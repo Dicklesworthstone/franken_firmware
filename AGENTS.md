@@ -69,7 +69,8 @@ Reading order for a new agent:
 
 ## Engineering Rules
 
-- Toolchain: Rust stable, edition 2024; `#![forbid(unsafe_code)]` in
+- Toolchain: Rust (edition 2024 for new workspace crates; the bake-off
+  `ffw-hello-init` predates it at edition 2021); `#![forbid(unsafe_code)]` in
   application/protocol crates. Platform crates (startup, MMIO, DMA) may use
   `unsafe` in minimal audited form, per the assessment's memory-safety
   contract section.

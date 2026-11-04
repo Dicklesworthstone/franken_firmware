@@ -8,7 +8,7 @@ a Playbar, three Bridges. Two SoC families (big-endian PowerPC and
 big-endian MIPS), two firmware generations (S1 and S2), one target codebase.
 
 ![status: research](https://img.shields.io/badge/status-research%2Fpre--alpha-orange)
-![language: Rust 2024](https://img.shields.io/badge/Rust-2024-dea584)
+![language: Rust 2021/2024](https://img.shields.io/badge/Rust-2021%2F2024-dea584)
 ![license: MIT + rider](https://img.shields.io/badge/license-MIT%20%2B%20OpenAI%2FAnthropic%20rider-blue)
 ![targets: mips32 BE · powerpc BE](https://img.shields.io/badge/targets-mips32%20BE%20%C2%B7%20powerpc%20BE-7b4bff)
 ![safety: forbid(unsafe_code) app crates](https://img.shields.io/badge/safety-forbid%28unsafe_code%29%20app%20crates-blue)
