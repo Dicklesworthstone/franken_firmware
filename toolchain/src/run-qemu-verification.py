@@ -118,6 +118,7 @@ def verify_serial_output(arch: str, expected_hello: str, expected_enosys: str, r
         "FFW_TEST:ERR_EBADF": r"FFW_TEST:ERR_EBADF status=PASS errno=9",
         "FFW_TEST:ERR_ENOSYS": re.escape(expected_enosys),
         "FFW_TEST:POS_FD_SHORT_WRITE": r"FFW_TEST:POS_FD_SHORT_WRITE status=PASS fd=[0-9]+",
+        "FFW_TEST:PARTIAL_WRITE": r"FFW_TEST:PARTIAL_WRITE status=PASS bytes=[1-9][0-9]*",
         "FFW_PROBE:CLOCK_MONOTONIC": r"FFW_PROBE:CLOCK_MONOTONIC status=PASS res_ns=[1-9][0-9]*",
         "FFW_PROBE:NONBLOCK_PIPE": r"FFW_PROBE:NONBLOCK_PIPE status=PASS rc=0",
         "FFW_PROBE:POLL": r"FFW_PROBE:POLL status=PASS rc=1",
@@ -142,6 +143,8 @@ def verify_serial_output(arch: str, expected_hello: str, expected_enosys: str, r
         pattern = patterns.get(key)
         if pattern is None or re.fullmatch(pattern, line) is None:
             errors.append(f"invalid:{key}")
+        elif key == "FFW_TEST:PARTIAL_WRITE" and int(line.rsplit("=", 1)[1]) >= 8192:
+            errors.append("invalid:partial_write_count_is_not_partial")
         if line.startswith("FFW_TEST:") or line.startswith("FFW_PROBE:"):
             probes[key] = {
                 "raw": line,
@@ -229,6 +232,7 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
 
     archive_receipts = {}
     guest_results = {}
+    args.receipt["guests"] = guest_results
     overall_pass = True
 
     for arch, cfg in targets.items():
@@ -284,6 +288,11 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
             verification["status"] = "FAIL"
             overall_pass = False
         guest_results[arch] = verification
+        # Persist completed guests before starting the next one. A later
+        # exception must retain both successful and failed earlier evidence.
+        (results_dir / "e07-e03-verification-receipt.json").write_text(
+            json.dumps(args.receipt, indent=2, sort_keys=True) + "\n"
+        )
 
     receipt = {
         "schema_version": "ffw.e07_e03.receipt.v1",
@@ -328,6 +337,7 @@ def main(argv: list[str] | None = None) -> int:
     results_dir.mkdir(parents=True, exist_ok=False)
     receipt_path = results_dir / "e07-e03-verification-receipt.json"
     receipt = {"schema_version": "ffw.e07_e03.receipt.v1", "run_id": run_id, "status": "INCOMPLETE"}
+    args.receipt = receipt
     receipt_path.write_text(json.dumps(receipt, sort_keys=True) + "\n")
     try:
         return run_verification(args, results_dir)

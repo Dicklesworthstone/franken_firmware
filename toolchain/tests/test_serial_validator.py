@@ -27,6 +27,7 @@ FFW_TEST:ERR_ENOENT status=PASS errno=2
 FFW_TEST:ERR_EBADF status=PASS errno=9
 FFW_TEST:ERR_ENOSYS status=PASS errno=89
 FFW_TEST:POS_FD_SHORT_WRITE status=PASS fd=4
+FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096
 FFW_PROBE:CLOCK_MONOTONIC status=PASS res_ns=1
 FFW_PROBE:NONBLOCK_PIPE status=PASS rc=0
 FFW_PROBE:POLL status=PASS rc=1
@@ -45,6 +46,12 @@ class SerialEvidenceTests(unittest.TestCase):
 
     def test_complete_transcript_passes(self):
         self.assertEqual(self.status(POSITIVE), "PASS")
+
+    def test_full_write_does_not_prove_partial_write(self):
+        self.assertEqual(self.status(POSITIVE.replace("bytes=4096", "bytes=8192")), "FAIL")
+
+    def test_zero_write_does_not_prove_partial_write(self):
+        self.assertEqual(self.status(POSITIVE.replace("bytes=4096", "bytes=0")), "FAIL")
 
     def test_missing_probe_fails(self):
         text = POSITIVE.replace("FFW_PROBE:ENTROPY status=PASS fd=4\n", "")
@@ -128,6 +135,31 @@ class CaptureTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 VERIFIER.main(["--results-dir", scratch])
             self.assertEqual(marker.read_bytes(), b"previous run")
+
+    def test_second_guest_exception_retains_first_guest_receipt(self):
+        # Fault injection for orchestration only; synthetic bytes are never
+        # executed and this test supplies no guest qualification evidence.
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            target = root / "target"
+            for triple in ("mips-unknown-linux-musl", "powerpc-unknown-linux-musl"):
+                binary = target / triple / "release/ffw-hello-init"
+                binary.parent.mkdir(parents=True)
+                binary.write_bytes(b"synthetic-not-executable")
+            kernel = root / "kernels/xm/boot/vmlinux-4.19.0-21-4kc-malta"
+            kernel.parent.mkdir(parents=True)
+            kernel.write_bytes(b"synthetic-kernel-not-executed")
+            output = root / "result"
+            capture = {"stdout": POSITIVE.encode(), "stderr": b"", "returncode": 0, "stop_reason": None}
+            with patch.object(VERIFIER.mkinitramfs, "resolve_default_build_dir", return_value=root), \
+                 patch.object(VERIFIER, "capture_guest", side_effect=[capture, FileNotFoundError("second guest")]):
+                result = VERIFIER.main(["--skip-build", "--target-dir", str(target), "--results-dir", str(output)])
+            receipt = json.loads((output / "e07-e03-verification-receipt.json").read_text())
+            self.assertEqual(result, 1)
+            self.assertEqual(receipt["status"], "FAIL")
+            self.assertEqual(receipt["error_type"], "FileNotFoundError")
+            self.assertEqual(receipt["guests"]["mips"]["status"], "PASS")
+            self.assertNotIn("ppc", receipt["guests"])
 
 
 if __name__ == "__main__":

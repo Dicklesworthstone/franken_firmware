@@ -303,9 +303,14 @@ impl LineWriter {
 }
 
 fn emit_console(console_fd: usize, msg: &[u8]) {
-    let written = sys_write(console_fd, msg);
-    if written < 0 && console_fd != 1 {
-        let _ = sys_write(1, msg);
+    if let Err(failure) =
+        ffw_hello_init::write_all_with(msg, 1024, |remaining| sys_write(console_fd, remaining))
+    {
+        if console_fd != 1 {
+            let _ = ffw_hello_init::write_all_with(&msg[failure.written..], 1024, |remaining| {
+                sys_write(1, remaining)
+            });
+        }
     }
     // syslog(2) action 3 reads kernel messages INTO its buffer. It must never
     // be used as an output fallback with a pointer derived from shared &[u8].
@@ -459,9 +464,10 @@ pub extern "C" fn _start() -> ! {
         failures += 1;
     }
 
-    // 4. Positive FD + bounded short write on /dev/null
+    // 4. Positive descriptor and exact small write; partial writes are probed
+    // separately using a deliberately capacity-limited nonblocking pipe.
     let null_fd = sys_open(c"/dev/null".as_ptr().cast::<u8>(), 0o0001, 0);
-    let short_ok = if null_fd > 0 {
+    let short_ok = if null_fd >= 0 {
         let payload = b"FFW_SHORT_WRITE_PAYLOAD";
         let nw = sys_write(null_fd as usize, &payload[..4]);
         let _ = sys_close(null_fd as usize);
@@ -550,7 +556,9 @@ pub extern "C" fn _start() -> ! {
     };
     let mut pipe_ok = false;
     let mut poll_ok = false;
-    if r_pipe == 0 && pipefds[0] > 0 && pipefds[1] > 0 {
+    let mut partial_bytes = -1;
+    let mut partial_ok = false;
+    if r_pipe == 0 && pipefds[0] >= 0 && pipefds[1] >= 0 {
         let rfd = pipefds[0] as usize;
         let wfd = pipefds[1] as usize;
         let mut rbuf = [0u8; 8];
@@ -567,8 +575,39 @@ pub extern "C" fn _start() -> ! {
 
         let nr = sys_read(rfd, &mut rbuf);
         pipe_ok = empty_rd == -sys::EAGAIN_EXPECTED && nw == 4 && nr == 4 && &rbuf[..4] == b"ABCD";
+        // Linux pipe(7): a nonblocking write larger than PIPE_BUF can return
+        // fewer bytes than requested. Fill to EAGAIN, free one 4096-byte slot,
+        // then request 8192 bytes. No unbounded loops or allocation.
+        // https://man7.org/linux/man-pages/man7/pipe.7.html
+        let payload = [0x5au8; 8192];
+        let mut drain = [0u8; 4096];
+        let mut filled = false;
+        for _ in 0..256 {
+            let count = sys_write(wfd, &payload[..4096]);
+            if count == -sys::EAGAIN_EXPECTED {
+                filled = true;
+                break;
+            }
+            if count != 4096 {
+                break;
+            }
+        }
+        if filled && sys_read(rfd, &mut drain) == 4096 && drain.iter().all(|b| *b == 0x5a) {
+            partial_bytes = sys_write(wfd, &payload);
+            partial_ok = partial_bytes > 0 && partial_bytes < payload.len() as isize;
+        }
         let _ = sys_close(rfd);
         let _ = sys_close(wfd);
+    }
+    if !emit_test_result(
+        console_fd,
+        b"FFW_TEST",
+        b"PARTIAL_WRITE",
+        partial_ok,
+        b"bytes",
+        partial_bytes,
+    ) {
+        failures += 1;
     }
     if !emit_test_result(
         console_fd,

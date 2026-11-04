@@ -1,7 +1,7 @@
 [target.mips-unknown-linux-musl]
-linker = "/opt/homebrew/bin/ld.lld"
+linker = "rust-lld"
 rustflags = ["-C", "linker-flavor=ld.lld", "-C", "relocation-model=static", "-C", "link-arg=--static", "-C", "link-arg=-e", "-C", "link-arg=_start"]
 
 [target.powerpc-unknown-linux-musl]
-linker = "/opt/homebrew/bin/ld.lld"
+linker = "rust-lld"
 rustflags = ["-C", "linker-flavor=ld.lld", "-C", "relocation-model=static", "-C", "link-arg=--static", "-C", "link-arg=-e", "-C", "link-arg=_start"]

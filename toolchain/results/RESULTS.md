@@ -1,150 +1,138 @@
-# Toolchain bake-off results — 2026-11-04
+# Toolchain bake-off & verification results — 2026-11-04
 
 Decision point from `FIRMWARE_ASSESSMENT.md` and the revised plan: can we
-build and boot hello-world `/init` binaries for the fleet's two big-endian
-architectures, and does the asupersync stack come up on BE-PPC? All work
-offline (QEMU + cross-compile); no device touched.
+build and boot `/init` binaries for the fleet's two big-endian architectures
+with zero initramfs corruption, full userspace serial output, verified kernel
+ABI capabilities, and a compiling `asupersync` + `franken-kernel` stack on both
+`powerpc-unknown-linux-musl` and `mips-unknown-linux-musl`? All work offline
+(QEMU + cross-compile); no device touched.
 
 ## Environment
 
 - Host: macOS arm64 (Darwin 27), rustc 1.101.0-nightly (48f4b0553, 2026-10-23)
-- Cross std: `-Z build-std=core,compiler_builtins` (no prebuilt BE std ships
-  for `mips-unknown-linux-musl` / `powerpc-unknown-linux-musl` on any host —
-  verified on rustup aarch64-macOS and inside the `rust:1-bookworm` container)
+- Cross std: `-Z build-std=core,compiler_builtins` for `no_std` PID 1 (`ffw-hello-init`),
+  and `-Z build-std=core,alloc,std,panic_abort` for `asupersync` + `franken-kernel`
 - Linker: `ld.lld` (Homebrew llvm), static, `-e _start`, `relocation-model=static`
 - QEMU 11.1.2 (`qemu-system-mips`, `qemu-system-ppc`)
 - Kernels: Debian archive `linux-image-4.19.0-21-4kc-malta` (BE MIPS32r2) and
-  `linux-image-4.9.0-0.bpo.6-powerpc` (BE PPC) — same kernel-era families as
-  the fleet's stock firmware (4.x), useful as a later old-kernel-compat probe
-- Initramfs: `../src/mkinitramfs.py` — newc cpio with `/dev/console` (5,1) +
-  `/dev/ttyS0` (4,64) + `/init`, built without root
+  `linux-image-4.9.0-0.bpo.6-powerpc` (BE PPC)
+- Initramfs: `../src/mkinitramfs.py` — deterministic `newc` cpio (`mtime=0`)
+  with independent structural verifier (`parse_cpio_bytes` / `verify_initramfs_bytes`),
+  4x4 alignment self-test (`python3 toolchain/src/mkinitramfs.py --self-test`),
+  and device nodes `/dev/console` (5,1), `/dev/ttyS0` (4,64), `/dev/ttyPZ0` (204,192),
+  `/dev/null` (1,3), `/dev/zero` (1,5), `/dev/urandom` (1,9), plus `/init` (mode `0755`).
 
-## Build artifacts
+## Build artifacts (`ffw-hello-init`)
 
-| Target | file(1) | Size |
-|---|---|---|
-| `mips-unknown-linux-musl` | `ELF 32-bit MSB executable, MIPS, MIPS32 rel2, statically linked, stripped` | 2,068 B |
-| `powerpc-unknown-linux-musl` | `ELF 32-bit MSB executable, PowerPC, statically linked, stripped` | 1,588 B |
+| Target | file(1) | Size | Initramfs (`.cpio.gz`) |
+|---|---|---|---|
+| `mips-unknown-linux-musl` | `ELF 32-bit MSB executable, MIPS, MIPS32 rel2 version 1 (SYSV), statically linked, stripped` | 6,412 B | 2,000 B |
+| `powerpc-unknown-linux-musl` | `ELF 32-bit MSB executable, PowerPC or cisco 4500, version 1 (SYSV), statically linked, stripped` | 5,092 B | 1,923 B |
 
 Source: `src/ffw-hello-init/` — `no_std`, `#![feature(asm_experimental_arch)]`,
-raw syscalls only (write/open/dup2/reboot). Two bugs found and fixed that any
-BE porting effort would hit:
+raw syscalls + negative/positive errno tests + 7 kernel ABI capability probes.
+Five critical ABI and packaging bugs were identified and fixed (`E07` / `E03`):
 
-1. **MIPS o32 syscall numbers are 4000-based** (`write` = 4004, not 4). With
-   generic numbers every syscall returned ENOSYS: init printed nothing,
-   rebooted nothing, spun. Symptom is total silence after `Run /init`.
-2. **PPC/MIPS32 asm constraints**: `asm!` on these targets requires
-   `asm_experimental_arch`; explicit registers use `"$4"` form; `$1` (`at`)
-   and `$2` (`v0`) need explicit bindings, not clobbers; named args cannot
-   use explicit-register form (`lateout("$2") ret` must be positional
-   `lateout("$2") ret` without `ret =`).
+1. **MIPS o32 syscall numbers are 4000-based** (`write` = 4004, not 4).
+2. **`mkinitramfs.py` major/minor tuple bug**: `os.major(dev[0]), os.minor(dev[0])`
+   previously turned `dev=(5, 1)` into `(0, 5)`, causing the kernel's initial
+   `open("/dev/console")` to fail (`Warning: unable to open an initial console`).
+   Fixed via `normalize_dev_tuple(dev)` and verified by `verify_initramfs_bytes`.
+3. **PowerPC `g3beige` serial console device node**: `g3beige` uses `pmac_zilog`
+   (`ttyPZ0`, major 204, minor 192) rather than 8250 (`ttyS0`). Adding `/dev/ttyPZ0`
+   (204,192) and passing `console=ttyPZ0,38400` in `boot-ppc.sh` enabled full
+   userspace serial output on BE-PPC.
+4. **PowerPC32 SVR4 `sc` register clobbers**: Linux PowerPC `sc` clobbers `r4`..`r12`,
+   `cr0`, `ctr`, and `xer`. Declaring `r4`..`r7` as `inlateout` (and `cr0`, `ctr`, `xer`
+   as `lateout`) prevents LLVM from reusing clobbered registers across loop iterations.
+5. **MIPS O32 `syscall` error flag (`$7`/`a3`) and `$1` (`$at`) clobber**: Linux MIPS
+   sets `$7 != 0` on error with positive `errno` in `$2`, and the kernel clobbers `$1`
+   (`$at`) during `syscall`. `sys_raw5` now saves/restores `$1` at `20($29)` around
+   `syscall` and negates `$2` when `$7 != 0`.
 
-## Boot results
+## Boot & Kernel ABI Probe Results (`E07` + `E03`)
 
-### BE-MIPS (Malta, 4.19 kernel) — full pass ✅
+Pre-repair baseline logs are preserved at `baseline-pre-e07-mips-serial.log` and
+`baseline-pre-e07-ppc-serial.log`. Full machine-readable verification receipt is
+committed at `e07-e03-verification-receipt.json`.
+
+### BE-MIPS (`Malta`, 4.19.0-21-4kc-malta) — Full Pass ✅ (`boot-mips-serial.log`)
 
 ```
-[    1.999154] Run /init as init process
+[    1.213030] Unpacking initramfs...
+[    1.221141] Freeing initrd memory: 12K
+[    1.805820] Run /init as init process
+FFW_MARKER:USERSPACE_START arch=mips-be
 ffw-init: hello from BIG-ENDIAN MIPS32 (o32) PID 1
-ffw-init: PID1 alive, issuing reboot(RB_AUTOBOOT)
-[    1.930682] reboot: Restarting system
+FFW_KERNEL_VERSION: Linux version 4.19.0-21-4kc-malta (debian-kernel@lists.debian.org) (gcc version 8.3.0 (Debian 8.3.0-6)) #1 Debian 4.19.249-2 (2022-06-30)
+FFW_SYSCALL_TEST:ERR_ENOENT status=PASS
+FFW_SYSCALL_TEST:ERR_EBADF status=PASS
+FFW_SYSCALL_TEST:ERR_ENOSYS status=PASS
+FFW_SYSCALL_TEST:POS_FD_SHORT_WRITE status=PASS
+FFW_ABI_PROBE:CLOCK_MONOTONIC status=PASS
+FFW_ABI_PROBE:NONBLOCK_PIPE status=PASS
+FFW_ABI_PROBE:POLL status=PASS
+FFW_ABI_PROBE:EPOLL status=PASS
+FFW_ABI_PROBE:SOCKET_UDP status=PASS
+FFW_ABI_PROBE:ENTROPY status=PASS
+FFW_ABI_PROBE:ATOMICS_32 status=PASS
+FFW_MARKER:TEST_SUCCESS failures=0
+FFW_MARKER:REBOOT_REQUEST
+[    1.815235] reboot: Restarting system
 ```
 
-Executed as PID 1 from initramfs, banner written to the serial console via
-raw `write`, then clean `reboot(RB_AUTOBOOT)` (magic1 `0xfee1dead`, magic2
-672274793, cmd `RB_AUTOBOOT` in a2 — arg order matters). Full cycle < 7 s.
-Log: locally captured `/tmp/mips-v8.log` equivalent reproduced by
-`boot-mips.sh`.
+- Zero initramfs unpack errors, zero console warnings, 11/11 syscall + ABI probes PASS,
+  clean `reboot(RB_AUTOBOOT)` exit in 4.17s.
 
-### BE-PPC (g3beige/OpenBIOS, 4.9 kernel) — kernel-side pass ✅, console fd caveat ⚠
+### BE-PPC (`g3beige`, 4.9.0-0.bpo.6-powerpc) — Full Pass ✅ (`boot-ppc-serial.log`)
 
 ```
-Unpacking initramfs...            (clean, no "junk" error)
-Freeing unused kernel memory: 424K
-reboot: Restarting system          ← our reboot() with correct magics
+[    0.665604] Unpacking initramfs...
+[    0.669967] Freeing initrd memory: 4K (c1ff2000 - c1ff3000)
+FFW_MARKER:USERSPACE_START arch=powerpc-be
+ffw-init: hello from BIG-ENDIAN PowerPC32 PID 1
+FFW_KERNEL_VERSION: Linux version 4.9.0-0.bpo.6-powerpc (debian-kernel@lists.debian.org) (gcc version 4.9.2 (Debian 4.9.2-10+deb8u1) ) #1 Debian 4.9.88-1+deb9u1~bpo8+1 (2018-05-13)
+FFW_SYSCALL_TEST:ERR_ENOENT status=PASS
+FFW_SYSCALL_TEST:ERR_EBADF status=PASS
+FFW_SYSCALL_TEST:ERR_ENOSYS status=PASS
+FFW_SYSCALL_TEST:POS_FD_SHORT_WRITE status=PASS
+FFW_ABI_PROBE:CLOCK_MONOTONIC status=PASS
+FFW_ABI_PROBE:NONBLOCK_PIPE status=PASS
+FFW_ABI_PROBE:POLL status=PASS
+FFW_ABI_PROBE:EPOLL status=PASS
+FFW_ABI_PROBE:SOCKET_UDP status=PASS
+FFW_ABI_PROBE:ENTROPY status=PASS
+FFW_ABI_PROBE:ATOMICS_32 status=PASS
+FFW_MARKER:TEST_SUCCESS failures=0
+FFW_MARKER:REBOOT_REQUEST
+[    1.812423] reboot: Restarting system
 ```
 
-On `ppce500` the same binary produced zero serial output (Debian's
-`powerpc` flavor is CHRP/PReP-oriented; ppce500 needs an e500 cuImage);
-on `g3beige` the kernel boots, unpacks our initramfs, execs `/init`
-(no "Failed to execute" error), and our `reboot` syscall fires a clean
-restart deterministically at ~2.5 s — proving user→kernel syscalls work
-end-to-end. The banner is not visible because kernel-level
-`open("/dev/console")` fails on g3beige (`Warning: unable to open an initial
-console`): g3beige's serial is an escc (pmac-zilog), not an 8250, so
-`/dev/ttyS0` (4,64) is the wrong node there. Console-fd wiring is a
-per-machine device-node detail, not a toolchain/ABI failure. Log: locally
-captured, reproducible via `boot-ppc.sh`.
+- Zero initramfs unpack errors, zero `unable to open an initial console` warnings,
+  full userspace serial output on `ttyPZ0`, 11/11 syscall + ABI probes PASS,
+  clean `reboot(RB_AUTOBOOT)` exit in 3.72s.
 
-## asupersync BE-PPC decision point
+## `asupersync` + `franken-kernel` 32-Bit Big-Endian Port (`P05` + `P06`) — Full Pass ✅
 
-`cargo +nightly check --no-default-features --features runtime-core -p
-asupersync --target powerpc-unknown-linux-musl -Z build-std=core,std,alloc,
-panic_abort` (ld.lld):
-
-- **std/core/compiler_builtins build from source: ✅** — the entire dependency
-  tree (serde, libc, socket2, etc.) compiles for BE-PPC; `asupersync`'s own
-  build script runs.
-- **asupersync lib check: ❌ 133 errors, single root cause** — the target's
-  `max-atomic-width` is 32 (`rustc --print target-spec-json`), so
-  `std::sync::atomic::AtomicU64` does not exist for
-  `powerpc-unknown-linux-musl`. All 133 errors are `AtomicU64` (109 imports,
-  14 type sites, 8 paths, 2 combined). Zero architecture errors of any other
-  kind.
-
-### Decision
-
-**Conditional GO with a scoped abstraction task.** The toolchain, ABI,
-linking, std-from-source, and the whole dependency graph are clean on
-BE-PPC; the only blocker is 64-bit atomics. Paths, in preference order:
-
-1. **`portable-atomic`** (critical-section or fallback impls for
-   32-bit-only targets): add as a dependency, alias `AtomicU64` through an
-   internal `asupersync::atomic` module, keep `std::sync::atomic` types only
-   behind a target-gated re-export. Bounded, mechanical change (~130 sites,
-   one import each).
-2. **Config-gate 64-bit counters** on targets without them (shrink to
-   AtomicU32 with generation tricks) — more invasive, only if (1) has a
-   runtime cost problem on 603e-class cores without native lwarx/stwcx.
-   64-bit CAS.
-3. **Use the 64-bit-capable cores only** (e500mc has native 64-bit atomics;
-   Play:5's actual core is TBD pending the frankensonos hardware evidence) —
-   a fleet-hardware question, not a software one, and per the assessment the
-   S5 core identity is still unverified.
-
-Recommendation: prototype (1) against `asupersync` in a branch; if the
-`portable-atomic` critical-section build passes `check` and its bounded
-test-suite for `--target powerpc-unknown-linux-musl`, the executor itself is
-portable to the fleet's dominant 32 MB board family.
-
-## RCH note
-
-The cargo-shim fleet refused builds during this session (worker
-"source namespace: conflicting alias base") with local fallback disabled;
-per owner approval the shim was uninstalled for this session and
-`compilation.allow_local_fallback` flipped to `true` in `~/.config/rch/config.toml`
-(annotated there; revert when the worker namespace conflict clears).
-All builds above ran locally — trivial for a 100-line no_std crate; the
-asupersync check ran locally too (~2-3 min under load).
+- **Baseline (`ddda2bf82cc8b3f3946c63f2ffc44177a4e34824`):**
+  `cargo +nightly check --no-default-features --lib -p asupersync --target powerpc-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort`
+  failed with **133 errors** (`std::sync::atomic::AtomicU64` missing on 32-bit PPC/MIPS where `max-atomic-width = 32`).
+- **Fix Implemented in `asupersync`:**
+  1. Added `portable-atomic = { version = "1.15.0", default-features = false, features = ["fallback"] }` to `asupersync/Cargo.toml`.
+  2. Created `asupersync/src/sync/atomic.rs` re-exporting `core::sync::atomic::{AtomicU64, AtomicI64}` when `#[cfg(target_has_atomic = "64")]` and `portable_atomic::{AtomicU64, AtomicI64}` when `#[cfg(not(target_has_atomic = "64"))]`.
+  3. Migrated all 64-bit atomic call sites in `asupersync/src/` to `crate::sync::atomic` and replaced 5 unstable `.try_update(...)` calls with stable `.fetch_update(...)`.
+- **Verification Results:**
+  - `cargo +nightly check --manifest-path /Users/jemanuel/projects/asupersync/Cargo.toml --no-default-features --lib --config build.incremental=false --target powerpc-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort`:
+    **0 errors** (compiled `franken-kernel v0.6.0`, `franken-evidence v0.6.0`, `franken-decision v0.6.0`, `asupersync v0.6.2`).
+  - `cargo +nightly check --manifest-path /Users/jemanuel/projects/asupersync/Cargo.toml --no-default-features --lib --config build.incremental=false --target mips-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort`:
+    **0 errors** (compiled `franken-kernel v0.6.0`, `franken-evidence v0.6.0`, `franken-decision v0.6.0`, `asupersync v0.6.2`).
 
 ## Reproduction
 
 ```sh
-# build (from toolchain/src/ffw-hello-init)
-cargo +nightly build --release -Z build-std=core,compiler_builtins \
-  --target mips-unknown-linux-musl          # or powerpc-unknown-linux-musl
-# initramfs (adds /dev/console + /dev/ttyS0 + /init)
-python3 ../mkinitramfs.py
-# boot BE-MIPS
-qemu-system-mips -M malta -cpu 24Kf -kernel <vmlinux-4kc-malta> \
-  -initrd ../build/initramfs/initramfs-mips-v2.cpio.gz \
-  -append "console=ttyS0,38400 rdinit=/init panic=-1" -nographic -no-reboot
-# boot BE-PPC
-qemu-system-ppc -M g3beige -kernel <vmlinux-4.9-powerpc> \
-  -initrd ../build/initramfs/initramfs-ppc-v2.cpio.gz \
-  -append "console=ttyS0 rdinit=/init panic=-1" -nographic -no-reboot
-```
+# 1. Run mkinitramfs structural + negative-oracle self-tests
+python3 toolchain/src/mkinitramfs.py --self-test
 
-Kernel debs: Debian archive pool `linux-image-4.19.0-21-4kc-malta_*_mips.deb`,
-`linux-image-4.9.0-0.bpo.6-powerpc_*_powerpc.deb` → `ar x` + `tar xf data.tar.xz`
-→ `boot/vmlinux-*`.
+# 2. Run full build + initramfs verification + QEMU BE-MIPS & BE-PPC boot harness
+python3 toolchain/src/run-qemu-verification.py
+```
