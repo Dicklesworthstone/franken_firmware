@@ -371,7 +371,8 @@ pub fn dispatch_alexa_directive(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use franken_board_profile::canonical_board_catalog;
+    // Synthetic fixture: the canonical catalog holds non-admissible hypotheses.
+    use franken_board_profile::synthetic_test_fixture_catalog as canonical_board_catalog;
     use franken_session::ChannelRole;
 
     #[test]

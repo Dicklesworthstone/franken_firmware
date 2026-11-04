@@ -3,7 +3,7 @@
 
 #![forbid(unsafe_code)]
 
-use franken_board_profile::{BoardProfile, canonical_board_catalog};
+use franken_board_profile::{BoardProfile, synthetic_test_fixture_catalog};
 use franken_clock::{
     ClockExchangeSample, DEFAULT_MAX_ADMITTED_UNCERTAINTY_US, GroupClockEstimator, LatencyLedger,
 };
@@ -12,17 +12,18 @@ use franken_control::{
     SpotifySessionState, dispatch_alexa_directive, handle_fsonos_soap,
 };
 use franken_dsp::{BoardProtectionDsp, BoundedDriftResampler, FRAMES_PER_BLOCK, StereoAudioBlock};
-use franken_hal::{AudioHalDevice, state as hal_state};
+use franken_hal::{AudioHalDevice, HalTelemetry, state as hal_state};
 use franken_platform::MemoryBudgetLedger;
 use franken_session::{
-    ChannelRole, FencedControlCommand, GroupCommandPayload, UnifiedGroupSession,
+    ChannelRole, FencedControlCommand, GroupCommandPayload, SessionError, UnifiedGroupSession,
 };
 use franken_stream::{
     AuthenticatedStreamPacket, BoundedJitterBuffer, PlayoutMode, PlayoutPullDecision, ReplayWindow,
 };
 use franken_test_support::{
-    BoundedDiagnosticSink, DiagnosticEvent, NetworkSchedule, NetworkScheduleConfig,
-    ReadinessOracle, SampleContinuityOracle,
+    AmplifierObservation, BoardObservation, BoundedDiagnosticSink, ClockObservation,
+    CommandObservation, DiagnosticEvent, ExpectedSamples, FencedCommandOracle, NetworkSchedule,
+    NetworkScheduleConfig, OracleViolation, ReadinessOracle, ReadinessSpec, SampleContinuityOracle,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -44,17 +45,237 @@ pub struct VirtualSpeakerNode {
     pub board: BoardProfile,
     pub readiness: SpeakerReadinessState,
     pub readiness_oracle: ReadinessOracle,
-    pub continuity_oracle: SampleContinuityOracle,
+    /// One continuity/content oracle per hardware channel, so no channel is judged on another's evidence.
+    pub continuity_oracles: Vec<SampleContinuityOracle>,
     pub clock: GroupClockEstimator,
     pub replay_window: ReplayWindow,
     pub jitter_buffer: BoundedJitterBuffer,
     pub resampler: BoundedDriftResampler,
     pub dsp: BoardProtectionDsp,
+    /// A second instance of the same DSP, fed the same input and gain. Its output is the
+    /// expectation for the handoff check, so it detects corruption between the DSP and the
+    /// output path (and nondeterminism), not errors in the DSP's own arithmetic.
+    pub shadow_dsp: BoardProtectionDsp,
     pub hal: AudioHalDevice<hal_state::Running>,
     pub rendered_blocks: u64,
     pub authentic_blocks: u64,
     pub concealed_blocks: u64,
+    /// Samples compared against the shadow render, summed over every channel.
+    pub handoff_checked_samples: u64,
     pub max_skew_us: u64,
+}
+
+/// Silence blocks the virtual HAL must have primed before it may unmute. Stated by the harness,
+/// so the readiness gate does not depend on the HAL's own configuration.
+const REQUIRED_SILENCE_BLOCKS: u32 = 2;
+const HAL_DMA_SLOTS: u16 = 8;
+/// What the readiness gate requires of the clock, stated here and not read back from the
+/// estimator. 2 ms is the N03 admission bound; a test pins it against the production constant.
+const CLOCK_LOCK_MIN_SAMPLES: u32 = 3;
+const CLOCK_LOCK_MAX_UNCERTAINTY_US: u64 = 2_000;
+const CLOCK_EXCHANGES: u32 = 4;
+/// The simulated clock exchange is built from a known truth, so the estimate can be checked
+/// against it instead of against the estimator's own `is_locked()`.
+const SIM_TRUE_OFFSET_NS: i64 = 0;
+const SIM_ONE_WAY_DELAY_NS: i64 = 400_000;
+const SIM_PEER_DWELL_NS: i64 = 50_000;
+/// Logical time between bring-up steps; only the order of observations matters.
+const BRING_UP_STEP_NS: u64 = 1_000_000;
+
+/// How a node is brought up. `NOMINAL` is the real sequence; the other values exist so tests can
+/// plant a defect in the bring-up code itself.
+#[derive(Debug, Clone, Copy)]
+struct BringUpPlan {
+    /// Silence blocks the simulated driver is configured to demand before unmuting.
+    hal_required_silence_blocks: u32,
+    /// Silence blocks the bring-up primes.
+    silence_blocks_primed: u32,
+    clock_exchanges: u32,
+    /// Skip the node's own clock gate and rely on the independent oracle alone.
+    bypass_own_clock_gate: bool,
+}
+
+impl BringUpPlan {
+    const NOMINAL: Self = Self {
+        hal_required_silence_blocks: REQUIRED_SILENCE_BLOCKS,
+        silence_blocks_primed: REQUIRED_SILENCE_BLOCKS,
+        clock_exchanges: CLOCK_EXCHANGES,
+        bypass_own_clock_gate: false,
+    };
+}
+
+fn amplifier_observation(t_ns: u64, telemetry: &HalTelemetry) -> AmplifierObservation {
+    AmplifierObservation {
+        t_ns,
+        muted: telemetry.hardware_muted,
+        primed_silence_blocks: telemetry.primed_silence_blocks,
+    }
+}
+
+fn readiness_err(violation: OracleViolation) -> String {
+    format!("readiness oracle: {violation}")
+}
+
+/// Expected samples for one channel of one block: the shadow DSP's output for the same input.
+struct ShadowReference<'a> {
+    start_frame: u64,
+    samples: &'a [i16],
+}
+
+impl ExpectedSamples for ShadowReference<'_> {
+    fn expected(&self, frame: u64) -> i16 {
+        frame
+            .checked_sub(self.start_frame)
+            .and_then(|offset| usize::try_from(offset).ok())
+            .and_then(|offset| self.samples.get(offset).copied())
+            .unwrap_or(i16::MIN)
+    }
+}
+
+/// Coverage of the fencing checks, so a report says what was actually exercised.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FencingProbeStats {
+    /// Commands handed to the real session and judged by the fencing oracle.
+    pub commands_observed: u64,
+    pub fresh_applied: u64,
+    pub duplicates_suppressed: u64,
+    pub stale_rejected: u64,
+    pub epoch_advances: u64,
+}
+
+type SessionOutcome = Result<u64, SessionError>;
+
+fn fencing_err(violation: OracleViolation) -> String {
+    format!("fencing oracle: {violation}")
+}
+
+/// Hands commands to the real `UnifiedGroupSession` and has the independent fencing oracle judge
+/// each outcome. The authority epoch and the record of what was issued come from this harness,
+/// never from the session, so the session cannot vouch for itself.
+struct CommandAudit {
+    oracle: FencedCommandOracle,
+    stats: FencingProbeStats,
+    next_id: u64,
+}
+
+impl CommandAudit {
+    fn new(initial_authority_epoch: u64) -> Self {
+        Self {
+            oracle: FencedCommandOracle::new(initial_authority_epoch),
+            stats: FencingProbeStats::default(),
+            next_id: 1,
+        }
+    }
+
+    /// Issue a new logical command. The outer error means the oracle objected; the inner result
+    /// is the session's own answer.
+    fn deliver_new(
+        &mut self,
+        session: &mut UnifiedGroupSession,
+        cmd: FencedControlCommand,
+    ) -> Result<(u64, SessionOutcome), String> {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.oracle
+            .record_issued(id, cmd.epoch, cmd.command_seq)
+            .map_err(fencing_err)?;
+        let outcome = self.observe(session, id, cmd)?;
+        Ok((id, outcome))
+    }
+
+    /// Deliver an already issued command again: a duplicate delivery.
+    fn redeliver(
+        &mut self,
+        session: &mut UnifiedGroupSession,
+        id: u64,
+        cmd: FencedControlCommand,
+    ) -> Result<SessionOutcome, String> {
+        self.observe(session, id, cmd)
+    }
+
+    fn observe(
+        &mut self,
+        session: &mut UnifiedGroupSession,
+        id: u64,
+        cmd: FencedControlCommand,
+    ) -> Result<SessionOutcome, String> {
+        let outcome = session.apply_command(cmd);
+        self.stats.commands_observed += 1;
+        self.oracle
+            .observe_outcome(CommandObservation {
+                command_id: id,
+                applied: outcome.is_ok(),
+                system_epoch_after: session.current_epoch,
+            })
+            .map_err(fencing_err)?;
+        Ok(outcome)
+    }
+}
+
+/// Far from the small sequence numbers the campaign and the control crate use.
+const FENCING_PROBE_SEQ_BASE: u64 = 1_000_000;
+
+/// Drive the real session through the situations the fence exists for and let the oracle judge
+/// each outcome: a fresh command, its duplicate delivery, an authority change, a stale command.
+fn exercise_fencing(
+    session: &mut UnifiedGroupSession,
+    audit: &mut CommandAudit,
+    epoch: u64,
+) -> Result<(), String> {
+    let set_volume = |cmd_epoch: u64, command_seq: u64, volume_0_to_100: u8| FencedControlCommand {
+        epoch: cmd_epoch,
+        command_seq,
+        payload: GroupCommandPayload::SetGroupVolume { volume_0_to_100 },
+    };
+    let mut seq = FENCING_PROBE_SEQ_BASE;
+
+    // A fresh command is applied...
+    let fresh = set_volume(epoch, seq, 40);
+    let (id, outcome) = audit.deliver_new(session, fresh.clone())?;
+    outcome.map_err(|e| format!("fencing probe: a fresh command was refused: {e}"))?;
+    audit.stats.fresh_applied += 1;
+
+    // ...and delivering the same command again must not apply it twice.
+    if audit.redeliver(session, id, fresh)?.is_err() {
+        audit.stats.duplicates_suppressed += 1;
+    }
+
+    // The harness elects a new coordinator epoch; a command stamped with it is applied.
+    audit
+        .oracle
+        .declare_authority(epoch + 1)
+        .map_err(fencing_err)?;
+    seq += 1;
+    let (_, outcome) = audit.deliver_new(session, set_volume(epoch + 1, seq, 41))?;
+    outcome.map_err(|e| {
+        format!("fencing probe: a command from the new authority epoch was refused: {e}")
+    })?;
+    audit.stats.fresh_applied += 1;
+    audit.stats.epoch_advances += 1;
+
+    // A command from the superseded epoch must be fenced out.
+    seq += 1;
+    let (_, outcome) = audit.deliver_new(session, set_volume(epoch, seq, 99))?;
+    if outcome.is_err() {
+        audit.stats.stale_rejected += 1;
+    }
+    Ok(())
+}
+
+/// A planted output-path defect, applied after the DSP renders a block and before the oracles see
+/// the handoff. Constructed only by tests.
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(not(test), allow(dead_code))]
+enum OutputFault {
+    /// Flip one sample of one member's rendered block, in the first or the last channel.
+    CorruptSample {
+        member_id: &'static str,
+        block: u64,
+        last_channel: bool,
+        offset: usize,
+    },
+    /// The member never produces its final block.
+    DropFinalBlock { member_id: &'static str },
 }
 
 impl VirtualSpeakerNode {
@@ -63,67 +284,126 @@ impl VirtualSpeakerNode {
         board: BoardProfile,
         initial_epoch: u64,
     ) -> Result<Self, String> {
-        let mut readiness_oracle = ReadinessOracle::new();
+        Self::bring_up_with_plan(member_id, board, initial_epoch, BringUpPlan::NOMINAL)
+    }
+
+    /// Bring a node up while the readiness oracle watches. Nothing here sets a prerequisite: the
+    /// board checks, the HAL's mute pin and prime counter, and the clock's raw output are
+    /// recorded as observations as they happen, and `announce_ready` judges the history.
+    /// Simulation-only: every observation comes from a simulated component.
+    fn bring_up_with_plan(
+        member_id: &str,
+        board: BoardProfile,
+        initial_epoch: u64,
+        plan: BringUpPlan,
+    ) -> Result<Self, String> {
+        let mut readiness_oracle = ReadinessOracle::new(ReadinessSpec {
+            required_primed_silence_blocks: REQUIRED_SILENCE_BLOCKS,
+            min_clock_samples: CLOCK_LOCK_MIN_SAMPLES,
+            max_clock_uncertainty_us: CLOCK_LOCK_MAX_UNCERTAINTY_US,
+        });
+        let mut t_ns = 0u64;
+
         board
             .verify_integrity()
             .map_err(|e| format!("board integrity failed: {e:?}"))?;
-        readiness_oracle.board_profile_verified = true;
-
         let budget = MemoryBudgetLedger::for_board(&board);
         budget
             .verify_budget()
             .map_err(|e| format!("memory budget failed: {e}"))?;
+        t_ns += BRING_UP_STEP_NS;
+        readiness_oracle
+            .record_board(BoardObservation {
+                t_ns,
+                integrity_ok: true,
+                routing_consistent: board.channel_routing.len()
+                    == usize::from(board.hardware_channels),
+            })
+            .map_err(readiness_err)?;
 
-        let closed = AudioHalDevice::open_for_profile(board.clone(), 8, 2)
-            .map_err(|e| format!("HAL open failed: {e}"))?;
+        let closed = AudioHalDevice::open_for_profile(
+            board.clone(),
+            HAL_DMA_SLOTS,
+            plan.hal_required_silence_blocks,
+        )
+        .map_err(|e| format!("HAL open failed: {e}"))?;
         let mut prepared = closed.prepare();
-        prepared
-            .prime_silence_block()
-            .map_err(|e| format!("silence prime 1 failed: {e}"))?;
-        prepared
-            .prime_silence_block()
-            .map_err(|e| format!("silence prime 2 failed: {e}"))?;
-        readiness_oracle.amplifier_muted_until_primed = true;
+        t_ns += BRING_UP_STEP_NS;
+        readiness_oracle
+            .record_amplifier(amplifier_observation(t_ns, &prepared.telemetry()))
+            .map_err(readiness_err)?;
+        for n in 1..=plan.silence_blocks_primed {
+            prepared
+                .prime_silence_block()
+                .map_err(|e| format!("silence prime {n} failed: {e}"))?;
+            t_ns += BRING_UP_STEP_NS;
+            readiness_oracle
+                .record_amplifier(amplifier_observation(t_ns, &prepared.telemetry()))
+                .map_err(readiness_err)?;
+        }
 
         let running = prepared
             .start_unmuted()
             .map_err(|(_, e)| format!("HAL unmute failed: {e}"))?;
+        t_ns += BRING_UP_STEP_NS;
+        readiness_oracle
+            .record_amplifier(amplifier_observation(t_ns, &running.telemetry()))
+            .map_err(readiness_err)?;
 
         let mut clock = GroupClockEstimator::new(8, DEFAULT_MAX_ADMITTED_UNCERTAINTY_US);
-        for seq in 1..=4 {
+        for seq in 1..=u64::from(plan.clock_exchanges) {
             let t1 = (seq as i64) * 10_000_000;
-            let sample = ClockExchangeSample::from_four_timestamps(
-                seq,
-                t1,
-                t1 + 400_000,
-                t1 + 450_000,
-                t1 + 850_000,
-            )
-            .map_err(|e| e.to_string())?;
+            let t2 = t1 + SIM_TRUE_OFFSET_NS + SIM_ONE_WAY_DELAY_NS;
+            let t3 = t2 + SIM_PEER_DWELL_NS;
+            let t4 = t3 - SIM_TRUE_OFFSET_NS + SIM_ONE_WAY_DELAY_NS;
+            let sample = ClockExchangeSample::from_four_timestamps(seq, t1, t2, t3, t4)
+                .map_err(|e| e.to_string())?;
             clock.ingest_sample(sample);
         }
-        readiness_oracle.clock_locked = clock.is_locked();
+        if !plan.bypass_own_clock_gate && !clock.is_locked() {
+            return Err("clock is not locked".to_string());
+        }
+        t_ns += BRING_UP_STEP_NS;
         readiness_oracle
-            .assert_can_enter_ready()
-            .map_err(|e| e.to_string())?;
+            .record_clock(ClockObservation {
+                t_ns,
+                ingested_samples: plan.clock_exchanges,
+                uncertainty_us: clock.uncertainty_us(),
+                offset_error_ns: clock
+                    .estimated_offset_ns()
+                    .saturating_sub(SIM_TRUE_OFFSET_NS),
+            })
+            .map_err(readiness_err)?;
+
+        t_ns += BRING_UP_STEP_NS;
+        readiness_oracle
+            .announce_ready(t_ns)
+            .map_err(readiness_err)?;
 
         let dsp = BoardProtectionDsp::new(board.clone()).map_err(|e| e.to_string())?;
+        let shadow_dsp = dsp.clone();
+        let continuity_oracles: Vec<SampleContinuityOracle> =
+            (0..usize::from(board.hardware_channels))
+                .map(|_| SampleContinuityOracle::new())
+                .collect();
 
         Ok(Self {
             member_id: member_id.to_string(),
             board,
             readiness: SpeakerReadinessState::ReadySynchronized,
             readiness_oracle,
-            continuity_oracle: SampleContinuityOracle::new(),
+            continuity_oracles,
             clock,
             replay_window: ReplayWindow::new(initial_epoch),
             jitter_buffer: BoundedJitterBuffer::new(PlayoutMode::Music500ms, 128),
             resampler: BoundedDriftResampler::new(),
             dsp,
+            shadow_dsp,
             hal: running,
             rendered_blocks: 0,
             authentic_blocks: 0,
             concealed_blocks: 0,
+            handoff_checked_samples: 0,
             max_skew_us: 0,
         })
     }
@@ -132,6 +412,11 @@ impl VirtualSpeakerNode {
 /// Summary report emitted by a Virtual House multi-room simulation run (`Q01`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VirtualHouseReport {
+    /// Always true: every probe, clock exchange and expectation here comes from a simulated
+    /// component, so this report is not evidence about real hardware.
+    pub simulation_only: bool,
+    /// What the fencing oracle observed the real session do with fresh, duplicate and stale commands.
+    pub fencing: FencingProbeStats,
     pub group_id: String,
     pub unified_mixed_s1_s2: bool,
     pub total_blocks_streamed: u64,
@@ -151,7 +436,11 @@ pub struct MemberSimulationStats {
     pub rendered_blocks: u64,
     pub authentic_blocks: u64,
     pub concealed_blocks: u64,
+    /// Frames verified continuous on every channel (the minimum across channels).
     pub verified_continuous_frames: u64,
+    /// Samples compared with the shadow render, summed over every channel. This is a handoff
+    /// integrity check, not verification of the DSP's own arithmetic.
+    pub handoff_checked_samples: u64,
     pub quarantined_dma_slots: usize,
     pub readiness: SpeakerReadinessState,
 }
@@ -162,7 +451,15 @@ pub fn run_virtual_house_campaign(
     seed: u64,
     total_blocks: u64,
 ) -> Result<VirtualHouseReport, String> {
-    let catalog = canonical_board_catalog();
+    run_campaign(seed, total_blocks, None)
+}
+
+fn run_campaign(
+    seed: u64,
+    total_blocks: u64,
+    fault: Option<OutputFault>,
+) -> Result<VirtualHouseReport, String> {
+    let catalog = synthetic_test_fixture_catalog();
     let find_board = |model: &str| -> BoardProfile {
         catalog
             .iter()
@@ -183,31 +480,40 @@ pub fn run_virtual_house_campaign(
     let mut session = UnifiedGroupSession::new("grp-virtual-house", "spk-kitchen-s12", epoch);
     let mut nodes: BTreeMap<String, VirtualSpeakerNode> = BTreeMap::new();
     let mut sink = BoundedDiagnosticSink::new(512, 256 * 1024);
+    let mut audit = CommandAudit::new(epoch);
 
     let mut cmd_seq = 1u64;
     for (member_id, board, role) in fleet_specs {
-        session
-            .apply_command(FencedControlCommand {
-                epoch,
-                command_seq: cmd_seq,
-                payload: GroupCommandPayload::AdmitMember {
-                    member_id: member_id.to_string(),
-                    board: board.clone(),
-                    role,
+        audit
+            .deliver_new(
+                &mut session,
+                FencedControlCommand {
+                    epoch,
+                    command_seq: cmd_seq,
+                    payload: GroupCommandPayload::AdmitMember {
+                        member_id: member_id.to_string(),
+                        board: board.clone(),
+                        role,
+                    },
                 },
-            })
+            )?
+            .1
             .map_err(|e| e.to_string())?;
         cmd_seq += 1;
 
         let node = VirtualSpeakerNode::bring_up_admitted(member_id, board, epoch)?;
-        session
-            .apply_command(FencedControlCommand {
-                epoch,
-                command_seq: cmd_seq,
-                payload: GroupCommandPayload::MarkMemberClockLocked {
-                    member_id: member_id.to_string(),
+        audit
+            .deliver_new(
+                &mut session,
+                FencedControlCommand {
+                    epoch,
+                    command_seq: cmd_seq,
+                    payload: GroupCommandPayload::MarkMemberClockLocked {
+                        member_id: member_id.to_string(),
+                    },
                 },
-            })
+            )?
+            .1
             .map_err(|e| e.to_string())?;
         cmd_seq += 1;
         nodes.insert(member_id.to_string(), node);
@@ -294,6 +600,7 @@ pub fn run_virtual_house_campaign(
                 .effective_member_gain(member_id)
                 .map_err(|e| e.to_string())?;
             node.dsp.set_volume_gain(gain);
+            node.shadow_dsp.set_volume_gain(gain);
 
             let pull = node.jitter_buffer.pull_for_frame(start_frame);
             let stereo_in = match pull {
@@ -312,14 +619,67 @@ pub fn run_virtual_house_campaign(
                 .resampler
                 .process_stereo(&stereo_in, node.clock.estimated_drift_ppm())
                 .map_err(|e| e.to_string())?;
-            let hw_out = node.dsp.render_block(&resampled);
-            node.continuity_oracle
-                .observe_block(
-                    hw_out.start_frame,
-                    hw_out.frames as u64,
-                    &hw_out.channel_samples[0],
-                )
-                .map_err(|e| e.to_string())?;
+            let mut hw_out = node.dsp.render_block(&resampled);
+            let shadow_out = node.shadow_dsp.render_block(&resampled);
+
+            if let Some(OutputFault::DropFinalBlock { member_id: faulty }) = fault
+                && faulty == member_id.as_str()
+                && blk_idx + 1 == total_blocks
+            {
+                // Planted defect: this member's final block never reaches the output.
+                continue;
+            }
+            if let Some(OutputFault::CorruptSample {
+                member_id: faulty,
+                block,
+                last_channel,
+                offset,
+            }) = fault
+                && faulty == member_id.as_str()
+                && block == blk_idx
+            {
+                let channel = if last_channel {
+                    hw_out.channel_samples.len().saturating_sub(1)
+                } else {
+                    0
+                };
+                let sample = hw_out
+                    .channel_samples
+                    .get_mut(channel)
+                    .and_then(|samples| samples.get_mut(offset))
+                    .ok_or_else(|| "planted output fault is out of range".to_string())?;
+                *sample = sample.wrapping_add(1);
+            }
+
+            // Every channel is judged against the shadow render of the same input: continuity,
+            // block shape and per-sample content. A fault in any channel is therefore visible.
+            if node.continuity_oracles.len() != hw_out.channel_samples.len()
+                || shadow_out.channel_samples.len() != hw_out.channel_samples.len()
+            {
+                return Err(format!(
+                    "member {member_id}: {} oracle channels, {} rendered channels, {} shadow channels",
+                    node.continuity_oracles.len(),
+                    hw_out.channel_samples.len(),
+                    shadow_out.channel_samples.len()
+                ));
+            }
+            for (channel, oracle) in node.continuity_oracles.iter_mut().enumerate() {
+                let live = &hw_out.channel_samples[channel][..hw_out.frames];
+                let reference = ShadowReference {
+                    start_frame: hw_out.start_frame,
+                    samples: &shadow_out.channel_samples[channel][..hw_out.frames],
+                };
+                oracle
+                    .observe_block_against(
+                        hw_out.start_frame,
+                        hw_out.frames as u64,
+                        live,
+                        &reference,
+                        0,
+                    )
+                    .map_err(|e| format!("member {member_id} channel {channel}: {e}"))?;
+                node.handoff_checked_samples += live.len() as u64;
+            }
 
             let lease = node.hal.submit_dma_block().map_err(|e| e.to_string())?;
             lease.complete();
@@ -341,6 +701,20 @@ pub fn run_virtual_house_campaign(
         ) {
             let skew_us = (max_ns - min_ns) / 1_000;
             max_inter_speaker_skew_us = max_inter_speaker_skew_us.max(skew_us);
+        }
+    }
+
+    // Tail check: the harness streamed `total_blocks` blocks, so every channel of every member must
+    // have produced exactly that many frames. A dropped final block shows up here and nowhere
+    // earlier. (A zero-block campaign makes no claim, so there is nothing to finalize.)
+    if total_blocks > 0 {
+        let expected_total_frames = total_blocks * (FRAMES_PER_BLOCK as u64);
+        for (id, node) in &nodes {
+            for (channel, oracle) in node.continuity_oracles.iter().enumerate() {
+                oracle
+                    .finalize(expected_total_frames)
+                    .map_err(|e| format!("member {id} channel {channel}: {e}"))?;
+            }
         }
     }
 
@@ -396,6 +770,10 @@ pub fn run_virtual_house_campaign(
         latency_us: max_inter_speaker_skew_us,
     });
 
+    // Fencing probe last: it advances the session to a newer epoch, which the steps above must
+    // not see.
+    exercise_fencing(&mut session, &mut audit, epoch)?;
+
     let mut member_stats = BTreeMap::new();
     for (id, node) in &nodes {
         let hal_t = node.hal.telemetry();
@@ -408,7 +786,13 @@ pub fn run_virtual_house_campaign(
                 rendered_blocks: node.rendered_blocks,
                 authentic_blocks: node.authentic_blocks,
                 concealed_blocks: node.concealed_blocks,
-                verified_continuous_frames: node.continuity_oracle.verified_frames(),
+                verified_continuous_frames: node
+                    .continuity_oracles
+                    .iter()
+                    .map(SampleContinuityOracle::verified_frames)
+                    .min()
+                    .unwrap_or(0),
+                handoff_checked_samples: node.handoff_checked_samples,
                 quarantined_dma_slots: hal_t.quarantined_dma_slots,
                 readiness: node.readiness.clone(),
             },
@@ -416,6 +800,8 @@ pub fn run_virtual_house_campaign(
     }
 
     Ok(VirtualHouseReport {
+        simulation_only: true,
+        fencing: audit.stats,
         group_id: session.group_id.clone(),
         unified_mixed_s1_s2: session.is_unified_mixed_generation_group(),
         total_blocks_streamed: total_blocks,
@@ -449,5 +835,239 @@ mod tests {
             assert_eq!(stats.quarantined_dma_slots, 0);
             assert_eq!(stats.readiness, SpeakerReadinessState::ReadySynchronized);
         }
+    }
+
+    const SEED: u64 = 0x2026_1104;
+
+    fn fixture_board(model: &str) -> BoardProfile {
+        synthetic_test_fixture_catalog()
+            .iter()
+            .find(|p| p.model_number == model)
+            .expect("fixture model present")
+            .clone()
+    }
+
+    fn bring_up(plan: BringUpPlan) -> Result<VirtualSpeakerNode, String> {
+        VirtualSpeakerNode::bring_up_with_plan("spk-test", fixture_board("S5"), 1, plan)
+    }
+
+    fn refusal(plan: BringUpPlan) -> String {
+        match bring_up(plan) {
+            Ok(_) => panic!("bring-up must have been refused"),
+            Err(e) => e,
+        }
+    }
+
+    #[test]
+    fn harness_clock_bound_matches_the_n03_admission_bound() {
+        assert_eq!(
+            CLOCK_LOCK_MAX_UNCERTAINTY_US,
+            DEFAULT_MAX_ADMITTED_UNCERTAINTY_US
+        );
+    }
+
+    #[test]
+    fn nominal_bring_up_is_observed_and_reaches_ready() {
+        let node = bring_up(BringUpPlan::NOMINAL).expect("nominal bring-up is permitted");
+        assert_eq!(node.readiness, SpeakerReadinessState::ReadySynchronized);
+        assert!(node.readiness_oracle.is_announced());
+        let hal = node.hal.telemetry();
+        assert!(!hal.hardware_muted);
+        assert_eq!(hal.primed_silence_blocks, REQUIRED_SILENCE_BLOCKS);
+        assert_eq!(
+            node.continuity_oracles.len(),
+            usize::from(node.board.hardware_channels)
+        );
+    }
+
+    #[test]
+    fn canary_premature_unmute_through_a_weakened_driver_threshold_is_refused() {
+        // The simulated driver is configured to unmute after one silence block; the harness
+        // requires two. The HAL's own guard cannot object, so only the oracle can.
+        let weakened = BringUpPlan {
+            hal_required_silence_blocks: 1,
+            silence_blocks_primed: 1,
+            ..BringUpPlan::NOMINAL
+        };
+        let err = refusal(weakened);
+        assert!(err.contains("premature unmute"), "{err}");
+        // Paired positive: the same sequence at the required threshold is accepted.
+        assert!(bring_up(BringUpPlan::NOMINAL).is_ok());
+    }
+
+    #[test]
+    fn the_hal_still_refuses_an_unmute_before_priming_on_its_own() {
+        let unprimed = BringUpPlan {
+            silence_blocks_primed: 0,
+            ..BringUpPlan::NOMINAL
+        };
+        let err = refusal(unprimed);
+        assert!(err.contains("HAL unmute failed"), "{err}");
+    }
+
+    #[test]
+    fn canary_false_ready_on_an_unlocked_clock_is_refused_even_when_the_node_skips_its_own_gate() {
+        for exchanges in [0u32, 1, 2] {
+            let gated = BringUpPlan {
+                clock_exchanges: exchanges,
+                ..BringUpPlan::NOMINAL
+            };
+            let err = refusal(gated);
+            assert!(err.contains("clock is not locked"), "{err}");
+
+            let ungated = BringUpPlan {
+                clock_exchanges: exchanges,
+                bypass_own_clock_gate: true,
+                ..BringUpPlan::NOMINAL
+            };
+            let err = refusal(ungated);
+            assert!(err.contains("clock_locked"), "{err}");
+        }
+        // Paired positive at the boundary: three exchanges lock the clock.
+        let three = BringUpPlan {
+            clock_exchanges: 3,
+            ..BringUpPlan::NOMINAL
+        };
+        assert!(bring_up(three).is_ok());
+    }
+
+    #[test]
+    fn campaign_checks_every_channel_against_the_shadow_render_and_is_simulation_only() {
+        let report = run_campaign(SEED, 20, None).expect("clean campaign");
+        assert!(report.simulation_only);
+        assert_eq!(report.members.len(), 5);
+        for (id, stats) in &report.members {
+            assert!(stats.verified_continuous_frames > 0, "member {id}");
+            assert_eq!(
+                stats.handoff_checked_samples,
+                stats.verified_continuous_frames * u64::from(stats.hardware_channels),
+                "member {id}: every channel must have been compared"
+            );
+        }
+    }
+
+    #[test]
+    fn canary_sample_corruption_in_any_channel_of_the_real_campaign_is_caught() {
+        let clean = run_campaign(SEED, 20, None).expect("clean campaign");
+        let channels = clean.members["spk-office-s5"].hardware_channels;
+        assert!(
+            channels > 1,
+            "the fixture board must have a non-first channel"
+        );
+        for (last_channel, expected_channel) in [(false, 0usize), (true, usize::from(channels) - 1)]
+        {
+            let fault = OutputFault::CorruptSample {
+                member_id: "spk-office-s5",
+                block: 7,
+                last_channel,
+                offset: 5,
+            };
+            let err = run_campaign(SEED, 20, Some(fault)).expect_err("corruption must be caught");
+            assert!(err.contains("spk-office-s5"), "{err}");
+            assert!(
+                err.contains(&format!("channel {expected_channel}:")),
+                "{err}"
+            );
+            // Block 7 starts at frame 7 * 256; the flipped sample is 5 frames in.
+            assert!(err.contains("wrong sample at frame 1797"), "{err}");
+        }
+    }
+
+    #[test]
+    fn canary_a_missing_final_block_is_caught_as_a_truncated_stream() {
+        let fault = OutputFault::DropFinalBlock {
+            member_id: "spk-bedroom-s1",
+        };
+        let err = run_campaign(SEED, 20, Some(fault)).expect_err("a dropped tail must be caught");
+        assert!(err.contains("spk-bedroom-s1"), "{err}");
+        assert!(err.contains("truncated stream"), "{err}");
+        assert!(err.contains("4864 of 5120"), "{err}");
+    }
+
+    #[test]
+    fn campaign_fencing_probe_drives_the_real_session_and_the_oracle_accepts_it() {
+        let report = run_campaign(SEED, 20, None).expect("clean campaign");
+        // 5 members x (admit + clock-locked) = 10 observed in the admit loop, then the probe:
+        // a fresh command, its duplicate delivery, a new-epoch command, and a stale command.
+        assert_eq!(
+            report.fencing,
+            FencingProbeStats {
+                commands_observed: 14,
+                fresh_applied: 2,
+                duplicates_suppressed: 1,
+                stale_rejected: 1,
+                epoch_advances: 1,
+            }
+        );
+    }
+
+    /// Regression test for a `franken-session` defect that is now fixed. `apply_command` used to
+    /// adopt a command's epoch before validating its payload, so a *rejected* command at a
+    /// far-future epoch moved `current_epoch` and fenced out the legitimate coordinator. The
+    /// session now adopts a newer epoch only once the command has been applied. This began life
+    /// as `known_session_defect_a_rejected_command_still_adopts_its_epoch`, asserting the defect,
+    /// and was inverted when the fix landed.
+    #[test]
+    fn a_rejected_command_does_not_adopt_its_epoch_and_cannot_fence_out_the_coordinator() {
+        let mut session = UnifiedGroupSession::new("grp-regression", "coord", 1);
+        let mut audit = CommandAudit::new(1);
+        let ghost = |epoch: u64, command_seq: u64| FencedControlCommand {
+            epoch,
+            command_seq,
+            payload: GroupCommandPayload::RemoveMember {
+                member_id: "ghost".to_string(),
+            },
+        };
+
+        // Paired positive: a rejected command at the current epoch leaves the epoch alone.
+        let (_, outcome) = audit
+            .deliver_new(&mut session, ghost(1, 1))
+            .expect("a rejection that keeps the epoch is permitted");
+        assert!(matches!(outcome, Err(SessionError::UnknownMember { .. })));
+        assert_eq!(session.current_epoch, 1);
+
+        // The formerly defective case: the same rejection at epoch 999 must not move the epoch,
+        // and the oracle (which declared no such epoch) accepts the session's behaviour.
+        let (_, outcome) = audit
+            .deliver_new(&mut session, ghost(999, 2))
+            .expect("a rejection must not move the system epoch");
+        assert!(matches!(outcome, Err(SessionError::UnknownMember { .. })));
+        assert_eq!(session.current_epoch, 1);
+
+        // The real coordinator, still at epoch 1, is still obeyed.
+        let legitimate = FencedControlCommand {
+            epoch: 1,
+            command_seq: 3,
+            payload: GroupCommandPayload::SetGroupVolume {
+                volume_0_to_100: 30,
+            },
+        };
+        let (_, outcome) = audit
+            .deliver_new(&mut session, legitimate)
+            .expect("the coordinator's command is permitted");
+        assert!(outcome.is_ok());
+    }
+
+    /// KNOWN LIMIT, pinned so it is not forgotten. The session still adopts the epoch of any
+    /// *valid* command and has no way to tell whether the sender was elected, so an
+    /// unauthenticated command at a far-future epoch applies and fences out the real coordinator.
+    /// The oracle objects because the harness never declared epoch 999.
+    ///
+    /// When commands are authenticated, or elections are declared to the session, invert the
+    /// assertions marked FLIP: the oracle accepts and `current_epoch` stays 1.
+    #[test]
+    fn known_limit_a_valid_command_at_an_undeclared_epoch_is_still_applied() {
+        let mut session = UnifiedGroupSession::new("grp-limit", "coord", 1);
+        let mut audit = CommandAudit::new(1);
+        let unelected = FencedControlCommand {
+            epoch: 999,
+            command_seq: 1,
+            payload: GroupCommandPayload::SetGroupVolume { volume_0_to_100: 1 },
+        };
+        let err = audit
+            .deliver_new(&mut session, unelected)
+            .expect_err("the oracle must flag an epoch nobody declared"); // FLIP: expect Ok
+        assert!(err.contains("future epoch accepted"), "{err}");
+        assert_eq!(session.current_epoch, 999); // FLIP: expect 1
     }
 }

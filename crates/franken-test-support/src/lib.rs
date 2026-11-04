@@ -227,9 +227,115 @@ pub enum OracleViolation {
         "false-ready state violation: entered Ready while prerequisite `{missing_prerequisite}` was unsatisfied"
     )]
     FalseReadyState { missing_prerequisite: String },
+    #[error(
+        "block length mismatch: frame_count {frame_count} but {observed_samples} samples were supplied"
+    )]
+    BlockLengthMismatch {
+        frame_count: u64,
+        observed_samples: u64,
+    },
+    #[error(
+        "wrong sample at frame {frame}: expected {expected}, observed {observed} (tolerance {tolerance})"
+    )]
+    WrongSample {
+        frame: u64,
+        expected: i16,
+        observed: i16,
+        tolerance: u16,
+    },
+    #[error(
+        "truncated stream: {verified_frames} of {expected_total_frames} expected frames were verified"
+    )]
+    TruncatedStream {
+        expected_total_frames: u64,
+        verified_frames: u64,
+    },
+    #[error(
+        "overrun stream: {verified_frames} frames were verified but only {expected_total_frames} were expected"
+    )]
+    OverrunStream {
+        expected_total_frames: u64,
+        verified_frames: u64,
+    },
+    #[error(
+        "premature unmute: amplifier observed unmuted with {primed_blocks} primed silence blocks, {required_blocks} required"
+    )]
+    PrematureUnmute {
+        primed_blocks: u32,
+        required_blocks: u32,
+    },
+    #[error("probe out of order: observed t={observed_ns} ns after t={previous_ns} ns")]
+    ProbeOutOfOrder { previous_ns: u64, observed_ns: u64 },
+    #[error(
+        "future epoch accepted: authority epoch is {authority_epoch} but a command from epoch {command_epoch} was applied"
+    )]
+    FutureEpochAccepted {
+        authority_epoch: u64,
+        command_epoch: u64,
+    },
+    #[error(
+        "future epoch adopted: authority epoch is {authority_epoch} but the system now reports epoch {system_epoch}"
+    )]
+    FutureEpochAdopted {
+        authority_epoch: u64,
+        system_epoch: u64,
+    },
+    #[error("phantom command {command_id}: reported by the system but never issued")]
+    PhantomCommand { command_id: u64 },
+    #[error("authority epoch regressed: declared {declared_epoch} after {current_epoch}")]
+    AuthorityRegressed {
+        current_epoch: u64,
+        declared_epoch: u64,
+    },
+    #[error("command tracking overflow: more than {limit} commands tracked")]
+    CommandTrackingOverflow { limit: usize },
 }
 
-/// Oracle 1: Sample continuity and unexpected dropout detector.
+/// Independent source of the samples a single output channel must carry, one value per frame.
+///
+/// An implementation must be derived from the programme that was injected, never from the
+/// device-under-test's own output, or the oracle would only be agreeing with itself.
+pub trait ExpectedSamples {
+    fn expected(&self, frame: u64) -> i16;
+}
+
+/// Stateless random-access synthetic reference signal (test programme, never real audio).
+///
+/// `expected(frame)` is the `(frame + 1)`-th output of a SplitMix64 stream started at `key`
+/// (top 16 bits, two's complement), so any block can be verified in any order without trusting
+/// the device's frame counters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SeededReferenceSignal {
+    key: u64,
+}
+
+impl SeededReferenceSignal {
+    #[must_use]
+    pub const fn new(key: u64) -> Self {
+        Self { key }
+    }
+}
+
+impl ExpectedSamples for SeededReferenceSignal {
+    fn expected(&self, frame: u64) -> i16 {
+        let state = self
+            .key
+            .wrapping_add(frame.wrapping_add(1).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^= z >> 31;
+        (z >> 48) as u16 as i16
+    }
+}
+
+/// Oracle 1: Sample continuity, block-shape and content verifier for one output channel.
+///
+/// `observe_block` checks frame continuity and that exactly `frame_count` samples were supplied.
+/// It cannot know what the values should be. `observe_block_against` additionally compares every
+/// sample with an independent [`ExpectedSamples`] reference. `finalize` rejects a stream that
+/// ended early, ran long, or was never observed at all. A rejected block leaves the oracle's
+/// position unchanged, so the first fault stays the reported one.
 #[derive(Debug, Clone, Default)]
 pub struct SampleContinuityOracle {
     next_expected_frame: Option<u64>,
@@ -245,8 +351,8 @@ impl SampleContinuityOracle {
         }
     }
 
-    pub fn observe_block(
-        &mut self,
+    fn check_block(
+        &self,
         start_frame: u64,
         frame_count: u64,
         samples_i16: &[i16],
@@ -258,6 +364,12 @@ impl SampleContinuityOracle {
                 reason: "empty audio block submitted to output oracle".to_string(),
             });
         }
+        if samples_i16.len() as u64 != frame_count {
+            return Err(OracleViolation::BlockLengthMismatch {
+                frame_count,
+                observed_samples: samples_i16.len() as u64,
+            });
+        }
         if let Some(expected) = self.next_expected_frame
             && start_frame != expected
         {
@@ -267,8 +379,70 @@ impl SampleContinuityOracle {
                 reason: "unannounced frame gap or overlap".to_string(),
             });
         }
+        Ok(())
+    }
+
+    fn commit_block(&mut self, start_frame: u64, frame_count: u64) {
         self.next_expected_frame = Some(start_frame.saturating_add(frame_count));
         self.verified_frames = self.verified_frames.saturating_add(frame_count);
+    }
+
+    /// Continuity and shape only: the block must be non-empty, carry exactly `frame_count`
+    /// samples, and start where the previous block ended.
+    pub fn observe_block(
+        &mut self,
+        start_frame: u64,
+        frame_count: u64,
+        samples_i16: &[i16],
+    ) -> Result<(), OracleViolation> {
+        self.check_block(start_frame, frame_count, samples_i16)?;
+        self.commit_block(start_frame, frame_count);
+        Ok(())
+    }
+
+    /// Everything `observe_block` checks, plus every sample must be within `max_abs_error` of the
+    /// independent `reference` at its frame. Use `0` for bit-exact paths.
+    pub fn observe_block_against(
+        &mut self,
+        start_frame: u64,
+        frame_count: u64,
+        samples_i16: &[i16],
+        reference: &dyn ExpectedSamples,
+        max_abs_error: u16,
+    ) -> Result<(), OracleViolation> {
+        self.check_block(start_frame, frame_count, samples_i16)?;
+        for (offset, &observed) in samples_i16.iter().enumerate() {
+            let frame = start_frame.saturating_add(offset as u64);
+            let expected = reference.expected(frame);
+            let diff = (i32::from(observed) - i32::from(expected)).unsigned_abs();
+            if diff > u32::from(max_abs_error) {
+                return Err(OracleViolation::WrongSample {
+                    frame,
+                    expected,
+                    observed,
+                    tolerance: max_abs_error,
+                });
+            }
+        }
+        self.commit_block(start_frame, frame_count);
+        Ok(())
+    }
+
+    /// Declare the stream finished. Exactly `expected_total_frames` frames must have been
+    /// verified; a stream that was never observed fails even when zero frames were expected.
+    pub fn finalize(&self, expected_total_frames: u64) -> Result<(), OracleViolation> {
+        if self.verified_frames == 0 || self.verified_frames < expected_total_frames {
+            return Err(OracleViolation::TruncatedStream {
+                expected_total_frames,
+                verified_frames: self.verified_frames,
+            });
+        }
+        if self.verified_frames > expected_total_frames {
+            return Err(OracleViolation::OverrunStream {
+                expected_total_frames,
+                verified_frames: self.verified_frames,
+            });
+        }
         Ok(())
     }
 
@@ -278,136 +452,689 @@ impl SampleContinuityOracle {
     }
 }
 
-/// Oracle 2: Coordinator epoch fencing verifier.
-#[derive(Debug, Clone, Default)]
-pub struct EpochFencingOracle {
-    highest_epoch: u64,
+/// What the harness saw when it handed one command to the system under test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommandObservation {
+    /// Harness-assigned identity of the logical command (not the system's own key).
+    pub command_id: u64,
+    /// Whether the system reported the command as applied.
+    pub applied: bool,
+    /// The epoch the system reports as current after handling the command, read back from the
+    /// system and not from the command.
+    pub system_epoch_after: u64,
 }
 
-impl EpochFencingOracle {
+/// Oracles 2 and 3: epoch fencing and single application, judged against harness truth.
+///
+/// The harness declares which coordinator epoch is authoritative (`declare_authority`) and
+/// records every command it issues (`record_issued`). `observe_outcome` then judges what the
+/// system did. The system's own epoch bookkeeping is never the source of truth: the previous
+/// oracle learned epochs only from commands the system had already accepted, so a fence that
+/// never advanced, or advanced on the wrong evidence, went unnoticed. A system epoch that moves
+/// past the declared authority is a violation even when the command that moved it was rejected.
+/// Tracking is bounded; overflow is reported, not ignored.
+#[derive(Debug, Clone)]
+pub struct FencedCommandOracle {
+    authority_epoch: u64,
+    issued: BTreeMap<u64, (u64, u64)>,
+    applied: BTreeSet<u64>,
+    max_tracked: usize,
+}
+
+impl FencedCommandOracle {
+    pub const DEFAULT_MAX_TRACKED: usize = 10_000;
+
     #[must_use]
-    pub const fn new(initial_epoch: u64) -> Self {
+    pub fn new(initial_authority_epoch: u64) -> Self {
+        Self::with_capacity(initial_authority_epoch, Self::DEFAULT_MAX_TRACKED)
+    }
+
+    #[must_use]
+    pub fn with_capacity(initial_authority_epoch: u64, max_tracked: usize) -> Self {
         Self {
-            highest_epoch: initial_epoch,
+            authority_epoch: initial_authority_epoch,
+            issued: BTreeMap::new(),
+            applied: BTreeSet::new(),
+            max_tracked,
         }
     }
 
-    pub fn record_accepted_epoch(&mut self, candidate_epoch: u64) -> Result<(), OracleViolation> {
-        if candidate_epoch < self.highest_epoch {
-            return Err(OracleViolation::StaleEpochAccepted {
-                current_epoch: self.highest_epoch,
-                candidate_epoch,
+    #[must_use]
+    pub const fn authority_epoch(&self) -> u64 {
+        self.authority_epoch
+    }
+
+    /// Truth: the harness elected a new coordinator epoch. It can only move forward.
+    pub fn declare_authority(&mut self, epoch: u64) -> Result<(), OracleViolation> {
+        if epoch < self.authority_epoch {
+            return Err(OracleViolation::AuthorityRegressed {
+                current_epoch: self.authority_epoch,
+                declared_epoch: epoch,
             });
         }
-        self.highest_epoch = candidate_epoch;
+        self.authority_epoch = epoch;
         Ok(())
     }
-}
 
-/// Oracle 3: Command idempotency and single-application verifier.
-#[derive(Debug, Clone, Default)]
-pub struct CommandIdempotencyOracle {
-    applied: BTreeSet<(u64, u64)>,
-}
-
-impl CommandIdempotencyOracle {
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            applied: BTreeSet::new(),
-        }
-    }
-
-    pub fn record_applied_command(
+    /// Truth: the harness issued this command. Call once per logical command, then
+    /// `observe_outcome` for every delivery of it (a duplicate delivery is a second outcome).
+    pub fn record_issued(
         &mut self,
+        command_id: u64,
         epoch: u64,
         command_seq: u64,
     ) -> Result<(), OracleViolation> {
-        if !self.applied.insert((epoch, command_seq)) {
-            return Err(OracleViolation::DoubleAppliedCommand { epoch, command_seq });
+        if !self.issued.contains_key(&command_id) && self.issued.len() >= self.max_tracked {
+            return Err(OracleViolation::CommandTrackingOverflow {
+                limit: self.max_tracked,
+            });
+        }
+        self.issued.insert(command_id, (epoch, command_seq));
+        Ok(())
+    }
+
+    /// Judge one delivery. Rejecting a stale or duplicate command is permitted behaviour.
+    pub fn observe_outcome(&mut self, obs: CommandObservation) -> Result<(), OracleViolation> {
+        let Some(&(epoch, command_seq)) = self.issued.get(&obs.command_id) else {
+            return Err(OracleViolation::PhantomCommand {
+                command_id: obs.command_id,
+            });
+        };
+        if obs.applied {
+            if epoch < self.authority_epoch {
+                return Err(OracleViolation::StaleEpochAccepted {
+                    current_epoch: self.authority_epoch,
+                    candidate_epoch: epoch,
+                });
+            }
+            if epoch > self.authority_epoch {
+                return Err(OracleViolation::FutureEpochAccepted {
+                    authority_epoch: self.authority_epoch,
+                    command_epoch: epoch,
+                });
+            }
+            if !self.applied.insert(obs.command_id) {
+                return Err(OracleViolation::DoubleAppliedCommand { epoch, command_seq });
+            }
+        }
+        if obs.system_epoch_after > self.authority_epoch {
+            return Err(OracleViolation::FutureEpochAdopted {
+                authority_epoch: self.authority_epoch,
+                system_epoch: obs.system_epoch_after,
+            });
         }
         Ok(())
     }
 }
 
-/// Oracle 4: Speaker readiness gate verifier.
-#[derive(Debug, Clone, Default)]
+/// What "ready" requires, stated by the harness. These numbers are never read back from the
+/// device under test, or the oracle would only be agreeing with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadinessSpec {
+    /// Silence blocks that must be primed before the amplifier may be unmuted.
+    pub required_primed_silence_blocks: u32,
+    /// Clock exchanges that must have been ingested before the clock may count as locked.
+    pub min_clock_samples: u32,
+    /// Largest clock uncertainty, in microseconds, that still counts as locked.
+    pub max_clock_uncertainty_us: u64,
+}
+
+/// Board-profile evidence at one instant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoardObservation {
+    pub t_ns: u64,
+    pub integrity_ok: bool,
+    pub routing_consistent: bool,
+}
+
+/// Amplifier read-back at one instant: the hardware mute pin and the prime counter as the
+/// hardware layer reports them (for example HAL telemetry), not the bring-up code's own flow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AmplifierObservation {
+    pub t_ns: u64,
+    pub muted: bool,
+    pub primed_silence_blocks: u32,
+}
+
+/// Clock evidence at one instant as raw facts. `offset_error_ns` is the estimator's offset minus
+/// the offset the harness injected, so a clock cannot vouch for itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClockObservation {
+    pub t_ns: u64,
+    pub ingested_samples: u32,
+    pub uncertainty_us: u64,
+    pub offset_error_ns: i64,
+}
+
+/// Oracle 4: Speaker readiness gate verifier, driven by an observed probe history.
+///
+/// Prerequisites are never set by the code under test. The harness records observations as the
+/// bring-up proceeds, then `announce_ready` checks the history against the independent
+/// [`ReadinessSpec`]. A premature unmute is reported the moment it is observed and is not
+/// forgiven by priming afterwards. Simulation-only: the observations come from simulated
+/// components, which says nothing about real hardware.
+#[derive(Debug, Clone)]
 pub struct ReadinessOracle {
-    pub board_profile_verified: bool,
-    pub amplifier_muted_until_primed: bool,
-    pub clock_locked: bool,
+    spec: ReadinessSpec,
+    last_t_ns: u64,
+    board: Option<BoardObservation>,
+    clock: Option<ClockObservation>,
+    amplifier_seen_muted: bool,
+    amplifier_premature_unmute: bool,
+    amplifier_last: Option<AmplifierObservation>,
+    announced: bool,
 }
 
 impl ReadinessOracle {
     #[must_use]
-    pub const fn new() -> Self {
+    pub const fn new(spec: ReadinessSpec) -> Self {
         Self {
-            board_profile_verified: false,
-            amplifier_muted_until_primed: false,
-            clock_locked: false,
+            spec,
+            last_t_ns: 0,
+            board: None,
+            clock: None,
+            amplifier_seen_muted: false,
+            amplifier_premature_unmute: false,
+            amplifier_last: None,
+            announced: false,
         }
     }
 
-    pub fn assert_can_enter_ready(&self) -> Result<(), OracleViolation> {
-        if !self.board_profile_verified {
-            return Err(OracleViolation::FalseReadyState {
-                missing_prerequisite: "board_profile_verified".to_string(),
+    fn advance(&mut self, t_ns: u64) -> Result<(), OracleViolation> {
+        if t_ns < self.last_t_ns {
+            return Err(OracleViolation::ProbeOutOfOrder {
+                previous_ns: self.last_t_ns,
+                observed_ns: t_ns,
             });
         }
-        if !self.amplifier_muted_until_primed {
-            return Err(OracleViolation::FalseReadyState {
-                missing_prerequisite: "amplifier_muted_until_primed".to_string(),
-            });
+        self.last_t_ns = t_ns;
+        Ok(())
+    }
+
+    pub fn record_board(&mut self, obs: BoardObservation) -> Result<(), OracleViolation> {
+        self.advance(obs.t_ns)?;
+        self.board = Some(obs);
+        Ok(())
+    }
+
+    /// Record an amplifier read-back. An unmuted observation with fewer primed silence blocks
+    /// than the spec requires is a violation at once and stays recorded.
+    pub fn record_amplifier(&mut self, obs: AmplifierObservation) -> Result<(), OracleViolation> {
+        self.advance(obs.t_ns)?;
+        self.amplifier_last = Some(obs);
+        if obs.muted {
+            self.amplifier_seen_muted = true;
+            return Ok(());
         }
-        if !self.clock_locked {
-            return Err(OracleViolation::FalseReadyState {
-                missing_prerequisite: "clock_locked".to_string(),
+        if obs.primed_silence_blocks < self.spec.required_primed_silence_blocks {
+            self.amplifier_premature_unmute = true;
+            return Err(OracleViolation::PrematureUnmute {
+                primed_blocks: obs.primed_silence_blocks,
+                required_blocks: self.spec.required_primed_silence_blocks,
             });
         }
         Ok(())
     }
+
+    pub fn record_clock(&mut self, obs: ClockObservation) -> Result<(), OracleViolation> {
+        self.advance(obs.t_ns)?;
+        self.clock = Some(obs);
+        Ok(())
+    }
+
+    /// The device claims to be ready: check the observed history, not the device's word.
+    pub fn announce_ready(&mut self, t_ns: u64) -> Result<(), OracleViolation> {
+        self.advance(t_ns)?;
+        if let Some(missing) = self.first_missing_prerequisite() {
+            return Err(OracleViolation::FalseReadyState {
+                missing_prerequisite: missing.to_string(),
+            });
+        }
+        self.announced = true;
+        Ok(())
+    }
+
+    fn first_missing_prerequisite(&self) -> Option<&'static str> {
+        let board_ok = self
+            .board
+            .is_some_and(|b| b.integrity_ok && b.routing_consistent);
+        if !board_ok {
+            return Some("board_profile_verified");
+        }
+        let amplifier_ok = self.amplifier_seen_muted
+            && !self.amplifier_premature_unmute
+            && self.amplifier_last.is_some_and(|a| {
+                !a.muted && a.primed_silence_blocks >= self.spec.required_primed_silence_blocks
+            });
+        if !amplifier_ok {
+            return Some("amplifier_muted_until_primed");
+        }
+        let clock_ok = self.clock.is_some_and(|c| {
+            c.ingested_samples >= self.spec.min_clock_samples
+                && c.uncertainty_us <= self.spec.max_clock_uncertainty_us
+                && c.offset_error_ns.unsigned_abs() <= c.uncertainty_us.saturating_mul(1_000)
+        });
+        if !clock_ok {
+            return Some("clock_locked");
+        }
+        None
+    }
+
+    #[must_use]
+    pub const fn is_announced(&self) -> bool {
+        self.announced
+    }
 }
 
-/// Redact sensitive tokens, MACs, private IPv4s, household IDs, and serial-like strings.
-#[must_use]
-pub fn redact_sensitive_text(input: &str) -> String {
-    let mut out = input.to_string();
-    for secret_key in ["Bearer ", "token=", "secret=", "key=", "HHID_"] {
-        if let Some(idx) = out.find(secret_key) {
-            let prefix = &out[..idx + secret_key.len()];
-            out = format!("{prefix}[REDACTED_SECRET]");
-        }
-    }
-    // Redact 192.168.x.y private LAN addresses
-    while let Some(pos) = out.find("192.168.") {
-        let rest = &out[pos..];
-        let end = rest
-            .find(|c: char| !c.is_ascii_digit() && c != '.')
-            .unwrap_or(rest.len());
-        out.replace_range(pos..pos + end, "[REDACTED_LAN_IP]");
-    }
-    // Redact colon-separated 6-byte MAC patterns
-    let tokens: Vec<String> = out
-        .split_whitespace()
-        .map(|tok| {
-            let clean = tok.trim_matches(|c: char| !c.is_ascii_hexdigit() && c != ':');
-            let parts: Vec<&str> = clean.split(':').collect();
-            if parts.len() == 6
-                && parts
-                    .iter()
-                    .all(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_hexdigit()))
-            {
-                "[REDACTED_MAC]".to_string()
+const REDACTED_SECRET: &str = "[REDACTED_SECRET]";
+const REDACTED_ID: &str = "[REDACTED_ID]";
+const REDACTED_LAN_IP: &str = "[REDACTED_LAN_IP]";
+const REDACTED_MAC: &str = "[REDACTED_MAC]";
+const REDACTION_MARKER_PREFIX: &str = "[REDACTED_";
+
+/// Key names, matched as a lowercase suffix, whose values are secrets.
+const SECRET_KEY_SUFFIXES: &[&str] = &[
+    "token",
+    "secret",
+    "key",
+    "password",
+    "passwd",
+    "pwd",
+    "passphrase",
+    "credential",
+    "credentials",
+    "cookie",
+    "auth",
+];
+
+/// Key names, matched exactly with `-` folded to `_`, whose values identify a device, a
+/// household or a person.
+const IDENTIFIER_KEYS: &[&str] = &[
+    "serial",
+    "serial_number",
+    "serialnumber",
+    "sn",
+    "hhid",
+    "household",
+    "household_id",
+    "householdid",
+    "udn",
+    "uuid",
+    "mac",
+    "mac_address",
+    "macaddress",
+];
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KeyKind {
+    Secret,
+    Identifier,
+    Authorization,
+}
+
+fn classify_key(name: &str) -> Option<KeyKind> {
+    let folded: String = name
+        .chars()
+        .map(|c| {
+            if c == '-' {
+                '_'
             } else {
-                tok.to_string()
+                c.to_ascii_lowercase()
             }
         })
         .collect();
-    if tokens.is_empty() {
-        out
-    } else {
-        tokens.join(" ")
+    if folded == "authorization" || folded == "proxy_authorization" {
+        return Some(KeyKind::Authorization);
     }
+    if IDENTIFIER_KEYS.contains(&folded.as_str()) {
+        return Some(KeyKind::Identifier);
+    }
+    if SECRET_KEY_SUFFIXES
+        .iter()
+        .any(|suffix| folded.ends_with(*suffix))
+    {
+        return Some(KeyKind::Secret);
+    }
+    None
+}
+
+fn is_key_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.')
+}
+
+fn is_word_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+fn is_credential_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~' | b'+' | b'/' | b'=')
+}
+
+fn is_hex_byte(b: u8) -> bool {
+    b.is_ascii_hexdigit()
+}
+
+fn is_alnum_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric()
+}
+
+fn is_ipv6_byte(b: u8) -> bool {
+    b.is_ascii_hexdigit() || b == b':'
+}
+
+/// Shorter words after "bearer" are prose ("the bearer of news"), not credentials.
+const MIN_BEARER_CREDENTIAL_LEN: usize = 8;
+
+/// `Bearer <credential>` anywhere in the text. (`Basic` is not matched: it is an ordinary word.)
+fn redact_bearer_credentials(input: &str) -> String {
+    const SCHEME: &[u8] = b"bearer";
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut last = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let at_word_start = i == 0 || !is_word_byte(bytes[i - 1]);
+        if at_word_start
+            && bytes.len() - i >= SCHEME.len()
+            && bytes[i..i + SCHEME.len()].eq_ignore_ascii_case(SCHEME)
+        {
+            let mut j = i + SCHEME.len();
+            let gap_start = j;
+            while j < bytes.len() && matches!(bytes[j], b' ' | b'\t') {
+                j += 1;
+            }
+            let credential_start = j;
+            while j < bytes.len() && is_credential_byte(bytes[j]) {
+                j += 1;
+            }
+            if credential_start > gap_start && j - credential_start >= MIN_BEARER_CREDENTIAL_LEN {
+                out.push_str(&input[last..credential_start]);
+                out.push_str(REDACTED_SECRET);
+                last = j;
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out.push_str(&input[last..]);
+    out
+}
+
+/// `name=value`, `name: value`, `"name":"value"` and URL-query pairs. Only the value is replaced.
+fn redact_key_values(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut last = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let sep = bytes[i];
+        if sep != b'=' && sep != b':' {
+            i += 1;
+            continue;
+        }
+        let mut name_end = i;
+        if name_end > 0 && matches!(bytes[name_end - 1], b'"' | b'\'') {
+            name_end -= 1;
+        }
+        let mut name_start = name_end;
+        while name_start > 0 && is_key_byte(bytes[name_start - 1]) {
+            name_start -= 1;
+        }
+        let kind = if name_start < name_end && name_start >= last {
+            classify_key(&input[name_start..name_end])
+        } else {
+            None
+        };
+        let Some(kind) = kind else {
+            i += 1;
+            continue;
+        };
+        let mut value_start = i + 1;
+        if sep == b':' {
+            while value_start < bytes.len() && matches!(bytes[value_start], b' ' | b'\t') {
+                value_start += 1;
+            }
+        }
+        let quote = match bytes.get(value_start) {
+            Some(&q) if q == b'"' || q == b'\'' => Some(q),
+            _ => None,
+        };
+        if quote.is_some() {
+            value_start += 1;
+        }
+        let mut value_end = value_start;
+        while value_end < bytes.len() {
+            let b = bytes[value_end];
+            let stop = match quote {
+                Some(q) => b == q || b == b'\n',
+                None if kind == KeyKind::Authorization => matches!(
+                    b,
+                    b'\n' | b'"' | b'\'' | b',' | b'}' | b']' | b')' | b'&' | b';'
+                ),
+                None => {
+                    b.is_ascii_whitespace()
+                        || matches!(b, b'&' | b';' | b',' | b'"' | b'\'' | b')' | b']' | b'}')
+                }
+            };
+            if stop {
+                break;
+            }
+            value_end += 1;
+        }
+        if value_end == value_start
+            || input[value_start..value_end].starts_with(REDACTION_MARKER_PREFIX)
+        {
+            i += 1;
+            continue;
+        }
+        let marker = if kind == KeyKind::Identifier {
+            REDACTED_ID
+        } else {
+            REDACTED_SECRET
+        };
+        out.push_str(&input[last..value_start]);
+        out.push_str(marker);
+        last = value_end;
+        i = value_end;
+    }
+    out.push_str(&input[last..]);
+    out
+}
+
+/// Six hex pairs joined by `:` or `-` (the same separator throughout) starting at `bytes[0]`.
+fn is_mac_at(bytes: &[u8]) -> bool {
+    if bytes.len() < 17 {
+        return false;
+    }
+    let sep = bytes[2];
+    if sep != b':' && sep != b'-' {
+        return false;
+    }
+    for group in 0..6 {
+        let at = group * 3;
+        if !(bytes[at].is_ascii_hexdigit() && bytes[at + 1].is_ascii_hexdigit()) {
+            return false;
+        }
+        if group < 5 && bytes[at + 2] != sep {
+            return false;
+        }
+    }
+    true
+}
+
+/// Colon- and dash-separated MACs, including when glued to a key (`mac=00:0E:...`).
+fn redact_mac_addresses(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut last = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let boundary_before = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
+        if boundary_before && is_mac_at(&bytes[i..]) {
+            let end = i + 17;
+            if end == bytes.len() || !bytes[end].is_ascii_alphanumeric() {
+                out.push_str(&input[last..i]);
+                out.push_str(REDACTED_MAC);
+                last = end;
+                i = end;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out.push_str(&input[last..]);
+    out
+}
+
+fn parse_ipv4(text: &str) -> Option<[u8; 4]> {
+    let mut octets = [0u8; 4];
+    let mut parts = text.split('.');
+    for slot in &mut octets {
+        let part = parts.next()?;
+        if part.is_empty() || part.len() > 3 {
+            return None;
+        }
+        *slot = part.parse::<u8>().ok()?;
+    }
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(octets)
+}
+
+/// RFC 1918, link-local, and the `100.64.0.0/10` shared range that Tailscale tailnets use.
+fn is_sensitive_ipv4(octets: [u8; 4]) -> bool {
+    let [a, b, _, _] = octets;
+    a == 10
+        || (a == 172 && (16..=31).contains(&b))
+        || (a == 192 && b == 168)
+        || (a == 169 && b == 254)
+        || (a == 100 && (64..=127).contains(&b))
+}
+
+fn redact_private_ipv4(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut last = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let starts_numeric_run =
+            bytes[i].is_ascii_digit() && (i == 0 || !matches!(bytes[i - 1], b'0'..=b'9' | b'.'));
+        if starts_numeric_run {
+            let mut j = i;
+            while j < bytes.len() && (bytes[j].is_ascii_digit() || bytes[j] == b'.') {
+                j += 1;
+            }
+            let mut end = j;
+            while end > i && bytes[end - 1] == b'.' {
+                end -= 1;
+            }
+            if let Some(octets) = parse_ipv4(&input[i..end])
+                && is_sensitive_ipv4(octets)
+            {
+                out.push_str(&input[last..i]);
+                out.push_str(REDACTED_LAN_IP);
+                last = end;
+            }
+            i = j;
+            continue;
+        }
+        i += 1;
+    }
+    out.push_str(&input[last..]);
+    out
+}
+
+/// IPv6 unique-local (`fc00::/7`, which includes Tailscale's `fd7a:115c:a1e0::/48`) and link-local.
+fn redact_private_ipv6(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut last = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if is_ipv6_byte(bytes[i]) && (i == 0 || !is_ipv6_byte(bytes[i - 1])) {
+            let mut j = i;
+            while j < bytes.len() && is_ipv6_byte(bytes[j]) {
+                j += 1;
+            }
+            let run = &input[i..j];
+            let lower = run.to_ascii_lowercase();
+            let colons = run.bytes().filter(|&b| b == b':').count();
+            if colons >= 2
+                && (lower.starts_with("fc") || lower.starts_with("fd") || lower.starts_with("fe80"))
+            {
+                out.push_str(&input[last..i]);
+                out.push_str(REDACTED_LAN_IP);
+                last = j;
+            }
+            i = j;
+            continue;
+        }
+        i += 1;
+    }
+    out.push_str(&input[last..]);
+    out
+}
+
+/// `prefix` followed by at least `min_tail` tail characters, at a word start. The prefix is kept.
+fn redact_prefixed_ids(
+    input: &str,
+    prefix: &str,
+    min_tail: usize,
+    is_tail: fn(u8) -> bool,
+) -> String {
+    let bytes = input.as_bytes();
+    let prefix_bytes = prefix.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut last = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i..].starts_with(prefix_bytes) && (i == 0 || !bytes[i - 1].is_ascii_alphanumeric())
+        {
+            let tail_start = i + prefix_bytes.len();
+            let mut j = tail_start;
+            while j < bytes.len() && is_tail(bytes[j]) {
+                j += 1;
+            }
+            if j - tail_start >= min_tail {
+                out.push_str(&input[last..tail_start]);
+                out.push_str(REDACTED_ID);
+                last = j;
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out.push_str(&input[last..]);
+    out
+}
+
+/// Redact secrets and site identifiers in diagnostic text, in place, preserving everything else
+/// (including whitespace) exactly.
+///
+/// Covered: `Bearer` credentials; values of secret-named keys (`token`, `secret`, `key`,
+/// `password`, `cookie`, `auth`, ... matched case-insensitively as a suffix) and of identifier keys
+/// (`serial`, `sn`, `hhid`, `household`, `udn`, `uuid`, `mac`, ...) in `name=value`, `name: value`,
+/// JSON and URL-query form; the `Authorization` header (unquoted, up to the next delimiter or the
+/// end of its line, so the words after it on that line are redacted too); colon- and
+/// dash-separated MACs; RFC 1918, link-local and `100.64.0.0/10` IPv4 addresses; IPv6 unique-local
+/// and link-local addresses; and `RINCON_`, `Sonos_` and `HHID_` identifiers.
+///
+/// Not covered, deliberately or for now: unseparated 12-hex MACs (too many false positives against
+/// hashes), public IP addresses, global IPv6, credentials embedded in URLs (`user:pass@host`), and
+/// secrets that appear with no key. Over-redaction is intentional: `key: ready` is redacted too.
+#[must_use]
+pub fn redact_sensitive_text(input: &str) -> String {
+    let text = redact_bearer_credentials(input);
+    let text = redact_key_values(&text);
+    let text = redact_mac_addresses(&text);
+    let text = redact_private_ipv4(&text);
+    let text = redact_private_ipv6(&text);
+    let text = redact_prefixed_ids(&text, "RINCON_", 12, is_hex_byte);
+    let text = redact_prefixed_ids(&text, "Sonos_", 12, is_alnum_byte);
+    redact_prefixed_ids(&text, "HHID_", 1, is_alnum_byte)
 }
 
 /// Structured versioned diagnostic event (`ffw.log.v1`).
@@ -463,7 +1190,19 @@ impl BoundedDiagnosticSink {
             return false;
         }
         event.schema_version = LOG_SCHEMA_VERSION.to_string();
-        event.message = redact_sensitive_text(&event.message);
+        // Every free-text field, not only `message`: an identifier placed in any of them would
+        // otherwise reach the log.
+        for field in [
+            &mut event.run_id,
+            &mut event.case_id,
+            &mut event.correlation_id,
+            &mut event.member_id,
+            &mut event.group_id,
+            &mut event.event_kind,
+            &mut event.message,
+        ] {
+            *field = redact_sensitive_text(field);
+        }
         let serialized = serde_json::to_string(&event).unwrap_or_default();
         let event_bytes = serialized.len() + 1;
         if self.used_bytes.saturating_add(event_bytes) > self.max_bytes {
@@ -628,14 +1367,259 @@ mod tests {
         );
     }
 
+    fn reference_block(reference: &SeededReferenceSignal, start: u64, frames: u64) -> Vec<i16> {
+        (0..frames).map(|i| reference.expected(start + i)).collect()
+    }
+
+    #[test]
+    fn splitmix64_matches_published_known_answer_vectors() {
+        // Reference splitmix64.c, seed 0.
+        let mut rng = DeterministicRng::new(0);
+        assert_eq!(rng.next_u64(), 0xE220_A839_7B1D_CDAF);
+        assert_eq!(rng.next_u64(), 0x6E78_9E6A_A1B9_65F4);
+        assert_eq!(rng.next_u64(), 0x06C4_5D18_8009_454F);
+        assert_eq!(rng.next_u64(), 0xF88B_B8A8_724C_81EC);
+        // rand_xoshiro SplitMix64::seed_from_u64(1234567).
+        let mut rng = DeterministicRng::new(1_234_567);
+        for expected in [
+            6_457_827_717_110_365_317_u64,
+            3_203_168_211_198_807_973,
+            9_817_491_932_198_370_423,
+            4_593_380_528_125_082_431,
+            16_408_922_859_458_223_821,
+        ] {
+            assert_eq!(rng.next_u64(), expected);
+        }
+    }
+
+    #[test]
+    fn seeded_reference_matches_the_sequential_generator() {
+        // Second code path: random access must agree with walking the generator.
+        let key = 0xDEAD_BEEF_u64;
+        let reference = SeededReferenceSignal::new(key);
+        let mut rng = DeterministicRng::new(key);
+        for frame in 0..64u64 {
+            let sequential = (rng.next_u64() >> 48) as u16 as i16;
+            assert_eq!(reference.expected(frame), sequential, "frame {frame}");
+        }
+    }
+
+    #[test]
+    fn seeded_reference_is_not_degenerate() {
+        let reference = SeededReferenceSignal::new(1);
+        let distinct: std::collections::BTreeSet<i16> =
+            (0..256u64).map(|f| reference.expected(f)).collect();
+        assert!(
+            distinct.len() > 200,
+            "only {} distinct values",
+            distinct.len()
+        );
+        let other = SeededReferenceSignal::new(2);
+        assert_ne!(
+            reference_block(&reference, 0, 16),
+            reference_block(&other, 0, 16)
+        );
+    }
+
+    #[test]
+    fn blocks_matching_the_reference_pass_and_the_stream_finalizes() {
+        let reference = SeededReferenceSignal::new(7);
+        let mut oracle = SampleContinuityOracle::new();
+        for b in 0..4u64 {
+            let block = reference_block(&reference, b * 8, 8);
+            assert_eq!(
+                oracle.observe_block_against(b * 8, 8, &block, &reference, 0),
+                Ok(())
+            );
+        }
+        assert_eq!(oracle.verified_frames(), 32);
+        assert_eq!(oracle.finalize(32), Ok(()));
+    }
+
+    #[test]
+    fn canary_wrong_sample_value_fails_content_oracle() {
+        let reference = SeededReferenceSignal::new(7);
+        let mut oracle = SampleContinuityOracle::new();
+        let good = reference_block(&reference, 0, 8);
+        assert_eq!(
+            oracle.observe_block_against(0, 8, &good, &reference, 0),
+            Ok(())
+        );
+        // Frame numbers are perfectly continuous; one sample value is off by one.
+        let mut bad = reference_block(&reference, 8, 8);
+        let original = bad[3];
+        bad[3] = original.wrapping_add(1);
+        assert_eq!(
+            oracle.observe_block_against(8, 8, &bad, &reference, 0),
+            Err(OracleViolation::WrongSample {
+                frame: 11,
+                expected: original,
+                observed: original.wrapping_add(1),
+                tolerance: 0,
+            })
+        );
+        // The rejected block did not advance the oracle: the correct block is still accepted there.
+        let fixed = reference_block(&reference, 8, 8);
+        assert_eq!(
+            oracle.observe_block_against(8, 8, &fixed, &reference, 0),
+            Ok(())
+        );
+        assert_eq!(oracle.verified_frames(), 16);
+    }
+
+    #[test]
+    fn right_frame_numbers_with_values_from_the_wrong_frames_fail() {
+        let reference = SeededReferenceSignal::new(7);
+        // Frames 1..9 presented as frames 0..8.
+        let shifted = reference_block(&reference, 1, 8);
+        let mut oracle = SampleContinuityOracle::new();
+        assert!(matches!(
+            oracle.observe_block_against(0, 8, &shifted, &reference, 0),
+            Err(OracleViolation::WrongSample { .. })
+        ));
+        assert_eq!(oracle.verified_frames(), 0);
+        // Continuity-only observation cannot see this: that blind spot is why the content API exists.
+        assert_eq!(
+            SampleContinuityOracle::new().observe_block(0, 8, &shifted),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn tolerance_accepts_small_error_and_rejects_larger_error() {
+        let reference = SeededReferenceSignal::new(11);
+        let drifted: Vec<i16> = reference_block(&reference, 0, 16)
+            .iter()
+            .map(|s| s.saturating_add(3))
+            .collect();
+        let mut within = SampleContinuityOracle::new();
+        assert_eq!(
+            within.observe_block_against(0, 16, &drifted, &reference, 3),
+            Ok(())
+        );
+        let mut beyond = SampleContinuityOracle::new();
+        assert!(matches!(
+            beyond.observe_block_against(0, 16, &drifted, &reference, 2),
+            Err(OracleViolation::WrongSample { tolerance: 2, .. })
+        ));
+    }
+
+    #[test]
+    fn block_length_must_equal_frame_count() {
+        let mut oracle = SampleContinuityOracle::new();
+        assert_eq!(
+            oracle.observe_block(0, 4, &[1, 2, 3]),
+            Err(OracleViolation::BlockLengthMismatch {
+                frame_count: 4,
+                observed_samples: 3,
+            })
+        );
+        assert_eq!(
+            oracle.observe_block(0, 4, &[1, 2, 3, 4, 5]),
+            Err(OracleViolation::BlockLengthMismatch {
+                frame_count: 4,
+                observed_samples: 5,
+            })
+        );
+        let reference = SeededReferenceSignal::new(1);
+        assert_eq!(
+            oracle.observe_block_against(0, 4, &[0, 0], &reference, u16::MAX),
+            Err(OracleViolation::BlockLengthMismatch {
+                frame_count: 4,
+                observed_samples: 2,
+            })
+        );
+        assert_eq!(oracle.verified_frames(), 0);
+        assert_eq!(oracle.observe_block(0, 4, &[1, 2, 3, 4]), Ok(()));
+    }
+
+    #[test]
+    fn a_fixed_capacity_array_is_only_valid_when_sliced_to_the_frame_count() {
+        // How the speaker hands over a block: a 256-slot array of which only `frames` are live.
+        let capacity = [5i16; 256];
+        let mut oracle = SampleContinuityOracle::new();
+        assert_eq!(
+            oracle.observe_block(0, 100, &capacity),
+            Err(OracleViolation::BlockLengthMismatch {
+                frame_count: 100,
+                observed_samples: 256,
+            })
+        );
+        assert_eq!(oracle.observe_block(0, 100, &capacity[..100]), Ok(()));
+        assert_eq!(oracle.verified_frames(), 100);
+    }
+
+    #[test]
+    fn finalize_rejects_a_truncated_tail_an_overrun_and_an_unobserved_stream() {
+        let reference = SeededReferenceSignal::new(3);
+        let mut oracle = SampleContinuityOracle::new();
+        for b in 0..3u64 {
+            let block = reference_block(&reference, b * 8, 8);
+            assert_eq!(
+                oracle.observe_block_against(b * 8, 8, &block, &reference, 0),
+                Ok(())
+            );
+        }
+        assert_eq!(oracle.finalize(24), Ok(()));
+        // The final block of a 4-block stream never arrived.
+        assert_eq!(
+            oracle.finalize(32),
+            Err(OracleViolation::TruncatedStream {
+                expected_total_frames: 32,
+                verified_frames: 24,
+            })
+        );
+        assert_eq!(
+            oracle.finalize(16),
+            Err(OracleViolation::OverrunStream {
+                expected_total_frames: 16,
+                verified_frames: 24,
+            })
+        );
+        // Observing nothing is never a pass, even when nothing was expected.
+        assert_eq!(
+            SampleContinuityOracle::new().finalize(0),
+            Err(OracleViolation::TruncatedStream {
+                expected_total_frames: 0,
+                verified_frames: 0,
+            })
+        );
+        assert_eq!(
+            SampleContinuityOracle::new().finalize(8),
+            Err(OracleViolation::TruncatedStream {
+                expected_total_frames: 8,
+                verified_frames: 0,
+            })
+        );
+    }
+
+    fn outcome(command_id: u64, applied: bool, system_epoch_after: u64) -> CommandObservation {
+        CommandObservation {
+            command_id,
+            applied,
+            system_epoch_after,
+        }
+    }
+
+    #[test]
+    fn a_fresh_command_is_applied_and_its_duplicate_delivery_may_be_rejected() {
+        let mut oracle = FencedCommandOracle::new(1);
+        assert_eq!(oracle.record_issued(1, 1, 1), Ok(()));
+        assert_eq!(oracle.observe_outcome(outcome(1, true, 1)), Ok(()));
+        // The duplicate delivery is rejected: permitted, and not a second application.
+        assert_eq!(oracle.observe_outcome(outcome(1, false, 1)), Ok(()));
+    }
+
     #[test]
     fn canary_2_stale_epoch_fails_fencing_oracle() {
-        let mut oracle = EpochFencingOracle::new(10);
-        assert!(oracle.record_accepted_epoch(11).is_ok());
-        // Inject intentional stale epoch 9 command acceptance
-        let res = oracle.record_accepted_epoch(9);
+        let mut oracle = FencedCommandOracle::new(10);
+        assert_eq!(oracle.declare_authority(11), Ok(()));
+        assert_eq!(oracle.record_issued(7, 9, 1), Ok(()));
+        // Paired positive: rejecting the stale command is exactly what the fence is for.
+        assert_eq!(oracle.observe_outcome(outcome(7, false, 11)), Ok(()));
+        // Inject intentional stale epoch 9 command acceptance.
         assert_eq!(
-            res,
+            oracle.observe_outcome(outcome(7, true, 11)),
             Err(OracleViolation::StaleEpochAccepted {
                 current_epoch: 11,
                 candidate_epoch: 9,
@@ -645,12 +1629,12 @@ mod tests {
 
     #[test]
     fn canary_3_double_applied_command_fails_idempotency_oracle() {
-        let mut oracle = CommandIdempotencyOracle::new();
-        assert!(oracle.record_applied_command(4, 101).is_ok());
-        // Inject intentional duplicate command application
-        let res = oracle.record_applied_command(4, 101);
+        let mut oracle = FencedCommandOracle::new(4);
+        assert_eq!(oracle.record_issued(1, 4, 101), Ok(()));
+        assert_eq!(oracle.observe_outcome(outcome(1, true, 4)), Ok(()));
+        // Inject intentional duplicate command application.
         assert_eq!(
-            res,
+            oracle.observe_outcome(outcome(1, true, 4)),
             Err(OracleViolation::DoubleAppliedCommand {
                 epoch: 4,
                 command_seq: 101,
@@ -659,18 +1643,306 @@ mod tests {
     }
 
     #[test]
-    fn canary_4_false_ready_state_fails_readiness_oracle() {
-        let mut oracle = ReadinessOracle::new();
-        oracle.board_profile_verified = true;
-        oracle.amplifier_muted_until_primed = true;
-        // clock_locked intentionally false
-        let res = oracle.assert_can_enter_ready();
+    fn a_command_from_an_epoch_nobody_declared_must_not_be_applied() {
+        let mut oracle = FencedCommandOracle::new(1);
+        assert_eq!(oracle.record_issued(1, 3, 1), Ok(()));
+        // Paired positive: rejecting it is fine.
+        assert_eq!(oracle.observe_outcome(outcome(1, false, 1)), Ok(()));
         assert_eq!(
-            res,
+            oracle.observe_outcome(outcome(1, true, 3)),
+            Err(OracleViolation::FutureEpochAccepted {
+                authority_epoch: 1,
+                command_epoch: 3,
+            })
+        );
+    }
+
+    #[test]
+    fn canary_a_rejected_command_must_not_move_the_system_epoch_past_the_authority() {
+        let mut oracle = FencedCommandOracle::new(1);
+        assert_eq!(oracle.record_issued(1, 999, 1), Ok(()));
+        // The command was rejected, yet the system now reports epoch 999.
+        assert_eq!(
+            oracle.observe_outcome(outcome(1, false, 999)),
+            Err(OracleViolation::FutureEpochAdopted {
+                authority_epoch: 1,
+                system_epoch: 999,
+            })
+        );
+        // Paired positive: a rejection that leaves the epoch alone is fine.
+        assert_eq!(oracle.record_issued(2, 999, 2), Ok(()));
+        assert_eq!(oracle.observe_outcome(outcome(2, false, 1)), Ok(()));
+    }
+
+    #[test]
+    fn adopting_a_newer_epoch_is_legitimate_once_the_harness_declared_it() {
+        let mut oracle = FencedCommandOracle::new(1);
+        assert_eq!(oracle.declare_authority(2), Ok(()));
+        assert_eq!(oracle.record_issued(1, 2, 1), Ok(()));
+        assert_eq!(oracle.observe_outcome(outcome(1, true, 2)), Ok(()));
+        assert_eq!(oracle.authority_epoch(), 2);
+    }
+
+    #[test]
+    fn a_system_that_has_not_yet_learned_the_new_epoch_is_not_a_violation() {
+        let mut oracle = FencedCommandOracle::new(1);
+        assert_eq!(oracle.declare_authority(2), Ok(()));
+        assert_eq!(oracle.record_issued(1, 1, 5), Ok(()));
+        // Lagging behind the declared authority is not the oracle's concern; running ahead is.
+        assert_eq!(oracle.observe_outcome(outcome(1, false, 1)), Ok(()));
+    }
+
+    #[test]
+    fn an_outcome_for_a_command_never_issued_is_a_phantom() {
+        let mut oracle = FencedCommandOracle::new(1);
+        assert_eq!(
+            oracle.observe_outcome(outcome(42, true, 1)),
+            Err(OracleViolation::PhantomCommand { command_id: 42 })
+        );
+        assert_eq!(
+            oracle.observe_outcome(outcome(42, false, 1)),
+            Err(OracleViolation::PhantomCommand { command_id: 42 })
+        );
+    }
+
+    #[test]
+    fn the_declared_authority_can_only_move_forward() {
+        let mut oracle = FencedCommandOracle::new(3);
+        assert_eq!(oracle.declare_authority(3), Ok(()));
+        assert_eq!(
+            oracle.declare_authority(2),
+            Err(OracleViolation::AuthorityRegressed {
+                current_epoch: 3,
+                declared_epoch: 2,
+            })
+        );
+        assert_eq!(oracle.authority_epoch(), 3);
+    }
+
+    #[test]
+    fn command_tracking_is_bounded_and_overflow_is_reported() {
+        let mut oracle = FencedCommandOracle::with_capacity(1, 2);
+        assert_eq!(oracle.record_issued(1, 1, 1), Ok(()));
+        assert_eq!(oracle.record_issued(2, 1, 2), Ok(()));
+        assert_eq!(
+            oracle.record_issued(3, 1, 3),
+            Err(OracleViolation::CommandTrackingOverflow { limit: 2 })
+        );
+        // Re-recording an already tracked command does not count against the bound.
+        assert_eq!(oracle.record_issued(2, 1, 2), Ok(()));
+    }
+
+    fn readiness_spec() -> ReadinessSpec {
+        ReadinessSpec {
+            required_primed_silence_blocks: 2,
+            min_clock_samples: 3,
+            max_clock_uncertainty_us: 2_000,
+        }
+    }
+
+    fn board_ok(t_ns: u64) -> BoardObservation {
+        BoardObservation {
+            t_ns,
+            integrity_ok: true,
+            routing_consistent: true,
+        }
+    }
+
+    fn amp(t_ns: u64, muted: bool, primed_silence_blocks: u32) -> AmplifierObservation {
+        AmplifierObservation {
+            t_ns,
+            muted,
+            primed_silence_blocks,
+        }
+    }
+
+    fn clock_obs(
+        t_ns: u64,
+        ingested_samples: u32,
+        uncertainty_us: u64,
+        offset_error_ns: i64,
+    ) -> ClockObservation {
+        ClockObservation {
+            t_ns,
+            ingested_samples,
+            uncertainty_us,
+            offset_error_ns,
+        }
+    }
+
+    /// The permitted bring-up order: muted, prime two silence blocks, then unmute.
+    fn observe_nominal_amplifier(oracle: &mut ReadinessOracle) {
+        assert_eq!(oracle.record_amplifier(amp(2, true, 0)), Ok(()));
+        assert_eq!(oracle.record_amplifier(amp(3, true, 1)), Ok(()));
+        assert_eq!(oracle.record_amplifier(amp(4, true, 2)), Ok(()));
+        assert_eq!(oracle.record_amplifier(amp(5, false, 2)), Ok(()));
+    }
+
+    fn missing_after_clock(clock: ClockObservation) -> Result<(), OracleViolation> {
+        let mut oracle = ReadinessOracle::new(readiness_spec());
+        assert_eq!(oracle.record_board(board_ok(1)), Ok(()));
+        observe_nominal_amplifier(&mut oracle);
+        assert_eq!(oracle.record_clock(clock), Ok(()));
+        oracle.announce_ready(10)
+    }
+
+    #[test]
+    fn permitted_startup_reaches_ready() {
+        let mut oracle = ReadinessOracle::new(readiness_spec());
+        assert_eq!(oracle.record_board(board_ok(1)), Ok(()));
+        observe_nominal_amplifier(&mut oracle);
+        assert_eq!(oracle.record_clock(clock_obs(6, 4, 400, 0)), Ok(()));
+        assert!(!oracle.is_announced());
+        assert_eq!(oracle.announce_ready(7), Ok(()));
+        assert!(oracle.is_announced());
+    }
+
+    #[test]
+    fn canary_4_false_ready_state_fails_readiness_oracle() {
+        let mut oracle = ReadinessOracle::new(readiness_spec());
+        assert_eq!(oracle.record_board(board_ok(1)), Ok(()));
+        observe_nominal_amplifier(&mut oracle);
+        // Only one clock exchange was ingested: the clock is not locked, whatever the device says.
+        assert_eq!(oracle.record_clock(clock_obs(6, 1, 400, 0)), Ok(()));
+        assert_eq!(
+            oracle.announce_ready(7),
             Err(OracleViolation::FalseReadyState {
                 missing_prerequisite: "clock_locked".to_string(),
             })
         );
+        assert!(!oracle.is_announced());
+    }
+
+    #[test]
+    fn ready_with_no_observed_evidence_is_false_ready() {
+        let mut oracle = ReadinessOracle::new(readiness_spec());
+        assert_eq!(
+            oracle.announce_ready(1),
+            Err(OracleViolation::FalseReadyState {
+                missing_prerequisite: "board_profile_verified".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn board_failure_or_inconsistent_routing_is_not_ready() {
+        for (integrity_ok, routing_consistent) in [(false, true), (true, false), (false, false)] {
+            let mut oracle = ReadinessOracle::new(readiness_spec());
+            let board = BoardObservation {
+                t_ns: 1,
+                integrity_ok,
+                routing_consistent,
+            };
+            assert_eq!(oracle.record_board(board), Ok(()));
+            observe_nominal_amplifier(&mut oracle);
+            assert_eq!(oracle.record_clock(clock_obs(6, 4, 400, 0)), Ok(()));
+            assert_eq!(
+                oracle.announce_ready(7),
+                Err(OracleViolation::FalseReadyState {
+                    missing_prerequisite: "board_profile_verified".to_string(),
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn canary_premature_unmute_is_refused_when_observed_and_not_forgiven_later() {
+        let mut oracle = ReadinessOracle::new(readiness_spec());
+        assert_eq!(oracle.record_board(board_ok(1)), Ok(()));
+        assert_eq!(oracle.record_amplifier(amp(2, true, 0)), Ok(()));
+        assert_eq!(oracle.record_amplifier(amp(3, true, 1)), Ok(()));
+        // The driver unmuted after one silence block when two are required.
+        assert_eq!(
+            oracle.record_amplifier(amp(4, false, 1)),
+            Err(OracleViolation::PrematureUnmute {
+                primed_blocks: 1,
+                required_blocks: 2,
+            })
+        );
+        // Priming more afterwards does not undo the unsafe unmute.
+        assert_eq!(oracle.record_amplifier(amp(5, false, 2)), Ok(()));
+        assert_eq!(oracle.record_clock(clock_obs(6, 4, 400, 0)), Ok(()));
+        assert_eq!(
+            oracle.announce_ready(7),
+            Err(OracleViolation::FalseReadyState {
+                missing_prerequisite: "amplifier_muted_until_primed".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn an_amplifier_never_observed_muted_is_not_ready() {
+        let mut oracle = ReadinessOracle::new(readiness_spec());
+        assert_eq!(oracle.record_board(board_ok(1)), Ok(()));
+        assert_eq!(oracle.record_amplifier(amp(2, false, 2)), Ok(()));
+        assert_eq!(oracle.record_clock(clock_obs(6, 4, 400, 0)), Ok(()));
+        assert_eq!(
+            oracle.announce_ready(7),
+            Err(OracleViolation::FalseReadyState {
+                missing_prerequisite: "amplifier_muted_until_primed".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn an_amplifier_left_muted_is_not_ready() {
+        let mut oracle = ReadinessOracle::new(readiness_spec());
+        assert_eq!(oracle.record_board(board_ok(1)), Ok(()));
+        assert_eq!(oracle.record_amplifier(amp(2, true, 0)), Ok(()));
+        assert_eq!(oracle.record_amplifier(amp(3, true, 2)), Ok(()));
+        assert_eq!(oracle.record_clock(clock_obs(6, 4, 400, 0)), Ok(()));
+        assert_eq!(
+            oracle.announce_ready(7),
+            Err(OracleViolation::FalseReadyState {
+                missing_prerequisite: "amplifier_muted_until_primed".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn clock_lock_is_judged_from_raw_facts_at_their_exact_boundaries() {
+        let clock_missing = Err(OracleViolation::FalseReadyState {
+            missing_prerequisite: "clock_locked".to_string(),
+        });
+        // Samples: 3 is enough, 2 is not.
+        assert_eq!(missing_after_clock(clock_obs(6, 3, 400, 0)), Ok(()));
+        assert_eq!(missing_after_clock(clock_obs(6, 2, 400, 0)), clock_missing);
+        // Uncertainty: 2000 us is allowed, 2001 us is not.
+        assert_eq!(missing_after_clock(clock_obs(6, 4, 2_000, 0)), Ok(()));
+        assert_eq!(
+            missing_after_clock(clock_obs(6, 4, 2_001, 0)),
+            clock_missing
+        );
+        // Offset error must lie within the stated uncertainty (400 us = 400_000 ns), either sign.
+        assert_eq!(missing_after_clock(clock_obs(6, 4, 400, 400_000)), Ok(()));
+        assert_eq!(missing_after_clock(clock_obs(6, 4, 400, -400_000)), Ok(()));
+        assert_eq!(
+            missing_after_clock(clock_obs(6, 4, 400, 400_001)),
+            clock_missing
+        );
+        assert_eq!(
+            missing_after_clock(clock_obs(6, 4, 400, -400_001)),
+            clock_missing
+        );
+        // A clock that has ingested nothing reports maximal uncertainty and can never lock.
+        assert_eq!(
+            missing_after_clock(clock_obs(6, 0, u64::MAX, 0)),
+            clock_missing
+        );
+    }
+
+    #[test]
+    fn probes_must_not_go_back_in_time() {
+        let mut oracle = ReadinessOracle::new(readiness_spec());
+        assert_eq!(oracle.record_board(board_ok(5)), Ok(()));
+        assert_eq!(
+            oracle.record_amplifier(amp(4, true, 0)),
+            Err(OracleViolation::ProbeOutOfOrder {
+                previous_ns: 5,
+                observed_ns: 4,
+            })
+        );
+        assert_eq!(oracle.record_amplifier(amp(5, true, 0)), Ok(()));
     }
 
     #[test]
@@ -712,6 +1984,225 @@ mod tests {
         assert!(first_msg.contains("[REDACTED_LAN_IP]"));
         assert!(first_msg.contains("[REDACTED_MAC]"));
         assert!(first_msg.contains("[REDACTED_SECRET]"));
+    }
+
+    #[test]
+    fn redaction_leaves_benign_text_and_whitespace_unchanged() {
+        for benign in [
+            "retry=3 latency_us=40 member spk-office-s5 state ready",
+            "version 1.2.3 build 10.0.0 ok",
+            "public 8.8.8.8 loopback 127.0.0.1 global 2001:db8::1",
+            "the bearer of news",
+            "Sonos_short RINCON_xyz HHID_",
+            "line one\n\tline  two   three",
+            "naïve café ünï",
+        ] {
+            assert_eq!(redact_sensitive_text(benign), benign);
+        }
+    }
+
+    #[test]
+    fn a_secret_is_redacted_without_destroying_the_text_after_it() {
+        // Previously everything after the first key was replaced.
+        assert_eq!(
+            redact_sensitive_text("auth failed token=abc123 retry=3 latency_us=40"),
+            "auth failed token=[REDACTED_SECRET] retry=3 latency_us=40"
+        );
+        assert_eq!(
+            redact_sensitive_text("line1\n  token=abc\tend"),
+            "line1\n  token=[REDACTED_SECRET]\tend"
+        );
+    }
+
+    #[test]
+    fn secret_keys_are_matched_case_insensitively_and_in_every_form() {
+        assert_eq!(
+            redact_sensitive_text("TOKEN=aaa Password=bbb api_key=ccc"),
+            "TOKEN=[REDACTED_SECRET] Password=[REDACTED_SECRET] api_key=[REDACTED_SECRET]"
+        );
+        assert_eq!(
+            redact_sensitive_text("GET /x?id=7&token=abc&user=bob"),
+            "GET /x?id=7&token=[REDACTED_SECRET]&user=bob"
+        );
+        assert_eq!(
+            redact_sensitive_text(r#"{"token":"abc","ok":true}"#),
+            r#"{"token":"[REDACTED_SECRET]","ok":true}"#
+        );
+        assert_eq!(
+            redact_sensitive_text("token: abc def"),
+            "token: [REDACTED_SECRET] def"
+        );
+    }
+
+    #[test]
+    fn bearer_credentials_and_authorization_headers_are_redacted() {
+        assert_eq!(
+            redact_sensitive_text("using Bearer abcDEF123 now"),
+            "using Bearer [REDACTED_SECRET] now"
+        );
+        assert_eq!(
+            redact_sensitive_text("Authorization: Bearer abc.def.ghi end"),
+            "Authorization: [REDACTED_SECRET]"
+        );
+        assert_eq!(
+            redact_sensitive_text("authorization: bearer xyz"),
+            "authorization: [REDACTED_SECRET]"
+        );
+    }
+
+    #[test]
+    fn every_sensitive_ipv4_range_is_redacted_and_the_rest_is_not() {
+        assert_eq!(
+            redact_sensitive_text(
+                "a 10.1.2.3 b 172.16.0.9 c 172.31.255.1 d 192.168.1.20. e 169.254.1.1 f 100.64.0.5 g 100.127.9.9"
+            ),
+            "a [REDACTED_LAN_IP] b [REDACTED_LAN_IP] c [REDACTED_LAN_IP] d [REDACTED_LAN_IP]. e [REDACTED_LAN_IP] f [REDACTED_LAN_IP] g [REDACTED_LAN_IP]"
+        );
+        // Just outside each range, public, loopback, and malformed addresses stay as they are.
+        let outside = "8.8.8.8 172.15.0.1 172.32.0.1 100.63.0.1 100.128.0.1 11.0.0.1 192.169.0.1 127.0.0.1 10.1.2.300 10.1.2";
+        assert_eq!(redact_sensitive_text(outside), outside);
+    }
+
+    #[test]
+    fn tailnet_and_link_local_ipv6_are_redacted_and_global_ipv6_is_not() {
+        assert_eq!(
+            redact_sensitive_text("peer fd7a:115c:a1e0::1 and fe80::1ff:fe23:4567:890a ok"),
+            "peer [REDACTED_LAN_IP] and [REDACTED_LAN_IP] ok"
+        );
+        assert_eq!(
+            redact_sensitive_text("global 2001:db8::1 ok"),
+            "global 2001:db8::1 ok"
+        );
+    }
+
+    #[test]
+    fn macs_are_redacted_in_every_separator_form_including_when_glued_to_a_key() {
+        assert_eq!(
+            redact_sensitive_text(
+                "mac=00:0E:58:AA:BB:CC peer 00-0E-58-aa-bb-cc serial B8-E9-37-AA-BB-CC:5 src_mac=00:0E:58:AA:BB:CC end"
+            ),
+            "mac=[REDACTED_ID] peer [REDACTED_MAC] serial [REDACTED_MAC]:5 src_mac=[REDACTED_MAC] end"
+        );
+    }
+
+    #[test]
+    fn household_serial_and_udn_identifiers_are_redacted() {
+        assert_eq!(
+            redact_sensitive_text("device RINCON_000E58AABBCC01400 ok"),
+            "device RINCON_[REDACTED_ID] ok"
+        );
+        assert_eq!(
+            redact_sensitive_text("house Sonos_abcdef0123456789 x"),
+            "house Sonos_[REDACTED_ID] x"
+        );
+        assert_eq!(
+            redact_sensitive_text("HHID_x9 done"),
+            "HHID_[REDACTED_ID] done"
+        );
+        assert_eq!(
+            redact_sensitive_text("serial_number=SN12345 sn:XY9"),
+            "serial_number=[REDACTED_ID] sn:[REDACTED_ID]"
+        );
+    }
+
+    #[test]
+    fn every_category_the_doc_names_is_actually_redacted() {
+        for (raw, needle) in [
+            ("token=aaa111", "aaa111"),
+            ("00:0E:58:AA:BB:CC", "00:0E:58"),
+            ("00-0E-58-AA-BB-CC", "00-0E-58"),
+            ("10.9.8.7", "10.9.8.7"),
+            ("100.101.102.103", "100.101.102.103"),
+            ("fd7a:115c:a1e0::5", "fd7a:115c"),
+            ("HHID_zz9", "zz9"),
+            ("serial_number=SNX77", "SNX77"),
+            ("Sonos_0123456789abcdef", "0123456789abcdef"),
+            ("RINCON_000E58AABBCC01400", "000E58AABBCC"),
+        ] {
+            let out = redact_sensitive_text(&format!("event {raw} end"));
+            assert!(!out.contains(needle), "{raw} leaked: {out}");
+            assert!(out.starts_with("event "), "{raw}: prefix lost: {out}");
+            assert!(out.ends_with(" end"), "{raw}: suffix lost: {out}");
+        }
+    }
+
+    #[test]
+    fn redaction_is_idempotent_and_byte_safe_on_non_ascii_text() {
+        let sample = "mac=00:0E:58:AA:BB:CC ip 10.1.2.3 fd7a::1 token=xyz RINCON_000E58AABBCC01400 HHID_a1 Authorization: Bearer abcDEF12345";
+        let once = redact_sensitive_text(sample);
+        assert!(!once.contains("abcDEF12345") && !once.contains("10.1.2.3"));
+        assert_eq!(redact_sensitive_text(&once), once);
+
+        assert_eq!(
+            redact_sensitive_text("naïve café token=abc ünï\n\tline  two"),
+            "naïve café token=[REDACTED_SECRET] ünï\n\tline  two"
+        );
+        assert_eq!(redact_sensitive_text("é10.0.0.1é"), "é[REDACTED_LAN_IP]é");
+    }
+
+    #[test]
+    fn the_bounded_sink_never_lets_a_planted_secret_reach_the_log_from_any_field() {
+        let mut sink = BoundedDiagnosticSink::new(4, 8192);
+        let event = |run_id: &str,
+                     case_id: &str,
+                     correlation_id: &str,
+                     member_id: &str,
+                     group_id: &str,
+                     event_kind: &str,
+                     message: &str| DiagnosticEvent {
+            schema_version: String::new(),
+            timestamp_mono_ns: 1,
+            run_id: run_id.to_string(),
+            case_id: case_id.to_string(),
+            correlation_id: correlation_id.to_string(),
+            member_id: member_id.to_string(),
+            group_id: group_id.to_string(),
+            source_epoch: 1,
+            state_revision: 1,
+            event_kind: event_kind.to_string(),
+            message: message.to_string(),
+            queue_depth: 0,
+            latency_us: 0,
+        };
+
+        // A different planted identifier in every field.
+        assert!(sink.try_emit(event(
+            "Bearer s3cr3tRunTok9",
+            "RINCON_000E58AABBCC01400",
+            "10.20.30.40",
+            "00:0E:58:AA:BB:CC",
+            "token=s3cr3tGroupTok",
+            "serial_number=SNPLANTED77",
+            "peer fd7a:115c:a1e0::9 ok",
+        )));
+        let jsonl = sink.to_jsonl();
+        for leaked in [
+            "s3cr3tRunTok9",
+            "000E58AABBCC",
+            "10.20.30.40",
+            "00:0E:58",
+            "s3cr3tGroupTok",
+            "SNPLANTED77",
+            "fd7a:115c",
+        ] {
+            assert!(!jsonl.contains(leaked), "{leaked} reached the log: {jsonl}");
+        }
+
+        // Paired positive: benign identifiers pass through untouched.
+        assert!(sink.try_emit(event(
+            "run-01",
+            "Q00-sink",
+            "corr-1",
+            "spk-a",
+            "grp-1",
+            "test",
+            "normal event",
+        )));
+        let benign = &sink.events()[1];
+        assert_eq!(benign.run_id, "run-01");
+        assert_eq!(benign.member_id, "spk-a");
+        assert_eq!(benign.group_id, "grp-1");
+        assert_eq!(benign.message, "normal event");
     }
 
     #[test]

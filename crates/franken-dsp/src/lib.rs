@@ -413,7 +413,8 @@ impl BoundedDriftResampler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use franken_board_profile::canonical_board_catalog;
+    // Synthetic fixture: the canonical catalog holds non-admissible hypotheses.
+    use franken_board_profile::synthetic_test_fixture_catalog as canonical_board_catalog;
 
     #[test]
     fn big_endian_i16_roundtrip_and_nan_saturation_guard() {

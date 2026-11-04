@@ -135,9 +135,6 @@ impl UnifiedGroupSession {
                 command_seq: cmd.command_seq,
             });
         }
-        if cmd.epoch > self.current_epoch {
-            self.current_epoch = cmd.epoch;
-        }
 
         match cmd.payload {
             GroupCommandPayload::AdmitMember {
@@ -206,6 +203,12 @@ impl UnifiedGroupSession {
             }
         }
 
+        // Adopt a newer epoch only now that the command has been applied. Every rejection above
+        // returns before this point, so a malformed, unauthorised or ineligible command at a
+        // far-future epoch can no longer fence out the legitimate coordinator.
+        if cmd.epoch > self.current_epoch {
+            self.current_epoch = cmd.epoch;
+        }
         self.state_revision = self.state_revision.saturating_add(1);
         Ok(self.state_revision)
     }
@@ -238,7 +241,8 @@ impl UnifiedGroupSession {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use franken_board_profile::canonical_board_catalog;
+    // Synthetic fixture: the canonical catalog holds non-admissible hypotheses.
+    use franken_board_profile::synthetic_test_fixture_catalog as canonical_board_catalog;
 
     #[test]
     fn unified_group_combines_s1_ppc_and_s2_mips_and_enforces_epoch_and_dma_tail() {
@@ -326,6 +330,132 @@ mod tests {
             MemberLifecycleState::StoppingDmaTail {
                 tail_complete_ns: 1_010_666_666
             }
+        );
+    }
+
+    #[test]
+    fn hypothesis_catalog_boards_are_not_admitted_but_the_labelled_fixture_is() {
+        let hypothesis = franken_board_profile::canonical_board_catalog()
+            .into_iter()
+            .find(|p| p.model_number == "S5")
+            .unwrap();
+        let hypothesis_id = hypothesis.profile_id.clone();
+        let fixture = canonical_board_catalog()
+            .into_iter()
+            .find(|p| p.model_number == "S5")
+            .unwrap();
+
+        let mut session = UnifiedGroupSession::new("grp-gate", "spk-coordinator", 10);
+        assert_eq!(
+            session.apply_command(FencedControlCommand {
+                epoch: 10,
+                command_seq: 1,
+                payload: GroupCommandPayload::AdmitMember {
+                    member_id: "spk-hypothesis".to_string(),
+                    board: hypothesis,
+                    role: ChannelRole::Stereo,
+                },
+            }),
+            Err(SessionError::IneligibleAudioBoard {
+                profile_id: hypothesis_id
+            })
+        );
+        assert!(session.members.is_empty());
+
+        // Permitted positive: the labelled synthetic fixture is admitted offline.
+        session
+            .apply_command(FencedControlCommand {
+                epoch: 10,
+                command_seq: 2,
+                payload: GroupCommandPayload::AdmitMember {
+                    member_id: "spk-fixture".to_string(),
+                    board: fixture,
+                    role: ChannelRole::Stereo,
+                },
+            })
+            .unwrap();
+        assert_eq!(session.members.len(), 1);
+    }
+
+    #[test]
+    fn a_rejected_command_does_not_move_the_epoch_fence() {
+        let hypothesis = franken_board_profile::canonical_board_catalog()
+            .into_iter()
+            .find(|p| p.model_number == "S5")
+            .unwrap();
+        let hypothesis_id = hypothesis.profile_id.clone();
+        let mut session = UnifiedGroupSession::new("grp-fence", "spk-coordinator", 1);
+
+        // Unknown member at a far-future epoch: rejected, and the fence stays put.
+        assert_eq!(
+            session.apply_command(FencedControlCommand {
+                epoch: 999,
+                command_seq: 1,
+                payload: GroupCommandPayload::RemoveMember {
+                    member_id: "ghost".to_string()
+                },
+            }),
+            Err(SessionError::UnknownMember {
+                member_id: "ghost".to_string()
+            })
+        );
+        assert_eq!(session.current_epoch, 1);
+
+        // Ineligible (hypothesis) board at another future epoch: same.
+        assert_eq!(
+            session.apply_command(FencedControlCommand {
+                epoch: 50,
+                command_seq: 1,
+                payload: GroupCommandPayload::AdmitMember {
+                    member_id: "spk-hypothesis".to_string(),
+                    board: hypothesis,
+                    role: ChannelRole::Stereo,
+                },
+            }),
+            Err(SessionError::IneligibleAudioBoard {
+                profile_id: hypothesis_id
+            })
+        );
+        assert_eq!(session.current_epoch, 1);
+
+        // The legitimate coordinator, still at epoch 1, is accepted.
+        assert!(
+            session
+                .apply_command(FencedControlCommand {
+                    epoch: 1,
+                    command_seq: 2,
+                    payload: GroupCommandPayload::SetGroupVolume {
+                        volume_0_to_100: 30
+                    },
+                })
+                .is_ok()
+        );
+
+        // Permitted positive: a successful command at a newer epoch is adopted and fences epoch 1.
+        assert!(
+            session
+                .apply_command(FencedControlCommand {
+                    epoch: 5,
+                    command_seq: 1,
+                    payload: GroupCommandPayload::SetGroupVolume {
+                        volume_0_to_100: 40
+                    },
+                })
+                .is_ok()
+        );
+        assert_eq!(session.current_epoch, 5);
+        assert_eq!(
+            session.apply_command(FencedControlCommand {
+                epoch: 1,
+                command_seq: 3,
+                payload: GroupCommandPayload::SetGroupVolume {
+                    volume_0_to_100: 50
+                },
+            }),
+            Err(SessionError::StaleEpoch {
+                command_epoch: 1,
+                current_epoch: 5
+            })
         );
     }
 }

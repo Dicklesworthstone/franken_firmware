@@ -224,7 +224,8 @@ pub fn compute_cooperative_video_sync(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use franken_board_profile::canonical_board_catalog;
+    // Synthetic fixture: the canonical catalog holds non-admissible hypotheses.
+    use franken_board_profile::synthetic_test_fixture_catalog as canonical_board_catalog;
 
     #[test]
     fn clock_estimator_converges_and_compensates_board_calibration_delay() {

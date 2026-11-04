@@ -344,7 +344,8 @@ fn acquire_dma_lease(pool: &Arc<Mutex<DmaPoolState>>) -> Result<DmaSubmissionLea
 #[cfg(test)]
 mod tests {
     use super::*;
-    use franken_board_profile::canonical_board_catalog;
+    // Synthetic fixture: the canonical catalog holds non-admissible hypotheses.
+    use franken_board_profile::synthetic_test_fixture_catalog as canonical_board_catalog;
 
     #[test]
     fn typestate_hal_rejects_unmute_before_silence_prime_and_quarantines_dropped_dma_leases() {
@@ -406,5 +407,27 @@ mod tests {
                 UnsupportedReasonCode::NonAudioAppliance { .. }
             ))
         ));
+    }
+
+    #[test]
+    fn hypothesis_catalog_boards_are_refused_at_hal_open_but_the_labelled_fixture_is_admitted() {
+        let hypothesis = franken_board_profile::canonical_board_catalog()
+            .into_iter()
+            .find(|p| p.model_number == "S5")
+            .unwrap();
+        assert!(matches!(
+            AudioHalDevice::open_for_profile(hypothesis, 4, 2),
+            Err(HalError::ProfileRejected(
+                UnsupportedReasonCode::UnattestedProfile { .. }
+            ))
+        ));
+
+        // Permitted positive: the labelled synthetic fixture for the same model opens (offline only).
+        let fixture = canonical_board_catalog()
+            .into_iter()
+            .find(|p| p.model_number == "S5")
+            .unwrap();
+        assert!(fixture.is_synthetic_fixture());
+        assert!(AudioHalDevice::open_for_profile(fixture, 4, 2).is_ok());
     }
 }

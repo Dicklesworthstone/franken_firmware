@@ -194,7 +194,8 @@ pub enum PlatformAdmissionError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use franken_board_profile::canonical_board_catalog;
+    // Synthetic fixture: the canonical catalog holds non-admissible hypotheses.
+    use franken_board_profile::synthetic_test_fixture_catalog as canonical_board_catalog;
 
     #[test]
     fn portable_atomic_u64_preserves_monotonic_uniqueness_and_cas_across_wrap() {
