@@ -64,11 +64,11 @@ qualification evidence does.
 
 ## The plan: 56 beads
 
-Task state lives in `.beads/` (the beads tracker). Two beads are currently
-actionable (`br ready --json`): E01 (reconcile device/firmware identity
-evidence) and Q00 (deterministic test/receipt infrastructure). The other 54
-wait on them in a dependency graph 11 waves deep, with no cycles
-(`br dep cycles` is clean). The families:
+Task state lives in `.beads/` (the beads tracker). The graph has two roots,
+E01 (reconcile device/firmware identity evidence) and Q00 (deterministic
+test/receipt infrastructure); everything else waits on them in a dependency
+graph 19 waves deep, with no cycles (`br dep cycles` is clean). Run
+`br ready --json` for what is actionable right now. The families:
 
 | Family | Beads | What it covers |
 |---|---|---|
@@ -89,7 +89,7 @@ AGENTS.md                  rules for AI agents (also the human onboarding path)
 FIRMWARE_ASSESSMENT.md     engineering assessment with two peer-review reconciliations
 inventory/                 sanitized fleet inventory + capture scripts (no personal data)
 toolchain/                 bake-off sources, initramfs builder, boot scripts, results
-docs/                      per-bead contracts land here (docs/contracts/e01.md ...)
+docs/                      per-bead contracts will land here (E01 targets docs/contracts/e01.md)
 .beads/                    the task graph (br CLI); commit alongside code
 .local-real/               git-ignored raw captures with real IPs/MACs/serials
 ```
@@ -131,8 +131,9 @@ DMA), per the assessment.
 
 `AGENTS.md` is the onboarding path. The tracker is beads: `br ready --json`
 shows actionable work, `br show <id> --json` gives scope and acceptance
-criteria, and each bead owns a contract doc under `docs/contracts/`. Beads
-commit alongside code (`br sync --flush-only` before `git add .beads/`).
+criteria, and each bead's owned outputs (a contract doc under
+`docs/contracts/` plus code) land as the bead is worked. Beads commit
+alongside code (`br sync --flush-only` before `git add .beads/`).
 
 ## Related
 

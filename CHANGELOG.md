@@ -4,8 +4,9 @@ All notable changes to this repository are documented here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project
 has no releases yet, so entries are organized by commit rather than version.
 
-Scope window: 2026-11-04 (initial commit `9d8d530`) through the present
-head; the full history, as the repository is one day old.
+Scope window: 2026-11-04, initial commit `9d8d530` through `cd22f0d` (the
+commit introducing this changelog); the repository is one day old, so this
+is its complete history as of that revision.
 
 ## Version Timeline
 
@@ -156,12 +157,21 @@ roots of the dependency graph are:
 - Q00, Deterministic test, receipt and bounded-logging infrastructure
   (in progress).
 
-Everything else (11 dependency waves) hangs behind them: platform layer
+Everything else (19 dependency waves) hangs behind them: platform layer
 (P01-P06), DSP and render (D01-D04), network transport (N01-N07), groups
 and the fsonos compatibility adapter (G01-G03), Spotify source (S01-S03),
 updates and activation (U01-U03, UX01), qualification (Q01-Q07), and the
 gated integrations: Tailscale (T01-T04), AirPlay (A01-A02), Alexa
 (X01-X05), video sync (V01-V02), line-in (L01).
+
+Work in progress beyond the two roots: bead E07 carries a repaired
+`mkinitramfs.py` (explicit `normalize_dev_tuple` device-number encoding,
+newc parser regression tests) and a rerun verification receipt showing
+userspace serial output on both architectures (BE-PPC via `/dev/ttyPZ0`,
+major 204, with `console=ttyPZ0`); bead P05/P06 carry a `portable-atomic`
+fix in the asupersync working tree that resolves the 133 `AtomicU64`
+errors. Neither is committed or independently verified at this entry's
+revision, so the committed state above remains authoritative.
 
 ## Notes for agents
 
