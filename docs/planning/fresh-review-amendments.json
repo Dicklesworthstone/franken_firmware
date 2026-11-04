@@ -1,0 +1,127 @@
+{
+  "updates": {
+    "P02": {
+      "deps_add": [
+        "P06"
+      ],
+      "acceptance_append": " Library changes are allowed: consume the selected upstream portable subset and exact revision; do not infer ABI semantics from a removed cfg guard."
+    },
+    "P03": {
+      "deps_add": [
+        "P05"
+      ],
+      "scope_append": " Consume the explicit upstream slim runtime profile, including no-atomic64 semantics and finite thread/job caps.",
+      "acceptance_append": " Census all threads and allocations before/after first blocking, file, reconnect and cancellation calls. No-thread mode rejects unsupported blocking closures rather than running them inline on the render owner. Bound captured pending-job bytes, not only job count; census between block_on calls as well as startup."
+    },
+    "P04": {
+      "scope_append": " Device owner retains pool-slot ownership independent of future/token Drop. Expose minimum submission lead and an irrevocable-until presentation cursor, plus bounded acknowledged flush/stop behavior.",
+      "acceptance_append": " Forget completion futures/tokens, cancel drains, inject stale completions and try slot reuse. Never reuse storage still accessible by the kernel; quarantine remains bounded. A copying-write ABI may avoid shared-memory leases only with explicit evidence. Include destruction of the lease table/device owner itself; table ownership is insufficient if its Drop frees externally referenced storage."
+    },
+    "D02": {
+      "acceptance_append": " Existing stability validation also covers admitted realization/quantization, intermediate ranges and nonzero-state profile switches. Board-lifetime thermal/excursion/protection history survives seek, reconnect and source replacement; source-local histories follow an explicit reset/ramp policy."
+    },
+    "D04": {
+      "acceptance_append": " Pre-admit cleanup records and buffer ownership before Running; inject allocator failure during start, cancel, drain and reconnect. Logical capacity rejection is distinct from process/kernel OOM; process-death mute remains external qualification."
+    },
+    "N04": {
+      "scope_append": " Compute consume_by from presentation time minus admitted DSP/conversion work, submission lead and uncertainty. Choose real or concealed output exactly once at consumption cutoff.",
+      "acceptance_append": " Recovery before DAC presentation but after consume_by is late. Synthetic deadline vectors must include positive downstream cost and backpressure."
+    },
+    "N05": {
+      "acceptance_append": " All strategies use identical consume_by boundaries and bounded work, not merely DAC deadlines; expired repair must not delay the next block."
+    },
+    "N06": {
+      "acceptance_append": " Admit a repair job only if its conservative remaining-work bound fits before consume_by; never insert recovered output after concealment committed."
+    },
+    "N03": {
+      "acceptance_append": " Holdover duration is min(buffer coverage, authority validity, clock-uncertainty bound). Inject counter wrap/reset and half-range ambiguity rather than relying on a 24-hour wall-clock run."
+    },
+    "G01": {
+      "scope_append": " First profile uses one configured authority per group incarnation; followers never independently mint a higher valid epoch. Network isolation sacrifices new control availability, not authority uniqueness. Automatic replacement requires a separately specified grant/quorum/lease-expiry protocol before enabling it.",
+      "acceptance_append": " Cutover readiness includes every member's irrevocable old-output tail. Choose qualified drain cutover, acknowledged muted abort/restart, or exclude/abort. Two partitioned followers must not become simultaneous valid leaders. Protection state is not reset with the source epoch. Exclusion or UI removal is not output-stop evidence. Before conflicting output under the same group identity, all prior grant holders, including disconnected/excluded members, must acknowledge stop or pass a bounded output expiry plus irrevocable tail, clock uncertainty and stop/drain lead. Receivers enforce output deadlines including queued samples. Unknown or unenforceable bounds refuse conflicting start. Model assertions cover all prior grant holders, not only current members."
+    },
+    "S03": {
+      "acceptance_append": " A successful seek/skip is not acknowledged until old submitted output is drained or qualified flush/mute is acknowledged at the agreed boundary; old ingress rejection alone is insufficient."
+    },
+    "T01": {
+      "acceptance_append": " Closing a negative study does not close T04. T04 is provisional development admission; full native qualification is a separate Q06 result after implementation and combined tests.",
+      "scope_replace": {
+        "native admission remains pending until combined Q04 evidence": "provisional development admission belongs to T04; final native qualification remains pending until Q06 evidence"
+      }
+    },
+    "T02": {
+      "deps_add": [
+        "T04"
+      ],
+      "acceptance_append": " Start from T04's positive provisional candidate or bounded upstream-adaptation decision. Restrict initial native tailnet exposure to explicit authenticated control services; proxy/gateway identity is not native identity."
+    },
+    "X04": {
+      "title": "Implement offline Alexa voice-to-Spotify routing contract",
+      "acceptance": " Offline supported-mechanism specification, account/group routing adapter and positive/negative directive fixtures pass. If provider admission is unavailable, label the adapter unqualified. This software task never establishes actual voice-to-playback success; X05 owns external proof and remains open until received."
+    },
+    "Q04": {
+      "title": "Qualify offline combined native-integration candidate",
+      "scope_append": " This is an offline software/guest combined campaign; real provider and physical receipts belong to Q06 and X05.",
+      "acceptance_append": " Missing external receipts do not block this offline campaign, but prevent native release eligibility. Distinguish enabled native control-plane residency from simultaneously active audio sources; only one admitted source per group."
+    },
+    "Q05": {
+      "deps_add": [
+        "Q06"
+      ],
+      "acceptance_append": " Release eligibility requires the complete artifact-bound Q06 evidence matrix, including pair/Sub-specific criteria when enabled; software task closure alone cannot advertise native or hardware-qualified capability."
+    }
+  },
+  "new_tasks": [
+    {
+      "key": "P05",
+      "title": "Adapt Asupersync upstream for bounded legacy runtime profiles",
+      "deps": [
+        "P01",
+        "P02",
+        "E06"
+      ],
+      "scope": "Own changes in the Asupersync repository: real minimal module/dependency feature gates; semantic replacements for unavailable AtomicU64; explicit worker/blocking/job/stack caps; pre-admitted cleanup records. Keep structured concurrency and cancellation contracts.",
+      "acceptance": "Stable target feature graphs for BE PPC/MIPS compile or report exact blockers; thread-local u64 is allowed only for local state, shared fallbacks preserve atomic semantics and stay off render deadlines. No silent u32 truncation or naive split-word atomics. Saturation/allocator-failure/cancel/drain tests plus guest receipts required; cfg metadata is not runtime proof."
+    },
+    {
+      "key": "P06",
+      "title": "Extract and adapt portable Franken support-library subsets",
+      "deps": [
+        "P01",
+        "E06",
+        "E03"
+      ],
+      "scope": "Own selected upstream franken_kernel/frankenlibc/frankenfs/franken_remote adaptations. Publish pinned feature and unsafe/FFI inventory; factor alloc/std/host-only dependencies; port only selected platform primitives or use semantic references behind a small adapter, without importing full desktop/filesystem stacks.",
+      "acceptance": "Each selected primitive has BE layout, errno, time-width, syscall/TLS and target tests as applicable. Removing an architecture compile_error alone is not a port. Resolve differing Asupersync pins explicitly. Portable parsers/settings algorithms may be extracted without claiming raw-flash/filesystem support; LocalAPI delegation is not native Tailscale."
+    },
+    {
+      "key": "T04",
+      "title": "Admit a native tailnet development candidate per target profile",
+      "deps": [
+        "T01"
+      ],
+      "scope": "Machine-readable positive provisional development decision keyed by exact target, candidate revision and adaptation strategy. Separate source availability, offline feasibility and final native interoperability. A bounded owner-authorized upstream implementation may be the selected strategy.",
+      "acceptance": "Negative T01 leaves this gate open and T02 blocked. Positive decision names required native identity/control/data-plane behavior, unresolved limits and next discriminators; it does not assert final resource fit or interoperability. Graph fixture verifies negative study closure cannot clear this independent gate."
+    },
+    {
+      "key": "X05",
+      "title": "Validate externally supplied Alexa music-routing qualification evidence",
+      "deps": [
+        "X04"
+      ],
+      "scope": "Consume authorized external receipts for supported provider admission and utterance-to-selected-group playback. No enrollment, voice request or device command is executed from this repository. Validate receipt identities and feature scope.",
+      "acceptance": "Remain open when receipts or supported provider mechanism are absent. Offline fixtures and volume/mute success cannot close this gate. Positive/negative/revocation/source-change outcomes and exact software/profile identity required; reject stale or unrelated artifacts."
+    },
+    {
+      "key": "Q06",
+      "title": "Validate external native-service and physical qualification gates",
+      "deps": [
+        "Q04",
+        "Q03",
+        "X05"
+      ],
+      "scope": "Validate imported owner-authorized provider/hardware evidence against exact build/profile capability ledger: Spotify, native AirPlay2/Tailscale, Alexa, source-specific video, line-in and mixed-generation audio. Record candidate, offline, combined, provider and physical levels independently.",
+      "acceptance": "Remain open until every required capability in the frozen owner-approved profile, independent of implementation enable flags has matching receipts; no device/provider execution here. Stereo/Sub roles need their own phase/polarity/crossover/delay criterion and evidence, not the room skew band. Stale code/profile/calibration invalidates affected evidence. Optional unsupported features are explicit; no silent native-to-assisted substitution. Disabling an unimplemented required feature cannot remove it from the required set; only explicitly optional features can be absent without blocking."
+    }
+  ]
+}

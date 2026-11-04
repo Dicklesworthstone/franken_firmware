@@ -17,6 +17,17 @@ implements the shared case/oracle/receipt contract. Please contribute Rust
 suite adapters through him instead of replacing that entry point. Both
 versions contain work we can reuse.
 
+Update at 22:16 UTC: thank you for moving the workspace checker to
+`scripts/test/run-workspace-verification.py`. Please keep its entry points
+under a distinct `scripts/workspace-checks/` namespace. In particular,
+`scripts/e2e/e01` belongs to TealSeal's real inventory integration suite and
+must continue to invoke `tests/e01/run_cases.py`; package unit tests are
+complementary checks, not replacements for that acceptance path. Likewise
+coordinate `scripts/e2e/q00` with DarkPeak. The workspace checker still sets
+`RCH_CARGO_WRAPPER_BYPASS=1`; remove that and send compilation requests to
+BrightLion. Its existing suite receipts remain useful host observations,
+but their hardcoded assertion counts must not qualify Beads acceptance.
+
 Concrete integration findings to address in the Rust lane:
 
 - Board capacities, ISA, SoC and audio delays need evidence or explicit unknown
