@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/franken-test-support",
+    "crates/franken-board-profile",
+    "crates/franken-platform",
+    "crates/franken-hal",
+    "crates/franken-dsp",
+    "crates/franken-clock",
+    "crates/franken-stream",
+    "crates/franken-session",
+    "crates/franken-control",
+    "crates/franken-speaker",
+]
+exclude = [
+    "toolchain/src/ffw-hello-init",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.11"
+hmac = "0.13"
+hex = "0.4"
+thiserror = "2.0"
+portable-atomic = { version = "1.15.0", default-features = false, features = ["fallback"] }
+
+franken-test-support = { path = "crates/franken-test-support" }
+franken-board-profile = { path = "crates/franken-board-profile" }
+franken-platform = { path = "crates/franken-platform" }
+franken-hal = { path = "crates/franken-hal" }
+franken-dsp = { path = "crates/franken-dsp" }
+franken-clock = { path = "crates/franken-clock" }
+franken-stream = { path = "crates/franken-stream" }
+franken-session = { path = "crates/franken-session" }
+franken-control = { path = "crates/franken-control" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

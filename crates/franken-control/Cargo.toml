@@ -1,0 +1,19 @@
+[package]
+name = "franken-control"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+franken-session.workspace = true
+franken-clock.workspace = true
+
+[dev-dependencies]
+franken-test-support.workspace = true
+franken-board-profile.workspace = true

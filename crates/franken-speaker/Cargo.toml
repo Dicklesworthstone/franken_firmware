@@ -1,0 +1,22 @@
+[package]
+name = "franken-speaker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+franken-test-support.workspace = true
+franken-board-profile.workspace = true
+franken-platform.workspace = true
+franken-hal.workspace = true
+franken-dsp.workspace = true
+franken-clock.workspace = true
+franken-stream.workspace = true
+franken-session.workspace = true
+franken-control.workspace = true
