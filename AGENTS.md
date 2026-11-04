@@ -98,6 +98,10 @@ Reading order for a new agent:
 
 ## Implementation Swarm Rules
 
+Concurrent AGY collaborator: the owner welcomes complementary work. Read
+`AGY_HANDOFF.md` for the current file-collision handoff and contact BrightLion
+through Agent Mail before editing overlapping paths. Preserve both versions.
+
 - Implement real behavior and its tests together. Live Beads acceptance is
   authoritative over older generated plans; retain all requested features,
   including native tailnet support. Host assistance cannot silently replace it.
