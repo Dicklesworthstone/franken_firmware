@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# E01 evidence-pipeline end-to-end runner for the Python pipeline cases (bead ffw-xdi).
+# Offline, stdlib Python only.  scripts/e2e/e01 delegates here; the Rust franken-board-profile
+# cargo wrapper that used to be scripts/e2e/e01 is preserved at scripts/workspace-checks/e01.
+#
+#   tests/e01/e2e --tier smoke            fast named cases (synthetic fixtures)
+#   tests/e01/e2e --tier full             smoke + merge/restart/cancellation/XML/private-report cases
+#   tests/e01/e2e --tier soak             full, with 10x seeded permutation replays
+#   tests/e01/e2e --tier real             owner-local capture only (.local-real/devices.json);
+#                                         reported BLOCKED, and fails, if that file is absent
+#   tests/e01/e2e --tier full --case E01-E2E-006 [--receipts DIR]       replay one case
+#
+# Exit 0 only when every planned case passed and none is blocked or missing.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+exec python3 -B -I "$ROOT/tests/e01/run_cases.py" "$@"

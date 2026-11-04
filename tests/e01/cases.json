@@ -1,0 +1,982 @@
+{
+ "schema": "ffw.e01.cases.v1",
+ "note": "Expected outputs are hand-written literals (profile ids from `shasum -a 256`); the runner builds fixtures from documentation-range identifiers only.",
+ "required": {
+  "smoke": [
+   "E01-E2E-001",
+   "E01-E2E-002",
+   "E01-E2E-003",
+   "E01-E2E-004",
+   "E01-E2E-006",
+   "E01-E2E-007",
+   "E01-E2E-012",
+   "E01-E2E-014"
+  ],
+  "full": [
+   "E01-E2E-005",
+   "E01-E2E-008",
+   "E01-E2E-009",
+   "E01-E2E-010",
+   "E01-E2E-013"
+  ],
+  "real": [
+   "E01-E2E-011"
+  ]
+ },
+ "cases": [
+  {
+   "id": "E01-E2E-001",
+   "title": "evidenced profile resolves end to end",
+   "tier": "smoke",
+   "invariants": [
+    "fields joined: model, revision, nominal resources, ISA, ABI, image digest, provenance",
+    "stable profile id"
+   ],
+   "batches": [
+    [
+     {
+      "$dev": {
+       "n": 1
+      }
+     },
+     {
+      "$dev": {
+       "n": 2
+      }
+     }
+    ]
+   ],
+   "evidence": [
+    {
+     "schema": "ffw.e01.image-evidence.v1",
+     "records": [
+      {
+       "evidence_id": "ev-e2e-s5",
+       "join": {
+        "model_number": "S5",
+        "join_basis": "owner-attested"
+       },
+       "firmware_lines": [
+        "57.23"
+       ],
+       "claim": {
+        "machine": "powerpc",
+        "elf_class": 32,
+        "endianness": "big",
+        "abi": "elf32-ppc-sysv",
+        "float_abi": "hard",
+        "atomic_widths": [
+         8,
+         16,
+         32
+        ]
+       },
+       "image": {
+        "name": "anacapad",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+       },
+       "provenance": {
+        "source": "synthetic e2e fixture",
+        "basis": "synthetic record for pipeline testing, not evidence"
+       }
+      }
+     ]
+    }
+   ],
+   "argv": [
+    "--nominal-unit",
+    "MB"
+   ],
+   "expect": {
+    "exit": 0,
+    "public": {
+     "schema": "ffw.e01.profile-manifest.v1",
+     "summary": {
+      "observations": 2,
+      "identity_components": 2,
+      "devices_in_profiles": 2,
+      "devices_in_conflict": 0,
+      "unidentifiable_observations": 0,
+      "profiles": 1,
+      "profiles_resolved": 1,
+      "profiles_unresolved": 0,
+      "profiles_conflicted": 0,
+      "all_resolved": true
+     },
+     "profiles": [
+      {
+       "profile_id": "bp-a93b52330d511449",
+       "resolution": "resolved",
+       "activation_eligible": true,
+       "device_count": 2,
+       "model": {
+        "model_number": "S5",
+        "model_name": "Sonos Play:5",
+        "series_id": "P100",
+        "variant": "0"
+       },
+       "hardware_revision": "1.2.3.4-5.6",
+       "firmware": {
+        "line": "57.23",
+        "sw_gen": 1
+       },
+       "nominal_resources": {
+        "measured": false,
+        "memory": {
+         "value": 32,
+         "unit": "MB",
+         "unit_basis": "operator_asserted",
+         "bytes": 32000000
+        },
+        "flash": {
+         "value": 32,
+         "unit": "MB",
+         "unit_basis": "operator_asserted",
+         "bytes": 32000000
+        }
+       },
+       "target": {
+        "isa": {
+         "machine": "powerpc",
+         "elf_class": 32,
+         "endianness": "big"
+        },
+        "abi": "elf32-ppc-sysv",
+        "float_abi": "hard",
+        "atomic_widths": [
+         8,
+         16,
+         32
+        ],
+        "images": [
+         {
+          "name": "anacapad",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "digest_algorithm": "sha256"
+         }
+        ]
+       },
+       "evidence_ids": [
+        "ev-e2e-s5"
+       ],
+       "reason_codes": [],
+       "evidence_digest": {
+        "$regex": "[0-9a-f]{64}"
+       },
+       "provenance": {
+        "model_number": {
+         "sources": [
+          "device_description"
+         ],
+         "devices": 2
+        },
+        "hardware_revision": {
+         "sources": [
+          "device_description",
+          "status_zp"
+         ],
+         "devices": 2
+        },
+        "target": {
+         "source": "image_evidence",
+         "evidence_ids": [
+          "ev-e2e-s5"
+         ],
+         "join_bases": [
+          "owner-attested"
+         ]
+        }
+       }
+      }
+     ],
+     "conflicts": [],
+     "unattributed": {
+      "unidentifiable_observations": 0
+     },
+     "sanitization": {
+      "per_device_identifiers": "none",
+      "identifier_hashes": "none"
+     }
+    }
+   }
+  },
+  {
+   "id": "E01-E2E-002",
+   "title": "no evidence: unknown is reported, never a guessed board",
+   "tier": "smoke",
+   "invariants": [
+    "users see unknown rather than a guessed compatible device",
+    "CPU never derived from product era or teardown"
+   ],
+   "batches": [
+    [
+     {
+      "$dev": {
+       "n": 1
+      }
+     },
+     {
+      "$dev": {
+       "n": 2
+      }
+     }
+    ]
+   ],
+   "hypotheses": {
+    "S5": {
+     "cpu": "E2E-CPU-NOTE-POWERPC",
+     "ram": "synthetic ram",
+     "flash": "synthetic flash",
+     "network": "synthetic network",
+     "audio": "synthetic audio",
+     "qualification": "synthetic note",
+     "sources": [
+      "https://example.invalid/synthetic-teardown"
+     ]
+    }
+   },
+   "argv": [
+    "--nominal-unit",
+    "MB"
+   ],
+   "expect": {
+    "exit": 3,
+    "public": {
+     "summary": {
+      "profiles": 1,
+      "profiles_resolved": 0,
+      "profiles_unresolved": 1,
+      "all_resolved": false
+     },
+     "profiles": [
+      {
+       "profile_id": "bp-a93b52330d511449",
+       "resolution": "unresolved",
+       "activation_eligible": false,
+       "target": {
+        "isa": null,
+        "abi": null,
+        "float_abi": null,
+        "atomic_widths": null,
+        "images": []
+       },
+       "evidence_ids": [],
+       "reason_codes": {
+        "$contains": [
+         {
+          "code": "isa_evidence_absent"
+         }
+        ]
+       },
+       "published_hypothesis": {
+        "ref": "S5",
+        "published_profile_id": {
+         "$regex": "pub-s5-[0-9a-f]{8}"
+        },
+        "status": "hypothesis-not-evidence",
+        "used_for_selection": false,
+        "qualification": "synthetic note"
+       }
+      }
+     ]
+    }
+   },
+   "negative_controls": [
+    {
+     "public": {
+      "profiles": [
+       {
+        "target": {
+         "isa": {
+          "machine": "powerpc"
+         }
+        }
+       }
+      ]
+     },
+     "why": "ISA guessed from model or teardown"
+    },
+    {
+     "public": {
+      "summary": {
+       "all_resolved": true
+      }
+     },
+     "why": "claims completeness without evidence"
+    },
+    {
+     "public": {
+      "profiles": [
+       {
+        "activation_eligible": true
+       }
+      ]
+     },
+     "why": "eligible without evidence"
+    }
+   ]
+  },
+  {
+   "id": "E01-E2E-003",
+   "title": "contradictory image evidence is rejected, ISA withheld",
+   "tier": "smoke",
+   "invariants": [
+    "conflicting historical images",
+    "conflicts remain visible and ineligible for activation"
+   ],
+   "batches": [
+    [
+     {
+      "$dev": {
+       "n": 1
+      }
+     }
+    ]
+   ],
+   "evidence": [
+    {
+     "schema": "ffw.e01.image-evidence.v1",
+     "records": [
+      {
+       "evidence_id": "ev-e2e-a",
+       "join": {
+        "model_number": "S5",
+        "join_basis": "owner-attested"
+       },
+       "firmware_lines": [
+        "57.23"
+       ],
+       "claim": {
+        "machine": "powerpc",
+        "elf_class": 32,
+        "endianness": "big",
+        "abi": "elf32-ppc-sysv",
+        "float_abi": "hard",
+        "atomic_widths": [
+         8,
+         16,
+         32
+        ]
+       },
+       "image": {
+        "name": "anacapad",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+       },
+       "provenance": {
+        "source": "synthetic e2e fixture",
+        "basis": "synthetic record for pipeline testing, not evidence"
+       }
+      },
+      {
+       "evidence_id": "ev-e2e-b",
+       "join": {
+        "model_number": "S5",
+        "join_basis": "owner-attested"
+       },
+       "firmware_lines": [
+        "57.23"
+       ],
+       "claim": {
+        "machine": "mips",
+        "elf_class": 32,
+        "endianness": "big",
+        "abi": "o32",
+        "float_abi": "hard",
+        "atomic_widths": [
+         8,
+         16,
+         32
+        ]
+       },
+       "image": {
+        "name": "anacapad",
+        "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+       },
+       "provenance": {
+        "source": "synthetic e2e fixture",
+        "basis": "synthetic record for pipeline testing, not evidence"
+       }
+      }
+     ]
+    }
+   ],
+   "argv": [
+    "--nominal-unit",
+    "MB"
+   ],
+   "expect": {
+    "exit": 3,
+    "public": {
+     "summary": {
+      "profiles_conflicted": 1,
+      "profiles_resolved": 0,
+      "all_resolved": false
+     },
+     "profiles": [
+      {
+       "profile_id": "bp-a93b52330d511449",
+       "resolution": "conflicted",
+       "activation_eligible": false,
+       "target": {
+        "isa": null,
+        "abi": null,
+        "images": []
+       },
+       "evidence_ids": [
+        "ev-e2e-a",
+        "ev-e2e-b"
+       ],
+       "reason_codes": [
+        {
+         "code": "isa_evidence_conflict"
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "negative_controls": [
+    {
+     "public": {
+      "profiles": [
+       {
+        "resolution": "resolved"
+       }
+      ]
+     },
+     "why": "ambiguous mapping silently resolved"
+    },
+    {
+     "public": {
+      "profiles": [
+       {
+        "target": {
+         "isa": {
+          "machine": "mips"
+         }
+        }
+       }
+      ]
+     },
+     "why": "picked the MIPS record"
+    },
+    {
+     "public": {
+      "profiles": [
+       {
+        "target": {
+         "isa": {
+          "machine": "powerpc"
+         }
+        }
+       }
+      ]
+     },
+     "why": "picked the PowerPC record"
+    }
+   ]
+  },
+  {
+   "id": "E01-E2E-004",
+   "title": "serial reused with a different MAC is a visible, ineligible collision",
+   "tier": "smoke",
+   "invariants": [
+    "duplicate identities",
+    "identifier collision never silently merged"
+   ],
+   "batches": [
+    [
+     {
+      "$dev": {
+       "n": 1
+      }
+     },
+     {
+      "$dev": {
+       "n": 1,
+       "over": {
+        "MACAddress": "00:00:5e:00:53:07"
+       },
+       "status_over": {
+        "MACAddress": "00:00:5e:00:53:07"
+       }
+      }
+     }
+    ]
+   ],
+   "argv": [],
+   "expect": {
+    "exit": 3,
+    "public": {
+     "summary": {
+      "identity_components": 1,
+      "devices_in_profiles": 0,
+      "devices_in_conflict": 1,
+      "all_resolved": false
+     },
+     "profiles": [],
+     "conflicts": [
+      {
+       "conflict_id": {
+        "$regex": "cf-[0-9a-f]{8}"
+       },
+       "codes": [
+        {
+         "code": "identity_ambiguous",
+         "field": "mac"
+        }
+       ],
+       "model_numbers": [
+        "S5"
+       ],
+       "component_count": 1,
+       "activation_eligible": false
+      }
+     ]
+    }
+   },
+   "negative_controls": [
+    {
+     "public": {
+      "summary": {
+       "devices_in_profiles": 1
+      }
+     },
+     "why": "colliding device counted as a normal device"
+    },
+    {
+     "public": {
+      "profiles": [
+       {
+        "device_count": 1
+       }
+      ]
+     },
+     "why": "colliding device placed in a profile"
+    }
+   ]
+  },
+  {
+   "id": "E01-E2E-005",
+   "title": "duplicate, renamed and address-changed records merge to two devices",
+   "tier": "full",
+   "invariants": [
+    "duplicate/renamed/address-changed devices"
+   ],
+   "batches": [
+    [
+     {
+      "$dev": {
+       "n": 1
+      }
+     },
+     {
+      "$dev": {
+       "n": 1
+      }
+     }
+    ],
+    [
+     {
+      "$dev": {
+       "n": 1,
+       "room": "Moved Room"
+      }
+     },
+     {
+      "$dev": {
+       "n": 1,
+       "ip": "192.0.2.99"
+      }
+     }
+    ],
+    [
+     {
+      "$dev": {
+       "n": 2
+      }
+     }
+    ]
+   ],
+   "argv": [
+    "--nominal-unit",
+    "MB",
+    "--allow-incomplete"
+   ],
+   "expect": {
+    "exit": 0,
+    "public": {
+     "summary": {
+      "observations": 5,
+      "identity_components": 2,
+      "duplicate_observations": 1,
+      "devices_in_profiles": 2,
+      "devices_in_conflict": 0,
+      "profiles": 1
+     },
+     "profiles": [
+      {
+       "device_count": 2
+      }
+     ],
+     "conflicts": []
+    }
+   },
+   "negative_controls": [
+    {
+     "public": {
+      "summary": {
+       "identity_components": 4
+      }
+     },
+     "why": "rename/address change treated as new devices"
+    }
+   ]
+  },
+  {
+   "id": "E01-E2E-006",
+   "title": "reordered batch replay yields identical output and stable profile ids",
+   "tier": "smoke",
+   "invariants": [
+    "same provenance yields same stable profile id regardless of batch/record order"
+   ],
+   "batches": [
+    [
+     {
+      "$dev": {
+       "n": 1
+      }
+     },
+     {
+      "$dev": {
+       "n": 2
+      }
+     }
+    ],
+    [
+     {
+      "$dev": {
+       "n": 3,
+       "rev": "1.2.3.4-5.7"
+      }
+     },
+     {
+      "$dev": {
+       "n": 1,
+       "ts": "2026-02-01T00:00:00Z"
+      }
+     }
+    ],
+    [
+     {
+      "$dev": {
+       "n": 4,
+       "model": "S12",
+       "name": "Sonos Play:1",
+       "series": "A200",
+       "sw": "86.10-81100",
+       "gen": "2",
+       "mem": "256",
+       "flash": "256"
+      }
+     }
+    ]
+   ],
+   "argv": [
+    "--nominal-unit",
+    "MB"
+   ],
+   "permute": 12,
+   "expect": {
+    "exit": 3,
+    "public": {
+     "summary": {
+      "observations": 5,
+      "identity_components": 4,
+      "devices_in_profiles": 4,
+      "profiles": 3
+     },
+     "profiles": [
+      {
+       "profile_id": "bp-3ccaf07451b76461",
+       "device_count": 1,
+       "model": {
+        "model_number": "S12"
+       }
+      },
+      {
+       "profile_id": "bp-a93b52330d511449",
+       "device_count": 2,
+       "hardware_revision": "1.2.3.4-5.6"
+      },
+      {
+       "profile_id": "bp-73ff9b45059ef52d",
+       "device_count": 1,
+       "hardware_revision": "1.2.3.4-5.7"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "E01-E2E-007",
+   "title": "a leaking public field stops the run and writes nothing",
+   "tier": "smoke",
+   "invariants": [
+    "private input never emitted accidentally"
+   ],
+   "batches": [
+    [
+     {
+      "$dev": {
+       "n": 1,
+       "over": {
+        "modelName": "00-00-5E-00-53-01:1"
+       }
+      }
+     }
+    ]
+   ],
+   "argv": [
+    "--out",
+    "{out}"
+   ],
+   "expect": {
+    "exit": 4,
+    "stderr_regex": "error\\[leak_guard\\].*nothing was written",
+    "out_file": false,
+    "stdout_empty": true
+   }
+  },
+  {
+   "id": "E01-E2E-008",
+   "title": "XML with a DOCTYPE/ENTITY declaration is refused",
+   "tier": "full",
+   "invariants": [
+    "boundary/error cases fail closed"
+   ],
+   "raw_inputs": [
+    {
+     "name": "evil.xml",
+     "text": "<!DOCTYPE a [<!ENTITY e \"x\">]><root/>"
+    }
+   ],
+   "expect": {
+    "exit": 2,
+    "stderr_regex": "error\\[xml_doctype_forbidden\\]",
+    "stdout_empty": true
+   }
+  },
+  {
+   "id": "E01-E2E-009",
+   "title": "private report is refused outside git-ignored locations, accepted inside",
+   "tier": "full",
+   "invariants": [
+    "private identifiers stay local"
+   ],
+   "batches": [
+    [
+     {
+      "$dev": {
+       "n": 1
+      }
+     }
+    ]
+   ],
+   "steps": [
+    {
+     "argv": [
+      "--private-out",
+      "{tmp}/report.json"
+     ],
+     "expect": {
+      "exit": 5,
+      "stderr_regex": "private_out_not_ignored",
+      "stdout_empty": true,
+      "absent": [
+       "report.json"
+      ]
+     }
+    },
+    {
+     "argv": [
+      "--private-out",
+      "{priv}",
+      "--allow-incomplete"
+     ],
+     "expect": {
+      "exit": 0,
+      "priv_file": true
+     }
+    }
+   ]
+  },
+  {
+   "id": "E01-E2E-010",
+   "title": "restart: a rerun is refused until --overwrite, then reproduces identical bytes",
+   "tier": "full",
+   "invariants": [
+    "restart",
+    "idempotent output"
+   ],
+   "batches": [
+    [
+     {
+      "$dev": {
+       "n": 1
+      }
+     },
+     {
+      "$dev": {
+       "n": 2
+      }
+     }
+    ]
+   ],
+   "steps": [
+    {
+     "argv": [
+      "--nominal-unit",
+      "MB",
+      "--out",
+      "{out}",
+      "--allow-incomplete"
+     ],
+     "expect": {
+      "exit": 0,
+      "out_file": true,
+      "stdout_empty": true
+     }
+    },
+    {
+     "argv": [
+      "--nominal-unit",
+      "MB",
+      "--out",
+      "{out}",
+      "--allow-incomplete"
+     ],
+     "expect": {
+      "exit": 5,
+      "stderr_regex": "output_exists",
+      "out_file": true
+     }
+    },
+    {
+     "argv": [
+      "--nominal-unit",
+      "MB",
+      "--out",
+      "{out}",
+      "--overwrite",
+      "--allow-incomplete"
+     ],
+     "expect": {
+      "exit": 0,
+      "out_file": true,
+      "out_equals_step": 0
+     }
+    }
+   ]
+  },
+  {
+   "id": "E01-E2E-012",
+   "title": "an identifier with no recognisable shape is still caught by value",
+   "tier": "smoke",
+   "invariants": [
+    "private input never emitted accidentally (value-level guard, not only shape heuristics)"
+   ],
+   "batches": [
+    [
+     {
+      "$dev": {
+       "n": 1,
+       "over": {
+        "modelName": "SYNTH1234ABCD"
+       },
+       "status_over": {
+        "LocalUID": "SYNTH1234ABCD"
+       }
+      }
+     }
+    ]
+   ],
+   "argv": [
+    "--out",
+    "{out}"
+   ],
+   "expect": {
+    "exit": 4,
+    "stderr_regex": "error\\[leak_guard\\].*kind identifier",
+    "out_file": false,
+    "stdout_empty": true
+   }
+  },
+  {
+   "id": "E01-E2E-013",
+   "title": "SIGINT while blocked reading input exits 130 and leaves nothing behind",
+   "tier": "full",
+   "kind": "interrupt_fifo",
+   "invariants": [
+    "cancellation",
+    "no partial output or temp file"
+   ],
+   "settle_s": 2.0
+  },
+  {
+   "id": "E01-E2E-014",
+   "title": "enrich.py and reconcile.py issue the same profile ids on reordered equivalent observations",
+   "tier": "smoke",
+   "kind": "cross_caller",
+   "invariants": [
+    "one shared profile id",
+    "missing revision and unknown unit stay ineligible in both tools"
+   ],
+   "batches": [
+    [
+     {
+      "$dev": {
+       "n": 1
+      }
+     },
+     {
+      "$dev": {
+       "n": 2,
+       "rev": "1.2.3.4-5.7"
+      }
+     },
+     {
+      "$dev": {
+       "n": 3,
+       "model": "s5",
+       "rev": "01.002.3.4-5.6"
+      }
+     },
+     {
+      "$dev": {
+       "n": 4,
+       "drop": [
+        "hardwareVersion",
+        "HardwareVersion"
+       ]
+      }
+     }
+    ]
+   ],
+   "expect_ids": {
+    "bp-a93b52330d511449": 2,
+    "bp-73ff9b45059ef52d": 1
+   },
+   "shuffles": 4
+  },
+  {
+   "id": "E01-E2E-011",
+   "title": "owner-local capture: counts and leak check against an independent read",
+   "tier": "real",
+   "kind": "owner_local",
+   "invariants": [
+    "real-shape input; reports counts only; never prints identifiers"
+   ]
+  }
+ ]
+}

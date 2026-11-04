@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# E01 end-to-end entry point (bead ffw-xdi): the inventory evidence pipeline.
+# Delegates to tests/e01/e2e (offline, stdlib Python). With no arguments it runs the full tier.
+#
+#   scripts/e2e/e01                          full tier
+#   scripts/e2e/e01 --tier smoke|full|soak   explicit tier
+#   scripts/e2e/e01 --tier real              owner-local capture only; BLOCKED (fails) if absent
+#   scripts/e2e/e01 --tier full --case E01-E2E-006 [--receipts DIR]     replay one case
+#
+# The Rust franken-board-profile cargo check that used to live here is preserved unchanged at
+# scripts/workspace-checks/e01 (it builds, so it runs only through the centralized RCH path).
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+if [ "$#" -eq 0 ]; then
+  set -- --tier full
+fi
+exec "$ROOT/tests/e01/e2e" "$@"

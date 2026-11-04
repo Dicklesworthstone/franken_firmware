@@ -41,7 +41,16 @@ firmware images (see `FIRMWARE_ASSESSMENT.md` §"Second peer review"):
 
 ## Reproduction
 
-`scan.py` performs the SSDP sweep + description fetch (read-only).
-`enrich.py`/`reconcile.py` post-process captures into the local (never
-committed) `devices.json`. Run them yourself against your own LAN; keep real
-captures out of git.
+`scan.py` performs the SSDP sweep + description fetch (read-only, owner-run
+against the owner's own LAN; it is the only script here that touches a network).
+`reconcile.py` is offline and explicit: it reads only the files you name and
+never modifies them.
+
+    python3 inventory/reconcile.py --input .local-real/devices.json \
+        --evidence inventory/image-evidence.json \
+        --private-out .local-real/report.json
+
+prints a sanitized board-profile manifest (counts and model-level classes, no
+per-device identifiers) and rejects any output that would contain a value seen
+in the private input. Contract, reason codes and tests: `docs/contracts/e01.md`.
+Keep real captures out of git.

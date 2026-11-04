@@ -1,0 +1,27 @@
+{
+  "schema": "ffw.e01.image-evidence.v1",
+  "records": [
+    {
+      "evidence_id": "ev-assess-model16-anacapad",
+      "join": {"model_number": "S5", "join_basis": "name-inferred"},
+      "firmware_lines": ["57.23"],
+      "claim": {"machine": "powerpc", "elf_class": 32, "endianness": "big", "abi": null, "float_abi": null, "atomic_widths": null},
+      "image": {"name": "anacapad", "digest": null},
+      "provenance": {
+        "source": "FIRMWARE_ASSESSMENT.md, second peer review: existing firmware evidence",
+        "basis": "recorded statement that the model-16 57.23 anacapad is ELF32 big-endian PowerPC; the extracted image digest is not recorded in this repository; the join from internal model 16 to modelNumber S5 rests on the product name only"
+      }
+    },
+    {
+      "evidence_id": "ev-assess-model12-anacapad",
+      "join": {"model_number": null, "join_basis": "unmapped"},
+      "firmware_lines": ["57.23"],
+      "claim": {"machine": "mips", "elf_class": 32, "endianness": "big", "abi": null, "float_abi": null, "atomic_widths": null},
+      "image": {"name": "anacapad", "digest": null},
+      "provenance": {
+        "source": "FIRMWARE_ASSESSMENT.md, second peer review: existing firmware evidence",
+        "basis": "recorded statement that the model-12 57.23 anacapad is ELF32 big-endian MIPS; the mapping from internal model 12 to a live modelNumber is not established (the inventory note names it only by product era), so this record is deliberately unjoined; digest not recorded"
+      }
+    }
+  ]
+}
