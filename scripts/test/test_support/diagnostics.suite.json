@@ -1,0 +1,370 @@
+{
+  "schema": "ffw.suite.v1",
+  "suite": "q00-diagnostics",
+  "description": "Requirement-to-case registry for the bounded nonblocking diagnostic sink (test_support/diagnostics.py). Host-simulation evidence only: nothing here qualifies the on-device render path or any physical/provider behaviour.",
+  "requirements": {
+    "q00.diag.req.bounded_nonblocking": {
+      "text": "The diagnostic sink bounds event rate, queue memory and disk, never blocks or raises in the producer, and exposes exact dropped-event counts by reason.",
+      "tiers": [
+        "smoke",
+        "full"
+      ]
+    },
+    "q00.diag.req.critical_loss_invalidates": {
+      "text": "Loss of critical test evidence marks the result incomplete and a pass cannot rest on it; a sink that was never closed, hung, or lost its header/footer is not a pass on absence of error text.",
+      "tiers": [
+        "smoke",
+        "full"
+      ]
+    },
+    "q00.diag.req.sink_faults": {
+      "text": "Slow, full and unavailable log sinks are survived with exact loss accounting and do not change render-path results; real OS write refusal is exercised where the host supports it.",
+      "tiers": [
+        "smoke",
+        "full"
+      ]
+    },
+    "q00.diag.req.redaction": {
+      "text": "Tokens, keys, account and site identifiers, exact secret literals, the home directory and audio/binary payloads are redacted before they reach the log; member and group identifiers are pseudonymised.",
+      "tiers": [
+        "smoke",
+        "full"
+      ]
+    },
+    "q00.diag.req.log_audit": {
+      "text": "A written diagnostic log can be audited from the file alone: truncation, tampering, hidden critical loss and duplicated records are detected.",
+      "tiers": [
+        "smoke",
+        "full"
+      ]
+    },
+    "q00.diag.req.isolation": {
+      "text": "Diagnostics work from a non-root cwd with spaces in paths, isolate parallel run ids, never clobber an existing log, and clean up threads and file descriptors.",
+      "tiers": [
+        "smoke",
+        "full"
+      ]
+    },
+    "q00.diag.req.canaries": {
+      "text": "Planted diagnostic defects (uncounted critical loss, a lying footer, absence-of-error-text acceptance, a blocking emit) are each caught by the oracle that owns them.",
+      "tiers": [
+        "smoke",
+        "full"
+      ]
+    }
+  },
+  "required_cases": [
+    "q00.diag.envelope",
+    "q00.diag.bounds_and_loss",
+    "q00.diag.critical_evidence",
+    "q00.diag.sink_faults",
+    "q00.diag.render_independence",
+    "q00.diag.redaction",
+    "q00.diag.audit",
+    "q00.diag.isolation",
+    "q00.diag.canaries",
+    "q00.diag.canary.silent_critical_loss",
+    "q00.diag.canary.footer_lies_about_loss",
+    "q00.diag.canary.naive_absence_of_error",
+    "q00.diag.canary.blocking_emit"
+  ],
+  "cases": [
+    {
+      "id": "q00.diag.envelope",
+      "argv": [
+        "{python}",
+        "-B",
+        "-I",
+        "{manifest_dir}/test_diagnostics.py",
+        "--case",
+        "q00.diag.envelope"
+      ],
+      "tiers": [
+        "smoke",
+        "full"
+      ],
+      "requirements": [
+        "q00.diag.req.bounded_nonblocking"
+      ],
+      "timeout_s": 120,
+      "description": "Versioned JSONL envelope, pseudonyms, monotonic timebase, API shape and argument validation."
+    },
+    {
+      "id": "q00.diag.bounds_and_loss",
+      "argv": [
+        "{python}",
+        "-B",
+        "-I",
+        "{manifest_dir}/test_diagnostics.py",
+        "--case",
+        "q00.diag.bounds_and_loss"
+      ],
+      "tiers": [
+        "smoke",
+        "full"
+      ],
+      "requirements": [
+        "q00.diag.req.bounded_nonblocking"
+      ],
+      "timeout_s": 180,
+      "description": "Queue/byte/rate/disk bounds, exact loss accounting, seeded randomized scenarios replayed byte-identically against the independent audit."
+    },
+    {
+      "id": "q00.diag.critical_evidence",
+      "argv": [
+        "{python}",
+        "-B",
+        "-I",
+        "{manifest_dir}/test_diagnostics.py",
+        "--case",
+        "q00.diag.critical_evidence"
+      ],
+      "tiers": [
+        "smoke",
+        "full"
+      ],
+      "requirements": [
+        "q00.diag.req.critical_loss_invalidates"
+      ],
+      "timeout_s": 120,
+      "description": "Critical eviction, lost-critical invalidation, per-case verdicts, absence-of-error-is-not-a-pass, late emit and close errors."
+    },
+    {
+      "id": "q00.diag.sink_faults",
+      "argv": [
+        "{python}",
+        "-B",
+        "-I",
+        "{manifest_dir}/test_diagnostics.py",
+        "--case",
+        "q00.diag.sink_faults"
+      ],
+      "tiers": [
+        "smoke",
+        "full"
+      ],
+      "requirements": [
+        "q00.diag.req.sink_faults",
+        "q00.diag.req.critical_loss_invalidates"
+      ],
+      "timeout_s": 240,
+      "description": "Injected slow/full/unavailable/hung sinks plus real OS write refusal (RLIMIT_FSIZE child; /dev/full where present). INJECTED tests prove the reaction, not a real disk."
+    },
+    {
+      "id": "q00.diag.render_independence",
+      "argv": [
+        "{python}",
+        "-B",
+        "-I",
+        "{manifest_dir}/test_diagnostics.py",
+        "--case",
+        "q00.diag.render_independence"
+      ],
+      "tiers": [
+        "smoke",
+        "full"
+      ],
+      "requirements": [
+        "q00.diag.req.sink_faults"
+      ],
+      "timeout_s": 240,
+      "description": "A deterministic render stand-in with an independent state oracle gives identical results under healthy, slow, full and unavailable sinks; a blocking mutant is caught."
+    },
+    {
+      "id": "q00.diag.redaction",
+      "argv": [
+        "{python}",
+        "-B",
+        "-I",
+        "{manifest_dir}/test_diagnostics.py",
+        "--case",
+        "q00.diag.redaction"
+      ],
+      "tiers": [
+        "smoke",
+        "full"
+      ],
+      "requirements": [
+        "q00.diag.req.redaction"
+      ],
+      "timeout_s": 120,
+      "description": "Key-name and value-pattern redaction, literals, home scrubbing, audio/binary payloads, truncation-boundary leaks, structure bounds, end-to-end no-leak."
+    },
+    {
+      "id": "q00.diag.audit",
+      "argv": [
+        "{python}",
+        "-B",
+        "-I",
+        "{manifest_dir}/test_diagnostics.py",
+        "--case",
+        "q00.diag.audit"
+      ],
+      "tiers": [
+        "smoke",
+        "full"
+      ],
+      "requirements": [
+        "q00.diag.req.log_audit"
+      ],
+      "timeout_s": 120,
+      "description": "Every strict prefix of a good log audits incomplete; tampering, hidden critical loss, overlong/garbage input and the audit CLI."
+    },
+    {
+      "id": "q00.diag.isolation",
+      "argv": [
+        "{python}",
+        "-B",
+        "-I",
+        "{manifest_dir}/test_diagnostics.py",
+        "--case",
+        "q00.diag.isolation"
+      ],
+      "tiers": [
+        "smoke",
+        "full"
+      ],
+      "requirements": [
+        "q00.diag.req.isolation"
+      ],
+      "timeout_s": 180,
+      "description": "Non-root cwd, spaces in paths, parallel run ids, concurrent producers, cleanup on exception, no network/native imports."
+    },
+    {
+      "id": "q00.diag.canaries",
+      "argv": [
+        "{python}",
+        "-B",
+        "-I",
+        "{manifest_dir}/test_diagnostics.py",
+        "--case",
+        "q00.diag.canaries"
+      ],
+      "tiers": [
+        "smoke",
+        "full"
+      ],
+      "requirements": [
+        "q00.diag.req.canaries"
+      ],
+      "timeout_s": 120,
+      "description": "In-process check that every planted diagnostic defect is detected, plus the positive twin."
+    },
+    {
+      "id": "q00.diag.canary.silent_critical_loss",
+      "argv": [
+        "{python}",
+        "-B",
+        "-I",
+        "{manifest_dir}/test_diagnostics.py",
+        "--canary",
+        "silent_critical_loss"
+      ],
+      "tiers": [
+        "smoke",
+        "full"
+      ],
+      "requirements": [
+        "q00.diag.req.canaries",
+        "q00.diag.req.critical_loss_invalidates"
+      ],
+      "timeout_s": 60,
+      "expect": {
+        "kind": "fail",
+        "oracle": "diag.audit.loss_accounting",
+        "exit_codes": [
+          1
+        ],
+        "violation": "loss_accounting_mismatch"
+      },
+      "description": "Known defect: a producer that does not count a lost critical event. The independent audit must flag it."
+    },
+    {
+      "id": "q00.diag.canary.footer_lies_about_loss",
+      "argv": [
+        "{python}",
+        "-B",
+        "-I",
+        "{manifest_dir}/test_diagnostics.py",
+        "--canary",
+        "footer_lies_about_loss"
+      ],
+      "tiers": [
+        "smoke",
+        "full"
+      ],
+      "requirements": [
+        "q00.diag.req.canaries",
+        "q00.diag.req.log_audit"
+      ],
+      "timeout_s": 60,
+      "expect": {
+        "kind": "fail",
+        "oracle": "diag.audit.loss_accounting",
+        "exit_codes": [
+          1
+        ],
+        "violation": "loss_accounting_mismatch"
+      },
+      "description": "Known defect: a footer that reports no loss although events were dropped. The audit must flag it from the file alone."
+    },
+    {
+      "id": "q00.diag.canary.naive_absence_of_error",
+      "argv": [
+        "{python}",
+        "-B",
+        "-I",
+        "{manifest_dir}/test_diagnostics.py",
+        "--canary",
+        "naive_absence_of_error"
+      ],
+      "tiers": [
+        "smoke",
+        "full"
+      ],
+      "requirements": [
+        "q00.diag.req.canaries",
+        "q00.diag.req.critical_loss_invalidates"
+      ],
+      "timeout_s": 60,
+      "expect": {
+        "kind": "fail",
+        "oracle": "diag.audit.truncation",
+        "exit_codes": [
+          1
+        ],
+        "violation": "missing_footer"
+      },
+      "description": "Known defect: a checker that passes a truncated log because no error text appears. The audit must refuse it."
+    },
+    {
+      "id": "q00.diag.canary.blocking_emit",
+      "argv": [
+        "{python}",
+        "-B",
+        "-I",
+        "{manifest_dir}/test_diagnostics.py",
+        "--canary",
+        "blocking_emit"
+      ],
+      "tiers": [
+        "smoke",
+        "full"
+      ],
+      "requirements": [
+        "q00.diag.req.canaries",
+        "q00.diag.req.bounded_nonblocking"
+      ],
+      "timeout_s": 60,
+      "expect": {
+        "kind": "fail",
+        "oracle": "diag.nonblocking.emit",
+        "exit_codes": [
+          1
+        ],
+        "violation": "producer_blocked_on_sink"
+      },
+      "description": "Known defect: emit() performs inline I/O. The nonblocking harness must see the producer hang while the sink is stalled."
+    }
+  ]
+}

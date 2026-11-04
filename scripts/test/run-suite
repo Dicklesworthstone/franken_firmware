@@ -1,0 +1,2389 @@
+#!/usr/bin/env python3
+"""run-suite: bounded, deterministic subprocess suite runner (bead ffw-2qz / Q00).
+
+Standard library only; no production crates, no hardware, no network.
+
+What it does
+------------
+* Loads one or more ``*.suite.json`` manifests (the requirement-to-case
+  registry; schema ``ffw.suite.v1``).  Cases live in many small manifests, not
+  one monolithic script.  Duplicate case ids are an error.
+* ``--tier smoke|full|soak`` is mandatory.  Cases outside the tier are counted
+  as ``deselected`` and are never part of the denominator.
+* Every selected case becomes exactly one record with one of four statuses:
+  ``pass``, ``fail``, ``blocked``, ``not_run``.  The denominators
+  ``planned = pass + fail + blocked + not_run`` and ``executed = pass + fail``
+  are self-asserted; a violation is a runner bug (exit 5), never a pass.
+* A case only passes on *positive* evidence: exit 0 **and** a valid child
+  result receipt (``ffw.case-result.v1``) whose run id, case id and nonce
+  match, from an oracle that declares itself independent, with at least one
+  check and zero mismatches.  Absence of error text is never a pass: a missing,
+  truncated, stale, vacuous or non-independent receipt fails.  ``checks >= 1``
+  is a necessary report check, not proof of semantic correctness; the oracles
+  themselves are judged by their own planted-defect canaries.
+* Known-defect canaries (``expect.kind == "fail"``) pass only if the subject
+  fails with exactly the expected oracle id.  An undetected defect fails.
+* The runner writes a ``receipts.jsonl`` stream (``ffw.receipt-stream/1``) with
+  ``test_support/receipts.py`` and then re-reads it with that module's
+  independent aggregator.  The run passes only if the aggregator qualifies the
+  stream *and* agrees with the runner's own bookkeeping case by case; a
+  disagreement is a runner bug (exit 5).  There is exactly one qualification
+  claim: the aggregator's, never a second competing one.
+* Children run in their own process group with an allow-listed environment.
+  Timeout, global deadline and cancellation use a SIGTERM -> grace -> SIGKILL
+  ladder on the whole group; surviving or leaked processes are reported.
+* Output capture is bounded, redacted line by line before it touches disk, and
+  never blocks the child (the pipe is always drained).
+* The JSONL event log is versioned, bounded, and exposes dropped-event counts.
+  Critical events are never dropped for budget reasons; if one cannot be
+  written the run is INCOMPLETE (exit 3).  An optional mirror sink is
+  non-blocking and best-effort; it can never stall a run.
+* Reruns never overwrite: a run id that already exists is refused.
+
+Exit codes
+----------
+0  every planned case passed, evidence complete
+1  at least one fail / blocked / not_run / uncovered requirement / empty selection
+2  usage or manifest error (nothing was executed)
+3  evidence incomplete (critical event/receipt/log loss, leaked process, cleanup failure)
+4  cancelled by SIGINT/SIGTERM
+5  internal runner error (invariant violation or unexpected exception)
+
+Wire contract for children (required to PASS):
+  env: FFW_SUITE_PROTOCOL=1  FFW_RUN_ID  FFW_CASE_ID  FFW_ATTEMPT  FFW_SEED
+       FFW_RUN_SEED  FFW_CASE_DIR  FFW_RESULT_PATH  FFW_RESULT_NONCE  FFW_TIMEOUT_S
+       FFW_NETWORK=loopback-only (advisory only; no network isolation is claimed)
+  result file ($FFW_RESULT_PATH, atomic tmp+rename, <= 256 KiB):
+    {"schema":"ffw.case-result.v1","run_id","case_id","nonce","verdict":"pass"|"fail",
+     "oracle":"<name>","oracle_kind":"sample|state|protocol|timing|property|output",
+     "independent":true,"checks":<int>,"mismatches":<int; pass=>0, fail=>=1>,
+     "expected":<json>,"observed":<json, differs from expected on fail>,
+     "first_causal_event":"<text>","counters":{"name":int}}
+
+Limits that are NOT claimed: descendants that call setsid()/setpgid() escape the
+process-group kill; a process-group id can in theory be reused between the leader
+being reaped and the leak probe; ``FFW_NETWORK`` is advisory.  Tests built on this
+runner do not prove perfection.
+"""
+from __future__ import annotations
+
+import argparse
+import collections
+import dataclasses
+import datetime
+import errno
+import hashlib
+import importlib.util
+import json
+import os
+import re
+import resource
+import secrets
+import select
+import shlex
+import shutil
+import signal
+import subprocess
+import sys
+import threading
+import time
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+RUNNER_NAME = "run-suite"
+RUNNER_VERSION = "1.0.0"
+SUITE_SCHEMA = "ffw.suite.v1"
+RESULT_SCHEMA = "ffw.case-result.v1"
+RECEIPT_SCHEMA = "ffw.suite-receipt.v1"
+EVENT_VERSION = 1
+
+EXIT_OK = 0
+EXIT_FAILED = 1
+EXIT_USAGE = 2
+EXIT_INCOMPLETE = 3
+EXIT_CANCELLED = 4
+EXIT_INTERNAL = 5
+
+TIERS = ("smoke", "full", "soak")
+EVIDENCE_CLASSES = (
+    "host-simulation",
+    "guest-execution",
+    "loopback-integration",
+    "real-service",
+    "physical",
+)
+# These classes are never executed here: they consume separately authorised
+# external receipts (Q06/X05), so a runner-local pass would be fabricated.
+EXTERNAL_CLASSES = ("real-service", "physical")
+
+ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+
+MAX_MANIFEST_BYTES = 4 * 1024 * 1024
+MAX_RESULT_BYTES = 256 * 1024
+MAX_LINE_BYTES = 64 * 1024
+MAX_DIGEST_FILE_BYTES = 64 * 1024 * 1024
+MAX_CASE_TIMEOUT_S = 86400.0
+DEFAULT_CASE_TIMEOUT_S = 60.0
+DEFAULT_GLOBAL_TIMEOUT_S = 3600.0
+DEFAULT_OUTPUT_CAP = 1024 * 1024
+HARD_OUTPUT_CAP = 64 * 1024 * 1024
+DEFAULT_EVENT_CLOSE_TIMEOUT_S = 5.0
+MAX_TAIL_LINES = 20
+DEFAULT_ENV_INHERIT = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "SYSTEMROOT")
+RESERVED_ENV_PREFIX = "FFW_"
+POLL_S = 0.05
+
+
+class UsageError(Exception):
+    """Bad invocation or manifest; nothing was executed (exit 2)."""
+
+
+class InternalError(Exception):
+    """Runner bug or violated invariant (exit 5)."""
+
+
+# --------------------------------------------------------------------------- #
+# small helpers
+# --------------------------------------------------------------------------- #
+
+def utc_now() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+_digest_cache: Dict[str, Optional[str]] = {}
+_digest_lock = threading.Lock()
+
+
+def sha256_file(path: str, limit: int = MAX_DIGEST_FILE_BYTES, cached: bool = True) -> Optional[str]:
+    """Digest of a regular file, or None if unreadable / not a file / too big.
+
+    ``cached=False`` is for files that are still changing (logs, events)."""
+    if cached:
+        with _digest_lock:
+            if path in _digest_cache:
+                return _digest_cache[path]
+    digest: Optional[str] = None
+    try:
+        st = os.stat(path)
+        if os.path.isfile(path) and st.st_size <= limit:
+            h = hashlib.sha256()
+            with open(path, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+            digest = h.hexdigest()
+    except OSError:
+        digest = None
+    if cached:
+        with _digest_lock:
+            _digest_cache[path] = digest
+    return digest
+
+
+_RECEIPTS_NEEDED = ("StreamWriter", "aggregate_path", "derive_case_seed", "ORACLE_KINDS",
+                    "PROOF_CLASSES", "ReceiptError", "OUTCOMES", "registry_digest", "normalize_required")
+
+
+def load_receipts() -> Tuple[Any, str]:
+    """Load the helper-owned ``test_support/receipts.py`` by explicit path.
+
+    Fail closed: the runner's qualification claim is the aggregator's, so a
+    checkout without it must not silently run on a weaker private validator."""
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "test_support", "receipts.py")
+    if not os.path.isfile(path):
+        raise UsageError("test_support/receipts.py is missing next to run-suite; the receipt stream and its "
+                         "independent aggregator are required (Q00 foundation cannot qualify without them)")
+    sys.dont_write_bytecode = True  # never drop __pycache__ into a helper-owned directory
+    spec = importlib.util.spec_from_file_location("ffw_receipts", path)
+    if spec is None or spec.loader is None:
+        raise UsageError("cannot load %s" % path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["ffw_receipts"] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as exc:  # a broken helper must be loud, not a degraded run
+        raise UsageError("test_support/receipts.py failed to import: %r" % (exc,))
+    missing = [n for n in _RECEIPTS_NEEDED if not hasattr(mod, n)]
+    if missing:
+        raise UsageError("test_support/receipts.py lacks required API: %s" % ", ".join(missing))
+    digest = sha256_file(path, cached=False)
+    if digest is None:
+        raise UsageError("cannot digest %s" % path)
+    return mod, digest
+
+
+_DIAG: Any = None
+_DIAG_NEEDED = ("DiagnosticSink", "SinkLimits", "RedactionPolicy", "redact_text", "audit_log")
+
+
+def load_diagnostics() -> Tuple[Any, str]:
+    """Load the helper-owned ``test_support/diagnostics.py`` by explicit path (fail closed, like receipts)."""
+    global _DIAG
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "test_support", "diagnostics.py")
+    if not os.path.isfile(path):
+        raise UsageError("test_support/diagnostics.py is missing next to run-suite; the bounded diagnostic sink and "
+                         "the shared redaction patterns are required")
+    digest = sha256_file(path, cached=False)
+    if digest is None:
+        raise UsageError("cannot digest %s" % path)
+    if _DIAG is not None and getattr(_DIAG, "_ffw_sha256", None) == digest:
+        return _DIAG, digest   # one module object per file content, so every user (and every test) sees the same one
+    sys.dont_write_bytecode = True
+    spec = importlib.util.spec_from_file_location("ffw_diagnostics", path)
+    if spec is None or spec.loader is None:
+        raise UsageError("cannot load %s" % path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["ffw_diagnostics"] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as exc:
+        raise UsageError("test_support/diagnostics.py failed to import: %r" % (exc,))
+    missing = [n for n in _DIAG_NEEDED if not hasattr(mod, n)]
+    if missing:
+        raise UsageError("test_support/diagnostics.py lacks required API: %s" % ", ".join(missing))
+    mod._ffw_sha256 = digest
+    _DIAG = mod
+    return mod, digest
+
+
+def diagnostics_module() -> Any:
+    return _DIAG if _DIAG is not None else load_diagnostics()[0]
+
+
+def signal_name(num: int) -> str:
+    try:
+        return signal.Signals(num).name
+    except ValueError:
+        return "SIG%d" % num
+
+
+def clip(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "...[clipped %d chars]" % (len(text) - limit)
+
+
+def clip_obj(obj: Any, max_str: int) -> Any:
+    if isinstance(obj, str):
+        return clip(obj, max_str)
+    if isinstance(obj, dict):
+        return {str(k): clip_obj(v, max_str) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [clip_obj(v, max_str) for v in obj]
+    return obj
+
+
+# --------------------------------------------------------------------------- #
+# redaction (applied to child output *before* it is written, and to every
+# string that enters events / receipts / summaries)
+# --------------------------------------------------------------------------- #
+
+_PEM_BEGIN = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
+_PEM_END = re.compile(r"-----END [A-Z0-9 ]*PRIVATE KEY-----")
+_PEM_BLOCK = re.compile(
+    r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\Z)",
+    re.DOTALL,
+)
+
+
+class Redactor:
+    """Streaming line redactor.
+
+    The patterns are the shared sink's (``diagnostics.redact_text``): one definition of what a secret looks
+    like for events, receipts and child output alike.  This class adds only what a *stream* needs and a string
+    function cannot: PEM private-key state across lines, and the "home directory only in child output" switch.
+    """
+
+    def __init__(self, literals: Sequence[str] = (), scrub_home: bool = True) -> None:
+        diag = diagnostics_module()
+        lits = tuple(sorted({l for l in literals if len(l) >= 4}, key=len, reverse=True))
+        self._policy = diag.RedactionPolicy(literals=lits, scrub_home=scrub_home)
+        self._redact = diag.redact_text
+        self._in_pem = False
+        self.redactions = 0
+
+    def _scrub(self, text: str) -> str:
+        out = self._redact(text, self._policy)
+        if out != text:
+            self.redactions += 1
+        return out
+
+    def redact_line(self, line: str) -> str:
+        if self._in_pem:
+            if _PEM_END.search(line):
+                self._in_pem = False
+            self.redactions += 1
+            return "[REDACTED-PRIVATE-KEY]"
+        if _PEM_BEGIN.search(line):
+            self.redactions += 1
+            if not _PEM_END.search(line):
+                self._in_pem = True
+            return "[REDACTED-PRIVATE-KEY]"
+        return self._scrub(line)
+
+    def redact_text(self, text: str) -> str:
+        text = _PEM_BLOCK.sub("[REDACTED-PRIVATE-KEY]", text)
+        return "\n".join(self._scrub(l) for l in text.split("\n"))
+
+    def redact_obj(self, obj: Any) -> Any:
+        if isinstance(obj, str):
+            return self.redact_text(obj)
+        if isinstance(obj, dict):
+            return {str(k): self.redact_obj(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [self.redact_obj(v) for v in obj]
+        return obj
+
+
+# --------------------------------------------------------------------------- #
+# manifests / registry
+# --------------------------------------------------------------------------- #
+
+@dataclasses.dataclass
+class Case:
+    id: str
+    suite: str
+    manifest: str
+    argv: List[str]
+    cwd: str
+    tiers: List[str]
+    requirements: List[str]
+    timeout_s: float
+    mandatory: bool
+    evidence_class: str
+    env: Dict[str, str]
+    env_inherit: List[str]
+    expect_kind: str
+    expect_oracle: Optional[str]
+    expect_violation: Optional[str]
+    expect_exit_codes: List[int]
+    required_stdout: List[str]
+    requires_exe: List[str]
+    requires_env: List[str]
+    requires_files: List[str]
+    artifacts: List[str]
+    blocked_reason: Optional[str]
+    max_output_bytes: int
+    description: str
+
+
+@dataclasses.dataclass
+class Requirement:
+    id: str
+    text: str
+    tiers: List[str]
+
+
+@dataclasses.dataclass
+class Registry:
+    cases: List[Case]
+    requirements: Dict[str, Requirement]
+    required_all: List[str]
+    required_by_tier: Dict[str, List[str]]
+    manifests: List[Dict[str, str]]
+
+
+_CASE_KEYS = {
+    "id", "argv", "cwd", "tiers", "requirements", "timeout_s", "mandatory",
+    "evidence_class", "env", "env_inherit", "expect", "required_stdout",
+    "requires", "artifacts", "blocked", "max_output_bytes", "description",
+}
+_TOP_KEYS = {"schema", "suite", "description", "requirements", "required_cases", "cases"}
+
+
+def _expand_token(tok: str, manifest_dir: str) -> str:
+    return tok.replace("{python}", sys.executable).replace("{manifest_dir}", manifest_dir)
+
+
+def _parse_case(raw: Any, suite: str, manifest: str, errors: List[str]) -> Optional[Case]:
+    mdir = os.path.dirname(manifest)
+    where = "%s: case" % os.path.basename(manifest)
+    if not isinstance(raw, dict):
+        errors.append("%s is not an object" % where)
+        return None
+    cid = raw.get("id")
+    if not isinstance(cid, str) or not ID_RE.match(cid):
+        errors.append("%s has invalid id %r (want %s)" % (where, cid, ID_RE.pattern))
+        return None
+    where = "%s: case %s" % (os.path.basename(manifest), cid)
+    n_before = len(errors)
+    unknown = sorted(set(raw) - _CASE_KEYS)
+    if unknown:
+        errors.append("%s has unknown keys %s" % (where, unknown))
+
+    argv = raw.get("argv")
+    if not (isinstance(argv, list) and argv and all(isinstance(a, str) and a for a in argv)):
+        errors.append("%s: argv must be a non-empty list of non-empty strings" % where)
+        argv = []
+    argv = [_expand_token(a, mdir) for a in argv]
+
+    cwd_raw = raw.get("cwd", ".")
+    if not isinstance(cwd_raw, str):
+        errors.append("%s: cwd must be a string" % where)
+        cwd_raw = "."
+    cwd = os.path.normpath(os.path.join(mdir, cwd_raw))
+
+    tiers = raw.get("tiers", ["full"])
+    if not (isinstance(tiers, list) and tiers and all(t in TIERS for t in tiers)):
+        errors.append("%s: tiers must be a non-empty subset of %s" % (where, list(TIERS)))
+        tiers = []
+
+    reqs = raw.get("requirements", [])
+    if not (isinstance(reqs, list) and all(isinstance(r, str) and ID_RE.match(r) for r in reqs)):
+        errors.append("%s: requirements must be a list of requirement ids" % where)
+        reqs = []
+
+    timeout_s = raw.get("timeout_s", DEFAULT_CASE_TIMEOUT_S)
+    if isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float)) or not (
+        0 < timeout_s <= MAX_CASE_TIMEOUT_S
+    ):
+        errors.append("%s: timeout_s must be a number in (0, %d]" % (where, int(MAX_CASE_TIMEOUT_S)))
+        timeout_s = DEFAULT_CASE_TIMEOUT_S
+
+    mandatory = raw.get("mandatory", True)
+    if not isinstance(mandatory, bool):
+        errors.append("%s: mandatory must be a boolean" % where)
+        mandatory = True
+
+    eclass = raw.get("evidence_class", "host-simulation")
+    if eclass not in EVIDENCE_CLASSES:
+        errors.append("%s: evidence_class must be one of %s" % (where, list(EVIDENCE_CLASSES)))
+        eclass = "host-simulation"
+
+    env = raw.get("env", {})
+    if not (isinstance(env, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in env.items())):
+        errors.append("%s: env must map strings to strings" % where)
+        env = {}
+    for k in env:
+        if not ENV_NAME_RE.match(k) or k.startswith(RESERVED_ENV_PREFIX):
+            errors.append("%s: env name %r is invalid or reserved (%s*)" % (where, k, RESERVED_ENV_PREFIX))
+
+    env_inherit = raw.get("env_inherit", [])
+    if not (isinstance(env_inherit, list) and all(isinstance(k, str) and ENV_NAME_RE.match(k) for k in env_inherit)):
+        errors.append("%s: env_inherit must be a list of env var names" % where)
+        env_inherit = []
+
+    expect = raw.get("expect", {"kind": "pass"})
+    exp_kind, exp_oracle, exp_violation, exp_codes = "pass", None, None, [1]
+    if not isinstance(expect, dict) or set(expect) - {"kind", "oracle", "violation", "exit_codes"}:
+        errors.append("%s: expect must be an object with kind/oracle/violation/exit_codes" % where)
+    else:
+        exp_kind = expect.get("kind", "pass")
+        if exp_kind not in ("pass", "fail"):
+            errors.append("%s: expect.kind must be 'pass' or 'fail'" % where)
+            exp_kind = "pass"
+        if exp_kind == "fail":
+            # A canary names the exact defect it plants: which oracle must fire AND which violation
+            # kind it must report.  An oracle that merely failed, or never finished, proves nothing.
+            exp_oracle = expect.get("oracle")
+            if not (isinstance(exp_oracle, str) and exp_oracle):
+                errors.append("%s: a known-defect canary must name expect.oracle" % where)
+                exp_oracle = None
+            exp_violation = expect.get("violation")
+            if not (isinstance(exp_violation, str) and exp_violation):
+                errors.append("%s: a known-defect canary must name expect.violation (the violation kind)" % where)
+                exp_violation = None
+            exp_codes = expect.get("exit_codes", [1])
+            if not (isinstance(exp_codes, list) and exp_codes and all(
+                isinstance(c, int) and not isinstance(c, bool) and 0 <= c <= 255 for c in exp_codes
+            )):
+                errors.append("%s: expect.exit_codes must be a non-empty list of 0..255" % where)
+                exp_codes = [1]
+        elif "oracle" in expect or "violation" in expect or "exit_codes" in expect:
+            errors.append("%s: expect.oracle/violation/exit_codes only apply to kind 'fail'" % where)
+
+    req_stdout = raw.get("required_stdout", [])
+    if not (isinstance(req_stdout, list) and all(isinstance(p, str) for p in req_stdout)):
+        errors.append("%s: required_stdout must be a list of regexes" % where)
+        req_stdout = []
+    for pat in req_stdout:
+        try:
+            re.compile(pat)
+        except re.error as exc:
+            errors.append("%s: bad required_stdout regex %r: %s" % (where, pat, exc))
+
+    requires = raw.get("requires", {})
+    r_exe: List[str] = []
+    r_env: List[str] = []
+    r_files: List[str] = []
+    if not isinstance(requires, dict) or set(requires) - {"executables", "env", "files"}:
+        errors.append("%s: requires must be an object with executables/env/files" % where)
+    else:
+        r_exe = requires.get("executables", [])
+        r_env = requires.get("env", [])
+        r_files = requires.get("files", [])
+        for label, val in (("executables", r_exe), ("env", r_env), ("files", r_files)):
+            if not (isinstance(val, list) and all(isinstance(v, str) and v for v in val)):
+                errors.append("%s: requires.%s must be a list of strings" % (where, label))
+                if label == "executables":
+                    r_exe = []
+                elif label == "env":
+                    r_env = []
+                else:
+                    r_files = []
+        r_files = [os.path.normpath(os.path.join(mdir, f)) for f in r_files]
+
+    arts = raw.get("artifacts", [])
+    if not (isinstance(arts, list) and all(isinstance(a, str) and a for a in arts)):
+        errors.append("%s: artifacts must be a list of relative paths" % where)
+        arts = []
+    arts = [os.path.normpath(os.path.join(mdir, a)) for a in arts]
+
+    blocked = raw.get("blocked")
+    if blocked is not None and not (isinstance(blocked, str) and blocked):
+        errors.append("%s: blocked must be a non-empty reason string" % where)
+        blocked = None
+
+    cap = raw.get("max_output_bytes", DEFAULT_OUTPUT_CAP)
+    if isinstance(cap, bool) or not isinstance(cap, int) or not 1024 <= cap <= HARD_OUTPUT_CAP:
+        errors.append("%s: max_output_bytes must be an integer in [1024, %d]" % (where, HARD_OUTPUT_CAP))
+        cap = DEFAULT_OUTPUT_CAP
+
+    desc = raw.get("description", "")
+    if not isinstance(desc, str):
+        errors.append("%s: description must be a string" % where)
+        desc = ""
+
+    if len(errors) > n_before:
+        return None
+    return Case(
+        id=cid, suite=suite, manifest=manifest, argv=argv, cwd=cwd, tiers=list(tiers),
+        requirements=list(reqs), timeout_s=float(timeout_s), mandatory=mandatory,
+        evidence_class=eclass, env=dict(env), env_inherit=list(env_inherit),
+        expect_kind=exp_kind, expect_oracle=exp_oracle, expect_violation=exp_violation,
+        expect_exit_codes=list(exp_codes),
+        required_stdout=list(req_stdout), requires_exe=list(r_exe),
+        requires_env=list(r_env), requires_files=list(r_files), artifacts=list(arts),
+        blocked_reason=blocked, max_output_bytes=cap, description=desc,
+    )
+
+
+def discover_manifests(files: Sequence[str], dirs: Sequence[str]) -> List[str]:
+    found: Dict[str, None] = {}
+    for f in files:
+        p = os.path.realpath(f)
+        if not os.path.isfile(p):
+            raise UsageError("manifest not found: %s" % f)
+        found[p] = None
+    for d in dirs:
+        root = os.path.realpath(d)
+        if not os.path.isdir(root):
+            raise UsageError("manifest dir not found: %s" % d)
+        hits = 0
+        for cur, subdirs, names in os.walk(root):
+            subdirs.sort()
+            for name in sorted(names):
+                if name.endswith(".suite.json"):
+                    found[os.path.join(cur, name)] = None
+                    hits += 1
+        if hits == 0:
+            raise UsageError("no *.suite.json under %s (an empty registry must not pass silently)" % d)
+    if not found:
+        raise UsageError("no manifests given; use --manifest or --manifest-dir")
+    return sorted(found)
+
+
+def load_registry(files: Sequence[str], dirs: Sequence[str]) -> Registry:
+    errors: List[str] = []
+    cases: List[Case] = []
+    reqs: Dict[str, Requirement] = {}
+    required_all: List[str] = []
+    required_by_tier: Dict[str, List[str]] = {t: [] for t in TIERS}
+    manifests: List[Dict[str, str]] = []
+    seen_ids: Dict[str, str] = {}
+
+    for path in discover_manifests(files, dirs):
+        try:
+            size = os.stat(path).st_size
+            if size > MAX_MANIFEST_BYTES:
+                errors.append("%s: manifest larger than %d bytes" % (path, MAX_MANIFEST_BYTES))
+                continue
+            with open(path, "rb") as fh:
+                blob = fh.read()
+            doc = json.loads(blob.decode("utf-8"))
+        except (OSError, ValueError) as exc:
+            errors.append("%s: cannot load manifest: %s" % (path, exc))
+            continue
+        if not isinstance(doc, dict) or doc.get("schema") != SUITE_SCHEMA:
+            errors.append("%s: schema must be %r" % (path, SUITE_SCHEMA))
+            continue
+        extra = sorted(set(doc) - _TOP_KEYS)
+        if extra:
+            errors.append("%s: unknown top-level keys %s" % (path, extra))
+        suite = doc.get("suite")
+        if not (isinstance(suite, str) and ID_RE.match(suite)):
+            errors.append("%s: suite must be an id string" % path)
+            suite = "unnamed"
+        manifests.append({"path": path, "suite": suite, "sha256": sha256_bytes(blob)})
+
+        raw_reqs = doc.get("requirements", {})
+        if not isinstance(raw_reqs, dict):
+            errors.append("%s: requirements must be an object" % path)
+            raw_reqs = {}
+        for rid, rv in raw_reqs.items():
+            if not ID_RE.match(rid):
+                errors.append("%s: invalid requirement id %r" % (path, rid))
+                continue
+            if isinstance(rv, str):
+                text, rtiers = rv, list(TIERS)
+            elif isinstance(rv, dict) and set(rv) <= {"text", "tiers"} and isinstance(rv.get("text"), str):
+                text, rtiers = rv["text"], rv.get("tiers", list(TIERS))
+                if not (isinstance(rtiers, list) and rtiers and all(t in TIERS for t in rtiers)):
+                    errors.append("%s: requirement %s has bad tiers" % (path, rid))
+                    continue
+            else:
+                errors.append("%s: requirement %s must be a string or {text, tiers}" % (path, rid))
+                continue
+            prev = reqs.get(rid)
+            if prev and (prev.text != text or prev.tiers != rtiers):
+                errors.append("%s: requirement %s conflicts with an earlier definition" % (path, rid))
+            reqs[rid] = Requirement(rid, text, list(rtiers))
+
+        rc = doc.get("required_cases", [])
+        if isinstance(rc, list) and all(isinstance(x, str) and ID_RE.match(x) for x in rc):
+            required_all.extend(rc)
+        elif isinstance(rc, dict) and all(
+            k in TIERS and isinstance(v, list) and all(isinstance(x, str) and ID_RE.match(x) for x in v)
+            for k, v in rc.items()
+        ):
+            for k, v in rc.items():
+                required_by_tier[k].extend(v)
+        else:
+            errors.append("%s: required_cases must be a list of ids or {tier: [ids]}" % path)
+
+        raw_cases = doc.get("cases", [])
+        if not isinstance(raw_cases, list):
+            errors.append("%s: cases must be a list" % path)
+            raw_cases = []
+        for raw in raw_cases:
+            case = _parse_case(raw, suite, path, errors)
+            if case is None:
+                continue
+            if case.id in seen_ids:
+                errors.append(
+                    "duplicate case id %s (in %s and %s); ids are stable and global"
+                    % (case.id, seen_ids[case.id], path)
+                )
+                continue
+            seen_ids[case.id] = path
+            cases.append(case)
+
+    known = set(reqs)
+    for case in cases:
+        for rid in case.requirements:
+            if rid not in known:
+                errors.append(
+                    "case %s references undefined requirement %s (load the manifest that defines it)"
+                    % (case.id, rid)
+                )
+    if errors:
+        shown = errors[:20]
+        more = "" if len(errors) <= 20 else "\n  ... and %d more" % (len(errors) - 20)
+        raise UsageError("manifest errors:\n  " + "\n  ".join(shown) + more)
+    return Registry(cases, reqs, required_all, required_by_tier, manifests)
+
+
+# --------------------------------------------------------------------------- #
+# selection and seeds
+# --------------------------------------------------------------------------- #
+
+@dataclasses.dataclass
+class Planned:
+    case: Optional[Case]               # None for a synthetic (missing mandatory) entry
+    synthetic_id: Optional[str] = None
+    synthetic_reason: Optional[str] = None
+    synthetic_detail: str = ""
+
+
+def select_cases(registry: Registry, tier: str, only: Sequence[str]) -> Tuple[List[Planned], int, bool]:
+    """Return (planned entries, deselected count, partial_selection)."""
+    by_id = {c.id: c for c in registry.cases}
+    partial = bool(only)
+    if partial:
+        planned_cases: List[Case] = []
+        for cid in only:
+            if cid not in by_id:
+                raise UsageError("--case %s is not defined in the loaded manifests" % cid)
+            if tier not in by_id[cid].tiers:
+                raise UsageError("--case %s is not in tier %s (tiers: %s)" % (cid, tier, by_id[cid].tiers))
+            if by_id[cid] not in planned_cases:
+                planned_cases.append(by_id[cid])
+        deselected = len(registry.cases) - len(planned_cases)
+        return [Planned(c) for c in planned_cases], deselected, True
+
+    selected = [c for c in registry.cases if tier in c.tiers]
+    entries = [Planned(c) for c in selected]
+    required = list(dict.fromkeys(registry.required_all + registry.required_by_tier.get(tier, [])))
+    chosen = {c.id for c in selected}
+    for rid in required:
+        if rid in chosen:
+            continue
+        if rid in by_id:
+            entries.append(Planned(None, rid, "required_case_not_in_tier",
+                                   "defined with tiers %s but required in tier %s" % (by_id[rid].tiers, tier)))
+        else:
+            entries.append(Planned(None, rid, "missing_mandatory_case", "required but defined in no loaded manifest"))
+    return entries, len(registry.cases) - len(selected), False
+
+
+# --------------------------------------------------------------------------- #
+# event sink (bounded, exposes loss, never blocks)
+# --------------------------------------------------------------------------- #
+
+def make_event_sink(diag: Any, run_dir: str, run_id: str, t0_ns: int, planned: int,
+                    event_log_bytes: Optional[int], literals: Sequence[str]) -> Any:
+    """The run's event log: the shared bounded, nonblocking, redacting, closure-checked ``DiagnosticSink``.
+
+    Kept as a module-level factory so tests can substitute a sink over an injected-fault target.  The critical
+    reserve scales with the plan (one critical ``case_end`` per case plus run bookkeeping), so critical events
+    are bounded by construction and never compete with non-critical ones for the same bytes."""
+    reserve = max(64 * 1024, (planned + 16) * 2048)
+    max_file = event_log_bytes if event_log_bytes is not None else reserve + 8 * 1024 * 1024
+    try:
+        limits = diag.SinkLimits(max_file_bytes=max_file, critical_reserve_bytes=reserve)
+    except ValueError as exc:
+        raise UsageError("--event-log-bytes %d cannot hold the critical events of %d planned cases "
+                         "(need at least %d): %s" % (max_file, planned, reserve + 16 * 1024, exc))
+    policy = diag.RedactionPolicy(literals=tuple(l for l in literals if len(l) >= 4), scrub_home=False)
+    try:
+        return diag.DiagnosticSink.to_file(
+            os.path.join(run_dir, "events.jsonl"), run_id=run_id, limits=limits, redaction=policy,
+            clock_ns=lambda: time.monotonic_ns() - t0_ns)
+    except OSError as exc:
+        raise UsageError("cannot create the event log in %s: %s" % (run_dir, exc))
+
+
+# --------------------------------------------------------------------------- #
+# bounded output capture (never blocks the child)
+# --------------------------------------------------------------------------- #
+
+class Capture(threading.Thread):
+    def __init__(self, fd: int, log_path: str, cap_bytes: int, redactor: Redactor,
+                 markers: Sequence[str]) -> None:
+        super().__init__(daemon=True)
+        self.fd = fd
+        self.log_path = log_path
+        self.cap = cap_bytes
+        self.redactor = redactor
+        self.markers = [re.compile(m) for m in markers]
+        self.marker_hit = [False] * len(self.markers)
+        self.stop_event = threading.Event()
+        self.bytes_seen = 0
+        self.bytes_kept = 0
+        self.bytes_dropped = 0
+        self.lines = 0
+        self.lines_dropped = 0
+        self.overlong_lines = 0
+        self.binary_lines = 0
+        self.truncated = False
+        self.write_error: Optional[str] = None
+        self.annotation_error: Optional[str] = None
+        self.events = 0            # lines that reached the log file (incl. runner annotations)
+        self.dropped_events = 0    # lines that were counted but not stored (cap / write failure)
+        self.eof = False
+        self.tail: "collections.deque[str]" = collections.deque(maxlen=MAX_TAIL_LINES)
+        self._log: Optional[int] = None
+
+    def annotate(self, text: str) -> int:
+        """Append a runner-authored line after the capture thread has finished.
+
+        It bypasses the output cap (it is the classification evidence).  Returns the
+        line's sequence index, which is what ``first_causal_event.log_seq`` points at;
+        the index counts dropped lines too, so it stays valid when the log was capped."""
+        seq = self.events + self.dropped_events
+        data = (text.replace("\n", " ").replace("\r", " ") + "\n").encode("utf-8", "replace")
+        try:
+            fd = os.open(self.log_path, os.O_WRONLY | os.O_APPEND)
+        except OSError as exc:
+            self.annotation_error = "open:" + errno.errorcode.get(exc.errno or 0, str(exc.errno))
+            self.dropped_events += 1
+            return seq
+        try:
+            if os.write(fd, data) == len(data):
+                self.events += 1
+                self.bytes_kept += len(data)
+            else:
+                self.annotation_error = "short_write"
+                self.dropped_events += 1
+        except OSError as exc:
+            self.annotation_error = errno.errorcode.get(exc.errno or 0, str(exc.errno))
+            self.dropped_events += 1
+        finally:
+            os.close(fd)
+        return seq
+
+    @property
+    def lost(self) -> bool:
+        """True when evidence for this attempt could not be stored (receipts: critical_lost)."""
+        return self.write_error is not None or self.annotation_error is not None
+
+    def _open_log(self) -> None:
+        try:
+            self._log = os.open(self.log_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except OSError as exc:
+            self.write_error = "open:" + errno.errorcode.get(exc.errno or 0, str(exc.errno))
+
+    def _write(self, data: bytes) -> bool:
+        if self._log is None or self.write_error:
+            return False
+        try:
+            if os.write(self._log, data) != len(data):
+                self.write_error = "short_write"
+                return False
+            return True
+        except OSError as exc:
+            self.write_error = errno.errorcode.get(exc.errno or 0, str(exc.errno))
+            return False
+
+    def _line(self, raw: bytes, overlong: bool = False) -> None:
+        self.lines += 1
+        text = raw.decode("utf-8", "replace")
+        printable = sum(1 for ch in text if ch.isprintable() or ch in "\t\r")
+        binary = b"\x00" in raw or (len(text) > 0 and printable / len(text) < 0.7)
+        if not binary:
+            for i, pat in enumerate(self.markers):
+                if not self.marker_hit[i] and pat.search(text):
+                    self.marker_hit[i] = True
+            out = self.redactor.redact_line(text)
+        else:
+            self.binary_lines += 1
+            out = "[binary payload %d bytes redacted]" % len(raw)
+        if overlong:
+            self.overlong_lines += 1
+            out += " [line truncated]"
+        self.tail.append(out[:400])
+        data = (out + "\n").encode("utf-8", "replace")
+        if self.bytes_kept + len(data) > self.cap:
+            if not self.truncated:
+                self.truncated = True
+                marker = b"[run-suite: output log truncated at cap; later output dropped and counted]\n"
+                if self._write(marker):
+                    self.events += 1
+            self.bytes_dropped += len(data)
+            self.lines_dropped += 1
+            self.dropped_events += 1
+            return
+        if self._write(data):
+            self.bytes_kept += len(data)
+            self.events += 1
+        else:
+            self.bytes_dropped += len(data)
+            self.lines_dropped += 1
+            self.dropped_events += 1
+
+    def run(self) -> None:
+        self._open_log()
+        buf = b""
+        skipping = False
+        try:
+            while True:
+                ready, _, _ = select.select([self.fd], [], [], 0.1)
+                if not ready:
+                    if self.stop_event.is_set():
+                        break
+                    continue
+                try:
+                    chunk = os.read(self.fd, 65536)
+                except InterruptedError:
+                    continue
+                except OSError:
+                    break
+                if not chunk:
+                    self.eof = True
+                    break
+                self.bytes_seen += len(chunk)
+                if skipping:
+                    nl = chunk.find(b"\n")
+                    if nl < 0:
+                        self.bytes_dropped += len(chunk)
+                        continue
+                    self.bytes_dropped += nl + 1
+                    chunk = chunk[nl + 1:]
+                    skipping = False
+                buf += chunk
+                while True:
+                    nl = buf.find(b"\n")
+                    if nl < 0:
+                        break
+                    line, buf = buf[:nl], buf[nl + 1:]
+                    if len(line) > MAX_LINE_BYTES:
+                        self.bytes_dropped += len(line) - MAX_LINE_BYTES
+                        line = line[:MAX_LINE_BYTES]
+                        self._line(line, overlong=True)
+                    else:
+                        self._line(line)
+                if len(buf) > MAX_LINE_BYTES:
+                    self._line(buf[:MAX_LINE_BYTES], overlong=True)
+                    self.bytes_dropped += len(buf) - MAX_LINE_BYTES
+                    buf = b""
+                    skipping = True
+            if buf:
+                self._line(buf)  # unterminated final line (child died mid-write)
+        finally:
+            if self._log is not None:
+                try:
+                    os.close(self._log)
+                except OSError:
+                    pass
+
+    def stats(self) -> Dict[str, Any]:
+        return {
+            "path": self.log_path,
+            "bytes_seen": self.bytes_seen,
+            "bytes_kept": self.bytes_kept,
+            "bytes_dropped": self.bytes_dropped,
+            "lines": self.lines,
+            "lines_dropped": self.lines_dropped,
+            "overlong_lines": self.overlong_lines,
+            "binary_lines": self.binary_lines,
+            "truncated": self.truncated or self.overlong_lines > 0,
+            "write_error": self.write_error,
+            "annotation_error": self.annotation_error,
+            "events": self.events,
+            "dropped_events": self.dropped_events,
+            "cap_bytes": self.cap,
+        }
+
+
+# --------------------------------------------------------------------------- #
+# process-group control
+# --------------------------------------------------------------------------- #
+
+def kill_group(pgid: int, sig: int) -> None:
+    try:
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def wait_group_gone(pgid: int, seconds: float) -> bool:
+    end = time.monotonic() + seconds
+    while True:
+        if not group_alive(pgid):
+            return True
+        if time.monotonic() >= end:
+            return False
+        time.sleep(0.02)
+
+
+def terminate_tree(proc: "subprocess.Popen[bytes]", pgid: int, grace_s: float,
+                   hard: threading.Event) -> bool:
+    """SIGTERM -> grace -> SIGKILL on the whole group.  True if the group is gone."""
+    kill_group(pgid, signal.SIGTERM)
+    deadline = time.monotonic() + grace_s
+    while True:
+        proc.poll()
+        if proc.returncode is not None and not group_alive(pgid):
+            return True
+        if hard.is_set() or time.monotonic() >= deadline:
+            break
+        time.sleep(0.02)
+    kill_group(pgid, signal.SIGKILL)
+    try:
+        proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        pass
+    return wait_group_gone(pgid, 2.0) and proc.poll() is not None
+
+
+# --------------------------------------------------------------------------- #
+# child result receipt
+# --------------------------------------------------------------------------- #
+
+def _canon(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _bound_json(value: Any, redactor: Redactor) -> Any:
+    """Redact a child-supplied JSON value and keep it small; stays JSON."""
+    value = clip_obj(redactor.redact_obj(value), 1024)
+    if len(_canon(value)) > 4096:
+        return clip(_canon(value), 4096)
+    return value
+
+
+def read_case_result(path: str, run_id: str, case_id: str, nonce: str, redactor: Redactor,
+                     oracle_kinds: Sequence[str]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Return (sanitised result, error reason).  Exactly one is None.
+
+    Self-contradictory receipts are rejected here (``result_invalid``) rather than
+    interpreted: a pass must have zero mismatches, a fail at least one, and a fail
+    must say what it expected and observed (and the two must differ)."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except FileNotFoundError:
+        return None, "result_missing"
+    except OSError:
+        return None, "result_invalid"
+    try:
+        blob = os.read(fd, MAX_RESULT_BYTES + 1)
+    except OSError:
+        return None, "result_invalid"
+    finally:
+        os.close(fd)
+    if len(blob) > MAX_RESULT_BYTES:
+        return None, "result_oversize"
+    try:
+        doc = json.loads(blob.decode("utf-8"))
+    except ValueError:
+        return None, "result_invalid"
+    if not isinstance(doc, dict) or doc.get("schema") != RESULT_SCHEMA:
+        return None, "result_invalid"
+    if doc.get("run_id") != run_id or doc.get("case_id") != case_id or doc.get("nonce") != nonce:
+        return None, "result_stale"
+    verdict = doc.get("verdict")
+    if verdict not in ("pass", "fail", "incomplete"):
+        return None, "result_invalid"
+    oracle = doc.get("oracle")
+    if not (isinstance(oracle, str) and oracle and len(oracle) <= 128):
+        return None, "result_invalid"
+    if doc.get("oracle_kind") not in oracle_kinds:
+        return None, "result_invalid"
+    if not isinstance(doc.get("independent"), bool) or not isinstance(doc.get("finalized"), bool):
+        return None, "result_invalid"
+    checks, mismatches = doc.get("checks"), doc.get("mismatches")
+    for n in (checks, mismatches):
+        if isinstance(n, bool) or not isinstance(n, int) or n < 0:
+            return None, "result_invalid"
+    reasons = doc.get("incomplete_reasons")
+    if not (isinstance(reasons, list) and len(reasons) <= 16
+            and all(isinstance(x, str) and x for x in reasons)):
+        return None, "result_invalid"
+    kinds = doc.get("violation_kinds")
+    if not (isinstance(kinds, dict) and len(kinds) <= 32 and all(
+            isinstance(k, str) and k and isinstance(v, int) and not isinstance(v, bool) and v >= 1
+            for k, v in kinds.items())):
+        return None, "result_invalid"
+    # The receipt invariant: mismatches are exactly the sum of the typed violation counts.
+    if sum(kinds.values()) != mismatches:
+        return None, "result_invalid"
+    if verdict == "pass" and (mismatches != 0 or kinds):
+        return None, "result_invalid"
+    if verdict == "fail" and (mismatches < 1 or not kinds):
+        return None, "result_invalid"
+    # An "incomplete" verdict must say why; it never carries manufactured mismatches.
+    if verdict == "incomplete" and not (reasons or doc["finalized"] is False):
+        return None, "result_invalid"
+    if verdict == "incomplete" and mismatches != 0:
+        return None, "result_invalid"
+
+    expected = _bound_json(doc.get("expected"), redactor)
+    observed = _bound_json(doc.get("observed"), redactor)
+    if verdict == "fail":
+        if doc.get("expected") is None or doc.get("observed") is None or _canon(expected) == _canon(observed):
+            return None, "result_invalid"  # a failure must say what differed
+
+    event = doc.get("first_causal_event")
+    if event is not None and not isinstance(event, str):
+        event = _canon(event)
+    counters = doc.get("counters", {})
+    if not (isinstance(counters, dict) and all(isinstance(k, str) and isinstance(v, int)
+                                               and not isinstance(v, bool) for k, v in counters.items())):
+        counters = {}
+    return {
+        "verdict": verdict,
+        "oracle": redactor.redact_text(oracle),
+        "oracle_kind": doc["oracle_kind"],
+        "independent": doc["independent"],
+        "finalized": doc["finalized"],
+        "incomplete_reasons": [clip(redactor.redact_text(x), 200) for x in reasons],
+        "violation_kinds": {clip(redactor.redact_text(k), 128): v for k, v in sorted(kinds.items())},
+        "checks": checks,
+        "mismatches": mismatches,
+        "expected": expected,
+        "observed": observed,
+        "first_causal_event": clip(redactor.redact_text(event), 2048) if event else None,
+        "counters": dict(list(counters.items())[:64]),
+    }, None
+
+
+# --------------------------------------------------------------------------- #
+# classification (pure; unit-testable)
+# --------------------------------------------------------------------------- #
+
+@dataclasses.dataclass
+class Facts:
+    rc: Optional[int]
+    kill_reason: Optional[str]        # timeout | global_timeout | cancelled
+    signal_name: Optional[str]
+    leaked: bool
+    result: Optional[Dict[str, Any]]
+    result_error: Optional[str]
+    markers_missing: List[str]
+
+
+def _oracle_unfinished(r: Dict[str, Any]) -> bool:
+    """True when the oracle did not finish its job, whatever else it reports (receipts.py agrees)."""
+    return r["verdict"] == "incomplete" or r["finalized"] is False or bool(r["incomplete_reasons"])
+
+
+def classify(case: Case, f: Facts) -> Tuple[str, str, str]:
+    """Return (status, reason, detail).  Only 'pass' or 'fail' occur here.
+
+    Evidence that is missing or unfinished is never converted into a defect: an
+    incomplete oracle gets its own reason and can satisfy neither an ordinary case
+    nor an expected-failure canary, even if it carries the expected oracle name."""
+    canary = case.expect_kind == "fail"
+    if f.kill_reason:
+        if canary:
+            return "fail", "canary_wrong_failure_mode", f.kill_reason
+        return "fail", f.kill_reason, ""
+    if f.signal_name:
+        if canary:
+            return "fail", "canary_wrong_failure_mode", "crashed:" + f.signal_name
+        return "fail", "crashed", f.signal_name
+
+    if canary:
+        if f.result_error:
+            return "fail", "canary_no_result", f.result_error
+        assert f.result is not None
+        r = f.result
+        if _oracle_unfinished(r):
+            return "fail", "canary_oracle_incomplete", "oracle %s: %s" % (
+                r["oracle"], ",".join(r["incomplete_reasons"]) or "not finalized")
+        if r["verdict"] == "pass":
+            return "fail", "canary_not_detected", "subject passed; planted defect went undetected"
+        if r["oracle"] != case.expect_oracle:
+            return "fail", "canary_wrong_oracle", "fired %r, expected %r" % (r["oracle"], case.expect_oracle)
+        if case.expect_violation not in r["violation_kinds"]:
+            return "fail", "canary_wrong_violation", "violation kinds %s, expected %r" % (
+                sorted(r["violation_kinds"]), case.expect_violation)
+        if f.rc not in case.expect_exit_codes:
+            return "fail", "canary_unexpected_exit", "exit %s not in %s" % (f.rc, case.expect_exit_codes)
+        if not r["independent"]:
+            return "fail", "oracle_not_independent", "the detecting oracle declares independent=false"
+        if r["checks"] < 1:
+            return "fail", "vacuous_pass", "the detecting oracle reports zero checks"
+        if f.leaked:
+            return "fail", "leaked_process", "background process survived the case"
+        return "pass", "canary_detected", "%s/%s" % (case.expect_oracle, case.expect_violation)
+
+    if f.result and _oracle_unfinished(f.result):
+        # Typed and distinct, whatever the exit code says (an incomplete oracle usually exits non-zero).
+        return "fail", "oracle_incomplete", "oracle %s: %s" % (
+            f.result["oracle"], ",".join(f.result["incomplete_reasons"]) or "not finalized")
+    if f.rc != 0:
+        if f.result and f.result["verdict"] == "fail":
+            return "fail", "oracle_failed", f.result["oracle"] or ""
+        return "fail", "nonzero_exit", str(f.rc)
+    if f.result_error:
+        return "fail", f.result_error, ""
+    assert f.result is not None
+    r = f.result
+    if r["verdict"] != "pass":
+        return "fail", "oracle_failed", "exit 0 but receipt verdict is fail (%s)" % (r["oracle"],)
+    if not r["independent"]:
+        return "fail", "oracle_not_independent", "oracle %s declares independent=false" % (r["oracle"],)
+    if r["checks"] < 1:
+        return "fail", "vacuous_pass", "receipt reports zero checks"
+    if f.markers_missing:
+        return "fail", "required_marker_missing", "; ".join(f.markers_missing)
+    if f.leaked:
+        return "fail", "leaked_process", "background process survived the case"
+    return "pass", "ok", ""
+
+
+# --------------------------------------------------------------------------- #
+# run context + case execution
+# --------------------------------------------------------------------------- #
+
+@dataclasses.dataclass
+class RunContext:
+    run_id: str
+    run_dir: str
+    tier: str
+    run_seed: int
+    redactor_literals: List[str]
+    events: Any
+    cancel: threading.Event
+    hard_cancel: threading.Event
+    stop: threading.Event                 # fail-fast
+    global_deadline: float
+    kill_grace_s: float
+    retries: int
+    case_timeout_cap_s: float
+    output_cap: int
+    env_allow: List[str]
+    replay_prefix: List[str]
+    rx: Any = None                        # the loaded test_support/receipts.py module
+    t0_ns: int = 0                        # monotonic origin shared by events and receipts
+    # Artifact identities are fixed once, at plan time, before any child can create or change a file.
+    artifact_refs: Dict[str, List[Dict[str, Any]]] = dataclasses.field(default_factory=dict)
+    cancel_signal: List[str] = dataclasses.field(default_factory=list)
+    fail_fast: bool = False
+
+    def stop_if_fail_fast(self) -> None:
+        if self.fail_fast:
+            self.stop.set()
+
+
+def precheck(case: Case, ctx: RunContext) -> Optional[Tuple[str, str]]:
+    """Return (reason, detail) if the case cannot be attempted -> status blocked."""
+    if case.evidence_class in EXTERNAL_CLASSES:
+        return "external_evidence_required", (
+            "evidence class %s needs a separately authorised external receipt; never run or claimed here"
+            % case.evidence_class)
+    if case.blocked_reason:
+        return "declared_blocked", case.blocked_reason
+    if not os.path.isdir(case.cwd):
+        return "missing_cwd", os.path.basename(case.cwd)
+    exe = case.argv[0]
+    if os.sep in exe:
+        path = exe if os.path.isabs(exe) else os.path.join(case.cwd, exe)
+        if not (os.path.isfile(path) and os.access(path, os.X_OK)):
+            return "missing_executable", exe
+    elif shutil.which(exe) is None:
+        return "missing_executable", exe
+    for name in case.requires_exe:
+        if shutil.which(name) is None:
+            return "missing_prerequisite", "executable " + name
+    for name in case.requires_env:
+        if name not in os.environ:
+            return "missing_prerequisite", "env " + name
+    for path in case.requires_files + case.artifacts:
+        if not os.path.exists(path):
+            return "missing_prerequisite", "file " + os.path.basename(path)
+    return None
+
+
+def build_env(case: Case, ctx: RunContext, attempt: int, seed: int, scratch: str,
+              result_path: str, nonce: str) -> Dict[str, str]:
+    env: Dict[str, str] = {}
+    for name in list(DEFAULT_ENV_INHERIT) + list(ctx.env_allow) + list(case.env_inherit):
+        if name in os.environ:
+            env[name] = os.environ[name]
+    if "HOME" not in case.env_inherit:
+        env["HOME"] = os.path.join(scratch, "home")
+    env["TMPDIR"] = os.path.join(scratch, "tmp")
+    env["PYTHONHASHSEED"] = str(seed % (2**32 - 1))
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHONUTF8"] = "1"
+    env.update(case.env)
+    env.update({
+        "FFW_SUITE_PROTOCOL": "1",
+        "FFW_RUN_ID": ctx.run_id,
+        "FFW_CASE_ID": case.id,
+        "FFW_ATTEMPT": str(attempt),
+        "FFW_SEED": str(seed),
+        "FFW_RUN_SEED": str(ctx.run_seed),
+        "FFW_CASE_DIR": scratch,
+        "FFW_RESULT_PATH": result_path,
+        "FFW_RESULT_NONCE": nonce,
+        "FFW_TIMEOUT_S": repr(min(case.timeout_s, ctx.case_timeout_cap_s)),
+        "FFW_NETWORK": "loopback-only",
+    })
+    return env
+
+
+def artifact_identities(case: Case) -> List[Dict[str, Any]]:
+    seen: Dict[str, None] = {}
+    candidates = list(case.artifacts)
+    for tok in case.argv:
+        path = tok if os.path.isabs(tok) else os.path.join(case.cwd, tok)
+        if os.path.isfile(path):
+            candidates.append(os.path.normpath(path))
+    if shutil.which(case.argv[0]):
+        candidates.append(shutil.which(case.argv[0]) or "")
+    out = []
+    for path in candidates:
+        if not path or path in seen:
+            continue
+        seen[path] = None
+        out.append({"path": path, "sha256": sha256_file(path)})
+    return out
+
+
+def run_attempt(ctx: RunContext, case: Case, attempt: int, seed: int) -> Dict[str, Any]:
+    corr = "%s/%s/%d" % (ctx.run_id, case.id, attempt)
+    redactor = Redactor(ctx.redactor_literals)
+    scratch = os.path.join(ctx.run_dir, "scratch", case.id, "a%d" % attempt)
+    os.makedirs(os.path.join(scratch, "tmp"))
+    os.makedirs(os.path.join(scratch, "home"))
+    result_path = os.path.join(scratch, "result.json")
+    log_path = os.path.join(ctx.run_dir, "logs", "%s.a%d.log" % (case.id, attempt))
+    nonce = secrets.token_hex(16)
+    timeout_s = min(case.timeout_s, ctx.case_timeout_cap_s)
+    cap = min(case.max_output_bytes, ctx.output_cap)
+    rec: Dict[str, Any] = {"attempt": attempt, "seed": seed, "timeout_s": timeout_s, "corr": corr}
+    env = build_env(case, ctx, attempt, seed, scratch, result_path, nonce)
+    ctx.events.emit_event("case_start", case_id=case.id, attempt=attempt, corr=corr, seed=seed, timeout_s=timeout_s)
+
+    t_start = time.monotonic()
+    rec["started_mono_ns"] = time.monotonic_ns() - ctx.t0_ns
+    try:
+        proc = subprocess.Popen(
+            case.argv, cwd=case.cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, start_new_session=True, close_fds=True,
+        )
+    except OSError as exc:
+        rec.update(status="blocked", reason="spawn_failed",
+                   detail=errno.errorcode.get(exc.errno or 0, "OSError"), executed=False)
+        _cleanup_scratch(ctx, scratch, rec)
+        return rec
+
+    rec["executed"] = True
+    pgid = proc.pid
+    assert proc.stdout is not None
+    capture = Capture(proc.stdout.fileno(), log_path, cap, redactor, case.required_stdout)
+    capture.start()
+
+    kill_reason: Optional[str] = None
+    while True:
+        try:
+            proc.wait(timeout=POLL_S)
+            break
+        except subprocess.TimeoutExpired:
+            pass
+        now = time.monotonic()
+        if ctx.cancel.is_set():
+            kill_reason = "cancelled"
+        elif now >= ctx.global_deadline:
+            kill_reason = "global_timeout"
+        elif now - t_start >= timeout_s:
+            kill_reason = "timeout"
+        if kill_reason:
+            break
+
+    group_clear = True
+    leaked = False
+    if kill_reason:
+        group_clear = terminate_tree(proc, pgid, ctx.kill_grace_s, ctx.hard_cancel)
+    elif not wait_group_gone(pgid, 0.25):
+        leaked = True
+        kill_group(pgid, signal.SIGKILL)
+        group_clear = wait_group_gone(pgid, 2.0)
+
+    capture.join(3.0)
+    abandoned = False
+    if capture.is_alive():
+        capture.stop_event.set()
+        capture.join(1.0)
+        abandoned = capture.is_alive()
+    try:
+        proc.stdout.close()
+    except OSError:
+        pass
+    duration_ms = int((time.monotonic() - t_start) * 1000)
+    rec["ended_mono_ns"] = time.monotonic_ns() - ctx.t0_ns
+
+    rc = proc.returncode
+    sig_name = signal_name(-rc) if (rc is not None and rc < 0 and not kill_reason) else None
+    result, rerr = read_case_result(result_path, ctx.run_id, case.id, nonce, redactor, ctx.rx.ORACLE_KINDS)
+    missing = [pat for pat, hit in zip(case.required_stdout, capture.marker_hit) if not hit]
+    facts = Facts(rc, kill_reason, sig_name, leaked, result, rerr, missing)
+    status, reason, detail = classify(case, facts)
+    detail = redactor.redact_text(detail)
+
+    # The runner's own classification goes into the case log as an annotation line, so a
+    # silent child still has an indexable log and first_causal_event.log_seq has a target.
+    from_child = result is not None and reason in (
+        "oracle_failed", "oracle_not_independent", "vacuous_pass", "canary_detected", "canary_not_detected",
+        "canary_wrong_oracle", "canary_wrong_violation", "canary_unexpected_exit", "oracle_incomplete",
+        "canary_oracle_incomplete")
+    cause_kind = "child.oracle" if from_child else "runner." + reason
+    note = "[run-suite] attempt=%d status=%s reason=%s rc=%s signal=%s kill=%s%s" % (
+        attempt, status, reason, rc, sig_name, kill_reason,
+        (" oracle=%s mismatches=%s first_causal_event=%s" % (
+            result["oracle"], result["mismatches"], result["first_causal_event"])) if result else "")
+    log_seq = capture.annotate(redactor.redact_text(note))
+    log_bytes = os.path.getsize(log_path) if os.path.exists(log_path) else 0
+    log_sha = sha256_file(log_path, cached=False) if os.path.exists(log_path) else None
+    rec.update(
+        status=status, reason=reason, detail=detail, rc=rc,
+        signal=sig_name, kill_reason=kill_reason, duration_ms=duration_ms, leaked=leaked,
+        group_clear=group_clear, capture_abandoned=abandoned, log=capture.stats(),
+        result=result, result_error=rerr, markers_missing=missing, cause_kind=cause_kind, log_seq=log_seq,
+        receipt_log={
+            "sha256": log_sha or sha256_bytes(b""), "events": capture.events, "dropped": capture.dropped_events,
+            "bytes": log_bytes, "truncated": bool(capture.truncated or capture.overlong_lines > 0),
+            "critical_lost": bool(capture.lost or abandoned or log_sha is None),
+        },
+    )
+    if status != "pass":
+        rec["tail"] = list(capture.tail)
+    _cleanup_scratch(ctx, scratch, rec)
+    ctx.events.emit_event("case_attempt_end", case_id=case.id, attempt=attempt, corr=corr, status=status,
+                    reason=reason, duration_ms=duration_ms, log_bytes_seen=capture.bytes_seen,
+                    log_bytes_dropped=capture.bytes_dropped)
+    return rec
+
+
+def _cleanup_scratch(ctx: RunContext, scratch: str, rec: Dict[str, Any]) -> None:
+    root = os.path.realpath(os.path.join(ctx.run_dir, "scratch"))
+    target = os.path.realpath(scratch)
+    if os.path.commonpath([root, target]) != root or target == root:
+        rec["cleanup_error"] = "refused: scratch path escaped the run directory"
+        return
+    try:
+        shutil.rmtree(target)
+    except OSError as exc:
+        rec["cleanup_error"] = errno.errorcode.get(exc.errno or 0, "OSError")
+    # prune the per-case parent if now empty (best effort, own directory only)
+    try:
+        os.rmdir(os.path.dirname(target))
+    except OSError:
+        pass
+
+
+def replay_command(ctx: RunContext, case_id: str, run_seed: int) -> str:
+    return " ".join(shlex.quote(p) for p in ctx.replay_prefix + ["--case", case_id, "--seed", str(run_seed)])
+
+
+def process_entry(ctx: RunContext, entry: Planned) -> Dict[str, Any]:
+    if entry.case is None:
+        rec = {
+            "id": entry.synthetic_id, "status": "not_run", "reason": entry.synthetic_reason,
+            "detail": entry.synthetic_detail, "executed": False, "mandatory": True,
+            "evidence_class": None, "requirements": [], "attempts": [], "synthetic": True,
+        }
+        ctx.events.emit_event("case_not_run", critical=True, case_id=entry.synthetic_id, reason=entry.synthetic_reason)
+        return rec
+
+    case = entry.case
+    seed = ctx.rx.derive_case_seed(ctx.run_seed, case.id)
+    base: Dict[str, Any] = {
+        "id": case.id, "suite": case.suite, "mandatory": case.mandatory,
+        "evidence_class": case.evidence_class, "requirements": list(case.requirements),
+        "expect": {"kind": case.expect_kind, "oracle": case.expect_oracle,
+                   "exit_codes": case.expect_exit_codes if case.expect_kind == "fail" else None},
+        "seed": seed, "replay": replay_command(ctx, case.id, ctx.run_seed),
+        "artifacts": ctx.artifact_refs.get(case.id, []), "attempts": [], "executed": False, "flaky": False,
+        "original_failure": None, "causal_chain": [],
+    }
+
+    def finish(status: str, reason: str, detail: str = "", critical_event: str = "case_end") -> Dict[str, Any]:
+        base.update(status=status, reason=reason, detail=detail)
+        ctx.events.emit_event(critical_event, critical=True, case_id=case.id, corr="%s/%s" % (ctx.run_id, case.id),
+                        status=status, reason=reason, attempts=len(base["attempts"]),
+                        replay=base["replay"])
+        return base
+
+    blocked = precheck(case, ctx)
+    if blocked:
+        return finish("blocked", blocked[0], blocked[1], "case_blocked")
+    if ctx.cancel.is_set():
+        return finish("not_run", "cancelled", "run cancelled before this case started")
+    if ctx.stop.is_set():
+        return finish("not_run", "fail_fast", "an earlier case failed under --fail-fast")
+    if time.monotonic() >= ctx.global_deadline:
+        return finish("not_run", "global_timeout", "global deadline passed before this case started")
+
+    first_failure: Optional[Dict[str, Any]] = None
+    for attempt in range(1, ctx.retries + 2):
+        if attempt > 1 and (ctx.cancel.is_set() or time.monotonic() >= ctx.global_deadline):
+            break
+        rec = run_attempt(ctx, case, attempt, seed)
+        base["attempts"].append(rec)
+        if rec.get("executed"):
+            base["executed"] = True
+        if rec["status"] == "blocked":
+            if first_failure is None:
+                return finish("blocked", rec["reason"], rec.get("detail", ""), "case_blocked")
+            break  # a retry that cannot even start never hides the original failure
+        if rec["status"] == "pass":
+            if first_failure is not None:
+                base["flaky"] = True
+                base["original_failure"] = {k: first_failure.get(k) for k in
+                                            ("attempt", "reason", "detail", "rc", "signal", "result")}
+                return _finish_fail(ctx, case, base, first_failure, flaky=True, finish=finish)
+            return finish("pass", rec["reason"], rec.get("detail", ""))
+        if first_failure is None:
+            first_failure = rec
+        if rec["reason"] in ("cancelled", "global_timeout"):
+            break
+        if attempt <= ctx.retries:   # only announce a retry that will really happen
+            ctx.events.emit_event("case_retry", case_id=case.id, attempt=attempt, reason=rec["reason"])
+    assert first_failure is not None
+    base["original_failure"] = {k: first_failure.get(k) for k in
+                                ("attempt", "reason", "detail", "rc", "signal", "result")}
+    return _finish_fail(ctx, case, base, first_failure, flaky=False, finish=finish)
+
+
+def _finish_fail(ctx: RunContext, case: Case, base: Dict[str, Any], first: Dict[str, Any],
+                 flaky: bool, finish: Any) -> Dict[str, Any]:
+    chain = [{"layer": "runner", "reason": first["reason"], "detail": first.get("detail", ""),
+              "rc": first.get("rc"), "signal": first.get("signal")}]
+    res = first.get("result")
+    if res:
+        chain.append({"layer": "child", "oracle": res.get("oracle"), "expected": res.get("expected"),
+                      "observed": res.get("observed"), "first_causal_event": res.get("first_causal_event")})
+    base["causal_chain"] = chain
+    ctx.stop_if_fail_fast()
+    reason = ("flaky_pass_after_failure:" + first["reason"]) if flaky else first["reason"]
+    return finish("fail", reason, first.get("detail", ""))
+
+
+# --------------------------------------------------------------------------- #
+# receipt stream (test_support/receipts.py): the single qualification claim
+# --------------------------------------------------------------------------- #
+
+def artifact_name(path: str) -> str:
+    real = os.path.realpath(path)
+    root = repo_root()
+    name = os.path.relpath(real, root) if (real == root or real.startswith(root + os.sep)) else real
+    if len(name) > 250:
+        name = "ext/%s/%s" % (sha256_bytes(real.encode())[:16], os.path.basename(real)[:200])
+    return name
+
+
+def case_artifact_refs(case: Case) -> List[Dict[str, Any]]:
+    """Digests of what this case runs: script, resolved executable, defining manifest."""
+    idents = artifact_identities(case) + [{"path": case.manifest, "sha256": sha256_file(case.manifest)}]
+    refs: List[Dict[str, Any]] = []
+    seen = set()
+    for ident in idents:
+        if not ident["sha256"]:
+            continue
+        name = artifact_name(ident["path"])
+        if name in seen:
+            continue
+        seen.add(name)
+        refs.append({"name": name, "sha256": ident["sha256"], "size": os.path.getsize(ident["path"])})
+    return refs
+
+
+def build_expected(entries: Sequence[Planned]) -> Dict[str, Dict[str, Any]]:
+    """The registry slice the aggregator judges against (built from the manifests, not from results)."""
+    exp: Dict[str, Dict[str, Any]] = {}
+    for e in entries:
+        if e.case is not None:
+            spec: Dict[str, Any] = {"mandatory": e.case.mandatory, "proof_class": e.case.evidence_class,
+                                    "canary": e.case.expect_kind == "fail"}
+            if spec["canary"]:  # the exact planted defect: which oracle, which violation kind
+                spec["oracle"], spec["violation"] = e.case.expect_oracle, e.case.expect_violation
+            exp[e.case.id] = spec
+        else:  # required but absent from this tier / every manifest: mandatory, no record is ever written
+            exp[e.synthetic_id or "?"] = {"mandatory": True, "proof_class": "host-simulation", "canary": False}
+    return exp
+
+
+def attempt_outcome(rec: Dict[str, Any]) -> str:
+    """Map a runner attempt onto receipts.py's outcome vocabulary."""
+    if rec["status"] in ("pass", "blocked", "not_run"):
+        return rec["status"]
+    kill = rec.get("kill_reason")
+    if kill in ("timeout", "global_timeout"):
+        return "timeout"
+    if kill == "cancelled":
+        return "cancelled"
+    if rec.get("signal"):
+        return "crash"
+    return "fail"
+
+
+def _lost(rec: Dict[str, Any]) -> bool:
+    log = rec.get("receipt_log") or {}
+    return bool(log.get("truncated") or log.get("critical_lost"))
+
+
+def describe_failure(case: Case, rec: Dict[str, Any]) -> Tuple[str, Any, Any]:
+    """(oracle, expected, observed) for a failure record; expected != observed by construction."""
+    reason, res, rc = rec["reason"], rec.get("result"), rec.get("rc")
+    if reason == "oracle_failed" and res and res["verdict"] == "fail":
+        return res["oracle"], res["expected"], res["observed"]
+    ms = rec.get("duration_ms")
+    if reason == "timeout":
+        return "runner.timeout", {"terminates_within_s": rec.get("timeout_s")}, {"killed_after_ms": ms}
+    if reason == "global_timeout":
+        return "runner.global_timeout", {"completes_before_global_deadline": True}, {"killed_after_ms": ms}
+    if reason == "crashed":
+        return "runner.crash", {"terminated_by_signal": None}, {"terminated_by_signal": rec.get("signal")}
+    if reason == "nonzero_exit":
+        return "runner.exit_status", {"exit_code": 0}, {"exit_code": rc}
+    if reason == "leaked_process":
+        return "runner.process_leak", {"live_processes_after_exit": 0}, {"live_processes_after_exit": ">=1"}
+    if reason == "required_marker_missing":
+        return "runner.stdout_markers", {"required": list(case.required_stdout)}, {"missing": rec.get("markers_missing")}
+    if reason == "vacuous_pass":
+        return "runner.vacuous_oracle", {"checks_at_least": 1}, {"checks": res["checks"] if res else None}
+    if reason == "oracle_not_independent":
+        return "runner.oracle_independence", {"independent": True}, {"independent": False}
+    if reason == "oracle_failed":
+        return "runner.oracle_verdict", {"verdict": "pass"}, {"verdict": "fail", "exit_code": rc}
+    if reason == "oracle_incomplete":
+        return ("%s.incomplete" % (res["oracle"] if res else "unknown"), {"oracle_status": "passed"},
+                {"oracle_status": "incomplete", "reasons": res["incomplete_reasons"] if res else None})
+    if reason == "canary_oracle_incomplete":
+        return ("runner.canary", {"oracle_finishes": case.expect_oracle},
+                {"oracle": res["oracle"] if res else None, "incomplete": res["incomplete_reasons"] if res else None})
+    if reason == "canary_wrong_violation":
+        return ("runner.canary", {"violation_kind": case.expect_violation},
+                {"violation_kinds": sorted(res["violation_kinds"]) if res else None})
+    if reason == "canary_not_detected":
+        return "runner.canary", {"oracle_fires": case.expect_oracle}, {"verdict": "pass"}
+    if reason == "canary_wrong_oracle":
+        return "runner.canary", {"oracle": case.expect_oracle}, {"oracle": res["oracle"] if res else None}
+    if reason == "canary_unexpected_exit":
+        return "runner.canary", {"exit_code_in": list(case.expect_exit_codes)}, {"exit_code": rc}
+    if reason == "canary_no_result":
+        return "runner.canary", {"result_receipt": "valid, verdict fail"}, {"result_receipt": rec.get("result_error")}
+    if reason == "canary_wrong_failure_mode":
+        return "runner.canary", {"subject_fails_through": case.expect_oracle}, {"failure_mode": rec.get("detail")}
+    if reason.startswith("result_"):
+        return "runner.result_receipt", {"result_receipt": "valid ffw.case-result.v1"}, {"result_receipt": reason}
+    return "runner." + reason, {"outcome": "pass"}, {"outcome": reason}
+
+
+def case_stream_records(ctx: RunContext, case: Case, base: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """write_case(**kw) payloads for one finished case: one per attempt, or one for a never-launched case."""
+    # A never-launched external-class case is an explicit, typed `blocked` record (origin local, no
+    # `external`): the absence of an authorization is the reason it is blocked.  It is never omitted
+    # and never laundered into `not_run`.
+    seed = base["seed"]
+    argv = ctx.replay_prefix + ["--case", case.id, "--seed", str(ctx.run_seed)]
+    common: Dict[str, Any] = {
+        "case_id": case.id, "proof_class": case.evidence_class, "canary": case.expect_kind == "fail",
+        "origin": "local", "seed": seed,
+        "replay": {"argv": argv, "case_id": case.id, "run_seed": ctx.run_seed, "case_seed": seed},
+    }
+    if not base["attempts"]:
+        reason = clip("%s: %s" % (base["reason"], base.get("detail", "")), 1900)
+        return [dict(common, attempt=1, outcome=base["status"], reason=reason)]
+    refs = [{"name": a["name"], "sha256": a["sha256"]} for a in ctx.artifact_refs[case.id]]
+    out: List[Dict[str, Any]] = []
+    for rec in base["attempts"]:
+        outcome = attempt_outcome(rec)
+        row = dict(common, attempt=rec["attempt"], outcome=outcome)
+        if outcome in ("blocked", "not_run"):
+            row["reason"] = clip("%s: %s" % (rec["reason"], rec.get("detail", "")), 1900)
+            out.append(row)
+            continue
+        row.update(
+            process={"exit_code": rec.get("rc"), "timed_out": rec.get("kill_reason") in ("timeout", "global_timeout")},
+            started_mono_ns=rec["started_mono_ns"], ended_mono_ns=rec["ended_mono_ns"],
+            log=rec["receipt_log"], artifacts=refs)
+        if outcome == "pass":
+            res = rec["result"]
+            # classify() only lets an independent, finalized, complete oracle through, so these are facts.
+            row["oracle"] = {"name": res["oracle"], "kind": res["oracle_kind"], "independent": True,
+                             "checks": res["checks"], "mismatches": res["mismatches"],
+                             "status": "failed" if case.expect_kind == "fail" else "passed",
+                             "finalized": True, "incomplete_reasons": [],
+                             "violation_kinds": dict(res["violation_kinds"])}
+        elif outcome == "cancelled":
+            row["reason"] = clip("run cancelled (%s) while this case was running" % (
+                ",".join(ctx.cancel_signal[:1]) or "signal"), 1900)
+        else:
+            oracle, expected, observed = describe_failure(case, rec)
+            row["failure"] = {"oracle": oracle, "expected": expected, "observed": observed,
+                              "first_causal_event": {"log_seq": rec["log_seq"], "kind": rec["cause_kind"]}}
+        out.append(row)
+    return out
+
+
+def predicted_verdict(base: Dict[str, Any]) -> str:
+    """What receipts.py's aggregator must say about this case, if the runner emitted correctly."""
+    attempts = base.get("attempts", [])
+    if base.get("synthetic"):
+        return "not_run"  # required but defined nowhere: no record exists, the aggregator reports no_receipt
+    if not attempts:
+        return base["status"]
+    outcomes = [attempt_outcome(a) for a in attempts]
+    if any(o == "pass" and _lost(a) for o, a in zip(outcomes, attempts)):
+        return "invalid"  # a pass cannot rest on a truncated or lossy log
+    return next((o for o in outcomes if o != "pass"), "pass")
+
+
+class Stream:
+    """Thin guard around receipts.StreamWriter: I/O failure => poisoned stream => INCOMPLETE, never a crash."""
+
+    def __init__(self, rx: Any, path: str) -> None:
+        self.rx = rx
+        self.path = path
+        self.error: Optional[str] = None
+        self.fp: Any = None
+        self.writer: Any = None
+        self.records = 0
+        try:
+            self.fp = open(path, "xb")
+            self.writer = rx.StreamWriter(self.fp)
+        except OSError as exc:
+            self.error = "open:" + errno.errorcode.get(exc.errno or 0, str(exc.errno))
+
+    def _guard(self, fn: Any, *a: Any, **kw: Any) -> None:
+        if self.writer is None or self.error:
+            return
+        try:
+            fn(*a, **kw)
+        except OSError as exc:
+            self.error = errno.errorcode.get(exc.errno or 0, str(exc.errno))
+        except self.rx.ReceiptError as exc:  # we built an invalid record: that is a runner bug
+            raise InternalError("receipts.py rejected a record the runner built: %s" % exc)
+
+    def header(self, **kw: Any) -> None:
+        self._guard(self.writer.write_header if self.writer else None, **kw)
+
+    def case(self, kw: Dict[str, Any]) -> None:
+        self._guard(self.writer.write_case if self.writer else None, **kw)
+        self.records += 1
+
+    def footer(self) -> None:
+        self._guard(self.writer.write_footer if self.writer else None)
+        if self.fp is not None:
+            try:
+                self.fp.close()
+            except OSError as exc:
+                self.error = self.error or errno.errorcode.get(exc.errno or 0, str(exc.errno))
+
+
+# --------------------------------------------------------------------------- #
+# aggregation
+# --------------------------------------------------------------------------- #
+
+def denominators(records: List[Dict[str, Any]], deselected: int) -> Dict[str, int]:
+    c = collections.Counter(r["status"] for r in records)
+    d = {
+        "planned": len(records),
+        "executed": c["pass"] + c["fail"],
+        "pass": c["pass"],
+        "fail": c["fail"],
+        "blocked": c["blocked"],
+        "not_run": c["not_run"],
+        "deselected": deselected,
+    }
+    return d
+
+
+def check_invariants(records: List[Dict[str, Any]], d: Dict[str, int]) -> None:
+    if d["planned"] != d["pass"] + d["fail"] + d["blocked"] + d["not_run"]:
+        raise InternalError("denominator invariant broken: planned != pass+fail+blocked+not_run")
+    if d["executed"] != d["pass"] + d["fail"]:
+        raise InternalError("denominator invariant broken: executed != pass+fail")
+    for r in records:
+        if r["status"] not in ("pass", "fail", "blocked", "not_run"):
+            raise InternalError("case %s has unknown status %r" % (r["id"], r["status"]))
+        if r["status"] in ("pass", "fail") and not r.get("executed"):
+            raise InternalError("case %s is %s but never executed" % (r["id"], r["status"]))
+        if r["status"] in ("blocked", "not_run") and r.get("executed") and not r.get("attempts"):
+            raise InternalError("case %s is %s yet claims execution" % (r["id"], r["status"]))
+
+
+def compute_verdict(records: List[Dict[str, Any]], d: Dict[str, int], uncovered: List[str],
+                    cancelled: bool, incomplete: List[str]) -> Tuple[str, List[str]]:
+    blocking: List[str] = []
+    if cancelled:
+        return "cancelled", ["run cancelled"]
+    if incomplete:
+        return "incomplete", ["evidence incomplete: " + ", ".join(incomplete)]
+    if d["planned"] == 0:
+        blocking.append("empty_selection: no cases planned; an empty run is never a pass")
+    elif d["executed"] == 0:
+        # Planned work of which nothing ran (all blocked / not run, e.g. every case optional and blocked) proved
+        # nothing.  The runner says so itself rather than relying on the aggregator to refuse it.
+        blocking.append("nothing_executed: %d planned case(s), none launched" % d["planned"])
+    for r in records:
+        if r["status"] == "fail":
+            blocking.append("fail:%s:%s" % (r["id"], r["reason"]))
+        elif r["status"] == "not_run":
+            blocking.append("not_run:%s:%s" % (r["id"], r["reason"]))
+        elif r["status"] == "blocked" and r.get("mandatory", True):
+            blocking.append("blocked:%s:%s" % (r["id"], r["reason"]))
+    for rid in uncovered:
+        blocking.append("uncovered_requirement:" + rid)
+    return ("fail" if blocking else "pass"), blocking
+
+
+def git_info(root: str) -> Dict[str, Any]:
+    if not os.path.exists(os.path.join(root, ".git")):
+        return {"head": None, "dirty_tracked_files": None, "note": "not a git checkout"}
+    env = dict(os.environ, GIT_OPTIONAL_LOCKS="0")
+    out: Dict[str, Any] = {"head": None, "dirty_tracked_files": None}
+    try:
+        head = subprocess.run(["git", "-C", root, "rev-parse", "HEAD"], capture_output=True, text=True,
+                              timeout=5, env=env, stdin=subprocess.DEVNULL)
+        if head.returncode == 0:
+            out["head"] = head.stdout.strip()
+        st = subprocess.run(["git", "-C", root, "status", "--porcelain=v1", "--untracked-files=no"],
+                            capture_output=True, text=True, timeout=5, env=env, stdin=subprocess.DEVNULL)
+        if st.returncode == 0:
+            out["dirty_tracked_files"] = len([l for l in st.stdout.splitlines() if l.strip()])
+    except (OSError, subprocess.SubprocessError):
+        out["note"] = "git unavailable"
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# human summary
+# --------------------------------------------------------------------------- #
+
+def render_summary(receipt: Dict[str, Any], receipt_path: Optional[str], receipt_sha: Optional[str]) -> str:
+    d = receipt["denominators"]
+    run = receipt["run"]
+    ev = receipt["evidence"]
+    lines = [
+        "run-suite %s  run=%s  tier=%s  seed=%s%s" % (
+            receipt["runner"]["version"], run["id"], run["tier"], run["seed"],
+            "  PARTIAL-SELECTION" if run["partial_selection"] else ""),
+        "VERDICT: %s" % receipt["verdict"].upper(),
+        "denominators: planned=%d executed=%d pass=%d fail=%d blocked=%d not_run=%d (deselected=%d, not counted)" % (
+            d["planned"], d["executed"], d["pass"], d["fail"], d["blocked"], d["not_run"], d["deselected"]),
+    ]
+    for cls, c in sorted(receipt["by_evidence_class"].items()):
+        lines.append("  class %-20s planned=%d pass=%d fail=%d blocked=%d not_run=%d" % (
+            cls, c["planned"], c["pass"], c["fail"], c["blocked"], c["not_run"]))
+    if receipt["uncovered_requirements"]:
+        lines.append("uncovered requirements: " + ", ".join(receipt["uncovered_requirements"]))
+    for b in receipt["blocking"]:
+        if not b.startswith(("fail:", "not_run:", "blocked:", "uncovered_requirement:")):
+            lines.append("blocking: " + b)
+    bad = [c for c in receipt["cases"] if c["status"] != "pass"]
+    for c in bad[:50]:
+        lines.append("  %-8s %s  [%s]%s" % (c["status"].upper(), c["id"], c["reason"],
+                                            ("  " + c["detail"]) if c.get("detail") else ""))
+        if c.get("replay") and c["status"] == "fail":
+            lines.append("           replay: " + c["replay"])
+        chain = c.get("causal_chain") or []
+        for link in chain[1:2]:
+            lines.append("           expected=%s observed=%s first_causal_event=%s" % (
+                link.get("expected"), link.get("observed"), link.get("first_causal_event")))
+    if len(bad) > 50:
+        lines.append("  ... %d more non-pass cases in the receipt" % (len(bad) - 50))
+    agg = receipt["receipts"]["aggregator"]
+    if agg is not None:
+        lines.append("receipts.py aggregator: %s complete=%s verdicts: %s" % (
+            "QUALIFIED" if agg["qualified"] else "NOT QUALIFIED", "yes" if agg["complete"] else "NO",
+            " ".join("%s=%d" % (k, v) for k, v in agg["counts"].items() if v)))
+        if agg["unqualified_reasons"]:
+            lines.append("  reasons: " + ", ".join(agg["unqualified_reasons"]))
+    else:
+        lines.append("receipts.py aggregator: not run (no cases were planned)")
+    ev_stats = ev["events"]
+    st = ev_stats["stats"]
+    lines.append("events: emitted=%d written=%d dropped=%d critical_lost=%d log_complete=%s" % (
+        st["emitted"], st["written"], st["dropped_total"], st["critical_lost"],
+        "yes" if ev_stats["verdict"]["complete"] else "NO"))
+    if not ev["complete"]:
+        lines.append("EVIDENCE INCOMPLETE: " + ", ".join(ev["incomplete_reasons"]))
+    if receipt_path:
+        lines.append("receipt: %s  sha256=%s" % (receipt_path, receipt_sha))
+    return "\n".join(lines) + "\n"
+
+
+# --------------------------------------------------------------------------- #
+# commands
+# --------------------------------------------------------------------------- #
+
+def repo_root() -> str:
+    return os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", ".."))
+
+
+def default_artifact_root() -> str:
+    return os.environ.get("FFW_ARTIFACT_ROOT") or os.path.join(repo_root(), "build", "test-runs")
+
+
+def load_floor(rx: Any, path: str) -> Tuple[Dict[str, Dict[str, Any]], str]:
+    """Read and validate an independent floor file; an unreadable or empty floor is a usage error."""
+    try:
+        with open(path, "rb") as fh:
+            blob = fh.read(1024 * 1024 + 1)
+    except OSError as exc:
+        raise UsageError("cannot read --floor %s: %s" % (path, exc))
+    if len(blob) > 1024 * 1024:
+        raise UsageError("--floor file is larger than 1 MiB")
+    try:
+        doc = json.loads(blob.decode("utf-8"))
+        if not isinstance(doc, dict) or not doc:
+            raise ValueError("must be a non-empty JSON object {case_id: constraints}")
+        rx.normalize_required(doc)
+    except (ValueError, rx.ReceiptError) as exc:
+        raise UsageError("--floor %s is not a valid floor: %s" % (path, exc))
+    return {k: dict(v or {}) for k, v in doc.items()}, sha256_bytes(blob)
+
+
+def parse_seed(text: str) -> int:
+    if text == "random":
+        return secrets.randbits(63)
+    try:
+        value = int(text, 10)
+    except ValueError:
+        raise UsageError("--seed must be a non-negative integer or 'random'")
+    if not 0 <= value < 2**63:
+        raise UsageError("--seed must be in [0, 2**63)")
+    return value
+
+
+def compute_coverage(registry: Registry, tier: Optional[str], selected: Sequence[Case]) -> Tuple[Dict[str, Any], List[str]]:
+    by_req: Dict[str, List[str]] = {rid: [] for rid in registry.requirements}
+    for c in selected:
+        for rid in c.requirements:
+            by_req.setdefault(rid, []).append(c.id)
+    uncovered = []
+    for rid, req in sorted(registry.requirements.items()):
+        applies = tier is None or tier in req.tiers
+        if applies and not by_req[rid]:
+            uncovered.append(rid)
+    table = {rid: {"text": registry.requirements[rid].text, "tiers": registry.requirements[rid].tiers,
+                   "cases": sorted(ids)} for rid, ids in sorted(by_req.items()) if rid in registry.requirements}
+    return table, uncovered
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    registry = load_registry(args.manifest, args.manifest_dir)
+    entries, deselected, partial = select_cases(registry, args.tier, args.case)
+    rows = [{"id": e.case.id if e.case else e.synthetic_id,
+             "status_if_run": "not_run" if e.case is None else "planned",
+             "reason": e.synthetic_reason,
+             "requirements": e.case.requirements if e.case else [],
+             "evidence_class": e.case.evidence_class if e.case else None} for e in entries]
+    if args.json:
+        print(json.dumps({"tier": args.tier, "planned": len(rows), "deselected": deselected,
+                          "partial_selection": partial, "cases": rows}, indent=1, sort_keys=True))
+    else:
+        for r in rows:
+            print("%s%s" % (r["id"], "" if r["status_if_run"] == "planned" else "  (%s)" % r["reason"]))
+        print("planned=%d deselected=%d" % (len(rows), deselected))
+    return EXIT_OK
+
+
+def cmd_coverage(args: argparse.Namespace) -> int:
+    registry = load_registry(args.manifest, args.manifest_dir)
+    cases = [c for c in registry.cases if args.tier is None or args.tier in c.tiers]
+    table, uncovered = compute_coverage(registry, args.tier, cases)
+    print(json.dumps({"tier": args.tier, "requirements": table, "uncovered_requirements": uncovered},
+                     indent=1, sort_keys=True))
+    return EXIT_FAILED if uncovered else EXIT_OK
+
+
+def _write_atomic(path: str, data: bytes) -> Optional[str]:
+    tmp = path + ".tmp"
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            view = memoryview(data)
+            while view:
+                n = os.write(fd, view)
+                view = view[n:]
+        finally:
+            os.close(fd)
+        os.replace(tmp, path)
+        return None
+    except OSError as exc:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return errno.errorcode.get(exc.errno or 0, "OSError")
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    t0_ns = time.monotonic_ns()
+    t0 = time.monotonic()
+    started_utc = utc_now()
+    rx, rx_sha = load_receipts()  # fail closed before any directory is created
+    diag, diag_sha = load_diagnostics()
+    registry = load_registry(args.manifest, args.manifest_dir)
+    entries, deselected, partial = select_cases(registry, args.tier, args.case)
+    run_seed = parse_seed(args.seed)
+    floor_file: Dict[str, Dict[str, Any]] = {}
+    floor_sha: Optional[str] = None
+    if args.floor:
+        if partial:
+            raise UsageError("--floor cannot be combined with --case: a partial selection would silently skip it")
+        floor_file, floor_sha = load_floor(rx, args.floor)
+
+    if args.jobs < 1 or args.jobs > 64:
+        raise UsageError("--jobs must be in [1, 64]")
+    if not 0 <= args.retries <= 5:
+        raise UsageError("--retries must be in [0, 5]")
+    if not 0 < args.global_timeout_s <= MAX_CASE_TIMEOUT_S * 4:
+        raise UsageError("--global-timeout-s out of range")
+    if not 0 < args.case_timeout_cap_s <= MAX_CASE_TIMEOUT_S:
+        raise UsageError("--case-timeout-cap-s out of range")
+    if not 0 <= args.kill_grace_s <= 60:
+        raise UsageError("--kill-grace-s must be in [0, 60]")
+    if not 1024 <= args.max_output_bytes <= HARD_OUTPUT_CAP:
+        raise UsageError("--max-output-bytes must be in [1024, %d]" % HARD_OUTPUT_CAP)
+    for name in args.env_allow + args.redact_env:
+        if not ENV_NAME_RE.match(name):
+            raise UsageError("bad env var name %r" % name)
+    if args.run_id is not None and not RUN_ID_RE.match(args.run_id):
+        raise UsageError("--run-id must match %s" % RUN_ID_RE.pattern)
+
+    literals = [os.environ[n] for n in args.redact_env if os.environ.get(n)]
+    redactor = Redactor(literals, scrub_home=False)
+
+    artifact_root = os.path.abspath(args.artifact_root or default_artifact_root())
+    run_id = args.run_id or "%s-%d-%s" % (
+        datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ"), os.getpid(), secrets.token_hex(3))
+    run_dir = os.path.join(artifact_root, run_id)
+    try:
+        os.makedirs(artifact_root, exist_ok=True)
+        os.mkdir(run_dir, 0o700)
+    except FileExistsError:
+        raise UsageError("run id %s already exists under %s; refusing to overwrite (reruns keep the original "
+                         "failure evidence)" % (run_id, artifact_root))
+    except OSError as exc:
+        raise UsageError("cannot create run directory under %s: %s" % (artifact_root, exc))
+    for sub in ("logs", "scratch"):
+        try:
+            os.mkdir(os.path.join(run_dir, sub), 0o700)
+        except OSError as exc:
+            raise UsageError("cannot create %s in the run directory: %s" % (sub, exc))
+
+    sink = make_event_sink(diag, run_dir, run_id, t0_ns, len(entries), args.event_log_bytes, literals)
+
+    prefix = [sys.executable, os.path.realpath(__file__), "run", "--tier", args.tier,
+              "--artifact-root", artifact_root]
+    for m in args.manifest:
+        prefix += ["--manifest", os.path.abspath(m)]
+    for m in args.manifest_dir:
+        prefix += ["--manifest-dir", os.path.abspath(m)]
+    for n in args.env_allow:
+        prefix += ["--env-allow", n]
+    for n in args.redact_env:
+        prefix += ["--redact-env", n]
+
+    cancel = threading.Event()
+    hard = threading.Event()
+    ctx = RunContext(
+        run_id=run_id, run_dir=run_dir, tier=args.tier, run_seed=run_seed, redactor_literals=literals,
+        events=sink, cancel=cancel, hard_cancel=hard, stop=threading.Event(),
+        global_deadline=t0 + args.global_timeout_s, kill_grace_s=args.kill_grace_s, retries=args.retries,
+        case_timeout_cap_s=args.case_timeout_cap_s, output_cap=args.max_output_bytes,
+        env_allow=list(args.env_allow), replay_prefix=prefix, rx=rx, t0_ns=t0_ns,
+    )
+    ctx.fail_fast = bool(args.fail_fast)
+
+    def on_signal(signum: int, _frame: Any) -> None:
+        name = signal_name(signum)
+        if cancel.is_set():
+            hard.set()
+        ctx.cancel_signal.append(name)
+        cancel.set()
+
+    old_handlers = {s: signal.signal(s, on_signal) for s in (signal.SIGINT, signal.SIGTERM)}
+
+    sink.emit_event("run_start", critical=True, tier=args.tier, planned=len(entries), deselected=deselected,
+              run_seed=run_seed, jobs=args.jobs, partial_selection=partial,
+              timebase="time.monotonic_ns since run start", manifests=len(registry.manifests))
+
+    # The receipt stream: header first (so even a crashed run leaves an honest, footer-less stream).
+    expected = build_expected(entries)
+    git = git_info(repo_root())
+    stream = Stream(rx, os.path.join(run_dir, "receipts.jsonl"))
+    if entries:
+        header_artifacts: Dict[str, Dict[str, Any]] = {}
+        for m in registry.manifests:
+            digest = sha256_file(m["path"])
+            if digest:
+                name = artifact_name(m["path"])
+                header_artifacts[name] = {"name": name, "sha256": digest, "size": os.path.getsize(m["path"])}
+        for e in entries:
+            if e.case is not None:
+                refs = case_artifact_refs(e.case)
+                ctx.artifact_refs[e.case.id] = refs   # reused verbatim for the case's records
+                for ref in refs:
+                    header_artifacts.setdefault(ref["name"], ref)
+        versions = {"run-suite": RUNNER_VERSION, "python": sys.version.split()[0],
+                    "platform": sys.platform, "receipts.py": rx_sha, "diagnostics.py": diag_sha}
+        if git.get("head"):
+            versions["git_head"] = str(git["head"])
+        suite_names = sorted({e.case.suite for e in entries if e.case is not None}) or ["unnamed"]
+        stream.header(run_id=run_id, suite="+".join(suite_names)[:120], tier=args.tier, seed=run_seed,
+                      expected=expected, versions=versions,
+                      artifacts=[header_artifacts[k] for k in sorted(header_artifacts)])
+
+    records: List[Optional[Dict[str, Any]]] = [None] * len(entries)
+    from concurrent.futures import ThreadPoolExecutor, wait as fut_wait
+    try:
+        with ThreadPoolExecutor(max_workers=args.jobs, thread_name_prefix="case") as pool:
+            futures = {pool.submit(process_entry, ctx, e): i for i, e in enumerate(entries)}
+            pending = set(futures)
+            while pending:
+                done, pending = fut_wait(pending, timeout=0.2)
+                for fut in done:
+                    idx = futures[fut]
+                    try:
+                        rec = fut.result()
+                    except Exception as exc:  # a worker bug must not become a silent pass
+                        entry = entries[idx]
+                        cid = entry.case.id if entry.case else entry.synthetic_id
+                        raise InternalError("worker crashed on case %s: %r" % (cid, exc))
+                    records[idx] = rec
+                    if entries[idx].case is not None:
+                        for kw in case_stream_records(ctx, entries[idx].case, rec):  # type: ignore[arg-type]
+                            stream.case(kw)
+    finally:
+        for s, h in old_handlers.items():
+            signal.signal(s, h)
+
+    final: List[Dict[str, Any]] = [r for r in records if r is not None]
+    if len(final) != len(entries):
+        raise InternalError("lost case records: %d of %d" % (len(final), len(entries)))
+
+    cancelled = cancel.is_set()
+    if cancelled:
+        sink.emit_event("run_cancel", critical=True, signal=ctx.cancel_signal[0] if ctx.cancel_signal else "?")
+
+    d = denominators(final, deselected)
+    check_invariants(final, d)
+
+    # Close the stream, then let the helper-owned aggregator judge it independently.  Its verdict
+    # per case must equal what the runner's own bookkeeping predicts; a disagreement is a runner bug.
+    agg: Optional[Dict[str, Any]] = None
+    crosscheck: List[str] = []
+    if entries:
+        stream.footer()
+        # The floor is declared in the manifests (required_cases), apart from the selection logic that
+        # builds `expected`: if that logic ever dropped or demoted a required case, the aggregator says so.
+        # An optional --floor file adds a floor from a source the manifests cannot edit (for Q00: derived
+        # from oracles.DEFECTS by scripts/test/q00/floor.py).  Its constraints win over the bare manifest ids.
+        merged: Dict[str, Dict[str, Any]] = {}
+        if not partial:
+            merged = {cid: {} for cid in registry.required_all + registry.required_by_tier.get(args.tier, [])}
+            merged.update(floor_file)
+        agg = rx.aggregate_path(stream.path, expected, max_attempts=args.retries + 1, required=merged or None)
+        if not stream.error:
+            for r in final:
+                want = predicted_verdict(r)
+                got = agg["cases"].get(r["id"], {}).get("verdict")
+                if got != want:
+                    crosscheck.append("%s: runner expects %s, aggregator says %s" % (r["id"], want, got))
+
+    selected_cases = [e.case for e in entries if e.case is not None]
+    if partial:
+        table, uncovered = {}, []
+    else:
+        table, uncovered = compute_coverage(registry, args.tier, selected_cases)
+    status_by_id = {r["id"]: r["status"] for r in final}
+    for rid, row in table.items():
+        row["cases"] = [{"id": cid, "status": status_by_id.get(cid)} for cid in row["cases"]]
+
+    incomplete: List[str] = []
+    if sink.critical_lost or sink.open_error:
+        incomplete.append("critical_event_loss")
+    if stream.error:
+        incomplete.append("receipt_stream_write_failed")
+    if agg is not None and not agg["complete"]:
+        incomplete.append("receipt_stream_incomplete")
+    for r in final:
+        for a in r.get("attempts", []):
+            if _lost(a):
+                incomplete.append("critical_evidence_lost")
+            if not a.get("group_clear", True) or a.get("capture_abandoned"):
+                incomplete.append("process_cleanup_failed")
+            if a.get("cleanup_error"):
+                incomplete.append("scratch_cleanup_failed")
+    incomplete = sorted(set(incomplete))
+
+    def merged_verdict() -> Tuple[str, List[str]]:
+        v, b = compute_verdict(final, d, uncovered, cancelled, incomplete)
+        if v == "pass" and agg is not None and not agg["qualified"]:
+            v = "fail"
+            b = b + ["aggregator_unqualified:" + ",".join(agg["unqualified_reasons"])]
+        if crosscheck:
+            v, b = "internal_error", ["runner/aggregator disagreement: " + "; ".join(crosscheck[:10])]
+        return v, b
+
+    verdict, blocking = merged_verdict()
+    sink.emit_event("run_end", critical=True, verdict=verdict,
+                    **{k: d[k] for k in ("planned", "executed", "pass", "fail", "blocked", "not_run")})
+    ev_verdict = sink.close(timeout=args.event_close_timeout_s)   # bounded: a hung target cannot hang the run
+    # Two independent opinions on the event log: the sink's own accounting, and a re-read of the file itself
+    # (header first, footer last, closure identity, no torn tail).  Either one failing makes the run INCOMPLETE.
+    # A file-backed sink (always the case for the runner itself) MUST be re-readable: a missing or torn file fails.
+    # An in-memory target (only ever substituted by tests) has no file, so only the sink's own verdict applies.
+    audit = None
+    if sink.path:
+        audit = diag.audit_log(sink.path) if os.path.exists(sink.path) else None
+        if audit is None or not audit.complete:
+            incomplete.append("event_log_audit_failed")
+    if not ev_verdict.complete:
+        incomplete.append("event_log_incomplete")
+    incomplete = sorted(set(incomplete))
+    verdict, blocking = merged_verdict()   # final: now that the event log's own fate is known
+
+    by_class: Dict[str, Dict[str, int]] = {}
+    for r in final:
+        cls = r.get("evidence_class") or "unknown"
+        row = by_class.setdefault(cls, {"planned": 0, "pass": 0, "fail": 0, "blocked": 0, "not_run": 0})
+        row["planned"] += 1
+        row[r["status"]] += 1
+    breakdown = collections.Counter(r["reason"] for r in final if r["status"] != "pass")
+
+    events_stats = {
+        "path": sink.path, "verdict": ev_verdict.as_dict(), "stats": sink.stats(),
+        "summary": sink.summary_record(), "audit": audit.as_dict() if audit is not None else None,
+    }
+
+    receipt = {
+        "schema": RECEIPT_SCHEMA,
+        "runner": {"name": RUNNER_NAME, "version": RUNNER_VERSION,
+                   "python": sys.version.split()[0], "platform": sys.platform},
+        "run": {"id": run_id, "tier": args.tier, "seed": run_seed, "partial_selection": partial,
+                "jobs": args.jobs, "retries": args.retries, "fail_fast": bool(args.fail_fast),
+                "global_timeout_s": args.global_timeout_s, "started_utc": started_utc,
+                "finished_utc": utc_now(), "duration_ms": int((time.monotonic() - t0) * 1000),
+                "cancelled": ctx.cancel_signal[0] if cancelled and ctx.cancel_signal else None},
+        "timebase": {"clock": "time.monotonic_ns", "origin": "run start", "unit": "ns",
+                     "note": "wall-clock timestamps are informational only; durations use the monotonic clock"},
+        "replay": {"suite": " ".join(shlex.quote(p) for p in prefix + ["--seed", str(run_seed)])},
+        "git": git,
+        "manifests": registry.manifests,
+        "denominators": d,
+        "receipts": {
+            "stream": stream.path, "stream_error": stream.error, "records": stream.records,
+            "registry_digest": rx.registry_digest(expected) if entries else None,
+            "aggregator": None if agg is None else {
+                "qualified": agg["qualified"], "complete": agg["complete"],
+                "unqualified_reasons": agg["unqualified_reasons"], "denominator": agg["denominator"],
+                "counts": agg["counts"], "by_proof_class": agg["by_proof_class"],
+                "problems_total": agg["problems_total"], "problems": agg["problems"][:20],
+                "evidence_sha256": agg["evidence_sha256"]},
+            "crosscheck_mismatches": crosscheck,
+            "floor": None if not args.floor else {
+                "path": os.path.abspath(args.floor), "sha256": floor_sha, "cases": len(floor_file),
+                "violations": (agg or {}).get("required")},
+        },
+        "by_evidence_class": by_class,
+        "failure_breakdown": dict(sorted(breakdown.items())),
+        "verdict": verdict,
+        "blocking": blocking[:200],
+        "uncovered_requirements": uncovered,
+        "requirements": table,
+        "evidence": {"complete": not incomplete, "incomplete_reasons": incomplete, "events": events_stats},
+        "cases": final,
+    }
+    receipt = clip_obj(redactor.redact_obj(receipt), 16384)
+    try:
+        os.rmdir(os.path.join(run_dir, "scratch"))  # empty when every case cleaned up after itself
+    except OSError:
+        pass
+
+    receipt_path = os.path.join(run_dir, "receipt.json")
+    blob = (json.dumps(receipt, indent=1, sort_keys=True) + "\n").encode("utf-8")
+    err = _write_atomic(receipt_path, blob)
+    receipt_sha: Optional[str] = None
+    if err:
+        incomplete.append("receipt_write_failed")
+        receipt["evidence"]["complete"] = False
+        receipt["evidence"]["incomplete_reasons"] = sorted(set(incomplete))
+        receipt["verdict"], receipt["blocking"] = compute_verdict(final, d, uncovered, cancelled, sorted(set(incomplete)))
+        receipt_path = None
+    else:
+        receipt_sha = sha256_bytes(blob)
+    summary = render_summary(receipt, receipt_path, receipt_sha)
+    if err:
+        summary += "receipt could not be written (%s); this stdout summary is the only record\n" % err
+    else:
+        serr = _write_atomic(os.path.join(run_dir, "summary.txt"), summary.encode("utf-8"))
+        if serr:
+            summary += "summary.txt could not be written (%s)\n" % serr
+    if not args.quiet:
+        sys.stdout.write(summary)
+        sys.stdout.flush()
+
+    if receipt["verdict"] == "internal_error":
+        sys.stderr.write("run-suite: INTERNAL ERROR: %s\n" % "; ".join(crosscheck[:5]))
+        return EXIT_INTERNAL
+    if receipt["verdict"] == "cancelled":
+        return EXIT_CANCELLED
+    if receipt["verdict"] == "incomplete":
+        return EXIT_INCOMPLETE
+    return EXIT_OK if receipt["verdict"] == "pass" else EXIT_FAILED
+
+
+# --------------------------------------------------------------------------- #
+# CLI
+# --------------------------------------------------------------------------- #
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog=RUNNER_NAME,
+        description="Bounded deterministic subprocess suite runner (ffw-2qz / Q00). Offline only.")
+    sub = p.add_subparsers(dest="command", required=True)
+
+    def common(sp: argparse.ArgumentParser, tier_required: bool) -> None:
+        sp.add_argument("--manifest", action="append", default=[], metavar="FILE",
+                        help="a *.suite.json manifest (repeatable)")
+        sp.add_argument("--manifest-dir", action="append", default=[], metavar="DIR",
+                        help="recursively load every *.suite.json under DIR (repeatable)")
+        sp.add_argument("--tier", choices=TIERS, required=tier_required,
+                        help="explicit tier selection; there is no default")
+        sp.add_argument("--case", action="append", default=[], metavar="ID",
+                        help="select specific case ids (partial selection; skips registry coverage checks)")
+
+    run = sub.add_parser("run", help="execute the selected cases")
+    common(run, True)
+    run.add_argument("--artifact-root", metavar="DIR", help="default: <repo>/build/test-runs or $FFW_ARTIFACT_ROOT")
+    run.add_argument("--run-id", metavar="ID", help="default: UTC timestamp-pid-random; an existing id is refused")
+    run.add_argument("--seed", default="0", metavar="N|random",
+                     help="run seed (default 0, so runs are reproducible; 'random' picks and records one)")
+    run.add_argument("--jobs", type=int, default=1, help="parallel cases (default 1)")
+    run.add_argument("--global-timeout-s", type=float, default=DEFAULT_GLOBAL_TIMEOUT_S)
+    run.add_argument("--case-timeout-cap-s", type=float, default=MAX_CASE_TIMEOUT_S,
+                     help="clamp every case timeout to at most this many seconds")
+    run.add_argument("--kill-grace-s", type=float, default=2.0, help="SIGTERM->SIGKILL grace (default 2)")
+    run.add_argument("--retries", type=int, default=0,
+                     help="bounded retries (0..5); a pass after a failure is still reported as a failure (flaky)")
+    run.add_argument("--fail-fast", action="store_true", help="remaining unstarted cases become not_run after a failure")
+    run.add_argument("--event-log-bytes", type=int, default=None, metavar="N",
+                     help="total size bound of events.jsonl (default: critical reserve + 8 MiB). Non-critical events "
+                          "beyond it are dropped and counted; critical events have their own reserved slice")
+    run.add_argument("--event-close-timeout-s", type=float, default=DEFAULT_EVENT_CLOSE_TIMEOUT_S, metavar="S",
+                     help="bound on draining and closing the event log (a hung target leaves it incomplete)")
+    run.add_argument("--max-output-bytes", type=int, default=DEFAULT_OUTPUT_CAP,
+                     help="per-attempt captured-output cap (case value is clamped to this)")
+    run.add_argument("--env-allow", action="append", default=[], metavar="NAME",
+                     help="inherit this env var into every child (names only; default is a tiny allow-list)")
+    run.add_argument("--redact-env", action="append", default=[], metavar="NAME",
+                     help="redact the *value* of this env var wherever it appears (value never on the command line)")
+    run.add_argument("--floor", metavar="FILE",
+                     help="independent required-case floor (JSON {case_id: {proof_class,canary,oracle,violation}}) "
+                          "from a source the manifests cannot edit; a dropped, demoted or altered case fails the run")
+    run.add_argument("--quiet", action="store_true", help="do not print the human summary")
+    run.set_defaults(func=cmd_run)
+
+    lst = sub.add_parser("list", help="print the planned case ids for a tier")
+    common(lst, True)
+    lst.add_argument("--json", action="store_true")
+    lst.set_defaults(func=cmd_list)
+
+    cov = sub.add_parser("coverage", help="print the requirement-to-case registry; exit 1 if any requirement is uncovered")
+    common(cov, False)
+    cov.set_defaults(func=cmd_coverage)
+    return p
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    try:
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    except (ValueError, OSError):
+        pass
+    if hasattr(signal, "SIGXFSZ"):
+        try:
+            signal.signal(signal.SIGXFSZ, signal.SIG_IGN)  # a full disk must surface as an OSError, not kill us
+        except ValueError:
+            pass  # not the main thread
+    args = build_parser().parse_args(argv)
+    try:
+        return args.func(args)
+    except UsageError as exc:
+        sys.stderr.write("run-suite: error: %s\n" % exc)
+        return EXIT_USAGE
+    except InternalError as exc:
+        sys.stderr.write("run-suite: INTERNAL ERROR: %s\n" % exc)
+        return EXIT_INTERNAL
+    except BrokenPipeError:
+        return EXIT_INCOMPLETE
+    except Exception as exc:  # never convert an unexpected crash into a pass
+        sys.stderr.write("run-suite: INTERNAL ERROR: %r\n" % (exc,))
+        return EXIT_INTERNAL
+
+
+if __name__ == "__main__":
+    sys.exit(main())

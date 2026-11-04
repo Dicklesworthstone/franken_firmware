@@ -1,0 +1,420 @@
+{
+ "schema": "ffw.suite.v1",
+ "suite": "q00",
+ "description": "Q00 independent-oracle canaries and their paired positives, run through run-suite. The authoritative floor is derived separately by scripts/test/q00/floor.py.",
+ "requirements": {
+  "Q00.AC1.canaries": {
+   "text": "Independent oracle canaries fail for wrong samples, stale epochs, double-applied commands and false-ready state, each with its exact expected oracle and violation kind.",
+   "tiers": [
+    "smoke",
+    "full"
+   ]
+  },
+  "Q00.AC1.positives": {
+   "text": "Each independent oracle accepts the paired good behaviour and proves its guard was exercised.",
+   "tiers": [
+    "smoke",
+    "full"
+   ]
+  }
+ },
+ "required_cases": [
+  "q00.oracle.canary.sample_loss",
+  "q00.oracle.canary.wrong_samples",
+  "q00.oracle.canary.repeated_samples",
+  "q00.oracle.canary.truncate_tail",
+  "q00.oracle.canary.stale_epoch",
+  "q00.oracle.canary.double_apply",
+  "q00.oracle.canary.false_ready_early",
+  "q00.oracle.canary.false_ready_stuck",
+  "q00.oracle.canary.never_ready",
+  "q00.oracle.canary.stop_behind_queue",
+  "q00.oracle.positive.sample",
+  "q00.oracle.positive.epoch",
+  "q00.oracle.positive.command",
+  "q00.oracle.positive.readiness",
+  "q00.oracle.positive.priority_stop"
+ ],
+ "cases": [
+  {
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "id": "q00.oracle.canary.sample_loss",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/oracles.py",
+    "replay",
+    "--defect",
+    "sample_loss"
+   ],
+   "requirements": [
+    "Q00.AC1.canaries"
+   ],
+   "expect": {
+    "kind": "fail",
+    "oracle": "sample",
+    "violation": "lost_samples",
+    "exit_codes": [
+     1
+    ]
+   },
+   "description": "planted defect: a delivered block is silently discarded with no gap announced"
+  },
+  {
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "id": "q00.oracle.canary.wrong_samples",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/oracles.py",
+    "replay",
+    "--defect",
+    "wrong_samples"
+   ],
+   "requirements": [
+    "Q00.AC1.canaries"
+   ],
+   "expect": {
+    "kind": "fail",
+    "oracle": "sample",
+    "violation": "wrong_samples",
+    "exit_codes": [
+     1
+    ]
+   },
+   "description": "planted defect: one delivered sample is off by one"
+  },
+  {
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "id": "q00.oracle.canary.repeated_samples",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/oracles.py",
+    "replay",
+    "--defect",
+    "repeated_samples"
+   ],
+   "requirements": [
+    "Q00.AC1.canaries"
+   ],
+   "expect": {
+    "kind": "fail",
+    "oracle": "sample",
+    "violation": "repeated_samples",
+    "exit_codes": [
+     1
+    ]
+   },
+   "description": "planted defect: a delivered block is played twice"
+  },
+  {
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "id": "q00.oracle.canary.truncate_tail",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/oracles.py",
+    "replay",
+    "--defect",
+    "truncate_tail"
+   ],
+   "requirements": [
+    "Q00.AC1.canaries"
+   ],
+   "expect": {
+    "kind": "fail",
+    "oracle": "sample",
+    "violation": "truncated_stream",
+    "exit_codes": [
+     1
+    ]
+   },
+   "description": "planted defect: the final two blocks are never emitted"
+  },
+  {
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "id": "q00.oracle.canary.stale_epoch",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/oracles.py",
+    "replay",
+    "--defect",
+    "stale_epoch"
+   ],
+   "requirements": [
+    "Q00.AC1.canaries"
+   ],
+   "expect": {
+    "kind": "fail",
+    "oracle": "epoch",
+    "violation": "stale_epoch_applied",
+    "exit_codes": [
+     1
+    ]
+   },
+   "description": "planted defect: the epoch fence is disabled"
+  },
+  {
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "id": "q00.oracle.canary.double_apply",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/oracles.py",
+    "replay",
+    "--defect",
+    "double_apply"
+   ],
+   "requirements": [
+    "Q00.AC1.canaries"
+   ],
+   "expect": {
+    "kind": "fail",
+    "oracle": "command",
+    "violation": "double_applied",
+    "exit_codes": [
+     1
+    ]
+   },
+   "description": "planted defect: duplicate deliveries are not suppressed"
+  },
+  {
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "id": "q00.oracle.canary.false_ready_early",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/oracles.py",
+    "replay",
+    "--defect",
+    "false_ready_early"
+   ],
+   "requirements": [
+    "Q00.AC1.canaries"
+   ],
+   "expect": {
+    "kind": "fail",
+    "oracle": "readiness",
+    "violation": "false_ready",
+    "exit_codes": [
+     1
+    ]
+   },
+   "description": "planted defect: ready is announced with one prerequisite still missing"
+  },
+  {
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "id": "q00.oracle.canary.false_ready_stuck",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/oracles.py",
+    "replay",
+    "--defect",
+    "false_ready_stuck"
+   ],
+   "requirements": [
+    "Q00.AC1.canaries"
+   ],
+   "expect": {
+    "kind": "fail",
+    "oracle": "readiness",
+    "violation": "ready_not_withdrawn",
+    "exit_codes": [
+     1
+    ]
+   },
+   "description": "planted defect: ready is never withdrawn when clock lock is lost"
+  },
+  {
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "id": "q00.oracle.canary.never_ready",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/oracles.py",
+    "replay",
+    "--defect",
+    "never_ready"
+   ],
+   "requirements": [
+    "Q00.AC1.canaries"
+   ],
+   "expect": {
+    "kind": "fail",
+    "oracle": "readiness",
+    "violation": "ready_not_announced",
+    "exit_codes": [
+     1
+    ]
+   },
+   "description": "planted defect: ready is never announced (refusal-only path)"
+  },
+  {
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "id": "q00.oracle.canary.stop_behind_queue",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/oracles.py",
+    "replay",
+    "--defect",
+    "stop_behind_queue"
+   ],
+   "requirements": [
+    "Q00.AC1.canaries"
+   ],
+   "expect": {
+    "kind": "fail",
+    "oracle": "priority_stop",
+    "violation": "audible_after_deadline",
+    "exit_codes": [
+     1
+    ]
+   },
+   "description": "planted defect: stop waits behind the saturated output queue"
+  },
+  {
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "id": "q00.oracle.positive.sample",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/oracles.py",
+    "positive",
+    "--oracle",
+    "sample"
+   ],
+   "requirements": [
+    "Q00.AC1.positives"
+   ],
+   "description": "paired good behaviour: oracle 'sample' accepts it and proves its guard was exercised"
+  },
+  {
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "id": "q00.oracle.positive.epoch",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/oracles.py",
+    "positive",
+    "--oracle",
+    "epoch"
+   ],
+   "requirements": [
+    "Q00.AC1.positives"
+   ],
+   "description": "paired good behaviour: oracle 'epoch' accepts it and proves its guard was exercised"
+  },
+  {
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "id": "q00.oracle.positive.command",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/oracles.py",
+    "positive",
+    "--oracle",
+    "command"
+   ],
+   "requirements": [
+    "Q00.AC1.positives"
+   ],
+   "description": "paired good behaviour: oracle 'command' accepts it and proves its guard was exercised"
+  },
+  {
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "id": "q00.oracle.positive.readiness",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/oracles.py",
+    "positive",
+    "--oracle",
+    "readiness"
+   ],
+   "requirements": [
+    "Q00.AC1.positives"
+   ],
+   "description": "paired good behaviour: oracle 'readiness' accepts it and proves its guard was exercised"
+  },
+  {
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "id": "q00.oracle.positive.priority_stop",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/oracles.py",
+    "positive",
+    "--oracle",
+    "priority_stop"
+   ],
+   "requirements": [
+    "Q00.AC1.positives"
+   ],
+   "description": "paired good behaviour: oracle 'priority_stop' accepts it and proves its guard was exercised"
+  }
+ ]
+}
