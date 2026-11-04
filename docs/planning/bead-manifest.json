@@ -1,0 +1,523 @@
+[
+  {
+    "key": "E01",
+    "title": "Reconcile device and firmware identity evidence",
+    "deps": [],
+    "body": "docs/planning/bead-bodies/E01.md",
+    "priority": 1
+  },
+  {
+    "key": "E02",
+    "title": "Measure incumbent resource and dropout baseline",
+    "deps": [
+      "E01"
+    ],
+    "body": "docs/planning/bead-bodies/E02.md",
+    "priority": 1
+  },
+  {
+    "key": "E03",
+    "title": "Map legacy kernel ABI capability matrix",
+    "deps": [
+      "E01"
+    ],
+    "body": "docs/planning/bead-bodies/E03.md",
+    "priority": 1
+  },
+  {
+    "key": "E04",
+    "title": "Specify retained audio driver ownership and protection",
+    "deps": [
+      "E01"
+    ],
+    "body": "docs/planning/bead-bodies/E04.md",
+    "priority": 1
+  },
+  {
+    "key": "E05",
+    "title": "Qualify boot-hook and rollback semantics offline",
+    "deps": [
+      "E01"
+    ],
+    "body": "docs/planning/bead-bodies/E05.md",
+    "priority": 1
+  },
+  {
+    "key": "E06",
+    "title": "Audit dependency features and target availability",
+    "deps": [
+      "E03"
+    ],
+    "body": "docs/planning/bead-bodies/E06.md",
+    "priority": 1
+  },
+  {
+    "key": "P01",
+    "title": "Define Rust workspace and build profiles",
+    "deps": [
+      "E06"
+    ],
+    "body": "docs/planning/bead-bodies/P01.md",
+    "priority": 1
+  },
+  {
+    "key": "P02",
+    "title": "Implement minimal legacy platform capability layer",
+    "deps": [
+      "P01",
+      "E03",
+      "P06"
+    ],
+    "body": "docs/planning/bead-bodies/P02.md",
+    "priority": 1
+  },
+  {
+    "key": "P03",
+    "title": "Bring up bounded Asupersync execution profile",
+    "deps": [
+      "P02",
+      "P05"
+    ],
+    "body": "docs/planning/bead-bodies/P03.md",
+    "priority": 1
+  },
+  {
+    "key": "P04",
+    "title": "Implement board HAL adapters and fake-device harness",
+    "deps": [
+      "P02",
+      "E04"
+    ],
+    "body": "docs/planning/bead-bodies/P04.md",
+    "priority": 1
+  },
+  {
+    "key": "D01",
+    "title": "Implement fixed-size audio blocks and conversion",
+    "deps": [
+      "P01"
+    ],
+    "body": "docs/planning/bead-bodies/D01.md",
+    "priority": 1
+  },
+  {
+    "key": "D02",
+    "title": "Implement board protection DSP",
+    "deps": [
+      "D01",
+      "E04"
+    ],
+    "body": "docs/planning/bead-bodies/D02.md",
+    "priority": 1
+  },
+  {
+    "key": "D03",
+    "title": "Implement drift correction and resampling",
+    "deps": [
+      "D01"
+    ],
+    "body": "docs/planning/bead-bodies/D03.md",
+    "priority": 1
+  },
+  {
+    "key": "D04",
+    "title": "Integrate render scheduling with retained HAL",
+    "deps": [
+      "P04",
+      "D02",
+      "D03"
+    ],
+    "body": "docs/planning/bead-bodies/D04.md",
+    "priority": 1
+  },
+  {
+    "key": "N01",
+    "title": "Specify and implement authenticated stream framing",
+    "deps": [
+      "P01"
+    ],
+    "body": "docs/planning/bead-bodies/N01.md",
+    "priority": 1
+  },
+  {
+    "key": "N02",
+    "title": "Implement reliable bounded control channel",
+    "deps": [
+      "N01",
+      "P03",
+      "U01"
+    ],
+    "body": "docs/planning/bead-bodies/N02.md",
+    "priority": 1
+  },
+  {
+    "key": "N03",
+    "title": "Implement group clock and synchronized join",
+    "deps": [
+      "N01",
+      "D03",
+      "P02"
+    ],
+    "body": "docs/planning/bead-bodies/N03.md",
+    "priority": 1
+  },
+  {
+    "key": "N04",
+    "title": "Implement adaptive bounded jitter and concealment",
+    "deps": [
+      "N03",
+      "D01"
+    ],
+    "body": "docs/planning/bead-bodies/N04.md",
+    "priority": 1
+  },
+  {
+    "key": "N05",
+    "title": "Evaluate RaptorQ against simpler repair strategies",
+    "deps": [
+      "N04"
+    ],
+    "body": "docs/planning/bead-bodies/N05.md",
+    "priority": 2
+  },
+  {
+    "key": "N06",
+    "title": "Implement bounded admitted FEC profile",
+    "deps": [
+      "N05"
+    ],
+    "body": "docs/planning/bead-bodies/N06.md",
+    "priority": 2
+  },
+  {
+    "key": "G01",
+    "title": "Implement unified group membership state machine",
+    "deps": [
+      "N02",
+      "N03"
+    ],
+    "body": "docs/planning/bead-bodies/G01.md",
+    "priority": 1
+  },
+  {
+    "key": "G02",
+    "title": "Implement volume, mute and channel roles",
+    "deps": [
+      "G01",
+      "D02"
+    ],
+    "body": "docs/planning/bead-bodies/G02.md",
+    "priority": 1
+  },
+  {
+    "key": "G03",
+    "title": "Implement fsonos compatibility adapter",
+    "deps": [
+      "G01",
+      "G02"
+    ],
+    "body": "docs/planning/bead-bodies/G03.md",
+    "priority": 1
+  },
+  {
+    "key": "S01",
+    "title": "Implement Spotify source capability and session contract",
+    "deps": [
+      "P03",
+      "N02"
+    ],
+    "body": "docs/planning/bead-bodies/S01.md",
+    "priority": 1
+  },
+  {
+    "key": "S02",
+    "title": "Qualify negotiated source-codec profiles",
+    "deps": [
+      "D01",
+      "E06"
+    ],
+    "body": "docs/planning/bead-bodies/S02.md",
+    "priority": 1
+  },
+  {
+    "key": "S03",
+    "title": "Implement Spotify cache and source placement",
+    "deps": [
+      "S01",
+      "S02",
+      "N04",
+      "U01"
+    ],
+    "body": "docs/planning/bead-bodies/S03.md",
+    "priority": 1
+  },
+  {
+    "key": "A01",
+    "title": "Specify native AirPlay2 discovery and pairing",
+    "deps": [
+      "P03",
+      "N02"
+    ],
+    "body": "docs/planning/bead-bodies/A01.md",
+    "priority": 2
+  },
+  {
+    "key": "A02",
+    "title": "Implement AirPlay audio timing and decoding",
+    "deps": [
+      "A01",
+      "S02",
+      "N03",
+      "U01"
+    ],
+    "body": "docs/planning/bead-bodies/A02.md",
+    "priority": 2
+  },
+  {
+    "key": "V01",
+    "title": "Implement end-to-end latency ledger",
+    "deps": [
+      "D04",
+      "N04"
+    ],
+    "body": "docs/planning/bead-bodies/V01.md",
+    "priority": 2
+  },
+  {
+    "key": "V02",
+    "title": "Implement source-aware video synchronization",
+    "deps": [
+      "V01",
+      "A02"
+    ],
+    "body": "docs/planning/bead-bodies/V02.md",
+    "priority": 2
+  },
+  {
+    "key": "T01",
+    "title": "Qualify native Tailscale protocol and resource profile",
+    "deps": [
+      "E06",
+      "P02"
+    ],
+    "body": "docs/planning/bead-bodies/T01.md",
+    "priority": 2
+  },
+  {
+    "key": "T02",
+    "title": "Implement native tailnet endpoint integration",
+    "deps": [
+      "T01",
+      "N02",
+      "U01",
+      "T04"
+    ],
+    "body": "docs/planning/bead-bodies/T02.md",
+    "priority": 2
+  },
+  {
+    "key": "T03",
+    "title": "Implement optional redundant gateway service mode",
+    "deps": [
+      "T01",
+      "G01"
+    ],
+    "body": "docs/planning/bead-bodies/T03.md",
+    "priority": 2
+  },
+  {
+    "key": "X01",
+    "title": "Specify Alexa command and music-destination capabilities",
+    "deps": [
+      "G02",
+      "G03"
+    ],
+    "body": "docs/planning/bead-bodies/X01.md",
+    "priority": 2
+  },
+  {
+    "key": "X02",
+    "title": "Implement Alexa control integration",
+    "deps": [
+      "X01",
+      "N02"
+    ],
+    "body": "docs/planning/bead-bodies/X02.md",
+    "priority": 2
+  },
+  {
+    "key": "X03",
+    "title": "Qualify optional local voice on supported microphone boards",
+    "deps": [
+      "E01",
+      "P04",
+      "P03",
+      "N02"
+    ],
+    "body": "docs/planning/bead-bodies/X03.md",
+    "priority": 2
+  },
+  {
+    "key": "L01",
+    "title": "Implement line-in capture and synchronized distribution",
+    "deps": [
+      "E04",
+      "V01",
+      "G01"
+    ],
+    "body": "docs/planning/bead-bodies/L01.md",
+    "priority": 2
+  },
+  {
+    "key": "U01",
+    "title": "Implement minimal persistent state and calibration custody",
+    "deps": [
+      "P02",
+      "E05"
+    ],
+    "body": "docs/planning/bead-bodies/U01.md",
+    "priority": 1
+  },
+  {
+    "key": "U02",
+    "title": "Implement signed staged artifact/update design",
+    "deps": [
+      "U01",
+      "E01"
+    ],
+    "body": "docs/planning/bead-bodies/U02.md",
+    "priority": 1
+  },
+  {
+    "key": "U03",
+    "title": "Specify reversible userspace activation handoff",
+    "deps": [
+      "E05",
+      "D04",
+      "U02"
+    ],
+    "body": "docs/planning/bead-bodies/U03.md",
+    "priority": 1
+  },
+  {
+    "key": "Q01",
+    "title": "Build offline end-to-end virtual house harness",
+    "deps": [
+      "G03",
+      "S03",
+      "D04"
+    ],
+    "body": "docs/planning/bead-bodies/Q01.md",
+    "priority": 1
+  },
+  {
+    "key": "Q02",
+    "title": "Qualify footprint and deadline budgets",
+    "deps": [
+      "Q01",
+      "D04"
+    ],
+    "body": "docs/planning/bead-bodies/Q02.md",
+    "priority": 1
+  },
+  {
+    "key": "Q03",
+    "title": "Define owner-run acoustic and network qualification",
+    "deps": [
+      "Q02",
+      "U03",
+      "E02"
+    ],
+    "body": "docs/planning/bead-bodies/Q03.md",
+    "priority": 1
+  },
+  {
+    "key": "Q04",
+    "title": "Qualify offline combined native-integration candidate",
+    "deps": [
+      "Q03",
+      "T02",
+      "X02",
+      "X04",
+      "A02",
+      "V02",
+      "L01"
+    ],
+    "body": "docs/planning/bead-bodies/Q04.md",
+    "priority": 2
+  },
+  {
+    "key": "Q05",
+    "title": "Produce release and maintenance handoff",
+    "deps": [
+      "Q04",
+      "U03",
+      "Q06"
+    ],
+    "body": "docs/planning/bead-bodies/Q05.md",
+    "priority": 2
+  },
+  {
+    "key": "X04",
+    "title": "Implement offline Alexa voice-to-Spotify routing contract",
+    "deps": [
+      "X01",
+      "X02",
+      "S03",
+      "G01"
+    ],
+    "body": "docs/planning/bead-bodies/X04.md",
+    "priority": 2
+  },
+  {
+    "key": "P05",
+    "title": "Adapt Asupersync upstream for bounded legacy runtime profiles",
+    "deps": [
+      "P01",
+      "P02",
+      "E06"
+    ],
+    "body": "docs/planning/bead-bodies/P05.md",
+    "priority": 1
+  },
+  {
+    "key": "P06",
+    "title": "Extract and adapt portable Franken support-library subsets",
+    "deps": [
+      "P01",
+      "E06",
+      "E03"
+    ],
+    "body": "docs/planning/bead-bodies/P06.md",
+    "priority": 1
+  },
+  {
+    "key": "T04",
+    "title": "Admit a native tailnet development candidate per target profile",
+    "deps": [
+      "T01"
+    ],
+    "body": "docs/planning/bead-bodies/T04.md",
+    "priority": 2
+  },
+  {
+    "key": "X05",
+    "title": "Validate externally supplied Alexa music-routing qualification evidence",
+    "deps": [
+      "X04"
+    ],
+    "body": "docs/planning/bead-bodies/X05.md",
+    "priority": 2
+  },
+  {
+    "key": "Q06",
+    "title": "Validate external native-service and physical qualification gates",
+    "deps": [
+      "Q04",
+      "Q03",
+      "X05"
+    ],
+    "body": "docs/planning/bead-bodies/Q06.md",
+    "priority": 2
+  }
+]

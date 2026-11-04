@@ -1,0 +1,644 @@
+{
+  "E01": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "1. Evidence and meaning of compatibility"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "3. Board profile contract"
+    }
+  ],
+  "E02": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "9. Buffer allocation and accounting"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "15. Observability and reproducibility"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "16. Acceptance campaign"
+    }
+  ],
+  "E03": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "4. Legacy kernel and ABI feasibility gate"
+    }
+  ],
+  "E04": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "3. Board profile contract"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "6. Audio ownership and HAL API"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "7. Render path and DSP"
+    }
+  ],
+  "E05": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "3. Board profile contract"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "6. Audio ownership and HAL API"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "14. Failure behavior"
+    }
+  ],
+  "E06": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "2. Proposed crate responsibilities"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "4. Legacy kernel and ABI feasibility gate"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "5. Asupersync integration"
+    }
+  ],
+  "P01": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "2. Proposed crate responsibilities"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "3. Board profile contract"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "2. Integration boundary"
+    }
+  ],
+  "P02": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "3. Board profile contract"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "4. Legacy kernel and ABI feasibility gate"
+    }
+  ],
+  "P03": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "5. Asupersync integration"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "9. Buffer allocation and accounting"
+    }
+  ],
+  "P04": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "6. Audio ownership and HAL API"
+    }
+  ],
+  "P05": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "4. Legacy kernel and ABI feasibility gate"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "5. Asupersync integration"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "9. Buffer allocation and accounting"
+    }
+  ],
+  "P06": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "2. Proposed crate responsibilities"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "4. Legacy kernel and ABI feasibility gate"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "5. Asupersync integration"
+    }
+  ],
+  "D01": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "6. Audio ownership and HAL API"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "7. Render path and DSP"
+    }
+  ],
+  "D02": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "7. Render path and DSP"
+    }
+  ],
+  "D03": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "7. Render path and DSP"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "11. Clock synchronization"
+    }
+  ],
+  "D04": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "5. Asupersync integration"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "6. Audio ownership and HAL API"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "7. Render path and DSP"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "9. Buffer allocation and accounting"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "12. Group and membership state machine"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "14. Failure behavior"
+    }
+  ],
+  "N01": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "8. Stream identity and framing"
+    }
+  ],
+  "N02": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "8. Stream identity and framing"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "12. Group and membership state machine"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "2. Integration boundary"
+    }
+  ],
+  "N03": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "8. Stream identity and framing"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "11. Clock synchronization"
+    }
+  ],
+  "N04": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "8. Stream identity and framing"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "9. Buffer allocation and accounting"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "10. Packet recovery and FEC"
+    }
+  ],
+  "N05": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "9. Buffer allocation and accounting"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "10. Packet recovery and FEC"
+    }
+  ],
+  "N06": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "8. Stream identity and framing"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "10. Packet recovery and FEC"
+    }
+  ],
+  "G01": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "12. Group and membership state machine"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "2. Integration boundary"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "10. fsonos compatibility"
+    }
+  ],
+  "G02": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "7. Render path and DSP"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "12. Group and membership state machine"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "2. Integration boundary"
+    }
+  ],
+  "G03": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "12. Group and membership state machine"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "2. Integration boundary"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "10. fsonos compatibility"
+    }
+  ],
+  "S01": [
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "2. Integration boundary"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "3. Spotify"
+    }
+  ],
+  "S02": [
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "3. Spotify"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "4. AirPlay reception"
+    }
+  ],
+  "S03": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "9. Buffer allocation and accounting"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "12. Group and membership state machine"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "2. Integration boundary"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "3. Spotify"
+    }
+  ],
+  "A01": [
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "2. Integration boundary"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "4. AirPlay reception"
+    }
+  ],
+  "A02": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "11. Clock synchronization"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "2. Integration boundary"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "4. AirPlay reception"
+    }
+  ],
+  "V01": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "11. Clock synchronization"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "13. Music mode and video mode"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "5. YouTube and other video sources"
+    }
+  ],
+  "V02": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "13. Music mode and video mode"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "4. AirPlay reception"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "5. YouTube and other video sources"
+    }
+  ],
+  "T01": [
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "6. Native Tailscale"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "13. Qualification separation from fresh review"
+    }
+  ],
+  "T02": [
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "6. Native Tailscale"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "13. Qualification separation from fresh review"
+    }
+  ],
+  "T03": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "12. Group and membership state machine"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "6. Native Tailscale"
+    }
+  ],
+  "T04": [
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "6. Native Tailscale"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "13. Qualification separation from fresh review"
+    }
+  ],
+  "X01": [
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "7. Alexa"
+    }
+  ],
+  "X02": [
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "2. Integration boundary"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "7. Alexa"
+    }
+  ],
+  "X03": [
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "8. Optional Sonos One local voice"
+    }
+  ],
+  "X04": [
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "7. Alexa"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "13. Qualification separation from fresh review"
+    }
+  ],
+  "X05": [
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "7. Alexa"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "13. Qualification separation from fresh review"
+    }
+  ],
+  "L01": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "11. Clock synchronization"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "13. Music mode and video mode"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "9. Line-in"
+    }
+  ],
+  "U01": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "3. Board profile contract"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "4. Legacy kernel and ABI feasibility gate"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "14. Failure behavior"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "2. Integration boundary"
+    }
+  ],
+  "U02": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "3. Board profile contract"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "4. Legacy kernel and ABI feasibility gate"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "9. Buffer allocation and accounting"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "14. Failure behavior"
+    }
+  ],
+  "U03": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "6. Audio ownership and HAL API"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "12. Group and membership state machine"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "14. Failure behavior"
+    }
+  ],
+  "Q01": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "12. Group and membership state machine"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "14. Failure behavior"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "15. Observability and reproducibility"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "16. Acceptance campaign"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "2. Integration boundary"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "10. fsonos compatibility"
+    }
+  ],
+  "Q02": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "9. Buffer allocation and accounting"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "15. Observability and reproducibility"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "16. Acceptance campaign"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "11. Evidence and resource qualification"
+    }
+  ],
+  "Q03": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "11. Clock synchronization"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "16. Acceptance campaign"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "3. Spotify"
+    }
+  ],
+  "Q04": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "9. Buffer allocation and accounting"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "16. Acceptance campaign"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "11. Evidence and resource qualification"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "13. Qualification separation from fresh review"
+    }
+  ],
+  "Q05": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "1. Evidence and meaning of compatibility"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "3. Board profile contract"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "13. Qualification separation from fresh review"
+    }
+  ],
+  "Q06": [
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "11. Clock synchronization"
+    },
+    {
+      "file": "SLIM_RUNTIME_DESIGN.md",
+      "heading": "16. Acceptance campaign"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "11. Evidence and resource qualification"
+    },
+    {
+      "file": "SLIM_INTEGRATIONS_DESIGN.md",
+      "heading": "13. Qualification separation from fresh review"
+    }
+  ]
+}
