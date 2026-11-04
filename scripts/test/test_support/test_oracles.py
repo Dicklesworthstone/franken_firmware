@@ -890,7 +890,7 @@ class TestSchedule(unittest.TestCase):
 
 # ---------------------------------------------------------------------------
 class TestCanaries(unittest.TestCase):
-    EXTRA_SEEDS = tuple(range(100, 112))
+    EXTRA_SEEDS = tuple(range(100, 108)) + (0, 2**63, 2**64 - 1, 0xDEADBEEFCAFEF00D)
 
     def test_all_four_required_defect_classes_are_planted(self):
         wanted = {"sample": "lost_samples", "epoch": "stale_epoch_applied", "command": "double_applied", "readiness": "false_ready"}
@@ -1029,7 +1029,32 @@ class TestFoundationBoundary(unittest.TestCase):
 
 # ---------------------------------------------------------------------------
 RESULT_KEYS = {"schema", "run_id", "case_id", "nonce", "verdict", "oracle", "oracle_kind", "independent", "checks",
-               "mismatches", "expected", "observed", "first_causal_event", "counters"}
+               "mismatches", "expected", "observed", "first_causal_event", "counters",
+               "finalized", "incomplete_reasons", "violation_kinds"}
+
+
+def contract_problems(r):
+    """The consistency rules the runner enforces on a v1.1 result (from the contract message), as a list of problems."""
+    problems = []
+    kinds, reasons, mism = r["violation_kinds"], r["incomplete_reasons"], r["mismatches"]
+    if not (isinstance(kinds, dict) and all(isinstance(v, int) and not isinstance(v, bool) and v >= 1 for v in kinds.values())):
+        problems.append("violation_kinds must map kind -> count >= 1")
+    elif sum(kinds.values()) != mism:
+        problems.append("sum(violation_kinds) != mismatches")
+    if not (isinstance(reasons, list) and all(isinstance(x, str) and x for x in reasons)):
+        problems.append("incomplete_reasons must be a list of non-empty strings")
+    if not isinstance(r["finalized"], bool):
+        problems.append("finalized must be a bool")
+    v = r["verdict"]
+    if v == "pass" and (mism != 0 or kinds or r["finalized"] is not True or reasons or r["checks"] < 1):
+        problems.append("pass needs 0 mismatches, no kinds, finalized, no reasons, checks >= 1")
+    if v == "fail" and (mism < 1 or not kinds or r["expected"] == r["observed"]):
+        problems.append("fail needs mismatches >= 1, a kind, and expected != observed")
+    if v == "incomplete" and (mism != 0 or not (reasons or r["finalized"] is False)):
+        problems.append("incomplete needs 0 mismatches and reasons or finalized false")
+    if v not in ("pass", "fail", "incomplete"):
+        problems.append("unknown verdict")
+    return problems
 
 
 class TestRunnerContract(unittest.TestCase):
@@ -1046,17 +1071,45 @@ class TestRunnerContract(unittest.TestCase):
     def failed_verdict(self):
         return drive(oracles.SampleOracle(RampReference(), expected_total_frames=9), [blk(1, 0, 3), blk(2, 6, 3)])
 
-    def test_incomplete_result_has_a_distinct_identity_and_no_manufactured_mismatch(self):
+    def test_incomplete_is_its_own_typed_verdict_with_no_manufactured_mismatch(self):
         verdict = self.incomplete_verdict()
         self.assertEqual(verdict["status"], oracles.INCOMPLETE)
         result = oracles.build_case_result("sample", verdict, context={}, expect={"oracle": "sample", "kind": "lost_samples"}, **self.IDS)
         self.assertEqual(set(result), RESULT_KEYS)
-        self.assertEqual(result["verdict"], "fail")
-        self.assertEqual(result["oracle"], "sample.incomplete")
-        self.assertNotEqual(result["oracle"], "sample", "must not equal the oracle name an expected-failure canary names")
-        self.assertEqual((result["checks"], result["mismatches"]), (0, 0))
+        self.assertEqual((result["verdict"], result["oracle"]), ("incomplete", "sample"))
+        self.assertEqual((result["mismatches"], result["violation_kinds"]), (0, {}))
+        self.assertEqual(result["incomplete_reasons"], ["no_evidence"])
+        self.assertTrue(result["finalized"])
         self.assertTrue(result["observed"].startswith("oracle incomplete: no_evidence"))
-        self.assertNotEqual(result["expected"], result["observed"])
+        self.assertEqual(contract_problems(result), [])
+
+    def test_unfinalized_oracle_is_incomplete_with_finalized_false(self):
+        oracle = oracles.SampleOracle(RampReference(), expected_total_frames=3)
+        oracle.observe(blk(1, 0, 3))  # never finalized: the case "never reached its final summary"
+        verdict = oracle.verdict()
+        result = oracles.build_case_result("sample", verdict, context={}, **self.IDS)
+        self.assertEqual((result["verdict"], result["finalized"]), ("incomplete", False))
+        self.assertEqual(result["incomplete_reasons"], ["not_finalized"])
+        self.assertEqual(result["mismatches"], 0)
+        self.assertEqual(contract_problems(result), [])
+
+    def test_a_failure_that_is_also_incomplete_keeps_both_facts(self):
+        # Real violation found, but tracking overflowed: the runner must see the reason and downgrade it to non-canary-match.
+        events = [
+            ev("authority_epoch", 0, scope="s", epoch=1),
+            ev("command_issued", 1, command_id="c1", scope="s", epoch=1),
+            ev("command_issued", 2, command_id="c2", scope="s", epoch=1),  # beyond max_tracked_commands
+            ev("authority_epoch", 3, scope="s", epoch=2),
+            ev("command_delivered", 4, command_id="c1"),
+            ev("command_applied", 4, command_id="c1"),
+        ]
+        verdict = drive(oracles.EpochOracle(max_tracked_commands=1), events)
+        self.assertEqual(verdict["status"], oracles.FAILED)
+        result = oracles.build_case_result("epoch", verdict, context={}, expect={"oracle": "epoch", "kind": "stale_epoch_applied"}, **self.IDS)
+        self.assertEqual((result["verdict"], result["oracle"], result["mismatches"]), ("fail", "epoch", 1))
+        self.assertEqual(result["violation_kinds"], {"stale_epoch_applied": 1})
+        self.assertEqual(result["incomplete_reasons"], ["tracking_overflow"])
+        self.assertEqual(contract_problems(result), [])
 
     def test_failure_with_the_wrong_defect_identity_is_not_a_canary_match(self):
         verdict = self.failed_verdict()
@@ -1066,17 +1119,22 @@ class TestRunnerContract(unittest.TestCase):
         wrong = oracles.build_case_result("sample", verdict, context={}, expect={"oracle": "sample", "kind": "wrong_samples"}, **self.IDS)
         self.assertEqual((wrong["verdict"], wrong["oracle"]), ("fail", "sample.identity_mismatch"))
         self.assertNotEqual(wrong["expected"], wrong["observed"])
+        self.assertEqual(contract_problems(ok) + contract_problems(wrong), [])
+        self.assertIn("lost_samples", wrong["violation_kinds"], "the runner's own expect.violation check sees the real kinds")
 
     def test_pass_result_requires_evidence(self):
         verdict = drive(oracles.SampleOracle(RampReference(), expected_total_frames=3), [blk(1, 0, 3)])
         result = oracles.build_case_result("sample", verdict, context={"seed": 1}, **self.IDS)
         self.assertEqual((result["verdict"], result["mismatches"], result["oracle"]), ("pass", 0, "sample"))
         self.assertGreaterEqual(result["checks"], 1)
+        self.assertEqual((result["finalized"], result["incomplete_reasons"], result["violation_kinds"]), (True, [], {}))
+        self.assertEqual(contract_problems(result), [])
         vacuous = drive(oracles.SampleOracle(RampReference(), expected_total_frames=3, allow_empty=True), [])
         self.assertEqual(vacuous["status"], oracles.PASSED)
         result = oracles.build_case_result("sample", vacuous, context={}, **self.IDS)
-        self.assertEqual(result["verdict"], "fail", "a pass with zero checks must not be reported as a pass")
-        self.assertEqual(result["oracle"], "sample.incomplete")
+        self.assertEqual(result["verdict"], "incomplete", "a pass with zero checks must not be reported as a pass")
+        self.assertEqual((result["oracle"], result["incomplete_reasons"], result["mismatches"]), ("sample", ["no_evidence"], 0))
+        self.assertEqual(contract_problems(result), [])
 
     def test_missed_defect_is_reported_as_a_pass_not_as_the_expected_failure(self):
         blind = type("Blind", (oracles.EpochOracle,), {"_violate": lambda self, *a, **k: None})
@@ -1091,7 +1149,10 @@ class TestRunnerContract(unittest.TestCase):
         spec, report, verdict, collateral = oracles.defect_verdict(11, "double_apply", oracle_factory=swapped_factory("command", cls))
         self.assertEqual(verdict["status"], oracles.INCOMPLETE)
         result = oracles.build_case_result(spec.oracle, verdict, context={}, expect={"oracle": spec.oracle, "kind": spec.kind}, **self.IDS)
-        self.assertEqual((result["verdict"], result["oracle"], result["mismatches"]), ("fail", "command.incomplete", 0))
+        # Same oracle name as the canary expects -- the typed verdict, not the name, is what keeps it from matching.
+        self.assertEqual((result["verdict"], result["oracle"], result["mismatches"]), ("incomplete", "command", 0))
+        self.assertEqual(result["incomplete_reasons"], ["synthetic"])
+        self.assertEqual(contract_problems(result), [])
 
     def test_oracle_kinds_are_receipt_kinds(self):
         self.assertEqual(set(oracles.ORACLE_KIND), set(oracles.ORACLE_NAMES))
@@ -1132,6 +1193,37 @@ class TestRunnerContract(unittest.TestCase):
             self.assertEqual(list(Path(tmp).iterdir()), [])
             oracles.write_case_result(str(target), {"observed": "x" * 1000})
             self.assertTrue(target.exists())
+
+    def run_main_with(self, argv, patches):
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "r.json"
+            env = {"FFW_RUN_ID": "r", "FFW_CASE_ID": "c", "FFW_RESULT_NONCE": "n", "FFW_RESULT_PATH": str(path)}
+            with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(out), contextlib.ExitStack() as stack:
+                for name, value in patches.items():
+                    stack.enter_context(mock.patch.object(oracles, name, return_value=value))
+                code = oracles.main(argv)
+            return code, json.loads(path.read_text())
+
+    def test_incomplete_defect_replay_exits_2_and_is_typed_incomplete_under_the_expected_oracle_name(self):
+        def _finalize(self, end_t_ns):
+            self._add_incomplete("synthetic_missing_evidence")
+        cls = type("Inc", (oracles.CommandOracle,), {"_violate": lambda self, *a, **k: None, "_on_finalize": _finalize})
+        spec, report, verdict, collateral = oracles.defect_verdict(11, "double_apply", oracle_factory=swapped_factory("command", cls))
+        code, result = self.run_main_with(["replay", "--defect", "double_apply", "--seed", "11"],
+                                          {"defect_verdict": (spec, report, verdict, collateral)})
+        self.assertEqual(code, 2, "exit 2 is outside a canary's expected exit_codes [1]")
+        self.assertEqual((result["verdict"], result["oracle"], result["mismatches"]), ("incomplete", "command", 0))
+        self.assertEqual(result["incomplete_reasons"], ["synthetic_missing_evidence"])
+        self.assertEqual(contract_problems(result), [])
+
+    def test_incomplete_positive_exits_2_and_is_typed_incomplete(self):
+        verdict = self.incomplete_verdict()
+        report = {"trace_digest": "d" * 64, "schedule_digest": "e" * 64}
+        code, result = self.run_main_with(["positive", "--oracle", "sample", "--seed", "1"], {"positive_verdict": (verdict, report)})
+        self.assertEqual(code, 2)
+        self.assertEqual((result["verdict"], result["oracle"]), ("incomplete", "sample"))
+        self.assertEqual(contract_problems(result), [])
 
     def test_defect_exit_code_follows_the_corresponding_oracle_not_the_overall_report(self):
         # The corresponding oracle missed the defect (passed) while a *different* oracle failed.
@@ -1181,6 +1273,10 @@ class TestRunnerContract(unittest.TestCase):
                 self.assertIn(spec.kind, result["first_causal_event"])
                 self.assertEqual(result["expected"]["defect_identity"], {"oracle": spec.oracle, "kind": spec.kind})
                 self.assertTrue(all(isinstance(v, int) and not isinstance(v, bool) for v in result["counters"].values()))
+                self.assertEqual((result["finalized"], result["incomplete_reasons"]), (True, []))
+                self.assertIn(spec.kind, result["violation_kinds"])
+                self.assertEqual(sum(result["violation_kinds"].values()), result["mismatches"])
+                self.assertEqual(contract_problems(result), [])
                 self.assertLessEqual(path.stat().st_size, 256 * 1024)
                 self.assertEqual([p.name for p in Path(tmp).iterdir()], ["result.json"], "no temp file left behind")
 
@@ -1192,6 +1288,9 @@ class TestRunnerContract(unittest.TestCase):
                 result = json.loads(path.read_text())
                 self.assertEqual((result["verdict"], result["oracle"], result["mismatches"]), ("pass", name, 0))
                 self.assertGreaterEqual(result["checks"], 1)
+                self.assertEqual(set(result), RESULT_KEYS)
+                self.assertEqual((result["finalized"], result["incomplete_reasons"], result["violation_kinds"]), (True, [], {}))
+                self.assertEqual(contract_problems(result), [])
 
     def test_result_file_is_deterministic_for_the_same_environment(self):
         outs = []

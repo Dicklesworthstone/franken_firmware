@@ -48,24 +48,23 @@ or ``incomplete``.  ``receipt_outcome`` maps onto the receipt vocabulary
 (``pass`` / ``fail`` / ``blocked``): an incomplete oracle is *blocked*, a distinct
 typed outcome, never a failure that could satisfy an expected-failure canary.
 
-Runner contract (``ffw.case-result.v1``)
-----------------------------------------
+Runner contract (``ffw.case-result.v1``, v1.1)
+----------------------------------------------
 ``replay --defect D`` and ``positive --oracle O`` write ``$FFW_RESULT_PATH``
 (atomic tmp + rename, <= 256 KiB) when that variable is set; the seed comes
-from ``--seed`` or ``$FFW_SEED``.  A planted-defect replay reports ``fail`` under
-the exact corresponding oracle name (exit 1) only if that oracle caught the
-defect with the expected first violation kind.  An incomplete oracle reports
-``fail`` under ``<oracle>.incomplete`` with ``checks`` and ``mismatches`` both 0
-and exit 2: it carries a different identity and exit code from any expected
-defect, and no mismatch is manufactured from missing evidence.
+from ``--seed`` or ``$FFW_SEED``.  Besides the identifiers and counters the
+result carries the oracle's own completeness evidence: ``finalized``,
+``incomplete_reasons`` and ``violation_kinds`` (kind -> count, summing to
+``mismatches``).  The verdict is one of three typed values:
 
-Limits (tests do not prove perfection): the canary endpoints are deliberately
-minimal models.  They show that each oracle rejects its planted defect and
-accepts the paired good behaviour; they say nothing about a real device.
-
-Replay: ``python3 oracles.py replay --seed N [--defect NAME]`` re-derives the
-schedule, trace and verdicts from the seed alone.  Exit codes: 0 passed,
-1 failed, 2 incomplete or usage error.
+* ``pass``: finalized, no reasons, no violations, at least one check;
+* ``fail``: at least one violation; a planted-defect replay keeps the exact
+  corresponding oracle name (exit 1) only if that oracle's *first* violation
+  has the expected kind, else the name becomes ``<oracle>.identity_mismatch``;
+* ``incomplete``: the oracle could not reach a conclusion (exit 2).  It keeps
+  the oracle's name and reports ``mismatches`` 0: a distinct typed verdict, so
+  it can never satisfy an expected-failure canary, and no mismatch is
+  manufactured from missing evidence.
 """
 
 from __future__ import annotations
@@ -1841,15 +1840,19 @@ def build_case_result(
 
     ``expect`` (``{"oracle", "kind"}``) is the planted defect's exact identity.
     A failure of the right oracle with the wrong first violation kind is
-    reported under ``<oracle>.identity_mismatch``; incomplete evidence under
-    ``<oracle>.incomplete`` with no checks and no mismatches.  Neither can equal
-    the expected oracle name, so neither can satisfy an expected-failure canary.
+    reported under ``<oracle>.identity_mismatch``.  Incomplete evidence is its
+    own verdict (``incomplete``), never a failure with a made-up mismatch count.
+    The completeness fields are copied from the judged oracle's verdict, not
+    recomputed, so the runner sees what the oracle itself concluded.
     """
     status = verdict["status"]
     first = verdict["violations"][0] if verdict["violations"] else None
     base = {
         "schema": RESULT_SCHEMA, "run_id": run_id, "case_id": case_id, "nonce": nonce,
         "oracle_kind": ORACLE_KIND[oracle], "independent": True,
+        "finalized": bool(verdict["finalized"]),
+        "incomplete_reasons": list(verdict["incomplete_reasons"]),
+        "violation_kinds": dict(verdict["violation_kinds"]),
         "counters": _counters(verdict, collateral),
     }
     if status == PASSED and verdict["events_relevant"] >= 1:
@@ -1866,8 +1869,11 @@ def build_case_result(
                     checks=verdict["events_relevant"], mismatches=verdict["violation_count"],
                     expected=expected, observed=observed,
                     first_causal_event=f"{oracle}:{first['kind']} event_index={first['event_index']} t_ns={first['t_ns']} cause={first['cause']}")
-    text = "oracle incomplete: " + (",".join(verdict["incomplete_reasons"]) or "no_evidence")
-    return dict(base, verdict="fail", oracle=f"{oracle}.incomplete", checks=0, mismatches=0,
+    # Incomplete, or a "pass" with zero checks (which proves nothing).
+    reasons = list(verdict["incomplete_reasons"]) or ["no_evidence"]
+    text = "oracle incomplete: " + ",".join(reasons)
+    return dict(base, verdict="incomplete", oracle=oracle, checks=verdict["events_relevant"], mismatches=0,
+                incomplete_reasons=reasons, violation_kinds={},
                 expected={"status": PASSED}, observed=text, first_causal_event=text)
 
 
