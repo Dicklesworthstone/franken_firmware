@@ -3,12 +3,11 @@ name = "ffw-hello-init"
 version = "0.1.0"
 edition = "2021"
 
-# Bake-off firmware: minimal PID-1 hello for BE-MIPS / BE-PPC musl targets.
-# Builds both as a hosted std binary (via Linux cross toolchain) and, when
-# std is unavailable for the target (macOS rustup has no prebuilt std for
-# mips/powerpc BE musl), as a freestanding no_std syscall binary. The no_std
-# path is the primary bake-off artifact: it proves codegen, endianness, ABI
-# and linking without any std dependency.
+# Freestanding no_std PID-1 probe. A musl-named target does not imply libc
+# linkage or hosted std qualification. Keep this bootstrap independent of
+# the application workspace and its evolving dependencies.
+
+[workspace]
 
 [dependencies]
 

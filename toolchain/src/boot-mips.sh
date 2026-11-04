@@ -1,11 +1,16 @@
-#!/bin/sh
-# Boot the BE-MIPS hello-init under QEMU (Malta, 4.19 BE kernel).
-# Usage: boot-mips.sh <path-to-vmlinux-4kc-malta> [initramfs]
-set -eu
-KERNEL="${1:?usage: boot-mips.sh <vmlinux-4kc-malta> [initramfs]}"
-INITRD="${2:-$(dirname "$0")/../build/initramfs/initramfs-mips-v2.cpio.gz}"
-exec qemu-system-mips -M malta -cpu 24Kf \
-  -kernel "$KERNEL" \
-  -initrd "$INITRD" \
-  -append "console=ttyS0,38400 rdinit=/init panic=-1" \
-  -nographic -no-reboot
+#!/usr/bin/env bash
+# Boot ffw-hello-init under qemu-system-mips (Malta, 24Kc BE, 64 MB RAM).
+# Kernel: Debian stretch linux-image-4.19.0-0.bpo.5-4kc-malta (MIPS32R2 BE).
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+BUILD="${FFW_BUILD_DIR:-${REPO_ROOT}/build}"
+INITRAMFS="${FFW_INITRAMFS:-${BUILD}/initramfs/initramfs-mips.cpio.gz}"
+
+exec qemu-system-mips \
+  -M malta -cpu 24Kf -m 64M \
+  -nographic -no-reboot \
+  -kernel "${BUILD}/kernels/xm/boot/vmlinux-4.19.0-21-4kc-malta" \
+  -initrd "${INITRAMFS}" \
+  -append "console=ttyS0,38400 rdinit=/init panic=-1"

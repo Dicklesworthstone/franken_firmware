@@ -1,174 +1,448 @@
 #!/usr/bin/env python3
-"""Build newc-format cpio initramfs archives (gzip) with a /dev/console node,
-no root required. Spec: https://www.kernel.org/doc/html/latest/driver-api/early-userspace/buffer-format.html
-Verified against macOS cpio -it and Linux kernel unpacker.
+"""Deterministic newc-format CPIO initramfs builder and independent verifier.
+
+Spec: https://www.kernel.org/doc/html/latest/driver-api/early-userspace/buffer-format.html
+
+Repairs and invariants (E07 / ffw-ll1):
+- Explicit (major, minor) tuple handling: never pass already-unpacked major numbers
+  through os.major()/os.minor().
+- Independent parser advances via aligned `dataoff = (off + 110 + namesize + 3) & ~3`
+  followed by `off = dataoff + ((filesize + 3) & ~3)`, never by aligning the unpadded
+  sum `110 + namesize + filesize`.
+- Deterministic gzip output (`mtime=0`, empty filename header).
+- No hardcoded personal paths; paths are passed explicitly or derived from
+  `FFW_BUILD_DIR` / repository-relative `build/`.
 """
-import io, gzip, os, sys
 
-S_IFDIR, S_IFCHR, S_IFREG = 0o040000, 0o020000, 0o100000
+from __future__ import annotations
 
-def build(init_path: str, out_path: str):
+import argparse
+import gzip
+import hashlib
+import io
+import json
+import os
+import pathlib
+import sys
+from typing import Any, Iterable
+
+S_IFMT = 0o170000
+S_IFDIR = 0o040000
+S_IFCHR = 0o020000
+S_IFREG = 0o100000
+
+NEWC_MAGIC = b"070701"
+TRAILER_NAME = "TRAILER!!!"
+
+DEFAULT_DEVICE_NODES: tuple[tuple[str, int, tuple[int, int]], ...] = (
+    ("dev/console", S_IFCHR | 0o600, (5, 1)),
+    ("dev/ttyS0", S_IFCHR | 0o600, (4, 64)),
+    ("dev/ttyPZ0", S_IFCHR | 0o600, (204, 192)),
+    ("dev/null", S_IFCHR | 0o666, (1, 3)),
+    ("dev/zero", S_IFCHR | 0o666, (1, 5)),
+    ("dev/urandom", S_IFCHR | 0o666, (1, 9)),
+)
+
+DEFAULT_DIRS: tuple[str, ...] = (".", "dev", "proc", "sys", "tmp")
+
+
+def normalize_dev_tuple(dev: tuple[int, int] | None) -> tuple[int, int]:
+    """Return explicit (rdevmajor, rdevminor) integers without os.major/os.minor corruption."""
+    if dev is None:
+        return (0, 0)
+    if not isinstance(dev, tuple) or len(dev) != 2:
+        raise ValueError(f"device specification must be a 2-tuple (major, minor), got {dev!r}")
+    if any(type(value) is not int for value in dev):
+        raise ValueError("device major/minor must be integers, not coerced values")
+    maj, minr = dev
+    if maj < 0 or minr < 0 or maj > 0xFFFFFFFF or minr > 0xFFFFFFFF:
+        raise ValueError(f"device major/minor out of 32-bit range: {(maj, minr)!r}")
+    return (maj, minr)
+
+
+def encode_newc_entry(
+    name: str,
+    mode: int,
+    data: bytes = b"",
+    dev: tuple[int, int] | None = None,
+    ino: int = 1,
+    nlink: int | None = None,
+) -> bytes:
+    """Encode a single SVR4 newc (070701) CPIO entry with 4-byte header and data padding."""
+    name_bytes = name.encode("utf-8") + b"\0"
+    namesize = len(name_bytes)
+    filesize = len(data)
+    if nlink is None:
+        nlink = 2 if (mode & S_IFMT) == S_IFDIR else 1
+    rdevmaj, rdevmin = normalize_dev_tuple(dev)
+
+    fields = [
+        NEWC_MAGIC,
+        f"{ino & 0xFFFFFFFF:08X}".encode("ascii"),
+        f"{mode & 0xFFFFFFFF:08X}".encode("ascii"),
+        b"00000000",  # uid
+        b"00000000",  # gid
+        f"{nlink & 0xFFFFFFFF:08X}".encode("ascii"),
+        b"00000000",  # mtime (0 for deterministic output)
+        f"{filesize & 0xFFFFFFFF:08X}".encode("ascii"),
+        b"00000000",  # devmajor
+        b"00000000",  # devminor
+        f"{rdevmaj:08X}".encode("ascii"),
+        f"{rdevmin:08X}".encode("ascii"),
+        f"{namesize:08X}".encode("ascii"),
+        b"00000000",  # check
+    ]
+    buf = io.BytesIO()
+    buf.write(b"".join(fields))
+    assert buf.tell() == 110
+    buf.write(name_bytes)
+    hdr_pad = (4 - (buf.tell() % 4)) % 4
+    if hdr_pad:
+        buf.write(b"\0" * hdr_pad)
+    if data:
+        buf.write(data)
+        data_pad = (4 - (len(data) % 4)) % 4
+        if data_pad:
+            buf.write(b"\0" * data_pad)
+    return buf.getvalue()
+
+
+def build_cpio_bytes(
+    init_bytes: bytes,
+    extra_entries: Iterable[tuple[str, int, bytes, tuple[int, int] | None]] = (),
+) -> bytes:
+    """Build a complete uncompressed newc CPIO archive padded to a 512-byte boundary."""
     buf = io.BytesIO()
     ino = 300
 
-    def ent(name, mode, typ, data=b'', dev=None):
-        nonlocal ino
+    for dname in DEFAULT_DIRS:
         ino += 1
-        nlink = 2 if typ == b'd' else 1
-        filesize = len(data)
-        devmaj, devmin = (os.major(dev[0]), os.minor(dev[0])) if dev else (0, 0)
-        # newc magic + 13 hex fields: ino mode uid gid nlink mtime filesize
-        # devmajor(dev encoded hi/lo pair uses two fields) rdevmajor rdevminor
-        # namesize check
-        # Linux expects: ino mode uid gid nlink mtime filesize devmajor
-        #                devminor rdevmajor rdevminor namesize check
-        # where for device nodes rdevmajor/rdevminor carry the numbers.
-        fields = [
-            b'070701',
-            f'{ino:08X}'.encode(), f'{mode:08X}'.encode(), f'{0:08X}'.encode(), f'{0:08X}'.encode(),
-            f'{nlink:08X}'.encode(), f'{0:08X}'.encode(), f'{filesize:08X}'.encode(),
-            f'{0:08X}'.encode(), f'{0:08X}'.encode(),          # devmajor, devminor (of the fs)
-            f'{devmaj:08X}'.encode(), f'{devmin:08X}'.encode(),  # rdevmajor, rdevminor
-            f'{len(name) + 1:08X}'.encode(), f'{0:08X}'.encode(),
-        ]
-        buf.write(b''.join(fields))
-        name_b = name.encode() + b'\0'
-        buf.write(name_b)
-        pad = (4 - buf.tell() % 4) % 4
-        if pad:
-            buf.write(b'\0' * pad)
-        if data:
-            buf.write(data)
-            pad = (4 - len(data) % 4) % 4
-            if pad:
-                buf.write(b'\0' * pad)
+        buf.write(encode_newc_entry(dname, S_IFDIR | 0o755, ino=ino))
 
-    ent('.', S_IFDIR | 0o755, b'd')
-    ent('dev', S_IFDIR | 0o755, b'd')
-    ent('dev/console', S_IFCHR | 0o600, b'c', dev=(5, 1))
-    ent('dev/ttyS0', S_IFCHR | 0o600, b'c', dev=(4, 64))
-    ent('init', S_IFREG | 0o755, b'f', data=open(init_path, 'rb').read())
-    # trailer: magic + 13 zero fields, then name
-    buf.write(b'070701' + b'0' * 88 + b'0000000B' + b'00000000' + b'TRAILER!!!\0')
-    pad = (512 - buf.tell() % 512) % 512
-    if pad:
-        buf.write(b'\0' * pad)
-    with gzip.open(out_path, 'wb') as f:
-        f.write(buf.getvalue())
-    print(f"wrote {out_path} ({buf.tell()} bytes uncompressed)")
+    for dev_name, dev_mode, dev_tuple in DEFAULT_DEVICE_NODES:
+        ino += 1
+        buf.write(encode_newc_entry(dev_name, dev_mode, dev=dev_tuple, ino=ino))
 
-if __name__ == '__main__':
-    import subprocess, tempfile
+    ino += 1
+    buf.write(encode_newc_entry("init", S_IFREG | 0o755, data=init_bytes, ino=ino))
 
-    def append_entry(archive_path, name, mode, typ, dev=None, data=b''):
-        """Append one newc entry + trailer to an existing raw cpio archive."""
-        buf = io.BytesIO()
-        # single entry with fresh inode
-        devmaj, devmin = (os.major(dev[0]), os.minor(dev[0])) if dev else (0, 0)
-        fields = [
-            b'070701',
-            f'{999:08X}'.encode(), f'{mode:08X}'.encode(), b'00000000', b'00000000',
-            b'00000001', b'00000000', f'{len(data):08X}'.encode(),
-            b'00000000', b'00000000',
-            f'{devmaj:08X}'.encode(), f'{devmin:08X}'.encode(),
-            f'{len(name) + 1:08X}'.encode(), b'00000000',
-        ]
-        buf.write(b''.join(fields))
-        name_b = name.encode() + b'\0'
-        buf.write(name_b)
-        pad = (4 - buf.tell() % 4) % 4
-        if pad:
-            buf.write(b'\0' * pad)
-        if data:
-            buf.write(data)
-            pad = (4 - len(data) % 4) % 4
-            if pad:
-                buf.write(b'\0' * pad)
-        buf.write(b'070701' + b'0' * 88 + b'0000000B' + b'00000000' + b'TRAILER!!!\0')
-        pad = (512 - buf.tell() % 512) % 512
-        if pad:
-            buf.write(b'\0' * pad)
-        with open(archive_path, 'ab') as f:
-            f.write(buf.getvalue())
+    for name, mode, data, dev in extra_entries:
+        ino += 1
+        buf.write(encode_newc_entry(name, mode, data=data, dev=dev, ino=ino))
 
-    def build_findcpio(init_path, out_path):
-        """macOS find|cpio (kernel-clean) + appended dev/console entry."""
-        import shutil, tempfile
-        with tempfile.TemporaryDirectory() as td:
-            shutil.copy(init_path, os.path.join(td, 'init'))
-            os.chmod(os.path.join(td, 'init'), 0o755)
-            # cpio from the tree (includes trailer)
-            raw = subprocess.run(
-                f'cd "{td}" && find . | cpio -o -H newc 2>/dev/null',
-                shell=True, capture_output=True).stdout
-            # strip the trailer block (last entry) — find|cpio's trailer +
-            # padding, then append our dev/console + fresh trailer
-            # Simpler: keep both trailers; kernel stops at first trailer,
-            # so dev/console must come BEFORE the first trailer. Rebuild:
-            # extract entries except trailer is hard; instead write our own
-            # whole archive using the reference header style (mimic ref
-            # exactly: namesize includes NUL, dev numbers in rdev fields).
-            open(out_path + '.raw', 'wb').write(raw)
-        return open(out_path + '.raw', 'rb').read()
+    buf.write(encode_newc_entry(TRAILER_NAME, 0, data=b"", dev=None, ino=0, nlink=1))
+    tail_pad = (512 - (buf.tell() % 512)) % 512
+    if tail_pad:
+        buf.write(b"\0" * tail_pad)
+    return buf.getvalue()
 
-    for arch, binary in [
-        ('mips', '/Volumes/trj-data/franken_firmware_build/hello-init-target/mips-unknown-linux-musl/release/ffw-hello-init'),
-        ('ppc', '/Volumes/trj-data/franken_firmware_build/hello-init-target/powerpc-unknown-linux-musl/release/ffw-hello-init'),
-    ]:
-        # Build tree archive with find|cpio, then INSERT dev/console before
-        # the trailer by rebuilding: parse find|cpio output, drop trailer,
-        # re-emit + our dev/console entry + trailer.
-        raw = build_findcpio(binary, f'/tmp/ir-{arch}')
-        entries = []
-        d = raw
-        off = 0
-        while d[off:off+6] == b'070701':
-            f = [int(d[off+6+i*8: off+14+i*8], 16) for i in range(13)]
-            namesz = f[11]
-            name = d[off+110: off+110+namesz-1].decode()
-            if name == 'TRAILER!!!':
-                break
-            filesize = f[6]
-            dataoff = (off + 110 + namesz + 3) & ~3
-            data = d[dataoff: dataoff + filesize]
-            rdevmaj, rdevmin = f[9], f[10]
-            entries.append((name, f[1], data, (rdevmaj, rdevmin) if (f[1] & 0o170000) == 0o020000 else None))
-            advance = (110 + namesz + filesize + 3) & ~3
-            off += advance
-        if not any(e[0] == 'dev/console' for e in entries):
-            entries.append(('dev', S_IFDIR | 0o755, b'', None))
-            entries.append(('dev/console', S_IFCHR | 0o600, b'', (5, 1)))
-        # re-emit all entries with a fresh writer
-        out = io.BytesIO()
-        ino = 300
-        for (name, mode, data, dev) in entries:
-            ino += 1
-            nlink = 2 if (mode & 0o170000) == S_IFDIR else 1
-            devmaj, devmin = (os.major(dev[0]), os.minor(dev[0])) if dev else (0, 0)
+
+def compress_deterministic_gzip(raw_cpio: bytes) -> bytes:
+    """Compress `raw_cpio` into deterministic gzip bytes (mtime=0, empty filename)."""
+    out = io.BytesIO()
+    with gzip.GzipFile(filename="", mode="wb", fileobj=out, compresslevel=9, mtime=0) as gz:
+        gz.write(raw_cpio)
+    return out.getvalue()
+
+
+def parse_cpio_bytes(raw: bytes) -> list[dict[str, Any]]:
+    """Independently parse a raw newc CPIO archive and verify alignment/padding invariants."""
+    entries: list[dict[str, Any]] = []
+    off = 0
+    saw_trailer = False
+    seen_names: set[str] = set()
+
+    while off < len(raw):
+        if raw[off:] == b"\0" * len(raw[off:]):
+            break
+        if off + 110 > len(raw):
+            raise ValueError(f"truncated CPIO header at offset {off}")
+        magic = raw[off : off + 6]
+        if magic != NEWC_MAGIC:
+            raise ValueError(f"invalid CPIO magic at offset {off}: {magic!r}")
+        try:
             fields = [
-                b'070701',
-                f'{ino:08X}'.encode(), f'{mode:08X}'.encode(), b'00000000', b'00000000',
-                f'{nlink:08X}'.encode(), b'00000000', f'{len(data):08X}'.encode(),
-                b'00000000', b'00000000',
-                f'{devmaj:08X}'.encode(), f'{devmin:08X}'.encode(),
-                f'{len(name) + 1:08X}'.encode(), b'00000000',
+                int(raw[off + 6 + i * 8 : off + 14 + i * 8].decode("ascii"), 16)
+                for i in range(13)
             ]
-            out.write(b''.join(fields))
-            name_b = name.encode() + b'\0'
-            out.write(name_b)
-            pad = (4 - out.tell() % 4) % 4
-            if pad:
-                out.write(b'\0' * pad)
-            if data:
-                out.write(data)
-                pad = (4 - len(data) % 4) % 4
-                if pad:
-                    out.write(b'\0' * pad)
-        out.write(b'070701' + b'0' * 88 + b'0000000B' + b'00000000' + b'TRAILER!!!\0')
-        pad = (512 - out.tell() % 512) % 512
-        if pad:
-            out.write(b'\0' * pad)
-        out_path = f'/Volumes/trj-data/franken_firmware_build/initramfs/initramfs-{arch}-v2.cpio.gz'
-        with gzip.open(out_path, 'wb') as gf:
-            gf.write(out.getvalue())
-        print(f"wrote {out_path} ({out.tell()} bytes, {len(entries)} entries)")
+        except Exception as exc:
+            raise ValueError(f"malformed hex header field at offset {off}") from exc
+
+        (
+            ino,
+            mode,
+            uid,
+            gid,
+            nlink,
+            mtime,
+            filesize,
+            devmajor,
+            devminor,
+            rdevmajor,
+            rdevminor,
+            namesize,
+            check,
+        ) = fields
+
+        if namesize < 1:
+            raise ValueError(f"invalid namesize {namesize} at offset {off}")
+        name_end = off + 110 + namesize
+        if name_end > len(raw):
+            raise ValueError(f"truncated entry name at offset {off}")
+        name_with_nul = raw[off + 110 : name_end]
+        if name_with_nul[-1:] != b"\0":
+            raise ValueError(f"entry name missing trailing NUL at offset {off}")
+        if b"\0" in name_with_nul[:-1]:
+            raise ValueError(f"embedded NUL in entry name at offset {off}")
+        name = name_with_nul[:-1].decode("utf-8")
+        if name in seen_names:
+            raise ValueError(f"duplicate CPIO entry {name!r}")
+        seen_names.add(name)
+        if name != "." and (not name or name.startswith("/") or any(
+            part in ("", ".", "..") for part in name.split("/")
+        )):
+            raise ValueError("noncanonical or escaping archive path")
+
+        # Crucial invariant: align header+namesize first, then align filesize separately.
+        dataoff = (name_end + 3) & ~3
+        if raw[name_end:dataoff] != b"\0" * (dataoff - name_end):
+            raise ValueError(f"non-zero header padding at offset {name_end}..{dataoff}")
+
+        data_end = dataoff + filesize
+        if data_end > len(raw):
+            raise ValueError(f"truncated entry data for {name!r} at offset {dataoff}")
+        data = raw[dataoff:data_end]
+
+        next_off = dataoff + ((filesize + 3) & ~3)
+        if next_off > len(raw):
+            raise ValueError(f"truncated data padding for {name!r} at offset {data_end}")
+        if raw[data_end:next_off] != b"\0" * (next_off - data_end):
+            raise ValueError(f"non-zero data padding for {name!r} at offset {data_end}..{next_off}")
+
+        entry = {
+            "name": name,
+            "ino": ino,
+            "mode": mode,
+            "uid": uid,
+            "gid": gid,
+            "nlink": nlink,
+            "mtime": mtime,
+            "filesize": filesize,
+            "dev": (devmajor, devminor),
+            "rdev": (rdevmajor, rdevminor),
+            "namesize": namesize,
+            "check": check,
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "data": data,
+        }
+        entries.append(entry)
+        off = next_off
+
+        if name == TRAILER_NAME:
+            if filesize != 0:
+                raise ValueError("TRAILER!!! must not contain data")
+            saw_trailer = True
+            if raw[off:] != b"\0" * len(raw[off:]):
+                raise ValueError(f"non-zero bytes after TRAILER!!! at offset {off}")
+            break
+
+    if not saw_trailer:
+        raise ValueError("missing TRAILER!!! entry in CPIO archive")
+    return entries
+
+
+def verify_initramfs_bytes(
+    archive_bytes: bytes,
+    expected_init_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Decompress (if gzip) and verify required initramfs structure, device tuples, and init digest."""
+    if archive_bytes[:2] == b"\x1f\x8b":
+        raw = gzip.decompress(archive_bytes)
+    else:
+        raw = archive_bytes
+
+    entries = parse_cpio_bytes(raw)
+    by_name = {e["name"]: e for e in entries}
+
+    for required_dir in DEFAULT_DIRS:
+        if required_dir not in by_name:
+            raise ValueError(f"missing required directory {required_dir!r}")
+        if (by_name[required_dir]["mode"] & S_IFMT) != S_IFDIR:
+            raise ValueError(f"entry {required_dir!r} is not a directory")
+
+    for dev_name, dev_mode, expected_rdev in DEFAULT_DEVICE_NODES:
+        if dev_name not in by_name:
+            raise ValueError(f"missing required device node {dev_name!r}")
+        ent = by_name[dev_name]
+        if ent["mode"] != dev_mode:
+            raise ValueError(
+                f"device {dev_name!r} mode mismatch: got {oct(ent['mode'])}, expected {oct(dev_mode)}"
+            )
+        if ent["rdev"] != expected_rdev:
+            raise ValueError(
+                f"device {dev_name!r} rdev mismatch: got {ent['rdev']}, expected {expected_rdev}"
+            )
+
+    if "init" not in by_name:
+        raise ValueError("missing required 'init' executable")
+    init_ent = by_name["init"]
+    if init_ent["mode"] != (S_IFREG | 0o755):
+        raise ValueError(f"unexpected init mode {oct(init_ent['mode'])}")
+    if expected_init_sha256 is not None and init_ent["sha256"] != expected_init_sha256:
+        raise ValueError(
+            f"init sha256 mismatch: archive has {init_ent['sha256']}, expected {expected_init_sha256}"
+        )
+
+    return {
+        "uncompressed_bytes": len(raw),
+        "compressed_bytes": len(archive_bytes) if archive_bytes[:2] == b"\x1f\x8b" else None,
+        "archive_sha256": hashlib.sha256(archive_bytes).hexdigest(),
+        "raw_cpio_sha256": hashlib.sha256(raw).hexdigest(),
+        "init_sha256": init_ent["sha256"],
+        "init_size": init_ent["filesize"],
+        "entry_count": len(entries),
+        "devices": {
+            dev_name: {"mode": oct(by_name[dev_name]["mode"]), "rdev": list(by_name[dev_name]["rdev"])}
+            for dev_name, _, _ in DEFAULT_DEVICE_NODES
+        },
+    }
+
+
+def build(init_path: str | os.PathLike[str], out_path: str | os.PathLike[str]) -> dict[str, Any]:
+    """Build a deterministic `.cpio.gz` initramfs from `init_path` and verify it independently."""
+    init_p = pathlib.Path(init_path)
+    out_p = pathlib.Path(out_path)
+    if not init_p.is_file():
+        raise FileNotFoundError(f"init binary does not exist: {init_p}")
+    init_bytes = init_p.read_bytes()
+    init_sha256 = hashlib.sha256(init_bytes).hexdigest()
+
+    raw_cpio = build_cpio_bytes(init_bytes)
+    gz_bytes = compress_deterministic_gzip(raw_cpio)
+    receipt = verify_initramfs_bytes(gz_bytes, expected_init_sha256=init_sha256)
+
+    out_p.parent.mkdir(parents=True, exist_ok=True)
+    out_p.write_bytes(gz_bytes)
+    receipt["init_path"] = str(init_p)
+    receipt["out_path"] = str(out_p)
+    return receipt
+
+
+def self_test() -> dict[str, Any]:
+    """Run unit/property checks across all 16 (namesize % 4, filesize % 4) combinations and error paths."""
+    modulo_cases = 0
+    extra = []
+    for name_mod in range(4):
+        for data_mod in range(4):
+            # Construct name of exact length modulo 4
+            base = f"mod_{name_mod}_{data_mod}_"
+            pad_len = (name_mod - (len(base) % 4)) % 4
+            name = base + ("x" * pad_len)
+            assert len(name) % 4 == name_mod
+            data = bytes(((i * 37 + name_mod * 7 + data_mod) & 0xFF) for i in range(16 + data_mod))
+            assert len(data) % 4 == data_mod
+            extra.append((name, S_IFREG | 0o644, data, None))
+            modulo_cases += 1
+
+    fake_init = b"\x7fELF\x01\x02\x01\x00" + b"FFW_SYNTHETIC_INIT_PAYLOAD"
+    expected_sha = hashlib.sha256(fake_init).hexdigest()
+    raw = build_cpio_bytes(fake_init, extra_entries=extra)
+    gz1 = compress_deterministic_gzip(raw)
+    gz2 = compress_deterministic_gzip(raw)
+    if gz1 != gz2:
+        raise AssertionError("deterministic gzip produced non-identical outputs")
+
+    receipt = verify_initramfs_bytes(gz1, expected_init_sha256=expected_sha)
+    parsed = {e["name"]: e for e in parse_cpio_bytes(raw)}
+    for name, _, data, _ in extra:
+        if parsed[name]["data"] != data:
+            raise AssertionError(f"payload corruption for modulo case {name}")
+
+    # Negative oracle 1: corrupted device major/minor (simulating old os.major(5) -> (0, 5) bug)
+    bad_dev_raw = raw.replace(
+        encode_newc_entry("dev/console", S_IFCHR | 0o600, dev=(5, 1), ino=306),
+        encode_newc_entry("dev/console", S_IFCHR | 0o600, dev=(0, 5), ino=306),
+    )
+    try:
+        verify_initramfs_bytes(bad_dev_raw, expected_init_sha256=expected_sha)
+        raise AssertionError("corrupted (0, 5) device node was not rejected")
+    except ValueError:
+        pass
+
+    # Negative oracle 2: missing TRAILER!!!
+    no_trailer = encode_newc_entry(".", S_IFDIR | 0o755, ino=1)
+    try:
+        parse_cpio_bytes(no_trailer)
+        raise AssertionError("archive without TRAILER!!! was not rejected")
+    except ValueError:
+        pass
+
+    # Negative oracle 3: wrong init sha256
+    try:
+        verify_initramfs_bytes(gz1, expected_init_sha256="0" * 64)
+        raise AssertionError("mismatched init sha256 was not rejected")
+    except ValueError:
+        pass
+
+    return {
+        "status": "PASS",
+        "modulo_4x4_cases": modulo_cases,
+        "deterministic_gzip": True,
+        "negative_oracles": ["bad_device_tuple_0_5", "missing_trailer", "init_sha256_mismatch"],
+        "receipt": receipt,
+    }
+
+
+def resolve_default_build_dir(repo_root: pathlib.Path) -> pathlib.Path:
+    env_dir = os.environ.get("FFW_BUILD_DIR")
+    if env_dir:
+        return pathlib.Path(env_dir)
+    return repo_root / "build"
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-test", action="store_true", help="Run internal 4x4 alignment and negative oracle suite")
+    parser.add_argument("--init", type=str, help="Path to init ELF binary to package")
+    parser.add_argument("--out", type=str, help="Output .cpio.gz path")
+    parser.add_argument("--verify", type=str, help="Verify an existing .cpio or .cpio.gz archive")
+    parser.add_argument("--expected-init-sha256", type=str, default=None, help="Expected SHA-256 of /init")
+    parser.add_argument("--build-dir", type=str, default=None, help="Build root containing hello-init-target and initramfs/")
+    args = parser.parse_args(argv)
+
+    if args.self_test:
+        res = self_test()
+        print(json.dumps(res, indent=2, sort_keys=True))
+        return 0
+
+    if args.verify:
+        data = pathlib.Path(args.verify).read_bytes()
+        res = verify_initramfs_bytes(data, expected_init_sha256=args.expected_init_sha256)
+        print(json.dumps(res, indent=2, sort_keys=True))
+        return 0
+
+    if args.init and args.out:
+        res = build(args.init, args.out)
+        print(json.dumps(res, indent=2, sort_keys=True))
+        return 0
+
+    repo_root = pathlib.Path(__file__).resolve().parents[2]
+    build_dir = pathlib.Path(args.build_dir) if args.build_dir else resolve_default_build_dir(repo_root)
+    target_root = build_dir / "hello-init-target"
+    out_root = build_dir / "initramfs"
+
+    receipts = {}
+    for arch, triple in (
+        ("mips", "mips-unknown-linux-musl"),
+        ("ppc", "powerpc-unknown-linux-musl"),
+    ):
+        binary = target_root / triple / "release" / "ffw-hello-init"
+        out_path = out_root / f"initramfs-{arch}.cpio.gz"
+        receipts[arch] = build(binary, out_path)
+
+    print(json.dumps({"status": "PASS", "archives": receipts}, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

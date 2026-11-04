@@ -1,0 +1,3 @@
+# Raw serial evidence: retain CRLF and every captured byte on checkout.
+boot-*.bin binary
+boot-*-serial.log binary
