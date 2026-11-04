@@ -68,8 +68,8 @@ def main() -> int:
         return 2
     expected, required = os.path.join(floor_dir, "expected.json"), os.path.join(floor_dir, "required.json")
 
-    if step("1/3 derive the independent floor from oracles.DEFECTS",
-            [FLOOR, "emit", "--expected", expected, "--required", required]) != 0:
+    if step("1/3 derive the independent floor for the %s tier (oracles.DEFECTS; test modules on disk)" % args.tier,
+            [FLOOR, "emit", "--tier", args.tier, "--expected", expected, "--required", required]) != 0:
         print("Q00 ACCEPTANCE: FAIL (no floor)")
         return 1
     rc_run = step("2/3 run-suite %s tier with --floor" % args.tier,

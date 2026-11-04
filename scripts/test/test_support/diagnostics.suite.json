@@ -51,6 +51,41 @@
         "smoke",
         "full"
       ]
+    },
+    "Q00.AC2.full_slow_log_sink": {
+      "text": "Full, slow and unavailable log sinks are survived with exact loss accounting, never turn a pass into a clean result when critical evidence is lost, and do not change render-path results.",
+      "tiers": [
+        "smoke",
+        "full"
+      ]
+    },
+    "Q00.AC2.secret_redaction": {
+      "text": "Tokens, keys, account and site identifiers, audio payloads and exact secret literals are redacted before they reach any log, event stream or receipt.",
+      "tiers": [
+        "smoke",
+        "full"
+      ]
+    },
+    "Q00.AC2.parallel_isolation": {
+      "text": "Parallel runs are isolated by run id and by file, and an existing log is never clobbered or appended to.",
+      "tiers": [
+        "smoke",
+        "full"
+      ]
+    },
+    "Q00.AC2.non_root_cwd": {
+      "text": "Diagnostics work from a non-root cwd, including paths containing spaces, and a later chdir cannot redirect the log.",
+      "tiers": [
+        "smoke",
+        "full"
+      ]
+    },
+    "q00.diag.req.registry_integrity": {
+      "text": "The diagnostics case registry equals a floor derived from code that no manifest can edit, an undeclared skip makes a case incomplete rather than a pass, and case results satisfy the runner's result contract.",
+      "tiers": [
+        "smoke",
+        "full"
+      ]
     }
   },
   "required_cases": [
@@ -63,6 +98,7 @@
     "q00.diag.audit",
     "q00.diag.isolation",
     "q00.diag.canaries",
+    "q00.diag.registry",
     "q00.diag.canary.silent_critical_loss",
     "q00.diag.canary.footer_lies_about_loss",
     "q00.diag.canary.naive_absence_of_error",
@@ -137,7 +173,9 @@
         "-I",
         "{manifest_dir}/test_diagnostics.py",
         "--case",
-        "q00.diag.sink_faults"
+        "q00.diag.sink_faults",
+        "--allow-skip",
+        "/dev/full does not exist on this host"
       ],
       "tiers": [
         "smoke",
@@ -145,10 +183,11 @@
       ],
       "requirements": [
         "q00.diag.req.sink_faults",
-        "q00.diag.req.critical_loss_invalidates"
+        "q00.diag.req.critical_loss_invalidates",
+        "Q00.AC2.full_slow_log_sink"
       ],
       "timeout_s": 240,
-      "description": "Injected slow/full/unavailable/hung sinks plus real OS write refusal (RLIMIT_FSIZE child; /dev/full where present). INJECTED tests prove the reaction, not a real disk."
+      "description": "Injected slow/full/unavailable/hung sinks plus real OS write refusal (RLIMIT_FSIZE child; /dev/full where present). INJECTED tests prove the reaction, not a real disk. The only declared skip is the Linux-only /dev/full test; on a host that lacks it the case still passes, and any other skip makes it incomplete."
     },
     {
       "id": "q00.diag.render_independence",
@@ -165,7 +204,8 @@
         "full"
       ],
       "requirements": [
-        "q00.diag.req.sink_faults"
+        "q00.diag.req.sink_faults",
+        "Q00.AC2.full_slow_log_sink"
       ],
       "timeout_s": 240,
       "description": "A deterministic render stand-in with an independent state oracle gives identical results under healthy, slow, full and unavailable sinks; a blocking mutant is caught."
@@ -185,7 +225,8 @@
         "full"
       ],
       "requirements": [
-        "q00.diag.req.redaction"
+        "q00.diag.req.redaction",
+        "Q00.AC2.secret_redaction"
       ],
       "timeout_s": 120,
       "description": "Key-name and value-pattern redaction, literals, home scrubbing, audio/binary payloads, truncation-boundary leaks, structure bounds, end-to-end no-leak."
@@ -225,7 +266,9 @@
         "full"
       ],
       "requirements": [
-        "q00.diag.req.isolation"
+        "q00.diag.req.isolation",
+        "Q00.AC2.parallel_isolation",
+        "Q00.AC2.non_root_cwd"
       ],
       "timeout_s": 180,
       "description": "Non-root cwd, spaces in paths, parallel run ids, concurrent producers, cleanup on exception, no network/native imports."
@@ -249,6 +292,26 @@
       ],
       "timeout_s": 120,
       "description": "In-process check that every planted diagnostic defect is detected, plus the positive twin."
+    },
+    {
+      "id": "q00.diag.registry",
+      "argv": [
+        "{python}",
+        "-B",
+        "-I",
+        "{manifest_dir}/test_diagnostics.py",
+        "--case",
+        "q00.diag.registry"
+      ],
+      "tiers": [
+        "smoke",
+        "full"
+      ],
+      "requirements": [
+        "q00.diag.req.registry_integrity"
+      ],
+      "timeout_s": 240,
+      "description": "The manifest equals the code-derived floor (thirteen planted disagreements and six planted skip-declaration errors are each reported), undeclared skips are incomplete, result documents satisfy the v1.1 contract, and the CLI enforces the policy end to end."
     },
     {
       "id": "q00.diag.canary.silent_critical_loss",
@@ -353,7 +416,8 @@
       ],
       "requirements": [
         "q00.diag.req.canaries",
-        "q00.diag.req.bounded_nonblocking"
+        "q00.diag.req.bounded_nonblocking",
+        "Q00.AC2.full_slow_log_sink"
       ],
       "timeout_s": 60,
       "expect": {

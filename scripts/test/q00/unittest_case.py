@@ -132,6 +132,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 2
         target = (os.environ["FFW_RESULT_PATH"], ids)
 
+    # The runner's protocol variables belong to this adapter, not to the module under test.  A unit module is
+    # a test subject, so it must not inherit a result path, nonce or seed that would change what its own
+    # command-line tests do (for example `oracles.py replay` refuses to run when a result file is requested).
+    for name in [k for k in os.environ if k.startswith("FFW_")]:
+        del os.environ[name]
+
     stem = os.path.splitext(os.path.basename(path))[0]
     sys.dont_write_bytecode = True
     sys.path.insert(0, os.path.dirname(path))   # as if the module had been run as a script

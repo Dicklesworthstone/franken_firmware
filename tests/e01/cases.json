@@ -20,7 +20,8 @@
    "E01-E2E-013"
   ],
   "real": [
-   "E01-E2E-011"
+   "E01-E2E-011",
+   "E01-E2E-015"
   ]
  },
  "cases": [
@@ -968,6 +969,17 @@
     "bp-73ff9b45059ef52d": 1
    },
    "shuffles": 4
+  },
+  {
+   "id": "E01-E2E-015",
+   "title": "real description XML: one rule, merges with the scan.py capture without conflict",
+   "tier": "real",
+   "kind": "owner_local_xml",
+   "invariants": [
+    "first-device direct children only (nested UDN never the unit's)",
+    "XML and capture merge with no identity conflict",
+    "private input never emitted"
+   ]
   },
   {
    "id": "E01-E2E-011",

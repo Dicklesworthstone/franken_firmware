@@ -16,25 +16,85 @@
     "smoke",
     "full"
    ]
+  },
+  "Q00.AC2": {
+   "text": "Deterministic replay, timeouts, cancellation, crash, full/slow log sink, secret redaction, parallel run isolation and non-root cwd tests pass.",
+   "tiers": [
+    "full"
+   ]
+  },
+  "Q00.AC3": {
+   "text": "Versioned JSONL and human summary report exact case denominator, failed/blocked/not-run cases, artifact identities and replay commands; no log-only functional oracle.",
+   "tiers": [
+    "full"
+   ]
+  },
+  "Q00.AC4": {
+   "text": "Foundation boots without future production crates or hardware access; P01 owns integration and later consumers extend the registry.",
+   "tiers": [
+    "full"
+   ]
+  },
+  "Q00.AC5": {
+   "text": "Oracle integrity additions: a test case that never ran, lost critical log, hung or crashed before final summary must not pass on absence of error text. Add known-defect canaries for missing required task/acceptance-only drift and wrong newc alignment. Log sinks expose loss and remain bounded; local priority stop tests use independent state/sample oracle even when all ordinary queues/log sinks are saturated.",
+   "tiers": [
+    "smoke",
+    "full"
+   ]
   }
  },
- "required_cases": [
-  "q00.oracle.canary.sample_loss",
-  "q00.oracle.canary.wrong_samples",
-  "q00.oracle.canary.repeated_samples",
-  "q00.oracle.canary.truncate_tail",
-  "q00.oracle.canary.stale_epoch",
-  "q00.oracle.canary.double_apply",
-  "q00.oracle.canary.false_ready_early",
-  "q00.oracle.canary.false_ready_stuck",
-  "q00.oracle.canary.never_ready",
-  "q00.oracle.canary.stop_behind_queue",
-  "q00.oracle.positive.sample",
-  "q00.oracle.positive.epoch",
-  "q00.oracle.positive.command",
-  "q00.oracle.positive.readiness",
-  "q00.oracle.positive.priority_stop"
- ],
+ "required_cases": {
+  "smoke": [
+   "q00.oracle.canary.sample_loss",
+   "q00.oracle.canary.wrong_samples",
+   "q00.oracle.canary.repeated_samples",
+   "q00.oracle.canary.truncate_tail",
+   "q00.oracle.canary.stale_epoch",
+   "q00.oracle.canary.double_apply",
+   "q00.oracle.canary.false_ready_early",
+   "q00.oracle.canary.false_ready_stuck",
+   "q00.oracle.canary.never_ready",
+   "q00.oracle.canary.stop_behind_queue",
+   "q00.oracle.positive.sample",
+   "q00.oracle.positive.epoch",
+   "q00.oracle.positive.command",
+   "q00.oracle.positive.readiness",
+   "q00.oracle.positive.priority_stop",
+   "q00.newc.canary.align_unpadded_sum",
+   "q00.newc.canary.omit_data_padding",
+   "q00.newc.canary.align_to_8",
+   "q00.newc.positive.alignments"
+  ],
+  "full": [
+   "q00.oracle.canary.sample_loss",
+   "q00.oracle.canary.wrong_samples",
+   "q00.oracle.canary.repeated_samples",
+   "q00.oracle.canary.truncate_tail",
+   "q00.oracle.canary.stale_epoch",
+   "q00.oracle.canary.double_apply",
+   "q00.oracle.canary.false_ready_early",
+   "q00.oracle.canary.false_ready_stuck",
+   "q00.oracle.canary.never_ready",
+   "q00.oracle.canary.stop_behind_queue",
+   "q00.oracle.positive.sample",
+   "q00.oracle.positive.epoch",
+   "q00.oracle.positive.command",
+   "q00.oracle.positive.readiness",
+   "q00.oracle.positive.priority_stop",
+   "q00.newc.canary.align_unpadded_sum",
+   "q00.newc.canary.omit_data_padding",
+   "q00.newc.canary.align_to_8",
+   "q00.newc.positive.alignments",
+   "q00.unit.test_run_suite",
+   "q00.unit.test_receipts",
+   "q00.unit.test_diagnostics",
+   "q00.unit.test_oracles",
+   "q00.unit.test_run_workspace_verification",
+   "q00.unit.test_newc_case",
+   "q00.unit.test_initramfs_archive",
+   "q00.unit.test_serial_validator"
+  ]
+ },
  "cases": [
   {
    "tiers": [
@@ -304,7 +364,8 @@
     "stop_behind_queue"
    ],
    "requirements": [
-    "Q00.AC1.canaries"
+    "Q00.AC1.canaries",
+    "Q00.AC5"
    ],
    "expect": {
     "kind": "fail",
@@ -415,6 +476,248 @@
     "Q00.AC1.positives"
    ],
    "description": "paired good behaviour: oracle 'priority_stop' accepts it and proves its guard was exercised"
+  },
+  {
+   "id": "q00.unit.test_run_suite",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/q00/unittest_case.py",
+    "{manifest_dir}/test_run_suite.py"
+   ],
+   "tiers": [
+    "full"
+   ],
+   "timeout_s": 900,
+   "requirements": [
+    "Q00.AC2",
+    "Q00.AC3",
+    "Q00.AC4",
+    "Q00.AC5"
+   ],
+   "description": "runner behaviour: replay, timeouts, cancellation, crash, slow/full sink, redaction, isolation, non-root cwd, denominators, the independent floor, and the foundation running with no toolchain"
+  },
+  {
+   "id": "q00.unit.test_receipts",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/q00/unittest_case.py",
+    "{manifest_dir}/test_support/test_receipts.py"
+   ],
+   "tiers": [
+    "full"
+   ],
+   "timeout_s": 900,
+   "requirements": [
+    "Q00.AC2",
+    "Q00.AC3"
+   ],
+   "description": "receipt stream: truncated/duplicate/torn evidence, exact denominators, replay identity, fail-closed aggregation"
+  },
+  {
+   "id": "q00.unit.test_diagnostics",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/q00/unittest_case.py",
+    "{manifest_dir}/test_support/test_diagnostics.py",
+    "--allow-skip",
+    "/dev/full does not exist"
+   ],
+   "tiers": [
+    "full"
+   ],
+   "timeout_s": 900,
+   "requirements": [
+    "Q00.AC2",
+    "Q00.AC3",
+    "Q00.AC5"
+   ],
+   "description": "bounded nonblocking sink: full/slow/unavailable targets, critical-evidence loss, redaction, closure audit (the Linux-only /dev/full test is an explicitly allowed, counted skip on hosts without it)"
+  },
+  {
+   "id": "q00.unit.test_oracles",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/q00/unittest_case.py",
+    "{manifest_dir}/test_support/test_oracles.py"
+   ],
+   "tiers": [
+    "full"
+   ],
+   "timeout_s": 900,
+   "requirements": [
+    "Q00.AC1.canaries"
+   ],
+   "description": "the independent oracles, their paired positives and the meta-test that a blind oracle makes a canary fail"
+  },
+  {
+   "id": "q00.unit.test_run_workspace_verification",
+   "tiers": [
+    "full"
+   ],
+   "timeout_s": 300,
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/q00/unittest_case.py",
+    "{manifest_dir}/test_run_workspace_verification.py"
+   ],
+   "requirements": [],
+   "description": "workspace-verification entry points: every cargo command is wrapped in strict-remote RCH and nothing is launched here (the command runner is injected). Registered because the floor lists every test_*.py on disk; it claims no Q00 acceptance requirement"
+  },
+  {
+   "id": "q00.newc.canary.align_unpadded_sum",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/newc_case.py",
+    "replay",
+    "--defect",
+    "align_unpadded_sum"
+   ],
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "requirements": [
+    "Q00.AC5"
+   ],
+   "expect": {
+    "kind": "fail",
+    "oracle": "newc.archive_parser",
+    "violation": "header_padding",
+    "exit_codes": [
+     1
+    ]
+   },
+   "description": "planted wrong-newc-alignment defect: header and data are padded once, to the unpadded sum 110+namesize+filesize (the historical bug)"
+  },
+  {
+   "id": "q00.newc.canary.omit_data_padding",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/newc_case.py",
+    "replay",
+    "--defect",
+    "omit_data_padding"
+   ],
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "requirements": [
+    "Q00.AC5"
+   ],
+   "expect": {
+    "kind": "fail",
+    "oracle": "newc.archive_parser",
+    "violation": "data_padding",
+    "exit_codes": [
+     1
+    ]
+   },
+   "description": "planted wrong-newc-alignment defect: the header is padded but the file data is not padded to 4 bytes"
+  },
+  {
+   "id": "q00.newc.canary.align_to_8",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/newc_case.py",
+    "replay",
+    "--defect",
+    "align_to_8"
+   ],
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "requirements": [
+    "Q00.AC5"
+   ],
+   "expect": {
+    "kind": "fail",
+    "oracle": "newc.archive_parser",
+    "violation": "misaligned_header",
+    "exit_codes": [
+     1
+    ]
+   },
+   "description": "planted wrong-newc-alignment defect: header and data are aligned to 8 bytes instead of 4"
+  },
+  {
+   "id": "q00.newc.positive.alignments",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/newc_case.py",
+    "positive"
+   ],
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "requirements": [
+    "Q00.AC5"
+   ],
+   "description": "the production newc parser accepts every correctly padded archive (all 16 name/data alignments plus the production default archive) with exactly the intended contents"
+  },
+  {
+   "id": "q00.unit.test_newc_case",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/q00/unittest_case.py",
+    "{manifest_dir}/test_support/test_newc_case.py"
+   ],
+   "tiers": [
+    "full"
+   ],
+   "timeout_s": 300,
+   "requirements": [
+    "Q00.AC5"
+   ],
+   "description": "the newc canary adapter itself: simulated blind, over-strict, crashing and misparsing parsers must never read as a detection"
+  },
+  {
+   "id": "q00.unit.test_initramfs_archive",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/q00/unittest_case.py",
+    "{manifest_dir}/../../toolchain/tests/test_initramfs_archive.py"
+   ],
+   "tiers": [
+    "full"
+   ],
+   "timeout_s": 300,
+   "requirements": [
+    "Q00.AC5"
+   ],
+   "description": "root's independent newc archive regressions: all sixteen alignments, the named counterexample, device tuples, duplicates, escaping paths, trailer payload"
+  },
+  {
+   "id": "q00.unit.test_serial_validator",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/q00/unittest_case.py",
+    "{manifest_dir}/../../toolchain/tests/test_serial_validator.py"
+   ],
+   "tiers": [
+    "full"
+   ],
+   "timeout_s": 300,
+   "requirements": [],
+   "description": "root's independent boot-transcript parser tests (E07); registered because the floor lists every test module on disk; claims no Q00 requirement"
   }
  ]
 }

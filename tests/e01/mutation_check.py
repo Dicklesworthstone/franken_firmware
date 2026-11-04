@@ -33,6 +33,10 @@ LEAK_OFF = ('assert_public_clean(public, ids, names)', 'pass')
 
 # (layer, name, [(old, new)...], what should catch it)
 MUTANTS = [
+    ("unit", "XML device matched by local name (namespace ignored)", [('        if el.tag == _UPNP_PREFIX + "device":', '        if el.tag.split("}")[-1] == "device":')], "XML-NS-REFUSED"),
+    ("unit", "XML namespace matched by prefix, not exactly", [('        if el.tag == _UPNP_PREFIX + "device":', '        if el.tag.startswith("{urn:schemas-upnp-org:") and el.tag.endswith("}device"):')], "XML-NS-REFUSED"),
+    ("unit", "XML foreign-namespace fields accepted", [('        if len(child) != 0 or not child.tag.startswith(_UPNP_PREFIX):\n            continue\n        tag = child.tag[len(_UPNP_PREFIX):]', '        if len(child) != 0:\n            continue\n        tag = child.tag.split("}")[-1]')], "XML-NS-FOREIGN-FIELD"),
+    ("unit", "XML namespace error reported as a shape error", [('raise InputError("xml_namespace", f"{label}: <device> is not in the UPnP device namespace")', 'raise InputError("xml_shape", f"{label}: <device> is not in the UPnP device namespace")')], "XML-HAZARDS"),
     ("unit", "firmware tie not a conflict", [('if len(top) > 1:\n        return ("conflict",)', 'if False:\n        return ("conflict",)')], "FW-TIE"),
     ("unit", "undated firmware not a conflict", [('if any(ts is None for ts, _ in pairs):\n        return ("conflict",)', 'if False:\n        return ("conflict",)')], "FW-UNORDERED"),
     ("unit", "firmware: oldest wins", [('latest = max(ts for ts, _ in pairs)', 'latest = min(ts for ts, _ in pairs)')], "FW-ORDERED"),
@@ -81,6 +85,8 @@ MUTANTS = [
     ("e2e", "rerun clobbers", [('if p.exists() and not args.overwrite:', 'if False:'), ('        if overwrite:\n            os.replace(tmp, path)', '        if True:\n            os.replace(tmp, path)')], "E01-E2E-010"),
     ("e2e", "profile_id from a different revision", [('        return idm.profile_id_for(model_number, hardware_revision)', '        return idm.profile_id_for(model_number, hardware_revision.replace("-5.", "-6."))')], "E01-E2E-014"),
     ("e2e", "interrupt exits 0", [('        return EXIT_INTERRUPT', '        return EXIT_OK')], "E01-E2E-013"),
+    ("real", "XML flattened whole-tree, last wins (scan.py behaviour)", [('    fields = {}\n    for child in dev:\n        if len(child) != 0 or not child.tag.startswith(_UPNP_PREFIX):', '    fields = {el.tag.split("}")[-1]: (el.text or "").strip() for el in root.iter() if len(el) == 0}\n    return fields\n    for child in dev:\n        if len(child) != 0 or not child.tag.startswith(_UPNP_PREFIX):')], "E01-E2E-015"),
+    ("real", "XML rule reads every device, not the first", [('        if el.tag == _UPNP_PREFIX + "device":\n            dev = el\n            break\n', '        if el.tag == _UPNP_PREFIX + "device":\n            dev = el\n')], "E01-E2E-015"),
     ("real", "serial leaks into public output", [LEAK_OFF, ('"sanitization": {"policy": "allowlist-v1",', '"sanitization": {"leak": observations[0]["fields"].get("serialNum"), "policy": "allowlist-v1",')], "E01-E2E-011"),
     ("real", "a device is dropped", [('        if not tokens[i]:\n            unidentifiable.append(o)', '        if not tokens[i] or i == 0:\n            unidentifiable.append(o)')], "E01-E2E-011"),
     ("real", "output depends on input order", ORDER_DEP, "E01-E2E-011"),

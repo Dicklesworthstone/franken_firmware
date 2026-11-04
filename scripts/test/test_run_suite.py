@@ -1427,9 +1427,13 @@ class TestRegistry(Base):
 # --------------------------------------------------------------------------- #
 
 REPO_ROOT = os.path.dirname(os.path.dirname(HERE))
-FLOOR_PY = os.path.join(HERE, "q00", "floor.py")
+# FLOOR_UNDER_TEST / UNITTEST_CASE_UNDER_TEST / RUN_SUITE_UNDER_TEST point the suite at a deliberately weakened copy
+# (mutation checks): the weakened copy must make these tests fail.
+FLOOR_PY = os.environ.get("FLOOR_UNDER_TEST") or os.path.join(HERE, "q00", "floor.py")
 E2E_Q00 = os.path.join(REPO_ROOT, "scripts", "e2e", "q00")
 ORACLES_PY = os.path.join(HERE, "test_support", "oracles.py")
+NEWC_PY = os.path.join(HERE, "test_support", "newc_case.py")
+MKINITRAMFS_PY = os.path.join(REPO_ROOT, "toolchain", "src", "mkinitramfs.py")
 
 FAKE_ORACLES = '''
 from collections import namedtuple
@@ -1442,14 +1446,44 @@ CANARY_CASES = [
 ]
 '''
 
+FAKE_NEWC = '''
+from collections import namedtuple
+Spec = namedtuple("Spec", "name scenario oracle kind description")
+CANARY_PREFIX = "q00.newc.canary."
+POSITIVE_ID = "q00.newc.positive.fake"
+DEFECTS = {"gamma": Spec("gamma", "s", "fake-newc", "bad_thing", "d")}
+CANARY_CASES = [
+    ("q00.newc.canary.gamma", None),
+    ("q00.newc.positive.fake", None),
+]
+'''
+FAKE_NEWC_IDS = ["q00.newc.canary.gamma", "q00.newc.positive.fake"]
+
 
 class TestFloor(Base):
-    def _emit(self, source=FAKE_ORACLES, name="fake_oracles.py"):
+    def _units_dir(self, *stems):
+        """A directory of (empty) test_<stem>.py files: the disk source the full-tier floor scans."""
+        d = os.path.join(self.ws.tmp.name, "units %s" % "-".join(stems or ("none",)))
+        os.makedirs(d, exist_ok=True)
+        for stem in stems:
+            with open(os.path.join(d, "test_%s.py" % stem), "w") as fh:
+                fh.write("import unittest\n")
+        return d
+
+    def _fake_newc(self, source=FAKE_NEWC, name="fake_newc.py"):
+        path = os.path.join(self.ws.dir, name)
+        with open(path, "w") as fh:
+            fh.write(source)
+        return path
+
+    def _emit(self, source=FAKE_ORACLES, name="fake_oracles.py", tier="smoke", units=None, newc=None):
         mod = os.path.join(self.ws.dir, name)
         with open(mod, "w") as fh:
             fh.write(source)
-        exp, req = self.ws.path(name + ".expected.json"), self.ws.path(name + ".required.json")
-        proc = subprocess.run([sys.executable, FLOOR_PY, "emit", "--oracles", mod, "--expected", exp, "--required", req],
+        exp, req = self.ws.path(name + "." + tier + ".expected.json"), self.ws.path(name + "." + tier + ".required.json")
+        proc = subprocess.run([sys.executable, FLOOR_PY, "emit", "--tier", tier, "--oracles", mod,
+                               "--newc", newc or self._fake_newc(), "--unit-root", units or self._units_dir(),
+                               "--expected", exp, "--required", req],
                               cwd=self.ws.elsewhere, capture_output=True, text=True, timeout=60)
         return proc, exp, req
 
@@ -1459,6 +1493,8 @@ class TestFloor(Base):
             "alpha": canary("q00.oracle.canary.alpha", "canary_fire", "orc-a", "lost"),
             "beta": canary("q00.oracle.canary.beta", "canary_fire", "orc-b", "dup"),
             "pos": case("q00.oracle.positive.orc-a", "pass"),
+            "nc": canary("q00.newc.canary.gamma", "canary_fire", "fake-newc", "bad_thing"),
+            "np": case("q00.newc.positive.fake", "pass"),
         }
         dropped = tweaks.pop("drop", None)
         if "beta_as" in tweaks:
@@ -1471,32 +1507,82 @@ class TestFloor(Base):
         ids = [c["id"] for k, c in cases.items() if k != hidden]
         return self.ws.manifest(list(cases.values()), required_cases=ids)
 
-    def test_the_floor_is_derived_from_the_real_oracles_and_matches_defects_exactly(self):
-        proc = subprocess.run([sys.executable, FLOOR_PY, "print"], cwd=self.ws.elsewhere, capture_output=True,
-                              text=True, timeout=60)
+    def _print(self, tier):
+        proc = subprocess.run([sys.executable, FLOOR_PY, "print", "--tier", tier], cwd=self.ws.elsewhere,
+                              capture_output=True, text=True, timeout=60)
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        doc = json.loads(proc.stdout)
+        return json.loads(proc.stdout)
+
+    def test_the_floor_is_derived_from_the_real_oracles_and_the_files_on_disk_for_each_tier(self):
         oracles = _load("oracles_under_test", ORACLES_PY)
+        smoke, full = self._print("smoke"), self._print("full")
         want = {"q00.oracle.canary." + n: (d.oracle, d.kind) for n, d in oracles.DEFECTS.items()}
-        got = {cid: (v["oracle"], v["violation"]) for cid, v in doc["required"].items() if v["canary"]}
+        got = {cid: (v["oracle"], v["violation"]) for cid, v in smoke["required"].items()
+               if v["canary"] and cid.startswith("q00.oracle.")}
         self.assertEqual(got, want)
         self.assertEqual(len(got), len(oracles.DEFECTS))
-        positives = [cid for cid, v in doc["required"].items() if not v["canary"]]
-        self.assertEqual(sorted(positives), sorted(cid for cid, _ in oracles.CANARY_CASES
-                                                   if cid.startswith("q00.oracle.positive.")))
-        for cid, spec in doc["expected"].items():   # expected and required describe the same cases and agree
-            self.assertTrue(spec["mandatory"])
-            self.assertEqual({k: spec[k] for k in doc["required"][cid]}, doc["required"][cid])
-        # the shipped manifest is exactly the floor: nothing missing, nothing extra, identities equal
+        positives = sorted(cid for cid, v in smoke["required"].items() if not v["canary"] and cid.startswith("q00.oracle."))
+        self.assertEqual(positives, sorted(cid for cid, _ in oracles.CANARY_CASES if cid.startswith("q00.oracle.positive.")))
+        # the newc-alignment cases come from the adapter's own planted-defect table, with exact identities
+        newc = _load("newc_under_test", NEWC_PY)
+        want_newc = {newc.CANARY_PREFIX + n: (d.oracle, d.kind) for n, d in newc.DEFECTS.items()}
+        got_newc = {cid: (v["oracle"], v["violation"]) for cid, v in smoke["required"].items()
+                    if v["canary"] and cid.startswith("q00.newc.")}
+        self.assertEqual(got_newc, want_newc)
+        self.assertGreaterEqual(len(got_newc), 3)
+        self.assertEqual([cid for cid, v in smoke["required"].items() if cid.startswith("q00.newc.") and not v["canary"]],
+                         [newc.POSITIVE_ID])
+        # smoke has no unit modules (one of them runs the smoke acceptance itself); full adds exactly the files on disk
+        self.assertFalse([c for c in smoke["required"] if c.startswith("q00.unit.")])
+        on_disk = sorted("q00.unit." + n[:-3] for d in (HERE, os.path.join(HERE, "test_support"),
+                                                         os.path.join(REPO_ROOT, "toolchain", "tests"))
+                         for n in os.listdir(d) if n.startswith("test_") and n.endswith(".py"))
+        self.assertGreaterEqual(len(on_disk), 7)
+        self.assertEqual(sorted(c for c in full["required"] if c.startswith("q00.unit.")), on_disk)
+        self.assertEqual(sorted(set(full["required"]) - set(on_disk)), sorted(smoke["required"]))
+        for doc in (smoke, full):
+            for cid, spec in doc["expected"].items():   # expected and required describe the same cases and agree
+                self.assertTrue(spec["mandatory"])
+                self.assertEqual({k: spec[k] for k in doc["required"][cid]}, doc["required"][cid])
+        # the shipped manifest equals the floor, tier by tier: nothing missing, nothing extra, identities equal
         shipped = read_json(os.path.join(HERE, "q00.suite.json"))
-        by_id = {c["id"]: c for c in shipped["cases"]}
-        self.assertEqual(sorted(by_id), sorted(doc["required"]))
-        for cid, c in by_id.items():
-            exp = c.get("expect", {})
-            self.assertEqual(exp.get("kind") == "fail", doc["required"][cid]["canary"], cid)
-            if exp:
-                self.assertEqual((exp["oracle"], exp["violation"]),
-                                 (doc["required"][cid]["oracle"], doc["required"][cid]["violation"]), cid)
+        for tier, doc in (("smoke", smoke), ("full", full)):
+            by_id = {c["id"]: c for c in shipped["cases"] if tier in c["tiers"]}
+            self.assertEqual(sorted(by_id), sorted(doc["required"]), tier)
+            self.assertEqual(sorted(shipped["required_cases"][tier]), sorted(doc["required"]), tier)
+            for cid, c in by_id.items():
+                exp = c.get("expect", {})
+                self.assertEqual(exp.get("kind") == "fail", doc["required"][cid]["canary"], cid)
+                if exp:
+                    self.assertEqual((exp["oracle"], exp["violation"]),
+                                     (doc["required"][cid]["oracle"], doc["required"][cid]["violation"]), cid)
+
+    def test_a_unit_module_dropped_from_both_cases_and_required_cases_is_caught_by_the_disk_floor(self):
+        units = self._units_dir("alpha", "beta")
+        proc, exp, req = self._emit(tier="full", units=units, name="fake_full.py")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(sorted(read_json(req)), FAKE_NEWC_IDS + ["q00.oracle.canary.alpha", "q00.oracle.canary.beta",
+                                                                   "q00.oracle.positive.orc-a", "q00.unit.test_alpha",
+                                                                   "q00.unit.test_beta"])
+        smoke_proc, _, smoke_req = self._emit(tier="smoke", units=units, name="fake_full.py")
+        self.assertFalse([c for c in read_json(smoke_req) if c.startswith("q00.unit.")])   # tier-aware
+        oracle_cases = [canary("q00.oracle.canary.alpha", "canary_fire", "orc-a", "lost", tiers=("smoke", "full")),
+                        canary("q00.oracle.canary.beta", "canary_fire", "orc-b", "dup", tiers=("smoke", "full")),
+                        case("q00.oracle.positive.orc-a", "pass", tiers=("smoke", "full")),
+                        canary("q00.newc.canary.gamma", "canary_fire", "fake-newc", "bad_thing", tiers=("smoke", "full")),
+                        case("q00.newc.positive.fake", "pass", tiers=("smoke", "full"))]
+        unit = lambda stem: case("q00.unit.test_" + stem, "pass", tiers=("full",))   # noqa: E731
+        both = oracle_cases + [unit("alpha"), unit("beta")]
+        ids = lambda cs: [c["id"] for c in cs]   # noqa: E731
+        ok = self.ws.run(self.ws.manifest(both, required_cases={"full": ids(both)}), tier="full", extra=["--floor", req])
+        self.assertEqual(ok.rc, 0, ok.out + ok.err)   # control: the intact registry satisfies the full floor
+        shrunk = oracle_cases + [unit("alpha")]   # test_beta.py is still on disk, but its case is gone from the manifest
+        manifest = self.ws.manifest(shrunk, required_cases={"full": ids(shrunk)})
+        alone = self.ws.run(manifest, tier="full")
+        self.assertEqual(alone.rc, 0, "manifest-only checks cannot see a dropped unit module: " + alone.out)
+        guarded = self.ws.run(manifest, tier="full", extra=["--floor", req])
+        self.assertEqual(guarded.rc, 1, guarded.out + guarded.err)
+        self.assertEqual(guarded.report["receipts"]["floor"]["violations"]["dropped"], 1)
 
     def test_an_incoherent_oracles_module_is_refused_not_turned_into_a_smaller_floor(self):
         cases = {
@@ -1519,14 +1605,36 @@ class TestFloor(Base):
                 self.assertFalse(os.path.exists(req), "no floor file may be written from an incoherent source")
         ok, exp, req = self._emit()
         self.assertEqual(ok.returncode, 0, ok.stderr)  # control: the coherent module yields a floor
-        self.assertEqual(sorted(read_json(req)), ["q00.oracle.canary.alpha", "q00.oracle.canary.beta",
-                                                       "q00.oracle.positive.orc-a"])
+        self.assertEqual(sorted(read_json(req)), FAKE_NEWC_IDS + ["q00.oracle.canary.alpha", "q00.oracle.canary.beta",
+                                                                   "q00.oracle.positive.orc-a"])
+
+    def test_an_incoherent_newc_module_is_refused_not_turned_into_a_smaller_floor(self):
+        cases = {
+            "empty defects": (FAKE_NEWC.replace('DEFECTS = {"gamma": Spec("gamma", "s", "fake-newc", "bad_thing", "d")}',
+                                                "DEFECTS = {}"), "empty"),
+            "defect without a canary case": (FAKE_NEWC.replace('    ("q00.newc.canary.gamma", None),\n', ""), "no canary case"),
+            "no positive control": (FAKE_NEWC.replace('    ("q00.newc.positive.fake", None),\n', ""), "no positive control"),
+            "id outside the newc namespace": (FAKE_NEWC.replace('"q00.newc.positive.fake", None', '"q00.oracle.positive.x", None'),
+                                              "must start with"),
+            "canary for an unknown defect": (FAKE_NEWC.replace('q00.newc.canary.gamma", None', 'q00.newc.canary.delta", None'),
+                                             "has no 'delta'"),
+            "missing the case table": ("DEFECTS = {}\n", "lacks"),
+        }
+        for label, (src, fragment) in cases.items():
+            with self.subTest(label):
+                path = self._fake_newc(src, name="bad_newc_%d.py" % abs(hash(label)))
+                proc, exp, req = self._emit(name="ok_oracles_%d.py" % abs(hash(label)), newc=path)
+                self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+                self.assertIn(fragment, proc.stderr)
+                self.assertFalse(os.path.exists(req), "no floor file may be written from an incoherent source")
 
     def test_emit_never_overwrites_an_existing_floor_file(self):
         _, exp, req = self._emit()
         before = sha(req)
         mod = os.path.join(self.ws.dir, "fake_oracles.py")
-        again = subprocess.run([sys.executable, FLOOR_PY, "emit", "--oracles", mod, "--expected", exp, "--required", req],
+        again = subprocess.run([sys.executable, FLOOR_PY, "emit", "--tier", "smoke", "--oracles", mod,
+                                "--newc", self._fake_newc(), "--unit-root", self._units_dir(),
+                                "--expected", exp, "--required", req],
                                cwd=self.ws.elsewhere, capture_output=True, text=True, timeout=60)
         self.assertEqual(again.returncode, 2)
         self.assertEqual(sha(req), before)
@@ -1602,13 +1710,13 @@ class TestFloor(Base):
         proc = subprocess.run([sys.executable, E2E_Q00, "--tier", "smoke", "--artifact-root", root, "--run-id", "e2e1"],
                               cwd=self.ws.elsewhere, env=self.ws.env(), capture_output=True, text=True, timeout=300)
         out = proc.stdout
-        self.assertIn("floor: 15 cases (10 canaries, 5 positives)", out)   # step 1 ran against the real oracles
+        self.assertIn("floor[smoke]: 19 cases (13 canaries, 6 positives, 0 unit modules)", out)   # oracles + newc
         self.assertIn("run-suite smoke tier with --floor", out)
         self.assertIn("independent re-verification with receipts.py", out)   # step 3 ran as a separate process
         report = read_json(os.path.join(root, "e2e1", "receipt.json"))
-        self.assertEqual(report["receipts"]["floor"]["cases"], 15)
+        self.assertEqual(report["receipts"]["floor"]["cases"], 19)
         self.assertEqual(report["receipts"]["floor"]["violations"]["dropped"], 0)
-        self.assertEqual(report["denominators"]["planned"], 15)
+        self.assertEqual(report["denominators"]["planned"], 19)
         # one verdict, three steps: exit 0 only when run-suite AND the second verifier both say so
         self.assertEqual(proc.returncode == 0, "Q00 ACCEPTANCE: PASS" in out, out)
         self.assertEqual(proc.returncode == 0, report["verdict"] == "pass")
@@ -1620,6 +1728,113 @@ class TestFloor(Base):
         notier = subprocess.run([sys.executable, E2E_Q00, "--artifact-root", root], cwd=self.ws.elsewhere,
                                 capture_output=True, text=True, timeout=60)
         self.assertEqual(notier.returncode, 2)
+
+
+class TestNewcCanaries(Base):
+    """The wrong-newc-alignment canaries through the runner: the real parser detects every planted defect and accepts
+    correct archives, and a parser that is blind, over-strict or lax can never read as a detection."""
+
+    SHIPPED = os.path.join(HERE, "q00.suite.json")
+
+    def _newc(self):
+        return _load("newc_under_test_cases", NEWC_PY)
+
+    def _case_ids(self):
+        return [cid for cid, _ in self._newc().CANARY_CASES]
+
+    def test_the_real_parser_detects_every_planted_alignment_defect_and_accepts_correct_archives(self):
+        ids = self._case_ids()
+        argv = []
+        for cid in ids:
+            argv += ["--case", cid]
+        res = self.ws.run(self.SHIPPED, extra=argv)
+        self.assertEqual(res.rc, 0, res.out + res.err)
+        self.assertNoInternal(res)
+        newc = self._newc()
+        for name, d in newc.DEFECTS.items():
+            with self.subTest(defect=name):
+                c = self.assertCase(res, newc.CANARY_PREFIX + name, "pass", "canary_detected")
+                self.assertEqual(c["detail"], "%s/%s" % (d.oracle, d.kind))   # the exact expected identity
+        self.assertCase(res, newc.POSITIVE_ID, "pass", "ok")
+        self.assertEqual(res.den["pass"], len(ids))
+
+    def _mutant(self, tag, edits=(), append=""):
+        src = open(MKINITRAMFS_PY, encoding="utf-8").read()
+        for old, new in edits:
+            self.assertEqual(src.count(old), 1, "anchor drifted in the production parser: %r" % old)
+            src = src.replace(old, new)
+        path = os.path.join(self.ws.dir, "parser_%s.py" % tag)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(src + append)
+        return path
+
+    def _run_against(self, parser_path):
+        newc = self._newc()
+        cases = [{"id": newc.CANARY_PREFIX + n, "tiers": ["smoke"], "timeout_s": 60,
+                  "argv": ["{python}", "-I", NEWC_PY, "replay", "--defect", n, "--verifier", parser_path],
+                  "expect": {"kind": "fail", "oracle": d.oracle, "violation": d.kind, "exit_codes": [1]}}
+                 for n, d in newc.DEFECTS.items()]
+        cases.append({"id": newc.POSITIVE_ID, "tiers": ["smoke"], "timeout_s": 60,
+                      "argv": ["{python}", "-I", NEWC_PY, "positive", "--verifier", parser_path]})
+        return self.ws.run(self.ws.manifest(cases)), newc
+
+    def test_a_parser_that_stops_checking_padding_does_not_read_as_a_detection(self):
+        lax = self._mutant("lax", edits=[
+            ('if raw[name_end:dataoff] != b"\0" * (dataoff - name_end):', "if False:"),
+            ('if raw[data_end:next_off] != b"\0" * (next_off - data_end):', "if False:")])
+        res, newc = self._run_against(lax)
+        self.assertEqual(res.rc, 1, res.out + res.err)
+        self.assertNoInternal(res)
+        for name in newc.DEFECTS:
+            with self.subTest(defect=name):   # either it accepts the planted archive, or it rejects it for the wrong reason
+                c = res.cases[newc.CANARY_PREFIX + name]
+                self.assertEqual(c["status"], "fail")
+                self.assertIn(c["reason"], ("canary_not_detected", "canary_wrong_violation"), c["reason"])
+        self.assertCase(res, newc.POSITIVE_ID, "pass", "ok")   # control: it still accepts correct archives
+
+    def test_a_blind_or_over_strict_parser_is_incomplete_never_a_detection(self):
+        blind = self._mutant("blind", append="\n\ndef parse_cpio_bytes(raw):\n    return []\n")
+        strict = self._mutant("strict", append="\n\ndef parse_cpio_bytes(raw):\n"
+                                              "    raise ValueError('non-zero header padding: rejects everything')\n")
+        for label, path in (("blind", blind), ("over-strict", strict)):
+            with self.subTest(parser=label):
+                res, newc = self._run_against(path)
+                self.assertEqual(res.rc, 1, res.out + res.err)
+                for name in newc.DEFECTS:
+                    # an over-strict parser "rejects" the planted archive too, but it rejects the CORRECT one as
+                    # well, so the rejection proves nothing: the canary must not be credited
+                    self.assertCase(res, newc.CANARY_PREFIX + name, "fail", "canary_oracle_incomplete")
+                self.assertEqual(res.den["pass"], 0)
+
+    def test_dropping_a_newc_canary_from_the_manifest_is_caught_by_the_real_floor(self):
+        newc = self._newc()
+        victim = newc.CANARY_PREFIX + sorted(newc.DEFECTS)[0]
+        exp, req = self.ws.path("real.expected.json"), self.ws.path("real.required.json")
+        emit = subprocess.run([sys.executable, FLOOR_PY, "emit", "--tier", "smoke", "--expected", exp, "--required", req],
+                              cwd=self.ws.elsewhere, capture_output=True, text=True, timeout=60)
+        self.assertEqual(emit.returncode, 0, emit.stderr)
+        self.assertIn(victim, read_json(req))
+        doc = read_json(self.SHIPPED)
+        text = json.dumps(doc).replace("{manifest_dir}", HERE)   # the copy lives elsewhere: make its paths absolute
+
+        def write(name, drop=None):
+            d = json.loads(text)
+            if drop:
+                d["cases"] = [c for c in d["cases"] if c["id"] != drop]
+                d["required_cases"] = {t: [i for i in ids if i != drop] for t, ids in d["required_cases"].items()}
+            path = os.path.join(self.ws.dir, name + ".suite.json")
+            with open(path, "w") as fh:
+                json.dump(d, fh)
+            return path
+
+        control = self.ws.run(write("intact"), extra=["--floor", req])
+        self.assertEqual(control.rc, 0, control.out + control.err)   # the intact copy satisfies the floor
+        shrunk = write("shrunk", drop=victim)
+        alone = self.ws.run(shrunk)
+        self.assertEqual(alone.rc, 0, "manifest-only checks cannot see the dropped canary: " + alone.out)
+        guarded = self.ws.run(shrunk, extra=["--floor", req])
+        self.assertEqual(guarded.rc, 1, guarded.out + guarded.err)
+        self.assertEqual(guarded.report["receipts"]["floor"]["violations"]["dropped"], 1)
 
 
 class TestProducerConformance(Base):
@@ -1643,6 +1858,160 @@ class TestProducerConformance(Base):
                 self.assertIsNone(err, "oracles.py output is rejected by contract v1.1: %s" % err)
                 self.assertEqual(parsed["verdict"], "fail")
                 self.assertGreaterEqual(parsed["mismatches"], 1)
+
+
+# --------------------------------------------------------------------------- #
+# the unittest adapter: existing test modules become registry cases, judged by what unittest observed
+# --------------------------------------------------------------------------- #
+
+UNITTEST_CASE = os.environ.get("UNITTEST_CASE_UNDER_TEST") or os.path.join(HERE, "q00", "unittest_case.py")
+_UT_HEAD = "import unittest\n\n\nclass T(unittest.TestCase):\n"
+UT_MODULES = {
+    "pass": _UT_HEAD + "    def test_a(self):\n        self.assertEqual(1, 1)\n\n    def test_b(self):\n        self.assertTrue(True)\n",
+    "fail": _UT_HEAD + "    def test_a(self):\n        self.assertEqual(1, 1)\n\n    def test_b(self):\n        self.assertEqual(1, 2)\n",
+    "error": _UT_HEAD + "    def test_a(self):\n        self.assertEqual(1, 1)\n\n    def test_b(self):\n        raise RuntimeError('boom')\n",
+    "unexpected": _UT_HEAD + "    def test_a(self):\n        self.assertEqual(1, 1)\n\n    @unittest.expectedFailure\n    def test_x(self):\n        pass\n",
+    "skip": _UT_HEAD + "    def test_a(self):\n        self.assertEqual(1, 1)\n\n    @unittest.skip('needs a Linux-only feature')\n    def test_s(self):\n        pass\n",
+    "allskip": _UT_HEAD + "    @unittest.skip('needs a Linux-only feature')\n    def test_s(self):\n        pass\n",
+    "empty": "import unittest\n",
+    "hermetic": _UT_HEAD + "    def test_no_runner_protocol_variables_leak_in(self):\n"
+                "        import os\n"
+                "        self.assertEqual([k for k in os.environ if k.startswith('FFW_')], [])\n",
+    "import": "raise RuntimeError('cannot import this module')\n",
+}
+
+
+class TestUnittestAdapter(Base):
+    def _module(self, kind):
+        path = os.path.join(self.ws.dir, "t_%s.py" % kind)
+        with open(path, "w") as fh:
+            fh.write(UT_MODULES[kind])
+        return path
+
+    def _case(self, cid, module, *flags, **kw):
+        c = {"id": cid, "argv": ["{python}", "-I", UNITTEST_CASE, module] + list(flags), "tiers": ["smoke"],
+             "timeout_s": 60}
+        c.update(kw)
+        return c
+
+    def test_every_outcome_is_typed_and_only_real_execution_passes(self):
+        cases = [self._case("u.pass", self._module("pass")),
+                 self._case("u.skip_allowed", self._module("skip"), "--allow-skip", "needs a Linux-only"),
+                 self._case("u.fail", self._module("fail")),
+                 self._case("u.error", self._module("error")),
+                 self._case("u.unexpected_success", self._module("unexpected")),
+                 self._case("u.import_error", self._module("import")),
+                 self._case("u.unallowed_skip", self._module("skip")),
+                 self._case("u.all_skipped", self._module("allskip"), "--allow-skip", "needs a Linux-only"),
+                 self._case("u.no_tests", self._module("empty")),
+                 self._case("u.missing_module", os.path.join(self.ws.dir, "t_nothing.py"))]
+        res = self.ws.run(self.ws.manifest(cases))
+        self.assertEqual(res.rc, 1, res.out + res.err)
+        self.assertNoInternal(res)   # the strict aggregator accepted every record the adapter produced
+        want = {"u.pass": ("pass", "ok"), "u.skip_allowed": ("pass", "ok"),
+                "u.fail": ("fail", "oracle_failed"), "u.error": ("fail", "oracle_failed"),
+                "u.unexpected_success": ("fail", "oracle_failed"), "u.import_error": ("fail", "oracle_failed"),
+                "u.unallowed_skip": ("fail", "oracle_incomplete"), "u.all_skipped": ("fail", "oracle_incomplete"),
+                "u.no_tests": ("fail", "oracle_incomplete"), "u.missing_module": ("fail", "nonzero_exit")}
+        for cid, (status, reason) in want.items():
+            with self.subTest(case=cid):
+                self.assertCase(res, cid, status, reason)
+
+        def result(cid):
+            return res.cases[cid]["attempts"][0]["result"]
+
+        self.assertEqual((result("u.pass")["checks"], result("u.pass")["mismatches"]), (2, 0))
+        self.assertEqual((result("u.fail")["violation_kinds"], result("u.fail")["mismatches"], result("u.fail")["checks"]),
+                         ({"test_failure": 1}, 1, 2))
+        self.assertEqual(result("u.error")["violation_kinds"], {"test_error": 1})
+        self.assertEqual(result("u.unexpected_success")["violation_kinds"], {"unexpected_success": 1})
+        self.assertEqual(result("u.import_error")["violation_kinds"], {"import_error": 1})
+        self.assertIn("test_b", result("u.fail")["first_causal_event"])   # the first causal test is named
+        self.assertEqual(result("u.unallowed_skip")["incomplete_reasons"], ["unexpected_skip:1"])
+        self.assertIn("no_tests_executed", result("u.no_tests")["incomplete_reasons"])
+        # an allowed skip is counted and printed, never silent
+        self.assertEqual(result("u.skip_allowed")["counters"]["skipped_allowed"], 1)
+        self.assertIn("SKIPPED", res.log("u.skip_allowed"))
+        self.assertEqual(res.den["pass"], 2)
+        self.assertEqual(res.den["fail"], 8)
+
+    def test_the_module_under_test_never_inherits_the_runners_protocol_environment(self):
+        # Found by running the real test_oracles under the runner: its own `replay` test fails if FFW_RESULT_PATH leaks in.
+        module = self._module("hermetic")
+        res = self.ws.run(self.ws.manifest([self._case("u.hermetic", module)]))
+        self.assertEqual(res.rc, 0, res.out + res.err)   # the adapter scrubbed FFW_* before importing the module
+        self.assertCase(res, "u.hermetic", "pass", "ok")
+        # control: the same module fails when the variables ARE present, so the check above is not vacuous
+        proc = subprocess.run([sys.executable, "-B", "-m", "unittest", "t_hermetic"], cwd=self.ws.dir,
+                              env=self.ws.env({"FFW_RESULT_PATH": "x", "FFW_SEED": "1"}), capture_output=True,
+                              text=True, timeout=60)
+        self.assertEqual(proc.returncode, 1, "without the adapter's scrub the module sees FFW_* and fails")
+
+    def test_the_adapter_reports_through_its_exit_code_when_run_by_hand(self):
+        def run(kind, *flags):
+            return subprocess.run([sys.executable, "-B", UNITTEST_CASE, self._module(kind)] + list(flags),
+                                  cwd=self.ws.elsewhere, env=self.ws.env(), capture_output=True, text=True, timeout=60)
+
+        self.assertEqual(run("pass").returncode, 0)
+        self.assertEqual(run("fail").returncode, 1)
+        self.assertEqual(run("skip").returncode, 2)   # an unallowed skip is incomplete, not a pass
+        self.assertEqual(run("skip", "--allow-skip", "Linux-only").returncode, 0)
+        self.assertEqual(run("empty").returncode, 2)
+        self.assertEqual(run("pass", "--allow-skip", "(").returncode, 2)   # a malformed allowance is refused
+        env = self.ws.env({"FFW_RESULT_PATH": self.ws.path("r.json")})   # ids missing: refuse rather than fake a result
+        proc = subprocess.run([sys.executable, "-B", UNITTEST_CASE, self._module("pass")], cwd=self.ws.elsewhere,
+                              env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("required when FFW_RESULT_PATH is set", proc.stderr)
+        self.assertFalse(os.path.exists(self.ws.path("r.json")))
+
+
+# --------------------------------------------------------------------------- #
+# guards the registry depends on
+# --------------------------------------------------------------------------- #
+
+class TestOfflineFoundation(Base):
+    def test_a_run_in_which_nothing_launched_is_never_a_pass_on_the_runners_own_say_so(self):
+        recs = [{"id": "o.%d" % i, "status": "blocked", "reason": "missing_executable", "mandatory": False,
+                 "executed": False, "attempts": []} for i in range(2)]
+        d = rs.denominators(recs, 0)
+        verdict, blocking = rs.compute_verdict(recs, d, [], False, [])   # pure function: no aggregator involved
+        self.assertEqual(verdict, "fail")
+        self.assertTrue(any(b.startswith("nothing_executed") for b in blocking), blocking)
+        # control: the same optional-and-blocked case beside one that really ran is fine
+        ok = recs + [{"id": "r", "status": "pass", "reason": "ok", "mandatory": True, "executed": True, "attempts": [{}]}]
+        self.assertEqual(rs.compute_verdict(ok, rs.denominators(ok, 0), [], False, [])[0], "pass")
+        # and end to end: every case optional and blocked exits non-zero with that reason
+        absent = lambda i: {"id": "n.%d" % i, "argv": ["definitely-not-a-real-binary-xyz"], "tiers": ["smoke"],
+                            "mandatory": False}   # noqa: E731
+        res = self.ws.run(self.ws.manifest([absent(0), absent(1)]))
+        self.assertEqual(res.rc, 1, res.out + res.err)
+        self.assertEqual((res.den["planned"], res.den["executed"], res.den["blocked"]), (2, 0, 2))
+        self.assertTrue(any(b.startswith("nothing_executed") for b in res.report["blocking"]), res.report["blocking"])
+
+    def test_the_foundation_runs_with_no_rust_toolchain_rch_or_hardware_tool_available(self):
+        poison = os.path.join(self.ws.tmp.name, "poisoned path")
+        os.mkdir(poison)
+        sentinel = os.path.join(self.ws.tmp.name, "tool-was-invoked")
+        for tool in ("cargo", "rustc", "rustup", "rch", "qemu-system-mips", "qemu-system-ppc", "cross"):
+            exe = os.path.join(poison, tool)
+            with open(exe, "w") as fh:
+                fh.write("#!/bin/sh\necho %s >> '%s'\nexit 99\n" % (tool, sentinel))
+            os.chmod(exe, 0o755)
+        path = poison + os.pathsep + os.environ.get("PATH", "")
+        root = os.path.join(self.ws.tmp.name, "offline root")
+        proc = subprocess.run([sys.executable, E2E_Q00, "--tier", "smoke", "--artifact-root", root, "--run-id", "offline"],
+                              cwd=self.ws.elsewhere, env=self.ws.env({"PATH": path}), capture_output=True, text=True,
+                              timeout=300)
+        self.assertFalse(os.path.exists(sentinel), "a build or emulation tool was invoked: " + (
+            open(sentinel).read() if os.path.exists(sentinel) else ""))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)   # and the Q00 foundation still passes
+        self.assertIn("Q00 ACCEPTANCE: PASS", proc.stdout)
+        # control: the poison is real; a case that asks for one of the tools is refused or fails, and trips the sentinel
+        res = self.ws.run(self.ws.manifest([{"id": "p.cargo", "argv": ["cargo", "--version"], "tiers": ["smoke"]}]),
+                          env={"PATH": path})
+        self.assertTrue(os.path.exists(sentinel), "control: the poisoned cargo should have been reached")
+        self.assertEqual(res.rc, 1)
 
 
 # --------------------------------------------------------------------------- #

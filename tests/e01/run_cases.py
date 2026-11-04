@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+import importlib.util
 import json
 import os
 import random
@@ -461,6 +462,107 @@ def run_real(case):
             "monotonic_end_ns": time.monotonic_ns(), "counts_only": report}
 
 
+def _local_name(tag):
+    return tag.split("}")[-1]
+
+
+def run_real_xml(case):
+    """Real `device-*.xml` captures: one XML rule, and XML + the scan.py capture merge without an identity conflict.
+
+    The oracle is this runner's own read of the files (first <device>, direct leaf children), not
+    reconcile's output.  Only counts are reported; no value is printed.
+    """
+    import xml.etree.ElementTree as ET
+    start = time.monotonic_ns()
+    xmls = sorted((ROOT / ".local-real").glob("device-*.xml"))
+    base = {"input_class": "owner-local", "monotonic_start_ns": start}
+    if not xmls or not REAL_INPUT.exists():
+        return {**base, "status": "blocked", "mismatches": ["owner-local .local-real/device-*.xml and devices.json are required"],
+                "steps": 0, "permutations": 0, "stdout_sha256": None, "duration_ms": 0, "monotonic_end_ns": time.monotonic_ns()}
+    xml_serials, xml_private, nested_udn_files, rule_mismatch, premise_failures, foreign_leaf = set(), set(), 0, 0, 0, 0
+    spec = importlib.util.spec_from_file_location("ffw_reconcile_under_e2e", RECONCILE)
+    rc_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rc_mod)  # no import-time work; used only for its public XML rule
+    for f in xmls:
+        root = ET.parse(f).getroot()
+        devs = [e for e in root.iter() if _local_name(e.tag) == "device"]
+        upnp = "{urn:schemas-upnp-org:device-1-0}"
+        upnp_devs = [e for e in root.iter() if e.tag == upnp + "device"]
+        if not upnp_devs:  # the premise of the namespace-strict rule: real speakers emit the UPnP namespace
+            premise_failures += 1
+            continue
+        devs = upnp_devs + [e for e in devs if e not in upnp_devs]
+        direct = {c.tag[len(upnp):]: (c.text or "").strip() for c in upnp_devs[0] if len(c) == 0 and c.tag.startswith(upnp)}
+        foreign_leaf += sum(1 for c in upnp_devs[0] if len(c) == 0 and not c.tag.startswith(upnp))
+        try:  # the public rule must equal this runner's independent read of the real bytes, field for field
+            if rc_mod.parse_description_xml(f.read_bytes(), "real") != direct:
+                rule_mismatch += 1
+        except rc_mod.E01Error:
+            rule_mismatch += 1
+        xml_serials.add(direct["serialNum"].strip().upper())
+        for e in root.iter():  # every leaf value of identifier class, nested devices included
+            if len(e) == 0 and _local_name(e.tag) in ("serialNum", "MACAddress", "UDN", "friendlyName") and (e.text or "").strip():
+                xml_private.add(e.text.strip().lower())
+        nested_udn_files += len(devs) > 1
+    raw = json.loads(REAL_INPUT.read_text())
+    json_recs = [r for r in raw["devices"] if isinstance(r, dict) and isinstance(r.get("fields"), dict)]
+    json_serials = {r["fields"]["serialNum"].strip().upper() for r in json_recs if r["fields"].get("serialNum")}
+    json_private = set()
+    for r in json_recs:
+        for part in ("fields", "status"):
+            for k, v in (r.get(part) or {}).items():
+                if isinstance(v, str) and len(v.strip()) >= 6 and k.lower() in {"serialnum", "serialnumber", "macaddress", "udn", "deviceid", "ipaddress", "householdcontrolid", "localuid"}:
+                    json_private.add(v.strip().lower())
+    mism = []
+    if premise_failures:
+        mism.append(f"{premise_failures} of {len(xmls)} real file(s) have no UPnP-namespace <device>; the namespace-strict rule would refuse them")
+    if rule_mismatch:
+        mism.append(f"parse_description_xml differs from the independent read in {rule_mismatch} of {len(xmls)} real file(s)")
+    common = ["--evidence", str(EVIDENCE_SEED), "--hypotheses", str(HYPOTHESES)]
+    before = {str(f): sha(f.read_bytes()) for f in xmls}
+    with tempfile.TemporaryDirectory(prefix="ffw-e01-realxml-") as t:
+        tmp = Path(t)
+
+        def run(inputs):
+            args = [x for p in inputs for x in ("--input", str(p))] + common
+            code, out, err, _ = run_cli(args, tmp)
+            if code not in (0, 3):
+                mism.append(f"exit {code}")
+                return None, out
+            doc = json.loads(out)
+            low = out.decode().lower()
+            leaked = sum(1 for v in (xml_private | json_private) if len(v) >= 6 and v in low)
+            if leaked:
+                mism.append(f"{leaked} private value(s) appear in the public output")
+            return doc, out
+
+        doc_x, out_x = run(xmls)
+        if doc_x:
+            s_x = doc_x["summary"]
+            if s_x["observations"] != len(xmls) or s_x["identity_components"] != len(xml_serials):
+                mism.append("XML-only counts differ from the independent read")
+            if doc_x["conflicts"]:
+                mism.append("XML-only run reports identity conflicts")
+        both = [*xmls, REAL_INPUT]
+        doc_b, out_b = run(both)
+        if doc_b:
+            s_b = doc_b["summary"]
+            if s_b["observations"] != len(xmls) + len(json_recs) or s_b["identity_components"] != len(xml_serials | json_serials):
+                mism.append("XML + capture counts differ from the independent union")
+            if doc_b["conflicts"]:
+                mism.append("XML + capture produce identity conflicts (root vs nested UDN must merge cleanly)")
+        _, out_rev = run(both[::-1])
+        if out_rev != out_b:
+            mism.append("input order changed the public output")
+        if {str(f): sha(f.read_bytes()) for f in xmls} != before:
+            mism.append("a private XML file was modified")
+    counts = {"xml_files": len(xmls), "xml_files_with_nested_devices": nested_udn_files, "rule_equals_independent_read": len(xmls) - rule_mismatch - premise_failures, "foreign_namespace_leaf_fields": foreign_leaf, "independent_distinct_serials": len(xml_serials),
+              "union_with_capture": len(xml_serials | json_serials)}
+    return {**base, "status": "failed" if mism else "passed", "mismatches": mism[:8], "steps": 3, "permutations": 1,
+            "stdout_sha256": sha(out_b), "duration_ms": (time.monotonic_ns() - start) // 1_000_000,
+            "monotonic_end_ns": time.monotonic_ns(), "counts_only": counts}
+
+
 # ------------------------------------------------------------------------------ main
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0], allow_abbrev=False)
@@ -494,6 +596,8 @@ def main(argv=None):
         kind = c.get("kind")
         if kind == "owner_local":
             res = run_real(c)
+        elif kind == "owner_local_xml":
+            res = run_real_xml(c)
         elif kind == "interrupt_fifo":
             res = run_interrupt(c)
         elif kind == "cross_caller":

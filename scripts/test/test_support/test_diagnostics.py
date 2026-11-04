@@ -31,10 +31,14 @@ Evidence labelling - read before trusting a green run:
 
 from __future__ import annotations
 
+import argparse
+import copy
 import hashlib
+import io
 import json
 import os
 import random
+import re
 import subprocess
 import sys
 import tempfile
@@ -49,6 +53,11 @@ if HERE not in sys.path:
 import diagnostics as d  # noqa: E402  (path set up above)
 
 HANG_GUARD_S = 30.0  # only ever a guard against a hung test, never a timing assertion
+# The only host limitation a manifest may declare with --allow-skip. The skip decorator and the manifest check below
+# share this string, so the declaration cannot drift away from the text unittest actually reports.
+DEV_FULL_SKIP_REASON = "/dev/full does not exist on this host (Linux only)"
+# Reason prefixes that must stay UNDECLARED: skipping a real-OS write-refusal test is a check that did not happen.
+NEVER_DECLARABLE_SKIPS = ("RLIMIT_FSIZE is not enforced on this host",)
 
 
 # --------------------------------------------------------------------------- #
@@ -895,7 +904,7 @@ class SinkFaultTests(ClosureMixin, unittest.TestCase):
             block = audit.receipt_log_block()
             self.assertTrue(block["truncated"] or block["critical_lost"])
 
-    @unittest.skipUnless(os.path.exists("/dev/full"), "/dev/full does not exist on this host (Linux only)")
+    @unittest.skipUnless(os.path.exists("/dev/full"), DEV_FULL_SKIP_REASON)
     def test_real_os_dev_full_returns_enospc(self):
         sink = d.DiagnosticSink(d.FileSink("/dev/full", exclusive=False, fsync_on_close=False), run_id="full1",
                                 clock_ns=FakeClock(), pseudonym_key=b"k", threaded=False,
@@ -1508,19 +1517,23 @@ def canary_blocking_emit():
     return {"producer_finished_while_sink_stalled": finished}, finished is False
 
 
+# name -> (oracle id, violation kind that oracle must report, scenario). The oracle and violation are declared HERE,
+# in code, because they are the floor's source of truth: the manifest must agree with them, never the reverse.
 CANARIES = {
-    "silent_critical_loss": ("diag.audit.loss_accounting", canary_silent_critical_loss),
-    "footer_lies_about_loss": ("diag.audit.loss_accounting", canary_footer_lies_about_loss),
-    "naive_absence_of_error": ("diag.audit.truncation", canary_naive_absence_of_error_passes_a_truncated_log),
-    "blocking_emit": ("diag.nonblocking.emit", canary_blocking_emit),
+    "silent_critical_loss": ("diag.audit.loss_accounting", "loss_accounting_mismatch", canary_silent_critical_loss),
+    "footer_lies_about_loss": ("diag.audit.loss_accounting", "loss_accounting_mismatch", canary_footer_lies_about_loss),
+    "naive_absence_of_error": ("diag.audit.truncation", "missing_footer", canary_naive_absence_of_error_passes_a_truncated_log),
+    "blocking_emit": ("diag.nonblocking.emit", "producer_blocked_on_sink", canary_blocking_emit),
 }
 
 
 class CanaryTests(unittest.TestCase):
     def test_every_planted_defect_is_detected_by_its_oracle(self):
-        for name, (oracle, fn) in CANARIES.items():
+        for name, (oracle, violation, fn) in CANARIES.items():
             observed, detected = fn()
             self.assertTrue(detected, "%s (%s) was NOT detected: %r" % (name, oracle, observed))
+            self.assertIn(violation, _canary_kinds(name, observed),
+                          "%s: the declared violation %r is not among what the oracle reported" % (name, violation))
 
     def test_an_oracle_blind_to_the_defect_would_be_caught_by_the_positive_twin(self):
         # The same audit on an undamaged log must say complete, otherwise "detected" above proves nothing.
@@ -1528,7 +1541,7 @@ class CanaryTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# runner child-case entry point (wire contract ffw.case-result.v1)
+# case registry, code-derived floor, and the case-result adapter
 # --------------------------------------------------------------------------- #
 
 CASES = {
@@ -1541,7 +1554,103 @@ CASES = {
     "q00.diag.audit": [AuditTests],
     "q00.diag.isolation": [IsolationTests],
     "q00.diag.canaries": [CanaryTests],
+    "q00.diag.registry": [],      # filled below: FloorTests + CaseAdapterTests are defined after the helpers they use
 }
+CANARY_ID_PREFIX = "q00.diag.canary."
+PROOF_CLASS = "host-simulation"   # in-process models; nothing here touches a guest, device or provider
+
+
+def floor_entries():
+    """The independent floor for this suite: ``{case_id: {proof_class, canary[, oracle, violation]}}``.
+
+    Same shape as ``scripts/test/q00/floor.py``'s ``required`` map. It is derived from ``CASES`` and ``CANARIES``
+    in THIS FILE'S CODE and reads no manifest, receipt or run directory, so a case dropped from both the
+    manifest and its ``required_cases`` is still visible to whoever merges this into the floor.
+    """
+    out = {cid: {"proof_class": PROOF_CLASS, "canary": False} for cid in CASES}
+    for name, (oracle, violation, _fn) in CANARIES.items():
+        out[CANARY_ID_PREFIX + name] = {"proof_class": PROOF_CLASS, "canary": True, "oracle": oracle,
+                                        "violation": violation}
+    return out
+
+
+def _argv_names(argv, flag, value):
+    return any(a == flag and i + 1 < len(argv) and argv[i + 1] == value for i, a in enumerate(argv))
+
+
+def manifest_floor_problems(doc, floor):
+    """Every way a loaded manifest disagrees with the code-derived floor (an empty list means it agrees)."""
+    problems = []
+    raw = doc.get("cases", []) if isinstance(doc, dict) else []
+    cases = {c.get("id"): c for c in raw if isinstance(c, dict)}
+    req = doc.get("required_cases", []) if isinstance(doc, dict) else []
+    required = set(req) if isinstance(req, list) else set()
+    for cid, want in sorted(floor.items()):
+        c = cases.get(cid)
+        if c is None:
+            problems.append("%s: missing from the manifest" % cid)
+            continue
+        if cid not in required:
+            problems.append("%s: not in required_cases" % cid)
+        if c.get("mandatory", True) is not True:
+            problems.append("%s: not mandatory" % cid)
+        if c.get("blocked"):
+            problems.append("%s: blocked in the manifest" % cid)
+        if c.get("evidence_class", "host-simulation") != want["proof_class"]:
+            problems.append("%s: evidence_class %r != %r" % (cid, c.get("evidence_class"), want["proof_class"]))
+        expect = c.get("expect") or {"kind": "pass"}
+        argv = c.get("argv") if isinstance(c.get("argv"), list) else []
+        if want["canary"]:
+            if expect.get("kind") != "fail":
+                problems.append("%s: not a canary (expect.kind != fail)" % cid)
+            for key in ("oracle", "violation"):
+                if expect.get(key) != want[key]:
+                    problems.append("%s: expect.%s %r != %r" % (cid, key, expect.get(key), want[key]))
+            if not _argv_names(argv, "--canary", cid[len(CANARY_ID_PREFIX):]):
+                problems.append("%s: argv does not run --canary %s" % (cid, cid[len(CANARY_ID_PREFIX):]))
+        else:
+            if expect.get("kind", "pass") != "pass":
+                problems.append("%s: a positive case is declared as a canary" % cid)
+            if not _argv_names(argv, "--case", cid):
+                problems.append("%s: argv does not run --case %s" % (cid, cid))
+    for cid in sorted(c for c in cases if isinstance(c, str) and c.startswith("q00.diag.") and c not in floor):
+        problems.append("%s: manifest case has no code-derived floor entry" % cid)
+    for cid in sorted(r for r in required if isinstance(r, str) and r.startswith("q00.diag.") and r not in floor):
+        problems.append("%s: required_cases names a case this file does not define" % cid)
+    return problems
+
+
+def manifest_skip_problems(doc):
+    """Problems with the ``--allow-skip`` declarations in a manifest (empty = exactly the one permitted declaration)."""
+    problems = []
+    for c in doc.get("cases", []):
+        argv = c.get("argv") if isinstance(c.get("argv"), list) else []
+        regexes = [argv[i + 1] for i, a in enumerate(argv) if a == "--allow-skip" and i + 1 < len(argv)]
+        for rx in regexes:
+            try:
+                compiled = re.compile(rx)
+            except re.error:
+                problems.append("%s: --allow-skip %r is not a valid regex" % (c.get("id"), rx))
+                continue
+            if not compiled.search(DEV_FULL_SKIP_REASON):
+                problems.append("%s: --allow-skip %r matches no known host limitation" % (c.get("id"), rx))
+            for forbidden in NEVER_DECLARABLE_SKIPS + ("unrelated: the network is down", "RLIMIT_FSIZE"):
+                if compiled.search(forbidden):
+                    problems.append("%s: --allow-skip %r is too broad: it also excuses %r" % (c.get("id"), rx, forbidden))
+        has = any(re.search(rx, DEV_FULL_SKIP_REASON) for rx in regexes if _valid_regex(rx))
+        if c.get("id") == "q00.diag.sink_faults" and not has:
+            problems.append("q00.diag.sink_faults: does not declare the /dev/full host limitation")
+        if c.get("id") != "q00.diag.sink_faults" and regexes:
+            problems.append("%s: only q00.diag.sink_faults may declare a skip" % c.get("id"))
+    return problems
+
+
+def _valid_regex(rx):
+    try:
+        re.compile(rx)
+        return True
+    except re.error:
+        return False
 
 
 def _write_result(path, doc):
@@ -1556,14 +1665,22 @@ def _run_classes(classes, stream):
     return unittest.TextTestRunner(stream=stream, verbosity=1).run(suite)
 
 
-def _report(case_id, result, oracle):
-    """Build the ``ffw.case-result.v1`` document for a unittest run.
+# Same meaning as scripts/test/q00/unittest_case.py: 0 pass, 1 fail, 2 incomplete (never a pass).
+EXIT_CODES = {"pass": 0, "fail": 1, "incomplete": 2}
 
-    Skipped tests are host-capability gaps (e.g. ``/dev/full`` on macOS): they are not executed checks and are
-    surfaced in ``counters.tests_skipped``. A case in which NO check executed is ``incomplete``, never a pass.
+
+def _report(case_id, result, oracle, allow=()):
+    """Build the ``ffw.case-result.v1`` document for a unittest run (contract v1.1).
+
+    * ``fail``       any failure/error (typed ``test_failure`` / ``test_error``).
+    * ``incomplete`` nothing executed, or a skip the manifest did not declare with ``--allow-skip``. A skip is a
+                     check that did not happen, so an undeclared one is never a pass and never a manufactured failure.
+    * ``pass``       >= 1 check executed, no failure, and every skip declared.
+    Declared skips stay visible in ``counters.skipped_allowed``.
     """
-    skipped = len(result.skipped)
-    checks = result.testsRun - skipped
+    skips = list(result.skipped)
+    undeclared = [(t.id(), r) for t, r in skips if not any(rx.search(r) for rx in allow)]
+    checks = max(result.testsRun - len(skips), 0)
     bad = list(result.failures) + list(result.errors)
     env = os.environ
     kinds = {}
@@ -1574,21 +1691,25 @@ def _report(case_id, result, oracle):
     doc = {"schema": "ffw.case-result.v1", "run_id": env.get("FFW_RUN_ID"), "case_id": env.get("FFW_CASE_ID", case_id),
            "nonce": env.get("FFW_RESULT_NONCE"), "oracle": oracle, "oracle_kind": "property", "independent": True,
            "finalized": True, "checks": checks, "incomplete_reasons": [], "violation_kinds": kinds,
-           "counters": {"tests_run": result.testsRun, "tests_skipped": skipped,
+           "counters": {"tests_run": result.testsRun, "tests_skipped": len(skips),
+                        "skipped_allowed": len(skips) - len(undeclared), "skipped_unexpected": len(undeclared),
                         "failures": len(result.failures), "errors": len(result.errors)}}
     if bad:
         test, tb = bad[0]
         doc.update(verdict="fail", mismatches=sum(kinds.values()), expected={"failures": 0, "errors": 0},
                    observed={"failures": len(result.failures), "errors": len(result.errors)},
                    first_causal_event=("%s: %s" % (test.id(), tb.strip().splitlines()[-1]))[:400])
-    elif checks == 0:
-        doc.update(verdict="incomplete", mismatches=0, incomplete_reasons=["no_checks_executed"],
-                   expected={"checks": ">=1"}, observed={"checks": 0},
-                   first_causal_event="every test was skipped; nothing was checked")
+    elif checks == 0 or undeclared:
+        reasons = ["no_checks_executed"] if checks == 0 else []
+        reasons += [("unexpected_skip:%s" % tid)[:200] for tid, _r in undeclared[:15]]
+        doc.update(verdict="incomplete", mismatches=0, incomplete_reasons=reasons[:16],
+                   expected={"unexpected_skips": 0, "checks": ">=1"},
+                   observed={"unexpected_skips": len(undeclared), "checks": checks},
+                   first_causal_event=(reasons[0] if reasons else "incomplete")[:300])
     else:
         doc.update(verdict="pass", mismatches=0, expected={"failures": 0, "errors": 0},
                    observed={"failures": 0, "errors": 0},
-                   first_causal_event="no mismatch in %d checks; %d skipped (host capability)" % (checks, skipped))
+                   first_causal_event="no mismatch in %d checks; %d declared skip(s)" % (checks, len(skips)))
     return doc
 
 
@@ -1599,46 +1720,387 @@ def _canary_kinds(name, observed):
     return {r.split(":", 1)[0]: 1 for r in observed.get("audit_reasons", [])}
 
 
+def check_v11(doc):
+    """Standing guard for the runner's result contract (a mirror of its invariants, not an import of them)."""
+    errs = []
+    if doc.get("schema") != "ffw.case-result.v1":
+        errs.append("schema")
+    if doc.get("verdict") not in ("pass", "fail", "incomplete"):
+        errs.append("verdict")
+    kinds, mism = doc.get("violation_kinds"), doc.get("mismatches")
+    if not (isinstance(kinds, dict) and all(isinstance(k, str) and k and isinstance(v, int) and not isinstance(v, bool)
+                                            and v >= 1 for k, v in kinds.items())):
+        errs.append("violation_kinds")
+    elif not isinstance(mism, int) or sum(kinds.values()) != mism:
+        errs.append("mismatches != sum(violation_kinds)")
+    for key in ("finalized", "independent"):
+        if not isinstance(doc.get(key), bool):
+            errs.append(key)
+    reasons = doc.get("incomplete_reasons")
+    if not (isinstance(reasons, list) and len(reasons) <= 16 and all(isinstance(x, str) and x for x in reasons)):
+        errs.append("incomplete_reasons")
+    if not (isinstance(doc.get("counters"), dict) and all(isinstance(v, int) and not isinstance(v, bool)
+                                                         for v in doc["counters"].values())):
+        errs.append("counters")
+    v = doc.get("verdict")
+    if v == "pass" and (mism != 0 or kinds):
+        errs.append("pass with mismatches")
+    if v == "pass" and (reasons or doc.get("finalized") is False):
+        errs.append("pass while unfinalized or with incomplete reasons")
+    if v == "fail" and (not isinstance(mism, int) or mism < 1 or not kinds):
+        errs.append("fail without a typed violation")
+    if v == "fail" and doc.get("expected") == doc.get("observed"):
+        errs.append("fail with expected == observed")
+    if v == "incomplete" and (mism != 0 or not (reasons or doc.get("finalized") is False)):
+        errs.append("incomplete must carry reasons and no mismatches")
+    if isinstance(doc.get("checks"), bool) or not isinstance(doc.get("checks"), int) or doc["checks"] < 0:
+        errs.append("checks")
+    return errs
+
+
+# --------------------------------------------------------------------------- #
+# tests of the registry floor and of the case-result adapter
+# --------------------------------------------------------------------------- #
+
+MANIFEST_PATH = os.path.join(HERE, "diagnostics.suite.json")
+
+
+def load_manifest():
+    with open(MANIFEST_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+class FloorTests(unittest.TestCase):
+    def test_the_real_manifest_equals_the_code_derived_floor(self):
+        floor = floor_entries()
+        self.assertEqual(manifest_floor_problems(load_manifest(), floor), [])
+        self.assertEqual(len(floor), len(CASES) + len(CANARIES))
+        self.assertEqual(sum(1 for v in floor.values() if v["canary"]), len(CANARIES))
+        for cid, v in floor.items():
+            self.assertEqual(set(v), {"proof_class", "canary", "oracle", "violation"} if v["canary"] else {"proof_class", "canary"}, cid)
+            self.assertEqual(v["proof_class"], "host-simulation")
+
+    def test_the_floor_is_derived_from_code_and_reads_no_file(self):
+        import unittest.mock as mock
+        with mock.patch("builtins.open", side_effect=AssertionError("floor_entries() must not read any file")):
+            self.assertTrue(floor_entries())
+
+    def test_every_planted_disagreement_between_manifest_and_floor_is_reported(self):
+        base = load_manifest()
+        self.assertEqual(manifest_floor_problems(base, floor_entries()), [], "control must be clean before any mutation")
+        canary_id, positive_id = CANARY_ID_PREFIX + "blocking_emit", "q00.diag.audit"
+
+        def case(doc, cid):
+            return next(c for c in doc["cases"] if c["id"] == cid)
+
+        def drop_from_both(doc):
+            doc["cases"] = [c for c in doc["cases"] if c["id"] != positive_id]
+            doc["required_cases"].remove(positive_id)
+
+        def drop_required_only(doc):
+            doc["required_cases"].remove(positive_id)
+
+        def alter_violation(doc):
+            case(doc, canary_id)["expect"]["violation"] = "something_else"
+
+        def alter_oracle(doc):
+            case(doc, canary_id)["expect"]["oracle"] = "diag.other"
+
+        def canary_to_positive(doc):
+            del case(doc, canary_id)["expect"]
+
+        def positive_to_canary(doc):
+            case(doc, positive_id)["expect"] = {"kind": "fail", "oracle": "x", "violation": "y", "exit_codes": [1]}
+
+        def not_mandatory(doc):
+            case(doc, positive_id)["mandatory"] = False
+
+        def blocked(doc):
+            case(doc, positive_id)["blocked"] = "pretend this needs hardware"
+
+        def wrong_class(doc):
+            case(doc, positive_id)["evidence_class"] = "physical"
+
+        def extra_mandatory(doc):
+            doc["cases"].append(dict(copy.deepcopy(case(doc, positive_id)), id="q00.diag.unregistered"))
+
+        def phantom_required(doc):
+            doc["required_cases"].append("q00.diag.phantom")
+
+        def swapped_positive_argv(doc):
+            case(doc, positive_id)["argv"] = [a.replace("q00.diag.audit", "q00.diag.envelope") for a in case(doc, positive_id)["argv"]]
+
+        def swapped_argv(doc):
+            case(doc, canary_id)["argv"] = [a.replace("blocking_emit", "silent_critical_loss") for a in case(doc, canary_id)["argv"]]
+
+        planted = [
+            (drop_from_both, positive_id, "missing from the manifest"),
+            (drop_required_only, positive_id, "not in required_cases"),
+            (alter_violation, canary_id, "expect.violation"),
+            (alter_oracle, canary_id, "expect.oracle"),
+            (canary_to_positive, canary_id, "not a canary"),
+            (positive_to_canary, positive_id, "declared as a canary"),
+            (not_mandatory, positive_id, "not mandatory"),
+            (blocked, positive_id, "blocked in the manifest"),
+            (wrong_class, positive_id, "evidence_class"),
+            (extra_mandatory, "q00.diag.unregistered", "no code-derived floor entry"),
+            (phantom_required, "q00.diag.phantom", "does not define"),
+            (swapped_argv, canary_id, "argv does not run"),
+            (swapped_positive_argv, positive_id, "argv does not run --case"),
+        ]
+        for mutate, cid, needle in planted:
+            doc = copy.deepcopy(base)
+            mutate(doc)
+            problems = manifest_floor_problems(doc, floor_entries())
+            self.assertTrue(any(cid in p and needle in p for p in problems),
+                            "%s was not reported (%r): %s" % (mutate.__name__, needle, problems))
+
+    def test_skip_declarations_are_exactly_the_one_permitted_host_limitation(self):
+        base = load_manifest()
+        self.assertEqual(manifest_skip_problems(base), [], "control must be clean")
+        sf = next(c for c in base["cases"] if c["id"] == "q00.diag.sink_faults")
+        i = sf["argv"].index("--allow-skip")
+        self.assertRegex(DEV_FULL_SKIP_REASON, sf["argv"][i + 1])
+
+        def with_argv(doc, cid, fn):
+            c = next(x for x in doc["cases"] if x["id"] == cid)
+            c["argv"] = fn(list(c["argv"]))
+
+        planted = [
+            ("declaration removed", "q00.diag.sink_faults", lambda a: a[:a.index("--allow-skip")], "does not declare"),
+            ("declares everything", "q00.diag.sink_faults", lambda a: a[:-1] + [".*"], "too broad"),
+            ("declares the RLIMIT limitation", "q00.diag.sink_faults", lambda a: a + ["--allow-skip", "RLIMIT_FSIZE is not enforced"], "too broad"),
+            ("declares an unknown limitation", "q00.diag.sink_faults", lambda a: a[:-1] + ["something else entirely"], "matches no known"),
+            ("invalid regex", "q00.diag.sink_faults", lambda a: a[:-1] + ["("], "not a valid regex"),
+            ("another case declares a skip", "q00.diag.audit", lambda a: a + ["--allow-skip", "/dev/full does not exist"], "only q00.diag.sink_faults"),
+        ]
+        for label, cid, fn, needle in planted:
+            doc = copy.deepcopy(base)
+            with_argv(doc, cid, fn)
+            problems = manifest_skip_problems(doc)
+            self.assertTrue(any(needle in p for p in problems), "%s was not reported (%r): %s" % (label, needle, problems))
+
+    def test_the_bullet_two_requirement_ids_are_defined_once_and_really_referenced(self):
+        doc = load_manifest()
+        wanted = {"Q00.AC2.full_slow_log_sink", "Q00.AC2.secret_redaction", "Q00.AC2.parallel_isolation", "Q00.AC2.non_root_cwd"}
+        self.assertTrue(wanted <= set(doc["requirements"]))
+        referenced = {r for c in doc["cases"] for r in c.get("requirements", [])}
+        self.assertTrue(wanted <= referenced, sorted(wanted - referenced))
+        self.assertTrue(referenced <= set(doc["requirements"]), "a case references an undefined requirement")
+        covers = {rid: [c["id"] for c in doc["cases"] if rid in c.get("requirements", [])] for rid in wanted}
+        self.assertIn("q00.diag.isolation", covers["Q00.AC2.parallel_isolation"])
+        self.assertIn("q00.diag.isolation", covers["Q00.AC2.non_root_cwd"])
+        self.assertIn("q00.diag.redaction", covers["Q00.AC2.secret_redaction"])
+        self.assertIn("q00.diag.sink_faults", covers["Q00.AC2.full_slow_log_sink"])
+
+
+def _probe(*fns):
+    """Run real unittest tests built from callables and return the real TestResult."""
+    Probe = type("Probe", (unittest.TestCase,), {"test_%d" % i: fn for i, fn in enumerate(fns)})
+    return unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(unittest.defaultTestLoader.loadTestsFromTestCase(Probe))
+
+
+def _passes(self):
+    self.assertTrue(True)
+
+
+@unittest.skip("probe: needs /dev/full")
+def _skips(self):
+    raise AssertionError("never runs")
+
+
+def _fails(self):
+    self.fail("planted failure")
+
+
+def _errors(self):
+    raise RuntimeError("planted error")
+
+
+class CaseAdapterTests(unittest.TestCase):
+    ALLOW = [re.compile("needs /dev/full")]
+
+    def report(self, result, allow=()):
+        doc = _report("q00.diag.x", result, "diag.x", allow)
+        self.assertEqual(check_v11(doc), [], doc)
+        return doc
+
+    def test_a_clean_run_passes(self):
+        doc = self.report(_probe(_passes, _passes))
+        self.assertEqual((doc["verdict"], doc["checks"], doc["mismatches"]), ("pass", 2, 0))
+
+    def test_an_undeclared_skip_is_incomplete_never_a_pass_and_never_a_manufactured_failure(self):
+        doc = self.report(_probe(_passes, _skips))
+        self.assertEqual((doc["verdict"], doc["mismatches"], doc["violation_kinds"]), ("incomplete", 0, {}))
+        self.assertEqual(doc["counters"]["skipped_unexpected"], 1)
+        self.assertTrue(doc["incomplete_reasons"] and doc["incomplete_reasons"][0].startswith("unexpected_skip:"))
+
+    def test_a_declared_skip_passes_and_stays_visible(self):
+        doc = self.report(_probe(_passes, _skips), self.ALLOW)
+        self.assertEqual(doc["verdict"], "pass")
+        self.assertEqual((doc["counters"]["skipped_allowed"], doc["counters"]["skipped_unexpected"]), (1, 0))
+
+    def test_a_declaration_that_does_not_match_the_skip_does_not_excuse_it(self):
+        doc = self.report(_probe(_passes, _skips), [re.compile("some other limitation")])
+        self.assertEqual(doc["verdict"], "incomplete")
+
+    def test_failures_and_errors_outrank_any_skip_policy(self):
+        for fn, kind in ((_fails, "test_failure"), (_errors, "test_error")):
+            doc = self.report(_probe(_passes, _skips, fn), self.ALLOW)
+            self.assertEqual((doc["verdict"], doc["violation_kinds"]), ("fail", {kind: 1}))
+            self.assertNotEqual(doc["expected"], doc["observed"])
+
+    def test_nothing_executed_is_incomplete_even_if_every_skip_is_declared(self):
+        for result, allow in ((_probe(_skips), self.ALLOW), (_probe(), ())):
+            doc = self.report(result, allow)
+            self.assertEqual(doc["verdict"], "incomplete")
+            self.assertIn("no_checks_executed", doc["incomplete_reasons"])
+
+    def test_the_contract_guard_rejects_doctored_results(self):
+        good = self.report(_probe(_passes))
+        for name, edit in (("pass_with_mismatch", lambda d: d.update(mismatches=1)),
+                           ("fail_expected_equals_observed", lambda d: d.update(verdict="fail", mismatches=1, violation_kinds={"x": 1}, observed=d["expected"])),
+                           ("fail_without_kind", lambda d: d.update(verdict="fail", mismatches=1)),
+                           ("kinds_not_summing", lambda d: d.update(violation_kinds={"x": 2})),
+                           ("incomplete_without_reason", lambda d: d.update(verdict="incomplete")),
+                           ("pass_but_unfinalized", lambda d: d.update(finalized=False)),
+                           ("float_counter", lambda d: d["counters"].update(tests_run=1.5))):
+            doc = copy.deepcopy(good)
+            edit(doc)
+            self.assertNotEqual(check_v11(doc), [], name)
+
+    def test_exit_codes_never_let_an_incomplete_case_look_like_a_pass(self):
+        self.assertEqual(EXIT_CODES, {"pass": 0, "fail": 1, "incomplete": 2})
+        self.assertEqual(len(set(EXIT_CODES.values())), 3)
+
+    def test_a_canary_detected_as_the_wrong_violation_is_reported_as_not_detected(self):
+        import unittest.mock as mock
+        name = "naive_absence_of_error"
+        oracle, violation, fn = CANARIES[name]
+        with tempfile.TemporaryDirectory(prefix="diag canary ") as td:
+            path = os.path.join(td, "r.json")
+            stderr, sys.stderr = sys.stderr, io.StringIO()      # _canary_main echoes the document; keep the test log quiet
+            try:
+                rc_ok = _canary_main(name, path)
+                good = json.load(open(path))
+                os.unlink(path)
+                with mock.patch.dict(CANARIES, {name: (oracle, "a_violation_the_oracle_never_reports", fn)}):
+                    rc_bad = _canary_main(name, path)
+                bad = json.load(open(path))
+            finally:
+                sys.stderr = stderr
+        self.assertEqual((rc_ok, good["verdict"], violation in good["violation_kinds"]), (1, "fail", True))
+        self.assertEqual((rc_bad, bad["verdict"], bad["violation_kinds"]), (0, "pass", {}), "wrong violation must read as undetected")
+        self.assertEqual(check_v11(good) + check_v11(bad), [])
+
+    def run_cli(self, *args, result_path=None, case_id="q00.diag.envelope"):
+        env = {k: v for k, v in os.environ.items() if not k.startswith("FFW_")}
+        if result_path:
+            env.update(FFW_RESULT_PATH=result_path, FFW_RUN_ID="r1", FFW_CASE_ID=case_id, FFW_RESULT_NONCE="n0nce")
+        return subprocess.run([sys.executable, "-B", "-I", os.path.abspath(__file__), *args], env=env, capture_output=True,
+                              text=True, timeout=300)
+
+    def test_the_cli_writes_a_valid_result_that_echoes_the_runner_identity(self):
+        with tempfile.TemporaryDirectory(prefix="diag cli result ") as td:
+            path = os.path.join(td, "result.json")
+            r = self.run_cli("--case", "q00.diag.envelope", result_path=path)
+            self.assertEqual(r.returncode, 0, r.stderr[-400:])
+            doc = json.load(open(path))
+            self.assertEqual((doc["run_id"], doc["case_id"], doc["nonce"], doc["verdict"]), ("r1", "q00.diag.envelope", "n0nce", "pass"))
+            self.assertEqual(check_v11(doc), [])
+
+    def test_the_cli_enforces_the_skip_policy_on_the_real_sink_faults_case(self):
+        host_has_dev_full = os.path.exists("/dev/full")
+        with tempfile.TemporaryDirectory(prefix="diag cli skip ") as td:
+            undeclared, declared = os.path.join(td, "a.json"), os.path.join(td, "b.json")
+            r1 = self.run_cli("--case", "q00.diag.sink_faults", result_path=undeclared, case_id="q00.diag.sink_faults")
+            r2 = self.run_cli("--case", "q00.diag.sink_faults", "--allow-skip", "/dev/full does not exist on this host",
+                              result_path=declared, case_id="q00.diag.sink_faults")
+            d1, d2 = json.load(open(undeclared)), json.load(open(declared))
+        self.assertEqual(check_v11(d1) + check_v11(d2), [])
+        if host_has_dev_full:     # nothing is skipped, so the declaration is irrelevant and both pass
+            self.assertEqual((r1.returncode, d1["verdict"], r2.returncode, d2["verdict"]), (0, "pass", 0, "pass"))
+        else:                     # the Linux-only test is skipped: undeclared -> incomplete (exit 2), declared -> pass
+            self.assertEqual((r1.returncode, d1["verdict"]), (2, "incomplete"))
+            self.assertEqual((r2.returncode, d2["verdict"], d2["counters"]["skipped_allowed"]), (0, "pass", 1))
+
+    def test_the_cli_prints_the_floor_and_rejects_bad_usage(self):
+        r = self.run_cli("--floor")
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(json.loads(r.stdout), floor_entries())
+        self.assertEqual(self.run_cli("--allow-skip", "x").returncode, 2)                       # needs --case
+        self.assertEqual(self.run_cli("--case", "q00.diag.nope").returncode, 2)
+        self.assertEqual(self.run_cli("--case", "q00.diag.envelope", "--allow-skip", "(").returncode, 2)   # bad regex
+        self.assertEqual(self.run_cli("--canary", "nope").returncode, 2)
+
+
+CASES["q00.diag.registry"] = [FloorTests, CaseAdapterTests]
+
+
+# --------------------------------------------------------------------------- #
+# runner child-case entry point (wire contract ffw.case-result.v1, v1.1)
+# --------------------------------------------------------------------------- #
+
+def _canary_main(name, result_path):
+    oracle, violation, fn = CANARIES[name]
+    observed, detected = fn()
+    env = os.environ
+    kinds = _canary_kinds(name, observed) if detected else {}
+    common = {"schema": "ffw.case-result.v1", "run_id": env.get("FFW_RUN_ID"),
+              "case_id": env.get("FFW_CASE_ID", CANARY_ID_PREFIX + name), "nonce": env.get("FFW_RESULT_NONCE"),
+              "oracle": oracle, "oracle_kind": "property", "independent": True, "finalized": True, "checks": 1,
+              "incomplete_reasons": [], "counters": {"detected": int(detected)}}
+    if detected and violation in kinds:   # the oracle caught the planted defect: the defective subject FAILS, as the canary expects
+        doc = dict(common, verdict="fail", mismatches=sum(kinds.values()), violation_kinds=kinds,
+                   expected={"oracle_flags_defect": False}, observed=dict(observed, oracle_flags_defect=True),
+                   first_causal_event="planted defect %s detected by %s: %s" % (name, oracle, ",".join(sorted(kinds))))
+    else:                                 # undetected, or detected as the WRONG violation: report a pass so the runner records canary_not_detected
+        doc = dict(common, verdict="pass", mismatches=0, violation_kinds={}, expected=observed, observed=observed,
+                   first_causal_event="planted defect %s was NOT detected as %s" % (name, violation))
+    if result_path:
+        _write_result(result_path, doc)
+    sys.stderr.write(json.dumps(doc, sort_keys=True)[:600] + "\n")
+    return 1 if doc["verdict"] == "fail" else 0
+
+
 def main(argv=None):
-    argv = list(sys.argv[1:] if argv is None else argv)
+    ap = argparse.ArgumentParser(prog="test_diagnostics.py", description="diagnostics tests / runner child cases")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--list", action="store_true", help="print case ids and canaries")
+    mode.add_argument("--floor", action="store_true", help="print the code-derived floor as JSON")
+    mode.add_argument("--case", metavar="ID", help="run one registered case (runner child case)")
+    mode.add_argument("--canary", metavar="NAME", help="run one planted-defect canary")
+    ap.add_argument("--allow-skip", action="append", default=[], metavar="REGEX",
+                    help="declare a known host limitation (matched against skip reasons); an undeclared skip makes a case incomplete")
+    args = ap.parse_args(argv)
     result_path = os.environ.get("FFW_RESULT_PATH")
-    if argv[:1] == ["--list"]:
+    if args.allow_skip and not args.case:
+        ap.error("--allow-skip only applies to --case")
+    try:
+        allow = [re.compile(rx) for rx in args.allow_skip]
+    except re.error as exc:
+        ap.error("bad --allow-skip regex: %s" % exc)
+    if args.list:
         print("\n".join(list(CASES) + ["canary:" + n for n in CANARIES]))
         return 0
-    if argv[:1] == ["--canary"] and len(argv) == 2 and argv[1] in CANARIES:
-        name = argv[1]
-        oracle, fn = CANARIES[name]
-        observed, detected = fn()
-        env = os.environ
-        kinds = _canary_kinds(name, observed) if detected else {}
-        common = {"schema": "ffw.case-result.v1", "run_id": env.get("FFW_RUN_ID"),
-                  "case_id": env.get("FFW_CASE_ID", "q00.diag.canary." + name), "nonce": env.get("FFW_RESULT_NONCE"),
-                  "oracle": oracle, "oracle_kind": "property", "independent": True, "finalized": True, "checks": 1,
-                  "incomplete_reasons": [], "counters": {"detected": int(detected)}}
-        if detected and kinds:   # the oracle caught the planted defect: the defective subject FAILS, as the canary expects
-            doc = dict(common, verdict="fail", mismatches=sum(kinds.values()), violation_kinds=kinds,
-                       expected={"oracle_flags_defect": False}, observed=dict(observed, oracle_flags_defect=True),
-                       first_causal_event="planted defect %s detected by %s: %s" % (name, oracle, ",".join(sorted(kinds))))
-        else:                    # undetected: report a pass so the runner records canary_not_detected
-            doc = dict(common, verdict="pass", mismatches=0, violation_kinds={}, expected=observed, observed=observed,
-                       first_causal_event="planted defect %s was NOT detected" % name)
-        if result_path:
-            _write_result(result_path, doc)
-        sys.stderr.write(json.dumps(doc, sort_keys=True)[:600] + "\n")
-        return 1 if doc["verdict"] == "fail" else 0
-    case = None
-    if argv[:1] == ["--case"] and len(argv) == 2:
-        case = argv[1]
-    elif result_path and os.environ.get("FFW_CASE_ID") in CASES:
+    if args.floor:
+        print(json.dumps(floor_entries(), sort_keys=True))
+        return 0
+    if args.canary is not None:
+        if args.canary not in CANARIES:
+            ap.error("unknown canary %r; try --list" % args.canary)
+        return _canary_main(args.canary, result_path)
+    case = args.case
+    if case is None and result_path and os.environ.get("FFW_CASE_ID") in CASES:
         case = os.environ["FFW_CASE_ID"]
     if case is not None:
         if case not in CASES:
-            sys.stderr.write("unknown case %r; try --list\n" % case)
-            return 2
+            ap.error("unknown case %r; try --list" % case)
         result = _run_classes(CASES[case], sys.stderr)
+        doc = _report(case, result, "diag." + case.rsplit(".", 1)[-1], allow)
         if result_path:
-            _write_result(result_path, _report(case, result, "diag." + case.rsplit(".", 1)[-1]))
-        return 0 if result.wasSuccessful() and result.testsRun - len(result.skipped) > 0 else 1  # incomplete is non-zero too
+            _write_result(result_path, doc)
+        return EXIT_CODES[doc["verdict"]]
     result = _run_classes([c for cs in CASES.values() for c in cs], sys.stderr)
     return 0 if result.wasSuccessful() else 1
 
