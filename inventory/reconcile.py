@@ -339,30 +339,63 @@ def _loads_strict(data: bytes, label: str):
         raise InputError("input_not_json", f"{label}: not parseable JSON")
 
 
-def _xml_to_batch(data: bytes, label: str) -> dict:
+UPNP_DEVICE_NS = "urn:schemas-upnp-org:device-1-0"
+_UPNP_PREFIX = "{" + UPNP_DEVICE_NS + "}"
+
+
+def parse_description_xml(data: bytes, label: str = "xml") -> dict:
+    """The one rule for turning a UPnP ``device_description.xml`` into flat ``fields``.
+
+    * The device is the first ``<device>`` in document order that is in the UPnP device namespace
+      (``urn:schemas-upnp-org:device-1-0``, exact match; a default or a prefixed binding both work
+      because the parser resolves them).  A ``<device>`` in another namespace, or in none, is never
+      used; if those are the only ones the document is refused with ``xml_namespace``.
+    * Only that device's direct leaf children in the same namespace become fields.  Children in a
+      foreign namespace (or with ``xmlns=""``) are ignored: they are never a field and never a
+      duplicate conflict, so a look-alike ``serialNum`` cannot stand in for the real one.
+    * Nested devices (the MediaServer/MediaRenderer sub-devices real speakers embed) repeat tags
+      such as ``UDN`` with different text; they must never become the unit's value, which is what a
+      whole-tree "last wins" scan does.
+    * DOCTYPE/ENTITY declarations are refused (no entity expansion), a repeated field with differing
+      text is refused, and the input is size-bounded.
+
+    Evidence for refusing un-namespaced documents: on the owner's 17 real description files the root
+    and device are in the UPnP namespace 17/17 and all 599 direct leaf fields are too.  Raises
+    ``InputError`` with a code and no document content.
+    """
+    if len(data) > MAX_INPUT_BYTES:
+        raise InputError("input_too_large", f"{label}: exceeds {MAX_INPUT_BYTES} bytes")
     if re.search(rb"<!\s*(DOCTYPE|ENTITY)", data, re.I):
         raise InputError("xml_doctype_forbidden", f"{label}: DOCTYPE/ENTITY declarations are refused")
     try:
         root = ET.fromstring(data)
     except ET.ParseError as e:
         raise InputError("xml_parse", f"{label}: XML parse error at {e.position}")
-    dev = None
+    dev, other_device = None, False
     for el in root.iter():
-        if el.tag.split("}")[-1] == "device":
+        if el.tag == _UPNP_PREFIX + "device":
             dev = el
             break
+        if el.tag.split("}")[-1] == "device":
+            other_device = True
     if dev is None:
+        if other_device:
+            raise InputError("xml_namespace", f"{label}: <device> is not in the UPnP device namespace")
         raise InputError("xml_shape", f"{label}: no <device> element")
     fields = {}
     for child in dev:
-        if len(child) != 0:
+        if len(child) != 0 or not child.tag.startswith(_UPNP_PREFIX):
             continue
-        tag = child.tag.split("}")[-1]
+        tag = child.tag[len(_UPNP_PREFIX):]
         text = (child.text or "").strip()
         if tag in fields and fields[tag] != text:
             raise InputError("xml_duplicate_field", f"{label}: repeated device field with differing text")
         fields[tag] = text
-    return {"observed_at": None, "devices": [{"fields": fields}]}
+    return fields
+
+
+def _xml_to_batch(data: bytes, label: str) -> dict:
+    return {"observed_at": None, "devices": [{"fields": parse_description_xml(data, label)}]}
 
 
 def load_batch_file(path, label: str):

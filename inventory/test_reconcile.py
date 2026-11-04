@@ -1293,17 +1293,19 @@ class TestInputs(Base):
         self.assertEqual((merged["summary"]["identity_components"], merged["summary"]["observations"]), (1, 2))
 
     def test_xml_hazards_are_refused(self):
-        """E01-XML-HAZARDS: DOCTYPE/ENTITY, truncated XML, missing device and conflicting repeated fields exit 2."""
+        """E01-XML-HAZARDS: DOCTYPE/ENTITY, truncated XML, missing device, conflicting repeated fields and a foreign namespace exit 2, each for its own reason."""
         cases = {
-            "doctype": '<!DOCTYPE r [<!ENTITY a "b">]><root><device><serialNum>x</serialNum></device></root>',
-            "unclosed": "<root><device>",
-            "no-device": "<root/>",
-            "dup-field": "<root><device><serialNum>a</serialNum><serialNum>b</serialNum></device></root>",
+            "doctype": ('<!DOCTYPE r [<!ENTITY a "b">]><root><device><serialNum>x</serialNum></device></root>', "xml_doctype_forbidden"),
+            "unclosed": ("<root><device>", "xml_parse"),
+            "no-device": ("<root/>", "xml_shape"),
+            "dup-field": (ns_doc("<serialNum>a</serialNum><serialNum>b</serialNum>").decode(), "xml_duplicate_field"),
+            "no-namespace": ("<root><device><serialNum>a</serialNum></device></root>", "xml_namespace"),
         }
-        for label, text in cases.items():
+        for label, (text, code) in cases.items():
             with self.subTest(label):
-                code, _, err = self.cli("--input", self.write(text, f"{label}.xml"))
-                self.assertEqual(code, 2, err)
+                c, _, err = self.cli("--input", self.write(text, f"{label}.xml"))
+                self.assertEqual(c, 2, err)
+                self.assertIn(f"error[{code}]", err)
 
     def test_incomplete_results_exit_3_by_default(self):
         """E01-INCOMPLETE-EXIT: unresolved, conflicted, unattributed or empty results exit 3 (manifest still written); only a fully resolved fleet exits 0; --allow-incomplete opts out."""
@@ -1342,6 +1344,195 @@ class TestInputs(Base):
         text = doc.read_text()
         missing = [c for c in rc.REASONS if f"`{c}`" not in text]
         self.assertEqual(missing, [])
+
+
+# ------------------------------------------------------- the one description-XML rule
+def description_xml(n=1, *, nested_first=False):
+    """A synthetic UPnP device_description.xml shaped like a real speaker's: a root device whose
+    leaf fields are direct children, plus embedded MediaServer/MediaRenderer sub-devices that repeat
+    UDN (and invent other values) in the MIDDLE of the document."""
+    i = ident(n)
+    nested = ("<deviceList>"
+              f"<device><UDN>uuid:RINCON_00005E0053{n:02X}01400_MS</UDN><modelName>nested-ms</modelName><modelNumber>NESTED</modelNumber>"
+              "<serialNum>NESTED-SERIAL</serialNum><nestedOnly>x</nestedOnly></device>"
+              f"<device><UDN>uuid:RINCON_00005E0053{n:02X}01400_MR</UDN><modelName>nested-mr</modelName></device>"
+              "</deviceList>")
+    extension = '<q:X_QPlay_SoftwareCapability xmlns:q="http://example.invalid/ext">QPlay:2</q:X_QPlay_SoftwareCapability>' 
+    head = (f"<deviceType>urn:schemas-upnp-org:device:ZonePlayer:1</deviceType><friendlyName>{i['ip']} - Sonos Play:5</friendlyName>"
+            "<modelNumber>S5</modelNumber><modelName>Sonos Play:5</modelName><softwareVersion>57.23-74170</softwareVersion>"
+            f"<swGen>1</swGen><hardwareVersion>1.2.3.4-5.6</hardwareVersion><serialNum>{i['serial']}</serialNum>"
+            f"<MACAddress>{i['mac']}</MACAddress><UDN>uuid:RINCON_00005E0053{n:02X}01400</UDN>")
+    tail = "<seriesid>P100</seriesid><variant>0</variant><memory>32</memory><flash>32</flash>" + extension
+    body = (nested + head + tail) if nested_first else (head + nested + tail)
+    return ('<?xml version="1.0"?><root xmlns="urn:schemas-upnp-org:device-1-0"><specVersion><major>1</major></specVersion>'
+            f"<device>{body}</device></root>").encode()
+
+
+UPNP_NS = "urn:schemas-upnp-org:device-1-0"
+
+
+def ns_doc(inner, *, root_attrs=f'xmlns="{UPNP_NS}"', root="root", dev="device"):
+    """A minimal UPnP-namespaced description document around ``inner`` (the device's children)."""
+    return f"<{root} {root_attrs}><{dev}>{inner}</{dev}></{root}>".encode()
+
+
+class TestDescriptionXmlRule(Base):
+    def test_nested_devices_never_become_the_units_values(self):
+        """E01-XML-RULE-NESTED: only the first device's direct leaf fields are read, wherever the nested devices sit in the document."""
+        for nested_first in (False, True):
+            f = rc.parse_description_xml(description_xml(1, nested_first=nested_first))
+            self.assertEqual(f["UDN"], "uuid:RINCON_00005E00530101400", "root UDN, not the _MS/_MR sub-device's")
+            self.assertEqual((f["modelName"], f["modelNumber"], f["serialNum"]), ("Sonos Play:5", "S5", ident(1)["serial"]))
+            self.assertNotIn("nestedOnly", f)
+            self.assertNotIn("deviceList", f)
+            self.assertNotIn("X_QPlay_SoftwareCapability", f, "a foreign-namespace extension leaf is not a field")
+            self.assertEqual(set(f), {"deviceType", "friendlyName", "modelNumber", "modelName", "softwareVersion", "swGen",
+                                      "hardwareVersion", "serialNum", "MACAddress", "UDN", "seriesid", "variant", "memory", "flash"})
+
+    def test_whole_tree_flattening_is_the_defect_this_rule_avoids(self):
+        """E01-XML-RULE-WHOLE-TREE: scan.py-style 'every leaf, last wins' (re-implemented here as an independent oracle) takes the nested UDN/model; the rule does not."""
+        import xml.etree.ElementTree as ET
+        data = description_xml(1)
+        whole_tree = {el.tag.split("}")[-1]: el.text for el in ET.fromstring(data).iter() if len(el) == 0}
+        rule = rc.parse_description_xml(data)
+        differing = {k for k in rule if whole_tree.get(k) != rule[k]}
+        self.assertEqual(differing, {"UDN", "modelName", "modelNumber", "serialNum"})
+        self.assertEqual(whole_tree["UDN"], "uuid:RINCON_00005E00530101400_MR")
+        # ...and the identity layer still treats both spellings as one speaker:
+        self.assertEqual(rc.norm_udn(whole_tree["UDN"]), rc.norm_udn(rule["UDN"]))
+
+    def test_one_rule_for_every_xml_entry_point(self):
+        """E01-XML-RULE-SHARED: the CLI batch loader and the public function return the same fields for the same bytes."""
+        data = description_xml(2)
+        path = self.dir / "d.xml"
+        path.write_bytes(data)
+        batch_obj, kind = rc.load_batch_file(str(path), "x")
+        self.assertEqual(kind, "xml")
+        self.assertEqual(batch_obj["devices"][0]["fields"], rc.parse_description_xml(data))
+
+    def test_hazards_fail_closed_without_echoing_content(self):
+        """E01-XML-RULE-HAZARDS: DOCTYPE/ENTITY, repeated conflicting fields, no device, malformed, empty and oversize input are all refused with a code."""
+        marker = "PRIVATE-MARKER-9f3a"
+        cases = {
+            "xml_doctype_forbidden": f'<!DOCTYPE a [<!ENTITY e "{marker}">]><root><device><serialNum>x</serialNum></device></root>'.encode(),
+            "xml_duplicate_field": ns_doc(f"<serialNum>a</serialNum><serialNum>{marker}</serialNum>"),
+            "xml_namespace": f"<root><device><serialNum>{marker}</serialNum></device></root>".encode(),
+            "xml_shape": f"<root><x>{marker}</x></root>".encode(),
+            "xml_parse": f"<root><device><serialNum>{marker}</serialNum>".encode(),
+        }
+        for code, data in cases.items():
+            with self.subTest(code):
+                with self.assertRaises(rc.InputError) as cm:
+                    rc.parse_description_xml(data, "x")
+                self.assertEqual(cm.exception.code, code)
+                self.assertNotIn(marker.lower(), cm.exception.message.lower())
+        with self.assertRaises(rc.InputError) as cm:
+            rc.parse_description_xml(b"")
+        self.assertEqual(cm.exception.code, "xml_parse")
+        base = ns_doc("<a>1</a>")
+        limit = len(base)
+        with mock.patch.object(rc, "MAX_INPUT_BYTES", limit):
+            at_limit, over = base, base + b" "
+            self.assertEqual((len(at_limit), len(over)), (limit, limit + 1))
+            self.assertEqual(rc.parse_description_xml(at_limit), {"a": "1"})
+            with self.assertRaises(rc.InputError) as cm:
+                rc.parse_description_xml(over)
+            self.assertEqual(cm.exception.code, "input_too_large")
+
+    def test_identical_repeats_are_tolerated_conflicting_ones_are_not(self):
+        """E01-XML-RULE-REPEAT: a direct field repeated with the same text is harmless; with different text it is refused."""
+        self.assertEqual(rc.parse_description_xml(ns_doc("<a>1</a><a>1</a>")), {"a": "1"})
+        with self.assertRaises(rc.InputError) as cm:
+            rc.parse_description_xml(ns_doc("<a>1</a><a>2</a>"))
+        self.assertEqual(cm.exception.code, "xml_duplicate_field")
+
+    def test_real_shaped_xml_reaches_the_same_device_as_the_json_capture(self):
+        """E01-XML-RULE-MERGE: the XML (root UDN) and a scan.py-style JSON record (nested _MR UDN) are one device with no conflict."""
+        path = self.dir / "d.xml"
+        path.write_bytes(description_xml(1))
+        json_rec = dev(1)  # its UDN carries the _MR suffix, like scan.py's flattened capture
+        d = self.run_ok([batch(json_rec)], "--input", str(path))
+        self.assertEqual((d["summary"]["observations"], d["summary"]["identity_components"], d["conflicts"]), (2, 1, []))
+        self.assertEqual(one(d)["profile_id"], GOLDEN_S5_R6)
+
+
+class TestDescriptionXmlNamespace(Base):
+    """E01-XML-NS-*: the UPnP device namespace is matched explicitly, for the device and for each field."""
+    BODY = "<serialNum>S-1</serialNum><modelNumber>S5</modelNumber><UDN>uuid:RINCON_000000000001</UDN>"
+    WANT = {"serialNum": "S-1", "modelNumber": "S5", "UDN": "uuid:RINCON_000000000001"}
+
+    def test_default_namespace_binding(self):
+        """E01-XML-NS-STANDARD: the standard default-namespace form (what the real speakers send) parses."""
+        self.assertEqual(rc.parse_description_xml(ns_doc(self.BODY)), self.WANT)
+
+    def test_prefixed_binding_is_the_same_document(self):
+        """E01-XML-NS-PREFIXED: a prefix bound to the same URI gives identical fields, for the device and for every field."""
+        prefixed = (f'<u:root xmlns:u="{UPNP_NS}"><u:device><u:serialNum>S-1</u:serialNum><u:modelNumber>S5</u:modelNumber>'
+                    "<u:UDN>uuid:RINCON_000000000001</u:UDN></u:device></u:root>").encode()
+        self.assertEqual(rc.parse_description_xml(prefixed), self.WANT)
+        mixed = (f'<root xmlns="{UPNP_NS}" xmlns:p="{UPNP_NS}"><p:device><serialNum>S-1</serialNum><p:modelNumber>S5</p:modelNumber>'
+                 "<UDN>uuid:RINCON_000000000001</UDN></p:device></root>").encode()
+        self.assertEqual(rc.parse_description_xml(mixed), self.WANT, "default and prefixed bindings of one URI mix freely")
+
+    def test_documents_without_the_upnp_namespace_are_refused(self):
+        """E01-XML-NS-REFUSED: un-namespaced, foreign, and near-miss namespaces are all xml_namespace (never read by local name)."""
+        no_ns = f"<root><device>{self.BODY}</device></root>".encode()
+        cases = {"none": no_ns}
+        for name, uri in {"other": "urn:example:other", "version": "urn:schemas-upnp-org:device-1-1",
+                          "trailing-slash": UPNP_NS + "/", "case": UPNP_NS.upper(), "prefix-only": "urn:schemas-upnp-org:device",
+                          "service-ns": "urn:schemas-upnp-org:service-1-0"}.items():
+            cases[name] = ns_doc(self.BODY, root_attrs=f'xmlns="{uri}"')
+        for name, data in cases.items():
+            with self.subTest(name):
+                with self.assertRaises(rc.InputError) as cm:
+                    rc.parse_description_xml(data)
+                self.assertEqual(cm.exception.code, "xml_namespace")
+
+    def test_a_foreign_device_listed_first_is_never_used(self):
+        """E01-XML-NS-FOREIGN-DEVICE: device confusion - a look-alike <device> in another namespace placed first does not supply the unit's fields."""
+        doc = (f'<root xmlns="{UPNP_NS}" xmlns:e="urn:example:evil">'
+               "<e:device><e:serialNum>FOREIGN</e:serialNum><e:UDN>uuid:RINCON_FOREIGN</e:UDN><e:onlyForeign>x</e:onlyForeign></e:device>"
+               f"<device>{self.BODY}</device></root>").encode()
+        got = rc.parse_description_xml(doc)
+        self.assertEqual(got, self.WANT)
+        self.assertNotIn("onlyForeign", got)
+        none_ns = (f'<root xmlns="{UPNP_NS}"><device xmlns="">{self.BODY}</device><device>{self.BODY}</device></root>').encode()
+        self.assertEqual(rc.parse_description_xml(none_ns), self.WANT, "an xmlns='' device is skipped, the UPnP one is used")
+
+    def test_a_foreign_field_never_becomes_or_conflicts_with_a_real_field(self):
+        """E01-XML-NS-FOREIGN-FIELD: field confusion - same-named children in another namespace (or xmlns='') are ignored: no override, no duplicate conflict, no new field."""
+        doc = (f'<root xmlns="{UPNP_NS}" xmlns:e="urn:example:evil"><device>{self.BODY}'
+               "<e:serialNum>EVIL</e:serialNum><e:modelNumber>EVIL</e:modelNumber><e:foreignOnly>x</e:foreignOnly>"
+               '<hardwareVersion xmlns="">NOT-UPNP</hardwareVersion></device></root>').encode()
+        got = rc.parse_description_xml(doc)
+        self.assertEqual(got, self.WANT)
+        self.assertNotIn("foreignOnly", got)
+        self.assertNotIn("hardwareVersion", got, "an xmlns='' child is not a UPnP field")
+
+    def test_the_upnp_device_is_found_inside_a_foreign_wrapper(self):
+        """E01-XML-NS-WRAPPER: the first UPnP-namespace device in document order wins even if a foreign element wraps it."""
+        doc = f'<root xmlns:e="urn:example:evil"><e:wrap><u:device xmlns:u="{UPNP_NS}"><u:serialNum>S-1</u:serialNum></u:device></e:wrap></root>'.encode()
+        self.assertEqual(rc.parse_description_xml(doc), {"serialNum": "S-1"})
+
+    def test_no_device_at_all_stays_a_shape_error(self):
+        """E01-XML-NS-SHAPE: a namespaced document with no device is xml_shape, not xml_namespace."""
+        for data in (f'<root xmlns="{UPNP_NS}"><x>1</x></root>'.encode(), b"<root/>"):
+            with self.assertRaises(rc.InputError) as cm:
+                rc.parse_description_xml(data)
+            self.assertEqual(cm.exception.code, "xml_shape")
+
+    def test_cli_namespace_behaviour_without_echoing_content(self):
+        """E01-XML-NS-CLI: through the CLI a prefixed document is accepted and an un-namespaced one exits 2 with the code and no content."""
+        good = self.write(f'<u:root xmlns:u="{UPNP_NS}"><u:device><u:serialNum>{ident(1)["serial"]}</u:serialNum>'
+                          "<u:modelNumber>S5</u:modelNumber><u:hardwareVersion>1.2.3.4-5.6</u:hardwareVersion></u:device></u:root>", "p.xml")
+        d = self.run_ok([], "--input", good)
+        self.assertEqual((d["summary"]["identity_components"], one(d)["model"]["model_number"]), (1, "S5"))
+        bad = self.write(f"<root><device><serialNum>PRIVATE-MARKER-9f3a</serialNum></device></root>", "n.xml")
+        code, out, err = self.cli("--input", bad)
+        self.assertEqual(code, 2)
+        self.assertIn("error[xml_namespace]", err)
+        self.assertNotIn("private-marker", err.lower())
+        self.assertEqual(out, "")
 
 
 if __name__ == "__main__":

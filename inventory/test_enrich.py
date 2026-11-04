@@ -1269,5 +1269,78 @@ class InterruptionTests(Base):
         self.assertEqual(stale.read_bytes(), b"half-written bytes from a run that was SIGKILLed", "a file this run did not create is left alone")
 
 
+# ---------------------------------------------------------------------------
+# owner-local real-capture tier (counts only; private data is never printed, formatted or written)
+# ---------------------------------------------------------------------------
+
+REAL_DEVICES = Path(os.environ.get("FFW_REAL_DEVICES") or (HERE.parent / ".local-real" / "devices.json"))
+
+
+class RealCaptureTests(Base):
+    """Runs only when the owner asks for it (``FFW_REAL_TIER=1``). Requested but absent is a FAILURE
+    (blocked), never a silent skip. Assertion messages contain counts and reason codes only; no device
+    value is ever put into a message. The fixtures above prove rules; this shows the same rules hold on
+    the shapes real units produce (it is how a false leak on a real dotted-quad revision was found)."""
+
+    def setUp(self):
+        super().setUp()
+        if os.environ.get("FFW_REAL_TIER") != "1":
+            self.skipTest("owner-local real tier not requested (set FFW_REAL_TIER=1)")
+        if not REAL_DEVICES.is_file():
+            self.fail("BLOCKED: the real tier was requested but the owner-local capture is absent")
+        self.doc = enrich.parse_json_bounded(enrich.read_bounded(REAL_DEVICES, enrich.MAX_INPUT_BYTES, "devices"), "devices")
+
+    def run_enrich(self, unit, doc=None, salt=None):
+        return enrich.enrich_document(doc or self.doc, self.profiles, salt, None, unit)
+
+    def leaked_count(self, result):
+        text = enrich._json_text(result.output) + enrich._jsonl_text(result.ee_records)
+        return sum(1 for v in result.private_ids if len(v) >= enrich.MIN_LEAK_CHECK_CHARS and v in text)
+
+    def test_without_an_asserted_unit_the_only_blockers_are_the_two_unit_reasons_on_every_device(self):
+        result = self.run_enrich(None)
+        n = result.counts["devices_in_input"]
+        self.assertGreater(n, 0)
+        self.assertEqual(result.counts["enriched_incomplete"], n, f"counts={result.counts}")
+        self.assertEqual(set(result.reason_histogram), {"memory_unit_unknown", "flash_unit_unknown"}, f"reasons={sorted(result.reason_histogram)}")
+        self.assertEqual(set(result.reason_histogram.values()), {n}, f"reason counts={dict(result.reason_histogram)}")
+
+    def test_with_a_unit_asserted_every_device_is_enriched_and_the_unit_is_never_device_stated(self):
+        result = self.run_enrich("MB")
+        n = result.counts["devices_in_input"]
+        self.assertEqual(result.counts["enriched"], n, f"counts={result.counts}")
+        for status in ("unknown_model", "invalid", "ambiguous", "enriched_incomplete"):
+            self.assertEqual(result.counts[status], 0, f"{status} count={result.counts[status]}")
+        bases = {rec["device_reported"][k]["unit_basis"] for rec in result.output["devices"] for k in ("nominal_ram", "nominal_flash")}
+        self.assertEqual(bases, {"operator_asserted"}, f"unit bases={sorted(bases)}: real units report bare numbers, so the unit is the operator's word")
+        self.assertTrue(all(rec["board_profile_id"] for rec in result.output["devices"]), "every real unit yields a board profile id")
+
+    def test_both_leak_gates_pass_on_real_shapes_and_no_private_value_is_in_the_output(self):
+        result = self.run_enrich("MB")
+        self.assertGreater(len(result.private_ids), result.counts["devices_in_input"], "premise: harvesting found private values to look for")
+        self.assertEqual(enrich.find_leaks([result.output, result.ee_records], result.private_ids), 0)
+        self.assertEqual(enrich.shared_guard_findings([result.output], result.private_ids), 0)
+        leaked = self.leaked_count(result)
+        self.assertEqual(leaked, 0, f"{leaked} harvested private value(s) found in the sanitized output")
+
+    def test_input_order_does_not_change_the_output_bytes_in_either_ref_mode(self):
+        for salt in (None, SALT):  # unsalted refs are run-local ordinals and depend on the sort; salted refs come from the serial
+            texts = set()
+            for seed in range(5):
+                devices = list(self.doc["devices"])
+                random.Random(seed).shuffle(devices)
+                texts.add(enrich._json_text(self.run_enrich("MB", dict(self.doc, devices=devices), salt).output))
+            self.assertEqual(len(texts), 1, f"salted={salt is not None}: {len(texts)} distinct outputs")
+
+    def test_the_cli_dry_run_prints_counts_only(self):
+        out, err = io.StringIO(), io.StringIO()
+        code = enrich.main(["--devices", str(REAL_DEVICES), "--dry-run", "--nominal-unit", "MB"], stdout=out, stderr=err)
+        self.assertEqual(code, enrich.EXIT_OK, "see counts on stdout")
+        ids = self.run_enrich("MB").private_ids
+        shown = out.getvalue() + err.getvalue()
+        self.assertEqual(sum(1 for v in ids if len(v) >= enrich.MIN_LEAK_CHECK_CHARS and v in shown), 0, "a private value reached the console")
+        self.assertIn("dry-run, nothing written", shown)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
