@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "suite_id": "e07",
+  "seed": 1597463007,
+  "git_commit": "9b66685b7628fab0294c5e875459472f4093c8b2",
+  "overall_status": "passed",
+  "cases": [
+    {
+      "case_id": "e07_mkinitramfs_self_test",
+      "status": "passed",
+      "duration_ms": 74,
+      "assertions_checked": 1,
+      "failure_reason": null
+    },
+    {
+      "case_id": "e07_qemu_mips_and_ppc_boot_verification",
+      "status": "passed",
+      "duration_ms": 8431,
+      "assertions_checked": 1,
+      "failure_reason": null
+    }
+  ]
+}

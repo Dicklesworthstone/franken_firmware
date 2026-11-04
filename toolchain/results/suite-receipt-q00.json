@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "suite_id": "q00",
+  "seed": 1597463007,
+  "git_commit": "cd22f0d3e633d45db51d1154c19941ae2f1e9813",
+  "overall_status": "passed",
+  "cases": [
+    {
+      "case_id": "q00_test_support_unit_and_canaries",
+      "status": "passed",
+      "duration_ms": 6159,
+      "assertions_checked": 1,
+      "failure_reason": null
+    }
+  ]
+}

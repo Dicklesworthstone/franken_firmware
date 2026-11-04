@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "suite_id": "e03",
+  "seed": 1597463007,
+  "git_commit": "9b66685b7628fab0294c5e875459472f4093c8b2",
+  "overall_status": "passed",
+  "cases": [
+    {
+      "case_id": "e03_platform_capability_matrix_unit",
+      "status": "passed",
+      "duration_ms": 4189,
+      "assertions_checked": 1,
+      "failure_reason": null
+    },
+    {
+      "case_id": "e03_qemu_kernel_abi_probes",
+      "status": "passed",
+      "duration_ms": 8087,
+      "assertions_checked": 1,
+      "failure_reason": null
+    }
+  ]
+}

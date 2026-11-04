@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+exec python3 "$ROOT/scripts/test/run-workspace-verification.py" p01 "$@"

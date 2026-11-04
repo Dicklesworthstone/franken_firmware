@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "suite_id": "p01",
+  "seed": 1597463007,
+  "git_commit": "9b66685b7628fab0294c5e875459472f4093c8b2",
+  "overall_status": "passed",
+  "cases": [
+    {
+      "case_id": "p01_workspace_unit_tests",
+      "status": "passed",
+      "duration_ms": 7982,
+      "assertions_checked": 1,
+      "failure_reason": null
+    },
+    {
+      "case_id": "p01_workspace_clippy_zero_warnings",
+      "status": "passed",
+      "duration_ms": 3098,
+      "assertions_checked": 1,
+      "failure_reason": null
+    },
+    {
+      "case_id": "p01_workspace_cross_check_ppc_be",
+      "status": "passed",
+      "duration_ms": 4426,
+      "assertions_checked": 1,
+      "failure_reason": null
+    },
+    {
+      "case_id": "p01_workspace_cross_check_mips_be",
+      "status": "passed",
+      "duration_ms": 4358,
+      "assertions_checked": 1,
+      "failure_reason": null
+    },
+    {
+      "case_id": "p01_virtual_house_e2e",
+      "status": "passed",
+      "duration_ms": 1264,
+      "assertions_checked": 1,
+      "failure_reason": null
+    }
+  ]
+}

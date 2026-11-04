@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "suite_id": "p05",
+  "seed": 1597463007,
+  "git_commit": "b9b72c311b874b122af7ff1cc7666a0ad1e01f17",
+  "overall_status": "passed",
+  "cases": [
+    {
+      "case_id": "p05_platform_portable_atomic_tests",
+      "status": "passed",
+      "duration_ms": 10022,
+      "assertions_checked": 1,
+      "failure_reason": null
+    },
+    {
+      "case_id": "p05_asupersync_check_powerpc_be",
+      "status": "passed",
+      "duration_ms": 185643,
+      "assertions_checked": 1,
+      "failure_reason": null
+    },
+    {
+      "case_id": "p05_asupersync_check_mips_be",
+      "status": "passed",
+      "duration_ms": 155137,
+      "assertions_checked": 1,
+      "failure_reason": null
+    }
+  ]
+}
