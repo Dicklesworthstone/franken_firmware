@@ -22,7 +22,7 @@ S2).
 > assessment, and the first gate on the critical path — the
 > **cross-toolchain bake-off**: hello-world `/init` binaries for
 > `mips-unknown-linux-musl` (big-endian) and `powerpc-unknown-linux-musl`
-> (big-endian), booted as PID 1 under QEMU. Results and serial logs live under
+> (big-endian), booted as PID 1 under QEMU. Results and serial logs live under toolchain/results/
 > [`toolchain/`](toolchain/).
 
 ---
