@@ -94,3 +94,25 @@ Reading order for a new agent:
 - `asupersync`, `frankenlibc`, `frankenfs`, `franken_remote` — the franken
   library stack assessed in `FIRMWARE_ASSESSMENT.md`; `franken_kernel` (the
   `no_std` type substrate) is the first candidate for on-device reuse.
+
+## Implementation Swarm Rules
+
+- Implement real behavior and its tests together. Live Beads acceptance is
+  authoritative over older generated plans; retain all requested features,
+  including native tailnet support. Host assistance cannot silently replace it.
+- Use `br --actor <AgentMailName>` for tracker changes and narrow Agent Mail
+  reservations for edits. Helpers coordinate under one bead owner; they do not
+  create artificial task splits or overwrite another agent's files.
+- Code first, then centralized batch verification. Send build requests to the
+  supervisor. All builds use `RCH_REQUIRE_REMOTE=1 rch exec`; never change global
+  fallback or shim settings to manufacture a pass. Rust changes remain uncommitted
+  until required formatting and remote Clippy checks complete.
+- Implementers never close their own or peers' beads. Mark verification pending
+  in comments; the supervisor independently checks original acceptance at the
+  exact revision before closing. Incomplete external qualification stays open.
+- No placeholder success, weakened assertions, golden regeneration to hide a
+  regression, fixture-as-live proof, or moving unmet acceptance into follow-ups
+  to claim completion. Pair rejection tests with permitted positive behavior.
+- Reports, commit counts and refusal-only paths are not delivered capability.
+  Process artifacts require a named consumer, feature gate, observed defect and
+  retirement condition. Bound diagnostics and preserve failure/not-run counts.
