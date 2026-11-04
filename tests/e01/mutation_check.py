@@ -22,7 +22,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = (ROOT / "inventory" / "reconcile.py").read_text()
-COPY = ("inventory/test_reconcile.py", "inventory/image-evidence.json", "inventory/hardware-profiles.json",
+SRC_IMG = (ROOT / "inventory" / "image_evidence.py").read_text()  # layer "img" mutates this file instead
+SRC_RUN = (ROOT / "tests" / "e01" / "run_cases.py").read_text()  # layer "run" mutates the e2e runner
+COPY = ("inventory/test_reconcile.py", "inventory/test_image_evidence.py", "inventory/image_evidence.py",
+        "inventory/image-evidence.json", "inventory/hardware-profiles.json",
         "inventory/identity.py", "inventory/enrich.py",  # reconcile.py loads these siblings; without them every mutant would "die" for the wrong reason
         "docs/contracts/e01.md", "tests/e01/run_cases.py", "tests/e01/cases.json")
 
@@ -70,6 +73,29 @@ MUTANTS = [
     ("unit", "temp file leaked on failure", [('        try:\n            os.unlink(tmp)\n        except FileNotFoundError:\n            pass\n        raise', '        raise')], "WRITE-FAILURE"),
     ("unit", "incomplete exits 0", [('    return EXIT_INCOMPLETE if (not clean and not args.allow_incomplete) else EXIT_OK', '    return EXIT_OK')], "INCOMPLETE-EXIT"),
     ("unit", "ordinals follow arrival order", [('devices.sort(key=lambda d: d["tokens"])', 'pass')], "ORDINALS"),
+    ("img", "digest over the header only", [('h.update(chunk)', 'h.update(chunk[:64])')], "IMG-MEASURED"),
+    ("img", "private-path guard removed", [('if args.join_model and not rc._is_private_location(out):', 'if False:')], "IMG-PRIVATE"),
+    ("img", "blanket join allowed", [('if args.join_model and (not args.join_basis or not args.revision):', 'if args.join_model and not args.join_basis:')], "IMG-JOIN-GUARDS"),
+    ("img", "join basis not required", [('if args.join_model and (not args.join_basis or not args.revision):\n            raise ToolError("usage", "--join-model needs --join-basis and at least one --revision (no blanket joins)")', 'if False:\n            raise ToolError("usage", "x")')], "IMG-JOIN-GUARDS"),
+    ("img", "--expect-isa ignored", [('if args.expect_isa and args.expect_isa != claims["arch.isa"]:', 'if False:')], "IMG-EXPECT"),
+    ("img", "--expect-sha256 ignored", [('if args.expect_sha256 and args.expect_sha256.lower() != digest:', 'if False:')], "IMG-EXPECT"),
+    ("img", "ABI invented", [('"abi": claims.get("arch.abi"),', '"abi": claims.get("arch.abi") or "sysv",')], "IMG-MEASURED"),
+    ("img", "float ABI invented", [('"float_abi": None, "atomic_widths": None}', '"float_abi": "hard", "atomic_widths": None}')], "IMG-MEASURED"),
+    ("img", "attestation written world-readable", [('0o600 if args.join_model else 0o644', '0o644')], "IMG-JOIN"),
+    ("img", "may overwrite the image", [('if out == Path(args.image).resolve():', 'if False:')], "IMG-OUTPUT"),
+    ("img", "size cap ignored", [('if total > MAX_IMAGE_BYTES:', 'if False:')], "IMG-BOUNDS"),
+    ("img", "registry validation skipped", [('        rc._validate_evidence(rec, 0)', '        pass')], "IMG-VALIDATED"),
+    ("run", "evidence loss does not change the verdict", [('    if receipts.lost:\n        print(f"RESULT: INCOMPLETE', '    if False:\n        print(f"RESULT: INCOMPLETE')], "RUNNER-EVIDENCE-LOSS"),
+    ("run", "dropped count is a constant", [('"dropped_events": receipts.lost, **res}', '"dropped_events": 0, **res}')], "RUNNER-DROPPED-COUNT"),
+    ("run", "expected-oracle digest is a constant", [('"expected_sha256": expected_digest(c)', '"expected_sha256": "0" * 64')], "RUNNER-RECEIPTS"),
+    ("run", "identity.py digest not recorded", [('"identity_sha256": sha((ROOT / "inventory" / "identity.py").read_bytes()),', '"identity_sha256": "",')], "RUNNER-RECEIPTS"),
+    ("run", "enrich.py digest not recorded", [('"enrich_sha256": sha((ROOT / "inventory" / "enrich.py").read_bytes()),', '"enrich_sha256": "",')], "RUNNER-RECEIPTS"),
+    ("run", "earlier receipts may be truncated", [('os.O_WRONLY | os.O_CREAT | os.O_EXCL', 'os.O_WRONLY | os.O_CREAT | os.O_TRUNC')], "RUNNER-NO-EVIDENCE-DIR"),
+    ("run", "interrupt not handled", [('    except KeyboardInterrupt:\n        receipts.append', '    except ZeroDivisionError:\n        receipts.append')], "RUNNER-INTERRUPT"),
+    ("run", "no summary record", [('    receipts.append(summary)\n', '    pass\n')], "RUNNER-RECEIPTS"),
+    ("run", "no header record", [('    receipts.append({"schema": "ffw.e01.receipt.v1", "record": "header"', '    (lambda *_: None)({"schema": "ffw.e01.receipt.v1", "record": "header"')], "RUNNER-RECEIPTS"),
+    ("run", "fsync skipped", [('            os.fsync(self.fh.fileno())\n', '            pass\n')], "RUNNER-EVIDENCE-LOSS"),
+    ("run", "empty plan qualifies", [('and not_run == 0 and bool(planned)', 'and not_run == 0')], "RUNNER-EMPTY-PLAN"),
     ("e2e", "ISA guessed from model", [('    model, revision, fw_line = _val(s["model_number"]), _val(s["hardware_revision"]), _val(s["firmware_line"])\n    reasons = set(_key_reasons(key))',
         '    model, revision, fw_line = _val(s["model_number"]), _val(s["hardware_revision"]), _val(s["firmware_line"])\n    reasons = set(_key_reasons(key))\n    _guess = model == "S5"'),
         ('    severities = {REASONS[c][0] for c, _ in reasons}', '    if _guess and evidence["isa"] is None:\n        evidence["isa"] = {"machine": "powerpc", "elf_class": 32, "endianness": "big"}\n    severities = {REASONS[c][0] for c, _ in reasons}')], "E01-E2E-002"),
@@ -93,8 +119,8 @@ MUTANTS = [
 ]
 
 
-def run_unit(t: Path):
-    r = subprocess.run([sys.executable, "-B", "-I", "-m", "unittest", "discover", "-s", "inventory", "-p", "test_reconcile.py"],
+def run_unit(t: Path, pattern: str = "test_reconcile.py"):
+    r = subprocess.run([sys.executable, "-B", "-I", "-m", "unittest", "discover", "-s", "inventory", "-p", pattern],
                        cwd=t, capture_output=True, text=True, timeout=600)
     # Report each failing test by the stable case ID that starts its docstring (E01-...).
     failed, pending = [], False
@@ -114,11 +140,28 @@ def run_e2e(t: Path, tier: str):
     return r.returncode != 0, failed
 
 
+def run_layer(t: Path, lay: str):
+    if lay == "unit":
+        return run_unit(t)
+    if lay == "img":
+        return run_unit(t, "test_image_evidence.py")
+    if lay == "run":  # runner behaviour is pinned by TestRunnerEvidence inside test_reconcile.py
+        return run_unit(t)
+    return run_e2e(t, "real" if lay == "real" else "full")
+
+
 def stage(td: Path, source: str, lay: str):
     for rel in COPY:
         (td / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(ROOT / rel, td / rel)
-    (td / "inventory" / "reconcile.py").write_text(source)
+    if lay == "img":  # the tool under test is mutated; reconcile.py and its siblings stay as shipped
+        (td / "inventory" / "image_evidence.py").write_text(source)
+        (td / "inventory" / "reconcile.py").write_text(SRC)
+    elif lay == "run":  # the runner under test is mutated; everything it drives stays as shipped
+        (td / "tests" / "e01" / "run_cases.py").write_text(source)
+        (td / "inventory" / "reconcile.py").write_text(SRC)
+    else:
+        (td / "inventory" / "reconcile.py").write_text(source)
     if lay == "real":
         (td / ".local-real").symlink_to(ROOT / ".local-real")
 
@@ -126,15 +169,15 @@ def stage(td: Path, source: str, lay: str):
 def controls(layer: str):
     """The UNMUTATED source must pass every layer, or a "kill" below would prove nothing."""
     ok = True
-    for lay in ("unit", "e2e", "real"):
+    for lay in ("unit", "img", "run", "e2e", "real"):
         if layer not in ("all", lay):
             continue
         if lay == "real" and not (ROOT / ".local-real" / "devices.json").exists():
             continue
         with tempfile.TemporaryDirectory(prefix="ffw-e01-mut-") as td:
             t = Path(td)
-            stage(t, SRC, lay)
-            detected, failed = run_unit(t) if lay == "unit" else run_e2e(t, "real" if lay == "real" else "full")
+            stage(t, {"img": SRC_IMG, "run": SRC_RUN}.get(lay, SRC), lay)
+            detected, failed = run_layer(t, lay)
         print(f"control     [{lay}] unmutated source {'FAILED: ' + ', '.join(failed[:3]) if detected else 'passes'}")
         ok = ok and not detected
     return ok
@@ -142,7 +185,7 @@ def controls(layer: str):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0], allow_abbrev=False)
-    ap.add_argument("--layer", choices=("unit", "e2e", "real", "all"), default="all")
+    ap.add_argument("--layer", choices=("unit", "img", "run", "e2e", "real", "all"), default="all")
     layer = ap.parse_args(argv).layer
     killed = survived = skipped = unapplied = 0
     if not controls(layer):
@@ -155,7 +198,7 @@ def main(argv=None):
             print(f"SKIPPED     [{lay}] {name}  (owner-local .local-real/devices.json absent)")
             skipped += 1
             continue
-        s, ok = SRC, True
+        s, ok = {"img": SRC_IMG, "run": SRC_RUN}.get(lay, SRC), True
         for old, new in edits:
             if s.count(old) != 1:
                 ok = False
@@ -168,7 +211,7 @@ def main(argv=None):
         with tempfile.TemporaryDirectory(prefix="ffw-e01-mut-") as td:
             t = Path(td)
             stage(t, s, lay)
-            detected, failed = run_unit(t) if lay == "unit" else run_e2e(t, "real" if lay == "real" else "full")
+            detected, failed = run_layer(t, lay)
         hit = any(f.startswith(want if want.startswith("E01-") else "E01-" + want) for f in failed)
         if detected:
             killed += 1

@@ -1535,5 +1535,110 @@ class TestDescriptionXmlNamespace(Base):
         self.assertEqual(out, "")
 
 
+class TestRunnerEvidence(Base):
+    """E01-RUNNER-*: the e2e runner's receipts carry the digests/oracle the criteria require, and losing evidence is never QUALIFIED."""
+    CASE = "E01-E2E-007"  # fast, self-contained
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location("run_cases_under_test", REPO / "tests" / "e01" / "run_cases.py")
+        cls.rr = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.rr)
+
+    def run_runner(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = self.rr.main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def records(self, d):
+        return [json.loads(l) for l in (Path(d) / "receipts.jsonl").read_text().splitlines()]
+
+    def test_receipts_name_what_was_tested_and_what_was_expected(self):
+        """E01-RUNNER-RECEIPTS: header, case and summary records; artifact digests of every module under test; an expected-oracle digest; honest dropped count."""
+        d = self.dir / "r"
+        code, out, err = self.run_runner("--tier", "smoke", "--case", self.CASE, "--receipts", str(d))
+        self.assertEqual(code, 0, out + err)
+        header, case, summary = self.records(d)
+        self.assertEqual((header["record"], summary["record"], case["case_id"]), ("header", "summary", self.CASE))
+        sha = lambda rel: hashlib.sha256((REPO / rel).read_bytes()).hexdigest()
+        self.assertEqual(case["versions"], {
+            "python": case["versions"]["python"], "runner_sha256": sha("tests/e01/run_cases.py"),
+            "reconcile_sha256": sha("inventory/reconcile.py"), "identity_sha256": sha("inventory/identity.py"),
+            "enrich_sha256": sha("inventory/enrich.py"), "cases_sha256": sha("tests/e01/cases.json"),
+            "seed_registry_sha256": sha("inventory/image-evidence.json")})
+        spec_case = next(c for c in json.loads((REPO / "tests/e01/cases.json").read_text())["cases"] if c["id"] == self.CASE)
+        oracle = {k: spec_case[k] for k in ("expect", "steps", "negative_controls", "expect_ids", "kind") if k in spec_case}
+        self.assertEqual(case["expected_sha256"], hashlib.sha256(json.dumps(oracle, sort_keys=True, separators=(",", ":")).encode()).hexdigest())
+        self.assertEqual((case["dropped_events"], summary["dropped_events"], summary["passed"]), (0, 0, 1))
+        self.assertIn("monotonic_start_ns", case)
+        self.assertTrue(case["replay"].endswith(f"--case {self.CASE}"))
+
+    def test_evidence_must_have_somewhere_to_go(self):
+        """E01-RUNNER-NO-EVIDENCE-DIR: an uncreatable or already-used receipts location stops the run (exit 2) before any case runs; earlier evidence is never overwritten."""
+        blocker = self.dir / "a-file"
+        blocker.write_text("x")
+        for target in (blocker, blocker / "sub"):
+            code, out, err = self.run_runner("--tier", "smoke", "--case", self.CASE, "--receipts", str(target))
+            self.assertEqual(code, 2, (target, err))
+            self.assertNotIn("PASS", out)
+        d = self.dir / "r"
+        self.assertEqual(self.run_runner("--tier", "smoke", "--case", self.CASE, "--receipts", str(d))[0], 0)
+        before = (d / "receipts.jsonl").read_bytes()
+        code, out, err = self.run_runner("--tier", "smoke", "--case", self.CASE, "--receipts", str(d))
+        self.assertEqual(code, 2)
+        self.assertNotIn("PASS", out)
+        self.assertEqual((d / "receipts.jsonl").read_bytes(), before)
+
+    def test_lost_evidence_is_incomplete_not_qualified(self):
+        """E01-RUNNER-EVIDENCE-LOSS: a case that passed but whose receipts cannot be written is INCOMPLETE (exit 3); the same run with working storage is QUALIFIED (exit 0)."""
+        d = self.dir / "ok"
+        self.assertEqual(self.run_runner("--tier", "smoke", "--case", self.CASE, "--receipts", str(d))[0], 0)
+        d2 = self.dir / "lost"
+        with mock.patch.object(self.rr.os, "fsync", side_effect=OSError("disk full")):
+            code, out, err = self.run_runner("--tier", "smoke", "--case", self.CASE, "--receipts", str(d2))
+        self.assertEqual(code, 3, out)
+        self.assertIn("PASS", out)
+        self.assertIn("RESULT: INCOMPLETE", out)
+        self.assertNotIn("QUALIFIED", out.replace("NOT QUALIFIED", ""))
+
+    def test_partial_loss_is_counted_in_later_records(self):
+        """E01-RUNNER-DROPPED-COUNT: if only the header is lost, the case and summary records state dropped_events=1 and the run is INCOMPLETE."""
+        calls = {"n": 0}
+        real_fsync = os.fsync
+
+        def flaky(fd):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise OSError("transient")
+            return real_fsync(fd)
+
+        d = self.dir / "r"
+        with mock.patch.object(self.rr.os, "fsync", side_effect=flaky):
+            code, out, _ = self.run_runner("--tier", "smoke", "--case", self.CASE, "--receipts", str(d))
+        self.assertEqual(code, 3, out)
+        recs = self.records(d)
+        # A record whose fsync failed is counted as lost even though its line reached the OS: durability is what is claimed.
+        case = next(r for r in recs if r.get("case_id") == self.CASE)
+        summary = next(r for r in recs if r.get("record") == "summary")
+        self.assertEqual((case["dropped_events"], summary["dropped_events"]), (1, 1))
+
+    def test_an_interrupted_run_leaves_a_detectably_partial_file(self):
+        """E01-RUNNER-INTERRUPT: Ctrl-C mid-run exits 130 and the receipts have a header and an 'interrupted' record but no summary."""
+        d = self.dir / "r"
+        with mock.patch.object(self.rr, "run_case", side_effect=KeyboardInterrupt):
+            code, out, _ = self.run_runner("--tier", "smoke", "--case", self.CASE, "--receipts", str(d))
+        self.assertEqual(code, 130)
+        kinds = [r.get("record") for r in self.records(d)]
+        self.assertEqual(kinds, ["header", "interrupted"])
+        self.assertIn("INTERRUPTED", out)
+
+    def test_an_empty_plan_never_qualifies(self):
+        """E01-RUNNER-EMPTY-PLAN: replaying an unknown case id plans nothing and is NOT QUALIFIED (exit 1)."""
+        code, out, _ = self.run_runner("--tier", "smoke", "--case", "E01-E2E-999", "--receipts", str(self.dir / "r"))
+        self.assertEqual(code, 1)
+        self.assertIn("NOT QUALIFIED", out)
+
+
 if __name__ == "__main__":
     unittest.main()

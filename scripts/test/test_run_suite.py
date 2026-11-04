@@ -1645,15 +1645,15 @@ class TestFloor(Base):
         full = self._registry()
         control = self.ws.run(full, extra=["--floor", req])
         self.assertEqual(control.rc, 0, control.out + control.err)  # the intact registry satisfies the floor
-        self.assertEqual(control.report["receipts"]["floor"]["cases"], 3)
+        self.assertEqual(control.report["receipts"]["floor"]["cases"], 5)   # 3 oracle cases + 2 newc cases
         self.assertEqual(control.report["receipts"]["floor"]["violations"],
-                         {"count": 3, "dropped": 0, "demoted": 0, "altered": 0})
+                         {"count": 5, "dropped": 0, "demoted": 0, "altered": 0})
 
         # THE HOLE: remove a canary from `cases` AND `required_cases`.  Every check that reads only the manifest passes.
         shrunk = self._registry(drop="beta")
         alone = self.ws.run(shrunk)
         self.assertEqual(alone.rc, 0, "without an independent floor the silent drop is invisible: " + alone.out)
-        self.assertEqual(alone.den["planned"], 2)
+        self.assertEqual(alone.den["planned"], 4)   # 5 cases minus the dropped one
         # THE FIX: the same manifest under the independent floor fails, and says exactly what vanished.
         guarded = self.ws.run(shrunk, extra=["--floor", req])
         self.assertEqual(guarded.rc, 1, guarded.out + guarded.err)
@@ -1710,13 +1710,17 @@ class TestFloor(Base):
         proc = subprocess.run([sys.executable, E2E_Q00, "--tier", "smoke", "--artifact-root", root, "--run-id", "e2e1"],
                               cwd=self.ws.elsewhere, env=self.ws.env(), capture_output=True, text=True, timeout=300)
         out = proc.stdout
-        self.assertIn("floor[smoke]: 19 cases (13 canaries, 6 positives, 0 unit modules)", out)   # oracles + newc
+        oracles, newc = _load("oracles_e2e", ORACLES_PY), _load("newc_e2e", NEWC_PY)
+        canaries = len(oracles.DEFECTS) + len(newc.DEFECTS)   # both counts come from code, so they follow the tables
+        positives = sum(1 for cid, _ in oracles.CANARY_CASES if cid.startswith("q00.oracle.positive.")) + 1
+        total = canaries + positives
+        self.assertIn("floor[smoke]: %d cases (%d canaries, %d positives, 0 unit modules)" % (total, canaries, positives), out)
         self.assertIn("run-suite smoke tier with --floor", out)
         self.assertIn("independent re-verification with receipts.py", out)   # step 3 ran as a separate process
         report = read_json(os.path.join(root, "e2e1", "receipt.json"))
-        self.assertEqual(report["receipts"]["floor"]["cases"], 19)
+        self.assertEqual(report["receipts"]["floor"]["cases"], total)
         self.assertEqual(report["receipts"]["floor"]["violations"]["dropped"], 0)
-        self.assertEqual(report["denominators"]["planned"], 19)
+        self.assertEqual(report["denominators"]["planned"], total)
         # one verdict, three steps: exit 0 only when run-suite AND the second verifier both say so
         self.assertEqual(proc.returncode == 0, "Q00 ACCEPTANCE: PASS" in out, out)
         self.assertEqual(proc.returncode == 0, report["verdict"] == "pass")
@@ -1780,16 +1784,22 @@ class TestNewcCanaries(Base):
 
     def test_a_parser_that_stops_checking_padding_does_not_read_as_a_detection(self):
         lax = self._mutant("lax", edits=[
-            ('if raw[name_end:dataoff] != b"\0" * (dataoff - name_end):', "if False:"),
-            ('if raw[data_end:next_off] != b"\0" * (next_off - data_end):', "if False:")])
+            ('if raw[name_end:dataoff] != b"\\0" * (dataoff - name_end):', "if False:"),
+            ('if raw[data_end:next_off] != b"\\0" * (next_off - data_end):', "if False:")])
         res, newc = self._run_against(lax)
         self.assertEqual(res.rc, 1, res.out + res.err)
         self.assertNoInternal(res)
-        for name in newc.DEFECTS:
+        padding = [n for n, d in newc.DEFECTS.items() if d.kind in ("header_padding", "data_padding")]
+        other = [n for n in newc.DEFECTS if n not in padding]
+        self.assertGreaterEqual(len(padding), 2)
+        for name in padding:
             with self.subTest(defect=name):   # either it accepts the planted archive, or it rejects it for the wrong reason
                 c = res.cases[newc.CANARY_PREFIX + name]
                 self.assertEqual(c["status"], "fail")
                 self.assertIn(c["reason"], ("canary_not_detected", "canary_wrong_violation"), c["reason"])
+        for name in other:   # control: a defect caught by a DIFFERENT check (the magic number) is still legitimately detected
+            with self.subTest(still_detected=name):
+                self.assertCase(res, newc.CANARY_PREFIX + name, "pass", "canary_detected")
         self.assertCase(res, newc.POSITIVE_ID, "pass", "ok")   # control: it still accepts correct archives
 
     def test_a_blind_or_over_strict_parser_is_incomplete_never_a_detection(self):

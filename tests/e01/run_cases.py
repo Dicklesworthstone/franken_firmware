@@ -564,6 +564,42 @@ def run_real_xml(case):
 
 
 # ------------------------------------------------------------------------------ main
+class Receipts:
+    """Append-only JSONL evidence: created exclusively, one flushed+fsynced line per record.
+
+    A record that cannot be written is counted in ``lost`` (never silently dropped): a run whose
+    evidence is incomplete is reported INCOMPLETE and is never QUALIFIED.  A run cut short leaves a
+    file with no summary record, which is itself detectable.
+    """
+
+    def __init__(self, path: Path):
+        self.path, self.written, self.lost = path, 0, 0
+        self.fh = os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644), "w", encoding="utf-8")
+
+    def append(self, rec: dict) -> bool:
+        try:
+            self.fh.write(json.dumps(rec, sort_keys=True) + "\n")
+            self.fh.flush()
+            os.fsync(self.fh.fileno())
+            self.written += 1
+            return True
+        except (OSError, ValueError):
+            self.lost += 1
+            return False
+
+    def close(self):
+        try:
+            self.fh.close()
+        except OSError:
+            self.lost += 1
+
+
+def expected_digest(case: dict) -> str:
+    """SHA-256 of the case's declared expectation (the oracle), so a receipt names what was expected."""
+    oracle = {k: case[k] for k in ("expect", "steps", "negative_controls", "expect_ids", "kind") if k in case}
+    return sha(json.dumps(oracle, sort_keys=True, separators=(",", ":")).encode())
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0], allow_abbrev=False)
     ap.add_argument("--tier", choices=("smoke", "full", "soak", "real"), required=True)
@@ -580,48 +616,66 @@ def main(argv=None):
     planned = [c for c in cases if c["tier"] in tiers and (not args.case or c["id"] == args.case)]
     required = [i for t in tiers for i in spec["required"].get(t, [])]
     missing = [i for i in required if i not in ids]
-    run_dir = Path(args.receipts) if args.receipts else Path(tempfile.mkdtemp(prefix="ffw-e01-receipts-"))
-    run_dir.mkdir(parents=True, exist_ok=True)
-    rpath = run_dir / "receipts.jsonl"
-    if rpath.exists() and rpath.stat().st_size:
-        print(f"refusing to overwrite existing receipts: {rpath}", file=sys.stderr)
+    try:
+        run_dir = Path(args.receipts) if args.receipts else Path(tempfile.mkdtemp(prefix="ffw-e01-receipts-"))
+        run_dir.mkdir(parents=True, exist_ok=True)
+        receipts = Receipts(run_dir / "receipts.jsonl")
+    except FileExistsError:
+        print(f"refusing to overwrite existing receipts in {run_dir}", file=sys.stderr)
         return 2
+    except OSError as e:  # nowhere to put evidence: nothing may run, let alone qualify
+        print(f"cannot create the receipts file ({type(e).__name__}); nothing was run", file=sys.stderr)
+        return 2
+    rpath = receipts.path
     run_id = hashlib.sha256(f"{time.time_ns()}:{os.getpid()}".encode()).hexdigest()[:12]
-    versions = {"python": sys.version.split()[0], "reconcile_sha256": sha(RECONCILE.read_bytes()),
+    versions = {"python": sys.version.split()[0], "runner_sha256": sha(Path(__file__).read_bytes()),
+                "reconcile_sha256": sha(RECONCILE.read_bytes()),
+                "identity_sha256": sha((ROOT / "inventory" / "identity.py").read_bytes()),
+                "enrich_sha256": sha((ROOT / "inventory" / "enrich.py").read_bytes()),
                 "cases_sha256": sha(CASES_FILE.read_bytes()), "seed_registry_sha256": sha(EVIDENCE_SEED.read_bytes())}
     counts = {"passed": 0, "failed": 0, "blocked": 0}
-    lines = []
     soak_factor = 10 if args.tier == "soak" else 1
-    for c in planned:
-        kind = c.get("kind")
-        if kind == "owner_local":
-            res = run_real(c)
-        elif kind == "owner_local_xml":
-            res = run_real_xml(c)
-        elif kind == "interrupt_fifo":
-            res = run_interrupt(c)
-        elif kind == "cross_caller":
-            res = run_cross_caller(c)
-        else:
-            res = run_case(c, soak_factor, run_dir)
-        counts[res["status"]] += 1
-        rec = {"schema": "ffw.e01.receipt.v1", "run_id": run_id, "case_id": c["id"], "tier": c["tier"],
-               "invariants": c["invariants"], "replay": f"scripts/e2e/e01 --tier {args.tier} --case {c['id']}",
-               "versions": versions, "dropped_events": 0, **res}
-        lines.append(json.dumps(rec, sort_keys=True))
-        mark = {"passed": "PASS", "failed": "FAIL", "blocked": "BLOCKED"}[res["status"]]
-        print(f"{mark:8} {c['id']}  {c.get('title', '')}  ({res['duration_ms']} ms, {res['input_class']})")
-        for m in res["mismatches"][:3]:
-            print(f"           first causal mismatch: {m}")
+    receipts.append({"schema": "ffw.e01.receipt.v1", "record": "header", "run_id": run_id, "tier": args.tier,
+                     "planned": len(planned), "monotonic_ns": time.monotonic_ns(), "versions": versions})
+    try:
+        for c in planned:
+            kind = c.get("kind")
+            if kind == "owner_local":
+                res = run_real(c)
+            elif kind == "owner_local_xml":
+                res = run_real_xml(c)
+            elif kind == "interrupt_fifo":
+                res = run_interrupt(c)
+            elif kind == "cross_caller":
+                res = run_cross_caller(c)
+            else:
+                res = run_case(c, soak_factor, run_dir)
+            counts[res["status"]] += 1
+            rec = {"schema": "ffw.e01.receipt.v1", "run_id": run_id, "case_id": c["id"], "tier": c["tier"],
+                   "invariants": c["invariants"], "replay": f"scripts/e2e/e01 --tier {args.tier} --case {c['id']}",
+                   "versions": versions, "expected_sha256": expected_digest(c), "dropped_events": receipts.lost, **res}
+            receipts.append(rec)
+            mark = {"passed": "PASS", "failed": "FAIL", "blocked": "BLOCKED"}[res["status"]]
+            print(f"{mark:8} {c['id']}  {c.get('title', '')}  ({res['duration_ms']} ms, {res['input_class']})")
+            for m in res["mismatches"][:3]:
+                print(f"           first causal mismatch: {m}")
+    except KeyboardInterrupt:
+        receipts.append({"schema": "ffw.e01.receipt.v1", "record": "interrupted", "run_id": run_id, "completed": sum(counts.values())})
+        receipts.close()
+        print(f"\nINTERRUPTED after {sum(counts.values())} of {len(planned)} case(s); the receipts file has no summary record: {rpath}")
+        return 130
     not_run = len(missing)
     summary = {"schema": "ffw.e01.receipt.v1", "record": "summary", "run_id": run_id, "tier": args.tier,
                "planned": len(planned), **counts, "executed": counts["passed"] + counts["failed"],
-               "missing_required": missing, "not_run": not_run, "versions": versions}
-    lines.append(json.dumps(summary, sort_keys=True))
-    rpath.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    ok = counts["failed"] == 0 and counts["blocked"] == 0 and not missing and summary["not_run"] == 0 and bool(planned)
+               "missing_required": missing, "not_run": not_run, "dropped_events": receipts.lost, "versions": versions}
+    receipts.append(summary)
+    receipts.close()
+    ok = counts["failed"] == 0 and counts["blocked"] == 0 and not missing and not_run == 0 and bool(planned)
     print(f"\ntier={args.tier} planned={len(planned)} passed={counts['passed']} failed={counts['failed']} "
-          f"blocked={counts['blocked']} not_run={summary['not_run']}  receipts: {rpath}")
+          f"blocked={counts['blocked']} not_run={not_run} dropped_evidence={receipts.lost}  receipts: {rpath}")
+    if receipts.lost:
+        print(f"RESULT: INCOMPLETE ({receipts.lost} receipt record(s) could not be written; the outcome cannot be qualified)")
+        return 3
     print("RESULT:", "QUALIFIED (synthetic/owner-local evidence only; no device or provider claim)" if ok else "NOT QUALIFIED")
     return 0 if ok else 1
 

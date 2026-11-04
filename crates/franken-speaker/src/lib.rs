@@ -454,10 +454,27 @@ pub fn run_virtual_house_campaign(
     run_campaign(seed, total_blocks, None)
 }
 
+/// Limits of the diagnostic sink a normal campaign uses: 512 events, 256 KiB.
+fn default_diagnostic_sink() -> BoundedDiagnosticSink {
+    BoundedDiagnosticSink::new(512, 256 * 1024)
+}
+
 fn run_campaign(
     seed: u64,
     total_blocks: u64,
     fault: Option<OutputFault>,
+) -> Result<VirtualHouseReport, String> {
+    run_campaign_with_sink(seed, total_blocks, fault, default_diagnostic_sink())
+}
+
+/// The campaign proper. The render loop emits one bounded `block_rendered` event per block to
+/// `sink` and never waits on it: a full, zero-capacity or unavailable sink only increases
+/// `dropped_log_events`, and must change nothing else in the report.
+fn run_campaign_with_sink(
+    seed: u64,
+    total_blocks: u64,
+    fault: Option<OutputFault>,
+    mut sink: BoundedDiagnosticSink,
 ) -> Result<VirtualHouseReport, String> {
     let catalog = synthetic_test_fixture_catalog();
     let find_board = |model: &str| -> BoardProfile {
@@ -479,7 +496,6 @@ fn run_campaign(
     let epoch = 1u64;
     let mut session = UnifiedGroupSession::new("grp-virtual-house", "spk-kitchen-s12", epoch);
     let mut nodes: BTreeMap<String, VirtualSpeakerNode> = BTreeMap::new();
-    let mut sink = BoundedDiagnosticSink::new(512, 256 * 1024);
     let mut audit = CommandAudit::new(epoch);
 
     let mut cmd_seq = 1u64;
@@ -702,6 +718,25 @@ fn run_campaign(
             let skew_us = (max_ns - min_ns) / 1_000;
             max_inter_speaker_skew_us = max_inter_speaker_skew_us.max(skew_us);
         }
+
+        // Bounded, non-blocking diagnostics from the render path: one small event per block. The
+        // result is deliberately ignored; a dropped event is counted by the sink and nothing in
+        // the render path depends on whether it was stored.
+        sink.try_emit(DiagnosticEvent {
+            schema_version: String::new(),
+            timestamp_mono_ns: send_time_ns,
+            run_id: format!("vh-seed-{seed}"),
+            case_id: "Q01-virtual-house".to_string(),
+            correlation_id: format!("blk-{blk_idx}"),
+            member_id: "house".to_string(),
+            group_id: session.group_id.clone(),
+            source_epoch: session.current_epoch,
+            state_revision: session.state_revision,
+            event_kind: "block_rendered".to_string(),
+            message: format!("block {blk_idx} rendered"),
+            queue_depth: nodes.len(),
+            latency_us: max_inter_speaker_skew_us,
+        });
     }
 
     // Tail check: the harness streamed `total_blocks` blocks, so every channel of every member must
@@ -1069,5 +1104,63 @@ mod tests {
             .expect_err("the oracle must flag an epoch nobody declared"); // FLIP: expect Ok
         assert!(err.contains("future epoch accepted"), "{err}");
         assert_eq!(session.current_epoch, 999); // FLIP: expect 1
+    }
+
+    #[test]
+    fn the_campaign_is_deterministic() {
+        let first = run_campaign(SEED, 20, None).expect("first run");
+        let second = run_campaign(SEED, 20, None).expect("second run");
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn unavailable_full_zero_capacity_and_tiny_log_sinks_do_not_change_the_campaign() {
+        const BLOCKS: u64 = 20;
+        // One `block_rendered` event per block, plus the final `campaign_complete`. The exact
+        // counts below only come out right if the render loop really emits one event per block.
+        const EVENTS: u64 = BLOCKS + 1;
+
+        let baseline = run_campaign(SEED, BLOCKS, None).expect("baseline campaign");
+        assert_eq!(
+            baseline.dropped_log_events, 0,
+            "the default sink holds a campaign this size"
+        );
+
+        let mut unavailable = default_diagnostic_sink();
+        unavailable.set_unavailable(true);
+        for (label, sink, expected_dropped) in [
+            ("unavailable", unavailable, EVENTS),
+            ("zero capacity", BoundedDiagnosticSink::new(0, 0), EVENTS),
+            (
+                "full after 5 events",
+                BoundedDiagnosticSink::new(5, 256 * 1024),
+                EVENTS - 5,
+            ),
+        ] {
+            let report = run_campaign_with_sink(SEED, BLOCKS, None, sink)
+                .unwrap_or_else(|e| panic!("{label}: the campaign failed: {e}"));
+            // The loss is counted exactly, never silent...
+            assert_eq!(report.dropped_log_events, expected_dropped, "{label}");
+            // ...and nothing else differs: every timing field, every member's stats, the fencing
+            // probe and the readiness outcome are the same as with a healthy sink.
+            let mut comparable = report.clone();
+            comparable.dropped_log_events = baseline.dropped_log_events;
+            assert_eq!(
+                comparable, baseline,
+                "{label}: the sink changed the campaign"
+            );
+        }
+
+        // A byte budget too small for the stream drops some events, and still changes nothing else.
+        let tiny = run_campaign_with_sink(SEED, BLOCKS, None, BoundedDiagnosticSink::new(512, 400))
+            .expect("tiny sink campaign");
+        assert!(
+            tiny.dropped_log_events > 0 && tiny.dropped_log_events <= EVENTS,
+            "dropped {} of {EVENTS}",
+            tiny.dropped_log_events
+        );
+        let mut comparable = tiny.clone();
+        comparable.dropped_log_events = baseline.dropped_log_events;
+        assert_eq!(comparable, baseline, "tiny sink changed the campaign");
     }
 }

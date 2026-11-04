@@ -15,6 +15,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -74,6 +75,24 @@ def wanted_entries():
     return [{"name": n, "data": d} for n, d in list(N.PROBE) + [(N.TRAILER, b"")]]
 
 
+def contents(entries):
+    return [{"name": n, "data": d} for n, d in list(entries) + [(N.TRAILER, b"")]]
+
+
+def controls():
+    """{correct archive bytes: its exact parsed contents} for every archive in the sweep."""
+    return {N.build_archive(e): contents(e) for _, e in N.sweep()}
+
+
+def accept_everything():
+    """SIMULATED blind verifier: right contents for every correct AND every planted archive."""
+    table = {}
+    for _, entries in N.sweep():
+        for bug in [None] + list(N.DEFECTS):
+            table[N.build_archive(entries, bug=bug)] = contents(entries)
+    return stub(parse=lambda raw: table[raw])
+
+
 class TestEncoder(unittest.TestCase):
     def test_independent_encoder_agrees_with_the_production_encoder_when_correct(self):
         def same_layout(entry):
@@ -89,13 +108,17 @@ class TestEncoder(unittest.TestCase):
 
     def test_each_defect_changes_the_layout_exactly_as_documented(self):
         # ("ab", b"x"): namesize 3, filesize 1.  Correct: data at 116, next header at 120.
-        lengths = {None: 120, "align_unpadded_sum": 116, "omit_data_padding": 117, "align_to_8": 128}
+        lengths = {None: 120, "align_unpadded_sum": 116, "omit_header_padding": 117, "omit_data_padding": 117,
+                   "nonzero_padding": 120, "align_to_8": 128}
         for bug, length in lengths.items():
             with self.subTest(bug=bug):
                 entry = N.encode_entry("ab", b"x", bug=bug)
                 self.assertEqual(len(entry), length)
         self.assertEqual(N.encode_entry("ab", b"x", bug="align_unpadded_sum")[113:114], b"x", "data right after the name")
         self.assertEqual(N.encode_entry("ab", b"x")[116:117], b"x")
+        wrong = N.encode_entry("ab", b"x", bug="nonzero_padding")
+        self.assertEqual((wrong[113:116], wrong[117:120]), (b"\xff" * 3, b"\xff" * 3), "padding present but not zero")
+        self.assertEqual(N.encode_entry("ab", b"x", bug="omit_header_padding")[113:114], b"x")
         for bug in N.DEFECTS:
             self.assertNotEqual(N.build_archive(N.PROBE, bug=bug), N.build_archive(N.PROBE), bug)
 
@@ -105,18 +128,22 @@ class TestEncoder(unittest.TestCase):
 
 
 class TestAgainstTheRealParser(unittest.TestCase):
-    def test_each_planted_defect_is_detected_with_its_own_exact_violation_kind(self):
-        seen = set()
+    def test_each_planted_defect_is_detected_across_the_whole_sweep_with_its_defining_kind(self):
+        self.assertEqual(sorted(N.DEFECTS), ["align_to_8", "align_unpadded_sum", "nonzero_padding",
+                                             "omit_data_padding", "omit_header_padding"])
+        self.assertEqual(len(N.sweep()), 17, "the named probe plus all 16 alignments")
         for name, spec in N.DEFECTS.items():
             with self.subTest(defect=name):
+                self.assertEqual(len(N.plan(name)), 17, "every sweep archive is changed by this defect")
                 doc = N.canary_result(name, V)
                 check_contract(self, doc)
-                self.assertEqual((doc["verdict"], doc["oracle"], doc["checks"], doc["mismatches"]),
-                                 ("fail", N.ORACLE, 2, 1))
-                self.assertEqual(doc["violation_kinds"], {spec.kind: 1})
-                self.assertTrue(doc["first_causal_event"].startswith(name + ":"))
-                seen.add(spec.kind)
-        self.assertEqual(len(seen), 3, "the three defects are told apart by the parser, not lumped together")
+                self.assertEqual((doc["verdict"], doc["oracle"], doc["mismatches"], doc["checks"]),
+                                 ("fail", N.ORACLE, 17, 34))
+                self.assertEqual(sum(doc["violation_kinds"].values()), 17)
+                self.assertIn(spec.kind, doc["violation_kinds"])
+                self.assertEqual((doc["counters"]["missed"], doc["counters"]["rejected"]), (0, 17))
+                self.assertTrue(doc["first_causal_event"].startswith(name + "["))
+        self.assertEqual({s.kind for s in N.DEFECTS.values()}, {"header_padding", "data_padding", "misaligned_header"})
 
     def test_the_paired_positive_accepts_every_correct_archive(self):
         doc = N.positive_result(V)
@@ -163,13 +190,40 @@ class TestAdapterCannotMistakeABadOracleForADetection(unittest.TestCase):
     """SIMULATED verifiers."""
 
     def test_a_blind_verifier_that_accepts_everything_misses_the_defect(self):
-        blind = stub(parse=lambda raw: wanted_entries())
+        blind = accept_everything()
         for name in N.DEFECTS:
             with self.subTest(defect=name):
                 doc = N.canary_result(name, blind)
                 check_contract(self, doc)
                 self.assertEqual((doc["verdict"], doc["mismatches"], doc["violation_kinds"]), ("pass", 0, {}))
-                self.assertIn("accepted", doc["first_causal_event"])
+                self.assertEqual((doc["counters"]["missed"], doc["counters"]["rejected"]), (17, 0))
+                self.assertIn("accepted 17 of 17", doc["first_causal_event"])
+
+    def test_a_verifier_with_one_blind_spot_does_not_count_as_a_detection(self):
+        """The reason for the sweep: rejecting the probe is not enough if one alignment slips through."""
+        for label, entries, planted in N.plan("omit_data_padding"):
+            with self.subTest(blind_at=label):
+                table = controls()
+
+                def parse(raw, planted=planted, entries=entries):
+                    if raw == planted:
+                        return contents(entries)       # accepts this one planted archive
+                    if raw in table:
+                        return table[raw]
+                    return V.parse_cpio_bytes(raw)     # real behaviour everywhere else
+                doc = N.canary_result("omit_data_padding", stub(parse=parse))
+                check_contract(self, doc)
+                self.assertEqual((doc["verdict"], doc["violation_kinds"]), ("pass", {}))
+                self.assertEqual((doc["counters"]["missed"], doc["counters"]["rejected"]), (1, 16))
+                self.assertIn(label, doc["observed"]["labels"])
+
+    def test_a_defect_that_changes_no_archive_is_incomplete_never_a_detection_or_a_pass(self):
+        with mock.patch.object(N, "sweep", return_value=[("noop", [("a", b"1234")])]):
+            self.assertEqual(N.plan("omit_data_padding"), [], "payload already 4-aligned and the trailer is empty")
+            doc = N.canary_result("omit_data_padding", V)
+        check_contract(self, doc)
+        self.assertEqual((doc["verdict"], doc["violation_kinds"]), ("incomplete", {}))
+        self.assertIn("defect_never_manifested", doc["incomplete_reasons"][0])
 
     def test_an_over_strict_verifier_is_incomplete_not_a_detection(self):
         def reject(raw):
@@ -192,11 +246,11 @@ class TestAdapterCannotMistakeABadOracleForADetection(unittest.TestCase):
             self.assertIn("verifier_crashed:TypeError", doc["incomplete_reasons"])
 
     def test_a_verifier_that_crashes_only_on_the_planted_archive_is_incomplete(self):
-        good = N.build_archive(N.PROBE)
+        table = controls()
 
         def parse(raw):
-            if raw == good:
-                return wanted_entries()
+            if raw in table:
+                return table[raw]
             raise RuntimeError("unexpected state")
         doc = N.canary_result("align_to_8", stub(parse=parse))
         self.assertEqual(doc["verdict"], "incomplete")
@@ -230,19 +284,20 @@ class TestAdapterCannotMistakeABadOracleForADetection(unittest.TestCase):
         return [{"name": n, "data": d} for n, d in entries[raw]]
 
     def test_a_rejection_for_the_wrong_reason_carries_the_wrong_kind(self):
-        good = N.build_archive(N.PROBE)
+        table = controls()
 
-        def parse(raw):
-            if raw == good:
-                return wanted_entries()
-            raise ValueError("missing TRAILER!!! entry in CPIO archive")
-        doc = N.canary_result("align_unpadded_sum", stub(parse=parse))
-        self.assertEqual(doc["violation_kinds"], {"missing_trailer": 1})
-        self.assertNotEqual(list(doc["violation_kinds"])[0], N.DEFECTS["align_unpadded_sum"].kind,
-                            "the registry's exact expected kind will not match, so the runner fails the canary")
-        unknown = N.canary_result("align_unpadded_sum", stub(parse=lambda raw: wanted_entries() if raw == good
-                                                              else (_ for _ in ()).throw(ValueError("novel complaint"))))
-        self.assertEqual(unknown["violation_kinds"], {"invalid_archive": 1})
+        def rejecting(message):
+            def parse(raw):
+                if raw in table:
+                    return table[raw]
+                raise ValueError(message)
+            return parse
+        doc = N.canary_result("align_unpadded_sum", stub(parse=rejecting("missing TRAILER!!! entry in CPIO archive")))
+        self.assertEqual(doc["violation_kinds"], {"missing_trailer": 17})
+        self.assertNotIn(N.DEFECTS["align_unpadded_sum"].kind, doc["violation_kinds"],
+                         "the registry's expected kind is absent, so the runner fails the canary")
+        unknown = N.canary_result("align_unpadded_sum", stub(parse=rejecting("novel complaint")))
+        self.assertEqual(unknown["violation_kinds"], {"invalid_archive": 17})
 
 
 class TestCli(unittest.TestCase):
@@ -260,10 +315,8 @@ class TestCli(unittest.TestCase):
 
     def test_replay_and_positive_write_a_valid_result_and_the_right_exit_code(self):
         with tempfile.TemporaryDirectory(prefix="ffw newc ") as d:
-            for args, code, verdict in ((["replay", "--defect", "align_unpadded_sum"], 1, "fail"),
-                                        (["replay", "--defect", "omit_data_padding"], 1, "fail"),
-                                        (["replay", "--defect", "align_to_8"], 1, "fail"),
-                                        (["positive"], 0, "pass")):
+            for args, code, verdict in ([(["replay", "--defect", n], 1, "fail") for n in sorted(N.DEFECTS)]
+                                        + [(["positive"], 0, "pass")]):
                 with self.subTest(args=args):
                     env = self.wire(d)
                     if os.path.exists(env["FFW_RESULT_PATH"]):
@@ -306,11 +359,15 @@ class TestCli(unittest.TestCase):
                                    "def verify_initramfs_bytes(r):\n    return {}\n", encoding="utf-8")
             blind = os.path.join(d, "blind.py")
             Path(blind).write_text(
-                "def parse_cpio_bytes(raw):\n"
-                "    return [{'name': 'ab', 'data': b'x'}, {'name': 'next', 'data': b'after'},"
-                " {'name': 'TRAILER!!!', 'data': b''}]\n"
+                "import sys\nsys.dont_write_bytecode = True\nsys.path.insert(0, %r)\nimport newc_case as N\n"
+                "TABLE = {}\n"
+                "for label, entries in N.sweep():\n"
+                "    want = [{'name': n, 'data': d} for n, d in list(entries) + [(N.TRAILER, b'')]]\n"
+                "    for bug in [None] + list(N.DEFECTS):\n"
+                "        TABLE[N.build_archive(entries, bug=bug)] = want\n"
+                "def parse_cpio_bytes(raw):\n    return TABLE[raw]\n"
                 "def build_cpio_bytes(i):\n    return b''\n"
-                "def verify_initramfs_bytes(r):\n    return {}\n", encoding="utf-8")
+                "def verify_initramfs_bytes(r):\n    return {}\n" % HERE, encoding="utf-8")
             partial = os.path.join(d, "partial.py")
             Path(partial).write_text("def parse_cpio_bytes(raw):\n    return []\n", encoding="utf-8")
             cases = [("missing", os.path.join(d, "absent.py"), 2, "incomplete", "verifier_unavailable"),

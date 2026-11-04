@@ -9,14 +9,18 @@ The verifier is the existing independent parser ``toolchain/src/mkinitramfs.py::
 * the run-suite wire contract (``ffw.case-result.v1``, v1.1), so the registry can name each
   defect as a canary with the exact oracle and violation kind it must produce.
 
-    newc_case.py replay --defect align_unpadded_sum|omit_data_padding|align_to_8
+    newc_case.py replay --defect align_unpadded_sum|omit_header_padding|omit_data_padding|nonzero_padding|align_to_8
     newc_case.py positive
 
 Verdicts (exit 0 pass, 1 fail, 2 incomplete or usage error):
 
-  replay  fail        the parser rejected the planted archive; ``violation_kinds`` says how.  For a
-                      canary this is the DETECTION, so the registry expects exit 1.
-          pass        the parser ACCEPTED the planted archive: the defect was missed.  The runner
+  replay  fail        the parser rejected EVERY applicable planted archive (the named probe plus all 16
+                      name/data alignments, skipping any whose bytes the defect leaves unchanged);
+                      ``violation_kinds`` counts how.  For a canary this is the DETECTION, so the
+                      registry expects exit 1 and an exact kind among those counted.
+          pass        the parser ACCEPTED at least one planted archive: the defect was missed (a blind
+                      spot at a single alignment is enough).  Whatever the parser returned for it is
+                      irrelevant: a defective archive that parses is not a detection.  The runner
                       reports ``canary_not_detected``.
           incomplete  the parser crashed, could not be loaded, or REJECTED the correct control
                       archive (so its rejection of the planted one proves nothing).  Never a
@@ -60,8 +64,12 @@ DEFECTS: Dict[str, DefectSpec] = {
     for d in (
         DefectSpec("align_unpadded_sum", "newc", ORACLE, "header_padding",
                    "header and data are padded once, to the unpadded sum 110+namesize+filesize (the historical bug)"),
+        DefectSpec("omit_header_padding", "newc", ORACLE, "header_padding",
+                   "the name is not padded to 4 bytes before the file data"),
         DefectSpec("omit_data_padding", "newc", ORACLE, "data_padding",
                    "the header is padded but the file data is not padded to 4 bytes"),
+        DefectSpec("nonzero_padding", "newc", ORACLE, "header_padding",
+                   "padding is present at the right places but is filled with 0xFF instead of zeros"),
         DefectSpec("align_to_8", "newc", ORACLE, "misaligned_header",
                    "header and data are aligned to 8 bytes instead of 4"),
     )
@@ -114,10 +122,18 @@ def encode_entry(name: str, payload: bytes = b"", mode: int = 0o100644, bug: Opt
     elif bug == "align_unpadded_sum":
         out = header + name_bytes + payload
         out += b"\0" * (-len(out) % 4)
+    elif bug == "omit_header_padding":
+        out = header + name_bytes + payload
+        out += b"\0" * (-len(payload) % 4)
     elif bug == "omit_data_padding":
         out = header + name_bytes
         out += b"\0" * (-len(out) % 4)
         out += payload
+    elif bug == "nonzero_padding":
+        out = header + name_bytes
+        out += b"\xff" * (-len(out) % 4)
+        out += payload
+        out += b"\xff" * (-len(out) % 4)
     elif bug == "align_to_8":
         out = header + name_bytes
         out += b"\0" * (-len(out) % 8)
@@ -178,37 +194,71 @@ def _contents(entries) -> List[Tuple[str, bytes]]:
     return [(e["name"], e["data"]) for e in entries]
 
 
+def sweep() -> List[Tuple[str, List[Tuple[str, bytes]]]]:
+    """The named probe plus all 16 (namesize % 4, filesize % 4) combinations, each followed by an aligned entry."""
+    return [("probe", list(PROBE))] + positive_cases()
+
+
+def plan(defect: str) -> List[Tuple[str, List[Tuple[str, bytes]], bytes]]:
+    """(label, entries, planted archive) for every sweep archive the defect actually changes."""
+    out = []
+    for label, entries in sweep():
+        planted = build_archive(entries, bug=defect)
+        if planted != build_archive(entries):
+            out.append((label, entries, planted))
+    return out
+
+
 def canary_result(defect: str, verifier: Any) -> Dict[str, Any]:
-    """Plant ``defect``, ask the verifier, and report what it did.  The control comes first."""
+    """Plant ``defect`` across the whole sweep and report what the verifier did.
+
+    For each archive the correct control is checked first; the defect is DETECTED only if every
+    applicable planted archive is rejected."""
     spec = DEFECTS[defect]
-    wanted = list(PROBE) + [(TRAILER, b"")]
-    try:
-        control = verifier.parse_cpio_bytes(build_archive(PROBE))
-    except ValueError as exc:
-        return _incomplete(["control_rejected: the verifier rejects a CORRECT archive (%s)" % classify(str(exc))])
-    except Exception as exc:
-        return _incomplete(["verifier_crashed:%s" % type(exc).__name__])
-    if _contents(control) != wanted:
-        return _incomplete(["control_misparsed: the verifier returned the wrong contents for a CORRECT archive"], 1)
-    bad = build_archive(PROBE, bug=defect)
-    counters = {"archives_checked": 2, "planted_bytes": len(bad)}
-    try:
-        verifier.parse_cpio_bytes(bad)
-    except ValueError as exc:
-        message = str(exc)
-        kind = classify(message)
-        return dict(_base(), verdict="fail", finalized=True, incomplete_reasons=[], checks=2, mismatches=1,
-                    violation_kinds={kind: 1},
-                    expected={"archive": "valid newc: header and data each padded to a multiple of 4 bytes"},
-                    observed={"rejected": message, "kind": kind, "defect": defect},
-                    first_causal_event="%s: %s" % (defect, message), counters=counters)
-    except Exception as exc:
-        return _incomplete(["verifier_crashed:%s" % type(exc).__name__], 1)
-    return dict(_base(), verdict="pass", finalized=True, incomplete_reasons=[], checks=2, mismatches=0,
-                violation_kinds={}, expected={"planted_archive_accepted": False},
-                observed={"planted_archive_accepted": True, "defect": defect},
-                first_causal_event="none: the verifier accepted the planted %s archive (%s)" % (defect, spec.description),
-                counters=counters)
+    todo = plan(defect)
+    if not todo:
+        return _incomplete(["defect_never_manifested: %s changes no archive in the sweep" % defect])
+    kinds: Dict[str, int] = {}
+    missed: List[str] = []
+    first: Optional[str] = None
+    checks = 0
+    for label, entries, planted in todo:
+        try:
+            control = verifier.parse_cpio_bytes(build_archive(entries))
+        except ValueError as exc:
+            return _incomplete(["control_rejected: the verifier rejects a CORRECT archive (%s: %s)"
+                                % (label, classify(str(exc)))], checks)
+        except Exception as exc:
+            return _incomplete(["verifier_crashed:%s" % type(exc).__name__], checks)
+        checks += 1
+        if _contents(control) != list(entries) + [(TRAILER, b"")]:
+            return _incomplete(["control_misparsed: wrong contents for a CORRECT archive (%s)" % label], checks)
+        try:
+            verifier.parse_cpio_bytes(planted)
+        except ValueError as exc:
+            kind = classify(str(exc))
+            kinds[kind] = kinds.get(kind, 0) + 1
+            first = first or "%s[%s]: %s" % (defect, label, exc)
+        except Exception as exc:
+            return _incomplete(["verifier_crashed:%s" % type(exc).__name__], checks)
+        else:
+            missed.append(label)
+        checks += 1
+    counters = {"archives_checked": checks, "applicable": len(todo), "rejected": sum(kinds.values()),
+                "missed": len(missed)}
+    if missed:
+        return dict(_base(), verdict="pass", finalized=True, incomplete_reasons=[], checks=checks, mismatches=0,
+                    violation_kinds={}, expected={"planted_archives_accepted": 0},
+                    observed={"planted_archives_accepted": len(missed), "of": len(todo), "labels": missed[:5],
+                              "defect": defect},
+                    first_causal_event="none: the verifier accepted %d of %d planted %s archives (%s)"
+                                       % (len(missed), len(todo), defect, spec.description),
+                    counters=counters)
+    return dict(_base(), verdict="fail", finalized=True, incomplete_reasons=[], checks=checks,
+                mismatches=len(todo), violation_kinds=kinds,
+                expected={"archive": "valid newc: header and data each padded with zeros to a multiple of 4 bytes"},
+                observed={"rejected": len(todo), "kinds": kinds, "defect": defect},
+                first_causal_event=first or defect, counters=counters)
 
 
 def positive_cases() -> List[Tuple[str, List[Tuple[str, bytes]]]]:

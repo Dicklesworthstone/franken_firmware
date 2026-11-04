@@ -61,7 +61,9 @@
    "q00.oracle.positive.readiness",
    "q00.oracle.positive.priority_stop",
    "q00.newc.canary.align_unpadded_sum",
+   "q00.newc.canary.omit_header_padding",
    "q00.newc.canary.omit_data_padding",
+   "q00.newc.canary.nonzero_padding",
    "q00.newc.canary.align_to_8",
    "q00.newc.positive.alignments"
   ],
@@ -82,7 +84,9 @@
    "q00.oracle.positive.readiness",
    "q00.oracle.positive.priority_stop",
    "q00.newc.canary.align_unpadded_sum",
+   "q00.newc.canary.omit_header_padding",
    "q00.newc.canary.omit_data_padding",
+   "q00.newc.canary.nonzero_padding",
    "q00.newc.canary.align_to_8",
    "q00.newc.positive.alignments",
    "q00.unit.test_run_suite",
@@ -478,6 +482,164 @@
    "description": "paired good behaviour: oracle 'priority_stop' accepts it and proves its guard was exercised"
   },
   {
+   "id": "q00.newc.canary.align_unpadded_sum",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/newc_case.py",
+    "replay",
+    "--defect",
+    "align_unpadded_sum"
+   ],
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "requirements": [
+    "Q00.AC5"
+   ],
+   "expect": {
+    "kind": "fail",
+    "oracle": "newc.archive_parser",
+    "violation": "header_padding",
+    "exit_codes": [
+     1
+    ]
+   },
+   "description": "planted wrong-newc-alignment defect: header and data are padded once, to the unpadded sum 110+namesize+filesize (the historical bug)"
+  },
+  {
+   "id": "q00.newc.canary.omit_header_padding",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/newc_case.py",
+    "replay",
+    "--defect",
+    "omit_header_padding"
+   ],
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "requirements": [
+    "Q00.AC5"
+   ],
+   "expect": {
+    "kind": "fail",
+    "oracle": "newc.archive_parser",
+    "violation": "header_padding",
+    "exit_codes": [
+     1
+    ]
+   },
+   "description": "planted wrong-newc-alignment defect: the name is not padded to 4 bytes before the file data"
+  },
+  {
+   "id": "q00.newc.canary.omit_data_padding",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/newc_case.py",
+    "replay",
+    "--defect",
+    "omit_data_padding"
+   ],
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "requirements": [
+    "Q00.AC5"
+   ],
+   "expect": {
+    "kind": "fail",
+    "oracle": "newc.archive_parser",
+    "violation": "data_padding",
+    "exit_codes": [
+     1
+    ]
+   },
+   "description": "planted wrong-newc-alignment defect: the header is padded but the file data is not padded to 4 bytes"
+  },
+  {
+   "id": "q00.newc.canary.nonzero_padding",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/newc_case.py",
+    "replay",
+    "--defect",
+    "nonzero_padding"
+   ],
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "requirements": [
+    "Q00.AC5"
+   ],
+   "expect": {
+    "kind": "fail",
+    "oracle": "newc.archive_parser",
+    "violation": "header_padding",
+    "exit_codes": [
+     1
+    ]
+   },
+   "description": "planted wrong-newc-alignment defect: padding is present at the right places but is filled with 0xFF instead of zeros"
+  },
+  {
+   "id": "q00.newc.canary.align_to_8",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/newc_case.py",
+    "replay",
+    "--defect",
+    "align_to_8"
+   ],
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "requirements": [
+    "Q00.AC5"
+   ],
+   "expect": {
+    "kind": "fail",
+    "oracle": "newc.archive_parser",
+    "violation": "misaligned_header",
+    "exit_codes": [
+     1
+    ]
+   },
+   "description": "planted wrong-newc-alignment defect: header and data are aligned to 8 bytes instead of 4"
+  },
+  {
+   "id": "q00.newc.positive.alignments",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/test_support/newc_case.py",
+    "positive"
+   ],
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "timeout_s": 60,
+   "requirements": [
+    "Q00.AC5"
+   ],
+   "description": "the production newc parser accepts every correctly padded archive (all 16 name/data alignments plus the production default archive) with exactly the intended contents"
+  },
+  {
    "id": "q00.unit.test_run_suite",
    "argv": [
     "{python}",
@@ -567,108 +729,6 @@
    ],
    "requirements": [],
    "description": "workspace-verification entry points: every cargo command is wrapped in strict-remote RCH and nothing is launched here (the command runner is injected). Registered because the floor lists every test_*.py on disk; it claims no Q00 acceptance requirement"
-  },
-  {
-   "id": "q00.newc.canary.align_unpadded_sum",
-   "argv": [
-    "{python}",
-    "-I",
-    "{manifest_dir}/test_support/newc_case.py",
-    "replay",
-    "--defect",
-    "align_unpadded_sum"
-   ],
-   "tiers": [
-    "smoke",
-    "full"
-   ],
-   "timeout_s": 60,
-   "requirements": [
-    "Q00.AC5"
-   ],
-   "expect": {
-    "kind": "fail",
-    "oracle": "newc.archive_parser",
-    "violation": "header_padding",
-    "exit_codes": [
-     1
-    ]
-   },
-   "description": "planted wrong-newc-alignment defect: header and data are padded once, to the unpadded sum 110+namesize+filesize (the historical bug)"
-  },
-  {
-   "id": "q00.newc.canary.omit_data_padding",
-   "argv": [
-    "{python}",
-    "-I",
-    "{manifest_dir}/test_support/newc_case.py",
-    "replay",
-    "--defect",
-    "omit_data_padding"
-   ],
-   "tiers": [
-    "smoke",
-    "full"
-   ],
-   "timeout_s": 60,
-   "requirements": [
-    "Q00.AC5"
-   ],
-   "expect": {
-    "kind": "fail",
-    "oracle": "newc.archive_parser",
-    "violation": "data_padding",
-    "exit_codes": [
-     1
-    ]
-   },
-   "description": "planted wrong-newc-alignment defect: the header is padded but the file data is not padded to 4 bytes"
-  },
-  {
-   "id": "q00.newc.canary.align_to_8",
-   "argv": [
-    "{python}",
-    "-I",
-    "{manifest_dir}/test_support/newc_case.py",
-    "replay",
-    "--defect",
-    "align_to_8"
-   ],
-   "tiers": [
-    "smoke",
-    "full"
-   ],
-   "timeout_s": 60,
-   "requirements": [
-    "Q00.AC5"
-   ],
-   "expect": {
-    "kind": "fail",
-    "oracle": "newc.archive_parser",
-    "violation": "misaligned_header",
-    "exit_codes": [
-     1
-    ]
-   },
-   "description": "planted wrong-newc-alignment defect: header and data are aligned to 8 bytes instead of 4"
-  },
-  {
-   "id": "q00.newc.positive.alignments",
-   "argv": [
-    "{python}",
-    "-I",
-    "{manifest_dir}/test_support/newc_case.py",
-    "positive"
-   ],
-   "tiers": [
-    "smoke",
-    "full"
-   ],
-   "timeout_s": 60,
-   "requirements": [
-    "Q00.AC5"
-   ],
-   "description": "the production newc parser accepts every correctly padded archive (all 16 name/data alignments plus the production default archive) with exactly the intended contents"
   },
   {
    "id": "q00.unit.test_newc_case",
