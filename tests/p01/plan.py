@@ -2,7 +2,8 @@
 
 Nothing in this module runs cargo by itself. `plan_steps` builds the exact command lines a central run
 executes (`RCH_REQUIRE_REMOTE=1 rch exec -- cargo ...`, `--locked --offline`, an absolute `--manifest-path`,
-a working directory that is not the repository root). `check_plan` holds a plan to those rules. `execute` runs a
+a working directory that is not the repository root, except a device step that names a linker wrapper, which runs from the
+root so the wrapper is synced). `check_plan` holds a plan to those rules. `execute` runs a
 plan through an injected executor and writes a versioned receipt that carries the contract digest and, per
 artifact, the exact target, triple, profile, SHA-256 and ELF identity read from the built bytes. `check_receipt`
 re-verifies a receipt against the contract with the independent reference.
@@ -27,6 +28,16 @@ RECEIPT_SCHEMA = "ffw.p01.receipt.v1"
 HELLO_REL = "toolchain/src/ffw-hello-init"
 WORKSPACE_BUILD_STD = "build-std=core,alloc,std,panic_abort"
 HELLO_BUILD_STD = "build-std=core,panic_abort"
+# RCH admits a build against a worker's slot count and ignores CARGO_BUILD_JOBS, so the plan itself names the job count.
+DEFAULT_JOBS = 2
+# A host-target build runs on a Linux worker; rch refuses to fetch that executable to a different-OS operator unless
+# told to. It is fetched to be identified (hashed, header read), never run, so only host-target builds may carry it.
+FOREIGN_ARTIFACTS_ENV = "RCH_ALLOW_FOREIGN_ARTIFACTS"
+# rustc's default for these musl targets is a dynamic PIE that needs ld-musl-*.so.1, which the initramfs does not have, and
+# `-lgcc_s`, which zig does not ship. A device std artifact is linked static, by the contract's zig wrapper. The tokens are
+# inline `--config` arguments (absolute paths, nothing discovered from a working directory, all of it in the recorded argv).
+STATIC_RUSTFLAGS = ["-C", "target-feature=+crt-static", "-C", "link-self-contained=no"]
+CRT_STATIC = "target-feature=+crt-static"
 
 Step = Dict[str, Any]
 Pair = Tuple[str, str]
@@ -61,6 +72,18 @@ def _cargo_features(contract: Dict[str, Any], artifact: Dict[str, Any]) -> List[
     return sorted(set(flags))
 
 
+def linker_for(contract: Dict[str, Any], artifact: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The declared linker for a device artifact, or None (the bootstrap probe links with rust-lld)."""
+    return ref.linker_for(contract, artifact)
+
+
+def linker_config(root: str, triple: str, linker: Dict[str, Any]) -> List[str]:
+    """The two `--config` pairs that make rustc link a device artifact static through the contract's wrapper."""
+    wrapper = os.path.join(root, linker["wrapper"])
+    return ["--config", f'target.{triple}.linker="{wrapper}"',
+            "--config", f"target.{triple}.rustflags={json.dumps(STATIC_RUSTFLAGS, separators=(',', ':'))}"]
+
+
 def unbacked_disabled_features(contract: Dict[str, Any], artifact: Dict[str, Any]) -> List[str]:
     """Features the artifact's profile disables that have no Cargo flag: the build cannot actually omit them."""
     profile = next(p for p in contract["profiles"] if p["name"] == artifact["profile"])
@@ -72,19 +95,28 @@ def unbacked_disabled_features(contract: Dict[str, Any], artifact: Dict[str, Any
     return sorted(out)
 
 
-def plan_steps(root: str, cwd: str, target_dir: str, contract: Dict[str, Any]) -> List[Step]:
-    """The central command plan. Builds are shared by artifacts that need the identical cargo invocation."""
+def plan_steps(root: str, cwd: str, target_dir: str, contract: Dict[str, Any],
+               jobs: int = DEFAULT_JOBS) -> List[Step]:
+    """The central command plan. Builds are shared by artifacts that need the identical cargo invocation.
+
+    Two toolchain steps record what the build host runs: `rustc +nightly -vV` (the compiler the device builds ask for)
+    and plain `rustc -vV`, the compiler a bare `cargo` resolves to there, which is what the workspace test uses and
+    which nothing recorded before. Every cargo step ends with `-j <jobs>`."""
     root = os.path.realpath(root)
     env = {"RCH_REQUIRE_REMOTE": "1", "CARGO_TARGET_DIR": target_dir}
+    jobs_args = ["-j", str(jobs)]
     steps: List[Step] = [{
         "id": "toolchain", "kind": "toolchain", "artifacts": [], "cwd": cwd, "env": dict(env),
         "argv": [RCH, "exec", "--", "rustc", "+nightly", "-vV"],
+    }, {
+        "id": "toolchain-default", "kind": "toolchain_default", "artifacts": [], "cwd": cwd, "env": dict(env),
+        "argv": [RCH, "exec", "--", "rustc", "-vV"],
     }]
     workspace_manifest = os.path.join(root, "Cargo.toml")
     steps.append({
         "id": "workspace-test", "kind": "test", "artifacts": [], "cwd": cwd, "env": dict(env),
         "argv": [RCH, "exec", "--", "cargo", "test", "--locked", "--offline", "--manifest-path",
-                 workspace_manifest, "--workspace", "--config", "build.incremental=false"],
+                 workspace_manifest, "--workspace", "--config", "build.incremental=false", *jobs_args],
     })
     builds: Dict[Tuple[Any, ...], Step] = {}
     for art in contract["artifacts"]:
@@ -110,13 +142,38 @@ def plan_steps(root: str, cwd: str, target_dir: str, contract: Dict[str, Any]) -
             argv += ["--config", os.path.join(directory, ".cargo", "config.toml")]
         if is_device:
             argv += ["--target", triple, "-Z", HELLO_BUILD_STD if is_hello else WORKSPACE_BUILD_STD]
+            linker = linker_for(contract, art)
+            if linker is not None:
+                argv += linker_config(root, triple, linker)
         if features:
             argv += ["--features", ",".join(features)]
+        argv += jobs_args
+        step_env = dict(env)
+        if not is_device:
+            step_env[FOREIGN_ARTIFACTS_ENV] = "1"
+        # RCH syncs to the worker only the Cargo closure of the project the step runs from. A linker wrapper under
+        # toolchain/linker/ is in no crate's closure, so a step that names one runs from the workspace root, whose sync
+        # carries it (observed: from crates/franken-board-profile the sync was 91 files and had no toolchain/).
+        uses_linker = is_device and linker_for(contract, art) is not None
         step = {"id": f"build-{art['crate']}-{art['target']}", "kind": "build", "artifacts": [art["id"]],
-                "cwd": cwd, "env": dict(env), "argv": argv}
+                "cwd": root if uses_linker else cwd, "env": step_env, "argv": argv}
         builds[key] = step
         steps.append(step)
     return steps
+
+
+def inner_command(argv: Sequence[str]) -> List[str]:
+    """The command rch runs remotely: what follows `rch exec --`."""
+    return list(argv[list(argv).index("--") + 1:]) if "--" in argv else list(argv)
+
+
+def _has_jobs(inner: Sequence[str]) -> bool:
+    """`-j N` or `--jobs N` with a positive integer N."""
+    for flag in ("-j", "--jobs"):
+        if flag in inner:
+            i = list(inner).index(flag)
+            return i + 1 < len(inner) and inner[i + 1].isdigit() and int(inner[i + 1]) >= 1
+    return False
 
 
 def check_plan(steps: Sequence[Step], root: str, contract: Dict[str, Any]) -> List[Pair]:
@@ -136,9 +193,20 @@ def check_plan(steps: Sequence[Step], root: str, contract: Dict[str, Any]) -> Li
             errs.add(("plan_require_remote_missing", sid))
         if any(k in env for k in BYPASS_ENV):
             errs.add(("plan_bypass_env", sid))
+        if FOREIGN_ARTIFACTS_ENV in env:
+            hosted = [by_id[a]["target"] == "host" for a in step["artifacts"] if a in by_id]
+            if step["kind"] != "build" or not hosted or not all(hosted):
+                errs.add(("plan_foreign_artifacts_misplaced", sid))
         cwd = step["cwd"]
+        linked = step["kind"] == "build" and any(
+            a in by_id and ref.TARGETS[by_id[a]["target"]][3] and linker_for(contract, by_id[a]) is not None
+            for a in step["artifacts"])
         if not os.path.isdir(cwd):
             errs.add(("plan_cwd_missing", sid))
+        elif linked:
+            # the wrapper is synced only with the workspace root (see plan_steps)
+            if os.path.realpath(cwd) != root:
+                errs.add(("plan_linker_step_not_from_root", sid))
         elif os.path.realpath(cwd) == root:
             errs.add(("plan_cwd_is_root", sid))
         if not inner or inner[0] != "cargo":
@@ -147,6 +215,8 @@ def check_plan(steps: Sequence[Step], root: str, contract: Dict[str, Any]) -> Li
             errs.add(("plan_missing_locked", sid))
         if "--offline" not in inner:
             errs.add(("plan_missing_offline", sid))
+        if not _has_jobs(inner):
+            errs.add(("plan_missing_jobs", sid))
         manifest = inner[inner.index("--manifest-path") + 1] if "--manifest-path" in inner else ""
         if not manifest or not os.path.isabs(manifest) or not os.path.realpath(manifest).startswith(root + os.sep):
             errs.add(("plan_manifest_not_absolute", sid))
@@ -162,6 +232,17 @@ def check_plan(steps: Sequence[Step], root: str, contract: Dict[str, Any]) -> Li
                     errs.add(("plan_device_without_target", sid))
                 if "-Z" not in inner or not inner[inner.index("-Z") + 1].startswith("build-std="):
                     errs.add(("plan_device_without_build_std", sid))
+        configs = [inner[i + 1] for i, tok in enumerate(inner[:-1]) if tok == "--config"]
+        for aid in step["artifacts"]:
+            art = by_id.get(aid)
+            linker = linker_for(contract, art) if art is not None else None
+            if linker is None or not ref.TARGETS[art["target"]][3]:
+                continue
+            triple = ref.TARGETS[art["target"]][0]
+            if f'target.{triple}.linker="{os.path.join(root, linker["wrapper"])}"' not in configs:
+                errs.add(("plan_device_without_linker", sid))
+            if not any(c.startswith(f"target.{triple}.rustflags=") and CRT_STATIC in c for c in configs):
+                errs.add(("plan_device_not_static", sid))
         manifest_dir = os.path.dirname(manifest)
         if os.path.isabs(manifest) and os.path.isfile(os.path.join(manifest_dir, ".cargo", "config.toml")):
             wanted = os.path.join(manifest_dir, ".cargo", "config.toml")
@@ -172,17 +253,67 @@ def check_plan(steps: Sequence[Step], root: str, contract: Dict[str, Any]) -> Li
 
 # ------------------------------------------------------------------------------ identity from bytes
 
+PT_DYNAMIC, PT_INTERP, PT_MIPS_ABIFLAGS = 2, 3, 0x70000003
+# Val_GNU_MIPS_ABI_FP_* in .MIPS.abiflags. Only DOUBLE ("hard") and SOFT are the two the contract can declare.
+_MIPS_FP_ABI = {0: "", 1: "hard", 2: "single", 3: "soft", 4: "old64", 5: "xx", 6: "fp64", 7: "fp64a"}
+
+
+def elf_program_facts(data: bytes) -> Tuple[bool, str, str]:
+    """(dynamic, isa_revision, fp_abi) from an ELF's program headers.
+
+    `dynamic` is True if there is a PT_INTERP or PT_DYNAMIC segment, and also when the header table cannot be read: a file
+    that cannot be shown to be static is not reported as static. `isa_revision` ("mips32r2") and `fp_abi` ("soft"/"hard")
+    come from the PT_MIPS_ABIFLAGS segment (.MIPS.abiflags) and are "" when it is absent, as it is on PowerPC; they are read
+    from the segment, not the section headers, so a stripped file keeps them."""
+    if len(data) < 20 or data[:4] != b"\x7fELF" or data[4] not in (1, 2) or data[5] not in (1, 2):
+        return False, "", ""
+    order = "big" if data[5] == 2 else "little"
+    wide = data[4] == 2
+    try:
+        if wide:
+            phoff = int.from_bytes(data[32:40], order)
+            phentsize, phnum = int.from_bytes(data[54:56], order), int.from_bytes(data[56:58], order)
+        else:
+            phoff = int.from_bytes(data[28:32], order)
+            phentsize, phnum = int.from_bytes(data[42:44], order), int.from_bytes(data[44:46], order)
+        min_entry = 56 if wide else 32
+        if phnum and (phentsize < min_entry or phoff + phentsize * phnum > len(data)):
+            return True, "", ""
+        dynamic, isa, fp = False, "", ""
+        for index in range(phnum):
+            base = phoff + index * phentsize
+            p_type = int.from_bytes(data[base:base + 4], order)
+            if p_type in (PT_INTERP, PT_DYNAMIC):
+                dynamic = True
+            if p_type == PT_MIPS_ABIFLAGS:
+                if wide:
+                    offset, size = int.from_bytes(data[base + 8:base + 16], order), int.from_bytes(data[base + 32:base + 40], order)
+                else:
+                    offset, size = int.from_bytes(data[base + 4:base + 8], order), int.from_bytes(data[base + 16:base + 20], order)
+                if size < 8 or offset + 8 > len(data):
+                    return True, "", ""
+                level, rev, fp_abi = data[offset + 2], data[offset + 3], data[offset + 7]
+                isa = f"mips{level}" + (f"r{rev}" if rev else "")
+                fp = _MIPS_FP_ABI.get(fp_abi, f"fp{fp_abi}")
+        return dynamic, isa, fp
+    except (IndexError, ValueError):
+        return True, "", ""
+
+
 def elf_identity(path: str) -> Dict[str, Any]:
-    """SHA-256 of the file and, if it is an ELF, its class, byte order and e_machine read from the header."""
+    """SHA-256 of the file and, if it is an ELF, its class, byte order, e_machine, whether it is dynamic, and the ISA
+    revision and float ABI its MIPS ABI flags state, read from the bytes."""
     with open(path, "rb") as f:
         data = f.read()
     out: Dict[str, Any] = {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data),
-                           "elf_machine": 0, "elf_class": 0, "elf_big_endian": False}
+                           "elf_machine": 0, "elf_class": 0, "elf_big_endian": False,
+                           "elf_dynamic": False, "isa_revision": "", "fp_abi": ""}
     if len(data) >= 20 and data[:4] == b"\x7fELF":
         big = data[5] == 2
         out["elf_class"] = data[4]
         out["elf_big_endian"] = big
         out["elf_machine"] = int.from_bytes(data[18:20], "big" if big else "little")
+        out["elf_dynamic"], out["isa_revision"], out["fp_abi"] = elf_program_facts(data)
     return out
 
 
@@ -190,7 +321,8 @@ def observed_row(contract: Dict[str, Any], artifact: Dict[str, Any], ident: Dict
     return {"id": artifact["id"], "target": artifact["target"], "triple": ref.TARGETS[artifact["target"]][0],
             "profile": artifact["profile"], "sha256": ident["sha256"], "elf_machine": ident["elf_machine"],
             "elf_class": ident["elf_class"], "elf_big_endian": ident["elf_big_endian"],
-            "contract_digest": ref.digest(contract)}
+            "contract_digest": ref.digest(contract), "elf_dynamic": ident["elf_dynamic"],
+            "isa_revision": ident["isa_revision"], "fp_abi": ident["fp_abi"]}
 
 
 def parse_rustc_vv(text: str) -> Dict[str, str]:
@@ -240,7 +372,7 @@ def execute(steps: Sequence[Step], contract: Dict[str, Any], root: str, target_d
         "contract_digest": ref.digest(contract), "lock_sha256": lock_sha256,
         "plan": [{"id": s["id"], "kind": s["kind"], "argv": list(s["argv"]), "artifacts": list(s["artifacts"])}
                  for s in steps],
-        "steps": [], "toolchain": {}, "artifacts": [], "unbacked_disabled_features": {},
+        "steps": [], "toolchain": {}, "toolchain_default": {}, "artifacts": [], "unbacked_disabled_features": {},
         "verification": {"codes": [], "pairs": []},
         "boundary": ("Records what a build host built and what the files contain. Not an attestation of the "
                      "remote compiler; evidence kind is a build, not a guest execution or a physical result."),
@@ -257,6 +389,8 @@ def execute(steps: Sequence[Step], contract: Dict[str, Any], root: str, target_d
             receipt["steps"].append(record)
             if step["kind"] == "toolchain" and rc == 0:
                 receipt["toolchain"] = parse_rustc_vv(output)
+            if step["kind"] == "toolchain_default" and rc == 0:
+                receipt["toolchain_default"] = parse_rustc_vv(output)
             if step["kind"] == "build" and rc == 0:
                 for aid in step["artifacts"]:
                     art = by_id[aid]

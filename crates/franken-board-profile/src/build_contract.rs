@@ -95,6 +95,10 @@ pub mod code {
     pub const UNSAFE_IN_DEVICE_CLOSURE: &str = "unsafe_in_device_closure";
     pub const OPTIONAL_DEP_WITHOUT_FLAG: &str = "optional_dep_without_flag";
     pub const OPTIONAL_DEP_WRONG_OWNER: &str = "optional_dep_wrong_owner";
+    pub const LINKER_MALFORMED: &str = "linker_malformed";
+    pub const LINKER_UNKNOWN_CRATE: &str = "linker_unknown_crate";
+    pub const LINKER_DUPLICATE: &str = "linker_duplicate";
+    pub const DEVICE_ARTIFACT_WITHOUT_LINKER: &str = "device_artifact_without_linker";
     // Observed-artifact (receipt) codes.
     pub const CONTRACT_DIGEST_MISMATCH: &str = "contract_digest_mismatch";
     pub const UNKNOWN_ARTIFACT: &str = "unknown_artifact";
@@ -105,6 +109,9 @@ pub mod code {
     pub const ELF_NOT_32BIT_BIG_ENDIAN: &str = "elf_not_32bit_big_endian";
     pub const ARTIFACT_DIGEST_CONFLICT: &str = "artifact_digest_conflict";
     pub const ARTIFACT_NOT_OBSERVED: &str = "artifact_not_observed";
+    pub const ARTIFACT_NOT_STATIC: &str = "artifact_not_static";
+    pub const ISA_REVISION_MISMATCH: &str = "isa_revision_mismatch";
+    pub const FLOAT_ABI_MISMATCH: &str = "float_abi_mismatch";
 }
 
 /// A contract violation: a stable `code`, the `subject` it is about, and a human `detail`.
@@ -416,6 +423,46 @@ pub enum ArtifactStatus {
     Qualified,
 }
 
+/// The floating-point ABI a linked device binary must have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FloatAbi {
+    Soft,
+    Hard,
+}
+
+impl FloatAbi {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Soft => "soft",
+            Self::Hard => "hard",
+        }
+    }
+}
+
+/// The wrapper that links the device artifacts of some crates for one target, and what the linked file must show.
+///
+/// The wrapper is a repository file whose digest the contract records; it enforces the zig version itself. The
+/// ISA revision and float ABI are the ones rustc's target spec asks for. MIPS states them in `.MIPS.abiflags`, so
+/// `abi_measured` is true and a receipt row must match; PowerPC has no marker, so the declaration is not measured
+/// (a marker that is present must still agree). These are rustc tier-3 assumptions, not device facts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LinkerSpec {
+    pub target: ArtifactTarget,
+    /// Crates whose device artifacts are linked this way (the bootstrap probe links with rust-lld and is not listed).
+    pub crates: Vec<String>,
+    /// Repository-relative path of the wrapper script.
+    pub wrapper: String,
+    pub wrapper_sha256: String,
+    pub zig_version: String,
+    pub zig_target: String,
+    pub isa_revision: String,
+    pub float_abi: FloatAbi,
+    pub abi_measured: bool,
+}
+
 /// One built artifact: one crate, one target, one profile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -450,6 +497,7 @@ pub struct WorkspaceContract {
     pub test_support_exceptions: Vec<TestSupportException>,
     pub features: Vec<FeatureSpec>,
     pub profiles: Vec<BuildProfile>,
+    pub linkers: Vec<LinkerSpec>,
     pub artifacts: Vec<ArtifactSpec>,
 }
 
@@ -477,6 +525,12 @@ pub struct ObservedArtifact {
     pub elf_class: u32,
     pub elf_big_endian: bool,
     pub contract_digest: String,
+    /// True if the ELF has a `PT_INTERP` or `PT_DYNAMIC` segment, or its program headers cannot be read.
+    pub elf_dynamic: bool,
+    /// ISA revision stated by `.MIPS.abiflags` (`mips32r2`); empty when the ELF has no such marker.
+    pub isa_revision: String,
+    /// Float ABI stated by `.MIPS.abiflags` (`soft`, `hard`); empty when the ELF has no such marker.
+    pub fp_abi: String,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -706,6 +760,7 @@ impl WorkspaceContract {
         self.check_optional_deps(&mut errs);
         self.check_profiles(&mut errs);
         self.check_artifacts(&mut errs);
+        self.check_linkers(&mut errs);
         self.check_test_support(&mut errs);
         errs.sort();
         errs.dedup();
@@ -1302,6 +1357,64 @@ impl WorkspaceContract {
         }
     }
 
+    fn check_linkers(&self, errs: &mut Vec<ContractError>) {
+        let members = self.crate_index();
+        let mut covered: BTreeSet<String> = BTreeSet::new();
+        for linker in &self.linkers {
+            let target = linker.target.as_str();
+            let wrapper = linker.wrapper.as_str();
+            let malformed = !linker.target.is_device()
+                || linker.crates.is_empty()
+                || wrapper.is_empty()
+                || wrapper.starts_with('/')
+                || wrapper.contains('\\')
+                || wrapper
+                    .split('/')
+                    .any(|part| part.is_empty() || part == "..")
+                || !is_hex64(&linker.wrapper_sha256)
+                || linker.zig_version.trim().is_empty()
+                || linker.zig_target.trim().is_empty()
+                || linker.isa_revision.trim().is_empty();
+            if malformed {
+                errs.push(ContractError::new(
+                    code::LINKER_MALFORMED,
+                    target,
+                    "a linker needs a device target, crates, a relative wrapper path, a SHA-256, a zig version, a zig target and an ISA revision",
+                ));
+            }
+            for crate_name in &linker.crates {
+                let key = format!("{target}:{crate_name}");
+                if !members.contains_key(crate_name.as_str()) {
+                    errs.push(ContractError::new(
+                        code::LINKER_UNKNOWN_CRATE,
+                        key.clone(),
+                        "a linker names a crate that is not a workspace member",
+                    ));
+                }
+                if !covered.insert(key.clone()) {
+                    errs.push(ContractError::new(
+                        code::LINKER_DUPLICATE,
+                        key,
+                        "two linker entries cover the same crate and target",
+                    ));
+                }
+            }
+        }
+        for art in &self.artifacts {
+            let key = format!("{}:{}", art.target.as_str(), art.crate_name);
+            if art.target.is_device()
+                && members.contains_key(art.crate_name.as_str())
+                && !covered.contains(&key)
+            {
+                errs.push(ContractError::new(
+                    code::DEVICE_ARTIFACT_WITHOUT_LINKER,
+                    art.id.as_str(),
+                    "a device artifact built from a workspace member needs a declared linker",
+                ));
+            }
+        }
+    }
+
     fn check_test_support(&self, errs: &mut Vec<ContractError>) {
         let idx = self.crate_index();
         let declared = self.declared_graph();
@@ -1524,6 +1637,38 @@ impl WorkspaceContract {
                         id,
                         "a device artifact must be a 32-bit big-endian ELF",
                     ));
+                }
+                let linker = self.linkers.iter().find(|linker| {
+                    linker.target == spec.target && linker.crates.contains(&spec.crate_name)
+                });
+                if let Some(linker) = linker {
+                    if obs.elf_dynamic {
+                        errs.push(ContractError::new(
+                            code::ARTIFACT_NOT_STATIC,
+                            id,
+                            "a device artifact must be linked static: it has a PT_INTERP or PT_DYNAMIC segment",
+                        ));
+                    }
+                    // A declaration the ELF can show must be matched by the file; one it cannot show is not checked,
+                    // but a marker that is present must still agree.
+                    if obs.isa_revision != linker.isa_revision
+                        && (linker.abi_measured || !obs.isa_revision.is_empty())
+                    {
+                        errs.push(ContractError::new(
+                            code::ISA_REVISION_MISMATCH,
+                            id,
+                            "the ISA revision in the ELF differs from the linker declaration",
+                        ));
+                    }
+                    if obs.fp_abi != linker.float_abi.as_str()
+                        && (linker.abi_measured || !obs.fp_abi.is_empty())
+                    {
+                        errs.push(ContractError::new(
+                            code::FLOAT_ABI_MISMATCH,
+                            id,
+                            "the float ABI in the ELF differs from the linker declaration",
+                        ));
+                    }
                 }
             }
         }

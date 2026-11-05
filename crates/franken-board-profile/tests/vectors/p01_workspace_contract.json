@@ -407,6 +407,16 @@
       "path": "tests/p04",
       "owner": "P04",
       "kind": "fixture"
+    },
+    {
+      "path": "tests/g02",
+      "owner": "G02",
+      "kind": "fixture"
+    },
+    {
+      "path": "tests/n03",
+      "owner": "N03",
+      "kind": "fixture"
     }
   ],
   "test_support_exceptions": [],
@@ -800,6 +810,34 @@
       "status": "unqualified",
       "sha256": "",
       "qualifications": []
+    }
+  ],
+  "linkers": [
+    {
+      "target": "mips_be",
+      "crates": [
+        "franken-speaker"
+      ],
+      "wrapper": "toolchain/linker/zig-cc-mips-be",
+      "wrapper_sha256": "b0d60bcb217f48b552807e09688aa14c8eae78c930976b720d2fe91b2a14723d",
+      "zig_version": "0.14.1",
+      "zig_target": "mips-linux-musleabi",
+      "isa_revision": "mips32r2",
+      "float_abi": "soft",
+      "abi_measured": true
+    },
+    {
+      "target": "powerpc_be",
+      "crates": [
+        "franken-speaker"
+      ],
+      "wrapper": "toolchain/linker/zig-cc-powerpc-be",
+      "wrapper_sha256": "a7d03e732a87cf90902da92e473b6dff77f181a030172c717fd56a0a5a1b86b9",
+      "zig_version": "0.14.1",
+      "zig_target": "powerpc-linux-musleabihf",
+      "isa_revision": "ppc",
+      "float_abi": "hard",
+      "abi_measured": false
     }
   ]
 }

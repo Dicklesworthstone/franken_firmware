@@ -34,6 +34,7 @@ ENUMS: Dict[str, Set[str]] = {
     "state": {"enabled", "disabled"},
     "scope": {"full_product", "named_narrow"},
     "status": {"unqualified", "qualified"},
+    "float_abi": {"soft", "hard"},
 }
 
 # Field grammar: "str" | "u32" | "bool" | ("enum", name) | ("list", spec) | ("obj", {field: spec}).
@@ -65,6 +66,10 @@ CONTRACT_SPEC = ("obj", {
         "name": "str", "cargo_profile": "str", "scope": ("enum", "scope"), "narrow_reason": "str",
         "features": ("list", ("obj", {"feature": "str", "state": ("enum", "state"),
                                       "disabled_reason": "str"}))})),
+    "linkers": ("list", ("obj", {
+        "target": ("enum", "target"), "crates": ("list", "str"), "wrapper": "str", "wrapper_sha256": "str",
+        "zig_version": "str", "zig_target": "str", "isa_revision": "str", "float_abi": ("enum", "float_abi"),
+        "abi_measured": "bool"})),
     "artifacts": ("list", ("obj", {
         "id": "str", "crate": "str", "bin": "str", "target": ("enum", "target"), "triple": "str",
         "isa": "str", "profile": "str", "runs_on": ("list", ("enum", "target")),
@@ -73,7 +78,8 @@ CONTRACT_SPEC = ("obj", {
 })
 OBSERVED_SPEC = ("list", ("obj", {
     "id": "str", "target": ("enum", "target"), "triple": "str", "profile": "str", "sha256": "str",
-    "elf_machine": "u32", "elf_class": "u32", "elf_big_endian": "bool", "contract_digest": "str"}))
+    "elf_machine": "u32", "elf_class": "u32", "elf_big_endian": "bool", "contract_digest": "str",
+    "elf_dynamic": "bool", "isa_revision": "str", "fp_abi": "str"}))
 
 
 class ParseError(Exception):
@@ -345,6 +351,25 @@ def validate(doc: Dict[str, Any]) -> List[Pair]:
             if f["requirement"] == "required" and f["name"] not in selected:
                 errs.add(("required_feature_missing", f"{p['name']}:{f['name']}"))
 
+    # --- linkers: the wrapper that links a device artifact, and the ABI the linked file must show
+    covered: Set[str] = set()
+    for ln in doc["linkers"]:
+        parts = ln["wrapper"].split("/")
+        if (not TARGETS[ln["target"]][3] or not ln["crates"] or ln["wrapper"] == "" or ln["wrapper"].startswith("/")
+                or "\\" in ln["wrapper"] or ".." in parts or "" in parts or not is_hex64(ln["wrapper_sha256"])
+                or any(ln[key].strip() == "" for key in ("zig_version", "zig_target", "isa_revision"))):
+            errs.add(("linker_malformed", ln["target"]))
+        for crate in ln["crates"]:
+            key = f"{ln['target']}:{crate}"
+            if crate not in members:
+                errs.add(("linker_unknown_crate", key))
+            if key in covered:
+                errs.add(("linker_duplicate", key))
+            covered.add(key)
+    for art in doc["artifacts"]:
+        if TARGETS[art["target"]][3] and art["crate"] in members and f"{art['target']}:{art['crate']}" not in covered:
+            errs.add(("device_artifact_without_linker", art["id"]))
+
     # --- artifacts
     for art in doc["artifacts"]:
         aid = art["id"]
@@ -479,6 +504,14 @@ def admission(doc: Dict[str, Any], artifact_id: str) -> Optional[Dict[str, Any]]
 
 # ------------------------------------------------------------------------------ observed identity
 
+def linker_for(doc: Dict[str, Any], art: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The declared linker that covers a device artifact's crate and target, if any (the bootstrap probe has none)."""
+    for ln in doc["linkers"]:
+        if ln["target"] == art["target"] and art["crate"] in ln["crates"]:
+            return ln
+    return None
+
+
 def verify_observed(doc: Dict[str, Any], observed: Sequence[Dict[str, Any]], require_all: bool = False) -> List[Pair]:
     errs: Set[Pair] = set()
     want = digest(doc)
@@ -511,6 +544,16 @@ def verify_observed(doc: Dict[str, Any], observed: Sequence[Dict[str, Any]], req
                 errs.add(("elf_machine_mismatch", rid))
             if row["elf_class"] != 1 or not row["elf_big_endian"]:
                 errs.add(("elf_not_32bit_big_endian", rid))
+            ln = linker_for(doc, spec)
+            if ln is not None:
+                if row["elf_dynamic"]:
+                    errs.add(("artifact_not_static", rid))
+                # A declaration the ELF can show (MIPS .MIPS.abiflags) must be matched by the file; one it cannot show
+                # (PowerPC has no marker) is not checked, but a marker that IS present must still agree.
+                if row["isa_revision"] != ln["isa_revision"] and (ln["abi_measured"] or row["isa_revision"] != ""):
+                    errs.add(("isa_revision_mismatch", rid))
+                if row["fp_abi"] != ln["float_abi"] and (ln["abi_measured"] or row["fp_abi"] != ""):
+                    errs.add(("float_abi_mismatch", rid))
     for rid, shas in digests_by_id.items():
         if len(shas) > 1:
             errs.add(("artifact_digest_conflict", rid))

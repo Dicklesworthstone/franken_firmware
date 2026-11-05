@@ -5,6 +5,7 @@
     pipeline.py collect    --target-dir DIR [--receipts DIR]
     pipeline.py execute    [--cwd DIR] [--target-dir DIR] [--receipts DIR] [--timeout SECONDS]
     pipeline.py check-metadata --default FILE --harness FILE
+    pipeline.py ingest     --revision REV --export-root DIR --target-dir DIR --step ID=LOG [--step ...] [--out DIR]
 
 print-plan   Print the central command plan as JSON and check it against the plan rules. Runs nothing.
 collect      Read the artifacts a central build already produced under --target-dir, extract their identity from
@@ -18,6 +19,11 @@ check-metadata  Read two `cargo metadata --format-version 1` documents produced 
              `--features franken-speaker/harness`) and check the gate from their resolve graphs: no normal edge onto
              `franken-test-support` by default, and exactly that edge added with the harness. Runs no cargo.
 
+ingest       Turn the raw rch logs of a central run into a sanitized evidence record bound to a revision (the logs
+             name the worker's address and local paths and are never committed). Each step's remote command is checked
+             against the plan, its exit status and the toolchain, test totals and artifact identity are read from the
+             logs and the built files. Writes toolchain/results/p01/rev-<rev12>/receipt.json exclusively. Runs no cargo.
+
 Exit codes: 0 receipt complete; 1 a step or an identity check failed; 3 collect found only some artifacts
 (incomplete, never reported as complete); 130 cancelled (a partial receipt is left); 2 usage error.
 """
@@ -25,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import secrets
@@ -37,12 +44,14 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 
+import central  # noqa: E402
 import facts as facts_mod  # noqa: E402
 import metadata_check  # noqa: E402
 import plan as plan_mod  # noqa: E402
 import reference as ref  # noqa: E402
 
-CONTRACT_FILE = os.path.join(REPO, "crates", "franken-board-profile", "tests", "vectors", "p01_workspace_contract.json")
+CONTRACT_REL = "crates/franken-board-profile/tests/vectors/p01_workspace_contract.json"
+CONTRACT_FILE = os.path.join(REPO, *CONTRACT_REL.split("/"))
 DEFAULT_TARGET_DIR = os.path.join(REPO, "build", "p01-target")
 DEFAULT_RECEIPTS = os.path.join(REPO, "build", "p01-receipts")
 
@@ -161,6 +170,87 @@ def cmd_check_metadata(args) -> int:
     return 1 if pairs else 0
 
 
+def _git_show(revision: str, path: str) -> bytes:
+    out = subprocess.run(["git", "show", f"{revision}:{path}"], cwd=REPO, capture_output=True, timeout=60)
+    if out.returncode != 0:
+        raise OSError(f"git show {revision[:12]}:{path} failed: {out.stderr.decode('utf-8', 'replace').strip()[:160]}")
+    return out.stdout
+
+
+def cmd_ingest(args) -> int:
+    try:
+        resolved = subprocess.run(["git", "rev-parse", "--verify", f"{args.revision}^{{commit}}"], cwd=REPO,
+                                  capture_output=True, text=True, timeout=60)
+        if resolved.returncode != 0:
+            raise OSError(f"{args.revision} is not a commit of this repository")
+        revision = resolved.stdout.strip()
+        doc = json.loads(_git_show(revision, CONTRACT_REL).decode("utf-8"))
+        ref.parse_contract(doc)
+        lock_sha256 = hashlib.sha256(_git_show(revision, "Cargo.lock")).hexdigest()
+    except (OSError, ValueError, ref.ParseError) as err:
+        print(f"cannot bind the evidence to {args.revision}: {err}", file=sys.stderr)
+        return 2
+    export_root = os.path.realpath(args.export_root)
+    target_dir = os.path.realpath(args.target_dir)
+    steps = plan_mod.plan_steps(export_root, os.path.join(export_root, "crates", "franken-board-profile"),
+                                target_dir, doc)
+    known = {s["id"] for s in steps}
+    logs = {}
+    for spec in args.step:
+        sid, _, path = spec.partition("=")
+        if sid not in known or not path:
+            print(f"--step {spec!r}: expected ID=LOGFILE with ID one of {sorted(known)}", file=sys.stderr)
+            return 2
+        if sid in logs:
+            print(f"--step {sid} given twice", file=sys.stderr)
+            return 2
+        try:
+            with open(path, "rb") as f:
+                logs[sid] = f.read().decode("utf-8", "replace")
+        except OSError as err:
+            print(f"cannot read the log for {sid}: {err}", file=sys.stderr)
+            return 2
+    attested: Dict[str, Dict[str, str]] = {}
+    for spec in args.attest_env:
+        sid, _, pair = spec.partition("=")
+        key, eq, value = pair.partition("=")
+        if sid not in known or not eq or not key:
+            print(f"--attest-env {spec!r}: expected STEP=KEY=VALUE", file=sys.stderr)
+            return 2
+        attested.setdefault(sid, {})[key] = value
+    rows, missing, sizes = [], [], {}
+    for art in doc["artifacts"]:
+        if not art["bin"]:
+            continue
+        built = plan_mod.artifact_path(target_dir, art)
+        if not os.path.isfile(built):
+            missing.append(art["id"])
+            continue
+        ident = plan_mod.elf_identity(built)
+        rows.append(plan_mod.observed_row(doc, art, ident))
+        sizes[art["id"]] = ident["size"]
+    evidence = central.build_evidence(doc, steps, logs, revision, lock_sha256, export_root, rows, missing, sizes,
+                                      attested)
+    out_dir = os.path.join(args.out or os.path.join(REPO, central.EVIDENCE_GLOB_DIR), f"rev-{revision[:12]}")
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, "receipt.json")
+    try:
+        with open(path, "x", encoding="utf-8") as f:
+            json.dump(evidence, f, indent=1, sort_keys=True)
+            f.write("\n")
+    except FileExistsError:
+        print(f"refusing to overwrite an earlier record: {path}", file=sys.stderr)
+        return 2
+    bad = [s for s in evidence["steps"] if s["status"] == "failed"]
+    print(f"ingest: revision {revision[:12]}, {sum(s['status'] == 'ok' for s in evidence['steps'])} ok, "
+          f"{len(bad)} failed, {sum(s['status'] == 'not_run' for s in evidence['steps'])} not run; "
+          f"{len(rows)} artifact(s), {len(missing)} missing; verification {evidence['verification']['codes']}")
+    for s in bad:
+        print(f"  FAILED {s['id']}: exit {s.get('exit')}; {'; '.join(s.get('problems', []))}")
+    print(f"record: {path}")
+    return 1 if bad or evidence["verification"]["codes"] else 0
+
+
 def main(argv: List[str]) -> int:
     ap = argparse.ArgumentParser(description="P01 build-identity pipeline", epilog=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -174,13 +264,21 @@ def main(argv: List[str]) -> int:
             p.add_argument("--receipts")
         if name == "execute":
             p.add_argument("--timeout", type=float, default=7200.0)
+    ing = sub.add_parser("ingest")
+    ing.add_argument("--revision", required=True)
+    ing.add_argument("--export-root", required=True, help="the directory the run exported the revision to")
+    ing.add_argument("--target-dir", required=True, help="the CARGO_TARGET_DIR the run used")
+    ing.add_argument("--step", action="append", default=[], metavar="ID=LOG", help="a plan step id and its raw rch log")
+    ing.add_argument("--attest-env", action="append", default=[], metavar="STEP=KEY=VALUE",
+                     help="an environment variable the supervisor set for a step; logs do not show the environment")
+    ing.add_argument("--out", help="directory holding rev-<rev12>/receipt.json (default: toolchain/results/p01)")
     meta = sub.add_parser("check-metadata")
     meta.add_argument("--default", required=True)
     meta.add_argument("--harness", required=True)
     args = ap.parse_args(argv)
     try:
         return {"print-plan": cmd_print_plan, "collect": cmd_collect, "execute": cmd_execute,
-                "check-metadata": cmd_check_metadata}[args.command](args)
+                "check-metadata": cmd_check_metadata, "ingest": cmd_ingest}[args.command](args)
     except KeyboardInterrupt:
         return 130
 

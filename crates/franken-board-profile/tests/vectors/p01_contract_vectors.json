@@ -1,7 +1,7 @@
 {
  "schema": "ffw.p01.vectors.v1",
  "base": "p01_workspace_contract.json",
- "base_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508",
+ "base_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
  "vectors": [
   {
    "id": "P01-V-001",
@@ -15,7 +15,7 @@
    "title": "the contract digest is the pinned canonical-JSON SHA-256",
    "kind": "digest",
    "ops": [],
-   "expect_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
+   "expect_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88"
   },
   {
    "id": "P01-V-003",
@@ -2448,6 +2448,278 @@
    }
   },
   {
+   "id": "P01-V-105",
+   "title": "a linker whose wrapper digest is not a SHA-256 is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/linkers/target=mips_be/wrapper_sha256",
+     "value": "xyz"
+    }
+   ],
+   "expect_codes": [
+    "linker_malformed"
+   ],
+   "expect_subjects": {
+    "linker_malformed": [
+     "mips_be"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-106",
+   "title": "a wrapper path that climbs out of the repository is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/linkers/target=mips_be/wrapper",
+     "value": "toolchain/../../elsewhere/zig"
+    }
+   ],
+   "expect_codes": [
+    "linker_malformed"
+   ],
+   "expect_subjects": {
+    "linker_malformed": [
+     "mips_be"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-107",
+   "title": "an absolute wrapper path is refused: it is not a repository file",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/linkers/target=mips_be/wrapper",
+     "value": "/usr/bin/zig"
+    }
+   ],
+   "expect_codes": [
+    "linker_malformed"
+   ],
+   "expect_subjects": {
+    "linker_malformed": [
+     "mips_be"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-108",
+   "title": "a linker with no zig version is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/linkers/target=mips_be/zig_version",
+     "value": "  "
+    }
+   ],
+   "expect_codes": [
+    "linker_malformed"
+   ],
+   "expect_subjects": {
+    "linker_malformed": [
+     "mips_be"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-109",
+   "title": "a linker that covers no crate is malformed and leaves its artifacts without one",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/linkers/target=mips_be/crates",
+     "value": []
+    }
+   ],
+   "expect_codes": [
+    "device_artifact_without_linker",
+    "linker_malformed"
+   ],
+   "expect_subjects": {
+    "linker_malformed": [
+     "mips_be"
+    ],
+    "device_artifact_without_linker": [
+     "speaker-mips-full",
+     "speaker-mips-min"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-110",
+   "title": "a linker that names a crate which is not a workspace member is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/linkers/target=mips_be/crates",
+     "value": "franken-ghost"
+    }
+   ],
+   "expect_codes": [
+    "linker_unknown_crate"
+   ],
+   "expect_subjects": {
+    "linker_unknown_crate": [
+     "mips_be:franken-ghost"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-111",
+   "title": "two linker entries for the same crate and target are refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/linkers",
+     "value": {
+      "target": "mips_be",
+      "crates": [
+       "franken-speaker"
+      ],
+      "wrapper": "toolchain/linker/zig-cc-mips-be",
+      "wrapper_sha256": "b0d60bcb217f48b552807e09688aa14c8eae78c930976b720d2fe91b2a14723d",
+      "zig_version": "0.14.1",
+      "zig_target": "mips-linux-musleabi",
+      "isa_revision": "mips32r2",
+      "float_abi": "soft",
+      "abi_measured": true
+     }
+    }
+   ],
+   "expect_codes": [
+    "linker_duplicate"
+   ],
+   "expect_subjects": {
+    "linker_duplicate": [
+     "mips_be:franken-speaker"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-112",
+   "title": "a device artifact built from a workspace member with no declared linker is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "remove",
+     "path": "/linkers/target=powerpc_be"
+    }
+   ],
+   "expect_codes": [
+    "device_artifact_without_linker"
+   ],
+   "expect_subjects": {
+    "device_artifact_without_linker": [
+     "speaker-ppc-full",
+     "speaker-ppc-min"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-113",
+   "title": "a linker for the host is refused and leaves the device artifacts without one",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/linkers/target=mips_be/target",
+     "value": "host"
+    }
+   ],
+   "expect_codes": [
+    "device_artifact_without_linker",
+    "linker_malformed"
+   ],
+   "expect_subjects": {
+    "linker_malformed": [
+     "host"
+    ],
+    "device_artifact_without_linker": [
+     "speaker-mips-full",
+     "speaker-mips-min"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-114",
+   "title": "permitted positive: the declared float ABI is a declaration; judging it is the receipt's job",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/linkers/target=mips_be/float_abi",
+     "value": "hard"
+    }
+   ],
+   "expect_codes": []
+  },
+  {
+   "id": "P01-V-115",
+   "title": "permitted positive: a declaration the ELF cannot show may say so (abi_measured false)",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/linkers/target=mips_be/abi_measured",
+     "value": false
+    }
+   ],
+   "expect_codes": []
+  },
+  {
+   "id": "P01-V-116",
+   "title": "a float ABI other than soft or hard is not accepted",
+   "kind": "parse",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/linkers/target=mips_be/float_abi",
+     "value": "medium"
+    }
+   ],
+   "expect_codes": [
+    "parse_error"
+   ]
+  },
+  {
+   "id": "P01-V-117",
+   "title": "a contract without the linkers block is not defaulted",
+   "kind": "parse",
+   "ops": [
+    {
+     "op": "remove",
+     "path": "/linkers"
+    }
+   ],
+   "expect_codes": [
+    "parse_error"
+   ]
+  },
+  {
+   "id": "P01-V-118",
+   "title": "an unknown field in a linker is not tolerated",
+   "kind": "parse",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/linkers/target=mips_be/extra",
+     "value": 1
+    }
+   ],
+   "expect_codes": [
+    "parse_error"
+   ]
+  },
+  {
    "id": "P01-V-100",
    "title": "a different schema version is refused",
    "kind": "validate",
@@ -2522,6 +2794,298 @@
    ]
   },
   {
+   "id": "P01-O-016",
+   "title": "permitted positive: a static PowerPC speaker with no ABI marker (PowerPC has none)",
+   "kind": "observed",
+   "ops": [],
+   "rows": [
+    {
+     "id": "speaker-ppc-full",
+     "target": "powerpc_be",
+     "triple": "powerpc-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+     "elf_machine": 20,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": false,
+     "isa_revision": "",
+     "fp_abi": ""
+    }
+   ],
+   "require_all": false,
+   "expect_codes": []
+  },
+  {
+   "id": "P01-O-017",
+   "title": "a MIPS speaker with a PT_INTERP or PT_DYNAMIC segment is a dynamic link and is refused",
+   "kind": "observed",
+   "ops": [],
+   "rows": [
+    {
+     "id": "speaker-mips-full",
+     "target": "mips_be",
+     "triple": "mips-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+     "elf_machine": 8,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": true,
+     "isa_revision": "mips32r2",
+     "fp_abi": "soft"
+    }
+   ],
+   "require_all": false,
+   "expect_codes": [
+    "artifact_not_static"
+   ],
+   "expect_subjects": {
+    "artifact_not_static": [
+     "speaker-mips-full"
+    ]
+   }
+  },
+  {
+   "id": "P01-O-018",
+   "title": "a dynamic PowerPC speaker is refused too",
+   "kind": "observed",
+   "ops": [],
+   "rows": [
+    {
+     "id": "speaker-ppc-full",
+     "target": "powerpc_be",
+     "triple": "powerpc-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+     "elf_machine": 20,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": true,
+     "isa_revision": "",
+     "fp_abi": ""
+    }
+   ],
+   "require_all": false,
+   "expect_codes": [
+    "artifact_not_static"
+   ],
+   "expect_subjects": {
+    "artifact_not_static": [
+     "speaker-ppc-full"
+    ]
+   }
+  },
+  {
+   "id": "P01-O-019",
+   "title": "a MIPS speaker whose abiflags say hard float, where soft is declared, is refused",
+   "kind": "observed",
+   "ops": [],
+   "rows": [
+    {
+     "id": "speaker-mips-full",
+     "target": "mips_be",
+     "triple": "mips-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+     "elf_machine": 8,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": false,
+     "isa_revision": "mips32r2",
+     "fp_abi": "hard"
+    }
+   ],
+   "require_all": false,
+   "expect_codes": [
+    "float_abi_mismatch"
+   ],
+   "expect_subjects": {
+    "float_abi_mismatch": [
+     "speaker-mips-full"
+    ]
+   }
+  },
+  {
+   "id": "P01-O-020",
+   "title": "a MIPS speaker whose abiflags say MIPS32 revision 1 is refused",
+   "kind": "observed",
+   "ops": [],
+   "rows": [
+    {
+     "id": "speaker-mips-full",
+     "target": "mips_be",
+     "triple": "mips-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+     "elf_machine": 8,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": false,
+     "isa_revision": "mips32r1",
+     "fp_abi": "soft"
+    }
+   ],
+   "require_all": false,
+   "expect_codes": [
+    "isa_revision_mismatch"
+   ],
+   "expect_subjects": {
+    "isa_revision_mismatch": [
+     "speaker-mips-full"
+    ]
+   }
+  },
+  {
+   "id": "P01-O-021",
+   "title": "a MIPS speaker with no abiflags at all fails closed on both fields",
+   "kind": "observed",
+   "ops": [],
+   "rows": [
+    {
+     "id": "speaker-mips-full",
+     "target": "mips_be",
+     "triple": "mips-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+     "elf_machine": 8,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": false,
+     "isa_revision": "",
+     "fp_abi": ""
+    }
+   ],
+   "require_all": false,
+   "expect_codes": [
+    "float_abi_mismatch",
+    "isa_revision_mismatch"
+   ],
+   "expect_subjects": {
+    "float_abi_mismatch": [
+     "speaker-mips-full"
+    ],
+    "isa_revision_mismatch": [
+     "speaker-mips-full"
+    ]
+   }
+  },
+  {
+   "id": "P01-O-022",
+   "title": "a PowerPC marker that is present must still agree with the declaration",
+   "kind": "observed",
+   "ops": [],
+   "rows": [
+    {
+     "id": "speaker-ppc-full",
+     "target": "powerpc_be",
+     "triple": "powerpc-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+     "elf_machine": 20,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": false,
+     "isa_revision": "",
+     "fp_abi": "soft"
+    }
+   ],
+   "require_all": false,
+   "expect_codes": [
+    "float_abi_mismatch"
+   ],
+   "expect_subjects": {
+    "float_abi_mismatch": [
+     "speaker-ppc-full"
+    ]
+   }
+  },
+  {
+   "id": "P01-O-023",
+   "title": "permitted positive: a PowerPC marker that agrees is accepted",
+   "kind": "observed",
+   "ops": [],
+   "rows": [
+    {
+     "id": "speaker-ppc-full",
+     "target": "powerpc_be",
+     "triple": "powerpc-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+     "elf_machine": 20,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": false,
+     "isa_revision": "ppc",
+     "fp_abi": "hard"
+    }
+   ],
+   "require_all": false,
+   "expect_codes": []
+  },
+  {
+   "id": "P01-O-024",
+   "title": "permitted positive: a MIPS declaration marked unmeasured does not fail a row with no marker",
+   "kind": "observed",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/linkers/target=mips_be/abi_measured",
+     "value": false
+    }
+   ],
+   "rows": [
+    {
+     "id": "speaker-mips-full",
+     "target": "mips_be",
+     "triple": "mips-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+     "elf_machine": 8,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "926e202443de1e4b76edec401568a472361e11c1119e9dbc3ecd7415a30e0bc5",
+     "elf_dynamic": false,
+     "isa_revision": "",
+     "fp_abi": ""
+    }
+   ],
+   "require_all": false,
+   "expect_codes": []
+  },
+  {
+   "id": "P01-O-025",
+   "title": "permitted positive: the bootstrap probe has no linker entry and is not judged static here",
+   "kind": "observed",
+   "ops": [],
+   "rows": [
+    {
+     "id": "hello-init-mips",
+     "target": "mips_be",
+     "triple": "mips-unknown-linux-musl",
+     "profile": "bootstrap_probe",
+     "sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "elf_machine": 8,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": true,
+     "isa_revision": "",
+     "fp_abi": ""
+    }
+   ],
+   "require_all": false,
+   "expect_codes": []
+  },
+  {
    "id": "P01-O-001",
    "title": "permitted positive: distinct, correctly identified device artifacts",
    "kind": "observed",
@@ -2536,7 +3100,10 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": false,
+     "isa_revision": "mips32r2",
+     "fp_abi": "soft"
     },
     {
      "id": "speaker-ppc-full",
@@ -2547,7 +3114,10 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": false,
+     "isa_revision": "",
+     "fp_abi": ""
     }
    ],
    "require_all": false,
@@ -2568,7 +3138,10 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": false,
+     "isa_revision": "mips32r2",
+     "fp_abi": "soft"
     },
     {
      "id": "speaker-ppc-full",
@@ -2579,7 +3152,10 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": false,
+     "isa_revision": "",
+     "fp_abi": ""
     }
    ],
    "require_all": false,
@@ -2607,7 +3183,10 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": false,
-     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": false,
+     "isa_revision": "mips32r2",
+     "fp_abi": "soft"
     }
    ],
    "require_all": false,
@@ -2630,7 +3209,10 @@
      "elf_machine": 8,
      "elf_class": 2,
      "elf_big_endian": true,
-     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": false,
+     "isa_revision": "mips32r2",
+     "fp_abi": "soft"
     }
    ],
    "require_all": false,
@@ -2653,7 +3235,10 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": false,
+     "isa_revision": "mips32r2",
+     "fp_abi": "soft"
     },
     {
      "id": "speaker-ppc-full",
@@ -2664,7 +3249,10 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": false,
+     "isa_revision": "",
+     "fp_abi": ""
     }
    ],
    "require_all": false,
@@ -2692,7 +3280,10 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": false,
+     "isa_revision": "",
+     "fp_abi": ""
     }
    ],
    "require_all": false,
@@ -2720,7 +3311,10 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "0000000000000000000000000000000000000000000000000000000000000000"
+     "contract_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+     "elf_dynamic": false,
+     "isa_revision": "mips32r2",
+     "fp_abi": "soft"
     }
    ],
    "require_all": false,
@@ -2743,7 +3337,10 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": false,
+     "isa_revision": "",
+     "fp_abi": ""
     }
    ],
    "require_all": false,
@@ -2766,7 +3363,10 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": false,
+     "isa_revision": "mips32r2",
+     "fp_abi": "soft"
     }
    ],
    "require_all": false,
@@ -2789,7 +3389,10 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": false,
+     "isa_revision": "mips32r2",
+     "fp_abi": "soft"
     },
     {
      "id": "speaker-mips-full",
@@ -2800,7 +3403,10 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": false,
+     "isa_revision": "mips32r2",
+     "fp_abi": "soft"
     }
    ],
    "require_all": false,
@@ -2828,7 +3434,10 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": false,
+     "isa_revision": "mips32r2",
+     "fp_abi": "soft"
     }
    ],
    "require_all": true,
@@ -2861,7 +3470,10 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": false,
+     "isa_revision": "mips32r2",
+     "fp_abi": "soft"
     }
    ],
    "require_all": false,
@@ -2890,7 +3502,10 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "77cbaedfba1a393de325d4b2e669b84f2f778863b648759450757431a758482d"
+     "contract_digest": "4ccd439558c83f9b75b578c6aedadb1b5d2b227bb2158b01e01465f02356c7c9",
+     "elf_dynamic": false,
+     "isa_revision": "mips32r2",
+     "fp_abi": "soft"
     }
    ],
    "require_all": false,
@@ -2913,7 +3528,10 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": false,
+     "isa_revision": "",
+     "fp_abi": ""
     }
    ],
    "require_all": false,
@@ -2936,7 +3554,10 @@
      "elf_machine": 0,
      "elf_class": 0,
      "elf_big_endian": false,
-     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
+     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "elf_dynamic": false,
+     "isa_revision": "",
+     "fp_abi": ""
     }
    ],
    "require_all": false,

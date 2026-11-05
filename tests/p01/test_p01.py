@@ -10,6 +10,9 @@ import copy
 import io
 import json
 import os
+import re
+import shlex
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -17,6 +20,7 @@ import unittest
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 
+import central  # noqa: E402
 import facts  # noqa: E402
 import fixtures  # noqa: E402
 import metadata_check  # noqa: E402
@@ -285,14 +289,15 @@ class PipelineTests(unittest.TestCase):
             if art["id"] in wrong_machine_for:
                 machine = 8
             with open(path, "wb") as f:
-                f.write(run_cases.fake_elf(machine, art["crate"].encode() + art["target"].encode())
+                abi = (32, 2, 3) if art["target"] == "mips_be" and art["crate"] == "franken-speaker" else None
+                f.write(run_cases.fake_elf(machine, art["crate"].encode() + art["target"].encode(), mips_abi=abi)
                         if art["target"] != "host" else b"host-binary" + art["crate"].encode())
 
-    def test_print_plan_prints_seven_acceptable_steps(self):
+    def test_print_plan_prints_eight_acceptable_steps(self):
         code, out = self.run_pipeline("print-plan")
         self.assertEqual(code, 0)
         doc = json.loads(out)
-        self.assertEqual((len(doc["steps"]), doc["violations"]), (7, []))
+        self.assertEqual((len(doc["steps"]), doc["violations"]), (8, []))
         self.assertEqual(doc["contract_digest"], ref.digest(small_contract()))
 
     def test_collect_with_nothing_built_is_incomplete_not_complete(self):
@@ -581,6 +586,465 @@ class MetadataRealCaseTests(unittest.TestCase):
         cases = {c["id"]: c for c in run_cases.all_cases()}
         self.assertEqual(sorted(cases["P01-BLK-007"]["tiers"]), ["full", "smoke"])
         self.assertEqual(cases["P01-BLK-007"]["kind"], "metadata_real")
+
+
+class PlanJobsTests(unittest.TestCase):
+    """The `-j` parameter, the default-toolchain step and the foreign-artifacts guard in plan.py."""
+
+    def setUp(self):
+        self.root = os.path.realpath(run_cases.REPO)
+        self.doc = run_cases.contract()
+        self.cwd = os.path.join(self.root, "crates", "franken-board-profile")
+
+    def steps(self, **kw):
+        return plan.plan_steps(self.root, self.cwd, "/nonexistent/target", self.doc, **kw)
+
+    def cargo_steps(self, steps):
+        return [s for s in steps if plan.inner_command(s["argv"])[0] == "cargo"]
+
+    def test_every_cargo_step_ends_with_the_job_count_and_the_default_is_two(self):
+        for jobs, steps in ((2, self.steps()), (3, self.steps(jobs=3))):
+            self.assertEqual(len(self.cargo_steps(steps)), 6)
+            for step in self.cargo_steps(steps):
+                self.assertEqual(step["argv"][-2:], ["-j", str(jobs)], step["id"])
+            self.assertEqual(plan.check_plan(steps, self.root, self.doc), [])
+
+    def test_toolchain_queries_are_not_cargo_steps_and_carry_no_job_count(self):
+        queries = {s["id"]: s["argv"] for s in self.steps() if plan.inner_command(s["argv"])[0] == "rustc"}
+        self.assertEqual(queries, {"toolchain": ["rch", "exec", "--", "rustc", "+nightly", "-vV"],
+                                   "toolchain-default": ["rch", "exec", "--", "rustc", "-vV"]})
+
+    def test_a_missing_or_malformed_job_count_is_refused_and_both_spellings_are_accepted(self):
+        for label, edit, want in (
+                ("dropped", lambda a: a[:-2], ["plan_missing_jobs"]),
+                ("zero", lambda a: a[:-1] + ["0"], ["plan_missing_jobs"]),
+                ("not a number", lambda a: a[:-1] + ["many"], ["plan_missing_jobs"]),
+                ("no value", lambda a: a[:-1], ["plan_missing_jobs"]),
+                ("long spelling", lambda a: a[:-2] + ["--jobs", "4"], []),
+                ("a larger count", lambda a: a[:-1] + ["8"], [])):
+            with self.subTest(label):
+                steps = self.steps()
+                target = next(s for s in steps if s["id"] == "workspace-test")
+                target["argv"] = edit(target["argv"])
+                got = [code for code, sid in plan.check_plan(steps, self.root, self.doc) if sid == "workspace-test"]
+                self.assertEqual(got, want)
+
+    def test_the_foreign_artifacts_variable_is_only_on_the_host_build(self):
+        steps = self.steps()
+        carrying = [s["id"] for s in steps if plan.FOREIGN_ARTIFACTS_ENV in s["env"]]
+        self.assertEqual(carrying, ["build-franken-speaker-host"])
+        self.assertEqual(plan.check_plan(steps, self.root, self.doc), [])
+        for sid in ("build-franken-speaker-mips_be", "toolchain", "workspace-test"):
+            with self.subTest(sid):
+                bad = self.steps()
+                next(s for s in bad if s["id"] == sid)["env"][plan.FOREIGN_ARTIFACTS_ENV] = "1"
+                self.assertEqual([c for c, s in plan.check_plan(bad, self.root, self.doc) if s == sid],
+                                 ["plan_foreign_artifacts_misplaced"])
+
+    def test_a_receipt_keeps_the_nightly_and_the_default_compiler_apart(self):
+        text_nightly, text_default = run_cases.RUSTC_VV, run_cases.RUSTC_VV_DEFAULT
+        self.assertEqual(plan.parse_rustc_vv(text_nightly)["release"], "1.101.0-nightly")
+        self.assertEqual(plan.parse_rustc_vv(text_default)["release"], "1.90.0")
+
+
+def fake_rch_log(command, exit_code=0, worker="ts1", trailer=True, local=False, extra="", duplicate=False):
+    """What an rch log carries for one remote command, with ANSI colour, a worker address and local paths that a
+    sanitized record must not keep."""
+    shown = shlex.join(command)
+    if trailer and command and command[0].lstrip("+") != "rustc" and command[0] == "cargo":
+        shown += " --config 'env.RCH_BUILD_SOURCE.value=\"unknown\"' --config 'env.RCH_BUILD_SOURCE.force=true'"
+    line = f"  2026-11-05T03:31:40.928215Z \x1b[32m INFO\x1b[0m rch::hook::transfer_orchestration: Executing command remotely: {shown}\n"
+    return (f"  2026-11-05T03:31:30.080475Z \x1b[32m INFO\x1b[0m rch::hook: Selected worker: {worker} at builder@198.51.100.7 (2 slots)\n"
+            + line * (2 if duplicate else 1) + extra
+            + f"  2026-11-05T03:31:41.000000Z  INFO rch::hook::transfer_orchestration: Remote command finished: exit={exit_code} in 1234ms\n"
+            + ("[RCH] local\n" if local else f"[RCH] remote {worker} (1.2s)\n"))
+
+
+class CentralEvidenceTests(unittest.TestCase):
+    """central.build_evidence / central.judge on synthetic rch logs generated for the CURRENT plan, so the tests never
+    depend on what evidence happens to be committed. Every rejection starts from the passing baseline."""
+
+    def setUp(self):
+        self.root = os.path.realpath(run_cases.REPO)
+        self.doc = run_cases.contract()
+        self.export = "/srv/export-a1b2c3/ffw"
+        self.cwd = os.path.join(self.export, "crates", "franken-board-profile")
+        self.planned = plan.plan_steps(self.export, self.cwd, "/srv/export-a1b2c3/ffw/build/p01-target", self.doc)
+        self.now = plan.plan_steps(self.root, os.path.join(self.root, "crates", "franken-board-profile"),
+                                   "/nonexistent/target", self.doc)
+        self.roots_now = central.roots_for(self.root)
+        self.logs = {}
+        for step in self.planned:
+            if step["id"] not in central.BLK001_STEPS:
+                continue
+            inner = plan.inner_command(step["argv"])
+            extra = ""
+            if step["kind"] == "toolchain":
+                extra = run_cases.RUSTC_VV
+            if step["kind"] == "toolchain_default":
+                extra = run_cases.RUSTC_VV_DEFAULT
+            if step["kind"] == "test":
+                extra = "test result: ok. 530 passed; 0 failed; 1 ignored; 0 measured\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured\n"
+            self.logs[step["id"]] = fake_rch_log(inner, extra=extra)
+        self.rows = []
+
+    def build(self, logs=None, **kw):
+        args = dict(contract=self.doc, planned=self.planned, logs=logs if logs is not None else self.logs,
+                    revision="a" * 40, lock_sha256="b" * 64, export_root=self.export, rows=[], missing=[], sizes={},
+                    attested_env={})
+        args.update(kw)
+        return central.build_evidence(**args)
+
+    def judge(self, evidence, doc=None, steps=None):
+        return central.judge(evidence, doc or self.doc, steps or self.now, self.roots_now)
+
+    def test_a_faithful_run_of_the_current_plan_is_a_pass(self):
+        evidence = self.build()
+        verdict, detail = self.judge(evidence)
+        self.assertEqual(verdict, "pass", detail)
+        self.assertIn("6 steps ran the current plan", detail)
+        self.assertEqual(evidence["tests"], {"result_blocks": 2, "passed": 533, "failed": 0, "ignored": 1})
+        self.assertEqual((evidence["toolchain"]["release"], evidence["toolchain_default"]["release"]),
+                         ("1.101.0-nightly", "1.90.0"))
+        self.assertEqual(evidence["workers"], ["ts1"])
+        self.assertEqual(evidence["ran_at_utc"], "2026-11-05T03:31:30Z")
+
+    def test_the_record_keeps_no_address_user_path_or_export_directory(self):
+        text = json.dumps(self.build())
+        for needle in ("198.51.100.7", "builder@", "/srv/export", "a1b2c3", "\x1b", "slots"):
+            self.assertNotIn(needle, text)
+        self.assertIn("<repo>/Cargo.toml", text)
+
+    def test_rch_own_config_trailer_is_not_part_of_the_command_but_a_users_config_is(self):
+        tokens = ["cargo", "test", "--config", "build.incremental=false", "-j", "2",
+                  "--config", "env.RCH_BUILD_SOURCE.value=\"unknown\"", "--config", "env.RCH_BUILD_SOURCE.force=true"]
+        self.assertEqual(central.strip_rch_trailer(tokens), ["cargo", "test", "--config", "build.incremental=false", "-j", "2"])
+
+    def test_normalizing_replaces_the_root_only_at_a_path_boundary(self):
+        got = central.normalize(["/srv/e/Cargo.toml", "/srv/e", "/srv/extra/x", "/srv/e2", "plain"], ["/srv/e"])
+        self.assertEqual(got, ["<repo>/Cargo.toml", "<repo>", "/srv/extra/x", "/srv/e2", "plain"])
+
+    def test_a_step_that_never_ran_makes_the_evidence_stale_not_failed_and_names_it(self):
+        logs = {k: v for k, v in self.logs.items() if k != "toolchain-default"}
+        verdict, detail = self.judge(self.build(logs))
+        self.assertEqual(verdict, "blocked")
+        self.assertIn("5 of 6 steps ran the current plan", detail)
+        self.assertIn("step toolchain-default has not run", detail)
+
+    def test_evidence_for_another_plan_is_stale_and_names_the_step(self):
+        verdict, detail = self.judge(self.build(), steps=plan.plan_steps(
+            self.root, os.path.join(self.root, "crates", "franken-board-profile"), "/nonexistent/target", self.doc, jobs=4))
+        self.assertEqual(verdict, "blocked")
+        self.assertIn("ran a different command than the current plan", detail)
+
+    def test_evidence_for_another_contract_is_stale(self):
+        other = json.loads(json.dumps(self.doc))
+        other["crates"][0]["owner"] = other["crates"][0]["owner"] + "-changed"
+        verdict, detail = self.judge(self.build(), doc=other)
+        self.assertEqual(verdict, "blocked")
+        self.assertIn("contract digest", detail)
+
+    def test_a_failed_step_fails_the_evidence_and_is_not_laundered_into_stale(self):
+        for sid in ("workspace-test", "build-ffw-hello-init-mips_be"):
+            with self.subTest(sid):
+                logs = dict(self.logs)
+                inner = plan.inner_command(next(s for s in self.planned if s["id"] == sid)["argv"])
+                logs[sid] = fake_rch_log(inner, exit_code=101)
+                verdict, detail = self.judge(self.build(logs))
+                self.assertEqual(verdict, "fail")
+                self.assertIn(sid, detail)
+
+    def test_a_command_that_differs_from_the_plan_or_ran_locally_or_twice_is_a_failed_step(self):
+        sid = "workspace-test"
+        inner = plan.inner_command(next(s for s in self.planned if s["id"] == sid)["argv"])
+        for label, log in (("no --locked", fake_rch_log([a for a in inner if a != "--locked"])),
+                           ("ran locally", fake_rch_log(inner, local=True)),
+                           ("remote marker but a local fallback line too", fake_rch_log(inner, extra="[RCH] local fallback\n")),
+                           ("two command lines", fake_rch_log(inner, duplicate=True)),
+                           ("no job count", fake_rch_log(inner[:-2]))):
+            with self.subTest(label):
+                logs = dict(self.logs, **{sid: log})
+                evidence = self.build(logs)
+                step = next(s for s in evidence["steps"] if s["id"] == sid)
+                self.assertEqual(step["status"], "failed", label)
+                self.assertTrue(step["problems"])
+                self.assertEqual(self.judge(evidence)[0], "fail")
+
+    def test_failed_workspace_tests_fail_the_evidence_even_when_cargo_exited_zero(self):
+        logs = dict(self.logs)
+        inner = plan.inner_command(next(s for s in self.planned if s["id"] == "workspace-test")["argv"])
+        logs["workspace-test"] = fake_rch_log(inner, extra="test result: FAILED. 10 passed; 2 failed; 0 ignored; 0 measured\n")
+        verdict, detail = self.judge(self.build(logs))
+        self.assertEqual((verdict, "2 workspace test(s) failed" in detail), ("fail", True))
+
+    def test_a_malformed_or_unbound_record_fails(self):
+        base = self.build()
+        for label, edit in (("schema", lambda e: e.update(schema="x")),
+                            ("short revision", lambda e: e.update(revision="abc123")),
+                            ("no contract digest", lambda e: e.update(contract_digest="")),
+                            ("steps not a list", lambda e: e.update(steps={})),
+                            ("row bound to another digest", lambda e: e["artifacts"].append(
+                                {"id": "hello-init-mips", "contract_digest": "c" * 64}))):
+            with self.subTest(label):
+                evidence = json.loads(json.dumps(base))
+                edit(evidence)
+                self.assertEqual(self.judge(evidence)[0], "fail")
+
+    def test_artifact_identity_is_held_to_the_current_contract_when_the_evidence_is_current(self):
+        art = next(a for a in self.doc["artifacts"] if a["id"] == "hello-init-mips")
+        good = plan.observed_row(self.doc, art, {"sha256": "d" * 64, "elf_machine": 8, "elf_class": 1, "elf_big_endian": True,
+                                                     "elf_dynamic": False, "isa_revision": "", "fp_abi": ""})
+        bad = dict(good, elf_machine=20)
+        self.assertEqual(self.judge(self.build(rows=[good]))[0], "pass")
+        verdict, detail = self.judge(self.build(rows=[bad]))
+        self.assertEqual(verdict, "fail")
+        self.assertIn("elf_machine_mismatch", detail)
+
+    def test_the_ingest_command_writes_one_record_and_refuses_to_overwrite_it(self):
+        try:
+            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=run_cases.REPO, capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.SubprocessError):
+            self.skipTest("git is unavailable")
+        if head.returncode != 0:
+            self.skipTest("no git history here")
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = {}
+            for sid, text in self.logs.items():
+                paths[sid] = os.path.join(tmp, sid + ".log")
+                with open(paths[sid], "w") as f:
+                    f.write(text)
+            export = os.path.join(tmp, "export")
+            os.makedirs(export)
+            # the logs above name /srv/export-a1b2c3/ffw, so ingest against that root's spelling is what must match
+            args = ["ingest", "--revision", "HEAD", "--export-root", self.export, "--target-dir", os.path.join(tmp, "t"),
+                    "--out", os.path.join(tmp, "out")] + [a for sid, p in paths.items() for a in ("--step", f"{sid}={p}")]
+            out, err = io.StringIO(), io.StringIO()
+            real_git_show = pipeline._git_show
+
+            def working_tree_show(revision, path):
+                with open(os.path.join(run_cases.REPO, *path.split("/")), "rb") as handle:
+                    return handle.read()
+            pipeline._git_show = working_tree_show
+            try:
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    code = pipeline.main(args)
+                    again = pipeline.main(args)
+            finally:
+                pipeline._git_show = real_git_show
+            self.assertEqual((code, again), (0, 2), out.getvalue() + err.getvalue())
+            self.assertIn("refusing to overwrite", err.getvalue())
+            (name,) = os.listdir(os.path.join(tmp, "out"))
+            self.assertTrue(name.startswith("rev-" + head.stdout.strip()[:12]))
+            with open(os.path.join(tmp, "out", name, "receipt.json")) as f:
+                record = json.load(f)
+            self.assertEqual(record["revision"], head.stdout.strip())
+            self.assertEqual([s["status"] for s in record["steps"] if s["id"] in central.BLK001_STEPS], ["ok"] * 6)
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(pipeline.main(["ingest", "--revision", "HEAD", "--export-root", self.export,
+                                                "--target-dir", tmp, "--out", os.path.join(tmp, "o2"),
+                                                "--step", "no-such-step=x"]), 2)
+
+    def test_every_committed_evidence_record_is_well_formed_and_carries_no_site_data(self):
+        pattern = re.compile(r"/Users/|/private/|/home/|/var/folders|jemanuel|claude-501|@|\x1b|\b\d{1,3}(?:\.\d{1,3}){3}\b")
+        for path in central.find_evidence(run_cases.REPO):
+            with self.subTest(os.path.basename(os.path.dirname(path))):
+                text = open(path, encoding="utf-8").read()
+                self.assertIsNone(pattern.search(text), "an evidence record must not carry paths, users or addresses")
+                record = json.loads(text)
+                self.assertEqual(record["schema"], central.EVIDENCE_SCHEMA)
+                self.assertRegex(record["revision"], r"^[0-9a-f]{40}$")
+                self.assertTrue(path.split(os.sep)[-2] == "rev-" + record["revision"][:12])
+                for step in record["steps"]:
+                    if step["status"] != "not_run":
+                        self.assertRegex(step["log_sha256"], r"^[0-9a-f]{64}$")
+
+
+class ElfFactsTests(unittest.TestCase):
+    """plan.elf_program_facts reads static/dynamic and the MIPS ABI flags from the program headers, never the sections."""
+
+    def facts(self, **kw):
+        return plan.elf_program_facts(run_cases.fake_elf(8, b"payload", **kw))
+
+    def test_a_static_soft_float_mips32r2_file(self):
+        self.assertEqual(self.facts(mips_abi=(32, 2, 3)), (False, "mips32r2", "soft"))
+
+    def test_an_interpreter_or_dynamic_segment_makes_a_file_dynamic(self):
+        self.assertEqual(self.facts(dynamic=True, mips_abi=(32, 2, 3)), (True, "mips32r2", "soft"))
+
+    def test_a_dynamic_segment_without_an_interpreter_also_makes_a_file_dynamic(self):
+        data = bytearray(run_cases.fake_elf(8, b"", dynamic=True, mips_abi=(32, 2, 3)))
+        data[52:56] = (2).to_bytes(4, "big")  # the first segment is PT_DYNAMIC, not PT_INTERP
+        self.assertEqual(plan.elf_program_facts(bytes(data)), (True, "mips32r2", "soft"))
+        data[52:56] = (1).to_bytes(4, "big")  # PT_LOAD: neither
+        self.assertEqual(plan.elf_program_facts(bytes(data)), (False, "mips32r2", "soft"))
+
+    def test_the_float_abi_values_cargo_can_declare_and_the_ones_it_cannot(self):
+        for value, name in ((1, "hard"), (3, "soft"), (0, ""), (2, "single"), (5, "xx"), (6, "fp64"), (9, "fp9")):
+            with self.subTest(value):
+                self.assertEqual(self.facts(mips_abi=(32, 2, value))[2], name)
+
+    def test_isa_revision_is_spelled_from_level_and_revision(self):
+        self.assertEqual(self.facts(mips_abi=(32, 1, 3))[1], "mips32r1")
+        self.assertEqual(self.facts(mips_abi=(32, 0, 3))[1], "mips32")
+        self.assertEqual(self.facts(mips_abi=(64, 6, 3))[1], "mips64r6")
+
+    def test_a_file_without_program_headers_is_static_with_no_marker(self):
+        self.assertEqual(self.facts(), (False, "", ""))
+
+    def test_a_program_header_table_that_cannot_be_read_is_not_reported_static(self):
+        data = bytearray(run_cases.fake_elf(8, b"", mips_abi=(32, 2, 3)))
+        for label, blob in (("truncated table", bytes(data[:60])),
+                            ("phnum beyond the file", bytes(data[:44]) + (200).to_bytes(2, "big") + bytes(data[46:]))):
+            with self.subTest(label):
+                self.assertEqual(plan.elf_program_facts(blob), (True, "", ""))
+
+    def test_an_abiflags_segment_that_points_outside_the_file_is_not_trusted(self):
+        data = bytearray(run_cases.fake_elf(8, b"", mips_abi=(32, 2, 3)))
+        data[52 + 4:52 + 8] = (10 ** 6).to_bytes(4, "big")
+        self.assertEqual(plan.elf_program_facts(bytes(data)), (True, "", ""))
+
+    def test_non_elf_and_the_wrong_class_report_nothing(self):
+        self.assertEqual(plan.elf_program_facts(b"\xcf\xfa\xed\xfe" + bytes(80)), (False, "", ""))
+        self.assertEqual(plan.elf_program_facts(b""), (False, "", ""))
+
+    def test_a_64_bit_little_endian_file_with_an_interpreter_is_dynamic(self):
+        header = bytearray(64 + 56)
+        header[0:4] = b"\x7fELF"
+        header[4], header[5] = 2, 1
+        header[32:40] = (64).to_bytes(8, "little")
+        header[54:56] = (56).to_bytes(2, "little")
+        header[56:58] = (1).to_bytes(2, "little")
+        header[64:68] = (3).to_bytes(4, "little")
+        self.assertEqual(plan.elf_program_facts(bytes(header)), (True, "", ""))
+        header[64:68] = (1).to_bytes(4, "little")  # PT_LOAD only
+        self.assertEqual(plan.elf_program_facts(bytes(header)), (False, "", ""))
+
+    def test_elf_identity_carries_the_facts_into_a_receipt_row(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "speaker")
+            with open(path, "wb") as f:
+                f.write(run_cases.fake_elf(8, b"x", mips_abi=(32, 2, 3)))
+            ident = plan.elf_identity(path)
+        self.assertEqual((ident["elf_machine"], ident["elf_dynamic"], ident["isa_revision"], ident["fp_abi"]),
+                         (8, False, "mips32r2", "soft"))
+
+
+class LinkerPlanTests(unittest.TestCase):
+    """The device speaker steps link static through the contract's wrapper; the bootstrap probe does not."""
+
+    def setUp(self):
+        self.root = os.path.realpath(run_cases.REPO)
+        self.doc = run_cases.contract()
+        self.steps = {s["id"]: s for s in plan.plan_steps(
+            self.root, os.path.join(self.root, "crates", "franken-board-profile"), "/nonexistent/target", self.doc)}
+
+    def configs(self, sid):
+        inner = plan.inner_command(self.steps[sid]["argv"])
+        return [inner[i + 1] for i, tok in enumerate(inner[:-1]) if tok == "--config"]
+
+    def test_the_device_speaker_tokens_are_exactly_the_hand_written_ones(self):
+        for sid, triple, wrapper in (("build-franken-speaker-mips_be", "mips-unknown-linux-musl", "zig-cc-mips-be"),
+                                     ("build-franken-speaker-powerpc_be", "powerpc-unknown-linux-musl", "zig-cc-powerpc-be")):
+            with self.subTest(sid):
+                self.assertEqual(self.configs(sid), [
+                    f'target.{triple}.linker="{self.root}/toolchain/linker/{wrapper}"',
+                    f'target.{triple}.rustflags=["-C","target-feature=+crt-static","-C","link-self-contained=no"]'])
+
+    def test_the_host_build_and_the_bootstrap_probe_carry_no_linker_tokens(self):
+        self.assertEqual(self.configs("build-franken-speaker-host"), [])
+        for sid in ("build-ffw-hello-init-mips_be", "build-ffw-hello-init-powerpc_be"):
+            self.assertEqual([c for c in self.configs(sid) if "linker" in c or "rustflags" in c], [], sid)
+
+    def test_the_wrapper_in_the_plan_is_the_wrapper_the_contract_declares(self):
+        for ln in self.doc["linkers"]:
+            triple = plan.ref.TARGETS[ln["target"]][0]
+            want = f'target.{triple}.linker="{os.path.join(self.root, ln["wrapper"])}"'
+            self.assertIn(want, [c for sid in self.steps for c in self.configs(sid)])
+
+    def test_a_plan_that_omits_either_token_is_refused_and_the_unmutated_plan_is_not(self):
+        steps = list(self.steps.values())
+        self.assertEqual(plan.check_plan(steps, self.root, self.doc), [])
+        for label, drop, code in (("linker", ".linker=", "plan_device_without_linker"),
+                                  ("crt-static", ".rustflags=", "plan_device_not_static")):
+            with self.subTest(label):
+                broken = json.loads(json.dumps(steps))
+                step = next(s for s in broken if s["id"] == "build-franken-speaker-mips_be")
+                argv, kept, i = step["argv"], [], 0
+                while i < len(argv):
+                    if argv[i] == "--config" and drop in argv[i + 1] and argv[i + 1].startswith("target."):
+                        i += 2
+                        continue
+                    kept.append(argv[i])
+                    i += 1
+                step["argv"] = kept
+                self.assertEqual([c for c, s in plan.check_plan(broken, self.root, self.doc)
+                                  if s == "build-franken-speaker-mips_be"], [code])
+
+    def test_only_the_steps_that_name_a_linker_run_from_the_workspace_root(self):
+        at_root = sorted(sid for sid, s in self.steps.items() if os.path.realpath(s["cwd"]) == self.root)
+        self.assertEqual(at_root, ["build-franken-speaker-mips_be", "build-franken-speaker-powerpc_be"])
+        for sid in ("toolchain", "toolchain-default", "workspace-test", "build-franken-speaker-host",
+                    "build-ffw-hello-init-mips_be", "build-ffw-hello-init-powerpc_be"):
+            self.assertEqual(os.path.basename(self.steps[sid]["cwd"]), "franken-board-profile", sid)
+
+    def test_the_cwd_rules_each_have_their_positive_twin(self):
+        board = os.path.join(self.root, "crates", "franken-board-profile")
+        for sid, cwd, want in (
+                ("build-franken-speaker-mips_be", board, ["plan_linker_step_not_from_root"]),
+                ("build-franken-speaker-powerpc_be", self.root, []),
+                ("build-franken-speaker-host", self.root, ["plan_cwd_is_root"]),
+                ("build-ffw-hello-init-mips_be", self.root, ["plan_cwd_is_root"]),
+                ("workspace-test", self.root, ["plan_cwd_is_root"]),
+                ("build-franken-speaker-host", board, []),
+                ("build-franken-speaker-mips_be", os.path.join(self.root, "no-such-directory"), ["plan_cwd_missing"])):
+            with self.subTest(f"{sid} from {os.path.basename(cwd)}"):
+                steps = json.loads(json.dumps(list(self.steps.values())))
+                next(s for s in steps if s["id"] == sid)["cwd"] = cwd
+                self.assertEqual([c for c, s in plan.check_plan(steps, self.root, self.doc) if s == sid], want)
+
+    def test_a_linker_declared_for_a_crate_with_no_such_step_changes_nothing_for_other_crates(self):
+        doc = json.loads(json.dumps(self.doc))
+        doc["linkers"] = [ln for ln in doc["linkers"] if ln["target"] != "powerpc_be"]
+        steps = plan.plan_steps(self.root, os.path.join(self.root, "crates", "franken-board-profile"),
+                                "/nonexistent/target", doc)
+        ppc = next(s for s in steps if s["id"] == "build-franken-speaker-powerpc_be")
+        self.assertNotIn("--config", plan.inner_command(ppc["argv"]), "no declared linker, no tokens")
+
+
+class LinkerEvidenceTests(unittest.TestCase):
+    """A device speaker step's logged command carries the export directory inside a quoted --config value; ingest must
+    still recognize it, and must refuse a different wrapper."""
+
+    def setUp(self):
+        self.doc = run_cases.contract()
+        self.export = "/srv/export-a1b2c3/ffw"
+        self.planned = plan.plan_steps(self.export, self.export + "/crates/franken-board-profile",
+                                       self.export + "/build/p01-target", self.doc)
+
+    def evidence_for(self, sid, command):
+        return central.build_evidence(self.doc, self.planned, {sid: fake_rch_log(command)}, "a" * 40, "b" * 64,
+                                      self.export, [], [], {}, {})
+
+    def test_a_faithful_device_speaker_command_matches_the_plan_with_the_export_path_replaced(self):
+        sid = "build-franken-speaker-mips_be"
+        step = next(s for s in self.planned if s["id"] == sid)
+        evidence = self.evidence_for(sid, plan.inner_command(step["argv"]))
+        record = next(s for s in evidence["steps"] if s["id"] == sid)
+        self.assertEqual((record["status"], record["matches_plan"]), ("ok", True), record.get("problems"))
+        joined = " ".join(record["command"])
+        self.assertIn('linker="<repo>/toolchain/linker/zig-cc-mips-be"', joined)
+        self.assertNotIn("a1b2c3", joined)
+
+    def test_a_different_wrapper_or_no_static_flag_is_a_command_the_plan_did_not_ask_for(self):
+        sid = "build-franken-speaker-mips_be"
+        step = next(s for s in self.planned if s["id"] == sid)
+        inner = plan.inner_command(step["argv"])
+        for label, command in (
+                ("other wrapper", [tok.replace("zig-cc-mips-be", "cc") for tok in inner]),
+                ("no static", [tok.replace("target-feature=+crt-static", "target-feature=-crt-static") for tok in inner])):
+            with self.subTest(label):
+                record = next(s for s in self.evidence_for(sid, command)["steps"] if s["id"] == sid)
+                self.assertEqual((record["status"], record["matches_plan"]), ("failed", False))
 
 
 class ResolveTests(unittest.TestCase):

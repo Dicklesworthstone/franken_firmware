@@ -16,6 +16,9 @@
 #                                                the host cases with P01-BLK-007 judged on those two documents (the gate,
 #                                                proof they describe this tree and Cargo.lock, nine planted faults); without
 #                                                both flags that case is reported as BLOCKED, never skipped or passed
+#   scripts/e2e/p01 ingest --revision REV --export-root DIR --target-dir DIR --step ID=LOG ...
+#                                                turn the raw rch logs of a central run into a sanitized evidence record
+#                                                bound to REV (toolchain/results/p01/rev-<rev12>/receipt.json); judged by P01-BLK-001
 #   scripts/e2e/p01 --workspace-suite [...]      the former cargo suite (test, clippy, cross-check, virtual house)
 #                                                via scripts/test/run-workspace-verification.py p01
 #
@@ -28,7 +31,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 case "${1:-}" in
-  print-plan|collect|execute|check-metadata)
+  print-plan|collect|execute|check-metadata|ingest)
     exec python3 -B "$ROOT/tests/p01/pipeline.py" "$@"
     ;;
   --workspace-suite)

@@ -1,0 +1,262 @@
+{
+ "artifact_sizes": {
+  "hello-init-mips": 27444,
+  "hello-init-ppc": 24416,
+  "speaker-host-full": 488464
+ },
+ "artifacts": [
+  {
+   "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508",
+   "elf_big_endian": false,
+   "elf_class": 2,
+   "elf_machine": 62,
+   "id": "speaker-host-full",
+   "profile": "host_full",
+   "sha256": "e58e37a110bdef90a6e79aef9dec05fd29ae410b35f57235cf1e5a0be84286a2",
+   "target": "host",
+   "triple": "host"
+  },
+  {
+   "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508",
+   "elf_big_endian": true,
+   "elf_class": 1,
+   "elf_machine": 8,
+   "id": "hello-init-mips",
+   "profile": "bootstrap_probe",
+   "sha256": "37652d885d4c146ad13d71f56823aee7383c3c74901176ba24fb521b23eab326",
+   "target": "mips_be",
+   "triple": "mips-unknown-linux-musl"
+  },
+  {
+   "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508",
+   "elf_big_endian": true,
+   "elf_class": 1,
+   "elf_machine": 20,
+   "id": "hello-init-ppc",
+   "profile": "bootstrap_probe",
+   "sha256": "75ef9b04a3ea3abf871592a09dbdb8acf0d68e94ed60d30e6884f3713dd6825e",
+   "target": "powerpc_be",
+   "triple": "powerpc-unknown-linux-musl"
+  }
+ ],
+ "attested_env": {
+  "build-franken-speaker-host": {
+   "RCH_ALLOW_FOREIGN_ARTIFACTS": "1"
+  }
+ },
+ "boundary": "A supervisor ran these commands on a worker at this revision; each step was checked against the plan from its raw log, which is not committed (it names the worker's address and local paths). Not an attestation of the compiler. Says nothing about a guest, a boot or a device.",
+ "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508",
+ "kind": "central_run",
+ "lock_sha256": "d49436b8d54f3d38677af04fd2b815372c69971a51cd64925875344f62beaa33",
+ "missing": [
+  "speaker-mips-full",
+  "speaker-mips-min",
+  "speaker-ppc-full",
+  "speaker-ppc-min"
+ ],
+ "ran_at_utc": "2026-11-05T03:31:30Z",
+ "revision": "b8f8426de828270375eaae14f5547edd8e0cc033",
+ "schema": "ffw.p01.central_evidence.v1",
+ "steps": [
+  {
+   "command": [
+    "rustc",
+    "+nightly",
+    "-vV"
+   ],
+   "exit": 0,
+   "id": "toolchain",
+   "kind": "toolchain",
+   "log_sha256": "9fab2f23135af07989b196a5ad68280af415953be7373c6fe047d7c0184b30c4",
+   "matches_plan": true,
+   "millis": 1324,
+   "problems": [],
+   "status": "ok",
+   "worker": "ts1"
+  },
+  {
+   "id": "toolchain-default",
+   "kind": "toolchain_default",
+   "planned_command": [
+    "rustc",
+    "-vV"
+   ],
+   "status": "not_run"
+  },
+  {
+   "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "--manifest-path",
+    "<repo>/Cargo.toml",
+    "--workspace",
+    "--config",
+    "build.incremental=false",
+    "-j",
+    "2"
+   ],
+   "exit": 0,
+   "id": "workspace-test",
+   "kind": "test",
+   "log_sha256": "61b7ab01b78fbb739e88fef60e72745e662aab0871decd4d6fa0c0325893128d",
+   "matches_plan": true,
+   "millis": 34549,
+   "problems": [],
+   "status": "ok",
+   "worker": "ts1"
+  },
+  {
+   "command": [
+    "cargo",
+    "build",
+    "--locked",
+    "--offline",
+    "--manifest-path",
+    "<repo>/crates/franken-speaker/Cargo.toml",
+    "--release",
+    "-p",
+    "franken-speaker",
+    "--features",
+    "franken-speaker/harness",
+    "-j",
+    "2"
+   ],
+   "exit": 0,
+   "id": "build-franken-speaker-host",
+   "kind": "build",
+   "log_sha256": "82c0e9a3aff8024d4b65c22ea37f155236e5d86115a8a06145ef1d7d33967229",
+   "matches_plan": true,
+   "millis": 22779,
+   "problems": [],
+   "status": "ok",
+   "worker": "ts1"
+  },
+  {
+   "id": "build-franken-speaker-mips_be",
+   "kind": "build",
+   "planned_command": [
+    "cargo",
+    "+nightly",
+    "build",
+    "--locked",
+    "--offline",
+    "--manifest-path",
+    "<repo>/crates/franken-speaker/Cargo.toml",
+    "--release",
+    "-p",
+    "franken-speaker",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=core,alloc,std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "status": "not_run"
+  },
+  {
+   "id": "build-franken-speaker-powerpc_be",
+   "kind": "build",
+   "planned_command": [
+    "cargo",
+    "+nightly",
+    "build",
+    "--locked",
+    "--offline",
+    "--manifest-path",
+    "<repo>/crates/franken-speaker/Cargo.toml",
+    "--release",
+    "-p",
+    "franken-speaker",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=core,alloc,std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "status": "not_run"
+  },
+  {
+   "command": [
+    "cargo",
+    "+nightly",
+    "build",
+    "--locked",
+    "--offline",
+    "--manifest-path",
+    "<repo>/toolchain/src/ffw-hello-init/Cargo.toml",
+    "--release",
+    "--config",
+    "<repo>/toolchain/src/ffw-hello-init/.cargo/config.toml",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=core,panic_abort",
+    "-j",
+    "2"
+   ],
+   "exit": 0,
+   "id": "build-ffw-hello-init-mips_be",
+   "kind": "build",
+   "log_sha256": "5ebed35e2d42ba6a02bae4414fafa9837eea01378bea580a9e1a419ba59eb064",
+   "matches_plan": true,
+   "millis": 22151,
+   "problems": [],
+   "status": "ok",
+   "worker": "ts1"
+  },
+  {
+   "command": [
+    "cargo",
+    "+nightly",
+    "build",
+    "--locked",
+    "--offline",
+    "--manifest-path",
+    "<repo>/toolchain/src/ffw-hello-init/Cargo.toml",
+    "--release",
+    "--config",
+    "<repo>/toolchain/src/ffw-hello-init/.cargo/config.toml",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=core,panic_abort",
+    "-j",
+    "2"
+   ],
+   "exit": 0,
+   "id": "build-ffw-hello-init-powerpc_be",
+   "kind": "build",
+   "log_sha256": "b2ce08eed86ef6daf71b4d5c4e3c63b7631b128afb946e9f88cad68c3fe1dfc3",
+   "matches_plan": true,
+   "millis": 24312,
+   "problems": [],
+   "status": "ok",
+   "worker": "ts1"
+  }
+ ],
+ "tests": {
+  "failed": 0,
+  "ignored": 1,
+  "passed": 533,
+  "result_blocks": 32
+ },
+ "toolchain": {
+  "LLVM version": "23.1.5",
+  "commit-hash": "708c94ef093ecc42fb8851e17d8383d999727abc",
+  "host": "x86_64-unknown-linux-gnu",
+  "release": "1.101.0-nightly"
+ },
+ "toolchain_default": {},
+ "tree": "clean git archive export of the revision",
+ "verification": {
+  "codes": [],
+  "pairs": []
+ },
+ "workers": [
+  "ts1"
+ ]
+}

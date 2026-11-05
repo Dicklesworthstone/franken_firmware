@@ -128,6 +128,16 @@ def extract(root: str) -> Dict[str, Any]:
         tests = [f"tests/{e}" for e in sorted(os.listdir(tests_dir))
                  if os.path.isdir(os.path.join(tests_dir, e)) and not e.startswith((".", "__"))]
 
+    # The linker wrappers the contract declares are repository files: their bytes and exec bit are facts of the tree.
+    linker_files: Dict[str, Dict[str, Any]] = {}
+    linker_dir = os.path.join(root, "toolchain", "linker")
+    if os.path.isdir(linker_dir):
+        for entry in sorted(os.listdir(linker_dir)):
+            path = os.path.join(linker_dir, entry)
+            if os.path.isfile(path):
+                linker_files[f"toolchain/linker/{entry}"] = {
+                    "sha256": _sha256_file(path), "executable": (os.stat(path).st_mode & 0o111) == 0o111}
+
     lock = {"present": False, "sha256": "", "packages": {}}
     lock_path = os.path.join(root, "Cargo.lock")
     if os.path.isfile(lock_path):
@@ -146,6 +156,7 @@ def extract(root: str) -> Dict[str, Any]:
         "excluded": sorted(excluded, key=lambda c: c["path"]),
         "on_disk": sorted(on_disk, key=lambda c: c["path"]),
         "tests_dirs": tests,
+        "linker_files": linker_files,
         "lock": lock,
         "workspace_lints_unsafe": str(manifest.get("workspace", {}).get("lints", {}).get("rust", {})
                                       .get("unsafe_code", "none")),
@@ -354,6 +365,17 @@ def compare(contract: Dict[str, Any], facts: Dict[str, Any], root: str = "") -> 
     for art in contract["artifacts"]:
         if art["bin"] and art["bin"] not in bins.get(art["crate"], set()):
             errs.add(("bin_missing", art["id"]))
+
+    # the wrapper scripts the contract declares: present, byte-identical, and executable (the mode must survive the sync)
+    for ln in contract["linkers"]:
+        rec = facts["linker_files"].get(ln["wrapper"])
+        if rec is None:
+            errs.add(("linker_wrapper_missing", ln["wrapper"]))
+            continue
+        if rec["sha256"] != ln["wrapper_sha256"]:
+            errs.add(("linker_wrapper_digest_mismatch", ln["wrapper"]))
+        if not rec["executable"]:
+            errs.add(("linker_wrapper_not_executable", ln["wrapper"]))
 
     # ownership coverage of what is on disk, and no phantom assets
     asset_paths = {a["path"] for a in contract["assets"]}

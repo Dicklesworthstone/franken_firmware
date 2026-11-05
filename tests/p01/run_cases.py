@@ -35,6 +35,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 
+import central  # noqa: E402
 import facts as facts_mod  # noqa: E402
 import fixtures  # noqa: E402
 import metadata_check  # noqa: E402
@@ -313,10 +314,18 @@ def run_plan_exact(c) -> Result:
             raise CaseError(f"step {sid}: argv {got['argv']}, want {fill(want)}")
     if sorted(by_id) != sorted(c["expect_step_ids"]):
         raise CaseError(f"step ids {sorted(by_id)}, want {sorted(c['expect_step_ids'])}")
+    if "expect_root_cwd" in c:
+        at_root = sorted(s["id"] for s in steps if os.path.realpath(s["cwd"]) == root)
+        if at_root != sorted(c["expect_root_cwd"]):
+            raise CaseError(f"steps run from the repository root: {at_root}, want {sorted(c['expect_root_cwd'])}")
+    if "expect_foreign_on" in c:
+        carrying = sorted(s["id"] for s in steps if plan_mod.FOREIGN_ARTIFACTS_ENV in s["env"])
+        if carrying != sorted(c["expect_foreign_on"]):
+            raise CaseError(f"{plan_mod.FOREIGN_ARTIFACTS_ENV} is on {carrying}, want {sorted(c['expect_foreign_on'])}")
     for s in steps:
         if s["env"]["RCH_REQUIRE_REMOTE"] != "1" or s["env"]["CARGO_TARGET_DIR"] != target_dir:
             raise CaseError(f"step {s['id']}: environment {s['env']}")
-        if os.path.realpath(s["cwd"]) == root:
+        if os.path.realpath(s["cwd"]) == root and s["id"] not in c.get("expect_root_cwd", []):
             raise CaseError(f"step {s['id']} runs in the repository root")
     return PASS, f"{len(steps)} steps"
 
@@ -336,11 +345,29 @@ def run_plan_rules(c) -> Result:
     elif kind == "drop_with_value":
         i = target["argv"].index(arg)
         del target["argv"][i:i + 2]
+    elif kind in ("drop_config", "replace_config", "drop_all_config"):
+        argv = target["argv"]
+        out, i = [], 0
+        while i < len(argv):
+            pair = argv[i] == "--config" and i + 1 < len(argv)
+            if pair and kind == "drop_all_config":
+                i += 2
+                continue
+            if pair and argv[i + 1].startswith(arg):
+                if kind == "replace_config":
+                    out += ["--config", c["plant"]["to"]]
+                i += 2
+                continue
+            out.append(argv[i])
+            i += 1
+        target["argv"] = out
     elif kind == "relative_manifest":
         i = target["argv"].index("--manifest-path")
         target["argv"][i + 1] = "Cargo.toml"
     elif kind == "cwd_root":
         target["cwd"] = root
+    elif kind == "cwd_board":
+        target["cwd"] = os.path.join(root, "crates", "franken-board-profile")
     elif kind == "cwd_missing":
         target["cwd"] = os.path.join(root, "no-such-directory")
     elif kind == "set_env":
@@ -387,15 +414,42 @@ def run_plan_sharing(c) -> Result:
 
 # ------------------------------------------------------------------------------ receipts
 
-def fake_elf(machine: int, payload: bytes, big: bool = True, klass: int = 1) -> bytes:
+def fake_elf(machine: int, payload: bytes, big: bool = True, klass: int = 1, dynamic: bool = False,
+             mips_abi: Optional[Tuple[int, int, int]] = None) -> bytes:
+    """A 32-bit ELF header with a program header table when asked: a PT_INTERP segment for a dynamic link, a
+    PT_MIPS_ABIFLAGS segment for (ISA level, ISA revision, FP ABI) = `mips_abi`. No compiler is run; this is the shape
+    `plan.elf_identity` reads."""
+    order = "big" if big else "little"
+    segments: List[Tuple[int, bytes]] = []
+    if dynamic:
+        segments.append((3, b"/lib/ld-musl-mips.so.1\0"))
+    if mips_abi is not None:
+        level, rev, fp = mips_abi
+        segments.append((0x70000003, bytes([0, 0, level, rev, 1, 1, 0, fp]) + bytes(16)))
     header = bytearray(52)
     header[0:4] = b"\x7fELF"
     header[4] = klass
     header[5] = 2 if big else 1
-    header[18:20] = machine.to_bytes(2, "big" if big else "little")
-    return bytes(header) + payload
+    header[18:20] = machine.to_bytes(2, order)
+    table, blobs = bytearray(), bytearray()
+    offset = 52 + 32 * len(segments)
+    for p_type, blob in segments:
+        entry = bytearray(32)
+        entry[0:4] = p_type.to_bytes(4, order)
+        entry[4:8] = offset.to_bytes(4, order)
+        entry[16:20] = len(blob).to_bytes(4, order)
+        table += entry
+        blobs += blob
+        offset += len(blob)
+    if segments:
+        header[28:32] = (52).to_bytes(4, order)
+        header[42:44] = (32).to_bytes(2, order)
+        header[44:46] = len(segments).to_bytes(2, order)
+    return bytes(header) + bytes(table) + bytes(blobs) + payload
 
 
+RUSTC_VV_DEFAULT = ("rustc 1.90.0 (1159e78c4 2025-09-14)\nbinary: rustc\ncommit-hash: 1159e78c4747b02ef996e55082b704c09b970588"
+                    "\ncommit-date: 2025-09-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.90.0\nLLVM version: 20.1.8\n")
 RUSTC_VV = ("rustc 1.101.0-nightly (48f4b0553 2026-10-23)\nbinary: rustc\ncommit-hash: 48f4b05538c0a2ce7a5d9c4f5f2b1e"
             "0e9d8c7b6a\ncommit-date: 2026-10-23\nhost: x86_64-unknown-linux-gnu\nrelease: 1.101.0-nightly\n"
             "LLVM version: 23.1.0\n")
@@ -409,10 +463,12 @@ def make_executor(target_dir: str, doc: Dict[str, Any], scenario: str, steps: Li
     def executor(argv, cwd, env, timeout):
         step = next(s for s in steps if s["argv"] == argv)
         calls.append(step["id"])
-        if scenario == "cancel" and len(calls) == 3:
+        if scenario == "cancel" and len(calls) == 4:
             raise KeyboardInterrupt
         if step["kind"] == "toolchain":
             return 0, RUSTC_VV
+        if step["kind"] == "toolchain_default":
+            return 0, RUSTC_VV_DEFAULT
         if step["kind"] == "test":
             return 0, "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured\n"
         if scenario == "build_fails" and step["id"].endswith("powerpc_be") and "speaker" in step["id"]:
@@ -426,11 +482,19 @@ def make_executor(target_dir: str, doc: Dict[str, Any], scenario: str, steps: Li
             payload = f"{art['crate']}:{art['target']}".encode()
             if scenario == "wrong_isa" and art["target"] == "powerpc_be" and art["crate"] == "franken-speaker":
                 machine = 8
+            # the speaker is linked static through the declared wrapper; MIPS states its ABI in .MIPS.abiflags
+            abi = (32, 2, 3) if art["target"] == "mips_be" and art["crate"] == "franken-speaker" else None
+            dynamic = False
             if scenario == "universal" and art["crate"] == "franken-speaker" and art["target"] != "host":
-                machine, payload = 8, b"identical-bytes"
+                machine, payload, abi = 8, b"identical-bytes", (32, 2, 3)
+            if scenario == "dynamic" and art["target"] == "mips_be" and art["crate"] == "franken-speaker":
+                dynamic = True
+            if scenario == "hard_float" and art["target"] == "mips_be" and art["crate"] == "franken-speaker":
+                abi = (32, 2, 1)
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "wb") as f:
-                f.write(fake_elf(machine, payload) if art["target"] != "host" else b"\xcf\xfa\xed\xfe" + payload)
+                f.write(fake_elf(machine, payload, dynamic=dynamic, mips_abi=abi) if art["target"] != "host"
+                        else b"\xcf\xfa\xed\xfe" + payload)
         return 0, "Finished release\n"
     return executor, calls
 
@@ -480,6 +544,10 @@ def _check_identity(doc, receipt, target_dir, path) -> None:
         raise CaseError("the receipt on disk differs from the one returned")
     if receipt["contract_digest"] != sha256_bytes(ref.canonical_json(doc).encode("utf-8")):
         raise CaseError("receipt contract_digest is not the canonical digest of the contract")
+    if (receipt["toolchain"].get("release"), receipt["toolchain_default"].get("release")) != \
+            ("1.101.0-nightly", "1.90.0"):
+        raise CaseError("the nightly and the default toolchain must be recorded separately: "
+                        f"{receipt['toolchain']} / {receipt['toolchain_default']}")
     by_id = {a["id"]: a for a in doc["artifacts"]}
     seen = set()
     for row in receipt["artifacts"]:
@@ -518,7 +586,7 @@ def _check_restart(receipts_dir, target_dir, first_path, first_receipt) -> None:
     """After a cancelled run, a restart writes a new receipt and leaves the cancelled one exactly as it was."""
     before = open(first_path, "rb").read()
     if first_receipt["status"] != "incomplete" or [s["id"] for s in first_receipt["steps"]] != \
-            ["toolchain", "workspace-test"]:
+            ["toolchain", "toolchain-default", "workspace-test"]:
         raise CaseError(f"the cancelled receipt is not an honest partial: {first_receipt['status']}")
     doc, steps, code, path2, receipt2, _ = _run_scenario("ok", receipts_dir, target_dir)
     if path2 == first_path or code != 0 or receipt2["status"] != "complete":
@@ -693,6 +761,48 @@ def run_runner_selftest(c) -> Result:
     return PASS, f"{ran} unit tests"
 
 
+def _revision_is_here(revision: str) -> Optional[bool]:
+    """True/False when this checkout can say whether `revision` is one of its commits; None when it has no git."""
+    if not os.path.exists(os.path.join(REPO, ".git")):
+        return None
+    try:
+        out = subprocess.run(["git", "cat-file", "-e", f"{revision}^{{commit}}"], cwd=REPO, capture_output=True,
+                             timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.returncode == 0
+
+
+def run_central_evidence(c) -> Result:
+    """P01-BLK-001: the plan ran on the central path. Judged from committed, sanitized evidence records
+    (`scripts/e2e/p01 ingest`), newest run first, against the CURRENT plan and contract. No record: BLOCKED. A record
+    for another plan or contract, or with a step that never ran: BLOCKED and named. A failed step or an inconsistent
+    record: FAIL. Never skipped, never a pass on stale evidence."""
+    owner = f" [owner: {c['owner']}]"
+    records = []
+    for path in central.find_evidence(REPO):
+        try:
+            records.append((load_json(path), path))
+        except CaseError as err:
+            raise CaseError(f"unreadable evidence record: {err}")
+    if not records:
+        return BLOCKED, f"no central-run evidence is committed under toolchain/results/p01. {c['reason']}{owner}"
+    records.sort(key=lambda r: str(r[0].get("ran_at_utc", "")))
+    evidence, _path = records[-1]
+    root, _target_dir, steps = _plan()
+    verdict, detail = central.judge(evidence, contract(), steps, central.roots_for(root))
+    here = _revision_is_here(str(evidence.get("revision", "")))
+    if here is False:
+        raise CaseError(f"the evidence names revision {str(evidence.get('revision'))[:12]}, which is not a commit of this repository")
+    if here is None:
+        detail += " (revision not checkable here: no git)"
+    if verdict == "pass":
+        return PASS, detail
+    if verdict == "blocked":
+        return BLOCKED, detail + owner
+    raise CaseError(detail)
+
+
 def run_blocked(c) -> Result:
     return BLOCKED, f"{c['reason']} [owner: {c['owner']}]"
 
@@ -701,7 +811,7 @@ HANDLERS: Dict[str, Callable[[Dict[str, Any]], Result]] = {
     "vector": run_vector, "contract_valid": run_contract_valid, "drift_real": run_drift_real,
     "facts_cwd": run_facts_cwd, "drift_planted": run_drift_planted, "static_resolve": run_static_resolve,
     "resolve_planted": run_resolve_planted, "metadata": run_metadata, "metadata_real": run_metadata_real,
-    "plan_exact": run_plan_exact,
+    "central_evidence": run_central_evidence, "plan_exact": run_plan_exact,
     "plan_rules": run_plan_rules, "plan_sharing": run_plan_sharing, "receipt": run_receipt,
     "receipt_tamper": run_receipt_tamper, "meta_invariants": run_meta_invariants, "meta_codes": run_meta_codes,
     "meta_hygiene": run_meta_hygiene, "meta_vectors_current": run_meta_vectors_current,

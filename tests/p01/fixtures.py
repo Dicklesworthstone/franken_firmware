@@ -7,6 +7,7 @@ the only thing that can change a result. Everything here is synthetic: no real c
 from __future__ import annotations
 
 import copy
+import hashlib
 import os
 from typing import Any, Dict
 
@@ -24,6 +25,8 @@ BASE_SPEC: Dict[str, Any] = {
     "tests": ["x"],
     "workspace_unsafe": "forbid",
     "member_profile_table": False,
+    # linker wrappers under toolchain/linker/, keyed by device target
+    "linkers": {"mips_be": {"text": "#!/bin/sh\nexec zig cc -target mips-linux-musleabi \"$@\"\n", "mode": 493}},
 }
 
 
@@ -82,6 +85,10 @@ def materialize(root: str, spec: Dict[str, Any]) -> None:
                'opt-level = "z"\nlto = true\ncodegen-units = 1\npanic = "abort"\nstrip = true\n')
     for name in spec["tests"]:
         _write(os.path.join(root, "tests", name, "keep"), "")
+    for target, rec in spec["linkers"].items():
+        wrapper = os.path.join(root, "toolchain", "linker", f"w-{target}")
+        _write(wrapper, rec["text"])
+        os.chmod(wrapper, rec["mode"])
     if spec["lock_present"]:
         lock = ["version = 4", ""]
         for name, deps in spec["lock"].items():
@@ -109,6 +116,9 @@ def mini_contract(spec: Dict[str, Any]) -> Dict[str, Any]:
         "cargo_profiles": [{"name": "release", "opt_level": str(rel["opt-level"]).lower(),
                             "lto": str(rel["lto"]).lower(), "codegen_units": rel["codegen-units"],
                             "panic": rel["panic"], "strip": str(rel["strip"]).lower()}],
+        "linkers": [{"target": target, "crates": ["b"], "wrapper": f"toolchain/linker/w-{target}",
+                     "wrapper_sha256": hashlib.sha256(rec["text"].encode("utf-8")).hexdigest()}
+                    for target, rec in spec["linkers"].items()],
         "crates": crates, "excluded": [], "pending_members": [], "assets": assets,
         "features": [{"name": "f", "kind": "core", "requirement": "optional", "owner_crate": "b",
                       "cargo_feature": "gate", "requires": [], "accepted_evidence": ["host_simulation"]}],

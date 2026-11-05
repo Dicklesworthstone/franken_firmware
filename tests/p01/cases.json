@@ -1054,6 +1054,80 @@
    }
   },
   {
+   "id": "P01-DRIFT-032",
+   "kind": "drift_planted",
+   "title": "a declared linker wrapper that is not in the repository is refused",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "remove",
+     "path": "/linkers/mips_be"
+    }
+   ],
+   "contract_ops": [],
+   "expect_codes": [
+    "linker_wrapper_missing"
+   ],
+   "expect_subjects": {
+    "linker_wrapper_missing": [
+     "toolchain/linker/w-mips_be"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-033",
+   "kind": "drift_planted",
+   "title": "a linker wrapper whose bytes differ from the declared digest is refused",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "set",
+     "path": "/linkers/mips_be/text",
+     "value": "#!/bin/sh\nexec cc \"$@\"\n"
+    }
+   ],
+   "contract_ops": [],
+   "expect_codes": [
+    "linker_wrapper_digest_mismatch"
+   ],
+   "expect_subjects": {
+    "linker_wrapper_digest_mismatch": [
+     "toolchain/linker/w-mips_be"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-034",
+   "kind": "drift_planted",
+   "title": "a linker wrapper that lost its exec bit is refused: the mode must survive the sync",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "set",
+     "path": "/linkers/mips_be/mode",
+     "value": 420
+    }
+   ],
+   "contract_ops": [],
+   "expect_codes": [
+    "linker_wrapper_not_executable"
+   ],
+   "expect_subjects": {
+    "linker_wrapper_not_executable": [
+     "toolchain/linker/w-mips_be"
+    ]
+   }
+  },
+  {
    "id": "P01-MD-001",
    "kind": "metadata",
    "title": "permitted positive: no test-support edge by default, the edge with the harness",
@@ -1456,7 +1530,15 @@
     "build-franken-speaker-mips_be",
     "build-franken-speaker-powerpc_be",
     "toolchain",
+    "toolchain-default",
     "workspace-test"
+   ],
+   "expect_foreign_on": [
+    "build-franken-speaker-host"
+   ],
+   "expect_root_cwd": [
+    "build-franken-speaker-mips_be",
+    "build-franken-speaker-powerpc_be"
    ],
    "expect_argv": {
     "toolchain": [
@@ -1465,6 +1547,13 @@
      "--",
      "rustc",
      "+nightly",
+     "-vV"
+    ],
+    "toolchain-default": [
+     "rch",
+     "exec",
+     "--",
+     "rustc",
      "-vV"
     ],
     "workspace-test": [
@@ -1479,7 +1568,9 @@
      "<ROOT>/Cargo.toml",
      "--workspace",
      "--config",
-     "build.incremental=false"
+     "build.incremental=false",
+     "-j",
+     "2"
     ],
     "build-franken-speaker-host": [
      "rch",
@@ -1495,7 +1586,9 @@
      "-p",
      "franken-speaker",
      "--features",
-     "franken-speaker/harness"
+     "franken-speaker/harness",
+     "-j",
+     "2"
     ],
     "build-franken-speaker-powerpc_be": [
      "rch",
@@ -1514,7 +1607,38 @@
      "--target",
      "powerpc-unknown-linux-musl",
      "-Z",
-     "build-std=core,alloc,std,panic_abort"
+     "build-std=core,alloc,std,panic_abort",
+     "--config",
+     "target.powerpc-unknown-linux-musl.linker=\"<ROOT>/toolchain/linker/zig-cc-powerpc-be\"",
+     "--config",
+     "target.powerpc-unknown-linux-musl.rustflags=[\"-C\",\"target-feature=+crt-static\",\"-C\",\"link-self-contained=no\"]",
+     "-j",
+     "2"
+    ],
+    "build-franken-speaker-mips_be": [
+     "rch",
+     "exec",
+     "--",
+     "cargo",
+     "+nightly",
+     "build",
+     "--locked",
+     "--offline",
+     "--manifest-path",
+     "<ROOT>/crates/franken-speaker/Cargo.toml",
+     "--release",
+     "-p",
+     "franken-speaker",
+     "--target",
+     "mips-unknown-linux-musl",
+     "-Z",
+     "build-std=core,alloc,std,panic_abort",
+     "--config",
+     "target.mips-unknown-linux-musl.linker=\"<ROOT>/toolchain/linker/zig-cc-mips-be\"",
+     "--config",
+     "target.mips-unknown-linux-musl.rustflags=[\"-C\",\"target-feature=+crt-static\",\"-C\",\"link-self-contained=no\"]",
+     "-j",
+     "2"
     ],
     "build-ffw-hello-init-mips_be": [
      "rch",
@@ -1533,7 +1657,9 @@
      "--target",
      "mips-unknown-linux-musl",
      "-Z",
-     "build-std=core,panic_abort"
+     "build-std=core,panic_abort",
+     "-j",
+     "2"
     ]
    }
   },
@@ -1722,6 +1848,178 @@
    ]
   },
   {
+   "id": "P01-PLAN-014",
+   "kind": "plan_rules",
+   "title": "a cargo step without -j is refused: rch ignores CARGO_BUILD_JOBS, so a worker could be oversubscribed",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "step": "workspace-test",
+   "plant": {
+    "op": "drop_with_value",
+    "arg": "-j"
+   },
+   "expect_codes": [
+    "plan_missing_jobs"
+   ]
+  },
+  {
+   "id": "P01-PLAN-015",
+   "kind": "plan_rules",
+   "title": "a device build may not carry the foreign-artifacts variable: only a host build is fetched to be identified",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "step": "build-franken-speaker-mips_be",
+   "plant": {
+    "op": "set_env",
+    "arg": "RCH_ALLOW_FOREIGN_ARTIFACTS",
+    "value": "1"
+   },
+   "expect_codes": [
+    "plan_foreign_artifacts_misplaced"
+   ]
+  },
+  {
+   "id": "P01-PLAN-016",
+   "kind": "plan_rules",
+   "title": "a toolchain query may not carry the foreign-artifacts variable either",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "step": "toolchain-default",
+   "plant": {
+    "op": "set_env",
+    "arg": "RCH_ALLOW_FOREIGN_ARTIFACTS",
+    "value": "1"
+   },
+   "expect_codes": [
+    "plan_foreign_artifacts_misplaced"
+   ]
+  },
+  {
+   "id": "P01-PLAN-017",
+   "kind": "plan_rules",
+   "title": "a device speaker step without the contract's linker wrapper is refused (the plan that failed to link in b9d)",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "step": "build-franken-speaker-mips_be",
+   "plant": {
+    "op": "drop_config",
+    "arg": "target.mips-unknown-linux-musl.linker="
+   },
+   "expect_codes": [
+    "plan_device_without_linker"
+   ]
+  },
+  {
+   "id": "P01-PLAN-018",
+   "kind": "plan_rules",
+   "title": "a device speaker step without the crt-static token is refused (it would link a dynamic PIE the initramfs cannot load)",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "step": "build-franken-speaker-powerpc_be",
+   "plant": {
+    "op": "drop_config",
+    "arg": "target.powerpc-unknown-linux-musl.rustflags="
+   },
+   "expect_codes": [
+    "plan_device_not_static"
+   ]
+  },
+  {
+   "id": "P01-PLAN-019",
+   "kind": "plan_rules",
+   "title": "a device speaker step naming another wrapper than the contract's is refused",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "step": "build-franken-speaker-powerpc_be",
+   "plant": {
+    "op": "replace_config",
+    "arg": "target.powerpc-unknown-linux-musl.linker=",
+    "to": "target.powerpc-unknown-linux-musl.linker=\"/usr/bin/cc\""
+   },
+   "expect_codes": [
+    "plan_device_without_linker"
+   ]
+  },
+  {
+   "id": "P01-PLAN-020",
+   "kind": "plan_rules",
+   "title": "rustflags that do not contain +crt-static are refused even when the linker is right",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "step": "build-franken-speaker-mips_be",
+   "plant": {
+    "op": "replace_config",
+    "arg": "target.mips-unknown-linux-musl.rustflags=",
+    "to": "target.mips-unknown-linux-musl.rustflags=[\"-C\",\"link-self-contained=no\"]"
+   },
+   "expect_codes": [
+    "plan_device_not_static"
+   ]
+  },
+  {
+   "id": "P01-PLAN-021",
+   "kind": "plan_rules",
+   "title": "a device speaker step with neither the linker nor crt-static is refused for both reasons",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "step": "build-franken-speaker-mips_be",
+   "plant": {
+    "op": "drop_all_config"
+   },
+   "expect_codes": [
+    "plan_device_not_static",
+    "plan_device_without_linker"
+   ]
+  },
+  {
+   "id": "P01-PLAN-022",
+   "kind": "plan_rules",
+   "title": "a device speaker step run from crates/franken-board-profile is refused: RCH would not sync the wrapper (the b15 failure)",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "step": "build-franken-speaker-mips_be",
+   "plant": {
+    "op": "cwd_board"
+   },
+   "expect_codes": [
+    "plan_linker_step_not_from_root"
+   ]
+  },
+  {
+   "id": "P01-PLAN-023",
+   "kind": "plan_rules",
+   "title": "a device speaker step whose working directory is missing is still refused as missing, not as misplaced",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "step": "build-franken-speaker-powerpc_be",
+   "plant": {
+    "op": "cwd_missing"
+   },
+   "expect_codes": [
+    "plan_cwd_missing"
+   ]
+  },
+  {
    "id": "P01-PLAN-013",
    "kind": "plan_sharing",
    "title": "full and minimal artifacts share one build; the receipt must say the minimal profile's disabled features have no Cargo flag",
@@ -1812,6 +2110,8 @@
     "status": "failed",
     "codes": [
      "elf_machine_mismatch",
+     "float_abi_mismatch",
+     "isa_revision_mismatch",
      "universal_artifact_claim"
     ]
    }
@@ -1865,6 +2165,52 @@
      "build-franken-speaker-mips_be"
     ],
     "codes": []
+   }
+  },
+  {
+   "id": "P01-RCPT-013",
+   "kind": "receipt",
+   "title": "a MIPS speaker linked dynamically (PT_INTERP) fails the run",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "scenario": "dynamic",
+   "expect": {
+    "exit": 1,
+    "status": "failed",
+    "codes": [
+     "artifact_not_static"
+    ],
+    "subjects": {
+     "artifact_not_static": [
+      "speaker-mips-full",
+      "speaker-mips-min"
+     ]
+    }
+   }
+  },
+  {
+   "id": "P01-RCPT-014",
+   "kind": "receipt",
+   "title": "a MIPS speaker whose .MIPS.abiflags say hard float fails the run",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "scenario": "hard_float",
+   "expect": {
+    "exit": 1,
+    "status": "failed",
+    "codes": [
+     "float_abi_mismatch"
+    ],
+    "subjects": {
+     "float_abi_mismatch": [
+      "speaker-mips-full",
+      "speaker-mips-min"
+     ]
+    }
    }
   },
   {
@@ -2157,6 +2503,66 @@
      "optional dep flag owner",
      "errs.add((\"optional_dep_wrong_owner\", subject))",
      "pass"
+    ],
+    [
+     "linker malformed",
+     "errs.add((\"linker_malformed\", ln[\"target\"]))",
+     "pass"
+    ],
+    [
+     "linker unknown crate",
+     "errs.add((\"linker_unknown_crate\", key))",
+     "pass"
+    ],
+    [
+     "linker duplicate",
+     "errs.add((\"linker_duplicate\", key))",
+     "pass"
+    ],
+    [
+     "device artifact without linker",
+     "errs.add((\"device_artifact_without_linker\", art[\"id\"]))",
+     "pass"
+    ],
+    [
+     "wrapper may escape the repository",
+     "\"..\" in parts or ",
+     "False or "
+    ],
+    [
+     "wrapper digest unchecked",
+     "not is_hex64(ln[\"wrapper_sha256\"])",
+     "False"
+    ],
+    [
+     "host linker accepted",
+     "not TARGETS[ln[\"target\"]][3] or ",
+     "False or "
+    ],
+    [
+     "dynamic link accepted",
+     "errs.add((\"artifact_not_static\", rid))",
+     "pass"
+    ],
+    [
+     "isa revision unchecked",
+     "errs.add((\"isa_revision_mismatch\", rid))",
+     "pass"
+    ],
+    [
+     "float abi unchecked",
+     "errs.add((\"float_abi_mismatch\", rid))",
+     "pass"
+    ],
+    [
+     "a missing marker passes a measured declaration",
+     "if row[\"isa_revision\"] != ln[\"isa_revision\"] and (ln[\"abi_measured\"] or row[\"isa_revision\"] != \"\"):",
+     "if row[\"isa_revision\"] not in (\"\", ln[\"isa_revision\"]):"
+    ],
+    [
+     "a present marker is ignored when the declaration is unmeasured",
+     "if row[\"fp_abi\"] != ln[\"float_abi\"] and (ln[\"abi_measured\"] or row[\"fp_abi\"] != \"\"):",
+     "if row[\"fp_abi\"] != ln[\"float_abi\"] and ln[\"abi_measured\"]:"
     ]
    ]
   },
@@ -2171,14 +2577,14 @@
   },
   {
    "id": "P01-BLK-001",
-   "kind": "blocked",
-   "title": "workspace build and test from a different directory under --locked --offline on the central rch path",
+   "kind": "central_evidence",
+   "title": "workspace build and test from a different directory under --locked --offline on the central rch path, judged from committed evidence",
    "tiers": [
     "smoke",
     "full"
    ],
-   "reason": "the command plan is built and checked here (P01-PLAN-*) but not executed: builds run only through RCH_REQUIRE_REMOTE=1 rch exec, which the supervisor runs centrally; offline mode also needs the registry present on the worker",
-   "owner": "BeigeMaple: central rch run of `scripts/e2e/p01 execute`"
+   "reason": "the plan is built and checked here (P01-PLAN-*), but builds run only through RCH_REQUIRE_REMOTE=1 rch exec on the supervisor's central path; run the plan there, then `scripts/e2e/p01 ingest --revision REV --export-root DIR --target-dir DIR --step ID=LOG ...` writes the sanitized, revision-bound record under toolchain/results/p01 that this case judges",
+   "owner": "BeigeMaple: central run of the current plan, then `scripts/e2e/p01 ingest`"
   },
   {
    "id": "P01-BLK-002",
@@ -2210,7 +2616,7 @@
     "smoke",
     "full"
    ],
-   "reason": "the root nightly pin was declined (it would move the stable crates onto nightly, and the date it named is not what the workers run); a stable pin needs the release the central workspace builds actually use, which no committed receipt records; the `toolchain` step of `scripts/e2e/p01 execute` records it on the build host",
+   "reason": "the root nightly pin was declined (it would move the stable crates onto nightly, and the date it named is not what the workers run); a stable pin needs the release the central workspace builds actually use, which no committed receipt records; the plan's `toolchain-default` step (plain `rustc -vV`, what a bare `cargo` resolves to on the worker and what the workspace test uses) records it, and has not run centrally yet",
    "owner": "BeigeMaple: read the stable release from a central receipt, then land the file between batches"
   },
   {
@@ -2559,6 +2965,50 @@
     "P01-BLK-007"
    ],
    "status": "covered"
+  },
+  {
+   "id": "INV-P01-25",
+   "statement": "A device std artifact is linked static through a declared wrapper whose digest the contract records, the plan carries the linker and crt-static tokens, and the linked file shows the declared ISA revision and float ABI where it can",
+   "cases": [
+    "P01-V-105",
+    "P01-V-106",
+    "P01-V-107",
+    "P01-V-108",
+    "P01-V-109",
+    "P01-V-110",
+    "P01-V-111",
+    "P01-V-112",
+    "P01-V-113",
+    "P01-V-114",
+    "P01-V-115",
+    "P01-V-116",
+    "P01-V-117",
+    "P01-V-118",
+    "P01-O-016",
+    "P01-O-017",
+    "P01-O-018",
+    "P01-O-019",
+    "P01-O-020",
+    "P01-O-021",
+    "P01-O-022",
+    "P01-O-023",
+    "P01-O-024",
+    "P01-O-025",
+    "P01-DRIFT-032",
+    "P01-DRIFT-033",
+    "P01-DRIFT-034",
+    "P01-PLAN-017",
+    "P01-PLAN-018",
+    "P01-PLAN-019",
+    "P01-PLAN-020",
+    "P01-PLAN-021",
+    "P01-PLAN-022",
+    "P01-PLAN-023",
+    "P01-RCPT-013",
+    "P01-RCPT-014"
+   ],
+   "status": "partial",
+   "note": "the rules and the plan are checked here; no device speaker has linked yet, so a real static ELF with these ABI flags is P01-BLK-002"
   },
   {
    "id": "INV-P01-22",

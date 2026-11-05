@@ -106,13 +106,25 @@ def observed(vid, title, ops, rows, codes, subjects=None, require_all=False):
 def build(base):
     base_digest = ref.digest(base)
 
-    def row(aid, target, profile, sha, machine=None, klass=1, be=True, digest=None, triple=None):
+    def good_identity(aid):
+        """What a correct file for this artifact shows: static, and the ABI the declared linker says if the ELF can show it."""
+        art = next((a for a in base["artifacts"] if a["id"] == aid), None)
+        linker = next((l for l in base["linkers"] if art and l["target"] == art["target"]
+                       and art["crate"] in l["crates"]), None)
+        if linker is None or not linker["abi_measured"]:
+            return "", ""
+        return linker["isa_revision"], linker["float_abi"]
+
+    def row(aid, target, profile, sha, machine=None, klass=1, be=True, digest=None, triple=None,
+            dynamic=False, isa=None, fp=None):
         triple_ = {"host": "host", "mips_be": "mips-unknown-linux-musl",
                    "powerpc_be": "powerpc-unknown-linux-musl"}[target]
         machine_ = {"host": 0, "mips_be": 8, "powerpc_be": 20}[target]
+        good_isa, good_fp = good_identity(aid)
         return {"id": aid, "target": target, "triple": triple or triple_, "profile": profile, "sha256": sha,
                 "elf_machine": machine_ if machine is None else machine, "elf_class": klass,
-                "elf_big_endian": be, "contract_digest": digest or base_digest}
+                "elf_big_endian": be, "contract_digest": digest or base_digest, "elf_dynamic": dynamic,
+                "isa_revision": good_isa if isa is None else isa, "fp_abi": good_fp if fp is None else fp}
 
     mips = row("speaker-mips-full", "mips_be", "full_native", H3)
     ppc = row(PPC_FULL, "powerpc_be", "full_native", H4)
@@ -422,6 +434,44 @@ def build(base):
                        "layer_violation": ["franken-hal->franken-speaker"],
                        "optional_dep_wrong_owner": ["franken-hal->franken-speaker"]}))
 
+    # --- linkers: the wrapper that links a device std artifact, declared with its digest and the ABI it must produce
+    MIPS_LN = "/linkers/target=mips_be"
+    v.append(validate("P01-V-105", "a linker whose wrapper digest is not a SHA-256 is refused",
+                      [S(MIPS_LN + "/wrapper_sha256", "xyz")], ["linker_malformed"], {"linker_malformed": ["mips_be"]}))
+    v.append(validate("P01-V-106", "a wrapper path that climbs out of the repository is refused",
+                      [S(MIPS_LN + "/wrapper", "toolchain/../../elsewhere/zig")], ["linker_malformed"],
+                      {"linker_malformed": ["mips_be"]}))
+    v.append(validate("P01-V-107", "an absolute wrapper path is refused: it is not a repository file",
+                      [S(MIPS_LN + "/wrapper", "/usr/bin/zig")], ["linker_malformed"],
+                      {"linker_malformed": ["mips_be"]}))
+    v.append(validate("P01-V-108", "a linker with no zig version is refused",
+                      [S(MIPS_LN + "/zig_version", "  ")], ["linker_malformed"], {"linker_malformed": ["mips_be"]}))
+    v.append(validate("P01-V-109", "a linker that covers no crate is malformed and leaves its artifacts without one",
+                      [S(MIPS_LN + "/crates", [])], ["device_artifact_without_linker", "linker_malformed"],
+                      {"linker_malformed": ["mips_be"],
+                       "device_artifact_without_linker": ["speaker-mips-full", "speaker-mips-min"]}))
+    v.append(validate("P01-V-110", "a linker that names a crate which is not a workspace member is refused",
+                      [P(MIPS_LN + "/crates", "franken-ghost")], ["linker_unknown_crate"],
+                      {"linker_unknown_crate": ["mips_be:franken-ghost"]}))
+    v.append(validate("P01-V-111", "two linker entries for the same crate and target are refused",
+                      [P("/linkers", copy.deepcopy(next(l for l in base["linkers"] if l["target"] == "mips_be")))],
+                      ["linker_duplicate"], {"linker_duplicate": ["mips_be:franken-speaker"]}))
+    v.append(validate("P01-V-112", "a device artifact built from a workspace member with no declared linker is refused",
+                      [R("/linkers/target=powerpc_be")], ["device_artifact_without_linker"],
+                      {"device_artifact_without_linker": ["speaker-ppc-full", "speaker-ppc-min"]}))
+    v.append(validate("P01-V-113", "a linker for the host is refused and leaves the device artifacts without one",
+                      [S(MIPS_LN + "/target", "host")], ["device_artifact_without_linker", "linker_malformed"],
+                      {"linker_malformed": ["host"],
+                       "device_artifact_without_linker": ["speaker-mips-full", "speaker-mips-min"]}))
+    v.append(validate("P01-V-114", "permitted positive: the declared float ABI is a declaration; judging it is the receipt's job",
+                      [S(MIPS_LN + "/float_abi", "hard")], []))
+    v.append(validate("P01-V-115", "permitted positive: a declaration the ELF cannot show may say so (abi_measured false)",
+                      [S(MIPS_LN + "/abi_measured", False)], []))
+    v.append(parse("P01-V-116", "a float ABI other than soft or hard is not accepted",
+                   [S(MIPS_LN + "/float_abi", "medium")]))
+    v.append(parse("P01-V-117", "a contract without the linkers block is not defaulted", [R("/linkers")]))
+    v.append(parse("P01-V-118", "an unknown field in a linker is not tolerated", [S(MIPS_LN + "/extra", 1)]))
+
     # --- schema
     v.append(validate("P01-V-100", "a different schema version is refused",
                       [S("/schema_version", "ffw.build_contract.v0")], ["schema_version_mismatch"]))
@@ -433,6 +483,36 @@ def build(base):
                    [S("/crates/name=franken-hal/layer", "four")]))
     v.append(parse("P01-V-104", "an unknown enum value is not accepted",
                    [S("/crates/name=franken-hal/role", "firmware")]))
+
+    # --- the linked file must be static and show the declared ABI
+    v.append(observed("P01-O-016", "permitted positive: a static PowerPC speaker with no ABI marker (PowerPC has none)", [],
+                      [ppc], []))
+    v.append(observed("P01-O-017", "a MIPS speaker with a PT_INTERP or PT_DYNAMIC segment is a dynamic link and is refused", [],
+                      [row("speaker-mips-full", "mips_be", "full_native", H3, dynamic=True)], ["artifact_not_static"],
+                      {"artifact_not_static": ["speaker-mips-full"]}))
+    v.append(observed("P01-O-018", "a dynamic PowerPC speaker is refused too", [],
+                      [row(PPC_FULL, "powerpc_be", "full_native", H4, dynamic=True)], ["artifact_not_static"],
+                      {"artifact_not_static": [PPC_FULL]}))
+    v.append(observed("P01-O-019", "a MIPS speaker whose abiflags say hard float, where soft is declared, is refused", [],
+                      [row("speaker-mips-full", "mips_be", "full_native", H3, fp="hard")], ["float_abi_mismatch"],
+                      {"float_abi_mismatch": ["speaker-mips-full"]}))
+    v.append(observed("P01-O-020", "a MIPS speaker whose abiflags say MIPS32 revision 1 is refused", [],
+                      [row("speaker-mips-full", "mips_be", "full_native", H3, isa="mips32r1")], ["isa_revision_mismatch"],
+                      {"isa_revision_mismatch": ["speaker-mips-full"]}))
+    v.append(observed("P01-O-021", "a MIPS speaker with no abiflags at all fails closed on both fields", [],
+                      [row("speaker-mips-full", "mips_be", "full_native", H3, isa="", fp="")],
+                      ["float_abi_mismatch", "isa_revision_mismatch"],
+                      {"float_abi_mismatch": ["speaker-mips-full"], "isa_revision_mismatch": ["speaker-mips-full"]}))
+    v.append(observed("P01-O-022", "a PowerPC marker that is present must still agree with the declaration", [],
+                      [row(PPC_FULL, "powerpc_be", "full_native", H4, fp="soft")], ["float_abi_mismatch"],
+                      {"float_abi_mismatch": [PPC_FULL]}))
+    v.append(observed("P01-O-023", "permitted positive: a PowerPC marker that agrees is accepted", [],
+                      [row(PPC_FULL, "powerpc_be", "full_native", H4, isa="ppc", fp="hard")], []))
+    v.append(observed("P01-O-024", "permitted positive: a MIPS declaration marked unmeasured does not fail a row with no marker",
+                      [S(MIPS_LN + "/abi_measured", False)],
+                      [row("speaker-mips-full", "mips_be", "full_native", H3, isa="", fp="")], []))
+    v.append(observed("P01-O-025", "permitted positive: the bootstrap probe has no linker entry and is not judged static here", [],
+                      [row("hello-init-mips", "mips_be", "bootstrap_probe", H1, dynamic=True)], []))
 
     # --- exact artifact identity in a receipt
     v.append(observed("P01-O-001", "permitted positive: distinct, correctly identified device artifacts",
