@@ -4,12 +4,24 @@
 //! Eliminates the artificial S1 (`swGen=1`) vs. S2 (`swGen=2`) group segregation while
 //! enforcing monotonic coordinator epochs, command idempotency, and irrevocable
 //! hardware DMA tail accounting on stop/leave transitions.
+//!
+//! Membership changes (join, leave, exclusion) go through the cutover protocol in
+//! [`membership`]: propose a future frame, gather readiness acknowledgements, commit, and
+//! activate at that frame. It is additive and has its own error type; `apply_command` is unchanged.
 
 #![forbid(unsafe_code)]
 
 use franken_board_profile::BoardProfile;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+
+mod membership;
+pub use membership::{
+    AbortReason, AuthorityToken, GroupMembership, GroupTime, IntendedMember, MAX_GROUP_MEMBERS,
+    MAX_TERMINAL_HISTORY, MembershipChange, MembershipConfig, MembershipError, MembershipIntent,
+    MissingAckPolicy, OutputBound, OutputResolution, ProposalPhase, ProposalSpec, ProposalStatus,
+    ReadinessReport,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
