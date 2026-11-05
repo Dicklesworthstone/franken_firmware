@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# N03 end-to-end entry point (bead ffw-u07): group clock and synchronized join, member side.
+# Delegates to tests/n03/run_cases.py (offline, stdlib Python; it builds and boots nothing).
+#
+#   scripts/e2e/n03                              META checks only; every Rust-backed case is BLOCKED
+#   scripts/e2e/n03 --judge LOG [LOG ...]        judge the centrally run cargo test output
+#   scripts/e2e/n03 --tier smoke|full --judge LOG [--receipts DIR]
+#   scripts/e2e/n03 --list                       planned case ids
+#   scripts/e2e/n03 --write-vectors              regenerate tests/n03/vectors.json (Python reference only)
+#
+# The Rust suite runs only through the centralized RCH path; this script never invokes cargo:
+#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-clock -- --nocapture
+#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p franken-clock --all-targets -- -D warnings
+# (the module is wired into franken-clock/src/lib.rs only after the first green compile: docs/contracts/n03.md section 9)
+#
+# Exit 0 only when every case passed and none is blocked; 1 on a failed case; 3 when the only
+# non-passes are blocked cases (reported, never counted as passed); 2 on usage errors.
+# DAC / acoustic alignment and CPU on the target ISA are reported as "not measured: needs BE guest or hardware".
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+if [ "$#" -eq 0 ]; then
+  set -- --tier full
+fi
+exec python3 -B "$ROOT/tests/n03/run_cases.py" "$@"

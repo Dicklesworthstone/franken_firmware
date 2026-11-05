@@ -12,6 +12,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod group; // N03 (`ffw-u07`)
 pub mod rate; // D03 (`ffw-j9r`)
 
 use franken_board_profile::BoardProfile;

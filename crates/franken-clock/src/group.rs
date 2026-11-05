@@ -1,0 +1,1243 @@
+//! Group clock and synchronized join, member side (`N03` / `ffw-u07`).
+//!
+//! A member exchanges authenticated clock probes with the group's coordinator, fits a transform from its own
+//! monotonic clock to the group clock, and says how far that transform can be trusted. It is allowed to make
+//! sound only after it has locked within an explicit uncertainty, and it falls silent again when the timing it
+//! rests on goes stale. Contract: `docs/contracts/n03.md`.
+//!
+//! What this is, and is not:
+//!
+//! * **A clock fit, not DAC alignment.** Every result is "the group clock reads X at local time T, give or take
+//!   U". Decode, resampler and DSP delay, DMA depth and the DAC pipeline are separate terms the render path adds;
+//!   the one board term modelled here is the calibrated output delay and its stated uncertainty
+//!   ([`GroupClockConfig::output_delay_ns`], [`GroupClockConfig::calibration_uncertainty_ns`]). A small U here is
+//!   not a claim about the speaker cone.
+//! * **No promise from an NTP-style offset alone.** The four-timestamp offset is exact only when the two path
+//!   delays are equal, which the timestamps cannot show. Its error is bounded by half the exchange delay
+//!   (the bias of a path with delays `df` and `dr` is exactly `(df - dr) / 2`), so that half is *in* the
+//!   uncertainty, together with the timer resolution, the board term and growth with age.
+//! * **Authenticity is N01's job.** Probes arrive over the authenticated control channel. This module checks what
+//!   is left: epoch, leader, request/response pairing (replay), timing sanity and plausibility.
+//! * **Standalone.** Plain-typed inputs (`u64` epoch and nanosecond timestamps, as N01 carries them) and no
+//!   dependency on the stream or session crates. The D03 rate estimator ([`crate::rate`]) does the frequency
+//!   fit; the group timeline is fed to it as a wrapping 48 kHz `u32` frame counter, so counter wrap and
+//!   half-range ambiguity are handled by the code that already handles them.
+
+use crate::rate::{EstimateStatus, Observation, RateConfig, RateError, RateEstimator, ResetReason};
+use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
+
+/// Largest timestamp N01 accepts on the wire (2^62 ns).
+pub const MAX_TIMESTAMP_NS: u64 = 1 << 62;
+/// The group timeline is fed to the rate estimator as frames at this rate.
+pub const FRAME_RATE_HZ: u32 = 48_000;
+/// Longest sample window a configuration may ask for.
+pub const MAX_WINDOW: u32 = 64;
+
+const NS: i128 = 1_000_000_000;
+
+fn clamp_u64(v: i128) -> u64 {
+    u64::try_from(v.max(0)).unwrap_or(u64::MAX)
+}
+
+/// Group time as a wrapping `u32` frame counter at 48 kHz (it wraps near 24.86 hours).
+#[must_use]
+pub fn frame_position(group_ns: u64) -> u32 {
+    let frames = u128::from(group_ns) * u128::from(FRAME_RATE_HZ) / 1_000_000_000;
+    u32::try_from(frames & 0xFFFF_FFFF).unwrap_or(0)
+}
+
+// --------------------------------------------------------------------------------------------- vocabulary
+
+/// Why a probe response was not used. A rejection leaves the fit as it was, with two exceptions that clear it and
+/// mute the member: `Discontinuity`, and `LocalClockRegression` between two exchanges (the local clock went back).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProbeReject {
+    /// The response is for an older epoch.
+    StaleEpoch,
+    /// The response is for a newer epoch than the member has been told about (epochs arrive by control, not by probe).
+    FutureEpoch,
+    /// The response names a leader the member has not admitted.
+    UnadmittedLeader,
+    /// No outstanding request has this sequence: unsolicited, already answered (a replay), or long expired.
+    UnsolicitedOrReplayed,
+    /// The local clock did not advance across the exchange (a sample-level reject), or went backwards between two
+    /// exchanges (the fit is cleared: nothing measured on the old clock describes the new readings).
+    LocalClockRegression,
+    /// The exchange took longer than the request lifetime.
+    ExpiredRequest,
+    /// Impossible timestamps (out of range, transmit before receive, dwell longer than the round trip).
+    Malformed,
+    /// The path delay is above the limit; the sample says too little to use.
+    ExcessiveDelay,
+    /// The sample contradicts the established fit by more than its uncertainty (a clock jump), or the rate
+    /// estimator saw one. The fit is cleared and the member is muted until it locks again.
+    Discontinuity,
+}
+
+impl ProbeReject {
+    pub const ALL: [Self; 9] = [
+        Self::StaleEpoch,
+        Self::FutureEpoch,
+        Self::UnadmittedLeader,
+        Self::UnsolicitedOrReplayed,
+        Self::LocalClockRegression,
+        Self::ExpiredRequest,
+        Self::Malformed,
+        Self::ExcessiveDelay,
+        Self::Discontinuity,
+    ];
+
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::StaleEpoch => "StaleEpoch",
+            Self::FutureEpoch => "FutureEpoch",
+            Self::UnadmittedLeader => "UnadmittedLeader",
+            Self::UnsolicitedOrReplayed => "UnsolicitedOrReplayed",
+            Self::LocalClockRegression => "LocalClockRegression",
+            Self::ExpiredRequest => "ExpiredRequest",
+            Self::Malformed => "Malformed",
+            Self::ExcessiveDelay => "ExcessiveDelay",
+            Self::Discontinuity => "Discontinuity",
+        }
+    }
+
+    const fn index(self) -> usize {
+        match self {
+            Self::StaleEpoch => 0,
+            Self::FutureEpoch => 1,
+            Self::UnadmittedLeader => 2,
+            Self::UnsolicitedOrReplayed => 3,
+            Self::LocalClockRegression => 4,
+            Self::ExpiredRequest => 5,
+            Self::Malformed => 6,
+            Self::ExcessiveDelay => 7,
+            Self::Discontinuity => 8,
+        }
+    }
+}
+
+/// Why a scheduled start was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StartReject {
+    StaleEpoch,
+    FutureEpoch,
+    NotLocked,
+    /// The start is further ahead than the admitted future window.
+    TooFarAhead,
+    /// The member cannot be ready (muted catch-up needs `catchup_ns`) before the start.
+    TooLate,
+    /// The clock's uncertainty at the start instant is above the threshold.
+    UncertaintyAtStart,
+    /// The timing the member would rest on expires before the start.
+    ExpiresBeforeStart,
+}
+
+impl StartReject {
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::StaleEpoch => "StaleEpoch",
+            Self::FutureEpoch => "FutureEpoch",
+            Self::NotLocked => "NotLocked",
+            Self::TooFarAhead => "TooFarAhead",
+            Self::TooLate => "TooLate",
+            Self::UncertaintyAtStart => "UncertaintyAtStart",
+            Self::ExpiresBeforeStart => "ExpiresBeforeStart",
+        }
+    }
+}
+
+/// Why the member is muted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MuteReason {
+    NotLocked,
+    /// Locked, but no start has been admitted (or it was cleared by an expiry or reset).
+    NotAdmitted,
+    /// Timing went stale: the holdover bound passed or the uncertainty outgrew the threshold.
+    ClockExpired,
+    AuthorityExpired,
+    Discontinuity,
+    EpochChange,
+    /// The platform clock failed; nothing it says can be trusted.
+    ClockFault,
+}
+
+impl MuteReason {
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::NotLocked => "NotLocked",
+            Self::NotAdmitted => "NotAdmitted",
+            Self::ClockExpired => "ClockExpired",
+            Self::AuthorityExpired => "AuthorityExpired",
+            Self::Discontinuity => "Discontinuity",
+            Self::EpochChange => "EpochChange",
+            Self::ClockFault => "ClockFault",
+        }
+    }
+}
+
+/// Which of the three holdover bounds is the smallest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Binding {
+    Authority,
+    Buffer,
+    Uncertainty,
+}
+
+impl Binding {
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Authority => "Authority",
+            Self::Buffer => "Buffer",
+            Self::Uncertainty => "Uncertainty",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClockStatus {
+    /// Not enough evidence yet (or none since a reset).
+    Unlocked,
+    /// Fresh timing, uncertainty within the threshold.
+    Locked,
+    /// No fresh timing, but still inside the holdover bound.
+    Holdover,
+    /// Was locked; the holdover bound passed or the uncertainty outgrew the threshold. Needs a rejoin.
+    Expired,
+}
+
+impl ClockStatus {
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Unlocked => "Unlocked",
+            Self::Locked => "Locked",
+            Self::Holdover => "Holdover",
+            Self::Expired => "Expired",
+        }
+    }
+}
+
+/// What the member may do with its output right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Output {
+    Muted(MuteReason),
+    /// Admitted and catching up silently; sound begins in this many nanoseconds of local time.
+    Armed {
+        starts_in_ns: u64,
+    },
+    Audible,
+}
+
+impl Output {
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Muted(_) => "Muted",
+            Self::Armed { .. } => "Armed",
+            Self::Audible => "Audible",
+        }
+    }
+
+    #[must_use]
+    pub const fn is_audible(self) -> bool {
+        matches!(self, Self::Audible)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum GroupClockError {
+    #[error("invalid group clock configuration: {0}")]
+    InvalidConfig(String),
+    #[error("epoch {requested} does not advance current epoch {current}")]
+    EpochNotAdvanced { current: u64, requested: u64 },
+    #[error("authority is for epoch {given}, the member is in epoch {current}")]
+    WrongEpoch { current: u64, given: u64 },
+}
+
+// --------------------------------------------------------------------------------------------- configuration
+
+/// Limits and thresholds. [`GroupClockConfig::standard`] gives the documented defaults.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroupClockConfig {
+    /// A sample whose path delay is above this is not used.
+    pub max_delay_ns: u64,
+    /// A request unanswered for this long is dead; its response is `ExpiredRequest`.
+    pub request_ttl_ns: u64,
+    /// Samples needed before the member can lock.
+    pub min_probes_for_lock: u32,
+    /// The explicit uncertainty threshold: lock requires the clock's uncertainty at or below this.
+    pub lock_uncertainty_ns: u64,
+    /// A probe newer than this keeps the status `Locked`; older timing is `Holdover`.
+    pub fresh_ns: u64,
+    /// Worst-case ratio error of the local oscillator, used until the rate estimator has a usable estimate.
+    pub oscillator_bound_ppb: u64,
+    /// The rate estimator reports a one-sigma standard error; the ratio uncertainty used here is this many sigmas
+    /// plus [`Self::wander_ppb`].
+    pub rate_sigma_multiple: u64,
+    /// Assumed worst-case change of the oscillator ratio over a whole holdover, added to a usable rate estimate's
+    /// own uncertainty. It is an assumption, not a measurement (the default covers the D03 estimator's own aging
+    /// allowance, 100 ppb/s over its 60 s holdover).
+    pub wander_ppb: u64,
+    /// Resolution of the local clock readings (each exchange has two).
+    pub timer_resolution_ns: u64,
+    /// The board's calibration uncertainty (`BoardProfile::calibration_uncertainty_us`).
+    pub calibration_uncertainty_ns: u64,
+    /// The board's calibrated output delay, subtracted from a scheduled start (`calibrated_output_delay_us`).
+    pub output_delay_ns: u64,
+    /// How far beyond its uncertainty a new sample may disagree with the fit before it is a clock jump.
+    pub prediction_slack_ns: u64,
+    /// Only samples whose delay is within this of the best in the window feed the frequency fit.
+    pub rate_delay_slack_ns: u64,
+    /// Time the member needs, muted, to be ready before a scheduled start.
+    pub catchup_ns: u64,
+    /// A start further ahead than this is refused.
+    pub max_future_ns: u64,
+    /// Samples kept (at most [`MAX_WINDOW`]).
+    pub window: u32,
+    /// Requests that may await a response at once.
+    pub max_outstanding: u32,
+    /// The D03 rate estimator's configuration (48 kHz).
+    pub rate: RateConfig,
+}
+
+impl GroupClockConfig {
+    /// The documented defaults for a room-group member.
+    pub fn standard() -> Result<Self, GroupClockError> {
+        let rate = RateConfig::for_rate(FRAME_RATE_HZ)
+            .map_err(|e| GroupClockError::InvalidConfig(e.to_string()))?;
+        let cfg = Self {
+            max_delay_ns: 50_000_000,
+            request_ttl_ns: 2_000_000_000,
+            min_probes_for_lock: 4,
+            lock_uncertainty_ns: 2_000_000,
+            fresh_ns: 3_000_000_000,
+            oscillator_bound_ppb: 100_000,
+            rate_sigma_multiple: 3,
+            wander_ppb: 6_000,
+            timer_resolution_ns: 1_000,
+            calibration_uncertainty_ns: 0,
+            output_delay_ns: 0,
+            prediction_slack_ns: 500_000,
+            rate_delay_slack_ns: 500_000,
+            catchup_ns: 100_000_000,
+            max_future_ns: 5_000_000_000,
+            window: 16,
+            max_outstanding: 8,
+            rate,
+        };
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
+    /// The defaults with a board's calibrated output delay and calibration uncertainty.
+    pub fn for_board(
+        profile: &franken_board_profile::BoardProfile,
+    ) -> Result<Self, GroupClockError> {
+        let mut cfg = Self::standard()?;
+        cfg.output_delay_ns = u64::from(profile.calibrated_output_delay_us) * 1_000;
+        cfg.calibration_uncertainty_ns = u64::from(profile.calibration_uncertainty_us) * 1_000;
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
+    pub fn validate(&self) -> Result<(), GroupClockError> {
+        let bad = |what: &str| Err(GroupClockError::InvalidConfig(what.to_string()));
+        if self.window == 0 || self.window > MAX_WINDOW {
+            return bad("window outside 1..=64");
+        }
+        if self.min_probes_for_lock == 0 || self.min_probes_for_lock > self.window {
+            return bad("need 1 <= min_probes_for_lock <= window");
+        }
+        if self.max_outstanding == 0 || self.max_outstanding > 64 {
+            return bad("max_outstanding outside 1..=64");
+        }
+        if self.lock_uncertainty_ns == 0 || self.fresh_ns == 0 || self.request_ttl_ns == 0 {
+            return bad("lock_uncertainty_ns, fresh_ns and request_ttl_ns must be nonzero");
+        }
+        if self.max_delay_ns > self.request_ttl_ns {
+            return bad("max_delay_ns must not exceed request_ttl_ns");
+        }
+        if self.catchup_ns >= self.max_future_ns {
+            return bad("catchup_ns must be below max_future_ns");
+        }
+        if self.oscillator_bound_ppb > 1_000_000 || self.wander_ppb > 1_000_000 {
+            return bad("oscillator_bound_ppb and wander_ppb are limited to 1000 ppm");
+        }
+        if self.rate_sigma_multiple == 0 || self.rate_sigma_multiple > 10 {
+            return bad("rate_sigma_multiple outside 1..=10");
+        }
+        self.rate
+            .validate()
+            .map_err(|e| GroupClockError::InvalidConfig(e.to_string()))
+    }
+}
+
+// --------------------------------------------------------------------------------------------- one exchange
+
+/// A request for the coordinator's time. `t1_local_ns` is the member's monotonic reading when it was sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProbeRequest {
+    pub epoch: u64,
+    pub seq: u64,
+    pub t1_local_ns: u64,
+}
+
+/// The coordinator's answer, already authenticated by the control channel. `t2` and `t3` are the coordinator's
+/// group-clock readings when it received the request and sent the response.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProbeResponse {
+    pub epoch: u64,
+    pub leader: u64,
+    pub seq: u64,
+    /// The request's `t1_local_ns`, echoed back. A response only matches an outstanding request whose sequence
+    /// *and* send time it repeats, so a response captured before a restart cannot answer a new request.
+    pub t1_echo_ns: u64,
+    pub t2_group_ns: u64,
+    pub t3_group_ns: u64,
+}
+
+/// What one valid exchange tells: its path delay and where its midpoints sit on each clock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Sample {
+    pub delay_ns: u64,
+    pub local_mid_ns: u64,
+    pub group_mid_ns: u64,
+}
+
+impl Sample {
+    /// Validate an exchange and reduce it to a sample. `t1` and `t4` are local readings, `t2` and `t3` group
+    /// readings. The checks run in this order, which is part of the contract.
+    pub fn from_exchange(
+        t1: u64,
+        t2: u64,
+        t3: u64,
+        t4: u64,
+        cfg: &GroupClockConfig,
+    ) -> Result<Self, ProbeReject> {
+        if t4 <= t1 {
+            return Err(ProbeReject::LocalClockRegression);
+        }
+        let rtt = t4 - t1;
+        if rtt > cfg.request_ttl_ns {
+            return Err(ProbeReject::ExpiredRequest);
+        }
+        if t3 < t2 || t2 > MAX_TIMESTAMP_NS || t3 > MAX_TIMESTAMP_NS {
+            return Err(ProbeReject::Malformed);
+        }
+        let dwell = t3 - t2;
+        if dwell > rtt {
+            return Err(ProbeReject::Malformed);
+        }
+        let delay = rtt - dwell;
+        if delay > cfg.max_delay_ns {
+            return Err(ProbeReject::ExcessiveDelay);
+        }
+        Ok(Self {
+            delay_ns: delay,
+            local_mid_ns: t1 + rtt / 2,
+            group_mid_ns: t2 + dwell / 2,
+        })
+    }
+
+    /// Group minus local at the midpoints. Exact only when the two path delays were equal.
+    #[must_use]
+    pub fn offset_ns(&self) -> i128 {
+        i128::from(self.group_mid_ns) - i128::from(self.local_mid_ns)
+    }
+}
+
+// --------------------------------------------------------------------------------------------- the pure core
+
+/// What a sample cannot know about itself: half its delay (path asymmetry), the timer resolution, the board term.
+#[must_use]
+pub fn base_uncertainty_ns(cfg: &GroupClockConfig, delay_ns: u64) -> u64 {
+    delay_ns
+        .div_ceil(2)
+        .saturating_add(cfg.timer_resolution_ns)
+        .saturating_add(cfg.calibration_uncertainty_ns)
+}
+
+/// The sample's uncertainty at local time `at`: its base term plus growth with age at `ratio_unc_ppb`.
+#[must_use]
+pub fn uncertainty_at(cfg: &GroupClockConfig, s: &Sample, at: u64, ratio_unc_ppb: u64) -> u64 {
+    let age = u128::from(at.saturating_sub(s.local_mid_ns));
+    let growth = (age * u128::from(ratio_unc_ppb)).div_ceil(1_000_000_000);
+    base_uncertainty_ns(cfg, s.delay_ns).saturating_add(u64::try_from(growth).unwrap_or(u64::MAX))
+}
+
+/// A sample chosen as the anchor of the clock transform, with the ratio it is extrapolated by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Anchor {
+    pub sample: Sample,
+    pub ratio_ppb: i64,
+    pub ratio_unc_ppb: u64,
+    /// The anchor's uncertainty at the instant it was selected for.
+    pub uncertainty_ns: u64,
+}
+
+/// The sample with the smallest uncertainty at `now`. Ties go to the newer midpoint, then to the later one.
+pub fn select_anchor<'a>(
+    cfg: &GroupClockConfig,
+    samples: impl IntoIterator<Item = &'a Sample>,
+    now: u64,
+    ratio_ppb: i64,
+    ratio_unc_ppb: u64,
+) -> Option<Anchor> {
+    let mut best: Option<(u64, u64, Sample)> = None;
+    for s in samples {
+        let u = uncertainty_at(cfg, s, now, ratio_unc_ppb);
+        let better = match best {
+            None => true,
+            Some((bu, bmid, _)) => u < bu || (u == bu && s.local_mid_ns >= bmid),
+        };
+        if better {
+            best = Some((u, s.local_mid_ns, *s));
+        }
+    }
+    best.map(|(u, _, s)| Anchor {
+        sample: s,
+        ratio_ppb,
+        ratio_unc_ppb,
+        uncertainty_ns: u,
+    })
+}
+
+/// The group clock at local time `now`, by the anchor's transform.
+#[must_use]
+pub fn group_at(a: &Anchor, now: u64) -> u64 {
+    let delta = i128::from(now) - i128::from(a.sample.local_mid_ns);
+    let scaled = (delta * (NS + i128::from(a.ratio_ppb))).div_euclid(NS);
+    clamp_u64(i128::from(a.sample.group_mid_ns) + scaled)
+}
+
+/// The local time at which the group clock reads `group_ns`, by the anchor's transform.
+#[must_use]
+pub fn local_of(a: &Anchor, group_ns: u64) -> u64 {
+    let delta = i128::from(group_ns) - i128::from(a.sample.group_mid_ns);
+    let denom = (NS + i128::from(a.ratio_ppb)).max(1);
+    let scaled = (delta * NS).div_euclid(denom);
+    clamp_u64(i128::from(a.sample.local_mid_ns) + scaled)
+}
+
+/// How long the member may keep sounding without fresh timing, and what sets the limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Holdover {
+    /// The first local instant at which holdover is NOT allowed.
+    pub until_local_ns: u64,
+    pub binding: Binding,
+}
+
+/// `min(buffer coverage, authority validity, time for the uncertainty to reach the threshold)`. Ties go to
+/// Authority, then Buffer, then Uncertainty.
+#[must_use]
+pub fn holdover_for(
+    cfg: &GroupClockConfig,
+    a: &Anchor,
+    authority_until: Option<u64>,
+    buffer_until: Option<u64>,
+) -> Holdover {
+    let base = base_uncertainty_ns(cfg, a.sample.delay_ns);
+    let headroom = cfg.lock_uncertainty_ns.saturating_sub(base);
+    let unc_until = if a.ratio_unc_ppb == 0 {
+        u64::MAX
+    } else {
+        let span = u128::from(headroom) * 1_000_000_000 / u128::from(a.ratio_unc_ppb);
+        u64::try_from(u128::from(a.sample.local_mid_ns) + span + 1).unwrap_or(u64::MAX)
+    };
+    let mut best = Holdover {
+        until_local_ns: unc_until,
+        binding: Binding::Uncertainty,
+    };
+    if let Some(b) = buffer_until
+        && b <= best.until_local_ns
+    {
+        best = Holdover {
+            until_local_ns: b,
+            binding: Binding::Buffer,
+        };
+    }
+    if let Some(au) = authority_until
+        && au <= best.until_local_ns
+    {
+        best = Holdover {
+            until_local_ns: au,
+            binding: Binding::Authority,
+        };
+    }
+    best
+}
+
+/// A scheduled future start: the group time at which a frame boundary is presented (N01's `presentation_time_ns`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StartSchedule {
+    pub epoch: u64,
+    pub start_group_ns: u64,
+}
+
+/// An admitted start: when to begin (local), by when to be ready, and how long the timing behind it is good for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StartPlan {
+    pub epoch: u64,
+    pub start_group_ns: u64,
+    pub start_local_ns: u64,
+    pub deadline_local_ns: u64,
+    pub uncertainty_at_start_ns: u64,
+    pub valid_until_local_ns: u64,
+    pub binding: Binding,
+}
+
+/// Everything [`decide_start`] needs besides the schedule and the configuration.
+#[derive(Debug, Clone, Copy)]
+pub struct StartContext<'a> {
+    pub epoch: u64,
+    pub status: ClockStatus,
+    pub anchor: &'a Anchor,
+    pub now_local_ns: u64,
+    pub authority_until: Option<u64>,
+    pub buffer_until: Option<u64>,
+}
+
+/// The admissible-start decision. The checks run in this order, which is part of the contract.
+pub fn decide_start(
+    cfg: &GroupClockConfig,
+    ctx: &StartContext<'_>,
+    sched: StartSchedule,
+) -> Result<StartPlan, StartReject> {
+    let (a, now) = (ctx.anchor, ctx.now_local_ns);
+    if sched.epoch < ctx.epoch {
+        return Err(StartReject::StaleEpoch);
+    }
+    if sched.epoch > ctx.epoch {
+        return Err(StartReject::FutureEpoch);
+    }
+    if ctx.status != ClockStatus::Locked {
+        return Err(StartReject::NotLocked);
+    }
+    let group_now = group_at(a, now);
+    if sched.start_group_ns > group_now.saturating_add(cfg.max_future_ns) {
+        return Err(StartReject::TooFarAhead);
+    }
+    let start_local = local_of(a, sched.start_group_ns).saturating_sub(cfg.output_delay_ns);
+    let deadline = start_local.saturating_sub(cfg.catchup_ns);
+    if now > deadline {
+        return Err(StartReject::TooLate);
+    }
+    let u_start = uncertainty_at(cfg, &a.sample, start_local, a.ratio_unc_ppb);
+    if u_start > cfg.lock_uncertainty_ns {
+        return Err(StartReject::UncertaintyAtStart);
+    }
+    let h = holdover_for(cfg, a, ctx.authority_until, ctx.buffer_until);
+    if start_local >= h.until_local_ns {
+        return Err(StartReject::ExpiresBeforeStart);
+    }
+    Ok(StartPlan {
+        epoch: ctx.epoch,
+        start_group_ns: sched.start_group_ns,
+        start_local_ns: start_local,
+        deadline_local_ns: deadline,
+        uncertainty_at_start_ns: u_start,
+        valid_until_local_ns: h.until_local_ns,
+        binding: h.binding,
+    })
+}
+
+// --------------------------------------------------------------------------------------------- the member
+
+/// Counters. `rejected` is indexed by [`ProbeReject`]; read it with [`GroupStats::rejected`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct GroupStats {
+    pub probes_sent: u64,
+    /// Requests that were pushed out of the outstanding table or expired unanswered.
+    pub probes_lost: u64,
+    pub accepted: u64,
+    pub rejected: [u64; 9],
+    /// Full resets of the fit (a clock jump, a local clock regression, a platform clock fault).
+    pub resets: u32,
+    /// Times the frequency fit alone was restarted because the rate estimator saw a discontinuity.
+    pub rate_restarts: u32,
+    pub epochs: u32,
+}
+
+impl GroupStats {
+    #[must_use]
+    pub const fn rejected(&self, reason: ProbeReject) -> u64 {
+        self.rejected[reason.index()]
+    }
+
+    #[must_use]
+    pub fn rejected_total(&self) -> u64 {
+        self.rejected.iter().sum()
+    }
+}
+
+/// What an accepted probe changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Accepted {
+    pub delay_ns: u64,
+    pub offset_ns: i64,
+    pub status: ClockStatus,
+}
+
+/// The reading every report carries so nobody mistakes a clock fit for acoustic alignment.
+pub const CLAIM: &str = "network-clock-fit-only: not DAC or acoustic alignment";
+
+/// A bounded diagnostic snapshot. `claim` is always [`CLAIM`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ClockReport {
+    pub epoch: u64,
+    pub leader: u64,
+    pub status: &'static str,
+    pub output: &'static str,
+    pub mute_reason: Option<&'static str>,
+    pub claim: &'static str,
+    pub samples: u32,
+    pub accepted: u64,
+    pub rejected_total: u64,
+    pub uncertainty_ns: Option<u64>,
+    pub ratio_ppb: Option<i64>,
+    pub ratio_unc_ppb: Option<u64>,
+    pub holdover_until_local_ns: Option<u64>,
+    pub holdover_binding: Option<&'static str>,
+    pub last_accept_age_ns: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GroupClock {
+    cfg: GroupClockConfig,
+    epoch: u64,
+    leader: u64,
+    next_seq: u64,
+    outstanding: VecDeque<ProbeRequest>,
+    samples: VecDeque<Sample>,
+    rate: RateEstimator,
+    last_fed_us: Option<u64>,
+    accepted_in_epoch: u32,
+    last_accept_ns: Option<u64>,
+    last_t4_ns: Option<u64>,
+    lock_seen: bool,
+    authority_until: Option<u64>,
+    buffer_until: Option<u64>,
+    armed: Option<u64>,
+    mute: MuteReason,
+    stats: GroupStats,
+}
+
+fn fresh_rate(cfg: &GroupClockConfig) -> Result<RateEstimator, GroupClockError> {
+    RateEstimator::new(cfg.rate.clone()).map_err(|e| GroupClockError::InvalidConfig(e.to_string()))
+}
+
+impl GroupClock {
+    /// A member in `epoch`, admitting only `leader`. Nothing is carried over from a previous run: a member that
+    /// restarts is unlocked and has no outstanding requests, so replayed answers from before are unsolicited.
+    /// `seq_base` numbers the first request; take it from the platform entropy source on every boot, so a response
+    /// recorded before a restart (it carries a valid MAC) cannot match a request made after it.
+    pub fn new(
+        cfg: GroupClockConfig,
+        epoch: u64,
+        leader: u64,
+        seq_base: u64,
+    ) -> Result<Self, GroupClockError> {
+        cfg.validate()?;
+        let rate = fresh_rate(&cfg)?;
+        Ok(Self {
+            cfg,
+            epoch,
+            leader,
+            next_seq: seq_base,
+            outstanding: VecDeque::new(),
+            samples: VecDeque::new(),
+            rate,
+            last_fed_us: None,
+            accepted_in_epoch: 0,
+            last_accept_ns: None,
+            last_t4_ns: None,
+            lock_seen: false,
+            authority_until: None,
+            buffer_until: None,
+            armed: None,
+            mute: MuteReason::NotLocked,
+            stats: GroupStats::default(),
+        })
+    }
+
+    #[must_use]
+    pub const fn config(&self) -> &GroupClockConfig {
+        &self.cfg
+    }
+
+    #[must_use]
+    pub const fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    #[must_use]
+    pub const fn leader(&self) -> u64 {
+        self.leader
+    }
+
+    #[must_use]
+    pub const fn stats(&self) -> GroupStats {
+        self.stats
+    }
+
+    #[must_use]
+    pub fn sample_count(&self) -> usize {
+        self.samples.len()
+    }
+
+    /// Move to a newer epoch under a (possibly new) leader. The new leader does not inherit the old timestamp
+    /// interpretation: every sample, request, the rate fit, the authority and any admitted start are dropped, and
+    /// the member is muted until it has locked again and been admitted again.
+    pub fn begin_epoch(&mut self, epoch: u64, leader: u64) -> Result<(), GroupClockError> {
+        if epoch <= self.epoch {
+            return Err(GroupClockError::EpochNotAdvanced {
+                current: self.epoch,
+                requested: epoch,
+            });
+        }
+        self.epoch = epoch;
+        self.leader = leader;
+        self.authority_until = None;
+        self.clear_timing(MuteReason::EpochChange);
+        self.stats.epochs = self.stats.epochs.saturating_add(1);
+        Ok(())
+    }
+
+    /// The platform clock failed (P02, for example `WentBackwards`). Nothing it said can be trusted: drop the fit and
+    /// mute.
+    pub fn report_clock_fault(&mut self) {
+        self.clear_timing(MuteReason::ClockFault);
+        self.stats.resets = self.stats.resets.saturating_add(1);
+    }
+
+    /// Record the authority's validity for this epoch (`expires_at_local_ns` is a local instant, the way G01's token
+    /// check compares it). Holdover never outlasts it, and an admitted start does not survive it.
+    pub fn set_authority(
+        &mut self,
+        epoch: u64,
+        expires_at_local_ns: u64,
+        now_local_ns: u64,
+    ) -> Result<(), GroupClockError> {
+        if epoch != self.epoch {
+            return Err(GroupClockError::WrongEpoch {
+                current: self.epoch,
+                given: epoch,
+            });
+        }
+        // An expiry that already passed must clear the admitted start before a renewal can revive it.
+        self.settle(now_local_ns);
+        self.authority_until = Some(expires_at_local_ns);
+        Ok(())
+    }
+
+    /// The first local instant at which no audio is queued any more (buffer coverage ends). `None` means the caller
+    /// imposes no buffer bound.
+    pub fn set_buffer_until(&mut self, until_local_ns: Option<u64>) {
+        self.buffer_until = until_local_ns;
+    }
+
+    fn clear_timing(&mut self, mute: MuteReason) {
+        self.samples.clear();
+        self.outstanding.clear();
+        self.accepted_in_epoch = 0;
+        self.last_accept_ns = None;
+        self.last_t4_ns = None;
+        self.last_fed_us = None;
+        self.lock_seen = false;
+        self.armed = None;
+        self.mute = mute;
+        if let Ok(rate) = fresh_rate(&self.cfg) {
+            self.rate = rate;
+        }
+    }
+
+    fn reject(&mut self, reason: ProbeReject) -> ProbeReject {
+        let slot = &mut self.stats.rejected[reason.index()];
+        *slot = slot.saturating_add(1);
+        reason
+    }
+
+    /// Count `reason` and clear the whole fit: the member is muted until it has locked again.
+    fn reset_for(&mut self, reason: ProbeReject) -> ProbeReject {
+        self.clear_timing(MuteReason::Discontinuity);
+        self.stats.resets = self.stats.resets.saturating_add(1);
+        self.reject(reason)
+    }
+
+    /// Issue the next probe request, sent at local time `now_local_ns`.
+    pub fn next_probe(&mut self, now_local_ns: u64) -> ProbeRequest {
+        let before = self.outstanding.len();
+        let ttl = self.cfg.request_ttl_ns;
+        self.outstanding
+            .retain(|r| now_local_ns.saturating_sub(r.t1_local_ns) <= ttl);
+        let mut lost = before - self.outstanding.len();
+        while self.outstanding.len() >= self.cfg.max_outstanding as usize {
+            self.outstanding.pop_front();
+            lost += 1;
+        }
+        self.stats.probes_lost = self
+            .stats
+            .probes_lost
+            .saturating_add(u64::try_from(lost).unwrap_or(u64::MAX));
+        let request = ProbeRequest {
+            epoch: self.epoch,
+            seq: self.next_seq,
+            t1_local_ns: now_local_ns,
+        };
+        self.next_seq = self.next_seq.wrapping_add(1);
+        self.outstanding.push_back(request);
+        self.stats.probes_sent = self.stats.probes_sent.saturating_add(1);
+        request
+    }
+
+    /// Take one probe response, received at local time `t4_local_ns`. The checks run in this order, which is part
+    /// of the contract. A rejection leaves the fit as it was, except `Discontinuity` and a `LocalClockRegression`
+    /// between two exchanges, which clear it.
+    pub fn on_response(
+        &mut self,
+        resp: ProbeResponse,
+        t4_local_ns: u64,
+    ) -> Result<Accepted, ProbeReject> {
+        if resp.epoch < self.epoch {
+            return Err(self.reject(ProbeReject::StaleEpoch));
+        }
+        if resp.epoch > self.epoch {
+            return Err(self.reject(ProbeReject::FutureEpoch));
+        }
+        if resp.leader != self.leader {
+            return Err(self.reject(ProbeReject::UnadmittedLeader));
+        }
+        let Some(pos) = self
+            .outstanding
+            .iter()
+            .position(|r| r.seq == resp.seq && r.t1_local_ns == resp.t1_echo_ns)
+        else {
+            return Err(self.reject(ProbeReject::UnsolicitedOrReplayed));
+        };
+        let Some(request) = self.outstanding.remove(pos) else {
+            return Err(self.reject(ProbeReject::UnsolicitedOrReplayed));
+        };
+        if self.last_t4_ns.is_some_and(|last| t4_local_ns < last) {
+            return Err(self.reset_for(ProbeReject::LocalClockRegression));
+        }
+        // An expiry that passed before this response must mute before fresh timing can revive the member.
+        self.settle(t4_local_ns);
+        let sample = Sample::from_exchange(
+            request.t1_local_ns,
+            resp.t2_group_ns,
+            resp.t3_group_ns,
+            t4_local_ns,
+            &self.cfg,
+        )
+        .map_err(|reason| self.reject(reason))?;
+
+        // A sample that disagrees with the established fit by more than the fit and the sample can account for is
+        // a clock jump (a suspend, a step of the group clock), not noise.
+        if let Some(a) = self.anchor_at(t4_local_ns) {
+            let predicted = i128::from(group_at(&a, sample.local_mid_ns));
+            let diff = (i128::from(sample.group_mid_ns) - predicted).unsigned_abs();
+            let allowed = u128::from(uncertainty_at(
+                &self.cfg,
+                &a.sample,
+                sample.local_mid_ns,
+                a.ratio_unc_ppb,
+            )) + u128::from(sample.delay_ns.div_ceil(2))
+                + u128::from(self.cfg.prediction_slack_ns);
+            if diff > allowed {
+                return Err(self.reset_for(ProbeReject::Discontinuity));
+            }
+        }
+
+        if self.samples.len() >= self.cfg.window as usize {
+            self.samples.pop_front();
+        }
+        self.samples.push_back(sample);
+        self.accepted_in_epoch = self.accepted_in_epoch.saturating_add(1);
+        self.last_accept_ns = Some(t4_local_ns);
+        self.last_t4_ns = Some(t4_local_ns);
+        self.stats.accepted = self.stats.accepted.saturating_add(1);
+        self.feed_rate(&sample);
+
+        let status = self.status(t4_local_ns);
+        if status == ClockStatus::Locked {
+            self.lock_seen = true;
+        }
+        Ok(Accepted {
+            delay_ns: sample.delay_ns,
+            offset_ns: i64::try_from(sample.offset_ns()).unwrap_or(i64::MAX),
+            status,
+        })
+    }
+
+    /// Only good samples feed the frequency fit: a delayed exchange is mostly path asymmetry. A discontinuity the
+    /// rate estimator reports restarts the frequency fit alone, never the offset fit (an offset step is judged by the
+    /// prediction check above, which is what clears the clock).
+    fn feed_rate(&mut self, sample: &Sample) {
+        let best_delay = self
+            .samples
+            .iter()
+            .map(|s| s.delay_ns)
+            .min()
+            .unwrap_or(sample.delay_ns);
+        let local_us = sample.local_mid_ns / 1_000;
+        let advances = self.last_fed_us.is_none_or(|last| local_us > last);
+        if !advances || sample.delay_ns > best_delay.saturating_add(self.cfg.rate_delay_slack_ns) {
+            return;
+        }
+        let obs = Observation {
+            position: frame_position(sample.group_mid_ns),
+            local_us,
+        };
+        let reason = match self.rate.observe(obs) {
+            Ok(()) => {
+                self.last_fed_us = Some(local_us);
+                return;
+            }
+            Err(RateError::Discontinuity(why)) => ResetReason::Discontinuity(why),
+            Err(_) => ResetReason::Rejoin,
+        };
+        let next = self.rate.epoch().wrapping_add(1);
+        self.last_fed_us = None;
+        if self.rate.begin_epoch(next, reason).is_ok() {
+            self.stats.rate_restarts = self.stats.rate_restarts.saturating_add(1);
+            if self.rate.observe(obs).is_ok() {
+                self.last_fed_us = Some(local_us);
+            }
+        }
+    }
+
+    /// The ratio of group time to local time and its uncertainty: the rate estimator's if it has a usable (`Valid`)
+    /// estimate as of its newest observation, otherwise zero with the oscillator's worst-case bound. It does not
+    /// depend on the time asked about: only a new probe changes it, so holdover and start planning can be computed in
+    /// closed form.
+    fn ratio_state(&self) -> (i64, u64) {
+        match self.rate.estimate() {
+            Some(e) if e.status == EstimateStatus::Valid => (
+                e.correction_ppb,
+                e.uncertainty_ppb
+                    .saturating_mul(self.cfg.rate_sigma_multiple)
+                    .saturating_add(self.cfg.wander_ppb),
+            ),
+            _ => (0, self.cfg.oscillator_bound_ppb),
+        }
+    }
+
+    fn anchor_at(&self, now_local_ns: u64) -> Option<Anchor> {
+        let (ratio_ppb, ratio_unc_ppb) = self.ratio_state();
+        select_anchor(
+            &self.cfg,
+            self.samples.iter(),
+            now_local_ns,
+            ratio_ppb,
+            ratio_unc_ppb,
+        )
+    }
+
+    /// Where the clock stands at local time `now`.
+    #[must_use]
+    pub fn status(&self, now_local_ns: u64) -> ClockStatus {
+        if self.accepted_in_epoch < self.cfg.min_probes_for_lock {
+            return ClockStatus::Unlocked;
+        }
+        let Some(a) = self.anchor_at(now_local_ns) else {
+            return ClockStatus::Unlocked;
+        };
+        if a.uncertainty_ns > self.cfg.lock_uncertainty_ns {
+            return if self.lock_seen {
+                ClockStatus::Expired
+            } else {
+                ClockStatus::Unlocked
+            };
+        }
+        let age = now_local_ns.saturating_sub(self.last_accept_ns.unwrap_or(0));
+        if age <= self.cfg.fresh_ns {
+            return ClockStatus::Locked;
+        }
+        if !self.lock_seen {
+            return ClockStatus::Unlocked;
+        }
+        let h = holdover_for(&self.cfg, &a, self.authority_until, self.buffer_until);
+        if now_local_ns < h.until_local_ns {
+            ClockStatus::Holdover
+        } else {
+            ClockStatus::Expired
+        }
+    }
+
+    /// The transform in force at local time `now`: the anchor sample, ratio and uncertainty. `None` until a sample
+    /// exists. A reading says nothing about whether the member may sound: ask [`Self::status`].
+    #[must_use]
+    pub fn reading(&self, now_local_ns: u64) -> Option<Anchor> {
+        self.anchor_at(now_local_ns)
+    }
+
+    /// The group clock at local time `now`.
+    #[must_use]
+    pub fn group_ns(&self, now_local_ns: u64) -> Option<u64> {
+        self.anchor_at(now_local_ns)
+            .map(|a| group_at(&a, now_local_ns))
+    }
+
+    /// The local time at which the group clock reads `group_ns`, by the transform chosen at `now`.
+    #[must_use]
+    pub fn local_for_group(&self, group_ns: u64, now_local_ns: u64) -> Option<u64> {
+        self.anchor_at(now_local_ns).map(|a| local_of(&a, group_ns))
+    }
+
+    /// How long timing may go stale before the member must mute, and which bound sets it.
+    #[must_use]
+    pub fn holdover(&self, now_local_ns: u64) -> Option<Holdover> {
+        self.anchor_at(now_local_ns)
+            .map(|a| holdover_for(&self.cfg, &a, self.authority_until, self.buffer_until))
+    }
+
+    /// Whether a scheduled future start could be admitted now (a pure query).
+    pub fn plan_start(
+        &self,
+        sched: StartSchedule,
+        now_local_ns: u64,
+    ) -> Result<StartPlan, StartReject> {
+        let status = self.status(now_local_ns);
+        let Some(anchor) = self.anchor_at(now_local_ns) else {
+            return Err(StartReject::NotLocked);
+        };
+        let ctx = StartContext {
+            epoch: self.epoch,
+            status,
+            anchor: &anchor,
+            now_local_ns,
+            authority_until: self.authority_until,
+            buffer_until: self.buffer_until,
+        };
+        decide_start(&self.cfg, &ctx, sched)
+    }
+
+    /// Admit a scheduled start: the member stays muted, catching up, until the group clock reaches it. Refused with
+    /// the same reasons as [`Self::plan_start`], and then nothing changes.
+    pub fn admit(
+        &mut self,
+        sched: StartSchedule,
+        now_local_ns: u64,
+    ) -> Result<StartPlan, StartReject> {
+        self.settle(now_local_ns);
+        let plan = self.plan_start(sched, now_local_ns)?;
+        self.armed = Some(plan.start_group_ns);
+        Ok(plan)
+    }
+
+    /// Apply to the state what has become true by local time `now`: a stale clock, an expired authority or a reset
+    /// clears any admitted start, so sound returns only after a fresh lock and a fresh admission (muted catch-up).
+    fn settle(&mut self, now_local_ns: u64) -> ClockStatus {
+        let status = self.status(now_local_ns);
+        match status {
+            ClockStatus::Unlocked => self.armed = None,
+            ClockStatus::Expired => {
+                self.armed = None;
+                self.mute = MuteReason::ClockExpired;
+            }
+            ClockStatus::Locked | ClockStatus::Holdover => {
+                if self
+                    .authority_until
+                    .is_some_and(|expiry| now_local_ns >= expiry)
+                {
+                    self.armed = None;
+                    self.mute = MuteReason::AuthorityExpired;
+                } else if self.armed.is_none() {
+                    self.mute = MuteReason::NotAdmitted;
+                }
+            }
+        }
+        status
+    }
+
+    fn output_at(&self, status: ClockStatus, now_local_ns: u64) -> Output {
+        match status {
+            ClockStatus::Unlocked => Output::Muted(match self.mute {
+                MuteReason::Discontinuity | MuteReason::EpochChange | MuteReason::ClockFault => {
+                    self.mute
+                }
+                _ => MuteReason::NotLocked,
+            }),
+            ClockStatus::Expired => Output::Muted(MuteReason::ClockExpired),
+            ClockStatus::Locked | ClockStatus::Holdover => {
+                if self
+                    .authority_until
+                    .is_some_and(|expiry| now_local_ns >= expiry)
+                {
+                    return Output::Muted(MuteReason::AuthorityExpired);
+                }
+                let Some(start_group) = self.armed else {
+                    return Output::Muted(MuteReason::NotAdmitted);
+                };
+                let group_now = self.group_ns(now_local_ns).unwrap_or(0);
+                let target = start_group.saturating_sub(self.cfg.output_delay_ns);
+                if group_now < target {
+                    Output::Armed {
+                        starts_in_ns: target - group_now,
+                    }
+                } else {
+                    Output::Audible
+                }
+            }
+        }
+    }
+
+    /// Advance to local time `now` and say what the output may do. Sound needs a locked (or in-holdover) clock, a
+    /// valid authority and an admitted start that the group clock has reached. Everything else is muted.
+    pub fn tick(&mut self, now_local_ns: u64) -> Output {
+        let status = self.settle(now_local_ns);
+        self.output_at(status, now_local_ns)
+    }
+
+    /// What the output may do at local time `now`, with no side effects (unlike [`Self::tick`], it does not clear an
+    /// admitted start that has gone stale; the answer is the same).
+    #[must_use]
+    pub fn output(&self, now_local_ns: u64) -> Output {
+        self.output_at(self.status(now_local_ns), now_local_ns)
+    }
+
+    /// Whether the frequency fit currently has a usable estimate (otherwise the oscillator bound is in force).
+    #[must_use]
+    pub fn rate_in_force(&self) -> bool {
+        matches!(self.rate.estimate(), Some(e) if e.status == EstimateStatus::Valid)
+    }
+
+    /// A bounded diagnostic snapshot at local time `now`, with no side effects. Never a claim about the DAC.
+    #[must_use]
+    pub fn report(&self, now_local_ns: u64) -> ClockReport {
+        let status = self.status(now_local_ns);
+        let output = self.output_at(status, now_local_ns);
+        let anchor = self.anchor_at(now_local_ns);
+        let hold = anchor
+            .as_ref()
+            .map(|a| holdover_for(&self.cfg, a, self.authority_until, self.buffer_until));
+        ClockReport {
+            epoch: self.epoch,
+            leader: self.leader,
+            status: status.code(),
+            output: output.code(),
+            mute_reason: match output {
+                Output::Muted(reason) => Some(reason.code()),
+                _ => None,
+            },
+            claim: CLAIM,
+            samples: u32::try_from(self.samples.len()).unwrap_or(u32::MAX),
+            accepted: self.stats.accepted,
+            rejected_total: self.stats.rejected_total(),
+            uncertainty_ns: anchor.map(|a| a.uncertainty_ns),
+            ratio_ppb: anchor.map(|a| a.ratio_ppb),
+            ratio_unc_ppb: anchor.map(|a| a.ratio_unc_ppb),
+            holdover_until_local_ns: hold.map(|h| h.until_local_ns),
+            holdover_binding: hold.map(|h| h.binding.code()),
+            last_accept_age_ns: self.last_accept_ns.map(|t| now_local_ns.saturating_sub(t)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;
