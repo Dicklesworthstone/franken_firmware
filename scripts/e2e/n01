@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# N01 end-to-end entry point (bead ffw-ey5): authenticated stream framing, offline reference side.
+#
+#   scripts/e2e/n01            verify the committed golden vectors against the independent
+#                              reference and run the reference's own checks
+#   scripts/e2e/n01 --write    regenerate crates/franken-stream/tests/vectors/n01_wire_vectors.json
+#
+# Exit 0 only when every check passes; any failure exits non-zero.
+#
+# THIS SCRIPT DOES NOT RUN THE RUST IMPLEMENTATION. It proves the vectors are self-consistent and
+# match the contract-derived reference (stdlib hmac/struct, set-based replay model). The Rust crate
+# replays the same vectors, and exchanges real datagrams over loopback UDP, only under the
+# centralized builds:
+#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-stream
+# A green exit here is therefore not evidence about franken-stream.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+if [ "${1:-}" = "--write" ]; then
+  exec python3 -B -I "$ROOT/tests/n01/reference_frames.py" --write
+fi
+if [ "$#" -ne 0 ]; then
+  echo "usage: scripts/e2e/n01 [--write]" >&2
+  exit 2
+fi
+
+python3 -B -I "$ROOT/tests/n01/reference_frames.py" --check
+python3 -B -m unittest discover -s "$ROOT/tests/n01" -p 'test_*.py' -v
+echo "N01 reference side: PASS (Rust half not run here; see the note in this script)"
