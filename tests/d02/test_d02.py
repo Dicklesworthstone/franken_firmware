@@ -36,6 +36,7 @@ ref = _load("reference")
 gen = _load("generate")
 runner = _load("run_cases")
 rc = _load("realized_chain")
+model = _load("loop_history_model")
 
 
 # ---- constructed observations ----------------------------------------------------------------------
@@ -159,7 +160,7 @@ def cargo_log(doc: dict, drop_tests: tuple = (), drop_cases: tuple = (), perturb
         if perturb and case["id"] in perturb:
             obs = perturb[case["id"]](copy.deepcopy(obs))
         observed.append("D02-OBSERVED " + json.dumps(obs))
-    stems = ["franken_dsp", "d02_vectors", "protection_no_alloc"]
+    stems = ["franken_dsp", "d02_vectors", "protection_no_alloc", "d02_protection_history"]
 
     def header(stem: str) -> str:
         h = hashlib.sha256(stem.encode()).hexdigest()[:16]
@@ -554,6 +555,127 @@ def _load_d01() -> Any:
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+HISTORY_TESTS = (
+    "history_survives_a_reconnect_through_the_real_loop",
+    "history_survives_an_ingress_loss_discontinuity_epoch_through_the_real_loop",
+    "history_survives_a_stop_and_restart_through_the_real_loop",
+    "history_survives_a_profile_switch_through_the_real_loop",
+    "a_latched_fault_survives_recover_and_every_loop_call_until_it_is_cooled_and_cleared",
+    "a_loop_that_unlatched_the_board_at_recover_is_caught",
+)
+HISTORY_STEM = "d02_protection_history"
+
+
+class LoopHistoryJudge(Base):
+    """The speaker integration test is part of the D02 denominator: absent from the logs it is blocked."""
+
+    def test_the_six_loop_tests_are_required_and_judged(self) -> None:
+        required = sorted(n for s, n in runner.derive_rust_tests() if s == HISTORY_STEM)
+        self.assertEqual(required, sorted(HISTORY_TESTS))
+        passed = self.by(self.judge(cargo_log(self.doc)), "passed")
+        for name in HISTORY_TESTS:
+            self.assertIn(f"RUST:{HISTORY_STEM}::{name}", passed)
+
+    def test_without_their_log_they_are_blocked_never_passed(self) -> None:
+        results = self.judge(cargo_log(self.doc, drop_tests=HISTORY_TESTS))
+        self.assertEqual(sorted(self.by(results, "blocked")), sorted(f"RUST:{HISTORY_STEM}::{n}" for n in HISTORY_TESTS))
+        self.assertEqual(self.by(results, "failed"), [])
+        self.assertEqual(runner.exit_code(results), 3)
+
+    def test_a_failed_loop_test_fails_the_run(self) -> None:
+        name = HISTORY_TESTS[0]
+        text = cargo_log(self.doc)
+        self.assertIn(f"test {name} ... ok", text)
+        results = self.judge(text.replace(f"test {name} ... ok", f"test {name} ... FAILED"))
+        self.assertEqual(self.by(results, "failed"), [f"RUST:{HISTORY_STEM}::{name}"])
+        self.assertEqual(runner.exit_code(results), 1)
+
+
+class LoopHistorySource(unittest.TestCase):
+    """Guards on the Rust test's shape: the control and the plant are both run, and nothing was loosened. Heuristic
+    source checks, not a proof about the compiled test."""
+
+    def setUp(self) -> None:
+        with open(model.RUST, encoding="utf-8") as handle:
+            self.text = handle.read()
+
+    def test_every_event_test_runs_the_control_and_the_plant(self) -> None:
+        helper = re.search(r"fn assert_survives_and_the_plant_is_caught\(event: Event\) \{(.*?)\n\}\n", self.text, re.S)
+        self.assertIsNotNone(helper)
+        body = helper.group(1)
+        for needle in ("run_event(event, false)", "run_event(event, true)", "control.is_empty()", "!planted.is_empty()"):
+            self.assertIn(needle, body)
+        calls = re.findall(r"assert_survives_and_the_plant_is_caught\(Event::(\w+)\)", self.text)
+        self.assertEqual(sorted(calls), ["IngressLossEpoch", "ProfileSwitch", "Reconnect", "StopThenStart"])
+
+    def test_the_fault_case_runs_the_control_and_the_plant(self) -> None:
+        for needle in ("run_latch(false)", "run_latch(true)", "!planted.is_empty()", "control.is_empty()"):
+            self.assertIn(needle, self.text)
+
+    def test_nothing_is_allowed_ignored_or_loosened(self) -> None:
+        self.assertNotIn("#[allow", self.text)
+        self.assertNotIn("#[ignore", self.text)
+        self.assertEqual(self.text.count("*l.dsp_mut() ="), 1, "the one planted defect is the board replacement")
+        self.assertLessEqual(model.rust_constants()["slack"], 1e-2, "a loose slack would hide a partial loss")
+
+    def test_the_event_is_shown_to_have_happened_in_both_runs(self) -> None:
+        self.assertIn("began no resampler epoch", self.text)
+        self.assertIn("the switch never installed", self.text)
+
+
+class LoopHistoryModel(Base):
+    """The Rust test's numeric preconditions and its two laws, checked on a model of the chain (the Rust is not run)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.k = model.rust_constants()
+
+    def test_the_heater_builds_state_with_margin(self) -> None:
+        woofer, tweeter = model.heated(self.k["warm"], self.k["amplitude"], self.k["heat"])
+        self.assertGreater(woofer.level, 3 * 0.05, "the Rust test asserts a level above 0.05")
+        self.assertGreater(1 - woofer.gain, 10 * 0.01, "the Rust test asserts a gain below 0.99")
+        self.assertGreater(tweeter.level, 5 * self.k["thermal_floor"], "the quiet channel is also asked for history")
+        for ch in (woofer, tweeter):
+            self.assertIsNone(ch.hard_at, "the warming spec must never latch")
+            self.assertLess(ch.level, self.k["warm"][1], "and must never thermally scale")
+
+    def test_the_latching_spec_latches_and_cools_inside_the_rust_bounds(self) -> None:
+        tau, soft, hard = self.k["latching"]
+        frames = model.frames_to_latch(self.k["latching"], self.k["amplitude"], 40000)
+        self.assertIsNotNone(frames, "overdrive must reach the hard limit")
+        blocks = frames / 64.0
+        self.assertLess(blocks, 150 / 3.0, "the loop is ticked 150 * 4 times; a block takes 4 ticks: 3x headroom")
+        self.assertLess(model.cooling_blocks(hard, soft, tau), 200 / 10.0, "the cooling loop allows 200 blocks: 10x headroom")
+        self.assertGreater(hard, 0.15, "the Rust test asserts a level above 0.15 at the latch")
+
+    def test_the_laws_hold_for_every_event_and_a_rebuilt_board_breaks_them(self) -> None:
+        kw = dict(slack=self.k["slack"], thermal_floor=self.k["thermal_floor"], limiter_floor=self.k["limiter_floor"])
+        for event in model.EVENTS:
+            with self.subTest(event=event):
+                before, after, frames, tau = model.run_event(event, self.k["warm"], self.k["amplitude"], self.k["heat"])
+                self.assertEqual(model.law_violations(before, after, frames, tau, **kw), [], "the control passes")
+                rebuilt = [{"level": 0.0, "gain": 1.0} for _ in before]
+                planted = model.law_violations(before, rebuilt, frames, tau, **kw)
+                kinds = {("thermal" if "thermal" in p else "limiter") for p in planted}
+                self.assertEqual(kinds, {"thermal", "limiter"}, "a rebuilt board breaks both laws")
+
+    def test_a_partial_loss_is_caught_by_the_law_it_breaks(self) -> None:
+        before, after, frames, tau = model.run_event("reconnect", self.k["warm"], self.k["amplitude"], self.k["heat"])
+        half_thermal = [{"level": a["level"] * 0.5, "gain": a["gain"]} for a in after]
+        found = model.law_violations(before, half_thermal, frames, tau, slack=self.k["slack"])
+        self.assertTrue(found and all("thermal" in p for p in found), found)
+        limiter_only = [{"level": a["level"], "gain": 1.0} for a in after]
+        found = model.law_violations(before, limiter_only, frames, tau, slack=self.k["slack"])
+        self.assertTrue(found and all("limiter" in p for p in found), found)
+
+    def test_the_thermal_law_is_tight_to_the_time_constant(self) -> None:
+        # A law built on a time constant ten times too long would call the control a loss: the law is not so loose
+        # that any constant passes.
+        before, after, frames, tau = model.run_event("reconnect", self.k["warm"], self.k["amplitude"], self.k["heat"])
+        self.assertTrue(model.law_violations(before, after, frames, tau * 10.0, slack=self.k["slack"]))
+        self.assertEqual(model.law_violations(before, after, frames, tau, slack=self.k["slack"]), [])
 
 
 class AcceptanceMap(unittest.TestCase):

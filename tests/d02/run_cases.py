@@ -18,6 +18,11 @@ The central commands (RCH only):
 
     RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-dsp -- --nocapture
     RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-alloc-probe
+    RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-speaker --test d02_protection_history -- --nocapture
+
+The last one drives the real render loop (board-lifetime protection history through reconnect,
+discontinuity, stop and restart, profile switch and a latched thermal fault). Without its log those
+tests are ``blocked``.
 
 NUMERICAL TESTS DO NOT PROVE PHYSICAL PROTECTION. Calibration here is synthetic.
 """
@@ -62,6 +67,7 @@ d01.RUST_SOURCES = [
     ("crates/franken-dsp/src/protection/tests.rs", "franken_dsp", "protection::tests::"),
     ("crates/franken-dsp/tests/d02_vectors.rs", "d02_vectors", ""),
     ("crates/franken-alloc-probe/tests/protection_no_alloc.rs", "protection_no_alloc", ""),
+    ("crates/franken-speaker/tests/d02_protection_history.rs", "d02_protection_history", ""),
 ]
 Logs = d01.Logs
 Result = d01.Result

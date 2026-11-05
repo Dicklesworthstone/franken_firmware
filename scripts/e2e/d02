@@ -11,6 +11,7 @@
 # The Rust suites run only through the centralized RCH path; this script never invokes cargo:
 #   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-dsp -- --nocapture
 #   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-alloc-probe
+#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-speaker --test d02_protection_history -- --nocapture
 #
 # Exit 0 only when every case passed and none is blocked; 1 on a failed case; 3 when the only
 # non-passes are blocked cases (reported, never counted as passed); 2 on usage errors.
