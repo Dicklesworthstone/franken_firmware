@@ -9,6 +9,10 @@
 //! then field validation, then stream/epoch/sequence state, and only then is any state recorded.
 //! A packet that fails any earlier step changes nothing, so forged or mutated traffic can never
 //! consume a sequence number, move an epoch, or reach the jitter buffer.
+//!
+//! Endpoints are created either on the fixed baseline profile (`new`) or from a completed
+//! compatibility negotiation (`from_negotiated`, see [`Initiator`]), which keys them with a
+//! transcript-bound media key and limits them to the features both sides agreed to.
 
 #![forbid(unsafe_code)]
 
@@ -17,6 +21,13 @@ use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::collections::BTreeMap;
+
+mod negotiation;
+pub use negotiation::{
+    Capabilities, FEATURE_PARTIAL_FINAL_BLOCK, FEATURE_XOR_PARITY_FEC, FORMAT_PCM16_BE_STEREO_48K,
+    HELLO_DATAGRAM_BYTES, Initiator, KNOWN_FEATURES, KNOWN_FORMATS, NegotiatedSession,
+    NegotiationError, Selection, respond, select,
+};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -149,6 +160,8 @@ pub enum StreamError {
     NotMediaPacket,
     #[error("payload of {len} bytes is not valid stereo PCM for the jitter buffer")]
     PayloadFormatMismatch { len: usize },
+    #[error("feature {feature:#010x} was not negotiated for this session")]
+    FeatureNotNegotiated { feature: u32 },
 }
 
 impl StreamError {
@@ -183,6 +196,7 @@ impl StreamError {
             Self::ExpiredConsumeByDeadline { .. } => "EXPIRED_CONSUME_BY",
             Self::NotMediaPacket => "NOT_MEDIA_PACKET",
             Self::PayloadFormatMismatch { .. } => "PAYLOAD_FORMAT_MISMATCH",
+            Self::FeatureNotNegotiated { .. } => "FEATURE_NOT_NEGOTIATED",
         }
     }
 }
@@ -655,6 +669,62 @@ impl ReplayWindow {
     }
 }
 
+/// What a negotiation allows on top of the baseline wire format. Endpoints built with `new` run the
+/// baseline (every feature of this build); endpoints built with `from_negotiated` run exactly what
+/// both sides agreed, enforced on send and on receive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamProfile {
+    repair_allowed: bool,
+    partial_blocks_allowed: bool,
+}
+
+impl StreamProfile {
+    /// No negotiation: every feature this build implements is allowed.
+    pub const BASELINE: Self = Self {
+        repair_allowed: true,
+        partial_blocks_allowed: true,
+    };
+
+    #[must_use]
+    pub const fn from_selection(selection: &Selection) -> Self {
+        Self {
+            repair_allowed: selection.features & FEATURE_XOR_PARITY_FEC != 0,
+            partial_blocks_allowed: selection.features & FEATURE_PARTIAL_FINAL_BLOCK != 0,
+        }
+    }
+
+    fn check(&self, kind: PacketKind, payload_len: usize) -> Result<(), StreamError> {
+        if kind == PacketKind::Repair && !self.repair_allowed {
+            return Err(StreamError::FeatureNotNegotiated {
+                feature: FEATURE_XOR_PARITY_FEC,
+            });
+        }
+        if payload_len < MAX_PAYLOAD_BYTES && !self.partial_blocks_allowed {
+            return Err(StreamError::FeatureNotNegotiated {
+                feature: FEATURE_PARTIAL_FINAL_BLOCK,
+            });
+        }
+        Ok(())
+    }
+}
+
+/// A session this build cannot actually speak must not become a media endpoint: fail closed
+/// instead of sending or accepting frames in a version or format that was never implemented.
+fn ensure_implemented(session: &NegotiatedSession) -> Result<(), StreamError> {
+    let selection = session.selection();
+    if selection.wire_version != WIRE_VERSION {
+        return Err(StreamError::UnsupportedWireVersion {
+            version: selection.wire_version,
+        });
+    }
+    if selection.format != FORMAT_PCM16_BE_STEREO_48K {
+        return Err(StreamError::UnknownFormat {
+            format: selection.format,
+        });
+    }
+    Ok(())
+}
+
 /// Bounded per-reason counters. Every datagram fed to [`StreamReceiver::accept`] lands in exactly
 /// one of `accepted` or a `rejected_*` field, so `datagrams_seen` equals their sum.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -672,6 +742,8 @@ pub struct ReceiverCounters {
     pub rejected_future_epoch: u64,
     pub rejected_replay: u64,
     pub rejected_future_sequence: u64,
+    /// Authenticated and well-formed, but using a feature this session did not negotiate.
+    pub rejected_not_negotiated: u64,
 }
 
 impl ReceiverCounters {
@@ -699,6 +771,7 @@ impl ReceiverCounters {
             StreamError::FutureSessionEpoch { .. } => &mut self.rejected_future_epoch,
             StreamError::ReplayOrDuplicatePacket { .. } => &mut self.rejected_replay,
             StreamError::SequenceBeyondFutureWindow { .. } => &mut self.rejected_future_sequence,
+            StreamError::FeatureNotNegotiated { .. } => &mut self.rejected_not_negotiated,
             // Sender-side and jitter-buffer errors cannot come out of `accept`.
             _ => return,
         };
@@ -713,9 +786,11 @@ pub struct StreamReceiver {
     stream_id: StreamId,
     window: ReplayWindow,
     counters: ReceiverCounters,
+    profile: StreamProfile,
 }
 
 impl StreamReceiver {
+    /// A receiver on the baseline profile with an out-of-band key; no negotiation is involved.
     #[must_use]
     pub fn new(key: StreamKey, stream_id: StreamId, epoch: u64) -> Self {
         Self {
@@ -723,7 +798,22 @@ impl StreamReceiver {
             stream_id,
             window: ReplayWindow::new(epoch),
             counters: ReceiverCounters::default(),
+            profile: StreamProfile::BASELINE,
         }
+    }
+
+    /// A receiver for a completed negotiation: keyed by the transcript-bound media key, bound to
+    /// the negotiated stream and epoch, and limited to the negotiated features. Fails if this
+    /// build does not implement the negotiated wire version or format.
+    pub fn from_negotiated(session: &NegotiatedSession) -> Result<Self, StreamError> {
+        ensure_implemented(session)?;
+        Ok(Self {
+            key: session.media_key().clone(),
+            stream_id: session.stream_id(),
+            window: ReplayWindow::new(session.epoch()),
+            counters: ReceiverCounters::default(),
+            profile: StreamProfile::from_selection(session.selection()),
+        })
     }
 
     /// Bind to a restarted or rekeyed stream (announced over the control channel). Resets the
@@ -769,6 +859,7 @@ impl StreamReceiver {
         let payload_len = check_frame_structure(datagram)?;
         self.counters.mac_verifications = self.counters.mac_verifications.saturating_add(1);
         let packet = AuthenticatedStreamPacket::verify_and_parse(datagram, payload_len, &self.key)?;
+        self.profile.check(packet.kind, packet.payload.len())?;
         if packet.stream_id != self.stream_id {
             return Err(StreamError::WrongStream {
                 packet_stream: packet.stream_id.get(),
@@ -827,9 +918,11 @@ pub struct StreamSender {
     stream_id: StreamId,
     epoch: u64,
     next_seq: u64,
+    profile: StreamProfile,
 }
 
 impl StreamSender {
+    /// A sender on the baseline profile with an out-of-band key; no negotiation is involved.
     #[must_use]
     pub fn new(key: StreamKey, stream_id: StreamId, epoch: u64) -> Self {
         Self {
@@ -837,7 +930,21 @@ impl StreamSender {
             stream_id,
             epoch,
             next_seq: 0,
+            profile: StreamProfile::BASELINE,
         }
+    }
+
+    /// A sender for a completed negotiation; see [`StreamReceiver::from_negotiated`]. It refuses to
+    /// send any frame that uses a feature the session did not negotiate.
+    pub fn from_negotiated(session: &NegotiatedSession) -> Result<Self, StreamError> {
+        ensure_implemented(session)?;
+        Ok(Self {
+            key: session.media_key().clone(),
+            stream_id: session.stream_id(),
+            epoch: session.epoch(),
+            next_seq: 0,
+            profile: StreamProfile::from_selection(session.selection()),
+        })
     }
 
     #[must_use]
@@ -864,6 +971,7 @@ impl StreamSender {
     }
 
     pub fn send(&mut self, frame: OutboundFrame) -> Result<Vec<u8>, StreamError> {
+        self.profile.check(frame.kind, frame.payload.len())?;
         if self.next_seq == u64::MAX {
             return Err(StreamError::SequenceExhausted);
         }
@@ -1345,7 +1453,8 @@ mod tests {
                 + c.rejected_stale_epoch
                 + c.rejected_future_epoch
                 + c.rejected_replay
-                + c.rejected_future_sequence;
+                + c.rejected_future_sequence
+                + c.rejected_not_negotiated;
             assert_eq!(
                 c.datagrams_seen,
                 c.accepted + rejected,
@@ -2003,7 +2112,8 @@ mod tests {
             + c.rejected_stale_epoch
             + c.rejected_future_epoch
             + c.rejected_replay
-            + c.rejected_future_sequence;
+            + c.rejected_future_sequence
+            + c.rejected_not_negotiated;
         assert_eq!(c.datagrams_seen, fed);
         assert_eq!(c.datagrams_seen, c.accepted + rejected);
         assert_eq!(

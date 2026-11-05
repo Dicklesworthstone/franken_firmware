@@ -17,7 +17,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 if [ "${1:-}" = "--write" ]; then
-  exec python3 -B -I "$ROOT/tests/n01/reference_frames.py" --write
+  python3 -B -I "$ROOT/tests/n01/reference_frames.py" --write
+  exec python3 -B -I "$ROOT/tests/n01/reference_negotiation.py" --write
 fi
 if [ "$#" -ne 0 ]; then
   echo "usage: scripts/e2e/n01 [--write]" >&2
@@ -25,5 +26,6 @@ if [ "$#" -ne 0 ]; then
 fi
 
 python3 -B -I "$ROOT/tests/n01/reference_frames.py" --check
+python3 -B -I "$ROOT/tests/n01/reference_negotiation.py" --check
 python3 -B -m unittest discover -s "$ROOT/tests/n01" -p 'test_*.py' -v
 echo "N01 reference side: PASS (Rust half not run here; see the note in this script)"

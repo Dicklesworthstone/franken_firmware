@@ -24,6 +24,9 @@ SENDER_AND_JITTER_ONLY = {
     "EXPIRED_CONSUME_BY",
     "NOT_MEDIA_PACKET",
     "PAYLOAD_FORMAT_MISMATCH",
+    # Raised only by endpoints built from a negotiation, so no stand-alone frame vector can show it;
+    # the negotiation tests cover it (see reference_negotiation.py and n01.md section 9).
+    "FEATURE_NOT_NEGOTIATED",
 }
 
 

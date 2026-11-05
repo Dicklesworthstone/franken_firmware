@@ -1,0 +1,598 @@
+{
+ "schema": "ffw.n01.negotiation_vectors.v1",
+ "generator": "tests/n01/reference_negotiation.py",
+ "contract": "docs/contracts/n01.md",
+ "note": "Public synthetic test material: the key, identities and nonces are fixed test values, not secrets and not site data.",
+ "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+ "negotiations": [
+  {
+   "id": "N01-NG-001",
+   "name": "current_sender_with_old_firmware_receiver",
+   "sender_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "receiver_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 0
+   },
+   "sender_peer": 12249790986447749121,
+   "receiver_peer": 13474770085092524034,
+   "stream_id": 54324593195745281,
+   "epoch": 7,
+   "min_epoch": 0,
+   "offer_nonce_hex": "101112131415161718191a1b1c1d1e1f",
+   "answer_nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646574e01010001010104000000000000000003aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f00000000000000000000000000000000000000000000000000000000000000000000000000000000ec7b7e5109979d46a5ce0daa7f0252a9",
+   "answer_hex": "4646574e01020001010104000000000000000000bb0000000000000200c0ffee000000010000000000000007202122232425262728292a2b2c2d2e2f0101040000000000f5b5cc5d6dca49749f7d922a430a2028fe23962eced27ae49942e785888d1065bec5cc560dc7d73c8ee993d91133dcfb",
+   "selection": {
+    "wire_version": 1,
+    "format": 1,
+    "max_payload_bytes": 1024,
+    "features": 0
+   },
+   "transcript_hex": "078f9f0326da2500ff4f33e7b2a82b1832167cbc5341c73a528bbcc86b194eb6",
+   "session_key_hex": "0357eec3a010b352ade64482384bd6c0e525aea78d2a58ffc9eade63dce0994e"
+  },
+  {
+   "id": "N01-NG-002",
+   "name": "current_sender_with_current_receiver",
+   "sender_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "receiver_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "sender_peer": 12249790986447749121,
+   "receiver_peer": 13474770085092524034,
+   "stream_id": 54324593195745281,
+   "epoch": 7,
+   "min_epoch": 0,
+   "offer_nonce_hex": "101112131415161718191a1b1c1d1e1f",
+   "answer_nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646574e01010001010104000000000000000003aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f00000000000000000000000000000000000000000000000000000000000000000000000000000000ec7b7e5109979d46a5ce0daa7f0252a9",
+   "answer_hex": "4646574e01020001010104000000000000000003bb0000000000000200c0ffee000000010000000000000007202122232425262728292a2b2c2d2e2f0101040000000003f5b5cc5d6dca49749f7d922a430a2028fe23962eced27ae49942e785888d1065b4cc594c8fa20693a4e9f9cabab4061a",
+   "selection": {
+    "wire_version": 1,
+    "format": 1,
+    "max_payload_bytes": 1024,
+    "features": 3
+   },
+   "transcript_hex": "288a91b6bfd3ae6ae7a44d0c16f78af72c7e101a6b5914722fcfb911902a98c0",
+   "session_key_hex": "442d1dc56ed6932df340bf62fd43d6f11e0e8f49700c3897b6091859549fdafe"
+  },
+  {
+   "id": "N01-NG-003",
+   "name": "mandatory_feature_satisfied_by_receiver",
+   "sender_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 1,
+    "optional_features": 2
+   },
+   "receiver_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "sender_peer": 12249790986447749121,
+   "receiver_peer": 13474770085092524034,
+   "stream_id": 54324593195745281,
+   "epoch": 7,
+   "min_epoch": 0,
+   "offer_nonce_hex": "101112131415161718191a1b1c1d1e1f",
+   "answer_nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646574e01010001010104000000000100000002aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f00000000000000000000000000000000000000000000000000000000000000000000000000000000dc1173f937577e8b71cacb859140afe3",
+   "answer_hex": "4646574e01020001010104000000000000000003bb0000000000000200c0ffee000000010000000000000007202122232425262728292a2b2c2d2e2f01010400000000030bbb94aebb8370ab43d7a5a597a7a86deab26cedc9e3a3ba4bd1d33a63300efe1aa2b0dc29c8b0568f10535053760d89",
+   "selection": {
+    "wire_version": 1,
+    "format": 1,
+    "max_payload_bytes": 1024,
+    "features": 3
+   },
+   "transcript_hex": "e82d0df2d5c309a49c47f4a4adb4ad99534641142751638ac50ce96e53ec5a97",
+   "session_key_hex": "babe73598b7d0f9d65ee4bf443ca55f995082f48322a5b225ede69c128969845"
+  }
+ ],
+ "rejections": [
+  {
+   "id": "N01-NR-101",
+   "name": "offer_tampered_after_signing",
+   "op": "respond",
+   "expect": "HELLO_AUTH_FAILED",
+   "local_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "local_peer": 13474770085092524034,
+   "min_epoch": 0,
+   "nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646574e01010001010104000000000000000003aa0100000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f00000000000000000000000000000000000000000000000000000000000000000000000000000000ec7b7e5109979d46a5ce0daa7f0252a9"
+  },
+  {
+   "id": "N01-NR-102",
+   "name": "offer_one_byte_short",
+   "op": "respond",
+   "expect": "HELLO_LENGTH",
+   "local_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "local_peer": 13474770085092524034,
+   "min_epoch": 0,
+   "nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646574e01010001010104000000000000000003aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f00000000000000000000000000000000000000000000000000000000000000000000000000000000ec7b7e5109979d46a5ce0daa7f0252"
+  },
+  {
+   "id": "N01-NR-103",
+   "name": "offer_one_byte_long",
+   "op": "respond",
+   "expect": "HELLO_LENGTH",
+   "local_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "local_peer": 13474770085092524034,
+   "min_epoch": 0,
+   "nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646574e01010001010104000000000000000003aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f00000000000000000000000000000000000000000000000000000000000000000000000000000000ec7b7e5109979d46a5ce0daa7f0252a900"
+  },
+  {
+   "id": "N01-NR-104",
+   "name": "bad_magic",
+   "op": "respond",
+   "expect": "HELLO_BAD_MAGIC",
+   "local_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "local_peer": 13474770085092524034,
+   "min_epoch": 0,
+   "nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646575801010001010104000000000000000003aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f000000000000000000000000000000000000000000000000000000000000000000000000000000004c80b861e7535bda1321dfe191a709f9"
+  },
+  {
+   "id": "N01-NR-105",
+   "name": "hello_version_2_is_not_interpreted",
+   "op": "respond",
+   "expect": "HELLO_UNSUPPORTED_VERSION",
+   "local_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "local_peer": 13474770085092524034,
+   "min_epoch": 0,
+   "nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646574e02010001010104000000000000000003aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f000000000000000000000000000000000000000000000000000000000000000000000000000000007c2b8ecd96b6ee646f8f18c9184f06fa"
+  },
+  {
+   "id": "N01-NR-106",
+   "name": "answer_presented_as_offer",
+   "op": "respond",
+   "expect": "WRONG_HELLO_KIND",
+   "local_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "local_peer": 13474770085092524034,
+   "min_epoch": 0,
+   "nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646574e01020001010104000000000000000003bb0000000000000200c0ffee000000010000000000000007202122232425262728292a2b2c2d2e2f0101040000000003f5b5cc5d6dca49749f7d922a430a2028fe23962eced27ae49942e785888d1065b4cc594c8fa20693a4e9f9cabab4061a"
+  },
+  {
+   "id": "N01-NR-107",
+   "name": "offer_for_a_superseded_epoch",
+   "op": "respond",
+   "expect": "STALE_OFFER_EPOCH",
+   "local_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "local_peer": 13474770085092524034,
+   "min_epoch": 8,
+   "nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646574e01010001010104000000000000000003aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f00000000000000000000000000000000000000000000000000000000000000000000000000000000ec7b7e5109979d46a5ce0daa7f0252a9"
+  },
+  {
+   "id": "N01-NR-108",
+   "name": "unknown_message_kind",
+   "op": "respond",
+   "expect": "UNKNOWN_HELLO_KIND",
+   "local_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "local_peer": 13474770085092524034,
+   "min_epoch": 0,
+   "nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646574e01090001010104000000000000000003aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f0000000000000000000000000000000000000000000000000000000000000000000000000000000007caeff7820a3e6ac4bc4e4a100d8c6f"
+  },
+  {
+   "id": "N01-NR-109",
+   "name": "unknown_critical_flag",
+   "op": "respond",
+   "expect": "UNKNOWN_CRITICAL_HELLO_FLAGS",
+   "local_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "local_peer": 13474770085092524034,
+   "min_epoch": 0,
+   "nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646574e01011001010104000000000000000003aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f0000000000000000000000000000000000000000000000000000000000000000000000000000000082c65ce7924fa88ae0eb2797369383bb"
+  },
+  {
+   "id": "N01-NR-110",
+   "name": "malformed_capabilities",
+   "op": "respond",
+   "expect": "INVALID_CAPABILITIES",
+   "local_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "local_peer": 13474770085092524034,
+   "min_epoch": 0,
+   "nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646574e01010000010104000000000000000003aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f000000000000000000000000000000000000000000000000000000000000000000000000000000000871243cb4246d105a1b3f95d86a58ea"
+  },
+  {
+   "id": "N01-NR-111",
+   "name": "zero_peer_identity",
+   "op": "respond",
+   "expect": "INVALID_PEER_IDENTITY",
+   "local_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "local_peer": 13474770085092524034,
+   "min_epoch": 0,
+   "nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646574e01010001010104000000000000000003000000000000000000c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f00000000000000000000000000000000000000000000000000000000000000000000000000000000d72d1f115361f9a7b5124d986f89552a"
+  },
+  {
+   "id": "N01-NR-112",
+   "name": "zero_nonce_in_offer",
+   "op": "respond",
+   "expect": "INVALID_NONCE",
+   "local_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "local_peer": 13474770085092524034,
+   "min_epoch": 0,
+   "nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646574e01010001010104000000000000000003aa0000000000000100c0ffee00000001000000000000000700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000009a5915afdd95e29855b1419cb5422b66"
+  },
+  {
+   "id": "N01-NR-113",
+   "name": "offer_carrying_selection_content",
+   "op": "respond",
+   "expect": "MALFORMED_HELLO",
+   "local_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "local_peer": 13474770085092524034,
+   "min_epoch": 0,
+   "nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646574e01010001010104000000000000000003aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f010000000000000000000000000000000000000000000000000000000000000000000000000000009309834afaf2ad42e75bcc753a15d5f6"
+  },
+  {
+   "id": "N01-NR-114",
+   "name": "responder_reuses_the_senders_peer_identity",
+   "op": "respond",
+   "expect": "REFLECTED_HELLO",
+   "local_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "local_peer": 12249790986447749121,
+   "min_epoch": 0,
+   "nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646574e01010001010104000000000000000003aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f00000000000000000000000000000000000000000000000000000000000000000000000000000000ec7b7e5109979d46a5ce0daa7f0252a9"
+  },
+  {
+   "id": "N01-NR-115",
+   "name": "responder_reuses_the_offers_nonce",
+   "op": "respond",
+   "expect": "REFLECTED_HELLO",
+   "local_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "local_peer": 13474770085092524034,
+   "min_epoch": 0,
+   "nonce_hex": "101112131415161718191a1b1c1d1e1f",
+   "offer_hex": "4646574e01010001010104000000000000000003aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f00000000000000000000000000000000000000000000000000000000000000000000000000000000ec7b7e5109979d46a5ce0daa7f0252a9"
+  },
+  {
+   "id": "N01-NR-116",
+   "name": "responder_without_a_nonce",
+   "op": "respond",
+   "expect": "INVALID_NONCE",
+   "local_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "local_peer": 13474770085092524034,
+   "min_epoch": 0,
+   "nonce_hex": "00000000000000000000000000000000",
+   "offer_hex": "4646574e01010001010104000000000000000003aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f00000000000000000000000000000000000000000000000000000000000000000000000000000000ec7b7e5109979d46a5ce0daa7f0252a9"
+  },
+  {
+   "id": "N01-NR-117",
+   "name": "responder_claims_a_feature_this_build_lacks",
+   "op": "respond",
+   "expect": "INVALID_CAPABILITIES",
+   "local_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 1048579
+   },
+   "local_peer": 13474770085092524034,
+   "min_epoch": 0,
+   "nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646574e01010001010104000000000000000003aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f00000000000000000000000000000000000000000000000000000000000000000000000000000000ec7b7e5109979d46a5ce0daa7f0252a9"
+  },
+  {
+   "id": "N01-NR-118",
+   "name": "mandatory_feature_missing_on_the_receiver",
+   "op": "respond",
+   "expect": "MANDATORY_FEATURE_MISSING",
+   "local_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 0
+   },
+   "local_peer": 13474770085092524034,
+   "min_epoch": 0,
+   "nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646574e01010001010104000000000100000002aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f00000000000000000000000000000000000000000000000000000000000000000000000000000000dc1173f937577e8b71cacb859140afe3"
+  },
+  {
+   "id": "N01-NF-201",
+   "name": "answer_to_a_different_offer",
+   "op": "finish",
+   "expect": "OFFER_DIGEST_MISMATCH",
+   "sender_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "sender_peer": 12249790986447749121,
+   "stream_id": 54324593195745281,
+   "epoch": 7,
+   "offer_nonce_hex": "101112131415161718191a1b1c1d1e1f",
+   "answer_hex": "4646574e01020001010104000000000000000003bb0000000000000200c0ffee000000010000000000000007202122232425262728292a2b2c2d2e2f0101040000000003806dbd59fc5b18ac022952eda06c96ad8f955a1396d6b5c46e95d49bdef4b2b68070bcef096fd1fbcfc4288be62bcf57"
+  },
+  {
+   "id": "N01-NF-202",
+   "name": "answer_tampered_after_signing",
+   "op": "finish",
+   "expect": "HELLO_AUTH_FAILED",
+   "sender_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "sender_peer": 12249790986447749121,
+   "stream_id": 54324593195745281,
+   "epoch": 7,
+   "offer_nonce_hex": "101112131415161718191a1b1c1d1e1f",
+   "answer_hex": "4646574e01020001010104000000000000000003bb0000000000000200c0ffee000000010000000000000007202122232425262728292a2b2c2d2e2f0101040000000003f5b5cc5d6dca49749f7d922a430a2028fe23962eced27ae49942e785888d1065b4cc594c8fa20693a4e9f9cabab4061b"
+  },
+  {
+   "id": "N01-NF-203",
+   "name": "offer_fed_back_as_the_answer",
+   "op": "finish",
+   "expect": "WRONG_HELLO_KIND",
+   "sender_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "sender_peer": 12249790986447749121,
+   "stream_id": 54324593195745281,
+   "epoch": 7,
+   "offer_nonce_hex": "101112131415161718191a1b1c1d1e1f",
+   "answer_hex": "4646574e01010001010104000000000000000003aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f00000000000000000000000000000000000000000000000000000000000000000000000000000000ec7b7e5109979d46a5ce0daa7f0252a9"
+  },
+  {
+   "id": "N01-NF-204",
+   "name": "answer_for_another_stream",
+   "op": "finish",
+   "expect": "STREAM_MISMATCH",
+   "sender_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "sender_peer": 12249790986447749121,
+   "stream_id": 54324593195745281,
+   "epoch": 7,
+   "offer_nonce_hex": "101112131415161718191a1b1c1d1e1f",
+   "answer_hex": "4646574e01020001010104000000000000000003bb0000000000000200000000000000050000000000000007202122232425262728292a2b2c2d2e2f0101040000000003f5b5cc5d6dca49749f7d922a430a2028fe23962eced27ae49942e785888d10657b9bf594185ee4dbe44551a99bd50094"
+  },
+  {
+   "id": "N01-NF-205",
+   "name": "answer_for_another_epoch",
+   "op": "finish",
+   "expect": "EPOCH_MISMATCH",
+   "sender_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "sender_peer": 12249790986447749121,
+   "stream_id": 54324593195745281,
+   "epoch": 7,
+   "offer_nonce_hex": "101112131415161718191a1b1c1d1e1f",
+   "answer_hex": "4646574e01020001010104000000000000000003bb0000000000000200c0ffee000000010000000000000008202122232425262728292a2b2c2d2e2f0101040000000003f5b5cc5d6dca49749f7d922a430a2028fe23962eced27ae49942e785888d10652a9972d7791d49f9536feec6f02c4d19"
+  },
+  {
+   "id": "N01-NF-206",
+   "name": "answer_under_the_senders_peer_identity",
+   "op": "finish",
+   "expect": "REFLECTED_HELLO",
+   "sender_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "sender_peer": 12249790986447749121,
+   "stream_id": 54324593195745281,
+   "epoch": 7,
+   "offer_nonce_hex": "101112131415161718191a1b1c1d1e1f",
+   "answer_hex": "4646574e01020001010104000000000000000003aa0000000000000100c0ffee000000010000000000000007202122232425262728292a2b2c2d2e2f0101040000000003f5b5cc5d6dca49749f7d922a430a2028fe23962eced27ae49942e785888d1065dcd5b8b6b0fffd7a72c44f31261438bf"
+  },
+  {
+   "id": "N01-NF-207",
+   "name": "answer_strips_a_negotiated_feature",
+   "op": "finish",
+   "expect": "SELECTION_MISMATCH",
+   "sender_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "sender_peer": 12249790986447749121,
+   "stream_id": 54324593195745281,
+   "epoch": 7,
+   "offer_nonce_hex": "101112131415161718191a1b1c1d1e1f",
+   "answer_hex": "4646574e01020001010104000000000000000003bb0000000000000200c0ffee000000010000000000000007202122232425262728292a2b2c2d2e2f0101040000000002f5b5cc5d6dca49749f7d922a430a2028fe23962eced27ae49942e785888d1065c444f84ba78ca6eef79451aefe897f46"
+  },
+  {
+   "id": "N01-NF-208",
+   "name": "answer_with_a_malformed_selection",
+   "op": "finish",
+   "expect": "MALFORMED_HELLO",
+   "sender_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "sender_peer": 12249790986447749121,
+   "stream_id": 54324593195745281,
+   "epoch": 7,
+   "offer_nonce_hex": "101112131415161718191a1b1c1d1e1f",
+   "answer_hex": "4646574e01020001010104000000000000000003bb0000000000000200c0ffee000000010000000000000007202122232425262728292a2b2c2d2e2f0103040000000003f5b5cc5d6dca49749f7d922a430a2028fe23962eced27ae49942e785888d1065d591142dbbf39d120ebc4ec60a1a218a"
+  }
+ ]
+}
