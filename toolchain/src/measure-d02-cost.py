@@ -9,6 +9,9 @@ realization D02 had before commit 4e2c68c). Everything else is identical, so the
                                                          central build commands; nothing is built here
     measure-d02-cost.py run --elf-f64 P --elf-f32 P --log-dir D    boot each ELF as PID 1 under QEMU, then judge
     measure-d02-cost.py analyze --log-f64 L --log-f32 L --elf-f64 P --elf-f32 P    judge existing transcripts
+    measure-d02-cost.py compare --elf-before P --elf-after P --log-dir D    the saving ONE source change made, with the
+                                                         same section state in both builds: boot each, judge before - after
+    measure-d02-cost.py compare --elf-before P --elf-after P --log-before L --log-after L    judge existing transcripts
 
 WHAT THE NUMBERS ARE. Instructions executed under QEMU TCG with `-icount shift=0`, read from the guest's CP0 Count
 through a ruler that is calibrated in the guest against loops of known instruction count. They are NOT cycles on a
@@ -407,6 +410,51 @@ def judge(f64_text: str, f32_text: str, f64_elf: dict[str, Any] | None, f32_elf:
     return {"ok": not problems, "problems": problems, "rows": rows, "analyses": results}
 
 
+def judge_conversion(before_text: str, after_text: str, before_elf: dict[str, Any] | None,
+                     after_elf: dict[str, Any] | None) -> dict[str, Any]:
+    """The saving one source change made to a build whose Section state did not change: instructions per frame in the
+    `before` build minus the `after` build, per configuration and input. Both builds pass the same gates as `judge`.
+    They must measure the same section realization (otherwise the difference would include the section change),
+    must be different binaries (a build compared with itself has nothing to attribute), and must have measured the
+    same configurations. Each row carries the larger of the two builds' floor gaps as `noise_fraction`: a saving
+    that is not clearly larger than that is not a result."""
+    results: dict[str, dict[str, Any]] = {}
+    problems: list[str] = []
+    for label, text, elf in (("before", before_text, before_elf), ("after", after_text, after_elf)):
+        try:
+            analysis = analyze_one(label, parse_transcript(text), elf)
+        except MeasurementError as exc:
+            return {"ok": False, "problems": [str(exc)], "rows": {}, "analyses": results}
+        results[label] = analysis
+        problems += analysis["problems"]
+    before, after = results["before"], results["after"]
+    if before["variant"] != after["variant"]:
+        problems.append(f"the builds measured different section realizations (before {before['variant']}, after "
+                        f"{after['variant']}): the difference would include the section change, not one source change")
+    if before_elf is not None and after_elf is not None and before_elf["sha256"] == after_elf["sha256"]:
+        problems.append("the two ELFs are identical: there is no change to attribute a difference to")
+    if set(before["measurements"]) != set(after["measurements"]):
+        only = sorted(set(before["measurements"]) ^ set(after["measurements"]))
+        problems.append(f"the builds measured different configurations or inputs ({only}): rows would not pair up")
+    rows: dict[str, dict[str, Any]] = {}
+    if not problems:
+        for key, measured in sorted(before["measurements"].items()):
+            other = after["measurements"][key]
+            if measured.get("refused") or other.get("refused"):
+                rows[key] = {"refused_or_missing": True}
+                continue
+            a, b = measured["instructions_per_frame"]["min"], other["instructions_per_frame"]["min"]
+            channels, sections = measured["config"]["channels"], measured["config"]["sections"]
+            rows[key] = {"before_per_frame": a, "after_per_frame": b, "saving_per_frame": a - b,
+                         "saving_fraction": (a - b) / a, "channels": channels, "sections": sections,
+                         "saving_per_channel_per_frame": (a - b) / channels if channels else None,
+                         "noise_fraction": max(measured["floor_gap"], other["floor_gap"]),
+                         "before_minstr_per_second": a * SAMPLE_RATE_HZ / 1e6,
+                         "after_minstr_per_second": b * SAMPLE_RATE_HZ / 1e6,
+                         "saving_minstr_per_second": (a - b) * SAMPLE_RATE_HZ / 1e6}
+    return {"ok": not problems, "problems": problems, "rows": rows, "analyses": results}
+
+
 # ---- reporting -----------------------------------------------------------------------------------------------------
 
 HONEST_FOOTER = (
@@ -446,6 +494,51 @@ def render(report: dict[str, Any], revision: str | None) -> str:
                      f"{row['f32_per_frame']:16.1f} {row['delta_per_frame']:9.1f} {row['ratio']:6.3f} {per_section:>14s} "
                      f"{row['f64_minstr_per_second']:13.1f} {row['f32_minstr_per_second']:13.1f}")
     lines.append("")
+    lines.append(f"Minstr/s is instructions per frame x {SAMPLE_RATE_HZ} frames/s: what a core must retire per second "
+                 "to keep up, before cache or pipeline effects.")
+    lines.append("")
+    lines.append(HONEST_FOOTER)
+    return "\n".join(lines)
+
+
+def render_saving(report: dict[str, Any], revision_before: str | None, revision_after: str | None) -> str:
+    """The table for `judge_conversion`. A figure is printed only if every gate passed."""
+    lines: list[str] = []
+    for label in ("before", "after"):
+        analysis = report["analyses"].get(label)
+        if analysis:
+            ruler = analysis["ruler"]
+            lines.append(f"[{label}] section realization seen by the guest: {analysis['variant']}; ruler: "
+                         f"{ruler['instructions_per_tick']:.4f} instructions per Count tick "
+                         f"(shapes disagree by {ruler['shape_disagreement']:.4%}, before/after drift "
+                         f"{(ruler.get('phase_drift') or 0.0):.4%}, intercept {ruler['intercept']:.1f} ticks)")
+    if not report["ok"]:
+        lines.append("")
+        lines.append("NO HEADLINE NUMBER: a gate failed.")
+        lines += [f"  GATE FAILED: {p}" for p in report["problems"]]
+        lines.append("")
+        lines.append(HONEST_FOOTER)
+        return "\n".join(lines)
+    lines.append(f"before revision: {revision_before or 'unrecorded'}; after revision: {revision_after or 'unrecorded'}; "
+                 "frames per repetition and reps are in the transcripts")
+    lines.append("")
+    lines.append(f"{'config/input':16s} {'ch':>3s} {'sect':>4s} {'before instr/frame':>19s} {'after instr/frame':>18s} "
+                 f"{'saving':>9s} {'saving %':>9s} {'per channel':>12s} {'noise %':>8s} {'before Minstr/s':>16s} "
+                 f"{'after Minstr/s':>15s}")
+    for key, row in sorted(report["rows"].items()):
+        if row.get("refused_or_missing"):
+            lines.append(f"{key:16s}  refused by admission or missing from one transcript (reported, not hidden)")
+            continue
+        per_channel = f"{row['saving_per_channel_per_frame']:.1f}" if row["saving_per_channel_per_frame"] is not None else "-"
+        lines.append(f"{key:16s} {row['channels']:3d} {row['sections']:4d} {row['before_per_frame']:19.1f} "
+                     f"{row['after_per_frame']:18.1f} {row['saving_per_frame']:9.1f} {row['saving_fraction']:9.2%} "
+                     f"{per_channel:>12s} {row['noise_fraction']:8.3%} {row['before_minstr_per_second']:16.1f} "
+                     f"{row['after_minstr_per_second']:15.1f}")
+    lines.append("")
+    lines.append("saving = before - after, instructions per frame, with the SAME section state in both builds, so it is "
+                 "what the one source change between them removed.")
+    lines.append("noise % is the larger of the two builds' floor gaps (how closely their two lowest repetitions agreed); a "
+                 "saving that is not clearly larger than it is not a result.")
     lines.append(f"Minstr/s is instructions per frame x {SAMPLE_RATE_HZ} frames/s: what a core must retire per second "
                  "to keep up, before cache or pipeline effects.")
     lines.append("")
