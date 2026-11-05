@@ -7,6 +7,7 @@
 
 use crate::SpeakerReadinessState;
 use crate::clock_log::{ClockLog, ClockLogSummary};
+use crate::control_adapter::{VolumeDefect, VolumeDesk, VolumeReport, VolumeStep};
 use crate::playout_adapter::{
     CampaignTimeline, LinkFault, NodePlayout, Played, PlayoutMemberReport, PreviousEpoch, Publish,
     SendLink, Silence,
@@ -343,6 +344,8 @@ pub struct VirtualSpeakerNode {
     pub(crate) replaced_sender: Option<StreamSender>,
     /// Real blocks played per source epoch, identified from the bytes that sounded.
     pub(crate) source_blocks: BTreeMap<u64, u64>,
+    /// FNV-1a over every sample this node rendered, in block, channel and frame order (see [`fnv1a_extend_samples`]).
+    pub(crate) output_digest: u64,
     /// What negotiation produced for this member's stream: the agreement, or the refusal that left it
     /// without one.
     pub stream: StreamOutcome,
@@ -625,6 +628,12 @@ enum OutputFault {
     /// at a block position at or after the cutover: the receiver, rebound to the new stream, must refuse it. Needs a source
     /// change in the scenario.
     StaleStreamDatagram { member_id: &'static str, block: u64 },
+    /// A tailnet client retries a relative volume step as a new command (a new command number, the revision read again), so the
+    /// retry applies again where the contract says a retry of the same command applies once. Needs a volume plan in the scenario.
+    TailnetRetryAsNewCommand,
+    /// A tailnet client that composed a relative step against an older revision names the current one, so a step the contract says
+    /// is stale applies on top of another controller's change. Needs a volume plan in the scenario.
+    TailnetStaleRevisionRefreshed,
 }
 
 /// One line describing a planted fault, for the `fault` field of the diagnostic log.
@@ -665,6 +674,10 @@ fn describe_fault(fault: OutputFault) -> String {
         OutputFault::StaleStreamDatagram { member_id, block } => {
             format!("stale_stream_datagram member={member_id} block={block}")
         }
+        OutputFault::TailnetRetryAsNewCommand => "tailnet_retry_as_new_command".to_string(),
+        OutputFault::TailnetStaleRevisionRefreshed => {
+            "tailnet_stale_revision_refreshed".to_string()
+        }
     }
 }
 
@@ -691,11 +704,15 @@ struct SourceSwitch {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Scenario {
     source_switch: Option<SourceSwitch>,
+    /// Relative-volume steps driven through the real G03 endpoint and N02 channel (or, for a reference run, absolute sets applied
+    /// directly), each at the start of a render iteration. See `control_adapter`.
+    volume: Option<&'static [VolumeStep]>,
 }
 
 impl Scenario {
     const NONE: Self = Self {
         source_switch: None,
+        volume: None,
     };
 }
 
@@ -1193,6 +1210,7 @@ impl VirtualSpeakerNode {
             stream_key: link.media_key,
             replaced_sender: None,
             source_blocks: BTreeMap::new(),
+            output_digest: OUTPUT_DIGEST_START,
             stream: link.outcome,
             stream_refused_blocks: 0,
             playout,
@@ -1231,6 +1249,27 @@ const GATE_AFTER_SEND_NS: u64 = 1_000_000;
 const BRING_UP_EXCHANGE_SPACING_NS: u64 = 10_000_000;
 /// Bring-up considers the clock ready this long after its last exchange was sent.
 const BRING_UP_READY_AFTER_NS: u64 = 2_000_000;
+
+/// The digest of nothing: FNV-1a's offset basis. A node that rendered a block has moved off it.
+const OUTPUT_DIGEST_START: u64 = 0xcbf2_9ce4_8422_2325;
+
+/// The member the volume plan's endpoint is. It must be one that RENDERS the campaign's source: the source is `left = amp`,
+/// `right = -amp`, so the mono mix `0.5 * (l + r)` is exactly zero, and a member whose every channel comes from that mix (S12, S1,
+/// the sub) renders silence at any gain, which no sample digest can tell from another volume. S5 has channels fed from the left
+/// and the right.
+const VOLUME_ENDPOINT_MEMBER: &str = "spk-office-s5";
+
+/// Fold `samples` (as big-endian bytes) into the FNV-1a digest `h`. A dependency-free stand-in for "the same samples": two runs
+/// whose digests agree rendered the same samples, in the same order, and a different sample makes them differ.
+fn fnv1a_extend_samples(mut h: u64, samples: &[i16]) -> u64 {
+    for sample in samples {
+        for byte in sample.to_be_bytes() {
+            h ^= u64::from(byte);
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    h
+}
 
 /// FNV-1a over bytes: a stable, dependency-free hash for deriving simulated per-node values.
 fn fnv1a(bytes: &[u8]) -> u64 {
@@ -1472,6 +1511,9 @@ pub struct VirtualHouseReport {
     /// What the source arbiter did (`G01` §10).
     #[serde(default)]
     pub source: SourceReport,
+    /// What the relative-volume steps did through the real G03 endpoint (`None` for a campaign with no volume plan).
+    #[serde(default)]
+    pub volume: Option<VolumeReport>,
     pub members: BTreeMap<String, MemberSimulationStats>,
 }
 
@@ -1510,6 +1552,11 @@ pub struct MemberSimulationStats {
     /// program each block position actually carried.
     #[serde(default)]
     pub source_blocks: BTreeMap<u64, u64>,
+    /// FNV-1a over every sample this member rendered (every channel of every block, in order). Two campaigns that reach the same
+    /// audible state render the same samples and so have the same digest: that is how a race of relative-volume steps is held to
+    /// a reference that sets the same volumes directly.
+    #[serde(default)]
+    pub output_fnv1a64: u64,
 }
 
 /// Run a complete deterministic Virtual House simulation across 5 mixed-generation Sonos models
@@ -1727,6 +1774,39 @@ fn run_campaign_scenario(
     }
     let mut stale_publisher_from: Option<u64> = None;
 
+    // Relative volume goes through the real G03 endpoint over the same session (`control_adapter`). A planted volume fault needs a
+    // plan to act on.
+    let volume_defect = match fault {
+        Some(OutputFault::TailnetRetryAsNewCommand) => Some(VolumeDefect::FreshIdOnRetry),
+        Some(OutputFault::TailnetStaleRevisionRefreshed) => {
+            Some(VolumeDefect::StaleRevisionRefreshed)
+        }
+        _ => None,
+    };
+    if volume_defect.is_some() && scenario.volume.is_none() {
+        return Err("a planted volume fault needs a volume plan in the scenario".to_string());
+    }
+    let mut volume_desk = match scenario.volume {
+        Some(plan) => Some(VolumeDesk::start(
+            &session,
+            VOLUME_ENDPOINT_MEMBER,
+            plan,
+            total_blocks,
+            CAMPAIGN_ORIGIN_NS,
+            volume_defect,
+        )?),
+        None => None,
+    };
+    if volume_defect.is_some() {
+        sink.emit_critical(fault_injected_event(
+            seed,
+            0,
+            CAMPAIGN_ORIGIN_NS,
+            &session,
+            fault,
+        ));
+    }
+
     // Each member's stream came out of its own negotiation, so each has its own sender; a sender owns
     // stream identity, epoch and sequence, and sequence 0 is the first block. A member whose
     // negotiation was refused has none and is on record as muted with N01's diagnostic.
@@ -1788,6 +1868,15 @@ fn run_campaign_scenario(
                     fault,
                 ));
             }
+        }
+        // Volume steps of this block run before anything reads the session's gain, after any source change, so a step and a
+        // source change at the same block meet in that order.
+        if let Some(volume) = volume_desk.as_mut() {
+            volume.run_block(
+                blk_idx,
+                CAMPAIGN_ORIGIN_NS + block_offset_ns(blk_idx),
+                &mut session,
+            )?;
         }
         let frame_for = |blk: u64| frame_of(&timeline, blk, desk.program.owner_at(blk).epoch.get());
         let stale_frame = |blk: u64| {
@@ -2054,6 +2143,10 @@ fn run_campaign_scenario(
                     .map_err(|e| format!("member {member_id} channel {channel}: {e}"))?;
                 node.handoff_checked_samples += live.len() as u64;
             }
+            for samples in &hw_out.channel_samples {
+                node.output_digest =
+                    fnv1a_extend_samples(node.output_digest, &samples[..hw_out.frames]);
+            }
 
             let lease = node.hal.submit_dma_block().map_err(|e| e.to_string())?;
             lease.complete();
@@ -2136,6 +2229,12 @@ fn run_campaign_scenario(
             .finish(total_blocks)
             .map_err(|e| format!("member {id}: {e}"))?;
     }
+
+    // The volume plan is judged here, before the skeleton SOAP call and the fencing probe below change the group volume.
+    let volume_report = match volume_desk.as_mut() {
+        Some(volume) => Some(volume.finish(&session)?),
+        None => None,
+    };
 
     // Exercise fsonos SOAP group volume update
     match handle_fsonos_soap(
@@ -2225,6 +2324,7 @@ fn run_campaign_scenario(
                 clock_log: node.clock_log.summary(&node.clock),
                 playout: node.playout.report(),
                 source_blocks: node.source_blocks.clone(),
+                output_fnv1a64: node.output_digest,
             },
         );
     }
@@ -2247,6 +2347,7 @@ fn run_campaign_scenario(
         dropped_log_events: sink.dropped_event_count(),
         evidence_complete: sink.is_evidence_complete(),
         source: desk.report,
+        volume: volume_report,
         members: member_stats,
     })
 }
@@ -3736,6 +3837,7 @@ mod tests {
     fn scenario_at(r: u64, first: Racer) -> Scenario {
         Scenario {
             source_switch: Some(SourceSwitch { block: r, first }),
+            ..Scenario::NONE
         }
     }
 
@@ -4553,5 +4655,234 @@ mod tests {
             initiator.finish(&answer).err(),
             Some(NegotiationError::HelloAuthenticationFailed)
         );
+    }
+
+    // ---- Q01 slice 4: relative volume retried through the real G03 endpoint, around a source change ------------------------------
+    //
+    // The expected numbers come from `predict_volume.py`, which restates the contract's rules (g03.md 3.1 and 9.1, n02.md) and is not
+    // derived from the Rust. The campaign runs the real `Endpoint`, `ControlChannel` and `PeerDirectory` (`control_adapter`) over the
+    // campaign's own session, with the AirPlay sender replacing Spotify at block 100 (cutover at block 193).
+
+    use crate::control_adapter::plans;
+
+    const VOLUME_SWITCH_AT: u64 = 100;
+
+    /// The digest of `blocks` blocks of silence on `channels` channels: what a member renders when nothing reaches its output.
+    fn silent_digest(blocks: u64, channels: u8) -> u64 {
+        let silence = [0i16; FRAMES_PER_BLOCK];
+        let mut digest = OUTPUT_DIGEST_START;
+        for _ in 0..blocks * u64::from(channels) {
+            digest = fnv1a_extend_samples(digest, &silence);
+        }
+        digest
+    }
+
+    #[test]
+    fn the_digest_of_silence_is_the_value_computed_independently() {
+        // FNV-1a over N zero bytes is `basis * prime^N mod 2^64` (every step xors 0, then multiplies by the prime). For 400 blocks of
+        // 2 channels of 256 frames of 2 bytes, N is 409_600, and Python's `pow` gives this number without any of the Rust.
+        assert_eq!(silent_digest(400, 2), 5_755_000_421_370_241_829);
+    }
+
+    #[test]
+    fn a_member_whose_channels_all_come_from_the_mono_mix_renders_silence_and_the_endpoint_member_does_not()
+     {
+        // The campaign's source is `left = amp`, `right = -amp`, so the mono mix is exactly zero. S12 routes both its channels from
+        // that mix, so it renders only zeros whatever its volume: the first central run of the sensitivity test below found its digest
+        // to be exactly `silent_digest(400, 2)`. The volume plan's endpoint must therefore be a member that renders the signal.
+        let report = run_scenario(SEED, FAULT_BLOCKS, None, Scenario::NONE).expect("campaign");
+        let silent = &report.members["spk-kitchen-s12"];
+        assert_eq!(
+            silent.output_fnv1a64,
+            silent_digest(FAULT_BLOCKS, silent.hardware_channels)
+        );
+        let endpoint = &report.members[VOLUME_ENDPOINT_MEMBER];
+        assert_ne!(
+            endpoint.output_fnv1a64,
+            silent_digest(FAULT_BLOCKS, endpoint.hardware_channels),
+            "the endpoint member renders silence: its digest cannot see its volume"
+        );
+    }
+
+    fn volume_scenario(plan: &'static [VolumeStep]) -> Scenario {
+        Scenario {
+            volume: Some(plan),
+            ..scenario_at(VOLUME_SWITCH_AT, Racer::AirPlay)
+        }
+    }
+
+    #[test]
+    fn the_volume_race_around_a_source_change_does_what_the_contract_predicts() {
+        let race = run_scenario(SEED, FAULT_BLOCKS, None, volume_scenario(plans::RACE))
+            .expect("the race campaign: every response and every state matched the contract");
+        let volume = race.volume.clone().expect("the volume plan ran");
+        // 14 deliveries over 8 steps. Legacy: 4 applications (a plain-SOAP retry is a new command). Tailnet: 4 applications, one per
+        // command number, and 5 answers from the ledger, one of them the remembered refusal of the stale step.
+        assert_eq!(volume.steps_run, 8);
+        assert_eq!(volume.sends, 14);
+        assert_eq!(volume.legacy_applied, 4);
+        assert_eq!(volume.tailnet_applied, 4);
+        assert_eq!(volume.ledger_replays, 5);
+        assert_eq!(volume.stale_refused, 1);
+        assert_eq!(volume.direct_sets, 0);
+        assert_eq!(volume.faults, BTreeMap::from([("501".to_string(), 2)]));
+        assert_eq!(
+            (volume.start_member_volume, volume.start_group_volume),
+            (50, 50)
+        );
+        assert_eq!(
+            (volume.end_member_volume, volume.end_group_volume),
+            (30, 30)
+        );
+        // Eight applied commands, not fourteen deliveries and not twelve unrefused ones.
+        assert_eq!(volume.end_revision, volume.start_revision + 8);
+        // The source change happened as it does in the same campaign with no volume step at all: the same program, the same
+        // blocks from each source, and the fencing probe (which runs after the plan) saw what it always sees.
+        let quiet = run_scenario(
+            SEED,
+            FAULT_BLOCKS,
+            None,
+            scenario_at(VOLUME_SWITCH_AT, Racer::AirPlay),
+        )
+        .expect("the campaign with the same source change and no volume step");
+        assert!(quiet.volume.is_none());
+        assert_eq!(race.source, quiet.source);
+        assert_eq!(
+            race.source.cutover_block,
+            Some(cutover_for(VOLUME_SWITCH_AT))
+        );
+        assert_eq!(race.fencing, quiet.fencing);
+        for (id, stats) in &race.members {
+            assert_eq!(stats.source_blocks, quiet.members[id].source_blocks, "{id}");
+        }
+    }
+
+    #[test]
+    fn the_volume_race_sounds_exactly_like_a_reference_that_sets_the_same_volumes_directly() {
+        let race = run_scenario(SEED, FAULT_BLOCKS, None, volume_scenario(plans::RACE))
+            .expect("the race campaign");
+        let reference = run_scenario(SEED, FAULT_BLOCKS, None, volume_scenario(plans::REFERENCE))
+            .expect("the reference campaign");
+        let direct = reference.volume.clone().expect("the reference plan ran");
+        assert_eq!((direct.direct_sets, direct.sends), (7, 0));
+        assert_eq!(direct.end_revision, direct.start_revision + 7);
+        assert_eq!(race.source, reference.source);
+        // The endpoint member must render something, or equal digests would prove nothing about its volume.
+        let endpoint = &race.members[VOLUME_ENDPOINT_MEMBER];
+        assert_ne!(
+            endpoint.output_fnv1a64,
+            silent_digest(FAULT_BLOCKS, endpoint.hardware_channels),
+            "the endpoint member renders silence"
+        );
+        for (id, stats) in &race.members {
+            assert_ne!(
+                stats.output_fnv1a64, OUTPUT_DIGEST_START,
+                "{id} rendered nothing"
+            );
+            assert_eq!(
+                stats.output_fnv1a64, reference.members[id].output_fnv1a64,
+                "{id} does not sound like the reference"
+            );
+            assert_eq!(
+                stats.audible_blocks, reference.members[id].audible_blocks,
+                "{id}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reference_that_reaches_a_different_volume_sounds_different_in_that_member_only() {
+        // The negative control for the comparison above: a reference that disagrees with the race at one volume for 15 blocks must
+        // not have the same digest, so "the same digest" means something. Every other member renders the same samples in both.
+        let race = run_scenario(SEED, FAULT_BLOCKS, None, volume_scenario(plans::RACE))
+            .expect("the race campaign");
+        let wrong = run_scenario(
+            SEED,
+            FAULT_BLOCKS,
+            None,
+            volume_scenario(plans::WRONG_REFERENCE),
+        )
+        .expect("the wrong reference campaign");
+        for (id, stats) in &race.members {
+            if id.as_str() == VOLUME_ENDPOINT_MEMBER {
+                assert_ne!(
+                    stats.output_fnv1a64, wrong.members[id].output_fnv1a64,
+                    "the digest cannot tell two volume trajectories apart, so agreeing with the reference proves nothing"
+                );
+            } else {
+                assert_eq!(
+                    stats.output_fnv1a64, wrong.members[id].output_fnv1a64,
+                    "{id}"
+                );
+            }
+        }
+    }
+
+    /// The control (the same plan with no plant) must pass; then the plant must fail the campaign with a message that names it.
+    fn assert_a_volume_plant_is_named(fault: OutputFault, expected_prefix: &str) {
+        run_scenario(SEED, FAULT_BLOCKS, None, volume_scenario(plans::RACE))
+            .expect("the control: the same plan without the plant passes");
+        let error = run_scenario(
+            SEED,
+            FAULT_BLOCKS,
+            Some(fault),
+            volume_scenario(plans::RACE),
+        )
+        .expect_err("the plant must be caught");
+        assert!(error.starts_with(expected_prefix), "{error}");
+    }
+
+    #[test]
+    fn a_tailnet_retry_sent_as_a_new_command_fails_the_campaign_by_name() {
+        // Step 0 is a tailnet +10 sent twice: the retry applies again (70, not 60) when it is sent as a new command.
+        assert_a_volume_plant_is_named(
+            OutputFault::TailnetRetryAsNewCommand,
+            "volume_response_mismatch: step 0 send 1:",
+        );
+    }
+
+    #[test]
+    fn a_stale_tailnet_revision_a_client_refreshes_fails_the_campaign_by_name() {
+        // Step 2 names the revision before step 1; the contract refuses it. A client that names the current one is applied instead.
+        assert_a_volume_plant_is_named(
+            OutputFault::TailnetStaleRevisionRefreshed,
+            "volume_response_mismatch: step 2 send 0:",
+        );
+    }
+
+    #[test]
+    fn a_planted_volume_fault_needs_a_volume_plan() {
+        for fault in [
+            OutputFault::TailnetRetryAsNewCommand,
+            OutputFault::TailnetStaleRevisionRefreshed,
+        ] {
+            let error = run_scenario(SEED, FAULT_BLOCKS, Some(fault), Scenario::NONE)
+                .expect_err("a plant with nothing to act on is refused");
+            assert_eq!(
+                error,
+                "a planted volume fault needs a volume plan in the scenario"
+            );
+        }
+    }
+
+    #[test]
+    fn a_campaign_with_no_volume_plan_reports_none_and_sounds_the_same_every_time() {
+        let first = run_scenario(SEED, 200, None, Scenario::NONE).expect("campaign");
+        let second = run_scenario(SEED, 200, None, Scenario::NONE).expect("campaign");
+        assert!(first.volume.is_none());
+        let mut digests = std::collections::BTreeSet::new();
+        for (id, stats) in &first.members {
+            assert_ne!(
+                stats.output_fnv1a64, OUTPUT_DIGEST_START,
+                "{id} rendered nothing"
+            );
+            assert_eq!(
+                stats.output_fnv1a64, second.members[id].output_fnv1a64,
+                "{id}"
+            );
+            digests.insert(stats.output_fnv1a64);
+        }
+        // Five different boards render different samples: the digest is not one constant.
+        assert!(digests.len() > 1);
     }
 }

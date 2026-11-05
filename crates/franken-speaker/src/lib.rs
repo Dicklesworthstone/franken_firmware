@@ -30,6 +30,9 @@ pub mod render_log;
 mod clock_log;
 
 #[cfg(any(test, feature = "harness"))]
+mod control_adapter;
+
+#[cfg(any(test, feature = "harness"))]
 mod harness;
 
 #[cfg(any(test, feature = "harness"))]
@@ -43,6 +46,9 @@ pub use harness::{
 
 #[cfg(any(test, feature = "harness"))]
 pub use clock_log::ClockLogSummary;
+
+#[cfg(any(test, feature = "harness"))]
+pub use control_adapter::VolumeReport;
 
 #[cfg(any(test, feature = "harness"))]
 pub use playout_adapter::PlayoutMemberReport;
