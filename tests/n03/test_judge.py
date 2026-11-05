@@ -6,9 +6,12 @@ They say nothing about the Rust, which has not been run.
     python3 -B -I -m unittest discover -s tests/n03 -p 'test_judge.py'
 """
 import copy
+import hashlib
 import importlib.util
 import json
 import os
+import re
+import shutil
 import sys
 import tempfile
 import unittest
@@ -174,7 +177,8 @@ class JudgeSelfTest(unittest.TestCase):
     def test_no_log_blocks_every_rust_backed_case_and_passes_none(self):
         """N03-JUDGE-BLOCKED"""
         results, _ = rc.run("full", None)
-        rust = [r for r in results if not r.case_id.startswith("N03-META")]
+        # N03-TARGET-RECEIPT is judged from committed evidence, not from a cargo log: it is not Rust-backed (it has its own tests)
+        rust = [r for r in results if not r.case_id.startswith("N03-META") and r.case_id != "N03-TARGET-RECEIPT"]
         self.assertTrue(rust)
         self.assertTrue(all(r.status == "blocked" for r in rust))
         self.assertEqual(rc.exit_code(results), 3 if not any(r.status == "failed" for r in results) else 1)
@@ -385,6 +389,183 @@ class ReferenceSelfTest(unittest.TestCase):
     def test_the_vectors_are_fresh(self):
         with open(os.path.join(HERE, "vectors.json"), encoding="utf-8") as fh:
             self.assertEqual(fh.read(), gen.render(gen.build()))
+
+
+class TargetReceiptTest(unittest.TestCase):
+    """N03-TARGET-RECEIPT: the committed big-endian MIPS guest run is re-judged from its stored transcripts. Each test works on
+    a temporary copy of the committed receipt directory and never touches the repository's."""
+
+    @classmethod
+    def setUpClass(cls):
+        roots = [os.path.join(rc.TARGET_RECEIPT_ROOT, n) for n in sorted(os.listdir(rc.TARGET_RECEIPT_ROOT))
+                 if os.path.isfile(os.path.join(rc.TARGET_RECEIPT_ROOT, n, "n03-target-receipt.json"))]
+        assert roots, "no committed N03 target receipt to test against"
+        cls.source = roots[0]
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = self._tmp.name
+        self.dir = os.path.join(self.root, os.path.basename(self.source))
+        shutil.copytree(self.source, self.dir)
+        self.receipt_path = os.path.join(self.dir, "n03-target-receipt.json")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def receipt(self):
+        with open(self.receipt_path, encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def save(self, doc):
+        with open(self.receipt_path, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh, indent=2, sort_keys=True)
+
+    def restore(self):
+        shutil.copy(os.path.join(self.source, "n03-target-receipt.json"), self.receipt_path)
+
+    def result(self):
+        return rc.target_receipt_result(VEC, root=self.root)
+
+    def entry(self, doc, rid):
+        return next(e for e in doc["runs"] if e["id"] == rid)
+
+    def test_the_committed_receipt_passes_and_the_runner_reports_it(self):
+        """N03-JUDGE-TARGET-GOOD: the real receipt re-judges to what it recorded, in the runner and standalone."""
+        got = self.result()
+        self.assertEqual(got.status, "passed", got.detail)
+        results, _ = rc.run("smoke", None)
+        by = {r.case_id: r for r in results}
+        self.assertEqual(by["N03-TARGET-RECEIPT"].status, "passed", by["N03-TARGET-RECEIPT"].detail)
+
+    def test_no_receipt_is_blocked_not_passed(self):
+        """N03-JUDGE-TARGET-NONE: nothing recorded is a blocked case."""
+        with tempfile.TemporaryDirectory() as empty:
+            got = rc.target_receipt_result(VEC, root=empty)
+        self.assertEqual(got.status, "blocked")
+        self.assertIn("has not been recorded", got.detail)
+
+    def test_a_changed_transcript_fails_by_hash(self):
+        """N03-JUDGE-TARGET-TAMPER: one byte of a stored transcript no longer matches the receipt."""
+        path = os.path.join(self.dir, "normal-1.serial.bin")
+        with open(path, "rb") as fh:
+            raw = bytearray(fh.read())
+        raw[len(raw) // 2] ^= 1
+        with open(path, "wb") as fh:
+            fh.write(raw)
+        got = self.result()
+        self.assertEqual(got.status, "failed")
+        self.assertIn("normal-1: the transcript does not match its recorded sha256", got.detail)
+
+    def test_a_changed_record_with_a_rewritten_hash_fails_by_the_judge(self):
+        """N03-JUDGE-TARGET-REHASH: the receipt is edited to agree with a damaged transcript; the re-judge still disagrees with
+        the verdicts it recorded (the hash check alone would not catch this)."""
+        path = os.path.join(self.dir, "normal-2.serial.bin")
+        with open(path, "rb") as fh:
+            raw = fh.read()
+        at = raw.index(b'"status":"Locked"')
+        damaged = raw[:at] + b'"status":"Holdover"' + raw[at + len(b'"status":"Locked"'):]
+        with open(path, "wb") as fh:
+            fh.write(damaged)
+        doc = self.receipt()
+        self.entry(doc, "normal-2")["transcript_sha256"] = hashlib.sha256(damaged).hexdigest()
+        self.entry(doc, "normal-2")["transcript_bytes"] = len(damaged)
+        self.save(doc)
+        got = self.result()
+        self.assertEqual(got.status, "failed")
+        self.assertIn("normal-2: gate N03T-WORLDS is 'failed' now and was recorded as 'passed'", got.detail)
+
+    def test_a_plant_recorded_as_passing_is_caught(self):
+        """N03-JUDGE-TARGET-PLANT: a receipt that says the replay passed is contradicted by the transcript."""
+        doc = self.receipt()
+        e = self.entry(doc, "plant-replay")
+        e["gates"]["N03T-SEEDED"] = "passed"
+        e["judge_exit_code"] = 0
+        e["first_finding"] = None
+        self.save(doc)
+        got = self.result()
+        self.assertEqual(got.status, "failed")
+        self.assertIn("plant-replay: gate N03T-SEEDED is 'failed' now and was recorded as 'passed'", got.detail)
+
+    def test_a_changed_first_finding_alone_is_caught(self):
+        """N03-JUDGE-TARGET-FINDING: only the recorded first finding is edited; every gate and exit code still agree."""
+        doc = self.receipt()
+        self.entry(doc, "plant-truncate")["first_finding"] = "N03T-TRANSCRIPT: something else"
+        self.save(doc)
+        got = self.result()
+        self.assertEqual(got.status, "failed")
+        self.assertIn("plant-truncate: first finding is", got.detail)
+
+    def test_a_recorded_exit_code_that_disagrees_with_the_gates_alone_is_caught(self):
+        """N03-JUDGE-TARGET-EXIT: only the recorded exit code of a real run is edited."""
+        doc = self.receipt()
+        self.entry(doc, "normal-1")["judge_exit_code"] = 1
+        self.save(doc)
+        got = self.result()
+        self.assertEqual(got.status, "failed")
+        self.assertIn("normal-1: recorded exit 1 disagrees with the re-judged gates all passed", got.detail)
+
+    def test_a_receipt_without_both_planted_negatives_is_not_evidence(self):
+        """N03-JUDGE-TARGET-NEEDS-PLANTS: drop each plant in turn; a run set that never shows the judge failing proves nothing."""
+        for dropped in ("plant-replay", "plant-truncate"):
+            with self.subTest(dropped=dropped):
+                doc = self.receipt()
+                doc["runs"] = [e for e in doc["runs"] if e["id"] != dropped]
+                self.save(doc)
+                got = self.result()
+                self.assertEqual(got.status, "failed", got.detail)
+                self.assertIn("does not hold both planted negatives failing", got.detail)
+                self.restore()
+
+    def test_a_receipt_with_no_real_run_is_not_evidence(self):
+        """N03-JUDGE-TARGET-NEEDS-A-REAL-RUN: only the plants, nothing that passes."""
+        doc = self.receipt()
+        doc["runs"] = [e for e in doc["runs"] if e["id"].startswith("plant-")]
+        self.save(doc)
+        got = self.result()
+        self.assertEqual(got.status, "failed")
+        self.assertIn("no real run that passes every re-derivable gate", got.detail)
+
+    def test_the_recorded_elf_must_be_proven_soft_float(self):
+        """N03-JUDGE-TARGET-ELF: an ELF with FPU opcodes, or without the soft marker, is not the device target."""
+        for field, value in (("fpu_opcode_words", 3), ("mips_fp_abi", 1)):
+            with self.subTest(field=field):
+                doc = self.receipt()
+                doc["elf"][field] = value
+                self.save(doc)
+                got = self.result()
+                self.assertEqual(got.status, "failed", got.detail)
+                self.assertIn("not proven soft-float", got.detail)
+                self.restore()
+
+    def test_the_host_records_are_bound_to_the_receipt(self):
+        """N03-JUDGE-TARGET-HOST: edited host digests no longer match their recorded hash, and so cannot make a different
+        transcript look byte-identical."""
+        path = os.path.join(self.dir, "host-records.bin")
+        with open(path, "rb") as fh:
+            raw = fh.read()
+        with open(path, "wb") as fh:
+            fh.write(raw.replace(b'"steps":', b'"stepz":', 1))
+        got = self.result()
+        self.assertEqual(got.status, "failed")
+        self.assertIn("host-records.bin does not match its recorded sha256", got.detail)
+
+    def test_a_receipt_cannot_point_outside_its_own_directory(self):
+        """N03-JUDGE-TARGET-PATHS: a transcript name with a path in it is treated as missing."""
+        doc = self.receipt()
+        self.entry(doc, "normal-1")["transcript"] = "../" + os.path.basename(self.dir) + "/normal-1.serial.bin"
+        self.save(doc)
+        got = self.result()
+        self.assertEqual(got.status, "failed")
+        self.assertIn("normal-1: transcript", got.detail)
+        self.assertIn("is missing", got.detail)
+
+    def test_the_stale_not_measured_record_is_replaced_by_an_honest_one(self):
+        """N03-JUDGE-CPU: cycles on a real core stay not measured; the QEMU instruction counts are named as what was recorded
+        instead, never as cycles."""
+        self.assertEqual(rc.NOT_MEASURED[1]["status"], "not measured: needs hardware")
+        self.assertIn("executed instructions, not cycles", rc.NOT_MEASURED[1]["recorded_instead"])
+        self.assertIn("N03-TARGET-RECEIPT", rc.NOT_MEASURED[1]["recorded_instead"])
+        self.assertEqual(rc.NOT_MEASURED[0]["status"], "not measured: needs hardware")
 
 
 if __name__ == "__main__":

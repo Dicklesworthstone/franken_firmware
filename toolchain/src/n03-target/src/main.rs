@@ -41,7 +41,7 @@ use serde_json::Value;
 const WARM_EXCHANGES: usize = 100;
 /// Exchanges per timed repetition, and repetitions.
 const EXCHANGES_PER_REP: usize = 100;
-const GATE_CALLS_PER_REP: usize = 2_000;
+const GATE_CALLS_PER_REP: usize = 400;
 const REPS: usize = 5;
 const SETTLE: Duration = Duration::from_millis(2000);
 /// Ruler repetitions per phase. Each phase is run before and after the measurements.

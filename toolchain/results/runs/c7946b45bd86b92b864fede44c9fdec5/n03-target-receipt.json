@@ -1,0 +1,363 @@
+{
+  "bead": "ffw-u07",
+  "claims": [
+    "N03's GroupClock, built for soft-float big-endian MIPS32r2 (mips-unknown-linux-musl) and run as PID 1, decides exactly as the independent Python reference does on all 30 scripted worlds of tests/n03/vectors.json (1,839 records) and byte-for-byte as the host build of the same source file does.",
+    "Two seeded simulated worlds, whose LCG seeds derive from a per-run seed the host packs into the initramfs, match the reference's figures: a replayed or canned transcript cannot carry them.",
+    "Guest instructions for a steady stream of exchanges (next_probe + on_response) and for the per-block gate path (tick, local_for_group, output), read from the CP0 Count through a ruler calibrated in the same boot."
+  ],
+  "commands": {
+    "boot_and_judge_with_replay_plant": "FFW_BUILD_DIR=<kernel cache> python3 toolchain/src/measure-n03-target.py run --elf <elf> --log-dir <fresh dir> --host-log <host log> --revision e77f24d287776a5c958871b506e14af2553e0a75 --plant replay",
+    "boot_and_judge_with_truncate_plant": "FFW_BUILD_DIR=<kernel cache> python3 toolchain/src/measure-n03-target.py run --elf <elf> --log-dir <fresh dir> --host-log <host log> --revision e77f24d287776a5c958871b506e14af2553e0a75 --plant truncate",
+    "judge_a_stored_transcript": "python3 toolchain/src/measure-n03-target.py analyze --elf <elf> --host-log host-records.bin --log <transcript>.bin --seed <seed>",
+    "note": "The seeds are in each run entry. The ELF is not committed (its sha256 is above): rebuild it from the recorded sources, or supply the same bytes. The plant-replay transcript is judged under its own seed; plant-truncate under run 2's."
+  },
+  "date_utc": "2026-11-05",
+  "elf": {
+    "build_command": "cd <snapshot> && RCH_CANONICAL_PROJECT_ROOT=<snapshot> RCH_REQUIRE_REMOTE=1 RCH_WORKER=<worker> CARGO_TARGET_DIR=<snapshot>/build/n03-target-target rch exec --worker <worker> -- cargo +nightly build --offline --release --manifest-path toolchain/src/n03-target/Cargo.toml --target mips-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort --config 'target.mips-unknown-linux-musl.linker=\"<snapshot>/toolchain/linker/zig-cc-mips-be\"' --config 'target.mips-unknown-linux-musl.rustflags=[\"-C\",\"target-feature=+crt-static\",\"-C\",\"link-self-contained=no\"]' -j 2",
+    "build_result": "Finished `release` profile, exit 0 (supervisor lane)",
+    "build_warnings": [
+      "assembler: used $at without .set noat (also present in the D03 guest build; the ruler's shape-agreement gate would fail if it had added an instruction to a calibration loop)",
+      "linker: library directory not found (expected with link-self-contained=no)"
+    ],
+    "built_from": {
+      "guest_crate": "toolchain/src/n03-target (Cargo.toml, src/main.rs, src/cases.rs)",
+      "repository_head": "e77f24d287776a5c958871b506e14af2553e0a75",
+      "sha256": {
+        "Cargo.toml": "af6ba6d2d8cbdda6980f7991840f72b979fc8cce35aaae8ca312179645d5a005",
+        "src/cases.rs": "d784271164a94a951a4fd6cfda4f29c74a7b7ca751ac0e786615857de41c89c7",
+        "src/main.rs": "5db139a35683c6af52b92b1015d317175da7fbe4b177f4b2e8cb3d3a23ab9d2f"
+      }
+    },
+    "bytes": 1368716,
+    "class": "ELF32 big-endian MIPS",
+    "e_flags": "0x70001005",
+    "executable_words_scanned": 117129,
+    "fpu_opcode_words": 0,
+    "mips_fp_abi": 3,
+    "name": "ffw-n03-target",
+    "sha256": "bf1957e2e0d982881669db934dffc0f62f6e3c591cd755cf398911be5007d7f6",
+    "snapshot": "git archive of the repository head above plus the guest crate; the snapshot's Cargo.lock is the repository's",
+    "toolchain": "nightly with rust-src; `rustc -vV` was not captured for this build"
+  },
+  "evidence_class": "host simulation: QEMU TCG with -icount, a 24Kf MIPS model. Not hardware.",
+  "host_digests": {
+    "log_not_committed": "the full log carries worker names and local paths; only its 30 N03-TARGET-HOST records are kept",
+    "log_sha256": "c1ed611718e46cf007c6a667c556257619b76551824e525723b57a94662753e5",
+    "records_file": "host-records.bin",
+    "records_sha256": "a7a0876bec90c80eeac0576a4312bc13dfa67e97fe6e4147fff0bdd8f2428493",
+    "source": "cargo test -p franken-clock --test n03_target_worlds -- --nocapture (6 tests), central run on the revision above, exit 0"
+  },
+  "judge": {
+    "d03_judge_sha256_for_the_ruler_and_boot": "410870a2b994de530244eaef2ccd65bebef98a384c890d61557e8a4c247e82d8",
+    "mkinitramfs_sha256": "7988c0c3a893e16dfef015cc318e9c4a2f5926ecc5d8fbf80d3b6b5bca47a5eb",
+    "mutation_checks": "21 of 21 deliberate breakages of a judge check are caught by the named test (scratch-copy sweep)",
+    "reference": "tests/n03/reference.py through tests/n03/run_cases.py judge_world (re-derives the expectation at judge time)",
+    "script": "toolchain/src/measure-n03-target.py",
+    "script_sha256": "290af3ef2b6765ff06ccc32c803caa647b085685b68ebadf3d1978099fedbf42",
+    "self_test": "toolchain/tests/test_measure_n03_target.py",
+    "self_test_sha256": "be886cba6e4f17290ef524e53f55448947dab39e096aa33f02cc412ac695b02e",
+    "thresholds": {
+      "region_inside_ruler_range_instructions": [
+        3900000,
+        60000000
+      ],
+      "ruler_before_after_drift": 0.005,
+      "ruler_shape_agreement": 0.005,
+      "two_lowest_reps_within": 0.01
+    }
+  },
+  "not_covered": [
+    "Cycles on a real core: QEMU icount counts executed instructions only; no cache, pipeline, memory-latency or multiplier timing.",
+    "A board clock: the repository records none for any MIPS board, so no percentage of a CPU is claimed.",
+    "DAC, acoustic or analog alignment: the clock is a network-clock fit only (every report says so).",
+    "Real network delay, a real timer resolution, suspend and resume: every world is scripted or simulated.",
+    "PowerPC boards (hard-float, a different ISA): no run.",
+    "N03 is not closed by this receipt; ffw-u07 has other open clauses and the independent verifier closes it."
+  ],
+  "qemu": {
+    "command": "qemu-system-mips -M malta -cpu 24Kf -m 64M -nographic -no-reboot -icount shift=0,align=off,sleep=off -kernel <kernel> -initrd <initramfs> -append \"console=ttyS0,38400 rdinit=/init panic=-1 loglevel=3\"",
+    "initramfs": "toolchain/src/mkinitramfs.py: the ELF as /init plus the per-run seed as /ffw_seed (plant-replay also /plant-replay and /replay)",
+    "kernel": "vmlinux-4.19.0-21-4kc-malta (Debian)",
+    "kernel_sha256": "3803357ef7821dbf691c901105fb9b2b00382abf67fce8a4be2a0d592267dc61",
+    "version": "QEMU emulator version 11.1.2"
+  },
+  "runs": [
+    {
+      "cpu_instructions_per_operation": {
+        "exchange": {
+          "max": 155662.8,
+          "median": 155384.4,
+          "min": 155057.4,
+          "operations_per_repetition": 100
+        },
+        "gate": {
+          "max": 56972.3,
+          "median": 56955.5,
+          "min": 56933.9,
+          "operations_per_repetition": 400
+        }
+      },
+      "cpu_minstr_per_second_of_audio": 11.584,
+      "first_finding": null,
+      "gates": {
+        "N03T-CPU": "passed",
+        "N03T-ELF": "passed",
+        "N03T-HOST-BYTES": "passed",
+        "N03T-SEEDED": "passed",
+        "N03T-TRANSCRIPT": "passed",
+        "N03T-WORLDS": "passed"
+      },
+      "id": "normal-1",
+      "judge_exit_code": 0,
+      "judge_output": [
+        "ruler: 5.8868 instructions per Count tick (shapes disagree by 0.0028%, before/after drift 0.0121%, intercept -340.0 ticks)",
+        "PASSED   N03T-TRANSCRIPT  complete: ALIVE, BEGIN, END",
+        "PASSED   N03T-ELF         32-bit big-endian MIPS, 117129 executable words, no FPU opcodes",
+        "PASSED   N03T-CPU         ruler gates held; every region has a stable floor",
+        "PASSED   N03T-WORLDS      all 30 worlds equal the independent reference, record by record",
+        "PASSED   N03T-SEEDED      the seeded worlds carry this run's seed and match the reference's figures",
+        "PASSED   N03T-HOST-BYTES  every one of the 30 worlds is byte-identical to the host build",
+        "",
+        "build revision: e77f24d287776a5c958871b506e14af2553e0a75",
+        "",
+        "region       instr/op min     median        max",
+        "exchange         155057.4   155384.4   155662.8",
+        "gate              56933.9    56955.5    56972.3",
+        "",
+        "about 11.58 Minstr/s of one member's clock work (one gate call per 256-frame block and one exchange per 32 blocks), before cache or pipeline effects.",
+        "",
+        "These are INSTRUCTIONS EXECUTED under QEMU TCG (-icount shift=0) on QEMU's 24Kf model, read through a ruler",
+        "calibrated in the guest, not cycles on a real core: no cache, pipeline, memory latency or multiplier timing is",
+        "modelled, and no board clock is involved. The world records are the clock's decisions on the target ISA, judged against",
+        "the independent reference; the clock is a network-clock fit only and says nothing about the real DAC or acoustic path."
+      ],
+      "kind": "real boot",
+      "ruler": {
+        "before_after_drift": 0.000121,
+        "instructions_per_tick": 5.8868,
+        "intercept_ticks": -340.0,
+        "shape_disagreement": 2.8e-05
+      },
+      "seed": 3317816542148013125,
+      "seeded_worlds": {
+        "seed-0": {
+          "checks": 265,
+          "locked": true,
+          "lost": 35,
+          "match_reference": true,
+          "max_err": 133869,
+          "max_unc": 259612,
+          "min_margin": 102159,
+          "probes": 300,
+          "resets": 0,
+          "seed32": 1763172332,
+          "violations": 0
+        },
+        "seed-1": {
+          "checks": 475,
+          "locked": true,
+          "lost": 125,
+          "match_reference": true,
+          "max_err": 511500,
+          "max_unc": 1131766,
+          "min_margin": 202084,
+          "probes": 600,
+          "resets": 0,
+          "seed32": 577327891,
+          "violations": 0
+        }
+      },
+      "transcript": "normal-1.serial.bin",
+      "transcript_bytes": 384211,
+      "transcript_lines": 1931,
+      "transcript_sha256": "ae04da7b4f175f489b998accfb76a0bed9480267af82e5d31e17a0d833affb05",
+      "worlds": {
+        "compared_with_host": 30,
+        "count": 30
+      }
+    },
+    {
+      "cpu_instructions_per_operation": {
+        "exchange": {
+          "max": 155590.4,
+          "median": 155391.6,
+          "min": 155070.6,
+          "operations_per_repetition": 100
+        },
+        "gate": {
+          "max": 56988.8,
+          "median": 56976.4,
+          "min": 56957.4,
+          "operations_per_repetition": 400
+        }
+      },
+      "cpu_minstr_per_second_of_audio": 11.588,
+      "first_finding": "N03T-SEEDED: seeded world 0: the guest used run seed 3317816542148013125 / LCG seed 1763172332, this run's seed derives 2289910933517311761 / 1997896231: the records were not computed from this run's seed",
+      "gates": {
+        "N03T-CPU": "passed",
+        "N03T-ELF": "passed",
+        "N03T-HOST-BYTES": "passed",
+        "N03T-SEEDED": "failed",
+        "N03T-TRANSCRIPT": "passed",
+        "N03T-WORLDS": "passed"
+      },
+      "id": "plant-replay",
+      "judge_exit_code": 1,
+      "judge_output": [
+        "ruler: 5.8575 instructions per Count tick (shapes disagree by 0.0160%, before/after drift 0.0100%, intercept -1890.3 ticks)",
+        "PASSED   N03T-TRANSCRIPT  complete: ALIVE, BEGIN, END",
+        "PASSED   N03T-ELF         32-bit big-endian MIPS, 117129 executable words, no FPU opcodes",
+        "PASSED   N03T-CPU         ruler gates held; every region has a stable floor",
+        "PASSED   N03T-WORLDS      all 30 worlds equal the independent reference, record by record",
+        "FAILED   N03T-SEEDED      seeded world 0: the guest used run seed 3317816542148013125 / LCG seed 1763172332, this run's seed derives 2289910933517311761 / 1997896231: the records were not computed from this run's seed; seeded world 1: the guest used run seed 3317816542148013125 / LCG seed 577327891, this run's seed derives 2289910933517311761 / 1253590036: the records were not computed from this run's seed",
+        "PASSED   N03T-HOST-BYTES  every one of the 30 worlds is byte-identical to the host build",
+        "",
+        "build revision: e77f24d287776a5c958871b506e14af2553e0a75",
+        "",
+        "region       instr/op min     median        max",
+        "exchange         155070.6   155391.6   155590.4",
+        "gate              56957.4    56976.4    56988.8",
+        "",
+        "about 11.59 Minstr/s of one member's clock work (one gate call per 256-frame block and one exchange per 32 blocks), before cache or pipeline effects.",
+        "",
+        "These are INSTRUCTIONS EXECUTED under QEMU TCG (-icount shift=0) on QEMU's 24Kf model, read through a ruler",
+        "calibrated in the guest, not cycles on a real core: no cache, pipeline, memory latency or multiplier timing is",
+        "modelled, and no board clock is involved. The world records are the clock's decisions on the target ISA, judged against",
+        "the independent reference; the clock is a network-clock fit only and says nothing about the real DAC or acoustic path."
+      ],
+      "kind": "planted: the same ELF replays run 1's world and seeded-world lines under another seed",
+      "ruler": {
+        "before_after_drift": 0.0001,
+        "instructions_per_tick": 5.8575,
+        "intercept_ticks": -1890.3,
+        "shape_disagreement": 0.00016
+      },
+      "seed": 2289910933517311761,
+      "transcript": "plant-replay.serial.bin",
+      "transcript_bytes": 384211,
+      "transcript_lines": 1931,
+      "transcript_sha256": "ac9f03130e5dfeaa80d8599bafe1567a7cdb45fe6a10b45f54e63604cc0bb856",
+      "worlds": {
+        "compared_with_host": 30,
+        "count": 30
+      }
+    },
+    {
+      "cpu_instructions_per_operation": {
+        "exchange": {
+          "max": 155429.6,
+          "median": 155404.0,
+          "min": 155192.5,
+          "operations_per_repetition": 100
+        },
+        "gate": {
+          "max": 56998.0,
+          "median": 56952.9,
+          "min": 56944.3,
+          "operations_per_repetition": 400
+        }
+      },
+      "cpu_minstr_per_second_of_audio": 11.586,
+      "first_finding": null,
+      "gates": {
+        "N03T-CPU": "passed",
+        "N03T-ELF": "passed",
+        "N03T-HOST-BYTES": "passed",
+        "N03T-SEEDED": "passed",
+        "N03T-TRANSCRIPT": "passed",
+        "N03T-WORLDS": "passed"
+      },
+      "id": "normal-2",
+      "judge_exit_code": 0,
+      "judge_output": [
+        "ruler: 5.8692 instructions per Count tick (shapes disagree by 0.0280%, before/after drift 0.0097%, intercept -708.7 ticks)",
+        "PASSED   N03T-TRANSCRIPT  complete: ALIVE, BEGIN, END",
+        "PASSED   N03T-ELF         32-bit big-endian MIPS, 117129 executable words, no FPU opcodes",
+        "PASSED   N03T-CPU         ruler gates held; every region has a stable floor",
+        "PASSED   N03T-WORLDS      all 30 worlds equal the independent reference, record by record",
+        "PASSED   N03T-SEEDED      the seeded worlds carry this run's seed and match the reference's figures",
+        "PASSED   N03T-HOST-BYTES  every one of the 30 worlds is byte-identical to the host build",
+        "",
+        "build revision: e77f24d287776a5c958871b506e14af2553e0a75",
+        "",
+        "region       instr/op min     median        max",
+        "exchange         155192.5   155404.0   155429.6",
+        "gate              56944.3    56952.9    56998.0",
+        "",
+        "about 11.59 Minstr/s of one member's clock work (one gate call per 256-frame block and one exchange per 32 blocks), before cache or pipeline effects.",
+        "",
+        "These are INSTRUCTIONS EXECUTED under QEMU TCG (-icount shift=0) on QEMU's 24Kf model, read through a ruler",
+        "calibrated in the guest, not cycles on a real core: no cache, pipeline, memory latency or multiplier timing is",
+        "modelled, and no board clock is involved. The world records are the clock's decisions on the target ISA, judged against",
+        "the independent reference; the clock is a network-clock fit only and says nothing about the real DAC or acoustic path."
+      ],
+      "kind": "real boot",
+      "ruler": {
+        "before_after_drift": 9.7e-05,
+        "instructions_per_tick": 5.8692,
+        "intercept_ticks": -708.7,
+        "shape_disagreement": 0.00028
+      },
+      "seed": 3749899199296292945,
+      "seeded_worlds": {
+        "seed-0": {
+          "checks": 271,
+          "locked": true,
+          "lost": 29,
+          "match_reference": true,
+          "max_err": 107160,
+          "max_unc": 294182,
+          "min_margin": 102864,
+          "probes": 300,
+          "resets": 0,
+          "seed32": 4163929397,
+          "violations": 0
+        },
+        "seed-1": {
+          "checks": 458,
+          "locked": true,
+          "lost": 142,
+          "match_reference": true,
+          "max_err": 514500,
+          "max_unc": 1025769,
+          "min_margin": 201200,
+          "probes": 600,
+          "resets": 0,
+          "seed32": 3013967452,
+          "violations": 0
+        }
+      },
+      "transcript": "normal-2.serial.bin",
+      "transcript_bytes": 384212,
+      "transcript_lines": 1931,
+      "transcript_sha256": "89eff6736552d779f1447deb32d9ba581afafdce45fc776a4c9435c50f799ca4",
+      "worlds": {
+        "compared_with_host": 30,
+        "count": 30
+      }
+    },
+    {
+      "first_finding": "N03T-TRANSCRIPT: transcript is incomplete (BEGIN True, END False)",
+      "gates": {
+        "N03T-TRANSCRIPT": "failed"
+      },
+      "id": "plant-truncate",
+      "judge_exit_code": 1,
+      "judge_output": [
+        "FAILED   N03T-TRANSCRIPT  transcript is incomplete (BEGIN True, END False)",
+        "",
+        "These are INSTRUCTIONS EXECUTED under QEMU TCG (-icount shift=0) on QEMU's 24Kf model, read through a ruler",
+        "calibrated in the guest, not cycles on a real core: no cache, pipeline, memory latency or multiplier timing is",
+        "modelled, and no board clock is involved. The world records are the clock's decisions on the target ISA, judged against",
+        "the independent reference; the clock is a network-clock fit only and says nothing about the real DAC or acoustic path."
+      ],
+      "kind": "planted: run 2's transcript cut at 60 % of the world records (a derived file, not a captured boot)",
+      "seed": 3749899199296292945,
+      "transcript": "plant-truncate.serial.bin",
+      "transcript_bytes": 243851,
+      "transcript_lines": 1184,
+      "transcript_sha256": "4d7fc32e9f011267a778255d71dddfd25a33ce4bd07aa9e7f8962fd90d3db326"
+    }
+  ],
+  "schema": "ffw.n03-target-receipt.v1"
+}

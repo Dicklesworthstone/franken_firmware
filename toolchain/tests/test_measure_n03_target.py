@@ -51,9 +51,9 @@ m.N.gen.expect_for = _cached_expect_for
 WANTED = list(VEC["worlds"]) + [mm["world"] for mm in VEC["mixed"]["members"]]
 SEED_A, SEED_B = 4_611_686_018_427_387_903, 123_456_789_012_345
 IPT, INTERCEPT = 5.0, 40            # synthetic ruler: 5 instructions per tick, 40 ticks of read overhead
-EXCH_INSTR, GATE_INSTR = 150_000, 5_000
+EXCH_INSTR, GATE_INSTR = 150_000, 60_000
 JITTER = (0, 30, 10, 60, 5)         # extra ticks per repetition: strays only ever add
-WARM, EXCH, GATE_CALLS, REPS = 100, 100, 2000, 5
+WARM, EXCH, GATE_CALLS, REPS = 100, 100, 400, 5
 
 
 def ticks(instructions):
