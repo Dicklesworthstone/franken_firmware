@@ -1,0 +1,561 @@
+{
+  "central_lines": [
+    {
+      "command": "RCH_REQUIRE_REMOTE=1 rch exec --worker trj -- cargo +nightly clippy --locked --offline --all-targets -j 2 -- -D warnings",
+      "cwd": "crates/franken-stream/fuzz",
+      "exit_code": 0,
+      "log_bytes": 9429,
+      "log_sha256": "170595917135a27871a876b477167f6c151eabf8e6291e234c989b90cce6b959",
+      "name": "clippy"
+    },
+    {
+      "command": "RCH_REQUIRE_REMOTE=1 rch exec --worker trj -- cargo +nightly clippy --locked --offline --all-targets --features control -j 2 -- -D warnings",
+      "cwd": "crates/franken-stream/fuzz",
+      "exit_code": 0,
+      "log_bytes": 9446,
+      "log_sha256": "740739121cd3b93af1ce0e917ad1b2b5e0b5adce420ea084340286c8725ebc81",
+      "name": "clippy-control"
+    },
+    {
+      "command": "RCH_REQUIRE_REMOTE=1 rch exec --worker trj -- cargo +nightly test --locked --offline -j 2",
+      "cwd": "crates/franken-stream/fuzz",
+      "exit_code": 0,
+      "failed": 0,
+      "ignored": 0,
+      "log_bytes": 11502,
+      "log_sha256": "b908ed38aa06b15a75768850e1333805ab7322c74545583c363be292c7885d85",
+      "name": "test",
+      "passed": 22
+    },
+    {
+      "command": "RCH_REQUIRE_REMOTE=1 rch exec --worker trj -- cargo +nightly test --locked --offline --features control -j 2",
+      "cwd": "crates/franken-stream/fuzz",
+      "exit_code": 0,
+      "failed": 0,
+      "ignored": 0,
+      "log_bytes": 11408,
+      "log_sha256": "f8fc7f290aa1843c1a76ce79b6c68df1f15930389e84ec708c7f2fe8a6332ea8",
+      "name": "test-control",
+      "passed": 20
+    }
+  ],
+  "control": {
+    "crash": {
+      "artifact": "crash-91be76b53d10039e46c9a51b7da26956302bc1c7",
+      "base64_line_in_log": true,
+      "bytes": 65,
+      "frames": 184,
+      "hex": "024646575301020001a11ce00000000401000000000000000700000000000000680000000000006400000000001dcd6500000000001da1c0001981000400b81981",
+      "mode_byte": 2,
+      "sha1": "91be76b53d10039e46c9a51b7da26956302bc1c7",
+      "sha256": "317c547e2e4373ea789218e6c3b326f1a5f856e2b13ab45470f599f8889f6038"
+    },
+    "executions_at_crash": 244109,
+    "inited": {
+      "corp": 27,
+      "cov": 142,
+      "ft": 195
+    },
+    "instrumented_counters": 4119,
+    "last_status_before_the_crash": {
+      "corp": 53,
+      "cov": 172,
+      "execs_per_second": 216178,
+      "execution": 216178,
+      "ft": 254
+    },
+    "panic_payload_length": 736,
+    "step_seconds": 4,
+    "step_seconds_note": "rc.txt: build-clean 19:56:45, control 19:56:49 (one-second clock, includes loading 420 seeds); libFuzzer's own rate line puts the crash about 1 s into the run"
+  },
+  "driver_notes": {
+    "bytes": 4801,
+    "file": "b55.rc",
+    "sha256": "320a493b633759ac2bd8537dd12d5c4ae44d09449aec84d56a6c27ebda1c4440"
+  },
+  "first_run": {
+    "control_log_sha256": "d36ea228a425ba3e0a5bd6f868a9571b00c25cd10f79495b86c0af2905d2b373",
+    "crashes": 0,
+    "executions": 20541985,
+    "inited": {
+      "corp": 27,
+      "cov": 139,
+      "ft": 192
+    },
+    "instrumented_counters": 4112,
+    "mail": 5036,
+    "note": "the run that failed: seed_corpus did not link and the first plant was not found",
+    "revision": "10663364c936 (1066336)",
+    "seconds": 121
+  },
+  "fuzz_logs": [
+    {
+      "bytes": 1836,
+      "file": "build.clean.log",
+      "sha256": "661791f7c8cd3a493525f29865a572942ef1b8d89c58c7e0d3821c14f1161c3d"
+    },
+    {
+      "bytes": 380,
+      "file": "corpus-counts.txt",
+      "sha256": "b61f4d55cd9763e9dea3d28fe2cb957b6d098d8da7cd772ab444c6f5d6de6ea7"
+    },
+    {
+      "bytes": 104,
+      "file": "lock-after.txt",
+      "sha256": "0bff1658bdec210e2d1f2a51bf65c6209cc1e97944c5806bd38fee6d181ce309"
+    },
+    {
+      "bytes": 104,
+      "file": "lock-before.txt",
+      "sha256": "0bff1658bdec210e2d1f2a51bf65c6209cc1e97944c5806bd38fee6d181ce309"
+    },
+    {
+      "bytes": 28507,
+      "file": "negotiation_finish.clean.log",
+      "sha256": "6bcb95c5dcd060cd21a2f277fd0d360e06334b854d353f1e3dae842ef315a811"
+    },
+    {
+      "bytes": 28663,
+      "file": "negotiation_respond.clean.log",
+      "sha256": "2c2be018d996a732110d35e2477951293a9b8f16f9afa11801e942456b720b67"
+    },
+    {
+      "bytes": 238,
+      "file": "rc.txt",
+      "sha256": "322009aa984626a1dc45ce0eede35a30e17817c6cb6c32080a2307d4d75f7784"
+    },
+    {
+      "bytes": 223,
+      "file": "seeds.log",
+      "sha256": "bd792780651ab2e39689a20f476dacbba95074bb2bf38cdeea6070a1ed85db76"
+    },
+    {
+      "bytes": 1904,
+      "file": "seeds.stderr",
+      "sha256": "c1ae1d2294dcf39e21cb8ae784004204883b30a52341ffe23f4f11919c90cc4d"
+    },
+    {
+      "bytes": 45903,
+      "file": "stream_decode.clean.log",
+      "sha256": "69804423fb0c840d7b5ab23d668a5321d173932b8864bad48e28221a5e468e83"
+    },
+    {
+      "bytes": 26218,
+      "file": "stream_decode.control.log",
+      "sha256": "cb148d89cc54459fd8c66fa9a21d65462bbe2015215b47ded6db84b37b381c85"
+    },
+    {
+      "bytes": 300263,
+      "file": "stream_receiver.clean.log",
+      "sha256": "2321e91d260450f5eae1d843ae0fc6e9140d47538d80ce17196b5afe4a3c456b"
+    },
+    {
+      "bytes": 283,
+      "file": "versions.txt",
+      "sha256": "4c25a80ea521a07541fe23992af88beeb21dd2b334076010a72a93a545093760"
+    }
+  ],
+  "inputs": {
+    "crates/franken-stream/Cargo.toml": "c0059611538c78e101c437ff4852ac228dc45456f5c2622d41c14940fbe73089",
+    "crates/franken-stream/fuzz/.gitignore": "a24ed50fc1f28dcafa5d4f9eac712faf4b1ffd7910177f5ce30289197a7a2484",
+    "crates/franken-stream/fuzz/Cargo.lock": "a23abe8be0b897d2b2e44987e990423655cbf1e3bb2dab1b735c52abc54b3106",
+    "crates/franken-stream/fuzz/Cargo.toml": "d8bac8063f29fc66b0c9241acf63cb6809b87995b5b527c5fe7125725f50684f",
+    "crates/franken-stream/fuzz/examples/seed_corpus.rs": "af20029f214992f06efee74ad2577a81e9a2175190ba3408bf23cdb7aaf5b461",
+    "crates/franken-stream/fuzz/fuzz_targets/negotiation_finish.rs": "cbb85caab8f8ddc0630bf12ff8bce2b41fae275b61659e9c3e38f35a5fc91077",
+    "crates/franken-stream/fuzz/fuzz_targets/negotiation_respond.rs": "4a3d552c16da7b7c1b052631cf1cbb962f392e87b7438bd10e089ee9aee4b832",
+    "crates/franken-stream/fuzz/fuzz_targets/stream_decode.rs": "7e2a840fc83f435088a114ad860b12afe2346c48ba877f09c4b9d234926d7ae4",
+    "crates/franken-stream/fuzz/fuzz_targets/stream_receiver.rs": "fe2e2fd05f163b55c96bed589c93f52cd6aee47368b8603b9cb162f7df0ac2c8",
+    "crates/franken-stream/fuzz/src/fixture.rs": "1f962cd46432012685ce3bc2f4f2d52486bde81fd8630aed973b2c59fda3b34b",
+    "crates/franken-stream/fuzz/src/hello.rs": "90471c3e9a4d8e40ce0fe728207ceceacb42ceae530d5536b7328858575f83cd",
+    "crates/franken-stream/fuzz/src/lib.rs": "91b61f6cc00f4f341601b1d5dd03be927f00c0f5a7eaa5e792be0a9161d82c22",
+    "crates/franken-stream/fuzz/src/model.rs": "2a2d983c9a79d39c9f900815542a65d9b7ce8ad8f4e2f0e00460b27100980698",
+    "crates/franken-stream/fuzz/src/plant.rs": "03f2c2a2f186233fa387c93ab53a8c4cad8e79b26b540ae71d0d2794559245ea",
+    "crates/franken-stream/fuzz/src/seed.rs": "374a75f5a6aee2aca92df276b55db008e9cc71b88bb801e8d9dd13db48591412",
+    "crates/franken-stream/fuzz/src/stream.rs": "8f03c3db6e5e37e3d72a9693a17bd1589a99bd9e85b5c5d33d3a943fc5cbb8f9",
+    "crates/franken-stream/fuzz/src/wire.rs": "21f13dac55332c3f0211bdfcf57dadf31f066cd7b5857aab6021b16d55cc9d00",
+    "crates/franken-stream/fuzz/tests/harness.rs": "13bfc6fffff43bf74f4f75cf8d72ec08b5e7c791a5091056d0a41f3aea0322c1",
+    "crates/franken-stream/src/lib.rs": "d25f6c6ba0142b00de4e9dd71c870a67d7fcb02368b8f0abe42511fe7020d6b9",
+    "crates/franken-stream/src/negotiation.rs": "e93ff373b4941d73bc9618083eb932ba885c729b908174f2d57ac16c6ec58fd4",
+    "crates/franken-stream/tests/vectors/n01_negotiation_vectors.json": "fdfe890d8a867dd572813795b2fa30fe11e20b67452364248375d1fe2a853446",
+    "crates/franken-stream/tests/vectors/n01_wire_vectors.json": "e26f75c5236ad18bacdf2debfeb30dd6925109b56ba267042de8c2badd53b951"
+  },
+  "job": {
+    "command": "RCH_REQUIRE_REMOTE=1 rch exec --job --worker trj --result-dir n01-fuzz-out -- ./n01-fuzz-job.sh",
+    "exit_code": 0,
+    "fuzz_flags": "--sanitizer none -- -max_total_time=120 -max_len=8192 -print_final_stats=1",
+    "log_bytes": 3027,
+    "log_sha256": "d34a824270d2db24416201e78251c727eec76631efb021dbe39f6eb198079246",
+    "note": "corpora stayed on the worker (not returned); the control ran first and gated the four clean runs",
+    "script_sha256": "dfa307f21069b80cfa69959dc23aa188d64562f01c831fd321b03c9639427d66",
+    "seconds": 551,
+    "steps": [
+      {
+        "at": "19:56:08",
+        "rc": 0,
+        "step": "seeds"
+      },
+      {
+        "at": "19:56:45",
+        "rc": 0,
+        "step": "build-clean"
+      },
+      {
+        "at": "19:56:49",
+        "rc": 1,
+        "step": "control"
+      },
+      {
+        "at": "19:58:50",
+        "rc": 0,
+        "step": "clean-stream_decode"
+      },
+      {
+        "at": "20:00:51",
+        "rc": 0,
+        "step": "clean-stream_receiver"
+      },
+      {
+        "at": "20:02:52",
+        "rc": 0,
+        "step": "clean-negotiation_respond"
+      },
+      {
+        "at": "20:04:54",
+        "rc": 0,
+        "step": "clean-negotiation_finish"
+      }
+    ]
+  },
+  "judge": {
+    "clean": {
+      "negotiation_finish": {
+        "command": "scripts/e2e/n01 --judge-fuzz run <out>/negotiation_finish.clean.log --target negotiation_finish --kind clean --budget 120 --seeds-log <out>/seeds.log",
+        "exit_code": 0,
+        "output": {
+          "budget_seconds": 120,
+          "corpus_units": 51,
+          "coverage": 200,
+          "crashes": 0,
+          "executions": 34492090,
+          "features": 264,
+          "kind": "clean",
+          "last_status_execs": 34492090,
+          "problems": [],
+          "seconds": 121,
+          "seed_files_read": 17,
+          "target": "negotiation_finish"
+        }
+      },
+      "negotiation_respond": {
+        "command": "scripts/e2e/n01 --judge-fuzz run <out>/negotiation_respond.clean.log --target negotiation_respond --kind clean --budget 120 --seeds-log <out>/seeds.log",
+        "exit_code": 0,
+        "output": {
+          "budget_seconds": 120,
+          "corpus_units": 46,
+          "coverage": 184,
+          "crashes": 0,
+          "executions": 42351102,
+          "features": 250,
+          "kind": "clean",
+          "last_status_execs": 42351102,
+          "problems": [],
+          "seconds": 121,
+          "seed_files_read": 30,
+          "target": "negotiation_respond"
+        }
+      },
+      "stream_decode": {
+        "command": "scripts/e2e/n01 --judge-fuzz run <out>/stream_decode.clean.log --target stream_decode --kind clean --budget 120 --seeds-log <out>/seeds.log",
+        "exit_code": 0,
+        "output": {
+          "budget_seconds": 120,
+          "corpus_units": 55,
+          "coverage": 172,
+          "crashes": 0,
+          "executions": 18741444,
+          "features": 256,
+          "kind": "clean",
+          "last_status_execs": 18741444,
+          "problems": [],
+          "seconds": 121,
+          "seed_files_read": 420,
+          "target": "stream_decode"
+        }
+      },
+      "stream_receiver": {
+        "command": "scripts/e2e/n01 --judge-fuzz run <out>/stream_receiver.clean.log --target stream_receiver --kind clean --budget 120 --seeds-log <out>/seeds.log",
+        "exit_code": 0,
+        "output": {
+          "budget_seconds": 120,
+          "corpus_units": 270,
+          "coverage": 322,
+          "crashes": 0,
+          "executions": 6026780,
+          "features": 1373,
+          "kind": "clean",
+          "last_status_execs": 6026780,
+          "problems": [],
+          "seconds": 121,
+          "seed_files_read": 2,
+          "target": "stream_receiver"
+        }
+      }
+    },
+    "control": {
+      "command": "scripts/e2e/n01 --judge-fuzz run <out>/stream_decode.control.log --target stream_decode --kind control --budget 120 --crash <out>/artifacts-control/crash-<sha1>",
+      "exit_code": 0,
+      "output": {
+        "artifact": "crash-91be76b53d10039e46c9a51b7da26956302bc1c7",
+        "budget_seconds": 120,
+        "corpus_units": 53,
+        "coverage": 172,
+        "crash_bytes": 65,
+        "crash_sha256": "317c547e2e4373ea789218e6c3b326f1a5f856e2b13ab45470f599f8889f6038",
+        "crash_source": "file",
+        "crashes": 1,
+        "features": 254,
+        "kind": "control",
+        "last_status_execs": 216178,
+        "problems": [],
+        "seed_files_read": 420,
+        "target": "stream_decode"
+      }
+    },
+    "control_without_the_crash_file": {
+      "command": "the same without --crash (libFuzzer's Base64 line carries the input)",
+      "exit_code": 0,
+      "note": "re-executed for this record; the driver's own control judgment passed the file",
+      "output": {
+        "artifact": "crash-91be76b53d10039e46c9a51b7da26956302bc1c7",
+        "budget_seconds": 120,
+        "corpus_units": 53,
+        "coverage": 172,
+        "crash_bytes": 65,
+        "crash_sha256": "317c547e2e4373ea789218e6c3b326f1a5f856e2b13ab45470f599f8889f6038",
+        "crash_source": "log",
+        "crashes": 1,
+        "features": 254,
+        "kind": "control",
+        "last_status_execs": 216178,
+        "problems": [],
+        "seed_files_read": 420,
+        "target": "stream_decode"
+      }
+    },
+    "remove_the_plant": {
+      "command": "the clean stream_decode log judged as a control: scripts/e2e/n01 --judge-fuzz run <out>/stream_decode.clean.log --target stream_decode --kind control --budget 120",
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "output": {
+        "budget_seconds": 120,
+        "corpus_units": 55,
+        "coverage": 172,
+        "crashes": 0,
+        "features": 256,
+        "kind": "control",
+        "last_status_execs": 18741444,
+        "problems": [
+          "the control run finished without a crash: the planted bug was not found in the budget",
+          "no planted-bug panic message in the control log",
+          "libFuzzer did not report the crash",
+          "no 'Test unit written to ...crash-<sha1>' line: the crashing input was not kept",
+          "no crash input: it was not supplied as a file and libFuzzer did not print it in the log"
+        ],
+        "seed_files_read": 420,
+        "target": "stream_decode"
+      }
+    },
+    "seeds": {
+      "command": "scripts/e2e/n01 --judge-fuzz seeds <out>/seeds.log",
+      "exit_code": 0,
+      "output": {
+        "problems": [],
+        "seed_files": {
+          "negotiation_finish": 17,
+          "negotiation_respond": 30,
+          "stream_decode": 420,
+          "stream_receiver": 2
+        }
+      }
+    }
+  },
+  "local_checks": [
+    {
+      "evidence": "b55.rc line 'e2e n01 rc=0', tail OK",
+      "exit_code": 0,
+      "name": "scripts/e2e/n01 on the patched export"
+    }
+  ],
+  "lock": {
+    "path": "crates/franken-stream/fuzz/Cargo.lock",
+    "sha256_after": "a23abe8be0b897d2b2e44987e990423655cbf1e3bb2dab1b735c52abc54b3106",
+    "sha256_before": "a23abe8be0b897d2b2e44987e990423655cbf1e3bb2dab1b735c52abc54b3106"
+  },
+  "open": [
+    "No soak: 120 s per target is a smoke budget; nothing here says what a long run finds.",
+    "Coverage-guided fuzzing only; the golden-vector replay on a big-endian guest has not run (section 7).",
+    "Corpora stayed on the worker; the clean runs' final corpora are not evidence kept here.",
+    "Host synthetic evidence only; no device, no real network."
+  ],
+  "predictions": {
+    "mail": 5092,
+    "miss": {
+      "effect": "none on the control: it crashed on the planted bug about 244,000 executions in",
+      "explanation": "Not known. The INITED line read cov 142, ft 195, corp 27 where the first run's read cov 139, ft 192, corp 27: coverage and features rose by 3 each but the unit count did not rise and the corpus size fell (19Kb to 18Kb). The binary differs too (4112 instrumented counters then, 4119 now), so the rise in coverage does not by itself show that the fit seeds ran; the crash input does. My prediction assumed the 27 units of the first run would all be kept and a fit seed added; libFuzzer loads seeds smallest first, so a 69-byte fit seed can take features that a larger seed held before and leave that seed unkept. That reading fits the numbers but is not shown: the log has no per-seed lines.",
+      "id": "inited-corpus"
+    },
+    "rows": [
+      {
+        "claim": "seed counts 420, 2, 30, 17 for stream_decode, stream_receiver, negotiation_respond, negotiation_finish",
+        "id": "seeds",
+        "observed": {
+          "negotiation_finish": 17,
+          "negotiation_respond": 30,
+          "stream_decode": 420,
+          "stream_receiver": 2
+        },
+        "verdict": "met"
+      },
+      {
+        "claim": "control INITED cov above 139",
+        "id": "inited-coverage",
+        "note": "numerically met, but the binary also changed (instrumented counters 4112 then, 4119 now), so it does not isolate the fit seeds",
+        "observed": 142,
+        "threshold": 139,
+        "verdict": "met"
+      },
+      {
+        "claim": "control INITED corp at least 28",
+        "id": "inited-corpus",
+        "observed": 27,
+        "threshold": 28,
+        "verdict": "missed"
+      },
+      {
+        "claim": "first crash within about 10^5 to 2x10^6 executions (1 to 12 s)",
+        "high": 2000000,
+        "id": "crash-executions",
+        "low": 100000,
+        "observed": 244109,
+        "verdict": "met"
+      },
+      {
+        "claim": "panic 'planted decoder bug: payload length N', N a multiple of 4 in 600..=796",
+        "id": "panic-length",
+        "observed": 736,
+        "verdict": "met"
+      },
+      {
+        "claim": "crash input at most 256 bytes, so libFuzzer prints its Base64 line",
+        "id": "crash-input-size",
+        "limit": 256,
+        "observed": 65,
+        "verdict": "met"
+      },
+      {
+        "claim": "no crash by 120 s would refute the reasoning",
+        "id": "refutation",
+        "observed": "crash at execution 244109",
+        "verdict": "not triggered"
+      }
+    ]
+  },
+  "revision": "53f83cfec7a917cba9115d82cf965685deffb399",
+  "runs": {
+    "clean": {
+      "negotiation_finish": {
+        "crashes": 0,
+        "execs_per_second": 285058,
+        "executions": 34492090,
+        "final": {
+          "corp": 51,
+          "cov": 200,
+          "ft": 264
+        },
+        "inited": {
+          "corp": 11,
+          "cov": 134,
+          "ft": 169
+        },
+        "new_units": 210,
+        "peak_rss_mb": 29,
+        "seconds": 121
+      },
+      "negotiation_respond": {
+        "crashes": 0,
+        "execs_per_second": 350009,
+        "executions": 42351102,
+        "final": {
+          "corp": 46,
+          "cov": 184,
+          "ft": 250
+        },
+        "inited": {
+          "corp": 16,
+          "cov": 137,
+          "ft": 186
+        },
+        "new_units": 216,
+        "peak_rss_mb": 27,
+        "seconds": 121
+      },
+      "stream_decode": {
+        "crashes": 0,
+        "execs_per_second": 154887,
+        "executions": 18741444,
+        "final": {
+          "corp": 55,
+          "cov": 172,
+          "ft": 256
+        },
+        "inited": {
+          "corp": 27,
+          "cov": 142,
+          "ft": 195
+        },
+        "new_units": 330,
+        "peak_rss_mb": 29,
+        "seconds": 121
+      },
+      "stream_receiver": {
+        "crashes": 0,
+        "execs_per_second": 49808,
+        "executions": 6026780,
+        "final": {
+          "corp": 270,
+          "cov": 322,
+          "ft": 1373
+        },
+        "inited": {
+          "corp": 2,
+          "cov": 197,
+          "ft": 288
+        },
+        "new_units": 2283,
+        "peak_rss_mb": 27,
+        "seconds": 121
+      }
+    }
+  },
+  "schema": "ffw-n01-fuzz-run-record-1",
+  "scope": {
+    "budget_seconds": 120,
+    "hardware": false,
+    "kind": "smoke",
+    "note": "coverage-guided fuzzing only, 120 s per target; a smoke budget that proves no soak, no device and no endianness claim",
+    "soak": false,
+    "targets": 4
+  },
+  "toolchain": {
+    "cargo_fuzz": "0.13.1",
+    "cargo_home": "the compile-mode cache of the worker",
+    "cargo_net_offline": true,
+    "host": "x86_64-unknown-linux-gnu",
+    "llvm": "23.1.5",
+    "rustc": "1.101.0-nightly (708c94ef0 2026-11-03)",
+    "sanitizer": "none",
+    "source": "n01-fuzz-out/versions.txt, sha256 4c25a80ea521a07541fe23992af88beeb21dd2b334076010a72a93a545093760",
+    "worker": "trj"
+  },
+  "tree": "the revision above with n01-fuzz-fix.patch applied alone (sha256 2300dbf4a6a7e10df71986083fb5b0324db0a71f37fe6ab531eb40e5ee345e9d, 11 files); neither was committed when it ran"
+}
