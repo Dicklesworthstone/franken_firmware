@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# E05 end-to-end entry point (bead ffw-xcz): the boot-hook and rollback model, offline.
+# Runs the E05 cases through the shared Q00 runner (scripts/test/run-suite), which writes versioned
+# receipts under build/test-runs/<run-id>/ (or $FFW_ARTIFACT_ROOT). Stdlib Python only; it boots
+# nothing and touches no device.
+#
+#   scripts/e2e/e05                          full tier
+#   scripts/e2e/e05 --tier smoke|full        explicit tier
+#   scripts/e2e/e05 --tier full --case e05.unit.matrix     replay one case (skips the coverage check)
+#
+# Exit codes are run-suite's: 0 every required case passed; non-zero otherwise (see run-suite --help).
+# The model itself can also be driven directly:
+#   python3 -B -I scripts/e05/boot_model.py matrix --profile tests/e05/profiles/57.23.json
+#   python3 -B -I scripts/e05/boot_model.py trace  --profile tests/e05/profiles/57.23.json --fault hook_hangs
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+MANIFEST="$ROOT/scripts/test/e05.suite.json"
+if [ "$#" -eq 0 ]; then
+  set -- --tier full
+fi
+exec "$ROOT/scripts/test/run-suite" run --manifest "$MANIFEST" "$@"

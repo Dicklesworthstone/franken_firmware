@@ -1,0 +1,46 @@
+{
+  "schema": "ffw.e05.profile.v1",
+  "image": "57.23",
+  "kind": "extracted",
+  "facts": {
+    "hook_gate_existence_only": {
+      "status": "observed", "value": true,
+      "source": "sibling research (frankensonos FIRMWARE_PATHS.md): the early boot script runs the hook only if the file exists, after the writable partition is mounted; static boot script from the 57.23 tree"
+    },
+    "hook_interpreted": {
+      "status": "observed", "value": true,
+      "source": "sibling research: the boot script runs the hook through the shell, so no exec bit is needed; static boot script"
+    },
+    "hook_runs_synchronously": {
+      "status": "observed", "value": true,
+      "source": "sibling research: the quoted boot-script line runs the hook in the foreground (no background operator); static boot script"
+    },
+    "hook_failure_nonfatal": {
+      "status": "unknown", "blocker": "EXT-E05-RCS"
+    },
+    "jffs_noexec": {
+      "status": "observed", "value": true,
+      "source": "sibling research: the writable partition is mounted noexec on these devices (kernel mount-exec hook); a statement from that lane, not re-measured here"
+    },
+    "stock_stop_effective": {
+      "status": "unknown", "blocker": "EXT-E05-STOP"
+    },
+    "watchdog_covers_boot_stall": {
+      "status": "unknown", "blocker": "EXT-E05-WDOG"
+    },
+    "watchdog_restarts_daemon": {
+      "status": "observed", "value": true,
+      "source": "sibling research: live observations by that lane that a killed stock daemon is restarted by a watchdog within seconds; not re-verified here"
+    },
+    "fs_rename_atomic": {
+      "status": "unknown", "blocker": "EXT-E05-FS"
+    },
+    "hook_survives_update": {
+      "status": "observed", "value": true,
+      "source": "sibling research: the hook path carries the preserve flag in the image's partition table of preserved files; static, 57.23 libraries"
+    },
+    "update_interrupted_preserves_hook": {
+      "status": "unknown", "blocker": "EXT-E05-UPDATE"
+    }
+  }
+}

@@ -1,0 +1,185 @@
+{
+  "schema": "ffw.e05.cases.v1",
+  "note": "Expected outcomes are hand-derived from docs/contracts/e05.md section 3 (transition rules), not produced by running the model. 'synthetic-benign' has every fact observed and benign; '57.23' is the extracted S1-line profile (6 facts observed, 5 unknown). S2 (86.10) follows one rule, s2_rule below. boots counts boots started when the run ended.",
+  "s2_rule": "Every boot starts by consulting hook_gate_existence_only and every provision/update cell consults a fact first; all eleven 86.10 facts are unknown with blocker EXT-E05-S2, so every cell is UNQUALIFIED with blockers [EXT-E05-S2].",
+  "cells": [
+    {"id": "E05-CELL-01", "step": "boot", "kind": "none", "expect": {
+      "synthetic-benign": {"verdict": "CUSTOM_OK", "reason": "custom_owner", "boots": 1},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-STOP"], "boots": 1}}},
+    {"id": "E05-CELL-02", "step": "jffs_mount", "kind": "power_loss", "expect": {
+      "synthetic-benign": {"verdict": "CUSTOM_OK", "reason": "custom_owner", "boots": 2},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-STOP"], "boots": 2}}},
+    {"id": "E05-CELL-03", "step": "hook_gate", "kind": "hook_missing", "expect": {
+      "synthetic-benign": {"verdict": "STOCK_OK", "reason": "hook_absent", "boots": 1},
+      "57.23": {"verdict": "STOCK_OK", "reason": "hook_absent", "boots": 1}}},
+    {"id": "E05-CELL-04", "step": "hook_gate", "kind": "power_loss", "expect": {
+      "synthetic-benign": {"verdict": "CUSTOM_OK", "reason": "custom_owner", "boots": 2},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-STOP"], "boots": 2}}},
+    {"id": "E05-CELL-05", "step": "hook_read", "kind": "hook_unreadable", "expect": {
+      "synthetic-benign": {"verdict": "STOCK_OK", "reason": "hook_unreadable", "boots": 1},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-RCS"], "boots": 1}}},
+    {"id": "E05-CELL-06", "step": "hook_read", "kind": "hook_mode_no_exec", "expect": {
+      "synthetic-benign": {"verdict": "CUSTOM_OK", "reason": "custom_owner", "boots": 1},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-STOP"], "boots": 1}}},
+    {"id": "E05-CELL-07", "step": "hook_read", "kind": "power_loss", "expect": {
+      "synthetic-benign": {"verdict": "CUSTOM_OK", "reason": "custom_owner", "boots": 2},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-STOP"], "boots": 2}}},
+    {"id": "E05-CELL-08", "step": "hook_run", "kind": "hook_hangs", "expect": {
+      "synthetic-benign": {"verdict": "STOCK_OK", "reason": "attempt_cap", "boots": 4},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-WDOG"], "boots": 1}}},
+    {"id": "E05-CELL-09", "step": "hook_run", "kind": "hook_exits_nonzero", "expect": {
+      "synthetic-benign": {"verdict": "STOCK_OK", "reason": "hook_failed", "boots": 1},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-RCS"], "boots": 1}}},
+    {"id": "E05-CELL-10", "step": "hook_run", "kind": "power_loss", "expect": {
+      "synthetic-benign": {"verdict": "CUSTOM_OK", "reason": "custom_owner", "boots": 2},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-STOP"], "boots": 2}}},
+    {"id": "E05-CELL-11", "step": "preflight", "kind": "binary_missing", "expect": {
+      "synthetic-benign": {"verdict": "STOCK_OK", "reason": "binary_missing", "boots": 1},
+      "57.23": {"verdict": "STOCK_OK", "reason": "binary_missing", "boots": 1}}},
+    {"id": "E05-CELL-12", "step": "preflight", "kind": "binary_not_runnable", "expect": {
+      "synthetic-benign": {"verdict": "STOCK_OK", "reason": "binary_not_runnable", "boots": 1},
+      "57.23": {"verdict": "STOCK_OK", "reason": "binary_not_runnable", "boots": 1}}},
+    {"id": "E05-CELL-13", "step": "preflight", "kind": "power_loss", "expect": {
+      "synthetic-benign": {"verdict": "CUSTOM_OK", "reason": "custom_owner", "boots": 2},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-STOP"], "boots": 2}}},
+    {"id": "E05-CELL-14", "step": "stock_stop", "kind": "stock_stop_fails", "expect": {
+      "synthetic-benign": {"verdict": "STOCK_OK", "reason": "stop_ack_missing", "boots": 1},
+      "57.23": {"verdict": "STOCK_OK", "reason": "stop_ack_missing", "boots": 1}}},
+    {"id": "E05-CELL-15", "step": "stock_stop", "kind": "power_loss", "expect": {
+      "synthetic-benign": {"verdict": "CUSTOM_OK", "reason": "custom_owner", "boots": 2},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-STOP"], "boots": 1}}},
+    {"id": "E05-CELL-16", "step": "custom_start", "kind": "binary_start_fails", "expect": {
+      "synthetic-benign": {"verdict": "STOCK_OK", "reason": "binary_start_failed", "boots": 1},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-STOP"], "boots": 1}}},
+    {"id": "E05-CELL-17", "step": "custom_start", "kind": "power_loss", "expect": {
+      "synthetic-benign": {"verdict": "CUSTOM_OK", "reason": "custom_owner", "boots": 2},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-STOP"], "boots": 1}}},
+    {"id": "E05-CELL-18", "step": "custom_ready", "kind": "binary_exits_nonzero", "expect": {
+      "synthetic-benign": {"verdict": "STOCK_OK", "reason": "binary_exit", "boots": 1},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-STOP"], "boots": 1}}},
+    {"id": "E05-CELL-19", "step": "custom_ready", "kind": "binary_hangs", "expect": {
+      "synthetic-benign": {"verdict": "STOCK_OK", "reason": "ready_timeout", "boots": 1},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-STOP"], "boots": 1}}},
+    {"id": "E05-CELL-20", "step": "custom_ready", "kind": "power_loss", "expect": {
+      "synthetic-benign": {"verdict": "CUSTOM_OK", "reason": "custom_owner", "boots": 2},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-STOP"], "boots": 1}}},
+    {"id": "E05-CELL-21", "step": "owner_commit", "kind": "binary_crashes_after_ready", "expect": {
+      "synthetic-benign": {"verdict": "STOCK_OK", "reason": "restart_cap", "boots": 1},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-STOP"], "boots": 1}}},
+    {"id": "E05-CELL-22", "step": "owner_commit", "kind": "power_loss", "expect": {
+      "synthetic-benign": {"verdict": "CUSTOM_OK", "reason": "custom_owner", "boots": 2},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-STOP"], "boots": 1}}},
+    {"id": "E05-CELL-23", "step": "boot", "kind": "none", "policy": {"binary_location": "jffs"}, "expect": {
+      "synthetic-benign": {"verdict": "STOCK_OK", "reason": "binary_not_runnable", "boots": 1},
+      "57.23": {"verdict": "STOCK_OK", "reason": "binary_not_runnable", "boots": 1}}},
+    {"id": "E05-CELL-24", "step": "provision", "kind": "write_temp", "expect": {
+      "synthetic-benign": {"verdict": "CUSTOM_OK", "reason": "custom_owner", "boots": 1},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-STOP"], "boots": 1}}},
+    {"id": "E05-CELL-25", "step": "provision", "kind": "fsync_temp", "expect": {
+      "synthetic-benign": {"verdict": "CUSTOM_OK", "reason": "custom_owner", "boots": 1},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-STOP"], "boots": 1}}},
+    {"id": "E05-CELL-26", "step": "provision", "kind": "rename", "expect": {
+      "synthetic-benign": {"verdict": "CUSTOM_OK", "reason": "custom_owner", "boots": 1},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-FS"], "boots": 0}}},
+    {"id": "E05-CELL-27", "step": "provision", "kind": "fsync_dir", "expect": {
+      "synthetic-benign": {"verdict": "CUSTOM_OK", "reason": "custom_owner", "boots": 1},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-FS"], "boots": 0}}},
+    {"id": "E05-CELL-28", "step": "provision", "kind": "rename", "prior": "absent", "expect": {
+      "synthetic-benign": {"verdict": "STOCK_OK", "reason": "hook_absent", "boots": 1},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-FS"], "boots": 0}}},
+    {"id": "E05-CELL-29", "step": "provision", "kind": "fsync_dir", "prior": "absent", "expect": {
+      "synthetic-benign": {"verdict": "CUSTOM_OK", "reason": "custom_owner", "boots": 1},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-FS"], "boots": 0}}},
+    {"id": "E05-CELL-30", "step": "provision", "kind": "truncate", "policy": {"atomic_write": false}, "expect": {
+      "synthetic-benign": {"verdict": "FAILED", "reason": "partial_hook_executed", "boots": 1},
+      "57.23": {"verdict": "FAILED", "reason": "partial_hook_executed", "boots": 1}}},
+    {"id": "E05-CELL-31", "step": "provision", "kind": "write", "policy": {"atomic_write": false}, "expect": {
+      "synthetic-benign": {"verdict": "FAILED", "reason": "partial_hook_executed", "boots": 1},
+      "57.23": {"verdict": "FAILED", "reason": "partial_hook_executed", "boots": 1}}},
+    {"id": "E05-CELL-32", "step": "provision", "kind": "fsync", "policy": {"atomic_write": false}, "expect": {
+      "synthetic-benign": {"verdict": "CUSTOM_OK", "reason": "custom_owner", "boots": 1},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-STOP"], "boots": 1}}},
+    {"id": "E05-CELL-33", "step": "update", "kind": "none", "expect": {
+      "synthetic-benign": {"verdict": "CUSTOM_OK", "reason": "custom_owner", "boots": 1},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-STOP"], "boots": 1}}},
+    {"id": "E05-CELL-34", "step": "update", "kind": "power_loss", "expect": {
+      "synthetic-benign": {"verdict": "CUSTOM_OK", "reason": "custom_owner", "boots": 1},
+      "57.23": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-UPDATE"], "boots": 0}}}
+  ],
+  "adverse": [
+    {"id": "E05-ADV-01", "why": "a failing hook aborts boot but a watchdog resets it: the attempt counter still bounds the loop",
+     "facts": {"hook_failure_nonfatal": false}, "step": "hook_run", "kind": "hook_exits_nonzero",
+     "expect": {"verdict": "STOCK_OK", "reason": "attempt_cap", "boots": 4, "violations": []}},
+    {"id": "E05-ADV-02", "why": "an unreadable hook aborts boot before the launcher ever counts an attempt: nothing bounds the loop",
+     "facts": {"hook_failure_nonfatal": false}, "step": "hook_read", "kind": "hook_unreadable",
+     "expect": {"verdict": "FAILED", "reason": "restart_loop_unbounded", "boots": 8, "violations": ["unbounded_restarts"]}},
+    {"id": "E05-ADV-03", "why": "a hook that hangs boot with no watchdog coverage has no recovery path",
+     "facts": {"watchdog_covers_boot_stall": false}, "step": "hook_run", "kind": "hook_hangs",
+     "expect": {"verdict": "FAILED", "reason": "no_recovery_path", "boots": 1, "violations": ["no_recovery_path"]}},
+    {"id": "E05-ADV-04", "why": "stock stopped and nothing restarts it: muted forever",
+     "facts": {"watchdog_restarts_daemon": false}, "step": "stock_stop", "kind": "stock_stop_fails",
+     "expect": {"verdict": "FAILED", "reason": "no_recovery_path", "boots": 1, "violations": ["no_recovery_path"]}},
+    {"id": "E05-ADV-05", "why": "the same missing restart path after the custom binary dies",
+     "facts": {"watchdog_restarts_daemon": false}, "step": "custom_ready", "kind": "binary_exits_nonzero",
+     "expect": {"verdict": "FAILED", "reason": "no_recovery_path", "boots": 1, "violations": ["no_recovery_path"]}},
+    {"id": "E05-ADV-06", "why": "stock respawns after being stopped: the launcher yields rather than share the device",
+     "facts": {"stock_stop_effective": false}, "step": "boot", "kind": "none",
+     "expect": {"verdict": "STOCK_OK", "reason": "stock_respawn_detected", "boots": 1, "violations": []}},
+    {"id": "E05-ADV-07", "why": "a hook run without an interpreter needs its exec bit; without it the hook fails like any failure",
+     "facts": {"hook_interpreted": false}, "step": "hook_read", "kind": "hook_mode_no_exec",
+     "expect": {"verdict": "STOCK_OK", "reason": "hook_not_executable", "boots": 1, "violations": []}},
+    {"id": "E05-ADV-08", "why": "a hook that does not block boot can hang in the background without stopping the stock path",
+     "facts": {"hook_runs_synchronously": false}, "step": "hook_run", "kind": "hook_hangs",
+     "expect": {"verdict": "STOCK_OK", "reason": "hook_hang_async", "boots": 1, "violations": []}},
+    {"id": "E05-ADV-09", "why": "rename that is not atomic leaves a half hook even under the atomic discipline",
+     "facts": {"fs_rename_atomic": false}, "step": "provision", "kind": "rename",
+     "expect": {"verdict": "FAILED", "reason": "partial_hook_executed", "boots": 1, "violations": ["partial_hook_executed"]}},
+    {"id": "E05-ADV-10", "why": "an update that does not preserve the hook returns the unit to stock",
+     "facts": {"hook_survives_update": false}, "step": "update", "kind": "none",
+     "expect": {"verdict": "STOCK_OK", "reason": "hook_absent", "boots": 1, "violations": []}},
+    {"id": "E05-ADV-11", "why": "an interrupted update that wipes the hook returns the unit to stock",
+     "facts": {"update_interrupted_preserves_hook": false}, "step": "update", "kind": "power_loss",
+     "expect": {"verdict": "STOCK_OK", "reason": "hook_absent", "boots": 1, "violations": []}},
+    {"id": "E05-ADV-12", "why": "a binary on an exec-capable mount runs even though the writable partition is noexec",
+     "facts": {"jffs_noexec": false}, "step": "boot", "kind": "none", "policy": {"binary_location": "jffs"},
+     "expect": {"verdict": "CUSTOM_OK", "reason": "custom_owner", "boots": 1, "violations": []}},
+    {"id": "E05-ADV-13", "why": "if absence of the hook is not skipped, the boot script runs a missing file: that is a hook failure",
+     "facts": {"hook_gate_existence_only": false}, "step": "hook_gate", "kind": "hook_missing",
+     "expect": {"verdict": "STOCK_OK", "reason": "hook_absent_unskipped", "boots": 1, "violations": []}}
+  ],
+  "defects": [
+    {"id": "E05-DEF-01", "invariant": "INV-1", "profile": "synthetic-benign", "why": "start custom without waiting for the stock-stop acknowledgement: two owners",
+     "policy": {"stop_ack_required": false}, "step": "stock_stop", "kind": "stock_stop_fails",
+     "expect": {"verdict": "CUSTOM_OK", "violations": ["two_owners"]}},
+    {"id": "E05-DEF-02", "invariant": "INV-1", "profile": "synthetic-benign", "why": "unmute when custom starts, before it is ready",
+     "policy": {"unmute": "at_start"}, "step": "boot", "kind": "none",
+     "expect": {"verdict": "CUSTOM_OK", "violations": ["audible_before_ready"]}},
+    {"id": "E05-DEF-03", "invariant": "INV-3", "profile": "synthetic-benign", "why": "unmute as soon as ready: every crash-loop restart is audible",
+     "policy": {"unmute": "at_ready"}, "step": "owner_commit", "kind": "binary_crashes_after_ready",
+     "expect": {"verdict": "STOCK_OK", "violations": ["repeated_audible_activation"]}},
+    {"id": "E05-DEF-04", "invariant": "INV-3", "profile": "synthetic-benign", "why": "no attempt cap and no backoff: a hot restart loop",
+     "policy": {"backoff": false, "attempt_cap": null}, "step": "owner_commit", "kind": "binary_crashes_after_ready",
+     "expect": {"verdict": "FAILED", "violations": ["no_backoff", "unbounded_restarts"]}},
+    {"id": "E05-DEF-05", "invariant": "INV-4", "profile": "synthetic-benign", "why": "rewrite the hook in place: power loss leaves a half script that runs",
+     "policy": {"atomic_write": false}, "step": "provision", "kind": "write",
+     "expect": {"verdict": "FAILED", "violations": ["partial_hook_executed"]}},
+    {"id": "E05-DEF-06", "invariant": "INV-2", "profile": "synthetic-benign", "why": "no rollback path after stock was stopped",
+     "policy": {"restore_stock": false}, "step": "custom_ready", "kind": "binary_exits_nonzero",
+     "expect": {"verdict": "FAILED", "violations": ["no_recovery_path"]}},
+    {"id": "E05-DEF-07", "invariant": "INV-5", "profile": "synthetic-benign", "why": "transitions and rollbacks carry no reason",
+     "policy": {"log_reasons": false}, "step": "preflight", "kind": "binary_missing",
+     "expect": {"verdict": "STOCK_OK", "violations": ["missing_reason"]}},
+    {"id": "E05-DEF-08", "invariant": "PRED", "profile": "synthetic-benign", "why": "report the service as started because the hook exists",
+     "policy": {"claim_from_presence": true}, "step": "custom_ready", "kind": "binary_exits_nonzero",
+     "expect": {"verdict": "STOCK_OK", "violations": ["unsupported_claim"]}},
+    {"id": "E05-DEF-09", "invariant": "INV-6", "profile": "57.23", "why": "read an unknown fact as fine: the run reports success it cannot know",
+     "policy": {"strict_unknown": false}, "step": "boot", "kind": "none",
+     "expect": {"verdict": "CUSTOM_OK", "violations": ["unknown_resolved_ok"]}}
+  ],
+  "contrasts": [
+    {"id": "E05-CON-01", "why": "preflight turns a launcher-side failure into a definite, safe outcome on the real image; without it the same failure is unqualifiable because stock was already stopped",
+     "profile": "57.23", "step": "preflight", "kind": "binary_missing",
+     "with": {"policy": {}, "expect": {"verdict": "STOCK_OK", "reason": "binary_missing"}},
+     "without": {"policy": {"preflight": false}, "expect": {"verdict": "UNQUALIFIED", "blockers": ["EXT-E05-STOP"]}}}
+  ]
+}

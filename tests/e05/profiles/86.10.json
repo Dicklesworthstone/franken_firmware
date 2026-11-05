@@ -1,0 +1,18 @@
+{
+  "schema": "ffw.e05.profile.v1",
+  "image": "86.10",
+  "kind": "extracted",
+  "facts": {
+    "hook_gate_existence_only": {"status": "unknown", "blocker": "EXT-E05-S2"},
+    "hook_interpreted": {"status": "unknown", "blocker": "EXT-E05-S2"},
+    "hook_runs_synchronously": {"status": "unknown", "blocker": "EXT-E05-S2"},
+    "hook_failure_nonfatal": {"status": "unknown", "blocker": "EXT-E05-S2"},
+    "jffs_noexec": {"status": "unknown", "blocker": "EXT-E05-S2"},
+    "stock_stop_effective": {"status": "unknown", "blocker": "EXT-E05-S2"},
+    "watchdog_covers_boot_stall": {"status": "unknown", "blocker": "EXT-E05-S2"},
+    "watchdog_restarts_daemon": {"status": "unknown", "blocker": "EXT-E05-S2"},
+    "fs_rename_atomic": {"status": "unknown", "blocker": "EXT-E05-S2"},
+    "hook_survives_update": {"status": "unknown", "blocker": "EXT-E05-S2"},
+    "update_interrupted_preserves_hook": {"status": "unknown", "blocker": "EXT-E05-S2"}
+  }
+}

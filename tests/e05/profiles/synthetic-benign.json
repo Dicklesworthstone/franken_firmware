@@ -1,0 +1,18 @@
+{
+  "schema": "ffw.e05.profile.v1",
+  "image": "synthetic-benign",
+  "kind": "synthetic",
+  "facts": {
+    "hook_gate_existence_only": {"status": "observed", "value": true, "source": "synthetic: assumed value to exercise the model; not a device fact"},
+    "hook_interpreted": {"status": "observed", "value": true, "source": "synthetic: assumed value to exercise the model; not a device fact"},
+    "hook_runs_synchronously": {"status": "observed", "value": true, "source": "synthetic: assumed value to exercise the model; not a device fact"},
+    "hook_failure_nonfatal": {"status": "observed", "value": true, "source": "synthetic: assumed value to exercise the model; not a device fact"},
+    "jffs_noexec": {"status": "observed", "value": true, "source": "synthetic: assumed value to exercise the model; not a device fact"},
+    "stock_stop_effective": {"status": "observed", "value": true, "source": "synthetic: assumed value to exercise the model; not a device fact"},
+    "watchdog_covers_boot_stall": {"status": "observed", "value": true, "source": "synthetic: assumed value to exercise the model; not a device fact"},
+    "watchdog_restarts_daemon": {"status": "observed", "value": true, "source": "synthetic: assumed value to exercise the model; not a device fact"},
+    "fs_rename_atomic": {"status": "observed", "value": true, "source": "synthetic: assumed value to exercise the model; not a device fact"},
+    "hook_survives_update": {"status": "observed", "value": true, "source": "synthetic: assumed value to exercise the model; not a device fact"},
+    "update_interrupted_preserves_hook": {"status": "observed", "value": true, "source": "synthetic: assumed value to exercise the model; not a device fact"}
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "schema": "ffw.suite.v1",
+  "suite": "e05",
+  "description": "E05 (ffw-xcz) boot-hook and rollback model: hand-written (transition, fault) matrix, the six invariants and predicate separation with planted defects, and evidence/CLI/hygiene cases, run through the shared run-suite.",
+  "requirements": {
+    "E05.AC1": {"text": "Unit/property/contract coverage: hook ordering, permissions, persistence, stop-marker and watchdog semantics, repeated start and missing executable per image; unknown semantics resolve to UNQUALIFIED with a named blocker.", "tiers": ["full"]},
+    "E05.AC2": {"text": "Offline boot-state traces inject a fault at every transition and show one audio owner or a fail-muted/unqualified state; absence of a recovery path is a failed case.", "tiers": ["full"]},
+    "E05.AC3": {"text": "Every transition and rollback logs its exact reason; hook presence never establishes readable, executed, started, writable or installed.", "tiers": ["smoke", "full"]},
+    "E05.AC4": {"text": "Named cases under tests/e05 with hand-written expected outcomes, a scripts/e2e/e05 entry point, boundary and error cases, command and result receipts, and the invariant-to-case map in docs/contracts/e05.md.", "tiers": ["smoke", "full"]},
+    "E05.AC5": {"text": "Offline only: the model and checker import no network or process module, write no file, and carry no private identifiers or write-primitive vocabulary.", "tiers": ["smoke", "full"]}
+  },
+  "required_cases": {
+    "smoke": ["e05.unit.invariants", "e05.unit.evidence"],
+    "full": ["e05.unit.invariants", "e05.unit.evidence", "e05.unit.matrix"]
+  },
+  "cases": [
+    {
+      "id": "e05.unit.invariants",
+      "argv": ["{python}", "-I", "{manifest_dir}/q00/unittest_case.py", "{manifest_dir}/../../tests/e05/test_invariants.py"],
+      "tiers": ["smoke", "full"],
+      "timeout_s": 120,
+      "requirements": ["E05.AC2", "E05.AC3"],
+      "description": "INV-1..6, predicate separation, every checker rule on handcrafted traces, nine planted defects with paired good behaviour, 300-seed property sweeps"
+    },
+    {
+      "id": "e05.unit.evidence",
+      "argv": ["{python}", "-I", "{manifest_dir}/q00/unittest_case.py", "{manifest_dir}/../../tests/e05/test_evidence.py"],
+      "tiers": ["smoke", "full"],
+      "timeout_s": 120,
+      "requirements": ["E05.AC3", "E05.AC4", "E05.AC5"],
+      "description": "profile fixtures and validation, strict argument parsing, CLI exit codes and non-repo cwd, hygiene and offline guards, contract/code sync"
+    },
+    {
+      "id": "e05.unit.matrix",
+      "argv": ["{python}", "-I", "{manifest_dir}/q00/unittest_case.py", "{manifest_dir}/../../tests/e05/test_matrix.py"],
+      "tiers": ["full"],
+      "timeout_s": 120,
+      "requirements": ["E05.AC1", "E05.AC2", "E05.AC4"],
+      "description": "34 hand-derived (transition, fault) cells on the benign, 57.23 and 86.10 profiles, 13 adverse fact flips, the preflight contrast, and the declared-cell denominator"
+    }
+  ]
+}
