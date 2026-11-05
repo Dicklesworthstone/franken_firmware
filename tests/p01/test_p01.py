@@ -694,6 +694,7 @@ class CentralEvidenceTests(unittest.TestCase):
                                    "/nonexistent/target", self.doc)
         self.roots_now = central.roots_for(self.root)
         self.logs = {}
+        self.extras = {}
         for step in self.planned:
             if step["id"] not in central.BLK001_STEPS:
                 continue
@@ -706,6 +707,7 @@ class CentralEvidenceTests(unittest.TestCase):
             if step["kind"] == "test":
                 extra = "test result: ok. 530 passed; 0 failed; 1 ignored; 0 measured\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured\n"
             self.logs[step["id"]] = fake_rch_log(inner, extra=extra)
+            self.extras[step["id"]] = extra
         self.rows = []
 
     def build(self, logs=None, **kw):
@@ -739,6 +741,90 @@ class CentralEvidenceTests(unittest.TestCase):
         tokens = ["cargo", "test", "--config", "build.incremental=false", "-j", "2",
                   "--config", "env.RCH_BUILD_SOURCE.value=\"unknown\"", "--config", "env.RCH_BUILD_SOURCE.force=true"]
         self.assertEqual(central.strip_rch_trailer(tokens), ["cargo", "test", "--config", "build.incremental=false", "-j", "2"])
+
+    DEV = "CARGO_PROFILE_DEV_DEBUG=line-tables-only"
+    TEST = "CARGO_PROFILE_TEST_DEBUG=line-tables-only"
+
+    def prefixed(self, prefix, programs=("cargo",)):
+        """The passing logs with `prefix` in front of the command of every step that runs one of `programs`, as rch 2.1.35 prints it
+        for cargo (the raw log differs, the plan does not)."""
+        logs = dict(self.logs)
+        for step in self.planned:
+            inner = plan.inner_command(step["argv"])
+            if step["id"] in logs and inner[0] in programs:
+                logs[step["id"]] = fake_rch_log(list(prefix) + inner, extra=self.extras[step["id"]])
+        return logs
+
+    def cargo_steps(self):
+        return [s["id"] for s in self.planned if s["id"] in self.logs and plan.inner_command(s["argv"])[0] == "cargo"]
+
+    def test_the_rch_env_prefix_is_stripped_only_when_it_is_exactly_the_two_profile_settings_in_front_of_cargo(self):
+        D, T = self.DEV, self.TEST
+        cargo = ["cargo", "+nightly", "build", "--locked"]
+        for label, tokens in (("env and both", ["env", D, T] + cargo), ("bare and both", [D, T] + cargo),
+                              ("either order", ["env", T, D] + cargo), ("env and only dev", ["env", D] + cargo),
+                              ("env and only test", ["env", T] + cargo), ("bare and only test", [T] + cargo)):
+            with self.subTest(label):
+                self.assertEqual(central.strip_rch_env_prefix(tokens), cargo)
+        for label, tokens in (("no prefix", cargo), ("rustc untouched", ["rustc", "-vV"]), ("env alone", ["env"] + cargo),
+                              ("another variable", ["env", D, "RUST_LOG=debug"] + cargo),
+                              ("another variable first", ["env", "RUST_LOG=debug", D] + cargo),
+                              ("another value", ["env", "CARGO_PROFILE_DEV_DEBUG=full"] + cargo),
+                              ("a value with a space", ["env", "CARGO_PROFILE_DEV_DEBUG=line-tables-only "] + cargo),
+                              ("the release profile", ["env", "CARGO_PROFILE_RELEASE_DEBUG=line-tables-only"] + cargo),
+                              ("RUSTFLAGS", ["env", D, "RUSTFLAGS=-Cdebuginfo=2"] + cargo),
+                              ("env -i", ["env", "-i", D, T] + cargo), ("env -i after", ["env", D, "-i"] + cargo),
+                              ("a repeated setting", ["env", D, D] + cargo), ("a repeated setting apart", ["env", D, T, D] + cargo),
+                              ("no cargo", ["env", D, T, "sh", "-c", "cargo build"]), ("rustc after it", ["env", D, T, "rustc", "-vV"]),
+                              ("nothing after it", ["env", D, T]), ("two envs", ["env", "env", D] + cargo),
+                              ("not leading", cargo + ["env", D]), ("not leading either", ["time", D] + cargo)):
+            with self.subTest(label):
+                self.assertEqual(central.strip_rch_env_prefix(tokens), tokens)
+
+    def test_a_log_whose_cargo_commands_carry_the_rch_env_prefix_is_still_the_planned_command_in_both_forms(self):
+        plain = self.build()
+        cargo = self.cargo_steps()
+        self.assertGreaterEqual(len(cargo), 3)
+        for label, prefix in (("env and both", ["env", self.DEV, self.TEST]), ("bare and both", [self.DEV, self.TEST]),
+                              ("env, test then dev", ["env", self.TEST, self.DEV]), ("env and only dev", ["env", self.DEV])):
+            with self.subTest(label):
+                evidence = self.build(self.prefixed(prefix))
+                rows = {s["id"]: s for s in evidence["steps"]}
+                for sid in cargo:
+                    self.assertEqual((rows[sid]["status"], rows[sid]["matches_plan"], rows[sid]["problems"]), ("ok", True, []), sid)
+                    self.assertNotEqual(rows[sid]["log_sha256"], next(s for s in plain["steps"] if s["id"] == sid)["log_sha256"],
+                                        "the raw log differs and its digest says so")
+                # the record is otherwise the one the unprefixed run makes: same commands, same verdict
+                strip = lambda doc: [{k: v for k, v in s.items() if k != "log_sha256"} for s in doc["steps"]]  # noqa: E731
+                self.assertEqual(strip(evidence), strip(plain))
+                self.assertEqual(self.judge(evidence)[0], "pass")
+
+    def test_an_env_prefix_that_is_not_exactly_the_two_profile_settings_in_front_of_cargo_keeps_the_step_failed(self):
+        D, T = self.DEV, self.TEST
+        cargo = self.cargo_steps()
+        for label, prefix in (("another variable", ["env", D, T, "RUST_LOG=debug"]), ("another value", ["env", "CARGO_PROFILE_DEV_DEBUG=full", T]),
+                              ("the release profile", ["env", D, T, "CARGO_PROFILE_RELEASE_DEBUG=line-tables-only"]),
+                              ("RUSTFLAGS", ["env", D, T, "RUSTFLAGS=-Ctarget-cpu=native"]), ("env -i", ["env", "-i", D, T]),
+                              ("a repeated setting", ["env", D, D, T]), ("env alone", ["env"])):
+            with self.subTest(label):
+                evidence = self.build(self.prefixed(prefix))
+                rows = {s["id"]: s for s in evidence["steps"]}
+                for sid in cargo:
+                    self.assertEqual(rows[sid]["status"], "failed", sid)
+                    self.assertFalse(rows[sid]["matches_plan"], sid)
+                    self.assertIn("the command the worker ran differs from the planned command", rows[sid]["problems"])
+                verdict, detail = self.judge(evidence)
+                self.assertEqual(verdict, "fail")
+                self.assertIn("a step failed centrally", detail)
+
+    def test_a_prefix_in_front_of_a_command_that_is_not_cargo_keeps_that_step_failed_while_the_cargo_steps_pass(self):
+        logs = self.prefixed(["env", self.DEV, self.TEST], programs=("cargo", "rustc"))
+        rustc = [s["id"] for s in self.planned if s["id"] in self.logs and plan.inner_command(s["argv"])[0] == "rustc"]
+        self.assertTrue(rustc)
+        rows = {s["id"]: s for s in self.build(logs)["steps"]}
+        for sid in rustc:
+            self.assertEqual(rows[sid]["status"], "failed", "a prefix in front of rustc is not the rule")
+        self.assertTrue(all(rows[sid]["status"] == "ok" for sid in self.cargo_steps()))
 
     def test_normalizing_replaces_the_root_only_at_a_path_boundary(self):
         got = central.normalize(["/srv/e/Cargo.toml", "/srv/e", "/srv/extra/x", "/srv/e2", "plain"], ["/srv/e"])

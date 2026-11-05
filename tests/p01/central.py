@@ -5,8 +5,9 @@ E06 precedent). `build_evidence` reads them once and keeps only what is safe and
 NAME, the remote command with every path under the export replaced by `<repo>`, its exit status, the SHA-256 of the raw
 log (so whoever holds the log can check it), the toolchain facts, the test totals, and the identity of the artifacts
 the run produced, read from the built bytes. Each step is verified against the plan it was meant to run: the command
-the worker ran must equal the planned command (after the `--config env.RCH_*` trailer that rch itself appends is
-removed), it must have run remotely, and it must have exited 0.
+the worker ran must equal the planned command (after the `--config env.RCH_*` trailer that rch itself appends, and the
+`env CARGO_PROFILE_{DEV,TEST}_DEBUG=line-tables-only` prefix rch 2.1.35 prepends to a cargo command, are removed), it
+must have run remotely, and it must have exited 0.
 
 `judge` holds committed evidence to the CURRENT plan and contract. Evidence for a different plan or contract, or with a
 step that never ran, is not wrong, it is stale: the verdict is `blocked`, named, never `pass` and never silently
@@ -98,6 +99,27 @@ def strip_rch_trailer(tokens: Sequence[str]) -> List[str]:
             continue
         out.append(tok)
     return out
+
+
+# The only two settings rch 2.1.35 puts in front of a cargo command; each is accepted once, with or without a leading `env`.
+RCH_ENV_PREFIX = ("CARGO_PROFILE_DEV_DEBUG=line-tables-only", "CARGO_PROFILE_TEST_DEBUG=line-tables-only")
+
+
+def strip_rch_env_prefix(tokens: Sequence[str]) -> List[str]:
+    """Remove the leading `[env] CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_PROFILE_TEST_DEBUG=line-tables-only` rch prepends
+    to a cargo command: exactly those tokens, each at most once, and only when `cargo` follows them. Anything else (another
+    variable or value, `CARGO_PROFILE_RELEASE_DEBUG`, `RUSTFLAGS`, `env -i`, a repeated setting, a prefix in front of a command that
+    is not cargo) is left in place, so the command still differs from the plan and the step fails."""
+    toks = list(tokens)
+    i = 1 if toks[:1] == ["env"] else 0
+    j = i
+    seen: List[str] = []
+    while j < len(toks) and toks[j] in RCH_ENV_PREFIX and toks[j] not in seen:
+        seen.append(toks[j])
+        j += 1
+    if not seen or toks[j:j + 1] != ["cargo"]:
+        return toks
+    return toks[j:]
 
 
 def normalize(tokens: Sequence[str], roots: Sequence[str]) -> List[str]:
@@ -205,7 +227,7 @@ def build_evidence(contract: Dict[str, Any], planned: Sequence[Dict[str, Any]], 
             steps.append({"id": sid, "kind": step["kind"], "status": "not_run", "planned_command": want})
             continue
         parsed = parse_remote_log(logs[sid])
-        got = normalize(strip_rch_trailer(parsed["command"]), roots)
+        got = normalize(strip_rch_env_prefix(strip_rch_trailer(parsed["command"])), roots)
         problems = list(parsed["problems"])
         if got != want:
             problems.append("the command the worker ran differs from the planned command")
