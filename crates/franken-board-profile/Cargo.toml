@@ -2,7 +2,7 @@
 name = "franken-board-profile"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 
 [lints]
 workspace = true
