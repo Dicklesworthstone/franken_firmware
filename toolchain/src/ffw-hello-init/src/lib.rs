@@ -167,3 +167,10 @@ mod tests {
         );
     }
 }
+
+/// Pure verdict and wire-format logic for the franken-speaker smoke step (E07 runner). The syscalls live in
+/// `speaker_smoke.rs`, which is compiled only with the `speaker-smoke` feature.
+///
+/// Declared last on purpose: a declaration above `write_all_with` would shift its line numbers, and those are
+/// embedded in the panic locations of the default (feature-off) binary, which must stay byte-identical.
+pub mod speaker_judge;

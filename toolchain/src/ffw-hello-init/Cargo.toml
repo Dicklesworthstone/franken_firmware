@@ -11,6 +11,11 @@ edition = "2021"
 
 [dependencies]
 
+[features]
+# Off by default, so the E07/E03 bootstrap probe is exactly what it was. On, PID 1 also runs the franken-speaker
+# smoke step after the probes: `/franken-speaker --catalog` as a child process (src/speaker_smoke.rs).
+speaker-smoke = []
+
 [profile.release]
 opt-level = "z"
 lto = true

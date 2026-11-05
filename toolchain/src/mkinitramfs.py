@@ -308,18 +308,69 @@ def verify_initramfs_bytes(
     }
 
 
-def build(init_path: str | os.PathLike[str], out_path: str | os.PathLike[str]) -> dict[str, Any]:
-    """Build a deterministic `.cpio.gz` initramfs from `init_path` and verify it independently."""
+RESERVED_NAMES = frozenset({"init", TRAILER_NAME, *DEFAULT_DIRS, *(name for name, _, _ in DEFAULT_DEVICE_NODES)})
+
+
+def check_extra_files(extra_files: Iterable[tuple[str, int, bytes]]) -> list[tuple[str, int, bytes]]:
+    """Validate extra regular files for the archive: a plain relative name that does not collide with `init`, the
+    standard directories or device nodes (or with another extra), and a regular-file mode."""
+    checked: list[tuple[str, int, bytes]] = []
+    seen: set[str] = set()
+    for name, mode, data in extra_files:
+        parts = name.split("/")
+        if not name or name.startswith("/") or any(part in ("", ".", "..") for part in parts):
+            raise ValueError(f"extra file name must be a plain relative path: {name!r}")
+        if name in RESERVED_NAMES or name in seen:
+            raise ValueError(f"extra file name collides with an existing archive entry: {name!r}")
+        if (mode & S_IFMT) != S_IFREG:
+            raise ValueError(f"extra file {name!r} must be a regular file mode, got {oct(mode)}")
+        if not isinstance(data, bytes):
+            raise ValueError(f"extra file {name!r} data must be bytes")
+        seen.add(name)
+        checked.append((name, mode, data))
+    return checked
+
+
+def verify_extra_files(archive_bytes: bytes, extra_files: Iterable[tuple[str, int, bytes]]) -> dict[str, Any]:
+    """Parse the finished archive independently and confirm each extra file is present with the mode and bytes that
+    were handed in. Returns name -> {mode, size, sha256} as read back from the archive."""
+    raw = gzip.decompress(archive_bytes) if archive_bytes[:2] == b"\x1f\x8b" else archive_bytes
+    by_name = {entry["name"]: entry for entry in parse_cpio_bytes(raw)}
+    read_back: dict[str, Any] = {}
+    for name, mode, data in extra_files:
+        entry = by_name.get(name)
+        if entry is None:
+            raise ValueError(f"extra file {name!r} is missing from the archive")
+        if entry["mode"] != mode:
+            raise ValueError(f"extra file {name!r} mode mismatch: got {oct(entry['mode'])}, expected {oct(mode)}")
+        if entry["data"] != data:
+            raise ValueError(f"extra file {name!r} contents differ from what was packed")
+        read_back[name] = {"mode": oct(entry["mode"]), "size": entry["filesize"], "sha256": entry["sha256"]}
+    return read_back
+
+
+def build(
+    init_path: str | os.PathLike[str],
+    out_path: str | os.PathLike[str],
+    extra_files: Iterable[tuple[str, int, bytes]] = (),
+) -> dict[str, Any]:
+    """Build a deterministic `.cpio.gz` initramfs from `init_path` and verify it independently.
+
+    `extra_files` are `(name, mode, bytes)` regular files packed after `init`. With none, the archive is exactly
+    what it was before this parameter existed."""
     init_p = pathlib.Path(init_path)
     out_p = pathlib.Path(out_path)
     if not init_p.is_file():
         raise FileNotFoundError(f"init binary does not exist: {init_p}")
+    extras = check_extra_files(extra_files)
     init_bytes = init_p.read_bytes()
     init_sha256 = hashlib.sha256(init_bytes).hexdigest()
 
-    raw_cpio = build_cpio_bytes(init_bytes)
+    raw_cpio = build_cpio_bytes(init_bytes, extra_entries=[(name, mode, data, None) for name, mode, data in extras])
     gz_bytes = compress_deterministic_gzip(raw_cpio)
     receipt = verify_initramfs_bytes(gz_bytes, expected_init_sha256=init_sha256)
+    if extras:
+        receipt["extra_files"] = verify_extra_files(gz_bytes, extras)
 
     out_p.parent.mkdir(parents=True, exist_ok=True)
     out_p.write_bytes(gz_bytes)

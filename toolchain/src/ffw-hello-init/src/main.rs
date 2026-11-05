@@ -762,6 +762,14 @@ pub extern "C" fn _start() -> ! {
     // (the missing success marker and the capture timeout fail the guest), never a missing probe.
     failures += e03_probes_rt::run(console_fd);
 
+    // franken-speaker smoke (E07 runner change): only in a build with the `speaker-smoke` feature. It runs after
+    // every probe, so a wedged or crashing speaker cannot hide an earlier line, and before the summary, so a
+    // failure here is a TEST_FAILURE.
+    #[cfg(feature = "speaker-smoke")]
+    {
+        failures += speaker_smoke::run(console_fd);
+    }
+
     if failures == 0 {
         emit_console(console_fd, b"FFW_MARKER:TEST_SUCCESS failures=0\n");
     } else {
@@ -862,3 +870,8 @@ pub unsafe extern "C" fn bcmp(a: *const u8, b: *const u8, n: usize) -> i32 {
     }
     0
 }
+
+// Declared last on purpose: a declaration above the probes would shift the line numbers embedded in the panic
+// locations of the default (feature-off) binary, which must stay byte-identical to the one before this feature.
+#[cfg(feature = "speaker-smoke")]
+mod speaker_smoke;

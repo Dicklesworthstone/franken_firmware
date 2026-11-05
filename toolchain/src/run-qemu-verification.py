@@ -31,6 +31,7 @@ SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
 sys.path.insert(0, str(SCRIPT_DIR))
 import mkinitramfs  # noqa: E402
+import speaker_expect  # noqa: E402
 
 
 FORBIDDEN_SUBSTRINGS: tuple[str, ...] = (
@@ -277,6 +278,7 @@ def build_manifest(
     command: list[str] | None,
     sources: dict[str, str | None],
     target_dir: pathlib.Path,
+    features: list[str] | None = None,
 ) -> dict[str, Any]:
     """What this receipt pins about the build. `command` is the exact argv handed to rch, or None when the
     runner was told to reuse existing artifacts (`--skip-build`); in that case the source digests describe the
@@ -289,7 +291,7 @@ def build_manifest(
         except (OSError, KeyError, tomllib.TOMLDecodeError):
             flags = []
     built = command is not None
-    return {
+    manifest = {
         "command": command,
         "environment": {"RCH_REQUIRE_REMOTE": "1", "CARGO_TARGET_DIR": repo_relative(target_dir)} if built else None,
         "sources_sha256": sources,
@@ -309,6 +311,10 @@ def build_manifest(
             "build_std": "core,panic_abort" if built and "build-std=core,panic_abort" in command else None,
         },
     }
+    if features:
+        # Only when there are some: a default run's manifest keeps exactly the shape it has always had.
+        manifest["features"] = list(features)
+    return manifest
 
 
 def capture_guest(command: list[str], env: dict[str, str], timeout: float,
@@ -368,8 +374,202 @@ def capture_guest(command: list[str], env: dict[str, str], timeout: float,
             "returncode": proc.returncode, "stop_reason": reason}
 
 
+# ---- franken-speaker smoke (E07 runner change; BeigeMaple mail 3794) ---------------------------------------------
+#
+# With `--speaker-mips/--speaker-ppc` the initramfs also carries `/franken-speaker` and the guest is built with the
+# `speaker-smoke` feature: after every probe, PID 1 runs `/franken-speaker --catalog` as a child process and prints
+#
+#     FFW_SPEAKER_BEGIN path=/franken-speaker argv=--catalog
+#     <the child's stdout, forwarded verbatim: the pretty-printed board catalog>
+#     FFW_SPEAKER_EXIT status=0 stdout_bytes=<N> stdout_fnv1a64=<16 hex>
+#
+# before the usual summary markers. The expected markers are fixed here, before any run:
+#   * the BEGIN line, exactly once, before the EXIT line;
+#   * the EXIT line in its single success form (status 0, at least one byte of stdout); every other form is a
+#     named failure (`speaker_failed:<what the guest said>`), never a pass;
+#   * the console transcript between BEGIN and EXIT must be byte-for-byte what the guest measured (count and
+#     FNV-1a-64), so a corrupted or interleaved transcript does not verify;
+#   * that transcript must be the catalog the Rust source defines (`speaker_expect.judge_catalog`): the same
+#     nine rows, in order, with the fields the source literals state and digests that recompute.
+# The existing probe markers and their order are unchanged, and without the speaker flags any FFW_SPEAKER_* line
+# is an unknown marker and fails the guest.
+
+SPEAKER_FEATURE = "speaker-smoke"
+SPEAKER_CPIO_NAME = "franken-speaker"          # `/franken-speaker` in the guest
+SPEAKER_MODE = 0o100755
+SPEAKER_ARCHES = ("mips", "ppc")
+
+# Planted faults, one boot each. The real run is the "remove the plant" baseline: a control is only credited when
+# the unplanted run of the same guest passed, and it must fail for exactly the planted reason and no other.
+SPEAKER_CONTROLS: dict[str, dict[str, Any]] = {
+    "missing": {
+        "errno": 2,                             # ENOENT, the same number on both ABIs
+        "plant": "no /franken-speaker entry in the archive",
+    },
+    "non_executable": {
+        "errno": 13,                            # EACCES
+        "plant": "/franken-speaker present with mode 0644",
+    },
+    "wrong_isa": {
+        "errno": 8,                             # ENOEXEC: a valid static ELF32 BE for the other ISA
+        "plant": "the other ISA's franken-speaker, mode 0755",
+    },
+}
+
+
+def judge_speaker(raw_log: str, lines: list[str], positions: dict[str, int], errors: list[str],
+                  speaker: dict[str, Any]) -> dict[str, Any]:
+    """The speaker half of a transcript: grammar, console-versus-guest measurement, and the catalog itself.
+    Appends named errors to `errors`; returns the record that goes into the receipt."""
+    record: dict[str, Any] = {
+        "argv": [speaker_expect.SPEAKER_PATH, speaker_expect.SPEAKER_ARG],
+        "outcome": "not_run",
+        "exit_line": None,
+    }
+    begin, exit_at = positions.get("FFW_SPEAKER_BEGIN"), positions.get("FFW_SPEAKER_EXIT")
+    if exit_at is None:
+        return record
+    exit_line = lines[exit_at]
+    record["exit_line"] = exit_line
+    if begin is not None and begin > exit_at:
+        errors.append("speaker_order:exit_before_begin")
+    ok = speaker_expect.EXIT_OK.fullmatch(exit_line)
+    if ok is None:
+        record["outcome"] = "failed" if speaker_expect.EXIT_FAILURE.fullmatch(exit_line) else "invalid"
+        return record
+    record["outcome"] = "exited_0"
+    reported = {"stdout_bytes": int(ok.group(1)), "stdout_fnv1a64": ok.group(2)}
+    record["reported"] = reported
+    host = speaker.get("host")
+    if host is not None:
+        record["host_catalog"] = host
+        if (reported["stdout_bytes"], reported["stdout_fnv1a64"]) != (host["stdout_bytes"], host["stdout_fnv1a64"]):
+            errors.append("speaker_stdout_differs_from_host")
+    region, reason = speaker_expect.stdout_region(raw_log)
+    if region is None:
+        errors.append(f"speaker_region:{reason}")
+        return record
+    measured = {"stdout_bytes": len(region), "stdout_fnv1a64": f"{speaker_expect.fnv1a64(region):016x}"}
+    record["console_region"] = measured
+    if measured["stdout_bytes"] != reported["stdout_bytes"]:
+        errors.append("speaker_stdout_mismatch:bytes")
+    if measured["stdout_fnv1a64"] != reported["stdout_fnv1a64"]:
+        errors.append("speaker_stdout_mismatch:fnv1a64")
+    problems = speaker_expect.judge_catalog(region, speaker["expected"])
+    record["catalog"] = {"rows_expected": len(speaker["expected"]["rows"]), "problems": problems}
+    errors.extend(f"speaker_catalog:{problem}" for problem in problems)
+    return record
+
+
+def judge_speaker_control(verification: dict[str, Any], expected_errno: int,
+                          stop_reason: str | None, returncode: int | None) -> dict[str, Any]:
+    """Was a planted fault caught, and for the right reason? Every check must hold: the guest failed; the only
+    validation errors are the planted exec failure with its errno and the guest's own TEST_FAILURE line (which
+    this verifier has always reported as an unknown marker, so a failing guest always carries it); the only
+    missing marker is the success marker (every probe line was still valid); the only forbidden marker is that
+    same TEST_FAILURE; and the capture ended cleanly (QEMU exit 0, no timeout)."""
+    checks = {
+        "guest_failed": verification["status"] == "FAIL",
+        "only_the_planted_error": verification["validation_errors"] == [
+            f"speaker_failed:spawn=exec errno={expected_errno}", "invalid:FFW_MARKER:TEST_FAILURE"],
+        "only_the_success_marker_missing": verification["missing_markers"] == ["FFW_MARKER:TEST_SUCCESS"],
+        "only_the_guest_failure_marker": verification["forbidden_hits"] == ["FFW_MARKER:TEST_FAILURE"],
+        "clean_capture": stop_reason is None and returncode == 0,
+    }
+    return {"checks": checks, "caught": all(checks.values())}
+
+
+def speaker_binary_facts(arch: str, path: pathlib.Path, data: bytes,
+                         archive_receipt: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Facts about the speaker binary that was packed, and the errors they imply: it must be a static ELF32
+    big-endian executable for the guest's ISA, and the archive entry must be those exact bytes."""
+    elf = inspect_static_elf(path, arch)
+    entry = archive_receipt.get("extra_files", {}).get(SPEAKER_CPIO_NAME)
+    sha256 = hashlib.sha256(data).hexdigest()
+    errors = []
+    if elf["problems"]:
+        errors.append("speaker_elf:" + ",".join(elf["problems"]))
+    if entry is None or entry["sha256"] != sha256:
+        errors.append("speaker_entry_differs_from_binary")
+    return {"path": repo_relative(path), "sha256": sha256, "bytes": len(data), "static_elf": elf,
+            "archive_entry": entry}, errors
+
+
+SPEAKER_BOUNDARY = (
+    "Generic full-system QEMU guests (Debian Linux 4.19 Malta / 4.9 g3beige), not Sonos silicon or kernels. Shows "
+    "the linked franken-speaker starts as a userspace process under a retained-kernel-class guest, runs std, "
+    "allocation, serde_json and SHA-256 on a big-endian CPU, and prints the catalog the Rust source defines. "
+    "The catalog has no floating point and the run uses no network, audio or threads beyond startup, so it says "
+    "nothing about the float ABI, drivers, timing or memory pressure on a real unit."
+)
+
+
+def run_speaker_controls(arch: str, cfg: dict[str, Any], bin_path: pathlib.Path,
+                         speaker_bins: dict[str, pathlib.Path], results_dir: pathlib.Path,
+                         build_dir: pathlib.Path, timeout: float, speaker_ctx: dict[str, Any]) -> dict[str, Any]:
+    """Boot this guest once per planted fault and judge each with the same verifier that judged the real run.
+
+    Each control uses the SAME hello-init binary as the real run; only the archive differs. The record keeps the
+    raw logs, so a reader can see the guest's own EXIT line, not just the verdict."""
+    own = speaker_bins[arch].read_bytes()
+    other_arch = next(name for name in SPEAKER_ARCHES if name != arch)
+    other = speaker_bins[other_arch].read_bytes()
+    plants: dict[str, list[tuple[str, int, bytes]]] = {
+        "missing": [],
+        "non_executable": [(SPEAKER_CPIO_NAME, 0o100644, own)],
+        "wrong_isa": [(SPEAKER_CPIO_NAME, SPEAKER_MODE, other)],
+    }
+    controls: dict[str, Any] = {}
+    for name, spec in SPEAKER_CONTROLS.items():
+        initrd_path = results_dir / f"initramfs-{arch}-control-{name}.cpio.gz"
+        archive = mkinitramfs.build(bin_path, initrd_path, extra_files=plants[name])
+        entry = archive.get("extra_files", {}).get(SPEAKER_CPIO_NAME)
+        env = os.environ.copy()
+        env["FFW_BUILD_DIR"] = str(build_dir)
+        env["FFW_INITRAMFS"] = str(initrd_path.resolve())
+        capture = capture_guest([str(cfg["boot_script"])], env, timeout)
+        raw = capture["stdout"] + capture["stderr"]
+        prefix = f"boot-{arch}-control-{name}"
+        for stream in ("stdout", "stderr"):
+            with (results_dir / f"{prefix}-{stream}.bin").open("xb") as output:
+                output.write(capture[stream])
+        with (results_dir / f"{prefix}-serial.log").open("xb") as output:
+            output.write(raw)
+        verification = verify_serial_output(arch, cfg["hello"], cfg["enosys"], raw.decode("utf-8", errors="replace"),
+                                            cfg["triple"], speaker=speaker_ctx)
+        judged = judge_speaker_control(verification, spec["errno"], capture["stop_reason"], capture["returncode"])
+        # The plant must be what it claims to be, read back from the archive that was booted.
+        planted = {
+            "missing": entry is None,
+            "non_executable": entry is not None and entry["mode"] == oct(0o100644)
+            and entry["sha256"] == hashlib.sha256(own).hexdigest(),
+            "wrong_isa": entry is not None and entry["mode"] == oct(SPEAKER_MODE)
+            and entry["sha256"] == hashlib.sha256(other).hexdigest(),
+        }[name]
+        judged["checks"]["plant_is_what_it_claims"] = planted
+        judged["caught"] = all(judged["checks"].values())
+        controls[name] = {
+            "plant": spec["plant"],
+            "expected_errno": spec["errno"],
+            "archive_sha256": archive["archive_sha256"],
+            "archive_entry": entry,
+            "serial_log_path": f"{prefix}-serial.log",
+            "serial_log_sha256": hashlib.sha256(raw).hexdigest(),
+            "capture_stop_reason": capture["stop_reason"],
+            "qemu_exit_code": capture["returncode"],
+            "status": verification["status"],
+            "validation_errors": verification["validation_errors"],
+            "missing_markers": verification["missing_markers"],
+            "forbidden_hits": verification["forbidden_hits"],
+            "speaker_exit_line": verification["speaker"]["exit_line"],
+            **judged,
+        }
+    return controls
+
+
 def verify_serial_output(
-    arch: str, expected_hello: str, expected_enosys: str, raw_log: str, expected_triple: str
+    arch: str, expected_hello: str, expected_enosys: str, raw_log: str, expected_triple: str,
+    speaker: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     lines = [line.strip() for line in raw_log.splitlines()]
     forbidden_hits = [bad for bad in FORBIDDEN_SUBSTRINGS if bad in raw_log]
@@ -401,6 +601,9 @@ def verify_serial_output(
         "FFW_MARKER:TEST_SUCCESS": r"FFW_MARKER:TEST_SUCCESS failures=0",
         "FFW_MARKER:REBOOT_REQUEST": r"FFW_MARKER:REBOOT_REQUEST",
     }
+    if speaker is not None:
+        patterns["FFW_SPEAKER_BEGIN"] = re.escape(speaker_expect.BEGIN_LINE)
+        patterns["FFW_SPEAKER_EXIT"] = speaker_expect.EXIT_OK.pattern
     positions: dict[str, int] = {}
     errors = []
     probes = {}
@@ -414,7 +617,11 @@ def verify_serial_output(
             positions[key] = idx
         pattern = patterns.get(key)
         if pattern is None or re.fullmatch(pattern, line) is None:
-            errors.append(f"invalid:{key}")
+            if speaker is not None and key == "FFW_SPEAKER_EXIT" and speaker_expect.EXIT_FAILURE.fullmatch(line):
+                # The guest said exactly how the speaker failed; name that, do not call it a malformed line.
+                errors.append("speaker_failed:" + line[len("FFW_SPEAKER_EXIT "):])
+            else:
+                errors.append(f"invalid:{key}")
         elif key == "FFW_TEST:PARTIAL_WRITE" and int(line.rsplit("=", 1)[1]) >= 8192:
             errors.append("invalid:partial_write_count_is_not_partial")
         if line.startswith("FFW_TEST:") or line.startswith("FFW_PROBE:"):
@@ -465,8 +672,10 @@ def verify_serial_output(
         ):
             errors.append("inconsistent:FFW_BUILD_vs_FFW_RUSTC")
 
+    speaker_record = judge_speaker(raw_log, lines, positions, errors, speaker) if speaker is not None else None
+
     passed = (not forbidden_hits) and (not missing) and (not errors) and order_ok
-    return {
+    result = {
         "arch": arch,
         "status": "PASS" if passed else "FAIL",
         "build_identity": build_identity,
@@ -487,6 +696,9 @@ def verify_serial_output(
             key.split(":", 1)[1] for key, rec in probes.items() if rec.get("capability") == "unseeded"
         ),
     }
+    if speaker_record is not None:
+        result["speaker"] = speaker_record
+    return result
 
 
 def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int:
@@ -495,7 +707,16 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
     self_test_receipt = mkinitramfs.self_test()
 
     hello_crate = SCRIPT_DIR / "ffw-hello-init"
-    target_dir = args.target_dir or build_dir / "hello-init-target"
+    # Speaker mode builds a different binary from the same crate (feature `speaker-smoke`), so it gets its own
+    # default target directory: the default E07 build products are never overwritten by it.
+    speaker_bins: dict[str, pathlib.Path] | None = getattr(args, "speaker_binaries", None)
+    speaker_ctx: dict[str, Any] | None = None
+    if speaker_bins is not None:
+        speaker_ctx = {"expected": speaker_expect.load_expected(REPO_ROOT)}
+        if getattr(args, "speaker_host", None) is not None:
+            speaker_ctx["host"] = args.speaker_host           # already checked in main(), before anything ran
+    target_dir = args.target_dir or build_dir / (
+        "hello-init-speaker-target" if speaker_bins is not None else "hello-init-target")
 
     targets = {
         "mips": {
@@ -535,6 +756,8 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
                 "-Z",
                 "build-std=core,panic_abort",
             ]
+            if speaker_bins is not None:
+                cmd += ["--features", SPEAKER_FEATURE]
             # RCH admits a build against a worker's slot count using ITS OWN core estimate, which ignores
             # CARGO_BUILD_JOBS, so the job count has to be in the command itself ("-j 3 (or fewer)" on a
             # 3-slot worker). Recorded verbatim in build_manifest.command like every other argument.
@@ -555,7 +778,12 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
     for arch, cfg in targets.items():
         bin_path = target_dir / cfg["triple"] / "release" / "ffw-hello-init"
         initrd_path = results_dir / f"initramfs-{arch}.cpio.gz"
-        archive_receipts[arch] = mkinitramfs.build(bin_path, initrd_path)
+        speaker_bytes = speaker_bins[arch].read_bytes() if speaker_bins is not None else None
+        if speaker_bytes is not None:
+            archive_receipts[arch] = mkinitramfs.build(
+                bin_path, initrd_path, extra_files=[(SPEAKER_CPIO_NAME, SPEAKER_MODE, speaker_bytes)])
+        else:
+            archive_receipts[arch] = mkinitramfs.build(bin_path, initrd_path)
 
         t0 = time.monotonic()
         env = os.environ.copy()
@@ -576,11 +804,17 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
         with log_path.open("xb") as output:
             output.write(raw_combined)
 
-        verification = verify_serial_output(arch, cfg["hello"], cfg["enosys"], combined, cfg["triple"])
+        verification = verify_serial_output(arch, cfg["hello"], cfg["enosys"], combined, cfg["triple"],
+                                            speaker=speaker_ctx)
         elf = inspect_static_elf(bin_path, arch)
         linker = configured_linker(hello_crate, cfg["triple"])
         identity = verification["build_identity"]
         identity_errors = []
+        speaker_facts = None
+        if speaker_bytes is not None:
+            speaker_facts, speaker_errors = speaker_binary_facts(
+                arch, speaker_bins[arch], speaker_bytes, archive_receipts[arch])
+            identity_errors.extend(speaker_errors)
         binary_sha256 = sha256_file(bin_path)
         # The archive's init entry is what QEMU executed; it must be the binary this receipt names and inspects.
         if archive_receipts[arch].get("init_sha256") != binary_sha256:
@@ -606,7 +840,9 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
                 },
                 "booted_init_sha256": archive_receipts[arch].get("init_sha256"),
                 "linker_configured": linker,
-                "build_manifest": build_manifest(hello_crate, cfg["triple"], build_commands.get(arch), sources, target_dir),
+                "build_manifest": build_manifest(
+                    hello_crate, cfg["triple"], build_commands.get(arch), sources, target_dir,
+                    [SPEAKER_FEATURE] if speaker_bins is not None else None),
                 "qemu_exit_code": returncode,
                 "timed_out": timed_out,
                 "capture_stop_reason": capture["stop_reason"],
@@ -629,6 +865,26 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
                 ),
             }
         )
+        if speaker_bins is not None and speaker_facts is not None:
+            verification["speaker"]["binary"] = speaker_facts
+            verification["speaker"]["qualification_boundary"] = SPEAKER_BOUNDARY
+            if getattr(args, "speaker_controls", False):
+                # Credited only against a green baseline: a planted fault proves nothing if the unplanted run of
+                # the same guest did not pass.
+                baseline_ok = not capture["stop_reason"] and returncode == 0 and verification["status"] == "PASS"
+                if baseline_ok:
+                    controls = run_speaker_controls(arch, cfg, bin_path, speaker_bins, results_dir, build_dir,
+                                                    args.timeout, speaker_ctx)
+                else:
+                    controls = {name: {"skipped": "baseline_failed"} for name in SPEAKER_CONTROLS}
+                verification["speaker"]["controls"] = controls
+                for name, record in controls.items():
+                    if "skipped" in record:
+                        verification["validation_errors"].append(f"speaker_control_not_run:{name}")
+                        verification["status"] = "FAIL"
+                    elif not record["caught"]:
+                        verification["validation_errors"].append(f"speaker_control_not_caught:{name}")
+                        verification["status"] = "FAIL"
         if capture["stop_reason"] or returncode != 0 or verification["status"] != "PASS":
             verification["status"] = "FAIL"
             overall_pass = False
@@ -670,11 +926,44 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
         "mkinitramfs_self_test": self_test_receipt,
         "guests": guest_results,
     }
+    if speaker_ctx is not None:
+        expected = speaker_ctx["expected"]
+        receipt["speaker_smoke"] = {
+            "feature": SPEAKER_FEATURE,
+            "argv": [speaker_expect.SPEAKER_PATH, speaker_expect.SPEAKER_ARG],
+            "controls_requested": bool(getattr(args, "speaker_controls", False)),
+            "expected_source": {"path": expected["source"], "sha256": expected["source_sha256"],
+                                "schema_version": expected["schema_version"], "rows": len(expected["rows"])},
+            "host_catalog": speaker_ctx.get("host"),
+        }
 
     receipt_path = results_dir / "e07-e03-verification-receipt.json"
     receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
     print(json.dumps(receipt, indent=2, sort_keys=True))
     return 0 if overall_pass else 1
+
+
+def check_catalog_file(path: pathlib.Path, parser: argparse.ArgumentParser) -> int:
+    """`--check-catalog`: judge a `franken-speaker --catalog` stdout file and print the verdict. Run it on the HOST
+    build's output first: it must pass there (that validates this checker, including its SHA-256 replication)
+    before a guest's output is held to it. The printed byte count and FNV-1a-64 are what a guest's EXIT line must
+    equal if the catalog is byte-identical across ISAs, which JSON text should be."""
+    if not path.is_file():
+        parser.error(f"--check-catalog: not a file: {path.name}")
+    data = path.read_bytes()
+    expected = speaker_expect.load_expected(REPO_ROOT)
+    problems = speaker_expect.judge_catalog(data, expected)
+    print(json.dumps({
+        "checked": path.name,
+        "status": "PASS" if not problems else "FAIL",
+        "problems": problems,
+        "stdout_bytes": len(data),
+        "stdout_fnv1a64": f"{speaker_expect.fnv1a64(data):016x}",
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "rows_expected": len(expected["rows"]),
+        "expected_source": {"path": expected["source"], "sha256": expected["source_sha256"]},
+    }, indent=2, sort_keys=True))
+    return 0 if not problems else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -685,6 +974,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--results-dir", type=pathlib.Path, help="New output directory; existing directories are refused")
     parser.add_argument("--jobs", type=int, default=None, metavar="N",
                         help="append -j N to each cargo build command (RCH admits against a worker's slot count)")
+    speaker = parser.add_argument_group(
+        "franken-speaker smoke",
+        "Run the linked franken-speaker as a userspace process in each guest (see the franken-speaker smoke "
+        "section above verify_serial_output). The guests are then built with the `speaker-smoke` feature.")
+    speaker.add_argument("--speaker-mips", type=pathlib.Path, metavar="PATH",
+                         help="static ELF32 big-endian MIPS franken-speaker to pack as /franken-speaker")
+    speaker.add_argument("--speaker-ppc", type=pathlib.Path, metavar="PATH",
+                         help="static ELF32 big-endian PowerPC franken-speaker to pack as /franken-speaker")
+    speaker.add_argument("--speaker-controls", action="store_true",
+                         help="also boot each guest with planted faults (missing, non-executable, wrong-ISA "
+                              "binary); each must fail for exactly the planted reason or the run fails")
+    speaker.add_argument("--speaker-host-catalog", type=pathlib.Path, metavar="FILE",
+                         help="stdout of the HOST build's `franken-speaker --catalog`; it must pass the catalog "
+                              "check itself (positive control) and each guest's stdout must equal it exactly")
+    parser.add_argument("--check-catalog", type=pathlib.Path, metavar="FILE",
+                        help="only judge FILE (a `franken-speaker --catalog` stdout) against the catalog the Rust "
+                             "source defines, print the verdict and exit; runs no guest")
     args = parser.parse_args(argv)
     if not 0 < args.timeout <= 3600:
         parser.error("timeout must be positive, finite and no greater than 3600 seconds")
@@ -692,6 +998,38 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--jobs must be between 1 and 256")
     if args.jobs is not None and args.skip_build:
         parser.error("--jobs has no effect with --skip-build (no build runs, so no command would record it)")
+
+    args.speaker_binaries = None
+    args.speaker_host = None
+    if args.check_catalog is not None:
+        if (args.speaker_mips is not None or args.speaker_ppc is not None
+                or args.speaker_host_catalog is not None or args.speaker_controls):
+            parser.error("--check-catalog stands alone; it runs no guest")
+        return check_catalog_file(args.check_catalog, parser)
+    if args.speaker_mips is not None or args.speaker_ppc is not None:
+        if args.speaker_mips is None or args.speaker_ppc is None:
+            parser.error("--speaker-mips and --speaker-ppc go together: both guests run the same build")
+        args.speaker_binaries = {"mips": args.speaker_mips, "ppc": args.speaker_ppc}
+        for arch, path in args.speaker_binaries.items():
+            if not path.is_file():
+                parser.error(f"--speaker-{arch}: not a file: {path.name}")
+            problems = inspect_static_elf(path, arch)["problems"]
+            if problems:
+                parser.error(f"--speaker-{arch}: not a static ELF32 big-endian {arch} executable: {','.join(problems)}")
+        if args.speaker_host_catalog is not None:
+            if not args.speaker_host_catalog.is_file():
+                parser.error(f"--speaker-host-catalog: not a file: {args.speaker_host_catalog.name}")
+            host_bytes = args.speaker_host_catalog.read_bytes()
+            host_problems = speaker_expect.judge_catalog(host_bytes, speaker_expect.load_expected(REPO_ROOT))
+            if host_problems:
+                # The positive control: the HOST build's own output must satisfy the checker before any guest is
+                # blamed. A failure here belongs to the checker or the source, not to a guest.
+                parser.error("--speaker-host-catalog does not satisfy the catalog check: " + "; ".join(host_problems[:5]))
+            args.speaker_host = {"stdout_bytes": len(host_bytes),
+                                 "stdout_fnv1a64": f"{speaker_expect.fnv1a64(host_bytes):016x}",
+                                 "sha256": hashlib.sha256(host_bytes).hexdigest()}
+    elif args.speaker_controls or args.speaker_host_catalog is not None:
+        parser.error("--speaker-controls and --speaker-host-catalog need --speaker-mips and --speaker-ppc")
     run_id = args.run_id = uuid.uuid4().hex
     results_dir = args.results_dir or REPO_ROOT / "toolchain" / "results" / "runs" / run_id
     results_dir.mkdir(parents=True, exist_ok=False)
