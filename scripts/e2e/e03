@@ -1,4 +1,19 @@
 #!/usr/bin/env bash
+# E03 end-to-end entry point (bead ffw-q2p): kernel-ABI capability classification, host side.
+# Delegates to tests/e03/run_cases.py (offline, stdlib Python; it boots nothing). With no arguments it
+# runs the full tier.
+#
+#   scripts/e2e/e03                          full tier
+#   scripts/e2e/e03 --tier smoke|full        explicit tier
+#   scripts/e2e/e03 --tier full --case E03-CLASS-010 [--receipts DIR]     replay one case
+#
+# Exit 0 only when every case passed and no required case is blocked; 1 on a failed case; 3 when the
+# only non-passes are blocked cases (reported, never counted as passed); 2 on usage or a malformed case file.
+# The Rust workspace check that used to live here is preserved unchanged at scripts/workspace-checks/e03
+# (it builds, so it runs only through the centralized RCH path).
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-exec python3 "$ROOT/scripts/test/run-workspace-verification.py" e03 "$@"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+if [ "$#" -eq 0 ]; then
+  set -- --tier full
+fi
+exec python3 -B "$ROOT/tests/e03/run_cases.py" "$@"

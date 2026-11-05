@@ -1,0 +1,3052 @@
+{
+ "schema": "ffw.e03.cases.v1",
+ "about": "E03 (ffw-q2p) host-side cases.  Expected values are written independently of tests/e03/abi.py. REAL = committed QEMU transcripts/receipt; PLANTED = one changed line in a real transcript; SYNTHETIC = a line added or changed because no real source exists; BLOCKED = required, unverifiable now.",
+ "cases": [
+  {
+   "id": "E03-ERRNO-001",
+   "kind": "errno_table",
+   "title": "PowerPC errno numbers (asm-generic); ENOSYS 38 observed in boot-ppc-serial.log",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "arch": "powerpc",
+    "entries": [
+     [
+      1,
+      "EPERM"
+     ],
+     [
+      2,
+      "ENOENT"
+     ],
+     [
+      4,
+      "EINTR"
+     ],
+     [
+      9,
+      "EBADF"
+     ],
+     [
+      11,
+      "EAGAIN"
+     ],
+     [
+      12,
+      "ENOMEM"
+     ],
+     [
+      14,
+      "EFAULT"
+     ],
+     [
+      22,
+      "EINVAL"
+     ],
+     [
+      38,
+      "ENOSYS"
+     ],
+     [
+      88,
+      "ENOTSOCK"
+     ],
+     [
+      93,
+      "EPROTONOSUPPORT"
+     ],
+     [
+      95,
+      "EOPNOTSUPP"
+     ],
+     [
+      97,
+      "EAFNOSUPPORT"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "E03-ERRNO-002",
+   "kind": "errno_table",
+   "title": "MIPS errno numbers (arch/mips); ENOSYS 89 observed in boot-mips-serial.log",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "arch": "mips",
+    "entries": [
+     [
+      1,
+      "EPERM"
+     ],
+     [
+      2,
+      "ENOENT"
+     ],
+     [
+      4,
+      "EINTR"
+     ],
+     [
+      9,
+      "EBADF"
+     ],
+     [
+      11,
+      "EAGAIN"
+     ],
+     [
+      89,
+      "ENOSYS"
+     ],
+     [
+      95,
+      "ENOTSOCK"
+     ],
+     [
+      120,
+      "EPROTONOSUPPORT"
+     ],
+     [
+      122,
+      "EOPNOTSUPP"
+     ],
+     [
+      124,
+      "EAFNOSUPPORT"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "E03-ERRNO-003",
+   "kind": "errno_table",
+   "title": "A number outside an ABI's table decodes to nothing, never to another ABI's name",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "arch": "mips",
+    "entries": [
+     [
+      38,
+      null
+     ],
+     [
+      88,
+      null
+     ],
+     [
+      97,
+      null
+     ],
+     [
+      0,
+      null
+     ],
+     [
+      -1,
+      null
+     ],
+     [
+      2147483648,
+      null
+     ]
+    ]
+   }
+  },
+  {
+   "id": "E03-ERRNO-004",
+   "kind": "errno_reverse",
+   "title": "Name to number per ABI; unknown names and ABIs are refused",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "arch": "powerpc",
+    "entries": [
+     [
+      "ENOSYS",
+      38
+     ],
+     [
+      "EINTR",
+      4
+     ],
+     [
+      "EAGAIN",
+      11
+     ]
+    ],
+    "unknown_names": [
+     "EFOO",
+     "enosys",
+     ""
+    ],
+    "unknown_arches": [
+     "arm",
+     "x86",
+     "mips-be",
+     ""
+    ]
+   }
+  },
+  {
+   "id": "E03-ERRNO-005",
+   "kind": "errno_reverse",
+   "title": "The same name has different numbers on the two ABIs (ENOSYS 89, ENOTSOCK 95)",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "arch": "mips",
+    "entries": [
+     [
+      "ENOSYS",
+      89
+     ],
+     [
+      "ENOTSOCK",
+      95
+     ],
+     [
+      "EOPNOTSUPP",
+      122
+     ]
+    ]
+   }
+  },
+  {
+   "id": "E03-INT-001",
+   "kind": "int_table",
+   "title": "Canonical 32-bit decimals only: no errno=890-as-89 prefixing, no overflow wrap",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "valid": [
+     [
+      "0",
+      0
+     ],
+     [
+      "7",
+      7
+     ],
+     [
+      "-38",
+      -38
+     ],
+     [
+      "-89",
+      -89
+     ],
+     [
+      "2147483647",
+      2147483647
+     ],
+     [
+      "-2147483648",
+      -2147483648
+     ],
+     [
+      "4096",
+      4096
+     ],
+     [
+      "999999999",
+      999999999
+     ]
+    ],
+    "invalid": [
+     "",
+     "+1",
+     "01",
+     "-0",
+     " 1",
+     "1 ",
+     "0x10",
+     "1.0",
+     "1_0",
+     "\u0663",
+     "2147483648",
+     "-2147483649",
+     "99999999999999999999",
+     "--1",
+     "1e3",
+     "89x",
+     "-",
+     "- 1",
+     "\u0661\u0662"
+    ]
+   }
+  },
+  {
+   "id": "E03-IO-001",
+   "kind": "io_table",
+   "title": "Short I/O and errno results, PowerPC (requested 8192)",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "arch": "powerpc",
+    "requested": 8192,
+    "entries": [
+     [
+      8192,
+      "full",
+      null
+     ],
+     [
+      4096,
+      "short",
+      null
+     ],
+     [
+      1,
+      "short",
+      null
+     ],
+     [
+      8191,
+      "short",
+      null
+     ],
+     [
+      0,
+      "zero",
+      null
+     ],
+     [
+      -11,
+      "would_block",
+      "EAGAIN"
+     ],
+     [
+      -4,
+      "interrupted",
+      "EINTR"
+     ],
+     [
+      -9,
+      "error",
+      "EBADF"
+     ],
+     [
+      -38,
+      "error",
+      "ENOSYS"
+     ],
+     [
+      -14,
+      "error",
+      "EFAULT"
+     ],
+     [
+      -9999,
+      "error",
+      null
+     ],
+     [
+      8193,
+      "invalid",
+      null
+     ]
+    ]
+   }
+  },
+  {
+   "id": "E03-IO-002",
+   "kind": "io_table",
+   "title": "Short I/O and errno results, MIPS: ENOSYS is -89, and -38 is not ENOSYS here",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "arch": "mips",
+    "requested": 8192,
+    "entries": [
+     [
+      -89,
+      "error",
+      "ENOSYS"
+     ],
+     [
+      -38,
+      "error",
+      null
+     ],
+     [
+      -11,
+      "would_block",
+      "EAGAIN"
+     ],
+     [
+      -4,
+      "interrupted",
+      "EINTR"
+     ],
+     [
+      4096,
+      "short",
+      null
+     ],
+     [
+      0,
+      "zero",
+      null
+     ],
+     [
+      8192,
+      "full",
+      null
+     ]
+    ],
+    "invalid_args": [
+     [
+      0,
+      1
+     ],
+     [
+      -1,
+      1
+     ],
+     [
+      true,
+      1
+     ],
+     [
+      "8",
+      1
+     ],
+     [
+      8192,
+      true
+     ],
+     [
+      8192,
+      2147483648
+     ],
+     [
+      8192,
+      -2147483649
+     ],
+     [
+      8192,
+      "1"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "E03-CLASS-001",
+   "kind": "classify",
+   "title": "REAL mips transcript vs its own harness profile: red while the log lacks PARTIAL_WRITE",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [],
+    "expect": {
+     "expect_by_line": {
+      "line": "FFW_TEST:PARTIAL_WRITE",
+      "absent": {
+       "evidence": "matching-guest",
+       "verdict": "red",
+       "calibration_ok": true,
+       "probes": {
+        "PARTIAL_WRITE": [
+         "ambiguous",
+         "no_evidence"
+        ],
+        "EPOLL": [
+         "supported",
+         "pass"
+        ]
+       },
+       "supported_exactly": [
+        "CLOCK_MONOTONIC",
+        "NONBLOCK_PIPE",
+        "POLL",
+        "EPOLL",
+        "SOCKET_UDP",
+        "ENTROPY",
+        "ATOMICS_32"
+       ]
+      },
+      "present": {
+       "evidence": "matching-guest",
+       "verdict": "green",
+       "calibration_ok": true,
+       "supported_exactly": [
+        "CLOCK_MONOTONIC",
+        "NONBLOCK_PIPE",
+        "POLL",
+        "EPOLL",
+        "SOCKET_UDP",
+        "ENTROPY",
+        "ATOMICS_32",
+        "PARTIAL_WRITE"
+       ]
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-002",
+   "kind": "classify",
+   "title": "REAL ppc transcript vs its own harness profile: red while the log lacks PARTIAL_WRITE",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [],
+    "expect": {
+     "expect_by_line": {
+      "line": "FFW_TEST:PARTIAL_WRITE",
+      "absent": {
+       "evidence": "matching-guest",
+       "verdict": "red",
+       "calibration_ok": true,
+       "probes": {
+        "PARTIAL_WRITE": [
+         "ambiguous",
+         "no_evidence"
+        ],
+        "EPOLL": [
+         "supported",
+         "pass"
+        ]
+       },
+       "supported_exactly": [
+        "CLOCK_MONOTONIC",
+        "NONBLOCK_PIPE",
+        "POLL",
+        "EPOLL",
+        "SOCKET_UDP",
+        "ENTROPY",
+        "ATOMICS_32"
+       ]
+      },
+      "present": {
+       "evidence": "matching-guest",
+       "verdict": "green",
+       "calibration_ok": true,
+       "supported_exactly": [
+        "CLOCK_MONOTONIC",
+        "NONBLOCK_PIPE",
+        "POLL",
+        "EPOLL",
+        "SOCKET_UDP",
+        "ENTROPY",
+        "ATOMICS_32",
+        "PARTIAL_WRITE"
+       ]
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-003",
+   "kind": "classify",
+   "title": "mips real transcript + SYNTHETIC PARTIAL_WRITE line (committed log predates it): green",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "green",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE"
+     ]
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-004",
+   "kind": "classify",
+   "title": "ppc real transcript + SYNTHETIC PARTIAL_WRITE line (committed log predates it): green",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "green",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE"
+     ]
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-010",
+   "kind": "classify",
+   "title": "PLANTED ppc EPOLL -ENOSYS(38): unsupported, degraded (POLL fallback), never green",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:EPOLL",
+      "line": "FFW_PROBE:EPOLL status=FAIL fd=-38"
+     }
+    ],
+    "expect": {
+     "verdict": "degraded",
+     "probes": {
+      "EPOLL": [
+       "unsupported",
+       "ENOSYS"
+      ],
+      "POLL": [
+       "supported",
+       "pass"
+      ]
+     },
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE"
+     ]
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-011",
+   "kind": "classify",
+   "title": "PLANTED ppc EPOLL ENOSYS and POLL fails with no errno: POLL ambiguous, red",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:EPOLL",
+      "line": "FFW_PROBE:EPOLL status=FAIL fd=-38"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:POLL",
+      "line": "FFW_PROBE:POLL status=FAIL rc=0"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "probes": {
+      "EPOLL": [
+       "unsupported",
+       "ENOSYS"
+      ],
+      "POLL": [
+       "ambiguous",
+       "failed_without_errno"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-012",
+   "kind": "classify",
+   "title": "PLANTED mips SOCKET_UDP -ENOSYS(89): unsupported, red",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:SOCKET_UDP",
+      "line": "FFW_PROBE:SOCKET_UDP status=FAIL fd=-89"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "probes": {
+      "SOCKET_UDP": [
+       "unsupported",
+       "ENOSYS"
+      ]
+     },
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE"
+     ]
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-013",
+   "kind": "classify",
+   "title": "PLANTED mips SOCKET_UDP -38 (PowerPC's ENOSYS): NOT unsupported on MIPS, ambiguous",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:SOCKET_UDP",
+      "line": "FFW_PROBE:SOCKET_UDP status=FAIL fd=-38"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "probes": {
+      "SOCKET_UDP": [
+       "ambiguous",
+       "unknown_errno:38"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-014",
+   "kind": "classify",
+   "title": "PLANTED ppc ENTROPY -EINTR: transient, ambiguous, never unsupported",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:ENTROPY",
+      "line": "FFW_PROBE:ENTROPY status=FAIL fd=-4"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "probes": {
+      "ENTROPY": [
+       "ambiguous",
+       "transient:EINTR"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-015",
+   "kind": "classify",
+   "title": "PLANTED ppc ENTROPY -EAGAIN: transient, ambiguous",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:ENTROPY",
+      "line": "FFW_PROBE:ENTROPY status=FAIL fd=-11"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "probes": {
+      "ENTROPY": [
+       "ambiguous",
+       "transient:EAGAIN"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-016",
+   "kind": "classify",
+   "title": "PLANTED ppc SOCKET_UDP -EAFNOSUPPORT(97): the call exists but failed, ambiguous",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:SOCKET_UDP",
+      "line": "FFW_PROBE:SOCKET_UDP status=FAIL fd=-97"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "probes": {
+      "SOCKET_UDP": [
+       "ambiguous",
+       "errno:EAFNOSUPPORT"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-017",
+   "kind": "classify",
+   "title": "PLANTED ppc NONBLOCK_PIPE -ENOSYS (pipe2 absent): unsupported, red (required)",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:NONBLOCK_PIPE",
+      "line": "FFW_PROBE:NONBLOCK_PIPE status=FAIL rc=-38"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "probes": {
+      "NONBLOCK_PIPE": [
+       "unsupported",
+       "ENOSYS"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-018",
+   "kind": "classify",
+   "title": "PLANTED ppc ATOMICS_32 line missing: no evidence, ambiguous, red",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "drop",
+      "prefix": "FFW_PROBE:ATOMICS_32"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "probes": {
+      "ATOMICS_32": [
+       "ambiguous",
+       "no_evidence"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-019",
+   "kind": "classify",
+   "title": "PLANTED ppc EPOLL reported twice: duplicate, ambiguous",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "duplicate",
+      "prefix": "FFW_PROBE:EPOLL"
+     }
+    ],
+    "expect": {
+     "probes": {
+      "EPOLL": [
+       "ambiguous",
+       "duplicate_line"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-020",
+   "kind": "classify",
+   "title": "PLANTED ppc EPOLL 'PASS fd=-38': contradictory PASS, ambiguous",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:EPOLL",
+      "line": "FFW_PROBE:EPOLL status=PASS fd=-38"
+     }
+    ],
+    "expect": {
+     "probes": {
+      "EPOLL": [
+       "ambiguous",
+       "contradictory_pass"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-021",
+   "kind": "classify",
+   "title": "PLANTED ppc POLL 'rc=01': non-canonical integer, ambiguous",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:POLL",
+      "line": "FFW_PROBE:POLL status=PASS rc=01"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "probes": {
+      "POLL": [
+       "ambiguous",
+       "bad_integer"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-022",
+   "kind": "classify",
+   "title": "PLANTED ppc PARTIAL_WRITE 'PASS bytes=8192': not a short write, contradictory",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=8192"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "probes": {
+      "PARTIAL_WRITE": [
+       "ambiguous",
+       "contradictory_pass"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-023",
+   "kind": "classify",
+   "title": "PLANTED ppc PARTIAL_WRITE 'FAIL bytes=-1': no errno to decode, ambiguous",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=FAIL bytes=-1"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "probes": {
+      "PARTIAL_WRITE": [
+       "ambiguous",
+       "failed_without_errno"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-025",
+   "kind": "classify",
+   "title": "PLANTED mips guest ENOSYS disagrees with the table (38): nothing can be decoded, red",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_TEST:ERR_ENOSYS",
+      "line": "FFW_TEST:ERR_ENOSYS status=PASS errno=38"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:SOCKET_UDP",
+      "line": "FFW_PROBE:SOCKET_UDP status=FAIL fd=-89"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "calibration_ok": false,
+     "probes": {
+      "SOCKET_UDP": [
+       "ambiguous",
+       "errno_calibration_failed"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-026",
+   "kind": "classify",
+   "title": "PLANTED ppc guest self-test ERR_EBADF missing: not trusted, red even though every probe passed",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "drop",
+      "prefix": "FFW_TEST:ERR_EBADF"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "calibration_ok": false,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE"
+     ]
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-045",
+   "kind": "classify",
+   "title": "PLANTED ppc ENTROPY -ENOSYS: unsupported entropy, red (required)",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:ENTROPY",
+      "line": "FFW_PROBE:ENTROPY status=FAIL fd=-38"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "probes": {
+      "ENTROPY": [
+       "unsupported",
+       "ENOSYS"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-046",
+   "kind": "classify",
+   "title": "PLANTED ppc kernel string but the guest says arch=mips-be: wrong architecture, non-matching, red",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_HELLO",
+      "line": "FFW_HELLO arch=mips-be endian=0x01020304 pid=1 ptr_bits=32"
+     }
+    ],
+    "expect": {
+     "evidence": "non-matching-guest",
+     "verdict": "red",
+     "all_probes": [
+      "ambiguous",
+      "no_matching_guest"
+     ]
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-047",
+   "kind": "classify",
+   "title": "PLANTED ppc EPOLL reports 'rc=3' instead of 'fd=': wrong detail key, ambiguous",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:EPOLL",
+      "line": "FFW_PROBE:EPOLL status=PASS rc=3"
+     }
+    ],
+    "expect": {
+     "probes": {
+      "EPOLL": [
+       "ambiguous",
+       "wrong_detail_key"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-048",
+   "kind": "classify",
+   "title": "PLANTED ppc EPOLL line with trailing text: malformed, ambiguous",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:EPOLL",
+      "line": "FFW_PROBE:EPOLL status=PASS fd=4 extra"
+     }
+    ],
+    "expect": {
+     "probes": {
+      "EPOLL": [
+       "ambiguous",
+       "malformed_line"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-049",
+   "kind": "classify",
+   "title": "PLANTED ppc USERSPACE_START marker dropped but kernel identity present: unavailable guest",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "drop",
+      "prefix": "FFW_MARKER:USERSPACE_START"
+     }
+    ],
+    "expect": {
+     "evidence": "unavailable-guest",
+     "verdict": "red",
+     "all_probes": [
+      "unavailable-guest",
+      "no guest kernel identity"
+     ]
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-050",
+   "kind": "classify",
+   "title": "PLANTED ppc guest self-test ERR_EBADF 'PASS errno=1' (not 9): not trusted, red",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_TEST:ERR_EBADF",
+      "line": "FFW_TEST:ERR_EBADF status=PASS errno=1"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "calibration_ok": false,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE"
+     ]
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-051",
+   "kind": "classify",
+   "title": "PLANTED ppc guest self-test ERR_ENOENT 'PASS errno=3' (not 2): not trusted, red",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_TEST:ERR_ENOENT",
+      "line": "FFW_TEST:ERR_ENOENT status=PASS errno=3"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "calibration_ok": false,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE"
+     ]
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-052",
+   "kind": "classify",
+   "title": "PLANTED ppc guest self-test POS_FD_SHORT_WRITE 'PASS fd=0' (stdin, not a new fd): not trusted, red",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:POS_FD_SHORT_WRITE status=PASS fd=0"
+     },
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "calibration_ok": false,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE"
+     ]
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-053",
+   "kind": "classify",
+   "title": "PLANTED ppc ERR_ENOSYS line missing: no way to decode negatives, red",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "drop",
+      "prefix": "FFW_TEST:ERR_ENOSYS"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:SOCKET_UDP",
+      "line": "FFW_PROBE:SOCKET_UDP status=FAIL fd=-38"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "calibration_ok": false,
+     "probes": {
+      "SOCKET_UDP": [
+       "ambiguous",
+       "errno_calibration_failed"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-065",
+   "kind": "classify",
+   "title": "PLANTED ppc ERR_ENOSYS 'status=FAIL errno=38': the guest says its own check failed, red",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_TEST:ERR_ENOSYS",
+      "line": "FFW_TEST:ERR_ENOSYS status=FAIL errno=38"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:SOCKET_UDP",
+      "line": "FFW_PROBE:SOCKET_UDP status=FAIL fd=-38"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "calibration_ok": false,
+     "probes": {
+      "SOCKET_UDP": [
+       "ambiguous",
+       "errno_calibration_failed"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-054",
+   "kind": "classify",
+   "title": "PLANTED ppc POLL 'status=PASS rc=2': PASS outside its valid range, ambiguous",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:POLL",
+      "line": "FFW_PROBE:POLL status=PASS rc=2"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "probes": {
+      "POLL": [
+       "ambiguous",
+       "contradictory_pass"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-055",
+   "kind": "classify",
+   "title": "PLANTED ppc POLL 'status=PASS rc=0': PASS outside its valid range, ambiguous",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:POLL",
+      "line": "FFW_PROBE:POLL status=PASS rc=0"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "probes": {
+      "POLL": [
+       "ambiguous",
+       "contradictory_pass"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-056",
+   "kind": "classify",
+   "title": "PLANTED ppc ATOMICS_32 'status=PASS ok=0': PASS outside its valid range, ambiguous",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:ATOMICS_32",
+      "line": "FFW_PROBE:ATOMICS_32 status=PASS ok=0"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "probes": {
+      "ATOMICS_32": [
+       "ambiguous",
+       "contradictory_pass"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-057",
+   "kind": "classify",
+   "title": "PLANTED ppc NONBLOCK_PIPE 'status=PASS rc=-1': PASS outside its valid range, ambiguous",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:NONBLOCK_PIPE",
+      "line": "FFW_PROBE:NONBLOCK_PIPE status=PASS rc=-1"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "probes": {
+      "NONBLOCK_PIPE": [
+       "ambiguous",
+       "contradictory_pass"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-058",
+   "kind": "classify",
+   "title": "PLANTED ppc NONBLOCK_PIPE 'status=PASS rc=1': PASS outside its valid range, ambiguous",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:NONBLOCK_PIPE",
+      "line": "FFW_PROBE:NONBLOCK_PIPE status=PASS rc=1"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "probes": {
+      "NONBLOCK_PIPE": [
+       "ambiguous",
+       "contradictory_pass"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-059",
+   "kind": "classify",
+   "title": "PLANTED ppc CLOCK_MONOTONIC 'status=PASS res_ns=0': PASS outside its valid range, ambiguous",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:CLOCK_MONOTONIC",
+      "line": "FFW_PROBE:CLOCK_MONOTONIC status=PASS res_ns=0"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "probes": {
+      "CLOCK_MONOTONIC": [
+       "ambiguous",
+       "contradictory_pass"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-060",
+   "kind": "classify",
+   "title": "PLANTED ppc EPOLL 'status=PASS fd=0': PASS outside its valid range, ambiguous",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:EPOLL",
+      "line": "FFW_PROBE:EPOLL status=PASS fd=0"
+     }
+    ],
+    "expect": {
+     "verdict": "degraded",
+     "probes": {
+      "EPOLL": [
+       "ambiguous",
+       "contradictory_pass"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-061",
+   "kind": "classify",
+   "title": "PLANTED ppc SOCKET_UDP 'status=PASS fd=0': PASS outside its valid range, ambiguous",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:SOCKET_UDP",
+      "line": "FFW_PROBE:SOCKET_UDP status=PASS fd=0"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "probes": {
+      "SOCKET_UDP": [
+       "ambiguous",
+       "contradictory_pass"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-062",
+   "kind": "classify",
+   "title": "PLANTED ppc ENTROPY 'status=PASS fd=-1': PASS outside its valid range, ambiguous",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:ENTROPY",
+      "line": "FFW_PROBE:ENTROPY status=PASS fd=-1"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "probes": {
+      "ENTROPY": [
+       "ambiguous",
+       "contradictory_pass"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-063",
+   "kind": "classify",
+   "title": "PLANTED ppc PARTIAL_WRITE 'PASS bytes=0': a zero-byte write is not the expected short write",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=0"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "probes": {
+      "PARTIAL_WRITE": [
+       "ambiguous",
+       "contradictory_pass"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-064",
+   "kind": "classify",
+   "title": "ppc PARTIAL_WRITE bytes=8191 (largest short write): supported",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=8191"
+     }
+    ],
+    "expect": {
+     "verdict": "green",
+     "probes": {
+      "PARTIAL_WRITE": [
+       "supported",
+       "pass"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-040",
+   "kind": "classify",
+   "title": "ppc CLOCK_MONOTONIC res_ns=999999999 (largest valid tv_nsec): supported",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:CLOCK_MONOTONIC",
+      "line": "FFW_PROBE:CLOCK_MONOTONIC status=PASS res_ns=999999999"
+     }
+    ],
+    "expect": {
+     "verdict": "green"
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-041",
+   "kind": "classify",
+   "title": "PLANTED ppc CLOCK_MONOTONIC res_ns=1000000000 (outside tv_nsec): contradictory, red",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:CLOCK_MONOTONIC",
+      "line": "FFW_PROBE:CLOCK_MONOTONIC status=PASS res_ns=1000000000"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "probes": {
+      "CLOCK_MONOTONIC": [
+       "ambiguous",
+       "contradictory_pass"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-043",
+   "kind": "classify",
+   "title": "ppc EPOLL fd=2147483647 (largest 32-bit fd): supported",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:EPOLL",
+      "line": "FFW_PROBE:EPOLL status=PASS fd=2147483647"
+     }
+    ],
+    "expect": {
+     "verdict": "green"
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-044",
+   "kind": "classify",
+   "title": "PLANTED ppc EPOLL fd=2147483648 / -2147483648: overflow refused or undecodable, never a crash",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:EPOLL",
+      "line": "FFW_PROBE:EPOLL status=PASS fd=2147483648"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:SOCKET_UDP",
+      "line": "FFW_PROBE:SOCKET_UDP status=FAIL fd=-2147483648"
+     }
+    ],
+    "expect": {
+     "verdict": "red",
+     "probes": {
+      "EPOLL": [
+       "ambiguous",
+       "bad_integer"
+      ],
+      "SOCKET_UDP": [
+       "ambiguous",
+       "unknown_errno"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-030",
+   "kind": "classify",
+   "title": "PLANTED ppc transcript cut after FFW_HELLO (no kernel identity): unavailable guest",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "truncate_after",
+      "prefix": "FFW_HELLO"
+     }
+    ],
+    "expect": {
+     "evidence": "unavailable-guest",
+     "verdict": "red",
+     "all_probes": [
+      "unavailable-guest",
+      "no guest kernel identity"
+     ]
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-031",
+   "kind": "classify",
+   "title": "PLANTED mips guest died before userspace: unavailable guest",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "truncate_before_first",
+      "prefix": "FFW_MARKER:USERSPACE_START"
+     }
+    ],
+    "expect": {
+     "evidence": "unavailable-guest",
+     "verdict": "red",
+     "all_probes": [
+      "unavailable-guest",
+      "no guest kernel identity"
+     ]
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-032",
+   "kind": "classify",
+   "title": "ppc full transcript run under user-mode emulation: CPU evidence only, unavailable guest, red",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     }
+    ],
+    "expect": {
+     "evidence": "cpu-emulation",
+     "verdict": "red",
+     "all_probes": [
+      "unavailable-guest",
+      "user-mode emulation"
+     ],
+     "guest_status": {
+      "EPOLL": "supported"
+     }
+    },
+    "mode": "user-mode"
+   }
+  },
+  {
+   "id": "E03-CLASS-033",
+   "kind": "classify",
+   "title": "No QEMU run at all (mode none, empty transcript): unavailable guest, red",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "inline": []
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [],
+    "expect": {
+     "evidence": "unavailable-guest",
+     "verdict": "red",
+     "all_probes": [
+      "unavailable-guest",
+      "no guest kernel identity"
+     ]
+    },
+    "mode": "none"
+   }
+  },
+  {
+   "id": "E03-CLASS-037",
+   "kind": "classify",
+   "title": "PLANTED markers only echoed by the kernel/shell, not printed by the guest: unavailable guest",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "inline": [
+      "[    1.000000] FFW_MARKER:USERSPACE_START",
+      "# FFW_KERNEL_VERSION: Linux version 4.19.0-21-4kc-malta",
+      "  echo FFW_PROBE:EPOLL status=PASS fd=4"
+     ]
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [],
+    "expect": {
+     "evidence": "unavailable-guest",
+     "verdict": "red",
+     "all_probes": [
+      "unavailable-guest",
+      "no guest kernel identity"
+     ]
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-034",
+   "kind": "classify",
+   "title": "REAL ppc 4.9 guest vs the STOCK 2.6.14 profile: never supported (no matching guest), red",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "stock-ppc-2.6.14",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     }
+    ],
+    "expect": {
+     "evidence": "non-matching-guest",
+     "verdict": "red",
+     "all_probes": [
+      "ambiguous",
+      "no_matching_guest"
+     ],
+     "guest_status": {
+      "EPOLL": "supported",
+      "CLOCK_MONOTONIC": "supported"
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-035",
+   "kind": "classify",
+   "title": "REAL mips 4.19 guest vs the STOCK 2.6.35 profile: never supported (no matching guest), red",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "stock-mips-2.6.35",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     }
+    ],
+    "expect": {
+     "evidence": "non-matching-guest",
+     "verdict": "red",
+     "all_probes": [
+      "ambiguous",
+      "no_matching_guest"
+     ],
+     "guest_status": {
+      "EPOLL": "supported"
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-036",
+   "kind": "classify",
+   "title": "PLANTED mips transcript offered for the PowerPC harness profile: wrong architecture, red",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     }
+    ],
+    "expect": {
+     "evidence": "non-matching-guest",
+     "verdict": "red",
+     "all_probes": [
+      "ambiguous",
+      "no_matching_guest"
+     ]
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-038",
+   "kind": "classify",
+   "title": "PLANTED kernel '2.6.140' is not the 2.6.14 profile (prefix attack): non-matching, red",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "stock-ppc-2.6.14",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_KERNEL_VERSION:",
+      "line": "FFW_KERNEL_VERSION: Linux version 2.6.140 (synthetic)"
+     }
+    ],
+    "expect": {
+     "evidence": "non-matching-guest",
+     "verdict": "red"
+    }
+   }
+  },
+  {
+   "id": "E03-CLASS-039",
+   "kind": "classify",
+   "title": "SYNTHETIC '2.6.14-sonos' guest vs the 2.6.14 profile: matching evidence, green (the gate is not always red)",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "stock-ppc-2.6.14",
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_KERNEL_VERSION:",
+      "line": "FFW_KERNEL_VERSION: Linux version 2.6.14-sonos (synthetic)"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "green"
+    }
+   }
+  },
+  {
+   "id": "E03-CLI-001",
+   "kind": "cli",
+   "title": "CLI exits 0 only for a green classification (mips + SYNTHETIC PARTIAL_WRITE)",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "profile": "harness-mips-4.19",
+    "exit": 0,
+    "verdict": "green",
+    "source": {
+     "real": "mips"
+    },
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     }
+    ]
+   }
+  },
+  {
+   "id": "E03-CLI-002",
+   "kind": "cli",
+   "title": "CLI exits 1 when a required capability is unsupported (mips SOCKET_UDP -89)",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "profile": "harness-mips-4.19",
+    "exit": 1,
+    "verdict": "red",
+    "source": {
+     "real": "mips"
+    },
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:SOCKET_UDP",
+      "line": "FFW_PROBE:SOCKET_UDP status=FAIL fd=-89"
+     }
+    ]
+   }
+  },
+  {
+   "id": "E03-CLI-003",
+   "kind": "cli",
+   "title": "CLI exits 4 (distinct, nonzero) for a degraded fallback-covered gap (ppc EPOLL -38)",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "profile": "harness-ppc-4.9",
+    "exit": 4,
+    "verdict": "degraded",
+    "source": {
+     "real": "ppc"
+    },
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:EPOLL",
+      "line": "FFW_PROBE:EPOLL status=FAIL fd=-38"
+     }
+    ]
+   }
+  },
+  {
+   "id": "E03-CLI-004",
+   "kind": "cli",
+   "title": "CLI treats an unreadable transcript as no guest evidence: exit 1, never green",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "profile": "harness-mips-4.19",
+    "exit": 1,
+    "verdict": "red",
+    "missing_file": true
+   }
+  },
+  {
+   "id": "E03-CLI-005",
+   "kind": "cli",
+   "title": "CLI on the REAL ppc log as committed: exit 1 while it lacks PARTIAL_WRITE",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "profile": "harness-ppc-4.9",
+    "exit": 1,
+    "verdict": "red",
+    "source": {
+     "real": "ppc"
+    },
+    "mutations": []
+   }
+  },
+  {
+   "id": "E03-CLI-006",
+   "kind": "cli",
+   "title": "CLI refuses an unknown profile with a usage error (exit 2)",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "profile": "no-such-profile",
+    "exit": 2,
+    "verdict": null,
+    "source": {
+     "real": "mips"
+    },
+    "mutations": []
+   }
+  },
+  {
+   "id": "E03-CLI-007",
+   "kind": "cli",
+   "title": "CLI under user-mode emulation exits 1 whatever the transcript says",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "profile": "harness-ppc-4.9",
+    "exit": 1,
+    "verdict": "red",
+    "source": {
+     "real": "ppc"
+    },
+    "mutations": [
+     {
+      "op": "insert_after",
+      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+     }
+    ],
+    "mode": "user-mode"
+   }
+  },
+  {
+   "id": "E03-XVAL-001",
+   "kind": "cross_validator",
+   "title": "The root's validator and this classifier agree on every variant of the real mips log",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "real": "mips",
+    "profile": "harness-mips-4.19",
+    "variants": [
+     {
+      "name": "committed",
+      "mutations": [],
+      "root": "FAIL",
+      "ours": "red"
+     },
+     {
+      "name": "+synthetic PARTIAL_WRITE",
+      "mutations": [
+       {
+        "op": "insert_after",
+        "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+        "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+       }
+      ],
+      "root": "PASS",
+      "ours": "green"
+     },
+     {
+      "name": "EPOLL ENOSYS",
+      "mutations": [
+       {
+        "op": "insert_after",
+        "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+        "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+       },
+       {
+        "op": "set_line",
+        "prefix": "FFW_PROBE:EPOLL",
+        "line": "FFW_PROBE:EPOLL status=FAIL fd=-89"
+       }
+      ],
+      "root": "FAIL",
+      "ours": "degraded"
+     },
+     {
+      "name": "SOCKET ENOSYS",
+      "mutations": [
+       {
+        "op": "insert_after",
+        "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+        "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+       },
+       {
+        "op": "set_line",
+        "prefix": "FFW_PROBE:SOCKET_UDP",
+        "line": "FFW_PROBE:SOCKET_UDP status=FAIL fd=-89"
+       }
+      ],
+      "root": "FAIL",
+      "ours": "red"
+     }
+    ]
+   }
+  },
+  {
+   "id": "E03-XVAL-002",
+   "kind": "cross_validator",
+   "title": "The root's validator and this classifier agree on every variant of the real ppc log",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "real": "ppc",
+    "profile": "harness-ppc-4.9",
+    "variants": [
+     {
+      "name": "committed",
+      "mutations": [],
+      "root": "FAIL",
+      "ours": "red"
+     },
+     {
+      "name": "+synthetic PARTIAL_WRITE",
+      "mutations": [
+       {
+        "op": "insert_after",
+        "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+        "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+       }
+      ],
+      "root": "PASS",
+      "ours": "green"
+     },
+     {
+      "name": "POLL fails",
+      "mutations": [
+       {
+        "op": "insert_after",
+        "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+        "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+       },
+       {
+        "op": "set_line",
+        "prefix": "FFW_PROBE:POLL",
+        "line": "FFW_PROBE:POLL status=FAIL rc=0"
+       }
+      ],
+      "root": "FAIL",
+      "ours": "red"
+     }
+    ]
+   }
+  },
+  {
+   "id": "E03-IDENT-001",
+   "kind": "identity",
+   "title": "The two real logs are the bytes the committed receipt names (sha256) and carry its kernel",
+   "tiers": [
+    "full"
+   ],
+   "spec": {}
+  },
+  {
+   "id": "E03-SELF-001",
+   "kind": "runner_selftest",
+   "title": "The runner refuses wrong expectations, vacuous mutations, malformed documents and miscounted exits",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "min_tests": 47
+   }
+  },
+  {
+   "id": "E03-META-001",
+   "kind": "meta",
+   "title": "Every invariant names existing cases, every case covers an invariant, inapplicability is explained",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {}
+  },
+  {
+   "id": "E03-BLK-001",
+   "kind": "blocked",
+   "title": "Short-write evidence and a consistent committed receipt",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "reason": "no committed transcript contains FFW_TEST:PARTIAL_WRITE, so the current validator FAILS the logs the committed e07-e03 receipt calls PASS (sha256 matches); regenerate the transcripts and receipt",
+   "owner": "root: central RCH run of toolchain/src/run-qemu-verification.py"
+  },
+  {
+   "id": "E03-BLK-002",
+   "kind": "blocked",
+   "title": "Exact-version stock-kernel guests",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "reason": "no 2.6.14 PowerPC or 2.6.35 MIPS full-system guest exists; stock-kernel compatibility is unqualified, yet docs/contracts/e03.md and KernelCapabilityMatrix list those columns as verified",
+   "owner": "root / external: an exact-version guest, then correct the contract"
+  },
+  {
+   "id": "E03-BLK-003",
+   "kind": "blocked",
+   "title": "Probes for eventfd2, timerfd, accept4, getrandom, futex, TLS and threads",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "reason": "the contract and the bead name them but no guest probe emits them (abi.py lists them as unprobed)",
+   "owner": "guest probe: toolchain/src/ffw-hello-init"
+  },
+  {
+   "id": "E03-BLK-004",
+   "kind": "blocked",
+   "title": "Timer wakeup under repeated interrupts, signal delivery and shutdown, allocator alignment/failure/peak memory, dependency-graph atomics",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "reason": "bead section 4 requires them; the guest probes none of these (it probes one 32-bit atomic, a monotonic clock resolution and no signals)",
+   "owner": "guest probe: toolchain/src/ffw-hello-init"
+  },
+  {
+   "id": "E03-BLK-006",
+   "kind": "blocked",
+   "title": "Socket bind/send/receive and truncated-datagram reporting, readiness of audio-like character devices, reactor wakeup, filesystem sync and atomic rename",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "reason": "bead section 4 requires them; the guest only creates a UDP socket and polls a pipe",
+   "owner": "guest probe: toolchain/src/ffw-hello-init"
+  },
+  {
+   "id": "E03-BLK-005",
+   "kind": "blocked",
+   "title": "Probe build identity: target triple, compiler, linker and libc",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "reason": "the receipt records rustc, lld and qemu versions but neither a target triple nor the libc (none, no_std)",
+   "owner": "root: toolchain/src/run-qemu-verification.py receipt"
+  }
+ ],
+ "invariants": [
+  {
+   "id": "INV-01",
+   "text": "Syscall result to errno mapping, per ABI",
+   "status": "covered",
+   "cases": [
+    "E03-ERRNO-001",
+    "E03-ERRNO-002",
+    "E03-ERRNO-003",
+    "E03-ERRNO-004",
+    "E03-ERRNO-005",
+    "E03-IO-001",
+    "E03-IO-002"
+   ]
+  },
+  {
+   "id": "INV-02",
+   "text": "EINTR and EAGAIN are transient and never mean unsupported",
+   "status": "covered",
+   "cases": [
+    "E03-IO-001",
+    "E03-IO-002",
+    "E03-CLASS-014",
+    "E03-CLASS-015"
+   ]
+  },
+  {
+   "id": "INV-03",
+   "text": "Short I/O is a normal result; a full or zero count is not a short write",
+   "status": "partial",
+   "cases": [
+    "E03-IO-001",
+    "E03-IO-002",
+    "E03-CLASS-022",
+    "E03-CLASS-023",
+    "E03-BLK-001"
+   ],
+   "note": "the host can only judge the guest's PARTIAL_WRITE line; no committed transcript has one"
+  },
+  {
+   "id": "INV-04",
+   "text": "Time-width boundaries (tv_nsec, 32-bit counters)",
+   "status": "covered",
+   "cases": [
+    "E03-CLASS-040",
+    "E03-CLASS-041",
+    "E03-INT-001"
+   ]
+  },
+  {
+   "id": "INV-05",
+   "text": "Overflow of probe integers",
+   "status": "covered",
+   "cases": [
+    "E03-INT-001",
+    "E03-CLASS-043",
+    "E03-CLASS-044"
+   ]
+  },
+  {
+   "id": "INV-06",
+   "text": "Alignment boundaries (allocator, atomics operand)",
+   "status": "blocked",
+   "cases": [
+    "E03-BLK-004"
+   ],
+   "note": "newc archive alignment is covered elsewhere (scripts/test/test_support/newc_case.py); the guest probes no allocator alignment"
+  },
+  {
+   "id": "INV-07",
+   "text": "Absent poll and entropy capabilities",
+   "status": "covered",
+   "cases": [
+    "E03-CLASS-011",
+    "E03-CLASS-045",
+    "E03-CLASS-017",
+    "E03-CLASS-014"
+   ]
+  },
+  {
+   "id": "INV-08",
+   "text": "Absent thread, TLS, futex, eventfd and timerfd capabilities",
+   "status": "blocked",
+   "cases": [
+    "E03-BLK-003"
+   ]
+  },
+  {
+   "id": "INV-09",
+   "text": "Unsupported features return explicit capability failures (ENOSYS in the profile ABI)",
+   "status": "covered",
+   "cases": [
+    "E03-CLASS-010",
+    "E03-CLASS-012",
+    "E03-CLASS-013",
+    "E03-CLASS-017",
+    "E03-CLASS-045"
+   ]
+  },
+  {
+   "id": "INV-10",
+   "text": "An intentionally missing capability is a classified non-pass, never an overall green suite",
+   "status": "covered",
+   "cases": [
+    "E03-CLASS-010",
+    "E03-CLASS-011",
+    "E03-CLASS-012",
+    "E03-CLASS-018",
+    "E03-CLI-002",
+    "E03-CLI-003",
+    "E03-XVAL-001"
+   ]
+  },
+  {
+   "id": "INV-11",
+   "text": "Guest identity and provenance are recorded and checked",
+   "status": "partial",
+   "cases": [
+    "E03-CLASS-001",
+    "E03-CLASS-002",
+    "E03-IDENT-001",
+    "E03-BLK-005"
+   ],
+   "note": "kernel identity and artifact digests are checked; target triple, compiler, linker and libc are not recorded"
+  },
+  {
+   "id": "INV-12",
+   "text": "CPU emulation, matching guest, non-matching guest and unavailable guest are distinguished",
+   "status": "covered",
+   "cases": [
+    "E03-CLASS-030",
+    "E03-CLASS-031",
+    "E03-CLASS-032",
+    "E03-CLASS-033",
+    "E03-CLASS-034",
+    "E03-CLASS-035",
+    "E03-CLASS-036",
+    "E03-CLASS-037",
+    "E03-CLI-004",
+    "E03-CLI-007"
+   ]
+  },
+  {
+   "id": "INV-13",
+   "text": "A non-matching kernel can never make a profile supported",
+   "status": "covered",
+   "cases": [
+    "E03-CLASS-034",
+    "E03-CLASS-035",
+    "E03-CLASS-038",
+    "E03-CLASS-039"
+   ]
+  },
+  {
+   "id": "INV-14",
+   "text": "Exact-version stock-kernel guests exist for the stock profiles",
+   "status": "blocked",
+   "cases": [
+    "E03-BLK-002"
+   ]
+  },
+  {
+   "id": "INV-15",
+   "text": "Each probe is reported independently, not as one broad pass",
+   "status": "covered",
+   "cases": [
+    "E03-CLASS-001",
+    "E03-CLASS-002",
+    "E03-CLASS-003",
+    "E03-CLASS-004",
+    "E03-CLASS-011",
+    "E03-CLASS-019",
+    "E03-CLASS-020",
+    "E03-CLASS-021",
+    "E03-CLASS-016",
+    "E03-CLASS-046",
+    "E03-CLASS-047",
+    "E03-CLASS-048",
+    "E03-CLASS-049",
+    "E03-CLASS-050",
+    "E03-CLASS-051",
+    "E03-CLASS-052",
+    "E03-CLASS-053",
+    "E03-CLASS-054",
+    "E03-CLASS-055",
+    "E03-CLASS-056",
+    "E03-CLASS-057",
+    "E03-CLASS-058",
+    "E03-CLASS-059",
+    "E03-CLASS-060",
+    "E03-CLASS-061",
+    "E03-CLASS-062",
+    "E03-CLASS-063",
+    "E03-CLASS-064",
+    "E03-CLASS-065"
+   ]
+  },
+  {
+   "id": "INV-16",
+   "text": "Nonzero exit when a required capability is absent or ambiguous",
+   "status": "covered",
+   "cases": [
+    "E03-CLI-001",
+    "E03-CLI-002",
+    "E03-CLI-003",
+    "E03-CLI-004",
+    "E03-CLI-005",
+    "E03-CLI-006"
+   ]
+  },
+  {
+   "id": "INV-17",
+   "text": "The guest's own errno numbering and self-tests gate the transcript",
+   "status": "covered",
+   "cases": [
+    "E03-CLASS-013",
+    "E03-CLASS-025",
+    "E03-CLASS-026"
+   ]
+  },
+  {
+   "id": "INV-18",
+   "text": "An independent validator agrees with this one on real and planted transcripts",
+   "status": "covered",
+   "cases": [
+    "E03-XVAL-001",
+    "E03-XVAL-002"
+   ]
+  },
+  {
+   "id": "INV-19",
+   "text": "Evidence artifacts are identified by digest and consistent with the committed receipt",
+   "status": "covered",
+   "cases": [
+    "E03-IDENT-001"
+   ]
+  },
+  {
+   "id": "INV-20",
+   "text": "Per-probe output is preserved",
+   "status": "partial",
+   "cases": [
+    "E03-CLASS-001",
+    "E03-CLASS-003"
+   ],
+   "note": "each probe's raw line is retained in the result; separate stdout/stderr capture belongs to capture_guest in the root's runner"
+  },
+  {
+   "id": "INV-21",
+   "text": "Cancellation, timeout and restart of the QEMU run",
+   "status": "inapplicable",
+   "note": "the process-group capture, timeout and kill of the guest are toolchain/src/run-qemu-verification.py::capture_guest (root, E07); this host-side classifier only reads a finished transcript. A cancelled or timed-out run leaves a truncated transcript, which E03-CLASS-030 and E03-CLASS-031 classify as an unavailable guest."
+  },
+  {
+   "id": "INV-22",
+   "text": "The case file and the runner themselves are coherent and cannot pass vacuously",
+   "status": "covered",
+   "cases": [
+    "E03-META-001",
+    "E03-SELF-001"
+   ]
+  },
+  {
+   "id": "INV-23",
+   "text": "Socket I/O semantics, device readiness, reactor wakeup and filesystem durability",
+   "status": "blocked",
+   "cases": [
+    "E03-BLK-006"
+   ]
+  }
+ ]
+}
