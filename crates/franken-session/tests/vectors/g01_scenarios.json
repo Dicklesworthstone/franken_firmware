@@ -1,0 +1,871 @@
+{
+  "schema": "ffw.g01.scenarios.v1",
+  "bead": "ffw-kh0",
+  "notes": [
+    "Hand-written golden scenarios for the G01 membership engine (docs/contracts/g01.md). Every expectation in 'scenarios' was worked out by hand from the contract before either implementation produced it; none was read back from the model or from the Rust.",
+    "tests/g01/reference.py is the independent Python model that replays them. The Rust engine replays the same file only under the centralized builds; until a Rust replay exists this file is evidence about the model and the contract, not about franken-session.",
+    "Ops: quorum, found, observe, request, raw_request, respond, gather, round_start/round_ack/round_outcome, record, restart, restore, forget (voters); node, issue, live, renew, assume, adopt, session, probe, advance, discover, gate, grant_output, permitted (engine); propose, ack, commit, abort, tick, status, resolve, start_gate, unresolved, restart_node (cutover); repeat expands its steps count times with \"$n\" counting from 1.",
+    "An expectation is {ok: {...}} (every named key must equal the result) or {error: CODE, details: {...}} (the stable code, and the named numbers of the refusal). Times are [ns, frame] for engine calls and plain ns for voters.",
+    "The 'plants' section is model output too: for each fault planted in the DRIVER of the engine (zero_uncertainty: the margin forced to 0; early_voter_clock: every voter judged at a far-future clock; flipped_policy: the missing-acknowledgement policy swapped; flipped_mint: the epoch-minting mode swapped) the scenarios the model says it breaks. A replay that applies the same plant to the real engine must break exactly those, and it must break at least one.",
+    "The 'schedule' section is the exception to hand-written: its counts are the model's output for the seeded partition schedule in crates/franken-session/src/membership.rs (same SplitMix64 and draw order), kept so a Rust replay can be compared with them exactly. tests/g01/reference.py --check refuses any drift."
+  ],
+  "scenarios": [
+    {
+      "id": "G01-S001",
+      "title": "a join changes nothing audible until its cutover frame, then activates exactly once",
+      "invariants": ["INV-NOTHING-AUDIBLE-BEFORE-CUTOVER", "INV-ACTIVATE-ONCE-AT-FRAME"],
+      "config": {},
+      "steps": [
+        {"op": "node", "name": "n", "expect": {"ok": {}}},
+        {"op": "issue", "node": "n", "expires": 1000000000, "save": "good", "expect": {"ok": {"epoch": 1, "issuer": "coord"}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"ok": {"id": 1}}},
+        {"op": "session", "node": "n", "expect": {"ok": {"revision": 2, "members": ["a", "b"], "epoch": 1, "coordinator": "coord"}}},
+        {"op": "status", "node": "n", "id": 1, "expect": {"ok": {"status": {"phase": "pending", "acked": [], "missing": ["a", "b", "c"], "excluded": []}}}},
+        {"op": "ack", "id": 1, "member": "a", "now": [1100, 10100], "node": "n", "expect": {"ok": {}}},
+        {"op": "ack", "id": 1, "member": "b", "now": [1100, 10100], "node": "n", "expect": {"ok": {}}},
+        {"op": "ack", "id": 1, "member": "c", "now": [1100, 10100], "node": "n", "expect": {"ok": {}}},
+        {"op": "status", "node": "n", "id": 1, "expect": {"ok": {"status": {"phase": "pending", "acked": ["a", "b", "c"], "missing": [], "excluded": []}}}},
+        {"op": "commit", "node": "n", "token": "good", "id": 1, "now": [1200, 10200], "expect": {"ok": {"status": {"phase": "committed", "activate_at_frame": 100000, "excluded": []}}}},
+        {"op": "session", "node": "n", "expect": {"ok": {"revision": 2, "members": ["a", "b"]}}},
+        {"op": "tick", "node": "n", "now": [1300, 99999], "expect": {"ok": {"settled": []}}},
+        {"op": "session", "node": "n", "expect": {"ok": {"revision": 2, "members": ["a", "b"]}}},
+        {"op": "tick", "node": "n", "now": [1400, 100000], "expect": {"ok": {"settled": [{"id": 1, "status": {"phase": "activated", "revision": 3, "excluded": []}}]}}},
+        {"op": "session", "node": "n", "expect": {"ok": {"revision": 3, "members": ["a", "b", "c"]}}},
+        {"op": "tick", "node": "n", "now": [1500, 100001], "expect": {"ok": {"settled": []}}},
+        {"op": "session", "node": "n", "expect": {"ok": {"revision": 3, "members": ["a", "b", "c"]}}},
+        {"op": "status", "node": "n", "id": 1, "expect": {"ok": {"status": {"phase": "activated", "revision": 3, "excluded": []}}}}
+      ]
+    },
+    {
+      "id": "G01-S002",
+      "title": "a leave removes the member only at its cutover frame",
+      "invariants": ["INV-NOTHING-AUDIBLE-BEFORE-CUTOVER", "INV-ACTIVATE-ONCE-AT-FRAME"],
+      "config": {},
+      "steps": [
+        {"op": "node", "name": "n", "expect": {"ok": {}}},
+        {"op": "issue", "node": "n", "expires": 1000000000, "save": "good", "expect": {"ok": {"epoch": 1, "issuer": "coord"}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "leave", "member": "b"}, "cutover": 50000, "deadline": 2000, "now": [1000, 10000], "expect": {"ok": {"id": 1}}},
+        {"op": "ack", "id": 1, "member": "a", "now": [1100, 10100], "node": "n", "expect": {"ok": {}}},
+        {"op": "ack", "id": 1, "member": "b", "now": [1100, 10100], "node": "n", "expect": {"ok": {}}},
+        {"op": "commit", "node": "n", "token": "good", "id": 1, "now": [1200, 10200], "expect": {"ok": {"status": {"phase": "committed", "activate_at_frame": 50000, "excluded": []}}}},
+        {"op": "tick", "node": "n", "now": [1300, 49999], "expect": {"ok": {"settled": []}}},
+        {"op": "session", "node": "n", "expect": {"ok": {"revision": 2, "members": ["a", "b"]}}},
+        {"op": "tick", "node": "n", "now": [1400, 50000], "expect": {"ok": {"settled": [{"id": 1, "status": {"phase": "activated", "revision": 3, "excluded": []}}]}}},
+        {"op": "session", "node": "n", "expect": {"ok": {"revision": 3, "members": ["a"]}}}
+      ]
+    },
+    {
+      "id": "G01-S003",
+      "title": "a token that is not current is refused by every mutation and changes nothing",
+      "invariants": ["INV-AUTHORITY-ON-EVERY-MUTATION"],
+      "config": {},
+      "steps": [
+        {"op": "node", "name": "n", "expect": {"ok": {}}},
+        {"op": "issue", "node": "n", "expires": 1000000000, "save": "good", "expect": {"ok": {"epoch": 1, "issuer": "coord"}}},
+        {"op": "issue", "node": "n", "expires": 1000000000, "override": {"group": "other"}, "save": "bad_group", "expect": {"ok": {"group": "other"}}},
+        {"op": "issue", "node": "n", "expires": 1000000000, "override": {"issuer": "intruder"}, "save": "bad_issuer", "expect": {"ok": {"issuer": "intruder"}}},
+        {"op": "issue", "node": "n", "expires": 1000000000, "override": {"epoch": 9}, "save": "future", "expect": {"ok": {"epoch": 9}}},
+        {"op": "issue", "node": "n", "expires": 1000, "save": "expired", "expect": {"ok": {"expires": 1000}}},
+        {"op": "propose", "node": "n", "token": "bad_group", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"error": "WRONG_GROUP"}},
+        {"op": "advance", "node": "n", "token": "bad_group", "epoch": 2, "now": [1000, 10000], "expect": {"error": "WRONG_GROUP"}},
+        {"op": "propose", "node": "n", "token": "bad_issuer", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"error": "NOT_CONFIGURED_ISSUER"}},
+        {"op": "advance", "node": "n", "token": "bad_issuer", "epoch": 2, "now": [1000, 10000], "expect": {"error": "NOT_CONFIGURED_ISSUER"}},
+        {"op": "propose", "node": "n", "token": "future", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"error": "FUTURE_AUTHORITY", "details": {"token_epoch": 9, "current_epoch": 1}}},
+        {"op": "advance", "node": "n", "token": "future", "epoch": 2, "now": [1000, 10000], "expect": {"error": "FUTURE_AUTHORITY", "details": {"token_epoch": 9, "current_epoch": 1}}},
+        {"op": "propose", "node": "n", "token": "expired", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"error": "AUTHORITY_EXPIRED", "details": {"expires_at_ns": 1000, "now_ns": 1000}}},
+        {"op": "advance", "node": "n", "token": "expired", "epoch": 2, "now": [1000, 10000], "expect": {"error": "AUTHORITY_EXPIRED", "details": {"expires_at_ns": 1000, "now_ns": 1000}}},
+        {"op": "session", "node": "n", "expect": {"ok": {"epoch": 1, "revision": 2, "members": ["a", "b"]}}},
+        {"op": "advance", "node": "n", "token": "good", "epoch": 1, "now": [1000, 10000], "expect": {"error": "EPOCH_NOT_ADVANCING", "details": {"requested": 1, "current": 1}}},
+        {"op": "advance", "node": "n", "token": "good", "epoch": 2, "now": [1000, 10000], "save": "fresh", "expect": {"ok": {"epoch": 2, "issuer": "coord"}}},
+        {"op": "session", "node": "n", "expect": {"ok": {"epoch": 2, "revision": 3, "members": ["a", "b"]}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"error": "STALE_AUTHORITY", "details": {"token_epoch": 1, "current_epoch": 2}}},
+        {"op": "propose", "node": "n", "token": "fresh", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"ok": {"id": 1}}}
+      ]
+    },
+    {
+      "id": "G01-S004",
+      "title": "a commit under a stale epoch is refused because the epoch advance aborted the proposal",
+      "invariants": ["INV-STALE-EPOCH-FENCED", "INV-EPOCH-ADVANCE-ABORTS-PROPOSAL"],
+      "config": {},
+      "steps": [
+        {"op": "node", "name": "n", "expect": {"ok": {}}},
+        {"op": "issue", "node": "n", "expires": 1000000000, "save": "good", "expect": {"ok": {"epoch": 1, "issuer": "coord"}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"ok": {"id": 1}}},
+        {"op": "ack", "id": 1, "member": "a", "now": [1100, 10100], "node": "n", "expect": {"ok": {}}},
+        {"op": "ack", "id": 1, "member": "b", "now": [1100, 10100], "node": "n", "expect": {"ok": {}}},
+        {"op": "ack", "id": 1, "member": "c", "now": [1100, 10100], "node": "n", "expect": {"ok": {}}},
+        {"op": "advance", "node": "n", "token": "good", "epoch": 2, "now": [1200, 10200], "save": "fresh", "expect": {"ok": {"epoch": 2}}},
+        {"op": "status", "node": "n", "id": 1, "expect": {"ok": {"status": {"phase": "aborted", "reason": "EPOCH_ADVANCED"}}}},
+        {"op": "commit", "node": "n", "token": "good", "id": 1, "now": [1300, 10300], "expect": {"error": "STALE_AUTHORITY", "details": {"token_epoch": 1, "current_epoch": 2}}},
+        {"op": "commit", "node": "n", "token": "fresh", "id": 1, "now": [1300, 10300], "expect": {"error": "NOT_PENDING", "details": {"id": 1, "phase": "aborted"}}},
+        {"op": "session", "node": "n", "expect": {"ok": {"revision": 3, "members": ["a", "b"], "epoch": 2}}}
+      ]
+    },
+    {
+      "id": "G01-S005",
+      "title": "a missing acknowledgement blocks the commit, then the deadline aborts without holding the group",
+      "invariants": ["INV-MISSING-ACK-NEVER-HOLDS-GROUP"],
+      "config": {},
+      "steps": [
+        {"op": "node", "name": "n", "expect": {"ok": {}}},
+        {"op": "issue", "node": "n", "expires": 1000000000, "save": "good", "expect": {"ok": {"epoch": 1, "issuer": "coord"}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"ok": {"id": 1}}},
+        {"op": "ack", "id": 1, "member": "a", "now": [1100, 10100], "node": "n", "expect": {"ok": {}}},
+        {"op": "ack", "id": 1, "member": "b", "now": [1100, 10100], "node": "n", "expect": {"ok": {}}},
+        {"op": "commit", "node": "n", "token": "good", "id": 1, "now": [1200, 10200], "expect": {"error": "MISSING_ACKS", "details": {"members": ["c"]}}},
+        {"op": "tick", "node": "n", "now": [1999, 20000], "expect": {"ok": {"settled": []}}},
+        {"op": "status", "node": "n", "id": 1, "expect": {"ok": {"status": {"phase": "pending", "acked": ["a", "b"], "missing": ["c"], "excluded": []}}}},
+        {"op": "tick", "node": "n", "now": [2000, 20001], "expect": {"ok": {"settled": [{"id": 1, "status": {"phase": "aborted", "reason": "ACK_DEADLINE_MISSED", "missing": ["c"]}}]}}},
+        {"op": "session", "node": "n", "expect": {"ok": {"revision": 2, "members": ["a", "b"]}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 3000, "now": [2100, 20100], "expect": {"ok": {"id": 2}}}
+      ]
+    },
+    {
+      "id": "G01-S006",
+      "title": "an unreachable member is excluded, the cutover continues, and its output stays unresolved",
+      "invariants": ["INV-EXCLUSION-IS-NOT-OUTPUT-STOP", "INV-EVIDENCE-NEVER-SHORTENS", "INV-NOTHING-AUDIBLE-BEFORE-CUTOVER"],
+      "config": {"policy": "exclude"},
+      "steps": [
+        {"op": "node", "name": "n", "expect": {"ok": {}}},
+        {"op": "issue", "node": "n", "expires": 1000000000, "save": "good", "expect": {"ok": {"epoch": 1, "issuer": "coord"}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"ok": {"id": 1}}},
+        {"op": "ack", "id": 1, "member": "a", "now": [1100, 10100], "node": "n", "expect": {"ok": {}}},
+        {"op": "ack", "id": 1, "member": "c", "now": [1100, 10100], "node": "n", "expect": {"ok": {}}},
+        {"op": "tick", "node": "n", "now": [2000, 20000], "expect": {"ok": {"settled": []}}},
+        {"op": "status", "node": "n", "id": 1, "expect": {"ok": {"status": {"phase": "pending", "acked": ["a", "c"], "missing": [], "excluded": ["b"]}}}},
+        {"op": "ack", "id": 1, "member": "b", "now": [2001, 20001], "node": "n", "expect": {"error": "NOT_A_PARTICIPANT", "details": {"member_id": "b"}}},
+        {"op": "commit", "node": "n", "token": "good", "id": 1, "now": [2100, 20100], "expect": {"ok": {"status": {"phase": "committed", "activate_at_frame": 100000, "excluded": ["b"]}}}},
+        {"op": "tick", "node": "n", "now": [2200, 99999], "expect": {"ok": {"settled": []}}},
+        {"op": "session", "node": "n", "expect": {"ok": {"revision": 2, "members": ["a", "b"]}}},
+        {"op": "tick", "node": "n", "now": [2300, 100000], "expect": {"ok": {"settled": [{"id": 1, "status": {"phase": "activated", "revision": 3, "excluded": ["b"]}}]}}},
+        {"op": "session", "node": "n", "expect": {"ok": {"revision": 3, "members": ["a", "c"]}}},
+        {"op": "unresolved", "node": "n", "expect": {"ok": {"members": ["b"]}}},
+        {"op": "start_gate", "node": "n", "frame": 100000, "expect": {"ok": {"open": false, "blocked": ["b"]}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "join", "member": "b", "board": "S12"}, "cutover": 200000, "deadline": 3000, "now": [2400, 100001], "expect": {"error": "OUTPUT_UNRESOLVED", "details": {"member_id": "b"}}},
+        {"op": "resolve", "node": "n", "member": "b", "resolution": {"kind": "expires", "frame": 150000}, "expect": {"ok": {}}},
+        {"op": "start_gate", "node": "n", "frame": 149999, "expect": {"ok": {"open": false, "blocked": ["b"]}}},
+        {"op": "start_gate", "node": "n", "frame": 150000, "expect": {"ok": {"open": true, "blocked": []}}},
+        {"op": "resolve", "node": "n", "member": "b", "resolution": {"kind": "expires", "frame": 140000}, "expect": {"ok": {}}},
+        {"op": "start_gate", "node": "n", "frame": 149999, "expect": {"ok": {"open": false, "blocked": ["b"]}}},
+        {"op": "resolve", "node": "n", "member": "b", "resolution": {"kind": "stop"}, "expect": {"ok": {}}},
+        {"op": "unresolved", "node": "n", "expect": {"ok": {"members": []}}},
+        {"op": "start_gate", "node": "n", "frame": 0, "expect": {"ok": {"open": true, "blocked": []}}},
+        {"op": "resolve", "node": "n", "member": "b", "resolution": {"kind": "stop"}, "expect": {"error": "NO_UNRESOLVED_OUTPUT", "details": {"member_id": "b"}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "join", "member": "b", "board": "S12"}, "cutover": 200000, "deadline": 3000, "now": [2500, 100002], "expect": {"ok": {"id": 2}}}
+      ]
+    },
+    {
+      "id": "G01-S007",
+      "title": "an unreachable joiner aborts even when unreachable members are excluded",
+      "invariants": ["INV-MISSING-ACK-NEVER-HOLDS-GROUP", "INV-JOINER-MISSING-ABORTS"],
+      "config": {"policy": "exclude"},
+      "steps": [
+        {"op": "node", "name": "n", "expect": {"ok": {}}},
+        {"op": "issue", "node": "n", "expires": 1000000000, "save": "good", "expect": {"ok": {"epoch": 1, "issuer": "coord"}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"ok": {"id": 1}}},
+        {"op": "ack", "id": 1, "member": "a", "now": [1100, 10100], "node": "n", "expect": {"ok": {}}},
+        {"op": "ack", "id": 1, "member": "b", "now": [1100, 10100], "node": "n", "expect": {"ok": {}}},
+        {"op": "tick", "node": "n", "now": [2000, 20000], "expect": {"ok": {"settled": [{"id": 1, "status": {"phase": "aborted", "reason": "ACK_DEADLINE_MISSED", "missing": ["c"]}}]}}},
+        {"op": "session", "node": "n", "expect": {"ok": {"revision": 2, "members": ["a", "b"]}}},
+        {"op": "unresolved", "node": "n", "expect": {"ok": {"members": []}}}
+      ]
+    },
+    {
+      "id": "G01-S008",
+      "title": "duplicate acknowledgements are idempotent, a different one conflicts, strangers and late calls are refused",
+      "invariants": ["INV-ACK-RULES"],
+      "config": {},
+      "steps": [
+        {"op": "node", "name": "n", "expect": {"ok": {}}},
+        {"op": "issue", "node": "n", "expires": 1000000000, "save": "good", "expect": {"ok": {"epoch": 1, "issuer": "coord"}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"ok": {"id": 1}}},
+        {"op": "ack", "id": 1, "member": "a", "now": [1100, 10100], "node": "n", "expect": {"ok": {}}},
+        {"op": "ack", "id": 1, "member": "a", "now": [1150, 10150], "node": "n", "expect": {"ok": {}}},
+        {"op": "ack", "id": 1, "member": "a", "now": [1160, 10160], "node": "n", "report": {"tail": 5}, "expect": {"error": "ACK_CONFLICT", "details": {"member_id": "a"}}},
+        {"op": "ack", "id": 1, "member": "zz", "now": [1170, 10170], "node": "n", "expect": {"error": "NOT_A_PARTICIPANT", "details": {"member_id": "zz"}}},
+        {"op": "ack", "id": 1, "member": "b", "now": [1180, 10180], "node": "n", "expect": {"ok": {}}},
+        {"op": "ack", "id": 1, "member": "c", "now": [1190, 10190], "node": "n", "expect": {"ok": {}}},
+        {"op": "commit", "node": "n", "token": "good", "id": 1, "now": [1200, 10200], "expect": {"ok": {"status": {"phase": "committed", "activate_at_frame": 100000, "excluded": []}}}},
+        {"op": "commit", "node": "n", "token": "good", "id": 1, "now": [1210, 10210], "expect": {"error": "NOT_PENDING", "details": {"id": 1, "phase": "committed"}}},
+        {"op": "ack", "id": 1, "member": "a", "now": [1300, 10300], "node": "n", "expect": {"error": "NOT_PENDING", "details": {"id": 1, "phase": "committed"}}}
+      ]
+    },
+    {
+      "id": "G01-S009",
+      "title": "no new acknowledgement is accepted at or after the deadline",
+      "invariants": ["INV-ACK-RULES"],
+      "config": {},
+      "steps": [
+        {"op": "node", "name": "n", "expect": {"ok": {}}},
+        {"op": "issue", "node": "n", "expires": 1000000000, "save": "good", "expect": {"ok": {"epoch": 1, "issuer": "coord"}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"ok": {"id": 1}}},
+        {"op": "ack", "id": 1, "member": "a", "now": [2000, 10100], "node": "n", "expect": {"error": "ACK_AFTER_DEADLINE", "details": {"ack_deadline_ns": 2000, "now_ns": 2000}}},
+        {"op": "ack", "id": 1, "member": "a", "now": [1999, 10100], "node": "n", "expect": {"ok": {}}}
+      ]
+    },
+    {
+      "id": "G01-S010",
+      "title": "commit refuses a member that is not ready, a cutover before an output tail, and a cutover already reached",
+      "invariants": ["INV-COMMIT-READINESS-AND-TAIL", "INV-CANCEL-LEAVES-PLAYBACK-INTACT"],
+      "config": {},
+      "steps": [
+        {"op": "node", "name": "n", "expect": {"ok": {}}},
+        {"op": "issue", "node": "n", "expires": 1000000000, "save": "good", "expect": {"ok": {"epoch": 1, "issuer": "coord"}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"ok": {"id": 1}}},
+        {"op": "ack", "id": 1, "member": "a", "now": [1050, 10050], "node": "n", "expect": {"ok": {}}},
+        {"op": "ack", "id": 1, "member": "b", "now": [1050, 10050], "node": "n", "expect": {"ok": {}}},
+        {"op": "ack", "id": 1, "member": "c", "now": [1050, 10050], "node": "n", "report": {"buffer_ok": false}, "expect": {"ok": {}}},
+        {"op": "commit", "node": "n", "token": "good", "id": 1, "now": [1100, 10100], "expect": {"error": "MEMBER_NOT_READY", "details": {"members": ["c"]}}},
+        {"op": "abort", "node": "n", "token": "good", "id": 1, "now": [1100, 10100], "expect": {"ok": {"status": {"phase": "aborted", "reason": "BY_AUTHORITY"}}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "leave", "member": "b"}, "cutover": 50000, "deadline": 2000, "now": [1000, 10000], "expect": {"ok": {"id": 2}}},
+        {"op": "ack", "id": 2, "member": "a", "now": [1050, 10050], "node": "n", "report": {"tail": 60000}, "expect": {"ok": {}}},
+        {"op": "ack", "id": 2, "member": "b", "now": [1050, 10050], "node": "n", "expect": {"ok": {}}},
+        {"op": "commit", "node": "n", "token": "good", "id": 2, "now": [1100, 10100], "expect": {"error": "CUTOVER_BEFORE_OUTPUT_TAIL", "details": {"cutover_frame": 50000, "tail_complete_frame": 60000}}},
+        {"op": "abort", "node": "n", "token": "good", "id": 2, "now": [1100, 10100], "expect": {"ok": {"status": {"phase": "aborted", "reason": "BY_AUTHORITY"}}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "leave", "member": "b"}, "cutover": 50000, "deadline": 2000, "now": [1000, 10000], "expect": {"ok": {"id": 3}}},
+        {"op": "ack", "id": 3, "member": "a", "now": [1050, 10050], "node": "n", "expect": {"ok": {}}},
+        {"op": "ack", "id": 3, "member": "b", "now": [1050, 10050], "node": "n", "expect": {"ok": {}}},
+        {"op": "commit", "node": "n", "token": "good", "id": 3, "now": [1100, 50000], "expect": {"error": "CUTOVER_PASSED", "details": {"cutover_frame": 50000, "now_frame": 50000}}},
+        {"op": "commit", "node": "n", "token": "good", "id": 3, "now": [1100, 49999], "expect": {"ok": {"status": {"phase": "committed", "activate_at_frame": 50000, "excluded": []}}}},
+        {"op": "session", "node": "n", "expect": {"ok": {"revision": 2, "members": ["a", "b"]}}}
+      ]
+    },
+    {
+      "id": "G01-S011",
+      "title": "cancelling a committed join before its frame leaves the group untouched",
+      "invariants": ["INV-CANCEL-LEAVES-PLAYBACK-INTACT"],
+      "config": {},
+      "steps": [
+        {"op": "node", "name": "n", "expect": {"ok": {}}},
+        {"op": "issue", "node": "n", "expires": 1000000000, "save": "good", "expect": {"ok": {"epoch": 1, "issuer": "coord"}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"ok": {"id": 1}}},
+        {"op": "ack", "id": 1, "member": "a", "now": [1100, 10100], "node": "n", "expect": {"ok": {}}},
+        {"op": "ack", "id": 1, "member": "b", "now": [1100, 10100], "node": "n", "expect": {"ok": {}}},
+        {"op": "ack", "id": 1, "member": "c", "now": [1100, 10100], "node": "n", "expect": {"ok": {}}},
+        {"op": "commit", "node": "n", "token": "good", "id": 1, "now": [1200, 10200], "expect": {"ok": {"status": {"phase": "committed", "activate_at_frame": 100000, "excluded": []}}}},
+        {"op": "abort", "node": "n", "token": "good", "id": 1, "now": [1250, 10250], "expect": {"ok": {"status": {"phase": "aborted", "reason": "BY_AUTHORITY"}}}},
+        {"op": "tick", "node": "n", "now": [1300, 100000], "expect": {"ok": {"settled": []}}},
+        {"op": "session", "node": "n", "expect": {"ok": {"revision": 2, "members": ["a", "b"]}}},
+        {"op": "status", "node": "n", "id": 1, "expect": {"ok": {"status": {"phase": "aborted", "reason": "BY_AUTHORITY"}}}}
+      ]
+    },
+    {
+      "id": "G01-S012",
+      "title": "an uncommitted proposal lapses when its cutover frame arrives",
+      "invariants": ["INV-UNCOMMITTED-LAPSES"],
+      "config": {},
+      "steps": [
+        {"op": "node", "name": "n", "expect": {"ok": {}}},
+        {"op": "issue", "node": "n", "expires": 1000000000, "save": "good", "expect": {"ok": {"epoch": 1, "issuer": "coord"}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"ok": {"id": 1}}},
+        {"op": "ack", "id": 1, "member": "a", "now": [1100, 10100], "node": "n", "expect": {"ok": {}}},
+        {"op": "ack", "id": 1, "member": "b", "now": [1100, 10100], "node": "n", "expect": {"ok": {}}},
+        {"op": "ack", "id": 1, "member": "c", "now": [1100, 10100], "node": "n", "expect": {"ok": {}}},
+        {"op": "tick", "node": "n", "now": [1500, 99999], "expect": {"ok": {"settled": []}}},
+        {"op": "tick", "node": "n", "now": [1500, 100000], "expect": {"ok": {"settled": [{"id": 1, "status": {"phase": "aborted", "reason": "CUTOVER_MISSED"}}]}}},
+        {"op": "session", "node": "n", "expect": {"ok": {"revision": 2, "members": ["a", "b"]}}}
+      ]
+    },
+    {
+      "id": "G01-S013",
+      "title": "one change at a time, and every precondition is checked before anything is recorded",
+      "invariants": ["INV-ONE-CHANGE-AT-A-TIME", "INV-PRECONDITIONS-BEFORE-RECORDING"],
+      "config": {},
+      "steps": [
+        {"op": "node", "name": "n", "expect": {"ok": {}}},
+        {"op": "issue", "node": "n", "expires": 1000000000, "save": "good", "expect": {"ok": {"epoch": 1, "issuer": "coord"}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "join", "member": "a", "board": "S5"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"error": "MEMBER_ALREADY_PRESENT", "details": {"member_id": "a"}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "leave", "member": "zz"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"error": "UNKNOWN_MEMBER", "details": {"member_id": "zz"}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "join", "member": "c", "board": "hypothesis:S5"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"error": "INELIGIBLE_BOARD"}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 14799, "deadline": 2000, "now": [1000, 10000], "expect": {"error": "CUTOVER_TOO_SOON", "details": {"cutover_frame": 14799, "earliest_frame": 14800}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 14800, "deadline": 1000, "now": [1000, 10000], "expect": {"error": "ACK_DEADLINE_NOT_IN_FUTURE", "details": {"ack_deadline_ns": 1000, "now_ns": 1000}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 14800, "deadline": 1001, "now": [1000, 10000], "expect": {"ok": {"id": 1}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "leave", "member": "b"}, "cutover": 50000, "deadline": 2000, "now": [1000, 10000], "expect": {"error": "PROPOSAL_PENDING", "details": {"pending": 1}}},
+        {"op": "session", "node": "n", "expect": {"ok": {"revision": 2, "members": ["a", "b"]}}}
+      ]
+    },
+    {
+      "id": "G01-S014",
+      "title": "a group of two at its maximum refuses a third member",
+      "invariants": ["INV-PRECONDITIONS-BEFORE-RECORDING"],
+      "config": {"max_members": 2},
+      "steps": [
+        {"op": "node", "name": "n", "expect": {"ok": {}}},
+        {"op": "issue", "node": "n", "expires": 1000000000, "save": "good", "expect": {"ok": {"epoch": 1, "issuer": "coord"}}},
+        {"op": "propose", "node": "n", "token": "good", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"error": "GROUP_FULL", "details": {"max": 2}}}
+      ]
+    },
+    {
+      "id": "G01-S015",
+      "title": "after a restart no mutation is accepted until authority is rediscovered",
+      "invariants": ["INV-RESTART-REDISCOVERS-AUTHORITY"],
+      "config": {},
+      "steps": [
+        {"op": "node", "name": "r", "restarted": true, "expect": {"ok": {}}},
+        {"op": "issue", "node": "r", "expires": 1000000000, "save": "good", "expect": {"ok": {"epoch": 1}}},
+        {"op": "issue", "node": "r", "expires": 1000000000, "override": {"issuer": "intruder"}, "save": "intruder", "expect": {"ok": {"issuer": "intruder"}}},
+        {"op": "propose", "node": "r", "token": "good", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"error": "AUTHORITY_NOT_DISCOVERED"}},
+        {"op": "discover", "node": "r", "token": "intruder", "at": 1000, "expect": {"error": "NOT_CONFIGURED_ISSUER"}},
+        {"op": "propose", "node": "r", "token": "good", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"error": "AUTHORITY_NOT_DISCOVERED"}},
+        {"op": "discover", "node": "r", "token": "good", "at": 1000, "expect": {"ok": {}}},
+        {"op": "propose", "node": "r", "token": "good", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"ok": {"id": 1}}}
+      ]
+    },
+    {
+      "id": "G01-S016",
+      "title": "settled results are kept for reconciliation, but only the last 64",
+      "invariants": ["INV-HISTORY-BOUNDED"],
+      "config": {},
+      "steps": [
+        {"op": "node", "name": "n", "expect": {"ok": {}}},
+        {"op": "issue", "node": "n", "expires": 1000000000, "save": "good", "expect": {"ok": {"epoch": 1, "issuer": "coord"}}},
+        {"op": "repeat", "count": 65, "steps": [{"op": "propose", "node": "n", "token": "good", "change": {"kind": "leave", "member": "b"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"ok": {"id": "$n"}}}, {"op": "abort", "node": "n", "token": "good", "id": "$n", "now": [1000, 10000], "expect": {"ok": {}}}]},
+        {"op": "status", "node": "n", "id": 1, "expect": {"error": "UNKNOWN_PROPOSAL", "details": {"id": 1}}},
+        {"op": "status", "node": "n", "id": 2, "expect": {"ok": {"status": {"phase": "aborted", "reason": "BY_AUTHORITY"}}}},
+        {"op": "status", "node": "n", "id": 65, "expect": {"ok": {"status": {"phase": "aborted", "reason": "BY_AUTHORITY"}}}},
+        {"op": "status", "node": "n", "id": 66, "expect": {"error": "UNKNOWN_PROPOSAL", "details": {"id": 66}}},
+        {"op": "session", "node": "n", "expect": {"ok": {"revision": 2, "members": ["a", "b"]}}}
+      ]
+    },
+    {
+      "id": "G01-S101",
+      "title": "a renewal needs a majority, so a minority cannot extend a lease",
+      "invariants": ["INV-RENEWAL-NEEDS-QUORUM", "INV-HOLDER-MARGIN"],
+      "config": {"mode": "quorum", "max_lease": 1000, "u": 50, "horizon_ns": 500, "horizon_frames": 1000, "electorate": ["v1", "v2", "v3"]},
+      "steps": [
+        {"op": "found", "holder": "v1", "expires": 1000, "expect": {"ok": {}}},
+        {"op": "node", "name": "n1", "coordinator": "v1", "expect": {"ok": {}}},
+        {"op": "issue", "node": "n1", "expires": 1000, "save": "tok", "expect": {"ok": {"epoch": 1, "issuer": "v1", "expires": 1000}}},
+        {"op": "request", "voter": "v1", "kind": "renew", "at": 500, "len": 900, "save": "r1", "expect": {"ok": {"epoch": 1, "expires": 1400, "requester": "v1"}}},
+        {"op": "gather", "request": "r1", "now": 500, "reach": ["v1"], "clock": 500, "expect": {"error": "NO_QUORUM", "details": {"have": 1, "need": 2}}},
+        {"op": "gather", "request": "r1", "now": 500, "reach": ["v1", "v2"], "clock": 500, "save": "w", "expect": {"ok": {"kind": "renew", "epoch": 1, "requester": "v1", "expires": 1400, "prior": 0, "acks": 2}}},
+        {"op": "renew", "node": "n1", "token": "tok", "win": "w", "now": [500, 10000], "save": "tok2", "expect": {"ok": {"epoch": 1, "issuer": "v1", "expires": 1400}}},
+        {"op": "renew", "node": "n1", "token": "tok2", "win": "w", "now": [510, 10100], "expect": {"error": "LEASE_NOT_EXTENDED", "details": {"expires_at_ns": 1400, "current_ns": 1400}}},
+        {"op": "request", "voter": "v1", "kind": "renew", "at": 500, "len": 1001, "save": "long", "expect": {"error": "LEASE_TOO_LONG", "details": {"expires_at_ns": 1501, "max_ns": 1500}}},
+        {"op": "renew", "node": "n1", "token": "tok2", "win": "w", "now": [1360, 10000], "expect": {"error": "AUTHORITY_EXPIRED", "details": {"expires_at_ns": 1400, "now_ns": 1360}}}
+      ]
+    },
+    {
+      "id": "G01-S102",
+      "title": "an even electorate splits into a refusal, never a tie, and a voter cannot be completed for the rival",
+      "invariants": ["INV-QUORUM-IS-STRICT-MAJORITY", "INV-ONE-CANDIDATE-PER-EPOCH"],
+      "config": {"mode": "quorum", "max_lease": 1000, "u": 50, "horizon_ns": 500, "horizon_frames": 1000, "electorate": ["v1", "v2", "v3", "v4"]},
+      "steps": [
+        {"op": "found", "holder": "v1", "expires": 1000, "expect": {"ok": {}}},
+        {"op": "request", "voter": "v3", "kind": "takeover", "at": 1100, "len": 500, "save": "a", "expect": {"ok": {"epoch": 2, "expires": 1600, "requester": "v3"}}},
+        {"op": "request", "voter": "v4", "kind": "takeover", "at": 1100, "len": 500, "save": "b", "expect": {"ok": {"epoch": 2, "expires": 1600, "requester": "v4"}}},
+        {"op": "gather", "request": "a", "now": 1100, "reach": ["v3", "v1"], "clock": 1100, "expect": {"error": "NO_QUORUM", "details": {"have": 2, "need": 3}}},
+        {"op": "gather", "request": "b", "now": 1100, "reach": ["v4", "v2"], "clock": 1100, "expect": {"error": "NO_QUORUM", "details": {"have": 2, "need": 3}}},
+        {"op": "respond", "voter": "v1", "request": "b", "clock": 1200, "expect": {"error": "CONFLICTING_LEADERS", "details": {"epoch": 2, "held_by": "v3", "announced_by": "v4"}}}
+      ]
+    },
+    {
+      "id": "G01-S103",
+      "title": "five voters need three; two acknowledgements are not enough",
+      "invariants": ["INV-QUORUM-IS-STRICT-MAJORITY"],
+      "config": {"mode": "quorum", "max_lease": 1000, "u": 50, "horizon_ns": 500, "horizon_frames": 1000, "electorate": ["v1", "v2", "v3", "v4", "v5"]},
+      "steps": [
+        {"op": "found", "holder": "v1", "expires": 1000, "expect": {"ok": {}}},
+        {"op": "request", "voter": "v2", "kind": "takeover", "at": 1050, "len": 500, "save": "t", "expect": {"ok": {"epoch": 2, "expires": 1550, "requester": "v2"}}},
+        {"op": "gather", "request": "t", "now": 1050, "reach": ["v2", "v3"], "clock": 1050, "expect": {"error": "NO_QUORUM", "details": {"have": 2, "need": 3}}},
+        {"op": "gather", "request": "t", "now": 1050, "reach": ["v2", "v3", "v4"], "clock": 1050, "expect": {"ok": {"kind": "takeover", "epoch": 2, "requester": "v2", "expires": 1550, "prior": 1000, "acks": 3}}}
+      ]
+    },
+    {
+      "id": "G01-S104",
+      "title": "a single voter is its own quorum",
+      "invariants": ["INV-QUORUM-IS-STRICT-MAJORITY"],
+      "config": {"mode": "quorum", "max_lease": 1000, "u": 50, "horizon_ns": 500, "horizon_frames": 1000, "electorate": ["v1"]},
+      "steps": [
+        {"op": "found", "holder": "v1", "expires": 1000, "expect": {"ok": {}}},
+        {"op": "request", "voter": "v1", "kind": "renew", "at": 500, "len": 400, "save": "r", "expect": {"ok": {"epoch": 1, "expires": 900, "requester": "v1"}}},
+        {"op": "gather", "request": "r", "now": 500, "reach": ["v1"], "clock": 500, "expect": {"ok": {"kind": "renew", "epoch": 1, "requester": "v1", "expires": 900, "prior": 0, "acks": 1}}}
+      ]
+    },
+    {
+      "id": "G01-S105",
+      "title": "acknowledgements must match the open request, a repeat counts once, and a late quorum is no quorum",
+      "invariants": ["INV-ACK-MATCHES-ROUND", "INV-ROUND-ENDS-BEFORE-LEASE"],
+      "config": {"mode": "quorum", "max_lease": 1000, "u": 50, "horizon_ns": 500, "horizon_frames": 1000, "electorate": ["v1", "v2", "v3"]},
+      "steps": [
+        {"op": "found", "holder": "v1", "expires": 1000, "expect": {"ok": {}}},
+        {"op": "request", "voter": "v1", "kind": "renew", "at": 500, "len": 900, "save": "r", "expect": {"ok": {"epoch": 1, "expires": 1400, "requester": "v1"}}},
+        {"op": "round_start", "round": "rd", "request": "r", "now": 500, "expect": {"ok": {}}},
+        {"op": "respond", "voter": "v2", "request": "r", "clock": 500, "save": "a2", "expect": {"ok": {"voter": "v2", "epoch": 1, "prior": 0, "expires": 1400}}},
+        {"op": "round_ack", "round": "rd", "ack": "a2", "tamper": {"epoch": 2}, "now": 500, "expect": {"error": "ATTEMPT_MISMATCH"}},
+        {"op": "round_ack", "round": "rd", "ack": "a2", "tamper": {"expires": 1300}, "now": 500, "expect": {"error": "ATTEMPT_MISMATCH"}},
+        {"op": "round_ack", "round": "rd", "ack": "a2", "tamper": {"kind": "takeover"}, "now": 500, "expect": {"error": "ATTEMPT_MISMATCH"}},
+        {"op": "round_ack", "round": "rd", "ack": "a2", "tamper": {"requester": "v3"}, "now": 500, "expect": {"error": "ATTEMPT_MISMATCH"}},
+        {"op": "round_ack", "round": "rd", "ack": "a2", "tamper": {"group": "other"}, "now": 500, "expect": {"error": "ATTEMPT_MISMATCH"}},
+        {"op": "round_ack", "round": "rd", "ack": "a2", "tamper": {"voter": "zz"}, "now": 500, "expect": {"error": "NOT_A_VOTER", "details": {"member_id": "zz"}}},
+        {"op": "round_ack", "round": "rd", "ack": "a2", "now": 500, "expect": {"ok": {}}},
+        {"op": "round_ack", "round": "rd", "ack": "a2", "now": 500, "expect": {"ok": {}}},
+        {"op": "round_outcome", "round": "rd", "now": 500, "expect": {"error": "NO_QUORUM", "details": {"have": 1, "need": 2}}},
+        {"op": "respond", "voter": "v3", "request": "r", "clock": 500, "save": "a3", "expect": {"ok": {"voter": "v3"}}},
+        {"op": "round_ack", "round": "rd", "ack": "a3", "now": 1349, "expect": {"ok": {}}},
+        {"op": "round_outcome", "round": "rd", "now": 1349, "expect": {"ok": {"epoch": 1, "acks": 2}}},
+        {"op": "round_outcome", "round": "rd", "now": 1350, "expect": {"error": "ATTEMPT_EXPIRED", "details": {"now_ns": 1350, "deadline_ns": 1350}}},
+        {"op": "round_ack", "round": "rd", "ack": "a2", "now": 1350, "expect": {"error": "ATTEMPT_EXPIRED", "details": {"now_ns": 1350, "deadline_ns": 1350}}},
+        {"op": "round_start", "round": "late", "request": "r", "now": 1350, "expect": {"error": "ATTEMPT_EXPIRED", "details": {"now_ns": 1350, "deadline_ns": 1350}}},
+        {"op": "raw_request", "save": "outsider", "kind": "renew", "requester": "zz", "epoch": 1, "expires": 1400, "expect": {"ok": {}}},
+        {"op": "round_start", "round": "o", "request": "outsider", "now": 500, "expect": {"error": "NOT_A_VOTER", "details": {"member_id": "zz"}}},
+        {"op": "raw_request", "save": "foreign", "kind": "renew", "requester": "v1", "epoch": 1, "expires": 1400, "group": "other", "expect": {"ok": {}}},
+        {"op": "round_start", "round": "f", "request": "foreign", "now": 500, "expect": {"error": "WRONG_GROUP"}}
+      ]
+    },
+    {
+      "id": "G01-S106",
+      "title": "a takeover waits for the conservative expiry and is granted to one candidate for the next epoch only",
+      "invariants": ["INV-TAKEOVER-WAITS-FOR-EXPIRY", "INV-ONE-CANDIDATE-PER-EPOCH", "INV-NEXT-EPOCH-ONLY"],
+      "config": {"mode": "quorum", "max_lease": 1000, "u": 50, "horizon_ns": 500, "horizon_frames": 1000, "electorate": ["v1", "v2", "v3"]},
+      "steps": [
+        {"op": "found", "holder": "v1", "expires": 1000, "expect": {"ok": {}}},
+        {"op": "request", "voter": "v2", "kind": "takeover", "at": 1050, "len": 500, "save": "t", "expect": {"ok": {"epoch": 2, "expires": 1550, "requester": "v2"}}},
+        {"op": "respond", "voter": "v3", "request": "t", "clock": 1049, "expect": {"error": "LEASE_NOT_EXPIRED", "details": {"conservative_expiry_ns": 1050, "now_ns": 1049}}},
+        {"op": "record", "voter": "v3", "expect": {"ok": {"voter_id": "v3", "view": {"epoch": 1, "holder": "v1", "expires": 1000}, "grant": null}}},
+        {"op": "respond", "voter": "v3", "request": "t", "clock": 1050, "save": "first", "expect": {"ok": {"voter": "v3", "epoch": 2, "prior": 1000, "expires": 1550}}},
+        {"op": "respond", "voter": "v3", "request": "t", "clock": 1060, "expect": {"ok": {"voter": "v3", "epoch": 2, "prior": 1000, "expires": 1550}}},
+        {"op": "record", "voter": "v3", "expect": {"ok": {"grant": {"epoch": 2, "candidate": "v2", "expires": 1550, "prior": 1000}}}},
+        {"op": "raw_request", "save": "rival", "kind": "takeover", "requester": "v1", "epoch": 2, "expires": 1550, "expect": {"ok": {}}},
+        {"op": "respond", "voter": "v3", "request": "rival", "clock": 1100, "expect": {"error": "CONFLICTING_LEADERS", "details": {"epoch": 2, "held_by": "v2", "announced_by": "v1"}}},
+        {"op": "raw_request", "save": "skip", "kind": "takeover", "requester": "v2", "epoch": 5, "expires": 1550, "expect": {"ok": {}}},
+        {"op": "respond", "voter": "v3", "request": "skip", "clock": 1100, "expect": {"error": "NOT_NEXT_EPOCH", "details": {"requested": 5, "expected": 3}}}
+      ]
+    },
+    {
+      "id": "G01-S107",
+      "title": "a voter that has seen no lease cannot judge expiry and grants nothing",
+      "invariants": ["INV-TAKEOVER-WAITS-FOR-EXPIRY"],
+      "config": {"mode": "quorum", "max_lease": 1000, "u": 50, "horizon_ns": 500, "horizon_frames": 1000, "electorate": ["v1", "v2", "v3"]},
+      "steps": [
+        {"op": "request", "voter": "v1", "kind": "takeover", "at": 9999, "len": 500, "save": "x", "expect": {"error": "NO_LEASE_VIEW"}},
+        {"op": "request", "voter": "v1", "kind": "renew", "at": 9999, "len": 500, "save": "y", "expect": {"error": "NO_LEASE_VIEW"}},
+        {"op": "raw_request", "save": "t", "kind": "takeover", "requester": "v2", "epoch": 2, "expires": 10500, "expect": {"ok": {}}},
+        {"op": "respond", "voter": "v3", "request": "t", "clock": 9999, "expect": {"error": "NO_LEASE_VIEW"}}
+      ]
+    },
+    {
+      "id": "G01-S108",
+      "title": "the holder stops u before its lease ends and a taker is granted only u after it",
+      "invariants": ["INV-HOLDER-MARGIN", "INV-TAKEOVER-WAITS-FOR-EXPIRY", "INV-NO-OVERLAP-OF-LEASES"],
+      "config": {"mode": "quorum", "max_lease": 1000, "u": 50, "horizon_ns": 500, "horizon_frames": 1000, "electorate": ["v1", "v2", "v3"]},
+      "steps": [
+        {"op": "found", "holder": "v1", "expires": 1000, "expect": {"ok": {}}},
+        {"op": "node", "name": "n1", "coordinator": "v1", "expect": {"ok": {}}},
+        {"op": "issue", "node": "n1", "expires": 1000, "save": "tok", "expect": {"ok": {"epoch": 1, "issuer": "v1"}}},
+        {"op": "live", "node": "n1", "token": "tok", "at": 949, "expect": {"ok": {"live": true}}},
+        {"op": "live", "node": "n1", "token": "tok", "at": 950, "expect": {"ok": {"live": false}}},
+        {"op": "probe", "node": "n1", "token": "tok", "now": [950, 10000], "expect": {"error": "AUTHORITY_EXPIRED", "details": {"expires_at_ns": 1000, "now_ns": 950}}},
+        {"op": "probe", "node": "n1", "token": "tok", "now": [949, 10000], "expect": {"ok": {}}},
+        {"op": "request", "voter": "v2", "kind": "takeover", "at": 1050, "len": 500, "save": "t", "expect": {"ok": {"epoch": 2, "expires": 1550, "requester": "v2"}}},
+        {"op": "respond", "voter": "v3", "request": "t", "clock": 950, "expect": {"error": "LEASE_NOT_EXPIRED", "details": {"conservative_expiry_ns": 1050, "now_ns": 950}}},
+        {"op": "respond", "voter": "v3", "request": "t", "clock": 1000, "expect": {"error": "LEASE_NOT_EXPIRED", "details": {"conservative_expiry_ns": 1050, "now_ns": 1000}}},
+        {"op": "respond", "voter": "v3", "request": "t", "clock": 1049, "expect": {"error": "LEASE_NOT_EXPIRED", "details": {"conservative_expiry_ns": 1050, "now_ns": 1049}}},
+        {"op": "respond", "voter": "v3", "request": "t", "clock": 1050, "expect": {"ok": {"voter": "v3", "epoch": 2, "prior": 1000}}}
+      ]
+    },
+    {
+      "id": "G01-S109",
+      "title": "the voter in both quorums orders them: a takeover granted first refuses the late renewal",
+      "invariants": ["INV-VOTER-ORDERS-RENEWAL-AND-TAKEOVER"],
+      "config": {"mode": "quorum", "max_lease": 1000, "u": 50, "horizon_ns": 500, "horizon_frames": 1000, "electorate": ["v1", "v2", "v3"]},
+      "steps": [
+        {"op": "found", "holder": "v1", "expires": 1000, "expect": {"ok": {}}},
+        {"op": "request", "voter": "v2", "kind": "takeover", "at": 1050, "len": 500, "save": "t", "expect": {"ok": {"epoch": 2, "expires": 1550, "requester": "v2"}}},
+        {"op": "gather", "request": "t", "now": 1050, "reach": ["v2", "v3"], "clock": 1050, "expect": {"ok": {"kind": "takeover", "epoch": 2, "requester": "v2", "expires": 1550, "prior": 1000, "acks": 2}}},
+        {"op": "request", "voter": "v1", "kind": "renew", "at": 900, "len": 500, "save": "r", "expect": {"ok": {"epoch": 1, "expires": 1400, "requester": "v1"}}},
+        {"op": "gather", "request": "r", "now": 900, "reach": ["v1", "v2", "v3"], "clock": 1100, "expect": {"error": "NO_QUORUM", "details": {"have": 1, "need": 2}}},
+        {"op": "respond", "voter": "v2", "request": "r", "clock": 1100, "expect": {"error": "STALE_AUTHORITY", "details": {"token_epoch": 1, "current_epoch": 2}}},
+        {"op": "respond", "voter": "v3", "request": "r", "clock": 1100, "expect": {"error": "STALE_AUTHORITY", "details": {"token_epoch": 1, "current_epoch": 2}}}
+      ]
+    },
+    {
+      "id": "G01-S110",
+      "title": "the voter in both quorums orders them: a renewal acknowledged first delays the takeover",
+      "invariants": ["INV-VOTER-ORDERS-RENEWAL-AND-TAKEOVER"],
+      "config": {"mode": "quorum", "max_lease": 1000, "u": 50, "horizon_ns": 500, "horizon_frames": 1000, "electorate": ["v1", "v2", "v3"]},
+      "steps": [
+        {"op": "found", "holder": "v1", "expires": 1000, "expect": {"ok": {}}},
+        {"op": "request", "voter": "v1", "kind": "renew", "at": 900, "len": 500, "save": "r", "expect": {"ok": {"epoch": 1, "expires": 1400, "requester": "v1"}}},
+        {"op": "gather", "request": "r", "now": 900, "reach": ["v1", "v2"], "clock": 900, "expect": {"ok": {"kind": "renew", "epoch": 1, "requester": "v1", "expires": 1400, "prior": 0, "acks": 2}}},
+        {"op": "request", "voter": "v3", "kind": "takeover", "at": 1050, "len": 500, "save": "t", "expect": {"ok": {"epoch": 2, "expires": 1550, "requester": "v3"}}},
+        {"op": "gather", "request": "t", "now": 1050, "reach": ["v1", "v2", "v3"], "clock": 1050, "expect": {"error": "NO_QUORUM", "details": {"have": 1, "need": 2}}},
+        {"op": "respond", "voter": "v1", "request": "t", "clock": 1050, "expect": {"error": "LEASE_NOT_EXPIRED", "details": {"conservative_expiry_ns": 1450, "now_ns": 1050}}},
+        {"op": "respond", "voter": "v2", "request": "t", "clock": 1050, "expect": {"error": "LEASE_NOT_EXPIRED", "details": {"conservative_expiry_ns": 1450, "now_ns": 1050}}}
+      ]
+    },
+    {
+      "id": "G01-S111",
+      "title": "two candidates cannot both win an epoch",
+      "invariants": ["INV-ONE-CANDIDATE-PER-EPOCH"],
+      "config": {"mode": "quorum", "max_lease": 1000, "u": 50, "horizon_ns": 500, "horizon_frames": 1000, "electorate": ["v1", "v2", "v3"]},
+      "steps": [
+        {"op": "found", "holder": "v1", "expires": 1000, "expect": {"ok": {}}},
+        {"op": "request", "voter": "v2", "kind": "takeover", "at": 1100, "len": 500, "save": "first", "expect": {"ok": {"epoch": 2, "expires": 1600, "requester": "v2"}}},
+        {"op": "request", "voter": "v3", "kind": "takeover", "at": 1100, "len": 500, "save": "second", "expect": {"ok": {"epoch": 2, "expires": 1600, "requester": "v3"}}},
+        {"op": "gather", "request": "first", "now": 1100, "reach": ["v2", "v1"], "clock": 1100, "expect": {"ok": {"kind": "takeover", "epoch": 2, "requester": "v2", "expires": 1600, "prior": 1000, "acks": 2}}},
+        {"op": "gather", "request": "second", "now": 1100, "reach": ["v3", "v1", "v2"], "clock": 1100, "expect": {"error": "NO_QUORUM", "details": {"have": 1, "need": 2}}},
+        {"op": "respond", "voter": "v1", "request": "second", "clock": 1100, "expect": {"error": "CONFLICTING_LEADERS", "details": {"epoch": 2, "held_by": "v2", "announced_by": "v3"}}}
+      ]
+    },
+    {
+      "id": "G01-S112",
+      "title": "a voter extends only a lease it knows to be the requester's and learns only forward",
+      "invariants": ["INV-RENEW-ONLY-A-KNOWN-LEASE", "INV-VOTER-LEARNS-FORWARD"],
+      "config": {"mode": "quorum", "max_lease": 1000, "u": 50, "horizon_ns": 500, "horizon_frames": 1000, "electorate": ["v1", "v2", "v3"]},
+      "steps": [
+        {"op": "found", "holder": "v1", "expires": 1000, "expect": {"ok": {}}},
+        {"op": "raw_request", "save": "not_holder", "kind": "renew", "requester": "v2", "epoch": 1, "expires": 1300, "expect": {"ok": {}}},
+        {"op": "raw_request", "save": "unheard", "kind": "renew", "requester": "v2", "epoch": 7, "expires": 1300, "expect": {"ok": {}}},
+        {"op": "respond", "voter": "v3", "request": "not_holder", "clock": 500, "expect": {"error": "NOT_LEASE_HOLDER", "details": {"epoch": 1, "holder": "v1"}}},
+        {"op": "respond", "voter": "v3", "request": "unheard", "clock": 500, "expect": {"error": "FUTURE_AUTHORITY", "details": {"token_epoch": 7, "current_epoch": 1}}},
+        {"op": "observe", "voter": "v3", "view": {"epoch": 0, "holder": "v1", "expires": 900}, "expect": {"error": "STALE_AUTHORITY", "details": {"token_epoch": 0, "current_epoch": 1}}},
+        {"op": "observe", "voter": "v3", "view": {"epoch": 1, "holder": "v2", "expires": 1000}, "expect": {"error": "CONFLICTING_LEADERS", "details": {"epoch": 1, "held_by": "v1", "announced_by": "v2"}}},
+        {"op": "observe", "voter": "v3", "view": {"epoch": 1, "holder": "zz", "expires": 1000}, "expect": {"error": "NOT_A_VOTER", "details": {"member_id": "zz"}}},
+        {"op": "observe", "voter": "v3", "view": {"group": "other", "epoch": 1, "holder": "v1", "expires": 1000}, "expect": {"error": "WRONG_GROUP"}},
+        {"op": "observe", "voter": "v3", "view": {"epoch": 1, "holder": "v1", "expires": 900}, "expect": {"ok": {}}},
+        {"op": "record", "voter": "v3", "expect": {"ok": {"view": {"epoch": 1, "holder": "v1", "expires": 1000}}}},
+        {"op": "observe", "voter": "v3", "view": {"epoch": 1, "holder": "v1", "expires": 1200}, "expect": {"ok": {}}},
+        {"op": "record", "voter": "v3", "expect": {"ok": {"view": {"epoch": 1, "holder": "v1", "expires": 1200}}}},
+        {"op": "raw_request", "save": "t", "kind": "takeover", "requester": "v2", "epoch": 2, "expires": 1550, "expect": {"ok": {}}},
+        {"op": "respond", "voter": "v3", "request": "t", "clock": 1249, "expect": {"error": "LEASE_NOT_EXPIRED", "details": {"conservative_expiry_ns": 1250, "now_ns": 1249}}},
+        {"op": "respond", "voter": "v3", "request": "t", "clock": 1250, "expect": {"ok": {"prior": 1200}}},
+        {"op": "raw_request", "save": "r1", "kind": "renew", "requester": "v1", "epoch": 2, "expires": 1700, "expect": {"ok": {}}},
+        {"op": "raw_request", "save": "r2", "kind": "renew", "requester": "v2", "epoch": 2, "expires": 1700, "expect": {"ok": {}}},
+        {"op": "respond", "voter": "v3", "request": "r1", "clock": 1300, "expect": {"error": "NOT_LEASE_HOLDER", "details": {"epoch": 2, "holder": "v2"}}},
+        {"op": "respond", "voter": "v3", "request": "r2", "clock": 1300, "expect": {"ok": {"voter": "v3", "epoch": 2}}},
+        {"op": "record", "voter": "v3", "expect": {"ok": {"view": {"epoch": 2, "holder": "v2", "expires": 1700}, "grant": null}}}
+      ]
+    },
+    {
+      "id": "G01-S113",
+      "title": "a partitioned holder cannot renew, the majority takes over, and the old holder is fenced when it hears",
+      "invariants": ["INV-RENEWAL-NEEDS-QUORUM", "INV-NO-OVERLAP-OF-LEASES", "INV-STALE-COORDINATOR-FENCED", "INV-TAKEOVER-GATES-CONFLICTING-PROGRAMS"],
+      "config": {"mode": "quorum", "max_lease": 1000, "u": 50, "horizon_ns": 500, "horizon_frames": 1000, "electorate": ["v1", "v2", "v3"]},
+      "steps": [
+        {"op": "found", "holder": "v1", "expires": 1000, "expect": {"ok": {}}},
+        {"op": "node", "name": "n1", "coordinator": "v1", "expect": {"ok": {}}},
+        {"op": "node", "name": "n2", "coordinator": "v1", "expect": {"ok": {}}},
+        {"op": "node", "name": "n3", "coordinator": "v1", "expect": {"ok": {}}},
+        {"op": "issue", "node": "n1", "expires": 1000, "save": "old", "expect": {"ok": {"epoch": 1, "issuer": "v1"}}},
+        {"op": "request", "voter": "v1", "kind": "renew", "at": 600, "len": 900, "save": "rn", "expect": {"ok": {"epoch": 1, "expires": 1500, "requester": "v1"}}},
+        {"op": "gather", "request": "rn", "now": 600, "reach": ["v1"], "clock": 600, "expect": {"error": "NO_QUORUM", "details": {"have": 1, "need": 2}}},
+        {"op": "live", "node": "n1", "token": "old", "at": 949, "expect": {"ok": {"live": true}}},
+        {"op": "live", "node": "n1", "token": "old", "at": 950, "expect": {"ok": {"live": false}}},
+        {"op": "request", "voter": "v2", "kind": "takeover", "at": 1050, "len": 500, "save": "t", "expect": {"ok": {"epoch": 2, "expires": 1550, "requester": "v2"}}},
+        {"op": "gather", "request": "t", "now": 1050, "reach": ["v2", "v3"], "clock": 1049, "expect": {"error": "NO_QUORUM", "details": {"have": 0, "need": 2}}},
+        {"op": "gather", "request": "t", "now": 1050, "reach": ["v2", "v3"], "clock": 1050, "save": "w", "expect": {"ok": {"kind": "takeover", "epoch": 2, "requester": "v2", "expires": 1550, "prior": 1000, "acks": 2}}},
+        {"op": "assume", "node": "n2", "win": "w", "now": [1050, 20000], "save": "new", "expect": {"ok": {"epoch": 2, "issuer": "v2", "expires": 1550}}},
+        {"op": "session", "node": "n2", "expect": {"ok": {"epoch": 2, "coordinator": "v2", "revision": 3}}},
+        {"op": "live", "node": "n2", "token": "new", "at": 1050, "expect": {"ok": {"live": true}}},
+        {"op": "live", "node": "n2", "token": "new", "at": 1499, "expect": {"ok": {"live": true}}},
+        {"op": "live", "node": "n2", "token": "new", "at": 1500, "expect": {"ok": {"live": false}}},
+        {"op": "gate", "node": "n2", "at": 1549, "expect": {"ok": {"open": false, "until": 1550}}},
+        {"op": "gate", "node": "n2", "at": 1550, "expect": {"ok": {"open": true}}},
+        {"op": "gate", "node": "n3", "at": 0, "expect": {"ok": {"open": true}}},
+        {"op": "observe", "voter": "v1", "view": {"epoch": 2, "holder": "v2", "expires": 1550}, "expect": {"ok": {}}},
+        {"op": "adopt", "node": "n1", "view": {"epoch": 2, "holder": "v2", "expires": 1550}, "expect": {"ok": {}}},
+        {"op": "session", "node": "n1", "expect": {"ok": {"epoch": 2, "coordinator": "v2"}}},
+        {"op": "probe", "node": "n1", "token": "old", "now": [600, 10000], "expect": {"error": "STALE_AUTHORITY", "details": {"token_epoch": 1, "current_epoch": 2}}},
+        {"op": "request", "voter": "v1", "kind": "renew", "at": 1600, "len": 400, "save": "again", "expect": {"error": "NOT_LEASE_HOLDER", "details": {"epoch": 2, "holder": "v2"}}}
+      ]
+    },
+    {
+      "id": "G01-S114",
+      "title": "adopting a newer epoch aborts the proposal in flight and fences an unexpired stale token",
+      "invariants": ["INV-STALE-COORDINATOR-FENCED", "INV-EPOCH-ADVANCE-ABORTS-PROPOSAL", "INV-EPOCH-JUDGED-BEFORE-ISSUER"],
+      "config": {"mode": "quorum", "max_lease": 1000, "u": 50, "horizon_ns": 500, "horizon_frames": 1000, "electorate": ["v1", "v2", "v3"]},
+      "steps": [
+        {"op": "node", "name": "n1", "coordinator": "v1", "expect": {"ok": {}}},
+        {"op": "issue", "node": "n1", "expires": 100000, "save": "stale", "expect": {"ok": {"epoch": 1, "issuer": "v1"}}},
+        {"op": "propose", "node": "n1", "token": "stale", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [100, 10000], "expect": {"ok": {"id": 1}}},
+        {"op": "adopt", "node": "n1", "view": {"epoch": 2, "holder": "v2", "expires": 5000}, "expect": {"ok": {}}},
+        {"op": "status", "node": "n1", "id": 1, "expect": {"ok": {"status": {"phase": "aborted", "reason": "EPOCH_ADVANCED"}}}},
+        {"op": "session", "node": "n1", "expect": {"ok": {"epoch": 2, "coordinator": "v2", "revision": 3}}},
+        {"op": "propose", "node": "n1", "token": "stale", "change": {"kind": "join", "member": "d", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [200, 10100], "expect": {"error": "STALE_AUTHORITY", "details": {"token_epoch": 1, "current_epoch": 2}}},
+        {"op": "abort", "node": "n1", "token": "stale", "id": 1, "now": [200, 10100], "expect": {"error": "STALE_AUTHORITY", "details": {"token_epoch": 1, "current_epoch": 2}}},
+        {"op": "grant_output", "node": "n1", "token": "stale", "member": "a", "through": 10200, "now": [200, 10100], "expect": {"error": "STALE_AUTHORITY", "details": {"token_epoch": 1, "current_epoch": 2}}},
+        {"op": "discover", "node": "n1", "token": "stale", "at": 200, "expect": {"error": "STALE_AUTHORITY", "details": {"token_epoch": 1, "current_epoch": 2}}},
+        {"op": "session", "node": "n1", "expect": {"ok": {"epoch": 2, "coordinator": "v2", "revision": 3}}},
+        {"op": "adopt", "node": "n1", "view": {"epoch": 2, "holder": "v2", "expires": 5000}, "expect": {"ok": {}}},
+        {"op": "session", "node": "n1", "expect": {"ok": {"revision": 3}}},
+        {"op": "adopt", "node": "n1", "view": {"epoch": 2, "holder": "v3", "expires": 5000}, "expect": {"error": "CONFLICTING_LEADERS", "details": {"epoch": 2, "held_by": "v2", "announced_by": "v3"}}},
+        {"op": "adopt", "node": "n1", "view": {"epoch": 1, "holder": "v2", "expires": 5000}, "expect": {"error": "STALE_AUTHORITY", "details": {"token_epoch": 1, "current_epoch": 2}}},
+        {"op": "adopt", "node": "n1", "view": {"group": "other", "epoch": 2, "holder": "v2", "expires": 5000}, "expect": {"error": "WRONG_GROUP"}}
+      ]
+    },
+    {
+      "id": "G01-S115",
+      "title": "when a lease lapses, granted output plays out to its frame and nothing new is issued",
+      "invariants": ["INV-PLAYBACK-POLICY"],
+      "config": {"mode": "quorum", "max_lease": 1000, "u": 50, "horizon_ns": 500, "horizon_frames": 1000, "electorate": ["v1", "v2", "v3"]},
+      "steps": [
+        {"op": "node", "name": "n1", "coordinator": "v1", "expect": {"ok": {}}},
+        {"op": "issue", "node": "n1", "expires": 1000, "save": "tok", "expect": {"ok": {"epoch": 1}}},
+        {"op": "grant_output", "node": "n1", "token": "tok", "member": "a", "through": 10500, "now": [100, 10000], "expect": {"ok": {"granted": 10500}}},
+        {"op": "grant_output", "node": "n1", "token": "tok", "member": "a", "through": 10200, "now": [100, 10000], "expect": {"ok": {"granted": 10500}}},
+        {"op": "grant_output", "node": "n1", "token": "tok", "member": "a", "through": 11001, "now": [100, 10000], "expect": {"error": "OUTPUT_HORIZON_EXCEEDED", "details": {"requested_frame": 11001, "max_frame": 11000}}},
+        {"op": "grant_output", "node": "n1", "token": "tok", "member": "zz", "through": 10100, "now": [100, 10000], "expect": {"error": "UNKNOWN_MEMBER", "details": {"member_id": "zz"}}},
+        {"op": "permitted", "node": "n1", "member": "a", "frame": 10499, "expect": {"ok": {"permitted": true}}},
+        {"op": "permitted", "node": "n1", "member": "a", "frame": 10500, "expect": {"ok": {"permitted": false}}},
+        {"op": "permitted", "node": "n1", "member": "b", "frame": 0, "expect": {"ok": {"permitted": false}}},
+        {"op": "grant_output", "node": "n1", "token": "tok", "member": "a", "through": 20100, "now": [950, 20000], "expect": {"error": "AUTHORITY_EXPIRED", "details": {"expires_at_ns": 1000, "now_ns": 950}}},
+        {"op": "grant_output", "node": "n1", "token": "tok", "member": "b", "through": 20100, "now": [950, 20000], "expect": {"error": "AUTHORITY_EXPIRED", "details": {"expires_at_ns": 1000, "now_ns": 950}}},
+        {"op": "permitted", "node": "n1", "member": "a", "frame": 10499, "expect": {"ok": {"permitted": true}}},
+        {"op": "permitted", "node": "n1", "member": "a", "frame": 10500, "expect": {"ok": {"permitted": false}}},
+        {"op": "permitted", "node": "n1", "member": "b", "frame": 20050, "expect": {"ok": {"permitted": false}}}
+      ]
+    },
+    {
+      "id": "G01-S116",
+      "title": "a voter without its durable record refuses everything until it is restored; a voter that forgot grants the rival",
+      "invariants": ["INV-DURABLE-VOTER-RECORD"],
+      "config": {"mode": "quorum", "max_lease": 1000, "u": 50, "horizon_ns": 500, "horizon_frames": 1000, "electorate": ["v1", "v2", "v3"]},
+      "steps": [
+        {"op": "found", "holder": "v1", "expires": 1000, "expect": {"ok": {}}},
+        {"op": "request", "voter": "v2", "kind": "takeover", "at": 1050, "len": 500, "save": "take", "expect": {"ok": {"epoch": 2, "expires": 1550, "requester": "v2"}}},
+        {"op": "respond", "voter": "v3", "request": "take", "clock": 1050, "save": "ack", "expect": {"ok": {"voter": "v3", "epoch": 2, "prior": 1000, "expires": 1550}}},
+        {"op": "record", "voter": "v3", "save": "rec3", "expect": {"ok": {"voter_id": "v3", "view": {"epoch": 1, "holder": "v1", "expires": 1000}, "grant": {"epoch": 2, "candidate": "v2", "expires": 1550, "prior": 1000}}}},
+        {"op": "record", "voter": "v2", "save": "rec2", "expect": {"ok": {"voter_id": "v2"}}},
+        {"op": "raw_request", "save": "rival", "kind": "takeover", "requester": "v1", "epoch": 2, "expires": 1550, "expect": {"ok": {}}},
+        {"op": "request", "voter": "v1", "kind": "renew", "at": 900, "len": 400, "save": "stale_renewal", "expect": {"ok": {"epoch": 1, "expires": 1300, "requester": "v1"}}},
+        {"op": "restart", "voter": "v3", "expect": {"ok": {}}},
+        {"op": "respond", "voter": "v3", "request": "rival", "clock": 1100, "expect": {"error": "VOTER_RECORD_UNAVAILABLE"}},
+        {"op": "respond", "voter": "v3", "request": "stale_renewal", "clock": 1100, "expect": {"error": "VOTER_RECORD_UNAVAILABLE"}},
+        {"op": "restore", "voter": "v3", "record": "rec2", "expect": {"error": "VOTER_RECORD_UNAVAILABLE"}},
+        {"op": "respond", "voter": "v3", "request": "rival", "clock": 1100, "expect": {"error": "VOTER_RECORD_UNAVAILABLE"}},
+        {"op": "restore", "voter": "v3", "record": "rec3", "expect": {"ok": {}}},
+        {"op": "respond", "voter": "v3", "request": "rival", "clock": 1100, "expect": {"error": "CONFLICTING_LEADERS", "details": {"epoch": 2, "held_by": "v2", "announced_by": "v1"}}},
+        {"op": "respond", "voter": "v3", "request": "stale_renewal", "clock": 1100, "expect": {"error": "STALE_AUTHORITY", "details": {"token_epoch": 1, "current_epoch": 2}}},
+        {"op": "respond", "voter": "v3", "request": "take", "clock": 1100, "expect": {"ok": {"voter": "v3", "epoch": 2, "prior": 1000, "expires": 1550}}},
+        {"op": "forget", "voter": "v3", "view": {"epoch": 1, "holder": "v1", "expires": 1000}, "expect": {"ok": {}}},
+        {"op": "respond", "voter": "v3", "request": "rival", "clock": 1100, "expect": {"ok": {"voter": "v3", "epoch": 2}}}
+      ]
+    },
+    {
+      "id": "G01-S117",
+      "title": "a group mints epochs by one rule only, and a restarted node must learn the holder first",
+      "invariants": ["INV-EPOCH-MINT-IS-EXCLUSIVE", "INV-RESTART-REDISCOVERS-AUTHORITY"],
+      "config": {"mode": "quorum", "max_lease": 1000, "u": 50, "horizon_ns": 500, "horizon_frames": 1000, "electorate": ["v1", "v2", "v3"]},
+      "steps": [
+        {"op": "found", "holder": "v1", "expires": 1000, "expect": {"ok": {}}},
+        {"op": "request", "voter": "v1", "kind": "renew", "at": 500, "len": 900, "save": "r", "expect": {"ok": {"epoch": 1, "expires": 1400, "requester": "v1"}}},
+        {"op": "gather", "request": "r", "now": 500, "reach": ["v1", "v2"], "clock": 500, "save": "renewal", "expect": {"ok": {"kind": "renew", "epoch": 1, "requester": "v1", "expires": 1400, "prior": 0, "acks": 2}}},
+        {"op": "request", "voter": "v2", "kind": "takeover", "at": 1450, "len": 500, "save": "t", "expect": {"ok": {"epoch": 2, "expires": 1950, "requester": "v2"}}},
+        {"op": "gather", "request": "t", "now": 1450, "reach": ["v2", "v3"], "clock": 1450, "save": "takeover", "expect": {"ok": {"kind": "takeover", "epoch": 2, "requester": "v2", "expires": 1950, "prior": 1400, "acks": 2}}},
+        {"op": "node", "name": "q", "coordinator": "v1", "expect": {"ok": {}}},
+        {"op": "issue", "node": "q", "expires": 1000, "save": "qtok", "expect": {"ok": {"epoch": 1}}},
+        {"op": "advance", "node": "q", "token": "qtok", "epoch": 2, "now": [100, 10000], "expect": {"error": "QUORUM_REQUIRED"}},
+        {"op": "session", "node": "q", "expect": {"ok": {"epoch": 1, "revision": 2}}},
+        {"op": "node", "name": "p", "coordinator": "coord", "mode": "issuer", "expect": {"ok": {}}},
+        {"op": "issue", "node": "p", "expires": 1000000000, "save": "ptok", "expect": {"ok": {"epoch": 1, "issuer": "coord"}}},
+        {"op": "adopt", "node": "p", "view": {"epoch": 2, "holder": "v2", "expires": 5000}, "expect": {"error": "NOT_A_QUORUM_GROUP"}},
+        {"op": "assume", "node": "p", "win": "takeover", "now": [1450, 20000], "expect": {"error": "NOT_A_QUORUM_GROUP"}},
+        {"op": "renew", "node": "p", "token": "ptok", "win": "renewal", "now": [500, 10000], "expect": {"error": "NOT_A_QUORUM_GROUP"}},
+        {"op": "advance", "node": "p", "token": "ptok", "epoch": 2, "now": [100, 10000], "expect": {"ok": {"epoch": 2}}},
+        {"op": "node", "name": "r", "coordinator": "v1", "restarted": true, "expect": {"ok": {}}},
+        {"op": "issue", "node": "r", "expires": 1000, "save": "rtok", "expect": {"ok": {"epoch": 1}}},
+        {"op": "assume", "node": "r", "win": "takeover", "now": [1450, 20000], "expect": {"error": "AUTHORITY_NOT_DISCOVERED"}},
+        {"op": "renew", "node": "r", "token": "rtok", "win": "renewal", "now": [500, 10000], "expect": {"error": "AUTHORITY_NOT_DISCOVERED"}},
+        {"op": "adopt", "node": "r", "view": {"epoch": 1, "holder": "v1", "expires": 1000}, "expect": {"ok": {}}},
+        {"op": "assume", "node": "r", "win": "takeover", "now": [1450, 20000], "expect": {"ok": {"epoch": 2, "issuer": "v2", "expires": 1950}}}
+      ]
+    },
+    {
+      "id": "G01-S118",
+      "title": "a quorum result applies only to the token and session it was gathered for",
+      "invariants": ["INV-WIN-IS-SCOPED"],
+      "config": {"mode": "quorum", "max_lease": 1000, "u": 50, "horizon_ns": 500, "horizon_frames": 1000, "electorate": ["v1", "v2", "v3"]},
+      "steps": [
+        {"op": "found", "holder": "v1", "expires": 1000, "expect": {"ok": {}}},
+        {"op": "request", "voter": "v1", "kind": "renew", "at": 500, "len": 900, "save": "r", "expect": {"ok": {"epoch": 1, "expires": 1400, "requester": "v1"}}},
+        {"op": "gather", "request": "r", "now": 500, "reach": ["v1", "v2"], "clock": 500, "save": "renewal", "expect": {"ok": {"kind": "renew", "epoch": 1, "requester": "v1", "expires": 1400, "prior": 0, "acks": 2}}},
+        {"op": "request", "voter": "v2", "kind": "takeover", "at": 1450, "len": 500, "save": "t", "expect": {"ok": {"epoch": 2, "expires": 1950, "requester": "v2"}}},
+        {"op": "gather", "request": "t", "now": 1450, "reach": ["v2", "v3"], "clock": 1450, "save": "takeover", "expect": {"ok": {"kind": "takeover", "epoch": 2, "requester": "v2", "expires": 1950, "prior": 1400, "acks": 2}}},
+        {"op": "node", "name": "s", "coordinator": "v1", "expect": {"ok": {}}},
+        {"op": "issue", "node": "s", "expires": 1000, "save": "tok", "expect": {"ok": {"epoch": 1}}},
+        {"op": "renew", "node": "s", "token": "tok", "win": "takeover", "now": [500, 10000], "expect": {"error": "WIN_NOT_APPLICABLE"}},
+        {"op": "node", "name": "taking", "coordinator": "v1", "expect": {"ok": {}}},
+        {"op": "assume", "node": "taking", "win": "renewal", "now": [500, 10000], "expect": {"error": "WIN_NOT_APPLICABLE"}},
+        {"op": "node", "name": "sv2", "coordinator": "v2", "expect": {"ok": {}}},
+        {"op": "issue", "node": "sv2", "expires": 1000, "save": "tok2", "expect": {"ok": {"epoch": 1, "issuer": "v2"}}},
+        {"op": "renew", "node": "sv2", "token": "tok2", "win": "renewal", "now": [500, 10000], "expect": {"error": "WIN_NOT_APPLICABLE"}},
+        {"op": "node", "name": "there", "coordinator": "v1", "expect": {"ok": {}}},
+        {"op": "adopt", "node": "there", "view": {"epoch": 2, "holder": "v1", "expires": 5000}, "expect": {"ok": {}}},
+        {"op": "assume", "node": "there", "win": "takeover", "now": [1450, 20000], "expect": {"error": "STALE_AUTHORITY", "details": {"token_epoch": 2, "current_epoch": 2}}},
+        {"op": "node", "name": "late", "coordinator": "v1", "expect": {"ok": {}}},
+        {"op": "assume", "node": "late", "win": "takeover", "now": [1900, 20000], "expect": {"error": "AUTHORITY_EXPIRED", "details": {"expires_at_ns": 1950, "now_ns": 1900}}},
+        {"op": "node", "name": "fine", "coordinator": "v1", "expect": {"ok": {}}},
+        {"op": "assume", "node": "fine", "win": "takeover", "now": [1899, 20000], "expect": {"ok": {"epoch": 2, "issuer": "v2", "expires": 1950}}}
+      ]
+    },
+    {
+      "id": "G01-S123",
+      "title": "a quorum is a strict majority of the electorate, and an electorate must name a voter",
+      "invariants": ["INV-QUORUM-IS-STRICT-MAJORITY"],
+      "config": {},
+      "steps": [
+        {"op": "quorum", "voters": [], "expect": {"error": "EMPTY_ELECTORATE"}},
+        {"op": "quorum", "voters": ["v1"], "expect": {"ok": {"need": 1}}},
+        {"op": "quorum", "voters": ["v1", "v2"], "expect": {"ok": {"need": 2}}},
+        {"op": "quorum", "voters": ["v1", "v2", "v3"], "expect": {"ok": {"need": 2}}},
+        {"op": "quorum", "voters": ["v1", "v2", "v3", "v4"], "expect": {"ok": {"need": 3}}},
+        {"op": "quorum", "voters": ["v1", "v2", "v3", "v4", "v5"], "expect": {"ok": {"need": 3}}},
+        {"op": "quorum", "voters": ["v1", "v2", "v3", "v4", "v5", "v6", "v7"], "expect": {"ok": {"need": 4}}},
+        {"op": "quorum", "voters": ["a", "a", "b"], "expect": {"ok": {"need": 2}}}
+      ]
+    },
+    {
+      "id": "G01-S124",
+      "title": "a token flawed in two ways is refused by the first condition in the contract's order: group, stale, future, issuer, expiry",
+      "invariants": ["INV-EPOCH-JUDGED-BEFORE-ISSUER", "INV-AUTHORITY-ON-EVERY-MUTATION"],
+      "config": {},
+      "steps": [
+        {"op": "node", "name": "n", "expect": {"ok": {}}},
+        {"op": "issue", "node": "n", "expires": 1000000000, "save": "good", "expect": {"ok": {"epoch": 1, "issuer": "coord"}}},
+        {"op": "issue", "node": "n", "expires": 1000000000, "override": {"group": "other", "epoch": 0}, "save": "group_and_stale", "expect": {"ok": {"epoch": 0}}},
+        {"op": "issue", "node": "n", "expires": 1000000000, "override": {"issuer": "intruder", "epoch": 0}, "save": "issuer_and_stale", "expect": {"ok": {"epoch": 0}}},
+        {"op": "issue", "node": "n", "expires": 1000000000, "override": {"issuer": "intruder", "epoch": 9}, "save": "issuer_and_future", "expect": {"ok": {"epoch": 9}}},
+        {"op": "issue", "node": "n", "expires": 1000, "override": {"issuer": "intruder"}, "save": "issuer_and_expired", "expect": {"ok": {"issuer": "intruder"}}},
+        {"op": "issue", "node": "n", "expires": 1000, "override": {"epoch": 0}, "save": "stale_and_expired", "expect": {"ok": {"epoch": 0}}},
+        {"op": "propose", "node": "n", "token": "group_and_stale", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"error": "WRONG_GROUP"}},
+        {"op": "propose", "node": "n", "token": "issuer_and_stale", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"error": "STALE_AUTHORITY", "details": {"token_epoch": 0, "current_epoch": 1}}},
+        {"op": "propose", "node": "n", "token": "issuer_and_future", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"error": "FUTURE_AUTHORITY", "details": {"token_epoch": 9, "current_epoch": 1}}},
+        {"op": "propose", "node": "n", "token": "issuer_and_expired", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"error": "NOT_CONFIGURED_ISSUER"}},
+        {"op": "propose", "node": "n", "token": "stale_and_expired", "change": {"kind": "join", "member": "c", "board": "S1"}, "cutover": 100000, "deadline": 2000, "now": [1000, 10000], "expect": {"error": "STALE_AUTHORITY", "details": {"token_epoch": 0, "current_epoch": 1}}},
+        {"op": "session", "node": "n", "expect": {"ok": {"revision": 2, "members": ["a", "b"], "epoch": 1}}}
+      ]
+    },
+    {
+      "id": "G01-S119",
+      "title": "PLANTED: with no margin and a holder clock 40 ns slow, two leaders hold a live lease at once",
+      "invariants": ["INV-SKEW-MARGIN", "INV-NO-OVERLAP-OF-LEASES"],
+      "config": {"mode": "quorum", "max_lease": 1000, "u": 0, "horizon_ns": 500, "horizon_frames": 1000, "electorate": ["v1", "v2", "v3"]},
+      "steps": [
+        {"op": "found", "holder": "v1", "expires": 1000, "expect": {"ok": {}}},
+        {"op": "node", "name": "holder", "coordinator": "v1", "expect": {"ok": {}}},
+        {"op": "node", "name": "taker", "coordinator": "v1", "expect": {"ok": {}}},
+        {"op": "issue", "node": "holder", "expires": 1000, "save": "tok", "expect": {"ok": {"epoch": 1, "issuer": "v1"}}},
+        {"op": "request", "voter": "v2", "kind": "takeover", "at": 1000, "len": 500, "save": "t", "expect": {"ok": {"epoch": 2, "expires": 1500, "requester": "v2"}}},
+        {"op": "gather", "request": "t", "now": 1000, "reach": ["v2", "v3"], "clock": 1000, "save": "w", "expect": {"ok": {"kind": "takeover", "epoch": 2, "requester": "v2", "expires": 1500, "prior": 1000, "acks": 2}}},
+        {"op": "assume", "node": "taker", "win": "w", "now": [1000, 20000], "save": "new", "expect": {"ok": {"epoch": 2, "issuer": "v2", "expires": 1500}}},
+        {"op": "live", "node": "holder", "token": "tok", "at": 960, "expect": {"ok": {"live": true}}},
+        {"op": "live", "node": "taker", "token": "new", "at": 1000, "expect": {"ok": {"live": true}}},
+        {"op": "live", "node": "holder", "token": "tok", "at": 999, "expect": {"ok": {"live": true}}},
+        {"op": "live", "node": "taker", "token": "new", "at": 1039, "expect": {"ok": {"live": true}}},
+        {"op": "live", "node": "holder", "token": "tok", "at": 1000, "expect": {"ok": {"live": false}}},
+        {"op": "live", "node": "taker", "token": "new", "at": 1040, "expect": {"ok": {"live": true}}}
+      ]
+    },
+    {
+      "id": "G01-S120",
+      "title": "with u = 19 the overlap shrinks to two instants",
+      "invariants": ["INV-SKEW-MARGIN", "INV-NO-OVERLAP-OF-LEASES"],
+      "config": {"mode": "quorum", "max_lease": 1000, "u": 19, "horizon_ns": 500, "horizon_frames": 1000, "electorate": ["v1", "v2", "v3"]},
+      "steps": [
+        {"op": "found", "holder": "v1", "expires": 1000, "expect": {"ok": {}}},
+        {"op": "node", "name": "holder", "coordinator": "v1", "expect": {"ok": {}}},
+        {"op": "node", "name": "taker", "coordinator": "v1", "expect": {"ok": {}}},
+        {"op": "issue", "node": "holder", "expires": 1000, "save": "tok", "expect": {"ok": {"epoch": 1, "issuer": "v1"}}},
+        {"op": "request", "voter": "v2", "kind": "takeover", "at": 1018, "len": 500, "save": "t0", "expect": {"ok": {"epoch": 2, "expires": 1518, "requester": "v2"}}},
+        {"op": "respond", "voter": "v3", "request": "t0", "clock": 1018, "expect": {"error": "LEASE_NOT_EXPIRED", "details": {"conservative_expiry_ns": 1019, "now_ns": 1018}}},
+        {"op": "request", "voter": "v2", "kind": "takeover", "at": 1019, "len": 500, "save": "t", "expect": {"ok": {"epoch": 2, "expires": 1519, "requester": "v2"}}},
+        {"op": "gather", "request": "t", "now": 1019, "reach": ["v2", "v3"], "clock": 1019, "save": "w", "expect": {"ok": {"kind": "takeover", "epoch": 2, "requester": "v2", "expires": 1519, "prior": 1000, "acks": 2}}},
+        {"op": "assume", "node": "taker", "win": "w", "now": [1019, 20000], "save": "new", "expect": {"ok": {"epoch": 2, "issuer": "v2", "expires": 1519}}},
+        {"op": "live", "node": "holder", "token": "tok", "at": 979, "expect": {"ok": {"live": true}}},
+        {"op": "live", "node": "taker", "token": "new", "at": 1019, "expect": {"ok": {"live": true}}},
+        {"op": "live", "node": "holder", "token": "tok", "at": 980, "expect": {"ok": {"live": true}}},
+        {"op": "live", "node": "taker", "token": "new", "at": 1020, "expect": {"ok": {"live": true}}},
+        {"op": "live", "node": "holder", "token": "tok", "at": 981, "expect": {"ok": {"live": false}}},
+        {"op": "live", "node": "taker", "token": "new", "at": 1021, "expect": {"ok": {"live": true}}}
+      ]
+    },
+    {
+      "id": "G01-S121",
+      "title": "with u = 20 the same skew leaves no overlap",
+      "invariants": ["INV-SKEW-MARGIN", "INV-NO-OVERLAP-OF-LEASES"],
+      "config": {"mode": "quorum", "max_lease": 1000, "u": 20, "horizon_ns": 500, "horizon_frames": 1000, "electorate": ["v1", "v2", "v3"]},
+      "steps": [
+        {"op": "found", "holder": "v1", "expires": 1000, "expect": {"ok": {}}},
+        {"op": "node", "name": "holder", "coordinator": "v1", "expect": {"ok": {}}},
+        {"op": "node", "name": "taker", "coordinator": "v1", "expect": {"ok": {}}},
+        {"op": "issue", "node": "holder", "expires": 1000, "save": "tok", "expect": {"ok": {"epoch": 1, "issuer": "v1"}}},
+        {"op": "request", "voter": "v2", "kind": "takeover", "at": 1019, "len": 500, "save": "t0", "expect": {"ok": {"epoch": 2, "expires": 1519, "requester": "v2"}}},
+        {"op": "respond", "voter": "v3", "request": "t0", "clock": 1019, "expect": {"error": "LEASE_NOT_EXPIRED", "details": {"conservative_expiry_ns": 1020, "now_ns": 1019}}},
+        {"op": "request", "voter": "v2", "kind": "takeover", "at": 1020, "len": 500, "save": "t", "expect": {"ok": {"epoch": 2, "expires": 1520, "requester": "v2"}}},
+        {"op": "gather", "request": "t", "now": 1020, "reach": ["v2", "v3"], "clock": 1020, "save": "w", "expect": {"ok": {"kind": "takeover", "epoch": 2, "requester": "v2", "expires": 1520, "prior": 1000, "acks": 2}}},
+        {"op": "assume", "node": "taker", "win": "w", "now": [1020, 20000], "save": "new", "expect": {"ok": {"epoch": 2, "issuer": "v2", "expires": 1520}}},
+        {"op": "live", "node": "holder", "token": "tok", "at": 979, "expect": {"ok": {"live": true}}},
+        {"op": "live", "node": "holder", "token": "tok", "at": 980, "expect": {"ok": {"live": false}}},
+        {"op": "live", "node": "taker", "token": "new", "at": 1020, "expect": {"ok": {"live": true}}},
+        {"op": "live", "node": "holder", "token": "tok", "at": 981, "expect": {"ok": {"live": false}}},
+        {"op": "live", "node": "taker", "token": "new", "at": 1021, "expect": {"ok": {"live": true}}}
+      ]
+    },
+    {
+      "id": "G01-S122",
+      "title": "with u = 50 the holder is dead from true time 990 and the taker starts at 1050",
+      "invariants": ["INV-SKEW-MARGIN", "INV-NO-OVERLAP-OF-LEASES"],
+      "config": {"mode": "quorum", "max_lease": 1000, "u": 50, "horizon_ns": 500, "horizon_frames": 1000, "electorate": ["v1", "v2", "v3"]},
+      "steps": [
+        {"op": "found", "holder": "v1", "expires": 1000, "expect": {"ok": {}}},
+        {"op": "node", "name": "holder", "coordinator": "v1", "expect": {"ok": {}}},
+        {"op": "node", "name": "taker", "coordinator": "v1", "expect": {"ok": {}}},
+        {"op": "issue", "node": "holder", "expires": 1000, "save": "tok", "expect": {"ok": {"epoch": 1, "issuer": "v1"}}},
+        {"op": "request", "voter": "v2", "kind": "takeover", "at": 1049, "len": 500, "save": "t0", "expect": {"ok": {"epoch": 2, "expires": 1549, "requester": "v2"}}},
+        {"op": "respond", "voter": "v3", "request": "t0", "clock": 1049, "expect": {"error": "LEASE_NOT_EXPIRED", "details": {"conservative_expiry_ns": 1050, "now_ns": 1049}}},
+        {"op": "request", "voter": "v2", "kind": "takeover", "at": 1050, "len": 500, "save": "t", "expect": {"ok": {"epoch": 2, "expires": 1550, "requester": "v2"}}},
+        {"op": "gather", "request": "t", "now": 1050, "reach": ["v2", "v3"], "clock": 1050, "save": "w", "expect": {"ok": {"kind": "takeover", "epoch": 2, "requester": "v2", "expires": 1550, "prior": 1000, "acks": 2}}},
+        {"op": "assume", "node": "taker", "win": "w", "now": [1050, 20000], "save": "new", "expect": {"ok": {"epoch": 2, "issuer": "v2", "expires": 1550}}},
+        {"op": "live", "node": "holder", "token": "tok", "at": 949, "expect": {"ok": {"live": true}}},
+        {"op": "live", "node": "holder", "token": "tok", "at": 950, "expect": {"ok": {"live": false}}},
+        {"op": "live", "node": "holder", "token": "tok", "at": 1010, "expect": {"ok": {"live": false}}},
+        {"op": "live", "node": "taker", "token": "new", "at": 1050, "expect": {"ok": {"live": true}}}
+      ]
+    }
+  ],
+  "schedule": {
+    "steps": 400,
+    "note": "The model's output for the seeded partition schedule (same SplitMix64 and draw order as membership.rs). 'label' names the configuration; the proper runs must show zero overlaps and zero conflicts, the planted runs at least one overlap each.",
+    "runs": [
+      {"seed": 0, "u": 100, "max_offset": 50, "skew_holder": false, "label": "declared bound covers random offsets", "counts": {"renewals": 19, "minority_refused": 27, "takeovers": 12, "takeovers_refused": 143, "fenced": 47, "mutations_accepted": 6, "led_steps": 150, "leaderless_steps": 254, "overlaps": 0, "conflicts": 0}},
+      {"seed": 1, "u": 100, "max_offset": 50, "skew_holder": false, "label": "declared bound covers random offsets", "counts": {"renewals": 14, "minority_refused": 62, "takeovers": 8, "takeovers_refused": 131, "fenced": 61, "mutations_accepted": 3, "led_steps": 97, "leaderless_steps": 307, "overlaps": 0, "conflicts": 0}},
+      {"seed": 2, "u": 100, "max_offset": 50, "skew_holder": false, "label": "declared bound covers random offsets", "counts": {"renewals": 18, "minority_refused": 69, "takeovers": 12, "takeovers_refused": 147, "fenced": 40, "mutations_accepted": 10, "led_steps": 158, "leaderless_steps": 246, "overlaps": 0, "conflicts": 0}},
+      {"seed": 3, "u": 100, "max_offset": 50, "skew_holder": false, "label": "declared bound covers random offsets", "counts": {"renewals": 12, "minority_refused": 56, "takeovers": 8, "takeovers_refused": 145, "fenced": 28, "mutations_accepted": 4, "led_steps": 98, "leaderless_steps": 306, "overlaps": 0, "conflicts": 0}},
+      {"seed": 4, "u": 100, "max_offset": 50, "skew_holder": false, "label": "declared bound covers random offsets", "counts": {"renewals": 13, "minority_refused": 23, "takeovers": 10, "takeovers_refused": 134, "fenced": 48, "mutations_accepted": 6, "led_steps": 108, "leaderless_steps": 296, "overlaps": 0, "conflicts": 0}},
+      {"seed": 5, "u": 100, "max_offset": 50, "skew_holder": false, "label": "declared bound covers random offsets", "counts": {"renewals": 19, "minority_refused": 78, "takeovers": 10, "takeovers_refused": 132, "fenced": 56, "mutations_accepted": 4, "led_steps": 140, "leaderless_steps": 264, "overlaps": 0, "conflicts": 0}},
+      {"seed": 6, "u": 100, "max_offset": 50, "skew_holder": false, "label": "declared bound covers random offsets", "counts": {"renewals": 13, "minority_refused": 47, "takeovers": 8, "takeovers_refused": 141, "fenced": 33, "mutations_accepted": 6, "led_steps": 92, "leaderless_steps": 312, "overlaps": 0, "conflicts": 0}},
+      {"seed": 7, "u": 100, "max_offset": 50, "skew_holder": false, "label": "declared bound covers random offsets", "counts": {"renewals": 10, "minority_refused": 64, "takeovers": 6, "takeovers_refused": 151, "fenced": 56, "mutations_accepted": 2, "led_steps": 80, "leaderless_steps": 324, "overlaps": 0, "conflicts": 0}},
+      {"seed": 0, "u": 100, "max_offset": 50, "skew_holder": true, "label": "declared bound covers the worst-case skew", "counts": {"renewals": 21, "minority_refused": 32, "takeovers": 13, "takeovers_refused": 134, "fenced": 42, "mutations_accepted": 10, "led_steps": 171, "leaderless_steps": 233, "overlaps": 0, "conflicts": 0}},
+      {"seed": 1, "u": 100, "max_offset": 50, "skew_holder": true, "label": "declared bound covers the worst-case skew", "counts": {"renewals": 14, "minority_refused": 62, "takeovers": 8, "takeovers_refused": 131, "fenced": 61, "mutations_accepted": 3, "led_steps": 97, "leaderless_steps": 307, "overlaps": 0, "conflicts": 0}},
+      {"seed": 2, "u": 100, "max_offset": 50, "skew_holder": true, "label": "declared bound covers the worst-case skew", "counts": {"renewals": 15, "minority_refused": 74, "takeovers": 9, "takeovers_refused": 151, "fenced": 44, "mutations_accepted": 9, "led_steps": 120, "leaderless_steps": 284, "overlaps": 0, "conflicts": 0}},
+      {"seed": 3, "u": 100, "max_offset": 50, "skew_holder": true, "label": "declared bound covers the worst-case skew", "counts": {"renewals": 12, "minority_refused": 55, "takeovers": 9, "takeovers_refused": 145, "fenced": 28, "mutations_accepted": 4, "led_steps": 102, "leaderless_steps": 302, "overlaps": 0, "conflicts": 0}},
+      {"seed": 4, "u": 100, "max_offset": 50, "skew_holder": true, "label": "declared bound covers the worst-case skew", "counts": {"renewals": 1, "minority_refused": 84, "takeovers": 2, "takeovers_refused": 138, "fenced": 52, "mutations_accepted": 0, "led_steps": 2, "leaderless_steps": 402, "overlaps": 0, "conflicts": 0}},
+      {"seed": 5, "u": 100, "max_offset": 50, "skew_holder": true, "label": "declared bound covers the worst-case skew", "counts": {"renewals": 12, "minority_refused": 59, "takeovers": 6, "takeovers_refused": 142, "fenced": 32, "mutations_accepted": 2, "led_steps": 76, "leaderless_steps": 328, "overlaps": 0, "conflicts": 0}},
+      {"seed": 6, "u": 100, "max_offset": 50, "skew_holder": true, "label": "declared bound covers the worst-case skew", "counts": {"renewals": 17, "minority_refused": 43, "takeovers": 8, "takeovers_refused": 143, "fenced": 31, "mutations_accepted": 6, "led_steps": 107, "leaderless_steps": 297, "overlaps": 0, "conflicts": 0}},
+      {"seed": 7, "u": 100, "max_offset": 50, "skew_holder": true, "label": "declared bound covers the worst-case skew", "counts": {"renewals": 6, "minority_refused": 61, "takeovers": 8, "takeovers_refused": 150, "fenced": 53, "mutations_accepted": 5, "led_steps": 81, "leaderless_steps": 323, "overlaps": 0, "conflicts": 0}},
+      {"seed": 0, "u": 0, "max_offset": 50, "skew_holder": true, "label": "PLANTED: no margin, holder slow", "counts": {"renewals": 29, "minority_refused": 43, "takeovers": 11, "takeovers_refused": 132, "fenced": 44, "mutations_accepted": 15, "led_steps": 200, "leaderless_steps": 203, "overlaps": 1, "conflicts": 0}},
+      {"seed": 1, "u": 0, "max_offset": 50, "skew_holder": true, "label": "PLANTED: no margin, holder slow", "counts": {"renewals": 18, "minority_refused": 62, "takeovers": 8, "takeovers_refused": 131, "fenced": 61, "mutations_accepted": 5, "led_steps": 125, "leaderless_steps": 278, "overlaps": 1, "conflicts": 0}},
+      {"seed": 2, "u": 0, "max_offset": 50, "skew_holder": true, "label": "PLANTED: no margin, holder slow", "counts": {"renewals": 23, "minority_refused": 53, "takeovers": 4, "takeovers_refused": 137, "fenced": 50, "mutations_accepted": 11, "led_steps": 129, "leaderless_steps": 274, "overlaps": 1, "conflicts": 0}},
+      {"seed": 3, "u": 0, "max_offset": 50, "skew_holder": true, "label": "PLANTED: no margin, holder slow", "counts": {"renewals": 20, "minority_refused": 55, "takeovers": 12, "takeovers_refused": 144, "fenced": 53, "mutations_accepted": 7, "led_steps": 170, "leaderless_steps": 232, "overlaps": 2, "conflicts": 0}},
+      {"seed": 4, "u": 0, "max_offset": 50, "skew_holder": true, "label": "PLANTED: no margin, holder slow", "counts": {"renewals": 21, "minority_refused": 21, "takeovers": 13, "takeovers_refused": 129, "fenced": 45, "mutations_accepted": 16, "led_steps": 180, "leaderless_steps": 223, "overlaps": 1, "conflicts": 0}},
+      {"seed": 5, "u": 0, "max_offset": 50, "skew_holder": true, "label": "PLANTED: no margin, holder slow", "counts": {"renewals": 17, "minority_refused": 65, "takeovers": 10, "takeovers_refused": 128, "fenced": 65, "mutations_accepted": 2, "led_steps": 120, "leaderless_steps": 283, "overlaps": 1, "conflicts": 0}},
+      {"seed": 6, "u": 0, "max_offset": 50, "skew_holder": true, "label": "PLANTED: no margin, holder slow", "counts": {"renewals": 27, "minority_refused": 32, "takeovers": 11, "takeovers_refused": 140, "fenced": 32, "mutations_accepted": 14, "led_steps": 192, "leaderless_steps": 211, "overlaps": 1, "conflicts": 0}},
+      {"seed": 7, "u": 0, "max_offset": 50, "skew_holder": true, "label": "PLANTED: no margin, holder slow", "counts": {"renewals": 15, "minority_refused": 52, "takeovers": 8, "takeovers_refused": 146, "fenced": 66, "mutations_accepted": 1, "led_steps": 119, "leaderless_steps": 284, "overlaps": 1, "conflicts": 0}},
+      {"seed": 0, "u": 0, "max_offset": 0, "skew_holder": false, "label": "agreeing clocks, default configuration", "counts": {"renewals": 29, "minority_refused": 43, "takeovers": 11, "takeovers_refused": 132, "fenced": 44, "mutations_accepted": 15, "led_steps": 200, "leaderless_steps": 204, "overlaps": 0, "conflicts": 0}},
+      {"seed": 1, "u": 0, "max_offset": 0, "skew_holder": false, "label": "agreeing clocks, default configuration", "counts": {"renewals": 18, "minority_refused": 62, "takeovers": 8, "takeovers_refused": 131, "fenced": 61, "mutations_accepted": 5, "led_steps": 125, "leaderless_steps": 279, "overlaps": 0, "conflicts": 0}},
+      {"seed": 2, "u": 0, "max_offset": 0, "skew_holder": false, "label": "agreeing clocks, default configuration", "counts": {"renewals": 23, "minority_refused": 53, "takeovers": 4, "takeovers_refused": 137, "fenced": 50, "mutations_accepted": 11, "led_steps": 129, "leaderless_steps": 275, "overlaps": 0, "conflicts": 0}},
+      {"seed": 3, "u": 0, "max_offset": 0, "skew_holder": false, "label": "agreeing clocks, default configuration", "counts": {"renewals": 8, "minority_refused": 53, "takeovers": 9, "takeovers_refused": 146, "fenced": 28, "mutations_accepted": 2, "led_steps": 80, "leaderless_steps": 324, "overlaps": 0, "conflicts": 0}},
+      {"seed": 4, "u": 0, "max_offset": 0, "skew_holder": false, "label": "agreeing clocks, default configuration", "counts": {"renewals": 38, "minority_refused": 18, "takeovers": 15, "takeovers_refused": 127, "fenced": 40, "mutations_accepted": 21, "led_steps": 279, "leaderless_steps": 125, "overlaps": 0, "conflicts": 0}},
+      {"seed": 5, "u": 0, "max_offset": 0, "skew_holder": false, "label": "agreeing clocks, default configuration", "counts": {"renewals": 28, "minority_refused": 44, "takeovers": 10, "takeovers_refused": 132, "fenced": 53, "mutations_accepted": 6, "led_steps": 217, "leaderless_steps": 187, "overlaps": 0, "conflicts": 0}},
+      {"seed": 6, "u": 0, "max_offset": 0, "skew_holder": false, "label": "agreeing clocks, default configuration", "counts": {"renewals": 31, "minority_refused": 27, "takeovers": 11, "takeovers_refused": 139, "fenced": 36, "mutations_accepted": 16, "led_steps": 208, "leaderless_steps": 196, "overlaps": 0, "conflicts": 0}},
+      {"seed": 7, "u": 0, "max_offset": 0, "skew_holder": false, "label": "agreeing clocks, default configuration", "counts": {"renewals": 15, "minority_refused": 52, "takeovers": 8, "takeovers_refused": 146, "fenced": 66, "mutations_accepted": 1, "led_steps": 119, "leaderless_steps": 285, "overlaps": 0, "conflicts": 0}}
+    ]
+  },
+  "plants": [
+    {"name": "zero_uncertainty", "fails": ["G01-S101", "G01-S105", "G01-S106", "G01-S108", "G01-S110", "G01-S112", "G01-S113", "G01-S115", "G01-S118", "G01-S120", "G01-S121", "G01-S122"]},
+    {"name": "early_voter_clock", "fails": ["G01-S106", "G01-S108", "G01-S110", "G01-S112", "G01-S113", "G01-S120", "G01-S121", "G01-S122"]},
+    {"name": "flipped_policy", "fails": ["G01-S006"]},
+    {"name": "flipped_mint", "fails": ["G01-S001", "G01-S002", "G01-S003", "G01-S004", "G01-S005", "G01-S006", "G01-S007", "G01-S008", "G01-S009", "G01-S010", "G01-S011", "G01-S012", "G01-S013", "G01-S014", "G01-S016", "G01-S101", "G01-S113", "G01-S114", "G01-S117", "G01-S118", "G01-S119", "G01-S120", "G01-S121", "G01-S122", "G01-S124"]}
+  ]
+}

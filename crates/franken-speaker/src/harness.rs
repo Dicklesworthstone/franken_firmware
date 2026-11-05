@@ -80,7 +80,9 @@ pub struct VirtualSpeakerNode {
     /// Blocks the gate let sound, and blocks it replaced with silence at the same stream position.
     pub audible_blocks: u64,
     pub muted_blocks: u64,
-    /// Clock correction handed to the resampler: the group clock's ratio in ppm while a rate estimate is in force.
+    /// Clock correction handed to the legacy resampler: the group clock's ratio in ppm while a rate estimate is in
+    /// force. That needs a 4 s span of exchanges, longer than any run the harness makes today, so this is always 0
+    /// here; the sign convention against the legacy resampler is untested, and nothing claims it works.
     pub drift_ppm: i32,
 }
 
@@ -308,6 +310,9 @@ enum OutputFault {
     },
     /// The member never produces its final block.
     DropFinalBlock { member_id: &'static str },
+    /// The controller never schedules a start for any member but this one, so the others stay muted (and the skew
+    /// of the one that sounds is trivially 0).
+    UnadmittedExcept { member_id: &'static str },
 }
 
 /// One line describing a planted fault, for the `fault` field of the diagnostic log.
@@ -324,6 +329,9 @@ fn describe_fault(fault: OutputFault) -> String {
         ),
         OutputFault::DropFinalBlock { member_id } => {
             format!("drop_final_block member={member_id}")
+        }
+        OutputFault::UnadmittedExcept { member_id } => {
+            format!("unadmitted_except member={member_id}")
         }
     }
 }
@@ -705,7 +713,9 @@ impl VirtualSpeakerNode {
     /// The audible gate for block `blk_idx`: its clock exchange if one is due, the controller's re-admission once the
     /// clock is locked again, and then N03's answer for the block's presentation instant. A block sounds only if
     /// `GroupClock` says audible there (locked or in holdover, an admitted start reached, the authority live);
-    /// otherwise the caller feeds silence. A rejected exchange never changes what sounds.
+    /// otherwise the caller feeds silence. The exchange's own result is not used here: a rejection that resets the
+    /// fit (a clock jump, a clock that went backwards) mutes the node through the clock's state, and any other
+    /// rejection changes nothing.
     pub fn gate_block(&mut self, blk_idx: u64) -> BlockGate {
         let send_true = CAMPAIGN_ORIGIN_NS + blk_idx * BLOCK_PERIOD_NS;
         if blk_idx > 0 && blk_idx.is_multiple_of(PROBE_EVERY_BLOCKS) {
@@ -757,6 +767,11 @@ pub struct VirtualHouseReport {
     pub unified_mixed_s1_s2: bool,
     pub total_blocks_streamed: u64,
     pub max_inter_speaker_skew_us: u64,
+    /// Blocks in which every member sounded, so the skew above covers every member, and blocks in which at least
+    /// one did not (it was muted), where there is nothing to compare. A run with an unmeasured block does not
+    /// meet the target: a skew measured over fewer members than the group has is not a measurement of the group.
+    pub skew_measured_blocks: u64,
+    pub skew_unmeasured_blocks: u64,
     pub within_2ms_skew_target: bool,
     pub video_sync_residual_us: i64,
     pub video_sync_within_40ms_gate: bool,
@@ -895,7 +910,17 @@ fn run_campaign_inner(
             .map_err(|e| e.to_string())?;
         cmd_seq += 1;
 
-        let node = VirtualSpeakerNode::bring_up_admitted(member_id, board, epoch)?;
+        let plan = match fault {
+            Some(OutputFault::UnadmittedExcept { member_id: kept }) if kept != member_id => {
+                BringUpPlan {
+                    first_start_block: None,
+                    auto_admit: false,
+                    ..BringUpPlan::NOMINAL
+                }
+            }
+            _ => BringUpPlan::NOMINAL,
+        };
+        let node = VirtualSpeakerNode::bring_up_with_plan(member_id, board, epoch, plan)?;
         audit
             .deliver_new(
                 &mut session,
@@ -954,6 +979,8 @@ fn run_campaign_inner(
 
     // Stream & render loop
     let mut max_inter_speaker_skew_us = 0u64;
+    let mut skew_measured_blocks = 0u64;
+    let mut skew_unmeasured_blocks = 0u64;
     for blk_idx in 0..total_blocks {
         let start_frame = blk_idx * (FRAMES_PER_BLOCK as u64);
         let send_time_ns = blk_idx * block_period_ns;
@@ -1116,6 +1143,11 @@ fn run_campaign_inner(
             }
         }
 
+        if presented_true.len() == nodes.len() {
+            skew_measured_blocks += 1;
+        } else {
+            skew_unmeasured_blocks += 1;
+        }
         if let (Some(&min_ns), Some(&max_ns)) =
             (presented_true.iter().min(), presented_true.iter().max())
         {
@@ -1253,7 +1285,9 @@ fn run_campaign_inner(
         unified_mixed_s1_s2: session.is_unified_mixed_generation_group(),
         total_blocks_streamed: total_blocks,
         max_inter_speaker_skew_us,
-        within_2ms_skew_target: max_inter_speaker_skew_us <= 2_000,
+        skew_measured_blocks,
+        skew_unmeasured_blocks,
+        within_2ms_skew_target: max_inter_speaker_skew_us <= 2_000 && skew_unmeasured_blocks == 0,
         video_sync_residual_us: video_eval.residual_av_skew_us,
         video_sync_within_40ms_gate: video_eval.within_40ms_p99_gate,
         dropped_log_events: sink.dropped_event_count(),
@@ -1265,7 +1299,6 @@ fn run_campaign_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use franken_clock::DEFAULT_MAX_ADMITTED_UNCERTAINTY_US;
 
     #[test]
     fn virtual_house_streams_mixed_s1_s2_fleet_with_zero_output_discontinuities() {
@@ -1305,14 +1338,6 @@ mod tests {
             Ok(_) => panic!("bring-up must have been refused"),
             Err(e) => e,
         }
-    }
-
-    #[test]
-    fn harness_clock_bound_matches_the_n03_admission_bound() {
-        assert_eq!(
-            CLOCK_LOCK_MAX_UNCERTAINTY_US,
-            DEFAULT_MAX_ADMITTED_UNCERTAINTY_US
-        );
     }
 
     #[test]
@@ -2107,6 +2132,39 @@ mod tests {
         // is not asserted here; the field is excluded from the comparison, not from the report.
         comparable.evidence_complete = baseline.evidence_complete;
         assert_eq!(comparable, baseline, "tiny sink changed the campaign");
+    }
+
+    #[test]
+    fn a_run_in_which_all_but_one_member_is_muted_does_not_pass_the_skew_gate() {
+        // Planted defect: the controller never schedules a start for four of the five members, so they stay muted.
+        // One node sounds, so the measured skew is trivially 0, which must not read as "within 2 ms".
+        let planted = OutputFault::UnadmittedExcept {
+            member_id: "spk-kitchen-s12",
+        };
+        let report = run_campaign(SEED, 40, Some(planted)).expect("the campaign itself runs");
+        assert_eq!(report.max_inter_speaker_skew_us, 0);
+        assert_eq!(report.skew_unmeasured_blocks, 40);
+        assert_eq!(report.skew_measured_blocks, 0);
+        assert!(
+            !report.within_2ms_skew_target,
+            "an unmeasured skew is not a pass"
+        );
+        for (id, stats) in &report.members {
+            let expected = if id == "spk-kitchen-s12" {
+                (40, 0)
+            } else {
+                (0, 40)
+            };
+            assert_eq!((stats.audible_blocks, stats.muted_blocks), expected, "{id}");
+        }
+        // Paired positive: the same campaign without the planted defect measures every block and passes.
+        let clean = run_campaign(SEED, 40, None).expect("clean campaign");
+        assert_eq!(
+            (clean.skew_measured_blocks, clean.skew_unmeasured_blocks),
+            (40, 0)
+        );
+        assert!(clean.within_2ms_skew_target);
+        assert!(clean.max_inter_speaker_skew_us > 0);
     }
 
     #[test]

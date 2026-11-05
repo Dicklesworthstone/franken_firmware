@@ -95,6 +95,8 @@ pub mod code {
     pub const UNSAFE_IN_DEVICE_CLOSURE: &str = "unsafe_in_device_closure";
     pub const OPTIONAL_DEP_WITHOUT_FLAG: &str = "optional_dep_without_flag";
     pub const OPTIONAL_DEP_WRONG_OWNER: &str = "optional_dep_wrong_owner";
+    pub const STALE_UNSAFE_EXCEPTION: &str = "stale_unsafe_exception";
+    pub const UNSAFE_EXCEPTION_WITHOUT_REASON: &str = "unsafe_exception_without_reason";
     pub const LINKER_MALFORMED: &str = "linker_malformed";
     pub const LINKER_UNKNOWN_CRATE: &str = "linker_unknown_crate";
     pub const LINKER_DUPLICATE: &str = "linker_duplicate";
@@ -463,6 +465,16 @@ pub struct LinkerSpec {
     pub abi_measured: bool,
 }
 
+/// A counted exception that lets one crate depend on a crate with a scoped unsafe allowance although a device
+/// artifact is built from it. The exception names an edge; every active edge into the unsafe crate must be named.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnsafeException {
+    pub from: String,
+    pub to: String,
+    pub reason: String,
+}
+
 /// One built artifact: one crate, one target, one profile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -495,6 +507,7 @@ pub struct WorkspaceContract {
     pub pending_members: Vec<PendingMember>,
     pub assets: Vec<OwnedAsset>,
     pub test_support_exceptions: Vec<TestSupportException>,
+    pub unsafe_exceptions: Vec<UnsafeException>,
     pub features: Vec<FeatureSpec>,
     pub profiles: Vec<BuildProfile>,
     pub linkers: Vec<LinkerSpec>,
@@ -985,9 +998,10 @@ impl WorkspaceContract {
         for spec in &self.crates {
             let allowed = match spec.unsafe_policy {
                 UnsafePolicy::Forbid => true,
-                UnsafePolicy::DenyWithScopedAllow => {
-                    matches!(spec.role, CrateRole::HostTool | CrateRole::TestSupport)
-                }
+                UnsafePolicy::DenyWithScopedAllow => matches!(
+                    spec.role,
+                    CrateRole::HostTool | CrateRole::TestSupport | CrateRole::Platform
+                ),
                 UnsafePolicy::BootstrapProbe => false,
             };
             if !allowed {
@@ -1441,6 +1455,29 @@ impl WorkspaceContract {
                 ));
             }
         }
+        for exception in &self.unsafe_exceptions {
+            let subject = format!("{}->{}", exception.from, exception.to);
+            let is_edge = declared
+                .get(&exception.from)
+                .is_some_and(|edges| edges.contains(&exception.to));
+            let to_is_unsafe = idx
+                .get(exception.to.as_str())
+                .is_some_and(|spec| spec.unsafe_policy == UnsafePolicy::DenyWithScopedAllow);
+            if !is_edge || !to_is_unsafe {
+                errs.push(ContractError::new(
+                    code::STALE_UNSAFE_EXCEPTION,
+                    subject.clone(),
+                    "exception does not match a normal or optional dependency edge onto a crate with a scoped unsafe allowance",
+                ));
+            }
+            if exception.reason.trim().is_empty() {
+                errs.push(ContractError::new(
+                    code::UNSAFE_EXCEPTION_WITHOUT_REASON,
+                    subject,
+                    "an unsafe exception must say why it exists",
+                ));
+            }
+        }
         for art in &self.artifacts {
             if !art.target.is_device() || !idx.contains_key(art.crate_name.as_str()) {
                 continue;
@@ -1452,14 +1489,24 @@ impl WorkspaceContract {
                     continue;
                 };
                 let subject = format!("{}:{member}", art.id);
+                // Every edge into the crate that this artifact's build activates must be listed; the artifact's own
+                // crate has no incoming edge and is never excused.
+                let incoming: BTreeSet<&String> = reach
+                    .iter()
+                    .filter(|from| {
+                        active
+                            .get(*from)
+                            .is_some_and(|edges| edges.contains(member))
+                    })
+                    .collect();
                 if spec.role == CrateRole::TestSupport {
-                    let covered = self.test_support_exceptions.iter().any(|exception| {
-                        exception.to == *member
-                            && reach.contains(&exception.from)
-                            && active
-                                .get(&exception.from)
-                                .is_some_and(|edges| edges.contains(&exception.to))
-                    });
+                    let listed: BTreeSet<&String> = self
+                        .test_support_exceptions
+                        .iter()
+                        .filter(|exception| exception.to == *member)
+                        .map(|exception| &exception.from)
+                        .collect();
+                    let covered = !incoming.is_empty() && incoming.is_subset(&listed);
                     if !covered {
                         errs.push(ContractError::new(
                             code::TEST_SUPPORT_IN_DEVICE_CLOSURE,
@@ -1476,11 +1523,19 @@ impl WorkspaceContract {
                     ));
                 }
                 if spec.unsafe_policy == UnsafePolicy::DenyWithScopedAllow {
-                    errs.push(ContractError::new(
-                        code::UNSAFE_IN_DEVICE_CLOSURE,
-                        subject,
-                        "a crate with a scoped unsafe allowance is in a device artifact's closure",
-                    ));
+                    let listed: BTreeSet<&String> = self
+                        .unsafe_exceptions
+                        .iter()
+                        .filter(|exception| exception.to == *member)
+                        .map(|exception| &exception.from)
+                        .collect();
+                    if incoming.is_empty() || !incoming.is_subset(&listed) {
+                        errs.push(ContractError::new(
+                            code::UNSAFE_IN_DEVICE_CLOSURE,
+                            subject,
+                            "a crate with a scoped unsafe allowance is in a device artifact's closure through an edge no counted exception names",
+                        ));
+                    }
                 }
             }
         }
