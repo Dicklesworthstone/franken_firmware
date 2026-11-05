@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# G02 slice 2 end-to-end entry point (bead ffw-ld0): known multichannel PCM through D02 while the
+# group volume, local buttons, mutes and membership change mid-stream.
+# Delegates to tests/g02/pcm_run.py (offline, stdlib Python; it builds nothing).
+#
+#   scripts/e2e/g02-pcm                          META checks only; every Rust-backed case is BLOCKED
+#   scripts/e2e/g02-pcm --judge LOG [LOG ...]    judge the centrally run cargo test output
+#   scripts/e2e/g02-pcm --judge LOG [--receipts DIR]
+#   scripts/e2e/g02-pcm --list                   planned case ids
+#   scripts/e2e/g02-pcm --write-vectors          regenerate tests/g02/pcm_vectors.json (Python reference only)
+#
+# The Rust suite runs only through the centralized RCH path; this script never invokes cargo:
+#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-dsp --test g02_pcm -- --nocapture
+#
+# Exit 0 only when every case passed and none is blocked; 1 on a failed case; 3 when the only
+# non-passes are blocked cases (reported, never counted as passed); 2 on usage errors.
+# Numerical tests do not prove physical behavior.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+exec python3 -B "$ROOT/tests/g02/pcm_run.py" "$@"
