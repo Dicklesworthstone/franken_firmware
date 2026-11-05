@@ -278,6 +278,54 @@ enum OutputFault {
     DropFinalBlock { member_id: &'static str },
 }
 
+/// One line describing a planted fault, for the `fault` field of the diagnostic log.
+fn describe_fault(fault: OutputFault) -> String {
+    match fault {
+        OutputFault::CorruptSample {
+            member_id,
+            block,
+            last_channel,
+            offset,
+        } => format!(
+            "corrupt_sample member={member_id} block={block} channel={} offset={offset}",
+            if last_channel { "last" } else { "first" }
+        ),
+        OutputFault::DropFinalBlock { member_id } => {
+            format!("drop_final_block member={member_id}")
+        }
+    }
+}
+
+/// The campaign's fixed block period (256 frames at 48 kHz), in nanoseconds.
+const BLOCK_PERIOD_NS: u64 = 5_333_333;
+
+/// Critical record that a planted fault took effect, with the fault schedule entry in force.
+fn fault_injected_event(
+    seed: u64,
+    blk_idx: u64,
+    t_ns: u64,
+    session: &UnifiedGroupSession,
+    fault: Option<OutputFault>,
+) -> DiagnosticEvent {
+    DiagnosticEvent {
+        schema_version: String::new(),
+        timestamp_mono_ns: t_ns,
+        run_id: format!("vh-seed-{seed}"),
+        case_id: "Q01-virtual-house".to_string(),
+        correlation_id: format!("blk-{blk_idx}"),
+        member_id: "house".to_string(),
+        group_id: session.group_id.clone(),
+        source_epoch: session.current_epoch,
+        state_revision: session.state_revision,
+        event_kind: "fault_injected".to_string(),
+        message: format!("planted fault took effect at block {blk_idx}"),
+        queue_depth: 0,
+        latency_us: 0,
+        fault: fault.map(describe_fault),
+        cause: None,
+    }
+}
+
 impl VirtualSpeakerNode {
     pub fn bring_up_admitted(
         member_id: &str,
@@ -457,9 +505,13 @@ pub fn run_virtual_house_campaign(
     run_campaign(seed, total_blocks, None)
 }
 
-/// Limits of the diagnostic sink a normal campaign uses: 512 events, 256 KiB.
+/// Limits of the diagnostic sink a normal campaign uses: 512 events, 256 KiB, and at most 256
+/// ordinary events per virtual second. A healthy campaign emits one event per 5.33 ms block, about
+/// 187 per virtual second, so the rate bound only ever limits bursts. Pseudonymous ids are not
+/// enabled here: the simulation's ids are synthetic, and a key derived from a public seed would
+/// protect nothing.
 fn default_diagnostic_sink() -> BoundedDiagnosticSink {
-    BoundedDiagnosticSink::new(512, 256 * 1024)
+    BoundedDiagnosticSink::new(512, 256 * 1024).with_rate_limit(256, 1_000_000_000)
 }
 
 fn run_campaign(
@@ -467,17 +519,49 @@ fn run_campaign(
     total_blocks: u64,
     fault: Option<OutputFault>,
 ) -> Result<VirtualHouseReport, String> {
-    run_campaign_with_sink(seed, total_blocks, fault, default_diagnostic_sink())
+    let mut sink = default_diagnostic_sink();
+    run_campaign_with_sink(seed, total_blocks, fault, &mut sink)
 }
 
-/// The campaign proper. The render loop emits one bounded `block_rendered` event per block to
-/// `sink` and never waits on it: a full, zero-capacity or unavailable sink only increases
-/// `dropped_log_events`, and must change nothing else in the report.
+/// The campaign, logging to `sink` (which the caller keeps, so the log can be read afterwards).
+/// The render loop emits one bounded `block_rendered` event per block and never waits on the
+/// sink: a full, zero-capacity or unavailable sink only increases `dropped_log_events`, and must
+/// change nothing else in the report. If the campaign fails, a critical `campaign_failed` event
+/// records the causal error chain and the planted fault, if any, so the failure leaves evidence.
 fn run_campaign_with_sink(
     seed: u64,
     total_blocks: u64,
     fault: Option<OutputFault>,
-    mut sink: BoundedDiagnosticSink,
+    sink: &mut BoundedDiagnosticSink,
+) -> Result<VirtualHouseReport, String> {
+    let result = run_campaign_inner(seed, total_blocks, fault, sink);
+    if let Err(cause) = &result {
+        sink.emit_critical(DiagnosticEvent {
+            schema_version: String::new(),
+            timestamp_mono_ns: total_blocks * BLOCK_PERIOD_NS,
+            run_id: format!("vh-seed-{seed}"),
+            case_id: "Q01-virtual-house".to_string(),
+            correlation_id: "corr-vh-failed".to_string(),
+            member_id: "house".to_string(),
+            group_id: "grp-virtual-house".to_string(),
+            source_epoch: 0,
+            state_revision: 0,
+            event_kind: "campaign_failed".to_string(),
+            message: "virtual house campaign failed".to_string(),
+            queue_depth: 0,
+            latency_us: 0,
+            fault: fault.map(describe_fault),
+            cause: Some(cause.clone()),
+        });
+    }
+    result
+}
+
+fn run_campaign_inner(
+    seed: u64,
+    total_blocks: u64,
+    fault: Option<OutputFault>,
+    sink: &mut BoundedDiagnosticSink,
 ) -> Result<VirtualHouseReport, String> {
     let catalog = synthetic_test_fixture_catalog();
     let find_board = |model: &str| -> BoardProfile {
@@ -556,7 +640,7 @@ fn run_campaign_with_sink(
     .map_err(|e| e.to_string())?;
 
     let stream_key = [0xA5u8; 32];
-    let block_period_ns: u64 = 5_333_333; // 256 / 48_000 s
+    let block_period_ns: u64 = BLOCK_PERIOD_NS; // 256 / 48_000 s
     let playout_horizon_ns: u64 = 500_000_000; // 500 ms
 
     // Create deterministic per-member network schedules
@@ -646,6 +730,13 @@ fn run_campaign_with_sink(
                 && blk_idx + 1 == total_blocks
             {
                 // Planted defect: this member's final block never reaches the output.
+                sink.emit_critical(fault_injected_event(
+                    seed,
+                    blk_idx,
+                    send_time_ns,
+                    &session,
+                    fault,
+                ));
                 continue;
             }
             if let Some(OutputFault::CorruptSample {
@@ -657,6 +748,13 @@ fn run_campaign_with_sink(
                 && faulty == member_id.as_str()
                 && block == blk_idx
             {
+                sink.emit_critical(fault_injected_event(
+                    seed,
+                    blk_idx,
+                    send_time_ns,
+                    &session,
+                    fault,
+                ));
                 let channel = if last_channel {
                     hw_out.channel_samples.len().saturating_sub(1)
                 } else {
@@ -739,6 +837,8 @@ fn run_campaign_with_sink(
             message: format!("block {blk_idx} rendered"),
             queue_depth: nodes.len(),
             latency_us: max_inter_speaker_skew_us,
+            fault: None,
+            cause: None,
         });
     }
 
@@ -808,6 +908,8 @@ fn run_campaign_with_sink(
         message: "virtual house multi-room simulation finished".to_string(),
         queue_depth: 0,
         latency_us: max_inter_speaker_skew_us,
+        fault: fault.map(describe_fault),
+        cause: None,
     });
 
     // Fencing probe last: it advances the session to a newer epoch, which the steps above must
@@ -1112,6 +1214,125 @@ mod tests {
         assert_eq!(session.current_epoch, 999); // FLIP: expect 1
     }
 
+    fn event_kinds(sink: &BoundedDiagnosticSink) -> Vec<&str> {
+        sink.events()
+            .iter()
+            .map(|e| e.event_kind.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn a_planted_fault_leaves_the_fault_and_its_causal_chain_in_the_log() {
+        // A corrupted sample in block 7 is caught during block 7, so exactly 7 block events
+        // (blocks 0 to 6) precede the fault record and the failure record.
+        let mut sink = default_diagnostic_sink();
+        let corrupt = OutputFault::CorruptSample {
+            member_id: "spk-office-s5",
+            block: 7,
+            last_channel: true,
+            offset: 5,
+        };
+        let err = run_campaign_with_sink(SEED, 20, Some(corrupt), &mut sink)
+            .expect_err("corruption must be caught");
+        let kinds = event_kinds(&sink);
+        assert_eq!(kinds.iter().filter(|k| **k == "block_rendered").count(), 7);
+        assert_eq!(
+            &kinds[kinds.len() - 2..],
+            ["fault_injected", "campaign_failed"]
+        );
+        let injected = &sink.events()[kinds.len() - 2];
+        assert!(injected.fault.as_deref().is_some_and(|f| {
+            f.contains("corrupt_sample")
+                && f.contains("member=spk-office-s5")
+                && f.contains("block=7")
+        }));
+        let failed = &sink.events()[kinds.len() - 1];
+        assert_eq!(failed.fault, injected.fault);
+        let chain = failed
+            .cause
+            .as_deref()
+            .expect("a failure record carries its cause");
+        assert!(chain.contains("wrong sample at frame 1797"), "{chain}");
+        assert!(err.contains("wrong sample at frame 1797"), "{err}");
+        assert!(sink.is_evidence_complete());
+
+        // A dropped final block is only noticed after the loop, so all 20 block events exist.
+        let mut tail_sink = default_diagnostic_sink();
+        let dropped = OutputFault::DropFinalBlock {
+            member_id: "spk-bedroom-s1",
+        };
+        run_campaign_with_sink(SEED, 20, Some(dropped), &mut tail_sink)
+            .expect_err("a dropped tail must be caught");
+        let tail_kinds = event_kinds(&tail_sink);
+        assert_eq!(
+            tail_kinds
+                .iter()
+                .filter(|k| **k == "block_rendered")
+                .count(),
+            20
+        );
+        let tail_failed = tail_sink.events().last().expect("a failure record");
+        assert_eq!(tail_failed.event_kind, "campaign_failed");
+        assert!(
+            tail_failed
+                .cause
+                .as_deref()
+                .is_some_and(|c| c.contains("truncated stream"))
+        );
+        assert!(tail_kinds.contains(&"fault_injected"));
+
+        // Paired positive: a clean campaign leaves neither record, and its summary names no fault.
+        let mut clean = default_diagnostic_sink();
+        run_campaign_with_sink(SEED, 20, None, &mut clean).expect("clean campaign");
+        let clean_kinds = event_kinds(&clean);
+        assert!(!clean_kinds.contains(&"fault_injected"));
+        assert!(!clean_kinds.contains(&"campaign_failed"));
+        let summary = clean.events().last().expect("a summary record");
+        assert_eq!(summary.event_kind, "campaign_complete");
+        assert_eq!(summary.fault, None);
+        assert_eq!(summary.cause, None);
+    }
+
+    #[test]
+    fn the_default_campaign_sink_bounds_a_burst_but_never_limits_a_healthy_stream() {
+        // A burst of 300 ordinary events in one instant: 256 pass, 44 are rate limited and
+        // counted. Capacity (512) is not the limit being exercised here.
+        let mut burst = default_diagnostic_sink();
+        for n in 0..300u64 {
+            assert_eq!(
+                burst.try_emit(DiagnosticEvent {
+                    schema_version: String::new(),
+                    timestamp_mono_ns: 0,
+                    run_id: "burst".to_string(),
+                    case_id: "Q01-virtual-house".to_string(),
+                    correlation_id: format!("burst-{n}"),
+                    member_id: "house".to_string(),
+                    group_id: "grp-burst".to_string(),
+                    source_epoch: 1,
+                    state_revision: 0,
+                    event_kind: "burst".to_string(),
+                    message: "burst".to_string(),
+                    queue_depth: 0,
+                    latency_us: 0,
+                    fault: None,
+                    cause: None,
+                }),
+                n < 256
+            );
+        }
+        assert_eq!(burst.events().len(), 256);
+        assert_eq!(burst.rate_limited_event_count(), 44);
+        assert_eq!(burst.dropped_event_count(), 44);
+        assert_eq!(burst.emitted_event_count(), 300);
+
+        // Paired positive: a normal campaign emits one event per block and is never limited.
+        let mut healthy = default_diagnostic_sink();
+        run_campaign_with_sink(SEED, 200, None, &mut healthy).expect("clean campaign");
+        assert_eq!(healthy.rate_limited_event_count(), 0);
+        assert_eq!(healthy.dropped_event_count(), 0);
+        assert!(healthy.is_evidence_complete());
+    }
+
     #[test]
     fn the_campaign_is_deterministic() {
         let first = run_campaign(SEED, 20, None).expect("first run");
@@ -1138,7 +1359,7 @@ mod tests {
         // (label, sink, events that must be counted as dropped, whether the critical summary
         // survives). A full sink evicts one ordinary event to keep the summary; a sink that
         // cannot store anything loses it, and the report says so.
-        for (label, sink, expected_dropped, expected_complete) in [
+        for (label, mut sink, expected_dropped, expected_complete) in [
             ("unavailable", unavailable, EVENTS, false),
             (
                 "zero capacity",
@@ -1153,7 +1374,7 @@ mod tests {
                 true,
             ),
         ] {
-            let report = run_campaign_with_sink(SEED, BLOCKS, None, sink)
+            let report = run_campaign_with_sink(SEED, BLOCKS, None, &mut sink)
                 .unwrap_or_else(|e| panic!("{label}: the campaign failed: {e}"));
             // The loss is counted exactly, never silent...
             assert_eq!(report.dropped_log_events, expected_dropped, "{label}");
@@ -1171,8 +1392,9 @@ mod tests {
         }
 
         // A byte budget too small for the stream drops some events, and still changes nothing else.
-        let tiny = run_campaign_with_sink(SEED, BLOCKS, None, BoundedDiagnosticSink::new(512, 400))
-            .expect("tiny sink campaign");
+        let mut tiny_sink = BoundedDiagnosticSink::new(512, 400);
+        let tiny =
+            run_campaign_with_sink(SEED, BLOCKS, None, &mut tiny_sink).expect("tiny sink campaign");
         assert!(
             tiny.dropped_log_events > 0 && tiny.dropped_log_events <= EVENTS,
             "dropped {} of {EVENTS}",

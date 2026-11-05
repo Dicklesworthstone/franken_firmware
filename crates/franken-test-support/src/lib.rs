@@ -730,6 +730,7 @@ const REDACTED_SECRET: &str = "[REDACTED_SECRET]";
 const REDACTED_ID: &str = "[REDACTED_ID]";
 const REDACTED_LAN_IP: &str = "[REDACTED_LAN_IP]";
 const REDACTED_MAC: &str = "[REDACTED_MAC]";
+const REDACTED_AUDIO: &str = "[REDACTED_AUDIO]";
 const REDACTION_MARKER_PREFIX: &str = "[REDACTED_";
 
 /// Key names, matched as a lowercase suffix, whose values are secrets.
@@ -765,11 +766,24 @@ const IDENTIFIER_KEYS: &[&str] = &[
     "macaddress",
 ];
 
+/// Key names, matched exactly with `-` folded to `_`, whose values are audio payloads. Matched
+/// exactly so counters such as `num_samples=480` or `payload_len=1024` are left alone.
+const AUDIO_KEYS: &[&str] = &[
+    "payload",
+    "samples",
+    "pcm",
+    "audio",
+    "audio_payload",
+    "audio_data",
+    "audio_samples",
+];
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum KeyKind {
     Secret,
     Identifier,
     Authorization,
+    Audio,
 }
 
 fn classify_key(name: &str) -> Option<KeyKind> {
@@ -785,6 +799,9 @@ fn classify_key(name: &str) -> Option<KeyKind> {
         .collect();
     if folded == "authorization" || folded == "proxy_authorization" {
         return Some(KeyKind::Authorization);
+    }
+    if AUDIO_KEYS.contains(&folded.as_str()) {
+        return Some(KeyKind::Audio);
     }
     if IDENTIFIER_KEYS.contains(&folded.as_str()) {
         return Some(KeyKind::Identifier);
@@ -903,11 +920,16 @@ fn redact_key_values(input: &str) -> String {
         if quote.is_some() {
             value_start += 1;
         }
+        // An unquoted array of samples runs through its closing bracket, not just to the first
+        // space or comma.
+        let audio_array =
+            kind == KeyKind::Audio && quote.is_none() && bytes.get(value_start) == Some(&b'[');
         let mut value_end = value_start;
         while value_end < bytes.len() {
             let b = bytes[value_end];
             let stop = match quote {
                 Some(q) => b == q || b == b'\n',
+                None if audio_array => b == b']',
                 None if kind == KeyKind::Authorization => matches!(
                     b,
                     b'\n' | b'"' | b'\'' | b',' | b'}' | b']' | b')' | b'&' | b';'
@@ -922,16 +944,19 @@ fn redact_key_values(input: &str) -> String {
             }
             value_end += 1;
         }
+        if audio_array && value_end < bytes.len() {
+            value_end += 1; // include the closing bracket
+        }
         if value_end == value_start
             || input[value_start..value_end].starts_with(REDACTION_MARKER_PREFIX)
         {
             i += 1;
             continue;
         }
-        let marker = if kind == KeyKind::Identifier {
-            REDACTED_ID
-        } else {
-            REDACTED_SECRET
+        let marker = match kind {
+            KeyKind::Identifier => REDACTED_ID,
+            KeyKind::Audio => REDACTED_AUDIO,
+            KeyKind::Secret | KeyKind::Authorization => REDACTED_SECRET,
         };
         out.push_str(&input[last..value_start]);
         out.push_str(marker);
@@ -1153,6 +1178,13 @@ pub struct DiagnosticEvent {
     pub message: String,
     pub queue_depth: usize,
     pub latency_us: u64,
+    /// The injected fault (or fault-schedule entry) in force when this event was emitted.
+    /// Omitted from the JSON when absent, so existing logs keep their shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fault: Option<String>,
+    /// The causal error chain behind this event, outermost first. Omitted when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<String>,
 }
 
 /// Non-blocking diagnostic sink with event-count and byte caps and exact loss accounting. (There
@@ -1179,6 +1211,36 @@ pub struct BoundedDiagnosticSink {
     dropped_event_count: u64,
     evicted_event_count: u64,
     critical_evidence_lost: u64,
+    /// `(max ordinary events per window, window length in ns)`, measured on event timestamps.
+    rate_limit: Option<(usize, u64)>,
+    rate_window_start_ns: Option<u64>,
+    rate_window_count: usize,
+    rate_limited_event_count: u64,
+    last_timestamp_ns: Option<u64>,
+    non_monotonic_event_count: u64,
+    pseudonym_key: Option<PseudonymKey>,
+}
+
+/// Secret that keys member/group pseudonyms. `Debug` never prints it.
+#[derive(Clone)]
+struct PseudonymKey([u8; 32]);
+
+impl std::fmt::Debug for PseudonymKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PseudonymKey([REDACTED])")
+    }
+}
+
+/// Stable, keyed, one-way stand-in for an identifier: `p-` plus 16 hex characters. The same id
+/// and key always give the same pseudonym; without the key the id cannot be recovered.
+fn pseudonym(key: &PseudonymKey, id: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"ffw.pseudonym.v1");
+    hasher.update(key.0);
+    hasher.update((id.len() as u64).to_be_bytes());
+    hasher.update(id.as_bytes());
+    let full = hex::encode(hasher.finalize());
+    format!("p-{}", &full[..16])
 }
 
 impl BoundedDiagnosticSink {
@@ -1196,7 +1258,32 @@ impl BoundedDiagnosticSink {
             dropped_event_count: 0,
             evicted_event_count: 0,
             critical_evidence_lost: 0,
+            rate_limit: None,
+            rate_window_start_ns: None,
+            rate_window_count: 0,
+            rate_limited_event_count: 0,
+            last_timestamp_ns: None,
+            non_monotonic_event_count: 0,
+            pseudonym_key: None,
         }
+    }
+
+    /// Bound the event rate: at most `max_events_per_window` ordinary events per window of
+    /// `window_ns`, measured on the events' own timestamps (so it is deterministic in virtual
+    /// time). Excess ordinary events are dropped and counted. Critical events are not rate
+    /// limited; they are bounded by capacity alone.
+    #[must_use]
+    pub fn with_rate_limit(mut self, max_events_per_window: usize, window_ns: u64) -> Self {
+        self.rate_limit = Some((max_events_per_window, window_ns));
+        self
+    }
+
+    /// Replace `member_id` and `group_id` with keyed pseudonyms before anything is stored, so the
+    /// raw identifiers never reach the log.
+    #[must_use]
+    pub fn with_pseudonym_key(mut self, key: [u8; 32]) -> Self {
+        self.pseudonym_key = Some(PseudonymKey(key));
+        self
     }
 
     pub fn set_unavailable(&mut self, unavailable: bool) {
@@ -1204,8 +1291,12 @@ impl BoundedDiagnosticSink {
     }
 
     /// Redact every free-text field, not only `message` (an identifier placed in any of them
-    /// would otherwise reach the log), and measure the serialized event.
-    fn prepare(mut event: DiagnosticEvent) -> (DiagnosticEvent, usize) {
+    /// would otherwise reach the log), pseudonymize member/group ids if a key is set, and
+    /// measure the serialized event.
+    fn prepare(
+        mut event: DiagnosticEvent,
+        pseudonym_key: Option<&PseudonymKey>,
+    ) -> (DiagnosticEvent, usize) {
         event.schema_version = LOG_SCHEMA_VERSION.to_string();
         for field in [
             &mut event.run_id,
@@ -1218,9 +1309,50 @@ impl BoundedDiagnosticSink {
         ] {
             *field = redact_sensitive_text(field);
         }
+        for field in [&mut event.fault, &mut event.cause] {
+            if let Some(text) = field {
+                *text = redact_sensitive_text(text);
+            }
+        }
+        if let Some(key) = pseudonym_key {
+            event.member_id = pseudonym(key, &event.member_id);
+            event.group_id = pseudonym(key, &event.group_id);
+        }
         let serialized = serde_json::to_string(&event).unwrap_or_default();
         let bytes = serialized.len() + 1;
         (event, bytes)
+    }
+
+    /// Track that timestamps never go backwards. An event that does is still processed, but
+    /// counted, so a log with an unreliable timebase says so.
+    fn note_timestamp(&mut self, t_ns: u64) {
+        match self.last_timestamp_ns {
+            Some(previous) if t_ns < previous => {
+                self.non_monotonic_event_count = self.non_monotonic_event_count.saturating_add(1);
+            }
+            _ => self.last_timestamp_ns = Some(t_ns),
+        }
+    }
+
+    /// Whether the rate limit, if any, lets an ordinary event at `t_ns` through. Consumes a slot
+    /// in the current window when it does.
+    fn admit_within_rate(&mut self, t_ns: u64) -> bool {
+        let Some((max_in_window, window_ns)) = self.rate_limit else {
+            return true;
+        };
+        let window_ns = window_ns.max(1);
+        let in_window = self
+            .rate_window_start_ns
+            .is_some_and(|start| t_ns < start.saturating_add(window_ns));
+        if !in_window {
+            self.rate_window_start_ns = Some(t_ns);
+            self.rate_window_count = 0;
+        }
+        if self.rate_window_count >= max_in_window {
+            return false;
+        }
+        self.rate_window_count += 1;
+        true
     }
 
     fn store(&mut self, event: DiagnosticEvent, bytes: usize, critical: bool) {
@@ -1253,13 +1385,21 @@ impl BoundedDiagnosticSink {
     /// unavailable; a dropped event is counted.
     pub fn try_emit(&mut self, event: DiagnosticEvent) -> bool {
         self.emitted_event_count = self.emitted_event_count.saturating_add(1);
+        let t_ns = event.timestamp_mono_ns;
+        self.note_timestamp(t_ns);
         if self.sink_unavailable || self.events.len() >= self.max_events {
             self.count_dropped();
             return false;
         }
-        let (event, bytes) = Self::prepare(event);
+        let (event, bytes) = Self::prepare(event, self.pseudonym_key.as_ref());
         if self.used_bytes.saturating_add(bytes) > self.max_bytes {
             self.count_dropped();
+            return false;
+        }
+        // Last, so an event refused for another reason does not use up a slot in the window.
+        if !self.admit_within_rate(t_ns) {
+            self.count_dropped();
+            self.rate_limited_event_count = self.rate_limited_event_count.saturating_add(1);
             return false;
         }
         self.store(event, bytes, false);
@@ -1272,10 +1412,11 @@ impl BoundedDiagnosticSink {
     /// `critical_evidence_lost` is incremented.
     pub fn emit_critical(&mut self, event: DiagnosticEvent) -> bool {
         self.emitted_event_count = self.emitted_event_count.saturating_add(1);
+        self.note_timestamp(event.timestamp_mono_ns);
         if self.sink_unavailable {
             return self.lose_critical();
         }
-        let (event, bytes) = Self::prepare(event);
+        let (event, bytes) = Self::prepare(event, self.pseudonym_key.as_ref());
 
         // Decide first whether evicting could possibly make room, so that good events are never
         // thrown away for nothing.
@@ -1339,6 +1480,41 @@ impl BoundedDiagnosticSink {
     #[must_use]
     pub const fn is_evidence_complete(&self) -> bool {
         self.critical_evidence_lost == 0
+    }
+
+    /// The part of `dropped_event_count` refused only because of the rate limit.
+    #[must_use]
+    pub const fn rate_limited_event_count(&self) -> u64 {
+        self.rate_limited_event_count
+    }
+
+    /// Events whose timestamp was earlier than one already seen.
+    #[must_use]
+    pub const fn non_monotonic_event_count(&self) -> u64 {
+        self.non_monotonic_event_count
+    }
+
+    /// One concise line for a human reading a run's output.
+    #[must_use]
+    pub fn human_summary(&self) -> String {
+        format!(
+            "diagnostics: emitted={} stored={}/{} dropped={} (evicted={} rate_limited={}) critical_lost={} out_of_order={} bytes={}/{} evidence={}",
+            self.emitted_event_count,
+            self.events.len(),
+            self.max_events,
+            self.dropped_event_count,
+            self.evicted_event_count,
+            self.rate_limited_event_count,
+            self.critical_evidence_lost,
+            self.non_monotonic_event_count,
+            self.used_bytes,
+            self.max_bytes,
+            if self.is_evidence_complete() {
+                "complete"
+            } else {
+                "INCOMPLETE"
+            }
+        )
     }
 
     #[must_use]
@@ -2079,6 +2255,8 @@ mod tests {
             message: msg.to_string(),
             queue_depth: 4,
             latency_us: 120,
+            fault: None,
+            cause: None,
         };
 
         assert!(sink.try_emit(mk_ev(
@@ -2118,6 +2296,8 @@ mod tests {
             message: message.to_string(),
             queue_depth: 0,
             latency_us: 0,
+            fault: None,
+            cause: None,
         }
     }
 
@@ -2240,6 +2420,175 @@ mod tests {
         assert!(!sink.to_jsonl().contains("abc123"));
         assert_eq!(sink.dropped_event_count(), 0);
         assert_accounting_holds(&sink);
+    }
+
+    fn diag_at(t_ns: u64, correlation_id: &str) -> DiagnosticEvent {
+        let mut event = diag(correlation_id, "ordinary");
+        event.timestamp_mono_ns = t_ns;
+        event
+    }
+
+    #[test]
+    fn the_event_rate_is_bounded_per_window_and_critical_events_are_not_rate_limited() {
+        let mut sink = BoundedDiagnosticSink::new(100, 1 << 20).with_rate_limit(3, 1_000);
+        // Window 1 (t = 0..999): three events pass, the rest are rate limited and counted.
+        for (t, id) in [(0, "corr-0"), (100, "corr-1"), (200, "corr-2")] {
+            assert!(sink.try_emit(diag_at(t, id)));
+        }
+        assert!(!sink.try_emit(diag_at(300, "corr-3")));
+        assert!(!sink.try_emit(diag_at(400, "corr-4")));
+        // Window 2 starts at t = 1000: the budget is renewed.
+        for (t, id) in [(1_000, "corr-5"), (1_100, "corr-6"), (1_200, "corr-7")] {
+            assert!(sink.try_emit(diag_at(t, id)));
+        }
+        assert!(!sink.try_emit(diag_at(1_300, "corr-8")));
+        // A critical event is not rate limited even though the window is spent.
+        let mut critical = diag_at(1_400, "corr-C");
+        critical.message = "critical".to_string();
+        assert!(sink.emit_critical(critical));
+        assert_eq!(
+            kept_ids(&sink),
+            [
+                "corr-0", "corr-1", "corr-2", "corr-5", "corr-6", "corr-7", "corr-C"
+            ]
+        );
+        assert_eq!(sink.rate_limited_event_count(), 3);
+        assert_eq!(sink.dropped_event_count(), 3);
+        assert!(sink.is_evidence_complete());
+        assert_accounting_holds(&sink);
+    }
+
+    #[test]
+    fn without_a_rate_limit_a_burst_is_stored_in_full() {
+        // Paired positive for the rate limit above.
+        let mut sink = BoundedDiagnosticSink::new(100, 1 << 20);
+        for t in 0..10u64 {
+            assert!(sink.try_emit(diag_at(t, "corr-1")));
+        }
+        assert_eq!(sink.rate_limited_event_count(), 0);
+        assert_eq!(sink.dropped_event_count(), 0);
+    }
+
+    #[test]
+    fn timestamps_that_go_backwards_are_counted_but_still_logged() {
+        let mut sink = BoundedDiagnosticSink::new(10, 1 << 20);
+        assert!(sink.try_emit(diag_at(100, "corr-1")));
+        assert!(sink.try_emit(diag_at(200, "corr-2")));
+        assert!(sink.try_emit(diag_at(150, "corr-3"))); // earlier than 200
+        assert!(sink.try_emit(diag_at(200, "corr-4"))); // equal is fine
+        assert!(sink.try_emit(diag_at(250, "corr-5")));
+        assert_eq!(sink.non_monotonic_event_count(), 1);
+        assert_eq!(sink.events().len(), 5);
+
+        let mut clean = BoundedDiagnosticSink::new(10, 1 << 20);
+        for t in [10, 10, 20, 30] {
+            assert!(clean.try_emit(diag_at(t, "corr-1")));
+        }
+        assert_eq!(clean.non_monotonic_event_count(), 0);
+    }
+
+    #[test]
+    fn fault_and_cause_are_stored_redacted_and_omitted_from_json_when_absent() {
+        let mut sink = BoundedDiagnosticSink::new(10, 1 << 20);
+        let mut event = diag("corr-1", "ordinary");
+        event.fault = Some("drop_final_block member=spk-a".to_string());
+        event.cause = Some("oracle: bad <- token=s3cr3tCauseTok <- 10.0.0.9".to_string());
+        assert!(sink.try_emit(event));
+        assert!(sink.try_emit(diag("corr-2", "ordinary")));
+
+        let jsonl = sink.to_jsonl();
+        let lines: Vec<&str> = jsonl.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains(r#""fault":"drop_final_block member=spk-a""#));
+        assert!(lines[0].contains(r#""cause":"#));
+        // Redacted like every other free-text field.
+        assert!(!jsonl.contains("s3cr3tCauseTok"), "{jsonl}");
+        assert!(!jsonl.contains("10.0.0.9"), "{jsonl}");
+        // Absent fields are omitted entirely, so the log keeps its existing shape...
+        assert!(!lines[1].contains("fault") && !lines[1].contains("cause"));
+        // ...and a line in that older shape still parses, with both fields defaulting to None.
+        let back: DiagnosticEvent = serde_json::from_str(lines[1]).expect("old-shape line parses");
+        assert_eq!((back.fault, back.cause), (None, None));
+    }
+
+    #[test]
+    fn the_human_summary_is_one_concise_line_that_flags_incomplete_evidence() {
+        let mut sink = BoundedDiagnosticSink::new(5, 100);
+        assert_eq!(
+            sink.human_summary(),
+            "diagnostics: emitted=0 stored=0/5 dropped=0 (evicted=0 rate_limited=0) critical_lost=0 out_of_order=0 bytes=0/100 evidence=complete"
+        );
+        sink.set_unavailable(true);
+        assert!(!sink.emit_critical(diag("corr-1", "critical")));
+        let summary = sink.human_summary();
+        assert!(summary.contains("critical_lost=1"), "{summary}");
+        assert!(summary.ends_with("evidence=INCOMPLETE"), "{summary}");
+        assert!(!summary.contains('\n'));
+    }
+
+    #[test]
+    fn member_and_group_ids_become_keyed_stable_pseudonyms_and_the_key_is_never_printed() {
+        let mut sink = BoundedDiagnosticSink::new(10, 1 << 20).with_pseudonym_key([7u8; 32]);
+        let with_ids = |correlation_id: &str, member: &str, group: &str| {
+            let mut event = diag(correlation_id, "ordinary");
+            event.member_id = member.to_string();
+            event.group_id = group.to_string();
+            event
+        };
+        assert!(sink.try_emit(with_ids("corr-1", "spk-office-s5", "grp-house")));
+        assert!(sink.try_emit(with_ids("corr-2", "spk-office-s5", "grp-other")));
+        assert!(sink.try_emit(with_ids("corr-3", "spk-den-s3", "grp-house")));
+
+        let events = sink.events();
+        // Stable: the same id gives the same pseudonym, and distinct ids give distinct ones.
+        assert_eq!(events[0].member_id, events[1].member_id);
+        assert_ne!(events[0].member_id, events[2].member_id);
+        assert_eq!(events[0].group_id, events[2].group_id);
+        assert_ne!(events[0].group_id, events[1].group_id);
+        for id in [&events[0].member_id, &events[0].group_id] {
+            assert!(id.starts_with("p-") && id.len() == 18, "{id}");
+        }
+        // The raw ids never reach the log.
+        let jsonl = sink.to_jsonl();
+        for raw in ["spk-office-s5", "spk-den-s3", "grp-house", "grp-other"] {
+            assert!(!jsonl.contains(raw), "{raw} leaked: {jsonl}");
+        }
+
+        // A different key gives different pseudonyms for the same id.
+        let mut other = BoundedDiagnosticSink::new(10, 1 << 20).with_pseudonym_key([8u8; 32]);
+        assert!(other.try_emit(with_ids("corr-1", "spk-office-s5", "grp-house")));
+        assert_ne!(other.events()[0].member_id, sink.events()[0].member_id);
+
+        // The key itself is never printed.
+        let debug = format!("{sink:?}");
+        assert!(debug.contains("PseudonymKey([REDACTED])"), "{debug}");
+        assert!(!debug.contains("7, 7, 7"), "{debug}");
+
+        // Paired positive: without a key, ids pass through unchanged (they are still redacted
+        // for secret shapes, but a plain id is not a secret).
+        let mut plain = BoundedDiagnosticSink::new(10, 1 << 20);
+        assert!(plain.try_emit(with_ids("corr-1", "spk-office-s5", "grp-house")));
+        assert_eq!(plain.events()[0].member_id, "spk-office-s5");
+    }
+
+    #[test]
+    fn audio_payloads_are_redacted_but_counters_with_similar_names_are_not() {
+        assert_eq!(
+            redact_sensitive_text("samples=[1, -2, 3000] rate=48000"),
+            "samples=[REDACTED_AUDIO] rate=48000"
+        );
+        assert_eq!(
+            redact_sensitive_text(r#"{"payload":"AAECAwQF","n":2}"#),
+            r#"{"payload":"[REDACTED_AUDIO]","n":2}"#
+        );
+        assert_eq!(
+            redact_sensitive_text("pcm=deadbeef00 ok"),
+            "pcm=[REDACTED_AUDIO] ok"
+        );
+        let benign = "num_samples=480 payload_len=1024 audio_state=ready";
+        assert_eq!(redact_sensitive_text(benign), benign);
+        let once = redact_sensitive_text("samples=[1, 2, 3] pcm=abc");
+        assert_eq!(redact_sensitive_text(&once), once);
     }
 
     #[test]
@@ -2419,6 +2768,8 @@ mod tests {
             message: message.to_string(),
             queue_depth: 0,
             latency_us: 0,
+            fault: None,
+            cause: None,
         };
 
         // A different planted identifier in every field.
