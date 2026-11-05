@@ -1,0 +1,22 @@
+#!/bin/sh
+# P01 linker driver for powerpc-unknown-linux-musl (big-endian PowerPC32, hard-float).
+#
+# rustc has no usable cross linker for this tier-3 target on the central workers, so
+# it is pointed at this wrapper, which hands the link to `zig cc`.
+#   -target powerpc-linux-musleabihf : zig's hard-float big-endian ppc32 musl target.
+#     rustc's spec for powerpc-unknown-linux-musl carries no "soft-float" feature, so
+#     it is hard-float; `zig cc -### -target powerpc-linux-musleabihf` shows
+#     -mfloat-abi hard, while `powerpc-linux-musleabi` shows -msoft-float and does
+#     NOT match. Unlike MIPS, a PowerPC ELF carries no float-ABI marker (no
+#     .gnu.attributes, e_flags 0), so this line is the only record of the choice.
+#   -m32 : rustc passes it itself (the spec's pre-link-args); zig accepts it.
+# The zig version is part of the artifact identity, so it is enforced here, not noted:
+# a binary that links through this file was linked by exactly this zig.
+set -eu
+want=0.14.1
+have=$(zig version)
+if [ "$have" != "$want" ]; then
+    echo "ffw-linker: zig $want required, found $have" >&2
+    exit 97
+fi
+exec zig cc -target powerpc-linux-musleabihf "$@"

@@ -1,0 +1,20 @@
+#!/bin/sh
+# P01 linker driver for mips-unknown-linux-musl (big-endian MIPS32r2, o32, soft-float).
+#
+# rustc has no usable cross linker for this tier-3 target on the central workers, so
+# it is pointed at this wrapper, which hands the link to `zig cc`.
+#   -target mips-linux-musleabi : zig's soft-float o32 big-endian musl target. rustc's
+#     spec for mips-unknown-linux-musl says features "+mips32r2,+soft-float",
+#     llvm-abiname "o32"; `zig cc -### -target mips-linux-musleabi` shows the same
+#     (-target-cpu mips32r2, +soft-float, -target-abi o32, -mfloat-abi soft).
+#     The `musleabihf` spelling is hard-float and does NOT match.
+# The zig version is part of the artifact identity, so it is enforced here, not noted:
+# a binary that links through this file was linked by exactly this zig.
+set -eu
+want=0.14.1
+have=$(zig version)
+if [ "$have" != "$want" ]; then
+    echo "ffw-linker: zig $want required, found $have" >&2
+    exit 97
+fi
+exec zig cc -target mips-linux-musleabi "$@"
