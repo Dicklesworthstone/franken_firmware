@@ -1,0 +1,76 @@
+{
+ "elf": {
+  "bytes": 662368,
+  "sha256": "44388f9d4c39870390a6368a9844b7cb3f9c1a2688a5657b1137c3f70944278c"
+ },
+ "gates": [
+  {
+   "detail": "",
+   "gate_id": "P05T-TRANSCRIPT",
+   "status": "passed",
+   "title": "a complete transcript: every line the guest prints, ALIVE first and END last"
+  },
+  {
+   "detail": "",
+   "gate_id": "P05T-ELF",
+   "status": "passed",
+   "title": "the program is a 32-bit big-endian MIPS executable"
+  },
+  {
+   "detail": "",
+   "gate_id": "P05T-ENV",
+   "status": "passed",
+   "title": "the guest says it is 32-bit big-endian MIPS and the kernel's uname agrees"
+  },
+  {
+   "detail": "",
+   "gate_id": "P05T-SOURCES",
+   "status": "passed",
+   "title": "the guest compiled exactly the repository's frozen sources and shared vectors"
+  },
+  {
+   "detail": "",
+   "gate_id": "P05T-SEED",
+   "status": "passed",
+   "title": "the guest echoes this run's seed"
+  },
+  {
+   "detail": "",
+   "gate_id": "P05T-VECTORS",
+   "status": "passed",
+   "title": "the hand-written results of the cells' operations"
+  },
+  {
+   "detail": "",
+   "gate_id": "P05T-PINNED",
+   "status": "passed",
+   "title": "the pinned sweep: vectors.txt's counts and seeds, and the reference's per-seed digest"
+  },
+  {
+   "detail": "",
+   "gate_id": "P05T-SEEDED",
+   "status": "passed",
+   "title": "the seeded sweep matches the reference for this run's seed"
+  },
+  {
+   "detail": "",
+   "gate_id": "P05T-DIRECTED",
+   "status": "passed",
+   "title": "nine scripted interleavings: verdict and loaded value by hand, history by the reference"
+  },
+  {
+   "detail": "",
+   "gate_id": "P05T-THREADS",
+   "status": "passed",
+   "title": "real threads on the real cell: outcomes exact for any correct cell"
+  }
+ ],
+ "kernel_sha256": "3803357ef7821dbf691c901105fb9b2b00382abf67fce8a4be2a0d592267dc61",
+ "qemu": "QEMU emulator version 11.1.2",
+ "result": "passed",
+ "revision": "6cba22a",
+ "schema": "ffw.p05.guest_receipt.v1",
+ "scope": "What this shows: the frozen franken-atomic source, compiled for 32-bit big-endian MIPS and run as PID 1, produced exactly the\nresults the hand-written vectors and the independent Python reference require, including the per-seed history digests of\nevery scheduled run in both sweeps, and real threads got exact outcomes. What it does NOT show: the stock board kernel (this is the Debian\n4.19 Malta kernel), true parallelism (QEMU's 24Kf is one CPU, so this is preemption), PowerPC, any physical board, or\nbehaviour under a futex implementation older than this kernel's. The naive-tear line is information only and is counted\nnowhere. The reference and the Rust share an author; tests do not prove perfection.",
+ "seed": 3466602899801270268,
+ "transcript_sha256": "9b513c59dfc98686ef39d52edda62a42e59d360885fb3e4b0b08599837a98c93"
+}

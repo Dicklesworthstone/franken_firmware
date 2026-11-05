@@ -1,0 +1,26 @@
+[package]
+name = "ffw-p05-target"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# P05's semantic 64-bit cells on the big-endian MIPS device target, run as PID 1 under QEMU (ffw-ipz, the open item
+# `P05-EXT-GUEST`): the SAME source text the host tests run, compiled for MIPS32, printing `FFW_P05T_*` lines for the host
+# to judge against the independent Python reference. Consumer: toolchain/src/measure-p05-target.py. It is built only for
+# that measurement and never ships.
+#
+# Its own workspace root, like ffw-hello-init, ffw-d02-cost and ffw-d03-target, so the application workspace, its lockfile
+# and the P01 workspace contract are not touched. It has no dependencies: `src/main.rs` includes the frozen
+# `crates/franken-atomic` files by path, unchanged, under their own module names. It needs `unsafe` for exactly two libc
+# calls (`uname` and `reboot`), which the workspace's `forbid(unsafe_code)` would refuse, so it does not inherit it.
+
+[workspace]
+
+# The device speaker's release profile, copied from the workspace root because a profile is read from the workspace root
+# and this package is its own. `panic = "abort"` is deliberate: a guest that panics ends the transcript without its END
+# line, and the judge refuses a transcript with no END.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"

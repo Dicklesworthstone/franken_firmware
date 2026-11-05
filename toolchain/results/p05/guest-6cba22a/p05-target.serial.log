@@ -1,0 +1,55 @@
+[    0.000000] Linux version 4.19.0-21-4kc-malta (debian-kernel@lists.debian.org) (gcc version 8.3.0 (Debian 8.3.0-6)) #1 SMP Debian 4.19.249-2 (2022-06-30)
+[    0.000000] earlycon: uart8250 at I/O port 0x3f8 (options '38400n8')
+[    0.000000] bootconsole [uart8250] enabled
+[    0.000000] CPU0 revision is: 00019300 (MIPS 24Kc)
+[    0.000000] FPU revision is: 00739300
+[    0.000000] MIPS: machine is mti,malta
+[    0.000000] Software DMA cache coherency enabled
+[    0.000000] Determined physical RAM map:
+[    0.000000]  memory: 03fff000 @ 00000000 (usable)
+FFW_P05T_ALIVE
+FFW_P05T_BEGIN version=1 threads=3 ops=4 seeds=256 budget=200000 threaded_budget=2000000
+FFW_P05T_ENV target_arch=mips target_endian=big pointer_width=32 target_os=linux size_usize=4 size_u64=8 ne_u32=01020304 ne_u64=0102030405060708
+FFW_P05T_SYS sysname=Linux release=4.19.0-21-4kc-malta machine=mips
+FFW_P05T_SRC file=error.rs bytes=2642 fnv=e985270bf9a2c682
+FFW_P05T_SRC file=shared.rs bytes=10866 fnv=cc6d2baa87c0a2d2
+FFW_P05T_SRC file=counter.rs bytes=1485 fnv=9b2a5853334bd839
+FFW_P05T_SRC file=local.rs bytes=1905 fnv=113a99b55d5a3af8
+FFW_P05T_SRC file=model.rs bytes=11071 fnv=65f705a8c46c6687
+FFW_P05T_SRC file=planted.rs bytes=5600 fnv=3c6f5aa1bf05ec05
+FFW_P05T_SRC file=vectors.txt bytes=1377 fnv=948f63c2987511be
+FFW_P05T_SEED value=3466602899801270268
+FFW_P05T_VEC id=load_store_roundtrip r=v:0,v:0,v:0,v:1,v:1,v:0,v:ffffffff,v:ffffffff,v:1,v:100000000,v:100000000,v:ffffffff,v:100000001,v:100000001,v:100000000,v:ffffffff00000000,v:ffffffff00000000,v:100000001,v:8000000000000000,v:8000000000000000,v:ffffffff00000000,v:123456789abcdef,v:123456789abcdef,v:8000000000000000,v:ffffffffffffffff,v:ffffffffffffffff,v:123456789abcdef,v:0,v:abcdef0123456789,v:100000007
+FFW_P05T_VEC id=add_carry r=ok:ffffffff,v:100000000,ok:5,v:100000005,ok:1fffffff0,v:200000010
+FFW_P05T_VEC id=add_overflow r=ok:fffffffffffffffe,v:ffffffffffffffff,of:ffffffffffffffff/1,v:ffffffffffffffff,ok:ffffffffffffffff,of:1/ffffffffffffffff,v:1
+FFW_P05T_VEC id=sub_underflow r=ok:1,v:0,uf:0/1,v:0,ok:0,ok:100000000,v:ffffffff
+FFW_P05T_VEC id=wrapping r=v:ffffffffffffffff,v:1,v:0,v:ffffffffffffffff,of:ffffffffffffffff/2,v:ffffffffffffffff
+FFW_P05T_VEC id=cas_full_width r=cx_err:100000001,v:100000001,cx_ok:100000001,v:9,cx_ok:9,cx_err:9
+FFW_P05T_VEC id=max_min_bits r=v:5,v:100000000,v:100000000,v:100000000,v:100000000,v:7,v:7,v:7,v:f0f0f0f0f0f0f0f0,v:f0f0f0f000000000,v:f0f0f0f000000000,v:f0f0f0f00f0f0f0f
+FFW_P05T_VEC id=i64_range r=of:7fffffffffffffff/1,ok:7fffffffffffffff,v:7ffffffffffffffe,ok:7ffffffffffffffe,of:7fffffffffffffff/ffffffffffffffff,uf:8000000000000000/ffffffffffffffff,uf:8000000000000000/1,v:8000000000000000,ok:8000000000000000,v:8000000000000001,cx_err:ffffffff,v:ffffffff00000000,v:ffffffff00000000
+FFW_P05T_VEC id=sequence r=ok:0,ok:1,ok:2,ok:fffffffffffffffd,ok:fffffffffffffffe,v:ffffffffffffffff,ex,ex,v:ffffffffffffffff,ex
+FFW_P05T_VEC id=local_u64 r=ok:fffffffffffffffe,of:ffffffffffffffff/1,v:ffffffffffffffff,v:ffffffffffffffff,v:1,v:100000000,v:0,v:100000001
+FFW_P05T_SWEEP set=pinned kind=good first_seed=0 seeds=256 violations=0 inconclusive=0 head=- digest=6170cb2d5d11bf33
+FFW_P05T_SWEEP set=pinned kind=split first_seed=0 seeds=256 violations=198 inconclusive=0 head=0,1,2,3,4,5,6,7 digest=64177127184181ed
+FFW_P05T_SWEEP set=pinned kind=trunc first_seed=0 seeds=256 violations=231 inconclusive=0 head=0,2,3,4,5,6,7,8 digest=46b5750ee4e32f25
+FFW_P05T_SWEEP set=seeded kind=good first_seed=3466602899801270268 seeds=256 violations=0 inconclusive=0 head=- digest=f21b03ae020ce22f
+FFW_P05T_SWEEP set=seeded kind=split first_seed=3466602899801270268 seeds=256 violations=190 inconclusive=0 head=3466602899801270268,3466602899801270271,3466602899801270274,3466602899801270276,3466602899801270279,3466602899801270280,3466602899801270281,3466602899801270282 digest=b9f8dc31f8c6e3f3
+FFW_P05T_SWEEP set=seeded kind=trunc first_seed=3466602899801270268 seeds=256 violations=226 inconclusive=0 head=3466602899801270268,3466602899801270269,3466602899801270271,3466602899801270272,3466602899801270274,3466602899801270275,3466602899801270276,3466602899801270277 digest=cceeff9c7b5911bd
+FFW_P05T_DIRECTED name=torn_store kind=good verdict=L loaded=100000000 history=t0:0:1:S100000000:T;t1:1:2:L:V100000000
+FFW_P05T_DIRECTED name=torn_store kind=split verdict=N loaded=1fffffff0 history=t1:1:3:L:V1fffffff0;t0:0:4:S100000000:T
+FFW_P05T_DIRECTED name=torn_store kind=trunc verdict=N loaded=0 history=t0:0:1:S100000000:T;t1:1:2:L:V0
+FFW_P05T_DIRECTED name=torn_carry kind=good verdict=L loaded=100000000 history=t0:0:1:A10:Aofffffff0;t1:1:2:L:V100000000
+FFW_P05T_DIRECTED name=torn_carry kind=split verdict=N loaded=0 history=t1:1:3:L:V0;t0:0:4:A10:Aofffffff0
+FFW_P05T_DIRECTED name=torn_carry kind=trunc verdict=N loaded=0 history=t0:0:1:A10:Aofffffff0;t1:1:2:L:V0
+FFW_P05T_DIRECTED name=truncated_store kind=good verdict=L loaded=100000001 history=t0:0:1:S100000001:T;t1:1:2:L:V100000001
+FFW_P05T_DIRECTED name=truncated_store kind=split verdict=L loaded=100000001 history=t0:0:3:S100000001:T;t1:1:4:L:V100000001
+FFW_P05T_DIRECTED name=truncated_store kind=trunc verdict=N loaded=1 history=t0:0:1:S100000001:T;t1:1:2:L:V1
+FFW_P05T_THREADED first_seed=3466602899801270268 seeds=24 threads=3 ops=5 linearizable=24 not=0 inconclusive=0
+FFW_P05T_TICKETS threads=4 per=2000 total=8000 duplicates=0 out_of_range=0 complete=1 increasing=1 final=1f40
+FFW_P05T_CASLOOP start=fffff000 threads=4 per=2000 final=100000f40 crossed=1
+FFW_P05T_OVERFLOWRACE threads=8 attempts=10 oks=fffffffffffffffc,fffffffffffffffd,fffffffffffffffe errors=77 all_typed=1 final=ffffffffffffffff
+FFW_P05T_SEQRACE span=100 threads=4 issued=100 exact=1 next_err=1 peek=ffffffffffffffff
+FFW_P05T_MONOTONE start=ffffff00 adds=512 reads=1708 backwards=0 final=100000100 crossed=1
+FFW_P05T_INFO what=naive_two_word_store_tear reads=103405 torn=18751
+FFW_P05T_END
+[  200.628491] reboot: Restarting system

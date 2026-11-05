@@ -1,0 +1,31 @@
+# Central (RCH, worker pinned with --worker; local paths shown as <...>), revision 6cba22a + p05_guest.patch fc98c5ec:
+$ RCH_REQUIRE_REMOTE=1 CARGO_TARGET_DIR=build/p05-target-target rch exec --worker <nightly worker> -- cargo +nightly clippy --all-targets --offline --release --manifest-path toolchain/src/p05-target/Cargo.toml --target mips-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort --config 'target.mips-unknown-linux-musl.linker="<repo>/toolchain/linker/zig-cc-mips-be"' --config 'target.mips-unknown-linux-musl.rustflags=["-C","target-feature=+crt-static","-C","link-self-contained=no"]' -j 2 -- -D warnings
+# remote exit 0, no diagnostics
+$ RCH_REQUIRE_REMOTE=1 CARGO_TARGET_DIR=build/p05-target-target rch exec --worker <nightly worker> -- cargo +nightly build --offline --release --manifest-path toolchain/src/p05-target/Cargo.toml --target mips-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort --config 'target.mips-unknown-linux-musl.linker="<repo>/toolchain/linker/zig-cc-mips-be"' --config 'target.mips-unknown-linux-musl.rustflags=["-C","target-feature=+crt-static","-C","link-self-contained=no"]' -j 2
+# remote exit 0; ELF sha256 44388f9d4c39870390a6368a9844b7cb3f9c1a2688a5657b1137c3f70944278c
+# Boot + judge (local QEMU), exit status 0:
+$ FFW_BUILD_DIR=<kernel cache> python3 toolchain/src/measure-p05-target.py run --elf <ELF above> --log-dir <fresh dir> --revision 6cba22a --plant host --plant replay --plant truncate --plant order --receipt <receipt.json>
+QEMU emulator version 11.1.2; kernel 3803357e...; exit 0; 55 serial lines; seed 3466602899801270268
+PLANT host: CAUGHT (failed gates ['P05T-ENV']; wanted exactly ['P05T-ENV']); control: the unplanted run passes
+PLANT replay: CAUGHT (failed gates ['P05T-SEEDED']; wanted exactly ['P05T-SEEDED']); control: the unplanted run passes
+PLANT truncate: CAUGHT (failed gates ['P05T-TRANSCRIPT']; wanted exactly ['P05T-TRANSCRIPT']); control: the unplanted run passes
+PLANT order: CAUGHT (failed gates ['P05T-DIRECTED']; wanted exactly ['P05T-DIRECTED']); control: the unplanted run passes
+P05 guest receipt (revision 6cba22a)
+  PASSED   P05T-TRANSCRIPT  a complete transcript: every line the guest prints, ALIVE first and END last
+  PASSED   P05T-ELF         the program is a 32-bit big-endian MIPS executable
+  PASSED   P05T-ENV         the guest says it is 32-bit big-endian MIPS and the kernel's uname agrees
+  PASSED   P05T-SOURCES     the guest compiled exactly the repository's frozen sources and shared vectors
+  PASSED   P05T-SEED        the guest echoes this run's seed
+  PASSED   P05T-VECTORS     the hand-written results of the cells' operations
+  PASSED   P05T-PINNED      the pinned sweep: vectors.txt's counts and seeds, and the reference's per-seed digest
+  PASSED   P05T-SEEDED      the seeded sweep matches the reference for this run's seed
+  PASSED   P05T-DIRECTED    nine scripted interleavings: verdict and loaded value by hand, history by the reference
+  PASSED   P05T-THREADS     real threads on the real cell: outcomes exact for any correct cell
+  info     (not judged) naive two-word store: 103405 reads, 18751 torn
+RESULT: PASSED
+What this shows: the frozen franken-atomic source, compiled for 32-bit big-endian MIPS and run as PID 1, produced exactly the
+results the hand-written vectors and the independent Python reference require, including the per-seed history digests of
+every scheduled run in both sweeps, and real threads got exact outcomes. What it does NOT show: the stock board kernel (this is the Debian
+4.19 Malta kernel), true parallelism (QEMU's 24Kf is one CPU, so this is preemption), PowerPC, any physical board, or
+behaviour under a futex implementation older than this kernel's. The naive-tear line is information only and is counted
+nowhere. The reference and the Rust share an author; tests do not prove perfection.
