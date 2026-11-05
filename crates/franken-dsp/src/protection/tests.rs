@@ -2,6 +2,7 @@
 //! independent Python reference (`tests/d02/`) supplies the golden step/impulse responses and the
 //! replayed scenarios, and `tests/d02_vectors.rs` compares them with this implementation.
 
+use super::calibration::{BOUND_MARGIN, StageBound, chain_bounds, dc_pole, quantize_section};
 use super::*;
 use crate::{FRAMES_PER_BLOCK, StereoAudioBlock};
 use franken_board_profile::{
@@ -573,19 +574,16 @@ fn planted_malformed_calibrations_each_fail_muted_with_the_exact_reason() {
         |c| c.channels[2].sections = one_sample(5.0),
         ProtectionError::GainBoundExceeded { channel: 2 },
     );
-    // Passes the gain bound (about 6.8 of 8) but its intermediate bound (about 23) exceeds 16.
+    // A +24 dB boost at 500 Hz followed by a 0.15 trim: the cascade's final gain bound (3.09) is far inside 8, but the
+    // middle node's worst case is 20.4 against the limit of 16, and the realized chain really reaches it
+    // (`the_refusal_is_warranted_the_refused_boost_really_overflows_and_the_admitted_one_does_not`). This case used
+    // to be b = [1, -2, 1], a1 = -1.7196056842803955, a2 = 0.81, refused at a product bound of 23; its exact worst
+    // case is 3.5, so it is admitted now and is a positive control in
+    // `designs_the_product_bound_refused_are_admitted_and_run_without_a_fault`.
     expect(
         &s5,
         "intermediate range",
-        |c| {
-            c.channels[2].sections = vec![BiquadSpec {
-                b0: 1.0,
-                b1: -2.0,
-                b2: 1.0,
-                a1: -1.7196056842803955,
-                a2: 0.81,
-            }];
-        },
+        |c| c.channels[2].sections = vec![boost_24_db(), gain_section(0.15)],
         ProtectionError::IntermediateRangeExceeded { channel: 2 },
     );
 
@@ -601,7 +599,7 @@ fn planted_malformed_calibrations_each_fail_muted_with_the_exact_reason() {
         |c| c.channels[0].sections = vec![butterworth2_lowpass(2000.0, FS)],
         ProtectionError::BandPolicyViolated { channel: 0 },
     );
-    // (A 2.2 kHz high-pass passes the intermediate bound at ~14.3; a 100 Hz one would trip it at ~20.3.)
+    // (A 2.2 kHz high-pass is within both bounds; the band policy is what refuses it on a woofer.)
     expect(
         &s5,
         "woofer with a high-pass",
@@ -1233,5 +1231,546 @@ fn the_compatibility_wrapper_matches_the_preallocated_path() {
     assert_eq!((block.frames, block.channels), (out.frames, out.channels));
     for (got, want) in block.channel_samples.iter().zip(out.samples.iter()) {
         assert_eq!(got, want);
+    }
+}
+
+// ---- the admitted bound against the realized chain ------------------------------------------------------------
+//
+// `calibration::chain_bounds` says how large the DC rejector, every section output and both DF2T states can get for
+// |input| <= 1. These tests measure the same thing. For each quantity the input is the sign of the time-reversed impulse
+// response from the chain input to that quantity (computed here in direct form I, independently of `Section`), which
+// makes that quantity reach its exact L1 norm; the REAL `DcRejector` (f32) and `Section`s (f64 state, f32 output) are
+// driven with it and the largest value they reach is recorded. `tests/d02/realized_chain.py` does the same with an
+// operation-for-operation emulation, and the numbers pinned below come from `tests/d02/reference.py`, not from this code.
+
+/// Samples driven through the chain: twice the horizon, so the part of the response past it is exercised.
+const RUN: usize = 2 * L1_HORIZON;
+const QUANTITY_NAMES: [&str; 3] = ["y", "z1", "z2"];
+
+fn gain_section(gain: f64) -> BiquadSpec {
+    BiquadSpec {
+        b0: gain,
+        b1: 0.0,
+        b2: 0.0,
+        a1: 0.0,
+        a2: 0.0,
+    }
+}
+
+/// RBJ peaking boost, +20 dB at 1 kHz, Q 1: `reference.peaking(1000, 20, 1)`.
+fn boost_20_db() -> BiquadSpec {
+    BiquadSpec {
+        b0: 1.1819861960991969,
+        b1: -1.942794327422395,
+        b2: 0.7775724269898705,
+        a1: -1.942794327422395,
+        a2: 0.9595586230890674,
+    }
+}
+
+/// RBJ peaking boost, +24 dB at 500 Hz, Q 2: `reference.peaking(500, 24, 2)`.
+fn boost_24_db() -> BiquadSpec {
+    BiquadSpec {
+        b0: 1.060737050971506,
+        b1: -1.9875546993106874,
+        b2: 0.9310822864354036,
+        a1: -1.9875546993106874,
+        a2: 0.9918193374069095,
+    }
+}
+
+struct Design {
+    name: &'static str,
+    dc_hz: f64,
+    sections: Vec<BiquadSpec>,
+}
+
+fn design(name: &'static str, dc_hz: f64, sections: Vec<BiquadSpec>) -> Design {
+    Design {
+        name,
+        dc_hz,
+        sections,
+    }
+}
+
+/// The committed designs: the six `D02-DESIGN` filters, the ordinary low-corner high-passes that the product bound refused,
+/// cascades, a boost whose middle node is large, a pure gain (where the product bound is already exact), and two designs
+/// with a 1 Hz DC corner, where the rejector has not settled by the end of the horizon (R^8191 = 0.34).
+fn designs() -> Vec<Design> {
+    let lp = |fc: f64| butterworth2_lowpass(fc, FS);
+    let hp = |fc: f64| butterworth2_highpass(fc, FS);
+    vec![
+        design("LP120", 5.0, vec![lp(120.0)]),
+        design("LP300", 5.0, vec![lp(300.0)]),
+        design("LP2000", 5.0, vec![lp(2_000.0)]),
+        design("HP2200", 5.0, vec![hp(2_200.0)]),
+        design("HP3000", 5.0, vec![hp(3_000.0)]),
+        design("HP100", 5.0, vec![hp(100.0)]),
+        design("HP60", 5.0, vec![hp(60.0)]),
+        design("HP20", 5.0, vec![hp(20.0)]),
+        design("LR4 LP1000", 5.0, vec![lp(1_000.0), lp(1_000.0)]),
+        design("HP60 + LP2000", 5.0, vec![hp(60.0), lp(2_000.0)]),
+        design(
+            "boost +20 dB then trim",
+            5.0,
+            vec![boost_20_db(), gain_section(0.25)],
+        ),
+        design("gain 3", 5.0, vec![gain_section(3.0)]),
+        design("HP60, 1 Hz DC corner", 1.0, vec![hp(60.0)]),
+        design("LP120, 1 Hz DC corner", 1.0, vec![lp(120.0)]),
+    ]
+}
+
+fn named(name: &str) -> Design {
+    designs()
+        .into_iter()
+        .find(|design| design.name == name)
+        .expect("a committed design with that name")
+}
+
+fn stored_sections(sections: &[BiquadSpec]) -> Vec<[f64; 5]> {
+    sections
+        .iter()
+        .enumerate()
+        .map(|(k, spec)| {
+            let index = u8::try_from(k).expect("section index");
+            quantize_section(spec, 0, index)
+                .expect("a stored section")
+                .map(f64::from)
+        })
+        .collect()
+}
+
+fn component(bound: &StageBound, index: usize) -> f64 {
+    [bound.y, bound.z1, bound.z2][index]
+}
+
+/// Independent f64 impulse responses from the chain input to `y`, `z1` and `z2` of every section. Direct form I gives `y`;
+/// the DF2T states follow from `z2[n] = b2 x[n] - a2 y[n]` and `z1[n] = b1 x[n] - a1 y[n] + z2[n-1]`. The rejector's
+/// response is written in closed form here (`1`, then `-(1 - R) R^(i-1)`); the bound uses the recurrence.
+fn exact_responses(dc_r: f64, stored: &[[f64; 5]], n: usize) -> Vec<[Vec<f64>; 3]> {
+    let mut signal: Vec<f64> = (0..n)
+        .map(|i| {
+            if i == 0 {
+                1.0
+            } else {
+                -(1.0 - dc_r) * dc_r.powf((i - 1) as f64)
+            }
+        })
+        .collect();
+    let mut responses = Vec::with_capacity(stored.len());
+    for c in stored {
+        let (mut x1, mut x2, mut y1, mut y2) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+        let mut y_response: Vec<f64> = Vec::with_capacity(n);
+        let mut z1_response: Vec<f64> = Vec::with_capacity(n);
+        let mut z2_response: Vec<f64> = Vec::with_capacity(n);
+        for &x in &signal {
+            let y = c[0] * x + c[1] * x1 + c[2] * x2 - c[3] * y1 - c[4] * y2;
+            let z2 = c[2] * x - c[4] * y;
+            let z1 = c[1] * x - c[3] * y + z2_response.last().copied().unwrap_or(0.0);
+            y_response.push(y);
+            z1_response.push(z1);
+            z2_response.push(z2);
+            x2 = x1;
+            x1 = x;
+            y2 = y1;
+            y1 = y;
+        }
+        signal.clone_from(&y_response);
+        responses.push([y_response, z1_response, z2_response]);
+    }
+    responses
+}
+
+/// The input in [-1, 1] that makes the last output equal the L1 norm of `response`.
+fn adversarial(response: &[f64]) -> Vec<f32> {
+    response
+        .iter()
+        .rev()
+        .map(|&h| if h >= 0.0 { 1.0 } else { -1.0 })
+        .collect()
+}
+
+/// Drive the real rejector and sections; the largest `|y|` (the f32 output), `|z1|` and `|z2|` of each section.
+fn realize(dc_hz: f64, sections: &[BiquadSpec], input: &[f32]) -> Vec<[f64; 3]> {
+    let mut rejector = DcRejector::new(dc_hz, FS);
+    let mut chain: Vec<Section> = sections
+        .iter()
+        .map(|spec| Section::from_spec(spec).expect("an admissible section"))
+        .collect();
+    let mut peaks = vec![[0.0f64; 3]; chain.len()];
+    for &x in input {
+        let mut value = rejector.process(x);
+        for (section, peak) in chain.iter_mut().zip(peaks.iter_mut()) {
+            value = section.process(value);
+            let (z1, z2) = section.state();
+            peak[0] = peak[0].max(f64::from(value).abs());
+            peak[1] = peak[1].max(z1.abs());
+            peak[2] = peak[2].max(z2.abs());
+        }
+    }
+    peaks
+}
+
+struct Row {
+    design: &'static str,
+    stage: usize,
+    quantity: &'static str,
+    /// The original product bound.
+    product: f64,
+    /// The bound validation uses.
+    bound: f64,
+    /// Exact L1 norm over the horizon (the sum the bound is built on).
+    exact_horizon: f64,
+    /// Exact L1 norm over `RUN` samples (what an input of that length can reach).
+    exact_run: f64,
+    /// What the real chain reached under that input.
+    realized: f64,
+}
+
+impl Row {
+    fn label(&self) -> String {
+        format!("{} stage {} {}", self.design, self.stage, self.quantity)
+    }
+}
+
+fn measure(design: &Design) -> Vec<Row> {
+    let stored = stored_sections(&design.sections);
+    let dc_r = f64::from(dc_pole(design.dc_hz, FS));
+    let bounds = chain_bounds(dc_r, &stored);
+    let responses = exact_responses(dc_r, &stored, RUN);
+    let mut rows = Vec::new();
+    for (stage, response) in responses.iter().enumerate() {
+        for (index, name) in QUANTITY_NAMES.iter().enumerate() {
+            let input = adversarial(&response[index]);
+            let realized = realize(design.dc_hz, &design.sections, &input)[stage][index];
+            rows.push(Row {
+                design: design.name,
+                stage,
+                quantity: name,
+                product: component(&bounds.product[stage], index),
+                bound: component(&bounds.stages[stage], index),
+                exact_horizon: component(&bounds.exact[stage], index),
+                exact_run: response[index].iter().map(|v| v.abs()).sum::<f64>(),
+                realized,
+            });
+        }
+    }
+    rows
+}
+
+#[test]
+fn step_one_the_harness_measures_correctly_against_the_old_product_bound() {
+    // Before the bound moves: the realized peak of every quantity of every committed design is at most the old product
+    // bound, equals the independent exact L1 norm, and the check can fail (it would catch a halved product bound).
+    let mut bites = false;
+    for design in designs() {
+        for row in measure(&design) {
+            assert!(
+                row.realized <= row.product * (1.0 + 1.0e-6),
+                "{}: realized {} above the product bound {}",
+                row.label(),
+                row.realized,
+                row.product
+            );
+            assert!(
+                (row.realized - row.exact_run).abs() <= 1.0e-5 * row.exact_run + 1.0e-12,
+                "{}: realized {} differs from the independent exact value {}",
+                row.label(),
+                row.realized,
+                row.exact_run
+            );
+            bites |= row.realized > 0.5 * row.product * (1.0 + 1.0e-6);
+        }
+    }
+    assert!(
+        bites,
+        "no row would be caught by a halved bound: the check does not bite"
+    );
+}
+
+#[test]
+fn the_exact_bound_is_sound_against_the_realized_chain_with_room_to_spare() {
+    for design in designs() {
+        for row in measure(&design) {
+            assert!(
+                row.realized <= row.bound * (1.0 + 1.0e-6),
+                "{}: the bound {} fell below a value the filter reaches, {}",
+                row.label(),
+                row.bound,
+                row.realized
+            );
+            assert!(
+                row.bound <= row.product * (1.0 + 1.0e-12),
+                "{}: the bound {} is looser than the product bound {}",
+                row.label(),
+                row.bound,
+                row.product
+            );
+            if row.bound < row.product - 1.0e-9 && row.realized > 0.0 {
+                // The exact path is active: the explicit margin is spare on top of the allowance for the part past the
+                // horizon, and f32 rounding (under 2e-7 of the exact value) is 50000 times smaller than that margin.
+                assert!(
+                    row.bound >= row.realized * (1.0 + BOUND_MARGIN / 2.0),
+                    "{}: bound {} has less than half the margin over {}",
+                    row.label(),
+                    row.bound,
+                    row.realized
+                );
+                if !design.name.contains("1 Hz") {
+                    assert!(
+                        row.bound <= row.realized * 1.10,
+                        "{}: a bound 10% above the realized peak is loose ({} against {})",
+                        row.label(),
+                        row.bound,
+                        row.realized
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn the_long_tail_case_is_covered_by_the_remainder_allowance() {
+    // A 1 Hz DC corner leaves R^8191 = 0.34 of the rejector's response past the horizon: the sum over the horizon alone is
+    // low by up to 0.33, and the remainder allowance has to cover it.
+    for name in ["HP60, 1 Hz DC corner", "LP120, 1 Hz DC corner"] {
+        let rows: Vec<Row> = measure(&named(name))
+            .into_iter()
+            .filter(|row| row.realized > 0.0)
+            .collect();
+        let tail = rows
+            .iter()
+            .map(|row| row.exact_run - row.exact_horizon)
+            .fold(0.0f64, f64::max);
+        assert!(
+            tail > 0.15,
+            "{name}: the part past the horizon is {tail}, not the long-tail case it is meant to be"
+        );
+        for row in &rows {
+            assert!(
+                row.exact_horizon <= row.realized + 1.0e-9,
+                "{}: the horizon sum {} exceeds the realized peak {}",
+                row.label(),
+                row.exact_horizon,
+                row.realized
+            );
+            assert!(
+                row.bound >= row.realized * (1.0 + BOUND_MARGIN / 2.0),
+                "{}: bound {} against realized {}",
+                row.label(),
+                row.bound,
+                row.realized
+            );
+        }
+    }
+}
+
+#[test]
+fn the_exact_bound_is_never_stricter_than_the_product_bound() {
+    // Pure relaxation by construction (the bound is the minimum of the two), checked over a design grid and the committed
+    // designs at three DC corners: nothing the product bound admitted is refused now.
+    let mut grid: Vec<(String, Vec<BiquadSpec>)> = Vec::new();
+    for fc in [
+        20.0, 60.0, 100.0, 300.0, 1_000.0, 2_200.0, 8_000.0, 16_000.0,
+    ] {
+        for reps in [1usize, 2] {
+            grid.push((
+                format!("lp{fc}x{reps}"),
+                vec![butterworth2_lowpass(fc, FS); reps],
+            ));
+            grid.push((
+                format!("hp{fc}x{reps}"),
+                vec![butterworth2_highpass(fc, FS); reps],
+            ));
+        }
+    }
+    for design in designs() {
+        grid.push((design.name.to_string(), design.sections));
+    }
+    grid.push((
+        "refused boost".to_string(),
+        vec![boost_24_db(), gain_section(0.15)],
+    ));
+    let mut newly_admitted = 0;
+    for dc_hz in [1.0, 5.0, 100.0] {
+        let dc_r = f64::from(dc_pole(dc_hz, FS));
+        for (name, sections) in &grid {
+            let bounds = chain_bounds(dc_r, &stored_sections(sections));
+            for (stage, product) in bounds.stages.iter().zip(bounds.product.iter()) {
+                for (index, quantity) in QUANTITY_NAMES.iter().enumerate() {
+                    assert!(
+                        component(stage, index) <= component(product, index) * (1.0 + 1.0e-12),
+                        "{name} at {dc_hz} Hz: {quantity} looser than the product bound"
+                    );
+                }
+            }
+            let old_gain = bounds.product.last().map_or(2.0, |stage| stage.y);
+            let old_worst = bounds.product.iter().fold(2.0f64, |worst, stage| {
+                worst.max(stage.y).max(stage.z1).max(stage.z2)
+            });
+            let old_ok =
+                bounds.converged && old_gain <= MAX_L1_GAIN && old_worst <= MAX_INTERMEDIATE;
+            let new_ok =
+                bounds.converged && bounds.gain <= MAX_L1_GAIN && bounds.worst <= MAX_INTERMEDIATE;
+            assert!(
+                !old_ok || new_ok,
+                "{name} at {dc_hz} Hz: admitted by the product bound, refused by the exact one"
+            );
+            newly_admitted += usize::from(new_ok && !old_ok);
+        }
+    }
+    assert!(
+        newly_admitted > 30,
+        "the exact bound should admit the ordinary high-pass designs; only {newly_admitted}"
+    );
+}
+
+#[test]
+fn the_exact_bound_matches_the_independent_reference_on_pinned_designs() {
+    // (design, gain bound, worst bound, relative tolerance) from `tests/d02/reference.py: chain_bounds`. The Butterworth
+    // designs are computed from a formula in both languages and then rounded to f32; a coefficient on a rounding boundary
+    // would differ by one f32 step, so they get 1e-4. The literal-coefficient designs get 1e-9.
+    let pinned = [
+        ("LP120", 1.900829189887, 2.0, 1.0e-4),
+        ("HP100", 2.483242705140, 2.483242705140, 1.0e-4),
+        ("HP60", 2.510871557174, 2.510871557174, 1.0e-4),
+        (
+            "boost +20 dB then trim",
+            3.368107524692,
+            13.472430098766,
+            1.0e-9,
+        ),
+        ("gain 3", 6.0, 6.0, 1.0e-9),
+        (
+            "HP60, 1 Hz DC corner",
+            3.295743724244,
+            5.549311119716,
+            1.0e-4,
+        ),
+    ];
+    for (name, gain, worst, tolerance) in pinned {
+        let design = named(name);
+        let dc_r = f64::from(dc_pole(design.dc_hz, FS));
+        let bounds = chain_bounds(dc_r, &stored_sections(&design.sections));
+        assert!(bounds.converged, "{name}");
+        assert!(
+            (bounds.gain - gain).abs() <= tolerance * gain,
+            "{name}: gain bound {} against the reference {gain}",
+            bounds.gain
+        );
+        assert!(
+            (bounds.worst - worst).abs() <= tolerance * worst,
+            "{name}: worst bound {} against the reference {worst}",
+            bounds.worst
+        );
+    }
+    let refused = chain_bounds(
+        f64::from(dc_pole(5.0, FS)),
+        &stored_sections(&[boost_24_db(), gain_section(0.15)]),
+    );
+    assert!((refused.gain - 3.085408878402).abs() <= 1.0e-9 * 3.085408878402);
+    assert!((refused.worst - 20.569391705325).abs() <= 1.0e-9 * 20.569391705325);
+    assert!(refused.worst > MAX_INTERMEDIATE && refused.gain <= MAX_L1_GAIN);
+}
+
+#[test]
+fn the_refusal_is_warranted_the_refused_boost_really_overflows_and_the_admitted_one_does_not() {
+    // The +24 dB design is refused for its middle node. The refusal is not over-conservative: the real chain, driven with
+    // that node's worst-case input, goes past the limit of 16. The +20 dB design is admitted and stays under it, and the
+    // 60 and 100 Hz high-passes sit far inside it.
+    let refused = design(
+        "refused boost",
+        5.0,
+        vec![boost_24_db(), gain_section(0.15)],
+    );
+    let peak = measure(&refused)
+        .iter()
+        .filter(|row| row.stage == 0)
+        .map(|row| row.realized)
+        .fold(0.0f64, f64::max);
+    assert!(
+        peak > MAX_INTERMEDIATE,
+        "the refused design reaches only {peak}: the refusal is over-conservative"
+    );
+    let admitted = measure(&named("boost +20 dB then trim"))
+        .iter()
+        .map(|row| row.realized)
+        .fold(0.0f64, f64::max);
+    assert!(
+        admitted < MAX_INTERMEDIATE,
+        "admitted boost reaches {admitted}"
+    );
+    for name in ["HP100", "HP60", "HP60, 1 Hz DC corner"] {
+        let peak = measure(&named(name))
+            .iter()
+            .map(|row| row.realized)
+            .fold(0.0f64, f64::max);
+        assert!(peak < 0.2 * MAX_INTERMEDIATE, "{name} reaches {peak}");
+    }
+}
+
+#[test]
+fn designs_the_product_bound_refused_are_admitted_and_run_without_a_fault() {
+    // Positive controls for the cases the product bound refused (the old b = [1, -2, 1] design at 23.2, the 100 Hz and 60
+    // Hz high-passes at about 20.3, the +20 dB boost at 77.9): each is admitted by the real validator, and the real board,
+    // driven with the worst-case input for its first section's output, never latches a fault. The user gain is low so the
+    // thermal model (which reads the signal after gain) stays out of the way; the filter states do not depend on it.
+    let s5 = fixture("S5");
+    let cases: [(&str, Vec<BiquadSpec>, f64); 4] = [
+        (
+            "b = [1, -2, 1] design",
+            vec![BiquadSpec {
+                b0: 1.0,
+                b1: -2.0,
+                b2: 1.0,
+                a1: -1.7196056842803955,
+                a2: 0.81,
+            }],
+            5.0,
+        ),
+        (
+            "100 Hz high-pass",
+            vec![butterworth2_highpass(100.0, FS)],
+            5.0,
+        ),
+        (
+            "60 Hz high-pass, 1 Hz DC corner",
+            vec![butterworth2_highpass(60.0, FS)],
+            1.0,
+        ),
+        (
+            "boost +20 dB then trim",
+            vec![boost_20_db(), gain_section(0.25)],
+            5.0,
+        ),
+    ];
+    for (name, sections, dc_hz) in cases {
+        let mut calibration = synthetic_calibration_for(&s5);
+        calibration.channels[2].sections.clone_from(&sections);
+        calibration.channels[2].dc_block_hz = dc_hz;
+        let mut dsp = ProtectedBoardDsp::admit(&s5, Some(&calibration), Admission::HostSimulation);
+        assert_eq!(dsp.status(), BoardStatus::Active, "{name}: admitted");
+        dsp.set_user_gain(0.05);
+        settle(&mut dsp);
+        let stored = stored_sections(&sections);
+        let responses = exact_responses(f64::from(dc_pole(dc_hz, FS)), &stored, RUN);
+        for chunk in adversarial(&responses[0][0]).chunks(FRAMES_PER_BLOCK) {
+            let mut block = StereoAudioBlock::silence(0);
+            block.frames = chunk.len();
+            block.left[..chunk.len()].copy_from_slice(chunk);
+            render(&mut dsp, &block);
+            assert_eq!(
+                dsp.status(),
+                BoardStatus::Active,
+                "{name}: the worst-case input faulted the board"
+            );
+        }
+        let (z1, z2) = dsp.section_state(2).expect("channel 2");
+        assert!(
+            z1.abs() < MAX_INTERMEDIATE && z2.abs() < MAX_INTERMEDIATE,
+            "{name}: states {z1} {z2}"
+        );
     }
 }

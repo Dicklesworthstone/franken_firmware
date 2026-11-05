@@ -34,7 +34,7 @@ INVARIANTS: Dict[str, str] = {
     "D02-INV-MAX-GAIN": "gain ceiling caps trim * user gain",
     "D02-INV-OUTPUT-CEILING": "the hard output ceiling bounds a limiter overshoot and counts it",
     "D02-INV-MALFORMED": "malformed or unstable calibration is refused with the exact reason and the board stays muted",
-    "D02-INV-ADMITTED-REALIZATION": "coefficients are judged on the stored f32 values, with exact gain and intermediate-range bounds",
+    "D02-INV-ADMITTED-REALIZATION": "coefficients are judged on the stored f32 values, with gain and intermediate-range bounds that are the smaller of a rigorous product bound and an exact L1 bound, and that the realized chain does not exceed",
     "D02-INV-BAND-POLICY": "tweeter, woofer and sub roles must meet their stop-band guards",
     "D02-INV-UNKNOWN-BOARD": "an unknown board or a missing calibration comes up fail-muted and never unmutes",
     "D02-INV-PERSISTENCE": "thermal and limiter history survive seek, reconnect, source replacement and profile switch",
@@ -153,8 +153,10 @@ def validation_cases() -> List[dict]:
         # A converged one-sample section isolates the NUMERIC gain limit: bound = 2 * L1 = 2 * |b0|.
         ("converged gain 6 is under the limit of 8", "S5", lambda c: c["channels"][2].__setitem__("sections", [{"b0": 3.0, "b1": 0.0, "b2": 0.0, "a1": 0.0, "a2": 0.0}]), ["D02-INV-MALFORMED", "D02-INV-ADMITTED-REALIZATION"]),
         ("converged gain 10 is over the limit of 8", "S5", lambda c: c["channels"][2].__setitem__("sections", [{"b0": 5.0, "b1": 0.0, "b2": 0.0, "a1": 0.0, "a2": 0.0}]), ["D02-INV-MALFORMED", "D02-INV-ADMITTED-REALIZATION"]),
-        ("intermediate range only", "S5", lambda c: c["channels"][2].__setitem__("sections", [{"b0": 1.0, "b1": -2.0, "b2": 1.0, "a1": -1.7196056842803955, "a2": 0.81}]), ["D02-INV-MALFORMED", "D02-INV-ADMITTED-REALIZATION"]),
-        ("100 Hz high-pass trips the intermediate bound", "S5", lambda c: c["channels"][2].__setitem__("sections", [hp(100)]), ["D02-INV-MALFORMED", "D02-INV-ADMITTED-REALIZATION"]),
+        # These two were REFUSED by the product bound (intermediate 23.2 and 20.3 against 16). Their exact worst cases are
+        # 3.46 and 2.45, so under the exact bound they are admitted; they stay as positive controls, in the same slots.
+        ("old intermediate-range design is admitted under the exact bound", "S5", lambda c: c["channels"][2].__setitem__("sections", [{"b0": 1.0, "b1": -2.0, "b2": 1.0, "a1": -1.7196056842803955, "a2": 0.81}]), ["D02-INV-MALFORMED", "D02-INV-ADMITTED-REALIZATION"]),
+        ("100 Hz high-pass is admitted under the exact bound", "S5", lambda c: c["channels"][2].__setitem__("sections", [hp(100)]), ["D02-INV-MALFORMED", "D02-INV-ADMITTED-REALIZATION"]),
         ("tweeter with no crossover", "S5", lambda c: c["channels"][0].__setitem__("sections", []), ["D02-INV-BAND-POLICY"]),
         ("tweeter with a low-pass", "S5", lambda c: c["channels"][0].__setitem__("sections", [lp(2000)]), ["D02-INV-BAND-POLICY"]),
         ("woofer with a high-pass", "S5", lambda c: c["channels"][4].__setitem__("sections", [hp(2200)]), ["D02-INV-BAND-POLICY"]),
@@ -163,8 +165,25 @@ def validation_cases() -> List[dict]:
         ("order: parameter before section", "S5", lambda c: (c["channels"][0].__setitem__("trim", 0.0), c["channels"][0]["sections"][0].__setitem__("a2", 1.0)), ["D02-INV-MALFORMED"]),
         ("order: lower channel first", "S5", lambda c: (c["channels"][1].__setitem__("trim", 0.0), c["channels"][0]["sections"][0].__setitem__("a2", 1.0)), ["D02-INV-MALFORMED"]),
     ]
-    cases = []
-    for n, (name, fixture, mutate, invariants) in enumerate(rows, 1):
+    # Added with the exact bound. They take the ids AFTER the malformed-document cases (D02-VAL-044..046), so no id that
+    # existed before changes meaning. The boost pair straddles the limit of 16 on the MIDDLE node of a cascade whose final
+    # gain is well inside the gain limit: the exact worst case of the +20 dB design is 13.3 and of the +24 dB design 20.3.
+    # The long-tail case has a 1 Hz DC corner, where the rejector has not settled by the end of the 8192-sample horizon
+    # (R^8191 = 0.34) and the remainder allowance does the work.
+    late_rows: List[Any] = [
+        ("60 Hz high-pass with a 1 Hz DC corner is admitted (long tail)", "S5",
+         lambda c: (c["channels"][2].__setitem__("sections", [hp(60)]), c["channels"][2].__setitem__("dc_block_hz", 1.0)),
+         ["D02-INV-MALFORMED", "D02-INV-ADMITTED-REALIZATION"]),
+        ("boost +20 dB then trim: middle node within the limit", "S5",
+         lambda c: c["channels"][2].__setitem__("sections", [ref.peaking(1000.0, 20.0, 1.0), ref.gain_section(0.25)]),
+         ["D02-INV-MALFORMED", "D02-INV-ADMITTED-REALIZATION"]),
+        ("boost +24 dB then trim: middle node over the limit", "S5",
+         lambda c: c["channels"][2].__setitem__("sections", [ref.peaking(500.0, 24.0, 2.0), ref.gain_section(0.15)]),
+         ["D02-INV-MALFORMED", "D02-INV-ADMITTED-REALIZATION"]),
+    ]
+
+    def row_case(n: int, row: Any) -> dict:
+        name, fixture, mutate, invariants = row
         cal = ref.synthetic_calibration(fixture)
         if mutate is not None:
             mutate(cal)
@@ -173,8 +192,10 @@ def validation_cases() -> List[dict]:
             expect: dict = {"status": "active"}
         except ref.RefError as e:
             expect = {"status": "fail_muted", **e.as_dict()}
-        cases.append({"id": f"D02-VAL-{n:03d}", "kind": "validation", "title": name, "invariants": invariants,
-                      "fixture": fixture, "calibration": cal, "expect": expect})
+        return {"id": f"D02-VAL-{n:03d}", "kind": "validation", "title": name, "invariants": invariants,
+                "fixture": fixture, "calibration": cal, "expect": expect}
+
+    cases = [row_case(n, row) for n, row in enumerate(rows, 1)]
     # structurally malformed documents (planted; expected by construction)
     base = ref.synthetic_calibration("S3")
     unknown = copy.deepcopy(base)
@@ -187,6 +208,7 @@ def validation_cases() -> List[dict]:
         cases.append({"id": f"D02-VAL-{k:03d}", "kind": "validation", "title": name, "invariants": ["D02-INV-MALFORMED"],
                       "fixture": "S3", "calibration": doc,
                       "expect": {"status": "fail_muted", "error": "malformed_calibration", "channel": None, "section": None, "parameter": None}})
+    cases += [row_case(n, row) for n, row in enumerate(late_rows, len(cases) + 1)]
     return cases
 
 

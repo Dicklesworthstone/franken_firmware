@@ -352,9 +352,26 @@ fn widen(section: &[f32; 5]) -> [f64; 5] {
     ]
 }
 
-/// L1 norm of one section's impulse response over [`L1_HORIZON`] samples (direct form I in `f64`),
-/// and whether the response had decayed by the end of the horizon.
-fn section_l1(c: &[f64; 5]) -> (f64, bool) {
+/// The DC rejector pole `R = exp(-2*pi*hz/fs)` as the renderer stores it (`f32`). One definition,
+/// used by [`DcRejector::new`](super::DcRejector::new) and by the bounds below, so the bound is
+/// computed for the pole the filter really has.
+pub(super) fn dc_pole(hz: f64, fs_hz: f64) -> f32 {
+    (-2.0 * PI * hz / fs_hz).exp() as f32
+}
+
+/// The DC rejector's impulse response has L1 norm exactly 2 for `0 < R < 1`.
+const DC_L1: f64 = 2.0;
+/// A section has "decayed" when its unit-impulse response is at most this over the last 256
+/// samples of the horizon.
+const CONVERGED_TAIL: f64 = 1.0e-6;
+/// Relative margin on the exact bound. It is spare on top of the allowance for the part of the
+/// response past the horizon; `f32` rounding in the DC rejector moves a realized peak by under
+/// 2e-7 of its value (`tests/d02/realized_chain.py`), 50000 times less.
+pub(super) const BOUND_MARGIN: f64 = 0.01;
+
+/// L1 norm of one section's unit-impulse response over [`L1_HORIZON`] samples (direct form I in
+/// `f64`), and the peak of that response over the last 256 samples of the horizon.
+fn section_l1(c: &[f64; 5]) -> (f64, f64) {
     let (mut x1, mut x2, mut y1, mut y2) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
     let mut sum = 0.0f64;
     let mut tail_peak = 0.0f64;
@@ -370,25 +387,166 @@ fn section_l1(c: &[f64; 5]) -> (f64, bool) {
         y2 = y1;
         y1 = y;
     }
-    (sum, tail_peak <= 1.0e-6)
+    (sum, tail_peak)
 }
 
-/// Rigorous worst-case bounds for `|x| <= 1` through the DC rejector (L1 = 2 for `0 < R < 1`) and
-/// the sections: `(cascade gain bound, largest intermediate bound, all sections converged)`.
-fn chain_bounds(sections: &[[f64; 5]]) -> (f64, f64, bool) {
-    let mut x_bound = 2.0f64;
-    let mut worst = x_bound;
-    let mut converged = true;
-    for c in sections {
-        let (l1, done) = section_l1(c);
-        converged &= done;
-        let y_bound = l1 * x_bound;
-        let z2 = c[2].abs() * x_bound + c[4].abs() * y_bound;
-        let z1 = c[1].abs() * x_bound + c[3].abs() * y_bound + z2;
-        worst = worst.max(y_bound).max(z1).max(z2);
-        x_bound = y_bound;
+/// Radius of the slowest pole of `1 + a1 z^-1 + a2 z^-2`.
+fn pole_radius(c: &[f64; 5]) -> f64 {
+    let discriminant = c[3] * c[3] - 4.0 * c[4];
+    if discriminant < 0.0 {
+        c[4].sqrt()
+    } else {
+        (c[3].abs() + discriminant.sqrt()) / 2.0
     }
-    (x_bound, worst, converged)
+}
+
+/// Bounds on one section's output `y` and its two direct-form-II-transposed states, for
+/// `|input| <= 1` at the chain input.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct StageBound {
+    pub(super) y: f64,
+    pub(super) z1: f64,
+    pub(super) z2: f64,
+}
+
+/// Bounds on the whole chain. Validation reads `gain`, `worst` and `converged`; the per-stage
+/// detail exists only under `cfg(test)`, where tests compare it with the realized chain.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct ChainBounds {
+    /// Bound on the cascade output: the last stage's `y`, or 2 with no sections.
+    pub(super) gain: f64,
+    /// Largest bound over the DC rejector output and every `y`, `z1`, `z2`.
+    pub(super) worst: f64,
+    /// Every section's own unit-impulse response had decayed by the end of the horizon.
+    pub(super) converged: bool,
+    /// The bound used: `min(product, (exact + allowance) * (1 + BOUND_MARGIN))` per quantity.
+    #[cfg(test)]
+    pub(super) stages: Vec<StageBound>,
+    /// The original loose bound: L1 norms of the sections multiply, each state bounded term by term.
+    #[cfg(test)]
+    pub(super) product: Vec<StageBound>,
+    /// Exact L1 norm over the horizon of the response from the chain input to each quantity.
+    #[cfg(test)]
+    pub(super) exact: Vec<StageBound>,
+    /// `R^(H-1)`: the L1 norm of the DC rejector's response past the horizon.
+    #[cfg(test)]
+    pub(super) dc_remainder: f64,
+    /// Largest unit-impulse peak over the last 256 samples of the horizon, over the sections.
+    #[cfg(test)]
+    pub(super) tail_peak: f64,
+    /// Multiplier on `tail_peak` for the part of the sections' responses past the horizon.
+    #[cfg(test)]
+    pub(super) tail_factor: f64,
+}
+
+/// Worst-case bounds for `|input| <= 1` on the DC rejector (pole `dc_r`, as stored) and the
+/// stored sections `[b0, b1, b2, a1, a2]`.
+///
+/// The largest value a quantity reaches for `|input| <= 1` is the L1 norm of the impulse response
+/// from the chain input to that quantity; the input that attains it is the sign of the
+/// time-reversed response. Two bounds on it are computed per quantity and the smaller is used:
+///
+/// * the **product bound**: the sections' L1 norms multiply (L1 is submultiplicative), starting
+///   from the DC rejector's 2, and each state is bounded term by term. Rigorous and loose: it
+///   exceeds the true worst case by 2 to 7 times on the synthetic boards and refuses an ordinary
+///   60 Hz or 100 Hz high-pass;
+/// * the **exact bound**: the response is run through the DC rejector and each section in direct
+///   form II transposed (the arithmetic of `Section::process`) and summed over the horizon, plus an
+///   allowance for what lies past it, times `1 + BOUND_MARGIN`. The allowance is
+///   `product / 2 * (R^(H-1) + tail_peak * max(H, 1 / (1 - rho)))`: the first term is rigorous (the
+///   rejector's remainder past the horizon has L1 norm `R^(H-1)`, and a following cascade can
+///   amplify it by at most its product bound per unit of input L1); the second assumes the
+///   sections' own responses past the horizon decay at the slowest pole's rate from a peak no
+///   larger than `tail_peak`, which is the convergence rule the product bound already relied on.
+///
+/// Taking the minimum means validation is never stricter than the product bound was.
+pub(super) fn chain_bounds(dc_r: f64, sections: &[[f64; 5]]) -> ChainBounds {
+    let mut x_bound = DC_L1;
+    let mut product: Vec<StageBound> = Vec::with_capacity(sections.len());
+    let mut converged = true;
+    let mut tail_peak = 0.0f64;
+    let mut rho = 0.0f64;
+    for c in sections {
+        let (l1, tail) = section_l1(c);
+        converged &= tail <= CONVERGED_TAIL;
+        tail_peak = tail_peak.max(tail);
+        rho = rho.max(pole_radius(c));
+        let y = l1 * x_bound;
+        let z2 = c[2].abs() * x_bound + c[4].abs() * y;
+        let z1 = c[1].abs() * x_bound + c[3].abs() * y + z2;
+        product.push(StageBound { y, z1, z2 });
+        x_bound = y;
+    }
+
+    // The DC rejector's response by the recurrence the renderer runs: 1, R - 1, R(R - 1), ...
+    let mut signal = vec![0.0f64; L1_HORIZON];
+    let mut next = vec![0.0f64; L1_HORIZON];
+    let mut previous = dc_r - 1.0;
+    signal[0] = 1.0;
+    signal[1] = previous;
+    for slot in signal.iter_mut().skip(2) {
+        previous *= dc_r;
+        *slot = previous;
+    }
+    let dc_remainder = dc_r.powf(L1_HORIZON as f64 - 1.0);
+    let tail_factor = (L1_HORIZON as f64).max(1.0 / (1.0 - rho).max(1.0e-12));
+
+    let mut exact: Vec<StageBound> = Vec::with_capacity(sections.len());
+    for c in sections {
+        let (mut z1, mut z2) = (0.0f64, 0.0f64);
+        let (mut sum_y, mut sum_z1, mut sum_z2) = (0.0f64, 0.0f64, 0.0f64);
+        for (out, &x) in next.iter_mut().zip(signal.iter()) {
+            let y = c[0] * x + z1;
+            z1 = c[1] * x - c[3] * y + z2;
+            z2 = c[2] * x - c[4] * y;
+            *out = y;
+            sum_y += y.abs();
+            sum_z1 += z1.abs();
+            sum_z2 += z2.abs();
+        }
+        std::mem::swap(&mut signal, &mut next);
+        exact.push(StageBound {
+            y: sum_y,
+            z1: sum_z1,
+            z2: sum_z2,
+        });
+    }
+
+    let allowance =
+        |product_bound: f64| product_bound / DC_L1 * (dc_remainder + tail_peak * tail_factor);
+    let limit = |product_bound: f64, exact_sum: f64| {
+        ((exact_sum + allowance(product_bound)) * (1.0 + BOUND_MARGIN)).min(product_bound)
+    };
+    let stages: Vec<StageBound> = product
+        .iter()
+        .zip(exact.iter())
+        .map(|(p, e)| StageBound {
+            y: limit(p.y, e.y),
+            z1: limit(p.z1, e.z1),
+            z2: limit(p.z2, e.z2),
+        })
+        .collect();
+    let gain = stages.last().map_or(DC_L1, |stage| stage.y);
+    let worst = stages.iter().fold(DC_L1, |worst, stage| {
+        worst.max(stage.y).max(stage.z1).max(stage.z2)
+    });
+    ChainBounds {
+        gain,
+        worst,
+        converged,
+        #[cfg(test)]
+        stages,
+        #[cfg(test)]
+        product,
+        #[cfg(test)]
+        exact,
+        #[cfg(test)]
+        dc_remainder,
+        #[cfg(test)]
+        tail_peak,
+        #[cfg(test)]
+        tail_factor,
+    }
 }
 
 /// `|H(e^{jw})|` of the cascade at `hz`, from the stored coefficients.
@@ -470,11 +628,12 @@ fn validate_channel(
     }
     let wide: Vec<[f64; 5]> = stored.iter().map(widen).collect();
 
-    let (gain_bound, intermediate_bound, converged) = chain_bounds(&wide);
-    if !converged || gain_bound > MAX_L1_GAIN {
+    let dc_r = dc_pole(channel.dc_block_hz, fs);
+    let bounds = chain_bounds(f64::from(dc_r), &wide);
+    if !bounds.converged || bounds.gain > MAX_L1_GAIN {
         return Err(ProtectionError::GainBoundExceeded { channel: index });
     }
-    if intermediate_bound > MAX_INTERMEDIATE {
+    if bounds.worst > MAX_INTERMEDIATE {
         return Err(ProtectionError::IntermediateRangeExceeded { channel: index });
     }
     if let Some((hz, max_magnitude)) = band_guard(channel.role)
@@ -488,7 +647,7 @@ fn validate_channel(
         trim: channel.trim as f32,
         max_gain: channel.max_gain as f32,
         ceiling: channel.ceiling as f32,
-        dc_r: (-2.0 * PI * channel.dc_block_hz / fs).exp() as f32,
+        dc_r,
         sections: stored,
         threshold: channel.limiter.threshold as f32,
         a_attack: smoothing_coefficient(channel.limiter.attack_ms, fs),

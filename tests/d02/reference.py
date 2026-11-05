@@ -75,6 +75,20 @@ def butterworth(kind: str, fc: float, fs: float = FS) -> Dict[str, float]:
     return {"b0": norm, "b1": -2.0 * norm, "b2": norm, "a1": a1, "a2": a2}
 
 
+def peaking(fc: float, gain_db: float, q: float, fs: float = FS) -> Dict[str, float]:
+    """RBJ peaking equaliser (a boost at ``fc``); used to build cascades whose middle node is large."""
+    a = 10.0 ** (gain_db / 40.0)
+    w0 = 2.0 * math.pi * fc / fs
+    alpha = math.sin(w0) / (2.0 * q)
+    a0 = 1.0 + alpha / a
+    return {"b0": (1.0 + alpha * a) / a0, "b1": -2.0 * math.cos(w0) / a0, "b2": (1.0 - alpha * a) / a0,
+            "a1": -2.0 * math.cos(w0) / a0, "a2": (1.0 - alpha / a) / a0}
+
+
+def gain_section(gain: float) -> Dict[str, float]:
+    return {"b0": gain, "b1": 0.0, "b2": 0.0, "a1": 0.0, "a2": 0.0}
+
+
 def coeffs(spec: dict) -> List[float]:
     return [spec["b0"], spec["b1"], spec["b2"], spec["a1"], spec["a2"]]
 
@@ -141,7 +155,21 @@ def quantize_section(spec: dict, channel: int, section: int) -> List[float]:
     return out
 
 
-def section_l1(c: List[float]) -> Tuple[float, bool]:
+CONVERGED_TAIL = 1.0e-6
+# Relative margin on the exact bound. It covers the f32 rounding of the DC rejector (measured at under
+# 2e-7 of the exact value, tests/d02/realized_chain.py) by a factor of tens of thousands.
+BOUND_MARGIN = 0.01
+DC_L1 = 2.0
+
+
+def dc_pole(hz: float) -> float:
+    """The DC rejector pole as the renderer stores it (f32)."""
+    return q32(math.exp(-2.0 * math.pi * hz / FS))
+
+
+def section_l1(c: List[float]) -> Tuple[float, float]:
+    """L1 norm of one section's unit-impulse response over the horizon (direct form I, f64), and the
+    peak of that response over the last 256 samples of the horizon."""
     x1 = x2 = y1 = y2 = 0.0
     total, tail = 0.0, 0.0
     for n in range(L1_HORIZON):
@@ -151,20 +179,107 @@ def section_l1(c: List[float]) -> Tuple[float, bool]:
         if n >= L1_HORIZON - 256:
             tail = max(tail, abs(y))
         x2, x1, y2, y1 = x1, x, y1, y
-    return total, tail <= 1e-6
+    return total, tail
 
 
-def chain_bounds(sections: List[List[float]]) -> Tuple[float, float, bool]:
-    x_bound, worst, converged = 2.0, 2.0, True
+def pole_radius(c: List[float]) -> float:
+    """Radius of the slowest pole of 1 + a1 z^-1 + a2 z^-2."""
+    a1, a2 = c[3], c[4]
+    disc = a1 * a1 - 4.0 * a2
+    return math.sqrt(a2) if disc < 0.0 else (abs(a1) + math.sqrt(disc)) / 2.0
+
+
+def product_bounds(sections: List[List[float]]) -> dict:
+    """The original rigorous but loose bound: the L1 norms of the sections multiply (submultiplicativity),
+    starting from the DC rejector's L1 of 2, and each state is bounded term by term."""
+    x_bound = DC_L1
+    stages, converged, tail_peak, rho = [], True, 0.0, 0.0
     for c in sections:
-        l1, done = section_l1(c)
-        converged = converged and done
+        l1, tail = section_l1(c)
+        converged = converged and tail <= CONVERGED_TAIL
+        tail_peak, rho = max(tail_peak, tail), max(rho, pole_radius(c))
         y = l1 * x_bound
         z2 = abs(c[2]) * x_bound + abs(c[4]) * y
         z1 = abs(c[1]) * x_bound + abs(c[3]) * y + z2
-        worst = max(worst, y, z1, z2)
+        stages.append((y, z1, z2))
         x_bound = y
-    return x_bound, worst, converged
+    return {"stages": stages, "converged": converged, "tail_peak": tail_peak, "rho": rho}
+
+
+FAULTS = ("signed_sum", "no_states", "dc_l1_one", "no_dc_remainder", "no_tail", "no_margin",
+          "worst_from_last_stage", "no_product_cap")
+
+
+def chain_bounds(dc_r: float, sections: List[List[float]], fault: Optional[str] = None) -> dict:
+    """Bounds on the DC rejector and every section (output ``y`` and the two states ``z1``, ``z2``) for
+    ``|input| <= 1``, as the Rust ``chain_bounds`` computes them:
+
+        bound = min(product bound, (exact L1 over the horizon + allowance) * (1 + BOUND_MARGIN))
+        allowance = (product bound / 2) * (R^(H-1) + tail_peak * max(H, 1 / (1 - rho)))
+
+    The exact L1 norm of the impulse response from the chain input to a quantity is the largest value
+    that quantity can reach for ``|input| <= 1`` (the input that attains it is the sign of the
+    time-reversed response). ``R^(H-1)`` is the L1 norm of the DC rejector's response past the horizon,
+    which a following cascade can amplify by at most its product bound; the tail term covers the sections'
+    own responses past the horizon under the same convergence rule as before. ``fault`` is a test hook that
+    plants one defect (``FAULTS``); production passes ``None``."""
+    prod = product_bounds(sections)
+    if fault == "dc_l1_one":
+        x_bound, shrunk = 1.0, []
+        for c in sections:
+            l1, _ = section_l1(c)
+            y = l1 * x_bound
+            z2 = abs(c[2]) * x_bound + abs(c[4]) * y
+            shrunk.append((y, abs(c[1]) * x_bound + abs(c[3]) * y + z2, z2))
+            x_bound = y
+        prod["stages"] = shrunk
+    n = L1_HORIZON
+    signal = [0.0] * n
+    signal[0] = 1.0
+    signal[1] = dc_r - 1.0
+    for i in range(2, n):
+        signal[i] = dc_r * signal[i - 1]
+    dc_remainder = dc_r ** (n - 1)
+    tail_peak, rho = prod["tail_peak"], prod["rho"]
+    tail_factor = max(float(n), 1.0 / max(1.0 - rho, 1.0e-12))
+    exact, final = [], []
+    for c, p in zip(sections, prod["stages"]):
+        z1 = z2 = 0.0
+        out = [0.0] * n
+        sums = [0.0, 0.0, 0.0]
+        for i, x in enumerate(signal):
+            y = c[0] * x + z1
+            z1 = c[1] * x - c[3] * y + z2
+            z2 = c[2] * x - c[4] * y
+            out[i] = y
+            if fault == "signed_sum":
+                sums[0] += y
+                sums[1] += z1
+                sums[2] += z2
+            else:
+                sums[0] += abs(y)
+                sums[1] += abs(z1)
+                sums[2] += abs(z2)
+        signal = out
+        exact.append(tuple(sums))
+        bound = []
+        for k, (p_q, e_q) in enumerate(zip(p, sums)):
+            rem = 0.0 if fault == "no_dc_remainder" else dc_remainder
+            tail = 0.0 if fault == "no_tail" else tail_peak * tail_factor
+            margin = 0.0 if fault == "no_margin" else BOUND_MARGIN
+            value = (e_q + (p_q / DC_L1) * (rem + tail)) * (1.0 + margin)
+            if fault != "no_product_cap":
+                value = min(p_q, value)
+            if fault == "no_states" and k > 0:
+                value = 0.0
+            bound.append(value)
+        final.append(tuple(bound))
+    gain = final[-1][0] if final else DC_L1
+    scan = final[-1:] if fault == "worst_from_last_stage" else final
+    worst = max([DC_L1] + [v for stage in scan for v in stage])
+    return {"gain": gain, "worst": worst, "converged": prod["converged"], "stages": final,
+            "product": prod["stages"], "exact": exact, "dc_remainder": dc_remainder,
+            "tail_peak": tail_peak, "tail_factor": tail_factor}
 
 
 def magnitude(sections: List[List[float]], hz: float) -> float:
@@ -231,10 +346,10 @@ def validate_calibration(cal: dict, fixture: str) -> None:
         if len(ch["sections"]) > MAX_SECTIONS:
             raise RefError("too_many_sections", i)
         secs = [quantize_section(s, i, j) for j, s in enumerate(ch["sections"])]
-        gain, worst, converged = chain_bounds(secs)
-        if not converged or gain > MAX_L1_GAIN:
+        bounds = chain_bounds(dc_pole(ch["dc_block_hz"]), secs)
+        if not bounds["converged"] or bounds["gain"] > MAX_L1_GAIN:
             raise RefError("gain_bound_exceeded", i)
-        if worst > MAX_INTERMEDIATE:
+        if bounds["worst"] > MAX_INTERMEDIATE:
             raise RefError("intermediate_range_exceeded", i)
         guard = GUARDS.get(ch["role"])
         if guard is not None and magnitude(secs, guard[0]) > guard[1]:

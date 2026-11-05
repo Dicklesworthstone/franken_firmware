@@ -13,6 +13,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import re
 import sys
@@ -34,6 +35,7 @@ def _load(name: str) -> Any:
 ref = _load("reference")
 gen = _load("generate")
 runner = _load("run_cases")
+rc = _load("realized_chain")
 
 
 # ---- constructed observations ----------------------------------------------------------------------
@@ -208,14 +210,21 @@ class ReferenceAndVectors(Base):
         self.assertEqual(set(self.doc["invariants"]) - covered - external, set())
 
     def test_the_validator_reproduces_the_hand_derived_planted_cases(self) -> None:
-        want = {"intermediate range only": ("intermediate_range_exceeded", 2),
-                "100 Hz high-pass trips the intermediate bound": ("intermediate_range_exceeded", 2),
-                "high-Q resonator": ("gain_bound_exceeded", 0), "woofer with a high-pass": ("band_policy_violated", 4),
+        want = {"boost +24 dB then trim: middle node over the limit": ("intermediate_range_exceeded", 2),
+                "high-Q resonator": ("gain_bound_exceeded", 0),
+                "converged gain 10 is over the limit of 8": ("gain_bound_exceeded", 2),
+                "woofer with a high-pass": ("band_policy_violated", 4),
                 "order: lower channel first": ("unstable", 0)}
         seen = {c["title"]: c["expect"] for c in self.doc["cases"] if c["kind"] == "validation"}
         for title, (code, channel) in want.items():
             self.assertEqual((seen[title]["error"], seen[title]["channel"]), (code, channel), title)
-        self.assertEqual(seen["positive S5"]["status"], "active")
+        # The positive controls: designs the product bound refused (or that sit just inside a limit) are admitted.
+        for title in ("positive S5", "old intermediate-range design is admitted under the exact bound",
+                      "100 Hz high-pass is admitted under the exact bound",
+                      "60 Hz high-pass with a 1 Hz DC corner is admitted (long tail)",
+                      "boost +20 dB then trim: middle node within the limit",
+                      "converged gain 6 is under the limit of 8"):
+            self.assertEqual(seen[title]["status"], "active", title)
 
     def test_section_vectors_reject_an_f32_state_realization_and_accept_the_f64_one(self) -> None:
         """The b9 defect: an f32 direct-form-II-transposed state drifted from an exact evaluation of
@@ -278,6 +287,193 @@ class ReferenceAndVectors(Base):
         finally:
             gref.STABILITY_MARGIN, gref.MAX_INTERMEDIATE, gref.smoothing, gref.MAX_L1_GAIN = saved
         self.assertTrue(gen.dumps(gen.build()) == committed, "reference restored")
+
+
+# Bounds from the reference at the DC corner named in DESIGNS (5 Hz unless the name says 1 Hz); copied into the Rust test
+# `the_exact_bound_matches_the_independent_reference_on_pinned_designs`.
+PINNED_BOUNDS = {
+    "LP120": (1.900829189887, 2.0),
+    "HP100": (2.483242705140, 2.483242705140),
+    "HP60": (2.510871557174, 2.510871557174),
+    "boost +20 dB then trim": (3.368107524692, 13.472430098766),
+    "gain 3": (6.0, 6.0),
+    "HP60, 1 Hz DC corner": (3.295743724244, 5.549311119716),
+}
+PINNED_REFUSED_BOOST = (3.085408878402, 20.569391705325)
+
+
+class ExactBound(Base):
+    """The admitted intermediate bound against the realized chain (D02 acceptance: intermediate-state ranges).
+
+    ``realized_chain`` drives an operation-for-operation emulation of the renderer with the input that maximises each
+    quantity, so these tests compare the bound with what the real filter reaches, not with another formula."""
+
+    RUN = 2 * ref.L1_HORIZON
+    _rows: Optional[Dict[str, List[dict]]] = None
+
+    @classmethod
+    def rows(cls) -> Dict[str, List[dict]]:
+        if cls._rows is None:
+            cls._rows = {name: rc.measure(specs, dc_hz, cls.RUN) for name, dc_hz, specs in rc.DESIGNS}
+        return cls._rows
+
+    @staticmethod
+    def secs(specs: List[dict]) -> List[List[float]]:
+        return [ref.quantize_section(s, 0, k) for k, s in enumerate(specs)]
+
+    def test_step_one_the_harness_measures_correctly_against_the_old_product_bound(self) -> None:
+        """Before anything moves: the realized peak of every quantity of every committed design is at most the old product
+        bound, equals the independent exact L1 norm, and the check can fail (it catches a halved product bound)."""
+        bitten = False
+        for name, rows in self.rows().items():
+            for row in rows:
+                with self.subTest(design=name, stage=row["stage"], q=row["q"]):
+                    self.assertLessEqual(row["realized"], row["product"] * (1 + 1e-6))
+                    self.assertAlmostEqual(row["realized"], row["exact_run"], delta=1e-5 * row["exact_run"] + 1e-12)
+                bitten = bitten or row["realized"] > 0.5 * row["product"] * (1 + 1e-6)
+        self.assertTrue(bitten, "no row would have been caught by a halved bound: the check does not bite")
+
+    def test_step_two_the_exact_bound_is_sound_against_the_realized_chain_with_room_to_spare(self) -> None:
+        for name, rows in self.rows().items():
+            for row in rows:
+                with self.subTest(design=name, stage=row["stage"], q=row["q"]):
+                    self.assertLessEqual(row["realized"], row["bound"] * (1 + 1e-6), "the bound fell below a value the filter reaches")
+                    self.assertLessEqual(row["bound"], row["product"] * (1 + 1e-12), "never looser than the product bound")
+                    if row["bound"] < row["product"] - 1e-9 and row["realized"] > 0.0:
+                        # Exact path active: the explicit margin is spare on top of the allowance for the part past the
+                        # horizon, and f32 rounding (measured at under 2e-7 of the exact value) is 50000 times smaller.
+                        self.assertGreaterEqual(row["bound"], row["realized"] * (1 + ref.BOUND_MARGIN / 2))
+                        if "1 Hz" not in name:
+                            self.assertLessEqual(row["bound"], row["realized"] * 1.10, "a bound 10% above the realized peak is loose")
+
+    def test_the_long_tail_case_is_covered_by_the_remainder_allowance(self) -> None:
+        """A 1 Hz DC corner leaves R^8191 = 0.34 of the rejector's response past the horizon: the sum over the horizon alone
+        is low by up to 0.33, and the remainder allowance has to cover it."""
+        for name in ("HP60, 1 Hz DC corner", "LP120, 1 Hz DC corner"):
+            rows = [row for row in self.rows()[name] if row["realized"] > 0.0]
+            self.assertGreater(max(row["exact_run"] - row["exact_horizon"] for row in rows), 0.15,
+                               f"{name}: the part past the horizon is not the long-tail case it is meant to be")
+            for row in rows:
+                with self.subTest(design=name, stage=row["stage"], q=row["q"]):
+                    self.assertLessEqual(row["exact_horizon"], row["realized"] + 1e-9)
+                    self.assertGreaterEqual(row["bound"], row["realized"] * (1 + ref.BOUND_MARGIN / 2))
+
+    def test_the_exact_bound_is_never_stricter_than_the_product_bound(self) -> None:
+        """Pure relaxation by construction (the bound is the minimum of the two), checked over a design grid and the
+        committed designs at three DC corners: no design admitted before is refused now, and the converged flag is unchanged."""
+        designs = [(f"{kind}{fc}", [ref.butterworth(kind, float(fc))] * reps)
+                   for kind in ("hp", "lp") for fc in (20, 60, 100, 300, 1000, 2200, 8000, 16000) for reps in (1, 2)]
+        designs += [(name, specs) for name, _, specs in rc.DESIGNS]
+        designs.append(("refused boost", rc.REFUSED_BOOST))
+        newly_admitted = 0
+        for hz in (1.0, 5.0, 100.0):
+            dc_r = ref.dc_pole(hz)
+            for name, specs in designs:
+                secs = self.secs(specs)
+                new, old = ref.chain_bounds(dc_r, secs), ref.product_bounds(secs)
+                with self.subTest(design=name, dc_hz=hz):
+                    self.assertEqual(new["converged"], old["converged"])
+                    for stage, product in zip(new["stages"], old["stages"]):
+                        for value, limit in zip(stage, product):
+                            self.assertLessEqual(value, limit * (1 + 1e-12))
+                    old_ok = old["converged"] and (old["stages"][-1][0] if secs else 2.0) <= ref.MAX_L1_GAIN \
+                        and max([2.0] + [v for s in old["stages"] for v in s]) <= ref.MAX_INTERMEDIATE
+                    new_ok = new["converged"] and new["gain"] <= ref.MAX_L1_GAIN and new["worst"] <= ref.MAX_INTERMEDIATE
+                    if old_ok:
+                        self.assertTrue(new_ok, "a design the product bound admitted is refused")
+                    newly_admitted += int(new_ok and not old_ok)
+        self.assertGreater(newly_admitted, 30, "the exact bound should admit the ordinary high-pass designs")
+
+    def test_the_refusal_is_warranted_the_refused_boost_really_overflows_and_the_admitted_one_does_not(self) -> None:
+        refused = rc.measure(rc.REFUSED_BOOST, 5.0, self.RUN)
+        peak = max(row["realized"] for row in refused if row["stage"] == 0)
+        self.assertGreater(peak, ref.MAX_INTERMEDIATE, "the refused design never exceeds the limit: the refusal is over-conservative")
+        admitted = max(row["realized"] for row in self.rows()["boost +20 dB then trim"])
+        self.assertLess(admitted, ref.MAX_INTERMEDIATE)
+        high_pass = max(row["realized"] for name in ("HP100", "HP60", "HP60, 1 Hz DC corner") for row in self.rows()[name])
+        self.assertLess(high_pass, 0.2 * ref.MAX_INTERMEDIATE, "60 and 100 Hz high-passes sit far inside the limit")
+
+    def test_the_section_tail_allowance_covers_slow_converged_sections(self) -> None:
+        """Sections that have only just converged (tail peak under the 1e-6 threshold, poles near 0.999) still have a
+        response past the horizon; its L1 norm must be under the allowance the bound adds for it (tail * max(H, 1/(1-rho)))."""
+        horizon, run = ref.L1_HORIZON, 1 << 18
+        cases = 0
+        for radius in (0.998, 0.9983, 0.9988, 0.9992):
+            for theta_deg in (1.0, 20.0, 90.0):
+                theta = math.radians(theta_deg)
+                a1, a2 = -2.0 * radius * math.cos(theta), radius * radius
+                scale = 1.0
+                for _ in range(40):
+                    c = [ref.q32(scale), 0.0, 0.0, ref.q32(a1), ref.q32(a2)]
+                    _, tail = ref.section_l1(c)
+                    if tail <= 0.9e-6:
+                        break
+                    scale *= 0.5 * 0.9e-6 / tail if tail > 0 else 1.0
+                self.assertLessEqual(tail, ref.CONVERGED_TAIL)
+                x1 = x2 = y1 = y2 = 0.0
+                inside = outside = 0.0
+                for n in range(run):
+                    x = 1.0 if n == 0 else 0.0
+                    y = c[0] * x + c[1] * x1 + c[2] * x2 - c[3] * y1 - c[4] * y2
+                    if n < horizon:
+                        inside += abs(y)
+                    else:
+                        outside += abs(y)
+                    x2, x1, y2, y1 = x1, x, y1, y
+                allowance = tail * max(float(horizon), 1.0 / (1.0 - ref.pole_radius(c)))
+                with self.subTest(radius=radius, theta_deg=theta_deg):
+                    self.assertLessEqual(outside, allowance, "the response past the horizon exceeds the tail allowance")
+                    self.assertLess(outside, 0.2 * allowance, "less than a fifth of the allowance is used: spare to spare")
+                    self.assertGreater(tail, 1.0e-8, "the case is not near the convergence threshold")
+                cases += 1
+        self.assertEqual(cases, 12)
+
+    def test_pinned_numbers_for_the_rust_test(self) -> None:
+        for name, (gain, worst) in PINNED_BOUNDS.items():
+            dc_hz, specs = next((dc, s) for n, dc, s in rc.DESIGNS if n == name)
+            got = ref.chain_bounds(ref.dc_pole(dc_hz), self.secs(specs))
+            with self.subTest(design=name):
+                self.assertAlmostEqual(got["gain"], gain, delta=1e-9 * gain)
+                self.assertAlmostEqual(got["worst"], worst, delta=1e-9 * worst)
+        got = ref.chain_bounds(ref.dc_pole(5.0), self.secs(rc.REFUSED_BOOST))
+        self.assertAlmostEqual(got["gain"], PINNED_REFUSED_BOOST[0], delta=1e-9 * PINNED_REFUSED_BOOST[0])
+        self.assertAlmostEqual(got["worst"], PINNED_REFUSED_BOOST[1], delta=1e-9 * PINNED_REFUSED_BOOST[1])
+        self.assertGreater(got["worst"], ref.MAX_INTERMEDIATE)
+        self.assertLessEqual(got["gain"], ref.MAX_L1_GAIN)
+
+    def test_single_term_mutants_of_the_bound_are_killed_or_named_unkillable(self) -> None:
+        """Plant each defect in the reference's bound and look for a killer among: soundness against the realized peaks
+        (``sound``), the explicit spare (``spare``), the pinned numbers (``pin``) and pure relaxation (``relax``)."""
+        killers: Dict[str, set] = {}
+        for fault in ref.FAULTS:
+            found = set()
+            for name, dc_hz, specs in rc.DESIGNS:
+                secs = self.secs(specs)
+                dc_r = ref.dc_pole(dc_hz)
+                mutant = ref.chain_bounds(dc_r, secs, fault)
+                for k, rows in enumerate(self.rows()[name]):
+                    stage, q = divmod(k, 3)
+                    bound, product = mutant["stages"][stage][q], mutant["product"][stage][q]
+                    if rows["realized"] > bound * (1 + 1e-6):
+                        found.add("sound")
+                    if bound < product - 1e-9 and rows["realized"] > 0.0 and bound < rows["realized"] * (1 + ref.BOUND_MARGIN / 2):
+                        found.add("spare")
+                    if bound > product * (1 + 1e-12):
+                        found.add("relax")
+                if name in PINNED_BOUNDS:
+                    gain, worst = PINNED_BOUNDS[name]
+                    if abs(mutant["gain"] - gain) > 1e-9 * gain or abs(mutant["worst"] - worst) > 1e-9 * worst:
+                        found.add("pin")
+            killers[fault] = found
+        must = {"signed_sum": "sound", "no_states": "sound", "dc_l1_one": "sound", "no_dc_remainder": "sound",
+                "no_margin": "spare", "worst_from_last_stage": "pin", "no_product_cap": "relax"}
+        for fault, killer in must.items():
+            self.assertIn(killer, killers[fault], f"{fault}: not killed by {killer}: {killers[fault]}")
+        # Honest limit: on every committed design the sections' tail peak is far below the convergence threshold (below
+        # 1e-30), so the tail term is zero and removing the tail allowance changes nothing the tests can see. A section that
+        # has converged only just adds at most 8192e-6 * product / 2, comparable to the 1% margin (docs/contracts/d02.md).
+        self.assertEqual(killers["no_tail"], set())
+        self.assertEqual(set(killers) - set(must) - {"no_tail"}, set(), "a planted fault with no stated killer")
 
 
 class JudgeBehavior(Base):

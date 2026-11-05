@@ -4,7 +4,7 @@
 
 use super::calibration::{
     BiquadSpec, BoardCalibration, CalibrationProvenance, RouteSource, ValidatedBoard,
-    ValidatedChannel, quantize_section, validate,
+    ValidatedChannel, dc_pole, quantize_section, validate,
 };
 use super::{
     Admission, BoardStatus, FaultCode, MAX_INTERMEDIATE, MAX_SECTIONS_PER_CHANNEL, ProtectionError,
@@ -14,7 +14,6 @@ use crate::{
     FRAMES_PER_BLOCK, HardwareOutputBlock, MAX_HARDWARE_CHANNELS, StereoAudioBlock, unit_f32_to_i16,
 };
 use franken_board_profile::BoardProfile;
-use std::f64::consts::PI;
 
 /// Run-time guard on every filter output: the admitted intermediate range, as an `f32`.
 const INTERMEDIATE_LIMIT: f32 = MAX_INTERMEDIATE as f32;
@@ -105,7 +104,7 @@ impl DcRejector {
     /// `hz` is the -3 dB-ish corner; callers go through calibration validation (`1..=100` Hz).
     #[must_use]
     pub fn new(hz: f64, fs_hz: f64) -> Self {
-        Self::with_pole((-2.0 * PI * hz / fs_hz).exp() as f32)
+        Self::with_pole(dc_pole(hz, fs_hz))
     }
 
     pub(super) const fn with_pole(r: f32) -> Self {
