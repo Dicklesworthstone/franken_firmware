@@ -33,7 +33,9 @@ const INTERMEDIATE_LIMIT: f32 = MAX_INTERMEDIATE as f32;
 /// within 512 samples, because the poles sit at radius 0.973 and 0.989 and the roundoff is amplified
 /// by roughly `1/(1-r)`. `f64` state removes it (difference below 1e-13). The coefficients stay
 /// `f32` on purpose: they are what validation judges (finite, at most 8, stable, bounded), and the
-/// reference uses the same stored values. CPU cost of `f64` on the target ISAs is not measured.
+/// reference uses the same stored values. CPU cost: on a soft-float MIPS32r2 guest under QEMU the `f64` state
+/// costs about 541 more instructions per section per frame than `f32` (guest instructions, not core cycles; no
+/// board clock; `docs/contracts/d02.md`). The PowerPC targets are not measured.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Section {
     b0: f64,
