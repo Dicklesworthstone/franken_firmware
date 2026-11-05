@@ -6,7 +6,8 @@ A results file (JSON lines: crate, target, status, evidence, note) is a CLAIM by
 that says ``pass`` is believed.  This module is what makes the claim checkable before it is folded in:
 
 * it reads the raw per-line log each row points at and requires the log to say the same thing: the command RCH ran
-  on the worker is exactly the planned command (RCH's own ``--config env.RCH_*`` trailer aside), the remote exit
+  on the worker is exactly the planned command (RCH's own ``--config env.RCH_*`` trailer and independently bound
+  source-pair output-directory overrides aside), the remote exit
   status is the row's ``rc`` and is 0 exactly when the row says ``pass``, a ``Finished`` line is present, and the
   worker and revision in the row's note are the log's and the expected revision;
 * it requires the denominator to match: every planned check has exactly one result and no result is for a check
@@ -46,6 +47,13 @@ FINISHED_CARGO = re.compile(r"^\s*Finished `(?P<profile>[^`]+)` profile .* in "
 NOTE_RC = re.compile(r"\brc=(-?\d+)")
 NOTE_WORKER = re.compile(r"\bworker=(\S+)")
 NOTE_REV = re.compile(r"\brev=([0-9a-f]{40})\b")
+TARGET_REWRITE = re.compile(r"Rewriting CARGO_TARGET_DIR for remote execution \(worker-scoped path\): .+ -> (?P<path>\S+)$")
+SOURCE_RECEIPT = "[RCH] source content receipt: "
+POOL_PATH = re.compile(r"(?P<base>/[A-Za-z0-9_./-]+)/(?P<project>[A-Za-z0-9_.-]+)/"
+                       r"\.rch-target-(?P<worker>[A-Za-z0-9_-]+)-pool-(?P<pool>[0-9a-f]{32})")
+SOURCE_PATH = re.compile(r"(?P<base>/[A-Za-z0-9_./-]+)/source-content-pair-(?P<pool>[0-9a-f]{32})"
+                         r"/projects(?:/[A-Za-z0-9_.-]+)*")
+RECEIPT_FIELDS = ("schema", "worker_id", "build_id", "command_sha256", "command_exit_code", "root_count", "roots")
 # Things a diagnostic line must never carry into a committed record.
 _ABS_PATH = re.compile(r"(?:/Users|/home|/private|/tmp|/var|/Volumes|/opt)/[^\s'\"`)\]]+")
 _ADDRESS = re.compile(r"\b[\w.-]+@\d{1,3}(?:\.\d{1,3}){3}\b|\b\d{1,3}(?:\.\d{1,3}){3}\b")
@@ -70,7 +78,7 @@ def parse_log(text: str) -> Dict[str, Any]:
     """Facts from one raw RCH log.  Only the first worker / command / exit line counts, and a second one is a
     ``problems`` entry, so a log that concatenates two runs cannot vouch for either."""
     text = strip_ansi(text)
-    workers, commands, exits, finished = [], [], [], []
+    workers, commands, exits, finished, target_rewrites, receipts = [], [], [], [], [], []
     checked = warnings = 0
     errors: List[str] = []
     for raw in text.splitlines():
@@ -84,6 +92,11 @@ def parse_log(text: str) -> Dict[str, Any]:
         m = FINISHED_REMOTE.search(line)
         if m:
             exits.append((int(m.group("rc")), int(m.group("ms"))))
+        if "Rewriting CARGO_TARGET_DIR for remote execution (worker-scoped path): " in line:
+            m = TARGET_REWRITE.search(line)
+            target_rewrites.append(m.group("path") if m else "")
+        if line.startswith(SOURCE_RECEIPT):
+            receipts.append(line[len(SOURCE_RECEIPT):])
         m = FINISHED_CARGO.match(raw)
         if m:
             seconds = int(m.group("h") or 0) * 3600 + int(m.group("m") or 0) * 60 + float(m.group("s"))
@@ -102,7 +115,12 @@ def parse_log(text: str) -> Dict[str, Any]:
     if len(commands) == 1:
         try:
             argv = remote_argv(commands[0])
+            cargo = argv[:argv.index("--")] if "--" in argv else argv
+            if any(token.startswith("build.build-dir=") for token in cargo):
+                target = _managed_output_target(workers, exits, target_rewrites, receipts)
+                argv = remote_argv(commands[0], managed_target=target)
         except ValueError as exc:
+            argv = None
             problems.append("the remote command cannot be read: %s" % exc)
     return {"worker": workers[0] if len(workers) == 1 else None, "argv": argv,
             "rc": exits[0][0] if len(exits) == 1 else None, "remote_ms": exits[0][1] if len(exits) == 1 else None,
@@ -110,9 +128,74 @@ def parse_log(text: str) -> Dict[str, Any]:
             "errors": errors, "problems": problems}
 
 
-def remote_argv(command: str) -> List[str]:
-    """The cargo argv RCH ran, with RCH's own trailing ``--config env.RCH_...`` pairs removed.  Any other
-    ``--config`` stays, so a build that quietly changed cargo's configuration does not match the plan."""
+def _unique_json_object(pairs: List[Tuple[str, Any]]) -> dict:
+    result = {}
+    for name, value in pairs:
+        if name in result:
+            raise ValueError("duplicate field in source receipt")
+        result[name] = value
+    return result
+
+
+def _literal_absolute_path(path: Any) -> bool:
+    return (isinstance(path, str) and path.startswith("/")
+            and re.fullmatch(r"/[A-Za-z0-9_./-]+", path) is not None
+            and all(part not in ("", ".", "..") for part in path.split("/")[1:]))
+
+
+def _managed_output_target(workers: List[str], exits: list, rewrites: List[str], receipts: List[str]) -> str:
+    """Bind the output-only rewrite to the same log's worker, target and source-pair receipt.
+
+    RCH's cargo_target_dir.rs inserts build.build-dir and --target-dir before Cargo's `--`;
+    dependency_closure.rs binds their pool key to source-content-pair-<key>/projects.
+    Receipt integrity follows source_fidelity.rs::SourceContentReceiptPreimage. This does NOT
+    establish source-file fidelity or equate command_sha256 with a reconstructed command string;
+    the caller still compares the resulting argv against its independently supplied plan.
+    """
+    if any(len(values) != 1 for values in (workers, exits, rewrites, receipts)):
+        raise ValueError("managed output override needs exactly one worker, exit, target rewrite and source receipt")
+    target = rewrites[0]
+    pool = POOL_PATH.fullmatch(target) if _literal_absolute_path(target) else None
+    if pool is None or pool.group("worker") != workers[0]:
+        raise ValueError("managed output target is not the selected worker's literal pool path")
+    try:
+        receipt = json.loads(receipts[0], object_pairs_hook=_unique_json_object)
+        if not isinstance(receipt, dict) or set(receipt) != set(RECEIPT_FIELDS) | {"receipt_root"}:
+            raise ValueError("invalid source receipt fields")
+        preimage = {name: receipt[name] for name in RECEIPT_FIELDS}
+        digest = sha256_bytes(json.dumps(preimage, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8"))
+        roots = receipt["roots"]
+        if (receipt["schema"] != "rch.source_content_receipt.v1"
+                or receipt["worker_id"] != workers[0]
+                or not isinstance(receipt["build_id"], str) or re.fullmatch(r"[1-9][0-9]*", receipt["build_id"]) is None
+                or not isinstance(receipt["command_sha256"], str)
+                or re.fullmatch(r"[0-9a-f]{64}", receipt["command_sha256"]) is None
+                or type(receipt["command_exit_code"]) is not int or receipt["command_exit_code"] != exits[0][0]
+                or type(receipt["root_count"]) is not int or not isinstance(roots, list)
+                or receipt["root_count"] != len(roots) or not roots
+                or digest != receipt["receipt_root"]):
+            raise ValueError("source receipt identity, status, denominator or digest mismatch")
+        for root in roots:
+            if (not isinstance(root, dict) or root.get("schema") != "rch.source_content_root.v1"
+                    or type(root.get("is_primary")) is not bool or not _literal_absolute_path(root.get("remote_root"))):
+                raise ValueError("invalid source root witness")
+            source = SOURCE_PATH.fullmatch(root["remote_root"])
+            if source is None or (source.group("base"), source.group("pool")) != (pool.group("base"), pool.group("pool")):
+                raise ValueError("source root does not bind the managed output pool")
+        primary = [root for root in roots if root["is_primary"]]
+        if len(primary) != 1 or primary[0].get("project_id") != pool.group("project"):
+            raise ValueError("source receipt does not name exactly one matching primary project")
+    except (TypeError, KeyError, UnicodeError, RecursionError) as exc:
+        raise ValueError("invalid source receipt") from exc
+    return target
+
+
+def remote_argv(command: str, managed_target: Optional[str] = None) -> List[str]:
+    """The cargo argv RCH ran, minus its env.RCH trailer before Cargo's `--`.
+
+    Only parse_log's independently bound managed_target permits removing the exact adjacent
+    build.build-dir/--target-dir suffix. Every other config/flag and all passthrough argv stay.
+    """
     argv = shlex.split(command)
     # RCH's debug-pressure defaults are logged as an env prefix. Only the
     # observed fixed values are equivalent to the planned release command;
@@ -129,9 +212,19 @@ def remote_argv(command: str) -> List[str]:
         if not seen or i == len(argv):
             raise ValueError("remote environment prefix has no cargo command")
         argv = argv[i:]
-    while len(argv) >= 2 and argv[-2] == "--config" and argv[-1].startswith("env.RCH_"):
-        argv = argv[:-2]
-    return argv
+    end = argv.index("--") if "--" in argv else len(argv)
+    cargo, passthrough = argv[:end], argv[end:]
+    while len(cargo) >= 2 and cargo[-2] == "--config" and cargo[-1].startswith("env.RCH_"):
+        cargo = cargo[:-2]
+    if managed_target is not None:
+        suffix = ["--config", 'build.build-dir="%s"' % managed_target, "--target-dir", managed_target]
+        if cargo[-4:] != suffix:
+            raise ValueError("managed output options are not the exact paired Cargo suffix")
+        cargo = cargo[:-4]
+        if any(token.startswith("build.build-dir=") or token == "--target-dir" or token.startswith("--target-dir=")
+               for token in cargo):
+            raise ValueError("repeated managed output option")
+    return cargo + passthrough
 
 
 def plan_argv(line: str) -> List[str]:

@@ -6,6 +6,7 @@ paths, so no real worker address or local path is in this repository. They show 
 kind of claim; the real run's logs are verified by running the ingest on them (docs/contracts/e06.md), not here.
 """
 import importlib.util
+import hashlib
 import io
 import json
 import os
@@ -71,6 +72,37 @@ def row(crate, target, status="pass", rc=0, worker="w1", rev=REV, evidence=None,
     return {"crate": crate, "target": target, "status": status,
             "evidence": evidence or "out/%s-%s.log" % (crate, target),
             "note": note if note is not None else "rc=%d worker=%s rev=%s" % (rc, worker, rev)}
+
+
+POOL = "0123456789abcdef0123456789abcdef"
+MANAGED_TARGET = "/data/tmp/rch/fixture/.rch-target-w1-pool-" + POOL
+
+
+def source_receipt(worker="w1", project="fixture", pool=POOL):
+    """Synthetic source-pair receipt; no file list here is evidence of a real source transfer."""
+    return {"schema": "rch.source_content_receipt.v1", "worker_id": worker, "build_id": "12345",
+            "command_sha256": "a" * 64, "command_exit_code": 0, "root_count": 1,
+            "roots": [{"schema": "rch.source_content_root.v1", "ordinal": 0, "project_id": project,
+                       "local_root": "/synthetic/fixture", "remote_root": "/data/tmp/rch/source-content-pair-" + pool + "/projects",
+                       "root_hash": "b" * 64, "is_primary": True, "mode": "full", "filter_policy": {},
+                       "file_count": 0, "byte_count": 0, "files": []}]}
+
+
+def receipt_line(receipt):
+    preimage = {key: receipt[key] for key in ("schema", "worker_id", "build_id", "command_sha256", "command_exit_code", "root_count", "roots")}
+    receipt = dict(receipt, receipt_root=hashlib.sha256(json.dumps(preimage, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest())
+    return "[RCH] source content receipt: " + json.dumps(receipt, ensure_ascii=False, separators=(",", ":"))
+
+
+def managed_log(crate="alpha", target=MIPS, receipt=None, path=MANAGED_TARGET, passthrough=""):
+    """Model the independently inspected RCH rewrite, not an expanded expected plan."""
+    text = log(crate, target)
+    pair = " --config 'build.build-dir=\"%s\"' --target-dir %s" % (path, path)
+    text = text.replace(" --config 'env.RCH_BUILD_SOURCE.value", pair + " --config 'env.RCH_BUILD_SOURCE.value", 1)
+    if passthrough:
+        text = "\n".join(line + passthrough if "Executing command remotely:" in line else line for line in text.splitlines()) + "\n"
+    return (text + "INFO rch::transfer: Rewriting CARGO_TARGET_DIR for remote execution (worker-scoped path): "
+            "/synthetic/target -> " + path + "\n" + receipt_line(receipt if receipt is not None else source_receipt()) + "\n")
 
 
 class Base(unittest.TestCase):
@@ -179,6 +211,106 @@ class ParseLogTests(unittest.TestCase):
             self.assertTrue(any("0 %s lines" % word in p for p in facts["problems"]), (kind, facts["problems"]))
 
 
+class ManagedOutputTests(unittest.TestCase):
+    def assert_unreadable(self, text):
+        facts = CK.parse_log(text)
+        self.assertIsNone(facts["argv"])
+        self.assertTrue(any("cannot be read" in p for p in facts["problems"]), facts["problems"])
+
+    def test_only_the_exact_witness_bound_pair_is_removed(self):
+        facts = CK.parse_log(managed_log())
+        self.assertEqual(facts["problems"], [])
+        self.assertEqual(facts["argv"], CK.plan_argv(planned("alpha", MIPS)))
+        # A bare command string has no independent authority for an output-path exception.
+        command = next(line.split("Executing command remotely: ", 1)[1] for line in managed_log().splitlines()
+                       if "Executing command remotely:" in line)
+        self.assertNotEqual(CK.remote_argv(command), CK.plan_argv(planned("alpha", MIPS)))
+
+    def test_the_cargo_separator_and_all_compiler_arguments_survive(self):
+        tail = " -- --no-deps -F unsafe_code --config 'env.RCH_LITERAL.force=true'"
+        text = managed_log(passthrough=tail).replace("cargo +nightly check ", "cargo +nightly clippy ")
+        facts = CK.parse_log(text)
+        self.assertEqual(facts["problems"], [])
+        expected = CK.plan_argv(planned("alpha", MIPS).replace(" check ", " clippy "))
+        self.assertEqual(facts["argv"], expected + ["--", "--no-deps", "-F", "unsafe_code", "--config", "env.RCH_LITERAL.force=true"])
+        # A compiler argument that looks like Cargo's output override is never stripped or used as authority.
+        text = log("alpha", MIPS)
+        text = "\n".join(line + " -- --config 'build.build-dir=\"/literal\"'" if "Executing command remotely:" in line else line
+                         for line in text.splitlines())
+        facts = CK.parse_log(text)
+        self.assertEqual(facts["problems"], [])
+        self.assertEqual(facts["argv"][-3:], ["--", "--config", 'build.build-dir="/literal"'])
+
+    def test_each_missing_or_duplicate_witness_prevents_normalization(self):
+        text = managed_log()
+        markers = ("Selected worker:", "Rewriting CARGO_TARGET_DIR", "[RCH] source content receipt:", "Remote command finished:")
+        for marker in markers:
+            witness = next(line for line in text.splitlines() if marker in line)
+            for bad in (text.replace(witness + "\n", ""), text + witness + "\n"):
+                with self.subTest(marker=marker, duplicated=bad.startswith(text)):
+                    self.assert_unreadable(bad)
+        self.assert_unreadable(text + "INFO rch::transfer: Rewriting CARGO_TARGET_DIR for remote execution (worker-scoped path): malformed\n")
+
+    def test_a_different_worker_pool_project_or_base_cannot_bind_the_pair(self):
+        variants = [managed_log().replace("Selected worker: w1 at", "Selected worker: w2 at"),
+                    managed_log(path=MANAGED_TARGET.replace("w1-pool", "w2-pool")),
+                    managed_log(path=MANAGED_TARGET.replace(POOL, "f" * 32)),
+                    managed_log(path=MANAGED_TARGET.replace("/data/tmp/rch/", "/elsewhere/rch/")),
+                    managed_log(receipt=source_receipt(worker="w2")),
+                    managed_log(receipt=source_receipt(project="other")),
+                    managed_log(receipt=source_receipt(pool="f" * 32))]
+        for bad in variants:
+            with self.subTest(index=variants.index(bad)):
+                self.assert_unreadable(bad)
+
+    def test_the_two_output_options_must_agree_and_be_adjacent(self):
+        text = managed_log()
+        for old, new in (("--target-dir " + MANAGED_TARGET, "--target-dir /unmanaged"),
+                         ("--target-dir " + MANAGED_TARGET, ""),
+                         ("--target-dir " + MANAGED_TARGET, "--target-dir=" + MANAGED_TARGET),
+                         ("--target-dir " + MANAGED_TARGET, "--target-dir " + MANAGED_TARGET + " --target-dir " + MANAGED_TARGET),
+                         ("--target-dir " + MANAGED_TARGET, "--config 'build.jobs=1' --target-dir " + MANAGED_TARGET)):
+            with self.subTest(new=new):
+                self.assert_unreadable(text.replace(old, new, 1))
+
+    def test_paths_with_traversal_empty_components_backslashes_or_toml_injection_are_not_managed(self):
+        for path in (MANAGED_TARGET.replace("/fixture/", "/fixture/../fixture/"),
+                     MANAGED_TARGET.replace("/fixture/", "/fixture//"),
+                     MANAGED_TARGET.replace("/fixture/", "/./fixture/"),
+                     MANAGED_TARGET.replace("/fixture/", "/fixture\\evil/"),
+                     "relative/" + MANAGED_TARGET.lstrip("/")):
+            with self.subTest(path=path):
+                self.assert_unreadable(managed_log(path=path))
+        self.assert_unreadable(managed_log().replace('build.build-dir="' + MANAGED_TARGET + '"',
+                                                    'build.build-dir="' + MANAGED_TARGET + '"\nbuild.rustflags=["-Awarnings"]', 1))
+
+    def test_receipt_digest_shape_status_and_primary_are_not_advisory(self):
+        for field, value in (("schema", "unknown"), ("root_count", 2), ("root_count", True), ("command_exit_code", 101),
+                             ("command_exit_code", False), ("command_sha256", "not-a-hash"), ("build_id", "unknown")):
+            receipt = source_receipt(); receipt[field] = value
+            with self.subTest(field=field, value=value):
+                self.assert_unreadable(managed_log(receipt=receipt))
+        for primary in (False, "true", 1):
+            receipt = source_receipt(); receipt["roots"][0]["is_primary"] = primary
+            self.assert_unreadable(managed_log(receipt=receipt))
+        receipt = source_receipt(); receipt["roots"].append(dict(receipt["roots"][0])); receipt["root_count"] = 2
+        self.assert_unreadable(managed_log(receipt=receipt))
+        # Change a valid hash without repairing its independent canonical receipt digest.
+        self.assert_unreadable(managed_log().replace('"command_sha256":"' + "a" * 64, '"command_sha256":"' + "c" * 64))
+        # Duplicate JSON fields cannot silently use last-value-wins parsing.
+        self.assert_unreadable(managed_log().replace('"worker_id":"w1"', '"worker_id":"w1","worker_id":"w1"'))
+
+    def test_an_unrecognized_config_or_compiler_change_remains_visible_to_the_plan(self):
+        pair = " --config 'build.build-dir=\"" + MANAGED_TARGET + "\"'"
+        for extra in (" --config 'build.rustflags=[\"-Awarnings\"]'", " --config 'build.jobs=1'", " --target other-isa"):
+            facts = CK.parse_log(managed_log().replace(pair, extra + pair, 1))
+            self.assertEqual(facts["problems"], [])
+            self.assertNotEqual(facts["argv"], CK.plan_argv(planned("alpha", MIPS)))
+            self.assertIn(extra.split()[0], facts["argv"])
+        # A duplicate managed config is not merely stripped twice.
+        self.assert_unreadable(managed_log().replace(pair, pair + pair, 1))
+
+
 class VerifyAcceptTests(Base):
     def test_supported_claims_become_records_with_the_logs_own_facts(self):
         records, problems = self.verify(self.good())
@@ -211,6 +343,19 @@ class VerifyAcceptTests(Base):
         text = json.dumps(records)
         for leaked in ("192.0.2.7", "ubuntu", "/private", "/home", "synthetic", "Selected worker", "Syncing"):
             self.assertNotIn(leaked, text, leaked)
+
+    def test_a_verified_source_pair_still_uses_the_independent_plan_and_redacts_the_witness(self):
+        rows = self.good()
+        self.put("alpha", MIPS, managed_log())
+        records, problems = self.verify(rows)
+        self.assertEqual(problems, [])
+        self.assertEqual(records[0]["command"], planned("alpha", MIPS))
+        public = json.dumps(records)
+        for private in (MANAGED_TARGET, "source-content-pair-", "build.build-dir", "receipt_root", "/synthetic"):
+            self.assertNotIn(private, public)
+        pair = " --config 'build.build-dir=\"" + MANAGED_TARGET + "\"'"
+        self.put("alpha", MIPS, managed_log().replace(pair, " --config 'build.jobs=1'" + pair, 1))
+        self.only_problem(rows, "not the planned command")
 
 
 class VerifyRejectTests(Base):
