@@ -93,6 +93,65 @@ pub enum SessionError {
     IneligibleAudioBoard { profile_id: String },
     #[error("unknown group member `{member_id}`")]
     UnknownMember { member_id: String },
+    #[error(
+        "command (epoch={epoch}, seq={command_seq}) is at or below the idempotency floor {window_floor}: whether it was applied can no longer be known, so it is refused rather than risk applying it twice"
+    )]
+    CommandBelowWindow {
+        epoch: u64,
+        command_seq: u64,
+        window_floor: u64,
+    },
+}
+
+/// How many applied command sequence numbers of the current epoch the session remembers.
+pub const COMMAND_DEDUP_WINDOW: usize = 1024;
+
+/// Bounded memory of which command sequence numbers of the current epoch have been applied.
+///
+/// Only commands that were actually applied are recorded, so a rejected command never burns its
+/// sequence number and a corrected retry under the same number gets its real outcome. At most
+/// [`COMMAND_DEDUP_WINDOW`] numbers are kept: when more arrive the smallest is evicted and the
+/// eviction floor rises to it. Anything at or below the floor can no longer be proven unapplied,
+/// so it is refused (`CommandBelowWindow`) instead of being applied again. A large jump in
+/// sequence number costs one slot and cannot lock out the numbers below it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct AppliedCommands {
+    seqs: BTreeSet<u64>,
+    evicted_through: Option<u64>,
+}
+
+impl AppliedCommands {
+    fn check(&self, epoch: u64, seq: u64) -> Result<(), SessionError> {
+        if self.seqs.contains(&seq) {
+            return Err(SessionError::DuplicateCommand {
+                epoch,
+                command_seq: seq,
+            });
+        }
+        if let Some(floor) = self.evicted_through
+            && seq <= floor
+        {
+            return Err(SessionError::CommandBelowWindow {
+                epoch,
+                command_seq: seq,
+                window_floor: floor,
+            });
+        }
+        Ok(())
+    }
+
+    fn record(&mut self, seq: u64) {
+        self.seqs.insert(seq);
+        while self.seqs.len() > COMMAND_DEDUP_WINDOW {
+            let Some(oldest) = self.seqs.pop_first() else {
+                break;
+            };
+            self.evicted_through = Some(
+                self.evicted_through
+                    .map_or(oldest, |floor| floor.max(oldest)),
+            );
+        }
+    }
 }
 
 /// Unified group state machine supporting mixed S1 (`swGen=1`) and S2 (`swGen=2`) speakers (`G01`).
@@ -104,7 +163,7 @@ pub struct UnifiedGroupSession {
     pub state_revision: u64,
     pub group_master_volume: u8,
     pub members: BTreeMap<String, GroupMemberState>,
-    applied_commands: BTreeSet<(u64, u64)>,
+    applied_commands: AppliedCommands,
 }
 
 impl UnifiedGroupSession {
@@ -117,11 +176,17 @@ impl UnifiedGroupSession {
             state_revision: 0,
             group_master_volume: 50,
             members: BTreeMap::new(),
-            applied_commands: BTreeSet::new(),
+            applied_commands: AppliedCommands::default(),
         }
     }
 
     /// Apply a fenced control command, enforcing epoch monotonicity and idempotency.
+    ///
+    /// A command is judged against the record of its own epoch and recorded only once it has been
+    /// applied: a rejected command leaves the epoch, the record and the state untouched, so it can
+    /// be retried (corrected) under the same sequence number, while a duplicate of an applied one
+    /// is `DuplicateCommand`. A command from a newer epoch has no record yet; adopting that epoch
+    /// drops the older epoch's record.
     pub fn apply_command(&mut self, cmd: FencedControlCommand) -> Result<u64, SessionError> {
         if cmd.epoch < self.current_epoch {
             return Err(SessionError::StaleEpoch {
@@ -129,11 +194,8 @@ impl UnifiedGroupSession {
                 current_epoch: self.current_epoch,
             });
         }
-        if !self.applied_commands.insert((cmd.epoch, cmd.command_seq)) {
-            return Err(SessionError::DuplicateCommand {
-                epoch: cmd.epoch,
-                command_seq: cmd.command_seq,
-            });
+        if cmd.epoch == self.current_epoch {
+            self.applied_commands.check(cmd.epoch, cmd.command_seq)?;
         }
 
         match cmd.payload {
@@ -208,7 +270,9 @@ impl UnifiedGroupSession {
         // far-future epoch can no longer fence out the legitimate coordinator.
         if cmd.epoch > self.current_epoch {
             self.current_epoch = cmd.epoch;
+            self.applied_commands = AppliedCommands::default();
         }
+        self.applied_commands.record(cmd.command_seq);
         self.state_revision = self.state_revision.saturating_add(1);
         Ok(self.state_revision)
     }
