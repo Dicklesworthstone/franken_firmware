@@ -18,7 +18,7 @@ generations (S1 and S2), one target codebase.
 </div>
 
 > **Status: research workspace, pre-alpha.** The live tracker has 56 beads;
-> the 2026-11-05 review found five closed (E01, E03, E05, E07 and Q00).
+> the 2026-11-05 review found six closed (E01, E03, E05, E06, E07 and Q00).
 > Use `br list --all --deferred --limit 0 --json` for current counts and
 > `br ready --json` for actionable work. The Rust workspace, offline suites
 > and cross-target evidence are implemented in this tree; each open bead
