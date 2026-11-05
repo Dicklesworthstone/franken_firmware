@@ -34,6 +34,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import threading
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -45,6 +46,11 @@ SCHEMA = "ffw.e06.batch.v1"
 RECORD_SCHEMA = "ffw.e06.batch-record.v1"
 WORKERS = "trj,hz3"                       # nightly -Z build-std lines go on the workers that have rust-src (ts1 removed: its shim refuses strict-remote jobs)
 JOBS = 2
+# Deadlines (seconds) for the local children this tool starts, so none of them can wait forever. `audit.py plan` resolves three platforms
+# (each `cargo metadata` has its own 180 s bound there); a local git read or archive of a pinned revision ends in seconds.
+PLAN_TIMEOUT = 900.0
+GIT_TIMEOUT = 120.0
+ARCHIVE_TIMEOUT = 600.0
 TARGETS = {"mips-unknown-linux-musl": "mips", "powerpc-unknown-linux-musl": "powerpc"}
 EVIDENCE_REL = os.path.join("toolchain", "results", "e06", "upstream")
 BYPASS_ENV = ("RCH_CARGO_WRAPPER_BYPASS", "RCH_ENABLED")
@@ -160,11 +166,14 @@ def make_line(group: str, source: str, config: str, item: Dict[str, str]) -> Dic
     }
 
 
-def workspace_plan(export: str, audit_py: Optional[str] = None) -> List[str]:
+def workspace_plan(export: str, audit_py: Optional[str] = None, timeout: float = PLAN_TIMEOUT) -> List[str]:
     """The planned workspace lines for an export, from audit.py plan (a resolver read: cargo metadata --locked --offline)."""
     audit_py = audit_py or os.path.join(HERE, "audit.py")
-    proc = subprocess.run([sys.executable, "-B", "-I", audit_py, "plan", "--manifest-path", os.path.join(export, "Cargo.toml"),
-                           "--jobs", str(JOBS)], capture_output=True, text=True)
+    try:
+        proc = subprocess.run([sys.executable, "-B", "-I", audit_py, "plan", "--manifest-path", os.path.join(export, "Cargo.toml"),
+                               "--jobs", str(JOBS)], capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("audit.py plan did not finish within %g s" % timeout) from None
     if proc.returncode != 0:
         raise RuntimeError("audit.py plan refused (exit %d): %s" % (proc.returncode, checks.redact(proc.stderr.strip().splitlines()[-1] if proc.stderr.strip() else "")))
     return [line for line in proc.stdout.splitlines() if line.strip()]
@@ -524,24 +533,48 @@ def results_rows(manifest: Dict[str, Any], results: Sequence[Dict[str, Any]], re
 
 
 # ------------------------------------------------------------------------------------------------------------------ the runner
-def run_git(repo: str, *args: str) -> str:
-    proc = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+def run_git(repo: str, *args: str, timeout: float = GIT_TIMEOUT) -> str:
+    try:
+        proc = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("git %s did not finish within %g s in %s" % (args[0], timeout, os.path.basename(os.path.abspath(repo)))) from None
     if proc.returncode != 0:
         raise RuntimeError("git %s failed in %s" % (args[0], os.path.basename(os.path.abspath(repo))))
     return proc.stdout.strip()
 
 
-def archive_into(repo: str, rev: str, dest: str) -> None:
-    """Extract `git archive rev` of `repo` into the new directory `dest`: the pinned bytes, never a working copy."""
+def archive_into(repo: str, rev: str, dest: str, timeout: float = ARCHIVE_TIMEOUT) -> None:
+    """Extract `git archive rev` of `repo` into the new directory `dest`: the pinned bytes, never a working copy.  The archive is a stream,
+    which `subprocess` cannot put a deadline on, so a timer kills `git archive` when `timeout` passes: the stream ends and the extraction
+    fails as a timeout, not as a wait."""
     if run_git(repo, "cat-file", "-t", rev) != "commit" or run_git(repo, "rev-parse", rev + "^{commit}") != rev:
         raise RuntimeError("%s is not a commit of %s" % (rev[:12], os.path.basename(os.path.abspath(repo))))
     os.makedirs(dest)
+    expired = threading.Event()
     with subprocess.Popen(["git", "-C", repo, "archive", "--format=tar", rev], stdout=subprocess.PIPE) as proc:
-        with tarfile.open(fileobj=proc.stdout, mode="r|") as tf:
+        def stop() -> None:
+            expired.set()
+            proc.kill()
+        watchdog = threading.Timer(timeout, stop)
+        watchdog.start()
+        try:
+            with tarfile.open(fileobj=proc.stdout, mode="r|") as tf:
+                try:
+                    tf.extractall(dest, filter="data")
+                except TypeError:                   # Python before 3.12 has no extraction filters
+                    tf.extractall(dest)
+        except (tarfile.TarError, EOFError):
+            if not expired.is_set():
+                raise
+        finally:
+            # EOF only establishes that the archive stream ended. Keep the
+            # watchdog active while waiting for a child that may still be alive.
             try:
-                tf.extractall(dest, filter="data")
-            except TypeError:                       # Python before 3.12 has no extraction filters
-                tf.extractall(dest)
+                proc.wait()
+            finally:
+                watchdog.cancel()
+    if expired.is_set():
+        raise RuntimeError("git archive did not finish within %g s" % timeout)
     if proc.returncode != 0:
         raise RuntimeError("git archive failed")
 

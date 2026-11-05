@@ -165,6 +165,16 @@ class StubbedRecordTests(unittest.TestCase):
         self.assertEqual(rec["targets"]["powerpc"]["rust_float_abi"], "soft")
 
 
+def nightly_rustc_answers():
+    """True when `rustc +nightly -vV` answers 0 within its deadline; a probe that does not answer is "no nightly rustc" (a skip with a reason)."""
+    if not __import__("shutil").which("rustc"):
+        return False
+    try:
+        return subprocess.run(["rustc", "+nightly", "-vV"], capture_output=True, timeout=60).returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
+
+
 class CommandLineAndLiveTests(unittest.TestCase):
     def test_json_is_written_once_and_never_overwritten(self):
         with tempfile.TemporaryDirectory() as d:
@@ -177,8 +187,7 @@ class CommandLineAndLiveTests(unittest.TestCase):
             with open(out) as fh:
                 self.assertEqual(fh.read(), "keep")
 
-    @unittest.skipUnless(subprocess.run(["rustc", "+nightly", "-vV"], capture_output=True).returncode == 0
-                         if __import__("shutil").which("rustc") else False, "no nightly rustc")
+    @unittest.skipUnless(nightly_rustc_answers(), "no nightly rustc")
     def test_the_real_toolchain_today(self):
         """Pins today's facts. A failure means a nightly changed a target's float default: read it, do not 'fix' it."""
         rec = FP.record(use_zig=False)

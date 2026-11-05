@@ -4,17 +4,80 @@
 # Cargo.lock and the dependency sources already in the local registry cache. It compiles nothing, runs no
 # QEMU and touches no device.
 #
-#   scripts/e2e/e06                      the tests, then the audit of this workspace
+#   scripts/e2e/e06                      the full tier: the tests, then the audit of this workspace
+#   scripts/e2e/e06 --tier smoke|full|soak   the tier, explicitly (CI selects it; no tier means full)
 #   scripts/e2e/e06 --tests-only         only the tests (hand-written graphs, a contaminated graph, real cargo)
 #   scripts/e2e/e06 --audit-only [ARGS]  only the audit; ARGS go to scripts/e06/audit.py audit
 #                                        (e.g. --json OUT, --build-results FILE, --unsafe-allowed a,b)
 #   python3 -B -I scripts/e06/audit.py plan     the minimal-graph `cargo check` lines for the central batch
 #
+# Tiers:
+#   full   today's default, unchanged: all of tests/e06, then the audit. `--tier full [ARGS]` passes ARGS to the audit.
+#   smoke  only the test modules listed in SMOKE_MODULES below: they start neither cargo nor rustc (the lexer, hand-written and
+#          contaminated graphs, the ingest verifier, the committed evidence). It runs no audit. It prints that it is a PARTIAL
+#          run: it is never an E06 qualification, whatever its exit status.
+#   soak   NOT RUN. E06 is a one-shot batch read over a finite graph; nothing in it is long-running, so there is nothing to soak.
+#          It says so and exits 4, which is not a pass.
+#
 # Exit codes: 1 a test failed or the audit has blockers; 3 the tests passed and only REVIEW items remain
-# (reported, never admitted: a human decides each one); 0 tests passed and nothing is left to review;
-# 2 usage. The audit never says "admitted".
+# (reported, never admitted: a human decides each one); 0 tests passed and nothing is left to review
+# (for --tier smoke: the smoke modules passed, and nothing is claimed about the rest); 2 usage or an unknown tier;
+# 4 --tier soak (not run). The audit never says "admitted".
+#
+# Every tests/e06/test_*.py module is in exactly one of the two lists; tests/e06/test_e2e_tiers.py fails when a module is in neither.
+SMOKE_MODULES=(test_rustscan.py test_audit.py test_checks.py test_evidence.py test_run7_evidence.py test_audit_closing_evidence.py)
+FULL_ONLY_MODULES=(test_batch.py test_deadlines.py test_e2e_tiers.py test_fp_isa.py test_live.py test_upstream.py)
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+tier=""
+if [ "${1:-}" = "--tier" ]; then
+  if [ "$#" -lt 2 ]; then
+    echo "scripts/e2e/e06: --tier needs smoke, full or soak" >&2
+    exit 2
+  fi
+  tier="$2"
+  shift 2
+  case "$tier" in
+    smoke|full|soak) ;;
+    *) echo "scripts/e2e/e06: unknown tier '$tier' (smoke, full or soak)" >&2; exit 2 ;;
+  esac
+  case "${1:-}" in
+    --tests-only|--audit-only) echo "scripts/e2e/e06: --tier cannot be combined with ${1}" >&2; exit 2 ;;
+  esac
+fi
+
+if [ "$tier" = "soak" ]; then
+  echo "scripts/e2e/e06: soak tier NOT RUN. E06 is a one-shot batch read over a finite graph (cargo metadata --locked --offline, Cargo.lock, the registry cache); nothing in it is long-running, so there is nothing to soak. This is not a pass (exit 4)." >&2
+  exit 4
+fi
+
+if [ "$tier" = "smoke" ]; then
+  if [ "$#" -ne 0 ]; then
+    echo "scripts/e2e/e06: --tier smoke takes no further arguments (got $*)" >&2
+    exit 2
+  fi
+  python3 -B -I -c '
+import sys, unittest
+start, patterns = sys.argv[1], sys.argv[2:]
+suite = unittest.TestSuite()
+for pattern in patterns:
+    suite.addTests(unittest.defaultTestLoader.discover(start, pattern=pattern))
+result = unittest.TextTestRunner(verbosity=1).run(suite)
+# A smoke test that skipped for want of cargo or rustc means its module needs them, so it is not a smoke module.
+needs = [str(test) for test, why in result.skipped if "cargo" in why.lower() or "rustc" in why.lower()]
+if needs:
+    print("smoke tier: %d test(s) skipped for want of cargo or rustc, so their module is not a smoke module: %s" % (len(needs), "; ".join(needs[:3])), file=sys.stderr)
+sys.exit(0 if result.wasSuccessful() and not needs else 1)
+' "$ROOT/tests/e06" "${SMOKE_MODULES[@]}" || {
+    echo "scripts/e2e/e06: smoke tier FAILED" >&2
+    exit 1
+  }
+  all_modules=("$ROOT"/tests/e06/test_*.py)
+  echo "scripts/e2e/e06: smoke tier ran ${#SMOKE_MODULES[@]} of ${#all_modules[@]} test modules and no audit: a PARTIAL run, not an E06 qualification. Run --tier full for that."
+  exit 0
+fi
+
 mode="both"
 case "${1:-}" in
   --tests-only) mode="tests"; shift ;;

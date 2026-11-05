@@ -49,7 +49,7 @@ def export_head():
     TemporaryDirectory, or None when git or a repository is not available (an environment fact, so the class skips)."""
     if shutil.which("git") is None:
         return None
-    if subprocess.run(["git", "-C", ROOT, "rev-parse", "--git-dir"], capture_output=True).returncode != 0:
+    if subprocess.run(["git", "-C", ROOT, "rev-parse", "--git-dir"], capture_output=True, timeout=60).returncode != 0:
         return None
     proc = subprocess.run(["git", "-C", ROOT, "archive", "--format=tar", "HEAD"], capture_output=True, timeout=180, check=True)
     tmp = tempfile.TemporaryDirectory()

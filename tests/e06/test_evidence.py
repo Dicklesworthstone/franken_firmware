@@ -91,7 +91,7 @@ class CommittedEvidenceTests(unittest.TestCase):
             self.assertEqual((row["status"], row["evidence"], row["note"]), (record["status"], record["evidence"], record["note"]))
 
     def test_the_audit_ran_on_the_revision_the_checks_ran_on(self):
-        lock = subprocess.run(["git", "-C", ROOT, "show", REV + ":Cargo.lock"], capture_output=True)
+        lock = subprocess.run(["git", "-C", ROOT, "show", REV + ":Cargo.lock"], capture_output=True, timeout=60)
         if lock.returncode != 0:
             self.skipTest("revision %s is not in this repository" % REV[:12])
         import hashlib

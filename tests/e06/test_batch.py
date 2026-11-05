@@ -65,10 +65,10 @@ def make_repo(base):
         write(os.path.join(repo, name, "src", "lib.rs"), "pub fn f() {}\n")
     subprocess.run(["cargo", "generate-lockfile", "--offline", "--manifest-path", os.path.join(repo, "Cargo.toml")],
                    capture_output=True, text=True, check=True, timeout=120)
-    subprocess.run(["git", "init", "-q", repo], check=True, capture_output=True)
-    subprocess.run(GIT + ["-C", repo, "add", "-A"], check=True, capture_output=True)
-    subprocess.run(GIT + ["-C", repo, "commit", "-q", "-m", "fixture"], check=True, capture_output=True)
-    rev = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+    subprocess.run(["git", "init", "-q", repo], check=True, capture_output=True, timeout=120)
+    subprocess.run(GIT + ["-C", repo, "add", "-A"], check=True, capture_output=True, timeout=120)
+    subprocess.run(GIT + ["-C", repo, "commit", "-q", "-m", "fixture"], check=True, capture_output=True, timeout=120)
+    rev = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], check=True, capture_output=True, text=True, timeout=120).stdout.strip()
     return repo, rev
 
 
@@ -535,8 +535,8 @@ class FrankenLibcPreparationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo, rev = make_repo(tmp)
             write(os.path.join(repo, "later.txt"), "later\n")
-            subprocess.run(GIT + ["-C", repo, "add", "-A"], check=True, capture_output=True)
-            subprocess.run(GIT + ["-C", repo, "commit", "-q", "-m", "later"], check=True, capture_output=True)
+            subprocess.run(GIT + ["-C", repo, "add", "-A"], check=True, capture_output=True, timeout=120)
+            subprocess.run(GIT + ["-C", repo, "commit", "-q", "-m", "later"], check=True, capture_output=True, timeout=120)
             dest = os.path.join(tmp, "out")
             BA.archive_into(repo, rev, dest)
             self.assertTrue(os.path.isfile(os.path.join(dest, "Cargo.toml")))
