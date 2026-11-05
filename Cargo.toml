@@ -12,6 +12,7 @@ members = [
     "crates/franken-control",
     "crates/franken-speaker",
     "crates/franken-alloc-probe",
+    "crates/franken-baseline",
 ]
 exclude = [
     "toolchain/src/ffw-hello-init",

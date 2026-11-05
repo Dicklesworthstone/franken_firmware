@@ -1,0 +1,12 @@
+{
+  "profile": "synthetic-outliers-v1",
+  "gauges": [
+    {"name": "lat_us", "role": "value", "points": 10, "implausible": 1,
+     "stats": {"n": 10, "min": 117, "max": 5000, "p50": 120, "p99": 5000, "spikes": 1}},
+    {"name": "rss_kib", "role": "value", "points": 11, "implausible": 0,
+     "stats": {"n": 11, "min": 2400, "max": 2450, "p50": 2425, "p99": 2450, "spikes": 0}}
+  ],
+  "findings": [
+    {"kind": "implausible_value", "values": {"value": 4000000, "max": 1000000}}
+  ]
+}

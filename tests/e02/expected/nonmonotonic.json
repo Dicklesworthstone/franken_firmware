@@ -1,0 +1,21 @@
+{
+  "profile": "synthetic-nonmono-v1",
+  "denominators": {
+    "declared_ns": 4000000000, "expected_samples": 5,
+    "samples_total": 5, "samples_accepted": 3, "samples_rejected_non_monotonic": 2,
+    "intervals_total": 2, "intervals_observed": 1, "intervals_censored": 1,
+    "observed_ns": 1000000000, "censored_ns": 2000000000, "coverage_ppm": 250000
+  },
+  "holes": [
+    {"from_ns": 100000000000, "to_ns": 102000000000, "dt_ns": 2000000000, "missing_samples_est": 1}
+  ],
+  "truncated": null,
+  "counters": [
+    {"name": "xruns", "points": 3, "observed_events": 0, "observed_ns": 1000000000, "censored_spans": 1, "unlocated_events_min": 0}
+  ],
+  "dropouts": {"known": true, "observed": [], "censored": []},
+  "findings": [
+    {"kind": "non_monotonic_clock", "values": {"mono_ns": 101000000000, "previous_mono_ns": 102000000000}},
+    {"kind": "non_monotonic_clock", "values": {"mono_ns": 102000000000, "previous_mono_ns": 102000000000}}
+  ]
+}

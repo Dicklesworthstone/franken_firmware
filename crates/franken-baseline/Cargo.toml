@@ -1,0 +1,20 @@
+[package]
+name = "franken-baseline"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "Offline analyzer for the incumbent resource and dropout baseline (ffw-za4, E02)."
+
+[lints]
+workspace = true
+
+# The library has no dependencies: every input is plain text and every figure is integer arithmetic,
+# so a hand-computed expectation is exact and nothing here can drift with a dependency upgrade.
+[dependencies]
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[[bin]]
+name = "ffw-baseline"
+path = "src/bin/ffw-baseline.rs"

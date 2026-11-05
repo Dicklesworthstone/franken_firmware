@@ -1,0 +1,8 @@
+{
+  "schema": "ffw.baseline.comparison.v1",
+  "claim": "refused",
+  "reason": "baseline_not_measured_on_device",
+  "comparison": null,
+  "current_evidence": "synthetic",
+  "current_profile": "synthetic-clean-v1"
+}

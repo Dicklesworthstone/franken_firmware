@@ -1,0 +1,28 @@
+{
+  "profile": "synthetic-holes-v1",
+  "denominators": {
+    "declared_ns": 12000000000, "expected_samples": 13, "samples_total": 10, "samples_accepted": 10,
+    "intervals_total": 9, "intervals_observed": 8, "intervals_censored": 1,
+    "observed_ns": 8000000000, "censored_ns": 4000000000, "coverage_ppm": 666666
+  },
+  "holes": [
+    {"from_ns": 104000000000, "to_ns": 108000000000, "dt_ns": 4000000000, "missing_samples_est": 3}
+  ],
+  "truncated": null,
+  "counters": [
+    {"name": "xruns", "points": 10, "missing_values": 0, "observed_events": 0, "observed_ns": 8000000000,
+     "per_hour_milli": 0, "censored_spans": 1, "censored_ns": 4000000000, "unlocated_events_min": 3,
+     "resets": 0, "wraps": 0}
+  ],
+  "dropouts": {
+    "known": true,
+    "observed": [],
+    "censored": [
+      {"from_ns": 104000000000, "to_ns": 108000000000, "events_min": 3, "reason": "hole"}
+    ],
+    "totals": {"intervals": 0, "underrun_events": 0, "censored_spans": 1, "censored_events_min": 3}
+  },
+  "absolute": {"thresholds": {"min_coverage_ppm": 900000, "max_dropout_intervals": 0}, "verdict": "not_qualified",
+               "reasons": [{"kind": "coverage_below_min", "have_ppm": 666666, "min_ppm": 900000},
+                           {"kind": "dropouts_exceed_max", "have": 1, "max": 0}]}
+}

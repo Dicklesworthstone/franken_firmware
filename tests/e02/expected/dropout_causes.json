@@ -1,0 +1,35 @@
+{
+  "profile": "synthetic-causes-v1",
+  "denominators": {
+    "declared_ns": 20000000000, "expected_samples": 21, "samples_accepted": 21,
+    "intervals_total": 20, "intervals_observed": 20, "intervals_censored": 0,
+    "observed_ns": 20000000000, "coverage_ppm": 1000000
+  },
+  "holes": [],
+  "counters": [
+    {"name": "xruns", "observed_events": 13, "observed_ns": 20000000000, "per_hour_milli": 2340000},
+    {"name": "late", "observed_events": 5, "per_hour_milli": 900000},
+    {"name": "cpu", "observed_events": 3, "per_hour_milli": 540000},
+    {"name": "src", "observed_events": 1900, "per_hour_milli": 342000000}
+  ],
+  "dropouts": {
+    "known": true,
+    "observed": [
+      {"from_ns": 102000000000, "to_ns": 103000000000, "underrun_events": 2, "stall_deficit_frames": null,
+       "cause": {"class": "source_outage", "unexcluded": []}},
+      {"from_ns": 106000000000, "to_ns": 107000000000, "underrun_events": 1, "stall_deficit_frames": null,
+       "cause": {"class": "network_lateness", "unexcluded": []}},
+      {"from_ns": 110000000000, "to_ns": 111000000000, "underrun_events": 4, "stall_deficit_frames": null,
+       "cause": {"class": "cpu_deadline_miss", "unexcluded": []}},
+      {"from_ns": 114000000000, "to_ns": 115000000000, "underrun_events": 1, "stall_deficit_frames": null,
+       "cause": {"class": "output_underrun"}},
+      {"from_ns": 118000000000, "to_ns": 119000000000, "underrun_events": 5, "stall_deficit_frames": null,
+       "cause": {"class": "ambiguous", "present": ["network_lateness", "cpu_deadline_miss"]}}
+    ],
+    "censored": [],
+    "totals": {"intervals": 5, "underrun_events": 13, "source_outage": 1, "network_lateness": 1, "cpu_deadline_miss": 1, "output_underrun": 1, "ambiguous": 1, "undetermined": 0, "censored_spans": 0, "censored_events_min": 0}
+  },
+  "findings": [],
+  "absolute": {"thresholds": {"min_coverage_ppm": 1000000, "max_dropout_intervals": 0}, "verdict": "not_qualified",
+               "reasons": [{"kind": "dropouts_exceed_max", "have": 5, "max": 0}]}
+}

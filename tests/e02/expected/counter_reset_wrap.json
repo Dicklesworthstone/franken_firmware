@@ -1,0 +1,29 @@
+{
+  "profile": "synthetic-reset-wrap-v1",
+  "denominators": {"samples_accepted": 11, "intervals_total": 10, "intervals_observed": 10, "intervals_censored": 0, "observed_ns": 10000000000, "coverage_ppm": 1000000},
+  "counters": [
+    {"name": "xruns", "points": 11, "observed_events": 11, "observed_ns": 10000000000, "per_hour_milli": 3960000,
+     "censored_spans": 0, "censored_ns": 0, "unlocated_events_min": 0, "resets": 0, "wraps": 1},
+    {"name": "late", "points": 11, "observed_events": 0, "observed_ns": 9000000000, "per_hour_milli": 0,
+     "censored_spans": 1, "censored_ns": 1000000000, "unlocated_events_min": 2, "resets": 1, "wraps": 0},
+    {"name": "src", "width": 64, "points": 11, "observed_events": 900, "observed_ns": 9000000000, "per_hour_milli": 360000000,
+     "censored_spans": 1, "censored_ns": 1000000000, "unlocated_events_min": 50, "resets": 1, "wraps": 0}
+  ],
+  "dropouts": {
+    "known": true,
+    "observed": [
+      {"from_ns": 101000000000, "to_ns": 102000000000, "underrun_events": 11,
+       "cause": {"class": "undetermined",
+                 "missing": [
+                   {"signal": "playing_state", "why": "not_carried"},
+                   {"signal": "cpu_misses", "why": "not_carried"}
+                 ]}}
+    ],
+    "censored": []
+  },
+  "findings": [
+    {"kind": "counter_wrap", "values": {"from": 4294967290, "to": 5}},
+    {"kind": "counter_reset", "values": {"from": 100, "to": 2}},
+    {"kind": "counter_reset", "values": {"from": 1500, "to": 50}}
+  ]
+}

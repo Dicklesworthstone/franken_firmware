@@ -1,0 +1,23 @@
+{
+  "profile": "synthetic-undetermined-v1",
+  "denominators": {"expected_samples": 11, "samples_accepted": 11, "coverage_ppm": 1000000},
+  "counters": [
+    {"name": "xruns", "observed_events": 2},
+    {"name": "src", "role": "source_bytes", "observed_events": 1000}
+  ],
+  "dropouts": {
+    "known": true,
+    "observed": [
+      {"from_ns": 103000000000, "to_ns": 104000000000, "underrun_events": 2,
+       "cause": {"class": "undetermined",
+                 "missing": [
+                   {"signal": "playing_state", "why": "not_carried"},
+                   {"signal": "late_packets", "why": "not_carried"},
+                   {"signal": "cpu_misses", "why": "not_carried"}
+                 ]}}
+    ],
+    "censored": [],
+    "totals": {"intervals": 1, "underrun_events": 2, "source_outage": 0, "network_lateness": 0, "cpu_deadline_miss": 0, "output_underrun": 0, "ambiguous": 0, "undetermined": 1}
+  },
+  "absolute": {"thresholds": {"min_coverage_ppm": null, "max_dropout_intervals": null}, "verdict": "not_assessed", "reasons": []}
+}

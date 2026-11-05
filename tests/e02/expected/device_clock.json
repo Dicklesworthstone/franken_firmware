@@ -1,0 +1,18 @@
+{
+  "profile": "synthetic-device-v1",
+  "denominators": {"declared_ns": 5000000000, "expected_samples": 6, "samples_accepted": 6, "coverage_ppm": 1000000},
+  "device_clock": {
+    "carried": true, "rate_hz": 48000,
+    "expected_frames": 240000, "observed_frames": 220000, "drift_ppm": -83333,
+    "resets": 0, "wraps": 1, "stall_intervals": 1
+  },
+  "dropouts": {
+    "known": true,
+    "observed": [
+      {"from_ns": 103000000000, "to_ns": 104000000000, "underrun_events": 0, "stall_deficit_frames": 24000,
+       "cause": {"class": "undetermined"}}
+    ],
+    "censored": []
+  },
+  "findings": []
+}

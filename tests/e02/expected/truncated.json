@@ -1,0 +1,13 @@
+{
+  "profile": "synthetic-truncated-v1",
+  "denominators": {
+    "declared_ns": 10000000000, "expected_samples": 11, "samples_total": 7, "samples_accepted": 7,
+    "intervals_total": 6, "intervals_observed": 6, "intervals_censored": 0,
+    "observed_ns": 6000000000, "censored_ns": 0, "coverage_ppm": 600000
+  },
+  "holes": [],
+  "truncated": {"missing_ns": 4000000000},
+  "dropouts": {"known": true, "observed": [], "censored": []},
+  "absolute": {"thresholds": {"min_coverage_ppm": 1000000, "max_dropout_intervals": null}, "verdict": "not_qualified",
+               "reasons": [{"kind": "coverage_below_min", "have_ppm": 600000, "min_ppm": 1000000}]}
+}

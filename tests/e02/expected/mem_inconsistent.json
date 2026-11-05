@@ -1,0 +1,29 @@
+{
+  "schema": "ffw.baseline.memory-report.v1",
+  "page_size_bytes": 16384,
+  "snapshots": [
+    {
+      "label": "bad",
+      "processes": [
+        {"pid": 1, "name": "x", "rss_kib": 2500, "rss_source": "smaps_rollup", "pss_kib": 3000, "uss_kib": 1500, "shared_kib": 900, "hwm_kib": 2000, "kernel_thread": false}
+      ],
+      "system": {
+        "mem_total_kib": 1000, "mem_free_kib": 2000, "used_kib": null,
+        "process_rss_naive_sum_kib": 2500, "process_pss_sum_kib": 3000, "double_counted_kib": null,
+        "kernel_reported_kib": null, "unmapped_cache_kib": null, "buffers_kib": null, "unattributed_kib": null
+      },
+      "findings": [
+        {"kind": "rss_source_mismatch", "values": {"chosen_kib": 2500, "other_kib": 10000}},
+        {"kind": "rollup_rss_mismatch", "values": {"rss_kib": 2500, "parts_kib": 2400}},
+        {"kind": "pss_out_of_range", "values": {"uss_kib": 1500, "pss_kib": 3000, "rss_kib": 2500}},
+        {"kind": "rss_breakdown_mismatch", "values": {"vm_rss_kib": 2500, "parts_kib": 2600}},
+        {"kind": "hwm_below_rss", "values": {"hwm_kib": 2000, "rss_kib": 2500}},
+        {"kind": "free_exceeds_total", "values": {"mem_total_kib": 1000, "mem_free_kib": 2000}},
+        {"kind": "pss_exceeds_rss", "values": {"rss_sum_kib": 2500, "pss_sum_kib": 3000}},
+        {"kind": "mapped_exceeds_cached", "values": {"cached_kib": 100, "mapped_kib": 300}}
+      ]
+    }
+  ],
+  "peaks": {"max_used_kib": null, "max_process_pss_sum_kib": 3000, "max_vm_hwm_kib": 2000},
+  "headroom": {"required_reserve_kib": null, "reserve_kib": null, "verdict": "not_assessed"}
+}

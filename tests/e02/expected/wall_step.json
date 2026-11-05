@@ -1,0 +1,32 @@
+{
+  "profile": "synthetic-wallstep-v1",
+  "denominators": {"intervals_total": 10, "intervals_observed": 10, "intervals_censored": 0, "coverage_ppm": 1000000},
+  "holes": [],
+  "truncated": null,
+  "wall_clock": {
+    "carried": true,
+    "steps": [
+      {"at_mono_ns": 105000000000, "delta_ns": 3600000000000},
+      {"at_mono_ns": 109000000000, "delta_ns": -1800000000000}
+    ]
+  },
+  "dropouts": {
+    "known": true,
+    "observed": [
+      {"from_ns": 106000000000, "to_ns": 107000000000, "underrun_events": 1,
+       "cause": {"class": "undetermined",
+                 "missing": [
+                   {"signal": "source_bytes", "why": "not_carried"},
+                   {"signal": "playing_state", "why": "not_carried"},
+                   {"signal": "late_packets", "why": "not_carried"},
+                   {"signal": "cpu_misses", "why": "not_carried"}
+                 ]}}
+    ],
+    "censored": [],
+    "totals": {"intervals": 1, "underrun_events": 1, "censored_spans": 0}
+  },
+  "findings": [
+    {"kind": "wall_step", "values": {"delta_ns": 3600000000000}},
+    {"kind": "wall_step", "values": {"delta_ns": -1800000000000}}
+  ]
+}

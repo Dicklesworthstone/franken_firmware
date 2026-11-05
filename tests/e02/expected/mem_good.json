@@ -1,0 +1,36 @@
+{
+  "schema": "ffw.baseline.memory-report.v1",
+  "page_size_bytes": 4096,
+  "snapshots": [
+    {
+      "label": "steady",
+      "at_mono_ns": 1000000000,
+      "processes": [
+        {"pid": 2, "name": "kthreadd", "rss_kib": null, "rss_source": "none", "pss_kib": null, "uss_kib": null, "shared_kib": null, "hwm_kib": null, "kernel_thread": true},
+        {"pid": 100, "name": "player", "rss_kib": 2500, "rss_source": "smaps_rollup", "pss_kib": 1800, "uss_kib": 1600, "shared_kib": 900, "hwm_kib": 3000, "kernel_thread": false},
+        {"pid": 200, "name": "netd", "rss_kib": 1200, "rss_source": "smaps_rollup", "pss_kib": 700, "uss_kib": 400, "shared_kib": 800, "hwm_kib": 1300, "kernel_thread": false}
+      ],
+      "system": {
+        "mem_total_kib": 30000, "mem_free_kib": 20000, "used_kib": 10000,
+        "process_rss_naive_sum_kib": 3700, "process_pss_sum_kib": 2500, "double_counted_kib": 1200,
+        "kernel_reported_kib": 1800, "unmapped_cache_kib": 4000, "buffers_kib": 500, "unattributed_kib": 1200
+      },
+      "findings": [{"kind": "kernel_thread", "subject": "pid=2"}]
+    },
+    {
+      "label": "transition",
+      "at_mono_ns": 2000000000,
+      "processes": [
+        {"pid": 100, "name": "player", "rss_kib": 2800, "rss_source": "smaps_rollup", "pss_kib": 2000, "uss_kib": 1800, "shared_kib": 1000, "hwm_kib": 3400, "kernel_thread": false}
+      ],
+      "system": {
+        "mem_total_kib": 30000, "mem_free_kib": 17000, "used_kib": 13000,
+        "process_rss_naive_sum_kib": 2800, "process_pss_sum_kib": 2000, "double_counted_kib": 800,
+        "kernel_reported_kib": 1800, "unmapped_cache_kib": 4000, "buffers_kib": 500, "unattributed_kib": 4700
+      },
+      "findings": []
+    }
+  ],
+  "peaks": {"max_used_kib": 13000, "max_process_pss_sum_kib": 2500, "max_vm_hwm_kib": 3400},
+  "headroom": {"required_reserve_kib": 4096, "reserve_kib": 17000, "verdict": "pass"}
+}

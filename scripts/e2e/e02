@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# E02 end-to-end entry point (bead ffw-za4): incumbent resource and dropout baseline ANALYZER.
+#
+#   scripts/e2e/e02                  both halves
+#   scripts/e2e/e02 --fixtures-only  the local half only
+#   scripts/e2e/e02 --rust-only      the Rust half only (central build; see below)
+#
+# Two halves, kept honest about what each proves:
+#
+#  1. Local, stdlib Python: tests/e02/oracle.py re-derives every series/memory report from the rules in
+#     docs/contracts/e02.md with a separate implementation and compares it with the hand-written
+#     expected files; it also checks the case inventory, the invariant map, and that its own matcher
+#     rejects planted differences. THIS DOES NOT RUN THE RUST ANALYZER.
+#
+#  2. Rust, centralized: the real `ffw-baseline` binary over the same captures, compared with the same
+#     expected files, plus the crate's unit tests. Builds run only through RCH; there is no local cargo
+#     and no fallback:
+#         RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-baseline
+#
+# Exit 0 only if every selected half passed. 1: a check failed. 2: usage. 3: the Rust half could not be
+# run here (no `rch`): that is "blocked", reported as such, and never counted as a pass. The captures
+# are synthetic: a pass is a statement about the analyzer, not about any device.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+mode=all
+case "${1:-}" in
+  "") ;;
+  --fixtures-only) mode=fixtures ;;
+  --rust-only) mode=rust ;;
+  *)
+    echo "usage: scripts/e2e/e02 [--fixtures-only | --rust-only]" >&2
+    exit 2
+    ;;
+esac
+if [ "$#" -gt 1 ]; then
+  echo "usage: scripts/e2e/e02 [--fixtures-only | --rust-only]" >&2
+  exit 2
+fi
+
+failed=0
+blocked=0
+
+if [ "$mode" != rust ]; then
+  python3 -B -I "$ROOT/tests/e02/oracle.py" --check || failed=1
+fi
+
+if [ "$mode" != fixtures ]; then
+  if command -v rch >/dev/null 2>&1; then
+    (cd "$ROOT" && RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-baseline) || failed=1
+  else
+    echo "BLOCKED: 'rch' not found. The Rust half builds only through RCH_REQUIRE_REMOTE=1 rch exec and was NOT run." >&2
+    blocked=1
+  fi
+fi
+
+if [ "$failed" -ne 0 ]; then
+  echo "E02: FAIL" >&2
+  exit 1
+fi
+if [ "$blocked" -ne 0 ]; then
+  echo "E02: BLOCKED (local half passed; Rust half not run)" >&2
+  exit 3
+fi
+case "$mode" in
+  fixtures) echo "E02 local half: PASS (independent oracle only; the Rust analyzer was NOT run)" ;;
+  rust) echo "E02 Rust half: PASS (synthetic captures; says nothing about any device)" ;;
+  *) echo "E02: PASS (both halves; synthetic captures, says nothing about any device)" ;;
+esac

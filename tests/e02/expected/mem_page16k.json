@@ -1,0 +1,21 @@
+{
+  "schema": "ffw.baseline.memory-report.v1",
+  "page_size_bytes": 16384,
+  "snapshots": [
+    {
+      "label": "only",
+      "processes": [
+        {"pid": 10, "name": "a", "rss_kib": 4800, "rss_source": "status", "pss_kib": null, "uss_kib": null, "shared_kib": null, "hwm_kib": 5000, "kernel_thread": false},
+        {"pid": 11, "name": "", "rss_kib": 2400, "rss_source": "statm", "pss_kib": null, "uss_kib": null, "shared_kib": null, "hwm_kib": null, "kernel_thread": false}
+      ],
+      "system": {
+        "mem_total_kib": 64000, "mem_free_kib": 40000, "used_kib": 24000,
+        "process_rss_naive_sum_kib": 7200, "process_pss_sum_kib": null, "double_counted_kib": null,
+        "kernel_reported_kib": null, "unmapped_cache_kib": null, "buffers_kib": null, "unattributed_kib": null
+      },
+      "findings": []
+    }
+  ],
+  "peaks": {"max_used_kib": 24000, "max_process_pss_sum_kib": null, "max_vm_hwm_kib": 5000},
+  "headroom": {"required_reserve_kib": null, "reserve_kib": 40000, "verdict": "not_assessed"}
+}
