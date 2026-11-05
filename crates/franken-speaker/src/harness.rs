@@ -1026,6 +1026,9 @@ pub struct VirtualHouseReport {
     /// A member that has a stream but does not sound IS counted, and makes its blocks unmeasured. With fewer than two
     /// participants there is nothing to compare, so every block is unmeasured.
     pub skew_participants: usize,
+    /// Whether the skew target was met: at least one block was compared, none was left unmeasured, and the largest
+    /// skew is within 2 ms. A campaign that compared nothing (zero blocks) makes no claim, so this is `false` for it;
+    /// `skew_measured_blocks == 0` tells that apart from a measured miss.
     pub within_2ms_skew_target: bool,
     pub video_sync_residual_us: i64,
     pub video_sync_within_40ms_gate: bool,
@@ -1579,7 +1582,9 @@ fn run_campaign_inner(
         skew_measured_blocks,
         skew_unmeasured_blocks,
         skew_participants,
-        within_2ms_skew_target: max_inter_speaker_skew_us <= 2_000 && skew_unmeasured_blocks == 0,
+        within_2ms_skew_target: skew_measured_blocks > 0
+            && skew_unmeasured_blocks == 0
+            && max_inter_speaker_skew_us <= 2_000,
         video_sync_residual_us: video_eval.residual_av_skew_us,
         video_sync_within_40ms_gate: video_eval.within_40ms_p99_gate,
         dropped_log_events: sink.dropped_event_count(),
@@ -2589,6 +2594,38 @@ mod tests {
             !both.within_2ms_skew_target,
             "a refusal does not excuse a silent mute"
         );
+    }
+
+    #[test]
+    fn a_campaign_that_compared_nothing_does_not_report_the_skew_target_as_met() {
+        // Planted: no blocks at all. Nothing is measured and nothing is left unmeasured, so both terms of the gate
+        // as it stood (skew within 2 ms, no unmeasured block) hold trivially.
+        let mut sink = default_diagnostic_sink();
+        let report = run_campaign_inner(SEED, 0, None, &mut sink, &[])
+            .expect("a zero-block campaign runs; it just makes no claim");
+        assert_eq!(report.total_blocks_streamed, 0);
+        assert_eq!(report.skew_participants, 5);
+        assert_eq!(
+            (report.skew_measured_blocks, report.skew_unmeasured_blocks),
+            (0, 0)
+        );
+        assert_eq!(report.max_inter_speaker_skew_us, 0);
+        assert!(
+            report.max_inter_speaker_skew_us <= 2_000 && report.skew_unmeasured_blocks == 0,
+            "the old formula would have called this met"
+        );
+        assert!(
+            !report.within_2ms_skew_target,
+            "a run that compared nothing met nothing"
+        );
+        // Paired positive: a normal campaign compares every block and still meets the target.
+        let nominal = run_campaign(SEED, 200, None).expect("campaign");
+        assert_eq!(
+            (nominal.skew_measured_blocks, nominal.skew_unmeasured_blocks),
+            (200, 0)
+        );
+        assert!(nominal.max_inter_speaker_skew_us > 0);
+        assert!(nominal.within_2ms_skew_target);
     }
 
     #[test]
