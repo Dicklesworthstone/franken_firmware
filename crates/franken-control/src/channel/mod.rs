@@ -15,7 +15,9 @@
 //! * **stop and mute keep their place**: a separate priority lane with slots reserved for the local
 //!   user, served before everything else ([`pipeline`]).
 //!
-//! The request format and the bytes the authentication proof covers are in [`request`].
+//! The request format and the bytes the authentication proof covers are in [`request`]. The reply a client can
+//! check (an explicit encoding, bound to the command, its request and the epoch and revision it was made at)
+//! is in [`reply`].
 //!
 //! Nothing here opens a socket or reads a clock: transport is the caller's, and time is passed in as
 //! nanoseconds. See `docs/contracts/n02.md` for the guarantees and for what is deliberately not
@@ -26,6 +28,7 @@ pub mod ledger;
 pub mod limiter;
 pub mod peer;
 pub mod pipeline;
+pub mod reply;
 pub mod request;
 
 #[cfg(test)]

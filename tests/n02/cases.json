@@ -723,6 +723,102 @@
         "a_flood_never_takes_any_structure_past_its_cap",
         "an_authority_that_admits_every_identity_takes_the_per_peer_tables_past_their_caps"
       ]
+    },
+    {
+      "id": "INV-MARK-ROUND-TRIP",
+      "claim": "The revision high-water mark is stored on U01's journal after each step and read back at boot: after a process death, only the durable bytes survive, a held-back copy is refused exactly as StaleRevision, a fresh command applies and the journal then holds the new mark; an owner that never restores, and one whose first process never stored, admit the copy and the judge catches each by name.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the channel over U01's journal on an in-memory medium with fault injection, judged by Rust tests; the Python scenario model has no journal and nothing to say about either.",
+      "rust_tests": [
+        "a_stale_copy_is_refused_after_a_journal_round_trip_and_a_fresh_command_applies",
+        "each_planted_owner_fault_fails_the_round_trip_judge_by_name",
+        "restoring_tells_a_blank_medium_from_an_intact_journal_without_a_mark_from_a_mark",
+        "a_mark_offered_after_the_first_step_is_an_error_and_not_a_silent_no_op",
+        "the_key_and_the_value_fit_the_smallest_and_the_device_configuration"
+      ]
+    },
+    {
+      "id": "INV-MARK-WRITE-AHEAD",
+      "claim": "step_then_store returns a step's outcomes only after the mark that covers them is durable, and withholds them if the store fails; with the power cut at every storage operation and byte budget of one store the recovered mark is exactly the old or the new one, and the duplicate of every delivered command is refused; an owner that delivers before it stores is caught by the sweep, and one that forgot to restore cannot store over the mark.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the channel over U01's journal on an in-memory medium with fault injection, judged by Rust tests; the Python scenario model has no journal and nothing to say about either.",
+      "rust_tests": [
+        "every_cut_of_the_mark_store_leaves_the_old_or_the_new_mark_and_no_replay",
+        "an_owner_that_delivers_before_it_stores_is_caught_by_the_cut_sweep",
+        "an_owner_that_forgot_to_restore_has_its_outcomes_withheld_by_the_journal",
+        "a_step_that_changed_nothing_writes_nothing"
+      ]
+    },
+    {
+      "id": "INV-MARK-FAIL-CLOSED",
+      "claim": "A journal that cannot be read (opening fails, or neither segment is valid) gives the channel the floor u64::MAX instead of the session's revision: for that run every remote command that names a revision is refused as StaleRevision, the local user still commits, and the floor is never stored; an owner that treats the unreadable journal as no mark admits the copy and the judge catches it by name.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the channel over U01's journal on an in-memory medium with fault injection, judged by Rust tests; the Python scenario model has no journal and nothing to say about either.",
+      "rust_tests": [
+        "an_unreadable_journal_refuses_remote_commands_and_does_not_start_from_zero",
+        "an_owner_that_ignores_an_unreadable_journal_fails_the_refusal_judge_by_name",
+        "the_refusal_floor_is_never_stored"
+      ]
+    },
+    {
+      "id": "INV-REPLY-AUTHENTIC",
+      "claim": "A reply is accepted only if its tag is HMAC-SHA256 under the peer's key with the reply label over its signed bytes: a forged tag (all zero, made under the request context, the request's own proof, another peer's key) and any change to one signed field of a genuine reply are refused as bad_tag, checked first.",
+      "scenarios": [],
+      "scenario_inapplicable": "A reply is a wire format and a client check, and the Python scenario model has no wire to put it on. The independent evidence is tests/n02/gen_reply_vectors.py (hand-written layout and results, a separately written decoder and verifier) and tests/n02/test_reply_vectors.py (broken implementations caught by name), not a scenario.",
+      "rust_tests": [
+        "the_encoding_and_the_tag_equal_the_independent_vectors",
+        "a_reply_assembled_by_hand_has_the_bytes_a_person_wrote",
+        "every_tampered_reply_is_refused_as_a_bad_tag_under_the_original_tag",
+        "the_context_of_a_reply_is_not_the_context_of_a_request",
+        "a_reply_to_another_peer_does_not_verify_under_this_peers_key"
+      ]
+    },
+    {
+      "id": "INV-REPLY-BOUND",
+      "claim": "A genuine reply is accepted only for the command it answers (wrong_command), the request it answers (wrong_request) and no earlier than the state the client has seen (stale), checked in that order after the tag.",
+      "scenarios": [],
+      "scenario_inapplicable": "A reply is a wire format and a client check, and the Python scenario model has no wire to put it on. The independent evidence is tests/n02/gen_reply_vectors.py (hand-written layout and results, a separately written decoder and verifier) and tests/n02/test_reply_vectors.py (broken implementations caught by name), not a scenario.",
+      "rust_tests": [
+        "the_verification_cases_are_judged_as_written"
+      ]
+    },
+    {
+      "id": "INV-REPLY-WIRE",
+      "claim": "A reply has one explicit big-endian encoding and a decoder refuses everything else by a stable name; every status round-trips; a status the decoder would refuse cannot be built; the longest reply is 144 bytes.",
+      "scenarios": [],
+      "scenario_inapplicable": "A reply is a wire format and a client check, and the Python scenario model has no wire to put it on. The independent evidence is tests/n02/gen_reply_vectors.py (hand-written layout and results, a separately written decoder and verifier) and tests/n02/test_reply_vectors.py (broken implementations caught by name), not a scenario.",
+      "rust_tests": [
+        "malformed_input_fails_to_decode_with_the_named_error",
+        "every_status_survives_an_encode_decode_round_trip",
+        "a_status_a_decoder_would_refuse_cannot_be_built"
+      ]
+    },
+    {
+      "id": "INV-REPLY-STATUS",
+      "claim": "Every outcome, refusal, rejection and submit result has exactly one status with no wildcard; the refusal names are the diagnostic log's; a request that did not authenticate has no status.",
+      "scenarios": [],
+      "scenario_inapplicable": "A reply is a wire format and a client check, and the Python scenario model has no wire to put it on. The independent evidence is tests/n02/gen_reply_vectors.py (hand-written layout and results, a separately written decoder and verifier) and tests/n02/test_reply_vectors.py (broken implementations caught by name), not a scenario.",
+      "rust_tests": [
+        "every_outcome_refusal_rejection_and_submit_result_has_one_status"
+      ]
+    },
+    {
+      "id": "INV-REPLY-NO-ORACLE",
+      "claim": "A request that does not authenticate gets no reply, and a peer that has been revoked cannot be signed for.",
+      "scenarios": [],
+      "scenario_inapplicable": "A reply is a wire format and a client check, and the Python scenario model has no wire to put it on. The independent evidence is tests/n02/gen_reply_vectors.py (hand-written layout and results, a separately written decoder and verifier) and tests/n02/test_reply_vectors.py (broken implementations caught by name), not a scenario.",
+      "rust_tests": [
+        "an_unauthenticated_request_gets_no_reply_and_a_revoked_peer_cannot_be_signed_for"
+      ]
+    },
+    {
+      "id": "INV-REPLY-ONE-TRANSITION",
+      "claim": "Through the real channel a client that never sees the committed reply asks again and is answered with the recorded outcome while the session changed once; a forged refusal, a replayed queued reply, a reply for another command and a reply for a reused number are each refused by name.",
+      "scenarios": [],
+      "scenario_inapplicable": "A reply is a wire format and a client check, and the Python scenario model has no wire to put it on. The independent evidence is tests/n02/gen_reply_vectors.py (hand-written layout and results, a separately written decoder and verifier) and tests/n02/test_reply_vectors.py (broken implementations caught by name), not a scenario.",
+      "rust_tests": [
+        "a_retrying_client_sees_one_transition_and_every_forgery_and_replay_is_refused_by_name"
+      ]
     }
   ],
   "other_rust_checks": {

@@ -1,0 +1,747 @@
+{
+  "schema": "ffw.n02.reply_vectors.v1",
+  "notes": [
+    "Written by tests/n02/gen_reply_vectors.py from docs/contracts/n02.md section 9.1. The layout, codes, errors and expected results are hand-written; only the HMAC tags and request digests are computed (standard library).",
+    "wire = signing bytes || 32-byte tag; tag = HMAC-SHA256(key, \"FFCR-v1-reply\" || signing bytes).",
+    "A tamper keeps the base reply's tag and changes exactly one signed field; the Rust replay must refuse it as bad_tag.",
+    "A malformed input must fail to decode with the named error, before any tag is looked at.",
+    "A verify case is a reply as the client received it, the key the client holds and what the client expects; the result is hand-written."
+  ],
+  "context": "FFCR-v1-reply",
+  "max_reply_len": 144,
+  "replies": [
+    {
+      "id": "R001",
+      "what": "committed, hand-assembled hex (the request digest is the literal 00..1f)",
+      "peer": "ctl-a",
+      "seq": 7,
+      "epoch": 3,
+      "revision": 13,
+      "request_digest_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "status": {
+        "kind": "committed",
+        "revision": 13
+      },
+      "signing_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000d",
+      "key": "key-ctl-a-0123456789abcdef",
+      "tag_hex": "d6773973df58d1d690740d6d4f93836b16859934a86d27421691076079965fbd",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000dd6773973df58d1d690740d6d4f93836b16859934a86d27421691076079965fbd"
+    },
+    {
+      "id": "R002",
+      "what": "queued on the ordinary lane: accepted, not committed",
+      "peer": "ctl-a",
+      "seq": 8,
+      "epoch": 3,
+      "revision": 13,
+      "request_digest_hex": "af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017",
+      "status": {
+        "kind": "queued",
+        "lane": "ordinary"
+      },
+      "signing_hex": "46464352010563746c2d6100000000000000080000000000000003000000000000000daf52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a70170100",
+      "key": "key-ctl-a-0123456789abcdef",
+      "tag_hex": "6b9785915044a8b3d293b09aedd98c2616c93877a1db692abb4bf0bc6d9d5507",
+      "wire_hex": "46464352010563746c2d6100000000000000080000000000000003000000000000000daf52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a701701006b9785915044a8b3d293b09aedd98c2616c93877a1db692abb4bf0bc6d9d5507"
+    },
+    {
+      "id": "R003",
+      "what": "a copy is already waiting, on the priority lane",
+      "peer": "panel",
+      "seq": 2,
+      "epoch": 10,
+      "revision": 5,
+      "request_digest_hex": "af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017",
+      "status": {
+        "kind": "already_queued",
+        "lane": "priority"
+      },
+      "signing_hex": "46464352010570616e656c0000000000000002000000000000000a0000000000000005af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a70170201",
+      "key": "key-panel-0123456789abcdef",
+      "tag_hex": "c6838fe8d3f77ed98c2421a23c49e6970f4296960047acfee2e46a672365bcef",
+      "wire_hex": "46464352010570616e656c0000000000000002000000000000000a0000000000000005af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a70170201c6838fe8d3f77ed98c2421a23c49e6970f4296960047acfee2e46a672365bcef"
+    },
+    {
+      "id": "R004",
+      "what": "withdrawn by a cancel before it was applied",
+      "peer": "ctl-b",
+      "seq": 300,
+      "epoch": 11,
+      "revision": 20,
+      "request_digest_hex": "af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017",
+      "status": {
+        "kind": "withdrawn"
+      },
+      "signing_hex": "46464352010563746c2d62000000000000012c000000000000000b0000000000000014af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a701704",
+      "key": "key-ctl-b-0123456789abcdef",
+      "tag_hex": "a15e961aba385573663c271ad81e8933c0aafd956dbd1d7d0c3d03d77774d06a",
+      "wire_hex": "46464352010563746c2d62000000000000012c000000000000000b0000000000000014af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a701704a15e961aba385573663c271ad81e8933c0aafd956dbd1d7d0c3d03d77774d06a"
+    },
+    {
+      "id": "R005",
+      "what": "this command was a cancel and it withdrew 298",
+      "peer": "ctl-b",
+      "seq": 301,
+      "epoch": 11,
+      "revision": 20,
+      "request_digest_hex": "af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017",
+      "status": {
+        "kind": "cancel_applied",
+        "target_seq": 298
+      },
+      "signing_hex": "46464352010563746c2d62000000000000012d000000000000000b0000000000000014af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a701705000000000000012a",
+      "key": "key-ctl-b-0123456789abcdef",
+      "tag_hex": "dec7178cf44f4c5a0e745330a88f75d718bea8bd63e72809a8598ee2314b33bb",
+      "wire_hex": "46464352010563746c2d62000000000000012d000000000000000b0000000000000014af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a701705000000000000012adec7178cf44f4c5a0e745330a88f75d718bea8bd63e72809a8598ee2314b33bb"
+    },
+    {
+      "id": "R006",
+      "what": "refused: a copy that outlived a restart (observed 4, floor 7)",
+      "peer": "ctl-a",
+      "seq": 100,
+      "epoch": 10,
+      "revision": 7,
+      "request_digest_hex": "af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017",
+      "status": {
+        "kind": "refused",
+        "code": "stale_revision",
+        "a": 4,
+        "b": 7
+      },
+      "signing_hex": "46464352010563746c2d610000000000000064000000000000000a0000000000000007af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017060400000000000000040000000000000007",
+      "key": "key-ctl-a-0123456789abcdef",
+      "tag_hex": "734a843f32ce5f6a3e08b6a0890b5628c5a5b097da1921458db6afe15a741e6f",
+      "wire_hex": "46464352010563746c2d610000000000000064000000000000000a0000000000000007af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017060400000000000000040000000000000007734a843f32ce5f6a3e08b6a0890b5628c5a5b097da1921458db6afe15a741e6f"
+    },
+    {
+      "id": "R007",
+      "what": "refused with no numbers: no group lease",
+      "peer": "ctl-a",
+      "seq": 9,
+      "epoch": 10,
+      "revision": 7,
+      "request_digest_hex": "af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017",
+      "status": {
+        "kind": "refused",
+        "code": "no_lease",
+        "a": 0,
+        "b": 0
+      },
+      "signing_hex": "46464352010563746c2d610000000000000009000000000000000a0000000000000007af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017060800000000000000000000000000000000",
+      "key": "key-ctl-a-0123456789abcdef",
+      "tag_hex": "caf6dacd868f9ec27928e7eb048ff5a5dba332ab9e5f754f953fcbf37c885f7c",
+      "wire_hex": "46464352010563746c2d610000000000000009000000000000000a0000000000000007af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017060800000000000000000000000000000000caf6dacd868f9ec27928e7eb048ff5a5dba332ab9e5f754f953fcbf37c885f7c"
+    },
+    {
+      "id": "R008",
+      "what": "refused: a relative step against another revision",
+      "peer": "ctl-a",
+      "seq": 10,
+      "epoch": 10,
+      "revision": 9,
+      "request_digest_hex": "af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017",
+      "status": {
+        "kind": "refused",
+        "code": "revision_mismatch",
+        "a": 5,
+        "b": 9
+      },
+      "signing_hex": "46464352010563746c2d61000000000000000a000000000000000a0000000000000009af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017060300000000000000050000000000000009",
+      "key": "key-ctl-a-0123456789abcdef",
+      "tag_hex": "919d1e7fb2420f6f0d9744f60efbec6a7458053970e03e2500a9e46dcc04b0b5",
+      "wire_hex": "46464352010563746c2d61000000000000000a000000000000000a0000000000000009af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017060300000000000000050000000000000009919d1e7fb2420f6f0d9744f60efbec6a7458053970e03e2500a9e46dcc04b0b5"
+    },
+    {
+      "id": "R009",
+      "what": "refused: a cancel whose target is older than the ledger remembers",
+      "peer": "ctl-b",
+      "seq": 302,
+      "epoch": 11,
+      "revision": 20,
+      "request_digest_hex": "af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017",
+      "status": {
+        "kind": "refused",
+        "code": "target_out_of_window",
+        "a": 12,
+        "b": 0
+      },
+      "signing_hex": "46464352010563746c2d62000000000000012e000000000000000b0000000000000014af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017060e000000000000000c0000000000000000",
+      "key": "key-ctl-b-0123456789abcdef",
+      "tag_hex": "c4d8e07ef76173dd0475d17e221dd8131dc2cc5940ba2416fd0110c3cb71625d",
+      "wire_hex": "46464352010563746c2d62000000000000012e000000000000000b0000000000000014af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017060e000000000000000c0000000000000000c4d8e07ef76173dd0475d17e221dd8131dc2cc5940ba2416fd0110c3cb71625d"
+    },
+    {
+      "id": "R010",
+      "what": "out of window: unknown whether it was applied, and it will not be applied now",
+      "peer": "ctl-a",
+      "seq": 3,
+      "epoch": 10,
+      "revision": 400,
+      "request_digest_hex": "af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017",
+      "status": {
+        "kind": "out_of_window",
+        "floor": 250
+      },
+      "signing_hex": "46464352010563746c2d610000000000000003000000000000000a0000000000000190af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a70170700000000000000fa",
+      "key": "key-ctl-a-0123456789abcdef",
+      "tag_hex": "14545cd18cd72eaebf8431f6a752b8738e6959dad783e7cef296e6b37f543f31",
+      "wire_hex": "46464352010563746c2d610000000000000003000000000000000a0000000000000190af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a70170700000000000000fa14545cd18cd72eaebf8431f6a752b8738e6959dad783e7cef296e6b37f543f31"
+    },
+    {
+      "id": "R011",
+      "what": "rejected before it was accepted: rate limited on the priority lane",
+      "peer": "panel",
+      "seq": 5,
+      "epoch": 10,
+      "revision": 8,
+      "request_digest_hex": "af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017",
+      "status": {
+        "kind": "rejected",
+        "code": "rate_limited",
+        "a": 1,
+        "b": 1500000
+      },
+      "signing_hex": "46464352010570616e656c0000000000000005000000000000000a0000000000000008af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a701708030000000000000001000000000016e360",
+      "key": "key-panel-0123456789abcdef",
+      "tag_hex": "74568597250f358936c5b32d359407fc897da08a7043e84b10e51e7cfaf30bbe",
+      "wire_hex": "46464352010570616e656c0000000000000005000000000000000a0000000000000008af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a701708030000000000000001000000000016e36074568597250f358936c5b32d359407fc897da08a7043e84b10e51e7cfaf30bbe"
+    },
+    {
+      "id": "R012",
+      "what": "rejected: the key is bound to another epoch",
+      "peer": "ctl-a",
+      "seq": 11,
+      "epoch": 9,
+      "revision": 8,
+      "request_digest_hex": "af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017",
+      "status": {
+        "kind": "rejected",
+        "code": "epoch_not_bound",
+        "a": 10,
+        "b": 9
+      },
+      "signing_hex": "46464352010563746c2d61000000000000000b00000000000000090000000000000008af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a70170801000000000000000a0000000000000009",
+      "key": "key-ctl-a-0123456789abcdef",
+      "tag_hex": "1d5ca546e3d60c57ba090c0d0f17606cd0c297799a26c13221c1cfc56044d5f4",
+      "wire_hex": "46464352010563746c2d61000000000000000b00000000000000090000000000000008af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a70170801000000000000000a00000000000000091d5ca546e3d60c57ba090c0d0f17606cd0c297799a26c13221c1cfc56044d5f4"
+    },
+    {
+      "id": "R013",
+      "what": "rejected: the same number with different content",
+      "peer": "ctl-a",
+      "seq": 7,
+      "epoch": 3,
+      "revision": 13,
+      "request_digest_hex": "af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017",
+      "status": {
+        "kind": "rejected",
+        "code": "id_reuse",
+        "a": 0,
+        "b": 0
+      },
+      "signing_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000daf52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017080500000000000000000000000000000000",
+      "key": "key-ctl-a-0123456789abcdef",
+      "tag_hex": "b9dd8f0ae7f4b48535403c96b5443f5a78d1c77c7469073ac0baffb55cdd734f",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000daf52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017080500000000000000000000000000000000b9dd8f0ae7f4b48535403c96b5443f5a78d1c77c7469073ac0baffb55cdd734f"
+    },
+    {
+      "id": "R014",
+      "what": "the longest identity and the largest numbers: the longest reply on the wire",
+      "peer": "abcdefghijklmnopqrstuvwxyz012345",
+      "seq": 18446744073709551615,
+      "epoch": 18446744073709551615,
+      "revision": 18446744073709551615,
+      "request_digest_hex": "af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017",
+      "status": {
+        "kind": "rejected",
+        "code": "rate_limited",
+        "a": 1,
+        "b": 18446744073709551615
+      },
+      "signing_hex": "4646435201206162636465666768696a6b6c6d6e6f707172737475767778797a303132333435ffffffffffffffffffffffffffffffffffffffffffffffffaf52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a701708030000000000000001ffffffffffffffff",
+      "key": "key-abcdefghijklmnopqrstuvwxyz012345-0123456789abcdef",
+      "tag_hex": "da08cae821658076df93ae590537a443aca7bf45107a47e10a26c9822ab76c0a",
+      "wire_hex": "4646435201206162636465666768696a6b6c6d6e6f707172737475767778797a303132333435ffffffffffffffffffffffffffffffffffffffffffffffffaf52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a701708030000000000000001ffffffffffffffffda08cae821658076df93ae590537a443aca7bf45107a47e10a26c9822ab76c0a"
+    }
+  ],
+  "tampers": [
+    {
+      "id": "T001",
+      "reply": "R001",
+      "field": "peer",
+      "wire_hex": "46464352010563746c2d6200000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000dd6773973df58d1d690740d6d4f93836b16859934a86d27421691076079965fbd"
+    },
+    {
+      "id": "T002",
+      "reply": "R001",
+      "field": "seq",
+      "wire_hex": "46464352010563746c2d6100000000000000080000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000dd6773973df58d1d690740d6d4f93836b16859934a86d27421691076079965fbd"
+    },
+    {
+      "id": "T003",
+      "reply": "R001",
+      "field": "epoch",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000004000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000dd6773973df58d1d690740d6d4f93836b16859934a86d27421691076079965fbd"
+    },
+    {
+      "id": "T004",
+      "reply": "R001",
+      "field": "revision",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000e000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000dd6773973df58d1d690740d6d4f93836b16859934a86d27421691076079965fbd"
+    },
+    {
+      "id": "T005",
+      "reply": "R001",
+      "field": "request digest",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d010102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000dd6773973df58d1d690740d6d4f93836b16859934a86d27421691076079965fbd"
+    },
+    {
+      "id": "T006",
+      "reply": "R001",
+      "field": "status kind",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f04d6773973df58d1d690740d6d4f93836b16859934a86d27421691076079965fbd"
+    },
+    {
+      "id": "T007",
+      "reply": "R001",
+      "field": "committed revision",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000ed6773973df58d1d690740d6d4f93836b16859934a86d27421691076079965fbd"
+    },
+    {
+      "id": "T008",
+      "reply": "R002",
+      "field": "lane",
+      "wire_hex": "46464352010563746c2d6100000000000000080000000000000003000000000000000daf52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a701701016b9785915044a8b3d293b09aedd98c2616c93877a1db692abb4bf0bc6d9d5507"
+    },
+    {
+      "id": "T009",
+      "reply": "R006",
+      "field": "refusal code",
+      "wire_hex": "46464352010563746c2d610000000000000064000000000000000a0000000000000007af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017060200000000000000040000000000000007734a843f32ce5f6a3e08b6a0890b5628c5a5b097da1921458db6afe15a741e6f"
+    },
+    {
+      "id": "T010",
+      "reply": "R006",
+      "field": "refusal a",
+      "wire_hex": "46464352010563746c2d610000000000000064000000000000000a0000000000000007af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017060400000000000000050000000000000007734a843f32ce5f6a3e08b6a0890b5628c5a5b097da1921458db6afe15a741e6f"
+    },
+    {
+      "id": "T011",
+      "reply": "R006",
+      "field": "refusal b",
+      "wire_hex": "46464352010563746c2d610000000000000064000000000000000a0000000000000007af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017060400000000000000040000000000000008734a843f32ce5f6a3e08b6a0890b5628c5a5b097da1921458db6afe15a741e6f"
+    },
+    {
+      "id": "T012",
+      "reply": "R011",
+      "field": "rejection code",
+      "wire_hex": "46464352010570616e656c0000000000000005000000000000000a0000000000000008af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a701708040000000000000001000000000000000074568597250f358936c5b32d359407fc897da08a7043e84b10e51e7cfaf30bbe"
+    },
+    {
+      "id": "T013",
+      "reply": "R010",
+      "field": "out of window floor",
+      "wire_hex": "46464352010563746c2d610000000000000003000000000000000a0000000000000190af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a70170700000000000000fb14545cd18cd72eaebf8431f6a752b8738e6959dad783e7cef296e6b37f543f31"
+    }
+  ],
+  "malformed": [
+    {
+      "id": "M001",
+      "what": "an empty input",
+      "wire_hex": "",
+      "error": "truncated"
+    },
+    {
+      "id": "M002",
+      "what": "only the magic",
+      "wire_hex": "46464352",
+      "error": "truncated"
+    },
+    {
+      "id": "M003",
+      "what": "cut inside the peer label",
+      "wire_hex": "46464352010563746c",
+      "error": "truncated"
+    },
+    {
+      "id": "M004",
+      "what": "cut inside the request digest",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d00010203040506070809",
+      "error": "truncated"
+    },
+    {
+      "id": "M005",
+      "what": "cut where the status should begin",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "error": "truncated"
+    },
+    {
+      "id": "M006",
+      "what": "the signed bytes and no tag at all",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000d",
+      "error": "truncated"
+    },
+    {
+      "id": "M007",
+      "what": "cut inside the tag (31 bytes)",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000dd6773973df58d1d690740d6d4f93836b16859934a86d27421691076079965f",
+      "error": "truncated"
+    },
+    {
+      "id": "M008",
+      "what": "one byte after the tag",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000dd6773973df58d1d690740d6d4f93836b16859934a86d27421691076079965fbd00",
+      "error": "trailing_bytes"
+    },
+    {
+      "id": "M009",
+      "what": "the request magic, not the reply magic",
+      "wire_hex": "46464350010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000dd6773973df58d1d690740d6d4f93836b16859934a86d27421691076079965fbd",
+      "error": "bad_magic"
+    },
+    {
+      "id": "M010",
+      "what": "version 2",
+      "wire_hex": "46464352020563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000dd6773973df58d1d690740d6d4f93836b16859934a86d27421691076079965fbd",
+      "error": "bad_version"
+    },
+    {
+      "id": "M011",
+      "what": "peer label of length zero",
+      "wire_hex": "46464352010000000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000d003f9a7ee3a7a067b3b19d3fe14686fefcb46f4d20d67f34a8c2bfc1c8535377",
+      "error": "invalid_peer"
+    },
+    {
+      "id": "M012",
+      "what": "peer label of 33 bytes",
+      "wire_hex": "46464352012161616161616161616161616161616161616161616161616161616161616161616100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000da9f14e5f0d315988313a9eff5366bcfbbe87dc0d10f3d7b4bb09a7743ef22940",
+      "error": "invalid_peer"
+    },
+    {
+      "id": "M013",
+      "what": "peer label with an upper-case letter",
+      "wire_hex": "46464352010543746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000df71db379241165d0394274dc8ce62835fcd22a8bb8d42a12b9a339d8a5858b10",
+      "error": "invalid_peer"
+    },
+    {
+      "id": "M014",
+      "what": "sequence number zero",
+      "wire_hex": "46464352010563746c2d6100000000000000000000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000daf446a6aaea9185a598075a831195eaf832908c2486a56575fe054cfbaa6a6c2",
+      "error": "zero_sequence"
+    },
+    {
+      "id": "M015",
+      "what": "status tag 0",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000000000000000d9adc10eff35a06d70fd46caa16f56aadcd3ae5f7623c9e4bb9e08f67d9790eb7",
+      "error": "unknown_status"
+    },
+    {
+      "id": "M016",
+      "what": "status tag 9",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f09000000000000000d132d9c12abf5f19e7e152140128be2f6f36832c574d8955e29b4fdf5c04519dd",
+      "error": "unknown_status"
+    },
+    {
+      "id": "M017",
+      "what": "lane code 2 on a queued reply",
+      "wire_hex": "46464352010563746c2d6100000000000000080000000000000003000000000000000daf52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a701701021eed6bb552f5529348346a7bb4f0b7b407ae1729984e20b22cc9b963d60f7d1e",
+      "error": "bad_lane"
+    },
+    {
+      "id": "M018",
+      "what": "refusal code 0",
+      "wire_hex": "46464352010563746c2d610000000000000064000000000000000a0000000000000007af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a701706000000000000000004000000000000000714be9f7dbb29b48010d416a5fd687cf953ee091fb951087052152b6731ae8d9d",
+      "error": "unknown_kind"
+    },
+    {
+      "id": "M019",
+      "what": "refusal code 16",
+      "wire_hex": "46464352010563746c2d610000000000000064000000000000000a0000000000000007af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a70170610000000000000000400000000000000076671c7f9fd41e406b3e55b2dbf1cdff51c42f44d8d59d2d16f35ae19149e72b7",
+      "error": "unknown_kind"
+    },
+    {
+      "id": "M020",
+      "what": "rejection code 0",
+      "wire_hex": "46464352010570616e656c0000000000000005000000000000000a0000000000000008af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a701708000000000000000001000000000016e36020944b137bfd2a9766a1af52953abb6bdd618d82f09873448232243e07e4a4c4",
+      "error": "unknown_kind"
+    },
+    {
+      "id": "M021",
+      "what": "rejection code 6",
+      "wire_hex": "46464352010570616e656c0000000000000005000000000000000a0000000000000008af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a701708060000000000000001000000000016e360d40c993b589c5ba0f5545518726f7dd8f897d029b98d99c2a7dca9b3aef4327f",
+      "error": "unknown_kind"
+    },
+    {
+      "id": "M022",
+      "what": "lane code 2 in a rate-limit rejection",
+      "wire_hex": "46464352010570616e656c0000000000000005000000000000000a0000000000000008af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a701708030000000000000002000000000016e360555f5ac080a1085c64044819a6091ada2976a86f44c16c02b69376b8541fb423",
+      "error": "bad_lane"
+    },
+    {
+      "id": "M023",
+      "what": "a number on a refusal that carries none",
+      "wire_hex": "46464352010563746c2d610000000000000064000000000000000a0000000000000007af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017060800000000000000010000000000000007292bc30a9964ccb58fe3dfdb769c1f1fa63cf6e897de0de3c96c2c76521f725e",
+      "error": "non_canonical"
+    },
+    {
+      "id": "M024",
+      "what": "a second number on a refusal that carries one",
+      "wire_hex": "46464352010563746c2d610000000000000064000000000000000a0000000000000007af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017060e0000000000000004000000000000000576b49c1e744dbc46f13349d028e3ca8e9ce1b2b7100945b4b1e41117ffaf5b2a",
+      "error": "non_canonical"
+    }
+  ],
+  "verify": [
+    {
+      "id": "V001",
+      "what": "the genuine reply to the command the client sent",
+      "key": "key-ctl-a-0123456789abcdef",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000dd6773973df58d1d690740d6d4f93836b16859934a86d27421691076079965fbd",
+      "expect": {
+        "peer": "ctl-a",
+        "seq": 7,
+        "request_digest_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "seen_epoch": 3,
+        "seen_revision": 10
+      },
+      "result": "accepted"
+    },
+    {
+      "id": "V002",
+      "what": "accepted at the freshness boundary: the client has seen exactly this revision",
+      "key": "key-ctl-a-0123456789abcdef",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000dd6773973df58d1d690740d6d4f93836b16859934a86d27421691076079965fbd",
+      "expect": {
+        "peer": "ctl-a",
+        "seq": 7,
+        "request_digest_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "seen_epoch": 3,
+        "seen_revision": 13
+      },
+      "result": "accepted"
+    },
+    {
+      "id": "V003",
+      "what": "accepted from a newer epoch than the client has seen",
+      "key": "key-ctl-a-0123456789abcdef",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000dd6773973df58d1d690740d6d4f93836b16859934a86d27421691076079965fbd",
+      "expect": {
+        "peer": "ctl-a",
+        "seq": 7,
+        "request_digest_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "seen_epoch": 2,
+        "seen_revision": 99
+      },
+      "result": "accepted"
+    },
+    {
+      "id": "V004",
+      "what": "an old reply replayed: the client has seen a later revision of the same epoch",
+      "key": "key-ctl-a-0123456789abcdef",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000dd6773973df58d1d690740d6d4f93836b16859934a86d27421691076079965fbd",
+      "expect": {
+        "peer": "ctl-a",
+        "seq": 7,
+        "request_digest_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "seen_epoch": 3,
+        "seen_revision": 14
+      },
+      "result": "stale"
+    },
+    {
+      "id": "V005",
+      "what": "an old reply replayed: the client has seen a later epoch",
+      "key": "key-ctl-a-0123456789abcdef",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000dd6773973df58d1d690740d6d4f93836b16859934a86d27421691076079965fbd",
+      "expect": {
+        "peer": "ctl-a",
+        "seq": 7,
+        "request_digest_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "seen_epoch": 4,
+        "seen_revision": 0
+      },
+      "result": "stale"
+    },
+    {
+      "id": "V006",
+      "what": "a genuine reply to another command of the same peer (seq 7 answered for seq 8)",
+      "key": "key-ctl-a-0123456789abcdef",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000dd6773973df58d1d690740d6d4f93836b16859934a86d27421691076079965fbd",
+      "expect": {
+        "peer": "ctl-a",
+        "seq": 8,
+        "request_digest_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "seen_epoch": 3,
+        "seen_revision": 10
+      },
+      "result": "wrong_command"
+    },
+    {
+      "id": "V007",
+      "what": "a reply whose tag is genuine under this client's key but which names another peer",
+      "key": "key-ctl-b-0123456789abcdef",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000d6d550c6d9879608b7d20cd5d1a211ffc94a0331d19ea3073dce83fdb2f09cda1",
+      "expect": {
+        "peer": "ctl-b",
+        "seq": 7,
+        "request_digest_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "seen_epoch": 3,
+        "seen_revision": 10
+      },
+      "result": "wrong_command"
+    },
+    {
+      "id": "V008",
+      "what": "the same peer and number, but a different request (a reused number)",
+      "key": "key-ctl-a-0123456789abcdef",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000dd6773973df58d1d690740d6d4f93836b16859934a86d27421691076079965fbd",
+      "expect": {
+        "peer": "ctl-a",
+        "seq": 7,
+        "request_digest_hex": "af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017",
+        "seen_epoch": 3,
+        "seen_revision": 10
+      },
+      "result": "wrong_request"
+    },
+    {
+      "id": "V009",
+      "what": "a forged reply: the tag is all zero",
+      "key": "key-ctl-a-0123456789abcdef",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000d0000000000000000000000000000000000000000000000000000000000000000",
+      "expect": {
+        "peer": "ctl-a",
+        "seq": 7,
+        "request_digest_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "seen_epoch": 3,
+        "seen_revision": 10
+      },
+      "result": "bad_tag"
+    },
+    {
+      "id": "V010",
+      "what": "a forged reply: the tag is computed under the request context",
+      "key": "key-ctl-a-0123456789abcdef",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000d1ee574b097cedd1c5bcf06c35b823af5ed025d3900d2bc18e86cead002089147",
+      "expect": {
+        "peer": "ctl-a",
+        "seq": 7,
+        "request_digest_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "seen_epoch": 3,
+        "seen_revision": 10
+      },
+      "result": "bad_tag"
+    },
+    {
+      "id": "V011",
+      "what": "a forged reply: the tag is the request's own proof, which an attacker saw on the wire",
+      "key": "key-ctl-a-0123456789abcdef",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000d06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a",
+      "expect": {
+        "peer": "ctl-a",
+        "seq": 7,
+        "request_digest_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "seen_epoch": 3,
+        "seen_revision": 10
+      },
+      "result": "bad_tag"
+    },
+    {
+      "id": "V012",
+      "what": "a genuine reply for another peer handed to this client",
+      "key": "key-ctl-a-0123456789abcdef",
+      "wire_hex": "46464352010563746c2d62000000000000012c000000000000000b0000000000000014af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a701704a15e961aba385573663c271ad81e8933c0aafd956dbd1d7d0c3d03d77774d06a",
+      "expect": {
+        "peer": "ctl-b",
+        "seq": 300,
+        "request_digest_hex": "af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017",
+        "seen_epoch": 11,
+        "seen_revision": 0
+      },
+      "result": "bad_tag"
+    },
+    {
+      "id": "V013",
+      "what": "authenticity is checked first: a forged reply to the wrong command",
+      "key": "key-ctl-a-0123456789abcdef",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000d0000000000000000000000000000000000000000000000000000000000000000",
+      "expect": {
+        "peer": "ctl-a",
+        "seq": 8,
+        "request_digest_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "seen_epoch": 3,
+        "seen_revision": 10
+      },
+      "result": "bad_tag"
+    },
+    {
+      "id": "V014",
+      "what": "authenticity is checked first: a forged reply that would also be stale",
+      "key": "key-ctl-a-0123456789abcdef",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000d0000000000000000000000000000000000000000000000000000000000000000",
+      "expect": {
+        "peer": "ctl-a",
+        "seq": 7,
+        "request_digest_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "seen_epoch": 3,
+        "seen_revision": 14
+      },
+      "result": "bad_tag"
+    },
+    {
+      "id": "V015",
+      "what": "the command is checked before the freshness: a wrong command that is also stale",
+      "key": "key-ctl-a-0123456789abcdef",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000dd6773973df58d1d690740d6d4f93836b16859934a86d27421691076079965fbd",
+      "expect": {
+        "peer": "ctl-a",
+        "seq": 8,
+        "request_digest_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "seen_epoch": 3,
+        "seen_revision": 14
+      },
+      "result": "wrong_command"
+    },
+    {
+      "id": "V016",
+      "what": "the request is checked before the freshness: a wrong request that is also stale",
+      "key": "key-ctl-a-0123456789abcdef",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000dd6773973df58d1d690740d6d4f93836b16859934a86d27421691076079965fbd",
+      "expect": {
+        "peer": "ctl-a",
+        "seq": 7,
+        "request_digest_hex": "af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017",
+        "seen_epoch": 3,
+        "seen_revision": 14
+      },
+      "result": "wrong_request"
+    },
+    {
+      "id": "V017",
+      "what": "the command is checked before the request: both are wrong",
+      "key": "key-ctl-a-0123456789abcdef",
+      "wire_hex": "46464352010563746c2d6100000000000000070000000000000003000000000000000d000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f03000000000000000dd6773973df58d1d690740d6d4f93836b16859934a86d27421691076079965fbd",
+      "expect": {
+        "peer": "ctl-a",
+        "seq": 8,
+        "request_digest_hex": "af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017",
+        "seen_epoch": 3,
+        "seen_revision": 10
+      },
+      "result": "wrong_command"
+    },
+    {
+      "id": "V018",
+      "what": "a genuine queued reply, accepted: accepted is not committed",
+      "key": "key-ctl-a-0123456789abcdef",
+      "wire_hex": "46464352010563746c2d6100000000000000080000000000000003000000000000000daf52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a701701006b9785915044a8b3d293b09aedd98c2616c93877a1db692abb4bf0bc6d9d5507",
+      "expect": {
+        "peer": "ctl-a",
+        "seq": 8,
+        "request_digest_hex": "af52f326cca5a0b28dda0c880f77e75c9b5d475cb387b8582a310788034a7017",
+        "seen_epoch": 3,
+        "seen_revision": 13
+      },
+      "result": "accepted"
+    }
+  ]
+}

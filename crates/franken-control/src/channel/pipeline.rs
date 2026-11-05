@@ -74,11 +74,16 @@ use super::peer::{AuthFailure, Authenticated, PeerAuthority, PeerId, PeerRole};
 use super::request::{ControlCommand, ControlRequest, Lane, RequestBody};
 
 mod ack;
+mod persist;
 #[cfg(test)]
 mod profile;
 mod restart;
 
 pub use ack::AckOutcome;
+pub use persist::{
+    Cause, HIGH_WATER_KEY, REFUSING_FLOOR, Restored, StoreFailed, restore_from_open,
+    step_then_store, store_high_water,
+};
 pub use restart::HighWaterError;
 
 /// How a command ended, as remembered in the ledger and returned on a retry.

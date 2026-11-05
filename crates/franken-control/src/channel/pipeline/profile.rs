@@ -134,11 +134,13 @@ const SOURCES: &[(&str, &str)] = &[
     ("limiter.rs", include_str!("../limiter.rs")),
     ("peer.rs", include_str!("../peer.rs")),
     ("request.rs", include_str!("../request.rs")),
+    ("reply.rs", include_str!("../reply.rs")),
     ("ledger.rs", include_str!("../ledger.rs")),
     ("diag.rs", include_str!("../diag.rs")),
     ("mod.rs", include_str!("../mod.rs")),
     ("pipeline.rs", include_str!("../pipeline.rs")),
     ("pipeline/ack.rs", include_str!("ack.rs")),
+    ("pipeline/persist.rs", include_str!("persist.rs")),
     ("pipeline/restart.rs", include_str!("restart.rs")),
 ];
 

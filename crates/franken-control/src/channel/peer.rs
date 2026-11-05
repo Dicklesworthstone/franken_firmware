@@ -50,6 +50,9 @@ pub const MAX_PEERS: usize = 16;
 /// Domain-separation label hashed before every request. It ties a proof to this protocol and
 /// version, so a tag computed for another purpose under the same key is not a valid request proof.
 pub const AUTH_CONTEXT: &[u8] = b"FFCP-v1-auth";
+/// Domain-separation label hashed before every reply (N02 section 9.1). It differs from [`AUTH_CONTEXT`], so a
+/// tag made for a request is never a valid reply tag, and the reverse, although both are made under the same key.
+pub const REPLY_CONTEXT: &[u8] = b"FFCR-v1-reply";
 
 /// Why a peer id or a proof could not be built.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -193,6 +196,29 @@ fn hmac_sha256(key: &[u8], parts: &[&[u8]]) -> [u8; PROOF_LEN] {
 #[must_use]
 pub fn compute_proof(key: &[u8], message: &[u8]) -> AuthProof {
     AuthProof(hmac_sha256(key, &[AUTH_CONTEXT, message]).to_vec())
+}
+
+/// The tag a channel holding `key` puts on a reply whose signed bytes are `message`. A client holding the same key
+/// recomputes it with [`reply_tag_matches`].
+#[must_use]
+pub fn compute_reply_tag(key: &[u8], message: &[u8]) -> AuthProof {
+    AuthProof(hmac_sha256(key, &[REPLY_CONTEXT, message]).to_vec())
+}
+
+/// Whether `tag` is the reply tag of `message` under `key`, compared in constant time.
+#[must_use]
+pub fn reply_tag_matches(key: &[u8], message: &[u8], tag: &[u8]) -> bool {
+    constant_time_eq(&hmac_sha256(key, &[REPLY_CONTEXT, message]), tag)
+}
+
+/// An authority that can put a reply tag on behalf of a peer it currently admits (N02 section 9.1).
+///
+/// Kept apart from [`PeerAuthority`] so that an authority that only verifies requests, such as a test double,
+/// stays valid. It changes no state.
+pub trait ReplySigner {
+    /// The reply tag of `message` under `peer`'s key, or `None` if the peer is not admitted now (unknown or
+    /// revoked) or its key cannot be read. A revoked peer is never signed for.
+    fn sign_reply(&self, peer: &PeerId, message: &[u8]) -> Option<AuthProof>;
 }
 
 /// Equality that does not stop at the first differing byte. Lengths are not secret.
@@ -406,6 +432,18 @@ impl<S: SecretStore> PeerDirectory<S> {
     #[must_use]
     pub fn key_slots(&self) -> usize {
         self.keys.list().len()
+    }
+}
+
+impl<S: SecretStore> ReplySigner for PeerDirectory<S> {
+    fn sign_reply(&self, peer: &PeerId, message: &[u8]) -> Option<AuthProof> {
+        if !self.peers.contains_key(peer) {
+            return None;
+        }
+        let handle = key_handle(peer).ok()?;
+        self.keys
+            .with_secret(&handle, |_, key| compute_reply_tag(key, message))
+            .ok()
     }
 }
 
