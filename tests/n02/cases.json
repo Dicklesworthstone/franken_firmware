@@ -711,6 +711,18 @@
         "the_floor_is_the_larger_of_the_first_steps_revision_and_the_mark",
         "the_local_user_is_never_locked_out_by_a_mark_and_a_remote_controller_is_told_why"
       ]
+    },
+    {
+      "id": "INV-RUNTIME-PROFILE",
+      "claim": "The channel's production source uses no thread, lock, atomic, Arc, clock read, file, socket, process, environment or unsafe, and under a six-thousand-operation flood every structure it keeps stays within its cap after every operation; the per-peer tables are bounded by the authority's identity cap, and an authority that admits every identity takes them past their caps and the census catches it.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the source text and of the structures' sizes under load, judged by Rust tests that read the channel's own files; the Python scenario model has nothing to say about either.",
+      "rust_tests": [
+        "the_channel_sources_use_no_thread_lock_atomic_clock_io_or_unsafe",
+        "the_scanner_flags_each_planted_violation_and_ignores_the_same_words_in_comments_and_strings",
+        "a_flood_never_takes_any_structure_past_its_cap",
+        "an_authority_that_admits_every_identity_takes_the_per_peer_tables_past_their_caps"
+      ]
     }
   ],
   "other_rust_checks": {

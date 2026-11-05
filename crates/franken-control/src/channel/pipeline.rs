@@ -74,6 +74,8 @@ use super::peer::{AuthFailure, Authenticated, PeerAuthority, PeerId, PeerRole};
 use super::request::{ControlCommand, ControlRequest, Lane, RequestBody};
 
 mod ack;
+#[cfg(test)]
+mod profile;
 mod restart;
 
 pub use ack::AckOutcome;
