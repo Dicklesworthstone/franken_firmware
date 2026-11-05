@@ -68,6 +68,22 @@ RUNNING = re.compile(r"^\s*Running .*?\((?:[^()]*/)?([A-Za-z0-9_]+)-[0-9a-f]{6,}
 DOC_TESTS = re.compile(r"^\s*Doc-tests\s+(\S+)\s*$")
 SECTION_START = re.compile(r"^running (\d+) tests?\s*$")
 SECTION_RESULT = re.compile(r"^test result: (?:ok|FAILED)\.")
+# With `--nocapture` the test threads print lines (records, event lines) into the same stream as libtest's own writes, and libtest's
+# main thread writes a result in three separate pieces: `test <name> ... `, then `ok` (or `FAILED`, `ignored`), then a newline. A
+# line from another thread can land between any two of them, so a result is not always on one line:
+#     test <name> ... <a record>        the prefix, interrupted      (OPEN_PREFIX, then the next line starts with the token)
+#     ok
+#     test <name> ... ok<a record>      the token, interrupted before its newline   (GLUED_RESULT; a blank line follows later)
+# Only the main thread writes prefixes and tokens, one test after another, so at most one prefix is open at a time, and the first
+# token after it is its result. See `Logs.add`.
+OPEN_PREFIX = re.compile(r"^test ([A-Za-z_][A-Za-z0-9_:]*) \.\.\. ")
+GLUED_RESULT = re.compile(r"^test ([A-Za-z_][A-Za-z0-9_:]*) \.\.\. (ok|FAILED|ignored)(?=[A-Za-z0-9_])")
+RESULT_AT_START = re.compile(r"^(ok|FAILED|ignored)")
+BARE_RESULT = re.compile(r"^(?:ok|FAILED|ignored(?:, .*)?)$")
+# libtest sorts its tests by name and, with ONE test thread, runs them in that order. A section of this many tests or more that
+# reports in exactly sorted order was therefore run serially, where a prefix interrupted by output is the test's OWN output; the
+# open-prefix rule is for parallel runs and is not applied to it (see `Logs.add`).
+SERIAL_MIN_TESTS = 16
 
 
 def _load(name: str) -> Any:
@@ -135,6 +151,17 @@ class Logs:
     Repeated inputs never change the denominator: a log with the same sha256 is read once, an
     identical repeated observation is ignored, and a *conflicting* one is reported on its own
     case, not as an extra case.
+
+    A test's result is not always on one line. Under ``--nocapture`` another test's output can land
+    between the three pieces libtest's main thread writes for it (see ``OPEN_PREFIX``). The main
+    thread is the only writer of prefixes and tokens and writes one test after another, so a
+    prefix with no token is the one open prefix, and the first token after it is its result,
+    whatever lines came between. A log that breaks that model is not guessed at: a second prefix
+    while one is open, a token with no prefix open, and a prefix that never gets its token each
+    drop the tests involved (they are not reported, so their cases stay blocked) and are listed in
+    ``attribution_notes``. A section that reports in exactly sorted order (``SERIAL_MIN_TESTS``)
+    was run with one test thread, where the lines between a prefix and its token are that test's
+    own output; its interrupted prefixes are not attributed, as they were not before this rule.
     """
 
     def __init__(self) -> None:
@@ -146,6 +173,9 @@ class Logs:
         self.conflicting_tests: set = set()
         self.ambiguous_names: set = set()
         self.unattributed_logs: List[str] = []
+        # Why a result was not attributed (a log that broke the open-prefix model), and how many were attributed by it.
+        self.attribution_notes: List[str] = []
+        self.interrupted_results = 0
         self.files: List[Tuple[str, str]] = []
         self._digests: set = set()
 
@@ -181,8 +211,22 @@ class Logs:
         sections: List[dict] = []
         orphans: List[Tuple[str, str]] = []
         current: Optional[dict] = None
+        open_prefix: Optional[Tuple[str, int]] = None  # (test name, line number) written, result not yet
+        notes: List[str] = []
+        base = os.path.basename(path)
+
+        def drop(why: str) -> None:
+            nonlocal open_prefix
+            notes.append(f"{base}: {why}")
+            open_prefix = None
+
+        def report(name: str, status: str, interrupted: bool) -> None:
+            (current["tests"] if current is not None else orphans).append((name, status))
+            if current is not None:
+                current["interrupted"].append(interrupted)
+
         with open(path, encoding="utf-8", errors="replace") as handle:
-            for line in handle:
+            for number, line in enumerate(handle, 1):
                 running = RUNNING.match(line)
                 if running:
                     headers.append(running.group(1))
@@ -193,19 +237,59 @@ class Logs:
                     continue
                 start = SECTION_START.match(line)
                 if start:
-                    current = {"declared": int(start.group(1)), "tests": []}
+                    if open_prefix is not None:
+                        drop(f"line {number}: a test section starts while `test {open_prefix[0]} ... ` (line {open_prefix[1]}) has no result")
+                    current = {"declared": int(start.group(1)), "tests": [], "interrupted": []}
                     sections.append(current)
+                    continue
+                if SECTION_RESULT.match(line):
+                    if open_prefix is not None:
+                        drop(f"line {number}: a test section ends while `test {open_prefix[0]} ... ` (line {open_prefix[1]}) has no result")
+                    current = None
                     continue
                 observed = OBSERVED.search(line)
                 if observed:
                     self._record_observation(observed.group(1))
+                text = line.rstrip("\r\n")
+                whole = TEST_LINE.search(line)
+                glued = GLUED_RESULT.match(text)
+                prefix = OPEN_PREFIX.match(text)
+                if open_prefix is not None:
+                    if whole or glued or prefix:
+                        # Only the main thread writes prefixes, one test at a time: two are open, and which of the two the next
+                        # token belongs to cannot be told. Neither is reported.
+                        name = (whole or glued or prefix).group(1)
+                        drop(f"line {number}: `test {name} ... ` starts while `test {open_prefix[0]} ... ` (line {open_prefix[1]}) is open; neither is attributed")
+                    elif RESULT_AT_START.match(text):
+                        report(open_prefix[0], RESULT_AT_START.match(text).group(1), True)
+                        self.interrupted_results += 1
+                        open_prefix = None
                     continue
-                test = TEST_LINE.search(line)
-                if test:
-                    (current["tests"] if current is not None else orphans).append((test.group(1), test.group(2)))
-                    continue
-                if SECTION_RESULT.match(line):
-                    current = None
+                if whole:
+                    report(whole.group(1), whole.group(2), False)
+                elif glued:
+                    report(glued.group(1), glued.group(2), False)
+                elif prefix:
+                    open_prefix = (prefix.group(1), number)
+                elif BARE_RESULT.match(text) and current is not None:
+                    notes.append(f"{base}: line {number}: a result token with no test prefix open")
+        if open_prefix is not None:
+            notes.append(f"{base}: the log ends while `test {open_prefix[0]} ... ` (line {open_prefix[1]}) has no result")
+
+        for section in sections:
+            names = [name for name, _ in section["tests"]]
+            if (
+                len(names) >= SERIAL_MIN_TESTS
+                and names == sorted(names)
+                and any(section["interrupted"])
+            ):
+                kept = [t for t, cut in zip(section["tests"], section["interrupted"]) if not cut]
+                notes.append(
+                    f"{base}: a section of {len(names)} tests reports in sorted order, which is how libtest runs with one test thread; "
+                    f"{len(names) - len(kept)} result(s) found only by the open-prefix rule were not attributed")
+                self.interrupted_results -= len(names) - len(kept)
+                section["tests"] = kept
+        self.attribution_notes.extend(notes)
 
         consistent = not orphans and all(len(s["tests"]) == s["declared"] for s in sections)
         if headers and len(headers) == len(sections) and consistent:

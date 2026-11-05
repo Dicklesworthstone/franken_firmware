@@ -709,6 +709,11 @@ def run(tier: str, logs: Optional[Logs]) -> Tuple[List[Result], dict]:
             notes.append("%d identical repeated observation(s) ignored" % logs.identical_repeats)
         if logs.unattributed_logs:
             notes.append("no header pairing, exact names used: " + "; ".join(logs.unattributed_logs))
+        if logs.interrupted_results:
+            notes.append("%d result(s) were interrupted by other tests' output and attributed to the one open prefix"
+                         % logs.interrupted_results)
+        if logs.attribution_notes:
+            notes.append("not attributed: " + "; ".join(logs.attribution_notes))
         if bad_obs or bad_tests:
             detail = "conflicting records: " + ", ".join(bad_obs + bad_tests)
         else:

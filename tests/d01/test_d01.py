@@ -15,6 +15,7 @@ import importlib.util
 import io
 import json
 import os
+import random
 import re
 import sys
 import tempfile
@@ -514,6 +515,146 @@ class RchShape(Harness):
         logs.add(same_path)  # the very same path again
         self.assertEqual(len(logs.repeated_inputs), 2)
         self.assertEqual(runner.summarize(runner.run("full", logs)[0]), runner.summarize(once))
+
+
+class OpenPrefix(Harness):
+    """Under ``--nocapture`` another test's line can land between the pieces libtest's main thread writes for a test (``test <name> ... ``,
+    the token, the newline). ``Logs`` attributes by the one open prefix, and refuses what that model cannot explain. The shapes are the
+    ones of a real central log (a record between a prefix and its ``ok``; a token with a record glued to it); the names are invented."""
+
+    HEADER = "     Running unittests src/lib.rs (target/debug/deps/franken_clock-0123abcd)"
+    RECORD = 'D01-OBSERVED {"id":"x-1","kind":"convert","status":"ok"}'
+    STEM = "franken_clock"
+
+    def section(self, body: List[str], declared: int) -> str:
+        lines = [self.HEADER, f"running {declared} tests"] + body + [
+            "", f"test result: ok. {declared} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s", ""]
+        return "\n".join(lines) + "\n"
+
+    def statuses(self, logs: Any, names: List[str]) -> List[Optional[str]]:
+        return [logs.test_status(self.STEM, n) for n in names]
+
+    def test_a_prefix_interrupted_by_a_line_gets_the_token_that_follows(self) -> None:
+        body = ["test t::a ... ok", "test t::b ... " + self.RECORD, "ok", "test t::c ... ok"]
+        logs = self.parse(self.section(body, 3))
+        self.assertEqual(self.statuses(logs, ["t::a", "t::b", "t::c"]), ["ok", "ok", "ok"])
+        self.assertEqual((logs.unattributed_logs, logs.attribution_notes, logs.interrupted_results), ([], [], 1))
+
+    def test_a_prefix_interrupted_by_several_lines_of_any_kind_is_still_read(self) -> None:
+        body = ["test t::a ... " + self.RECORD, 'FFW_X_EVENT {"a":1}', "plain text from a test", self.RECORD, "ok", "test t::b ... ok"]
+        logs = self.parse(self.section(body, 2))
+        self.assertEqual(self.statuses(logs, ["t::a", "t::b"]), ["ok", "ok"])
+        self.assertEqual(logs.attribution_notes, [])
+
+    def test_the_token_comes_from_the_log_not_from_the_shape(self) -> None:
+        for token, expected in (("FAILED", "FAILED"), ("ignored", "ignored"), ("ignored, slow", "ignored")):
+            body = ["test t::a ... ok", "test t::b ... " + self.RECORD, token]
+            logs = self.parse(self.section(body, 2))
+            self.assertEqual(self.statuses(logs, ["t::a", "t::b"]), ["ok", expected], token)
+
+    def test_a_token_with_a_record_glued_to_it_is_read(self) -> None:
+        body = ["test t::a ... ok", "test t::b ... ok" + self.RECORD, "", "test t::c ... FAILED" + self.RECORD, ""]
+        logs = self.parse(self.section(body, 3))
+        self.assertEqual(self.statuses(logs, ["t::a", "t::b", "t::c"]), ["ok", "ok", "FAILED"])
+        self.assertEqual(logs.attribution_notes, [])
+
+    def test_a_prefix_that_never_gets_a_result_is_not_reported(self) -> None:
+        # the section ends while it is open
+        logs = self.parse(self.section(["test t::a ... ok", "test t::b ... " + self.RECORD], 2))
+        self.assertEqual(self.statuses(logs, ["t::a", "t::b"]), ["ok", None])
+        self.assertTrue(any("has no result" in n for n in logs.attribution_notes), logs.attribution_notes)
+        # the log ends while it is open
+        path = os.path.join(self.tmp.name, "cut.log")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("\n".join([self.HEADER, "running 2 tests", "test t::a ... ok", "test t::b ... " + self.RECORD]) + "\n")
+        cut = runner.Logs()
+        cut.add(path)
+        self.assertEqual(cut.test_status(None, "t::b"), None)
+        self.assertTrue(any("the log ends" in n for n in cut.attribution_notes), cut.attribution_notes)
+        # a prefix left open at the end of one section does not reach into the next binary's section
+        second = "\n".join(["     Running unittests src/lib.rs (target/debug/deps/franken_dsp-0123abcd)", "running 1 test", "test t::z ... ok", "",
+                            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s", ""]) + "\n"
+        both = self.parse(self.section(["test t::a ... ok", "test t::b ... " + self.RECORD], 2) + second)
+        self.assertEqual(both.test_status("franken_dsp", "t::z"), "ok")
+        self.assertEqual(both.test_status(None, "t::b"), None)
+
+    def test_two_open_prefixes_are_refused_and_neither_test_is_credited(self) -> None:
+        body = ["test t::a ... " + self.RECORD, "test t::b ... " + self.RECORD, "ok", "ok", "test t::c ... ok"]
+        logs = self.parse(self.section(body, 3))
+        self.assertEqual(self.statuses(logs, ["t::a", "t::b"]), [None, None])
+        self.assertEqual(logs.test_status(None, "t::c"), "ok", "a test with its own complete line is still read")
+        self.assertTrue(any("is open; neither is attributed" in n for n in logs.attribution_notes), logs.attribution_notes)
+        # a complete line opening while a prefix is open is the same defect
+        body = ["test t::a ... " + self.RECORD, "test t::b ... ok", "ok"]
+        logs = self.parse(self.section(body, 2))
+        self.assertEqual(self.statuses(logs, ["t::a", "t::b"]), [None, None])
+
+    def test_a_token_with_no_prefix_open_is_noted_and_credits_nothing(self) -> None:
+        body = ["test t::a ... ok", "ok", "test t::b ... ok"]
+        logs = self.parse(self.section(body, 2))
+        self.assertEqual(self.statuses(logs, ["t::a", "t::b"]), ["ok", "ok"])
+        self.assertTrue(any("no test prefix open" in n for n in logs.attribution_notes), logs.attribution_notes)
+
+    def test_a_test_that_printed_a_line_starting_with_a_token_cannot_be_misread_silently(self) -> None:
+        # a line that looks like a token takes the result, and then the real token is a token with no prefix open: it is refused
+        body = ["test t::a ... " + self.RECORD, "ok, said the test", "FAILED", "test t::b ... ok"]
+        logs = self.parse(self.section(body, 2))
+        self.assertTrue(any("no test prefix open" in n for n in logs.attribution_notes), logs.attribution_notes)
+
+    def names(self, n: int) -> List[str]:
+        return [f"t::case_{i:02d}" for i in range(n)]
+
+    def test_a_section_reporting_in_sorted_order_is_a_serial_run_and_its_interrupted_prefixes_are_not_attributed(self) -> None:
+        names = self.names(20)
+        body = []
+        for i, n in enumerate(names):
+            body += [f"test {n} ... " + self.RECORD, "ok"] if i % 2 == 0 else [f"test {n} ... ok"]
+        logs = self.parse(self.section(body, 20))
+        got = self.statuses(logs, names)
+        self.assertEqual([g for i, g in enumerate(got) if i % 2 == 1], ["ok"] * 10, "complete lines are read as they always were")
+        self.assertEqual([g for i, g in enumerate(got) if i % 2 == 0], [None] * 10, "interrupted prefixes of a serial run are not")
+        self.assertTrue(any("sorted order" in n for n in logs.attribution_notes), logs.attribution_notes)
+        self.assertEqual(logs.interrupted_results, 0)
+        # the control: the same lines in a parallel-looking (unsorted) order are all read
+        shuffled = list(reversed(names))
+        body = []
+        for i, n in enumerate(shuffled):
+            body += [f"test {n} ... " + self.RECORD, "ok"] if i % 2 == 0 else [f"test {n} ... ok"]
+        logs = self.parse(self.section(body, 20))
+        self.assertEqual(self.statuses(logs, names), ["ok"] * 20)
+        self.assertEqual((logs.attribution_notes, logs.interrupted_results), ([], 10))
+        # and a short section is not taken for a serial run
+        body = [f"test {n} ... " + self.RECORD + "\nok" for n in self.names(5)]
+        logs = self.parse(self.section(body, 5))
+        self.assertEqual(self.statuses(logs, self.names(5)), ["ok"] * 5)
+
+    def test_a_clean_log_reads_as_it_always_did(self) -> None:
+        names = self.names(30)
+        logs = self.parse(self.section([f"test {n} ... ok" for n in names], 30))
+        self.assertEqual(self.statuses(logs, names), ["ok"] * 30)
+        self.assertEqual((logs.unattributed_logs, logs.attribution_notes, logs.interrupted_results), ([], [], 0))
+
+    def test_any_interleaving_of_whole_lines_between_the_three_pieces_is_read_exactly(self) -> None:
+        """libtest's main thread writes ``test <n> ... ``, the token, then a newline, one test after another; a test thread writes whole
+        lines. Every placement of whole lines between the pieces (none, one or two in each gap) must read back each test's own token."""
+        noise = [self.RECORD, 'FFW_V01_EVENT {"schema_version":"ffw.log.v1"}', "a plain line a test printed", "N03-OBSERVED {\"id\":\"n\"}"]
+        for seed in range(60):
+            rng = random.Random(seed)
+            names = self.names(30)
+            order = list(names)
+            while order == sorted(order):
+                rng.shuffle(order)
+            want = {n: rng.choice(["ok", "ok", "ok", "FAILED", "ignored"]) for n in names}
+            stream = ""
+            for n in order:
+                for piece in (f"test {n} ... ", want[n], "\n"):
+                    stream += piece + "".join(rng.choice(noise) + "\n" for _ in range(rng.choice([0, 0, 1, 2])))
+            text = (self.HEADER + "\nrunning 30 tests\n" + stream
+                    + "\ntest result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n")
+            logs = self.parse(text)
+            got = {n: logs.test_status(self.STEM, n) for n in names}
+            self.assertEqual(got, want, f"seed {seed}")
+            self.assertEqual((logs.unattributed_logs, logs.attribution_notes), ([], []), f"seed {seed}")
 
 
 class CommandLine(Harness):

@@ -103,11 +103,13 @@ def good_records():
 GOOD = good_records()
 
 
-def build_log(records, skip_tests=(), failed_tests=(), ignored_tests=(), layout="classic", extra_sections=()):
+def build_log(records, skip_tests=(), failed_tests=(), ignored_tests=(), layout="classic", extra_sections=(), order="sorted"):
     """A cargo-test log of the same FORM as the real ones. layout "rch": the stdout sections come first and the
     stderr ``Running`` headers arrive afterwards (the shape through RCH)."""
     names = sorted({name for case in rc.registry(VEC) for _, name in case["tests"]})
     shown = [n for n in names if n.rsplit("::", 1)[-1] not in skip_tests]
+    if order == "reversed":  # libtest reports in completion order: a parallel run is not in sorted order
+        shown.reverse()
     body = ["", "running %d tests" % len(shown)]
     for n in shown:
         bare = n.rsplit("::", 1)[-1]
@@ -375,6 +377,122 @@ class JudgeSelfTest(unittest.TestCase):
     def test_a_property_record_alone_cannot_stand_in_for_a_test_that_did_not_run(self):
         by_id, _ = judge(build_log(GOOD, skip_tests=("n03_audible_output_always_rests_on_a_locked_clock_a_valid_authority_and_an_admitted_start",)))
         self.assertEqual(by_id["N03-PROPERTY"].status, "blocked")
+
+
+class InterruptedResultsTest(unittest.TestCase):
+    """Under ``--nocapture`` another test's record can land between a test's ``test <name> ... `` and its ``ok`` (a central log did, once:
+    the b52 run, 30 of 31, with the very same code that gave 31 of 31 in b48). The judge attributes such a result to the one open prefix
+    (``tests/d01/run_cases.py``, ``Logs.add``); these are the planted shapes, over the real required test names."""
+
+    VICTIM = "group::tests::n03_frame_position_wraps_at_two_to_the_32_frames"  # the test whose result was lost in that run
+    OTHER = "group::tests::n03_transform_table_matches_the_reference_and_the_two_directions_are_consistent"
+    # exactly what interrupted it: another test's N03 record; a D03 record or a V01 event line interrupts the same way
+    RECORD = "N03-OBSERVED " + json.dumps(next(r for r in GOOD if r["id"] == "n03-mixed"))
+    OTHERS = ('D03-OBSERVED {"dropped":16,"id":"d03-disc-half-range","kind":"discontinuity"}', 'FFW_V01_EVENT {"schema_version":"ffw.log.v1"}')
+
+    def log(self, interrupt=(), order="reversed", every=False):
+        """A good log whose lib section is not in sorted order (a parallel run) with each named test's line replaced by `interrupt`
+        (a list of lines) or, with `every`, every test's ``ok`` interrupted by a record."""
+        lines = build_log(GOOD, layout="rch", order=order).split("\n")
+        out = []
+        for line in lines:
+            hit = re.match(r"^test (\S+) \.\.\. ok$", line)
+            if hit and every:
+                out += ["test %s ... %s" % (hit.group(1), self.RECORD), "ok"]
+            elif hit and hit.group(1) == self.VICTIM and interrupt:
+                out += [l.replace("{name}", hit.group(1)) for l in interrupt]
+            else:
+                out.append(line)
+        return "\n".join(out)
+
+    def test_the_exact_shape_of_the_racy_run_is_judged_ok(self):
+        text = self.log(["test {name} ... " + self.RECORD, "ok"])
+        by_id, results = judge(text)
+        self.assertEqual(by_id["N03-TRANSFORM"].status, "passed", by_id["N03-TRANSFORM"].as_dict())
+        self.assertEqual(rc.exit_code(results), 0, [r.as_dict() for r in results if r.status != "passed"])
+        self.assertIn("1 result(s) were interrupted", self.logs_note(text))
+
+    def logs_note(self, text):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "cargo.log")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            logs = rc.Logs()
+            logs.add(path)
+            results, _ = rc.run("full", logs)
+        return next(r.detail for r in results if r.case_id == "N03-META-LOGS-CONSISTENT")
+
+    def test_every_kind_of_line_that_can_interrupt_it_is_judged_ok(self):
+        for noise in self.OTHERS:
+            by_id, results = judge(self.log(["test {name} ... " + noise, "ok"]))
+            self.assertEqual(rc.exit_code(results), 0, noise)
+        # the token interrupted before its newline
+        by_id, results = judge(self.log(["test {name} ... ok" + self.RECORD, ""]))
+        self.assertEqual(rc.exit_code(results), 0)
+        # more than one line in the gap
+        by_id, results = judge(self.log(["test {name} ... " + self.RECORD, *self.OTHERS, "ok"]))
+        self.assertEqual(rc.exit_code(results), 0)
+
+    def test_an_interrupted_prefix_whose_real_result_is_FAILED_fails_its_case(self):
+        by_id, results = judge(self.log(["test {name} ... " + self.RECORD, "FAILED"]))
+        self.assertEqual(by_id["N03-TRANSFORM"].status, "failed", by_id["N03-TRANSFORM"].as_dict())
+        self.assertEqual(rc.exit_code(results), 1)
+        by_id, _ = judge(self.log(["test {name} ... FAILED" + self.RECORD, ""]))
+        self.assertEqual(by_id["N03-TRANSFORM"].status, "failed")
+
+    def test_an_interrupted_prefix_that_is_ignored_stays_blocked(self):
+        by_id, results = judge(self.log(["test {name} ... " + self.RECORD, "ignored"]))
+        self.assertEqual(by_id["N03-TRANSFORM"].status, "blocked", by_id["N03-TRANSFORM"].as_dict())
+        self.assertEqual(rc.exit_code(results), 3)
+
+    def test_a_prefix_that_never_gets_a_result_stays_blocked(self):
+        by_id, results = judge(self.log(["test {name} ... " + self.RECORD]))
+        self.assertEqual(by_id["N03-TRANSFORM"].status, "blocked", by_id["N03-TRANSFORM"].as_dict())
+        self.assertIn("not reported", by_id["N03-TRANSFORM"].detail)
+        self.assertEqual(rc.exit_code(results), 3)
+        self.assertEqual([r.case_id for r in results if r.status == "failed"], [])
+
+    def test_two_open_prefixes_are_refused(self):
+        # the victim and the next test both have an open prefix, then two bare tokens: which belongs to which cannot be told
+        text = self.log(["test {name} ... " + self.RECORD, "test %s ... %s" % (self.OTHER, self.RECORD), "ok", "ok"])
+        text = text.replace("\ntest %s ... ok\n" % self.OTHER, "\n", 1)  # the other test's own line is the second prefix
+        by_id, results = judge(text)
+        self.assertEqual(by_id["N03-TRANSFORM"].status, "blocked", by_id["N03-TRANSFORM"].as_dict())
+        self.assertNotEqual(rc.exit_code(results), 0)
+        self.assertIn("is open; neither is attributed", self.logs_note(text))
+
+    def notes(self, text):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "cargo.log")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            logs = rc.Logs()
+            logs.add(path)
+        return logs.attribution_notes
+
+    def test_a_token_with_no_prefix_open_is_not_credited_to_anyone(self):
+        # drop the victim's own line and leave a bare token where its result would be
+        text = self.log(["ok"])
+        by_id, results = judge(text)
+        self.assertEqual(by_id["N03-TRANSFORM"].status, "blocked", by_id["N03-TRANSFORM"].as_dict())
+        self.assertTrue(any("no test prefix open" in n for n in self.notes(text)), self.notes(text))
+
+    def test_a_serial_log_is_still_not_accepted(self):
+        """The control for the b53 run (``--test-threads=1``): every test that prints has its record between its prefix and its token,
+        and the section reports in sorted order. Serial mode is not silently accepted: those results are not attributed."""
+        text = self.log(every=True, order="sorted")
+        by_id, results = judge(text)
+        self.assertEqual(rc.exit_code(results), 3, [r.as_dict() for r in results if r.status == "failed"])
+        self.assertEqual(by_id["N03-PARAMS"].status, "blocked")
+        self.assertTrue(any("sorted order" in n for n in self.notes(text)), self.notes(text))
+        # the control of the control: the same interruptions in a parallel-looking order are all attributed
+        by_id, results = judge(self.log(every=True, order="reversed"))
+        self.assertEqual(rc.exit_code(results), 0, [r.as_dict() for r in results if r.status != "passed"])
+
+    def test_the_clean_log_is_unchanged(self):
+        for order in ("sorted", "reversed"):
+            _, results = judge(build_log(GOOD, layout="rch", order=order))
+            self.assertEqual(rc.exit_code(results), 0, order)
 
 
 class ReferenceSelfTest(unittest.TestCase):
