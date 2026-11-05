@@ -41,7 +41,9 @@ def good_records():
     ]
     plants = [{"kind": "plant", "name": p["name"], "broken": list(p["fails"]), "predicted": list(p["fails"])}
               for p in DOC["plants"]]
-    corrupted = [{"kind": "corrupted", "wrong_number_reported": True, "wrong_code_reported": True}]
+    corrupted = [{"kind": "corrupted", "wrong_number_reported": True, "wrong_code_reported": True,
+                  "dropped_details_reported": True, "null_for_empty_reported": True,
+                  "bare_refusal_is_an_empty_object": True}]
     vectors = [{"kind": "vectors", "scenarios": len(DOC["scenarios"]),
                 "step_entries": sum(len(s["steps"]) for s in DOC["scenarios"]),
                 "schedule_runs": len(DOC["schedule"]["runs"]), "plants": len(DOC["plants"])}]
@@ -150,7 +152,8 @@ class Judge(unittest.TestCase):
 
     def test_a_replay_that_cannot_show_it_reports_corruption_fails(self):
         key = "a_planted_fault_breaks_exactly_the_scenarios_the_model_predicts"
-        for field in ("wrong_number_reported", "wrong_code_reported"):
+        for field in ("wrong_number_reported", "wrong_code_reported", "dropped_details_reported",
+                      "null_for_empty_reported", "bare_refusal_is_an_empty_object"):
             g = good_records()
             next(r for r in g[key] if r["kind"] == "corrupted")[field] = False
             self.assertTrue(any("corrupted expectation" in p for p in problems_of(g)), field)

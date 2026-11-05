@@ -240,6 +240,37 @@ class Scenarios(unittest.TestCase):
         refusal["expect"]["details"]["conservative_expiry_ns"] = 1051
         self.assertTrue(ref.replay(d, sc), "a wrong number inside a refusal was accepted")
 
+    def test_a_refusal_with_no_numbers_has_an_empty_object_of_details_in_the_model(self):
+        """The Rust replay once reported such a refusal as `null` and 11 scenarios failed (b20). The model
+        decides what "no details" is: an empty object, for every refusal whose vector omits `details`."""
+        shapes = {}
+        for sc in doc()["scenarios"]:
+            ctx = ref.Context(sc, ref.Rules())
+            for step in ref.expand(sc["steps"]):
+                try:
+                    ref.do_step(ctx, step)
+                except ref.Refuse as refusal:
+                    if "details" not in step["expect"]:
+                        shapes[repr(refusal.details)] = shapes.get(repr(refusal.details), 0) + 1
+        self.assertEqual(list(shapes), ["{}"], shapes)
+        self.assertGreaterEqual(shapes["{}"], 30)
+
+    def test_the_comparison_does_not_treat_an_empty_object_and_null_as_the_same(self):
+        self.assertIsNone(ref.subset({}, {}, "details"))
+        self.assertIsNotNone(ref.subset({}, None, "details"))
+        self.assertIsNotNone(ref.subset({"token_epoch": 9}, {}, "details"))
+        self.assertIsNotNone(ref.subset({"token_epoch": 9}, None, "details"))
+        self.assertIsNone(ref.subset({}, {"token_epoch": 9}, "details"))  # extra keys are allowed
+
+    def test_the_replay_judges_refusal_details_strictly_and_converts_a_bare_variant_to_an_empty_object(self):
+        text = REPLAY.read_text(encoding="utf-8")
+        self.assertIn("Ok(Value::String(_)) => json!({}),", text)
+        self.assertIn("fn judge_refusal(expect: &Value, refusal: &Refusal)", text)
+        for fragment in ("dropped_details_reported", "null_for_empty_reported", "bare_refusal_is_an_empty_object"):
+            self.assertIn('"%s"' % fragment, text)
+        # no general equivalence between an empty object and null anywhere in the comparison
+        self.assertNotIn("is_null()", text[text.index("fn subset("):text.index("fn judge_refusal(")])
+
 
 class Rules(unittest.TestCase):
     """Every rule of the contract is a switch of the model. The unbroken model is shown green first

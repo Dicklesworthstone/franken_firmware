@@ -149,12 +149,17 @@ impl Refusal {
 
 impl From<MembershipError> for Refusal {
     fn from(error: MembershipError) -> Self {
-        // The error serialises externally tagged: {"StaleAuthority": {"token_epoch": 1, ...}}.
+        // A variant with fields serialises externally tagged: {"StaleAuthority": {"token_epoch": 1, ...}}.
+        // A variant with none (`WrongGroup`) serialises as a bare string, and the model's refusal for
+        // it carries an empty object (`Refuse(code)` has no keyword details), which is also what a
+        // vector that omits `details` means. Anything else is unexpected and stays `null`, so it
+        // fails the comparison instead of being mistaken for "no details".
         let details = match serde_json::to_value(&error) {
             Ok(Value::Object(map)) => map
                 .into_iter()
                 .next()
                 .map_or(Value::Null, |(_, inner)| inner),
+            Ok(Value::String(_)) => json!({}),
             _ => Value::Null,
         };
         Self {
@@ -934,27 +939,34 @@ fn subset(expected: &Value, actual: &Value, path: &str) -> Option<String> {
     }
 }
 
+/// `None` when a refusal meets the expectation, else a short description of the mismatch. A step that
+/// omits `details` expects an empty object (the model's value for a refusal with no numbers), and the
+/// comparison does not treat an empty object and `null` as the same: an engine that drops details the
+/// model has, or reports none as `null`, is a mismatch.
+fn judge_refusal(expect: &Value, refusal: &Refusal) -> Option<String> {
+    let empty = json!({});
+    let Some(code) = expect.get("error").and_then(Value::as_str) else {
+        return Some(format!(
+            "refused {} {}, wanted success",
+            refusal.code, refusal.details
+        ));
+    };
+    if code != refusal.code {
+        return Some(format!("refused {}, wanted {code}", refusal.code));
+    }
+    subset(
+        expect.get("details").unwrap_or(&empty),
+        &refusal.details,
+        "details",
+    )
+}
+
 /// `None` when the step met its expectation, else a short description of the mismatch.
 fn run_step(ctx: &mut Ctx, step: &Value) -> Option<String> {
     let expect = step.get("expect").unwrap_or(&Value::Null);
     let empty = json!({});
     match do_step(ctx, step) {
-        Err(refusal) => {
-            let Some(code) = expect.get("error").and_then(Value::as_str) else {
-                return Some(format!(
-                    "refused {} {}, wanted success",
-                    refusal.code, refusal.details
-                ));
-            };
-            if code != refusal.code {
-                return Some(format!("refused {}, wanted {code}", refusal.code));
-            }
-            subset(
-                expect.get("details").unwrap_or(&empty),
-                &refusal.details,
-                "details",
-            )
-        }
+        Err(refusal) => judge_refusal(expect, &refusal),
         Ok(value) => {
             if let Some(code) = expect.get("error") {
                 return Some(format!("succeeded with {value}, wanted {code}"));
@@ -1696,16 +1708,62 @@ fn a_planted_fault_breaks_exactly_the_scenarios_the_model_predicts() {
     let first = &all[0];
     let wrong_number = replay(&corrupt_number(first, "session"), None).1;
     let wrong_code = replay(&corrupt_code(&all[3]), None).1;
+    // Details are compared strictly. "No details" is an empty object, as in the model, so a refusal
+    // with no fields converts to `{}`; an engine that dropped the numbers the model has, or reported
+    // none as `null`, must still be a mismatch. Both are judged here without touching the engine.
+    let future = json!({
+        "error": "FUTURE_AUTHORITY",
+        "details": {"token_epoch": 9, "current_epoch": 1}
+    });
+    let numbered = Refusal::from(MembershipError::FutureAuthority {
+        token_epoch: 9,
+        current_epoch: 1,
+    });
+    let dropped = Refusal {
+        code: "FUTURE_AUTHORITY".to_string(),
+        details: json!({}),
+    };
+    let bare = Refusal::from(MembershipError::WrongGroup);
+    let nulled = Refusal {
+        code: "WRONG_GROUP".to_string(),
+        details: Value::Null,
+    };
+    let no_details = json!({"error": "WRONG_GROUP"});
+    let numbers_kept = judge_refusal(&future, &numbered).is_none();
+    let dropped_numbers_reported = judge_refusal(&future, &dropped).is_some();
+    let bare_is_an_empty_object = bare.details == json!({});
+    let bare_meets_an_expectation_without_details = judge_refusal(&no_details, &bare).is_none();
+    let null_for_none_reported = judge_refusal(&no_details, &nulled).is_some();
     observe(&json!({
         "kind": "corrupted",
         "wrong_number_reported": !wrong_number.is_empty(),
         "wrong_code_reported": !wrong_code.is_empty(),
+        "dropped_details_reported": dropped_numbers_reported,
+        "null_for_empty_reported": null_for_none_reported,
+        "bare_refusal_is_an_empty_object": bare_is_an_empty_object,
     }));
     assert!(
         !wrong_number.is_empty(),
         "a wrong expected number was accepted"
     );
     assert!(!wrong_code.is_empty(), "a wrong expected code was accepted");
+    assert!(
+        numbers_kept,
+        "a refusal's numbers did not survive conversion"
+    );
+    assert!(
+        dropped_numbers_reported,
+        "an engine that drops the details the model has was accepted"
+    );
+    assert!(
+        bare_is_an_empty_object && bare_meets_an_expectation_without_details,
+        "a refusal with no fields must carry an empty object, as the model's does: {:?}",
+        bare.details
+    );
+    assert!(
+        null_for_none_reported,
+        "null was accepted where the model has an empty object"
+    );
     assert!(
         disagreements.is_empty(),
         "planted faults break different scenarios in the engine and the model:\n{}",

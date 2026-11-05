@@ -156,7 +156,9 @@ def judge_records(doc, records):
 
     # the replay can fail at all
     corrupted = by_kind.get("corrupted", [])
-    if len(corrupted) != 1 or not (corrupted[0].get("wrong_number_reported") and corrupted[0].get("wrong_code_reported")):
+    shown = ("wrong_number_reported", "wrong_code_reported", "dropped_details_reported",
+             "null_for_empty_reported", "bare_refusal_is_an_empty_object")
+    if len(corrupted) != 1 or not all(corrupted[0].get(field) is True for field in shown):
         problems.append("the replay did not show that a corrupted expectation is reported: %s" % corrupted)
 
     # the vector file the Rust read is the one the model has
