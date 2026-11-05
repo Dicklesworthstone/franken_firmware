@@ -19,3 +19,4 @@ unsafe_code = "deny"
 franken-clock.workspace = true
 franken-board-profile.workspace = true
 franken-dsp.workspace = true
+franken-stream.workspace = true

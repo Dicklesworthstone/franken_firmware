@@ -16,4 +16,5 @@ thiserror.workspace = true
 franken-dsp.workspace = true
 
 [dev-dependencies]
+franken-clock.workspace = true
 franken-test-support.workspace = true

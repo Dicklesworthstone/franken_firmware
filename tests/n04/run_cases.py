@@ -51,13 +51,16 @@ NOT_MEASURED = [
     {"item": "concealment_listening_quality", "status": "not evaluated: no listening test exists",
      "recorded_instead": "bit-exact attenuated repetition of the last played block, bounded to a stated maximum, then silence"},
     {"item": "cpu_and_memory_on_target_isa", "status": "not measured: needs a BE guest or hardware",
-     "recorded_instead": "fixed slot storage (profile horizon x 1 KiB), no allocation after construction (structural, not probed)"},
+     "recorded_instead": "fixed slot storage (profile horizon x 1 KiB); no allocation after construction, probed on the host by N04-NO-ALLOC (not on the target ISA)"},
     {"item": "real_network_loss_and_jitter", "status": "not measured: scripted and seeded schedules only",
      "recorded_instead": "seeded independent loss, jitter, reorder, duplicate and burst schedules over 700 blocks"},
 ]
 
 RUST_SOURCES = [("crates/franken-stream/src/playout/tests.rs", "franken_stream", "playout::tests::"),
-                ("crates/franken-stream/src/playout/log/tests.rs", "franken_stream", "playout::log::tests::")]
+                ("crates/franken-stream/src/playout/log/tests.rs", "franken_stream", "playout::log::tests::"),
+                ("crates/franken-stream/src/playout/group_clock_tests.rs", "franken_stream",
+                 "playout::group_clock_tests::"),
+                ("crates/franken-alloc-probe/tests/playout_no_alloc.rs", "playout_no_alloc", "")]
 TEST_FN = re.compile(r"#\[test\]\s*((?:#\[[^\]]*\]\s*)*)fn\s+(n04_[A-Za-z0-9_]+)")
 WORLD_MACRO = re.compile(r"world_test!\(\s*(n04_[a-z0-9_]+)\s*,")
 OBSERVED = re.compile(r"N04-OBSERVED (\{.*\})\s*$")
@@ -65,6 +68,8 @@ OBSERVED = re.compile(r"N04-OBSERVED (\{.*\})\s*$")
 C = "franken_stream"
 P = "playout::tests::"
 PL = "playout::log::tests::"
+PG = "playout::group_clock_tests::"
+ALLOC_STEM = "playout_no_alloc"
 
 
 def _load(name: str) -> Any:
@@ -124,6 +129,10 @@ def T(*names: str) -> List[Tuple[str, str]]:
 
 def LT(*names: str) -> List[Tuple[str, str]]:
     return [(C, PL + n) for n in names]
+
+
+def GT(*names: str) -> List[Tuple[str, str]]:
+    return [(C, PG + n) for n in names]
 
 
 def log_world_id(world_id: str) -> str:
@@ -208,7 +217,26 @@ def registry() -> List[dict]:
               T("n04_properties_hold_on_every_world", "n04_counters_account_for_every_packet_and_every_decision",
                 "n04_every_world_in_the_vectors_has_a_test"),
               ["n04-properties", "n04-accounting-w16-seeded-music", "n04-accounting-w17-seeded-realtime"]),
-    ] + log_cases()
+    ] + log_cases() + edge_cases()
+
+
+def edge_cases() -> List[dict]:
+    """The two dev-only edges (section 14, items 3 and 4): a real N03 clock through the seam, and the allocation probe."""
+    return [
+        _case("N04-GROUP-CLOCK", "AC-CLOCK", "smoke",
+              "views built from a real locked GroupClock: within its own uncertainty of the true offset; the cutoff moves by exactly the "
+              "uncertainty it reports; a block admitted at a real reading plays and the same arrival after the cutoff is late; Holdover is "
+              "usable, Expired, Unlocked and an empty clock are not",
+              GT("n04_group_clock_the_view_is_within_the_clocks_own_uncertainty_of_the_true_offset",
+                 "n04_group_clock_the_cutoff_moves_by_exactly_the_uncertainty_the_clock_reports",
+                 "n04_group_clock_a_block_admitted_at_a_real_reading_plays_and_the_same_arrival_after_the_cutoff_is_late",
+                 "n04_group_clock_holdover_is_usable_and_expired_unlocked_and_empty_clocks_are_not"),
+              ["n04-group-clock"]),
+        _case("N04-NO-ALLOC", "AC-CAPS", "smoke",
+              "under the counting allocator: the probe is live, construction allocates, and a seeded 400-block script through every consume-path "
+              "call and the log drain makes no allocation, reallocation or free",
+              [(ALLOC_STEM, "n04_playout_engine_consume_path_does_not_allocate_after_construction")], ["n04-no-alloc"]),
+    ]
 
 
 def log_cases() -> List[dict]:
@@ -323,6 +351,38 @@ def expected_log_records(vec: dict) -> Dict[str, dict]:
     for c in vec["log_scenarios"]:
         out[log_scenario_id(c["id"])] = dict(id=log_scenario_id(c["id"]), **log_observation(by_id[c["world"]], c["plan"]))
     return out
+
+
+def check_group_clock(got: dict) -> Optional[str]:
+    """A real N03 clock through the seam. The clock's own numbers (its uncertainty, when it expires) are measured in the Rust and
+    cannot be re-derived by the reference; what is fixed here is which behaviours were observed, and the bounds the clock's
+    configuration puts on the uncertainty: at least ceil(400000 / 2) + 1000 = 201000 (the exchanges' path delay, half of it, and
+    the timer resolution), growing while Holdover, and at most the 2 ms lock threshold (above it the status is Expired)."""
+    want = {"statuses_seen": ["Expired", "Holdover", "Locked"], "holdover_usable": True, "holdover_decision": "pending",
+            "expired_poll": "clock_unusable", "expired_admission": "clock_unusable", "expired_cursor": 0,
+            "unlocked_with_reading_poll": "clock_unusable", "no_reading_poll": "clock_unusable"}
+    for key, value in want.items():
+        if got.get(key) != value:
+            return "%s: observed %s, expected %s" % (key, json.dumps(got.get(key))[:120], json.dumps(value))
+    locked, hold = got.get("uncertainty_locked_ns"), got.get("uncertainty_holdover_ns")
+    if not (isinstance(locked, int) and isinstance(hold, int) and 201_000 <= locked < hold <= 2_000_000):
+        return "uncertainty locked %r, holdover %r: expected 201000 <= locked < holdover <= 2000000" % (locked, hold)
+    return None
+
+
+def check_no_alloc(got: dict) -> Optional[str]:
+    """The probe must be live and see construction, the script must have reached its paths, and the consume path must have
+    made no allocator call of any kind. The counts of ops and decisions are floors of the seeded script, not exact values."""
+    if got.get("probe_active") is not True or got.get("paths_reached") is not True:
+        return "probe_active %r, paths_reached %r" % (got.get("probe_active"), got.get("paths_reached"))
+    for key, floor in (("control_allocations", 1), ("construction_allocations", 2), ("construction_bytes", 150_000),
+                       ("ops", 900), ("decided", 300), ("log_emitted", 300)):
+        value = got.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value < floor:
+            return "%s is %r, expected at least %d" % (key, value, floor)
+    if got.get("measured") != {"allocations": 0, "reallocations": 0, "deallocations": 0}:
+        return "the consume path touched the allocator: %s" % json.dumps(got.get("measured"))
+    return None
 
 
 def check_log_accounting(vec: dict, got: dict) -> Optional[str]:
@@ -524,6 +584,10 @@ def judge_case(case: dict, vec: dict, want: Dict[str, dict], logs: Optional[Logs
             continue
         if oid == "n04-properties":
             why = check_properties(vec, [w["id"] for w in vec["worlds"]], got)
+        elif oid == "n04-group-clock":
+            why = check_group_clock(got)
+        elif oid == "n04-no-alloc":
+            why = check_no_alloc(got)
         elif oid == "n04-log-accounting":
             why = check_log_accounting(vec, got)
         elif oid == "n04-log-blocking":

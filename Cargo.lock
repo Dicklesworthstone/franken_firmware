@@ -75,6 +75,7 @@ dependencies = [
  "franken-board-profile",
  "franken-clock",
  "franken-dsp",
+ "franken-stream",
 ]
 
 [[package]]
@@ -188,6 +189,7 @@ dependencies = [
 name = "franken-stream"
 version = "0.1.0"
 dependencies = [
+ "franken-clock",
  "franken-dsp",
  "franken-test-support",
  "hmac",

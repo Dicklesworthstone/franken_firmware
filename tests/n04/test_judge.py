@@ -50,6 +50,13 @@ def good_records():
     ops = sum(len(w["ops"]) for w in VEC["worlds"]) + sum(len(by_id[c["world"]]["ops"]) for c in VEC["log_scenarios"])
     recs.append({"id": "n04-log-accounting", "ops_checked": ops, "unaccounted": 0, "critical_over_dropped": 0})
     w16 = by_id["W16-SEEDED-MUSIC"]
+    recs.append({"id": "n04-group-clock", "statuses_seen": ["Expired", "Holdover", "Locked"], "holdover_usable": True,
+                 "holdover_decision": "pending", "expired_poll": "clock_unusable", "expired_admission": "clock_unusable",
+                 "expired_cursor": 0, "unlocked_with_reading_poll": "clock_unusable", "no_reading_poll": "clock_unusable",
+                 "uncertainty_locked_ns": 201_300, "uncertainty_holdover_ns": 640_000})
+    recs.append({"id": "n04-no-alloc", "probe_active": True, "control_allocations": 1, "construction_allocations": 5,
+                 "construction_bytes": 163_000, "measured": {"allocations": 0, "reallocations": 0, "deallocations": 0},
+                 "ops": 1100, "decided": 400, "log_emitted": 700, "paths_reached": True})
     recs.append({"id": "n04-log-blocking", "world": "W16-SEEDED-MUSIC", "ops": len(w16["ops"]), "decision_path_offers": 0,
                  "decision_path_virtual_ns": 0, "results_digest": gen.digest(gen.world_results(w16)), "drain_budget": 3,
                  "drain_offers": 3, "drain_virtual_ns": 3_000_000_000, "queued_before_drain_nonzero": True})
@@ -62,18 +69,32 @@ GOOD = good_records()
 def build_log(records, skip_tests=(), failed_tests=(), ignored_tests=(), layout="classic"):
     """A cargo-test log of the same FORM as the real ones. layout "rch": the stdout section first, then the stderr
     ``Running`` header (the shape through RCH)."""
-    names = sorted({name for case in rc.registry() for _, name in case["tests"]})
-    shown = [n for n in names if n.rsplit("::", 1)[-1] not in skip_tests]
-    body = ["", "running %d tests" % len(shown)]
-    for n in shown:
-        bare = n.rsplit("::", 1)[-1]
-        body.append("test %s ... %s" % (n, "FAILED" if bare in failed_tests else "ignored" if bare in ignored_tests else "ok"))
-    bad = set(failed_tests) | set(ignored_tests)
-    passed = sum(1 for n in shown if n.rsplit("::", 1)[-1] not in bad)
-    body += ["", "test result: ok. %d passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s" % passed]
-    header = "     Running unittests src/lib.rs (.rch-target-w0-pool-0123456789abcdef/debug/deps/franken_stream-0123456789abcdef)"
+    stems = []
+    for case in rc.registry():
+        for stem, name in case["tests"]:
+            if stem not in stems:
+                stems.append(stem)
     lines = ["   Compiling franken-stream v0.1.0", "    Finished `test` profile"]
-    lines += ([header] + body) if layout == "classic" else (body + [header])
+    headers, bodies = [], []
+    bad = set(failed_tests) | set(ignored_tests)
+    for stem in stems:
+        names = sorted({name for case in rc.registry() for s, name in case["tests"] if s == stem})
+        shown = [n for n in names if n.rsplit("::", 1)[-1] not in skip_tests]
+        body = ["", "running %d tests" % len(shown)]
+        for n in shown:
+            bare = n.rsplit("::", 1)[-1]
+            body.append("test %s ... %s" % (n, "FAILED" if bare in failed_tests else "ignored" if bare in ignored_tests else "ok"))
+        passed = sum(1 for n in shown if n.rsplit("::", 1)[-1] not in bad)
+        body += ["", "test result: ok. %d passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s" % passed]
+        where = "unittests src/lib.rs" if stem == "franken_stream" else "tests/%s.rs" % stem
+        headers.append("     Running %s (.rch-target-w0-pool-0123456789abcdef/debug/deps/%s-0123456789abcdef)" % (where, stem))
+        bodies.append(body)
+        if layout == "classic":
+            lines += [headers[-1]] + body
+    if layout != "classic":
+        for body in bodies:
+            lines += body
+        lines += headers
     lines += ["N04-OBSERVED " + json.dumps(r) for r in records]
     return "\n".join(lines) + "\n"
 
@@ -295,6 +316,48 @@ class JudgeTests(unittest.TestCase):
         self.assertTrue(any(c["stats"]["delivered"] and c["stats"]["queued"] for c in by.values()), "partly drained")
         self.assertTrue(all(c["stats"]["emitted"] == c["stats"]["delivered"] + c["stats"]["queued"] + c["stats"]["dropped_full"]
                             + c["stats"]["dropped_oversize"] for c in by.values()), "the vectors' own counts add up")
+
+    # -- the two dev-only edges: a real clock through the seam, and the allocation probe -------------------------------------
+
+    def test_a_group_clock_observation_that_misses_a_behaviour_fails(self):
+        for label, mutate in {
+            "expired clock still polled as usable": lambda r: r.update(expired_poll="decision"),
+            "expired clock admitted a packet": lambda r: r.update(expired_admission="admitted"),
+            "a block was consumed on an unusable clock": lambda r: r.update(expired_cursor=1),
+            "holdover refused": lambda r: r.update(holdover_usable=False),
+            "holdover never seen": lambda r: r.update(statuses_seen=["Expired", "Locked"]),
+            "a constant uncertainty": lambda r: r.update(uncertainty_holdover_ns=r["uncertainty_locked_ns"]),
+            "an uncertainty below what one exchange cannot know": lambda r: r.update(uncertainty_locked_ns=1000),
+            "an uncertainty above the lock threshold in Holdover": lambda r: r.update(uncertainty_holdover_ns=2_000_001),
+            "an unlocked clock with a reading was used": lambda r: r.update(unlocked_with_reading_poll="pending"),
+        }.items():
+            with self.subTest(label):
+                results = judge(build_log(tampered("n04-group-clock", mutate)))
+                self.assertEqual(results["N04-GROUP-CLOCK"].status, "fail", label)
+        self.assertEqual(judge(build_log(GOOD))["N04-GROUP-CLOCK"].status, "pass")
+
+    def test_an_engine_that_allocates_or_a_probe_that_is_not_live_fails(self):
+        for label, mutate in {
+            "one allocation after construction": lambda r: r["measured"].update(allocations=1),
+            "one reallocation": lambda r: r["measured"].update(reallocations=1),
+            "one free": lambda r: r["measured"].update(deallocations=1),
+            "the counting allocator was not active": lambda r: r.update(probe_active=False),
+            "the control allocation was not counted": lambda r: r.update(control_allocations=0),
+            "construction was not seen": lambda r: r.update(construction_allocations=0, construction_bytes=0),
+            "the script was thin": lambda r: r.update(ops=10, decided=2, log_emitted=1),
+            "the script missed its paths": lambda r: r.update(paths_reached=False),
+        }.items():
+            with self.subTest(label):
+                results = judge(build_log(tampered("n04-no-alloc", mutate)))
+                self.assertEqual(results["N04-NO-ALLOC"].status, "fail", label)
+        self.assertEqual(judge(build_log(GOOD))["N04-NO-ALLOC"].status, "pass")
+
+    def test_the_probe_binary_is_attributed_by_its_own_header_in_both_layouts(self):
+        for layout in ("classic", "rch"):
+            with self.subTest(layout=layout):
+                results = judge(build_log(GOOD, layout=layout, skip_tests=("n04_playout_engine_consume_path_does_not_allocate_after_construction",)))
+                self.assertEqual(results["N04-NO-ALLOC"].status, "blocked")
+                self.assertEqual(results["N04-GROUP-CLOCK"].status, "pass")
 
     # -- meta ---------------------------------------------------------------------------------------------------------------
 

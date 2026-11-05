@@ -115,6 +115,7 @@
       ],
       "optional_deps": [],
       "dev_deps": [
+        "franken-clock",
         "franken-test-support"
       ]
     },
@@ -189,7 +190,8 @@
       "dev_deps": [
         "franken-board-profile",
         "franken-clock",
-        "franken-dsp"
+        "franken-dsp",
+        "franken-stream"
       ]
     },
     {
