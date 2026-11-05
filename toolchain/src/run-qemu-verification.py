@@ -22,6 +22,11 @@ import time
 import uuid
 from typing import Any
 
+try:  # Python >= 3.11; without it the configured-linker record says so instead of guessing.
+    import tomllib
+except ImportError:  # pragma: no cover
+    tomllib = None  # type: ignore[assignment]
+
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
 sys.path.insert(0, str(SCRIPT_DIR))
@@ -46,6 +51,226 @@ def cmd_version(cmd: list[str]) -> str:
         return (res.stdout or res.stderr).strip().splitlines()[0]
     except Exception as exc:
         return f"unavailable ({exc})"
+
+
+# ---- E03 build identity (bead ffw-q2p: target triple, compiler, linker, libc) --------------------------
+#
+# The probe prints one `FFW_BUILD` line (toolchain/src/ffw-hello-init/build.rs + main.rs). It is the
+# compile's own report. It describes the booted bytes because the runner checks that the archive's init entry
+# hashes to the binary it names (`initramfs_init_differs_from_binary`); it is NOT an attestation of the
+# remote compiler (`build_provenance` below stays "not_attested_by_this_boot_runner"). The runner
+# cross-checks what it can: the triple against the one it built for, the libc claim against the ELF it
+# booted, and the linker flavor against the committed cargo config.
+
+BUILD_TOKEN = r"[A-Za-z0-9._+-]{1,40}"          # build.rs emits only this alphabet, capped at 40
+UNIDENTIFIED = ("unknown", "unspecified")        # build.rs spells "could not read" this way
+ELF_MACHINE = {"mips": 8, "ppc": 20}             # EM_MIPS, EM_PPC
+PT_DYNAMIC, PT_INTERP = 2, 3
+_BUILD_FIELDS = re.compile(
+    r"FFW_BUILD target=(\S+) rustc=(\S+) rustc_commit=(\S+) linker_flavor=(\S+) libc=(\S+) runtime=(\S+)"
+)
+
+
+def build_identity_pattern(expected_triple: str) -> str:
+    """Exact grammar of the probe's FFW_BUILD line for the triple this runner built."""
+    return (
+        r"FFW_BUILD target=" + re.escape(expected_triple)
+        + rf" rustc={BUILD_TOKEN} rustc_commit={BUILD_TOKEN} linker_flavor={BUILD_TOKEN}"
+        + r" libc=none runtime=no_std"
+    )
+
+
+def parse_build_identity(line: str) -> dict[str, str] | None:
+    m = _BUILD_FIELDS.fullmatch(line)
+    if m is None:
+        return None
+    return dict(zip(("target", "rustc", "rustc_commit", "linker_flavor", "libc", "runtime"), m.groups()))
+
+
+# ---- E03 capability probes with an explicit "absent" answer (bead ffw-q2p: getrandom, eventfd2, timerfd, futex)
+#
+# Each prints `FFW_PROBE:<NAME> status=PASS|FAIL <key>=<raw return of the defining syscall>`
+# (ffw-hello-init/src/e03_probes.rs; verdicts in e03_judge.rs). `-ENOSYS` is the kernel saying the call does
+# not exist: the explicit capability failure the bead asks for, not a guest malfunction, so the transcript is
+# still well formed and the guest may still report success. Anything else that is not a pass (another errno,
+# a FAIL with a non-error return, short data) means the call exists and misbehaves; the guest then prints
+# TEST_FAILURE and this verifier refuses the line. "Probe ran and found nothing" is therefore distinct from
+# "probe did not run" (missing marker) and from "probe misbehaved" (invalid line).
+
+OPTIONAL_PROBES: dict[str, tuple[str, str]] = {   # name -> (detail key, regex of the success value)
+    "GETRANDOM": ("rc", "16"),
+    "EVENTFD2": ("fd", "[1-9][0-9]*"),
+    "TIMERFD": ("fd", "[1-9][0-9]*"),
+    "FUTEX": ("rc", "0"),
+    "ACCEPT4": ("fd", "[1-9][0-9]*"),        # e03_probes/net.rs
+    "THREADS": ("tid", "[1-9][0-9]*"),       # e03_probes_rt.rs
+    "TLS": ("tp", "305419896"),              # 0x12345678, the thread pointer the child was given
+}
+OPTIONAL_PROBE_KEYS = frozenset(f"FFW_PROBE:{name}" for name in OPTIONAL_PROBES)
+
+# Runtime BEHAVIORS rather than syscalls an old kernel may lack. On the 4.9/4.19 harness kernels none of them can
+# legitimately be -ENOSYS, so the transcript must carry the exact PASS line: an ENOSYS line, any other FAIL, or a
+# missing line fails the guest. (Whether a capability is usable on a given profile is the classifier's question.)
+REQUIRED_PROBES: dict[str, tuple[str, str]] = {
+    "LOOPBACK_UP": ("rc", "0"),              # e03_probes/net.rs
+    "UDP_LOOPBACK": ("rc", "24"),
+    "REACTOR_WAKE": ("rc", "1"),
+    "CHARDEV_POLL": ("rc", "2"),
+    "ATOMIC_WIDTH": ("bits", "32"),          # e03_probes_rt.rs
+    "ALLOC": ("rc", "0"),
+    "MEM_PEAK": ("kb", "[1-9][0-9]*"),
+    "FS_RENAME": ("rc", "0"),
+    "SIGNAL": ("rc", "0"),
+    "TIMER_SIGNALS": ("rc", "0"),
+    "EINTR_READ": ("rc", "-4"),              # the NEGATIVE return -EINTR is the pass
+}
+
+
+def required_probe_pattern(name: str) -> str:
+    key, success = REQUIRED_PROBES[name]
+    return rf"FFW_PROBE:{name} status=PASS {key}={success}"
+
+
+# `rustc -vV` as seen by the compiler that built the booted bytes (build.rs), printed once by the probe. E07 asks
+# the receipt to pin the compiler; this records it as observed provenance, not enforcement (no toolchain pin).
+RUSTC_TOKEN = r"[A-Za-z0-9._+-]{1,40}"
+RUSTC_PATTERN = (
+    rf"FFW_RUSTC release={RUSTC_TOKEN} commit=[0-9a-f]{{40}} date=[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}} "
+    rf"host={RUSTC_TOKEN} llvm={RUSTC_TOKEN}"
+)
+_RUSTC_FIELDS = re.compile(r"FFW_RUSTC release=(\S+) commit=(\S+) date=(\S+) host=(\S+) llvm=(\S+)")
+
+
+def parse_rustc_identity(line: str) -> dict[str, str] | None:
+    m = _RUSTC_FIELDS.fullmatch(line)
+    return None if m is None else dict(zip(("release", "commit_hash", "commit_date", "host", "llvm"), m.groups()))
+
+
+def enosys_errno_of(expected_enosys: str) -> str:
+    """The guest ABI's ENOSYS number, read from the same expected line that calibrates the errno self-test
+    (38 on PowerPC, 89 on MIPS), so one ABI's number can never be accepted for the other."""
+    m = re.fullmatch(r"FFW_TEST:ERR_ENOSYS status=PASS errno=([1-9][0-9]*)", expected_enosys)
+    if m is None:
+        raise ValueError(f"cannot read the guest ENOSYS number from {expected_enosys!r}")
+    return m.group(1)
+
+
+def optional_probe_pattern(name: str, enosys_errno: str) -> str:
+    key, success = OPTIONAL_PROBES[name]
+    return rf"FFW_PROBE:{name} status=(?:PASS {key}={success}|FAIL {key}=-{enosys_errno})"
+
+
+def inspect_static_elf(path: pathlib.Path, arch: str) -> dict[str, Any]:
+    """Facts about the exact binary that was booted that back the probe's `libc=none` claim: a 32-bit
+    big-endian ELF for the right machine with neither PT_INTERP nor PT_DYNAMIC (no loader, no shared libc)."""
+    with path.open("rb") as handle:
+        data = handle.read(1 << 16)
+    out: dict[str, Any] = {"is_elf": False, "problems": []}
+    if len(data) < 52 or data[:4] != b"\x7fELF":
+        out["problems"].append("not_elf")
+        return out
+    out["is_elf"] = True
+    if data[4] != 1 or data[5] != 2:
+        out["problems"].append("not_elf32_big_endian")
+        return out
+    machine = int.from_bytes(data[18:20], "big")
+    phoff = int.from_bytes(data[28:32], "big")
+    phentsize = int.from_bytes(data[42:44], "big")
+    phnum = int.from_bytes(data[44:46], "big")
+    out.update({"machine": machine, "machine_matches_arch": machine == ELF_MACHINE.get(arch)})
+    if not out["machine_matches_arch"]:
+        out["problems"].append("machine_does_not_match_arch")
+    if phentsize != 32 or phnum == 0 or phoff + phnum * phentsize > len(data):
+        out["problems"].append("program_headers_unreadable")
+        return out
+    types = {int.from_bytes(data[phoff + i * 32: phoff + i * 32 + 4], "big") for i in range(phnum)}
+    out.update({"has_interp": PT_INTERP in types, "has_dynamic": PT_DYNAMIC in types})
+    out["static"] = not (out["has_interp"] or out["has_dynamic"])
+    if not out["static"]:
+        out["problems"].append("dynamic_or_interpreted")
+    return out
+
+
+def configured_linker(crate_dir: pathlib.Path, triple: str) -> dict[str, Any]:
+    """The linker the committed cargo config names for `triple`. A configuration claim, never an
+    attestation of the linker that actually ran on the remote worker."""
+    record: dict[str, Any] = {"source": ".cargo/config.toml", "attested": False, "linker": None, "flavor": None}
+    if tomllib is None:
+        return {**record, "error": "tomllib_unavailable"}
+    try:
+        target = tomllib.loads((crate_dir / ".cargo" / "config.toml").read_text())["target"][triple]
+    except (OSError, KeyError, tomllib.TOMLDecodeError) as exc:
+        return {**record, "error": type(exc).__name__}
+    flags = target.get("rustflags", [])
+    flavor = next((f.split("=", 1)[1] for f in flags if isinstance(f, str) and f.startswith("linker-flavor=")), None)
+    return {**record, "linker": target.get("linker"), "flavor": flavor}
+
+
+# ---- E07 build manifest (bead ffw-ll1: "pins rustc/toolchain/nightly, target JSON/CPU features, linker,
+# source/lockfile, kernel/initramfs/binary digests and exact command") ---------------------------------------
+#
+# Digests of the kernel, initramfs and booted binary are recorded per guest below. This adds what produced the
+# binary: the exact command, and a digest of every file that decides what the crate compiles to. The runner
+# still does not attest the remote compiler: rustc and the linker flavor are the probe's own FFW_BUILD report
+# and the linker name is the committed config's claim (see `build_provenance`).
+
+MANIFEST_FILES = ("Cargo.toml", "Cargo.lock", ".cargo/config.toml", "build.rs")
+OUTSIDE_REPO = "<outside-repo>"
+
+
+def source_digests(crate_dir: pathlib.Path) -> dict[str, str | None]:
+    """sha256 of the manifest, lockfile, cargo config, build script and every `src/*.rs` of the bootstrap
+    crate, keyed by crate-relative path. A file that is absent is recorded as None, never omitted."""
+    names = [*MANIFEST_FILES, *sorted(p.relative_to(crate_dir).as_posix() for p in (crate_dir / "src").glob("*.rs"))]
+    return {n: sha256_file(crate_dir / n) if (crate_dir / n).is_file() else None for n in names}
+
+
+def repo_relative(path: pathlib.Path) -> str:
+    """A path as it may appear in a committed receipt: repo-relative, or a marker, never an absolute path."""
+    try:
+        return path.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
+    except ValueError:
+        return OUTSIDE_REPO
+
+
+def build_manifest(
+    crate_dir: pathlib.Path,
+    triple: str,
+    command: list[str] | None,
+    sources: dict[str, str | None],
+    target_dir: pathlib.Path,
+) -> dict[str, Any]:
+    """What this receipt pins about the build. `command` is the exact argv handed to rch, or None when the
+    runner was told to reuse existing artifacts (`--skip-build`); in that case the source digests describe the
+    tree at verification time and are explicitly NOT bound to the binary that booted."""
+    flags: list[str] = []
+    if tomllib is not None:
+        try:
+            raw = tomllib.loads((crate_dir / ".cargo" / "config.toml").read_text())["target"][triple]["rustflags"]
+            flags = [f for f in raw if isinstance(f, str)]
+        except (OSError, KeyError, tomllib.TOMLDecodeError):
+            flags = []
+    built = command is not None
+    return {
+        "command": command,
+        "environment": {"RCH_REQUIRE_REMOTE": "1", "CARGO_TARGET_DIR": repo_relative(target_dir)} if built else None,
+        "sources_sha256": sources,
+        "sources_bound_to_binary": built,
+        "toolchain": {
+            "selector": "+nightly",
+            "pinned": False,
+            "note": "cargo +nightly selects the worker's nightly; the release and commit that built the binary are "
+                    "the probe's FFW_BUILD report in build_identity",
+        },
+        "target": {
+            "triple": triple,
+            "target_json": None,
+            "builtin_target": True,
+            "rustflags": flags,
+            "cpu_features_overridden": any(re.search(r"target-(cpu|feature)", f) for f in flags),
+            "build_std": "core,panic_abort" if built and "build-std=core,panic_abort" in command else None,
+        },
+    }
 
 
 def capture_guest(command: list[str], env: dict[str, str], timeout: float,
@@ -105,7 +330,9 @@ def capture_guest(command: list[str], env: dict[str, str], timeout: float,
             "returncode": proc.returncode, "stop_reason": reason}
 
 
-def verify_serial_output(arch: str, expected_hello: str, expected_enosys: str, raw_log: str) -> dict[str, Any]:
+def verify_serial_output(
+    arch: str, expected_hello: str, expected_enosys: str, raw_log: str, expected_triple: str
+) -> dict[str, Any]:
     lines = [line.strip() for line in raw_log.splitlines()]
     forbidden_hits = [bad for bad in FORBIDDEN_SUBSTRINGS if bad in raw_log]
     # Parse the exact v1 transcript. Substring matching accepts errno=890 as
@@ -113,6 +340,8 @@ def verify_serial_output(arch: str, expected_hello: str, expected_enosys: str, r
     patterns = {
         "FFW_MARKER:USERSPACE_START": r"FFW_MARKER:USERSPACE_START",
         "FFW_HELLO": re.escape(expected_hello),
+        "FFW_BUILD": build_identity_pattern(expected_triple),
+        "FFW_RUSTC": RUSTC_PATTERN,
         "FFW_KERNEL_VERSION:": r"FFW_KERNEL_VERSION: Linux version \S.*",
         "FFW_TEST:ERR_ENOENT": r"FFW_TEST:ERR_ENOENT status=PASS errno=2",
         "FFW_TEST:ERR_EBADF": r"FFW_TEST:ERR_EBADF status=PASS errno=9",
@@ -126,6 +355,11 @@ def verify_serial_output(arch: str, expected_hello: str, expected_enosys: str, r
         "FFW_PROBE:SOCKET_UDP": r"FFW_PROBE:SOCKET_UDP status=PASS fd=[0-9]+",
         "FFW_PROBE:ENTROPY": r"FFW_PROBE:ENTROPY status=PASS fd=[0-9]+",
         "FFW_PROBE:ATOMICS_32": r"FFW_PROBE:ATOMICS_32 status=PASS ok=1",
+        **{
+            f"FFW_PROBE:{name}": optional_probe_pattern(name, enosys_errno_of(expected_enosys))
+            for name in OPTIONAL_PROBES
+        },
+        **{f"FFW_PROBE:{name}": required_probe_pattern(name) for name in REQUIRED_PROBES},
         "FFW_MARKER:TEST_SUCCESS": r"FFW_MARKER:TEST_SUCCESS failures=0",
         "FFW_MARKER:REBOOT_REQUEST": r"FFW_MARKER:REBOOT_REQUEST",
     }
@@ -146,10 +380,13 @@ def verify_serial_output(arch: str, expected_hello: str, expected_enosys: str, r
         elif key == "FFW_TEST:PARTIAL_WRITE" and int(line.rsplit("=", 1)[1]) >= 8192:
             errors.append("invalid:partial_write_count_is_not_partial")
         if line.startswith("FFW_TEST:") or line.startswith("FFW_PROBE:"):
-            probes[key] = {
-                "raw": line,
-                "status": "PASS" if pattern and re.fullmatch(pattern, line) else "FAIL",
-            }
+            well_formed = pattern is not None and re.fullmatch(pattern, line) is not None
+            guest_says_pass = re.search(r" status=PASS(?: |$)", line) is not None
+            # The recorded status is the guest's own: a well-formed explicit -ENOSYS is a FAIL here, never PASS.
+            record: dict[str, Any] = {"raw": line, "status": "PASS" if well_formed and guest_says_pass else "FAIL"}
+            if well_formed and key in OPTIONAL_PROBE_KEYS:
+                record["capability"] = "supported" if guest_says_pass else "unsupported"
+            probes[key] = record
 
     missing = [key for key in patterns if key not in positions]
     idx_start = positions.get("FFW_MARKER:USERSPACE_START", -1)
@@ -169,16 +406,41 @@ def verify_serial_output(arch: str, expected_hello: str, expected_enosys: str, r
             kernel_version = line[len("FFW_KERNEL_VERSION: ") :]
             break
 
+    # A compiler or linker flavor the build could not read is not a recorded identity.
+    build_identity = next((parse_build_identity(l) for l in lines if l.startswith("FFW_BUILD ")), None)
+    if build_identity is not None:
+        for name in ("rustc", "rustc_commit", "linker_flavor"):
+            if build_identity[name] in UNIDENTIFIED:
+                errors.append(f"unidentified:FFW_BUILD.{name}")
+
+    # The two compiler reports must describe the same compiler: FFW_BUILD carries the release and the short commit.
+    rustc_identity = next((parse_rustc_identity(l) for l in lines if l.startswith("FFW_RUSTC ")), None)
+    if rustc_identity is not None:
+        for name in ("release", "host", "llvm"):
+            if rustc_identity[name] in UNIDENTIFIED:
+                errors.append(f"unidentified:FFW_RUSTC.{name}")
+        if build_identity is not None and (
+            build_identity["rustc"] != rustc_identity["release"]
+            or rustc_identity["commit_hash"][:9] != build_identity["rustc_commit"]
+        ):
+            errors.append("inconsistent:FFW_BUILD_vs_FFW_RUSTC")
+
     passed = (not forbidden_hits) and (not missing) and (not errors) and order_ok
     return {
         "arch": arch,
         "status": "PASS" if passed else "FAIL",
+        "build_identity": build_identity,
+        "rustc_identity": rustc_identity,
         "kernel_version": kernel_version,
         "forbidden_hits": forbidden_hits,
         "missing_markers": missing,
         "validation_errors": errors,
         "marker_order_ok": order_ok,
         "probes": probes,
+        # Probes that ran and got an explicit -ENOSYS. Kept apart from `missing_markers` (did not run).
+        "unsupported_capabilities": sorted(
+            key.split(":", 1)[1] for key, rec in probes.items() if rec.get("capability") == "unsupported"
+        ),
     }
 
 
@@ -209,6 +471,9 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
         },
     }
 
+    # Hashed before the build so the digests describe what was handed to rch, not what the tree became after.
+    sources = source_digests(hello_crate)
+    build_commands: dict[str, list[str]] = {}
     if not args.skip_build:
         for arch, cfg in targets.items():
             cmd = [
@@ -225,6 +490,7 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
                 "-Z",
                 "build-std=core,panic_abort",
             ]
+            build_commands[arch] = list(cmd)
             env = os.environ.copy()
             env["CARGO_TARGET_DIR"] = str(target_dir)
             env["RCH_REQUIRE_REMOTE"] = "1"
@@ -259,9 +525,37 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
         with log_path.open("xb") as output:
             output.write(raw_combined)
 
-        verification = verify_serial_output(arch, cfg["hello"], cfg["enosys"], combined)
+        verification = verify_serial_output(arch, cfg["hello"], cfg["enosys"], combined, cfg["triple"])
+        elf = inspect_static_elf(bin_path, arch)
+        linker = configured_linker(hello_crate, cfg["triple"])
+        identity = verification["build_identity"]
+        identity_errors = []
+        binary_sha256 = sha256_file(bin_path)
+        # The archive's init entry is what QEMU executed; it must be the binary this receipt names and inspects.
+        if archive_receipts[arch].get("init_sha256") != binary_sha256:
+            identity_errors.append("initramfs_init_differs_from_binary")
+        if elf["problems"]:
+            identity_errors.append("libc_claim_unsupported_by_elf:" + ",".join(elf["problems"]))
+        if identity is not None and linker["flavor"] is not None and identity["linker_flavor"] != linker["flavor"]:
+            identity_errors.append("linker_flavor_differs_from_committed_config")
+        if identity_errors:
+            verification["validation_errors"].extend(identity_errors)
+            verification["status"] = "FAIL"
         verification.update(
             {
+                # What the runner built and booted, and what the probe reported about its own compile.
+                "target_triple": cfg["triple"],
+                "libc": {
+                    # What the ELF check PROVES is a static executable with no interpreter or dynamic section. It
+                    # cannot tell "no libc" from "statically linked musl"; `libc=none` is the build's own claim.
+                    "conclusion": "static_no_loader" if identity is not None and identity["libc"] == "none"
+                    and not elf["problems"] else "unverified",
+                    "reported_by_probe": identity["libc"] if identity is not None else None,
+                    "static_elf": elf,
+                },
+                "booted_init_sha256": archive_receipts[arch].get("init_sha256"),
+                "linker_configured": linker,
+                "build_manifest": build_manifest(hello_crate, cfg["triple"], build_commands.get(arch), sources, target_dir),
                 "qemu_exit_code": returncode,
                 "timed_out": timed_out,
                 "capture_stop_reason": capture["stop_reason"],
@@ -300,7 +594,16 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
         "status": "PASS" if overall_pass else "FAIL",
         "build_provenance": {
             "status": "not_attested_by_this_boot_runner",
-            "note": "Binary hashes bind this boot. Compiler identity requires the separate build receipt; local rustc is not the remote compiler.",
+            "note": (
+                "Binary hashes bind this boot. Each guest's build_identity is the probe's own FFW_BUILD report "
+                "(target, rustc release and commit, linker flavor, libc) plus the FFW_RUSTC `rustc -vV` fields; it "
+                "describes the booted bytes (the archive's init entry is checked against binary_sha256) but is not "
+                "an attestation of the remote compiler or linker, which requires the separate build receipt. "
+                "Each guest's build_manifest records the exact build command and the digests of the sources, "
+                "lockfile and cargo config handed to rch; those digests are bound to the binary only when the "
+                "runner built it itself (sources_bound_to_binary), never under --skip-build. "
+                "Local rustc is not the remote compiler."
+            ),
         },
         "local_inspection_tools": {
             "host_rustc_nightly": cmd_version(["rustc", "+nightly", "--version"]),

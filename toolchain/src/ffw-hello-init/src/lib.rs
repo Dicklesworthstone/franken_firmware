@@ -1,6 +1,13 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
+/// Pure verdict logic for the E03 guest capability probes (the syscalls live in `e03_probes.rs`).
+pub mod e03_judge;
+
+/// Pure verdict logic for the E03 runtime-behavior probes (threads, TLS, signals, timers, allocator, rename,
+/// atomic width; the syscalls live in `e03_probes_rt.rs`).
+pub mod e03_judge_rt;
+
 /// Why bounded output stopped before delivering every byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteCause {

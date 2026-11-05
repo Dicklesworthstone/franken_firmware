@@ -10,7 +10,8 @@
 //!   positive FD + short write verification, and distinct start/success/reboot markers.
 //! - E03 (ffw-q2p): per-capability kernel ABI probes (`clock_gettime`/`clock_getres`,
 //!   nonblocking `pipe2` + `EAGAIN`, `poll`, `epoll_create`, `socket(AF_INET, SOCK_DGRAM)`,
-//!   `/dev/urandom` entropy, and 32-bit atomic compare-exchange/fetch-add).
+//!   `/dev/urandom` entropy, and 32-bit atomic compare-exchange/fetch-add), plus
+//!   `getrandom`, `eventfd2`, `timerfd` and `futex` behavior probes (`e03_probes.rs`).
 
 #![no_std]
 #![no_main]
@@ -25,6 +26,14 @@ compile_error!("ffw-hello-init must be compiled for a big-endian target");
 
 #[cfg(not(target_pointer_width = "32"))]
 compile_error!("ffw-hello-init targets 32-bit Sonos platforms");
+
+// E03 (ffw-q2p) real-syscall probes: getrandom, eventfd2, timerfd, futex, and (net.rs, wired inside this
+// module) loopback UDP/TCP, accept4, reactor wakeup and character-device poll. Child module, so it reaches
+// the private `sys_*` helpers through `super::`. Verdict logic is in the lib crate (`e03_judge`).
+mod e03_probes;
+// E03 runtime-behavior probes (BLK-003/004/006): threads, TLS, signals, timers, EINTR, allocator, memory peak,
+// rename durability, atomic width. Same shape; verdicts are in the lib crate (`e03_judge_rt`).
+mod e03_probes_rt;
 
 #[cfg(target_arch = "mips")]
 mod sys {
@@ -58,6 +67,12 @@ mod sys {
     /// - `$4`..`$7` (`a0`..`a3`) hold args 0..3; arg 4 is passed at `16($sp)`.
     /// - On exit, `$7` (`a3`) is 0 on success and non-zero on error. When `$7 != 0`,
     ///   `$2` (`v0`) is a positive errno value that MUST be negated.
+    ///
+    /// Register audit (E07), against `man 2 syscall` and the clobber set glibc and musl declare for MIPS o32:
+    /// `$v1`, `$t0`..`$t7`, `$t8` and `$t9` are declared clobbered and `$at` is saved and restored around the
+    /// call. glibc and musl also list `hi` and `lo`. Rust's `asm!` cannot name them, and nothing the caller
+    /// holds can be live in them across this call: the function is `#[inline(never)]` and the O32 calling
+    /// convention treats HI/LO as caller-saved. No defect found; a guest run is the execution proof.
     #[inline(never)]
     pub unsafe fn sys_raw5(
         nr: usize,
@@ -391,6 +406,46 @@ fn emit_test_result(
     pass
 }
 
+/// E03 build identity: what this binary says about the compile that produced it, printed once so the
+/// boot transcript carries it (the runner checks the archive's init entry hashes to the binary it names,
+/// so the line describes the booted bytes). `FFW_BUILD_*` come from `build.rs` (cargo's own
+/// `TARGET`, `RUSTC` and rustflags) and describe the build, not the guest kernel. `libc=none` is a
+/// property of this crate (`no_std`, `no_main`, own `memcpy`/`memset`): a musl-named triple does not
+/// link a libc here, and the runner re-checks that the ELF has no interpreter or dynamic section.
+/// Worst case the line is 239 bytes, inside the 256-byte `LineWriter` (which truncates silently).
+fn emit_build_identity(console_fd: usize) {
+    let mut w = LineWriter::new();
+    w.push(b"FFW_BUILD target=");
+    w.push(env!("FFW_BUILD_TARGET").as_bytes());
+    w.push(b" rustc=");
+    w.push(env!("FFW_BUILD_RUSTC").as_bytes());
+    w.push(b" rustc_commit=");
+    w.push(env!("FFW_BUILD_RUSTC_COMMIT").as_bytes());
+    w.push(b" linker_flavor=");
+    w.push(env!("FFW_BUILD_LINKER_FLAVOR").as_bytes());
+    w.push(b" libc=none runtime=no_std\n");
+    emit_console(console_fd, w.as_slice());
+}
+
+/// `rustc -vV` as the compiler that built these bytes saw itself (`build.rs`): observed provenance for the
+/// receipt, not enforcement and not an attestation. Worst case the line is 245 bytes, inside the 256-byte
+/// `LineWriter` (which truncates silently); every value is a `build.rs` token capped at 40 bytes.
+fn emit_rustc_identity(console_fd: usize) {
+    let mut w = LineWriter::new();
+    w.push(b"FFW_RUSTC release=");
+    w.push(env!("FFW_BUILD_RUSTC").as_bytes());
+    w.push(b" commit=");
+    w.push(env!("FFW_RUSTC_HASH").as_bytes());
+    w.push(b" date=");
+    w.push(env!("FFW_RUSTC_DATE").as_bytes());
+    w.push(b" host=");
+    w.push(env!("FFW_RUSTC_HOST").as_bytes());
+    w.push(b" llvm=");
+    w.push(env!("FFW_RUSTC_LLVM").as_bytes());
+    w.push(b"\n");
+    emit_console(console_fd, w.as_slice());
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
     let console_fd = open_console_fd();
@@ -414,6 +469,8 @@ pub extern "C" fn _start() -> ! {
     banner.push_isize(pid);
     banner.push(b" ptr_bits=32\n");
     emit_console(console_fd, banner.as_slice());
+    emit_build_identity(console_fd);
+    emit_rustc_identity(console_fd);
 
     let mut failures: usize = 0;
     if first_byte != 0x01 || pid != 1 {
@@ -694,6 +751,16 @@ pub extern "C" fn _start() -> ! {
     ) {
         failures += 1;
     }
+
+    // Probes 8-11 (BLK-003): getrandom, eventfd2, timerfd, futex. Only an ambiguous result (the call
+    // exists but misbehaves) counts as a failure; an exact -ENOSYS is printed as an explicit
+    // capability failure and does not stop a guest from reporting success.
+    failures += e03_probes::run(console_fd);
+
+    // Runtime-behavior probes (DarkPeak). The thread probe runs LAST inside `run`, after every other line has
+    // been printed, so a wedge or crash there still leaves every earlier line in the raw log. A wedge is a FAIL
+    // (the missing success marker and the capture timeout fail the guest), never a missing probe.
+    failures += e03_probes_rt::run(console_fd);
 
     if failures == 0 {
         emit_console(console_fd, b"FFW_MARKER:TEST_SUCCESS failures=0\n");
