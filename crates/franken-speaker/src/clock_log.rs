@@ -192,6 +192,34 @@ impl ClockLog {
     }
 }
 
+/// Every place a raw label appears in what a sink holds: the field it is in, for each stored event, and `to_jsonl` for the
+/// serialised log. It looks at every field of the serialised event, so a field added later is covered too. The clock log's tests
+/// and the campaign's (`harness.rs`) both use it.
+#[cfg(test)]
+pub(crate) fn leaks_of(sink: &BoundedDiagnosticSink, raws: &[&str]) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    for event in sink.events() {
+        let value = serde_json::to_value(event).expect("an event serialises");
+        for (field, v) in value.as_object().expect("an event is an object") {
+            let text = v.to_string();
+            for raw in raws {
+                if text.contains(raw) {
+                    found.push((field.clone(), (*raw).to_string()));
+                }
+            }
+        }
+    }
+    let jsonl = sink.to_jsonl();
+    for raw in raws {
+        if jsonl.contains(raw) {
+            found.push(("to_jsonl".to_string(), (*raw).to_string()));
+        }
+    }
+    found.sort();
+    found.dedup();
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -617,32 +645,6 @@ mod tests {
             log.drain(gc);
         });
         log
-    }
-
-    /// Every place a raw label appears in what a sink holds: the field it is in, for each stored event, and `to_jsonl`
-    /// for the serialised log. It looks at every field of the serialised event, so a field added later is covered too.
-    fn leaks_of(sink: &BoundedDiagnosticSink, raws: &[&str]) -> Vec<(String, String)> {
-        let mut found = Vec::new();
-        for event in sink.events() {
-            let value = serde_json::to_value(event).expect("an event serialises");
-            for (field, v) in value.as_object().expect("an event is an object") {
-                let text = v.to_string();
-                for raw in raws {
-                    if text.contains(raw) {
-                        found.push((field.clone(), (*raw).to_string()));
-                    }
-                }
-            }
-        }
-        let jsonl = sink.to_jsonl();
-        for raw in raws {
-            if jsonl.contains(raw) {
-                found.push(("to_jsonl".to_string(), (*raw).to_string()));
-            }
-        }
-        found.sort();
-        found.dedup();
-        found
     }
 
     #[test]

@@ -285,7 +285,38 @@ fn negotiate_member_stream(
     })
 }
 
-/// Critical record that a member has no stream, with N01's bounded diagnostic as its cause.
+/// The campaign's members, in the order the campaign admits them. A log record's free text (`fault`, `cause`, `message`,
+/// `correlation_id`) is not rewritten by a keyed sink, so none of these labels may be in it: see [`redact_member_labels`].
+const CAMPAIGN_MEMBER_IDS: [&str; 5] = [
+    "spk-office-s5",
+    "spk-bedroom-s1",
+    "spk-kitchen-s12",
+    "spk-den-s3",
+    "spk-living-sub",
+];
+
+/// What stands for a member's label in the text of a log record.
+const REDACTED_MEMBER: &str = "<member>";
+
+/// `text` as a log record may carry it, and the member the record is about. Every campaign member's label in the text is replaced
+/// by [`REDACTED_MEMBER`], and the member is the first one the text names (`None` if it names none, and the record is the house's).
+/// The campaign's returned errors name the member in their own words (`member <id>: ...`, `member_rendered_silence: <id>: ...`), and
+/// their tests and the Q01 oracles read those strings as they are: only the copy that becomes a record's `cause` is redacted, and the
+/// member goes to the record's `member_id`, which a keyed sink rewrites to a pseudonym.
+fn redact_member_labels(text: &str) -> (String, Option<&'static str>) {
+    let first = CAMPAIGN_MEMBER_IDS
+        .into_iter()
+        .filter_map(|id| text.find(id).map(|at| (at, id)))
+        .min_by_key(|&(at, _)| at)
+        .map(|(_, id)| id);
+    let redacted = CAMPAIGN_MEMBER_IDS
+        .into_iter()
+        .fold(text.to_string(), |acc, id| acc.replace(id, REDACTED_MEMBER));
+    (redacted, first)
+}
+
+/// Critical record that a member has no stream, with N01's bounded diagnostic as its cause. The member is in `member_id` and
+/// nowhere else: `correlation_id` and `message` are free text a keyed sink does not rewrite.
 fn stream_refused_event(
     seed: u64,
     member_id: &str,
@@ -297,13 +328,13 @@ fn stream_refused_event(
         timestamp_mono_ns: 0,
         run_id: format!("vh-seed-{seed}"),
         case_id: "Q01-virtual-house".to_string(),
-        correlation_id: format!("negotiation-{member_id}"),
+        correlation_id: "negotiation".to_string(),
         member_id: member_id.to_string(),
         group_id: session.group_id.clone(),
         source_epoch: session.current_epoch,
         state_revision: session.state_revision,
         event_kind: "stream_refused".to_string(),
-        message: format!("negotiation refused; {member_id} is muted"),
+        message: "negotiation refused; the member is muted".to_string(),
         queue_depth: 0,
         latency_us: 0,
         fault: None,
@@ -644,49 +675,59 @@ enum OutputFault {
     SilentInput { member_id: &'static str },
 }
 
-/// One line describing a planted fault, for the `fault` field of the diagnostic log.
+/// One line describing a planted fault, for the `fault` field of the diagnostic log. It names the kind of fault and its numbers and
+/// never the member it is planted on: `fault` is free text, which a keyed sink does not rewrite. That member is
+/// [`fault_member`], and goes into the `member_id` of the record.
 fn describe_fault(fault: OutputFault) -> String {
     match fault {
         OutputFault::CorruptSample {
-            member_id,
             block,
             last_channel,
             offset,
+            ..
         } => format!(
-            "corrupt_sample member={member_id} block={block} channel={} offset={offset}",
+            "corrupt_sample block={block} channel={} offset={offset}",
             if last_channel { "last" } else { "first" }
         ),
-        OutputFault::DropFinalBlock { member_id } => {
-            format!("drop_final_block member={member_id}")
-        }
-        OutputFault::UnadmittedExcept { member_id } => {
-            format!("unadmitted_except member={member_id}")
-        }
-        OutputFault::LateBlock { member_id, block } => {
-            format!("late_block member={member_id} block={block}")
-        }
-        OutputFault::ReorderedPair { member_id, block } => {
-            format!("reordered_pair member={member_id} block={block}")
-        }
-        OutputFault::StaleEpochPacket { member_id, block } => {
-            format!("stale_epoch_packet member={member_id} block={block}")
+        OutputFault::DropFinalBlock { .. } => "drop_final_block".to_string(),
+        OutputFault::UnadmittedExcept { .. } => "unadmitted_except".to_string(),
+        OutputFault::LateBlock { block, .. } => format!("late_block block={block}"),
+        OutputFault::ReorderedPair { block, .. } => format!("reordered_pair block={block}"),
+        OutputFault::StaleEpochPacket { block, .. } => {
+            format!("stale_epoch_packet block={block}")
         }
         OutputFault::ClockLeap {
-            member_id,
-            block,
-            delta_ns,
-        } => format!("clock_leap member={member_id} block={block} delta_ns={delta_ns}"),
+            block, delta_ns, ..
+        } => format!("clock_leap block={block} delta_ns={delta_ns}"),
         OutputFault::ReplacedSourceKeepsPublishing => {
             "replaced_source_keeps_publishing".to_string()
         }
-        OutputFault::StaleStreamDatagram { member_id, block } => {
-            format!("stale_stream_datagram member={member_id} block={block}")
+        OutputFault::StaleStreamDatagram { block, .. } => {
+            format!("stale_stream_datagram block={block}")
         }
         OutputFault::TailnetRetryAsNewCommand => "tailnet_retry_as_new_command".to_string(),
         OutputFault::TailnetStaleRevisionRefreshed => {
             "tailnet_stale_revision_refreshed".to_string()
         }
-        OutputFault::SilentInput { member_id } => format!("silent_input member={member_id}"),
+        OutputFault::SilentInput { .. } => "silent_input".to_string(),
+    }
+}
+
+/// The member a planted fault is planted on, if it names one. It is what the record of the fault carries in `member_id`.
+fn fault_member(fault: OutputFault) -> Option<&'static str> {
+    match fault {
+        OutputFault::CorruptSample { member_id, .. }
+        | OutputFault::DropFinalBlock { member_id }
+        | OutputFault::UnadmittedExcept { member_id }
+        | OutputFault::LateBlock { member_id, .. }
+        | OutputFault::ReorderedPair { member_id, .. }
+        | OutputFault::StaleEpochPacket { member_id, .. }
+        | OutputFault::ClockLeap { member_id, .. }
+        | OutputFault::StaleStreamDatagram { member_id, .. }
+        | OutputFault::SilentInput { member_id } => Some(member_id),
+        OutputFault::ReplacedSourceKeepsPublishing
+        | OutputFault::TailnetRetryAsNewCommand
+        | OutputFault::TailnetStaleRevisionRefreshed => None,
     }
 }
 
@@ -1028,7 +1069,8 @@ const fn block_offset_ns(blk: u64) -> u64 {
     (blk * 16_000_000 + 1) / 3
 }
 
-/// Critical record that a planted fault took effect, with the fault schedule entry in force.
+/// Critical record that a planted fault took effect, with the fault schedule entry in force. A fault planted on a member is that
+/// member's record (`member_id`); one planted on no member is the house's.
 fn fault_injected_event(
     seed: u64,
     blk_idx: u64,
@@ -1042,7 +1084,7 @@ fn fault_injected_event(
         run_id: format!("vh-seed-{seed}"),
         case_id: "Q01-virtual-house".to_string(),
         correlation_id: format!("blk-{blk_idx}"),
-        member_id: "house".to_string(),
+        member_id: fault.and_then(fault_member).unwrap_or("house").to_string(),
         group_id: session.group_id.clone(),
         source_epoch: session.current_epoch,
         state_revision: session.state_revision,
@@ -1667,15 +1709,30 @@ fn run_scenario_with_sink(
     scenario: Scenario,
     sink: &mut BoundedDiagnosticSink,
 ) -> Result<VirtualHouseReport, String> {
-    let result = run_campaign_scenario(seed, total_blocks, fault, sink, &[], scenario);
-    if let Err(cause) = &result {
+    run_recorded(seed, total_blocks, fault, scenario, &[], sink)
+}
+
+/// The campaign with `firmware` planted (see [`PeerFirmware`]), and its failure, if any, on record in `sink`. The record is about
+/// the member the failure names (the house's, if it names none) and its `cause` is the failure with the members' labels redacted
+/// ([`redact_member_labels`]). The caller is returned the failure as it is.
+fn run_recorded(
+    seed: u64,
+    total_blocks: u64,
+    fault: Option<OutputFault>,
+    scenario: Scenario,
+    firmware: &[(&str, PeerFirmware)],
+    sink: &mut BoundedDiagnosticSink,
+) -> Result<VirtualHouseReport, String> {
+    let result = run_campaign_scenario(seed, total_blocks, fault, sink, firmware, scenario);
+    if let Err(failure) = &result {
+        let (cause, member) = redact_member_labels(failure);
         sink.emit_critical(DiagnosticEvent {
             schema_version: String::new(),
             timestamp_mono_ns: block_offset_ns(total_blocks),
             run_id: format!("vh-seed-{seed}"),
             case_id: "Q01-virtual-house".to_string(),
             correlation_id: "corr-vh-failed".to_string(),
-            member_id: "house".to_string(),
+            member_id: member.unwrap_or("house").to_string(),
             group_id: "grp-virtual-house".to_string(),
             source_epoch: 0,
             state_revision: 0,
@@ -1684,7 +1741,7 @@ fn run_scenario_with_sink(
             queue_depth: 0,
             latency_us: 0,
             fault: fault.map(describe_fault),
-            cause: Some(cause.clone()),
+            cause: Some(cause),
         });
     }
     result
@@ -2461,6 +2518,7 @@ fn run_campaign_scenario(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clock_log::leaks_of;
     use franken_stream::StreamError;
 
     #[test]
@@ -3223,19 +3281,29 @@ mod tests {
             ["fault_injected", "campaign_failed"]
         );
         let injected = &sink.events()[kinds.len() - 2];
+        // The member the fault is planted on is the record's `member_id` field, with the same specificity the `fault` text had
+        // (`member=spk-office-s5`): `fault` names the kind and its numbers, and not the member, which a keyed sink would leave in
+        // free text.
+        assert_eq!(injected.member_id, "spk-office-s5");
         assert!(injected.fault.as_deref().is_some_and(|f| {
-            f.contains("corrupt_sample")
-                && f.contains("member=spk-office-s5")
-                && f.contains("block=7")
+            f.contains("corrupt_sample") && f.contains("block=7") && !f.contains("spk-office-s5")
         }));
         let failed = &sink.events()[kinds.len() - 1];
         assert_eq!(failed.fault, injected.fault);
+        // The failure is about the member it names, which is the record's `member_id`; the cause is the chain with its label redacted.
+        assert_eq!(failed.member_id, "spk-office-s5");
         let chain = failed
             .cause
             .as_deref()
             .expect("a failure record carries its cause");
         assert!(chain.contains("wrong sample at frame 1797"), "{chain}");
+        assert!(
+            chain.contains(REDACTED_MEMBER) && !chain.contains("spk-office-s5"),
+            "{chain}"
+        );
         assert!(err.contains("wrong sample at frame 1797"), "{err}");
+        // What the caller is returned is the failure as it is, member named.
+        assert!(err.contains("spk-office-s5"), "{err}");
         assert!(sink.is_evidence_complete());
 
         // A dropped final block is only noticed after the loop, so all 20 block events exist.
@@ -3259,9 +3327,17 @@ mod tests {
             tail_failed
                 .cause
                 .as_deref()
-                .is_some_and(|c| c.contains("truncated stream"))
+                .is_some_and(|c| c.contains("truncated stream") && !c.contains("spk-bedroom-s1"))
         );
+        assert_eq!(tail_failed.member_id, "spk-bedroom-s1");
         assert!(tail_kinds.contains(&"fault_injected"));
+        let tail_injected = tail_sink
+            .events()
+            .iter()
+            .find(|e| e.event_kind == "fault_injected")
+            .expect("the planted fault took effect");
+        assert_eq!(tail_injected.member_id, "spk-bedroom-s1");
+        assert_eq!(tail_injected.fault.as_deref(), Some("drop_final_block"));
 
         // Paired positive: a clean campaign leaves neither record, and its summary names no fault.
         let mut clean = default_diagnostic_sink();
@@ -3273,6 +3349,307 @@ mod tests {
         assert_eq!(summary.event_kind, "campaign_complete");
         assert_eq!(summary.fault, None);
         assert_eq!(summary.cause, None);
+    }
+
+    /// The pseudonym key of the keyed-sink tests below, and the pseudonyms it gives, computed with Python's `hashlib` and not with this
+    /// code: `sha256(b"ffw.pseudonym.v1" + key + len(id) as big-endian u64 + id)`, first 8 bytes, prefixed `p-`. The same formula gives
+    /// the clock log's pinned `p-c6192b6d33c1d5ad` for `spk-test` under key `[7; 32]`.
+    const CAMPAIGN_KEY: [u8; 32] = [9; 32];
+    const OFFICE_PSEUDONYM: &str = "p-49c68058a75f82e4";
+    const DEN_PSEUDONYM: &str = "p-253e37b003acfcbf";
+
+    /// Every raw label a campaign has: its members and its group.
+    fn campaign_labels() -> Vec<&'static str> {
+        let mut labels = CAMPAIGN_MEMBER_IDS.to_vec();
+        labels.push("grp-virtual-house");
+        labels
+    }
+
+    /// One campaign that takes every path that wrote a raw member id into free text: a refusal (`stream_refused`: den's firmware
+    /// speaks a newer negotiation message), a planted fault (`fault_injected`) and a failing campaign (`campaign_failed`: the
+    /// corrupted sample is caught). Returns what the caller was returned.
+    fn campaign_through_all_three_paths(sink: &mut BoundedDiagnosticSink) -> String {
+        let newer = PeerFirmware {
+            answer_message_version: Some(2),
+            ..PeerFirmware::CURRENT
+        };
+        let corrupt = OutputFault::CorruptSample {
+            member_id: "spk-office-s5",
+            block: 7,
+            last_channel: true,
+            offset: 5,
+        };
+        run_recorded(
+            SEED,
+            20,
+            Some(corrupt),
+            Scenario::NONE,
+            &[("spk-den-s3", newer)],
+            sink,
+        )
+        .expect_err("the corrupted sample must fail the campaign")
+    }
+
+    fn first_record<'a>(sink: &'a BoundedDiagnosticSink, kind: &str) -> &'a DiagnosticEvent {
+        sink.events()
+            .iter()
+            .find(|e| e.event_kind == kind)
+            .unwrap_or_else(|| panic!("no {kind} record: {:?}", event_kinds(sink)))
+    }
+
+    #[test]
+    fn a_campaign_record_names_its_member_in_member_id_and_in_no_free_text_field() {
+        // An unkeyed sink, where the member id is still readable: it is in `member_id` and `group_id`, and the scan over every field
+        // finds it nowhere else (it was also in `correlation_id`, `message`, `fault` and `cause`).
+        let mut sink = default_diagnostic_sink();
+        let returned = campaign_through_all_three_paths(&mut sink);
+        for kind in ["stream_refused", "fault_injected", "campaign_failed"] {
+            assert!(event_kinds(&sink).contains(&kind), "{kind}");
+        }
+        let leaks = leaks_of(&sink, &campaign_labels());
+        let mut fields: Vec<&str> = leaks.iter().map(|(field, _)| field.as_str()).collect();
+        fields.dedup();
+        assert_eq!(fields, ["group_id", "member_id", "to_jsonl"], "{leaks:?}");
+        // and each record is about the member it was written about, as it was before in the text
+        assert_eq!(
+            first_record(&sink, "stream_refused").member_id,
+            "spk-den-s3"
+        );
+        assert_eq!(
+            first_record(&sink, "fault_injected").member_id,
+            "spk-office-s5"
+        );
+        assert_eq!(
+            first_record(&sink, "campaign_failed").member_id,
+            "spk-office-s5"
+        );
+        // The record's cause is redacted and the caller's error is not: it is the same failure, and the redaction is what differs.
+        let cause = first_record(&sink, "campaign_failed")
+            .cause
+            .as_deref()
+            .expect("a failure carries its cause");
+        assert!(returned.contains("spk-office-s5"), "{returned}");
+        assert_eq!(
+            cause,
+            returned.replace("spk-office-s5", REDACTED_MEMBER),
+            "the cause is the returned failure with the label redacted, and nothing else changed"
+        );
+    }
+
+    #[test]
+    fn a_keyed_campaign_sink_holds_no_raw_member_or_group_label_in_any_field_or_in_the_jsonl() {
+        let mut sink = default_diagnostic_sink().with_pseudonym_key(CAMPAIGN_KEY);
+        campaign_through_all_three_paths(&mut sink);
+        // The scan is only worth something if the three records are there, and about the right members, as pseudonyms.
+        assert_eq!(
+            first_record(&sink, "stream_refused").member_id,
+            DEN_PSEUDONYM
+        );
+        assert_eq!(
+            first_record(&sink, "fault_injected").member_id,
+            OFFICE_PSEUDONYM
+        );
+        assert_eq!(
+            first_record(&sink, "campaign_failed").member_id,
+            OFFICE_PSEUDONYM
+        );
+        assert!(sink.is_evidence_complete());
+        assert_eq!(
+            leaks_of(&sink, &campaign_labels()),
+            Vec::<(String, String)>::new()
+        );
+    }
+
+    #[test]
+    fn the_leak_scan_names_the_free_text_field_a_raw_member_id_is_put_back_in() {
+        // The remove-the-plant control for the two tests above. Each record the campaign wrote, with the raw label put back into one
+        // free-text field as it was before (a keyed sink does not rewrite those fields), must be found by the scan and named by that
+        // field. The same record without the plant is clean.
+        let mut source = default_diagnostic_sink();
+        campaign_through_all_three_paths(&mut source);
+        // (the record's kind, the field planted, the label put back, the plant)
+        type Plant = (
+            &'static str,
+            &'static str,
+            &'static str,
+            fn(&mut DiagnosticEvent),
+        );
+        let plants: [Plant; 5] = [
+            ("stream_refused", "correlation_id", "spk-den-s3", |e| {
+                e.correlation_id = "negotiation-spk-den-s3".to_string();
+            }),
+            ("stream_refused", "message", "spk-den-s3", |e| {
+                e.message = "negotiation refused; spk-den-s3 is muted".to_string();
+            }),
+            ("fault_injected", "fault", "spk-office-s5", |e| {
+                e.fault = Some("corrupt_sample member=spk-office-s5 block=7".to_string());
+            }),
+            ("campaign_failed", "fault", "spk-office-s5", |e| {
+                e.fault = Some("corrupt_sample member=spk-office-s5 block=7".to_string());
+            }),
+            ("campaign_failed", "cause", "spk-office-s5", |e| {
+                e.cause = Some("member spk-office-s5 channel 1: wrong sample".to_string());
+            }),
+        ];
+        for (kind, field, raw, plant) in plants {
+            let real = first_record(&source, kind).clone();
+            let mut clean = default_diagnostic_sink().with_pseudonym_key(CAMPAIGN_KEY);
+            assert!(clean.emit_critical(real.clone()));
+            assert_eq!(
+                leaks_of(&clean, &campaign_labels()),
+                Vec::<(String, String)>::new(),
+                "{kind}: the record as the campaign wrote it"
+            );
+            let mut planted = default_diagnostic_sink().with_pseudonym_key(CAMPAIGN_KEY);
+            let mut event = real;
+            plant(&mut event);
+            assert!(planted.emit_critical(event));
+            assert_eq!(
+                leaks_of(&planted, &campaign_labels()),
+                vec![
+                    (field.to_string(), raw.to_string()),
+                    ("to_jsonl".to_string(), raw.to_string())
+                ],
+                "{kind}: {field} planted"
+            );
+        }
+    }
+
+    #[test]
+    fn redacting_a_failure_replaces_every_member_label_and_names_the_first_member_it_mentions() {
+        // As the campaign's own errors are worded: the two forms the render loop writes, and the Q01 oracle's.
+        assert_eq!(
+            redact_member_labels("member spk-office-s5 channel 1: wrong sample at frame 1797"),
+            (
+                "member <member> channel 1: wrong sample at frame 1797".to_string(),
+                Some("spk-office-s5")
+            )
+        );
+        assert_eq!(
+            redact_member_labels("member spk-den-s3: block 4 was refused"),
+            (
+                "member <member>: block 4 was refused".to_string(),
+                Some("spk-den-s3")
+            )
+        );
+        assert_eq!(
+            redact_member_labels("member_rendered_silence: spk-kitchen-s12: 4 authentic blocks"),
+            (
+                "member_rendered_silence: <member>: 4 authentic blocks".to_string(),
+                Some("spk-kitchen-s12")
+            )
+        );
+        // Every occurrence goes, and the member of the record is the first one the text names, not the first in the fleet.
+        assert_eq!(
+            redact_member_labels("spk-den-s3, then spk-office-s5, then spk-den-s3 again"),
+            (
+                "<member>, then <member>, then <member> again".to_string(),
+                Some("spk-den-s3")
+            )
+        );
+        // A failure that names no member is the house's, and its text is as it was.
+        assert_eq!(
+            redact_member_labels("the program has no owner"),
+            ("the program has no owner".to_string(), None)
+        );
+        // The control: no member label of the campaign survives, whichever it is.
+        for id in CAMPAIGN_MEMBER_IDS {
+            let (text, member) = redact_member_labels(&format!("member {id}: failed"));
+            assert!(
+                !text.contains(id) && text.contains(REDACTED_MEMBER),
+                "{text}"
+            );
+            assert_eq!(member, Some(id));
+        }
+    }
+
+    #[test]
+    fn the_redacted_labels_are_the_members_the_campaign_has() {
+        // A member added to the campaign and not to `CAMPAIGN_MEMBER_IDS` would keep its label in every cause: the two are compared.
+        assert_eq!(CAMPAIGN_MEMBER_IDS, FLEET);
+        let report = run_campaign(SEED, 20, None).expect("clean campaign");
+        let mut expected = CAMPAIGN_MEMBER_IDS.to_vec();
+        expected.sort_unstable();
+        let members: Vec<&str> = report.members.keys().map(String::as_str).collect();
+        assert_eq!(members, expected);
+    }
+
+    #[test]
+    fn a_planted_fault_names_its_member_as_a_field_and_never_in_its_text() {
+        let id = "spk-office-s5";
+        let session = UnifiedGroupSession::new("grp-virtual-house", "spk-kitchen-s12", 1);
+        let on_a_member = [
+            OutputFault::CorruptSample {
+                member_id: id,
+                block: 7,
+                last_channel: true,
+                offset: 5,
+            },
+            OutputFault::DropFinalBlock { member_id: id },
+            OutputFault::UnadmittedExcept { member_id: id },
+            OutputFault::LateBlock {
+                member_id: id,
+                block: 3,
+            },
+            OutputFault::ReorderedPair {
+                member_id: id,
+                block: 3,
+            },
+            OutputFault::StaleEpochPacket {
+                member_id: id,
+                block: 3,
+            },
+            OutputFault::ClockLeap {
+                member_id: id,
+                block: 3,
+                delta_ns: 9,
+            },
+            OutputFault::StaleStreamDatagram {
+                member_id: id,
+                block: 3,
+            },
+            OutputFault::SilentInput { member_id: id },
+        ];
+        for fault in on_a_member {
+            let text = describe_fault(fault);
+            assert!(!text.contains(id) && !text.contains("member"), "{text}");
+            assert_eq!(fault_member(fault), Some(id), "{text}");
+            let record = fault_injected_event(SEED, 3, 0, &session, Some(fault));
+            assert_eq!(record.member_id, id, "{text}");
+            assert_eq!(record.fault.as_deref(), Some(text.as_str()));
+        }
+        // A fault planted on no member is the house's, and says what it is all the same.
+        for fault in [
+            OutputFault::ReplacedSourceKeepsPublishing,
+            OutputFault::TailnetRetryAsNewCommand,
+            OutputFault::TailnetStaleRevisionRefreshed,
+        ] {
+            assert_eq!(fault_member(fault), None);
+            let record = fault_injected_event(SEED, 3, 0, &session, Some(fault));
+            assert_eq!(record.member_id, "house");
+            assert_eq!(record.fault, Some(describe_fault(fault)));
+        }
+        assert_eq!(fault_injected_event(SEED, 3, 0, &session, None).fault, None);
+    }
+
+    #[test]
+    fn a_failure_that_names_no_member_is_recorded_as_the_houses_with_its_whole_text_as_the_cause() {
+        // The set-up error a campaign refuses to start on names no member: the record is the house's, and nothing is lost.
+        let mut sink = default_diagnostic_sink();
+        let fault = OutputFault::ReplacedSourceKeepsPublishing;
+        let error = run_recorded(SEED, 20, Some(fault), Scenario::NONE, &[], &mut sink)
+            .expect_err("a planted source fault needs a source change");
+        assert_eq!(
+            error,
+            "a planted source fault needs a source change in the scenario"
+        );
+        let failed = first_record(&sink, "campaign_failed");
+        assert_eq!(failed.member_id, "house");
+        assert_eq!(failed.cause.as_deref(), Some(error.as_str()));
+        assert_eq!(
+            failed.fault.as_deref(),
+            Some("replaced_source_keeps_publishing")
+        );
     }
 
     #[test]
