@@ -7,6 +7,9 @@
 
 use crate::SpeakerReadinessState;
 use crate::clock_log::{ClockLog, ClockLogSummary};
+use crate::playout_adapter::{
+    CampaignTimeline, NodePlayout, Played, PlayoutMemberReport, SendLink, Silence,
+};
 use franken_board_profile::{BoardProfile, synthetic_test_fixture_catalog};
 use franken_clock::LatencyLedger;
 use franken_clock::group::{
@@ -24,8 +27,8 @@ use franken_session::{
     ChannelRole, FencedControlCommand, GroupCommandPayload, SessionError, UnifiedGroupSession,
 };
 use franken_stream::{
-    BoundedJitterBuffer, Capabilities, Initiator, NegotiationError, OutboundFrame, PlayoutMode,
-    PlayoutPullDecision, StreamId, StreamKey, StreamReceiver, StreamSender, respond,
+    Capabilities, Initiator, NegotiationError, OutboundFrame, StreamId, StreamKey, StreamReceiver,
+    StreamSender, respond,
 };
 use franken_test_support::{
     AmplifierObservation, BoardObservation, BoundedDiagnosticSink, ClockObservation,
@@ -296,7 +299,8 @@ pub struct VirtualSpeakerNode {
     pub stream: StreamOutcome,
     /// Blocks that sounded nothing because there was no stream to play (counted in `muted_blocks` too).
     pub stream_refused_blocks: u64,
-    pub jitter_buffer: BoundedJitterBuffer,
+    /// The member's playout: the real N04 `PlayoutEngine`, fed through its own clock (`playout_adapter`).
+    pub(crate) playout: NodePlayout,
     pub resampler: BoundedDriftResampler,
     pub dsp: BoardProtectionDsp,
     /// A second instance of the same DSP, fed the same input and gain. Its output is the
@@ -750,6 +754,12 @@ impl VirtualSpeakerNode {
 
         let mut clock_log = ClockLog::new(member_id)?;
         clock_log.drain(&mut clock);
+        // The engine is bound to the stream negotiation produced: its epoch, and the presentation time of block 0.
+        let playout = if link.sender.is_some() {
+            NodePlayout::bind(initial_epoch, Self::block_pts_group_ns(0))?
+        } else {
+            NodePlayout::unbound()
+        };
 
         let dsp = BoardProtectionDsp::new(board.clone()).map_err(|e| e.to_string())?;
         let shadow_dsp = dsp.clone();
@@ -772,7 +782,7 @@ impl VirtualSpeakerNode {
             coordinator_sender: link.sender,
             stream: link.outcome,
             stream_refused_blocks: 0,
-            jitter_buffer: BoundedJitterBuffer::new(PlayoutMode::Music500ms, 128),
+            playout,
             resampler: BoundedDriftResampler::new(),
             dsp,
             shadow_dsp,
@@ -1076,6 +1086,10 @@ pub struct MemberSimulationStats {
     /// critical clock event was lost (`N03`, `docs/contracts/n03.md` section 13).
     #[serde(default)]
     pub clock_log: ClockLogSummary,
+    /// The N04 engine's own account of this member's blocks (`ffw-gmq`): what arrived on time, late, twice or from the
+    /// wrong epoch, and what was decided for every block.
+    #[serde(default)]
+    pub playout: PlayoutMemberReport,
 }
 
 /// Run a complete deterministic Virtual House simulation across 5 mixed-generation Sonos models
@@ -1270,21 +1284,29 @@ fn run_campaign_inner(
         .values()
         .filter(|node| node.coordinator_sender.is_some())
         .count();
-    for blk_idx in 0..total_blocks {
-        let start_frame = blk_idx * (FRAMES_PER_BLOCK as u64);
-        let send_time_ns = block_offset_ns(blk_idx);
-        let pts_ns = send_time_ns + playout_horizon_ns;
+    // The N04 engine decides a block `work + lead` before its presentation, about 496 ms after it was sent, so each
+    // member's sender runs ahead of the render loop (see `playout_adapter`). A block's frame depends on the block alone,
+    // so it is built when the sender reaches it. The presentation time it carries is on the group clock: the engine's
+    // timeline and the node's clock readings share that axis.
+    let timeline = CampaignTimeline {
+        origin_ns: CAMPAIGN_ORIGIN_NS,
+        horizon_ns: playout_horizon_ns,
+        offset_ns: block_offset_ns,
+    };
+    let frame_for = |blk: u64| -> OutboundFrame {
+        let start_frame = blk * (FRAMES_PER_BLOCK as u64);
+        let pts_ns = timeline.pts_group_ns(blk);
         let consume_by_ns = pts_ns - block_period_ns;
 
         let mut src_block = StereoAudioBlock::silence(start_frame);
-        let amp = ((blk_idx % 32) as f32) * 0.02 + 0.05;
+        let amp = ((blk % 32) as f32) * 0.02 + 0.05;
         src_block.left = [amp; FRAMES_PER_BLOCK];
         src_block.right = [-amp; FRAMES_PER_BLOCK];
 
-        // Blocks are coded in groups of four; the sender assigns `seq == blk_idx`.
-        let frame = OutboundFrame {
-            fec_group_id: (blk_idx / 4) as u16,
-            fec_index: (blk_idx % 4) as u8,
+        // Blocks are coded in groups of four; the sender assigns `seq == blk`.
+        OutboundFrame {
+            fec_group_id: (blk / 4) as u16,
+            fec_index: (blk % 4) as u8,
             fec_group_size: 4,
             ..OutboundFrame::media(
                 start_frame,
@@ -1292,33 +1314,38 @@ fn run_campaign_inner(
                 consume_by_ns,
                 src_block.to_be_i16_bytes(),
             )
-        };
+        }
+    };
+    for blk_idx in 0..total_blocks {
+        let start_frame = blk_idx * (FRAMES_PER_BLOCK as u64);
+        let send_time_ns = block_offset_ns(blk_idx);
         let mut presented_true = Vec::with_capacity(nodes.len());
         for (member_id, node) in &mut nodes {
             // Each member is sent the block on its own negotiated session, so the datagram is keyed for
             // that member alone. The sender advances whether or not the network delivers the block, as
-            // a real sender does. A member with no stream is sent nothing.
-            let wire = match node.coordinator_sender.as_mut() {
-                Some(link) => Some(link.send(frame.clone()).map_err(|e| {
-                    format!("member {member_id}: block {blk_idx} could not be encoded: {e}")
-                })?),
-                None => None,
-            };
-            let streaming = wire.is_some();
-            let sched = schedules.get_mut(member_id).unwrap();
-            let decision = sched.evaluate_packet(blk_idx, send_time_ns);
-            if !decision.dropped
-                && let Some(deliver_ns) = decision.deliver_time_ns
-                && let (Some(wire), Some(receiver)) = (wire.as_ref(), node.receiver.as_mut())
+            // a real sender does. A member with no stream is sent nothing. The engine decides this block
+            // about 496 ms after it was sent, so the sender is ahead of the render loop: it sends, in
+            // block order, every block sent before this one is decided (`playout_adapter`). A refusal by
+            // the receiver is a defect in the framing or the harness, never ordinary loss: it fails the
+            // campaign. A packet that is merely late is a different matter: the engine refuses it and
+            // play-out conceals.
+            let streaming = node.coordinator_sender.is_some();
+            if let (Some(sender), Some(receiver)) =
+                (node.coordinator_sender.as_mut(), node.receiver.as_mut())
             {
-                // Each block is delivered to each member at most once, in order, on the member's
-                // own stream, so a refusal here is a defect in the framing or the harness, never
-                // ordinary loss. Fail the campaign rather than skip it silently. A packet that is
-                // merely late is a different matter: `push_packet` counts it and play-out conceals.
-                let verified = receiver.accept(wire).map_err(|e| {
-                    format!("member {member_id}: block {blk_idx} refused by the receiver: {e}")
-                })?;
-                let _ = node.jitter_buffer.push_packet(&verified, deliver_ns);
+                let schedule = schedules.get_mut(member_id).unwrap();
+                node.playout.send_until(
+                    &mut SendLink {
+                        member_id,
+                        sender,
+                        receiver,
+                        schedule,
+                    },
+                    timeline.decision_true_ns(blk_idx),
+                    total_blocks,
+                    &timeline,
+                    &frame_for,
+                )?;
             }
 
             let gain = session
@@ -1329,20 +1356,37 @@ fn run_campaign_inner(
 
             // The audible gate: N03's answer for this block's presentation instant.
             let gate = node.gate_block(blk_idx);
-            // A member with no stream has nothing to play and nothing to conceal.
-            let pull = streaming.then(|| node.jitter_buffer.pull_for_frame(start_frame));
-            let stereo_in = match pull {
-                None => StereoAudioBlock::silence(start_frame),
+            // A member with no stream has nothing to play and nothing to conceal. Otherwise the N04 engine
+            // decides this block from what has arrived by now, on the node's own clock.
+            let played = if streaming {
                 Some(
-                    PlayoutPullDecision::AuthenticBlock(b)
-                    | PlayoutPullDecision::FecRecoveredBlock(b),
-                ) => {
+                    node.playout
+                        .decide_block(blk_idx, &timeline, &node.clock, &node.sim_clock)
+                        .map_err(|e| format!("member {member_id}: {e}"))?,
+                )
+            } else {
+                None
+            };
+            let stereo_in = match played {
+                None => StereoAudioBlock::silence(start_frame),
+                Some(Played::Authentic(block)) => {
                     node.authentic_blocks += 1;
-                    b
+                    block
                 }
-                Some(PlayoutPullDecision::PlcConcealedBlock { block, .. }) => {
+                Some(Played::Concealed(block)) => {
                     node.concealed_blocks += 1;
                     block
+                }
+                // Missing blocks beyond what the engine conceals are silence; the legacy buffer counted those as
+                // concealed too, and so does this.
+                Some(Played::Silent(Silence::Gap)) => {
+                    node.concealed_blocks += 1;
+                    StereoAudioBlock::silence(start_frame)
+                }
+                // Silence the engine decided for another reason, and a position whose block the clock could not
+                // decide: both are in the member's playout report, and neither is a block that sounds.
+                Some(Played::Silent(_) | Played::NoDecision) => {
+                    StereoAudioBlock::silence(start_frame)
                 }
             };
             // A block the gate does not let sound is replaced by silence at the same stream position, so the
@@ -1497,6 +1541,14 @@ fn run_campaign_inner(
         }
     }
 
+    // Each member's engine decided every block position exactly once (a position the clock could not decide is
+    // counted, and decided as overdue later), and its decision counters add up to its cursor.
+    for (id, node) in &nodes {
+        node.playout
+            .finish(total_blocks)
+            .map_err(|e| format!("member {id}: {e}"))?;
+    }
+
     // Exercise fsonos SOAP group volume update
     match handle_fsonos_soap(
         &mut session,
@@ -1583,6 +1635,7 @@ fn run_campaign_inner(
                 quarantined_dma_slots: hal_t.quarantined_dma_slots,
                 readiness: node.readiness.clone(),
                 clock_log: node.clock_log.summary(&node.clock),
+                playout: node.playout.report(),
             },
         );
     }
@@ -2463,6 +2516,95 @@ mod tests {
         assert_eq!(healthy.rate_limited_event_count(), 0);
         assert_eq!(healthy.dropped_event_count(), 0);
         assert!(healthy.is_evidence_complete());
+    }
+
+    /// What each member's engine must decide for every block, from the seeded schedule alone. These are the rules N04's
+    /// contract states, restated here and not read from the engine: a delivered block is real; a missing one is concealed
+    /// up to 8 in a row and then muted; before anything has played it is muted for want of history. Returns (real,
+    /// concealed, muted for a long gap, muted for want of history, duplicates delivered).
+    fn expected_playout(
+        seed: u64,
+        member_index: u64,
+        total_blocks: u64,
+    ) -> (u64, u64, u64, u64, u64) {
+        let cfg = NetworkScheduleConfig {
+            seed: seed.wrapping_add(member_index * 101),
+            ..NetworkScheduleConfig::default()
+        };
+        let mut schedule = NetworkSchedule::new(cfg);
+        let (mut real, mut concealed, mut gap, mut nohistory, mut duplicates) = (0, 0, 0, 0, 0);
+        let (mut have_played, mut run) = (false, 0_u32);
+        for blk in 0..total_blocks {
+            let decision = schedule.evaluate_packet(blk, block_offset_ns(blk));
+            if !decision.dropped {
+                real += 1;
+                have_played = true;
+                run = 0;
+                duplicates += u64::from(decision.duplicate_deliver_time_ns.is_some());
+            } else if !have_played {
+                nohistory += 1;
+                run += 1;
+            } else if run >= 8 {
+                gap += 1;
+                run += 1;
+            } else {
+                concealed += 1;
+                run += 1;
+            }
+        }
+        (real, concealed, gap, nohistory, duplicates)
+    }
+
+    #[test]
+    fn the_real_playout_engine_decides_every_block_as_the_seeded_schedule_says_it_must() {
+        // 1 200 blocks is 6.4 s: long enough to contain the schedule's first 100 ms burst outage (it starts at 5 s) and
+        // the muting after the engine has concealed 8 blocks of it.
+        let total = 1_200;
+        let report = run_virtual_house_campaign(SEED, total).unwrap();
+        assert_eq!(report.members.len(), 5);
+        assert!(report.unified_mixed_s1_s2 && report.within_2ms_skew_target);
+        let mut muted_after_a_long_gap = false;
+        for (idx, (id, stats)) in report.members.iter().enumerate() {
+            let (real, concealed, gap, nohistory, duplicates) =
+                expected_playout(SEED, idx as u64, total);
+            let p = &stats.playout;
+            assert_eq!(
+                (
+                    p.decided_real,
+                    p.decided_concealed,
+                    p.decided_muted_gap,
+                    p.decided_muted_nohistory
+                ),
+                (real, concealed, gap, nohistory),
+                "member {id}"
+            );
+            assert_eq!(real + concealed + gap + nohistory, total, "member {id}");
+            // Jitter is at most 50 ms against a 500 ms horizon: nothing is late, from another epoch, refused for want of
+            // a clock, or left undecided; every delivered block is admitted once and each duplicate is refused once.
+            assert_eq!(
+                (
+                    p.late,
+                    p.wrong_epoch,
+                    p.clock_refused,
+                    p.otherwise_refused,
+                    p.blocks_without_a_decision,
+                    p.catch_up_decisions,
+                    p.decided_muted_overdue,
+                    p.decided_skipped
+                ),
+                (0, 0, 0, 0, 0, 0, 0, 0),
+                "member {id}"
+            );
+            assert_eq!((p.admitted, p.duplicate), (real, duplicates), "member {id}");
+            // The legacy counters keep their meaning: real blocks, and blocks that were missing.
+            assert_eq!(stats.authentic_blocks, real, "member {id}");
+            assert_eq!(stats.concealed_blocks, concealed + gap, "member {id}");
+            muted_after_a_long_gap |= gap > 0;
+        }
+        assert!(
+            muted_after_a_long_gap,
+            "the burst outage reached the engine"
+        );
     }
 
     #[test]

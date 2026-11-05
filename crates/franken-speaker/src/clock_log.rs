@@ -100,7 +100,7 @@ impl ClockLog {
     pub(crate) fn new(member_id: &str) -> Result<Self, String> {
         let ctx = LogContext::new(
             "vh-clock",
-            "N03-clock",
+            "n03-clock",
             member_id,
             "grp-virtual-house",
             None,
@@ -249,6 +249,25 @@ mod tests {
             accepted(),
             pair("n03.status.locked", None),
         ]
+    }
+
+    #[test]
+    fn a_clock_log_can_be_made_for_every_member_of_the_house() {
+        // `LogContext` accepts only 1-64 bytes of `a-z0-9._-` starting with a lowercase letter or digit. A label it
+        // refuses fails the member's bring-up, and so every campaign: the case id once began with a capital.
+        for id in [
+            "spk-office-s5",
+            "spk-bedroom-s1",
+            "spk-kitchen-s12",
+            "spk-den-s3",
+            "spk-living-sub",
+            "spk-test",
+        ] {
+            ClockLog::new(id).unwrap_or_else(|e| panic!("{id}: {e}"));
+        }
+        // and the refusal is real: a capital in a member label is refused, with the field named
+        let err = ClockLog::new("Spk-Office").expect_err("a capital is not a valid label");
+        assert!(err.contains("InvalidLabel"), "{err}");
     }
 
     #[test]
@@ -425,7 +444,10 @@ mod tests {
         sink: &mut BoundedDiagnosticSink,
     ) -> usize {
         let mut offered = 0;
-        while let Some(buffered) = gc.pop_event() {
+        for _ in 0..gc.pending_events() {
+            let Some(buffered) = gc.pop_event() else {
+                break;
+            };
             let event = event_of(&buffered, ctx);
             for _ in 0..50 {
                 let stored = if buffered.critical {
@@ -443,13 +465,21 @@ mod tests {
     }
 
     /// PLANT: treats a refusal as a fault of the clock and mutes the node.
+    ///
+    /// Its loop is bounded by the events pending when the call starts, as the real drain's is, and that bound is
+    /// load-bearing. `report_clock_fault` always pushes a new critical `n03.reset` event, so a loop of
+    /// `while let Some(_) = gc.pop_event()` meets that event next; a sink that refuses it faults the clock again, and
+    /// so on without end. b36 ran exactly that for 13 minutes. The plant's defect is the fault, not an endless loop.
     fn gate_changing_drain(
         gc: &mut GroupClock,
         ctx: &LogContext,
         sink: &mut BoundedDiagnosticSink,
     ) -> usize {
         let mut offered = 0;
-        while let Some(buffered) = gc.pop_event() {
+        for _ in 0..gc.pending_events() {
+            let Some(buffered) = gc.pop_event() else {
+                break;
+            };
             let event = event_of(&buffered, ctx);
             let stored = if buffered.critical {
                 sink.emit_critical(event)

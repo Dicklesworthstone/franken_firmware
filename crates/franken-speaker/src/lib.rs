@@ -30,6 +30,9 @@ mod clock_log;
 mod harness;
 
 #[cfg(any(test, feature = "harness"))]
+mod playout_adapter;
+
+#[cfg(any(test, feature = "harness"))]
 pub use harness::{
     FencingProbeStats, MemberSimulationStats, RefusedBy, StreamAgreement, StreamOutcome,
     StreamRefusal, VirtualHouseReport, VirtualSpeakerNode, run_virtual_house_campaign,
@@ -37,3 +40,6 @@ pub use harness::{
 
 #[cfg(any(test, feature = "harness"))]
 pub use clock_log::ClockLogSummary;
+
+#[cfg(any(test, feature = "harness"))]
+pub use playout_adapter::PlayoutMemberReport;
