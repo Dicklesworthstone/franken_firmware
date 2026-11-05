@@ -1,0 +1,14 @@
+audit.py audit --manifest-path <export of the pinned revision> --subject upstream --generate-lock
+exit status 1
+
+E06 dependency audit  schema=ffw.e06.audit.v1  Cargo.lock sha256=ac6f380908f14609 (367 entries, generated-offline)
+  host     aarch64-apple-darwin               resolver-failed  [no soft-float feature in the compiler's target spec]
+  mips     mips-unknown-linux-musl            resolver-failed  [soft-float]
+  powerpc  powerpc-unknown-linux-musl         resolver-failed  [no soft-float feature in the compiler's target spec]
+findings: 3 blocker, 1 review, 5 info
+  BLOCKER  resolver-failed            -                            cargo cannot resolve aarch64-apple-darwin: attempting to make an HTTP request, but --offline was specified
+  BLOCKER  resolver-failed            -                            cargo cannot resolve mips-unknown-linux-musl: attempting to make an HTTP request, but --offline was specified
+  BLOCKER  resolver-failed            -                            cargo cannot resolve powerpc-unknown-linux-musl: attempting to make an HTTP request, but --offline was specified
+  REVIEW   lock-generated-not-an-upstream-pin -                            this revision has no Cargo.lock: the 367 package versions below were generated offline from this machine's registry cache (lock sha256 ac6f380908f1460
+minimal-graph build checks: planned=0 pass=0 fail=0 not-run=0 conflicting=0
+not admitted by this tool: it reports facts; a human decides each review item.

@@ -307,12 +307,59 @@ def _cfg_above(toks: Sequence[Tok], idx: int) -> Optional[CfgExpr]:
     return gates[0] if len(gates) == 1 else ("all", gates)
 
 
+def _brace_gate(toks: Sequence[Tok], brace: int) -> Optional[CfgExpr]:
+    """The ``#[cfg(..)]`` gates on the item whose body the ``{`` at ``brace`` opens (a ``mod``, ``fn``, ``impl``...),
+    or None.  The item header runs back to the previous ``;``, ``{`` or ``}`` that is not inside brackets or parentheses
+    (a ``;`` inside ``[u8; 4]`` is not a boundary); its attributes come first, so the keyword is the first token after them."""
+    depth, j = 0, brace - 1
+    while j >= 0:
+        text = toks[j].text if toks[j].kind == "punct" else ""
+        if text == "]" and depth == 0:
+            # An INNER attribute (`#![no_std]`) ends an item header as a `;` does; an outer one (`#[cfg(..)]`) belongs to it.
+            o, nest = j - 1, 1
+            while o >= 0 and nest:
+                if toks[o].kind == "punct":
+                    nest += (toks[o].text == "]") - (toks[o].text == "[")
+                o -= 1
+            if o + 1 >= 2 and toks[o].text == "!" and toks[o - 1].text == "#":
+                break
+        if text in (")", "]"):
+            depth += 1
+        elif text in ("(", "["):
+            depth -= 1
+        elif depth == 0 and text in (";", "{", "}"):
+            break
+        j -= 1
+    i = j + 1
+    while i + 1 < brace and toks[i].text == "#" and toks[i + 1].text == "[":
+        depth, i = 0, i + 1
+        while i < brace:
+            depth += (toks[i].text == "[") - (toks[i].text == "]") if toks[i].kind == "punct" else 0
+            i += 1
+            if depth == 0:
+                break
+    return _cfg_above(toks, i) if i > j + 1 else None
+
+
+def _all_gates(gates: List[CfgExpr]) -> Optional[CfgExpr]:
+    return None if not gates else gates[0] if len(gates) == 1 else ("all", gates)
+
+
 def scan_source(src: str) -> SourceFacts:
     """Facts from one Rust source text.  ``unsafe`` is the keyword token only: ``unsafe_code`` (the lint
-    name), strings and comments never count."""
+    name), strings and comments never count.
+
+    An ``extern crate std;`` is recorded with ALL the cfg gates that govern it: the attributes on the item itself and
+    those on every enclosing item (``#[cfg(test)] mod tests { extern crate std; }`` is a test-only std, not the crate's)."""
     toks = tokenize(src)
     facts = SourceFacts(tokens=len(toks))
+    enclosing: List[Optional[CfgExpr]] = []                 # one entry per open `{`: the gate of the item it belongs to
     for k, t in enumerate(toks):
+        if t.kind == "punct" and t.text == "{":
+            enclosing.append(_brace_gate(toks, k))
+        elif t.kind == "punct" and t.text == "}":
+            if enclosing:
+                enclosing.pop()
         if t.kind == "ident":
             if t.text == "unsafe":
                 facts.unsafe_lines.append(t.line)
@@ -325,7 +372,9 @@ def scan_source(src: str) -> SourceFacts:
                 facts.uses_alloc = True
             elif (t.text == "crate" and k >= 1 and toks[k - 1].text == "extern" and k + 1 < len(toks)
                   and toks[k + 1].text == "std"):
-                facts.extern_std.append(_cfg_above(toks, k - 1))
+                own = _cfg_above(toks, k - 1)
+                gates = [g for g in enclosing if g is not None] + ([own] if own is not None else [])
+                facts.extern_std.append(_all_gates(gates))
         elif t.kind == "num" and t.is_float:
             facts.uses_float = True
     _inner_attributes(toks, facts)

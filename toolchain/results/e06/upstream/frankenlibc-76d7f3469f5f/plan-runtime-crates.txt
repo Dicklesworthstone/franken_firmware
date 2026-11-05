@@ -1,0 +1,6 @@
+RCH_REQUIRE_REMOTE=1 rch exec -- cargo +nightly check --locked --release -p frankenlibc-abi --target mips-unknown-linux-musl -Z build-std=std,panic_abort -j 2
+RCH_REQUIRE_REMOTE=1 rch exec -- cargo +nightly check --locked --release -p frankenlibc-core --target mips-unknown-linux-musl -Z build-std=std,panic_abort -j 2
+RCH_REQUIRE_REMOTE=1 rch exec -- cargo +nightly check --locked --release -p frankenlibc-membrane --target mips-unknown-linux-musl -Z build-std=std,panic_abort -j 2
+RCH_REQUIRE_REMOTE=1 rch exec -- cargo +nightly check --locked --release -p frankenlibc-abi --target powerpc-unknown-linux-musl -Z build-std=std,panic_abort -j 2
+RCH_REQUIRE_REMOTE=1 rch exec -- cargo +nightly check --locked --release -p frankenlibc-core --target powerpc-unknown-linux-musl -Z build-std=std,panic_abort -j 2
+RCH_REQUIRE_REMOTE=1 rch exec -- cargo +nightly check --locked --release -p frankenlibc-membrane --target powerpc-unknown-linux-musl -Z build-std=std,panic_abort -j 2

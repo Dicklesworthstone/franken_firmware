@@ -33,7 +33,9 @@ SCHEMA = "ffw.e06.checks.v1"
 MAX_LOG_BYTES = 2 * 1024 * 1024               # a log larger than this is refused, not read
 PLAN_PREFIX = ["RCH_REQUIRE_REMOTE=1", "rch", "exec", "--"]
 PLAN_LINE = re.compile(r"^RCH_REQUIRE_REMOTE=1 rch exec -- cargo \+nightly check --locked --release "
-                       r"-p (?P<crate>\S+) --target (?P<target>\S+) -Z build-std=(?P<std>\S+)(?: -j (?P<jobs>\d+))?$")
+                       r"-p (?P<crate>[A-Za-z0-9_][A-Za-z0-9_.-]*)"
+                       r"(?P<flags>(?: --no-default-features)?(?: --features [A-Za-z0-9_][A-Za-z0-9_./+,-]*)?) "
+                       r"--target (?P<target>\S+) -Z build-std=(?P<std>\S+)(?: -j (?P<jobs>\d+))?$")
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 WORKER = re.compile(r"Selected worker: (?P<alias>\S+) at ")
 EXECUTING = re.compile(r"Executing command remotely: (?P<command>cargo .*)$")

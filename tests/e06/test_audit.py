@@ -304,7 +304,8 @@ class ContaminatedGraphTests(Base):
         permitted = audit(self.fx, unsafe_allowed={"core2"})
         self.assertEqual(find(permitted, "workspace-unsafe-linked", "core2@0.1.0"), [])
         self.assertEqual(find(permitted, "workspace-unsafe-permitted", "core2@0.1.0")[0]["severity"], "info")
-        self.assertEqual(permitted["policy_inputs"], {"unsafe_allowed": ["core2"]})
+        self.assertEqual(permitted["policy_inputs"], {"unsafe_allowed": ["core2"], "subject": "own", "cargo_args": [],
+                                                  "scope_crates": None})
 
     def test_duplicate_versions_are_a_review_only_when_both_are_linked(self):
         dupe = find(self.report, "duplicate-version", "dupe")[0]
@@ -697,6 +698,37 @@ class CandidateTests(Base):
         self.assertEqual(sorted(p for f in find(report, "candidate-in-graph") for p in f["platforms"]), ["mips", "powerpc"])
         self.assertEqual(find(report, "ffi-binding-table-linked"), [])
         self.assertEqual(by["codecs"]["status"], "not in graph; unevaluated")
+
+
+class NoStdWithTestOnlyStdTests(Base):
+    """franken_kernel is `#![no_std]` + `extern crate alloc`, and its `mod tests` has `extern crate std;`. That is std in
+    tests only: the crate itself is no_std (and not allocation-free, which is a different question)."""
+
+    def report_for(self, src):
+        app = Crate("app", "0.1.0", where="workspace", workspace_lints=True, license=None, license_file="../../LICENSE",
+                    src="#![forbid(unsafe_code)]\n", deps=[Dep("kern")])
+        fx = Fixture(self.root, self.outside, ["app@0.1.0"])
+        fx.add(app, Crate("kern", "0.6.0", src=src))
+        fx.write()
+        return audit(fx)
+
+    def test_a_test_only_extern_crate_std_leaves_the_crate_no_std_and_records_its_alloc(self):
+        report = self.report_for("#![no_std]\nextern crate alloc;\nuse alloc::string::String;\n"
+                                 "#[cfg(test)]\nmod tests {\n    extern crate std;\n}\n")
+        kern = pkg(report, "kern@0.6.0")
+        for key in ("mips", "powerpc"):
+            self.assertEqual(kern["platforms"][key]["std"], "no_std", key)
+        self.assertTrue(kern["references_alloc"])            # no_std is not no allocation
+
+    def test_the_same_extern_crate_std_outside_a_test_gate_still_makes_the_crate_std(self):
+        for src in ("#![no_std]\nmod m {\n    extern crate std;\n}\n", "#![no_std]\nextern crate std;\n"):
+            report = self.report_for(src)
+            self.assertEqual(pkg(report, "kern@0.6.0")["platforms"]["mips"]["std"], "std", src)
+
+    def test_an_enclosing_feature_gate_is_decided_by_the_features_cargo_enabled(self):
+        report = self.report_for('#![no_std]\n#[cfg(feature = "std")]\nmod m {\n    extern crate std;\n}\n')
+        # the fixture enables no `std` feature on kern, so the gated std does not hold
+        self.assertEqual(pkg(report, "kern@0.6.0")["platforms"]["mips"]["std"], "no_std")
 
 
 class ReportHygieneTests(Base):

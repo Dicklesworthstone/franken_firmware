@@ -1,0 +1,1104 @@
+{
+ "build_checks": {
+  "counts": {
+   "conflicting": 0,
+   "fail": 0,
+   "not-run": 2,
+   "pass": 0
+  },
+  "planned": 2
+ },
+ "candidates": [
+  {
+   "in_graph": [],
+   "name": "asupersync",
+   "status": "not in graph; unevaluated"
+  },
+  {
+   "in_graph": [
+    "franken-kernel@0.6.0"
+   ],
+   "name": "franken_kernel",
+   "status": "linked into the firmware graph of: mips, powerpc (see packages)"
+  },
+  {
+   "in_graph": [],
+   "name": "libc candidates",
+   "status": "not in graph; unevaluated"
+  },
+  {
+   "in_graph": [],
+   "name": "libc crate (Rust FFI binding table)",
+   "status": "not in graph; unevaluated"
+  },
+  {
+   "in_graph": [],
+   "name": "codecs",
+   "status": "not in graph; unevaluated"
+  }
+ ],
+ "findings": [
+  {
+   "detail": "mips-unknown-linux-musl is soft-float, so every f32/f64 operation below is software; the crates that use floats are workspace: franken-decision@0.6.0, franken-evidence@0.6.0; dependencies: serde@1.0.229, serde_core@1.0.229, serde_json@1.0.1",
+   "kind": "float-on-soft-float",
+   "package": null,
+   "platforms": [
+    "mips"
+   ],
+   "severity": "review"
+  },
+  {
+   "detail": "13 unsafe token(s) in its own source (src/lib.rs); pulled in by serde_json@1.0.151",
+   "kind": "unsafe-in-dependency",
+   "package": "itoa@1.0.18",
+   "platforms": [
+    "mips",
+    "powerpc"
+   ],
+   "severity": "review"
+  },
+  {
+   "detail": "333 unsafe token(s) in its own source (src/arch/aarch64/memchr.rs, src/arch/aarch64/neon/memchr.rs, src/arch/aarch64/neon/packedpair.rs, src/arch/all/memchr.rs, src/arch/all/mod.rs, src/arch/all/rabinkarp.rs, src/arch/generic/memchr.rs, src",
+   "kind": "unsafe-in-dependency",
+   "package": "memchr@2.8.3",
+   "platforms": [
+    "mips",
+    "powerpc"
+   ],
+   "severity": "review"
+  },
+  {
+   "detail": "2 unsafe token(s) in its own source (src/core/format.rs, src/core/ser/impls.rs); pulled in by franken-decision@0.6.0, franken-evidence@0.6.0, franken-kernel@0.6.0; the forbid(unsafe_code) of franken-decision@0.6.0, franken-evidence@0.6.0, f",
+   "kind": "unsafe-in-dependency",
+   "package": "serde@1.0.229",
+   "platforms": [
+    "mips",
+    "powerpc"
+   ],
+   "severity": "review"
+  },
+  {
+   "detail": "2 unsafe token(s) in its own source (src/format.rs, src/ser/impls.rs); pulled in by serde@1.0.229, serde_json@1.0.151",
+   "kind": "unsafe-in-dependency",
+   "package": "serde_core@1.0.229",
+   "platforms": [
+    "mips",
+    "powerpc"
+   ],
+   "severity": "review"
+  },
+  {
+   "detail": "13 unsafe token(s) in its own source (src/raw.rs, src/read.rs, src/ser.rs, src/value/mod.rs); pulled in by franken-evidence@0.6.0; the forbid(unsafe_code) of franken-evidence@0.6.0 does not cover this crate",
+   "kind": "unsafe-in-dependency",
+   "package": "serde_json@1.0.151",
+   "platforms": [
+    "mips",
+    "powerpc"
+   ],
+   "severity": "review"
+  },
+  {
+   "detail": "70 unsafe token(s) in its own source (src/lib.rs, src/stdarch_x86.rs); pulled in by serde_json@1.0.151",
+   "kind": "unsafe-in-dependency",
+   "package": "zmij@1.0.23",
+   "platforms": [
+    "mips",
+    "powerpc"
+   ],
+   "severity": "review"
+  },
+  {
+   "detail": "2 of 2 planned minimal-graph checks have no result",
+   "kind": "build-check-not-run",
+   "package": null,
+   "platforms": [],
+   "severity": "info"
+  },
+  {
+   "detail": "build script present, no native signal found; spawns a process",
+   "kind": "build-script",
+   "package": "serde@1.0.229",
+   "platforms": [
+    "host",
+    "mips",
+    "powerpc"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "build script present, no native signal found; spawns a process",
+   "kind": "build-script",
+   "package": "serde_core@1.0.229",
+   "platforms": [
+    "host",
+    "mips",
+    "powerpc"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "build script present, no native signal found",
+   "kind": "build-script",
+   "package": "serde_json@1.0.151",
+   "platforms": [
+    "host",
+    "mips",
+    "powerpc"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "build script present, no native signal found; spawns a process",
+   "kind": "build-script",
+   "package": "zmij@1.0.23",
+   "platforms": [
+    "host",
+    "mips",
+    "powerpc"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "linked into the firmware graph of: mips, powerpc (see packages): franken-kernel@0.6.0",
+   "kind": "candidate-in-graph",
+   "package": "franken_kernel",
+   "platforms": [
+    "mips",
+    "powerpc"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "not in graph; unevaluated",
+   "kind": "candidate-not-in-graph",
+   "package": "asupersync",
+   "platforms": [],
+   "severity": "info"
+  },
+  {
+   "detail": "not in graph; unevaluated",
+   "kind": "candidate-not-in-graph",
+   "package": "codecs",
+   "platforms": [],
+   "severity": "info"
+  },
+  {
+   "detail": "not in graph; unevaluated",
+   "kind": "candidate-not-in-graph",
+   "package": "libc candidates",
+   "platforms": [],
+   "severity": "info"
+  },
+  {
+   "detail": "powerpc-unknown-linux-musl: no soft-float feature in the compiler's target spec; crates using f32/f64: workspace: franken-decision@0.6.0, franken-evidence@0.6.0; dependencies: serde@1.0.229, serde_core@1.0.229, serde_json@1.0.151, zmij@1.0.",
+   "kind": "float-usage",
+   "package": null,
+   "platforms": [
+    "powerpc"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "powerpc-unknown-linux-musl: no soft-float feature in the compiler's target spec; whether the board's CPU has an FPU is not established by this repository",
+   "kind": "fp-isa-hardware-unknown",
+   "package": null,
+   "platforms": [
+    "powerpc"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "normal dependency serde_derive gated by cfg(any()); active on host=no, mips=no, powerpc=no",
+   "kind": "gated-dependency",
+   "package": "serde_core@1.0.229",
+   "platforms": [],
+   "severity": "info"
+  },
+  {
+   "detail": "normal dependency serde gated by cfg(any()); active on host=no, mips=no, powerpc=no",
+   "kind": "gated-dependency",
+   "package": "serde_json@1.0.151",
+   "platforms": [],
+   "severity": "info"
+  },
+  {
+   "detail": "mips-unknown-linux-musl has max-atomic-width 32: classify each shared u64 by semantics (contract E03 section 4)",
+   "kind": "no-native-atomic64",
+   "package": null,
+   "platforms": [
+    "mips"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "powerpc-unknown-linux-musl has max-atomic-width 32: classify each shared u64 by semantics (contract E03 section 4)",
+   "kind": "no-native-atomic64",
+   "package": null,
+   "platforms": [
+    "powerpc"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "13 unsafe token(s) in its own source (src/lib.rs); pulled in by serde_json@1.0.151",
+   "kind": "unsafe-in-dependency",
+   "package": "itoa@1.0.18",
+   "platforms": [
+    "host"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "333 unsafe token(s) in its own source (src/arch/aarch64/memchr.rs, src/arch/aarch64/neon/memchr.rs, src/arch/aarch64/neon/packedpair.rs, src/arch/all/memchr.rs, src/arch/all/mod.rs, src/arch/all/rabinkarp.rs, src/arch/generic/memchr.rs, src",
+   "kind": "unsafe-in-dependency",
+   "package": "memchr@2.8.3",
+   "platforms": [
+    "host"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "2 unsafe token(s) in its own source (src/core/format.rs, src/core/ser/impls.rs); pulled in by franken-decision@0.6.0, franken-evidence@0.6.0, franken-kernel@0.6.0; the forbid(unsafe_code) of franken-decision@0.6.0, franken-evidence@0.6.0, f",
+   "kind": "unsafe-in-dependency",
+   "package": "serde@1.0.229",
+   "platforms": [
+    "host"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "2 unsafe token(s) in its own source (src/format.rs, src/ser/impls.rs); pulled in by serde@1.0.229, serde_json@1.0.151",
+   "kind": "unsafe-in-dependency",
+   "package": "serde_core@1.0.229",
+   "platforms": [
+    "host"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "13 unsafe token(s) in its own source (src/raw.rs, src/read.rs, src/ser.rs, src/value/mod.rs); pulled in by franken-evidence@0.6.0; the forbid(unsafe_code) of franken-evidence@0.6.0 does not cover this crate",
+   "kind": "unsafe-in-dependency",
+   "package": "serde_json@1.0.151",
+   "platforms": [
+    "host"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "70 unsafe token(s) in its own source (src/lib.rs, src/stdarch_x86.rs); pulled in by serde_json@1.0.151",
+   "kind": "unsafe-in-dependency",
+   "package": "zmij@1.0.23",
+   "platforms": [
+    "host"
+   ],
+   "severity": "info"
+  }
+ ],
+ "host_only": {
+  "host": [
+   "proc-macro2@1.0.107",
+   "quote@1.0.47",
+   "serde_derive@1.0.229",
+   "syn@3.0.6",
+   "unicode-ident@1.0.26"
+  ],
+  "mips": [
+   "proc-macro2@1.0.107",
+   "quote@1.0.47",
+   "serde_derive@1.0.229",
+   "syn@3.0.6",
+   "unicode-ident@1.0.26"
+  ],
+  "powerpc": [
+   "proc-macro2@1.0.107",
+   "quote@1.0.47",
+   "serde_derive@1.0.229",
+   "syn@3.0.6",
+   "unicode-ident@1.0.26"
+  ]
+ },
+ "linked": {
+  "host": [
+   "franken-decision@0.6.0",
+   "franken-evidence@0.6.0",
+   "franken-kernel@0.6.0",
+   "itoa@1.0.18",
+   "memchr@2.8.3",
+   "probe@0.0.0",
+   "serde@1.0.229",
+   "serde_core@1.0.229",
+   "serde_json@1.0.151",
+   "zmij@1.0.23"
+  ],
+  "mips": [
+   "franken-decision@0.6.0",
+   "franken-evidence@0.6.0",
+   "franken-kernel@0.6.0",
+   "itoa@1.0.18",
+   "memchr@2.8.3",
+   "probe@0.0.0",
+   "serde@1.0.229",
+   "serde_core@1.0.229",
+   "serde_json@1.0.151",
+   "zmij@1.0.23"
+  ],
+  "powerpc": [
+   "franken-decision@0.6.0",
+   "franken-evidence@0.6.0",
+   "franken-kernel@0.6.0",
+   "itoa@1.0.18",
+   "memchr@2.8.3",
+   "probe@0.0.0",
+   "serde@1.0.229",
+   "serde_core@1.0.229",
+   "serde_json@1.0.151",
+   "zmij@1.0.23"
+  ]
+ },
+ "lock": {
+  "entries": 15,
+  "origin": "repository",
+  "sha256": "20c7d060f98d375081d6b75637f626dacc6d2998c7486a1ffd8b0cdc40270ab7"
+ },
+ "packages": [
+  {
+   "build_script": false,
+   "checksum": null,
+   "declared_features": {},
+   "in_lock": true,
+   "key": "franken-decision@0.6.0",
+   "license": "LicenseRef-MIT-OpenAI-Anthropic-Rider",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "franken-decision",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    }
+   },
+   "references_alloc": false,
+   "source": null,
+   "source_kind": "workspace",
+   "unsafe_declared": [
+    "forbid via crate-attribute",
+    "deny via manifest-lint (package)"
+   ],
+   "unsafe_status": "none",
+   "unsafe_tokens": 0,
+   "uses_float": true,
+   "version": "0.6.0"
+  },
+  {
+   "build_script": false,
+   "checksum": null,
+   "declared_features": {},
+   "in_lock": true,
+   "key": "franken-evidence@0.6.0",
+   "license": "LicenseRef-MIT-OpenAI-Anthropic-Rider",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "franken-evidence",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    }
+   },
+   "references_alloc": false,
+   "source": null,
+   "source_kind": "workspace",
+   "unsafe_declared": [
+    "forbid via crate-attribute",
+    "deny via manifest-lint (package)"
+   ],
+   "unsafe_status": "none",
+   "unsafe_tokens": 0,
+   "uses_float": true,
+   "version": "0.6.0"
+  },
+  {
+   "build_script": false,
+   "checksum": null,
+   "declared_features": {},
+   "in_lock": true,
+   "key": "franken-kernel@0.6.0",
+   "license": "LicenseRef-MIT-OpenAI-Anthropic-Rider",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "franken-kernel",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    },
+    "mips": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    },
+    "powerpc": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    }
+   },
+   "references_alloc": true,
+   "source": null,
+   "source_kind": "workspace",
+   "unsafe_declared": [
+    "forbid via crate-attribute",
+    "deny via manifest-lint (package)"
+   ],
+   "unsafe_status": "none",
+   "unsafe_tokens": 0,
+   "uses_float": false,
+   "version": "0.6.0"
+  },
+  {
+   "build_script": false,
+   "checksum": "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682",
+   "declared_features": null,
+   "in_lock": true,
+   "key": "itoa@1.0.18",
+   "license": "MIT OR Apache-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "itoa",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "no_std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    },
+    "mips": {
+     "effective_std": "no_std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    },
+    "powerpc": {
+     "effective_std": "no_std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    }
+   },
+   "references_alloc": false,
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "source_kind": "registry",
+   "unsafe_declared": [],
+   "unsafe_status": "present",
+   "unsafe_tokens": 13,
+   "uses_float": false,
+   "version": "1.0.18"
+  },
+  {
+   "build_script": false,
+   "checksum": "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98",
+   "declared_features": null,
+   "in_lock": true,
+   "key": "memchr@2.8.3",
+   "license": "Unlicense OR MIT",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "memchr",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "std",
+     "features": [
+      "alloc",
+      "std"
+     ],
+     "role": "linked",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": "std",
+     "features": [
+      "alloc",
+      "std"
+     ],
+     "role": "linked",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": "std",
+     "features": [
+      "alloc",
+      "std"
+     ],
+     "role": "linked",
+     "std": "std"
+    }
+   },
+   "references_alloc": true,
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "source_kind": "registry",
+   "unsafe_declared": [],
+   "unsafe_status": "present",
+   "unsafe_tokens": 333,
+   "uses_float": false,
+   "version": "2.8.3"
+  },
+  {
+   "build_script": false,
+   "checksum": null,
+   "declared_features": {},
+   "in_lock": true,
+   "key": "probe@0.0.0",
+   "license": "MIT",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "probe",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "std",
+     "features": [],
+     "role": "member",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": "std",
+     "features": [],
+     "role": "member",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": "std",
+     "features": [],
+     "role": "member",
+     "std": "std"
+    }
+   },
+   "references_alloc": false,
+   "source": null,
+   "source_kind": "workspace",
+   "unsafe_declared": [
+    "forbid via crate-attribute"
+   ],
+   "unsafe_status": "none",
+   "unsafe_tokens": 0,
+   "uses_float": false,
+   "version": "0.0.0"
+  },
+  {
+   "build_script": true,
+   "checksum": "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9",
+   "declared_features": null,
+   "in_lock": true,
+   "key": "proc-macro2@1.0.107",
+   "license": "MIT OR Apache-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "proc-macro2",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": null,
+     "features": [
+      "proc-macro"
+     ],
+     "role": "host-only",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": null,
+     "features": [
+      "proc-macro"
+     ],
+     "role": "host-only",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": null,
+     "features": [
+      "proc-macro"
+     ],
+     "role": "host-only",
+     "std": "std"
+    }
+   },
+   "references_alloc": true,
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "source_kind": "registry",
+   "unsafe_declared": [],
+   "unsafe_status": "present",
+   "unsafe_tokens": 6,
+   "uses_float": true,
+   "version": "1.0.107"
+  },
+  {
+   "build_script": true,
+   "checksum": "1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001",
+   "declared_features": null,
+   "in_lock": true,
+   "key": "quote@1.0.47",
+   "license": "MIT OR Apache-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "quote",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": null,
+     "features": [
+      "proc-macro"
+     ],
+     "role": "host-only",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": null,
+     "features": [
+      "proc-macro"
+     ],
+     "role": "host-only",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": null,
+     "features": [
+      "proc-macro"
+     ],
+     "role": "host-only",
+     "std": "std"
+    }
+   },
+   "references_alloc": true,
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "source_kind": "registry",
+   "unsafe_declared": [],
+   "unsafe_status": "none",
+   "unsafe_tokens": 0,
+   "uses_float": true,
+   "version": "1.0.47"
+  },
+  {
+   "build_script": true,
+   "checksum": "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba",
+   "declared_features": null,
+   "in_lock": true,
+   "key": "serde@1.0.229",
+   "license": "MIT OR Apache-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "serde",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "std",
+     "features": [
+      "default",
+      "derive",
+      "serde_derive",
+      "std"
+     ],
+     "role": "linked",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": "std",
+     "features": [
+      "default",
+      "derive",
+      "serde_derive",
+      "std"
+     ],
+     "role": "linked",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": "std",
+     "features": [
+      "default",
+      "derive",
+      "serde_derive",
+      "std"
+     ],
+     "role": "linked",
+     "std": "std"
+    }
+   },
+   "references_alloc": true,
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "source_kind": "registry",
+   "unsafe_declared": [],
+   "unsafe_status": "present",
+   "unsafe_tokens": 2,
+   "uses_float": true,
+   "version": "1.0.229"
+  },
+  {
+   "build_script": true,
+   "checksum": "67dca2c9c51e58a4791a4b1ed58308b39c64224d349a935ab5039aa360942a48",
+   "declared_features": null,
+   "in_lock": true,
+   "key": "serde_core@1.0.229",
+   "license": "MIT OR Apache-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "serde_core",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "std",
+     "features": [
+      "result",
+      "std"
+     ],
+     "role": "linked",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": "std",
+     "features": [
+      "result",
+      "std"
+     ],
+     "role": "linked",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": "std",
+     "features": [
+      "result",
+      "std"
+     ],
+     "role": "linked",
+     "std": "std"
+    }
+   },
+   "references_alloc": true,
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "source_kind": "registry",
+   "unsafe_declared": [],
+   "unsafe_status": "present",
+   "unsafe_tokens": 2,
+   "uses_float": true,
+   "version": "1.0.229"
+  },
+  {
+   "build_script": false,
+   "checksum": "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348",
+   "declared_features": null,
+   "in_lock": true,
+   "key": "serde_derive@1.0.229",
+   "license": "MIT OR Apache-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "serde_derive",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": null,
+     "features": [
+      "default"
+     ],
+     "role": "host-only",
+     "std": "proc-macro"
+    },
+    "mips": {
+     "effective_std": null,
+     "features": [
+      "default"
+     ],
+     "role": "host-only",
+     "std": "proc-macro"
+    },
+    "powerpc": {
+     "effective_std": null,
+     "features": [
+      "default"
+     ],
+     "role": "host-only",
+     "std": "proc-macro"
+    }
+   },
+   "references_alloc": false,
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "source_kind": "registry",
+   "unsafe_declared": [],
+   "unsafe_status": "none",
+   "unsafe_tokens": 0,
+   "uses_float": true,
+   "version": "1.0.229"
+  },
+  {
+   "build_script": true,
+   "checksum": "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14",
+   "declared_features": null,
+   "in_lock": true,
+   "key": "serde_json@1.0.151",
+   "license": "MIT OR Apache-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "serde_json",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "std",
+     "features": [
+      "default",
+      "std"
+     ],
+     "role": "linked",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": "std",
+     "features": [
+      "default",
+      "std"
+     ],
+     "role": "linked",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": "std",
+     "features": [
+      "default",
+      "std"
+     ],
+     "role": "linked",
+     "std": "std"
+    }
+   },
+   "references_alloc": true,
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "source_kind": "registry",
+   "unsafe_declared": [],
+   "unsafe_status": "present",
+   "unsafe_tokens": 13,
+   "uses_float": true,
+   "version": "1.0.151"
+  },
+  {
+   "build_script": false,
+   "checksum": "8593e8e72159ed2257d083c7a454a85cbf854f37a0966d8d483aff8c8a3ebcee",
+   "declared_features": null,
+   "in_lock": true,
+   "key": "syn@3.0.6",
+   "license": "MIT OR Apache-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "syn",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": null,
+     "features": [
+      "clone-impls",
+      "derive",
+      "parsing",
+      "printing",
+      "proc-macro"
+     ],
+     "role": "host-only",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": null,
+     "features": [
+      "clone-impls",
+      "derive",
+      "parsing",
+      "printing",
+      "proc-macro"
+     ],
+     "role": "host-only",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": null,
+     "features": [
+      "clone-impls",
+      "derive",
+      "parsing",
+      "printing",
+      "proc-macro"
+     ],
+     "role": "host-only",
+     "std": "std"
+    }
+   },
+   "references_alloc": true,
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "source_kind": "registry",
+   "unsafe_declared": [],
+   "unsafe_status": "present",
+   "unsafe_tokens": 77,
+   "uses_float": false,
+   "version": "3.0.6"
+  },
+  {
+   "build_script": false,
+   "checksum": "d245f478577f809a851594d02313b640fb437e0bb33866753cff937863096954",
+   "declared_features": null,
+   "in_lock": true,
+   "key": "unicode-ident@1.0.26",
+   "license": "(MIT OR Apache-2.0) AND Unicode-3.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "unicode-ident",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": null,
+     "features": [],
+     "role": "host-only",
+     "std": "no_std"
+    },
+    "mips": {
+     "effective_std": null,
+     "features": [],
+     "role": "host-only",
+     "std": "no_std"
+    },
+    "powerpc": {
+     "effective_std": null,
+     "features": [],
+     "role": "host-only",
+     "std": "no_std"
+    }
+   },
+   "references_alloc": false,
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "source_kind": "registry",
+   "unsafe_declared": [],
+   "unsafe_status": "present",
+   "unsafe_tokens": 2,
+   "uses_float": false,
+   "version": "1.0.26"
+  },
+  {
+   "build_script": true,
+   "checksum": "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b",
+   "declared_features": null,
+   "in_lock": true,
+   "key": "zmij@1.0.23",
+   "license": "MIT",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "zmij",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "no_std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    },
+    "mips": {
+     "effective_std": "no_std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    },
+    "powerpc": {
+     "effective_std": "no_std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    }
+   },
+   "references_alloc": false,
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "source_kind": "registry",
+   "unsafe_declared": [],
+   "unsafe_status": "present",
+   "unsafe_tokens": 70,
+   "uses_float": true,
+   "version": "1.0.23"
+  }
+ ],
+ "platforms": {
+  "host": {
+   "float": "no soft-float feature in the compiler's target spec",
+   "outcome": "resolved",
+   "triple": "aarch64-apple-darwin"
+  },
+  "mips": {
+   "float": "soft-float",
+   "outcome": "resolved",
+   "triple": "mips-unknown-linux-musl"
+  },
+  "powerpc": {
+   "float": "no soft-float feature in the compiler's target spec",
+   "outcome": "resolved",
+   "triple": "powerpc-unknown-linux-musl"
+  }
+ },
+ "policy_inputs": {
+  "cargo_args": [],
+  "scope_crates": null,
+  "subject": "upstream",
+  "unsafe_allowed": [
+   "franken-platform"
+  ]
+ },
+ "schema": "ffw.e06.inventory.v1",
+ "subject": {
+  "name": "asupersync",
+  "rev": "8940119023c0e01b4d6d3e2c1399f41417c2ad24"
+ },
+ "summary": {
+  "blocker": 0,
+  "info": 21,
+  "review": 7
+ }
+}

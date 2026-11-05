@@ -1,0 +1,68 @@
+{
+ "configs": {
+  "default": {
+   "lock": {
+    "also_in_upstream_lock_exactly": 175,
+    "consumer_lock_sha256": "8210f7c51cb663a75f013e5ba83d69505eb26bc159615554e8adbfe240c5dca5",
+    "not_in_upstream_lock": [],
+    "registry_packages_in_consumer_lock": 175,
+    "upstream_lock_registry_packages": 466
+   },
+   "probe_dependencies": [
+    "asupersync = { path = \"../upstream\" }"
+   ]
+  },
+  "franken-support-crates": {
+   "lock": {
+    "also_in_upstream_lock_exactly": 11,
+    "consumer_lock_sha256": "20c7d060f98d375081d6b75637f626dacc6d2998c7486a1ffd8b0cdc40270ab7",
+    "not_in_upstream_lock": [],
+    "registry_packages_in_consumer_lock": 11,
+    "upstream_lock_registry_packages": 466
+   },
+   "probe_dependencies": [
+    "franken-kernel = { path = \"../upstream/franken_kernel\" }",
+    "franken-evidence = { path = \"../upstream/franken_evidence\" }",
+    "franken-decision = { path = \"../upstream/franken_decision\" }"
+   ]
+  },
+  "no-default-features": {
+   "lock": {
+    "also_in_upstream_lock_exactly": 175,
+    "consumer_lock_sha256": "1439aad31059001ba1b5680fb2d1f00753879af8e0fc822bc6d46578ce337923",
+    "not_in_upstream_lock": [],
+    "registry_packages_in_consumer_lock": 175,
+    "upstream_lock_registry_packages": 466
+   },
+   "probe_dependencies": [
+    "asupersync = { path = \"../upstream\", default-features = false }"
+   ]
+  },
+  "runtime-core-and-native-runtime": {
+   "lock": {
+    "also_in_upstream_lock_exactly": 175,
+    "consumer_lock_sha256": "1439aad31059001ba1b5680fb2d1f00753879af8e0fc822bc6d46578ce337923",
+    "not_in_upstream_lock": [],
+    "registry_packages_in_consumer_lock": 175,
+    "upstream_lock_registry_packages": 466
+   },
+   "probe_dependencies": [
+    "asupersync = { path = \"../upstream\", default-features = false, features = [\"runtime-core\", \"native-runtime\"] }"
+   ]
+  },
+  "runtime-core-only": {
+   "lock": {
+    "also_in_upstream_lock_exactly": 175,
+    "consumer_lock_sha256": "1439aad31059001ba1b5680fb2d1f00753879af8e0fc822bc6d46578ce337923",
+    "not_in_upstream_lock": [],
+    "registry_packages_in_consumer_lock": 175,
+    "upstream_lock_registry_packages": 466
+   },
+   "probe_dependencies": [
+    "asupersync = { path = \"../upstream\", default-features = false, features = [\"runtime-core\"] }"
+   ]
+  }
+ },
+ "note": "scratch consumer workspaces: one member (probe) depending on the pinned upstream export by path, with the upstream's own Cargo.lock as the starting lock; cargo pruned it and added the probe, and 'also_in_upstream_lock_exactly' counts the registry packages (name, version, checksum) that stayed identical to the upstream's pins",
+ "upstream_rev": "8940119023c0e01b4d6d3e2c1399f41417c2ad24"
+}

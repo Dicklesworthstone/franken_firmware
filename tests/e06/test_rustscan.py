@@ -151,6 +151,43 @@ class ExternStdTests(unittest.TestCase):
         self.assertEqual(self.gates('#[cfg(any(test, feature = "std"))]\nextern crate std;\n'),
                          ['any(test, feature = "std")'])
 
+    # -- gates on ENCLOSING items. franken_kernel is `#![no_std]` plus `extern crate alloc`, and its `mod tests` has an
+    #    `extern crate std;`: a test-only std. It was read as unconditional because only the attributes directly above the
+    #    item were looked at.
+
+    def test_an_extern_crate_std_inside_a_cfg_test_module_is_gated_by_that_module(self):
+        src = '#![no_std]\nextern crate alloc;\n#[cfg(test)]\nmod tests {\n    extern crate std;\n}\n'
+        self.assertEqual(self.gates(src), ["test"])
+
+    def test_an_enclosing_gate_and_the_items_own_gate_are_anded_outermost_first(self):
+        src = '#[cfg(test)]\nmod t {\n    #[cfg(feature = "std")]\n    extern crate std;\n}\n'
+        self.assertEqual(self.gates(src), ['all(test, feature = "std")'])
+        src = '#[cfg(feature = "a")]\nmod outer {\n    #[cfg(feature = "b")]\n    mod inner {\n        extern crate std;\n    }\n}\n'
+        self.assertEqual(self.gates(src), ['all(feature = "a", feature = "b")'])
+
+    def test_an_ungated_module_does_not_gate_what_it_contains_and_a_closed_module_does_not_leak(self):
+        self.assertEqual(self.gates("mod x {\n    extern crate std;\n}\n"), [None])
+        self.assertEqual(self.gates("#[cfg(test)]\nmod tests {\n    fn a() {}\n}\nextern crate std;\n"), [None])
+        self.assertEqual(self.gates("#[cfg(test)]\nmod tests {}\n#[cfg(feature = \"x\")]\nmod y {}\nextern crate std;\n"), [None])
+
+    def test_a_semicolon_inside_a_type_does_not_hide_the_gate_of_a_function(self):
+        src = '#[cfg(test)]\nfn f() -> [u8; 4] {\n    extern crate std;\n    [0; 4]\n}\n'
+        self.assertEqual(self.gates(src), ["test"])
+
+    def test_braces_in_strings_and_comments_do_not_open_or_close_scopes(self):
+        src = 'const S: &str = "{ } {";\n// } }\n#[cfg(test)]\nmod t { extern crate std; }\nextern crate std;\n'
+        self.assertEqual(self.gates(src), ["test", None])
+
+    def test_an_inner_attribute_ends_a_header_so_the_next_items_gate_is_still_found(self):
+        # `#![no_std]` has no `;`: it must not be read as part of the header of the gated module that follows it.
+        self.assertEqual(self.gates('#![no_std]\n#[cfg(feature = "std")]\nmod m {\n    extern crate std;\n}\n'), ['feature = "std"'])
+        self.assertEqual(self.gates('#![forbid(unsafe_code)]\n#![no_std]\n#[cfg(test)]\nmod t {\n    extern crate std;\n}\n'), ["test"])
+        self.assertEqual(self.gates('#![no_std]\nmod m {\n    extern crate std;\n}\n'), [None])      # nothing gates it
+
+    def test_gated_functions_and_impls_gate_their_bodies_too(self):
+        self.assertEqual(self.gates('#[cfg(feature = "z")]\nimpl X {\n    fn f() { extern crate std; }\n}\n'), ['feature = "z"'])
+        self.assertEqual(self.gates('#[cfg(test)]\n#[allow(dead_code)]\nfn f() { extern crate std; }\n'), ["test"])
+
 
 class CfgEvaluationTests(unittest.TestCase):
     def ev(self, text, features=()):

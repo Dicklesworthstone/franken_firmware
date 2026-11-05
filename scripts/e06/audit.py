@@ -96,10 +96,12 @@ _UNKNOWN_TARGET = re.compile(r"could not find specification for target|error loa
                              r"unknown target triple", re.I)
 
 
-def run_cargo_metadata(manifest: str, triple: str, timeout: float = 180.0) -> Tuple[str, Optional[dict], str]:
-    """(outcome, metadata, detail).  A resolver read, not a build: --locked --offline, one target filter."""
+def run_cargo_metadata(manifest: str, triple: str, timeout: float = 180.0,
+                       cargo_args: Sequence[str] = ()) -> Tuple[str, Optional[dict], str]:
+    """(outcome, metadata, detail).  A resolver read, not a build: --locked --offline, one target filter.  ``cargo_args``
+    is only ever the feature selection built by ``feature_args`` (never free text)."""
     cmd = ["cargo", "metadata", "--format-version", "1", "--locked", "--offline", "--filter-platform", triple,
-           "--manifest-path", manifest]
+           "--manifest-path", manifest, *cargo_args]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -108,6 +110,27 @@ def run_cargo_metadata(manifest: str, triple: str, timeout: float = 180.0) -> Tu
         return "resolved", json.loads(proc.stdout), ""
     return ("target-unsupported" if _UNKNOWN_TARGET.search(proc.stderr) else "resolver-failed"), None, \
         scrub_paths(error_headline(proc.stderr), [os.path.dirname(os.path.abspath(manifest))])
+
+
+FEATURE_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_./+-]*$")
+
+
+def feature_args(no_default: bool, features: Optional[str]) -> List[str]:
+    """The only cargo flags this tool forwards, validated: a feature selection, nothing else.  Raises ValueError."""
+    out: List[str] = []
+    if no_default:
+        out.append("--no-default-features")
+    if features:
+        names = features.split(",")
+        if not all(FEATURE_NAME.match(f) for f in names):               # an empty segment is a typo, not a no-op
+            raise ValueError("--features needs a comma-separated list of feature names, got %r" % features)
+        out += ["--features", ",".join(names)]
+    return out
+
+
+def feature_suffix(cargo_args: Sequence[str]) -> str:
+    """The same selection as it appears in a planned cargo check line (after ``-p <crate>``)."""
+    return "".join(" " + a for a in cargo_args)
 
 
 def scrub_paths(text: str, roots: Sequence[str]) -> str:
@@ -237,8 +260,12 @@ _GIT_SHA = re.compile(r"#([0-9a-f]{40})$")
 
 # ------------------------------------------------------------------------------------------------ graph
 
-def classify_platform(meta: dict) -> Dict[str, Any]:
+def classify_platform(meta: dict, scope: Optional[Sequence[str]] = None) -> Dict[str, Any]:
     """Which packages end up in the target binary and which only run on the host, for ONE platform.
+
+    ``scope`` names the workspace crates that are the roots; None means every member.  A third-party workspace has
+    members for wasm, test harnesses and tooling whose closures would swamp the closure of the one crate a slim
+    profile would use, so the roots can be named.
 
     ``linked``: workspace members plus everything reachable from them over normal edges, never entering a
     proc-macro crate.  ``host_only``: proc-macro crates, build-dependencies and member dev-dependencies and
@@ -246,6 +273,8 @@ def classify_platform(meta: dict) -> Dict[str, Any]:
     nodes = {n["id"]: n for n in meta["resolve"]["nodes"]}
     pkgs = {p["id"]: p for p in meta["packages"]}
     members = [m for m in meta["workspace_members"] if m in nodes]
+    if scope is not None:
+        members = [m for m in members if pkgs[m]["name"] in set(scope)]
     edges: Dict[str, Dict[str, Set[str]]] = {}
     for nid, node in nodes.items():
         out: Dict[str, Set[str]] = {}
@@ -458,8 +487,14 @@ class _Findings:
 
 def analyze(platforms: Sequence[PlatformInput], lock_text: str, workspace_root: str,
             unsafe_allowed: Iterable[str] = DEFAULT_UNSAFE_ALLOWED, build_results: Optional[List[dict]] = None,
-            candidates: Optional[List[Dict[str, Any]]] = None, jobs: Optional[int] = None) -> Dict[str, Any]:
-    """The audit.  Pure with respect to its arguments (it reads source files named by the metadata)."""
+            candidates: Optional[List[Dict[str, Any]]] = None, jobs: Optional[int] = None,
+            subject: str = "own", cargo_args: Sequence[str] = (), lock_origin: str = "repository",
+            plan_crates: Optional[Sequence[str]] = None, scope_crates: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+    """The audit.  Pure with respect to its arguments (it reads source files named by the metadata).
+
+    ``subject`` is ``own`` (this project's workspace, held to its P01 unsafe rule) or ``upstream`` (a third party's
+    pinned revision, audited read-only: its crates' unsafe is a fact to review, never a violation of a rule it never
+    agreed to).  ``lock_origin`` is ``repository`` (a committed Cargo.lock) or ``generated-offline``."""
     allowed = set(unsafe_allowed)
     findings = _Findings()
     lock = parse_lock(lock_text)
@@ -482,13 +517,26 @@ def analyze(platforms: Sequence[PlatformInput], lock_text: str, workspace_root: 
             findings.add(p.outcome, "blocker", None, p.key,
                          "cargo cannot resolve %s: %s" % (p.triple, p.detail or "no detail"))
 
-    graphs = {p.key: classify_platform(p.metadata) for p in resolved}       # type: ignore[arg-type]
+    if scope_crates is not None and resolved:
+        known = {pkg["name"] for p in resolved for pkg in (p.metadata or {}).get("packages", [])
+                 if pkg["id"] in (p.metadata or {}).get("workspace_members", [])}
+        unknown = sorted(set(scope_crates) - known)
+        if unknown:
+            raise ValueError("--scope-crates names no workspace crate: %s" % ", ".join(unknown))
+    graphs = {p.key: classify_platform(p.metadata, scope_crates) for p in resolved}       # type: ignore[arg-type]
     all_pkgs: Dict[str, dict] = {}
     for p in resolved:
         for pkg in p.metadata["packages"]:                                  # type: ignore[index]
             all_pkgs.setdefault(pkg["id"], pkg)
     names = _pkg_names(all_pkgs.values())
     in_graph = {pid for g in graphs.values() for pid in g["nodes"]}
+    # With named roots, cargo's resolve still lists every workspace member and everything under it. What is not
+    # reachable from the roots (linked, or under a host-only edge) is not in this audit's graph: it is absent, never
+    # a host-only package. Without a scope every resolve node is reachable and nothing changes.
+    reach: Optional[Dict[str, Set[str]]] = None
+    if scope_crates is not None:
+        reach = {k: set(g["members"]) | set(g["linked"]) | set(g["host_only"]) for k, g in graphs.items()}
+        in_graph = {pid for r in reach.values() for pid in r}
 
     scans = {pid: scan_package(all_pkgs[pid], workspace_root) for pid in sorted(in_graph, key=lambda i: names[i])}
 
@@ -500,7 +548,7 @@ def analyze(platforms: Sequence[PlatformInput], lock_text: str, workspace_root: 
         lock_entry = lock.get((pkg["name"], pkg["version"], pkg.get("source")))
         per: Dict[str, Any] = {}
         for key, g in graphs.items():
-            if pid not in g["nodes"]:
+            if pid not in g["nodes"] or (reach is not None and pid not in reach[key]):
                 per[key] = {"role": "absent"}
                 continue
             feats = set(g["nodes"][pid]["features"])
@@ -533,6 +581,10 @@ def analyze(platforms: Sequence[PlatformInput], lock_text: str, workspace_root: 
             "build_script": scan["build_script"], "unsafe": scan["unsafe"], "uses_float": scan["uses_float"],
             "references_alloc": scan["uses_alloc"], "scanned_files": scan["scanned_files"],
             "platforms": per, "gated_dependencies": gated,
+            # What each declared feature enables, for workspace crates (cargo's own `features` map). An EMPTY list is a
+            # marker: `runtime-core = []` enables nothing in Cargo.toml, so the name alone excludes no dependency.
+            "declared_features": ({k: list(v) for k, v in sorted(pkg.get("features", {}).items())}
+                                  if kind == "workspace" else None),
         }
 
     # --- effective std per platform (a crate is std if any linked dependency is)
@@ -569,7 +621,21 @@ def analyze(platforms: Sequence[PlatformInput], lock_text: str, workspace_root: 
                 continue
             k = rec["key"]
             u = rec["unsafe"]
-            if rec["source_kind"] == "workspace":
+            if rec["source_kind"] == "workspace" and subject == "upstream":
+                declared = [d for d in u["declared"] if "conditional" not in d["mechanism"]]
+                if u["tokens"]:
+                    findings.add("upstream-crate-unsafe", "review", k, key,
+                                 "%d unsafe token(s) in %s (declared: %s)" % (
+                                     u["tokens"], ", ".join(list(u["files"])[:6]) + (" ..." if len(u["files"]) > 6 else "") or "?",
+                                     ", ".join("%s via %s" % (d["level"], d["mechanism"]) for d in declared) or "no forbid/deny"))
+                elif not declared and u["status"] != "unscanned":
+                    findings.add("upstream-crate-no-unsafe-declaration", "review", k, key,
+                                 "no forbid/deny of unsafe_code by crate attribute or manifest lint")
+                if u["tokens"] and any(d["level"] == "forbid" and "conditional" not in d["mechanism"] for d in u["declared"]):
+                    findings.add("forbid-contradicted-by-source", "review", k, key,
+                                 "forbid(unsafe_code) is declared yet %d unsafe token(s) exist (cfg-off or macro text): %s"
+                                 % (u["tokens"], ", ".join(u["files"])))
+            elif rec["source_kind"] == "workspace":
                 declared = [d for d in u["declared"] if "conditional" not in d["mechanism"]]
                 if u["tokens"] and rec["name"] in allowed:
                     findings.add("workspace-unsafe-permitted", "info", k, key,
@@ -713,7 +779,7 @@ def analyze(platforms: Sequence[PlatformInput], lock_text: str, workspace_root: 
     pins: Dict[str, Any] = {}
     for key, g in graphs.items():
         rows = []
-        for pid in sorted(g["nodes"], key=lambda i: names[i]):
+        for pid in sorted(g["nodes"] if reach is None else reach[key], key=lambda i: names[i]):
             rec = records[pid]
             rows.append({"package": rec["key"], "source": rec["pin"]["source"] or rec["source_kind"],
                          "checksum": rec["pin"]["checksum"], "role": rec["platforms"][key]["role"],
@@ -723,8 +789,16 @@ def analyze(platforms: Sequence[PlatformInput], lock_text: str, workspace_root: 
     unused_lock = sorted("%s@%s" % (n, v) for (n, v, s) in lock if (n, v, s) not in resolved_keys)
     if unused_lock:
         findings.add("lock-unused-entries", "info", None, None,
-                     "%d Cargo.lock entr%s not in any resolved platform graph: %s" % (
-                         len(unused_lock), "y is" if len(unused_lock) == 1 else "ies are", ", ".join(unused_lock[:8])))
+                     "%d Cargo.lock entr%s not in %s: %s" % (
+                         len(unused_lock), "y is" if len(unused_lock) == 1 else "ies are",
+                         "any resolved platform graph" if reach is None else "the graph reachable from the scoped roots",
+                         ", ".join(unused_lock[:8])))
+
+    if lock_origin != "repository":
+        findings.add("lock-generated-not-an-upstream-pin", "review", None, None,
+                     "this revision has no Cargo.lock: the %d package versions below were generated offline from this "
+                     "machine's registry cache (lock sha256 %s), not pinned by the repository, so a different machine or "
+                     "date can resolve them differently" % (len(lock), _sha256(lock_text)[:16]))
 
     # --- candidates
     cand_report = []
@@ -769,20 +843,34 @@ def analyze(platforms: Sequence[PlatformInput], lock_text: str, workspace_root: 
             findings.add("candidate-not-linked-on-firmware", "info", c["name"], None, status)
 
     # --- build checks (supplied results; the analyzer never runs a build)
-    plan = build_plan(records, graphs, platforms, names, jobs) if graphs else []
+    declared_features: Dict[str, Set[str]] = {}
+    for p in resolved:
+        for pkg in (p.metadata or {}).get("packages", []):
+            declared_features.setdefault(pkg["name"], set()).update(pkg.get("features", {}))
+    plan = (build_plan(records, graphs, platforms, names, jobs, cargo_args=cargo_args, only=plan_crates,
+                       declared_features=declared_features) if graphs else [])
+    requested_features = [f for a in cargo_args if a not in ("--no-default-features", "--features") for f in a.split(",")]
+    if requested_features and plan_crates is None and graphs:
+        members = {records[m]["name"] for g in graphs.values() for m in g["members"]}
+        left_out = sorted(members - {p["crate"] for p in plan})
+        if left_out:
+            findings.add("plan-narrowed-by-features", "info", None, None,
+                         "not planned, because they do not declare %s: %s (name crates with --plan-crates to plan others)"
+                         % (", ".join(requested_features), ", ".join(left_out)))
     checks = fold_build_results(plan, build_results, findings)
 
     flist = findings.all()
     counts = {s: sum(1 for f in flist if f["severity"] == s) for s in SEVERITIES}
     return {
         "schema": SCHEMA,
-        "lock": {"sha256": _sha256(lock_text), "entries": len(lock)},
+        "lock": {"sha256": _sha256(lock_text), "entries": len(lock), "origin": lock_origin},
         "platforms": plat_report,
         "packages": [records[pid] for pid in sorted(records, key=lambda i: names[i])],
         "pins": pins,
         "build_checks": checks,
         "candidates": cand_report,
-        "policy_inputs": {"unsafe_allowed": sorted(allowed)},
+        "policy_inputs": {"unsafe_allowed": sorted(allowed), "subject": subject, "cargo_args": list(cargo_args),
+                          "scope_crates": None if scope_crates is None else sorted(scope_crates)},
         "findings": flist,
         "summary": {"counts": counts,
                     "linked": {k: sorted(records[p]["key"] for p in g["linked"]) for k, g in graphs.items()},
@@ -793,11 +881,21 @@ def analyze(platforms: Sequence[PlatformInput], lock_text: str, workspace_root: 
 # ------------------------------------------------------------------------------------------------ build plan
 
 def build_plan(records: Dict[str, Dict[str, Any]], graphs: Dict[str, Any], platforms: Sequence[PlatformInput],
-               names: Dict[str, str], jobs: Optional[int] = None) -> List[Dict[str, Any]]:
+               names: Dict[str, str], jobs: Optional[int] = None, cargo_args: Sequence[str] = (),
+               only: Optional[Sequence[str]] = None,
+               declared_features: Optional[Dict[str, Set[str]]] = None) -> List[Dict[str, Any]]:
     """One ``cargo check`` per workspace crate per big-endian target.  A crate whose every linked dependency
     is no_std gets the core+alloc set; anything else needs std.  Proposed, not proven: the first run decides."""
     triples = {p.key: p.triple for p in platforms}
     plan = []
+    suffix = feature_suffix(cargo_args)
+    wanted = [a for a in cargo_args if a not in ("--no-default-features", "--features")]
+    requested = [f for arg in wanted for f in arg.split(",")]
+    members = {records[m]["name"] for g in graphs.values() for m in g["members"] if records[m]["source_kind"] == "workspace"}
+    if only is not None:
+        unknown = sorted(set(only) - members)
+        if unknown:
+            raise ValueError("--plan-crates names no workspace crate: %s" % ", ".join(unknown))
     for key, g in sorted(graphs.items()):
         if key == "host":
             continue
@@ -805,13 +903,21 @@ def build_plan(records: Dict[str, Dict[str, Any]], graphs: Dict[str, Any], platf
             rec = records[mid]
             if rec["source_kind"] != "workspace":
                 continue
+            if only is not None and rec["name"] not in only:
+                continue
+            missing = [f for f in requested if declared_features is not None and f not in declared_features.get(rec["name"], set())]
+            if missing and only is None:
+                continue                   # not asked for by name: left out, and the audit says so (see analyze)
+            if missing:
+                raise ValueError("%s does not declare feature(s) %s, so a planned check with them would not run; "
+                                 "narrow the plan with --plan-crates" % (rec["name"], ", ".join(missing)))
             eff = rec["platforms"][key].get("effective_std", "unknown")
             std_set = "core,alloc" if eff == "no_std" else "std,panic_abort"
             plan.append({"crate": rec["name"], "target": triples[key], "platform": key, "effective_std": eff,
                          # RCH admits a build against a worker's slot count using its own core estimate (it ignores
                          # CARGO_BUILD_JOBS), so a job count has to be part of the command: see --jobs.
-                         "command": "RCH_REQUIRE_REMOTE=1 rch exec -- cargo +nightly check --locked --release -p %s "
-                                    "--target %s -Z build-std=%s%s" % (rec["name"], triples[key], std_set,
+                         "command": "RCH_REQUIRE_REMOTE=1 rch exec -- cargo +nightly check --locked --release -p %s%s "
+                                    "--target %s -Z build-std=%s%s" % (rec["name"], suffix, triples[key], std_set,
                                                                        "" if jobs is None else " -j %d" % jobs)})
     return plan
 
@@ -850,13 +956,33 @@ def fold_build_results(plan: List[Dict[str, Any]], results: Optional[List[dict]]
 
 # ------------------------------------------------------------------------------------------------ CLI
 
-def gather(manifest: str, targets: Dict[str, str], host: Optional[str]) -> Tuple[List[PlatformInput], str, str]:
+def generate_lock(manifest: str) -> Tuple[str, str]:
+    """(outcome, detail).  Generate a Cargo.lock OFFLINE next to ``manifest`` when it has none.  This writes a file, so it
+    refuses anything that is not a plain export: a directory with a ``.git`` entry is somebody's work tree, and a
+    third-party repository is never edited."""
+    root = os.path.dirname(os.path.abspath(manifest))
+    if os.path.exists(os.path.join(root, ".git")):
+        return "refused", "%s is a git work tree; export the revision first (git archive) and audit the export" % "the manifest directory"
+    if os.path.exists(os.path.join(root, "Cargo.lock")):
+        return "present", "a Cargo.lock is already there; it is used as it is"
+    try:
+        proc = subprocess.run(["cargo", "+nightly", "generate-lockfile", "--offline", "--manifest-path", manifest],
+                              capture_output=True, text=True, timeout=300)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return "failed", "%s: %s" % (type(exc).__name__, str(exc)[:160])
+    if proc.returncode != 0:
+        return "failed", scrub_paths(error_headline(proc.stderr), [root])
+    return "generated", ""
+
+
+def gather(manifest: str, targets: Dict[str, str], host: Optional[str],
+           cargo_args: Sequence[str] = ()) -> Tuple[List[PlatformInput], str, str]:
     root = os.path.dirname(os.path.abspath(manifest))
     triples = dict(targets)
     triples["host"] = host or host_triple() or "host"
     platforms = []
     for key, triple in sorted(triples.items()):
-        outcome, meta, detail = run_cargo_metadata(manifest, triple)
+        outcome, meta, detail = run_cargo_metadata(manifest, triple, cargo_args=cargo_args)
         spec_outcome, spec = capture_target_spec(triple)
         platforms.append(PlatformInput(key, triple, outcome, detail, meta, spec, spec_outcome))
     workspace_root = next((p.metadata["workspace_root"] for p in platforms if p.metadata), root)   # type: ignore[index]
@@ -864,9 +990,51 @@ def gather(manifest: str, targets: Dict[str, str], host: Optional[str]) -> Tuple
     return platforms, _read(lock_path) or "", workspace_root
 
 
+INVENTORY_SCHEMA = "ffw.e06.inventory.v1"
+FINDING_DETAIL_LIMIT = 240
+
+
+def inventory(report: Dict[str, Any], subject_name: str, subject_rev: str) -> Dict[str, Any]:
+    """A compact, committable per-package record of one audit: exact revision, lock digest and origin, the feature
+    selection, each platform's outcome, and for every package its pin, license, own-unsafe count, native signals and,
+    per platform, its role, std mode and enabled features.  The full report keeps per-file detail (1.4 MB for a
+    477-package graph); this keeps what a reader needs to decide, and the findings, with their details bounded."""
+    rows = []
+    for p in report["packages"]:
+        rows.append({
+            "name": p["name"], "version": p["version"], "key": p["key"], "source_kind": p["source_kind"],
+            "source": p["pin"]["source"], "checksum": p["pin"]["checksum"], "in_lock": p["pin"]["in_lock"],
+            "license": p["license"]["expression"] or p["license"]["file"], "license_status": p["license"]["status"],
+            "unsafe_tokens": p["unsafe"]["tokens"], "unsafe_status": p["unsafe"]["status"],
+            "unsafe_declared": [d["level"] + " via " + d["mechanism"] for d in p["unsafe"]["declared"]],
+            "links": p["links"], "build_script": p["build_script"]["present"],
+            "native_tooling": sorted(set(p["build_script"]["native_tooling_deps"])),
+            "link_directives": len(p["build_script"]["link_directives"]), "references_alloc": p["references_alloc"],
+            "uses_float": bool(p.get("uses_float")),
+            "declared_features": p.get("declared_features"),
+            # A package absent from a platform's graph has only {"role": "absent"}: no std mode, no features.
+            "platforms": {k: {"role": v["role"], "std": v.get("std"), "effective_std": v.get("effective_std"),
+                              "features": v.get("features")}
+                          for k, v in sorted(p["platforms"].items())},
+        })
+    return {
+        "schema": INVENTORY_SCHEMA, "subject": {"name": subject_name, "rev": subject_rev},
+        "lock": report["lock"], "policy_inputs": report["policy_inputs"],
+        "platforms": {k: {"triple": v["triple"], "outcome": v["outcome"], "float": v["float"]}
+                      for k, v in sorted(report["platforms"].items())},
+        "summary": report["summary"]["counts"], "candidates": [
+            {"name": c["name"], "status": c["status"], "in_graph": c["in_graph"]} for c in report["candidates"]],
+        "linked": report["summary"]["linked"], "host_only": report["summary"]["host_only"],
+        "packages": rows,
+        "findings": [{"kind": f["kind"], "severity": f["severity"], "package": f["package"], "platforms": f["platforms"],
+                      "detail": f["detail"][:FINDING_DETAIL_LIMIT]} for f in report["findings"]],
+        "build_checks": {"planned": report["build_checks"]["planned"], "counts": report["build_checks"]["counts"]},
+    }
+
+
 def render(report: Dict[str, Any]) -> str:
-    out = ["E06 dependency audit  schema=%s  Cargo.lock sha256=%s (%d entries)" % (
-        report["schema"], report["lock"]["sha256"][:16], report["lock"]["entries"])]
+    out = ["E06 dependency audit  schema=%s  Cargo.lock sha256=%s (%d entries, %s)" % (
+        report["schema"], report["lock"]["sha256"][:16], report["lock"]["entries"], report["lock"].get("origin", "repository"))]
     for key, p in sorted(report["platforms"].items()):
         out.append("  %-8s %-34s %s%s" % (key, p["triple"], p["outcome"], "  [%s]" % p["float"] if p["float"] else ""))
     c = report["summary"]["counts"]
@@ -959,6 +1127,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     ing.add_argument("--out", required=True, help="the redacted record (a new file)")
     for name in ("audit", "plan"):
         s = sub.add_parser(name)
+        if name == "audit":
+            s.add_argument("--inventory", default=None, metavar="OUT",
+                           help="write the compact per-package inventory here (a new file); needs --subject-name/--subject-rev")
+            s.add_argument("--subject-name", default=None, help="the repository or crate audited (recorded in the inventory)")
+            s.add_argument("--subject-rev", default=None, help="the 40-hex revision audited (recorded in the inventory)")
         s.add_argument("--manifest-path", default=os.path.join(os.path.dirname(os.path.dirname(HERE)), "Cargo.toml"))
         s.add_argument("--target", action="append", default=[], metavar="KEY=TRIPLE",
                        help="big-endian targets to audit (default mips and powerpc musl); the host is always added")
@@ -969,6 +1142,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         s.add_argument("--jobs", type=int, default=None, metavar="N",
                        help="append -j N to every planned cargo check (RCH admits against a worker's slot count)")
         s.add_argument("--json", default=None, metavar="OUT", help="write the full report here (a new file)")
+        s.add_argument("--features", default=None, metavar="LIST", help="cargo features to activate (comma-separated)")
+        s.add_argument("--no-default-features", action="store_true", help="do not activate default features")
+        s.add_argument("--plan-crates", default=None, metavar="LIST",
+                       help="plan only these workspace crates (comma-separated); each must declare every --features name")
+        s.add_argument("--scope-crates", default=None, metavar="LIST",
+                       help="treat only these workspace crates as the roots of the graph (comma-separated); default: every member")
+        s.add_argument("--subject", choices=("own", "upstream"), default="own",
+                       help="own: this workspace, held to its P01 unsafe rule; upstream: a third party's pinned revision "
+                            "audited read-only (its unsafe is reviewed, not a violation)")
+        s.add_argument("--generate-lock", action="store_true",
+                       help="when the manifest's directory has no Cargo.lock, generate one OFFLINE there (refused inside a "
+                            "git work tree: audit an export); the report says the lock is not an upstream pin")
     args = ap.parse_args(argv)
     if args.cmd == "ingest":
         return run_ingest(args)
@@ -979,6 +1164,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
     if args.jobs is not None and not 1 <= args.jobs <= 256:
         print("audit.py: --jobs must be between 1 and 256", file=sys.stderr)
+        return 2
+    try:
+        cargo_args = feature_args(args.no_default_features, args.features)
+    except ValueError as exc:
+        print("audit.py: %s" % exc, file=sys.stderr)
+        return 2
+    if getattr(args, "inventory", None) and (not args.subject_name or not re.fullmatch(r"[0-9a-f]{40}", args.subject_rev or "")):
+        print("audit.py: --inventory needs --subject-name and a 40-hex --subject-rev", file=sys.stderr)
+        return 2
+    if getattr(args, "inventory", None) and os.path.exists(args.inventory):
+        print("audit.py: %s already exists; inventories are never overwritten" % args.inventory, file=sys.stderr)
         return 2
     if getattr(args, "json", None) and os.path.exists(args.json):
         print("audit.py: %s already exists; reports are never overwritten" % args.json, file=sys.stderr)
@@ -994,9 +1190,24 @@ def main(argv: Optional[List[str]] = None) -> int:
         except ValueError as exc:
             print("audit.py: build results are not JSON lines: %s" % exc, file=sys.stderr)
             return 2
-    platforms, lock_text, workspace_root = gather(args.manifest_path, targets, args.host_triple)
-    report = analyze(platforms, lock_text, workspace_root, [s for s in args.unsafe_allowed.split(",") if s], results,
-                     jobs=args.jobs)
+    lock_origin = "repository"
+    if args.generate_lock:
+        outcome, detail = generate_lock(args.manifest_path)
+        if outcome in ("refused", "failed"):
+            print("audit.py: --generate-lock %s: %s" % (outcome, detail), file=sys.stderr)
+            return 2
+        if outcome == "generated":
+            lock_origin = "generated-offline"
+    plan_crates = [c for c in args.plan_crates.split(",") if c] if args.plan_crates else None
+    scope_crates = [c for c in args.scope_crates.split(",") if c] if args.scope_crates else None
+    platforms, lock_text, workspace_root = gather(args.manifest_path, targets, args.host_triple, cargo_args)
+    try:
+        report = analyze(platforms, lock_text, workspace_root, [s for s in args.unsafe_allowed.split(",") if s], results,
+                         jobs=args.jobs, subject=args.subject, cargo_args=cargo_args, lock_origin=lock_origin,
+                         plan_crates=plan_crates, scope_crates=scope_crates)
+    except ValueError as exc:
+        print("audit.py: %s" % exc, file=sys.stderr)
+        return 2
     if args.cmd == "plan":
         lines, refusals = plan_lines(report)
         if refusals:
@@ -1013,6 +1224,14 @@ def main(argv: Optional[List[str]] = None) -> int:
                 fh.write("\n")
         except OSError as exc:
             print("audit.py: cannot write %s: %s" % (args.json, exc.__class__.__name__), file=sys.stderr)
+            return 2
+    if getattr(args, "inventory", None):
+        try:
+            with open(args.inventory, "x", encoding="utf-8") as fh:
+                json.dump(inventory(report, args.subject_name, args.subject_rev), fh, indent=1, sort_keys=True)
+                fh.write("\n")
+        except OSError as exc:
+            print("audit.py: cannot write %s: %s" % (args.inventory, exc.__class__.__name__), file=sys.stderr)
             return 2
     sys.stdout.write(render(report))
     return exit_code(report)

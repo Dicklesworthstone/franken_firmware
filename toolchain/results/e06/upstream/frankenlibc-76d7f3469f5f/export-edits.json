@@ -1,0 +1,28 @@
+{
+ "edits": [
+  {
+   "after": "members = [\"crates/frankenlibc-core\", \"crates/frankenlibc-abi\", \"crates/frankenlibc-membrane\"]",
+   "before": "members = [ \"crates/frankenlibc-membrane\", \"crates/frankenlibc-core\", \"crates/frankenlibc-abi\", \"crates/frankenlibc-fixture-exec\", \"crates/frankenlibc-harness\", \"crates/frankenlibc-bench\", # Legacy crates (kept for migration compatibility) \"crates/frankenlibc\", \"crates/frankenlibc_conformance\", ]",
+   "change": "workspace members reduced",
+   "file": "Cargo.toml",
+   "sha256_after": "7586d6ab5be79f0fccd8f5ea8caaf29c3014a53131eff0c55088ab4374e12128",
+   "sha256_before": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6"
+  },
+  {
+   "change": "dev-dependencies not in the local cache removed",
+   "file": "crates/frankenlibc-membrane/Cargo.toml",
+   "removed_lines": [
+    "asupersync-conformance = { workspace = true }",
+    "ftui-harness = { workspace = true }",
+    "ftui-core = \"0.3.1\"",
+    "ftui-layout = \"0.3.1\"",
+    "ftui-render = \"0.3.1\"",
+    "ftui-style = \"0.3.1\"",
+    "ftui-widgets = \"0.3.1\""
+   ],
+   "sha256_after": "f0b3c12eb705840cef65c5aa62003540ed0ba1360d3e67f8025f036b07a14bc8",
+   "sha256_before": "b9c91993f3b9c584ee9d1624bca2c078c71e09345f1dbb4acf60a5a9c7a8eb4a"
+  }
+ ],
+ "note": "applied to a scratch git-archive export of the pinned revision, never to the upstream repository"
+}

@@ -1,0 +1,125 @@
+{
+ "rustc": "1.101.0-nightly",
+ "rustc_commit": "48f4b05538b8eca412137042d9647a61e692c6b3",
+ "schema": "ffw.e06.fp_isa.v1",
+ "targets": {
+  "mips": {
+   "board_fpu": "not established by this tool: the compiler's choice says nothing about a board's CPU",
+   "codegen": {
+    "evidence": {
+     "add_f32": "lw\t$25, %call16(__addsf3)($gp)",
+     "mul_f64": "lw\t$25, %call16(__muldf3)($gp)"
+    },
+    "functions": {
+     "add_f32": "soft",
+     "mul_f64": "soft"
+    },
+    "outcome": "compiled",
+    "overall": "soft"
+   },
+   "rust_float_abi": "soft",
+   "spec": {
+    "cpu": "mips32r2",
+    "features": "+mips32r2,+soft-float",
+    "llvm_abiname": "o32",
+    "llvm_floatabi": null,
+    "outcome": "captured",
+    "rustc_abi": null,
+    "says_anything_about_float": true,
+    "says_soft_float": true
+   },
+   "spec_consistent": true,
+   "triple": "mips-unknown-linux-musl",
+   "zig": {
+    "outcome": "captured",
+    "spellings": {
+     "mips-linux-musl": {
+      "float_abi": "hard",
+      "outcome": "accepted",
+      "soft_macros": []
+     },
+     "mips-linux-musleabi": {
+      "float_abi": "soft",
+      "outcome": "accepted",
+      "soft_macros": [
+       "__mips_soft_float"
+      ]
+     },
+     "mips-linux-musleabihf": {
+      "float_abi": "hard",
+      "outcome": "accepted",
+      "soft_macros": []
+     }
+    },
+    "version": "0.15.2"
+   },
+   "zig_spellings_matching_rust": [
+    "mips-linux-musleabi"
+   ],
+   "zig_spellings_mismatching_rust": [
+    "mips-linux-musl",
+    "mips-linux-musleabihf"
+   ]
+  },
+  "powerpc": {
+   "board_fpu": "not established by this tool: the compiler's choice says nothing about a board's CPU",
+   "codegen": {
+    "evidence": {
+     "add_f32": "fadds 1, 1, 2",
+     "mul_f64": "fmul 1, 1, 2"
+    },
+    "functions": {
+     "add_f32": "hard",
+     "mul_f64": "hard"
+    },
+    "outcome": "compiled",
+    "overall": "hard"
+   },
+   "rust_float_abi": "hard",
+   "spec": {
+    "cpu": null,
+    "features": null,
+    "llvm_abiname": null,
+    "llvm_floatabi": null,
+    "outcome": "captured",
+    "rustc_abi": null,
+    "says_anything_about_float": false,
+    "says_soft_float": false
+   },
+   "spec_consistent": true,
+   "triple": "powerpc-unknown-linux-musl",
+   "zig": {
+    "outcome": "captured",
+    "spellings": {
+     "powerpc-linux-musl": {
+      "float_abi": "hard",
+      "outcome": "accepted",
+      "soft_macros": []
+     },
+     "powerpc-linux-musleabi": {
+      "float_abi": "soft",
+      "outcome": "accepted",
+      "soft_macros": [
+       "_SOFT_DOUBLE",
+       "_SOFT_FLOAT",
+       "__NO_FPRS__"
+      ]
+     },
+     "powerpc-linux-musleabihf": {
+      "float_abi": "hard",
+      "outcome": "accepted",
+      "soft_macros": []
+     }
+    },
+    "version": "0.15.2"
+   },
+   "zig_spellings_matching_rust": [
+    "powerpc-linux-musl",
+    "powerpc-linux-musleabihf"
+   ],
+   "zig_spellings_mismatching_rust": [
+    "powerpc-linux-musleabi"
+   ]
+  }
+ }
+}
