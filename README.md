@@ -105,7 +105,7 @@ Evidence lives in `toolchain/results/` with committed serial logs.
 | Hello `/init` builds | `mips-unknown-linux-musl` (BE) | done: 2,068 B static ELF, `file(1)`-verified |
 | Hello `/init` builds | `powerpc-unknown-linux-musl` (BE) | done: 1,588 B static ELF |
 | Boot as PID 1, banner on serial, clean reboot | BE-MIPS (QEMU Malta, 4.19 kernel) | done, full cycle |
-| Initramfs unpack, `/init` exec, user→kernel syscalls, clean reboot | BE-PPC (QEMU g3beige/OpenBIOS, 4.9 kernel) | done; console fd wiring is a per-machine open item |
+| Initramfs unpack, `/init` exec, user→kernel syscalls, clean reboot | BE-PPC (QEMU g3beige/OpenBIOS, 4.9 kernel) | done; userspace output reaches the serial console through the `pmac_zilog` driver (`/dev/ttyPZ0`, `console=ttyPZ0`); run `toolchain/results/runs/1412ac47120d4e5b865f9de6e05f50fe` |
 | std + full dependency graph cross-compiles | BE-PPC via `-Z build-std` | done |
 | asupersync lib compiles for BE-PPC | | open: 133 errors, one root cause (`AtomicU64` absent, `max-atomic-width=32`); fix scoped as a `portable-atomic` abstraction |
 
