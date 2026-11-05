@@ -4,6 +4,9 @@
 #   scripts/e2e/n01            verify the committed golden vectors against the independent
 #                              reference and run the reference's own checks
 #   scripts/e2e/n01 --write    regenerate crates/franken-stream/tests/vectors/n01_wire_vectors.json
+#   scripts/e2e/n01 --judge-guest LOG [--endian big|little]
+#                              judge the log of the `n01_wire_guest` binary (docs/contracts/n01.md section 7):
+#                              every vector, planted datagram and the byte-order probe. Exit 0 only if all hold.
 #
 # Exit 0 only when every check passes; any failure exits non-zero.
 #
@@ -20,8 +23,16 @@ if [ "${1:-}" = "--write" ]; then
   python3 -B -I "$ROOT/tests/n01/reference_frames.py" --write
   exec python3 -B -I "$ROOT/tests/n01/reference_negotiation.py" --write
 fi
+if [ "${1:-}" = "--judge-guest" ]; then
+  shift
+  if [ "$#" -lt 1 ] || [ "$#" -gt 3 ]; then
+    echo "usage: scripts/e2e/n01 --judge-guest LOG [--endian big|little]" >&2
+    exit 2
+  fi
+  exec python3 -B -I "$ROOT/tests/n01/guest_transcript.py" "$@"
+fi
 if [ "$#" -ne 0 ]; then
-  echo "usage: scripts/e2e/n01 [--write]" >&2
+  echo "usage: scripts/e2e/n01 [--write | --judge-guest LOG [--endian big|little]]" >&2
   exit 2
 fi
 

@@ -18,3 +18,9 @@ franken-dsp.workspace = true
 [dev-dependencies]
 franken-clock.workspace = true
 franken-test-support.workspace = true
+
+# N01 golden-vector replay for a guest (docs/contracts/n01.md section 7). A [[bin]] and not an example: building an
+# example also builds the dev-dependencies (franken-test-support among them), and a bin sees only the normal ones.
+[[bin]]
+name = "n01_wire_guest"
+path = "src/bin/n01_wire_guest/main.rs"
