@@ -96,7 +96,13 @@
    "q00.unit.test_run_workspace_verification",
    "q00.unit.test_newc_case",
    "q00.unit.test_initramfs_archive",
-   "q00.unit.test_serial_validator"
+   "q00.unit.test_serial_validator",
+   "q00.unit.test_measure_d02_cost",
+   "q00.unit.test_measure_d03_target",
+   "q00.unit.test_measure_n03_target",
+   "q00.unit.test_measure_p05_target",
+   "q00.unit.test_platform_smoke",
+   "q00.unit.test_speaker_smoke"
   ]
  },
  "cases": [
@@ -778,6 +784,96 @@
    "timeout_s": 300,
    "requirements": [],
    "description": "root's independent boot-transcript parser tests (E07); registered because the floor lists every test module on disk; claims no Q00 requirement"
+  },
+  {
+   "id": "q00.unit.test_measure_d02_cost",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/q00/unittest_case.py",
+    "{manifest_dir}/../../toolchain/tests/test_measure_d02_cost.py"
+   ],
+   "tiers": [
+    "full"
+   ],
+   "timeout_s": 300,
+   "requirements": [],
+   "description": "D02 target CPU-cost measurement, host side (ffw-7s0): the ruler, the transcript parser, the gates, the ELF scan, the control patch and the snapshot preparation, against invented synthetic transcripts; no guest booted and nothing was counted by QEMU; registered because the floor lists every test module on disk; claims no Q00 requirement"
+  },
+  {
+   "id": "q00.unit.test_measure_d03_target",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/q00/unittest_case.py",
+    "{manifest_dir}/../../toolchain/tests/test_measure_d03_target.py"
+   ],
+   "tiers": [
+    "full"
+   ],
+   "timeout_s": 900,
+   "requirements": [],
+   "description": "D03 target-ISA judge self-test: SYNTHETIC transcripts fabricated from the double-precision reference qualify a good one and catch a replayed or copied sample dump and a truncated dump; CPU-heavy reference interpolation, hence the long timeout; says nothing about the Rust or the MIPS guest; registered because the floor lists every test module on disk; claims no Q00 requirement"
+  },
+  {
+   "id": "q00.unit.test_measure_n03_target",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/q00/unittest_case.py",
+    "{manifest_dir}/../../toolchain/tests/test_measure_n03_target.py"
+   ],
+   "tiers": [
+    "full"
+   ],
+   "timeout_s": 300,
+   "requirements": [],
+   "description": "N03 target-ISA judge self-test: SYNTHETIC transcripts from an independent Python reference qualify a good one and catch replayed or canned records, a truncated dump and one differing record, and a gate that must not pass vacuously; says nothing about the Rust or the MIPS guest; registered because the floor lists every test module on disk; claims no Q00 requirement"
+  },
+  {
+   "id": "q00.unit.test_measure_p05_target",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/q00/unittest_case.py",
+    "{manifest_dir}/../../toolchain/tests/test_measure_p05_target.py"
+   ],
+   "tiers": [
+    "full"
+   ],
+   "timeout_s": 300,
+   "requirements": [],
+   "description": "P05 big-endian MIPS guest judge self-test: a baseline transcript formatted by an encoder separate from the judge, one plant per gate that must fail only its own gate, and the control that passes again; no guest, QEMU or Rust involved; registered because the floor lists every test module on disk; claims no Q00 requirement"
+  },
+  {
+   "id": "q00.unit.test_platform_smoke",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/q00/unittest_case.py",
+    "{manifest_dir}/../../toolchain/tests/test_platform_smoke.py"
+   ],
+   "tiers": [
+    "full"
+   ],
+   "timeout_s": 300,
+   "requirements": [],
+   "description": "P02 platform step of the franken-speaker smoke (ffw-jub): the judge, the verifier, the controls and the runner plumbing against transcripts built from the committed marker examples; no guest booted and no speaker ran, so not guest proof; registered because the floor lists every test module on disk; claims no Q00 requirement"
+  },
+  {
+   "id": "q00.unit.test_speaker_smoke",
+   "argv": [
+    "{python}",
+    "-I",
+    "{manifest_dir}/q00/unittest_case.py",
+    "{manifest_dir}/../../toolchain/tests/test_speaker_smoke.py"
+   ],
+   "tiers": [
+    "full"
+   ],
+   "timeout_s": 300,
+   "requirements": [],
+   "description": "franken-speaker smoke (E07 runner change): the verifier, the source-derived expectation and the orchestration against synthetic transcripts; no guest booted and no speaker ran, so not guest proof; registered because the floor lists every test module on disk; claims no Q00 requirement"
   }
  ]
 }
