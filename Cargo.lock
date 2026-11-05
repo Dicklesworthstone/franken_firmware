@@ -161,9 +161,9 @@ dependencies = [
 name = "franken-platform"
 version = "0.1.0"
 dependencies = [
+ "franken-atomic",
  "franken-board-profile",
  "franken-test-support",
- "portable-atomic",
  "serde",
  "serde_json",
  "thiserror",
@@ -272,12 +272,6 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
-
-[[package]]
-name = "portable-atomic"
-version = "1.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
 
 [[package]]
 name = "proc-macro2"

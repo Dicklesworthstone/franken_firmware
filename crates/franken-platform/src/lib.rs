@@ -1,4 +1,4 @@
-//! Legacy platform capability matrix, portable 64-bit atomics, and memory budget ledger
+//! Legacy platform capability matrix, 64-bit shared cells (from `franken-atomic`), and memory budget ledger
 //! (`E03` / `ffw-q2p`, `P02` / `ffw-jub`, `P05` / `ffw-ipz`, `P06` / `ffw-2nw`).
 
 #![forbid(unsafe_code)]
@@ -23,11 +23,13 @@ pub use core::sync::atomic::{
     AtomicU32, AtomicUsize, Ordering, compiler_fence, fence,
 };
 
-#[cfg(target_has_atomic = "64")]
-pub use core::sync::atomic::{AtomicI64, AtomicU64};
-
-#[cfg(not(target_has_atomic = "64"))]
-pub use portable_atomic::{AtomicI64, AtomicU64};
+// 64-bit shared state. `core`'s `AtomicU64`/`AtomicI64` do not exist on the big-endian MIPS32 and PPC32 targets, and a
+// cfg-selected alias would give the host and the device different APIs (an `Ordering` argument, a silently wrapping
+// `fetch_add`), so code would compile on the host that the device build rejects. These are the same types on every
+// target: typed overflow, no `Ordering`, linearizable per cell, and not for a render deadline (docs/contracts/p05.md).
+pub use franken_atomic::{
+    ArithError, Contended, Exhausted, LocalU64, Sequence, SharedI64, SharedU64,
+};
 
 /// Returns `true` when the compilation target provides hardware lock-free 64-bit atomics.
 #[must_use]
@@ -279,26 +281,155 @@ mod tests {
     use franken_board_profile::synthetic_test_fixture_catalog as canonical_board_catalog;
 
     #[test]
-    fn portable_atomic_u64_preserves_monotonic_uniqueness_and_cas_across_wrap() {
-        let atom = AtomicU64::new(u64::MAX - 3);
+    fn shared_u64_is_the_same_semantic_cell_on_every_target() {
+        // The sequence the removed `portable_atomic` test asserted, unchanged, now under the explicit wrapping name:
+        // six consecutive values, unique across the wrap, then a compare-exchange that compares all 64 bits.
+        let cell = SharedU64::new(u64::MAX - 3);
         let mut seen = Vec::new();
         for _ in 0..6 {
-            seen.push(atom.fetch_add(1, Ordering::SeqCst));
+            seen.push(cell.fetch_add_wrapping(1));
         }
         assert_eq!(
             seen,
             vec![u64::MAX - 3, u64::MAX - 2, u64::MAX - 1, u64::MAX, 0, 1]
         );
         assert_eq!(
-            atom.compare_exchange(
-                2,
-                0xDEAD_BEEF_CAFE_BABE,
-                Ordering::AcqRel,
-                Ordering::Acquire
-            ),
-            Ok(2)
+            cell.compare_exchange(2, 0xDEAD_BEEF_CAFE_BABE),
+            Ok(2),
+            "compare-exchange compares all 64 bits"
         );
-        assert_eq!(atom.load(Ordering::Acquire), 0xDEAD_BEEF_CAFE_BABE);
+        assert_eq!(cell.load(), 0xDEAD_BEEF_CAFE_BABE);
+
+        // What the plain add does instead of wrapping, and what the `core` atomic it replaces never did: it refuses
+        // with a typed error and leaves the value alone, so an identifier or a timestamp cannot wrap unseen.
+        let cell = SharedU64::new(u64::MAX - 1);
+        assert_eq!(cell.fetch_add(1), Ok(u64::MAX - 1));
+        assert_eq!(cell.load(), u64::MAX);
+        assert_eq!(
+            cell.fetch_add(1),
+            Err(ArithError::Overflow {
+                current: u64::MAX,
+                delta: 1
+            })
+        );
+        assert_eq!(cell.load(), u64::MAX, "a refused add changes nothing");
+    }
+
+    #[test]
+    fn shared_u64_crossing_the_32_bit_boundary_is_never_seen_torn() {
+        // A writer adds one 512 times across 2^32 while this thread reads. A read may be any value the counter
+        // really held, so the reads never go backwards and never fall below the start.
+        let start = 0xFFFF_FF00u64;
+        let cell = SharedU64::new(start);
+        std::thread::scope(|scope| {
+            let writer = scope.spawn(|| {
+                for _ in 0..512 {
+                    cell.fetch_add(1).expect("no overflow near 2^32");
+                }
+            });
+            let mut previous = start;
+            // `is_finished` is also true if the writer panicked, so a failure ends the loop instead of hanging it.
+            while !writer.is_finished() {
+                let seen = cell.load();
+                assert!(
+                    seen >= previous,
+                    "a read went backwards: {seen:#x} after {previous:#x}"
+                );
+                previous = seen;
+            }
+        });
+        assert_eq!(cell.load(), start + 512);
+        assert!(
+            cell.load() > 0xFFFF_FFFF,
+            "the run crossed the 32-bit boundary"
+        );
+    }
+
+    /// PLANTED DEFECT, test only: a "64-bit counter" made of two independent 32-bit atomics updated without a lock.
+    struct SplitCounter {
+        hi: AtomicU32,
+        lo: AtomicU32,
+    }
+
+    impl SplitCounter {
+        fn new(value: u64) -> Self {
+            Self {
+                hi: AtomicU32::new((value >> 32) as u32),
+                lo: AtomicU32::new(value as u32),
+            }
+        }
+
+        /// First half of an add: the low word. Returns whether it carried out of the word.
+        fn add_low(&self, delta: u32) -> bool {
+            let old = self.lo.fetch_add(delta, Ordering::SeqCst);
+            old.checked_add(delta).is_none()
+        }
+
+        /// Second half: the carry into the high word.
+        fn add_high(&self, carry: bool) {
+            self.hi.fetch_add(u32::from(carry), Ordering::SeqCst);
+        }
+
+        fn read(&self) -> u64 {
+            (u64::from(self.hi.load(Ordering::SeqCst)) << 32)
+                | u64::from(self.lo.load(Ordering::SeqCst))
+        }
+    }
+
+    /// The property a shared 64-bit counter must keep: a read is the value before an operation or the value after
+    /// it, never a mixture.
+    fn is_before_or_after(seen: u64, before: u64, after: u64) -> bool {
+        seen == before || seen == after
+    }
+
+    #[test]
+    fn planted_split_counter_fails_the_check_a_shared_cell_passes() {
+        let before = 0xFFFF_FFFFu64;
+        let after = 0x1_0000_0000u64;
+
+        // The split counter, with a read between its two steps: the low word has wrapped, the carry is not yet in.
+        let split = SplitCounter::new(before);
+        let carry = split.add_low(1);
+        let torn = split.read();
+        split.add_high(carry);
+        assert_eq!(
+            split.read(),
+            after,
+            "the split counter ends correct; only the read in between is wrong"
+        );
+        assert_eq!(
+            torn, 0,
+            "the torn read is 0, a value the counter never held"
+        );
+        assert!(
+            !is_before_or_after(torn, before, after),
+            "the check must reject the split counter"
+        );
+
+        // The same add on the shared cell has no step in between, so the same check holds.
+        let shared = SharedU64::new(before);
+        assert!(is_before_or_after(shared.load(), before, after));
+        assert_eq!(shared.fetch_add(1), Ok(before));
+        assert!(is_before_or_after(shared.load(), before, after));
+    }
+
+    #[test]
+    fn planted_truncating_counter_fails_the_check_a_shared_cell_passes() {
+        // A counter that keeps only the low 32 bits, as `as u32` would.
+        let stored = 0x1_0000_0001u64;
+        let truncating = AtomicU32::new(0);
+        truncating.store(stored as u32, Ordering::SeqCst);
+        let loaded = u64::from(truncating.load(Ordering::SeqCst));
+        assert_eq!(loaded, 1);
+        assert!(
+            !is_before_or_after(loaded, 0, stored),
+            "the check must reject the truncating counter"
+        );
+
+        let shared = SharedU64::new(0);
+        shared.store(stored);
+        assert!(is_before_or_after(shared.load(), 0, stored));
+        assert_eq!(shared.load(), stored);
     }
 
     const HARNESS_PPC_KERNEL: &str = "4.9.0-0.bpo.6-powerpc";

@@ -36,10 +36,10 @@ sha2 = "0.11"
 hmac = "0.13"
 hex = "0.4"
 thiserror = "2.0"
-portable-atomic = { version = "1.15.0", default-features = false, features = ["fallback"] }
 
 franken-test-support = { path = "crates/franken-test-support" }
 franken-board-profile = { path = "crates/franken-board-profile" }
+franken-atomic = { path = "crates/franken-atomic" }
 franken-platform = { path = "crates/franken-platform" }
 franken-platform-linux = { path = "crates/franken-platform-linux" }
 franken-hal = { path = "crates/franken-hal" }

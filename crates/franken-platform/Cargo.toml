@@ -12,12 +12,9 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 franken-board-profile.workspace = true
-
-# `src/lib.rs` re-exports `AtomicU64`/`AtomicI64` from portable-atomic only under this same cfg
-# (big-endian MIPS32 and PPC32 have no native 64-bit atomics). Everywhere else the crate is never
-# named, so declaring it unconditionally made cargo warn `unused dependency` on the host.
-[target.'cfg(not(target_has_atomic = "64"))'.dependencies]
-portable-atomic.workspace = true
+# 64-bit shared state: `src/lib.rs` re-exports franken-atomic's cells on every target (big-endian MIPS32 and
+# PPC32 have no native 64-bit atomics, and a cfg-selected alias would give host and device different APIs).
+franken-atomic.workspace = true
 
 [dev-dependencies]
 franken-test-support.workspace = true
