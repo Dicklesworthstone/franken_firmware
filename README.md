@@ -46,11 +46,12 @@ kernel layout class; a from-scratch OS is a later, separate ambition. The
 audio path uses the retained stock drivers behind audited HAL adapters
 (E04, P04, D04).
 
-Host-assisted by design: Spotify sessions, AirPlay, Alexa and Tailscale
-admission live on a host coordinator. The 32 MiB endpoints (the eight Play:5
-Gen1 units are the fleet's center of gravity) run a small render and network
-runtime, fed by decode-once PCM distribution rather than per-speaker
-clients.
+Host coordination can provide shared sessions and decode-once PCM distribution.
+Required native integrations, including native Tailscale, remain in scope and
+must qualify under each selected board profile; host assistance cannot stand
+in for native qualification. The 32 MiB endpoints (the eight Play:5 Gen1 units
+are the fleet's center of gravity) need a bounded render and network runtime.
+Per-profile resource and service evidence decides which configurations can run.
 
 The fsonos contract survives: a compatibility adapter (G03) keeps the
 existing daemon, CLI and MCP surfaces working over the new firmware, so the
@@ -93,8 +94,8 @@ AGENTS.md                  rules for AI agents (also the human onboarding path)
 FIRMWARE_ASSESSMENT.md     engineering assessment with two peer-review reconciliations
 inventory/                 sanitized fleet inventory + capture scripts (no personal data)
 toolchain/                 bake-off sources, initramfs builder, boot scripts, results
-docs/                      per-bead contracts will land here (E01 targets docs/contracts/e01.md)
-.beads/                    the task graph (br CLI); commit alongside code
+docs/                      per-bead contracts and sanitized planning artifacts
+.beads/                    local task graph managed with br (git-ignored)
 .local-real/               git-ignored raw captures with real IPs/MACs/serials
 ```
 
