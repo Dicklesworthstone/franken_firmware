@@ -571,8 +571,19 @@ fn describe_fault(fault: OutputFault) -> String {
     }
 }
 
-/// The campaign's fixed block period (256 frames at 48 kHz), in nanoseconds.
+/// The campaign's nominal block period (256 frames at 48 kHz), in nanoseconds, rounded down. It is a DURATION to
+/// compare against, never a factor to multiply by a block index: the true period is 16/3 ms, so `index *
+/// BLOCK_PERIOD_NS` falls 1/3 ns further behind with every block, one whole frame (20.8 us) after 62 500 blocks and
+/// half a frame, enough to round to the wrong frame, after 31 250 (about 2.8 minutes). The instant a block starts is
+/// [`block_offset_ns`].
 const BLOCK_PERIOD_NS: u64 = 5_333_333;
+
+/// Nanoseconds from the start of the campaign's first block to the start of block `blk`: `blk * 256 / 48 000` seconds,
+/// that is `blk * 16 000 000 / 3` ns, rounded to the nearest nanosecond. The error is at most half a nanosecond
+/// (0.00002 frame) however long the campaign runs, so the nearest frame to this instant is always `blk * 256`.
+const fn block_offset_ns(blk: u64) -> u64 {
+    (blk * 16_000_000 + 1) / 3
+}
 
 /// Critical record that a planted fault took effect, with the fault schedule entry in force.
 fn fault_injected_event(
@@ -923,7 +934,7 @@ impl VirtualSpeakerNode {
     /// Group time at which block `blk_idx` is presented. The group clock is true time in this house.
     #[must_use]
     pub const fn block_pts_group_ns(blk_idx: u64) -> u64 {
-        CAMPAIGN_ORIGIN_NS + blk_idx * BLOCK_PERIOD_NS + PLAYOUT_HORIZON_NS
+        CAMPAIGN_ORIGIN_NS + block_offset_ns(blk_idx) + PLAYOUT_HORIZON_NS
     }
 
     /// One clock exchange with the coordinator, started at true time `true_ns`.
@@ -955,7 +966,7 @@ impl VirtualSpeakerNode {
     /// fit (a clock jump, a clock that went backwards) mutes the node through the clock's state, and any other
     /// rejection changes nothing.
     pub fn gate_block(&mut self, blk_idx: u64) -> BlockGate {
-        let send_true = CAMPAIGN_ORIGIN_NS + blk_idx * BLOCK_PERIOD_NS;
+        let send_true = CAMPAIGN_ORIGIN_NS + block_offset_ns(blk_idx);
         if blk_idx > 0 && blk_idx.is_multiple_of(PROBE_EVERY_BLOCKS) {
             let _ = self.exchange_at(send_true);
         }
@@ -1005,11 +1016,16 @@ pub struct VirtualHouseReport {
     pub unified_mixed_s1_s2: bool,
     pub total_blocks_streamed: u64,
     pub max_inter_speaker_skew_us: u64,
-    /// Blocks in which every member sounded, so the skew above covers every member, and blocks in which at least
-    /// one did not (it was muted), where there is nothing to compare. A run with an unmeasured block does not
+    /// Blocks in which every participant sounded, so the skew above covers every participant, and blocks in which at
+    /// least one did not (it was muted), where there is nothing to compare. A run with an unmeasured block does not
     /// meet the target: a skew measured over fewer members than the group has is not a measurement of the group.
     pub skew_measured_blocks: u64,
     pub skew_unmeasured_blocks: u64,
+    /// The members the skew is judged over: those with a media stream. A member N01 refused has none; it is out of the
+    /// group by that recorded decision (`members[..].stream`, a critical `stream_refused` event) and is not counted.
+    /// A member that has a stream but does not sound IS counted, and makes its blocks unmeasured. With fewer than two
+    /// participants there is nothing to compare, so every block is unmeasured.
+    pub skew_participants: usize,
     pub within_2ms_skew_target: bool,
     pub video_sync_residual_us: i64,
     pub video_sync_within_40ms_gate: bool,
@@ -1087,7 +1103,7 @@ fn run_campaign_with_sink(
     if let Err(cause) = &result {
         sink.emit_critical(DiagnosticEvent {
             schema_version: String::new(),
-            timestamp_mono_ns: total_blocks * BLOCK_PERIOD_NS,
+            timestamp_mono_ns: block_offset_ns(total_blocks),
             run_id: format!("vh-seed-{seed}"),
             case_id: "Q01-virtual-house".to_string(),
             correlation_id: "corr-vh-failed".to_string(),
@@ -1233,9 +1249,13 @@ fn run_campaign_inner(
     let mut max_inter_speaker_skew_us = 0u64;
     let mut skew_measured_blocks = 0u64;
     let mut skew_unmeasured_blocks = 0u64;
+    let skew_participants = nodes
+        .values()
+        .filter(|node| node.coordinator_sender.is_some())
+        .count();
     for blk_idx in 0..total_blocks {
         let start_frame = blk_idx * (FRAMES_PER_BLOCK as u64);
-        let send_time_ns = blk_idx * block_period_ns;
+        let send_time_ns = block_offset_ns(blk_idx);
         let pts_ns = send_time_ns + playout_horizon_ns;
         let consume_by_ns = pts_ns - block_period_ns;
 
@@ -1412,7 +1432,7 @@ fn run_campaign_inner(
             }
         }
 
-        if presented_true.len() == nodes.len() {
+        if skew_participants >= 2 && presented_true.len() == skew_participants {
             skew_measured_blocks += 1;
         } else {
             skew_unmeasured_blocks += 1;
@@ -1500,7 +1520,7 @@ fn run_campaign_inner(
     // (`evidence_complete`), not quietly look like a clean run.
     sink.emit_critical(DiagnosticEvent {
         schema_version: String::new(),
-        timestamp_mono_ns: total_blocks * block_period_ns,
+        timestamp_mono_ns: block_offset_ns(total_blocks),
         run_id: format!("vh-seed-{seed}"),
         case_id: "Q01-virtual-house".to_string(),
         correlation_id: "corr-vh-1".to_string(),
@@ -1558,6 +1578,7 @@ fn run_campaign_inner(
         max_inter_speaker_skew_us,
         skew_measured_blocks,
         skew_unmeasured_blocks,
+        skew_participants,
         within_2ms_skew_target: max_inter_speaker_skew_us <= 2_000 && skew_unmeasured_blocks == 0,
         video_sync_residual_us: video_eval.residual_av_skew_us,
         video_sync_within_40ms_gate: video_eval.within_40ms_p99_gate,
@@ -1706,6 +1727,102 @@ mod tests {
         }
     }
 
+    /// The frame nearest to an offset from the stream's first sample, at 48 kHz.
+    fn nearest_frame(offset_ns: u64) -> u64 {
+        u64::try_from((u128::from(offset_ns) * 48_000 + 500_000_000) / 1_000_000_000)
+            .expect("a frame count fits")
+    }
+
+    #[test]
+    fn a_blocks_start_maps_back_to_its_scheduled_frame_however_long_the_campaign_runs() {
+        let first = VirtualSpeakerNode::block_pts_group_ns(0);
+        let check = |blk: u64| {
+            let offset = VirtualSpeakerNode::block_pts_group_ns(blk) - first;
+            assert_eq!(offset, block_offset_ns(blk), "block {blk}");
+            assert_eq!(
+                nearest_frame(offset),
+                blk * (FRAMES_PER_BLOCK as u64),
+                "block {blk}"
+            );
+        };
+        // every block of a 5.5 minute campaign and the stretch after it, then a thinner walk out to about 15 hours
+        for blk in 0..=70_000_u64 {
+            check(blk);
+        }
+        for blk in (70_000..10_000_000_u64).step_by(4_999) {
+            check(blk);
+        }
+        for blk in [10_000_001, 123_456_789, 1_000_000_007] {
+            check(blk);
+        }
+        // consecutive blocks are 5 333 333 or 5 333 334 ns apart: the period is not a whole number of nanoseconds
+        for blk in 0..1_000_u64 {
+            let step = block_offset_ns(blk + 1) - block_offset_ns(blk);
+            assert!(
+                (5_333_333..=5_333_334).contains(&step),
+                "block {blk}: {step}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_old_mapping_a_block_index_times_the_rounded_period_misses_its_frame_and_the_exact_one_does_not()
+     {
+        // The plant: multiplying the index by the rounded period. It is off by one frame at block 62 500 and already
+        // rounds to the wrong frame at 31 251; the floor of the same product is wrong from block 1.
+        let planted = |blk: u64| nearest_frame(blk * BLOCK_PERIOD_NS);
+        for blk in [31_251_u64, 62_500, 62_501, 200_000] {
+            let scheduled = blk * (FRAMES_PER_BLOCK as u64);
+            assert_ne!(planted(blk), scheduled, "the planted mapping, block {blk}");
+            assert_eq!(
+                nearest_frame(block_offset_ns(blk)),
+                scheduled,
+                "the exact mapping, block {blk}"
+            );
+        }
+        assert_eq!(
+            blk_floor_frame(1),
+            255,
+            "the floor of the planted product is wrong from block 1"
+        );
+        // the planted mapping is right while the error is under half a frame, which is why short runs never saw it
+        for blk in [0_u64, 1, 100, 31_250] {
+            assert_eq!(planted(blk), blk * (FRAMES_PER_BLOCK as u64), "block {blk}");
+        }
+
+        fn blk_floor_frame(blk: u64) -> u64 {
+            blk * BLOCK_PERIOD_NS * 48_000 / 1_000_000_000
+        }
+    }
+
+    #[test]
+    fn a_locked_node_keeps_presenting_the_scheduled_frame_past_62_500_blocks() {
+        let mut node = bring_up(exact_plan()).expect("bring-up");
+        let first_pts = VirtualSpeakerNode::block_pts_group_ns(0);
+        let (mut audible, mut audible_after) = (0_u64, 0_u64);
+        for blk in 0..=66_000_u64 {
+            let gate = node.gate_block(blk);
+            let Some(true_ns) = node.presented_true_ns(&gate) else {
+                continue;
+            };
+            audible += 1;
+            if blk > 62_500 {
+                audible_after += 1;
+            }
+            // The instant the node presents the block is within the 1 us clock's resolution of the stream's own
+            // presentation time, which is a twentieth of a frame: the nearest frame is the scheduled one.
+            assert_eq!(
+                nearest_frame(true_ns - first_pts),
+                blk * (FRAMES_PER_BLOCK as u64),
+                "block {blk}"
+            );
+        }
+        assert!(
+            audible > 0 && audible_after >= 1_000,
+            "{audible} audible, {audible_after} after block 62 500"
+        );
+    }
+
     #[test]
     fn a_locked_node_sounds_at_the_admitted_start_and_presents_the_scheduled_frame_at_the_reference_instant()
      {
@@ -1751,14 +1868,11 @@ mod tests {
                     "block {blk}: {true_ns} vs {pts}"
                 );
             }
-            // The presented sample position: the frame at that group time is the block's first frame, to within one
-            // frame (the block period is rounded to a whole number of nanoseconds).
-            let frame_at = (pts - first_pts) * 48_000 / 1_000_000_000;
+            // The presented sample position: the nearest frame to that group time is the block's first frame, exactly
+            // (a block's start is rounded to the nearest nanosecond, which is 0.00002 frame).
+            let frame_at = nearest_frame(pts - first_pts);
             let block_frame = blk * (FRAMES_PER_BLOCK as u64);
-            assert!(
-                frame_at.abs_diff(block_frame) <= 1,
-                "block {blk}: frame {frame_at} vs {block_frame}"
-            );
+            assert_eq!(frame_at, block_frame, "block {blk}");
         }
     }
 
@@ -2440,6 +2554,76 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_member_is_out_of_the_skew_gate_but_a_silently_muted_one_is_not() {
+        let newer = PeerFirmware {
+            answer_message_version: Some(2),
+            ..PeerFirmware::CURRENT
+        };
+        // A member N01 refused is out of the group by a recorded decision; the other four are judged among themselves.
+        let mut sink = default_diagnostic_sink();
+        let refused_only = run_campaign_inner(SEED, 40, None, &mut sink, &[("spk-den-s3", newer)])
+            .expect("a refused member is an outcome, not a failed campaign");
+        assert_eq!(refused_only.skew_participants, 4);
+        assert_eq!(
+            (
+                refused_only.skew_measured_blocks,
+                refused_only.skew_unmeasured_blocks
+            ),
+            (40, 0)
+        );
+        assert!(refused_only.within_2ms_skew_target);
+        // The same refusal plus the planted defect (the controller never schedules a start for any other member but
+        // one): the refusal does not excuse that mute. Three participants never sound, so nothing is measured.
+        let planted = OutputFault::UnadmittedExcept {
+            member_id: "spk-kitchen-s12",
+        };
+        let mut sink = default_diagnostic_sink();
+        let both = run_campaign_inner(SEED, 40, Some(planted), &mut sink, &[("spk-den-s3", newer)])
+            .expect("the campaign itself runs");
+        assert_eq!(both.skew_participants, 4);
+        assert_eq!(
+            (both.skew_measured_blocks, both.skew_unmeasured_blocks),
+            (0, 40)
+        );
+        assert!(
+            !both.within_2ms_skew_target,
+            "a refusal does not excuse a silent mute"
+        );
+    }
+
+    #[test]
+    fn a_house_with_one_participant_left_makes_no_synchronisation_claim() {
+        let newer = PeerFirmware {
+            answer_message_version: Some(2),
+            ..PeerFirmware::CURRENT
+        };
+        let mut sink = default_diagnostic_sink();
+        let report = run_campaign_inner(
+            SEED,
+            40,
+            None,
+            &mut sink,
+            &[
+                ("spk-bedroom-s1", newer),
+                ("spk-kitchen-s12", newer),
+                ("spk-den-s3", newer),
+                ("spk-living-sub", newer),
+            ],
+        )
+        .expect("refused members are outcomes, not a failed campaign");
+        assert_eq!(report.skew_participants, 1);
+        assert_eq!(report.members["spk-office-s5"].audible_blocks, 40);
+        assert_eq!(
+            (report.skew_measured_blocks, report.skew_unmeasured_blocks),
+            (0, 40)
+        );
+        assert!(
+            !report.within_2ms_skew_target,
+            "one speaker has nothing to be in sync with"
+        );
+    }
+
+    #[test]
     fn the_simulated_member_clocks_are_pinned_so_a_change_to_them_is_deliberate() {
         // `within_2ms_skew_target` is now a measured gate on the `--virtual-house` exit code, so the simulated
         // offsets and skews it rests on must not drift unnoticed. Values are the FNV-1a derivation of
@@ -2613,6 +2797,16 @@ mod tests {
             );
         }
         assert!(report.within_2ms_skew_target && report.unified_mixed_s1_s2);
+        // The gate was judged over the four members that have a stream, on every block: the refused member is out of
+        // the group by N01's recorded decision, and nothing about the others was left unmeasured.
+        assert_eq!(
+            (
+                report.skew_participants,
+                report.skew_measured_blocks,
+                report.skew_unmeasured_blocks
+            ),
+            (4, 200, 0)
+        );
 
         // The cause is on record exactly once, for that member, and nowhere else.
         let refusals: Vec<_> = sink

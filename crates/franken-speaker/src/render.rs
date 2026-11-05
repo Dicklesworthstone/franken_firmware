@@ -1309,9 +1309,9 @@ impl<B: DeviceBackend> RenderLoop<B> {
                         offset += receipt.accepted_bytes;
                         self.dropped_since_submit = 0;
                     }
-                    // The token owns nothing and has no `Drop`; the session frees the slot on the
+                    // The token is deliberately left in the receipt and goes out of scope with it. It is a
+                    // claim check that owns nothing and has no `Drop`; the session frees the slot on the
                     // device's acknowledgment, whatever becomes of it.
-                    drop(receipt.token);
                 }
                 Err(SessionError::NoFreeSlot) => {
                     if offset == 0 {
@@ -1486,7 +1486,12 @@ mod tests {
             let phase = (self.pos % 48) as f32 / 48.0;
             self.pos += 1;
             let v = 0.25 * (2.0 * std::f32::consts::PI * phase).sin();
-            Some([v, -v])
+            // In phase, with the right channel at half the left. NOT `[v, -v]`: this profile's two
+            // drivers (`WooferMono`, `TweeterMono`) are both fed from `mid = 0.5 * (l + r)`
+            // (`RouteSource::Mid` in D02's synthetic calibration), and an antiphase pair sums to exactly
+            // 0.0, so every output byte is zero. The loop and the stages then agree trivially on silence
+            // and the sample tests prove nothing (b26 showed exactly that).
+            Some([v, 0.5 * v])
         }
     }
 

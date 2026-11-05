@@ -58,16 +58,25 @@ def good_records():
 
 
 def log_of(groups, result="test result: ok. %d passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s",
-           running=True, tests=None, extra=""):
+           running=True, tests=None, extra="", relay_at=None):
     """A log in the shape of `cargo test --test g01_replay -- --nocapture --test-threads=1`: each test's
-    first output lands on the `test NAME ... ` line, and `ok` follows its last."""
+    first output lands on the `test NAME ... ` line, and `ok` follows its last.
+
+    `relay_at=k` is the shape a relay produces: the test binary's stdout comes first (`running N tests` and the
+    first `k` tests), and cargo's stderr (`Finished`, `Running tests/g01_replay.rs`) is written after it, in the
+    middle of the remaining tests."""
     tests = ORDER if tests is None else tests
+    stderr_lines = ["    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.65s",
+                    "     Running tests/g01_replay.rs (target/debug/deps/g01_replay-0123456789abcdef)"]
     lines = ["   Compiling franken-session v0.1.0 (/work/crates/franken-session)"]
+    if running and relay_at is None:
+        lines.extend(stderr_lines[1:])
     if running:
-        lines.append("     Running tests/g01_replay.rs (target/debug/deps/g01_replay-0123456789abcdef)")
         lines.append("")
         lines.append("running %d tests" % len(tests))
-    for name in tests:
+    for position, name in enumerate(tests):
+        if running and relay_at is not None and position == relay_at:
+            lines.extend(stderr_lines)
         records = groups.get(name, [])
         for index, record in enumerate(records):
             prefix = "test %s ... " % name if index == 0 else ""
@@ -75,6 +84,8 @@ def log_of(groups, result="test result: ok. %d passed; 0 failed; 0 ignored; 0 me
         if not records:
             lines.append("test %s ... " % name)
         lines.append("ok")
+    if running and relay_at is not None and relay_at >= len(tests):
+        lines.extend(stderr_lines)
     lines.append("")
     lines.append(result % len(tests) if "%d" in result else result)
     if extra:
@@ -227,6 +238,61 @@ class Judge(unittest.TestCase):
     def test_an_unreadable_record_fails(self):
         text = log_of(good_records()) + "G01-OBSERVED {not json\n"
         self.assertTrue(any("unreadable" in p for p in judge.judge(DOC, [text], TESTS)))
+
+    def test_a_relay_that_writes_cargos_stderr_after_the_tests_stdout_passes(self):
+        """b23: `Running tests/g01_replay.rs` came after three tests' output and before the fourth's."""
+        for relay_at in (0, 1, 3, len(ORDER) - 1, len(ORDER)):
+            with self.subTest(relay_at=relay_at):
+                self.assertEqual(problems_of(relay_at=relay_at), [])
+        text = log_of(good_records(), relay_at=3)
+        self.assertLess(text.index("test %s ..." % ORDER[0]), text.index("Running tests/g01_replay.rs"))
+        self.assertLess(text.index("Running tests/g01_replay.rs"), text.index("test %s ..." % ORDER[3]))
+
+    def test_colour_codes_around_cargos_markers_do_not_hide_them(self):
+        text = log_of(good_records(), relay_at=3)
+        text = text.replace("\nok\n", "\n\x1b[32mok\x1b[0m\n").replace(
+            "test result: ok.", "test result: \x1b[32mok\x1b[0m.").replace(
+            "     Running tests", "\x1b[1m\x1b[32m     Running\x1b[0m tests")
+        self.assertIn("\x1b[32mok\x1b[0m.", text)
+        self.assertEqual(judge.judge(DOC, [text], TESTS), [])
+
+    def test_a_second_block_anywhere_fails(self):
+        """The command runs one target. Another target's block, before or after, must not be tolerated."""
+        other = ("     Running unittests src/lib.rs (target/debug/deps/franken_session-0)\n\nrunning 43 tests\n"
+                 "test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n")
+        for label, text in (("before", other + log_of(good_records())),
+                            ("after", log_of(good_records()) + other),
+                            ("relay order, after", log_of(good_records(), relay_at=3) + other)):
+            with self.subTest(label):
+                found = judge.judge(DOC, [text], TESTS)
+                self.assertTrue(any("another target" in p for p in found), found)
+                self.assertTrue(any("`running N tests` lines" in p for p in found), found)
+                self.assertTrue(any("`test result` lines" in p for p in found), found)
+        second_ours = log_of(good_records()) + "     Running tests/g01_replay.rs (target/debug/deps/g01_replay-1)\n"
+        self.assertTrue(any("2 `Running tests/g01_replay.rs` lines" in p for p in judge.judge(DOC, [second_ours], TESTS)))
+        doc_tests = log_of(good_records()) + "   Doc-tests franken_session\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n"
+        self.assertTrue(judge.judge(DOC, [doc_tests], TESTS))
+
+    def test_a_test_name_missing_or_appearing_twice_or_unexpected_fails(self):
+        base = log_of(good_records(), relay_at=3)
+        missing = base.replace("test %s ..." % ORDER[1], "test something_else ...")
+        found = judge.judge(DOC, [missing], TESTS)
+        self.assertTrue(any("did not run the test %s" % ORDER[1] in p for p in found), found)
+        self.assertTrue(any("not in the replay's list: something_else" in p for p in found), found)
+        twice = base + "test %s ... ok\n" % ORDER[2]
+        self.assertTrue(any("ran the test %s 2 times" % ORDER[2] in p for p in judge.judge(DOC, [twice], TESTS)))
+
+    def test_the_running_and_result_lines_must_each_be_exactly_right(self):
+        base = log_of(good_records(), relay_at=3)
+        found = judge.judge(DOC, [base.replace("running 4 tests", "running 5 tests")], TESTS)
+        self.assertTrue(any("cargo ran 5 tests, expected 4" in p for p in found), found)
+        for wrong in ("0 filtered out", "1 filtered out"):
+            text = base.replace("0 measured; 0 filtered out", "0 measured; 1 filtered out") if wrong == "1 filtered out" else base
+            self.assertEqual(bool(judge.judge(DOC, [text], TESTS)), wrong == "1 filtered out")
+        text = base.replace("0 measured; 0 filtered out", "1 measured; 0 filtered out")
+        self.assertTrue(any("cargo reported" in p for p in judge.judge(DOC, [text], TESTS)))
+        no_result = "\n".join(l for l in base.splitlines() if not l.startswith("test result:")) + "\n"
+        self.assertTrue(any("`test result` lines, expected exactly one" in p for p in judge.judge(DOC, [no_result], TESTS)))
 
     def test_the_other_targets_of_the_crate_are_not_mistaken_for_the_replay(self):
         text = log_of(good_records(), running=False)

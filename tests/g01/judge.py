@@ -51,31 +51,62 @@ def parse(text):
     return records, bad
 
 
+ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
 def cargo_problems(text, tests):
-    """Did cargo itself report the replay target's tests passing?"""
+    """Did cargo itself report the replay target's tests passing?
+
+    The command runs exactly one test target. A relay (RCH) writes cargo's stderr (`Finished`, `Running
+    tests/...`) AFTER the test binary's stdout, so the order of the markers in the log carries no meaning and
+    nothing here slices the log by position. Each marker is judged by how many times it appears in the whole
+    log: exactly one `Running <target>`, one `running N tests`, one `test result:`, every expected test name once,
+    and no block of any other target (a second target got in)."""
+    text = ANSI.sub("", text)
     problems = []
     if "FAILED" in text or "panicked" in text:
         problems.append("the log reports a failure (FAILED or panicked)")
-    start = text.find("Running " + TARGET)
-    if start < 0:
-        return problems + ["the log has no `Running %s` section" % TARGET]
-    rest = text[start:]
-    end = min((i for i in (rest.find("Running ", 1), rest.find("Doc-tests")) if i > 0), default=len(rest))
-    section = rest[:end]
-    running = re.search(r"running (\d+) tests?", section)
-    if not running or int(running.group(1)) != len(tests):
-        problems.append("cargo ran %s tests, expected %d" % (running.group(1) if running else "no", len(tests)))
-    result = re.search(r"test result: (\w+)\. (\d+) passed; (\d+) failed; (\d+) ignored", section)
+
+    started = re.findall(r"^\s*Running\s+(?:unittests\s+)?(\S+\.rs)\b", text, re.M)
+    ours = [name for name in started if name == TARGET]
+    others = [name for name in started if name != TARGET]
+    if not ours:
+        problems.append("the log has no `Running %s` line" % TARGET)
+    elif len(ours) > 1:
+        problems.append("the log has %d `Running %s` lines, expected exactly one" % (len(ours), TARGET))
+    if others:
+        problems.append("the log has a block for another target (%s); the command runs only %s" % (
+            ", ".join(sorted(set(others))), TARGET))
+
+    counts = re.findall(r"^\s*running (\d+) tests?\s*$", text, re.M)
+    if len(counts) > 1:
+        problems.append("cargo printed %d `running N tests` lines, expected exactly one" % len(counts))
+    elif not counts or int(counts[0]) != len(tests):
+        problems.append("cargo ran %s tests, expected %d" % (counts[0] if counts else "no", len(tests)))
+
+    result_lines = re.findall(r"^\s*test result:.*$", text, re.M)
+    if len(result_lines) != 1:
+        problems.append("cargo printed %d `test result` lines, expected exactly one" % len(result_lines))
+    result = re.search(
+        r"^\s*test result: (\w+)\. (\d+) passed; (\d+) failed; (\d+) ignored; (\d+) measured; (\d+) filtered out",
+        text, re.M)
     if not result:
         problems.append("no `test result` line for %s" % TARGET)
     else:
-        status, passed, failed, ignored = result.group(1), int(result.group(2)), int(result.group(3)), int(result.group(4))
-        if (status, passed, failed, ignored) != ("ok", len(tests), 0, 0):
-            problems.append("cargo reported %s, %d passed, %d failed, %d ignored; wanted ok, %d, 0, 0" % (
-                status, passed, failed, ignored, len(tests)))
+        status = result.group(1)
+        passed, failed, ignored, measured, filtered = (int(result.group(i)) for i in range(2, 7))
+        if (status, passed, failed, ignored, measured, filtered) != ("ok", len(tests), 0, 0, 0, 0):
+            problems.append("cargo reported %s, %d passed, %d failed, %d ignored, %d measured, %d filtered out; "
+                            "wanted ok, %d, 0, 0, 0, 0" % (status, passed, failed, ignored, measured, filtered, len(tests)))
+
     for name in tests:
-        if not re.search(r"test %s \.\.\." % re.escape(name), section):
+        seen = len(re.findall(r"(?<!\w)test %s \.\.\." % re.escape(name), text))
+        if seen == 0:
             problems.append("cargo did not run the test %s" % name)
+        elif seen > 1:
+            problems.append("cargo ran the test %s %d times, expected once" % (name, seen))
+    for name in sorted(set(re.findall(r"(?<!\w)test (\w+) \.\.\.", text)) - set(tests)):
+        problems.append("cargo ran a test that is not in the replay's list: %s" % name)
     return problems
 
 
