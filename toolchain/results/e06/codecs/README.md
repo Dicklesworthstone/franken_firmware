@@ -57,7 +57,7 @@ recorded layout (the export inside the consumer workspace, as `../upstream`) is 
 * No graph line is predicted to fail, so there is no predicted failure to explain. If one does fail, it is a finding for S02 (record the class: compile,
   resolve, or infrastructure), not a defect to patch.
 
-## 3. The check lines (central; nothing here was run)
+## 3. The original check plan (execution update below)
 Prepare the four directories (offline, no shell, refuses an existing `--out`), from the repository root:
 ```
 python3 -B -I toolchain/results/e06/codecs/prepare_candidates.py --archives-dir build/e06-candidates --locks-dir toolchain/results/e06/codecs/locks --out <NEW dir P>
@@ -89,8 +89,51 @@ they must equal `consumers.json` (`consumer_tree_sha256`, `lint_tree_sha256`, `l
 * **c07, c08**: the control holds only if the exit is nonzero **and** the log contains ``usage of an `unsafe` block`` and `-F unsafe_code`. A
   nonzero exit without those (a toolchain or sync error) is "no result". A control that passes voids c05 and c06.
 
-## 4. Not established
+## 4. Observed central outcomes (2026-11-05)
+
+All eight audit obligations have observed outcomes: four graph checks and two
+clean root-lint checks passed; both planted-unsafe controls were rejected.
+The records preserve the controls as failures, not successful builds:
+
+| Obligations | Targets | Actual outcome | Verified records |
+|---|---|---|---|
+| c01, c02: Symphonia graph | MIPS, PowerPC | exit 0 | `central/symphonia-checks.jsonl` |
+| c03, c04: opus-pure graph | MIPS, PowerPC | exit 0 | `central/opus-checks.jsonl` |
+| c05, c06: clean opus-pure root lint | MIPS, PowerPC | exit 0 | `central/opus-root-lint-checks.jsonl` |
+| c07, c08: planted unsafe root lint | MIPS, PowerPC | exit 101, explicit unsafe-block rejection | `central/opus-root-lint-controls.jsonl` |
+
+**The lint invocation changed, transparently.** c05-c08 were executed as
+`cargo +nightly clippy --locked --release --lib -p opus-pure --target <triple> -Z build-std=std,panic_abort -j 2 -- --no-deps -F unsafe_code`,
+through strict RCH with a source-content receipt. The originally proposed
+`cargo rustc` code-generation commands did not complete and are not claimed as
+run. They needed RCH's generic job mode, which reserved 20 GiB; classified
+Clippy reserved 4 GiB without reducing the worker's protected disk floor.
+Clippy establishes the builtin root unsafe-lint obligation on this exact
+source, not rustc code generation. The pinned root has no `cfg(clippy)` branch
+or build script. Both targets use the same source, lock, features and forbid
+flag for their clean and planted cases. Each control has the unsafe diagnostic
+and also a separate `missing_docs` error from the planted public function;
+nonzero exit alone is not the control oracle.
+
+The six new records bind raw-log digests and RCH source receipts. Independent
+review compared all 1,566 transferred file entries against the pinned consumer
+trees, including file bytes, sizes and executable bits, and verified terminal
+ACK, absent owners and retirement/releases for all six jobs. Raw logs remain
+private because they contain machine paths and worker addresses. Earlier CLI,
+disk-admission and slot refusals are retained separately and earn no pass.
+The prior c03 pass was repeated once to obtain a directly available raw log;
+the new record is the observation cited here.
+
+The existing ingest now recognizes only RCH's exact paired managed build-dir
+and target-dir override, bound to the same log's worker, rewrite witness and
+source receipt. It still compares all remaining argv to the independent plan
+and rejects unrelated configuration changes. Root-lint records use the same
+command/result verifier with the actual Clippy plan and additionally require
+the causal unsafe diagnostic for each planted control. No dependency is
+admitted by these observations.
+
+## 5. Not established
 Anything about runtime: decoder conformance for AAC-LC, ALAC, Vorbis, Ogg, MP4 or Opus, real-time budget on either soft- or hard-float CPU, memory use,
-or the board FPU. Whether either graph type-checks on a big-endian target (until c01-c04 run). Whether the other Symphonia codecs, containers and
+or the board FPU. Whether the other Symphonia codecs, containers and
 `opt-simd` features, or `symphonia-codec-opus`, are acceptable (not audited). Whether the registry versions a worker resolves equal the generated locks
 (`--locked` makes a mismatch an error, not a drift). No dependency is admitted by any of this.
