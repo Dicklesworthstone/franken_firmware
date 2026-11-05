@@ -1,0 +1,587 @@
+{
+  "build_provenance": {
+    "note": "Binary hashes bind this boot. Each guest's build_identity is the probe's own FFW_BUILD report (target, rustc release and commit, linker flavor, libc) plus the FFW_RUSTC `rustc -vV` fields; it describes the booted bytes (the archive's init entry is checked against binary_sha256) but is not an attestation of the remote compiler or linker, which requires the separate build receipt. Each guest's build_manifest records the exact build command and the digests of the sources, lockfile and cargo config handed to rch; those digests are bound to the binary only when the runner built it itself (sources_bound_to_binary), never under --skip-build. Local rustc is not the remote compiler.",
+    "status": "not_attested_by_this_boot_runner"
+  },
+  "guests": {
+    "mips": {
+      "arch": "mips",
+      "binary_bytes": 27444,
+      "binary_sha256": "37652d885d4c146ad13d71f56823aee7383c3c74901176ba24fb521b23eab326",
+      "booted_init_sha256": "37652d885d4c146ad13d71f56823aee7383c3c74901176ba24fb521b23eab326",
+      "build_identity": {
+        "libc": "none",
+        "linker_flavor": "ld.lld",
+        "runtime": "no_std",
+        "rustc": "1.101.0-nightly",
+        "rustc_commit": "708c94ef0",
+        "target": "mips-unknown-linux-musl"
+      },
+      "build_manifest": {
+        "command": [
+          "rch",
+          "exec",
+          "--source-content-receipt",
+          "--",
+          "cargo",
+          "+nightly",
+          "build",
+          "--release",
+          "--target",
+          "mips-unknown-linux-musl",
+          "-Z",
+          "build-std=core,panic_abort",
+          "-j",
+          "2"
+        ],
+        "environment": {
+          "CARGO_TARGET_DIR": "build/hello-init-target",
+          "RCH_REQUIRE_REMOTE": "1"
+        },
+        "sources_bound_to_binary": true,
+        "sources_sha256": {
+          ".cargo/config.toml": "5e2a7e29e6c0bdd0a8d5eebf9cd38d1f01b76806cdb7e90b9758c14d21e0b560",
+          "Cargo.lock": "8d3ee710523654e19c102b745e9defbb4b47f72fe204f5b86790981af82bfea3",
+          "Cargo.toml": "4a0b2713665adcbd075de409858c1d6738ed048a166056b53ade5158b28d8868",
+          "build.rs": "e0ee93db501522d3dfba259a72acda430e5612049050cf43fbe737829d46279e",
+          "src/e03_judge.rs": "a966fdd730caecf8ce26f8c69d4e94f9e157007de513af5fe0b1dc6b77aaf124",
+          "src/e03_judge/net.rs": "84a677b24a1dc88145eb32d12dd8502fc3c9b91b88dd41db0ffb31d193dc74f5",
+          "src/e03_judge_rt.rs": "1f6d7e0440abed2812dd7d3b87da4611f39be01f3cdfe16da158776ea72b83aa",
+          "src/e03_probes.rs": "91b94fc236a7570369728aecec195ee0ee63bfc01f062a618e37979a885abe80",
+          "src/e03_probes/net.rs": "840d7713c36efd3606256c301a4a95be6ef072af71314511a843fde51a84b352",
+          "src/e03_probes_rt.rs": "20a8602be872588b6f35dd53d4972d755fcbc07d1d0f42eea852e1c68929d6d9",
+          "src/lib.rs": "4fdc904a8cb3253e974a3e2c5ed89595ae194c7bb6504f79398eef103c929ea1",
+          "src/main.rs": "27a0544918569e8f81f5323985b62091909c84ac81af50905f66b2553d36a3d6"
+        },
+        "target": {
+          "build_std": "core,panic_abort",
+          "builtin_target": true,
+          "cpu_features_overridden": false,
+          "rustflags": [
+            "-C",
+            "linker-flavor=ld.lld",
+            "-C",
+            "relocation-model=static",
+            "-C",
+            "link-arg=--static",
+            "-C",
+            "link-arg=-e",
+            "-C",
+            "link-arg=_start"
+          ],
+          "target_json": null,
+          "triple": "mips-unknown-linux-musl"
+        },
+        "toolchain": {
+          "note": "cargo +nightly selects the worker's nightly; the release and commit that built the binary are the probe's FFW_BUILD report in build_identity",
+          "pinned": false,
+          "selector": "+nightly"
+        }
+      },
+      "capture_byte_limit": 8388608,
+      "capture_layout": "stdout-then-stderr; separate raw streams retained",
+      "capture_stop_reason": null,
+      "elapsed_seconds": 4.662,
+      "forbidden_hits": [],
+      "initramfs_sha256": "9e08912892ea5e17bcc51d269fff4b516445733418276bceb8fbb7033df33e9b",
+      "kernel_sha256": "3803357ef7821dbf691c901105fb9b2b00382abf67fce8a4be2a0d592267dc61",
+      "kernel_version": "Linux version 4.19.0-21-4kc-malta (debian-kernel@lists.debian.org) (gcc version 8.3.0 (Debian 8.3.0-6)) #1 SMP Debian 4.19.249-2 (2022-06-30)",
+      "libc": {
+        "conclusion": "static_no_loader",
+        "reported_by_probe": "none",
+        "static_elf": {
+          "has_dynamic": false,
+          "has_interp": false,
+          "is_elf": true,
+          "machine": 8,
+          "machine_matches_arch": true,
+          "problems": [],
+          "static": true
+        }
+      },
+      "linker_configured": {
+        "attested": false,
+        "flavor": "ld.lld",
+        "linker": "rust-lld",
+        "source": ".cargo/config.toml"
+      },
+      "marker_order_ok": true,
+      "missing_markers": [],
+      "probes": {
+        "FFW_PROBE:ACCEPT4": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:ACCEPT4 status=PASS fd=6",
+          "status": "PASS"
+        },
+        "FFW_PROBE:ALLOC": {
+          "raw": "FFW_PROBE:ALLOC status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:ATOMICS_32": {
+          "raw": "FFW_PROBE:ATOMICS_32 status=PASS ok=1",
+          "status": "PASS"
+        },
+        "FFW_PROBE:ATOMIC_WIDTH": {
+          "raw": "FFW_PROBE:ATOMIC_WIDTH status=PASS bits=32",
+          "status": "PASS"
+        },
+        "FFW_PROBE:CHARDEV_POLL": {
+          "raw": "FFW_PROBE:CHARDEV_POLL status=PASS rc=2",
+          "status": "PASS"
+        },
+        "FFW_PROBE:CLOCK_MONOTONIC": {
+          "raw": "FFW_PROBE:CLOCK_MONOTONIC status=PASS res_ns=1",
+          "status": "PASS"
+        },
+        "FFW_PROBE:EINTR_READ": {
+          "raw": "FFW_PROBE:EINTR_READ status=PASS rc=-4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:ENTROPY": {
+          "raw": "FFW_PROBE:ENTROPY status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:EPOLL": {
+          "raw": "FFW_PROBE:EPOLL status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:EVENTFD2": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:EVENTFD2 status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:FS_RENAME": {
+          "raw": "FFW_PROBE:FS_RENAME status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:FUTEX": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:FUTEX status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:GETRANDOM": {
+          "capability": "unseeded",
+          "raw": "FFW_PROBE:GETRANDOM status=UNSEEDED rc=-11",
+          "status": "UNSEEDED"
+        },
+        "FFW_PROBE:LOOPBACK_UP": {
+          "raw": "FFW_PROBE:LOOPBACK_UP status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:MEM_PEAK": {
+          "raw": "FFW_PROBE:MEM_PEAK status=PASS kb=64",
+          "status": "PASS"
+        },
+        "FFW_PROBE:NONBLOCK_PIPE": {
+          "raw": "FFW_PROBE:NONBLOCK_PIPE status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:POLL": {
+          "raw": "FFW_PROBE:POLL status=PASS rc=1",
+          "status": "PASS"
+        },
+        "FFW_PROBE:REACTOR_WAKE": {
+          "raw": "FFW_PROBE:REACTOR_WAKE status=PASS rc=1",
+          "status": "PASS"
+        },
+        "FFW_PROBE:SIGNAL": {
+          "raw": "FFW_PROBE:SIGNAL status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:SOCKET_UDP": {
+          "raw": "FFW_PROBE:SOCKET_UDP status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:THREADS": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:THREADS status=PASS tid=60",
+          "status": "PASS"
+        },
+        "FFW_PROBE:TIMERFD": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:TIMERFD status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:TIMER_SIGNALS": {
+          "raw": "FFW_PROBE:TIMER_SIGNALS status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:TLS": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:TLS status=PASS tp=305419896",
+          "status": "PASS"
+        },
+        "FFW_PROBE:UDP_LOOPBACK": {
+          "raw": "FFW_PROBE:UDP_LOOPBACK status=PASS rc=24",
+          "status": "PASS"
+        },
+        "FFW_TEST:ERR_EBADF": {
+          "raw": "FFW_TEST:ERR_EBADF status=PASS errno=9",
+          "status": "PASS"
+        },
+        "FFW_TEST:ERR_ENOENT": {
+          "raw": "FFW_TEST:ERR_ENOENT status=PASS errno=2",
+          "status": "PASS"
+        },
+        "FFW_TEST:ERR_ENOSYS": {
+          "raw": "FFW_TEST:ERR_ENOSYS status=PASS errno=89",
+          "status": "PASS"
+        },
+        "FFW_TEST:PARTIAL_WRITE": {
+          "raw": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096",
+          "status": "PASS"
+        },
+        "FFW_TEST:POS_FD_SHORT_WRITE": {
+          "raw": "FFW_TEST:POS_FD_SHORT_WRITE status=PASS fd=4",
+          "status": "PASS"
+        }
+      },
+      "qemu_exit_code": 0,
+      "qualification_boundary": "Full-system Debian QEMU guest (Linux 4.19 Malta / Linux 4.9 g3beige); proves ISA, endianness, static ELF startup, initramfs device nodes, and syscall ABI probes; does not substitute for stock Sonos 2.4/2.6 kernel or proprietary audio driver qualification.",
+      "rustc_identity": {
+        "commit_date": "2026-11-03",
+        "commit_hash": "708c94ef093ecc42fb8851e17d8383d999727abc",
+        "host": "x86_64-unknown-linux-gnu",
+        "llvm": "23.1.5",
+        "release": "1.101.0-nightly"
+      },
+      "serial_log_path": "boot-mips-serial.log",
+      "serial_log_sha256": "da1bff4032bedee4dd5236a59d972cb4962ee745542e30cdffb8847f165938d8",
+      "status": "PASS",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "da1bff4032bedee4dd5236a59d972cb4962ee745542e30cdffb8847f165938d8",
+      "target_triple": "mips-unknown-linux-musl",
+      "timed_out": false,
+      "unseeded_capabilities": [
+        "GETRANDOM"
+      ],
+      "unsupported_capabilities": [],
+      "validation_errors": []
+    },
+    "ppc": {
+      "arch": "ppc",
+      "binary_bytes": 24416,
+      "binary_sha256": "75ef9b04a3ea3abf871592a09dbdb8acf0d68e94ed60d30e6884f3713dd6825e",
+      "booted_init_sha256": "75ef9b04a3ea3abf871592a09dbdb8acf0d68e94ed60d30e6884f3713dd6825e",
+      "build_identity": {
+        "libc": "none",
+        "linker_flavor": "ld.lld",
+        "runtime": "no_std",
+        "rustc": "1.101.0-nightly",
+        "rustc_commit": "708c94ef0",
+        "target": "powerpc-unknown-linux-musl"
+      },
+      "build_manifest": {
+        "command": [
+          "rch",
+          "exec",
+          "--source-content-receipt",
+          "--",
+          "cargo",
+          "+nightly",
+          "build",
+          "--release",
+          "--target",
+          "powerpc-unknown-linux-musl",
+          "-Z",
+          "build-std=core,panic_abort",
+          "-j",
+          "2"
+        ],
+        "environment": {
+          "CARGO_TARGET_DIR": "build/hello-init-target",
+          "RCH_REQUIRE_REMOTE": "1"
+        },
+        "sources_bound_to_binary": true,
+        "sources_sha256": {
+          ".cargo/config.toml": "5e2a7e29e6c0bdd0a8d5eebf9cd38d1f01b76806cdb7e90b9758c14d21e0b560",
+          "Cargo.lock": "8d3ee710523654e19c102b745e9defbb4b47f72fe204f5b86790981af82bfea3",
+          "Cargo.toml": "4a0b2713665adcbd075de409858c1d6738ed048a166056b53ade5158b28d8868",
+          "build.rs": "e0ee93db501522d3dfba259a72acda430e5612049050cf43fbe737829d46279e",
+          "src/e03_judge.rs": "a966fdd730caecf8ce26f8c69d4e94f9e157007de513af5fe0b1dc6b77aaf124",
+          "src/e03_judge/net.rs": "84a677b24a1dc88145eb32d12dd8502fc3c9b91b88dd41db0ffb31d193dc74f5",
+          "src/e03_judge_rt.rs": "1f6d7e0440abed2812dd7d3b87da4611f39be01f3cdfe16da158776ea72b83aa",
+          "src/e03_probes.rs": "91b94fc236a7570369728aecec195ee0ee63bfc01f062a618e37979a885abe80",
+          "src/e03_probes/net.rs": "840d7713c36efd3606256c301a4a95be6ef072af71314511a843fde51a84b352",
+          "src/e03_probes_rt.rs": "20a8602be872588b6f35dd53d4972d755fcbc07d1d0f42eea852e1c68929d6d9",
+          "src/lib.rs": "4fdc904a8cb3253e974a3e2c5ed89595ae194c7bb6504f79398eef103c929ea1",
+          "src/main.rs": "27a0544918569e8f81f5323985b62091909c84ac81af50905f66b2553d36a3d6"
+        },
+        "target": {
+          "build_std": "core,panic_abort",
+          "builtin_target": true,
+          "cpu_features_overridden": false,
+          "rustflags": [
+            "-C",
+            "linker-flavor=ld.lld",
+            "-C",
+            "relocation-model=static",
+            "-C",
+            "link-arg=--static",
+            "-C",
+            "link-arg=-e",
+            "-C",
+            "link-arg=_start"
+          ],
+          "target_json": null,
+          "triple": "powerpc-unknown-linux-musl"
+        },
+        "toolchain": {
+          "note": "cargo +nightly selects the worker's nightly; the release and commit that built the binary are the probe's FFW_BUILD report in build_identity",
+          "pinned": false,
+          "selector": "+nightly"
+        }
+      },
+      "capture_byte_limit": 8388608,
+      "capture_layout": "stdout-then-stderr; separate raw streams retained",
+      "capture_stop_reason": null,
+      "elapsed_seconds": 4.095,
+      "forbidden_hits": [],
+      "initramfs_sha256": "d534ac7acf64510c4e20f58f5908f334a3fc31ca3b7347eab10965830479f324",
+      "kernel_sha256": "289f40b63ea9aa82743f568ddeaba669a16a859970497dccf7135596da538f98",
+      "kernel_version": "Linux version 4.9.0-0.bpo.6-powerpc (debian-kernel@lists.debian.org) (gcc version 4.9.2 (Debian 4.9.2-10) ) #1 Debian 4.9.88-1+deb9u1~bpo8+1 (2018-05-13)",
+      "libc": {
+        "conclusion": "static_no_loader",
+        "reported_by_probe": "none",
+        "static_elf": {
+          "has_dynamic": false,
+          "has_interp": false,
+          "is_elf": true,
+          "machine": 20,
+          "machine_matches_arch": true,
+          "problems": [],
+          "static": true
+        }
+      },
+      "linker_configured": {
+        "attested": false,
+        "flavor": "ld.lld",
+        "linker": "rust-lld",
+        "source": ".cargo/config.toml"
+      },
+      "marker_order_ok": true,
+      "missing_markers": [],
+      "probes": {
+        "FFW_PROBE:ACCEPT4": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:ACCEPT4 status=PASS fd=6",
+          "status": "PASS"
+        },
+        "FFW_PROBE:ALLOC": {
+          "raw": "FFW_PROBE:ALLOC status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:ATOMICS_32": {
+          "raw": "FFW_PROBE:ATOMICS_32 status=PASS ok=1",
+          "status": "PASS"
+        },
+        "FFW_PROBE:ATOMIC_WIDTH": {
+          "raw": "FFW_PROBE:ATOMIC_WIDTH status=PASS bits=32",
+          "status": "PASS"
+        },
+        "FFW_PROBE:CHARDEV_POLL": {
+          "raw": "FFW_PROBE:CHARDEV_POLL status=PASS rc=2",
+          "status": "PASS"
+        },
+        "FFW_PROBE:CLOCK_MONOTONIC": {
+          "raw": "FFW_PROBE:CLOCK_MONOTONIC status=PASS res_ns=1",
+          "status": "PASS"
+        },
+        "FFW_PROBE:EINTR_READ": {
+          "raw": "FFW_PROBE:EINTR_READ status=PASS rc=-4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:ENTROPY": {
+          "raw": "FFW_PROBE:ENTROPY status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:EPOLL": {
+          "raw": "FFW_PROBE:EPOLL status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:EVENTFD2": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:EVENTFD2 status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:FS_RENAME": {
+          "raw": "FFW_PROBE:FS_RENAME status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:FUTEX": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:FUTEX status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:GETRANDOM": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:GETRANDOM status=PASS rc=16",
+          "status": "PASS"
+        },
+        "FFW_PROBE:LOOPBACK_UP": {
+          "raw": "FFW_PROBE:LOOPBACK_UP status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:MEM_PEAK": {
+          "raw": "FFW_PROBE:MEM_PEAK status=PASS kb=60",
+          "status": "PASS"
+        },
+        "FFW_PROBE:NONBLOCK_PIPE": {
+          "raw": "FFW_PROBE:NONBLOCK_PIPE status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:POLL": {
+          "raw": "FFW_PROBE:POLL status=PASS rc=1",
+          "status": "PASS"
+        },
+        "FFW_PROBE:REACTOR_WAKE": {
+          "raw": "FFW_PROBE:REACTOR_WAKE status=PASS rc=1",
+          "status": "PASS"
+        },
+        "FFW_PROBE:SIGNAL": {
+          "raw": "FFW_PROBE:SIGNAL status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:SOCKET_UDP": {
+          "raw": "FFW_PROBE:SOCKET_UDP status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:THREADS": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:THREADS status=PASS tid=46",
+          "status": "PASS"
+        },
+        "FFW_PROBE:TIMERFD": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:TIMERFD status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:TIMER_SIGNALS": {
+          "raw": "FFW_PROBE:TIMER_SIGNALS status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:TLS": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:TLS status=PASS tp=305419896",
+          "status": "PASS"
+        },
+        "FFW_PROBE:UDP_LOOPBACK": {
+          "raw": "FFW_PROBE:UDP_LOOPBACK status=PASS rc=24",
+          "status": "PASS"
+        },
+        "FFW_TEST:ERR_EBADF": {
+          "raw": "FFW_TEST:ERR_EBADF status=PASS errno=9",
+          "status": "PASS"
+        },
+        "FFW_TEST:ERR_ENOENT": {
+          "raw": "FFW_TEST:ERR_ENOENT status=PASS errno=2",
+          "status": "PASS"
+        },
+        "FFW_TEST:ERR_ENOSYS": {
+          "raw": "FFW_TEST:ERR_ENOSYS status=PASS errno=38",
+          "status": "PASS"
+        },
+        "FFW_TEST:PARTIAL_WRITE": {
+          "raw": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096",
+          "status": "PASS"
+        },
+        "FFW_TEST:POS_FD_SHORT_WRITE": {
+          "raw": "FFW_TEST:POS_FD_SHORT_WRITE status=PASS fd=4",
+          "status": "PASS"
+        }
+      },
+      "qemu_exit_code": 0,
+      "qualification_boundary": "Full-system Debian QEMU guest (Linux 4.19 Malta / Linux 4.9 g3beige); proves ISA, endianness, static ELF startup, initramfs device nodes, and syscall ABI probes; does not substitute for stock Sonos 2.4/2.6 kernel or proprietary audio driver qualification.",
+      "rustc_identity": {
+        "commit_date": "2026-11-03",
+        "commit_hash": "708c94ef093ecc42fb8851e17d8383d999727abc",
+        "host": "x86_64-unknown-linux-gnu",
+        "llvm": "23.1.5",
+        "release": "1.101.0-nightly"
+      },
+      "serial_log_path": "boot-ppc-serial.log",
+      "serial_log_sha256": "c2176da63977e191f61491b634b80dc56f1d2bace2aa105c1df698c8601be638",
+      "status": "PASS",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "c2176da63977e191f61491b634b80dc56f1d2bace2aa105c1df698c8601be638",
+      "target_triple": "powerpc-unknown-linux-musl",
+      "timed_out": false,
+      "unseeded_capabilities": [],
+      "unsupported_capabilities": [],
+      "validation_errors": []
+    }
+  },
+  "local_inspection_tools": {
+    "bootstrap_policy_note": "Nightly -Z build-std=core,panic_abort and asm_experimental_arch are scoped strictly to the freestanding PID-1 bootstrap probe; production application, protocol, and DSP crates target stable Rust with #![forbid(unsafe_code)].",
+    "host_lld": "Homebrew LLD 21.1.8 (compatible with GNU linkers)",
+    "host_rustc_nightly": "rustc 1.101.0-nightly (48f4b0553 2026-10-23)",
+    "qemu_mips": "QEMU emulator version 11.1.2",
+    "qemu_ppc": "QEMU emulator version 11.1.2"
+  },
+  "mkinitramfs_self_test": {
+    "deterministic_gzip": true,
+    "modulo_4x4_cases": 16,
+    "negative_oracles": [
+      "bad_device_tuple_0_5",
+      "missing_trailer",
+      "init_sha256_mismatch"
+    ],
+    "receipt": {
+      "archive_sha256": "19eaef0179d4ad435dd63c567516f0c41672c149201fd4fe2a699ee8c25a244f",
+      "compressed_bytes": 757,
+      "devices": {
+        "dev/console": {
+          "mode": "0o20600",
+          "rdev": [
+            5,
+            1
+          ]
+        },
+        "dev/null": {
+          "mode": "0o20666",
+          "rdev": [
+            1,
+            3
+          ]
+        },
+        "dev/ttyPZ0": {
+          "mode": "0o20600",
+          "rdev": [
+            204,
+            192
+          ]
+        },
+        "dev/ttyS0": {
+          "mode": "0o20600",
+          "rdev": [
+            4,
+            64
+          ]
+        },
+        "dev/urandom": {
+          "mode": "0o20666",
+          "rdev": [
+            1,
+            9
+          ]
+        },
+        "dev/zero": {
+          "mode": "0o20666",
+          "rdev": [
+            1,
+            5
+          ]
+        }
+      },
+      "entry_count": 29,
+      "init_sha256": "8df5d4573ff2f9285b410b491094c1a593603b307b1a35fddba11c7accdba606",
+      "init_size": 34,
+      "raw_cpio_sha256": "14f83f3d39597ec64836c83b0ccb192d249f66473856c27ccfa852df447aa8c2",
+      "uncompressed_bytes": 4096
+    },
+    "status": "PASS"
+  },
+  "run_id": "1412ac47120d4e5b865f9de6e05f50fe",
+  "schema_version": "ffw.e07_e03.receipt.v1",
+  "status": "PASS"
+}

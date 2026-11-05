@@ -1,6 +1,7 @@
 """Independent E07 serial-evidence regressions; fixtures are not guest proof."""
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -602,8 +603,120 @@ class BuildManifestTests(unittest.TestCase):
         for name in ("Cargo.toml", "Cargo.lock", ".cargo/config.toml", "build.rs", "src/main.rs", "src/lib.rs"):
             self.assertRegex(digests[name] or "", r"^[0-9a-f]{64}$", name)
         self.assertEqual(digests, VERIFIER.source_digests(self.CRATE))                 # deterministic
-        on_disk = sorted(p.name for p in (self.CRATE / "src").glob("*.rs"))
-        self.assertEqual(sorted(k[len("src/"):] for k in digests if k.startswith("src/")), on_disk)   # none omitted
+        # None omitted, listed by a walk that shares no code with the implementation (the earlier check used the
+        # same shallow glob as the code it tested, so it could not see a subdirectory module).
+        on_disk = sorted(
+            os.path.relpath(os.path.join(root, name), self.CRATE).replace(os.sep, "/")
+            for root, _dirs, files in os.walk(self.CRATE / "src") for name in files)
+        self.assertEqual(sorted(k for k in digests if k.startswith("src/")), on_disk)
+        for nested in ("src/e03_probes/net.rs", "src/e03_judge/net.rs"):      # the two the first central run missed
+            self.assertRegex(digests.get(nested) or "", r"^[0-9a-f]{64}$", nested)
+
+    def test_a_change_in_a_subdirectory_module_changes_the_digest_set(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            crate = self.copy_crate(scratch)
+            before = VERIFIER.source_digests(crate)
+            net = crate / "src" / "e03_probes" / "net.rs"
+            net.write_bytes(net.read_bytes() + b"\n// one more byte\n")
+            after = VERIFIER.source_digests(crate)
+        self.assertEqual([k for k in before if before[k] != after[k]], ["src/e03_probes/net.rs"])
+        self.assertEqual(set(before), set(after))
+
+    def test_files_added_at_any_depth_or_of_any_kind_enter_the_digest_set(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            crate = self.copy_crate(scratch)
+            before = VERIFIER.source_digests(crate)
+            deep = crate / "src" / "a" / "b"
+            deep.mkdir(parents=True)
+            (deep / "c.rs").write_text("// nested\n")
+            (crate / "src" / "table.bin").write_bytes(b"\x00\x01")                 # include_bytes! can name any file
+            after = VERIFIER.source_digests(crate)
+            (deep / "c.rs").unlink()
+            removed = VERIFIER.source_digests(crate)
+        self.assertEqual(sorted(set(after) - set(before)), ["src/a/b/c.rs", "src/table.bin"])
+        self.assertEqual(set(before) - set(after), set())
+        self.assertEqual(sorted(set(after) - set(removed)), ["src/a/b/c.rs"])      # deleting one shrinks the set again
+
+    def test_a_symlinked_source_directory_is_refused_not_skipped(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            crate = self.copy_crate(scratch)
+            target = Path(scratch) / "elsewhere"
+            target.mkdir()
+            (target / "hidden.rs").write_text("// would be compiled but never digested\n")
+            try:
+                os.symlink(target, crate / "src" / "linked", target_is_directory=True)
+            except (OSError, NotImplementedError):
+                self.skipTest("this filesystem cannot create symlinks")
+            with self.assertRaisesRegex(ValueError, "symlinked directory"):
+                VERIFIER.source_digests(crate)
+
+    def test_the_listing_is_sorted_and_relative_so_two_machines_agree(self):
+        keys = [k for k in VERIFIER.source_digests(self.CRATE) if k.startswith("src/")]
+        self.assertEqual(keys, sorted(keys))
+        self.assertFalse(any(k.startswith("/") or ".." in k.split("/") or "\\" in k for k in keys))
+
+    def minimal_crate(self, scratch):
+        """The smallest crate with a module in a subdirectory: src/a.rs and src/sub/b.rs, nothing else."""
+        crate = Path(scratch) / "tiny"
+        (crate / "src" / "sub").mkdir(parents=True)
+        (crate / "src" / "a.rs").write_bytes(b"// a\n")
+        (crate / "src" / "sub" / "b.rs").write_bytes(b"// b\n")
+        return crate
+
+    def test_a_minimal_crate_yields_a_key_for_the_top_level_and_the_nested_module(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            digests = VERIFIER.source_digests(self.minimal_crate(scratch))
+        self.assertEqual([k for k in digests if k.startswith("src/")], ["src/a.rs", "src/sub/b.rs"])
+        # The values are checked against hashlib directly, not against the runner's own helper.
+        self.assertEqual(digests["src/a.rs"], hashlib.sha256(b"// a\n").hexdigest())
+        self.assertEqual(digests["src/sub/b.rs"], hashlib.sha256(b"// b\n").hexdigest())
+
+    def test_changing_only_the_nested_module_changes_only_its_digest(self):
+        # The planted negative: a shallow `src/*.rs` listing never sees this edit, so before == after there.
+        with tempfile.TemporaryDirectory() as scratch:
+            crate = self.minimal_crate(scratch)
+            before = VERIFIER.source_digests(crate)
+            (crate / "src" / "sub" / "b.rs").write_bytes(b"// b, changed\n")
+            after = VERIFIER.source_digests(crate)
+        self.assertNotEqual(before, after)
+        self.assertEqual(set(before), set(after))
+        self.assertEqual([k for k in before if before[k] != after[k]], ["src/sub/b.rs"])
+
+    def test_the_same_bytes_at_a_different_path_is_a_different_digest_set(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            crate = self.minimal_crate(scratch)
+            before = VERIFIER.source_digests(crate)
+            (crate / "src" / "sub" / "b.rs").rename(crate / "src" / "sub" / "c.rs")
+            after = VERIFIER.source_digests(crate)
+        self.assertEqual(before["src/sub/b.rs"], after["src/sub/c.rs"])
+        self.assertNotIn("src/sub/b.rs", after)
+        self.assertNotEqual(before, after)
+
+    def test_an_unreadable_source_directory_is_an_error_not_a_gap(self):
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root can read any directory")
+        with tempfile.TemporaryDirectory() as scratch:
+            crate = self.minimal_crate(scratch)
+            sub = crate / "src" / "sub"
+            os.chmod(sub, 0)
+            try:
+                try:
+                    os.listdir(sub)
+                except PermissionError:
+                    pass
+                else:
+                    self.skipTest("this filesystem does not enforce directory permissions")
+                # `os.walk` alone would skip the directory and return only src/a.rs.
+                with self.assertRaises(PermissionError):
+                    VERIFIER.source_digests(crate)
+            finally:
+                os.chmod(sub, 0o755)                       # so the scratch directory can be cleaned up
+
+    def test_a_crate_with_no_src_directory_has_an_empty_source_set(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            digests = VERIFIER.source_digests(Path(scratch))
+        self.assertEqual([k for k in digests if k.startswith("src/")], [])
+        self.assertEqual(sorted(digests), sorted(VERIFIER.MANIFEST_FILES))
 
     def test_a_changed_file_changes_exactly_its_own_digest(self):
         with tempfile.TemporaryDirectory() as scratch:

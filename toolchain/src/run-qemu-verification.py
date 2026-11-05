@@ -227,10 +227,39 @@ MANIFEST_FILES = ("Cargo.toml", "Cargo.lock", ".cargo/config.toml", "build.rs")
 OUTSIDE_REPO = "<outside-repo>"
 
 
+def _raise_walk_error(error: OSError) -> None:
+    """`os.walk` swallows the errors it meets (an unreadable directory, a missing top) unless told otherwise.
+    Swallowing one here would drop part of the tree from the digest set without a word."""
+    raise error
+
+
+def source_tree(crate_dir: pathlib.Path) -> list[str]:
+    """Every regular file under ``<crate>/src``, at any depth, as sorted crate-relative POSIX paths.
+
+    All files, not only ``*.rs``: a module can ``include_str!`` or ``include_bytes!`` anything, and a file that
+    decides what the crate compiles to must be in the digest set. Nothing in an existing tree is skipped
+    silently: a symlinked directory is refused rather than walked or skipped, and so is a directory that cannot
+    be read. Either would leave part of the tree out of a receipt that says the sources are bound to the binary,
+    which is the gap an earlier shallow ``src/*.rs`` listing left for ``src/e03_probes/net.rs`` and
+    ``src/e03_judge/net.rs``. The receipt records no exclusions because there are none. A crate with no ``src``
+    directory at all has no source files to digest, so its listing is empty (it could not have been built)."""
+    src = crate_dir / "src"
+    if not src.is_dir():
+        return []
+    found: list[str] = []
+    for root, dirs, files in os.walk(src, onerror=_raise_walk_error):
+        for name in dirs:
+            if (pathlib.Path(root) / name).is_symlink():
+                raise ValueError(f"symlinked directory under src is not digested: {pathlib.Path(root) / name}")
+        found.extend((pathlib.Path(root) / name).relative_to(crate_dir).as_posix() for name in files)
+    return sorted(found)
+
+
 def source_digests(crate_dir: pathlib.Path) -> dict[str, str | None]:
-    """sha256 of the manifest, lockfile, cargo config, build script and every `src/*.rs` of the bootstrap
-    crate, keyed by crate-relative path. A file that is absent is recorded as None, never omitted."""
-    names = [*MANIFEST_FILES, *sorted(p.relative_to(crate_dir).as_posix() for p in (crate_dir / "src").glob("*.rs"))]
+    """sha256 of the manifest, lockfile, cargo config, build script and every file under `src/` (recursively;
+    see `source_tree`) of the bootstrap crate, keyed by crate-relative path. A manifest file that is absent is
+    recorded as None, never omitted."""
+    names = [*MANIFEST_FILES, *source_tree(crate_dir)]
     return {n: sha256_file(crate_dir / n) if (crate_dir / n).is_file() else None for n in names}
 
 
