@@ -20,6 +20,9 @@ pub enum SpeakerReadinessState {
     FaultedSafeMuted { reason: String },
 }
 
+pub mod render;
+pub mod render_log;
+
 #[cfg(any(test, feature = "harness"))]
 mod harness;
 
