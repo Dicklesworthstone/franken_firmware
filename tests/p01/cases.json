@@ -2793,7 +2793,7 @@
     "smoke",
     "full"
    ],
-   "owner": "BeigeMaple: reconcile docs/planning to the live Beads (a regeneration that never overwrites live fields from old generated documents)"
+   "owner": "NavyHollow (P01): regenerate with `python3 docs/planning/generate_from_beads.py` and commit the result when a bead's title, body, acceptance_criteria or edges change or a bead is added; a comment or a status change needs nothing"
   }
  ],
  "invariants": [
@@ -3076,7 +3076,7 @@
     "P01-REC-007"
    ],
    "status": "partial",
-   "note": "the checker and its planted negatives are covered; the real tree is judged by P01-REC-007 and is blocked while the files differ (and has no live export in a git-archive snapshot); a required-feature registry is not compared because no generated planning file or live field carries one"
+   "note": "the checker and its planted negatives are covered; the real tree is judged by P01-REC-007: it passes while docs/planning (regenerated from the live export by docs/planning/generate_from_beads.py) agrees with the live Beads, is blocked while the files differ, and has no live export in a git-archive snapshot; a required-feature registry is not compared because no generated planning file or live field carries one"
   },
   {
    "id": "INV-P01-20",

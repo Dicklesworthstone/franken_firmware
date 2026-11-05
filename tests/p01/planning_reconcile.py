@@ -26,7 +26,7 @@ What is compared, and the code of each difference:
   snapshot_missing_issue          the generated snapshot lacks an alias-mapped issue (its fields cannot be compared)
   acceptance_criteria_differs     live acceptance_criteria differ from the generated snapshot's
   acceptance_criteria_absent_from_generated   live has acceptance_criteria, the generated snapshot has no such field
-  design_package_alias_differs    live `Mapped design packages:` line differs from the catalog's design_packages
+  design_package_alias_differs    live `Mapped design packages:` line differs from the catalog's design_packages (no line = no packages)
   blocking_edge_missing_in_live   the catalog depends on a task through an edge live does not have (a gate edge removed)
   edge_type_differs               the live edge between the same two tasks has another type than `blocks`
   live_edge_not_in_generated      a live edge (any type) the catalog does not have
@@ -164,7 +164,8 @@ def reconcile(live: Dict[str, Any], generated: Dict[str, Any]) -> List[Finding]:
         if issue.get("title") != f"{key}: {task['title']}":
             add("title_differs", key)
         packages = _design_packages(issue.get("description", ""))
-        if packages is None or packages != sorted(task.get("design_packages", [])):
+        # a live body with no `Mapped design packages:` line (a free-form bead) maps to no package: the catalog may claim none, no more
+        if (packages if packages is not None else []) != sorted(task.get("design_packages", [])):
             add("design_package_alias_differs", key)
         if row is None:
             add("snapshot_missing_issue", key)

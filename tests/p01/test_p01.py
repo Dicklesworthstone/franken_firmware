@@ -8,11 +8,13 @@ from __future__ import annotations
 import contextlib
 import copy
 import hashlib
+import importlib.util
 import io
 import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1803,6 +1805,303 @@ class InventoryTests(unittest.TestCase):
             os.unlink(os.path.join(tmp, "Cargo.lock"))
             with self.assertRaises(run_cases.CaseError):
                 self.handler(tmp)
+
+
+def _load_module(path, name):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+GENERATOR_PATH = os.path.join(run_cases.REPO, "docs", "planning", "generate_from_beads.py")
+CHECK_PLANNING_PATH = os.path.join(run_cases.REPO, "docs", "planning", "check_planning.py")
+
+
+class PlanningGenerateTests(unittest.TestCase):
+    """docs/planning/generate_from_beads.py: the live Beads export is the only input, a live field always wins over a stale generated
+    value, and what it writes passes check_planning.py and the P01 reconcile. Synthetic issues; nothing reads the real tracker."""
+
+    def setUp(self):
+        self.gen = _load_module(GENERATOR_PATH, "generate_from_beads_under_test")
+
+    @staticmethod
+    def body(key, title, packages, scope="the scope", inputs=("an input",)):
+        line = ", ".join(packages) if packages else "canonical standalone task"
+        bullets = "\n".join("- " + i for i in inputs)
+        return (f"# {key}: {title}\n\nGoal: a goal.\n\nScope: {scope}\n\nWhy: a reason.\n\nInputs:\n{bullets}\n\nOwned outputs: docs/x.md\n\n"
+                f"Acceptance: it accepts.\n\nEvidence: offline only.\n\nAuthority: offline.\n\nFailure/closure: bounded.\n\n"
+                f"Mapped design packages: {line}.\n\nDetailed implementation and validation contract:\n\n## 1. Contract\n\nText {key}.\n")
+
+    def issues(self):
+        def issue(i, key, title, body, deps=(), **extra):
+            row = {"id": i, "title": f"{key}: {title}", "description": body, "acceptance_criteria": f"- [ ] {key} accepts",
+                   "status": "open", "priority": 1, "issue_type": "task", "created_at": "2026-11-04T10:00:00Z", "created_by": "someone",
+                   "updated_at": "2026-11-04T11:00:00Z", "external_ref": None, "source_repo": "r", "source_repo_path": "/home/someone/secret-checkout",
+                   "compaction_level": 0, "original_size": 0, "labels": ["planning"], "assignee": "Agent", "notes": "private note",
+                   "comments": [{"id": 1, "author": "Agent", "text": "a private comment"}],
+                   "dependencies": [{"issue_id": i, "depends_on_id": d, "type": "blocks"} for d in deps]}
+            row.update(extra)
+            return row
+        return [issue("ffw-aa1", "A1", "the root", self.body("A1", "the root", [], inputs=("Owner scope, sanitized inventory and existing evidence registry.",))),
+                issue("ffw-bb2", "B1", "second", self.body("B1", "second", ["INT-001", "R01"], inputs=("one", "two")), ["ffw-aa1"]),
+                issue("ffw-ff3", "F1", "written by hand", "Own the hand-written thing.\n\nAcceptance:\n- it works\n\nTests:\n- a test\n", ["ffw-bb2"],
+                      priority=3)]
+
+    @staticmethod
+    def text(issues):
+        return "".join(json.dumps(i) + "\n" for i in issues)
+
+    @staticmethod
+    def read(*parts):
+        with open(os.path.join(*parts), encoding="utf-8") as f:
+            return f.read()
+
+    @staticmethod
+    def write_text(text, *parts):
+        with open(os.path.join(*parts), "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def load(self, *parts):
+        return json.loads(self.read(*parts))
+
+    def dump(self, doc, *parts):
+        self.write_text(json.dumps(doc, indent=2), *parts)
+
+    def repo(self, tmp, issues):
+        os.makedirs(os.path.join(tmp, ".beads"))
+        os.makedirs(os.path.join(tmp, "docs", "planning"))
+        with open(os.path.join(tmp, ".beads", "issues.jsonl"), "w", encoding="utf-8") as f:
+            f.write(self.text(issues))
+        with open(os.path.join(tmp, "docs", "SLIM_SPEAKER_PLAN.md"), "w", encoding="utf-8") as f:
+            f.write("plan\n")
+        shutil.copy(CHECK_PLANNING_PATH, os.path.join(tmp, "docs", "planning", "check_planning.py"))
+        return tmp
+
+    def run_generator(self, tmp):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = self.gen.main(["--root", tmp])
+        return code, out.getvalue(), err.getvalue()
+
+    def check(self, tmp):
+        module = _load_module(os.path.join(tmp, "docs", "planning", "check_planning.py"), "check_planning_" + str(abs(hash(tmp))))
+        return module.check()
+
+    def reconcile(self, tmp, live_issues=None):
+        live = planning_reconcile.parse_live(self.text(live_issues) if live_issues is not None else
+                                             self.read(tmp, ".beads", "issues.jsonl"))
+        return planning_reconcile.reconcile(live, planning_reconcile.load_generated(os.path.join(tmp, "docs", "planning")))
+
+    def snapshot_of(self, tmp):
+        base = os.path.join(tmp, "docs", "planning")
+        found = {}
+        for folder, _dirs, names in os.walk(base):
+            for name in names:
+                path = os.path.join(folder, name)
+                with open(path, "rb") as f:
+                    found[os.path.relpath(path, base)] = f.read()
+        return found
+
+    def test_what_it_writes_passes_check_planning_and_the_reconcile_with_template_and_freeform_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo(tmp, self.issues())
+            code, out, err = self.run_generator(tmp)
+            self.assertEqual(code, 0, err)
+            self.assertIn("forms {'freeform': 1, 'template': 2}", out)
+            self.assertEqual(self.reconcile(tmp), [])
+            result = self.check(tmp)
+            self.assertEqual((result["status"], result["tasks"], result["blocking_edges"], result["expected_blocking_edges"]), ("pass", 3, 2, 2), result["errors"])
+            catalog = {t["key"]: t for t in self.load(tmp, "docs", "planning", "task-catalog.json")}
+            self.assertEqual((catalog["B1"]["form"], catalog["B1"]["design_packages"], catalog["B1"]["inputs"], catalog["B1"]["deps"]),
+                             ("template", ["INT-001", "R01"], ["one", "two"], ["A1"]))
+            self.assertEqual((catalog["A1"]["design_packages"], catalog["F1"]["form"], "scope" in catalog["F1"]), ([], "freeform", False))
+            self.assertEqual(catalog["A1"]["inputs"], [], "the placeholder bullet is no input")
+            base = os.path.join(tmp, "docs", "planning")
+            manifest = {m["key"]: m for m in self.load(base, "bead-manifest.json")}
+            self.assertEqual((manifest["A1"]["priority"], manifest["F1"]["priority"], manifest["F1"]["deps"], manifest["F1"]["body"]),
+                             (1, 3, ["B1"], "docs/planning/bead-bodies/F1.md"), "priority is the live priority")
+            rows = {r["id"]: r for r in self.load(base, "beads-snapshot.json")["issues"]}
+            self.assertEqual([(rows[i]["dependency_count"], rows[i]["dependent_count"]) for i in ("ffw-aa1", "ffw-bb2", "ffw-ff3")],
+                             [(0, 1), (1, 1), (1, 0)])
+            self.assertEqual(self.load(base, "bead-map.json"), {"A1": "ffw-aa1", "B1": "ffw-bb2", "F1": "ffw-ff3"})
+            body = self.read(tmp, "docs", "planning", "bead-bodies", "F1.md")
+            self.assertEqual(body, self.issues()[2]["description"], "a body is the live description byte for byte")
+
+    def test_a_live_field_wins_over_a_stale_generated_value_and_the_generator_never_reads_the_old_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo(tmp, self.issues())
+            self.run_generator(tmp)
+            pristine = self.snapshot_of(tmp)
+            base = os.path.join(tmp, "docs", "planning")
+            # plant stale generated values: a title, an acceptance_criteria, a dependency, an alias, a body
+            catalog = self.load(base, "task-catalog.json")
+            catalog[1]["title"] = "a stale title"
+            catalog[2]["deps"] = ["A1"]
+            self.dump(catalog, base, "task-catalog.json")
+            snapshot = self.load(base, "beads-snapshot.json")
+            snapshot["issues"][0]["acceptance_criteria"] = "- [ ] a stale acceptance"
+            self.dump(snapshot, base, "beads-snapshot.json")
+            self.write_text("a stale body", base, "bead-bodies", "B1.md")
+            stale = self.reconcile(tmp)
+            self.assertTrue({"title_differs", "acceptance_criteria_differs", "blocking_edge_missing_in_live"} <= set(planning_reconcile.codes(stale)), stale)
+            self.assertTrue(any("B1: complete body differs" in e for e in self.check(tmp)["errors"]), "check_planning sees the stale body")
+            self.assertNotEqual(self.snapshot_of(tmp), pristine)
+            # the old files are now unreadable: the generator must not need them, and the live values come back
+            self.write_text("{ not json", base, "task-catalog.json")
+            self.write_text("garbage", base, "beads-snapshot.json")
+            self.assertEqual(self.run_generator(tmp)[0], 0)
+            self.assertEqual(self.snapshot_of(tmp), pristine, "the regenerated files are exactly what the live data produces")
+            self.assertEqual(self.reconcile(tmp), [])
+
+    def test_a_later_comment_or_status_change_alone_cannot_fail_the_reconcile_but_a_compared_field_can(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo(tmp, self.issues())
+            self.run_generator(tmp)
+            later = self.issues()
+            for row in later:
+                row["comments"].append({"id": 2, "author": "Other", "text": "a later comment"})
+                row["updated_at"] = "2026-11-06T09:00:00Z"
+            later[0]["status"], later[1]["labels"], later[2]["priority"], later[1]["notes"] = "closed", ["x"], 3, "another note"
+            self.assertEqual(self.reconcile(tmp, later), [])
+            for label, edit, code in (("a title", lambda r: r[1].update(title="B1: renamed"), "title_differs"),
+                                      ("an acceptance_criteria", lambda r: r[0].update(acceptance_criteria="- [ ] changed"), "acceptance_criteria_differs"),
+                                      ("a description", lambda r: r[2].update(description=r[2]["description"] + "x"), "description_differs"),
+                                      ("a gate edge removed", lambda r: r[1].update(dependencies=[]), "live_edge_not_in_generated"),
+                                      ("a new bead", lambda r: r.append(dict(r[0], id="ffw-nn9", title="N1: new", dependencies=[])), "task_absent_from_catalog")):
+                with self.subTest(label):
+                    changed = copy.deepcopy(later)
+                    edit(changed)
+                    got = planning_reconcile.codes(self.reconcile(tmp, changed))
+                    self.assertIn(code if code != "live_edge_not_in_generated" else "blocking_edge_missing_in_live", got)
+
+    def test_check_planning_skips_only_the_template_checks_for_a_freeform_row(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo(tmp, self.issues())
+            self.run_generator(tmp)
+            base = os.path.join(tmp, "docs", "planning")
+            self.assertEqual(self.check(tmp)["status"], "pass")
+            # a templated body that loses its contract tail still fails
+            path = os.path.join(base, "bead-bodies", "B1.md")
+            original = self.read(path)
+            self.write_text(original.replace("Text B1.\n", "Other text.\n"), path)
+            self.assertTrue(any("B1: stale detailed contract" in e for e in self.check(tmp)["errors"]))
+            self.write_text(original, path)
+            # a freeform row is not a way to skip the checks: marking a templated row freeform is refused
+            catalog = self.load(base, "task-catalog.json")
+            catalog[1] = {"key": "B1", "title": "second", "deps": ["A1"], "form": "freeform"}
+            self.dump(catalog, base, "task-catalog.json")
+            self.assertTrue(any("B1: marked freeform but the body follows the template" in e for e in self.check(tmp)["errors"]))
+            # and the checks that need no template field still apply to a freeform row: its body must equal the snapshot
+            self.run_generator(tmp)
+            self.write_text("a different body", base, "bead-bodies", "F1.md")
+            self.assertTrue(any("F1: complete body differs" in e for e in self.check(tmp)["errors"]))
+
+    def test_a_body_with_no_design_package_line_maps_to_no_package_and_a_claim_still_fails(self):
+        live, generated = planning_fixtures.world()
+        issue = planning_fixtures._issue(live, "B")
+        issue["description"] = issue["description"].replace("Mapped design packages: INT-001.\n", "")
+        planning_fixtures._row(generated, "B")["description"] = issue["description"]
+        self.assertEqual(planning_reconcile.codes(planning_reconcile.reconcile(live, generated)), ["design_package_alias_differs"],
+                         "the catalog still claims INT-001 for a body that names none")
+        planning_fixtures._task(generated, "B")["design_packages"] = []
+        self.assertEqual(planning_reconcile.reconcile(live, generated), [])
+
+    def test_a_non_blocking_edge_is_warned_about_kept_out_of_the_catalog_and_still_shows_in_the_reconcile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows = self.issues()
+            rows[0]["dependencies"].append({"issue_id": "ffw-aa1", "depends_on_id": "ffw-ff3", "type": "related"})
+            self.repo(tmp, rows)
+            code, _out, err = self.run_generator(tmp)
+            self.assertEqual(code, 0)
+            self.assertIn("edge type 'related' is not in the catalog", err)
+            catalog = {t["key"]: t for t in self.load(tmp, "docs", "planning", "task-catalog.json")}
+            self.assertEqual(catalog["A1"]["deps"], [])
+            self.assertEqual(self.reconcile(tmp), [("live_edge_not_in_generated", "A1->F1:related")])
+
+    def test_what_is_not_a_planning_fact_never_reaches_the_public_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo(tmp, self.issues())
+            self.run_generator(tmp)
+            blob = b"".join(v for k, v in self.snapshot_of(tmp).items() if k != "check_planning.py")
+            for needle in (b"private note", b"a private comment", b"secret-checkout", b"source_repo_path", b"/home/", b"Agent"):
+                self.assertNotIn(needle, blob)
+            self.assertIn(b"acceptance_criteria", blob)
+
+    def test_it_is_idempotent_writes_only_its_own_files_and_deletes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo(tmp, self.issues())
+            os.makedirs(os.path.join(tmp, "docs", "planning", "bead-bodies"))
+            self.write_text("a body whose bead is gone", tmp, "docs", "planning", "bead-bodies", "GONE.md")
+            before = set(self.snapshot_of(tmp))
+            self.run_generator(tmp)
+            first = self.snapshot_of(tmp)
+            code, out, _err = self.run_generator(tmp)
+            self.assertEqual((code, self.snapshot_of(tmp)), (0, first))
+            self.assertIn("0 changed", out)
+            added = set(first) - before
+            self.assertEqual(added, {"task-catalog.json", "bead-map.json", "bead-manifest.json", "beads-snapshot.json",
+                                     "bead-bodies/A1.md", "bead-bodies/B1.md", "bead-bodies/F1.md"})
+            self.assertIn("bead-bodies/GONE.md", first, "a body whose bead is gone is left on disk, not deleted")
+            self.assertFalse(os.path.exists(os.path.join(tmp, ".beads", "issues.jsonl.new")))
+            self.assertEqual(self.read(tmp, ".beads", "issues.jsonl"), self.text(self.issues()), "the live export is not touched")
+
+    def test_it_refuses_what_it_would_have_to_guess_and_writes_nothing(self):
+        gen = self.gen
+        cases = []
+        rows = self.issues()
+        damaged = copy.deepcopy(rows)
+        damaged[1]["description"] = damaged[1]["description"].replace("Scope: the scope\n\n", "")
+        cases.append(("a templated body missing a section", damaged, "ffw-bb2"))
+        stray = copy.deepcopy(rows)
+        stray[2]["description"] = "Hand-written.\n\nScope: sneaks a template line in.\n"
+        cases.append(("a free-form body with a template-only line", stray, "ffw-ff3"))
+        twin = copy.deepcopy(rows)
+        twin[2]["title"] = "A1: another A"
+        cases.append(("two issues with one key", twin, "both claim the key A"))
+        nokey = copy.deepcopy(rows)
+        nokey[2]["title"] = "no key here"
+        cases.append(("a title with no key", nokey, "does not start with a task key"))
+        dangling = copy.deepcopy(rows)
+        dangling[2]["dependencies"] = [{"issue_id": "ffw-ff3", "depends_on_id": "ffw-zzz", "type": "blocks"}]
+        cases.append(("a dependency on an issue that is not there", dangling, "ffw-zzz"))
+        empty = copy.deepcopy(rows)
+        empty[0]["description"] = ""
+        cases.append(("an empty description", empty, "description is empty"))
+        for label, issues, needle in cases:
+            with self.subTest(label):
+                with self.assertRaisesRegex(gen.GenerateError, needle):
+                    gen.build(self.text(issues))
+        for label, text, needle in (("an export that is not JSON", "{not json\n", "not JSON"), ("an empty export", "", "no issues"),
+                                    ("a duplicate id", self.text([rows[0], rows[0]]), "duplicate issue id")):
+            with self.subTest(label):
+                with self.assertRaisesRegex(gen.GenerateError, needle):
+                    gen.build(text)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo(tmp, damaged)
+            code, _out, err = self.run_generator(tmp)
+            self.assertEqual(code, 2)
+            self.assertIn("ffw-bb2", err)
+            self.assertEqual(sorted(os.listdir(os.path.join(tmp, "docs", "planning"))), ["check_planning.py"], "a refused run writes nothing")
+
+    def test_it_refuses_to_write_through_a_symlink_or_read_a_live_export_inside_its_own_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo(tmp, self.issues())
+            elsewhere = os.path.join(tmp, "elsewhere.json")
+            self.write_text("keep", elsewhere)
+            os.symlink(elsewhere, os.path.join(tmp, "docs", "planning", "task-catalog.json"))
+            code, _out, err = self.run_generator(tmp)
+            self.assertEqual(code, 2)
+            self.assertIn("symlink", err)
+            self.assertEqual(self.read(elsewhere), "keep")
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo(tmp, self.issues())
+            inside = os.path.join(tmp, "docs", "planning", "issues.jsonl")
+            self.write_text(self.text(self.issues()), inside)
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                self.assertEqual(self.gen.main(["--root", tmp, "--live", inside]), 2)
+            self.assertIn("must not be inside docs/planning", err.getvalue())
 
 
 class ResolveTests(unittest.TestCase):

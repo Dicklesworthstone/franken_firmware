@@ -2,7 +2,11 @@
 
 Snapshot list output contains dependency counts, not edges. Exact edge equality
 therefore uses the local .beads/issues.jsonl export; neither input is live proof.
-Run render_planning.py and refresh the snapshot/export separately before checking.
+Run generate_from_beads.py (live Beads -> these files) and refresh the export separately before checking.
+
+A catalog row has "form": "template" (its body follows the generated template, and the labelled fields and the contract tail below
+are checked against it) or "freeform" (a body written by hand in Beads, which has no such fields: only the checks that do not need
+them apply, and a body that DOES carry the template is refused as freeform, so the form cannot be used to skip them).
 """
 import hashlib
 import json
@@ -68,7 +72,7 @@ def check():
         deps = task['deps']
         require(len(deps) == len(set(deps)), f'{key}: duplicate canonical dependency')
         require(all(dep in catalog and dep in mapping for dep in deps), f'{key}: unknown dependency')
-        packages.update(task['design_packages'])
+        packages.update(task.get('design_packages', []))
         item = manifest.get(key)
         issue_id = mapping.get(key)
         if item is None or issue_id not in stored or issue_id not in exported:
@@ -84,11 +88,15 @@ def check():
                        and item['body'] == f'docs/planning/bead-bodies/{key}.md')
         require(manifest_ok, f'{key}: manifest differs from catalog')
         counts['manifest_matches'] += manifest_ok
-        for label, value in [('Scope', task['scope']), ('Acceptance', task['acceptance']),
-                             ('Owned outputs', task['output_path']), ('Evidence', task['evidence_status'])]:
-            require(f'\n{label}: {value}\n' in body, f'{key}: stale body {label}')
-        require(body.endswith('Detailed implementation and validation contract:\n\n' + task['detailed_contract']),
-                f'{key}: stale detailed contract')
+        if task.get('form', 'template') == 'freeform':
+            require(not body.startswith(f'# {key}: ') and '\nDetailed implementation and validation contract:\n\n' not in body,
+                    f'{key}: marked freeform but the body follows the template')
+        else:
+            for label, value in [('Scope', task['scope']), ('Acceptance', task['acceptance']),
+                                 ('Owned outputs', task['output_path']), ('Evidence', task['evidence_status'])]:
+                require(f'\n{label}: {value}\n' in body, f'{key}: stale body {label}')
+            require(body.endswith('Detailed implementation and validation contract:\n\n' + task['detailed_contract']),
+                    f'{key}: stale detailed contract')
         body_ok = body == snap['description'] == export['description']
         title_ok = snap['title'] == export['title'] == key + ': ' + task['title']
         require(body_ok, f'{key}: complete body differs from snapshot/export')
