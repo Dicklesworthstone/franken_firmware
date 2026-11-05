@@ -13,6 +13,7 @@ pub mod format;
 pub mod protection; // D02 (`ffw-7s0`): admitted, fail-muted board protection
 pub mod resample; // D03 (`ffw-j9r`), written by TealSeal
 pub mod ring;
+pub mod volume; // G02 (`ffw-ld0`): group volume, per-room trim, mute and channel roles
 
 pub use convert::{ConvertStats, convert_block, convert_packed};
 pub use format::{

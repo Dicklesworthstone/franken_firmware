@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# G02 end-to-end entry point (bead ffw-ld0): group volume, per-room trim, mute and channel roles.
+# Delegates to tests/g02/run_cases.py (offline, stdlib Python; it builds nothing).
+#
+#   scripts/e2e/g02                              META checks only; every Rust-backed case is BLOCKED
+#   scripts/e2e/g02 --judge LOG [LOG ...]        judge the centrally run cargo test output
+#   scripts/e2e/g02 --tier smoke|full --judge LOG [--receipts DIR]
+#   scripts/e2e/g02 --list                       planned case ids
+#   scripts/e2e/g02 --write-vectors              regenerate tests/g02/vectors.json (Python reference only)
+#
+# The Rust suites run only through the centralized RCH path; this script never invokes cargo:
+#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-dsp -- --nocapture
+#
+# Exit 0 only when every case passed and none is blocked; 1 on a failed case; 3 when the only
+# non-passes are blocked cases (reported, never counted as passed); 2 on usage errors.
+# Numerical tests do not prove physical behavior.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+if [ "$#" -eq 0 ]; then
+  set -- --tier full
+fi
+exec python3 -B "$ROOT/tests/g02/run_cases.py" "$@"
