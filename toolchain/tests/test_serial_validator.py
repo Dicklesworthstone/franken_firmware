@@ -29,6 +29,7 @@ BUILD = "FFW_BUILD target=mips-unknown-linux-musl rustc=1.101.0-nightly rustc_co
 # Frozen protocol transcript, authored independently of parser patterns.
 # This checks the parser only; it establishes no boot or hardware capability.
 POSITIVE = """FFW_MARKER:USERSPACE_START
+FFW_GUEST:CONSOLE_LEVEL status=PASS rc=0
 FFW_HELLO arch=mips-be endian=0x01020304 pid=1 ptr_bits=32
 FFW_BUILD target=mips-unknown-linux-musl rustc=1.101.0-nightly rustc_commit=48f4b0553 linker_flavor=ld.lld libc=none runtime=no_std
 FFW_RUSTC release=1.101.0-nightly commit=48f4b05538b8eca412137042d9647a61e692c6b3 date=2026-10-23 host=aarch64-apple-darwin llvm=23.1.4
@@ -142,6 +143,85 @@ class SerialEvidenceTests(unittest.TestCase):
     def test_truncated_reboot_marker_fails(self):
         text = POSITIVE.replace("FFW_MARKER:REBOOT_REQUEST", "FFW_MARKER:REBOOT_REQUE")
         self.assertEqual(self.status(text), "FAIL")
+
+
+class ConsoleLevelTests(unittest.TestCase):
+    """The guest raises the console log level before anything else, so a kernel printk cannot land inside a marker. On the
+    first PowerPC smoke one did: `FFW_MARKER:TEST_SUCCESS fai[    3.303530] random: crng init done` and then `lures=0`. The
+    parser stays strict (a lenient one could pass a marker the guest never wrote whole); these pin that strictness and the
+    new line. Fixtures check the parser only: no guest ran and no kernel answered.
+"""
+
+    GOOD = "FFW_GUEST:CONSOLE_LEVEL status=PASS rc=0"
+
+    def verify(self, text, ppc=False):
+        if ppc:
+            return VERIFIER.verify_serial_output("ppc", PPC_HELLO, PPC_ENOSYS, text, PPC_TRIPLE)
+        return VERIFIER.verify_serial_output("mips", HELLO, ENOSYS, text, MIPS_TRIPLE)
+
+    def test_the_green_baseline_carries_the_line_on_both_guests(self):
+        self.assertIn(self.GOOD + "\n", POSITIVE)
+        self.assertEqual(self.verify(POSITIVE)["status"], "PASS")
+        self.assertEqual(self.verify(ppc_transcript(POSITIVE), ppc=True)["status"], "PASS")
+
+    def test_the_exact_split_the_powerpc_guest_printed_is_refused(self):
+        split = POSITIVE.replace(
+            "FFW_MARKER:TEST_SUCCESS failures=0\n",
+            "FFW_MARKER:TEST_SUCCESS fai[    3.303530] random: crng init done\nlures=0\n")
+        self.assertNotEqual(split, POSITIVE, "the plant must change the fixture")
+        result = self.verify(ppc_transcript(split), ppc=True)
+        self.assertEqual(result["status"], "FAIL")
+        self.assertIn("invalid:FFW_MARKER:TEST_SUCCESS", result["validation_errors"])
+
+    def test_a_kernel_line_between_whole_lines_is_not_a_failure(self):
+        between = POSITIVE.replace(
+            "FFW_MARKER:TEST_SUCCESS failures=0\n",
+            "[    3.303530] random: crng init done\nFFW_MARKER:TEST_SUCCESS failures=0\n")
+        self.assertNotEqual(between, POSITIVE)
+        self.assertEqual(self.verify(between)["status"], "PASS")
+
+    def test_the_line_is_required(self):
+        result = self.verify(POSITIVE.replace(self.GOOD + "\n", ""))
+        self.assertEqual(result["status"], "FAIL")
+        self.assertIn("FFW_GUEST:CONSOLE_LEVEL", result["missing_markers"])
+
+    def test_a_refused_call_is_named_by_what_the_kernel_answered(self):
+        for rc in ("-1", "-38", "-89", "7", "0"):
+            with self.subTest(rc=rc):
+                result = self.verify(POSITIVE.replace(self.GOOD, f"FFW_GUEST:CONSOLE_LEVEL status=FAIL rc={rc}"))
+                self.assertEqual(result["status"], "FAIL")
+                self.assertIn(f"console_level_refused:status=FAIL rc={rc}", result["validation_errors"])
+
+    def test_a_refusal_line_with_trailing_text_is_invalid_not_named(self):
+        result = self.verify(POSITIVE.replace(self.GOOD, "FFW_GUEST:CONSOLE_LEVEL status=FAIL rc=-1 extra=1"))
+        self.assertEqual(result["status"], "FAIL")
+        self.assertIn("invalid:FFW_GUEST:CONSOLE_LEVEL", result["validation_errors"])
+        self.assertFalse(any(e.startswith("console_level_refused:") for e in result["validation_errors"]))
+
+    def test_only_the_exact_pass_line_in_the_right_place_passes(self):
+        bad = {
+            "rc=1": POSITIVE.replace(self.GOOD, "FFW_GUEST:CONSOLE_LEVEL status=PASS rc=1"),
+            "rc=00": POSITIVE.replace(self.GOOD, "FFW_GUEST:CONSOLE_LEVEL status=PASS rc=00"),
+            "trailing text": POSITIVE.replace(self.GOOD, self.GOOD + " extra=1"),
+            "another name": POSITIVE.replace(self.GOOD, self.GOOD.replace("CONSOLE_LEVEL", "CONSOLE_LEVELS")),
+            "a probe prefix": POSITIVE.replace(self.GOOD, self.GOOD.replace("FFW_GUEST", "FFW_PROBE")),
+            "duplicated": POSITIVE.replace(self.GOOD, self.GOOD + "\n" + self.GOOD),
+            "before the start marker": POSITIVE.replace(self.GOOD + "\n", "").replace(
+                "FFW_MARKER:USERSPACE_START\n", self.GOOD + "\nFFW_MARKER:USERSPACE_START\n"),
+            "after the success marker": POSITIVE.replace(self.GOOD + "\n", "").replace(
+                "FFW_MARKER:REBOOT_REQUEST", self.GOOD + "\nFFW_MARKER:REBOOT_REQUEST"),
+        }
+        for label, text in bad.items():
+            with self.subTest(label):
+                self.assertNotEqual(text, POSITIVE)
+                self.assertEqual(self.verify(text)["status"], "FAIL")
+
+    def test_the_setup_line_is_not_an_e03_probe(self):
+        # It must not reach the capability matrix: the recorded probes are FFW_TEST and FFW_PROBE lines only.
+        result = self.verify(POSITIVE)
+        self.assertNotIn("FFW_GUEST:CONSOLE_LEVEL", result["probes"])
+        self.assertEqual(set(VERIFIER.GUEST_SETUP), {"CONSOLE_LEVEL"})
+        self.assertFalse(set(VERIFIER.GUEST_SETUP) & set(VERIFIER.REQUIRED_PROBES))
 
 
 class BuildIdentityTests(unittest.TestCase):

@@ -2,8 +2,12 @@
 
 **Status.** The guest-side code passed centrally (commit `376039d`): hello-init lib tests, the `speaker-smoke` build for both
 triples, clippy with no warnings, and the feature-off A/B, which is byte-identical to the committed E07 digests. The smoke
-itself, the speaker booting in the guests, has no committed result yet. Nothing below is evidence of a boot until a receipt
-under `toolchain/results/runs/` is committed.
+itself has one committed result: `toolchain/results/runs/22637af083874c1a8c2204a7620838e2/` (2026-11-05), both guests PASS.
+The device speakers in that run were built from `1688a75` (MIPS `476a2d1c…`, PowerPC `f05bcbc6…`) and judged against that
+revision's host catalog (FNV-1a64 `920a91647ae4af73`); hello-init was built from this file's commit, with the console-level
+step below. The command was the one under Command plus `--target-dir`; all six controls were caught. The E07 digests
+committed earlier describe the hello-init before the console-level change; this run's receipt carries the new ones
+(speaker-smoke builds only; no feature-off digest was taken).
 
 A pass would show a linked, static `franken-speaker` starting as a userspace process under the E07 guests (MIPS Malta, Linux
 4.19; PowerPC g3beige, Linux 4.9) and printing the catalog the Rust source defines. It would not show anything about Sonos
@@ -38,6 +42,13 @@ The only success form is status 0 with at least one byte of stdout. Every other 
 (`speaker_failed:<the guest's words>`). The console text between BEGIN and EXIT must match the guest's own count and FNV, and
 must be the catalog the Rust source defines (`speaker_expect.py` parses the nine rows out of `canonical_board_catalog()`).
 Without the speaker flags any `FFW_SPEAKER_*` line fails the guest.
+
+**Console quiet (every guest run, with or without the speaker flags).** `hello-init`'s first action is
+`klogctl(SYSLOG_ACTION_CONSOLE_LEVEL, NULL, 1)`, so only `KERN_EMERG` reaches the serial console and a kernel `printk`
+cannot land inside a marker; one did on the first PowerPC smoke (`FFW_MARKER:TEST_SUCCESS fai[ ... random: crng init done`
+then `lures=0`). The guest prints `FFW_GUEST:CONSOLE_LEVEL status=PASS rc=0` after `USERSPACE_START`; the verifier requires
+that exact line, names a refused call (`console_level_refused:<what the kernel answered>`), and stays strict about partial
+lines on purpose. The line is guest setup, not an E03 capability probe, so it never reaches the capability matrix.
 
 ## Controls (`--speaker-controls`)
 

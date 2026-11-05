@@ -35,6 +35,12 @@ mod e03_probes;
 // rename durability, atomic width. Same shape; verdicts are in the lib crate (`e03_judge_rt`).
 mod e03_probes_rt;
 
+/// `syslog(2)` / `klogctl` action 8: set the console log level to `len`, with no buffer. (`emit_console` warns about action 3,
+/// which reads kernel messages INTO a buffer; this one never touches a buffer.)
+const SYSLOG_ACTION_CONSOLE_LEVEL: usize = 8;
+/// Console level 1: only `KERN_EMERG` still reaches the serial console; everything else stays in the kernel ring.
+const CONSOLE_LEVEL_EMERG_ONLY: usize = 1;
+
 #[cfg(target_arch = "mips")]
 mod sys {
     pub const ARCH_NAME: &[u8] = b"mips-be";
@@ -47,6 +53,7 @@ mod sys {
     pub const NR_GETPID: usize = 4020;
     pub const NR_MOUNT: usize = 4021;
     pub const NR_REBOOT: usize = 4088;
+    pub const NR_SYSLOG: usize = 4103;
     pub const NR_SOCKET: usize = 4183;
     pub const NR_POLL: usize = 4188;
     pub const NR_EPOLL_CREATE: usize = 4248;
@@ -134,6 +141,7 @@ mod sys {
     pub const NR_GETPID: usize = 20;
     pub const NR_MOUNT: usize = 21;
     pub const NR_REBOOT: usize = 88;
+    pub const NR_SYSLOG: usize = 103;
     pub const NR_POLL: usize = 167;
     pub const NR_EPOLL_CREATE: usize = 236;
     pub const NR_CLOCK_GETTIME: usize = 246;
@@ -448,6 +456,19 @@ fn emit_rustc_identity(console_fd: usize) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
+    // First action, before the console is even opened: a kernel printk goes straight to the console and does not wait for a
+    // tty write, so one can land in the middle of a marker line (the first PowerPC smoke printed
+    // `FFW_MARKER:TEST_SUCCESS fai[    3.303530] random: crng init done` / `lures=0`). With the console level at 1 only
+    // KERN_EMERG reaches it. The result is printed below as `FFW_GUEST:CONSOLE_LEVEL`; a refused call fails the guest.
+    let console_level_rc = unsafe {
+        sys_raw(
+            sys::NR_SYSLOG,
+            SYSLOG_ACTION_CONSOLE_LEVEL,
+            0,
+            CONSOLE_LEVEL_EMERG_ONLY,
+            0,
+        )
+    };
     let console_fd = open_console_fd();
 
     emit_console(console_fd, b"FFW_MARKER:USERSPACE_START\n");
@@ -474,6 +495,16 @@ pub extern "C" fn _start() -> ! {
 
     let mut failures: usize = 0;
     if first_byte != 0x01 || pid != 1 {
+        failures += 1;
+    }
+    if !emit_test_result(
+        console_fd,
+        b"FFW_GUEST",
+        b"CONSOLE_LEVEL",
+        console_level_rc == 0,
+        b"rc",
+        console_level_rc,
+    ) {
         failures += 1;
     }
 

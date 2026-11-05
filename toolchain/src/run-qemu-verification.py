@@ -132,6 +132,20 @@ def required_probe_pattern(name: str) -> str:
     return rf"FFW_PROBE:{name} status=PASS {key}={success}"
 
 
+# Guest setup that is not a kernel capability, so it is not an E03 probe and never reaches the capability matrix. The guest's
+# first action is klogctl(SYSLOG_ACTION_CONSOLE_LEVEL, NULL, 1): only KERN_EMERG then reaches the serial console, so a kernel
+# printk cannot land inside a marker (it split FFW_MARKER:TEST_SUCCESS on the first PowerPC smoke). The exact PASS line is
+# required; a refused call is named (`console_level_refused:`); and the parser stays strict about partial lines on purpose:
+# a lenient one could pass a marker the guest never wrote whole.
+GUEST_SETUP: dict[str, tuple[str, str]] = {"CONSOLE_LEVEL": ("rc", "0")}
+CONSOLE_LEVEL_FAILURE = re.compile(r"FFW_GUEST:CONSOLE_LEVEL status=FAIL rc=-?[0-9]+")
+
+
+def guest_setup_pattern(name: str) -> str:
+    key, success = GUEST_SETUP[name]
+    return rf"FFW_GUEST:{name} status=PASS {key}={success}"
+
+
 # `rustc -vV` as seen by the compiler that built the booted bytes (build.rs), printed once by the probe. E07 asks
 # the receipt to pin the compiler; this records it as observed provenance, not enforcement (no toolchain pin).
 RUSTC_TOKEN = r"[A-Za-z0-9._+-]{1,40}"
@@ -598,6 +612,7 @@ def verify_serial_output(
             for name in OPTIONAL_PROBES
         },
         **{f"FFW_PROBE:{name}": required_probe_pattern(name) for name in REQUIRED_PROBES},
+        **{f"FFW_GUEST:{name}": guest_setup_pattern(name) for name in GUEST_SETUP},
         "FFW_MARKER:TEST_SUCCESS": r"FFW_MARKER:TEST_SUCCESS failures=0",
         "FFW_MARKER:REBOOT_REQUEST": r"FFW_MARKER:REBOOT_REQUEST",
     }
@@ -620,6 +635,9 @@ def verify_serial_output(
             if speaker is not None and key == "FFW_SPEAKER_EXIT" and speaker_expect.EXIT_FAILURE.fullmatch(line):
                 # The guest said exactly how the speaker failed; name that, do not call it a malformed line.
                 errors.append("speaker_failed:" + line[len("FFW_SPEAKER_EXIT "):])
+            elif key == "FFW_GUEST:CONSOLE_LEVEL" and CONSOLE_LEVEL_FAILURE.fullmatch(line):
+                # The guest said exactly what the kernel answered; name that.
+                errors.append("console_level_refused:" + line[len("FFW_GUEST:CONSOLE_LEVEL "):])
             else:
                 errors.append(f"invalid:{key}")
         elif key == "FFW_TEST:PARTIAL_WRITE" and int(line.rsplit("=", 1)[1]) >= 8192:
