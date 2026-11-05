@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Q01 end-to-end entry point (bead ffw-gmq): the offline Virtual House harness, judged from a centrally run cargo test log.
+# Delegates to tests/q01/run_cases.py (offline, stdlib Python; it builds and boots nothing and never invokes cargo).
+#
+#   scripts/e2e/q01                             META checks only; every case that needs a log is BLOCKED (exit 3)
+#   scripts/e2e/q01 --judge LOG [LOG ...]       judge the centrally run `cargo test ... -- --nocapture` output
+#   scripts/e2e/q01 --judge LOG --receipts DIR  also write the redacted verified record (log sha256, no log text, no paths)
+#   scripts/e2e/q01 --list                      the cases and what each shows
+#   scripts/e2e/q01 --self-test                 the judge's own tests (synthetic logs built in memory; not evidence about the Rust)
+#
+# The Rust suite runs only through the centralized RCH path, never on the orchestrator:
+#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-speaker --features harness --lib --locked -- --nocapture
+#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p franken-speaker --features harness --all-targets --locked -- -D warnings
+# The measurement is a pair of cargo tests judged by name and by the records they print (no host binary is run, so there is nothing for
+# RCH to sync back).
+#
+# Exit 0 only when every case passed and none is blocked; 1 on a failed case or check; 3 when the only non-passes are blocked cases
+# (reported, never counted as passed); 2 on usage errors.
+# Everything here is simulation. Nothing is measured about a board, a provider, a network or the level of any block
+# (docs/contracts/q01.md sections 1 and 6).
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+if [ "${1:-}" = "--self-test" ]; then
+  shift
+  exec python3 -B -m unittest discover -s "$ROOT/tests/q01" -p 'test_*.py' "$@"
+fi
+exec python3 -B -I "$ROOT/tests/q01/run_cases.py" "$@"

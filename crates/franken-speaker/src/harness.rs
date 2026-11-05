@@ -5124,4 +5124,101 @@ mod tests {
             }
         }
     }
+
+    // ---- Q01 measurement: what every member renders under each source, for the e2e judge (`tests/q01`, `scripts/e2e/q01`) ------
+    //
+    // These two tests print one JSON record per line (`Q01-MEMBER`, `Q01-PLANT`) into the `cargo test -- --nocapture` output. The
+    // judge re-derives every record independently (it recomputes the digest of silence itself and cross-checks it against the
+    // counter) and holds `docs/contracts/q01.md` limit 1 to what the records show. The tests assert the same things, so a pass by
+    // name means something on its own. The campaign is the one `franken-speaker --virtual-house` runs: seed `SEED`, 250 blocks.
+
+    const MEASURE_BLOCKS: u64 = 250;
+
+    fn signal_name(signal: SourceSignal) -> &'static str {
+        match signal {
+            SourceSignal::Opposed => "opposed",
+            SourceSignal::Asymmetric => "asymmetric",
+        }
+    }
+
+    #[test]
+    fn q01_measure_what_every_member_renders_under_each_source() {
+        for signal in [SourceSignal::Opposed, SourceSignal::Asymmetric] {
+            let scenario = Scenario {
+                signal,
+                ..Scenario::NONE
+            };
+            let report = run_scenario(SEED, MEASURE_BLOCKS, None, scenario)
+                .expect("the campaign passes under this source");
+            assert_eq!(report.members.len(), 5);
+            for (id, stats) in &report.members {
+                println!(
+                    "Q01-MEMBER {}",
+                    serde_json::json!({
+                        "signal": signal_name(signal),
+                        "member": id,
+                        "seed": SEED,
+                        "blocks": MEASURE_BLOCKS,
+                        "channels": stats.hardware_channels,
+                        "rendered_blocks": stats.rendered_blocks,
+                        "audible_authentic_blocks": stats.audible_authentic_blocks,
+                        "rendered_nonzero_blocks": stats.rendered_nonzero_blocks,
+                        "digest": stats.output_fnv1a64,
+                    })
+                );
+                // The two independent measurements of "rendered only zeros" agree: no non-zero block exactly when the digest is
+                // the digest of that many blocks of silence.
+                assert_eq!(
+                    stats.rendered_nonzero_blocks == 0,
+                    stats.output_fnv1a64 == silent_digest(MEASURE_BLOCKS, stats.hardware_channels),
+                    "{id}: the counter and the digest disagree about silence"
+                );
+                if signal == SourceSignal::Asymmetric {
+                    assert!(stats.audible_authentic_blocks > 0, "{id} never sounded");
+                    assert!(
+                        stats.rendered_nonzero_blocks > 0,
+                        "{id} rendered only zeros"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn q01_measure_planted_silence_is_named_for_every_member() {
+        let scenario = Scenario {
+            signal: SourceSignal::Asymmetric,
+            ..Scenario::NONE
+        };
+        // The remove-the-plant control: the same campaign with no plant passes.
+        run_scenario(SEED, MEASURE_BLOCKS, None, scenario)
+            .expect("the control: the unplanted campaign passes");
+        println!(
+            "Q01-PLANT {}",
+            serde_json::json!({ "member": null, "planted": false, "outcome": "ok", "message": null })
+        );
+        for member in [
+            "spk-office-s5",
+            "spk-bedroom-s1",
+            "spk-kitchen-s12",
+            "spk-den-s3",
+            "spk-living-sub",
+        ] {
+            let error = run_scenario(
+                SEED,
+                MEASURE_BLOCKS,
+                Some(OutputFault::SilentInput { member_id: member }),
+                scenario,
+            )
+            .expect_err("a member that renders silence must fail the campaign");
+            println!(
+                "Q01-PLANT {}",
+                serde_json::json!({ "member": member, "planted": true, "outcome": "error", "message": error })
+            );
+            assert!(
+                error.starts_with(&format!("member_rendered_silence: {member}:")),
+                "{error}"
+            );
+        }
+    }
 }

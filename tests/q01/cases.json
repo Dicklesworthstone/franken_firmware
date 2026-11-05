@@ -1,0 +1,281 @@
+{
+  "schema": "ffw.q01.cases.v1",
+  "bead": "ffw-gmq",
+  "notes": "Every unit test of franken-speaker's harness and control adapter is in exactly one case. A case passes only when each of its tests reports ok in a centrally run `cargo test -- --nocapture` log; the measurement cases also need their records to re-derive in the judge. A case with no observation in the log is blocked, never passed.",
+  "cases": [
+    {
+      "id": "Q01-C01",
+      "group": "bring-up",
+      "class": "positive",
+      "what": "a node is brought up through the real readiness sequence and reaches ready; the HAL itself still refuses an unmute before priming; the readiness spec for the clock is pinned to N03's configuration",
+      "tests": [
+        "harness::tests::nominal_bring_up_is_observed_and_reaches_ready",
+        "harness::tests::the_hal_still_refuses_an_unmute_before_priming_on_its_own",
+        "harness::tests::harness_oracle_spec_for_the_clock_is_pinned_to_the_n03_configuration"
+      ]
+    },
+    {
+      "id": "Q01-C02",
+      "group": "bring-up",
+      "class": "negative",
+      "what": "a weakened driver threshold and a node that skips its own gate on an unlocked clock are each refused by name",
+      "tests": [
+        "harness::tests::canary_premature_unmute_through_a_weakened_driver_threshold_is_refused",
+        "harness::tests::canary_false_ready_on_an_unlocked_clock_is_refused_even_when_the_node_skips_its_own_gate"
+      ]
+    },
+    {
+      "id": "Q01-C03",
+      "group": "timeline",
+      "class": "positive",
+      "what": "a block's start maps back to its scheduled frame however long the campaign runs; a locked node sounds at the admitted start and not before; the simulated member clocks are pinned",
+      "tests": [
+        "harness::tests::a_blocks_start_maps_back_to_its_scheduled_frame_however_long_the_campaign_runs",
+        "harness::tests::the_old_mapping_a_block_index_times_the_rounded_period_misses_its_frame_and_the_exact_one_does_not",
+        "harness::tests::a_locked_node_keeps_presenting_the_scheduled_frame_past_62_500_blocks",
+        "harness::tests::a_locked_node_sounds_at_the_admitted_start_and_presents_the_scheduled_frame_at_the_reference_instant",
+        "harness::tests::nothing_sounds_before_the_admitted_start_and_the_first_sounding_block_is_the_scheduled_one",
+        "harness::tests::the_simulated_member_clocks_are_pinned_so_a_change_to_them_is_deliberate"
+      ]
+    },
+    {
+      "id": "Q01-C04",
+      "group": "clock faults",
+      "class": "negative",
+      "what": "a suspend, a clock leap, an unadmitted node, and unsolicited, replayed, stale and wrong-leader probes each mute or change nothing, and never produce audio; request bases differ per member and boot",
+      "tests": [
+        "harness::tests::a_suspend_mid_stream_mutes_within_one_probe_and_a_relock_resumes_at_a_new_admitted_start",
+        "harness::tests::a_leap_forward_mid_stream_mutes_at_once_and_a_relock_resumes_at_a_new_admitted_start",
+        "harness::tests::an_unadmitted_node_never_sounds_and_admitting_it_makes_it_sound_at_the_start",
+        "harness::tests::unsolicited_replayed_stale_and_wrong_leader_probes_change_nothing_and_never_produce_audio",
+        "harness::tests::each_member_and_each_boot_gets_a_different_request_base_and_a_recorded_answer_cannot_cross_a_reboot"
+      ]
+    },
+    {
+      "id": "Q01-C05",
+      "group": "campaign",
+      "class": "positive",
+      "what": "the mixed S1/S2 fleet streams every block of every member, measures a skew from independent clocks, checks every channel against the shadow render, and is deterministic",
+      "tests": [
+        "harness::tests::virtual_house_streams_mixed_s1_s2_fleet_with_zero_output_discontinuities",
+        "harness::tests::the_campaign_sounds_every_block_of_every_member_and_measures_a_skew_from_independent_clocks",
+        "harness::tests::campaign_checks_every_channel_against_the_shadow_render_and_is_simulation_only",
+        "harness::tests::the_campaign_is_deterministic"
+      ]
+    },
+    {
+      "id": "Q01-C06",
+      "group": "campaign",
+      "class": "negative",
+      "what": "a corrupted sample in any channel and a missing final block are caught",
+      "tests": [
+        "harness::tests::canary_sample_corruption_in_any_channel_of_the_real_campaign_is_caught",
+        "harness::tests::canary_a_missing_final_block_is_caught_as_a_truncated_stream"
+      ]
+    },
+    {
+      "id": "Q01-C07",
+      "group": "campaign",
+      "class": "negative",
+      "what": "an unmeasured skew is not a pass: a mostly muted house, a refused member, a campaign that compared nothing and a house with one participant make no synchronisation claim they cannot support",
+      "tests": [
+        "harness::tests::a_run_in_which_all_but_one_member_is_muted_does_not_pass_the_skew_gate",
+        "harness::tests::a_refused_member_is_out_of_the_skew_gate_but_a_silently_muted_one_is_not",
+        "harness::tests::a_campaign_that_compared_nothing_does_not_report_the_skew_target_as_met",
+        "harness::tests::a_house_with_one_participant_left_makes_no_synchronisation_claim"
+      ]
+    },
+    {
+      "id": "Q01-C08",
+      "group": "fencing",
+      "class": "positive",
+      "what": "the fencing probe drives the real session and the independent oracle accepts it; a rejected command does not adopt its epoch",
+      "tests": [
+        "harness::tests::campaign_fencing_probe_drives_the_real_session_and_the_oracle_accepts_it",
+        "harness::tests::a_rejected_command_does_not_adopt_its_epoch_and_cannot_fence_out_the_coordinator"
+      ]
+    },
+    {
+      "id": "Q01-C09",
+      "group": "fencing",
+      "class": "limit",
+      "what": "KNOWN LIMIT, pinned: a valid command at an undeclared epoch is still applied",
+      "tests": [
+        "harness::tests::known_limit_a_valid_command_at_an_undeclared_epoch_is_still_applied"
+      ]
+    },
+    {
+      "id": "Q01-C10",
+      "group": "diagnostics",
+      "class": "positive",
+      "what": "a planted fault leaves itself and its causal chain in the log; the default sink bounds a burst but never limits a healthy stream; an unavailable, full, zero-capacity or tiny sink changes nothing else",
+      "tests": [
+        "harness::tests::a_planted_fault_leaves_the_fault_and_its_causal_chain_in_the_log",
+        "harness::tests::the_default_campaign_sink_bounds_a_burst_but_never_limits_a_healthy_stream",
+        "harness::tests::unavailable_full_zero_capacity_and_tiny_log_sinks_do_not_change_the_campaign"
+      ]
+    },
+    {
+      "id": "Q01-C11",
+      "group": "playout",
+      "class": "negative",
+      "what": "the real N04 engine decides every block as the seeded schedule says; a late block, a reordered pair, a previous-epoch datagram and a clock leap each move exactly what they should and nothing else",
+      "tests": [
+        "harness::tests::the_real_playout_engine_decides_every_block_as_the_seeded_schedule_says_it_must",
+        "harness::tests::a_late_block_in_the_whole_campaign_is_refused_as_late_and_concealed_and_nothing_else_moves",
+        "harness::tests::a_reordered_pair_in_the_whole_campaign_changes_the_arrival_order_and_nothing_else",
+        "harness::tests::a_previous_epoch_datagram_in_the_whole_campaign_is_refused_twice_and_nothing_else_moves",
+        "harness::tests::a_clock_leap_in_the_whole_campaign_blinds_the_engine_until_the_relock_and_it_catches_up_as_overdue"
+      ]
+    },
+    {
+      "id": "Q01-C12",
+      "group": "negotiation",
+      "class": "positive",
+      "what": "every member's stream comes out of an N01 negotiation; each session has its own key; a member that answers with an unsupported version or cannot take a full block is refused and muted with its cause; peer identities and nonces are valid, distinct and deterministic",
+      "tests": [
+        "harness::tests::every_member_stream_is_created_through_negotiation_with_the_agreed_version_and_format",
+        "harness::tests::a_datagram_made_for_one_member_is_refused_by_another_because_each_session_has_its_own_key",
+        "harness::tests::a_member_whose_answer_carries_an_unsupported_message_version_is_refused_and_muted_with_its_cause",
+        "harness::tests::a_member_that_cannot_take_a_full_block_is_refused_by_the_member_and_both_refusals_are_independent",
+        "harness::tests::simulated_peer_identities_and_nonces_are_valid_distinct_and_deterministic",
+        "harness::tests::the_planted_version_refusal_is_about_the_version_and_not_a_broken_tag"
+      ]
+    },
+    {
+      "id": "Q01-C13",
+      "group": "source replacement",
+      "class": "positive",
+      "what": "two real adapters racing to replace the source admit exactly one in either order and the house cuts over at one frame; the program each block carried is read from the bytes that sounded",
+      "tests": [
+        "harness::tests::each_source_epoch_publishes_its_own_audio_and_epoch_one_is_the_campaigns_original_signal",
+        "harness::tests::the_cutover_the_model_restates_is_where_the_pump_stands_93_blocks_ahead",
+        "harness::tests::a_campaign_with_no_source_change_has_one_program_and_the_nominal_counts",
+        "harness::tests::two_adapters_racing_to_replace_the_source_admit_exactly_one_in_either_order_and_the_house_cuts_over_at_one_frame"
+      ]
+    },
+    {
+      "id": "Q01-C14",
+      "group": "source replacement",
+      "class": "negative",
+      "what": "a replaced adapter that keeps publishing is refused by the gate; a datagram of the replaced stream is refused by the rebound receiver; a planted source fault with no source change is an error",
+      "tests": [
+        "harness::tests::a_replaced_adapter_that_keeps_publishing_is_refused_by_the_gate_and_its_audio_never_sounds",
+        "harness::tests::a_datagram_of_the_replaced_stream_after_the_rebind_is_refused_by_the_receiver_and_changes_nothing_else",
+        "harness::tests::a_planted_source_fault_without_a_source_change_and_a_change_outside_the_campaign_are_errors"
+      ]
+    },
+    {
+      "id": "Q01-C15",
+      "group": "relative volume",
+      "class": "positive",
+      "what": "the real G03 endpoint and N02 channel: a plain-SOAP retry applies again, a tailnet retry with the same number applies once and reports the volume as it is now, a stale revision is refused and remembered, a bad proof changes nothing, clamps still move the revision, a group step moves the group",
+      "tests": [
+        "control_adapter::tests::a_local_legacy_retry_of_a_relative_step_applies_again",
+        "control_adapter::tests::a_tailnet_retry_with_the_same_command_number_applies_once",
+        "control_adapter::tests::a_tailnet_replay_reports_the_volume_as_it_is_now_not_as_it_was_committed",
+        "control_adapter::tests::a_tailnet_step_composed_against_an_older_revision_is_refused_and_remembered",
+        "control_adapter::tests::a_tailnet_request_signed_with_a_key_that_is_not_admitted_changes_nothing",
+        "control_adapter::tests::a_relative_step_clamps_and_a_clamped_step_still_moves_the_revision",
+        "control_adapter::tests::a_group_step_moves_the_group_volume_and_not_the_member"
+      ]
+    },
+    {
+      "id": "Q01-C16",
+      "group": "relative volume",
+      "class": "positive",
+      "what": "the volume plan the contract predicts: the race plan and the reference plan, an invalid plan is refused (with a valid control), an unfinished plan is not a clean run, the harness key store follows the secret-store contract",
+      "tests": [
+        "control_adapter::tests::the_race_plan_does_what_the_contract_predicts",
+        "control_adapter::tests::the_reference_plan_reaches_the_same_volumes_without_either_ingress",
+        "control_adapter::tests::an_invalid_plan_is_refused_before_anything_is_sent",
+        "control_adapter::tests::a_valid_plan_is_not_refused",
+        "control_adapter::tests::a_plan_that_did_not_finish_is_not_a_clean_run",
+        "control_adapter::tests::the_harness_keys_follow_the_secret_store_contract"
+      ]
+    },
+    {
+      "id": "Q01-C17",
+      "group": "relative volume",
+      "class": "negative",
+      "what": "a tailnet retry sent as a new command and a stale revision a client refreshes are each named by the oracle (adapter level and whole campaign), each with its unplanted control; a planted volume fault with no plan is refused",
+      "tests": [
+        "control_adapter::tests::a_retry_sent_as_a_new_command_is_named_by_the_oracle",
+        "control_adapter::tests::a_stale_revision_a_client_refreshes_is_named_by_the_oracle",
+        "harness::tests::a_tailnet_retry_sent_as_a_new_command_fails_the_campaign_by_name",
+        "harness::tests::a_stale_tailnet_revision_a_client_refreshes_fails_the_campaign_by_name",
+        "harness::tests::a_planted_volume_fault_needs_a_volume_plan"
+      ]
+    },
+    {
+      "id": "Q01-C18",
+      "group": "relative volume",
+      "class": "positive",
+      "what": "the race around a source change does what the contract predicts and sounds exactly like a reference that sets the same volumes directly; a campaign with no plan reports none and sounds the same every time",
+      "tests": [
+        "harness::tests::the_volume_race_around_a_source_change_does_what_the_contract_predicts",
+        "harness::tests::the_volume_race_sounds_exactly_like_a_reference_that_sets_the_same_volumes_directly",
+        "harness::tests::a_campaign_with_no_volume_plan_reports_none_and_sounds_the_same_every_time"
+      ]
+    },
+    {
+      "id": "Q01-C19",
+      "group": "sound evidence",
+      "class": "control",
+      "what": "the sample digest tells volume trajectories apart (a wrong reference differs in that member only); the digest of silence equals the independently computed value; the endpoint member renders and a mono-routed member does not",
+      "tests": [
+        "harness::tests::a_reference_that_reaches_a_different_volume_sounds_different_in_that_member_only",
+        "harness::tests::the_digest_of_silence_is_the_value_computed_independently",
+        "harness::tests::a_member_whose_channels_all_come_from_the_mono_mix_renders_silence_and_the_endpoint_member_does_not"
+      ]
+    },
+    {
+      "id": "Q01-C20",
+      "group": "sound evidence",
+      "class": "positive",
+      "what": "under the Asymmetric source every member renders sound; the source keeps the left channel and its mono mix never cancels; a member the gate never let sound is not asked to have rendered anything",
+      "tests": [
+        "harness::tests::the_asymmetric_source_keeps_the_left_channel_and_its_mono_mix_never_cancels",
+        "harness::tests::with_a_source_whose_channels_do_not_cancel_every_member_renders_sound",
+        "harness::tests::a_member_that_never_sounded_may_render_only_zeros_under_the_new_source"
+      ]
+    },
+    {
+      "id": "Q01-C21",
+      "group": "sound evidence",
+      "class": "limit",
+      "what": "LIMIT 1, pinned: under the original opposed source a mono-routed member renders only zeros and that is not a failure",
+      "tests": [
+        "harness::tests::under_the_original_source_the_mono_routed_member_renders_only_zeros_and_that_is_not_a_failure"
+      ]
+    },
+    {
+      "id": "Q01-C22",
+      "group": "sound evidence",
+      "class": "negative",
+      "what": "a member handed silence fails the campaign by name under Asymmetric, and passes every other oracle under the original source (which is why the question is asked)",
+      "tests": [
+        "harness::tests::a_member_that_renders_silence_fails_the_campaign_by_name",
+        "harness::tests::without_the_new_question_a_member_handed_silence_passes_every_other_oracle"
+      ]
+    },
+    {
+      "id": "Q01-M01",
+      "group": "measurement",
+      "class": "measurement",
+      "what": "what every member renders under each source at the --virtual-house campaign: one Q01-MEMBER record per member and source, judged from the log",
+      "tests": [
+        "harness::tests::q01_measure_what_every_member_renders_under_each_source"
+      ]
+    },
+    {
+      "id": "Q01-M02",
+      "group": "measurement",
+      "class": "measurement",
+      "what": "the SilentInput plant is named for every one of the five members, with its remove-the-plant control: one Q01-PLANT record per run, judged from the log",
+      "tests": [
+        "harness::tests::q01_measure_planted_silence_is_named_for_every_member"
+      ]
+    }
+  ]
+}
