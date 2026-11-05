@@ -1,0 +1,2254 @@
+//! The HAL session: one owner driving one device through its lifecycle (`P04` / `ffw-0bh`).
+//!
+//! `Closed -> Prepared -> Running -> Draining -> Prepared -> Closed`, with `Faulted` reachable from
+//! anywhere. The rules this layer enforces, each with a test:
+//!
+//! * **Fail muted.** A driver error, a malformed or forged response, a completion for a slot that
+//!   is not in flight, or a counter that claims more than was submitted moves the session to
+//!   `Faulted`, asks the device to mute, and records the fault. Nothing the device says is believed
+//!   until it has been checked.
+//! * **Tokens are inert.** A [`SubmitToken`] is a slot number and a generation. It owns nothing and
+//!   has no `Drop`, so forgetting it, dropping it, or never polling for it cannot return storage.
+//! * **The owner holds the storage.** A slot becomes `Free` only when the device acknowledges it (a
+//!   matching completion, a flush acknowledgment, or a reset acknowledgment). Storage the kernel may
+//!   still read is never reused, and destroying the session keeps it alive (see
+//!   [`crate::slots`]).
+//! * **Stop requested is not stopped.** `Draining` ends on a flush acknowledgment. If none arrives
+//!   in time the drain reports `TimedOut`, quarantines what is in flight and faults; it never
+//!   reports success it did not observe.
+//! * **No audible transition without a stop deadline.** If the device cannot state how long a stop
+//!   takes, [`HalSession::start`] is refused.
+//!
+//! This is a host model. Run against the fake device it shows the adapter logic and nothing about
+//! any board; the receipt says so.
+
+use crate::abi::{AbiError, DeviceEvent, RawGeometry, decode_event, decode_geometry};
+use crate::backend::{AbiKind, DeviceBackend, DriverError, LocalEventCapability, Op, Provenance};
+use crate::contract::ContractMatrix;
+use crate::slots::{
+    CompletionProblem, LeakLedger, MAX_BLOCK_BYTES, MAX_SLOTS, SlotError, SlotState, SlotTable,
+    TokenState,
+};
+use franken_board_profile::{AmplifierPolicy, BoardProfile, UnsupportedReasonCode};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Schema string of a [`SessionReceipt`].
+pub const RECEIPT_SCHEMA: &str = "ffw.p04.session_receipt.v1";
+/// Most device events handled by one [`HalSession::poll`].
+pub const MAX_EVENTS_PER_POLL: usize = 64;
+/// Most fault records kept; further ones are counted, not stored.
+pub const MAX_FAULT_RECORDS: usize = 16;
+/// Slots that may be quarantined before the session records saturation.
+pub const DEFAULT_QUARANTINE_CAP: usize = 4;
+const MAX_CHANNELS: usize = 8;
+
+static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionPhase {
+    Closed,
+    Prepared,
+    Running,
+    Draining,
+    Faulted,
+}
+
+/// What the session knows about the amplifier. `Unknown` means a mute was not acknowledged or the
+/// device is gone, so the physical state cannot be assumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Amp {
+    Muted,
+    Unmuted,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MalformedKind {
+    Geometry,
+    Event,
+    WriteCount,
+    SubmitCount,
+}
+
+/// Why the session faulted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FaultCode {
+    DriverError {
+        op: Op,
+        error: DriverError,
+    },
+    Malformed {
+        what: MalformedKind,
+        abi: Option<AbiError>,
+    },
+    BadCompletion {
+        problem: CompletionProblem,
+    },
+    /// A completion arrived on an ABI that has no completions.
+    UnexpectedCompletion,
+    CounterOverclaim,
+    DeviceLost,
+    DrainTimedOut,
+    DrainCancelled,
+    MuteNotAcknowledged,
+    UnmuteNotAcknowledged,
+    QuarantineSaturated,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FaultRecord {
+    pub code: FaultCode,
+    /// Frames accepted by the device when the fault was recorded.
+    pub accepted_frames: u64,
+}
+
+/// A device geometry that passed validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Geometry {
+    pub ring_depth: usize,
+    pub frames_per_block: usize,
+    pub channels: usize,
+    pub bytes_per_sample: usize,
+    pub frame_bytes: usize,
+    pub block_bytes: usize,
+}
+
+fn validate_geometry(raw: &RawGeometry) -> Option<Geometry> {
+    let ring_depth = usize::try_from(raw.ring_depth).ok()?;
+    let frames_per_block = usize::try_from(raw.frames_per_block).ok()?;
+    let channels = usize::try_from(raw.channels).ok()?;
+    let bytes_per_sample = usize::try_from(raw.bytes_per_sample).ok()?;
+    if ring_depth == 0
+        || ring_depth > MAX_SLOTS
+        || frames_per_block == 0
+        || channels == 0
+        || channels > MAX_CHANNELS
+        || !(1..=4).contains(&bytes_per_sample)
+    {
+        return None;
+    }
+    let frame_bytes = channels.checked_mul(bytes_per_sample)?;
+    let block_bytes = frames_per_block.checked_mul(frame_bytes)?;
+    if block_bytes > MAX_BLOCK_BYTES {
+        return None;
+    }
+    Some(Geometry {
+        ring_depth,
+        frames_per_block,
+        channels,
+        bytes_per_sample,
+        frame_bytes,
+        block_bytes,
+    })
+}
+
+fn whole_frames(len: usize, frame_bytes: usize) -> bool {
+    len / frame_bytes * frame_bytes == len
+}
+
+/// How well the consumed-frame count can be trusted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PositionClass {
+    Exact,
+    Bounded { max_error_frames: u32 },
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Position {
+    pub consumed_frames: u64,
+    pub class: PositionClass,
+}
+
+/// What a [`HalSession::poll`] did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PollReport {
+    pub events: usize,
+    pub completions: usize,
+    /// Reports that contradicted the contract.
+    pub anomalies: usize,
+    /// Reports drained while already faulted, which change nothing.
+    pub ignored_in_fault: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StartPreconditions {
+    pub presentation_mapping_installed: bool,
+    pub safe_gain_installed: bool,
+}
+
+/// A claim check for a retained-buffer submit. It owns nothing.
+#[derive(Debug, PartialEq, Eq)]
+#[must_use]
+pub struct SubmitToken {
+    session_id: u64,
+    slot: u16,
+    generation: u32,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct SubmitReceipt {
+    pub accepted_bytes: usize,
+    pub accepted_frames: u64,
+    /// Bytes the device did not take. They stay with the caller.
+    pub remainder_bytes: usize,
+    /// Present only for a retained-buffer submit the device accepted.
+    pub token: Option<SubmitToken>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DrainOutcome {
+    /// The device acknowledged the stop.
+    Acknowledged { waited_ticks: u64 },
+    /// No acknowledgment within the bound. What was in flight is quarantined and the session faulted.
+    TimedOut { waited_ticks: u64 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AbortReport {
+    pub mute_acknowledged: bool,
+}
+
+/// A record of what the session did and what that does and does not show.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionReceipt {
+    pub schema: String,
+    pub provenance: Provenance,
+    /// `model` for a fake device, `driver` for a real one.
+    pub evidence: String,
+    /// `host_simulation` or `device`.
+    pub scope: String,
+    pub abi: String,
+    /// For a copying ABI: the stated evidence that the copy is synchronous.
+    pub copy_evidence: Option<String>,
+    pub phase: SessionPhase,
+    pub amp: Amp,
+    pub stop_deadline_known: bool,
+    pub audible_transition_admitted: bool,
+    pub admission_blocker: Option<String>,
+    /// A stop was asked for. This is NOT the same as the device having stopped: that needs a flush
+    /// or reset acknowledgment, after which this is false again.
+    pub stop_requested: bool,
+    pub accepted_frames: u64,
+    pub consumed_frames: u64,
+    /// Frames accepted and then thrown away by a flush or reset instead of played.
+    pub discarded_frames: u64,
+    pub position_class: PositionClass,
+    pub slots_free: usize,
+    pub slots_in_flight: usize,
+    pub slots_quarantined: usize,
+    /// Slots whose storage was kept alive because the kernel might still read it.
+    pub leaked_slots: usize,
+    pub faults: Vec<FaultRecord>,
+    pub dropped_fault_records: u32,
+    pub anomalies: u32,
+    pub local_events: LocalEventCapability,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionConfig {
+    pub ledger: Arc<LeakLedger>,
+    pub quarantine_cap: usize,
+}
+
+impl SessionConfig {
+    /// The process-wide leak ledger and the default quarantine cap.
+    #[must_use]
+    pub fn process_default() -> Self {
+        Self {
+            ledger: LeakLedger::process(),
+            quarantine_cap: DEFAULT_QUARANTINE_CAP,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_ledger(ledger: Arc<LeakLedger>, quarantine_cap: usize) -> Self {
+        Self {
+            ledger,
+            quarantine_cap,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SessionError {
+    #[error("board profile rejected for audio output: {0:?}")]
+    ProfileRejected(UnsupportedReasonCode),
+    #[error("amplifier policy forbids hardware audio output")]
+    AmplifierForbidden,
+    #[error("a real device needs a hardware-eligible contract matrix")]
+    HardwareNeedsContract,
+    #[error("the contract matrix is not hardware-eligible ({missing} missing)")]
+    ContractIncomplete { missing: usize },
+    #[error("a copying-write ABI needs stated evidence that the copy is synchronous")]
+    CopyEvidenceMissing,
+    #[error("quarantine cap must be at least 1")]
+    BadConfig,
+    #[error("not allowed in phase {phase:?}")]
+    WrongPhase { phase: SessionPhase },
+    #[error("the mute was not acknowledged")]
+    MuteNotAcknowledged,
+    #[error("no presentation mapping is installed")]
+    PresentationMappingMissing,
+    #[error("no safe gain is installed")]
+    SafeGainMissing,
+    #[error("the device cannot state a stop deadline, so no audible transition is admitted")]
+    StopDeadlineUnknown,
+    #[error("a submit must carry at least one frame")]
+    EmptySubmit,
+    #[error("{len} byte(s) is not a whole number of {frame_bytes}-byte frames")]
+    PartialFrame { len: usize, frame_bytes: usize },
+    #[error("{len} byte(s) exceed the {block_bytes}-byte block")]
+    TooLarge { len: usize, block_bytes: usize },
+    #[error("no free slot")]
+    NoFreeSlot,
+    #[error("slot table: {0}")]
+    Slots(SlotError),
+    #[error("the session faulted and is muted: {0:?}")]
+    Faulted(FaultCode),
+    #[error("the session faulted while draining")]
+    FaultedDuringDrain,
+    #[error("the device did not acknowledge the reset")]
+    ResetNotAcknowledged,
+    #[error("the device is gone; a reset cannot recover it")]
+    DevicePersistentlyLost,
+    #[error("that token belongs to another session")]
+    ForeignToken,
+    #[error(
+        "cannot close: phase {phase:?}, {in_flight} in flight, {quarantined} quarantined, muted {amp_muted}"
+    )]
+    CloseBlocked {
+        phase: SessionPhase,
+        in_flight: usize,
+        quarantined: usize,
+        amp_muted: bool,
+    },
+}
+
+/// A refused close hands the session back, intact.
+#[derive(Debug)]
+pub struct CloseRefused<B: DeviceBackend> {
+    pub session: HalSession<B>,
+    pub reason: SessionError,
+}
+
+/// One owner driving one device.
+#[derive(Debug)]
+pub struct HalSession<B: DeviceBackend> {
+    // Declared first, so after `Drop::drop` has asked for a mute, the table's own drop (which keeps
+    // in-flight storage alive) runs before the backend goes away.
+    slots: Option<SlotTable>,
+    backend: B,
+    session_id: u64,
+    phase: SessionPhase,
+    amp: Amp,
+    abi: AbiKind,
+    provenance: Provenance,
+    geometry: Option<Geometry>,
+    stop_deadline_ticks: Option<u64>,
+    min_lead_ticks: Option<u64>,
+    position_error_frames: Option<u32>,
+    local_events: LocalEventCapability,
+    accepted_frames: u64,
+    consumed_frames: u64,
+    discarded_frames: u64,
+    last_counter: u32,
+    rebaseline: bool,
+    stop_requested: bool,
+    device_lost: bool,
+    saturated_reported: bool,
+    faults: Vec<FaultRecord>,
+    dropped_fault_records: u32,
+    anomalies: u32,
+    ledger: Arc<LeakLedger>,
+    quarantine_cap: usize,
+}
+
+impl<B: DeviceBackend> HalSession<B> {
+    /// Acquire a device that is not real hardware. A real backend is refused here: it must come
+    /// through [`Self::open_hardware`] with a hardware-eligible contract matrix.
+    pub fn open(
+        profile: BoardProfile,
+        backend: B,
+        config: SessionConfig,
+    ) -> Result<Self, SessionError> {
+        if backend.provenance() == Provenance::Real {
+            return Err(SessionError::HardwareNeedsContract);
+        }
+        Self::open_checked(profile, backend, config)
+    }
+
+    /// Acquire a device with the retained-driver contract matrix checked first.
+    pub fn open_hardware(
+        profile: BoardProfile,
+        backend: B,
+        config: SessionConfig,
+        matrix: &ContractMatrix,
+    ) -> Result<Self, SessionError> {
+        let report = matrix.evaluate();
+        if !report.hardware_eligible {
+            return Err(SessionError::ContractIncomplete {
+                missing: report.missing.len(),
+            });
+        }
+        Self::open_checked(profile, backend, config)
+    }
+
+    fn open_checked(
+        profile: BoardProfile,
+        backend: B,
+        config: SessionConfig,
+    ) -> Result<Self, SessionError> {
+        profile
+            .verify_integrity()
+            .map_err(SessionError::ProfileRejected)?;
+        if profile.amplifier_policy != AmplifierPolicy::AdmittedSafeStartupOrder {
+            return Err(SessionError::AmplifierForbidden);
+        }
+        let abi = backend.abi();
+        if let AbiKind::CopyingWrite { evidence } = &abi
+            && evidence.trim().is_empty()
+        {
+            return Err(SessionError::CopyEvidenceMissing);
+        }
+        if config.quarantine_cap == 0 {
+            return Err(SessionError::BadConfig);
+        }
+        let provenance = backend.provenance();
+        Ok(Self {
+            slots: None,
+            backend,
+            session_id: NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed),
+            phase: SessionPhase::Closed,
+            // The session has not touched the device, so it has not unmuted it.
+            amp: Amp::Muted,
+            abi,
+            provenance,
+            geometry: None,
+            stop_deadline_ticks: None,
+            min_lead_ticks: None,
+            position_error_frames: None,
+            local_events: LocalEventCapability::Unsupported {
+                reason: "not queried yet".to_string(),
+            },
+            accepted_frames: 0,
+            consumed_frames: 0,
+            discarded_frames: 0,
+            last_counter: 0,
+            rebaseline: true,
+            stop_requested: false,
+            device_lost: false,
+            saturated_reported: false,
+            faults: Vec::new(),
+            dropped_fault_records: 0,
+            anomalies: 0,
+            ledger: config.ledger,
+            quarantine_cap: config.quarantine_cap,
+        })
+    }
+
+    // ---- read-only views
+
+    #[must_use]
+    pub const fn phase(&self) -> SessionPhase {
+        self.phase
+    }
+
+    #[must_use]
+    pub const fn amp(&self) -> Amp {
+        self.amp
+    }
+
+    #[must_use]
+    pub const fn geometry(&self) -> Option<Geometry> {
+        self.geometry
+    }
+
+    #[must_use]
+    pub fn slot_states(&self) -> Vec<SlotState> {
+        self.slots.as_ref().map_or_else(Vec::new, SlotTable::states)
+    }
+
+    /// Fewest ticks ahead of the output cursor a block must be submitted, if the device says.
+    #[must_use]
+    pub const fn min_submission_lead_ticks(&self) -> Option<u64> {
+        self.min_lead_ticks
+    }
+
+    #[must_use]
+    pub const fn stop_deadline_ticks(&self) -> Option<u64> {
+        self.stop_deadline_ticks
+    }
+
+    /// Everything handed to the device so far is irrevocable: the output cursor cannot move back
+    /// past it. This is the count of frames the device accepted.
+    #[must_use]
+    pub const fn irrevocable_until_frames(&self) -> u64 {
+        self.accepted_frames
+    }
+
+    #[must_use]
+    pub const fn position(&self) -> Position {
+        let class = match self.position_error_frames {
+            Some(0) => PositionClass::Exact,
+            Some(n) => PositionClass::Bounded {
+                max_error_frames: n,
+            },
+            None => PositionClass::Unknown,
+        };
+        Position {
+            consumed_frames: self.consumed_frames,
+            class,
+        }
+    }
+
+    fn in_flight_frames(&self) -> u64 {
+        self.accepted_frames
+            .saturating_sub(self.consumed_frames)
+            .saturating_sub(self.discarded_frames)
+    }
+
+    /// Where the use of a slot named by a token stands.
+    pub fn token_state(&self, token: &SubmitToken) -> Result<TokenState, SessionError> {
+        if token.session_id != self.session_id {
+            return Err(SessionError::ForeignToken);
+        }
+        Ok(self.inspect_slot(token.slot, token.generation))
+    }
+
+    /// Diagnostic: where the use of `slot` at `generation` stands, without needing a token.
+    #[must_use]
+    pub fn inspect_slot(&self, slot: u16, generation: u32) -> TokenState {
+        self.slots
+            .as_ref()
+            .map_or(TokenState::Settled, |t| t.token_state(slot, generation))
+    }
+
+    #[must_use]
+    pub fn receipt(&self) -> SessionReceipt {
+        let (slots_free, slots_in_flight, slots_quarantined) =
+            self.slots.as_ref().map_or((0, 0, 0), |t| {
+                (
+                    t.count(SlotState::Free),
+                    t.count(SlotState::KernelOwned),
+                    t.count(SlotState::Quarantined),
+                )
+            });
+        let admitted = self.stop_deadline_ticks.is_some();
+        let (evidence, scope) = match self.provenance {
+            Provenance::Fake => ("model", "host_simulation"),
+            Provenance::Real => ("driver", "device"),
+        };
+        let (abi, copy_evidence) = match &self.abi {
+            AbiKind::CopyingWrite { evidence } => ("copying_write", Some(evidence.clone())),
+            AbiKind::RetainedBuffer => ("retained_buffer", None),
+        };
+        SessionReceipt {
+            schema: RECEIPT_SCHEMA.to_string(),
+            provenance: self.provenance,
+            evidence: evidence.to_string(),
+            scope: scope.to_string(),
+            abi: abi.to_string(),
+            copy_evidence,
+            phase: self.phase,
+            amp: self.amp,
+            stop_deadline_known: admitted,
+            audible_transition_admitted: admitted,
+            admission_blocker: if admitted {
+                None
+            } else {
+                Some("stop deadline unknown".to_string())
+            },
+            stop_requested: self.stop_requested,
+            accepted_frames: self.accepted_frames,
+            consumed_frames: self.consumed_frames,
+            discarded_frames: self.discarded_frames,
+            position_class: self.position().class,
+            slots_free,
+            slots_in_flight,
+            slots_quarantined,
+            leaked_slots: self.ledger.leaked_slots(),
+            faults: self.faults.clone(),
+            dropped_fault_records: self.dropped_fault_records,
+            anomalies: self.anomalies,
+            local_events: self.local_events.clone(),
+        }
+    }
+
+    // ---- fault handling
+
+    fn require_phase(&self, allowed: &[SessionPhase]) -> Result<(), SessionError> {
+        if allowed.contains(&self.phase) {
+            Ok(())
+        } else {
+            Err(SessionError::WrongPhase { phase: self.phase })
+        }
+    }
+
+    fn record_fault(&mut self, code: FaultCode) {
+        if self.faults.len() < MAX_FAULT_RECORDS {
+            self.faults.push(FaultRecord {
+                code,
+                accepted_frames: self.accepted_frames,
+            });
+        } else {
+            self.dropped_fault_records = self.dropped_fault_records.saturating_add(1);
+        }
+    }
+
+    /// Ask the device to mute. Returns whether it acknowledged, and records what the session now
+    /// knows about the amplifier.
+    fn try_mute(&mut self) -> bool {
+        match self.backend.set_mute(true) {
+            Ok(true) => {
+                self.amp = Amp::Muted;
+                true
+            }
+            Ok(false) => {
+                self.amp = Amp::Unknown;
+                false
+            }
+            Err(error) => {
+                if error == DriverError::Gone {
+                    self.device_lost = true;
+                }
+                self.amp = Amp::Unknown;
+                false
+            }
+        }
+    }
+
+    /// The one failure path: record, quarantine what the kernel may hold, fault, mute.
+    fn fail_muted(&mut self, code: FaultCode) -> SessionError {
+        self.record_fault(code.clone());
+        let mut saturated = false;
+        if let Some(table) = self.slots.as_mut() {
+            table.quarantine_all_in_flight();
+            saturated = table.quarantine_over_cap();
+        }
+        if saturated && !self.saturated_reported {
+            self.saturated_reported = true;
+            self.record_fault(FaultCode::QuarantineSaturated);
+        }
+        self.phase = SessionPhase::Faulted;
+        self.stop_requested = true;
+        let acknowledged = self.try_mute();
+        if !acknowledged && !matches!(code, FaultCode::MuteNotAcknowledged) {
+            self.record_fault(FaultCode::MuteNotAcknowledged);
+        }
+        SessionError::Faulted(code)
+    }
+
+    fn driver_failed(&mut self, op: Op, error: DriverError) -> SessionError {
+        if error == DriverError::Gone {
+            self.device_lost = true;
+        }
+        self.fail_muted(FaultCode::DriverError { op, error })
+    }
+
+    // ---- lifecycle
+
+    /// `Closed -> Prepared`. Queries the device (no state change), validates what it says, mutes,
+    /// and only then builds buffers.
+    pub fn prepare(&mut self) -> Result<(), SessionError> {
+        self.require_phase(&[SessionPhase::Closed])?;
+        let caps = match self.backend.capabilities() {
+            Ok(caps) => caps,
+            Err(error) => return Err(self.driver_failed(Op::Capabilities, error)),
+        };
+        let raw = match decode_geometry(&caps.geometry) {
+            Ok(raw) => raw,
+            Err(error) => {
+                return Err(self.fail_muted(FaultCode::Malformed {
+                    what: MalformedKind::Geometry,
+                    abi: Some(error),
+                }));
+            }
+        };
+        let Some(geometry) = validate_geometry(&raw) else {
+            return Err(self.fail_muted(FaultCode::Malformed {
+                what: MalformedKind::Geometry,
+                abi: None,
+            }));
+        };
+        match self.backend.set_mute(true) {
+            Ok(true) => self.amp = Amp::Muted,
+            Ok(false) => return Err(self.fail_muted(FaultCode::MuteNotAcknowledged)),
+            Err(error) => return Err(self.driver_failed(Op::SetMute, error)),
+        }
+        if self.abi == AbiKind::RetainedBuffer {
+            let cap = self.quarantine_cap.min(geometry.ring_depth);
+            let table = SlotTable::new(
+                geometry.ring_depth,
+                geometry.block_bytes,
+                cap,
+                Arc::clone(&self.ledger),
+            )
+            .map_err(SessionError::Slots)?;
+            self.slots = Some(table);
+        }
+        self.geometry = Some(geometry);
+        self.stop_deadline_ticks = caps.stop_deadline_ticks;
+        self.min_lead_ticks = caps.min_submission_lead_ticks;
+        self.position_error_frames = caps.position_error_frames;
+        self.local_events = caps.local_events;
+        self.phase = SessionPhase::Prepared;
+        Ok(())
+    }
+
+    /// `Prepared -> Running`. Refused unless the amplifier is known muted, a presentation mapping and
+    /// a safe gain are installed, and the device can state how long a stop takes.
+    pub fn start(&mut self, pre: StartPreconditions) -> Result<(), SessionError> {
+        self.require_phase(&[SessionPhase::Prepared])?;
+        if self.amp != Amp::Muted {
+            return Err(SessionError::MuteNotAcknowledged);
+        }
+        if !pre.presentation_mapping_installed {
+            return Err(SessionError::PresentationMappingMissing);
+        }
+        if !pre.safe_gain_installed {
+            return Err(SessionError::SafeGainMissing);
+        }
+        if self.stop_deadline_ticks.is_none() {
+            return Err(SessionError::StopDeadlineUnknown);
+        }
+        if let Err(error) = self.backend.start() {
+            return Err(self.driver_failed(Op::Start, error));
+        }
+        match self.backend.set_mute(false) {
+            Ok(true) => {
+                self.amp = Amp::Unmuted;
+                self.phase = SessionPhase::Running;
+                Ok(())
+            }
+            Ok(false) => Err(self.fail_muted(FaultCode::UnmuteNotAcknowledged)),
+            Err(error) => Err(self.driver_failed(Op::SetMute, error)),
+        }
+    }
+
+    /// Hand a block to the device. `bytes` must be a whole number of frames and fit one block.
+    /// A short write leaves the remainder with the caller.
+    pub fn submit(&mut self, bytes: &[u8]) -> Result<SubmitReceipt, SessionError> {
+        self.require_phase(&[SessionPhase::Prepared, SessionPhase::Running])?;
+        let Some(geometry) = self.geometry else {
+            return Err(SessionError::WrongPhase { phase: self.phase });
+        };
+        if bytes.is_empty() {
+            return Err(SessionError::EmptySubmit);
+        }
+        if !whole_frames(bytes.len(), geometry.frame_bytes) {
+            return Err(SessionError::PartialFrame {
+                len: bytes.len(),
+                frame_bytes: geometry.frame_bytes,
+            });
+        }
+        if bytes.len() > geometry.block_bytes {
+            return Err(SessionError::TooLarge {
+                len: bytes.len(),
+                block_bytes: geometry.block_bytes,
+            });
+        }
+        if self.abi == AbiKind::RetainedBuffer {
+            self.submit_retained(bytes, geometry)
+        } else {
+            self.submit_copying(bytes, geometry)
+        }
+    }
+
+    fn credit(&mut self, accepted_bytes: usize, geometry: Geometry) -> u64 {
+        let frames = u64::try_from(accepted_bytes / geometry.frame_bytes).unwrap_or(u64::MAX);
+        self.accepted_frames = self.accepted_frames.saturating_add(frames);
+        frames
+    }
+
+    fn submit_copying(
+        &mut self,
+        bytes: &[u8],
+        geometry: Geometry,
+    ) -> Result<SubmitReceipt, SessionError> {
+        match self.backend.write(bytes) {
+            Err(error) => Err(self.driver_failed(Op::Write, error)),
+            Ok(n) if n > bytes.len() || !whole_frames(n, geometry.frame_bytes) => Err(self
+                .fail_muted(FaultCode::Malformed {
+                    what: MalformedKind::WriteCount,
+                    abi: None,
+                })),
+            Ok(n) => {
+                let accepted_frames = self.credit(n, geometry);
+                Ok(SubmitReceipt {
+                    accepted_bytes: n,
+                    accepted_frames,
+                    remainder_bytes: bytes.len() - n,
+                    token: None,
+                })
+            }
+        }
+    }
+
+    fn submit_retained(
+        &mut self,
+        bytes: &[u8],
+        geometry: Geometry,
+    ) -> Result<SubmitReceipt, SessionError> {
+        let acquired = match self.slots.as_mut() {
+            Some(table) => table.acquire_free(bytes),
+            None => return Err(SessionError::WrongPhase { phase: self.phase }),
+        };
+        let (slot, generation, view) = match acquired {
+            Ok(parts) => parts,
+            Err(SlotError::NoFreeSlot) => return Err(SessionError::NoFreeSlot),
+            Err(other) => return Err(SessionError::Slots(other)),
+        };
+        match self
+            .backend
+            .submit_retained(slot, generation, view, bytes.len())
+        {
+            Err(error) => {
+                // The call failed, so we cannot tell whether the kernel kept the buffer.
+                if let Some(table) = self.slots.as_mut() {
+                    table.quarantine_slot(slot);
+                }
+                Err(self.driver_failed(Op::SubmitRetained, error))
+            }
+            Ok(n) if n > bytes.len() || !whole_frames(n, geometry.frame_bytes) => {
+                if let Some(table) = self.slots.as_mut() {
+                    table.quarantine_slot(slot);
+                }
+                Err(self.fail_muted(FaultCode::Malformed {
+                    what: MalformedKind::SubmitCount,
+                    abi: None,
+                }))
+            }
+            Ok(0) => {
+                // The device took none of it, so it holds nothing and the slot is ours again.
+                if let Some(table) = self.slots.as_mut() {
+                    table.release_unaccepted(slot, generation);
+                }
+                Ok(SubmitReceipt {
+                    accepted_bytes: 0,
+                    accepted_frames: 0,
+                    remainder_bytes: bytes.len(),
+                    token: None,
+                })
+            }
+            Ok(n) => {
+                let accepted_frames = self.credit(n, geometry);
+                Ok(SubmitReceipt {
+                    accepted_bytes: n,
+                    accepted_frames,
+                    remainder_bytes: bytes.len() - n,
+                    token: Some(SubmitToken {
+                        session_id: self.session_id,
+                        slot,
+                        generation,
+                    }),
+                })
+            }
+        }
+    }
+
+    // ---- device events
+
+    fn note_anomaly(&mut self, report: &mut PollReport) {
+        self.anomalies = self.anomalies.saturating_add(1);
+        report.anomalies += 1;
+    }
+
+    fn apply_event(&mut self, event: DeviceEvent, report: &mut PollReport) {
+        if self.phase == SessionPhase::Faulted {
+            // Already muted and quarantined. Draining what the device says changes nothing.
+            if event == DeviceEvent::DeviceLost {
+                self.device_lost = true;
+                self.amp = Amp::Unknown;
+            }
+            report.ignored_in_fault += 1;
+            return;
+        }
+        match event {
+            DeviceEvent::Completed { slot, generation } => {
+                let result = self
+                    .slots
+                    .as_mut()
+                    .map(|table| table.complete(slot, generation));
+                match result {
+                    Some(Ok(())) => report.completions += 1,
+                    Some(Err(problem)) => {
+                        self.note_anomaly(report);
+                        let _ = self.fail_muted(FaultCode::BadCompletion { problem });
+                    }
+                    None => {
+                        self.note_anomaly(report);
+                        let _ = self.fail_muted(FaultCode::UnexpectedCompletion);
+                    }
+                }
+            }
+            DeviceEvent::Position { counter } => {
+                if self.rebaseline {
+                    // The first report after open or reset only sets the baseline.
+                    self.last_counter = counter;
+                    self.rebaseline = false;
+                    return;
+                }
+                let delta = u64::from(counter.wrapping_sub(self.last_counter));
+                if delta > self.in_flight_frames() {
+                    self.note_anomaly(report);
+                    let _ = self.fail_muted(FaultCode::CounterOverclaim);
+                } else {
+                    self.consumed_frames += delta;
+                    self.last_counter = counter;
+                }
+            }
+            DeviceEvent::FlushAck => {
+                if self.phase == SessionPhase::Draining {
+                    if let Some(table) = self.slots.as_mut() {
+                        table.free_in_flight_after_flush_ack();
+                    }
+                    self.discarded_frames = self
+                        .discarded_frames
+                        .saturating_add(self.in_flight_frames());
+                    self.phase = SessionPhase::Prepared;
+                    self.stop_requested = false;
+                } else {
+                    self.note_anomaly(report);
+                }
+            }
+            DeviceEvent::DeviceLost => {
+                self.device_lost = true;
+                self.record_fault(FaultCode::DeviceLost);
+                if let Some(table) = self.slots.as_mut() {
+                    table.quarantine_all_in_flight();
+                }
+                self.amp = Amp::Unknown;
+                self.phase = SessionPhase::Faulted;
+                self.stop_requested = true;
+            }
+        }
+    }
+
+    /// Drain pending device events (at most [`MAX_EVENTS_PER_POLL`]). Every record is decoded and
+    /// checked before it changes anything.
+    pub fn poll(&mut self) -> PollReport {
+        let mut report = PollReport::default();
+        for _ in 0..MAX_EVENTS_PER_POLL {
+            let raw = match self.backend.poll_event() {
+                Ok(Some(raw)) => raw,
+                Ok(None) => break,
+                Err(error) => {
+                    if self.phase == SessionPhase::Faulted {
+                        if error == DriverError::Gone {
+                            self.device_lost = true;
+                        }
+                    } else {
+                        let _ = self.driver_failed(Op::PollEvent, error);
+                    }
+                    break;
+                }
+            };
+            report.events += 1;
+            match decode_event(&raw) {
+                Ok(event) => self.apply_event(event, &mut report),
+                Err(error) => {
+                    if self.phase == SessionPhase::Faulted {
+                        report.ignored_in_fault += 1;
+                    } else {
+                        self.note_anomaly(&mut report);
+                        let _ = self.fail_muted(FaultCode::Malformed {
+                            what: MalformedKind::Event,
+                            abi: Some(error),
+                        });
+                    }
+                }
+            }
+        }
+        report
+    }
+
+    /// Let the device make one tick of progress, then handle what it reported.
+    pub fn step(&mut self) -> PollReport {
+        self.backend.wait_tick();
+        self.poll()
+    }
+
+    /// Handle everything the device has already queued. Called before a new flush request, so an
+    /// acknowledgment seen afterwards cannot be one that answered an earlier request (an
+    /// acknowledgment carries no id).
+    fn settle_events(&mut self) {
+        for _ in 0..8 {
+            if self.poll().events == 0 {
+                break;
+            }
+        }
+    }
+
+    // ---- stopping
+
+    /// Mute, ask the device to flush, and wait up to `max_wait_ticks` for it to acknowledge. Success
+    /// is reported only when the acknowledgment was observed.
+    pub fn drain(&mut self, max_wait_ticks: u64) -> Result<DrainOutcome, SessionError> {
+        self.require_phase(&[SessionPhase::Running, SessionPhase::Prepared])?;
+        match self.backend.set_mute(true) {
+            Ok(true) => self.amp = Amp::Muted,
+            Ok(false) => return Err(self.fail_muted(FaultCode::MuteNotAcknowledged)),
+            Err(error) => return Err(self.driver_failed(Op::SetMute, error)),
+        }
+        self.settle_events();
+        if self.phase == SessionPhase::Faulted {
+            return Err(SessionError::FaultedDuringDrain);
+        }
+        if let Err(error) = self.backend.request_flush() {
+            return Err(self.driver_failed(Op::RequestFlush, error));
+        }
+        self.phase = SessionPhase::Draining;
+        self.stop_requested = true;
+        let mut waited = 0u64;
+        loop {
+            self.poll();
+            match self.phase {
+                SessionPhase::Prepared => {
+                    return Ok(DrainOutcome::Acknowledged {
+                        waited_ticks: waited,
+                    });
+                }
+                SessionPhase::Faulted => return Err(SessionError::FaultedDuringDrain),
+                _ => {}
+            }
+            if waited >= max_wait_ticks {
+                break;
+            }
+            self.backend.wait_tick();
+            waited += 1;
+        }
+        let _ = self.fail_muted(FaultCode::DrainTimedOut);
+        Ok(DrainOutcome::TimedOut {
+            waited_ticks: waited,
+        })
+    }
+
+    /// Give up on a drain. What is in flight is quarantined, never freed: the device has not said it
+    /// stopped.
+    pub fn cancel_drain(&mut self) -> Result<(), SessionError> {
+        self.require_phase(&[SessionPhase::Draining])?;
+        let _ = self.fail_muted(FaultCode::DrainCancelled);
+        Ok(())
+    }
+
+    /// Abort into mute and report whether the device acknowledged it.
+    pub fn abort_mute(&mut self) -> Result<AbortReport, SessionError> {
+        self.require_phase(&[
+            SessionPhase::Prepared,
+            SessionPhase::Running,
+            SessionPhase::Draining,
+            SessionPhase::Faulted,
+        ])?;
+        self.stop_requested = true;
+        match self.backend.set_mute(true) {
+            Ok(true) => {
+                self.amp = Amp::Muted;
+                if self.phase != SessionPhase::Faulted {
+                    self.settle_events();
+                    if self.phase != SessionPhase::Faulted {
+                        self.phase = SessionPhase::Draining;
+                        if let Err(error) = self.backend.request_flush() {
+                            return Err(self.driver_failed(Op::RequestFlush, error));
+                        }
+                    }
+                }
+                Ok(AbortReport {
+                    mute_acknowledged: true,
+                })
+            }
+            Ok(false) => {
+                let _ = self.fail_muted(FaultCode::MuteNotAcknowledged);
+                Ok(AbortReport {
+                    mute_acknowledged: false,
+                })
+            }
+            Err(error) => {
+                let _ = self.driver_failed(Op::SetMute, error);
+                Ok(AbortReport {
+                    mute_acknowledged: false,
+                })
+            }
+        }
+    }
+
+    /// Ask for a full device reset. Only an acknowledged reset frees what was in flight or
+    /// quarantined. A device that is gone cannot be recovered this way.
+    pub fn reset_device(&mut self) -> Result<(), SessionError> {
+        self.require_phase(&[SessionPhase::Draining, SessionPhase::Faulted])?;
+        if self.device_lost {
+            return Err(SessionError::DevicePersistentlyLost);
+        }
+        match self.backend.reset() {
+            Ok(true) => {
+                if let Some(table) = self.slots.as_mut() {
+                    table.release_all_after_reset_ack();
+                }
+                self.discarded_frames = self
+                    .discarded_frames
+                    .saturating_add(self.in_flight_frames());
+                self.rebaseline = true;
+                self.stop_requested = false;
+                self.saturated_reported = false;
+                self.phase = SessionPhase::Prepared;
+                Ok(())
+            }
+            Ok(false) => Err(SessionError::ResetNotAcknowledged),
+            Err(error) => Err(self.driver_failed(Op::Reset, error)),
+        }
+    }
+
+    /// Release the device. Allowed only when every slot is accounted for and the amplifier is known
+    /// muted; otherwise the session comes back intact with the reason.
+    pub fn close(mut self) -> Result<SessionReceipt, Box<CloseRefused<B>>> {
+        let (in_flight, quarantined) = self.slots.as_ref().map_or((0, 0), |t| {
+            (
+                t.count(SlotState::KernelOwned),
+                t.count(SlotState::Quarantined),
+            )
+        });
+        let phase_ok = matches!(self.phase, SessionPhase::Prepared | SessionPhase::Closed);
+        if !phase_ok || in_flight > 0 || quarantined > 0 || self.amp != Amp::Muted {
+            let reason = SessionError::CloseBlocked {
+                phase: self.phase,
+                in_flight,
+                quarantined,
+                amp_muted: self.amp == Amp::Muted,
+            };
+            return Err(Box::new(CloseRefused {
+                session: self,
+                reason,
+            }));
+        }
+        self.phase = SessionPhase::Closed;
+        self.slots = None;
+        Ok(self.receipt())
+    }
+}
+
+impl<B: DeviceBackend> Drop for HalSession<B> {
+    /// Destroying the owner asks for a mute. The slot table's own drop then keeps alive any storage
+    /// the kernel may still be reading.
+    fn drop(&mut self) {
+        if self.phase != SessionPhase::Closed || self.amp != Amp::Muted {
+            let _ = self.backend.set_mute(true);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::{FakeBackend, FakeCall, FakeConfig, FakeProbe};
+    use franken_board_profile::synthetic_test_fixture_catalog;
+
+    const READY: StartPreconditions = StartPreconditions {
+        presentation_mapping_installed: true,
+        safe_gain_installed: true,
+    };
+    /// One block: 4 frames of 2 channels of 2 bytes.
+    const BLOCK: [u8; 16] = [0xAA; 16];
+
+    fn profile() -> BoardProfile {
+        synthetic_test_fixture_catalog()
+            .into_iter()
+            .find(|p| p.model_number == "S5")
+            .unwrap()
+    }
+
+    fn session_with(
+        cfg: FakeConfig,
+        ledger: Arc<LeakLedger>,
+        cap: usize,
+    ) -> (HalSession<FakeBackend>, FakeProbe) {
+        let (backend, probe) = FakeBackend::new(cfg);
+        let config = SessionConfig::with_ledger(ledger, cap);
+        (HalSession::open(profile(), backend, config).unwrap(), probe)
+    }
+
+    fn session(cfg: FakeConfig) -> (HalSession<FakeBackend>, FakeProbe, Arc<LeakLedger>) {
+        let ledger = Arc::new(LeakLedger::new(64));
+        let (s, p) = session_with(cfg, Arc::clone(&ledger), 2);
+        (s, p, ledger)
+    }
+
+    fn running(cfg: FakeConfig) -> (HalSession<FakeBackend>, FakeProbe, Arc<LeakLedger>) {
+        let (mut s, p, l) = session(cfg);
+        s.prepare().unwrap();
+        s.start(READY).unwrap();
+        (s, p, l)
+    }
+
+    fn token(s: &mut HalSession<FakeBackend>) -> SubmitToken {
+        s.submit(&BLOCK).unwrap().token.unwrap()
+    }
+
+    fn first_fault(s: &HalSession<FakeBackend>) -> FaultCode {
+        s.receipt().faults[0].code.clone()
+    }
+
+    #[test]
+    fn a_clean_prepare_run_drain_close_cycle() {
+        let (mut s, probe, ledger) = session(FakeConfig::retained());
+        assert_eq!(s.phase(), SessionPhase::Closed);
+        s.prepare().unwrap();
+        assert_eq!((s.phase(), s.amp()), (SessionPhase::Prepared, Amp::Muted));
+        // The capability query comes first and changes nothing; the mute follows it.
+        assert_eq!(
+            probe.calls(),
+            vec![FakeCall::Capabilities, FakeCall::SetMute(true)]
+        );
+        s.start(READY).unwrap();
+        assert_eq!((s.phase(), s.amp()), (SessionPhase::Running, Amp::Unmuted));
+        let receipt = s.submit(&BLOCK).unwrap();
+        assert_eq!(
+            (
+                receipt.accepted_bytes,
+                receipt.accepted_frames,
+                receipt.remainder_bytes
+            ),
+            (16, 4, 0)
+        );
+        let t = receipt.token.unwrap();
+        assert_eq!(s.token_state(&t), Ok(TokenState::InFlight));
+        assert_eq!(
+            s.slot_states(),
+            vec![
+                SlotState::KernelOwned,
+                SlotState::Free,
+                SlotState::Free,
+                SlotState::Free
+            ]
+        );
+        assert_eq!(s.irrevocable_until_frames(), 4);
+        // The flush is requested at tick 0 and acknowledged at tick 1.
+        assert_eq!(
+            s.drain(10),
+            Ok(DrainOutcome::Acknowledged { waited_ticks: 1 })
+        );
+        assert_eq!((s.phase(), s.amp()), (SessionPhase::Prepared, Amp::Muted));
+        assert_eq!(s.slot_states(), vec![SlotState::Free; 4]);
+        assert_eq!(s.token_state(&t), Ok(TokenState::Settled));
+        let closed = s.close().unwrap();
+        assert_eq!(closed.phase, SessionPhase::Closed);
+        assert_eq!((closed.accepted_frames, closed.discarded_frames), (4, 4));
+        assert!(closed.faults.is_empty());
+        assert_eq!(
+            probe.calls(),
+            vec![
+                FakeCall::Capabilities,
+                FakeCall::SetMute(true),
+                FakeCall::Start,
+                FakeCall::SetMute(false),
+                FakeCall::SubmitRetained {
+                    slot: 0,
+                    generation: 1,
+                    len: 16
+                },
+                FakeCall::SetMute(true),
+                FakeCall::RequestFlush,
+            ]
+        );
+        assert_eq!(
+            (probe.use_after_free(), probe.modified_while_owned()),
+            (0, 0)
+        );
+        assert_eq!(ledger.leaked_slots(), 0, "a clean cycle leaks nothing");
+    }
+
+    #[test]
+    fn a_copying_write_abi_needs_no_slots_and_reports_a_short_write() {
+        let (mut s, probe, _) = running(FakeConfig::copying());
+        assert!(s.slot_states().is_empty());
+        probe.set_accept_limit(Some(8));
+        let r = s.submit(&BLOCK).unwrap();
+        assert_eq!(
+            (r.accepted_bytes, r.accepted_frames, r.remainder_bytes),
+            (8, 2, 8)
+        );
+        assert!(r.token.is_none(), "a copying write leaves nothing to track");
+        assert_eq!(s.irrevocable_until_frames(), 2);
+        assert_eq!(probe.written_bytes(), 8);
+        // A count that is not a whole number of frames is a malformed response: fail muted.
+        probe.set_accept_limit(Some(6));
+        let err = s.submit(&BLOCK).err().unwrap();
+        assert_eq!(
+            err,
+            SessionError::Faulted(FaultCode::Malformed {
+                what: MalformedKind::WriteCount,
+                abi: None
+            })
+        );
+        assert_eq!((s.phase(), s.amp()), (SessionPhase::Faulted, Amp::Muted));
+        assert_eq!(probe.calls().last(), Some(&FakeCall::SetMute(true)));
+    }
+
+    #[test]
+    fn a_copying_abi_without_stated_evidence_is_refused() {
+        let mut cfg = FakeConfig::copying();
+        cfg.abi = AbiKind::CopyingWrite {
+            evidence: "   ".to_string(),
+        };
+        let (backend, _probe) = FakeBackend::new(cfg);
+        let config = SessionConfig::with_ledger(Arc::new(LeakLedger::new(8)), 2);
+        let err = HalSession::open(profile(), backend, config).err().unwrap();
+        assert_eq!(err, SessionError::CopyEvidenceMissing);
+        // Permitted positive: the same device with evidence opens.
+        let (backend, _probe) = FakeBackend::new(FakeConfig::copying());
+        let config = SessionConfig::with_ledger(Arc::new(LeakLedger::new(8)), 2);
+        assert!(HalSession::open(profile(), backend, config).is_ok());
+        let (s, _, _) = session(FakeConfig::copying());
+        assert!(s.receipt().copy_evidence.is_some());
+    }
+
+    #[test]
+    fn malformed_geometry_fails_muted() {
+        let wrong_length = |bytes: Vec<u8>| {
+            let mut cfg = FakeConfig::retained();
+            cfg.geometry_override = Some(bytes);
+            cfg
+        };
+        let (mut s, probe, _) = session(wrong_length(vec![0; 15]));
+        assert_eq!(
+            s.prepare().err().unwrap(),
+            SessionError::Faulted(FaultCode::Malformed {
+                what: MalformedKind::Geometry,
+                abi: Some(AbiError::Length {
+                    expected: 16,
+                    actual: 15
+                })
+            })
+        );
+        assert_eq!((s.phase(), s.amp()), (SessionPhase::Faulted, Amp::Muted));
+        assert_eq!(probe.calls().last(), Some(&FakeCall::SetMute(true)));
+        // Well-formed bytes that describe an impossible device are malformed too.
+        let impossible = [
+            (0, 4, 2, 2),
+            (65, 4, 2, 2),
+            (4, 0, 2, 2),
+            (4, 4, 0, 2),
+            (4, 4, 9, 2),
+            (4, 4, 2, 0),
+            (4, 4, 2, 5),
+            (4, 1 << 30, 2, 2),
+        ];
+        for (depth, frames, channels, bytes) in impossible {
+            let raw = RawGeometry {
+                ring_depth: depth,
+                frames_per_block: frames,
+                channels,
+                bytes_per_sample: bytes,
+            };
+            let (mut s, _, _) = session(wrong_length(crate::abi::encode_geometry(&raw).to_vec()));
+            let err = s.prepare().err().unwrap();
+            assert_eq!(
+                err,
+                SessionError::Faulted(FaultCode::Malformed {
+                    what: MalformedKind::Geometry,
+                    abi: None
+                }),
+                "{raw:?}"
+            );
+            assert_eq!(s.phase(), SessionPhase::Faulted, "{raw:?}");
+        }
+        // Permitted positive: the standard geometry is accepted and reported.
+        let (mut s, _, _) = session(FakeConfig::retained());
+        s.prepare().unwrap();
+        let g = s.geometry().unwrap();
+        assert_eq!((g.frame_bytes, g.block_bytes), (4, 16));
+    }
+
+    #[test]
+    fn an_ioctl_error_fails_muted_and_a_failed_submit_quarantines_its_slot() {
+        let (mut s, probe, _) = session(FakeConfig::retained());
+        s.prepare().unwrap();
+        probe.fail_next(Op::Start, DriverError::Errno(5));
+        let err = s.start(READY).err().unwrap();
+        assert_eq!(
+            err,
+            SessionError::Faulted(FaultCode::DriverError {
+                op: Op::Start,
+                error: DriverError::Errno(5)
+            })
+        );
+        assert_eq!((s.phase(), s.amp()), (SessionPhase::Faulted, Amp::Muted));
+        // A submit that fails: we cannot tell whether the kernel kept the buffer, so the slot is
+        // quarantined, not freed.
+        let (mut s, probe, _) = running(FakeConfig::retained());
+        probe.fail_next(Op::SubmitRetained, DriverError::Errno(22));
+        assert!(s.submit(&BLOCK).is_err());
+        assert_eq!(s.slot_states()[0], SlotState::Quarantined);
+        assert_eq!((s.phase(), s.amp()), (SessionPhase::Faulted, Amp::Muted));
+        assert_eq!(s.receipt().slots_quarantined, 1);
+    }
+
+    #[test]
+    fn forgotten_and_dropped_tokens_cannot_return_storage() {
+        // A token has no `Drop`, so forgetting one is the same as dropping it (clippy says so). The
+        // two cases worth separating are a token that is dropped and one that is never given back to
+        // anything, which is kept alive here until the end of the iteration.
+        for hold in [true, false] {
+            let (mut s, probe, _) = running(FakeConfig::retained());
+            let t = token(&mut s);
+            let held = if hold {
+                Some(t)
+            } else {
+                drop(t);
+                None
+            };
+            assert_eq!(s.slot_states()[0], SlotState::KernelOwned);
+            // Tick 1: nothing is due yet, and the slot is still the kernel's.
+            assert_eq!(s.step().completions, 0);
+            assert_eq!(s.slot_states()[0], SlotState::KernelOwned);
+            // Tick 2: the device completes it, and the owner frees it, token or no token.
+            assert_eq!(s.step().completions, 1);
+            assert_eq!(s.slot_states()[0], SlotState::Free);
+            assert_eq!(probe.use_after_free(), 0);
+            assert!(s.receipt().faults.is_empty());
+            // The held token was still held throughout, and the dropped one was not.
+            assert_eq!(held.is_some(), hold);
+        }
+    }
+
+    #[test]
+    fn a_stale_completion_never_frees_the_new_occupant_and_slot_reuse_is_refused() {
+        let (mut s, probe, _) = running(FakeConfig::retained());
+        let first = token(&mut s);
+        s.step();
+        s.step();
+        assert_eq!(s.token_state(&first), Ok(TokenState::Settled));
+        let _second = token(&mut s); // the lowest free slot again, one generation later
+        assert_eq!(s.slot_states()[0], SlotState::KernelOwned);
+        probe.queue_event(DeviceEvent::Completed {
+            slot: 0,
+            generation: 1,
+        });
+        let report = s.poll();
+        assert_eq!(report.anomalies, 1);
+        assert_eq!(
+            first_fault(&s),
+            FaultCode::BadCompletion {
+                problem: CompletionProblem::StaleGeneration {
+                    expected: 2,
+                    got: 1
+                }
+            }
+        );
+        assert_eq!((s.phase(), s.amp()), (SessionPhase::Faulted, Amp::Muted));
+        // The new occupant is quarantined, not freed, and it cannot be handed out again.
+        assert_eq!(s.slot_states()[0], SlotState::Quarantined);
+        assert_eq!(
+            s.submit(&BLOCK).err().unwrap(),
+            SessionError::WrongPhase {
+                phase: SessionPhase::Faulted
+            }
+        );
+        assert_eq!(s.slot_states()[0], SlotState::Quarantined);
+        assert_eq!(probe.use_after_free(), 0);
+    }
+
+    #[test]
+    fn duplicate_and_unknown_completions_fault_muted() {
+        // A duplicate: the slot was already completed.
+        let (mut s, probe, _) = running(FakeConfig::retained());
+        let _t = token(&mut s);
+        s.step();
+        s.step();
+        probe.queue_event(DeviceEvent::Completed {
+            slot: 0,
+            generation: 1,
+        });
+        s.poll();
+        assert_eq!(
+            first_fault(&s),
+            FaultCode::BadCompletion {
+                problem: CompletionProblem::NotKernelOwned(SlotState::Free)
+            }
+        );
+        // A slot that does not exist.
+        let (mut s, probe, _) = running(FakeConfig::retained());
+        let _t = token(&mut s);
+        probe.queue_event(DeviceEvent::Completed {
+            slot: 9,
+            generation: 1,
+        });
+        s.poll();
+        assert_eq!(
+            first_fault(&s),
+            FaultCode::BadCompletion {
+                problem: CompletionProblem::OutOfRange
+            }
+        );
+        // The in-flight slot it did not name was quarantined, not freed.
+        assert_eq!(s.slot_states()[0], SlotState::Quarantined);
+        // A completion on an ABI that has none.
+        let (mut s, probe, _) = running(FakeConfig::copying());
+        probe.queue_event(DeviceEvent::Completed {
+            slot: 0,
+            generation: 1,
+        });
+        s.poll();
+        assert_eq!(first_fault(&s), FaultCode::UnexpectedCompletion);
+    }
+
+    #[test]
+    fn a_malformed_event_record_fails_muted() {
+        for bytes in [
+            vec![1u8, 2, 3],
+            vec![0; 12],
+            vec![0, 0, 0, 3, 0, 0, 0, 1, 0, 0, 0, 0],
+        ] {
+            let (mut s, probe, _) = running(FakeConfig::retained());
+            let _t = token(&mut s);
+            probe.queue_raw_event(bytes.clone());
+            let report = s.poll();
+            assert_eq!(report.anomalies, 1, "{bytes:?}");
+            assert_eq!((s.phase(), s.amp()), (SessionPhase::Faulted, Amp::Muted));
+            assert_eq!(s.slot_states()[0], SlotState::Quarantined, "{bytes:?}");
+            assert!(matches!(
+                first_fault(&s),
+                FaultCode::Malformed {
+                    what: MalformedKind::Event,
+                    abi: Some(_)
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn destroying_the_owner_keeps_storage_the_kernel_may_still_read() {
+        let (mut s, probe, ledger) = running(FakeConfig::retained());
+        let a = token(&mut s);
+        // One token is dropped and one is never given back; the token is inert either way, so this
+        // one is simply kept alive past the owner's destruction.
+        let _b = token(&mut s);
+        drop(a);
+        assert_eq!(probe.pending(), 2);
+        drop(s);
+        // The owner and its table are gone, and the kernel can still read both buffers.
+        assert_eq!(probe.kernel_touch_pending(), (2, 0));
+        assert_eq!(probe.use_after_free(), 0);
+        assert_eq!(ledger.leaked_slots(), 2);
+        assert_eq!(ledger.leaked_bytes(), 32);
+        // Destroying the owner asked for a mute on the way out.
+        assert_eq!(probe.calls().last(), Some(&FakeCall::SetMute(true)));
+    }
+
+    #[test]
+    fn the_leak_budget_bounds_how_many_devices_are_admitted_after_leaks() {
+        let ledger = Arc::new(LeakLedger::new(2));
+        let (mut s, _probe) = session_with(FakeConfig::retained(), Arc::clone(&ledger), 2);
+        s.prepare().unwrap();
+        s.start(READY).unwrap();
+        let _a = token(&mut s);
+        let _b = token(&mut s);
+        drop(s);
+        assert!(ledger.exhausted());
+        // The next device cannot build a slot table until the budget is dealt with.
+        let (mut next, _probe) = session_with(FakeConfig::retained(), Arc::clone(&ledger), 2);
+        assert_eq!(
+            next.prepare().err().unwrap(),
+            SessionError::Slots(SlotError::LeakBudgetExhausted)
+        );
+        assert_eq!(next.phase(), SessionPhase::Closed);
+    }
+
+    #[test]
+    fn a_drain_that_is_not_acknowledged_quarantines_and_never_claims_success() {
+        let mut cfg = FakeConfig::retained();
+        cfg.flush_ack_delay_ticks = None;
+        let (mut s, probe, ledger) = running(cfg);
+        probe.set_lose_completions(true);
+        let _t = token(&mut s);
+        assert_eq!(s.drain(3), Ok(DrainOutcome::TimedOut { waited_ticks: 3 }));
+        assert_eq!((s.phase(), s.amp()), (SessionPhase::Faulted, Amp::Muted));
+        assert_eq!(s.slot_states()[0], SlotState::Quarantined);
+        assert_eq!(probe.pending(), 1, "the kernel still holds it");
+        assert_eq!(first_fault(&s), FaultCode::DrainTimedOut);
+        // Closing is refused, and the session comes back intact.
+        let refused = s.close().err().unwrap();
+        let CloseRefused { session, reason } = *refused;
+        assert_eq!(
+            reason,
+            SessionError::CloseBlocked {
+                phase: SessionPhase::Faulted,
+                in_flight: 0,
+                quarantined: 1,
+                amp_muted: true
+            }
+        );
+        // Only an acknowledged reset frees it. Then the cycle completes cleanly.
+        let mut s = session;
+        s.reset_device().unwrap();
+        assert_eq!(
+            (s.phase(), s.slot_states()[0]),
+            (SessionPhase::Prepared, SlotState::Free)
+        );
+        assert_eq!(probe.pending(), 0);
+        assert!(s.close().is_ok());
+        assert_eq!(ledger.leaked_slots(), 0);
+    }
+
+    /// Why this test exists, as a deduction (the pre-fix code was never run; there is no local cargo):
+    /// * Old path: `drain` requested the flush and set `Draining` with no settle step, so its first
+    ///   `poll` consumed the acknowledgment queued earlier, freed the in-flight slot, and returned.
+    /// * Reasoned result on the old path: `Acknowledged { waited_ticks: 0 }` with the slot freed, while
+    ///   the kernel (the fake) still held the buffer.
+    /// * Expected result now: `TimedOut { waited_ticks: 2 }`, the slot quarantined, the early
+    ///   acknowledgment counted as one anomaly and not believed.
+    #[test]
+    fn an_acknowledgment_queued_before_a_drain_cannot_answer_it() {
+        // A flush acknowledgment carries no id. One queued while running is not the answer to a
+        // drain that starts afterwards; if it were believed, the drain would report success while
+        // the kernel still held the buffer.
+        let mut cfg = FakeConfig::retained();
+        cfg.flush_ack_delay_ticks = None; // the device never really acknowledges
+        let (mut s, probe, _) = running(cfg);
+        probe.set_lose_completions(true);
+        let _t = token(&mut s);
+        probe.queue_event(DeviceEvent::FlushAck);
+        assert_eq!(s.drain(2), Ok(DrainOutcome::TimedOut { waited_ticks: 2 }));
+        assert_eq!(s.slot_states()[0], SlotState::Quarantined);
+        assert_eq!(probe.pending(), 1, "the kernel still holds it");
+        let receipt = s.receipt();
+        assert_eq!(
+            receipt.anomalies, 1,
+            "the early acknowledgment was counted, not believed"
+        );
+        assert_eq!(receipt.faults[0].code, FaultCode::DrainTimedOut);
+        // A stop was asked for and never acknowledged, and the receipt says so. (The paired positive,
+        // a real acknowledgment being accepted, is the clean cycle in the first test of this module.)
+        assert!(receipt.stop_requested);
+    }
+
+    #[test]
+    fn a_cancelled_drain_quarantines_instead_of_freeing() {
+        let (mut s, probe, _) = running(FakeConfig::retained());
+        probe.set_lose_completions(true);
+        let _t = token(&mut s);
+        let report = s.abort_mute().unwrap();
+        assert!(report.mute_acknowledged);
+        assert_eq!(s.phase(), SessionPhase::Draining);
+        s.cancel_drain().unwrap();
+        assert_eq!(s.phase(), SessionPhase::Faulted);
+        assert_eq!(s.slot_states()[0], SlotState::Quarantined);
+        assert_eq!(first_fault(&s), FaultCode::DrainCancelled);
+        // The earlier flush request may still be acknowledged. That acknowledgment arrives after the
+        // cancel, so it is ignored and the slot stays quarantined until a reset is acknowledged.
+        s.step();
+        s.step();
+        assert_eq!(s.slot_states()[0], SlotState::Quarantined);
+        assert_eq!(
+            s.cancel_drain().err().unwrap(),
+            SessionError::WrongPhase {
+                phase: SessionPhase::Faulted
+            }
+        );
+    }
+
+    #[test]
+    fn quarantine_saturation_is_recorded_and_bounded() {
+        let mut cfg = FakeConfig::retained();
+        cfg.flush_ack_delay_ticks = None;
+        let ledger = Arc::new(LeakLedger::new(64));
+        let (mut s, probe) = session_with(cfg, Arc::clone(&ledger), 1);
+        s.prepare().unwrap();
+        s.start(READY).unwrap();
+        probe.set_lose_completions(true);
+        let _a = token(&mut s);
+        let _b = token(&mut s);
+        assert_eq!(s.drain(1), Ok(DrainOutcome::TimedOut { waited_ticks: 1 }));
+        let codes: Vec<FaultCode> = s.receipt().faults.into_iter().map(|f| f.code).collect();
+        assert_eq!(
+            codes,
+            vec![FaultCode::DrainTimedOut, FaultCode::QuarantineSaturated]
+        );
+        assert_eq!(s.receipt().slots_quarantined, 2);
+        // Dropping the faulted owner leaks exactly what is quarantined, no more.
+        drop(s);
+        assert_eq!(ledger.leaked_slots(), 2);
+        assert_eq!(probe.kernel_touch_pending(), (2, 0));
+    }
+
+    #[test]
+    fn an_unacknowledged_mute_blocks_everything_until_it_is_acknowledged() {
+        let mut cfg = FakeConfig::retained();
+        cfg.mute_ack = false;
+        let (mut s, _probe, _) = session(cfg);
+        assert_eq!(
+            s.prepare().err().unwrap(),
+            SessionError::Faulted(FaultCode::MuteNotAcknowledged)
+        );
+        assert_eq!((s.phase(), s.amp()), (SessionPhase::Faulted, Amp::Unknown));
+        assert_eq!(
+            s.receipt().faults.len(),
+            1,
+            "one fault, not one per attempt"
+        );
+        assert_eq!(
+            s.start(READY).err().unwrap(),
+            SessionError::WrongPhase {
+                phase: SessionPhase::Faulted
+            }
+        );
+        // A reset is acknowledged, but it does not make the amplifier known muted.
+        s.reset_device().unwrap();
+        assert_eq!(s.phase(), SessionPhase::Prepared);
+        assert_eq!(
+            s.start(READY).err().unwrap(),
+            SessionError::MuteNotAcknowledged
+        );
+        assert_eq!(
+            s.abort_mute(),
+            Ok(AbortReport {
+                mute_acknowledged: false
+            })
+        );
+        assert_eq!(s.amp(), Amp::Unknown);
+    }
+
+    #[test]
+    fn an_unacknowledged_unmute_falls_back_to_muted() {
+        let mut cfg = FakeConfig::retained();
+        cfg.unmute_ack = false;
+        let (mut s, probe, _) = session(cfg);
+        s.prepare().unwrap();
+        assert_eq!(
+            s.start(READY).err().unwrap(),
+            SessionError::Faulted(FaultCode::UnmuteNotAcknowledged)
+        );
+        assert_eq!((s.phase(), s.amp()), (SessionPhase::Faulted, Amp::Muted));
+        assert_eq!(
+            probe.calls(),
+            vec![
+                FakeCall::Capabilities,
+                FakeCall::SetMute(true),
+                FakeCall::Start,
+                FakeCall::SetMute(false),
+                FakeCall::SetMute(true),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unknown_stop_deadline_refuses_the_audible_transition() {
+        let mut cfg = FakeConfig::retained();
+        cfg.stop_deadline_ticks = None;
+        let (mut s, probe, _) = session(cfg);
+        s.prepare().unwrap();
+        let r = s.receipt();
+        assert!(!r.stop_deadline_known && !r.audible_transition_admitted);
+        assert_eq!(
+            r.admission_blocker.as_deref(),
+            Some("stop deadline unknown")
+        );
+        assert_eq!(
+            s.start(READY).err().unwrap(),
+            SessionError::StopDeadlineUnknown
+        );
+        // Nothing was started or unmuted on the device, and the session did not fault.
+        assert_eq!(
+            probe.calls(),
+            vec![FakeCall::Capabilities, FakeCall::SetMute(true)]
+        );
+        assert_eq!((s.phase(), s.amp()), (SessionPhase::Prepared, Amp::Muted));
+        // Permitted positive: a known deadline is admitted.
+        let (mut s, _, _) = session(FakeConfig::retained());
+        s.prepare().unwrap();
+        assert!(s.receipt().audible_transition_admitted);
+    }
+
+    #[test]
+    fn start_preconditions_are_checked_before_the_device_is_touched() {
+        let (mut s, probe, _) = session(FakeConfig::retained());
+        s.prepare().unwrap();
+        let before = probe.calls();
+        let no_map = StartPreconditions {
+            presentation_mapping_installed: false,
+            safe_gain_installed: true,
+        };
+        let no_gain = StartPreconditions {
+            presentation_mapping_installed: true,
+            safe_gain_installed: false,
+        };
+        assert_eq!(
+            s.start(no_map).err().unwrap(),
+            SessionError::PresentationMappingMissing
+        );
+        assert_eq!(
+            s.start(no_gain).err().unwrap(),
+            SessionError::SafeGainMissing
+        );
+        assert_eq!(probe.calls(), before);
+        assert!(s.start(READY).is_ok());
+    }
+
+    #[test]
+    fn the_consumed_counter_wraps_but_never_claims_more_than_is_in_flight() {
+        let (mut s, probe, _) = running(FakeConfig::retained());
+        let _a = token(&mut s);
+        let _b = token(&mut s); // 8 frames in flight
+        let report = |s: &mut HalSession<FakeBackend>, counter| {
+            probe.queue_event(DeviceEvent::Position { counter });
+            s.poll()
+        };
+        report(&mut s, 0xFFFF_FFFC); // the first report only sets the baseline
+        assert_eq!(s.position().consumed_frames, 0);
+        report(&mut s, 2); // wraps: 2 - 0xFFFFFFFC = 6
+        assert_eq!(s.position().consumed_frames, 6);
+        assert_eq!(s.phase(), SessionPhase::Running);
+        // 7 more would leave 13 consumed of 8 submitted.
+        let r = report(&mut s, 9);
+        assert_eq!(r.anomalies, 1);
+        assert_eq!(first_fault(&s), FaultCode::CounterOverclaim);
+        assert_eq!(
+            s.position().consumed_frames,
+            6,
+            "an overclaim credits nothing"
+        );
+        // An enormous jump is not an enormous index: it is just an overclaim.
+        let (mut s, probe, _) = running(FakeConfig::retained());
+        let _a = token(&mut s);
+        probe.queue_event(DeviceEvent::Position { counter: 0 });
+        probe.queue_event(DeviceEvent::Position {
+            counter: 0x8000_0000,
+        });
+        s.poll();
+        assert_eq!(first_fault(&s), FaultCode::CounterOverclaim);
+        assert_eq!(s.position().consumed_frames, 0);
+    }
+
+    #[test]
+    fn a_flush_acknowledgment_outside_a_drain_is_an_anomaly_not_a_free() {
+        let (mut s, probe, _) = running(FakeConfig::retained());
+        let _t = token(&mut s);
+        probe.queue_event(DeviceEvent::FlushAck);
+        let report = s.poll();
+        assert_eq!(report.anomalies, 1);
+        assert_eq!(s.slot_states()[0], SlotState::KernelOwned);
+        assert_eq!(s.phase(), SessionPhase::Running);
+        assert!(s.receipt().faults.is_empty());
+        assert_eq!(s.receipt().anomalies, 1);
+    }
+
+    #[test]
+    fn a_vanished_device_is_a_persistent_fault() {
+        let (mut s, probe, _) = running(FakeConfig::retained());
+        let _t = token(&mut s);
+        probe.lose_device();
+        s.poll();
+        assert_eq!(s.phase(), SessionPhase::Faulted);
+        assert_eq!(
+            s.amp(),
+            Amp::Unknown,
+            "a device that is gone cannot be known muted"
+        );
+        assert_eq!(s.slot_states()[0], SlotState::Quarantined);
+        assert_eq!(first_fault(&s), FaultCode::DeviceLost);
+        assert_eq!(
+            s.reset_device().err().unwrap(),
+            SessionError::DevicePersistentlyLost
+        );
+        assert_eq!(s.slot_states()[0], SlotState::Quarantined);
+        // The kernel may still be reading, so dropping the owner keeps the storage.
+        let (alive, freed) = probe.kernel_touch_pending();
+        assert_eq!((alive, freed), (1, 0));
+        drop(s);
+        assert_eq!(probe.kernel_touch_pending(), (1, 0));
+    }
+
+    #[test]
+    fn a_reset_must_be_acknowledged_to_free_anything() {
+        let mut cfg = FakeConfig::retained();
+        cfg.reset_ack = false;
+        cfg.flush_ack_delay_ticks = None;
+        let (mut s, probe, _) = running(cfg);
+        probe.set_lose_completions(true);
+        let _t = token(&mut s);
+        assert_eq!(s.drain(1), Ok(DrainOutcome::TimedOut { waited_ticks: 1 }));
+        assert_eq!(
+            s.reset_device().err().unwrap(),
+            SessionError::ResetNotAcknowledged
+        );
+        assert_eq!(s.slot_states()[0], SlotState::Quarantined);
+        assert_eq!(s.phase(), SessionPhase::Faulted);
+    }
+
+    #[test]
+    fn a_real_backend_cannot_be_opened_without_an_eligible_contract() {
+        struct Real;
+        impl DeviceBackend for Real {
+            fn provenance(&self) -> Provenance {
+                Provenance::Real
+            }
+            fn abi(&self) -> AbiKind {
+                AbiKind::RetainedBuffer
+            }
+            fn capabilities(&mut self) -> Result<crate::backend::RawCapabilities, DriverError> {
+                Err(DriverError::Gone)
+            }
+            fn set_mute(&mut self, _: bool) -> Result<bool, DriverError> {
+                Err(DriverError::Gone)
+            }
+            fn start(&mut self) -> Result<(), DriverError> {
+                Err(DriverError::Gone)
+            }
+            fn write(&mut self, _: &[u8]) -> Result<usize, DriverError> {
+                Err(DriverError::Gone)
+            }
+            fn submit_retained(
+                &mut self,
+                _: u16,
+                _: u32,
+                _: crate::slots::KernelView,
+                _: usize,
+            ) -> Result<usize, DriverError> {
+                Err(DriverError::Gone)
+            }
+            fn poll_event(&mut self) -> Result<Option<Vec<u8>>, DriverError> {
+                Err(DriverError::Gone)
+            }
+            fn request_flush(&mut self) -> Result<(), DriverError> {
+                Err(DriverError::Gone)
+            }
+            fn reset(&mut self) -> Result<bool, DriverError> {
+                Err(DriverError::Gone)
+            }
+            fn wait_tick(&mut self) {}
+        }
+        let config = || SessionConfig::with_ledger(Arc::new(LeakLedger::new(8)), 2);
+        assert_eq!(
+            HalSession::open(profile(), Real, config()).err().unwrap(),
+            SessionError::HardwareNeedsContract
+        );
+        // The committed matrix is all unknown, so it does not make a real device eligible.
+        let matrix: ContractMatrix =
+            serde_json::from_str(include_str!("../../../tests/e04/matrix_audiodev_m16.json"))
+                .unwrap();
+        assert_eq!(
+            HalSession::open_hardware(profile(), Real, config(), &matrix)
+                .err()
+                .unwrap(),
+            SessionError::ContractIncomplete { missing: 101 }
+        );
+    }
+
+    #[test]
+    fn submit_is_validated_before_anything_changes() {
+        let (mut s, probe, _) = session(FakeConfig::retained());
+        assert_eq!(
+            s.submit(&BLOCK).err().unwrap(),
+            SessionError::WrongPhase {
+                phase: SessionPhase::Closed
+            }
+        );
+        s.prepare().unwrap();
+        let before = probe.calls();
+        assert_eq!(s.submit(&[]).err().unwrap(), SessionError::EmptySubmit);
+        assert_eq!(
+            s.submit(&[0; 5]).err().unwrap(),
+            SessionError::PartialFrame {
+                len: 5,
+                frame_bytes: 4
+            }
+        );
+        assert_eq!(
+            s.submit(&[0; 20]).err().unwrap(),
+            SessionError::TooLarge {
+                len: 20,
+                block_bytes: 16
+            }
+        );
+        assert_eq!(probe.calls(), before, "nothing reached the device");
+        assert_eq!(s.slot_states(), vec![SlotState::Free; 4]);
+        assert_eq!(s.irrevocable_until_frames(), 0);
+    }
+
+    #[test]
+    fn a_full_ring_is_a_typed_busy_error_with_no_side_effects() {
+        let (mut s, probe, _) = running(FakeConfig::retained());
+        let tokens: Vec<SubmitToken> = (0..4).map(|_| token(&mut s)).collect();
+        assert_eq!(tokens.len(), 4);
+        let submits = |p: &FakeProbe| {
+            p.calls()
+                .iter()
+                .filter(|c| matches!(c, FakeCall::SubmitRetained { .. }))
+                .count()
+        };
+        assert_eq!(submits(&probe), 4);
+        assert_eq!(s.submit(&BLOCK).err().unwrap(), SessionError::NoFreeSlot);
+        assert_eq!(submits(&probe), 4);
+        assert_eq!(s.phase(), SessionPhase::Running);
+    }
+
+    #[test]
+    fn a_zero_accept_returns_the_slot_because_the_device_holds_nothing() {
+        let (mut s, probe, _) = running(FakeConfig::retained());
+        probe.set_accept_limit(Some(0));
+        let r = s.submit(&BLOCK).unwrap();
+        assert_eq!(
+            (r.accepted_bytes, r.accepted_frames, r.remainder_bytes),
+            (0, 0, 16)
+        );
+        assert!(r.token.is_none());
+        assert_eq!(s.slot_states()[0], SlotState::Free);
+        assert_eq!(probe.pending(), 0);
+        assert_eq!(s.irrevocable_until_frames(), 0);
+        // A partial accept keeps the whole slot: the device may read all of it.
+        probe.set_accept_limit(Some(8));
+        let r = s.submit(&BLOCK).unwrap();
+        assert_eq!((r.accepted_frames, r.remainder_bytes), (2, 8));
+        assert_eq!(s.slot_states()[0], SlotState::KernelOwned);
+    }
+
+    #[test]
+    fn a_token_from_another_session_is_refused() {
+        let (mut a, _, _) = running(FakeConfig::retained());
+        let (b, _, _) = running(FakeConfig::retained());
+        let t = token(&mut a);
+        assert_eq!(b.token_state(&t), Err(SessionError::ForeignToken));
+        assert_eq!(a.token_state(&t), Ok(TokenState::InFlight));
+    }
+
+    #[test]
+    fn position_class_lead_and_deadline_are_exposed() {
+        for (err, class) in [
+            (Some(0), PositionClass::Exact),
+            (
+                Some(5),
+                PositionClass::Bounded {
+                    max_error_frames: 5,
+                },
+            ),
+            (None, PositionClass::Unknown),
+        ] {
+            let mut cfg = FakeConfig::retained();
+            cfg.position_error_frames = err;
+            let (mut s, _, _) = session(cfg);
+            s.prepare().unwrap();
+            assert_eq!(s.position().class, class);
+            assert_eq!(s.min_submission_lead_ticks(), Some(1));
+            assert_eq!(s.stop_deadline_ticks(), Some(8));
+        }
+    }
+
+    #[test]
+    fn the_receipt_names_model_evidence_and_serializes() {
+        let (mut s, _, _) = running(FakeConfig::retained());
+        let _t = token(&mut s);
+        let r = s.receipt();
+        assert_eq!(r.schema, RECEIPT_SCHEMA);
+        assert_eq!(r.provenance, Provenance::Fake);
+        assert_eq!(
+            (r.evidence.as_str(), r.scope.as_str(), r.abi.as_str()),
+            ("model", "host_simulation", "retained_buffer")
+        );
+        assert!(matches!(
+            r.local_events,
+            LocalEventCapability::Unsupported { .. }
+        ));
+        assert_eq!((r.slots_in_flight, r.slots_free), (1, 3));
+        let back: SessionReceipt =
+            serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert_eq!(back, r);
+    }
+
+    #[test]
+    fn a_profile_that_does_not_verify_never_reaches_the_device() {
+        let hypothesis = franken_board_profile::canonical_board_catalog()
+            .into_iter()
+            .find(|p| p.model_number == "S5")
+            .unwrap();
+        let (backend, probe) = FakeBackend::new(FakeConfig::retained());
+        let config = SessionConfig::with_ledger(Arc::new(LeakLedger::new(8)), 2);
+        assert!(matches!(
+            HalSession::open(hypothesis, backend, config).err().unwrap(),
+            SessionError::ProfileRejected(UnsupportedReasonCode::UnattestedProfile { .. })
+        ));
+        assert!(probe.calls().is_empty());
+    }
+
+    /// Small deterministic generator so the sweep below needs no dependency and replays exactly.
+    struct Xorshift(u64);
+
+    impl Xorshift {
+        fn next_u64(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.0 = x;
+            x
+        }
+
+        fn below(&mut self, n: u64) -> u64 {
+            self.next_u64() % n
+        }
+    }
+
+    fn assert_storage_invariant(s: &HalSession<FakeBackend>, probe: &FakeProbe, seed: u64) {
+        assert_eq!(
+            probe.use_after_free(),
+            0,
+            "seed {seed}: the kernel read freed storage"
+        );
+        assert_eq!(
+            probe.modified_while_owned(),
+            0,
+            "seed {seed}: storage changed under the kernel"
+        );
+        for (slot, generation) in probe.pending_slots() {
+            assert_ne!(
+                s.inspect_slot(slot, generation),
+                TokenState::Settled,
+                "seed {seed}: the kernel holds slot {slot} generation {generation} but the table says it is settled"
+            );
+        }
+    }
+
+    #[test]
+    fn storage_the_kernel_may_hold_is_never_released_under_chaos() {
+        let mut completions = 0usize;
+        let mut quarantined_runs = 0usize;
+        let mut leaked_total = 0usize;
+        let mut closed_runs = 0usize;
+        for seed in 1..=300u64 {
+            let mut rng = Xorshift(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
+            let mut cfg = FakeConfig::retained();
+            cfg.completion_delay_ticks = rng.below(4);
+            cfg.flush_ack_delay_ticks = if rng.below(4) == 0 {
+                None
+            } else {
+                Some(rng.below(3))
+            };
+            cfg.reset_ack = rng.below(5) != 0;
+            let ledger = Arc::new(LeakLedger::new(100_000));
+            let (backend, probe) = FakeBackend::new(cfg);
+            let config = SessionConfig::with_ledger(Arc::clone(&ledger), 2);
+            let mut session = Some(HalSession::open(profile(), backend, config).unwrap());
+            session.as_mut().unwrap().prepare().unwrap();
+            let mut ever_quarantined = false;
+            for _ in 0..60 {
+                let Some(s) = session.as_mut() else { break };
+                match rng.below(15) {
+                    0 => {
+                        let _ = s.start(READY);
+                    }
+                    1..=3 => {
+                        let lens = [0usize, 4, 8, 16, 16, 20];
+                        let len = lens[usize::try_from(rng.below(6)).unwrap()];
+                        let _ = s.submit(&vec![0x5A; len]);
+                    }
+                    4 => completions += s.step().completions,
+                    5 => completions += s.poll().completions,
+                    6 => {
+                        let _ = s.drain(rng.below(4));
+                    }
+                    7 => {
+                        let _ = s.abort_mute();
+                    }
+                    8 => {
+                        let _ = s.cancel_drain();
+                    }
+                    9 => {
+                        let _ = s.reset_device();
+                    }
+                    10 => match rng.below(5) {
+                        // Generation 0 is never valid, so these are always stale or unknown.
+                        0 => probe.queue_event(DeviceEvent::Completed {
+                            slot: u16::try_from(rng.below(8)).unwrap(),
+                            generation: 0,
+                        }),
+                        1 => probe.queue_event(DeviceEvent::Completed {
+                            slot: 200,
+                            generation: 1,
+                        }),
+                        2 => probe.queue_raw_event(vec![1, 2, 3]),
+                        3 => probe.queue_event(DeviceEvent::Position {
+                            counter: u32::try_from(rng.below(1 << 20)).unwrap(),
+                        }),
+                        _ => {
+                            // A flush acknowledgment while draining would be a device that lies about
+                            // having stopped. The session is entitled to believe an acknowledgment, so
+                            // the sweep does not forge one.
+                            if s.phase() != SessionPhase::Draining {
+                                probe.queue_event(DeviceEvent::FlushAck);
+                            }
+                        }
+                    },
+                    11 => {
+                        probe.set_lose_completions(rng.below(2) == 0);
+                        let limits = [None, Some(0), Some(4), Some(7), Some(8)];
+                        probe.set_accept_limit(limits[usize::try_from(rng.below(5)).unwrap()]);
+                    }
+                    12 => {
+                        let ops = [
+                            Op::Start,
+                            Op::SubmitRetained,
+                            Op::SetMute,
+                            Op::RequestFlush,
+                            Op::Reset,
+                        ];
+                        probe.fail_next(
+                            ops[usize::try_from(rng.below(5)).unwrap()],
+                            DriverError::Errno(5),
+                        );
+                    }
+                    13 => {
+                        if rng.below(6) == 0 {
+                            probe.lose_device();
+                        }
+                    }
+                    _ => {
+                        if let Some(taken) = session.take() {
+                            match taken.close() {
+                                Ok(_) => {
+                                    assert_eq!(
+                                        probe.pending(),
+                                        0,
+                                        "seed {seed}: closed with the kernel holding storage"
+                                    );
+                                    closed_runs += 1;
+                                    break;
+                                }
+                                Err(refused) => session = Some(refused.session),
+                            }
+                        }
+                    }
+                }
+                if let Some(s) = session.as_ref() {
+                    assert_storage_invariant(s, &probe, seed);
+                    if s.receipt().slots_quarantined > 0 {
+                        ever_quarantined = true;
+                    }
+                }
+            }
+            // Destroying the owner, in whatever state the chaos left it, must not free what the
+            // kernel may still read.
+            drop(session);
+            assert_eq!(
+                probe.use_after_free(),
+                0,
+                "seed {seed}: owner destruction freed kernel storage"
+            );
+            assert_eq!(probe.kernel_touch_pending().1, 0, "seed {seed}");
+            quarantined_runs += usize::from(ever_quarantined);
+            leaked_total += ledger.leaked_slots();
+        }
+        // The sweep must reach the interesting states, or it proves nothing.
+        assert!(completions > 0, "no completion was ever processed");
+        assert!(quarantined_runs > 0, "no slot was ever quarantined");
+        assert!(
+            leaked_total > 0,
+            "no owner was ever destroyed with the kernel holding storage"
+        );
+        assert!(closed_runs > 0, "no session ever closed cleanly");
+    }
+}

@@ -13,8 +13,12 @@
 
 #![forbid(unsafe_code)]
 
+pub mod abi;
+pub mod backend;
 pub mod contract;
 pub mod dma_sim;
+pub mod session;
+pub mod slots;
 
 use contract::{ContractMatrix, MissingContract};
 use franken_board_profile::{AmplifierPolicy, BoardProfile, UnsupportedReasonCode};
