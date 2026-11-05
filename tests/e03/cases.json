@@ -1,6 +1,6 @@
 {
  "schema": "ffw.e03.cases.v1",
- "about": "E03 (ffw-q2p) host-side cases.  Expected values are written independently of tests/e03/abi.py. REAL = committed QEMU transcripts/receipt; PLANTED = one changed line in a real transcript; SYNTHETIC = a line added or changed because no real source exists; BLOCKED = required, unverifiable now.",
+ "about": "E03 (ffw-q2p) host-side cases.  Expected values are written independently of tests/e03/abi.py.  REAL = the committed transcripts and receipt of central QEMU run 1412ac47 (toolchain/results/runs/1412ac47120d4e5b865f9de6e05f50fe/), read unmodified; PLANTED = one changed or removed line in a real transcript (each mutation must apply and must change the text, so a planted case cannot pass vacuously); SYNTHETIC = a line added, or an inline transcript, because no real source exists; BLOCKED = required, unverifiable now.  The E03-BUILD-*, PROBE-*, RT-*, NET-* and SEED-* cases start from the real run: the earlier SYNTHETIC baseline of twenty added lines was retired when the run supplied them.  The two real baselines differ in exactly one probe: MIPS GETRANDOM is UNSEEDED (rc=-11, so MIPS is DEGRADED) and PPC GETRANDOM is PASS (rc=16).  validate_doc enforces the labelling: a REAL title needs empty mutations and any added line needs SYNTHETIC in the title.  The probes are freestanding raw-syscall PID-1 code on Debian 4.19/4.9 kernels: not musl/std, not a stock Sonos kernel, not the audio driver.  (An earlier run, f0a91e7b, built identical binaries with the same probe lines, but its receipt listed 10 source digests, not 12, so no case reads it.)  Still blocked: retained-audio-driver readiness (E03-BLK-006).",
  "cases": [
   {
    "id": "E03-ERRNO-001",
@@ -451,7 +451,7 @@
   {
    "id": "E03-CLASS-001",
    "kind": "classify",
-   "title": "REAL mips transcript vs its own harness profile: red while the log lacks PARTIAL_WRITE",
+   "title": "REAL mips run 1412ac47, unmodified, vs its own harness profile: every probe reports; DEGRADED only because GETRANDOM is UNSEEDED (successor of E03-BLK-001/003/004/005)",
    "tiers": [
     "smoke",
     "full"
@@ -463,55 +463,107 @@
     "profile": "harness-mips-4.19",
     "mutations": [],
     "expect": {
-     "expect_by_line": {
-      "line": "FFW_TEST:PARTIAL_WRITE",
-      "absent": {
-       "evidence": "matching-guest",
-       "verdict": "red",
-       "calibration_ok": true,
-       "probes": {
-        "PARTIAL_WRITE": [
-         "ambiguous",
-         "no_evidence"
-        ],
-        "EPOLL": [
-         "supported",
-         "pass"
-        ]
-       },
-       "supported_exactly": [
-        "CLOCK_MONOTONIC",
-        "NONBLOCK_PIPE",
-        "POLL",
-        "EPOLL",
-        "SOCKET_UDP",
-        "ENTROPY",
-        "ATOMICS_32"
-       ]
-      },
-      "present": {
-       "evidence": "matching-guest",
-       "verdict": "green",
-       "calibration_ok": true,
-       "supported_exactly": [
-        "CLOCK_MONOTONIC",
-        "NONBLOCK_PIPE",
-        "POLL",
-        "EPOLL",
-        "SOCKET_UDP",
-        "ENTROPY",
-        "ATOMICS_32",
-        "PARTIAL_WRITE"
-       ]
+     "evidence": "matching-guest",
+     "verdict": "degraded",
+     "calibration_ok": true,
+     "probes": {
+      "PARTIAL_WRITE": [
+       "supported",
+       "pass"
+      ],
+      "EINTR_READ": [
+       "supported",
+       "pass"
+      ],
+      "THREADS": [
+       "supported",
+       "pass"
+      ],
+      "TLS": [
+       "supported",
+       "pass"
+      ],
+      "ACCEPT4": [
+       "supported",
+       "pass"
+      ],
+      "UDP_LOOPBACK": [
+       "supported",
+       "pass"
+      ],
+      "REACTOR_WAKE": [
+       "supported",
+       "pass"
+      ],
+      "MEM_PEAK": [
+       "supported",
+       "pass"
+      ],
+      "GETRANDOM": [
+       "unseeded",
+       "unseeded"
+      ]
+     },
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS"
+     ],
+     "build": {
+      "recorded": true,
+      "ok": true,
+      "fields": {
+       "rustc": "1.101.0-nightly",
+       "rustc_commit": "708c94ef0",
+       "linker_flavor": "ld.lld",
+       "libc": "none",
+       "runtime": "no_std",
+       "target": "mips-unknown-linux-musl"
       }
-     }
+     },
+     "lines_present": [
+      "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096",
+      "FFW_PROBE:EINTR_READ status=PASS rc=-4",
+      "FFW_PROBE:TLS status=PASS tp=305419896",
+      "FFW_PROBE:UDP_LOOPBACK status=PASS rc=24",
+      "FFW_PROBE:GETRANDOM status=UNSEEDED rc=-11"
+     ],
+     "lines_match": [
+      "FFW_PROBE:THREADS status=PASS tid=[1-9][0-9]*",
+      "FFW_PROBE:ACCEPT4 status=PASS fd=[1-9][0-9]*",
+      "FFW_PROBE:MEM_PEAK status=PASS kb=[1-9][0-9]*"
+     ],
+     "degraded_contains": "GETRANDOM is unseeded",
+     "kernel_release": "4.19.0-21-4kc-malta"
     }
    }
   },
   {
    "id": "E03-CLASS-002",
    "kind": "classify",
-   "title": "REAL ppc transcript vs its own harness profile: red while the log lacks PARTIAL_WRITE",
+   "title": "REAL ppc run 1412ac47, unmodified, vs its own harness profile: every probe reports PASS, GETRANDOM included: green (successor of E03-BLK-001/003/004/005)",
    "tiers": [
     "smoke",
     "full"
@@ -523,55 +575,107 @@
     "profile": "harness-ppc-4.9",
     "mutations": [],
     "expect": {
-     "expect_by_line": {
-      "line": "FFW_TEST:PARTIAL_WRITE",
-      "absent": {
-       "evidence": "matching-guest",
-       "verdict": "red",
-       "calibration_ok": true,
-       "probes": {
-        "PARTIAL_WRITE": [
-         "ambiguous",
-         "no_evidence"
-        ],
-        "EPOLL": [
-         "supported",
-         "pass"
-        ]
-       },
-       "supported_exactly": [
-        "CLOCK_MONOTONIC",
-        "NONBLOCK_PIPE",
-        "POLL",
-        "EPOLL",
-        "SOCKET_UDP",
-        "ENTROPY",
-        "ATOMICS_32"
-       ]
-      },
-      "present": {
-       "evidence": "matching-guest",
-       "verdict": "green",
-       "calibration_ok": true,
-       "supported_exactly": [
-        "CLOCK_MONOTONIC",
-        "NONBLOCK_PIPE",
-        "POLL",
-        "EPOLL",
-        "SOCKET_UDP",
-        "ENTROPY",
-        "ATOMICS_32",
-        "PARTIAL_WRITE"
-       ]
+     "evidence": "matching-guest",
+     "verdict": "green",
+     "calibration_ok": true,
+     "probes": {
+      "PARTIAL_WRITE": [
+       "supported",
+       "pass"
+      ],
+      "EINTR_READ": [
+       "supported",
+       "pass"
+      ],
+      "THREADS": [
+       "supported",
+       "pass"
+      ],
+      "TLS": [
+       "supported",
+       "pass"
+      ],
+      "ACCEPT4": [
+       "supported",
+       "pass"
+      ],
+      "UDP_LOOPBACK": [
+       "supported",
+       "pass"
+      ],
+      "REACTOR_WAKE": [
+       "supported",
+       "pass"
+      ],
+      "MEM_PEAK": [
+       "supported",
+       "pass"
+      ],
+      "GETRANDOM": [
+       "supported",
+       "pass"
+      ]
+     },
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "GETRANDOM"
+     ],
+     "build": {
+      "recorded": true,
+      "ok": true,
+      "fields": {
+       "rustc": "1.101.0-nightly",
+       "rustc_commit": "708c94ef0",
+       "linker_flavor": "ld.lld",
+       "libc": "none",
+       "runtime": "no_std",
+       "target": "powerpc-unknown-linux-musl"
       }
-     }
+     },
+     "lines_present": [
+      "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096",
+      "FFW_PROBE:EINTR_READ status=PASS rc=-4",
+      "FFW_PROBE:TLS status=PASS tp=305419896",
+      "FFW_PROBE:UDP_LOOPBACK status=PASS rc=24",
+      "FFW_PROBE:GETRANDOM status=PASS rc=16"
+     ],
+     "lines_match": [
+      "FFW_PROBE:THREADS status=PASS tid=[1-9][0-9]*",
+      "FFW_PROBE:ACCEPT4 status=PASS fd=[1-9][0-9]*",
+      "FFW_PROBE:MEM_PEAK status=PASS kb=[1-9][0-9]*"
+     ],
+     "kernel_release": "4.9.0-0.bpo.6-powerpc"
     }
    }
   },
   {
    "id": "E03-CLASS-003",
    "kind": "classify",
-   "title": "mips real transcript + SYNTHETIC PARTIAL_WRITE line (committed log predates it): green",
+   "title": "PLANTED mips run: the PARTIAL_WRITE line removed, so the short-write guarantee has no evidence: red",
    "tiers": [
     "smoke",
     "full"
@@ -583,15 +687,24 @@
     "profile": "harness-mips-4.19",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+      "op": "drop",
+      "prefix": "FFW_TEST:PARTIAL_WRITE "
      }
     ],
     "expect": {
      "evidence": "matching-guest",
-     "verdict": "green",
+     "verdict": "red",
      "calibration_ok": true,
+     "probes": {
+      "PARTIAL_WRITE": [
+       "ambiguous",
+       "no_evidence"
+      ],
+      "EPOLL": [
+       "supported",
+       "pass"
+      ]
+     },
      "supported_exactly": [
       "CLOCK_MONOTONIC",
       "NONBLOCK_PIPE",
@@ -600,7 +713,23 @@
       "SOCKET_UDP",
       "ENTROPY",
       "ATOMICS_32",
-      "PARTIAL_WRITE"
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS"
      ]
     }
    }
@@ -608,7 +737,7 @@
   {
    "id": "E03-CLASS-004",
    "kind": "classify",
-   "title": "ppc real transcript + SYNTHETIC PARTIAL_WRITE line (committed log predates it): green",
+   "title": "PLANTED ppc run: the PARTIAL_WRITE line removed, so the short-write guarantee has no evidence: red",
    "tiers": [
     "smoke",
     "full"
@@ -620,15 +749,24 @@
     "profile": "harness-ppc-4.9",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
+      "op": "drop",
+      "prefix": "FFW_TEST:PARTIAL_WRITE "
      }
     ],
     "expect": {
      "evidence": "matching-guest",
-     "verdict": "green",
+     "verdict": "red",
      "calibration_ok": true,
+     "probes": {
+      "PARTIAL_WRITE": [
+       "ambiguous",
+       "no_evidence"
+      ],
+      "EPOLL": [
+       "supported",
+       "pass"
+      ]
+     },
      "supported_exactly": [
       "CLOCK_MONOTONIC",
       "NONBLOCK_PIPE",
@@ -637,7 +775,24 @@
       "SOCKET_UDP",
       "ENTROPY",
       "ATOMICS_32",
-      "PARTIAL_WRITE"
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "GETRANDOM"
      ]
     }
    }
@@ -656,11 +811,6 @@
     },
     "profile": "harness-ppc-4.9",
     "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
      {
       "op": "set_line",
       "prefix": "FFW_PROBE:EPOLL",
@@ -686,7 +836,25 @@
       "SOCKET_UDP",
       "ENTROPY",
       "ATOMICS_32",
-      "PARTIAL_WRITE"
+      "PARTIAL_WRITE",
+      "GETRANDOM",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
      ]
     }
    }
@@ -704,11 +872,6 @@
     },
     "profile": "harness-ppc-4.9",
     "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
      {
       "op": "set_line",
       "prefix": "FFW_PROBE:EPOLL",
@@ -750,11 +913,6 @@
     "profile": "harness-mips-4.19",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
-     {
       "op": "set_line",
       "prefix": "FFW_PROBE:SOCKET_UDP",
       "line": "FFW_PROBE:SOCKET_UDP status=FAIL fd=-89"
@@ -775,7 +933,24 @@
       "EPOLL",
       "ENTROPY",
       "ATOMICS_32",
-      "PARTIAL_WRITE"
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
      ]
     }
    }
@@ -793,11 +968,6 @@
     },
     "profile": "harness-mips-4.19",
     "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
      {
       "op": "set_line",
       "prefix": "FFW_PROBE:SOCKET_UDP",
@@ -829,11 +999,6 @@
     "profile": "harness-ppc-4.9",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
-     {
       "op": "set_line",
       "prefix": "FFW_PROBE:ENTROPY",
       "line": "FFW_PROBE:ENTROPY status=FAIL fd=-4"
@@ -863,11 +1028,6 @@
     },
     "profile": "harness-ppc-4.9",
     "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
      {
       "op": "set_line",
       "prefix": "FFW_PROBE:ENTROPY",
@@ -899,11 +1059,6 @@
     "profile": "harness-ppc-4.9",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
-     {
       "op": "set_line",
       "prefix": "FFW_PROBE:SOCKET_UDP",
       "line": "FFW_PROBE:SOCKET_UDP status=FAIL fd=-97"
@@ -933,11 +1088,6 @@
     },
     "profile": "harness-ppc-4.9",
     "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
      {
       "op": "set_line",
       "prefix": "FFW_PROBE:NONBLOCK_PIPE",
@@ -969,11 +1119,6 @@
     "profile": "harness-ppc-4.9",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
-     {
       "op": "drop",
       "prefix": "FFW_PROBE:ATOMICS_32"
      }
@@ -1003,11 +1148,6 @@
     "profile": "harness-ppc-4.9",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
-     {
       "op": "duplicate",
       "prefix": "FFW_PROBE:EPOLL"
      }
@@ -1035,11 +1175,6 @@
     },
     "profile": "harness-ppc-4.9",
     "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
      {
       "op": "set_line",
       "prefix": "FFW_PROBE:EPOLL",
@@ -1069,11 +1204,6 @@
     },
     "profile": "harness-ppc-4.9",
     "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
      {
       "op": "set_line",
       "prefix": "FFW_PROBE:POLL",
@@ -1105,8 +1235,8 @@
     "profile": "harness-ppc-4.9",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "op": "set_line",
+      "prefix": "FFW_TEST:PARTIAL_WRITE ",
       "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=8192"
      }
     ],
@@ -1135,8 +1265,8 @@
     "profile": "harness-ppc-4.9",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "op": "set_line",
+      "prefix": "FFW_TEST:PARTIAL_WRITE ",
       "line": "FFW_TEST:PARTIAL_WRITE status=FAIL bytes=-1"
      }
     ],
@@ -1164,11 +1294,6 @@
     },
     "profile": "harness-mips-4.19",
     "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
      {
       "op": "set_line",
       "prefix": "FFW_TEST:ERR_ENOSYS",
@@ -1206,11 +1331,6 @@
     "profile": "harness-ppc-4.9",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
-     {
       "op": "drop",
       "prefix": "FFW_TEST:ERR_EBADF"
      }
@@ -1226,7 +1346,25 @@
       "SOCKET_UDP",
       "ENTROPY",
       "ATOMICS_32",
-      "PARTIAL_WRITE"
+      "PARTIAL_WRITE",
+      "GETRANDOM",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
      ]
     }
    }
@@ -1244,11 +1382,6 @@
     },
     "profile": "harness-ppc-4.9",
     "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
      {
       "op": "set_line",
       "prefix": "FFW_PROBE:ENTROPY",
@@ -1280,11 +1413,6 @@
     "profile": "harness-ppc-4.9",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
-     {
       "op": "set_line",
       "prefix": "FFW_HELLO",
       "line": "FFW_HELLO arch=mips-be endian=0x01020304 pid=1 ptr_bits=32"
@@ -1313,11 +1441,6 @@
     },
     "profile": "harness-ppc-4.9",
     "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
      {
       "op": "set_line",
       "prefix": "FFW_PROBE:EPOLL",
@@ -1348,11 +1471,6 @@
     "profile": "harness-ppc-4.9",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
-     {
       "op": "set_line",
       "prefix": "FFW_PROBE:EPOLL",
       "line": "FFW_PROBE:EPOLL status=PASS fd=4 extra"
@@ -1382,11 +1500,6 @@
     "profile": "harness-ppc-4.9",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
-     {
       "op": "drop",
       "prefix": "FFW_MARKER:USERSPACE_START"
      }
@@ -1415,11 +1528,6 @@
     "profile": "harness-ppc-4.9",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
-     {
       "op": "set_line",
       "prefix": "FFW_TEST:ERR_EBADF",
       "line": "FFW_TEST:ERR_EBADF status=PASS errno=1"
@@ -1436,7 +1544,25 @@
       "SOCKET_UDP",
       "ENTROPY",
       "ATOMICS_32",
-      "PARTIAL_WRITE"
+      "PARTIAL_WRITE",
+      "GETRANDOM",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
      ]
     }
    }
@@ -1455,11 +1581,6 @@
     "profile": "harness-ppc-4.9",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
-     {
       "op": "set_line",
       "prefix": "FFW_TEST:ERR_ENOENT",
       "line": "FFW_TEST:ERR_ENOENT status=PASS errno=3"
@@ -1476,7 +1597,25 @@
       "SOCKET_UDP",
       "ENTROPY",
       "ATOMICS_32",
-      "PARTIAL_WRITE"
+      "PARTIAL_WRITE",
+      "GETRANDOM",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
      ]
     }
    }
@@ -1498,11 +1637,6 @@
       "op": "set_line",
       "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
       "line": "FFW_TEST:POS_FD_SHORT_WRITE status=PASS fd=0"
-     },
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
      }
     ],
     "expect": {
@@ -1516,7 +1650,25 @@
       "SOCKET_UDP",
       "ENTROPY",
       "ATOMICS_32",
-      "PARTIAL_WRITE"
+      "PARTIAL_WRITE",
+      "GETRANDOM",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
      ]
     }
    }
@@ -1534,11 +1686,6 @@
     },
     "profile": "harness-ppc-4.9",
     "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
      {
       "op": "drop",
       "prefix": "FFW_TEST:ERR_ENOSYS"
@@ -1574,11 +1721,6 @@
     },
     "profile": "harness-ppc-4.9",
     "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
      {
       "op": "set_line",
       "prefix": "FFW_TEST:ERR_ENOSYS",
@@ -1616,11 +1758,6 @@
     "profile": "harness-ppc-4.9",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
-     {
       "op": "set_line",
       "prefix": "FFW_PROBE:POLL",
       "line": "FFW_PROBE:POLL status=PASS rc=2"
@@ -1650,11 +1787,6 @@
     },
     "profile": "harness-ppc-4.9",
     "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
      {
       "op": "set_line",
       "prefix": "FFW_PROBE:POLL",
@@ -1686,11 +1818,6 @@
     "profile": "harness-ppc-4.9",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
-     {
       "op": "set_line",
       "prefix": "FFW_PROBE:ATOMICS_32",
       "line": "FFW_PROBE:ATOMICS_32 status=PASS ok=0"
@@ -1720,11 +1847,6 @@
     },
     "profile": "harness-ppc-4.9",
     "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
      {
       "op": "set_line",
       "prefix": "FFW_PROBE:NONBLOCK_PIPE",
@@ -1756,11 +1878,6 @@
     "profile": "harness-ppc-4.9",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
-     {
       "op": "set_line",
       "prefix": "FFW_PROBE:NONBLOCK_PIPE",
       "line": "FFW_PROBE:NONBLOCK_PIPE status=PASS rc=1"
@@ -1790,11 +1907,6 @@
     },
     "profile": "harness-ppc-4.9",
     "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
      {
       "op": "set_line",
       "prefix": "FFW_PROBE:CLOCK_MONOTONIC",
@@ -1826,11 +1938,6 @@
     "profile": "harness-ppc-4.9",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
-     {
       "op": "set_line",
       "prefix": "FFW_PROBE:EPOLL",
       "line": "FFW_PROBE:EPOLL status=PASS fd=0"
@@ -1860,11 +1967,6 @@
     },
     "profile": "harness-ppc-4.9",
     "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
      {
       "op": "set_line",
       "prefix": "FFW_PROBE:SOCKET_UDP",
@@ -1896,11 +1998,6 @@
     "profile": "harness-ppc-4.9",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
-     {
       "op": "set_line",
       "prefix": "FFW_PROBE:ENTROPY",
       "line": "FFW_PROBE:ENTROPY status=PASS fd=-1"
@@ -1931,8 +2028,8 @@
     "profile": "harness-ppc-4.9",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "op": "set_line",
+      "prefix": "FFW_TEST:PARTIAL_WRITE ",
       "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=0"
      }
     ],
@@ -1950,7 +2047,7 @@
   {
    "id": "E03-CLASS-064",
    "kind": "classify",
-   "title": "ppc PARTIAL_WRITE bytes=8191 (largest short write): supported",
+   "title": "PLANTED ppc PARTIAL_WRITE bytes=8191 (largest short write): supported",
    "tiers": [
     "full"
    ],
@@ -1961,8 +2058,8 @@
     "profile": "harness-ppc-4.9",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
+      "op": "set_line",
+      "prefix": "FFW_TEST:PARTIAL_WRITE ",
       "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=8191"
      }
     ],
@@ -1973,14 +2070,17 @@
        "supported",
        "pass"
       ]
-     }
+     },
+     "lines_present": [
+      "FFW_TEST:PARTIAL_WRITE status=PASS bytes=8191"
+     ]
     }
    }
   },
   {
    "id": "E03-CLASS-040",
    "kind": "classify",
-   "title": "ppc CLOCK_MONOTONIC res_ns=999999999 (largest valid tv_nsec): supported",
+   "title": "PLANTED ppc CLOCK_MONOTONIC res_ns=999999999 (largest valid tv_nsec): supported",
    "tiers": [
     "full"
    ],
@@ -1991,18 +2091,22 @@
     "profile": "harness-ppc-4.9",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
-     {
       "op": "set_line",
       "prefix": "FFW_PROBE:CLOCK_MONOTONIC",
       "line": "FFW_PROBE:CLOCK_MONOTONIC status=PASS res_ns=999999999"
      }
     ],
     "expect": {
-     "verdict": "green"
+     "verdict": "green",
+     "probes": {
+      "CLOCK_MONOTONIC": [
+       "supported",
+       "pass"
+      ]
+     },
+     "lines_present": [
+      "FFW_PROBE:CLOCK_MONOTONIC status=PASS res_ns=999999999"
+     ]
     }
    }
   },
@@ -2019,11 +2123,6 @@
     },
     "profile": "harness-ppc-4.9",
     "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
      {
       "op": "set_line",
       "prefix": "FFW_PROBE:CLOCK_MONOTONIC",
@@ -2044,7 +2143,7 @@
   {
    "id": "E03-CLASS-043",
    "kind": "classify",
-   "title": "ppc EPOLL fd=2147483647 (largest 32-bit fd): supported",
+   "title": "PLANTED ppc EPOLL fd=2147483647 (largest 32-bit fd): supported",
    "tiers": [
     "full"
    ],
@@ -2055,18 +2154,22 @@
     "profile": "harness-ppc-4.9",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
-     {
       "op": "set_line",
       "prefix": "FFW_PROBE:EPOLL",
       "line": "FFW_PROBE:EPOLL status=PASS fd=2147483647"
      }
     ],
     "expect": {
-     "verdict": "green"
+     "verdict": "green",
+     "probes": {
+      "EPOLL": [
+       "supported",
+       "pass"
+      ]
+     },
+     "lines_present": [
+      "FFW_PROBE:EPOLL status=PASS fd=2147483647"
+     ]
     }
    }
   },
@@ -2083,11 +2186,6 @@
     },
     "profile": "harness-ppc-4.9",
     "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
      {
       "op": "set_line",
       "prefix": "FFW_PROBE:EPOLL",
@@ -2174,7 +2272,7 @@
   {
    "id": "E03-CLASS-032",
    "kind": "classify",
-   "title": "ppc full transcript run under user-mode emulation: CPU evidence only, unavailable guest, red",
+   "title": "REAL ppc run classified under mode user-mode: CPU evidence only, unavailable guest, red",
    "tiers": [
     "smoke",
     "full"
@@ -2184,13 +2282,7 @@
      "real": "ppc"
     },
     "profile": "harness-ppc-4.9",
-    "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     }
-    ],
+    "mutations": [],
     "expect": {
      "evidence": "cpu-emulation",
      "verdict": "red",
@@ -2208,7 +2300,7 @@
   {
    "id": "E03-CLASS-033",
    "kind": "classify",
-   "title": "No QEMU run at all (mode none, empty transcript): unavailable guest, red",
+   "title": "SYNTHETIC: No QEMU run at all (mode none, empty transcript): unavailable guest, red",
    "tiers": [
     "full"
    ],
@@ -2232,7 +2324,7 @@
   {
    "id": "E03-CLASS-037",
    "kind": "classify",
-   "title": "PLANTED markers only echoed by the kernel/shell, not printed by the guest: unavailable guest",
+   "title": "SYNTHETIC: PLANTED markers only echoed by the kernel/shell, not printed by the guest: unavailable guest",
    "tiers": [
     "full"
    ],
@@ -2259,7 +2351,7 @@
   {
    "id": "E03-CLASS-034",
    "kind": "classify",
-   "title": "REAL ppc 4.9 guest vs the STOCK 2.6.14 profile: never supported (no matching guest), red",
+   "title": "REAL ppc 4.9 run vs the STOCK 2.6.14 profile: never supported (no matching guest), red",
    "tiers": [
     "smoke",
     "full"
@@ -2269,13 +2361,7 @@
      "real": "ppc"
     },
     "profile": "stock-ppc-2.6.14",
-    "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     }
-    ],
+    "mutations": [],
     "expect": {
      "evidence": "non-matching-guest",
      "verdict": "red",
@@ -2286,14 +2372,15 @@
      "guest_status": {
       "EPOLL": "supported",
       "CLOCK_MONOTONIC": "supported"
-     }
+     },
+     "kernel_release": "4.9.0-0.bpo.6-powerpc"
     }
    }
   },
   {
    "id": "E03-CLASS-035",
    "kind": "classify",
-   "title": "REAL mips 4.19 guest vs the STOCK 2.6.35 profile: never supported (no matching guest), red",
+   "title": "REAL mips 4.19 run vs the STOCK 2.6.35 profile: never supported (no matching guest), red",
    "tiers": [
     "smoke",
     "full"
@@ -2303,13 +2390,7 @@
      "real": "mips"
     },
     "profile": "stock-mips-2.6.35",
-    "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     }
-    ],
+    "mutations": [],
     "expect": {
      "evidence": "non-matching-guest",
      "verdict": "red",
@@ -2319,7 +2400,8 @@
      ],
      "guest_status": {
       "EPOLL": "supported"
-     }
+     },
+     "kernel_release": "4.19.0-21-4kc-malta"
     }
    }
   },
@@ -2335,13 +2417,7 @@
      "real": "mips"
     },
     "profile": "harness-ppc-4.9",
-    "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     }
-    ],
+    "mutations": [],
     "expect": {
      "evidence": "non-matching-guest",
      "verdict": "red",
@@ -2366,11 +2442,6 @@
     "profile": "stock-ppc-2.6.14",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
-     {
       "op": "set_line",
       "prefix": "FFW_KERNEL_VERSION:",
       "line": "FFW_KERNEL_VERSION: Linux version 2.6.140 (synthetic)"
@@ -2378,14 +2449,15 @@
     ],
     "expect": {
      "evidence": "non-matching-guest",
-     "verdict": "red"
+     "verdict": "red",
+     "kernel_release": "2.6.140"
     }
    }
   },
   {
    "id": "E03-CLASS-039",
    "kind": "classify",
-   "title": "SYNTHETIC '2.6.14-sonos' guest vs the 2.6.14 profile: matching evidence, green (the gate is not always red)",
+   "title": "PLANTED '2.6.14-sonos' guest vs the 2.6.14 profile: matching evidence, green (the gate is not always red)",
    "tiers": [
     "full"
    ],
@@ -2396,11 +2468,6 @@
     "profile": "stock-ppc-2.6.14",
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
-     {
       "op": "set_line",
       "prefix": "FFW_KERNEL_VERSION:",
       "line": "FFW_KERNEL_VERSION: Linux version 2.6.14-sonos (synthetic)"
@@ -2408,38 +2475,33 @@
     ],
     "expect": {
      "evidence": "matching-guest",
-     "verdict": "green"
+     "verdict": "green",
+     "kernel_release": "2.6.14-sonos"
     }
    }
   },
   {
    "id": "E03-CLI-001",
    "kind": "cli",
-   "title": "CLI exits 0 only for a green classification (mips + SYNTHETIC PARTIAL_WRITE)",
+   "title": "CLI exits 0 only for a green classification (the REAL ppc run as committed)",
    "tiers": [
     "smoke",
     "full"
    ],
    "spec": {
-    "profile": "harness-mips-4.19",
+    "profile": "harness-ppc-4.9",
     "exit": 0,
     "verdict": "green",
     "source": {
-     "real": "mips"
+     "real": "ppc"
     },
-    "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     }
-    ]
+    "mutations": []
    }
   },
   {
    "id": "E03-CLI-002",
    "kind": "cli",
-   "title": "CLI exits 1 when a required capability is unsupported (mips SOCKET_UDP -89)",
+   "title": "CLI exits 1 when a required capability is unsupported (PLANTED mips SOCKET_UDP -89)",
    "tiers": [
     "smoke",
     "full"
@@ -2453,11 +2515,6 @@
     },
     "mutations": [
      {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
-     {
       "op": "set_line",
       "prefix": "FFW_PROBE:SOCKET_UDP",
       "line": "FFW_PROBE:SOCKET_UDP status=FAIL fd=-89"
@@ -2468,7 +2525,7 @@
   {
    "id": "E03-CLI-003",
    "kind": "cli",
-   "title": "CLI exits 4 (distinct, nonzero) for a degraded fallback-covered gap (ppc EPOLL -38)",
+   "title": "CLI exits 4 (distinct, nonzero) for a degraded fallback-covered gap (PLANTED ppc EPOLL -38)",
    "tiers": [
     "full"
    ],
@@ -2480,11 +2537,6 @@
      "real": "ppc"
     },
     "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     },
      {
       "op": "set_line",
       "prefix": "FFW_PROBE:EPOLL",
@@ -2510,16 +2562,16 @@
   {
    "id": "E03-CLI-005",
    "kind": "cli",
-   "title": "CLI on the REAL ppc log as committed: exit 1 while it lacks PARTIAL_WRITE",
+   "title": "CLI exits 4 (distinct, nonzero) on the REAL mips run as committed: GETRANDOM is unseeded, so the run is degraded, not green",
    "tiers": [
     "full"
    ],
    "spec": {
-    "profile": "harness-ppc-4.9",
-    "exit": 1,
-    "verdict": "red",
+    "profile": "harness-mips-4.19",
+    "exit": 4,
+    "verdict": "degraded",
     "source": {
-     "real": "ppc"
+     "real": "mips"
     },
     "mutations": []
    }
@@ -2544,7 +2596,7 @@
   {
    "id": "E03-CLI-007",
    "kind": "cli",
-   "title": "CLI under user-mode emulation exits 1 whatever the transcript says",
+   "title": "CLI under user-mode emulation exits 1 whatever the transcript says (REAL ppc run)",
    "tiers": [
     "full"
    ],
@@ -2555,13 +2607,7 @@
     "source": {
      "real": "ppc"
     },
-    "mutations": [
-     {
-      "op": "insert_after",
-      "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-      "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-     }
-    ],
+    "mutations": [],
     "mode": "user-mode"
    }
   },
@@ -2577,31 +2623,25 @@
     "profile": "harness-mips-4.19",
     "variants": [
      {
-      "name": "committed",
+      "name": "REAL committed run",
       "mutations": [],
+      "root": "PASS",
+      "ours": "degraded"
+     },
+     {
+      "name": "PLANTED PARTIAL_WRITE removed",
+      "mutations": [
+       {
+        "op": "drop",
+        "prefix": "FFW_TEST:PARTIAL_WRITE "
+       }
+      ],
       "root": "FAIL",
       "ours": "red"
      },
      {
-      "name": "+synthetic PARTIAL_WRITE",
+      "name": "PLANTED EPOLL ENOSYS",
       "mutations": [
-       {
-        "op": "insert_after",
-        "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-        "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-       }
-      ],
-      "root": "PASS",
-      "ours": "green"
-     },
-     {
-      "name": "EPOLL ENOSYS",
-      "mutations": [
-       {
-        "op": "insert_after",
-        "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-        "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-       },
        {
         "op": "set_line",
         "prefix": "FFW_PROBE:EPOLL",
@@ -2612,13 +2652,8 @@
       "ours": "degraded"
      },
      {
-      "name": "SOCKET ENOSYS",
+      "name": "PLANTED SOCKET ENOSYS",
       "mutations": [
-       {
-        "op": "insert_after",
-        "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-        "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-       },
        {
         "op": "set_line",
         "prefix": "FFW_PROBE:SOCKET_UDP",
@@ -2643,31 +2678,25 @@
     "profile": "harness-ppc-4.9",
     "variants": [
      {
-      "name": "committed",
+      "name": "REAL committed run",
       "mutations": [],
-      "root": "FAIL",
-      "ours": "red"
-     },
-     {
-      "name": "+synthetic PARTIAL_WRITE",
-      "mutations": [
-       {
-        "op": "insert_after",
-        "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-        "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-       }
-      ],
       "root": "PASS",
       "ours": "green"
      },
      {
-      "name": "POLL fails",
+      "name": "PLANTED PARTIAL_WRITE removed",
       "mutations": [
        {
-        "op": "insert_after",
-        "prefix": "FFW_TEST:POS_FD_SHORT_WRITE",
-        "line": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096"
-       },
+        "op": "drop",
+        "prefix": "FFW_TEST:PARTIAL_WRITE "
+       }
+      ],
+      "root": "FAIL",
+      "ours": "red"
+     },
+     {
+      "name": "PLANTED POLL fails",
+      "mutations": [
        {
         "op": "set_line",
         "prefix": "FFW_PROBE:POLL",
@@ -2681,13 +2710,2537 @@
    }
   },
   {
-   "id": "E03-IDENT-001",
-   "kind": "identity",
-   "title": "The two real logs are the bytes the committed receipt names (sha256) and carry its kernel",
+   "id": "E03-BUILD-001",
+   "kind": "classify",
+   "title": "REAL mips run 1412ac47, unmodified: the FFW_BUILD identity is recorded and consistent with the run",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "degraded",
+     "calibration_ok": true,
+     "build": {
+      "recorded": true,
+      "ok": true,
+      "fields": {
+       "rustc": "1.101.0-nightly",
+       "rustc_commit": "708c94ef0",
+       "linker_flavor": "ld.lld",
+       "libc": "none",
+       "runtime": "no_std",
+       "target": "mips-unknown-linux-musl"
+      }
+     },
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS"
+     ],
+     "degraded_contains": "GETRANDOM is unseeded"
+    }
+   }
+  },
+  {
+   "id": "E03-BUILD-002",
+   "kind": "classify",
+   "title": "REAL ppc run 1412ac47, unmodified: the FFW_BUILD identity is recorded and consistent with the run",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "green",
+     "calibration_ok": true,
+     "build": {
+      "recorded": true,
+      "ok": true,
+      "fields": {
+       "rustc": "1.101.0-nightly",
+       "rustc_commit": "708c94ef0",
+       "linker_flavor": "ld.lld",
+       "libc": "none",
+       "runtime": "no_std",
+       "target": "powerpc-unknown-linux-musl"
+      }
+     },
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "GETRANDOM"
+     ]
+    }
+   }
+  },
+  {
+   "id": "E03-BUILD-003",
+   "kind": "classify",
+   "title": "PLANTED no FFW_BUILD line at all: every probe supported, verdict red (unrecorded)",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "drop",
+      "prefix": "FFW_BUILD "
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "red",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "reason_contains": "build identity",
+     "build": {
+      "ok": false,
+      "problem": "unrecorded",
+      "recorded": false
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-BUILD-004",
+   "kind": "classify",
+   "title": "PLANTED two FFW_BUILD lines: a doubled report is not an identity",
    "tiers": [
     "full"
    ],
-   "spec": {}
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "duplicate",
+      "prefix": "FFW_BUILD"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "red",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "reason_contains": "build identity",
+     "build": {
+      "ok": false,
+      "problem": "duplicate",
+      "recorded": false
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-BUILD-005",
+   "kind": "classify",
+   "title": "PLANTED libc=musl: a no_std probe that claims a libc is refused",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_BUILD ",
+      "line": "FFW_BUILD target=mips-unknown-linux-musl rustc=1.101.0-nightly rustc_commit=708c94ef0 linker_flavor=ld.lld libc=musl runtime=no_std"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "red",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "reason_contains": "build identity",
+     "build": {
+      "ok": false,
+      "problem": "libc:",
+      "recorded": true
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-BUILD-006",
+   "kind": "classify",
+   "title": "PLANTED rustc=unknown: a compiler the build could not read is not a recorded compiler",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_BUILD ",
+      "line": "FFW_BUILD target=mips-unknown-linux-musl rustc=unknown rustc_commit=708c94ef0 linker_flavor=ld.lld libc=none runtime=no_std"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "red",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "reason_contains": "build identity",
+     "build": {
+      "ok": false,
+      "problem": "unidentified: rustc"
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-BUILD-007",
+   "kind": "classify",
+   "title": "PLANTED linker_flavor=unspecified: no linker flavor is not a recorded linker",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_BUILD ",
+      "line": "FFW_BUILD target=mips-unknown-linux-musl rustc=1.101.0-nightly rustc_commit=708c94ef0 linker_flavor=unspecified libc=none runtime=no_std"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "red",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "reason_contains": "build identity",
+     "build": {
+      "ok": false,
+      "problem": "unidentified: linker_flavor"
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-BUILD-008",
+   "kind": "classify",
+   "title": "PLANTED runtime=std: the probe is no_std",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_BUILD ",
+      "line": "FFW_BUILD target=mips-unknown-linux-musl rustc=1.101.0-nightly rustc_commit=708c94ef0 linker_flavor=ld.lld libc=none runtime=std"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "red",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "reason_contains": "build identity",
+     "build": {
+      "ok": false,
+      "problem": "runtime:"
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-BUILD-009",
+   "kind": "classify",
+   "title": "PLANTED a powerpc triple in the mips run: identity contradicts the profile ABI, kernel evidence untouched",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_BUILD ",
+      "line": "FFW_BUILD target=powerpc-unknown-linux-musl rustc=1.101.0-nightly rustc_commit=708c94ef0 linker_flavor=ld.lld libc=none runtime=no_std"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "red",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "reason_contains": "build identity",
+     "build": {
+      "ok": false,
+      "problem": "target_arch:"
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-BUILD-010",
+   "kind": "classify",
+   "title": "PLANTED FFW_BUILD cut before its runtime field: malformed, not partially accepted",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_BUILD ",
+      "line": "FFW_BUILD target=mips-unknown-linux-musl rustc=1.101.0-nightly rustc_commit=708c94ef0 linker_flavor=ld.lld libc=none"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "red",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "reason_contains": "build identity",
+     "build": {
+      "ok": false,
+      "problem": "malformed:",
+      "recorded": false
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-BUILD-011",
+   "kind": "classify",
+   "title": "REAL mips run under mode user-mode: a valid identity cannot launder user-mode emulation: still cpu-emulation, red, no probe supported",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [],
+    "expect": {
+     "evidence": "cpu-emulation",
+     "verdict": "red",
+     "build": {
+      "recorded": true,
+      "ok": true
+     }
+    },
+    "mode": "user-mode"
+   }
+  },
+  {
+   "id": "E03-BUILD-012",
+   "kind": "classify",
+   "title": "REAL ppc 4.9 run vs the stock 2.6.14 profile: a valid identity cannot launder a non-matching guest: stays red",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "stock-ppc-2.6.14",
+    "mutations": [],
+    "expect": {
+     "evidence": "non-matching-guest",
+     "verdict": "red",
+     "build": {
+      "recorded": true,
+      "ok": true
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-PROBE-001",
+   "kind": "classify",
+   "title": "PLANTED EVENTFD2 -ENOSYS(89) on mips: unsupported, degraded (self-pipe fallback), never a guest failure",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:EVENTFD2",
+      "line": "FFW_PROBE:EVENTFD2 status=FAIL fd=-89"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "degraded",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "EVENTFD2": [
+       "unsupported",
+       "ENOSYS"
+      ],
+      "NONBLOCK_PIPE": [
+       "supported",
+       "pass"
+      ]
+     },
+     "degraded_contains": "EVENTFD2 is unsupported (fallback NONBLOCK_PIPE is supported)"
+    }
+   }
+  },
+  {
+   "id": "E03-PROBE-002",
+   "kind": "classify",
+   "title": "PLANTED GETRANDOM -ENOSYS(38) on ppc: unsupported, degraded (/dev/urandom ENTROPY fallback)",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:GETRANDOM",
+      "line": "FFW_PROBE:GETRANDOM status=FAIL rc=-38"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "degraded",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "GETRANDOM": [
+       "unsupported",
+       "ENOSYS"
+      ],
+      "ENTROPY": [
+       "supported",
+       "pass"
+      ]
+     },
+     "degraded_contains": "GETRANDOM is unsupported (fallback ENTROPY is supported)"
+    }
+   }
+  },
+  {
+   "id": "E03-PROBE-003",
+   "kind": "classify",
+   "title": "PLANTED TIMERFD -ENOSYS(89) on mips: unsupported, degraded (poll timeout fallback)",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:TIMERFD",
+      "line": "FFW_PROBE:TIMERFD status=FAIL fd=-89"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "degraded",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "TIMERFD": [
+       "unsupported",
+       "ENOSYS"
+      ],
+      "POLL": [
+       "supported",
+       "pass"
+      ]
+     },
+     "degraded_contains": "TIMERFD is unsupported (fallback POLL is supported)"
+    }
+   }
+  },
+  {
+   "id": "E03-PROBE-004",
+   "kind": "classify",
+   "title": "PLANTED FUTEX -ENOSYS(38) on ppc: unsupported, degraded with no fallback (no threads)",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:FUTEX",
+      "line": "FFW_PROBE:FUTEX status=FAIL rc=-38"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "degraded",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "GETRANDOM",
+      "EVENTFD2",
+      "TIMERFD",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "FUTEX": [
+       "unsupported",
+       "ENOSYS"
+      ]
+     },
+     "degraded_contains": "no fallback"
+    }
+   }
+  },
+  {
+   "id": "E03-PROBE-005",
+   "kind": "classify",
+   "title": "PLANTED FUTEX exists but fails with EINVAL(22): ambiguous, never read as absent",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:FUTEX",
+      "line": "FFW_PROBE:FUTEX status=FAIL rc=-22"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "degraded",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "FUTEX": [
+       "ambiguous",
+       "errno:EINVAL"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-PROBE-006",
+   "kind": "classify",
+   "title": "PLANTED GETRANDOM 'status=PASS rc=15': PASS outside its valid range is a contradiction, ambiguous",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:GETRANDOM",
+      "line": "FFW_PROBE:GETRANDOM status=PASS rc=15"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "degraded",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "GETRANDOM": [
+       "ambiguous",
+       "contradictory_pass"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-PROBE-007",
+   "kind": "classify",
+   "title": "PLANTED EVENTFD2 -ENOSYS with its NONBLOCK_PIPE fallback ALSO failing: red, the fallback does not cover it",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:EVENTFD2",
+      "line": "FFW_PROBE:EVENTFD2 status=FAIL fd=-89"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:NONBLOCK_PIPE",
+      "line": "FFW_PROBE:NONBLOCK_PIPE status=FAIL rc=-89"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "red",
+     "calibration_ok": true,
+     "reason_contains": "its fallback NONBLOCK_PIPE is not supported"
+    }
+   }
+  },
+  {
+   "id": "E03-PROBE-008",
+   "kind": "classify",
+   "title": "PLANTED mips EVENTFD2 failing with the PowerPC ENOSYS number(38): unknown on this ABI, ambiguous, NOT unsupported",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:EVENTFD2",
+      "line": "FFW_PROBE:EVENTFD2 status=FAIL fd=-38"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "degraded",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "EVENTFD2": [
+       "ambiguous",
+       "unknown_errno:38 for mips"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-PROBE-009",
+   "kind": "classify",
+   "title": "PLANTED FUTEX line missing from a post-probe transcript: the probe did not run, red (never degraded like an exact -ENOSYS)",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "drop",
+      "prefix": "FFW_PROBE:FUTEX"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "red",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "FUTEX": [
+       "ambiguous",
+       "no_evidence"
+      ]
+     },
+     "reason_contains": "FUTEX did not run"
+    }
+   }
+  },
+  {
+   "id": "E03-PROBE-010",
+   "kind": "classify",
+   "title": "PLANTED GETRANDOM reported twice: duplicate_line, ambiguous",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "duplicate",
+      "prefix": "FFW_PROBE:GETRANDOM"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "degraded",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "GETRANDOM": [
+       "ambiguous",
+       "duplicate_line"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-PROBE-011",
+   "kind": "classify",
+   "title": "PLANTED a harness guest lacking getrandom, eventfd2 and timerfd all at once (ppc): three fallbacks hold, degraded",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:GETRANDOM",
+      "line": "FFW_PROBE:GETRANDOM status=FAIL rc=-38"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:EVENTFD2",
+      "line": "FFW_PROBE:EVENTFD2 status=FAIL fd=-38"
+     },
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:TIMERFD",
+      "line": "FFW_PROBE:TIMERFD status=FAIL fd=-38"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "degraded",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "GETRANDOM": [
+       "unsupported",
+       "ENOSYS"
+      ],
+      "EVENTFD2": [
+       "unsupported",
+       "ENOSYS"
+      ],
+      "TIMERFD": [
+       "unsupported",
+       "ENOSYS"
+      ],
+      "FUTEX": [
+       "supported",
+       "pass"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-RT-001",
+   "kind": "classify",
+   "title": "PLANTED THREADS -ENOSYS(89) on mips: unsupported, degraded with no fallback (single-thread executor only)",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:THREADS",
+      "line": "FFW_PROBE:THREADS status=FAIL tid=-89"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "degraded",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "THREADS": [
+       "unsupported",
+       "ENOSYS"
+      ],
+      "TLS": [
+       "supported",
+       "pass"
+      ]
+     },
+     "degraded_contains": "THREADS is unsupported (no fallback"
+    }
+   }
+  },
+  {
+   "id": "E03-RT-002",
+   "kind": "classify",
+   "title": "PLANTED TLS -ENOSYS(38) on ppc: unsupported, degraded with no fallback",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:TLS",
+      "line": "FFW_PROBE:TLS status=FAIL tp=-38"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "degraded",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "GETRANDOM",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "TLS": [
+       "unsupported",
+       "ENOSYS"
+      ]
+     },
+     "degraded_contains": "TLS is unsupported (no fallback"
+    }
+   }
+  },
+  {
+   "id": "E03-RT-003",
+   "kind": "classify",
+   "title": "PLANTED TLS PASS with the wrong thread pointer (tp=0): a contradiction, ambiguous, never supported",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:TLS",
+      "line": "FFW_PROBE:TLS status=PASS tp=0"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "degraded",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "TLS": [
+       "ambiguous",
+       "contradictory_pass"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-RT-004",
+   "kind": "classify",
+   "title": "PLANTED SIGNAL fails with EINVAL(22): a REQUIRED runtime behavior is ambiguous, so red",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:SIGNAL",
+      "line": "FFW_PROBE:SIGNAL status=FAIL rc=-22"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "red",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "SIGNAL": [
+       "ambiguous",
+       "errno:EINVAL"
+      ]
+     },
+     "reason_contains": "SIGNAL is ambiguous"
+    }
+   }
+  },
+  {
+   "id": "E03-RT-005",
+   "kind": "classify",
+   "title": "PLANTED EINTR_READ 'status=PASS rc=0': the read must be interrupted (-4), a clean read is a contradiction, red",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:EINTR_READ",
+      "line": "FFW_PROBE:EINTR_READ status=PASS rc=0"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "red",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "EINTR_READ": [
+       "ambiguous",
+       "contradictory_pass"
+      ]
+     },
+     "reason_contains": "EINTR_READ is ambiguous"
+    }
+   }
+  },
+  {
+   "id": "E03-RT-006",
+   "kind": "classify",
+   "title": "PLANTED ALLOC line missing: no evidence for a REQUIRED behavior is red, not absent",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "drop",
+      "prefix": "FFW_PROBE:ALLOC"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "red",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "GETRANDOM",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "ALLOC": [
+       "ambiguous",
+       "no_evidence"
+      ]
+     },
+     "reason_contains": "ALLOC is ambiguous"
+    }
+   }
+  },
+  {
+   "id": "E03-RT-007",
+   "kind": "classify",
+   "title": "PLANTED ATOMIC_WIDTH 'status=PASS bits=64': contradicts the recorded no-native-64-bit-atomics fact, red",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:ATOMIC_WIDTH",
+      "line": "FFW_PROBE:ATOMIC_WIDTH status=PASS bits=64"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "red",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "ATOMIC_WIDTH": [
+       "ambiguous",
+       "contradictory_pass"
+      ]
+     },
+     "reason_contains": "ATOMIC_WIDTH is ambiguous"
+    }
+   }
+  },
+  {
+   "id": "E03-RT-008",
+   "kind": "classify",
+   "title": "PLANTED MEM_PEAK 'status=FAIL kb=-2' (no /proc): stated plainly, ambiguous, degraded with no fallback",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:MEM_PEAK",
+      "line": "FFW_PROBE:MEM_PEAK status=FAIL kb=-2"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "degraded",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "MEM_PEAK": [
+       "ambiguous",
+       "failed_without_errno"
+      ]
+     },
+     "degraded_contains": "MEM_PEAK is ambiguous (no fallback"
+    }
+   }
+  },
+  {
+   "id": "E03-RT-009",
+   "kind": "classify",
+   "title": "PLANTED FS_RENAME fails with EIO(5): rename durability is REQUIRED, so red",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:FS_RENAME",
+      "line": "FFW_PROBE:FS_RENAME status=FAIL rc=-5"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "red",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "GETRANDOM",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "FS_RENAME": [
+       "ambiguous",
+       "errno:EIO"
+      ]
+     },
+     "reason_contains": "FS_RENAME is ambiguous"
+    }
+   }
+  },
+  {
+   "id": "E03-NET-001",
+   "kind": "classify",
+   "title": "PLANTED ACCEPT4 -ENOSYS(89) on mips: unsupported, degraded with NO fallback (accept+fcntl is not probed, so never declared)",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:ACCEPT4",
+      "line": "FFW_PROBE:ACCEPT4 status=FAIL fd=-89"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "degraded",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "ACCEPT4": [
+       "unsupported",
+       "ENOSYS"
+      ]
+     },
+     "degraded_contains": "ACCEPT4 is unsupported (no fallback"
+    }
+   }
+  },
+  {
+   "id": "E03-NET-002",
+   "kind": "classify",
+   "title": "PLANTED ACCEPT4 fails with ENETUNREACH(101) on ppc (loopback not up): unknown in the table, ambiguous, NOT unsupported",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:ACCEPT4",
+      "line": "FFW_PROBE:ACCEPT4 status=FAIL fd=-101"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "degraded",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "GETRANDOM",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "ACCEPT4": [
+       "ambiguous",
+       "unknown_errno:101 for powerpc"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-NET-003",
+   "kind": "classify",
+   "title": "PLANTED LOOPBACK_UP -ENOSYS(89): a REQUIRED behavior is unsupported, so red (unlike the optional capabilities)",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:LOOPBACK_UP",
+      "line": "FFW_PROBE:LOOPBACK_UP status=FAIL rc=-89"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "red",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "LOOPBACK_UP": [
+       "unsupported",
+       "ENOSYS"
+      ]
+     },
+     "reason_contains": "LOOPBACK_UP is unsupported"
+    }
+   }
+  },
+  {
+   "id": "E03-NET-004",
+   "kind": "classify",
+   "title": "PLANTED UDP_LOOPBACK 'status=PASS rc=16': the truncated receive must report the real length 24, 16 is a contradiction, red",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:UDP_LOOPBACK",
+      "line": "FFW_PROBE:UDP_LOOPBACK status=PASS rc=16"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "red",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "GETRANDOM",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "UDP_LOOPBACK": [
+       "ambiguous",
+       "contradictory_pass"
+      ]
+     },
+     "reason_contains": "UDP_LOOPBACK is ambiguous"
+    }
+   }
+  },
+  {
+   "id": "E03-NET-005",
+   "kind": "classify",
+   "title": "PLANTED REACTOR_WAKE interrupted (EINTR 4): transient, never read as absent, red because it is REQUIRED",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:REACTOR_WAKE",
+      "line": "FFW_PROBE:REACTOR_WAKE status=FAIL rc=-4"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "red",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "REACTOR_WAKE": [
+       "ambiguous",
+       "transient:EINTR"
+      ]
+     },
+     "reason_contains": "REACTOR_WAKE is ambiguous"
+    }
+   }
+  },
+  {
+   "id": "E03-NET-006",
+   "kind": "classify",
+   "title": "PLANTED CHARDEV_POLL 'status=PASS rc=1': one ready descriptor of two is a contradiction, red; generic VFS poll on /dev/zero and /dev/null, says nothing about the retained audio driver",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:CHARDEV_POLL",
+      "line": "FFW_PROBE:CHARDEV_POLL status=PASS rc=1"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "red",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "GETRANDOM",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE"
+     ],
+     "probes": {
+      "CHARDEV_POLL": [
+       "ambiguous",
+       "contradictory_pass"
+      ]
+     },
+     "reason_contains": "CHARDEV_POLL is ambiguous"
+    }
+   }
+  },
+  {
+   "id": "E03-SEED-001",
+   "kind": "classify",
+   "title": "REAL mips run 1412ac47: GETRANDOM 'status=UNSEEDED rc=-11' is present but unseeded at PID-1 boot: degraded, never a pass",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "degraded",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "GETRANDOM": [
+       "unseeded",
+       "unseeded"
+      ],
+      "ENTROPY": [
+       "supported",
+       "pass"
+      ]
+     },
+     "degraded_contains": "does not establish secure entropy"
+    }
+   }
+  },
+  {
+   "id": "E03-SEED-002",
+   "kind": "classify",
+   "title": "PLANTED GETRANDOM 'status=UNSEEDED rc=-11' on ppc: EAGAIN is 11 on both ABIs, same result",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "ppc"
+    },
+    "profile": "harness-ppc-4.9",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:GETRANDOM",
+      "line": "FFW_PROBE:GETRANDOM status=UNSEEDED rc=-11"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "degraded",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "GETRANDOM": [
+       "unseeded",
+       "unseeded"
+      ]
+     },
+     "degraded_contains": "GETRANDOM is unseeded"
+    }
+   }
+  },
+  {
+   "id": "E03-SEED-003",
+   "kind": "classify",
+   "title": "PLANTED EVENTFD2 'status=UNSEEDED fd=-11': only GETRANDOM may report UNSEEDED, so it is ambiguous, not unseeded",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:EVENTFD2",
+      "line": "FFW_PROBE:EVENTFD2 status=UNSEEDED fd=-11"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "degraded",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "EVENTFD2": [
+       "ambiguous",
+       "bad_unseeded"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-SEED-004",
+   "kind": "classify",
+   "title": "PLANTED GETRANDOM 'status=UNSEEDED rc=-12': UNSEEDED needs the raw -EAGAIN, anything else is ambiguous",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:GETRANDOM",
+      "line": "FFW_PROBE:GETRANDOM status=UNSEEDED rc=-12"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "degraded",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "SIGNAL",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "GETRANDOM": [
+       "ambiguous",
+       "bad_unseeded"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "E03-SEED-005",
+   "kind": "classify",
+   "title": "PLANTED SIGNAL 'status=UNSEEDED rc=-11': a REQUIRED behavior cannot be UNSEEDED, ambiguous, red",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "source": {
+     "real": "mips"
+    },
+    "profile": "harness-mips-4.19",
+    "mutations": [
+     {
+      "op": "set_line",
+      "prefix": "FFW_PROBE:SIGNAL",
+      "line": "FFW_PROBE:SIGNAL status=UNSEEDED rc=-11"
+     }
+    ],
+    "expect": {
+     "evidence": "matching-guest",
+     "verdict": "red",
+     "calibration_ok": true,
+     "supported_exactly": [
+      "CLOCK_MONOTONIC",
+      "NONBLOCK_PIPE",
+      "POLL",
+      "EPOLL",
+      "SOCKET_UDP",
+      "ENTROPY",
+      "ATOMICS_32",
+      "PARTIAL_WRITE",
+      "EVENTFD2",
+      "TIMERFD",
+      "FUTEX",
+      "ATOMIC_WIDTH",
+      "ALLOC",
+      "MEM_PEAK",
+      "FS_RENAME",
+      "TIMER_SIGNALS",
+      "EINTR_READ",
+      "THREADS",
+      "TLS",
+      "LOOPBACK_UP",
+      "UDP_LOOPBACK",
+      "ACCEPT4",
+      "REACTOR_WAKE",
+      "CHARDEV_POLL"
+     ],
+     "probes": {
+      "SIGNAL": [
+       "ambiguous",
+       "bad_unseeded"
+      ]
+     },
+     "reason_contains": "SIGNAL is ambiguous"
+    }
+   }
+  },
+  {
+   "id": "E03-IDENT-001",
+   "kind": "identity",
+   "title": "The committed central run 1412ac47 is pinned by digest, and its receipt, raw captures and transcripts agree: log, stdout and stderr bytes, kernel, build identity, all 12 source digests, capability lists and every probe line",
+   "tiers": [
+    "full"
+   ],
+   "spec": {
+    "run_id": "1412ac47120d4e5b865f9de6e05f50fe",
+    "receipt_sha256": "c1161b4dca9e53e6f604056148ee56a6f0a39cefdaa2060bab30947be05ee030",
+    "sources_sha256": {
+     ".cargo/config.toml": "5e2a7e29e6c0bdd0a8d5eebf9cd38d1f01b76806cdb7e90b9758c14d21e0b560",
+     "Cargo.lock": "8d3ee710523654e19c102b745e9defbb4b47f72fe204f5b86790981af82bfea3",
+     "Cargo.toml": "4a0b2713665adcbd075de409858c1d6738ed048a166056b53ade5158b28d8868",
+     "build.rs": "e0ee93db501522d3dfba259a72acda430e5612049050cf43fbe737829d46279e",
+     "src/e03_judge.rs": "a966fdd730caecf8ce26f8c69d4e94f9e157007de513af5fe0b1dc6b77aaf124",
+     "src/e03_judge/net.rs": "84a677b24a1dc88145eb32d12dd8502fc3c9b91b88dd41db0ffb31d193dc74f5",
+     "src/e03_judge_rt.rs": "1f6d7e0440abed2812dd7d3b87da4611f39be01f3cdfe16da158776ea72b83aa",
+     "src/e03_probes.rs": "91b94fc236a7570369728aecec195ee0ee63bfc01f062a618e37979a885abe80",
+     "src/e03_probes/net.rs": "840d7713c36efd3606256c301a4a95be6ef072af71314511a843fde51a84b352",
+     "src/e03_probes_rt.rs": "20a8602be872588b6f35dd53d4972d755fcbc07d1d0f42eea852e1c68929d6d9",
+     "src/lib.rs": "4fdc904a8cb3253e974a3e2c5ed89595ae194c7bb6504f79398eef103c929ea1",
+     "src/main.rs": "27a0544918569e8f81f5323985b62091909c84ac81af50905f66b2553d36a3d6"
+    },
+    "guests": {
+     "mips": {
+      "serial_sha256": "da1bff4032bedee4dd5236a59d972cb4962ee745542e30cdffb8847f165938d8",
+      "stdout_sha256": "da1bff4032bedee4dd5236a59d972cb4962ee745542e30cdffb8847f165938d8",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "kernel_sha256": "3803357ef7821dbf691c901105fb9b2b00382abf67fce8a4be2a0d592267dc61",
+      "binary_sha256": "37652d885d4c146ad13d71f56823aee7383c3c74901176ba24fb521b23eab326",
+      "unseeded": [
+       "GETRANDOM"
+      ],
+      "probe_lines": 30
+     },
+     "ppc": {
+      "serial_sha256": "c2176da63977e191f61491b634b80dc56f1d2bace2aa105c1df698c8601be638",
+      "stdout_sha256": "c2176da63977e191f61491b634b80dc56f1d2bace2aa105c1df698c8601be638",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "kernel_sha256": "289f40b63ea9aa82743f568ddeaba669a16a859970497dccf7135596da538f98",
+      "binary_sha256": "75ef9b04a3ea3abf871592a09dbdb8acf0d68e94ed60d30e6884f3713dd6825e",
+      "unseeded": [],
+      "probe_lines": 30
+     }
+    }
+   }
   },
   {
    "id": "E03-SELF-001",
@@ -2698,7 +5251,7 @@
     "full"
    ],
    "spec": {
-    "min_tests": 47
+    "min_tests": 73
    }
   },
   {
@@ -2712,70 +5265,51 @@
    "spec": {}
   },
   {
-   "id": "E03-BLK-001",
-   "kind": "blocked",
-   "title": "Short-write evidence and a consistent committed receipt",
+   "id": "E03-STOCK-001",
+   "kind": "source_text",
+   "title": "Stock 2.6.14 PPC and 2.6.35 MIPS are recorded as unqualified (no matching guest), never verified, and the Rust gate checks the guest first",
    "tiers": [
     "smoke",
     "full"
    ],
-   "reason": "no committed transcript contains FFW_TEST:PARTIAL_WRITE, so the current validator FAILS the logs the committed e07-e03 receipt calls PASS (sha256 matches); regenerate the transcripts and receipt",
-   "owner": "root: central RCH run of toolchain/src/run-qemu-verification.py"
-  },
-  {
-   "id": "E03-BLK-002",
-   "kind": "blocked",
-   "title": "Exact-version stock-kernel guests",
-   "tiers": [
-    "smoke",
-    "full"
-   ],
-   "reason": "no 2.6.14 PowerPC or 2.6.35 MIPS full-system guest exists; stock-kernel compatibility is unqualified, yet docs/contracts/e03.md and KernelCapabilityMatrix list those columns as verified",
-   "owner": "root / external: an exact-version guest, then correct the contract"
-  },
-  {
-   "id": "E03-BLK-003",
-   "kind": "blocked",
-   "title": "Probes for eventfd2, timerfd, accept4, getrandom, futex, TLS and threads",
-   "tiers": [
-    "smoke",
-    "full"
-   ],
-   "reason": "the contract and the bead name them but no guest probe emits them (abi.py lists them as unprobed)",
-   "owner": "guest probe: toolchain/src/ffw-hello-init"
-  },
-  {
-   "id": "E03-BLK-004",
-   "kind": "blocked",
-   "title": "Timer wakeup under repeated interrupts, signal delivery and shutdown, allocator alignment/failure/peak memory, dependency-graph atomics",
-   "tiers": [
-    "smoke",
-    "full"
-   ],
-   "reason": "bead section 4 requires them; the guest probes none of these (it probes one 32-bit atomic, a monotonic clock resolution and no signals)",
-   "owner": "guest probe: toolchain/src/ffw-hello-init"
+   "spec": {
+    "doc": "docs/contracts/e03.md",
+    "rust": "crates/franken-platform/src/lib.rs",
+    "table_header": "Capability",
+    "stock_columns": [
+     "Stock PPC",
+     "Stock MIPS"
+    ],
+    "stock_cell": "unqualified",
+    "min_rows": 10,
+    "forbidden_words": [
+     "VerifiedAvailable",
+     "VerifiedAbsent"
+    ],
+    "rust_must_contain": [
+     "NoMatchingGuest",
+     "pub fn guest_kernel_matches",
+     "fn stock_profile_is_refused_when_the_observed_guest_is_a_different_kernel",
+     "fn stock_profile_without_any_observed_guest_is_unqualified",
+     "fn the_gate_admits_only_on_matching_evidence_and_the_two_cases_stay_distinct",
+     "fn guest_kernel_match_is_a_release_boundary_not_a_string_prefix"
+    ],
+    "rust_order": [
+     "guest_kernel_matches(&self.nominal_kernel_version",
+     "let required = ["
+    ]
+   }
   },
   {
    "id": "E03-BLK-006",
    "kind": "blocked",
-   "title": "Socket bind/send/receive and truncated-datagram reporting, readiness of audio-like character devices, reactor wakeup, filesystem sync and atomic rename",
+   "title": "Retained-audio-driver readiness, underrun and wake behavior",
    "tiers": [
     "smoke",
     "full"
    ],
-   "reason": "bead section 4 requires them; the guest only creates a UDP socket and polls a pipe",
-   "owner": "guest probe: toolchain/src/ffw-hello-init"
-  },
-  {
-   "id": "E03-BLK-005",
-   "kind": "blocked",
-   "title": "Probe build identity: target triple, compiler, linker and libc",
-   "tiers": [
-    "smoke",
-    "full"
-   ],
-   "reason": "the receipt records rustc, lld and qemu versions but neither a target triple nor the libc (none, no_std)",
-   "owner": "root: toolchain/src/run-qemu-verification.py receipt"
+   "reason": "CHARDEV_POLL is generic VFS poll on /dev/zero and /dev/null: readiness, underrun and wake behavior of the retained audio driver are NOT probed and not claimed, and need the E04 driver in an exact-version guest. The real guests also do not show rename durability on the device's own storage: FS_RENAME renames a pair of files on the guest's root filesystem and reads them back",
+   "owner": "E04 for the audio driver; a stock-kernel guest and the device's storage for durability"
   }
  ],
  "invariants": [
@@ -2807,15 +5341,17 @@
   {
    "id": "INV-03",
    "text": "Short I/O is a normal result; a full or zero count is not a short write",
-   "status": "partial",
+   "status": "covered",
    "cases": [
     "E03-IO-001",
     "E03-IO-002",
     "E03-CLASS-022",
     "E03-CLASS-023",
-    "E03-BLK-001"
-   ],
-   "note": "the host can only judge the guest's PARTIAL_WRITE line; no committed transcript has one"
+    "E03-CLASS-001",
+    "E03-CLASS-002",
+    "E03-CLASS-003",
+    "E03-CLASS-004"
+   ]
   },
   {
    "id": "INV-04",
@@ -2840,11 +5376,14 @@
   {
    "id": "INV-06",
    "text": "Alignment boundaries (allocator, atomics operand)",
-   "status": "blocked",
+   "status": "partial",
    "cases": [
-    "E03-BLK-004"
+    "E03-RT-006",
+    "E03-RT-007",
+    "E03-CLASS-001",
+    "E03-CLASS-002"
    ],
-   "note": "newc archive alignment is covered elsewhere (scripts/test/test_support/newc_case.py); the guest probes no allocator alignment"
+   "note": "allocator, atomic-width and memory-peak probes are now REAL (E03-CLASS-001/002, planted variants in E03-RT-*). MEM_PEAK reads the probe process's own VmPeak/VmHWM (64 kB MIPS, 60 kB PPC): it is not a budget for the firmware. Not probed: an atomic operand's misalignment behavior and widths beyond the recorded 32 bits. newc archive alignment is covered elsewhere (scripts/test/test_support/newc_case.py)"
   },
   {
    "id": "INV-07",
@@ -2860,9 +5399,20 @@
   {
    "id": "INV-08",
    "text": "Absent thread, TLS, futex, eventfd and timerfd capabilities",
-   "status": "blocked",
+   "status": "covered",
    "cases": [
-    "E03-BLK-003"
+    "E03-PROBE-001",
+    "E03-PROBE-002",
+    "E03-PROBE-003",
+    "E03-PROBE-004",
+    "E03-PROBE-011",
+    "E03-RT-001",
+    "E03-RT-002",
+    "E03-RT-003",
+    "E03-NET-001",
+    "E03-NET-002",
+    "E03-CLASS-001",
+    "E03-CLASS-002"
    ]
   },
   {
@@ -2894,14 +5444,12 @@
   {
    "id": "INV-11",
    "text": "Guest identity and provenance are recorded and checked",
-   "status": "partial",
+   "status": "covered",
    "cases": [
     "E03-CLASS-001",
     "E03-CLASS-002",
-    "E03-IDENT-001",
-    "E03-BLK-005"
-   ],
-   "note": "kernel identity and artifact digests are checked; target triple, compiler, linker and libc are not recorded"
+    "E03-IDENT-001"
+   ]
   },
   {
    "id": "INV-12",
@@ -2933,11 +5481,16 @@
   },
   {
    "id": "INV-14",
-   "text": "Exact-version stock-kernel guests exist for the stock profiles",
-   "status": "blocked",
+   "text": "A stock-kernel profile without a matching full-system guest is recorded as unqualified, never as verified, and the admission gate refuses it",
+   "status": "partial",
    "cases": [
-    "E03-BLK-002"
-   ]
+    "E03-STOCK-001",
+    "E03-CLASS-034",
+    "E03-CLASS-035",
+    "E03-CLASS-038",
+    "E03-CLASS-039"
+   ],
+   "note": "E03-STOCK-001 checks the contract text and the Rust source; the refusal itself is proven only by franken-platform's unit tests, which run in the central RCH batch and are unrun until then"
   },
   {
    "id": "INV-15",
@@ -3018,12 +5571,12 @@
   {
    "id": "INV-20",
    "text": "Per-probe output is preserved",
-   "status": "partial",
+   "status": "covered",
    "cases": [
     "E03-CLASS-001",
-    "E03-CLASS-003"
-   ],
-   "note": "each probe's raw line is retained in the result; separate stdout/stderr capture belongs to capture_guest in the root's runner"
+    "E03-CLASS-003",
+    "E03-IDENT-001"
+   ]
   },
   {
    "id": "INV-21",
@@ -3043,9 +5596,111 @@
   {
    "id": "INV-23",
    "text": "Socket I/O semantics, device readiness, reactor wakeup and filesystem durability",
-   "status": "blocked",
+   "status": "partial",
    "cases": [
-    "E03-BLK-006"
+    "E03-NET-003",
+    "E03-NET-004",
+    "E03-NET-005",
+    "E03-NET-006",
+    "E03-RT-009",
+    "E03-BLK-006",
+    "E03-CLASS-001",
+    "E03-CLASS-002"
+   ],
+   "note": "socket data path, reactor wakeup, character-device poll and rename are REAL on the Debian harness guests (E03-CLASS-001/002); readiness of the retained audio driver is not probed (E03-BLK-006) and FS_RENAME says nothing about the device's own storage"
+  },
+  {
+   "id": "INV-24",
+   "text": "The probe's build identity (target triple, compiler, linker flavor, libc) is recorded, self-consistent with the profile, and gates the verdict without altering any probe's result",
+   "status": "covered",
+   "cases": [
+    "E03-BUILD-001",
+    "E03-BUILD-002",
+    "E03-BUILD-003",
+    "E03-BUILD-004",
+    "E03-BUILD-005",
+    "E03-BUILD-006",
+    "E03-BUILD-007",
+    "E03-BUILD-008",
+    "E03-BUILD-009",
+    "E03-BUILD-010",
+    "E03-BUILD-011",
+    "E03-BUILD-012",
+    "E03-CLASS-001",
+    "E03-CLASS-002",
+    "E03-IDENT-001"
+   ]
+  },
+  {
+   "id": "INV-25",
+   "text": "An optional capability with a declared fallback degrades the verdict only while the fallback is supported; an exact -ENOSYS is a classified absence in the guest's own ABI numbering; anything else is ambiguous",
+   "status": "covered",
+   "cases": [
+    "E03-PROBE-001",
+    "E03-PROBE-002",
+    "E03-PROBE-003",
+    "E03-PROBE-004",
+    "E03-PROBE-005",
+    "E03-PROBE-006",
+    "E03-PROBE-007",
+    "E03-PROBE-008",
+    "E03-PROBE-009",
+    "E03-PROBE-010",
+    "E03-PROBE-011",
+    "E03-CLASS-001",
+    "E03-CLASS-002"
+   ]
+  },
+  {
+   "id": "INV-26",
+   "text": "Runtime behaviors the executor cannot run without (signal delivery, repeated timer interrupts, EINTR, allocator, filesystem rename, atomic width) are REQUIRED: a missing or ambiguous result is red; threads, TLS and memory peak are optional with no fallback and only degrade",
+   "status": "covered",
+   "cases": [
+    "E03-RT-001",
+    "E03-RT-002",
+    "E03-RT-003",
+    "E03-RT-004",
+    "E03-RT-005",
+    "E03-RT-006",
+    "E03-RT-007",
+    "E03-RT-008",
+    "E03-RT-009",
+    "E03-CLASS-001",
+    "E03-CLASS-002"
+   ]
+  },
+  {
+   "id": "INV-27",
+   "text": "A missing probe line from a transcript whose guest carries the probes is red (the probe did not run); an exact -ENOSYS is degraded; the two are never filed together",
+   "status": "covered",
+   "cases": [
+    "E03-PROBE-001",
+    "E03-PROBE-009",
+    "E03-RT-006",
+    "E03-CLASS-001",
+    "E03-CLASS-002"
+   ]
+  },
+  {
+   "id": "INV-28",
+   "text": "A case never presents a modified or added transcript as live evidence: REAL means unmodified, every added line says SYNTHETIC",
+   "status": "covered",
+   "cases": [
+    "E03-SELF-001",
+    "E03-META-001"
+   ]
+  },
+  {
+   "id": "INV-29",
+   "text": "A getrandom whose entropy pool is not yet seeded at PID-1 boot is reported UNSEEDED: present, never supported, never absent, never green, and the /dev/urandom fallback does not rescue it because it reads the same pool",
+   "status": "covered",
+   "cases": [
+    "E03-SEED-001",
+    "E03-SEED-002",
+    "E03-SEED-003",
+    "E03-SEED-004",
+    "E03-SEED-005",
+    "E03-CLASS-001"
    ]
   }
  ]
