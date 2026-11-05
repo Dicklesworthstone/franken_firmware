@@ -6,6 +6,7 @@ vectors and the named cases in cases.json.
 from __future__ import annotations
 
 import contextlib
+import copy
 import io
 import json
 import os
@@ -374,6 +375,212 @@ class MetadataTests(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(pipeline.main(["check-metadata", "--default", os.path.join(tmp, "missing.json"),
                                                 "--harness", paths["h"]]), 2)
+
+
+def cargo_shaped(tree, versions, crate, gate_feature, harness, external=("serde", "1.0.0")):
+    """A `cargo metadata`-shaped document built from the static resolve of `tree`: normal edges are the declared normal
+    dependencies, plus the gated optional ones when `harness`; a dev dependency shares its entry with a normal one
+    (two `dep_kinds` rows) as cargo prints it; an optional external package hangs off the first member. A test helper: the
+    real documents come from cargo, centrally."""
+    names = [m["name"] for m in tree["members"]]
+    ident = {n: f"path+file:///ws/{n}#{versions[n]}" for n in names}
+    if external:
+        ident[external[0]] = f"registry+https://example.invalid/index#{external[0]}@{external[1]}"
+    nodes = []
+    for m in tree["members"]:
+        normal = set(m["deps"]["normal"])
+        if harness and m["name"] == crate:
+            normal |= set(m["deps"]["optional"])
+        deps = []
+        for dep in sorted(normal | set(m["deps"]["dev"])):
+            kinds = ([{"kind": None, "target": None}] if dep in normal else []) + \
+                    ([{"kind": "dev", "target": None}] if dep in m["deps"]["dev"] else [])
+            deps.append({"name": dep.replace("-", "_"), "pkg": ident[dep], "dep_kinds": kinds})
+        if external and m["name"] == names[0]:
+            deps.append({"name": external[0], "pkg": ident[external[0]], "dep_kinds": [{"kind": None, "target": None}]})
+        feats = ["default"] + ([gate_feature] if harness and m["name"] == crate else [])
+        nodes.append({"id": ident[m["name"]], "dependencies": [d["pkg"] for d in deps], "deps": deps, "features": feats})
+    packages = [{"id": ident[n], "name": n, "version": versions[n]} for n in names]
+    if external:
+        nodes.append({"id": ident[external[0]], "dependencies": [], "deps": [], "features": ["default"]})
+        packages.append({"id": ident[external[0]], "name": external[0], "version": external[1]})
+    return {"packages": packages, "workspace_members": [ident[n] for n in names],
+            "resolve": {"nodes": nodes, "root": None}, "version": 1}
+
+
+class JudgeTests(unittest.TestCase):
+    """metadata_check.judge and its planted faults, on a small tree where every plant has something to bite on:
+    app -> a_util, lib; lib -> a_util, deep; app -> tsup only with the `harness` feature (and as a dev-dependency)."""
+    CRATE, FORBIDDEN, FEATURE = "app", "tsup", "harness"
+
+    @staticmethod
+    def member(name, normal=(), optional=(), dev=(), table=None):
+        return {"name": name, "deps": {"normal": list(normal), "optional": list(optional), "dev": list(dev), "build": []},
+                "feature_table": table or {}}
+
+    def setUp(self):
+        m = self.member
+        self.tree = {"members": [
+            m("app", ["a_util", "lib"], ["tsup"], ["tsup"], {"harness": ["dep:tsup"]}),
+            m("lib", ["a_util", "deep"]), m("a_util"), m("deep"), m("tsup")]}
+        self.versions = {n["name"]: "0.1.0" for n in self.tree["members"]}
+        self.lock = {(n, "0.1.0") for n in self.versions} | {("serde", "1.0.0")}
+        self.default = cargo_shaped(self.tree, self.versions, self.CRATE, self.FEATURE, False)
+        self.harness = cargo_shaped(self.tree, self.versions, self.CRATE, self.FEATURE, True)
+
+    def judge(self, default=None, harness=None, lock="lock"):
+        return metadata_check.judge(default or self.default, harness or self.harness, self.tree,
+                                    self.lock if lock == "lock" else lock, self.CRATE, self.FORBIDDEN, self.FEATURE)
+
+    def test_the_unplanted_pair_is_clean_and_its_dev_edge_is_not_a_leak(self):
+        self.assertEqual(self.judge(), [])
+        entry = next(d for d in metadata_check._node(self.default, "app")["deps"] if d["name"] == "tsup")
+        self.assertEqual([k["kind"] for k in entry["dep_kinds"]], ["dev"], "the default document carries only the dev edge")
+
+    def test_every_plant_is_caught_with_its_expected_codes_and_the_run_reports_none_missed(self):
+        self.assertEqual(self.judge(), [], "remove-the-plant control: the unplanted pair is clean")
+        for plant in metadata_check.PLANTS:
+            with self.subTest(plant.name):
+                ctx = {"crate": self.CRATE, "forbidden": self.FORBIDDEN, "feature": self.FEATURE}
+                d, h = plant.apply(copy.deepcopy(self.default), copy.deepcopy(self.harness), ctx)
+                got = metadata_check.codes(self.judge(d, h))
+                self.assertTrue(set(plant.expect) <= set(got), f"{plant.name}: want {plant.expect}, got {got}")
+        self.assertEqual(metadata_check.run_plants(self.default, self.harness, self.tree, self.lock,
+                                                   self.CRATE, self.FORBIDDEN, self.FEATURE), [])
+
+    def test_a_judgement_too_weak_to_catch_a_plant_is_reported_by_name(self):
+        problems = metadata_check.run_plants(self.default, self.harness, self.tree, None,
+                                             self.CRATE, self.FORBIDDEN, self.FEATURE)
+        self.assertEqual(len(problems), 1)
+        self.assertTrue(problems[0].startswith("stale_lock: not caught"), problems)
+
+    def test_a_plant_that_cannot_be_planted_is_a_problem_not_a_pass(self):
+        flat = {"members": [self.member("app", [], ["tsup"], ["tsup"], {"harness": ["dep:tsup"]}), self.member("tsup")]}
+        d = cargo_shaped(flat, {"app": "0.1.0", "tsup": "0.1.0"}, "app", "harness", False)
+        h = cargo_shaped(flat, {"app": "0.1.0", "tsup": "0.1.0"}, "app", "harness", True)
+        problems = metadata_check.run_plants(d, h, flat, {("app", "0.1.0"), ("tsup", "0.1.0"), ("serde", "1.0.0")},
+                                             "app", "tsup", "harness")
+        self.assertTrue(any(p.startswith("leak_transitive: could not be planted") for p in problems), problems)
+        self.assertTrue(any(p.startswith("stale_edge: could not be planted") for p in problems), problems)
+        self.assertTrue(any(p.startswith("member_missing: could not be planted") for p in problems), problems)
+        self.assertTrue(all(": could not be planted" in p or ": not caught" in p for p in problems), problems)
+
+    def test_the_transitive_leak_goes_through_a_crate_the_app_does_not_depend_on_directly(self):
+        self.assertEqual(metadata_check._intermediate(self.default, "app", "tsup"), "deep")
+
+    def test_a_dropped_edge_must_shrink_the_closure_so_it_is_not_a_no_op(self):
+        self.assertEqual(metadata_check._droppable_edge(self.default, "app", "tsup"), "lib",
+                         "a_util is also reached through lib, so removing app -> a_util changes nothing")
+
+    def test_plants_edit_a_shared_dependency_entry_the_way_cargo_prints_it(self):
+        meta = copy.deepcopy(self.default)
+        metadata_check.add_normal_edge(meta, "app", "tsup")
+        entries = [d for d in metadata_check._node(meta, "app")["deps"] if d["name"] == "tsup"]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(sorted(str(k["kind"]) for k in entries[0]["dep_kinds"]), ["None", "dev"])
+        metadata_check.remove_normal_edge(meta, "app", "tsup")
+        entries = [d for d in metadata_check._node(meta, "app")["deps"] if d["name"] == "tsup"]
+        self.assertEqual([k["kind"] for k in entries[0]["dep_kinds"]], ["dev"])
+        self.assertIn(entries[0]["pkg"], metadata_check._node(meta, "app")["dependencies"])
+
+    def test_a_document_of_another_tree_names_what_differs_and_stays_bounded(self):
+        many = {"members": self.tree["members"] + [self.member(f"extra{i}") for i in range(10)]}
+        pairs = metadata_check.bind_to_tree("default", self.default, many, None, False, self.CRATE, self.FEATURE)
+        (code, subject), = [p for p in pairs if p[0] == "metadata_members_differ_from_tree"]
+        self.assertIn("only_in_tree=extra0,extra1,extra2,extra3,extra4,extra5,+4 more", subject)
+        self.assertNotIn("/", subject, "subjects carry no paths")
+
+    def test_a_default_document_that_resolved_the_gate_feature_is_refused(self):
+        d = copy.deepcopy(self.default)
+        metadata_check._node(d, "app")["features"].append("harness")
+        self.assertIn("metadata_feature_resolved_by_default", metadata_check.codes(self.judge(d)))
+
+    def test_a_malformed_document_is_malformed_not_a_pass(self):
+        got = self.judge(default={"packages": []})
+        self.assertIn(("metadata_malformed", "default"), got)
+
+
+class MetadataRealCaseTests(unittest.TestCase):
+    """The runner wiring of P01-BLK-007 against the live tree, with documents synthesized from that tree's own manifests.
+    That proves the wiring (flags, blocked/judged/failed, exit codes, receipt), not cargo's resolver: the independent
+    comparison is made only on the documents cargo produced centrally."""
+    CASE = ["--tier", "full", "--case", "P01-BLK-007"]
+
+    def run_main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = run_cases.main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def setUp(self):
+        tree = facts.extract(run_cases.REPO)
+        lock = metadata_check.lock_packages(os.path.join(run_cases.REPO, "Cargo.lock"))
+        member_names = {m["name"] for m in tree["members"]}
+        versions = {name: version for name, version in lock if name in member_names}
+        external = next(iter(sorted(pair for pair in lock if pair[0] not in member_names)), None)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.paths = {}
+        for kind, harness in (("default", False), ("harness", True)):
+            doc = cargo_shaped(tree, versions, metadata_check.GATE_CRATE, metadata_check.GATE_FEATURE, harness, external)
+            self.paths[kind] = os.path.join(tmp.name, kind + ".json")
+            with open(self.paths[kind], "w") as f:
+                json.dump(doc, f)
+        self.tmp = tmp.name
+
+    def flags(self, default=None, harness=None):
+        return ["--metadata-default", default or self.paths["default"], "--metadata-harness", harness or self.paths["harness"]]
+
+    def test_without_documents_the_case_is_blocked_counted_and_never_a_pass(self):
+        code, out, _ = self.run_main(*self.CASE)
+        self.assertEqual(code, 3)
+        self.assertIn("BLOCKED", out)
+        self.assertIn("blocked=1", out)
+        self.assertNotIn("PASS", out)
+
+    def test_one_document_alone_is_a_usage_error_not_a_silent_skip(self):
+        code, out, err = self.run_main(*self.CASE, "--metadata-default", self.paths["default"])
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("go together", err)
+
+    def test_supplied_documents_are_judged_and_the_receipt_names_them_by_digest_only(self):
+        receipts = os.path.join(self.tmp, "receipts")
+        code, out, _ = self.run_main(*self.CASE, *self.flags(), "--receipts", receipts)
+        self.assertEqual(code, 0, out)
+        self.assertIn("PASS", out)
+        self.assertIn("planted faults caught", out)
+        (name,) = os.listdir(receipts)
+        with open(os.path.join(receipts, name)) as f:
+            receipt = json.load(f)
+        self.assertEqual(receipt["metadata_inputs"], {
+            "default_sha256": metadata_check.sha256_file(self.paths["default"]),
+            "harness_sha256": metadata_check.sha256_file(self.paths["harness"])})
+        self.assertNotIn(self.tmp, json.dumps(receipt), "the receipt carries digests, not paths")
+
+    def test_swapped_unreadable_and_non_json_documents_fail_rather_than_block_or_pass(self):
+        for label, flags in (("swapped", self.flags(self.paths["harness"], self.paths["default"])),
+                             ("unreadable", self.flags(os.path.join(self.tmp, "none.json"))),
+                             ("not json", self.flags(run_cases.__file__))):
+            with self.subTest(label):
+                code, out, _ = self.run_main(*self.CASE, *flags)
+                self.assertEqual(code, 1, out)
+                self.assertIn("FAIL", out)
+
+    def test_a_planted_leak_in_the_supplied_default_document_fails_the_case(self):
+        with open(self.paths["default"]) as f:
+            doc = json.load(f)
+        metadata_check.add_normal_edge(doc, metadata_check.GATE_CRATE, metadata_check.FORBIDDEN)
+        leaked = os.path.join(self.tmp, "leaked.json")
+        with open(leaked, "w") as f:
+            json.dump(doc, f)
+        code, out, _ = self.run_main(*self.CASE, *self.flags(default=leaked))
+        self.assertEqual(code, 1)
+        self.assertIn("metadata_default_has_edge", out)
+
+    def test_the_case_is_in_both_tiers_so_it_cannot_be_dropped_from_a_run(self):
+        cases = {c["id"]: c for c in run_cases.all_cases()}
+        self.assertEqual(sorted(cases["P01-BLK-007"]["tiers"]), ["full", "smoke"])
+        self.assertEqual(cases["P01-BLK-007"]["kind"], "metadata_real")
 
 
 class ResolveTests(unittest.TestCase):

@@ -11,7 +11,11 @@
 #   scripts/e2e/p01 execute [--cwd DIR] [--target-dir DIR] [--receipts DIR]
 #                                                run the plan through rch (central operator), then verify
 #   scripts/e2e/p01 check-metadata --default D.json --harness H.json
-#                                                hold two centrally produced `cargo metadata` documents to the gate
+#                                                hold two centrally produced `cargo metadata` documents to the gate alone
+#   scripts/e2e/p01 --tier full --metadata-default D.json --metadata-harness H.json
+#                                                the host cases with P01-BLK-007 judged on those two documents (the gate,
+#                                                proof they describe this tree and Cargo.lock, nine planted faults); without
+#                                                both flags that case is reported as BLOCKED, never skipped or passed
 #   scripts/e2e/p01 --workspace-suite [...]      the former cargo suite (test, clippy, cross-check, virtual house)
 #                                                via scripts/test/run-workspace-verification.py p01
 #

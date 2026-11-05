@@ -2178,7 +2178,7 @@
     "full"
    ],
    "reason": "the command plan is built and checked here (P01-PLAN-*) but not executed: builds run only through RCH_REQUIRE_REMOTE=1 rch exec, which the supervisor runs centrally; offline mode also needs the registry present on the worker",
-   "owner": "BeigeMaple: central rch run of `scripts/e2e/p01 --execute`"
+   "owner": "BeigeMaple: central rch run of `scripts/e2e/p01 execute`"
   },
   {
    "id": "P01-BLK-002",
@@ -2189,7 +2189,7 @@
     "full"
    ],
    "reason": "only `cargo check` of the workspace for the device targets has ever run; no franken-speaker device binary has been built or linked, so no real digest or ELF header exists to hold to the contract",
-   "owner": "BeigeMaple: central build, then `scripts/e2e/p01 --collect`"
+   "owner": "BeigeMaple: central build, then `scripts/e2e/p01 collect`"
   },
   {
    "id": "P01-BLK-003",
@@ -2237,13 +2237,13 @@
   },
   {
    "id": "P01-BLK-007",
-   "kind": "blocked",
-   "title": "cargo metadata of the real workspace: the speaker's normal closure with default features and with --features franken-speaker/harness",
+   "kind": "metadata_real",
+   "title": "the real workspace's `cargo metadata` resolve graphs (default, and --features franken-speaker/harness) are judged against the tree, the lockfile and nine planted faults",
    "tiers": [
     "smoke",
     "full"
    ],
-   "reason": "tests/p01/metadata_check.py holds two `cargo metadata --format-version 1` documents to the gate (P01-MD-* run it on hand-written documents, P01-CON-004 re-derives it from the manifests), but cargo runs only centrally; produce both documents there and run `scripts/e2e/p01 check-metadata --default D --harness H`",
+   "reason": "no metadata documents were supplied: cargo runs only on the central rch path, so produce `cargo metadata --format-version 1 --locked --offline` once with default features and once with `--features franken-speaker/harness`, then run `scripts/e2e/p01 --tier full --metadata-default D --metadata-harness H`; supplied, the case is judged pass or fail and is never skipped",
    "owner": "BeigeMaple: central `cargo metadata --locked --offline` for both feature sets"
   }
  ],
@@ -2555,7 +2555,8 @@
     "P01-DRIFT-031",
     "P01-CON-004",
     "P01-RESOLVE-*",
-    "P01-MD-*"
+    "P01-MD-*",
+    "P01-BLK-007"
    ],
    "status": "covered"
   },

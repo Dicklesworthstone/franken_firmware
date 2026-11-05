@@ -257,6 +257,39 @@ def run_metadata(c) -> Result:
     return PASS, ""
 
 
+def run_metadata_real(c) -> Result:
+    """Judge the two centrally produced `cargo metadata` documents named by --metadata-default/--metadata-harness.
+
+    Absent: BLOCKED, counted and named, never skipped and never a pass. Present: PASS only if (1) the gate holds in
+    both resolve graphs, (2) both documents describe THIS tree and Cargo.lock (members, workspace edges by an
+    independent static resolve, the gating feature resolved or not, every package in the lockfile), and (3) each
+    fault planted in a copy of them is caught with its expected code. (3) is the remove-the-plant control: it is
+    meaningful because (1) and (2) just showed the unplanted documents are clean."""
+    given = c.get("_inputs") or {}
+    if not given.get("default") and not given.get("harness"):
+        return BLOCKED, f"{c['reason']} [owner: {c['owner']}]"
+    try:
+        default_meta, harness_meta = metadata_check.load(given["default"]), metadata_check.load(given["harness"])
+        digests = (metadata_check.sha256_file(given["default"]), metadata_check.sha256_file(given["harness"]))
+    except (OSError, ValueError, KeyError) as err:
+        raise CaseError(f"cannot read the supplied metadata documents: {type(err).__name__}: {err}")
+    tree = facts_mod.extract(REPO)
+    lock = metadata_check.lock_packages(os.path.join(REPO, "Cargo.lock"))
+    pairs = metadata_check.judge(default_meta, harness_meta, tree, lock)
+    if pairs:
+        shown = "; ".join(f"{code} [{subject}]" for code, subject in pairs[:6])
+        raise CaseError(f"the supplied documents fail ({len(pairs)}): {shown}" + (" ..." if len(pairs) > 6 else ""))
+    problems = metadata_check.run_plants(default_meta, harness_meta, tree, lock)
+    if problems:
+        raise CaseError("the judgement missed planted faults: " + "; ".join(problems[:4]))
+    crate = metadata_check.GATE_CRATE
+    sizes = (len(metadata_check.normal_closure(default_meta, crate)),
+             len(metadata_check.normal_closure(harness_meta, crate)))
+    return PASS, (f"{crate} normal closure {sizes[0]} packages by default, {sizes[1]} with the harness; "
+                  f"{len(metadata_check.PLANTS)} planted faults caught; "
+                  f"documents sha256 {digests[0][:12]}/{digests[1][:12]}")
+
+
 # ------------------------------------------------------------------------------ the command plan
 
 def _plan(cwd_rel: str = "crates/franken-board-profile"):
@@ -667,7 +700,8 @@ def run_blocked(c) -> Result:
 HANDLERS: Dict[str, Callable[[Dict[str, Any]], Result]] = {
     "vector": run_vector, "contract_valid": run_contract_valid, "drift_real": run_drift_real,
     "facts_cwd": run_facts_cwd, "drift_planted": run_drift_planted, "static_resolve": run_static_resolve,
-    "resolve_planted": run_resolve_planted, "metadata": run_metadata, "plan_exact": run_plan_exact,
+    "resolve_planted": run_resolve_planted, "metadata": run_metadata, "metadata_real": run_metadata_real,
+    "plan_exact": run_plan_exact,
     "plan_rules": run_plan_rules, "plan_sharing": run_plan_sharing, "receipt": run_receipt,
     "receipt_tamper": run_receipt_tamper, "meta_invariants": run_meta_invariants, "meta_codes": run_meta_codes,
     "meta_hygiene": run_meta_hygiene, "meta_vectors_current": run_meta_vectors_current,
@@ -703,6 +737,19 @@ def select(cases, tier: str, only: Optional[str]):
     return [c for c in cases if tier in c.get("tiers", TIERS)]
 
 
+def _metadata_receipt(inputs: Dict[str, str]) -> Optional[Dict[str, str]]:
+    """Identify the metadata documents a run judged by content digest, never by path; null when none were supplied."""
+    if not inputs:
+        return None
+    out = {}
+    for key, path in sorted(inputs.items()):
+        try:
+            out[key + "_sha256"] = metadata_check.sha256_file(path)
+        except OSError:
+            out[key + "_sha256"] = "unreadable"
+    return out
+
+
 def main(argv: List[str]) -> int:
     ap = argparse.ArgumentParser(description="P01 host-side case runner",
                                  formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
@@ -710,7 +757,18 @@ def main(argv: List[str]) -> int:
     ap.add_argument("--case", metavar="ID", help="replay one case")
     ap.add_argument("--list", action="store_true", help="list the selected cases and exit")
     ap.add_argument("--receipts", metavar="DIR", help="write a JSON receipt into DIR (a new file; never overwrites)")
+    ap.add_argument("--metadata-default", metavar="FILE",
+                    help="`cargo metadata --format-version 1 --locked --offline` output for the default features")
+    ap.add_argument("--metadata-harness", metavar="FILE",
+                    help="the same with `--features franken-speaker/harness`; both or neither: P01-BLK-007 is judged "
+                         "from the pair, and stays BLOCKED (counted, not skipped) without them")
     args = ap.parse_args(argv)
+    if bool(args.metadata_default) != bool(args.metadata_harness):
+        print("error: --metadata-default and --metadata-harness go together; one alone cannot be judged and is not "
+              "silently ignored", file=sys.stderr)
+        return 2
+    metadata_inputs = ({"default": args.metadata_default, "harness": args.metadata_harness}
+                       if args.metadata_default else {})
     try:
         selected = select(all_cases(), args.tier, args.case)
         invariants = load_json(CASES_FILE)["invariants"]
@@ -723,6 +781,8 @@ def main(argv: List[str]) -> int:
         return 0
     results: List[Dict[str, Any]] = []
     for c in selected:
+        if c["kind"] == "metadata_real":
+            c = dict(c, _inputs=metadata_inputs)
         try:
             status, detail = HANDLERS[c["kind"]](c)
         except CaseError as err:
@@ -754,6 +814,7 @@ def main(argv: List[str]) -> int:
             "contract_digest": ref.digest(doc), "vectors_digest": sha256_bytes(open(VECTORS_FILE, "rb").read()),
             "facts_digest": facts_mod.facts_digest(facts_mod.extract(REPO)),
             "python": sys.version.split()[0],
+            "metadata_inputs": _metadata_receipt(metadata_inputs),
             "totals": {"total": len(results), "passed": passed, "failed": failed, "blocked": blocked},
             "results": results,
             "boundary": "host check: reads manifests, the lockfile and the tree; builds, boots and contacts nothing",
