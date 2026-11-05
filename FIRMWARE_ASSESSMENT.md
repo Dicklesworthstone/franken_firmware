@@ -52,6 +52,20 @@ Keep service login, catalog, transcoding and rich management on the host. Speake
 
 Signed manifests bind image to board identity and version. Preserve calibration, radio parameters and identity separately. Use watchdog-backed trial boot and rollback; A/B only if actual partition capacity permits it. Otherwise require a recovery boot path and power-fail-safe staging design. Never assume two images fit 32 MiB NAND. Read-only factory dumps and demonstrable recovery precede replacement.
 
+## SSH password-authentication inclusion requirement (2026-11-05)
+
+OpenSSH 10.6p2 addresses the musl/no-PAM password-authentication bypass reported as CVE-2026-123158. This is configuration-dependent, not a claim that every musl-linked Rust program accepts arbitrary SSH passwords. The relevant musl SHA-crypt limit is **256 bytes, not bits**; its error marker must never be accepted as a password hash. Sources: [OpenSSH release](https://www.openssh.org/releasenotes.html#10.6p2), [upstream fix 4353fdc](https://github.com/openssh/openssh-portable/commit/4353fdc), [musl SHA-512 crypt source](https://git.musl-libc.org/cgit/musl/tree/src/crypt/crypt_sha512.c).
+
+Current packaging inspection found no SSH daemon, password-authentication implementation or SSH dependency in this project's implementation paths. `toolchain/src/mkinitramfs.py` packages `/init`, directories and device nodes; the speaker-smoke path adds `/franken-speaker`, and measurement paths add probe data. This is **absence in the inspected build paths, not a delivered security patch or verification of retained vendor root filesystems**. The generic archive builder accepts opaque payloads; a filename scan alone cannot establish their security.
+
+Before U02/U03 admits an image that adds or retains SSH:
+
+- Bind the daemon's exact source/build digest, target libc and authentication configuration to the image. OpenSSH must include 10.6p2's fix or a reviewed equivalent backport; a version string alone is insufficient. Another SSH implementation requires its own review.
+- Preserve key-based administration and make the production effective configuration public-key-only: `PasswordAuthentication no`, `KbdInteractiveAuthentication no`, `PermitEmptyPasswords no`, and `AuthenticationMethods publickey`. Check resolved `Include` and `Match` behavior, not just a shipped text fragment. No SSH service is enabled by this requirement.
+- Exercise the actual selected daemon/libc combination in an isolated offline guest. With the shipped configuration, an authorized key succeeds, an unauthorized key fails, and password/keyboard-interactive attempts fail. Separately, a closed lab-only password-enabled profile must accept a disposable account's correct password while rejecting incorrect passwords and locked/disabled fields including `*`, `*0`, `*1` and `!` at the 255/256/257-byte boundary and the daemon's maximum input length. This second profile distinguishes the underlying fix from simply disabling password authentication; it is never shipped or run against a speaker. Multibyte input is counted in bytes. Keep positive and rejected results distinct, bounded and secret-free. Fixture-only checks do not qualify authentication.
+
+FrankenLibC is not automatically covered by the musl finding or the OpenSSH fix. Read-only source inspection at `cee93d9912257809642850d6b82909cf4be24d60` found that `crates/frankenlibc-abi/src/unistd_abi.rs::crypt_failure_token` chooses `*0`/`*1` so its own failure token differs from the setting. Its differential test `conformance_diff_crypt_failure_token.rs` checks that property against host libxcrypt, but does not test this exact `*`/long-password matrix; unclaimed schemes can delegate to host `libcrypt.so.1`. No build or test was run for this inspection. Any selected FrankenLibC authentication path still needs the daemon-level regression above at its admitted revision.
+
 ## Milestones and exit evidence
 
 1. Complete exact board mapping: CPU, actual RAM/flash, boot chain, radio and audio silicon, partition/calibration layout. Existing network observations plus published profiles are the starting ledger, not final proof.

@@ -17,11 +17,13 @@ generations (S1 and S2), one target codebase.
 
 </div>
 
-> **Status: research workspace, pre-alpha.** The plan is specced as 56 beads
-> in a dependency graph (`br ready --json`); none are closed yet. What exists
-> today: the fleet inventory (sanitized), the engineering assessment with two
-> peer reviews (`FIRMWARE_ASSESSMENT.md`), and a cross-toolchain bake-off
-> with QEMU boot evidence (`toolchain/results/RESULTS.md`).
+> **Status: research workspace, pre-alpha.** The live tracker has 56 beads;
+> the 2026-11-05 review found five closed (E01, E03, E05, E07 and Q00).
+> Use `br list --all --deferred --limit 0 --json` for current counts and
+> `br ready --json` for actionable work. The Rust workspace, offline suites
+> and cross-target evidence are implemented in this tree; each open bead
+> still requires its own acceptance review. Passing host tests or cross-checks
+> does not qualify playback on Sonos hardware.
 
 ---
 
@@ -107,7 +109,7 @@ Evidence lives in `toolchain/results/` with committed serial logs.
 | Boot as PID 1, banner on serial, clean reboot | BE-MIPS (QEMU Malta, 4.19 kernel) | done, full cycle |
 | Initramfs unpack, `/init` exec, user→kernel syscalls, clean reboot | BE-PPC (QEMU g3beige/OpenBIOS, 4.9 kernel) | done; userspace output reaches the serial console through the `pmac_zilog` driver (`/dev/ttyPZ0`, `console=ttyPZ0`); run `toolchain/results/runs/1412ac47120d4e5b865f9de6e05f50fe` |
 | std + full dependency graph cross-compiles | BE-PPC via `-Z build-std` | done |
-| asupersync lib compiles for BE-PPC | | open: 133 errors, one root cause (`AtomicU64` absent, `max-atomic-width=32`); fix scoped as a `portable-atomic` abstraction |
+| asupersync legacy runtime on BE-PPC | | the initial `AtomicU64` compile blocker has been addressed; P05 remains open for its bounded-runtime acceptance and target evidence (`docs/contracts/p05.md`) |
 
 These are cross-build and emulation results on generic QEMU machines (Malta,
 g3beige). They show the toolchain and boot path work for the two big-endian
