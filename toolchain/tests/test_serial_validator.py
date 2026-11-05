@@ -2,6 +2,7 @@
 
 import contextlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -334,6 +335,67 @@ class OptionalProbeTests(unittest.TestCase):
                     VERIFIER.verify_serial_output("mips", HELLO, broken, POSITIVE, MIPS_TRIPLE)
 
 
+class UnseededProbeTests(unittest.TestCase):
+    """GETRANDOM alone may report `UNSEEDED rc=-11`: the call exists (a bad flag gave exactly -EINVAL) but the kernel's
+    entropy pool is not yet seeded when PID 1 runs. It is not a pass, not an absence and not a misbehaving call.
+    Fixtures check the parser only; no probe ran."""
+
+    LINE = "FFW_PROBE:GETRANDOM status=UNSEEDED rc=-11"
+
+    def verify(self, text, ppc=False):
+        if ppc:
+            return VERIFIER.verify_serial_output("ppc", PPC_HELLO, PPC_ENOSYS, text, PPC_TRIPLE)
+        return VERIFIER.verify_serial_output("mips", HELLO, ENOSYS, text, MIPS_TRIPLE)
+
+    def test_the_unseeded_line_passes_the_transcript_as_its_own_state(self):
+        result = self.verify(swap("GETRANDOM", self.LINE))
+        self.assertEqual((result["status"], result["validation_errors"]), ("PASS", []))
+        record = result["probes"]["FFW_PROBE:GETRANDOM"]
+        # The guest's own token is kept: it is neither PASS (no entropy was obtained) nor FAIL (the call exists).
+        self.assertEqual((record["status"], record["capability"]), ("UNSEEDED", "unseeded"))
+        self.assertEqual(result["unseeded_capabilities"], ["GETRANDOM"])
+        self.assertEqual(result["unsupported_capabilities"], [])             # present, never filed as an absence
+
+    def test_unseeded_is_accepted_on_both_abis_because_eagain_is_11_on_both(self):
+        ppc = ppc_transcript(swap("GETRANDOM", self.LINE))
+        self.assertEqual(self.verify(ppc, ppc=True)["status"], "PASS")
+        self.assertEqual(self.verify(ppc_transcript(POSITIVE), ppc=True)["unseeded_capabilities"], [])
+
+    def test_a_seeded_or_absent_getrandom_is_not_reported_unseeded(self):
+        self.assertEqual(self.verify(POSITIVE)["unseeded_capabilities"], [])
+        absent = self.verify(swap("GETRANDOM", "FFW_PROBE:GETRANDOM status=FAIL rc=-89"))
+        self.assertEqual((absent["unseeded_capabilities"], absent["unsupported_capabilities"]), ([], ["GETRANDOM"]))
+
+    def test_no_other_probe_may_report_unseeded(self):
+        names = [n for n in OPTIONAL if n != "GETRANDOM"] + list(REQUIRED)
+        for name in names:
+            with self.subTest(name=name):
+                old = good_line(name) if name in OPTIONAL else required_line(name)
+                key = (OPTIONAL.get(name) or REQUIRED[name])[0]
+                result = self.verify(POSITIVE.replace(old, f"FFW_PROBE:{name} status=UNSEEDED {key}=-11"))
+                self.assertEqual(result["status"], "FAIL")
+                self.assertIn(f"invalid:FFW_PROBE:{name}", result["validation_errors"])
+                self.assertEqual(result["unseeded_capabilities"], [])
+
+    def test_the_unseeded_value_and_key_are_exact(self):
+        for tail in ("rc=-12", "rc=11", "rc=0", "rc=16", "rc=-89", "rc=-110", "rc=-011", "fd=-11", "rc=-11 extra=1",
+                     "rc=-11x"):
+            with self.subTest(tail=tail):
+                result = self.verify(swap("GETRANDOM", f"FFW_PROBE:GETRANDOM status=UNSEEDED {tail}"))
+                self.assertEqual(result["status"], "FAIL")
+                self.assertIn("invalid:FFW_PROBE:GETRANDOM", result["validation_errors"])
+                self.assertEqual(result["unseeded_capabilities"], [])
+
+    def test_the_status_token_is_matched_exactly(self):
+        for token in ("unseeded", "UNSEEDED2", "UNSEED", "SEEDED"):
+            with self.subTest(token=token):
+                result = self.verify(swap("GETRANDOM", f"FFW_PROBE:GETRANDOM status={token} rc=-11"))
+                self.assertEqual(result["status"], "FAIL")
+
+    def test_a_duplicate_unseeded_line_fails(self):
+        self.assertEqual(self.verify(swap("GETRANDOM", self.LINE + "\n" + self.LINE))["status"], "FAIL")
+
+
 def required_line(name):
     key, value = REQUIRED[name]
     return f"FFW_PROBE:{name} status=PASS {key}={value}"
@@ -635,7 +697,7 @@ class CaptureTests(unittest.TestCase):
                 VERIFIER.main(["--results-dir", scratch])
             self.assertEqual(marker.read_bytes(), b"previous run")
 
-    def run_main(self, scratch, binary_bytes, captures, build=False):
+    def run_main(self, scratch, binary_bytes, captures, build=False, extra_argv=()):
         """Drive run_verification with synthetic bytes and a patched guest capture. Orchestration and
         receipt-field plumbing only: nothing is executed and no guest qualification is supplied.
         With ``build=True`` the runner takes its build path and every subprocess call is recorded in
@@ -656,7 +718,7 @@ class CaptureTests(unittest.TestCase):
         kernel.parent.mkdir(parents=True)
         kernel.write_bytes(b"synthetic-kernel-not-executed")
         output = root / "result"
-        argv = ["--target-dir", str(target), "--results-dir", str(output)]
+        argv = ["--target-dir", str(target), "--results-dir", str(output), *extra_argv]
         with patch.object(VERIFIER.mkinitramfs, "resolve_default_build_dir", return_value=root), \
              patch.object(VERIFIER, "capture_guest", side_effect=captures), \
              contextlib.ExitStack() as stack:
@@ -691,6 +753,18 @@ class CaptureTests(unittest.TestCase):
             self.assertEqual((guest["linker_configured"]["linker"], guest["linker_configured"]["flavor"]), ("rust-lld", "ld.lld"))
             self.assertFalse(guest["linker_configured"]["attested"])
 
+    def test_guest_record_lists_unseeded_separately_from_unsupported(self):
+        # Receipt plumbing only: the guest's own UNSEEDED token reaches the written record, in its own list.
+        with tempfile.TemporaryDirectory() as scratch:
+            stdout = swap("GETRANDOM", "FFW_PROBE:GETRANDOM status=UNSEEDED rc=-11").encode()
+            capture = {"stdout": stdout, "stderr": b"", "returncode": 0, "stop_reason": None}
+            _, receipt = self.run_main(scratch, {}, [capture, FileNotFoundError("second guest")])
+        guest = receipt["guests"]["mips"]
+        self.assertEqual(guest["status"], "PASS")
+        self.assertEqual(guest["unseeded_capabilities"], ["GETRANDOM"])
+        self.assertEqual(guest["unsupported_capabilities"], [])
+        self.assertEqual(guest["probes"]["FFW_PROBE:GETRANDOM"]["status"], "UNSEEDED")
+
     def test_skip_build_manifest_has_no_command_and_is_not_bound_to_the_binary(self):
         with tempfile.TemporaryDirectory() as scratch:
             capture = {"stdout": POSITIVE.encode(), "stderr": b"", "returncode": 0, "stop_reason": None}
@@ -719,6 +793,53 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(manifest["environment"],
                          {"RCH_REQUIRE_REMOTE": "1", "CARGO_TARGET_DIR": VERIFIER.OUTSIDE_REPO})
         self.assertEqual(manifest["target"]["build_std"], "core,panic_abort")
+
+    BASE_BUILD = ["rch", "exec", "--source-content-receipt", "--", "cargo", "+nightly", "build", "--release",
+                  "--target", None, "-Z", "build-std=core,panic_abort"]
+
+    def expected_build(self, triple, jobs=None):
+        cmd = [triple if part is None else part for part in self.BASE_BUILD]
+        return cmd + ([] if jobs is None else ["-j", str(jobs)])
+
+    def test_jobs_appends_dash_j_to_the_command_that_ran_and_to_the_recorded_command(self):
+        # RCH refused a 4-core estimate on a 3-slot worker ("pass -j 3 (or fewer)") and ignores CARGO_BUILD_JOBS, so
+        # the count must be in the argv itself, and the receipt must show the argv that actually ran.
+        with tempfile.TemporaryDirectory() as scratch:
+            capture = {"stdout": POSITIVE.encode(), "stderr": b"", "returncode": 0, "stop_reason": None}
+            _, receipt = self.run_main(scratch, {}, [capture, FileNotFoundError("second guest")], build=True,
+                                       extra_argv=["--jobs", "2"])
+        ran = [cmd for cmd, _ in self.builds if cmd[:1] == ["rch"]]
+        self.assertEqual(ran, [self.expected_build(MIPS_TRIPLE, 2), self.expected_build(PPC_TRIPLE, 2)])
+        manifest = receipt["guests"]["mips"]["build_manifest"]
+        self.assertEqual(manifest["command"], self.expected_build(MIPS_TRIPLE, 2))
+        self.assertEqual(manifest["command"][-2:], ["-j", "2"])                     # appended, after -Z build-std
+        self.assertEqual(manifest["target"]["build_std"], "core,panic_abort")       # still recognised with -j present
+
+    def test_omitting_jobs_leaves_the_command_exactly_as_before(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            capture = {"stdout": POSITIVE.encode(), "stderr": b"", "returncode": 0, "stop_reason": None}
+            _, receipt = self.run_main(scratch, {}, [capture, FileNotFoundError("second guest")], build=True)
+        ran = [cmd for cmd, _ in self.builds if cmd[:1] == ["rch"]]
+        self.assertEqual(ran, [self.expected_build(MIPS_TRIPLE), self.expected_build(PPC_TRIPLE)])
+        self.assertNotIn("-j", receipt["guests"]["mips"]["build_manifest"]["command"])
+
+    def test_each_job_count_reaches_the_command_unchanged(self):
+        for jobs in (1, 3, 256):
+            with self.subTest(jobs=jobs), tempfile.TemporaryDirectory() as scratch:
+                capture = {"stdout": POSITIVE.encode(), "stderr": b"", "returncode": 0, "stop_reason": None}
+                _, receipt = self.run_main(scratch, {}, [capture, FileNotFoundError("second guest")], build=True,
+                                           extra_argv=["--jobs", str(jobs)])
+                self.assertEqual(receipt["guests"]["mips"]["build_manifest"]["command"][-2:], ["-j", str(jobs)])
+
+    def test_a_bad_jobs_value_or_jobs_without_a_build_is_refused_before_anything_runs(self):
+        for argv in (["--jobs", "0"], ["--jobs", "-1"], ["--jobs", "257"], ["--jobs", "two"], ["--jobs"],
+                     ["--jobs", "2", "--skip-build"]):
+            with self.subTest(argv=argv), tempfile.TemporaryDirectory() as scratch:
+                target = Path(scratch) / "never-created"
+                with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                    VERIFIER.main([*argv, "--results-dir", str(target)])
+                self.assertEqual(caught.exception.code, 2)
+                self.assertFalse(target.exists())                                   # no results dir, no build, no receipt
 
     def test_no_receipt_field_leaks_an_absolute_path(self):
         for build in (False, True):

@@ -16,6 +16,9 @@ use super::{Verdict, EAGAIN, POLLIN};
 /// Marks an `isize` observation the probe never made. Equal to no errno and no success value.
 pub const NOT_RUN: isize = isize::MIN;
 
+// Compile-time, not a runtime test: `NOT_RUN` must lie below every errno (-4095..-1) and differ from 0.
+const _: () = assert!(NOT_RUN < -4096 && NOT_RUN != 0);
+
 pub const POLLOUT: i16 = 4;
 pub const POLLERR: i16 = 8;
 pub const POLLHUP: i16 = 0x10;
@@ -138,16 +141,25 @@ pub struct AcceptObs {
     /// `fcntl(accepted, F_GETFL)` and `fcntl(accepted, F_GETFD)` raw returns.
     pub status_flags: isize,
     pub fd_flags: isize,
-    /// A read on the accepted socket with nothing sent: `-EAGAIN` proves `SOCK_NONBLOCK` took effect.
+    /// `recv(accepted, .., MSG_DONTWAIT)` with nothing sent must be `-EAGAIN`: no data and no EOF.
+    /// The probe uses `MSG_DONTWAIT` so that a socket `accept4` failed to make nonblocking cannot
+    /// block PID 1; the price is that this value is NOT evidence `SOCK_NONBLOCK` took effect (the call
+    /// is nonblocking either way). That proof is `status_flags`, read back with `F_GETFL`.
     pub empty_read: isize,
-    /// Four bytes written by the client are read back exactly.
+    /// `poll(accepted, POLLIN)` after the client wrote: must be exactly 1. A timeout (0) is a failure,
+    /// and the data read is not attempted after it.
+    pub data_poll_rc: isize,
+    /// Four bytes written by the client are received back exactly, with `recv(.., MSG_DONTWAIT)`.
     pub data_ret: isize,
     pub data_ok: bool,
 }
 
 /// `o_nonblock` is the guest ABI's `O_NONBLOCK` bit (0x80 on MIPS, 0x800 on PowerPC). The flags must
 /// be set atomically by `accept4` itself (the contract warns that accept-then-fcntl races), the
-/// connection must carry data, and the new fd must be positive. `rc` is the new fd on a pass.
+/// connection must carry data, and the new fd must be positive. `SOCK_NONBLOCK` is judged from the
+/// `F_GETFL` read-back alone (`status_flags`); the `MSG_DONTWAIT` receives cannot show it. The data must
+/// be reported ready by `poll` (exactly 1) before it is received: a timeout is a failure. `rc` is the
+/// new fd on a pass.
 pub fn judge_accept4(o: &AcceptObs, o_nonblock: isize) -> Verdict {
     let pass = o.err == 0
         && o.accepted_fd > 0
@@ -156,6 +168,7 @@ pub fn judge_accept4(o: &AcceptObs, o_nonblock: isize) -> Verdict {
         && o.fd_flags >= 0
         && (o.fd_flags & FD_CLOEXEC) != 0
         && o.empty_read == -EAGAIN
+        && o.data_poll_rc == 1
         && o.data_ret == TCP_MESSAGE_LEN
         && o.data_ok;
     Verdict {
@@ -393,6 +406,7 @@ mod tests {
             status_flags: 0o2 | PPC_O_NONBLOCK,
             fd_flags: FD_CLOEXEC,
             empty_read: -EAGAIN,
+            data_poll_rc: 1,
             data_ret: 4,
             data_ok: true,
         }
@@ -407,7 +421,7 @@ mod tests {
     #[test]
     fn accept4_each_dropped_check_would_be_caught() {
         assert!(judge_accept4(&good_accept(), PPC_O_NONBLOCK).pass);
-        let mutations: [Mutation<AcceptObs>; 9] = [
+        let mutations: [Mutation<AcceptObs>; 11] = [
             ("setup failed", |o| o.err = -111),
             ("fd not positive", |o| o.accepted_fd = 0),
             ("F_GETFL failed", |o| o.status_flags = -9),
@@ -415,6 +429,10 @@ mod tests {
             ("F_GETFD failed", |o| o.fd_flags = -9),
             ("SOCK_CLOEXEC not applied", |o| o.fd_flags = 0),
             ("empty read did not report EAGAIN", |o| o.empty_read = 0),
+            ("poll timed out before the data read", |o| {
+                o.data_poll_rc = 0
+            }),
+            ("poll failed before the data read", |o| o.data_poll_rc = -4),
             ("data short", |o| o.data_ret = 2),
             ("data differs", |o| o.data_ok = false),
         ];
@@ -426,6 +444,38 @@ mod tests {
                 "{name} must fail the probe"
             );
         }
+    }
+
+    #[test]
+    fn accept4_a_poll_timeout_is_a_fail_even_when_the_bytes_arrived() {
+        // Hand-written: the poll reported nothing ready (0), yet a later receive somehow returned the
+        // four bytes. The timeout is not accepted, and no read result can launder it.
+        let o = AcceptObs {
+            data_poll_rc: 0,
+            ..good_accept()
+        };
+        assert_eq!((o.data_ret, o.data_ok), (4, true));
+        let v = judge_accept4(&o, PPC_O_NONBLOCK);
+        assert!(!v.pass);
+        // It is a defect, not a missing capability: the printed value is the new fd, not an ENOSYS.
+        assert_eq!(v.rc, 7);
+        assert_eq!(v.class(PPC_ENOSYS), Class::Ambiguous);
+        assert!(v.is_guest_failure(PPC_ENOSYS));
+    }
+
+    #[test]
+    fn accept4_a_missing_nonblock_flag_is_caught_by_the_flag_not_the_receive() {
+        // Hand-written: accept4 failed to apply SOCK_NONBLOCK. Because the receives use MSG_DONTWAIT
+        // (so this defect cannot wedge PID 1), they still say -EAGAIN and then deliver the data; only
+        // the F_GETFL read-back can see the missing flag, and it must be enough to fail the probe.
+        let o = AcceptObs {
+            status_flags: 0o2,
+            ..good_accept()
+        };
+        assert_eq!(o.empty_read, -EAGAIN);
+        assert_eq!((o.data_poll_rc, o.data_ret, o.data_ok), (1, 4, true));
+        assert!(!judge_accept4(&o, PPC_O_NONBLOCK).pass);
+        assert!(!judge_accept4(&o, MIPS_O_NONBLOCK).pass);
     }
 
     #[test]
@@ -450,6 +500,7 @@ mod tests {
             status_flags: NOT_RUN,
             fd_flags: NOT_RUN,
             empty_read: NOT_RUN,
+            data_poll_rc: NOT_RUN,
             data_ret: NOT_RUN,
             data_ok: false,
             ..good_accept()
@@ -616,8 +667,8 @@ mod tests {
     }
 
     #[test]
-    fn not_run_equals_no_errno_and_no_success_value() {
-        assert!(NOT_RUN < -4096 && NOT_RUN != 0);
+    fn first_negative_reports_a_not_run_marker_and_ignores_success_values() {
+        // The marker's range is a compile-time assertion beside `NOT_RUN`; this covers how it is used.
         assert_eq!(first_negative(&[0, 5, NOT_RUN]), NOT_RUN);
         assert_eq!(first_negative(&[0, 5, 1]), 0);
     }

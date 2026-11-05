@@ -8,8 +8,10 @@
 //! capability failure and any other errno is ambiguous. On a pass it is the probe's success value.
 //!
 //! Bounds: every `poll` has a timeout, receives are `MSG_DONTWAIT`, the listener and the client are
-//! nonblocking, and the one forked child exits right after a single write. Worst case for the module is
-//! under two seconds.
+//! nonblocking, and the one forked child exits right after a single write. Worst case for the module,
+//! if every wait ran to its limit, is 1450 ms: UDP 300 (3 polls), ACCEPT4 300 (3 polls), REACTOR 750
+//! (50 + 500 + 20 reaps x 10), CHARDEV 100, LOOPBACK_UP 0. See `e03_probes` for the slice-1 figure
+//! and the total.
 //!
 //! Constraint worth knowing: the trampoline carries at most five syscall arguments and leaves the sixth
 //! undefined. So there is no `sendto`/`recvfrom` with an address here: the sender `connect`s and
@@ -435,14 +437,36 @@ fn accept_steps(o: &mut judge::AcceptObs, fds: &mut Fds) {
     let acc = acc as usize;
     o.status_flags = sc(nr::FCNTL, acc, F_GETFL, 0, 0);
     o.fd_flags = sc(nr::FCNTL, acc, F_GETFD, 0, 0);
+    // Both receives use `recv(.., MSG_DONTWAIT)`, never a plain `read`. If `accept4` failed to apply
+    // `SOCK_NONBLOCK`, which is the very defect this probe exists to detect, a `read` on the new socket
+    // would block PID 1 forever and take every later line and the final markers with it. The flag makes
+    // each call nonblocking whatever the socket's own state, so that defect is reported (by the
+    // `F_GETFL` read-back above) and the boot carries on.
     let mut msg = [0u8; 4];
-    o.empty_read = sys_read(acc, &mut msg);
-    if !must(sys_write(cli, b"PING"), &mut o.err)
-        || !must(poll_fd(acc as isize, POLLIN, POLL_MS).0, &mut o.err)
-    {
+    o.empty_read = sc(
+        nr::RECV,
+        acc,
+        msg.as_mut_ptr() as usize,
+        msg.len(),
+        MSG_DONTWAIT,
+    );
+    if !must(sys_write(cli, b"PING"), &mut o.err) {
         return;
     }
-    let n = sys_read(acc, &mut msg);
+    // The data must be reported ready by `poll`. A timeout (0) or an error is a failure and the
+    // receive is not attempted, so a result that merely happens to arrive cannot excuse it.
+    let (poll_rc, _) = poll_fd(acc as isize, POLLIN, POLL_MS);
+    o.data_poll_rc = poll_rc;
+    if poll_rc != 1 {
+        return;
+    }
+    let n = sc(
+        nr::RECV,
+        acc,
+        msg.as_mut_ptr() as usize,
+        msg.len(),
+        MSG_DONTWAIT,
+    );
     o.data_ret = n;
     o.data_ok = n == judge::TCP_MESSAGE_LEN && &msg == b"PING";
 }
@@ -455,6 +479,7 @@ fn probe_accept4() -> Verdict {
         status_flags: judge::NOT_RUN,
         fd_flags: judge::NOT_RUN,
         empty_read: judge::NOT_RUN,
+        data_poll_rc: judge::NOT_RUN,
         data_ret: judge::NOT_RUN,
         data_ok: false,
     };

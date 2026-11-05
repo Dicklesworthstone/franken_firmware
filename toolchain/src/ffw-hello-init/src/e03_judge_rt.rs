@@ -29,6 +29,11 @@ pub const TLS_MAGIC: usize = 0x1234_5678;
 pub const TIMER_SLEEP_NS: i64 = 40_000_000;
 pub const TIMER_MIN_SIGNALS: u32 = 3;
 pub const TIMER_MIN_INTERRUPTED_SLEEPS: u32 = 2;
+/// `EINTR_READ` bound: after this many `SIGALRM` ticks (10 ms apart, so about half a second) the signal
+/// handler writes one byte into the pipe being read. A kernel that interrupts the blocked `read` returns
+/// `-EINTR` on the first tick and never gets here; a kernel that restarts it on every tick instead returns
+/// that byte, which the judge refuses. Either way PID 1 cannot hang in the `read`.
+pub const EINTR_BOUND_TICKS: u32 = 50;
 /// Length of each fs payload; the two payloads differ so a rename that did not replace is visible.
 pub const FS_PAYLOAD_LEN: isize = 16;
 pub const ALLOC_PAGES: usize = 3;
@@ -152,7 +157,9 @@ pub struct EintrObs {
     pub act_rc: isize,
     /// Raw `setitimer` return for the periodic `SIGALRM`.
     pub timer_rc: isize,
-    /// Raw return of the `read` on an empty blocking pipe: must be `-EINTR`.
+    /// Raw return of the `read` on an empty blocking pipe: must be `-EINTR`. A return of 1 is the byte the
+    /// handler writes after `EINTR_BOUND_TICKS` ticks, which means the read was restarted instead of
+    /// interrupted.
     pub read_rc: isize,
     pub handler_count: u32,
     pub disarm_rc: isize,
@@ -234,7 +241,7 @@ pub fn judge_alloc(o: &AllocObs) -> Verdict {
     } else {
         o.unmap_rc
     };
-    let aligned = !is_errno(o.map_rc) && o.map_rc != 0 && (o.map_rc as usize) % PAGE == 0;
+    let aligned = !is_errno(o.map_rc) && o.map_rc != 0 && (o.map_rc as usize).is_multiple_of(PAGE);
     let pass = aligned
         && o.zero_ok
         && o.fill_ok
@@ -671,6 +678,28 @@ mod tests {
     fn eintr_read_prints_the_raw_read_return() {
         let v = judge_eintr_read(&good_eintr());
         assert_eq!(v, Verdict { rc: -4, pass: true });
+    }
+
+    #[test]
+    fn eintr_read_that_returns_the_bound_byte_is_a_failure_not_a_pass() {
+        // Green baseline first: the unmutated observation must pass, or the failure below proves nothing.
+        assert!(judge_eintr_read(&good_eintr()).pass);
+        // A kernel that restarts the read after every tick reaches the bound; the handler's byte makes the
+        // read return 1 with the handler having run `EINTR_BOUND_TICKS` times. That is a defect, not a pass.
+        let restarted = judge_eintr_read(&EintrObs {
+            read_rc: 1,
+            handler_count: EINTR_BOUND_TICKS,
+            ..good_eintr()
+        });
+        assert_eq!(restarted, Verdict { rc: 1, pass: false });
+        // The same byte with the bound count unreached is also refused: only `-EINTR` passes.
+        assert!(
+            !judge_eintr_read(&EintrObs {
+                read_rc: 1,
+                ..good_eintr()
+            })
+            .pass
+        );
     }
 
     #[test]

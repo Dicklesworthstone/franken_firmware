@@ -410,7 +410,7 @@ fn emit_test_result(
 /// boot transcript carries it (the runner checks the archive's init entry hashes to the binary it names,
 /// so the line describes the booted bytes). `FFW_BUILD_*` come from `build.rs` (cargo's own
 /// `TARGET`, `RUSTC` and rustflags) and describe the build, not the guest kernel. `libc=none` is a
-/// property of this crate (`no_std`, `no_main`, own `memcpy`/`memset`): a musl-named triple does not
+/// property of this crate (`no_std`, `no_main`, own `memcpy`/`memset`/`memcmp`/`bcmp`): a musl-named triple does not
 /// link a libc here, and the runner re-checks that the ELF has no interpreter or dynamic section.
 /// Worst case the line is 239 bytes, inside the 256-byte `LineWriter` (which truncates silently).
 fn emit_build_identity(console_fd: usize) {
@@ -811,4 +811,54 @@ pub unsafe extern "C" fn memcpy(dest: *mut u8, src: *const u8, n: usize) -> *mut
         i += 1;
     }
     dest
+}
+
+/// # Safety
+/// `a` and `b` must each be readable for `n` bytes, with no conflicting writes during the call, as
+/// required by the C memcmp contract. Returns zero if the two ranges are equal, otherwise the
+/// difference of the first pair of differing bytes taken as unsigned values (negative if `a` sorts
+/// first, positive if `b` does).
+///
+/// Slice comparison in the probes lowers to this symbol. The reads are volatile for the same reason as
+/// in `memcpy`/`memset` above: a plain byte loop is exactly the idiom LLVM recognises and turns back
+/// into a call to `memcmp`/`bcmp`, which would make this function call itself.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn memcmp(a: *const u8, b: *const u8, n: usize) -> i32 {
+    let mut i = 0usize;
+    while i < n {
+        let (x, y) = unsafe {
+            (
+                core::ptr::read_volatile(a.add(i)),
+                core::ptr::read_volatile(b.add(i)),
+            )
+        };
+        if x != y {
+            return i32::from(x) - i32::from(y);
+        }
+        i += 1;
+    }
+    0
+}
+
+/// # Safety
+/// As `memcmp`: both ranges readable for `n` bytes. Returns zero if the ranges are equal and nonzero
+/// otherwise; the sign carries no ordering. LLVM lowers an equality test of two byte slices to this
+/// symbol rather than `memcmp`. It has its own volatile loop, not a call to `memcmp`, so neither
+/// function depends on the other and neither can be rewritten into a call to itself.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bcmp(a: *const u8, b: *const u8, n: usize) -> i32 {
+    let mut i = 0usize;
+    while i < n {
+        let (x, y) = unsafe {
+            (
+                core::ptr::read_volatile(a.add(i)),
+                core::ptr::read_volatile(b.add(i)),
+            )
+        };
+        if x != y {
+            return 1;
+        }
+        i += 1;
+    }
+    0
 }

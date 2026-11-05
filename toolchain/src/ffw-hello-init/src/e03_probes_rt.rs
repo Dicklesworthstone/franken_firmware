@@ -26,8 +26,10 @@
 //! (SIGTERM), exercised by `SIGNAL`; the guest's final `reboot(2)` is already proven by its marker.
 //!
 //! Bounds: nothing here can block PID 1 indefinitely. Sleeps and futex waits carry timeouts, the
-//! blocking `read` is interrupted by a periodic timer that keeps firing until the read returns, and the
-//! thread join gives up after about two seconds. Worst case for the whole module is a few seconds.
+//! blocking `read` is interrupted by a periodic timer that keeps firing until the read returns (and, should
+//! a kernel restart the read after every tick instead of interrupting it, the handler writes one byte into
+//! the pipe after `EINTR_BOUND_TICKS` ticks so the read returns and the judge fails it), and the thread
+//! join gives up after about two seconds. Worst case for the whole module is a few seconds.
 //!
 //! Handlers installed for SIGTERM and SIGALRM are left in place on purpose: PID 1 discards signals whose
 //! disposition is the default, but a late periodic SIGALRM with the default action must never be the
@@ -41,7 +43,10 @@ use core::sync::atomic::{AtomicI32, AtomicU32, AtomicUsize, Ordering};
 use ffw_hello_init::e03_judge::Verdict;
 use ffw_hello_init::e03_judge_rt as judge;
 
-use super::{emit_test_result, sys, sys_close, sys_open, sys_raw, sys_read, sys_write, Timespec32};
+use super::{
+    emit_console, emit_test_result, sys, sys_close, sys_open, sys_raw, sys_read, sys_write,
+    Timespec32,
+};
 
 /// Per-ABI syscall numbers, signal-mask `how` values, mmap flag and open flag, from the libc crate's
 /// `linux/{gnu,musl}/b32` tables (libc 0.2.191). MIPS o32 is 4000-based; PowerPC32 uses the generic
@@ -370,13 +375,18 @@ extern "C" {
 fn read_thread_pointer() -> usize {
     let tp: usize;
     // SAFETY: RDHWR $29 only reads the UserLocal register; no memory or flags are touched.
+    //
+    // The destination is pinned to `$3` (`v1`). With `out(reg)` the register allocator was free to pick
+    // `$1` (`$at`), which the assembler reserves for its own macro expansion and warns about without
+    // `.set noat`. `rdhwr $3, $29` is also the exact encoding the kernel's reserved-instruction fast
+    // path recognises on cores that do not implement UserLocal in hardware.
     unsafe {
         core::arch::asm!(
             ".set push",
             ".set mips32r2",
-            "rdhwr {0}, $29",
+            "rdhwr $3, $29",
             ".set pop",
-            out(reg) tp,
+            out("$3") tp,
             options(nomem, nostack, preserves_flags),
         );
     }
@@ -464,11 +474,24 @@ fn munmap(addr: usize, len: usize) -> isize {
 
 // --------------------------------------------------------------------------- signals and timers
 
-/// Handler runs since the last reset; the handler touches nothing else.
+/// Handler runs since the last reset.
 static SIG_COUNT: AtomicU32 = AtomicU32::new(0);
 
+/// Write end of the `EINTR_READ` pipe while that probe is armed, `-1` at every other time. It is set before
+/// the timer is armed and cleared after the timer is disarmed (and before the pipe is closed), so a handler
+/// that runs for any other probe, or late, writes nothing.
+static EINTR_WAKE_FD: AtomicI32 = AtomicI32::new(-1);
+
 extern "C" fn on_signal(_sig: i32) {
-    SIG_COUNT.fetch_add(1, Ordering::SeqCst);
+    let ticks = SIG_COUNT.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+    let fd = EINTR_WAKE_FD.load(Ordering::SeqCst);
+    // The bound of `EINTR_READ`: if a kernel restarts the blocked `read` after every tick instead of
+    // interrupting it, this byte is what finally lets the read return, so PID 1 never hangs there. `write`
+    // is a bare syscall (async-signal-safe), the pipe is empty so it cannot block, and `==` writes exactly
+    // once. A kernel that interrupts the read never reaches this count.
+    if fd >= 0 && ticks == judge::EINTR_BOUND_TICKS {
+        let _ = sys_write(fd as usize, b"!");
+    }
 }
 
 fn install_handler(sig: usize) -> isize {
@@ -601,6 +624,10 @@ fn probe_eintr_read() -> Verdict {
     let mut read_rc = 0;
     let mut disarm_rc = -1;
     if pipe_rc == 0 && act_rc == 0 {
+        // Let the handler reach the write end before the timer exists: after `EINTR_BOUND_TICKS` ticks it
+        // writes one byte, so a kernel that restarts the `read` forever still returns from it (with 1, which
+        // the judge refuses) instead of hanging PID 1.
+        EINTR_WAKE_FD.store(fds[1], Ordering::SeqCst);
         // Periodic, so a tick that lands before the `read` blocks cannot leave the read waiting forever.
         timer_rc = setitimer_real(EINTR_TICK_US, EINTR_TICK_US);
         if timer_rc == 0 {
@@ -608,6 +635,8 @@ fn probe_eintr_read() -> Verdict {
             read_rc = sys_read(fds[0] as usize, &mut buf);
             disarm_rc = setitimer_real(0, 0);
         }
+        // Cleared before the pipe is closed below, so no late tick can write to a closed or reused fd.
+        EINTR_WAKE_FD.store(-1, Ordering::SeqCst);
     }
     if pipe_rc == 0 {
         let _ = sys_close(fds[0] as usize);
@@ -1025,6 +1054,10 @@ pub fn run_core(console_fd: usize) -> usize {
 
 /// `THREADS` and `TLS`: the only probes that start a second thread. Run last.
 pub fn run_threads(console_fd: usize) -> usize {
+    // A breadcrumb, not a probe line: it deliberately does not start with `FFW_`, so the verifier and the
+    // classifier skip it. If the cloned thread faults, the whole thread group (PID 1) dies and the guest
+    // reboots; this line is what shows, in the raw log, that the thread probe had started.
+    emit_console(console_fd, b"probe: run_threads start\n");
     let (threads, tls) = probe_threads_and_tls();
     report(console_fd, b"THREADS", b"tid", threads) + report(console_fd, b"TLS", b"tp", tls)
 }

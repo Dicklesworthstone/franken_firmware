@@ -155,9 +155,18 @@ def enosys_errno_of(expected_enosys: str) -> str:
     return m.group(1)
 
 
+# A third outcome only GETRANDOM can have. On the real guest the kernel's entropy pool is not yet seeded when PID 1
+# runs (the committed MIPS log reads `random: init: uninitialized urandom read`; no RNG device is attached), so
+# `getrandom` keeps answering -EAGAIN. The probe then proves the call exists without needing entropy (a bad flag
+# must give exactly -EINVAL) and reports `UNSEEDED rc=-11` (EAGAIN is 11 on both ABIs). That is neither a pass nor
+# an absence nor a misbehaving call, so it is recorded as its own token and never as PASS, FAIL or supported.
+UNSEEDED_PROBES: dict[str, str] = {"GETRANDOM": "-11"}
+
+
 def optional_probe_pattern(name: str, enosys_errno: str) -> str:
     key, success = OPTIONAL_PROBES[name]
-    return rf"FFW_PROBE:{name} status=(?:PASS {key}={success}|FAIL {key}=-{enosys_errno})"
+    unseeded = rf"|UNSEEDED {key}={UNSEEDED_PROBES[name]}" if name in UNSEEDED_PROBES else ""
+    return rf"FFW_PROBE:{name} status=(?:PASS {key}={success}|FAIL {key}=-{enosys_errno}{unseeded})"
 
 
 def inspect_static_elf(path: pathlib.Path, arch: str) -> dict[str, Any]:
@@ -381,11 +390,13 @@ def verify_serial_output(
             errors.append("invalid:partial_write_count_is_not_partial")
         if line.startswith("FFW_TEST:") or line.startswith("FFW_PROBE:"):
             well_formed = pattern is not None and re.fullmatch(pattern, line) is not None
-            guest_says_pass = re.search(r" status=PASS(?: |$)", line) is not None
-            # The recorded status is the guest's own: a well-formed explicit -ENOSYS is a FAIL here, never PASS.
-            record: dict[str, Any] = {"raw": line, "status": "PASS" if well_formed and guest_says_pass else "FAIL"}
+            token = re.search(r" status=(PASS|FAIL|UNSEEDED)(?: |$)", line)
+            guest_status = token.group(1) if token is not None else "FAIL"
+            # The recorded status is the guest's own token: a well-formed explicit -ENOSYS is a FAIL here, never
+            # PASS, and UNSEEDED is neither. A line that did not parse is FAIL whatever it claims.
+            record: dict[str, Any] = {"raw": line, "status": guest_status if well_formed else "FAIL"}
             if well_formed and key in OPTIONAL_PROBE_KEYS:
-                record["capability"] = "supported" if guest_says_pass else "unsupported"
+                record["capability"] = {"PASS": "supported", "FAIL": "unsupported", "UNSEEDED": "unseeded"}[guest_status]
             probes[key] = record
 
     missing = [key for key in patterns if key not in positions]
@@ -441,6 +452,11 @@ def verify_serial_output(
         "unsupported_capabilities": sorted(
             key.split(":", 1)[1] for key, rec in probes.items() if rec.get("capability") == "unsupported"
         ),
+        # Probes that ran, found the call present, and got no entropy because the pool is not yet seeded. Never
+        # merged with `unsupported_capabilities`: the call exists, and this says nothing about secure entropy.
+        "unseeded_capabilities": sorted(
+            key.split(":", 1)[1] for key, rec in probes.items() if rec.get("capability") == "unseeded"
+        ),
     }
 
 
@@ -490,6 +506,12 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
                 "-Z",
                 "build-std=core,panic_abort",
             ]
+            # RCH admits a build against a worker's slot count using ITS OWN core estimate, which ignores
+            # CARGO_BUILD_JOBS, so the job count has to be in the command itself ("-j 3 (or fewer)" on a
+            # 3-slot worker). Recorded verbatim in build_manifest.command like every other argument.
+            jobs = getattr(args, "jobs", None)
+            if jobs is not None:
+                cmd += ["-j", str(jobs)]
             build_commands[arch] = list(cmd)
             env = os.environ.copy()
             env["CARGO_TARGET_DIR"] = str(target_dir)
@@ -632,9 +654,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=30.0, help="Per-guest QEMU timeout in seconds")
     parser.add_argument("--target-dir", type=pathlib.Path, help="Directory containing target-triple/release artifacts")
     parser.add_argument("--results-dir", type=pathlib.Path, help="New output directory; existing directories are refused")
+    parser.add_argument("--jobs", type=int, default=None, metavar="N",
+                        help="append -j N to each cargo build command (RCH admits against a worker's slot count)")
     args = parser.parse_args(argv)
     if not 0 < args.timeout <= 3600:
         parser.error("timeout must be positive, finite and no greater than 3600 seconds")
+    if args.jobs is not None and not 1 <= args.jobs <= 256:
+        parser.error("--jobs must be between 1 and 256")
+    if args.jobs is not None and args.skip_build:
+        parser.error("--jobs has no effect with --skip-build (no build runs, so no command would record it)")
     run_id = args.run_id = uuid.uuid4().hex
     results_dir = args.results_dir or REPO_ROOT / "toolchain" / "results" / "runs" / run_id
     results_dir.mkdir(parents=True, exist_ok=False)
