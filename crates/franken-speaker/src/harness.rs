@@ -6,6 +6,7 @@
 //! `franken-speaker` carries none of it and has no dependency edge onto `franken-test-support`.
 
 use crate::SpeakerReadinessState;
+use crate::clock_log::{ClockLog, ClockLogSummary};
 use franken_board_profile::{BoardProfile, synthetic_test_fixture_catalog};
 use franken_clock::LatencyLedger;
 use franken_clock::group::{
@@ -316,6 +317,9 @@ pub struct VirtualSpeakerNode {
     /// force. That needs a 4 s span of exchanges, longer than any run the harness makes today, so this is always 0
     /// here; the sign convention against the legacy resampler is untested, and nothing claims it works.
     pub drift_ppm: i32,
+    /// This member's log of its group clock: the clock's events drained into a bounded sink after bring-up and after
+    /// every block's gate (`clock_log.rs`). Whatever the sink does, it cannot change what the clock decides.
+    pub(crate) clock_log: ClockLog,
 }
 
 /// Silence blocks the virtual HAL must have primed before it may unmute. Stated by the harness,
@@ -744,6 +748,9 @@ impl VirtualSpeakerNode {
         let link =
             negotiate_member_stream(member_id, initial_epoch, plan.boot_index, plan.firmware)?;
 
+        let mut clock_log = ClockLog::new(member_id)?;
+        clock_log.drain(&mut clock);
+
         let dsp = BoardProtectionDsp::new(board.clone()).map_err(|e| e.to_string())?;
         let shadow_dsp = dsp.clone();
         let continuity_oracles: Vec<SampleContinuityOracle> =
@@ -778,6 +785,7 @@ impl VirtualSpeakerNode {
             audible_blocks: 0,
             muted_blocks: 0,
             drift_ppm: 0,
+            clock_log,
         })
     }
 }
@@ -997,6 +1005,8 @@ impl VirtualSpeakerNode {
         let output = presented_local_ns.map_or(Output::Muted(MuteReason::NotLocked), |l| {
             self.clock.output(l)
         });
+        // The clock's events from this block go to its log. The drain only reads the clock's buffer.
+        self.clock_log.drain(&mut self.clock);
         BlockGate {
             output,
             presented_local_ns,
@@ -1062,6 +1072,10 @@ pub struct MemberSimulationStats {
     pub handoff_checked_samples: u64,
     pub quarantined_dma_slots: usize,
     pub readiness: SpeakerReadinessState,
+    /// What this member's clock log ended with: events offered to its bounded sink, kept and dropped, and whether any
+    /// critical clock event was lost (`N03`, `docs/contracts/n03.md` section 13).
+    #[serde(default)]
+    pub clock_log: ClockLogSummary,
 }
 
 /// Run a complete deterministic Virtual House simulation across 5 mixed-generation Sonos models
@@ -1568,6 +1582,7 @@ fn run_campaign_inner(
                 handoff_checked_samples: node.handoff_checked_samples,
                 quarantined_dma_slots: hal_t.quarantined_dma_slots,
                 readiness: node.readiness.clone(),
+                clock_log: node.clock_log.summary(&node.clock),
             },
         );
     }

@@ -39,7 +39,7 @@ VECTORS = os.path.join(HERE, "vectors.json")
 TIERS = ("smoke", "full")
 D01_RUNNER = os.path.join(REPO, "tests", "d01", "run_cases.py")
 
-PACKAGE_BINARIES = {"franken-dsp": ("franken_dsp", "g02_vectors")}
+PACKAGE_BINARIES = {"franken-dsp": ("franken_dsp", "g02_vectors"), "franken-speaker": ("franken_speaker",)}
 HARNESS_TEST = ("g02_vectors", "g02_vectors_match_the_independent_reference")
 TOLERANCE = 1e-7
 SMOKE = ("G02-GAIN-001", "G02-ROLE-001", "G02-MAP-001", "G02-MBR-003", "G02-MBR-012", "G02-MBR-013", "G02-GRP-001")
@@ -66,6 +66,7 @@ d01.RUST_SOURCES = [
     ("crates/franken-dsp/src/volume/outcome_tests.rs", "franken_dsp", "volume::outcome_tests::"),
     ("crates/franken-dsp/src/volume/progress_tests.rs", "franken_dsp", "volume::progress_tests::"),
     ("crates/franken-dsp/src/volume/local_mute_tests.rs", "franken_dsp", "volume::local_mute_tests::"),
+    ("crates/franken-speaker/src/button_adapter/tests.rs", "franken_speaker", "button_adapter::tests::"),
     ("crates/franken-dsp/tests/g02_vectors.rs", "g02_vectors", ""),
 ]
 Logs = d01.Logs

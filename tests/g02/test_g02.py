@@ -58,7 +58,7 @@ def cargo_log(doc: dict, drop_tests: tuple = (), drop_cases: tuple = (), perturb
         if perturb and case["id"] in perturb:
             obs = perturb[case["id"]](copy.deepcopy(obs))
         observed.append("G02-OBSERVED " + json.dumps(obs))
-    stems = ["franken_dsp", "g02_vectors"]
+    stems = ["franken_dsp", "g02_vectors", "franken_speaker"]
 
     def header(stem: str) -> str:
         h = hashlib.sha256(stem.encode()).hexdigest()[:16]
@@ -154,12 +154,12 @@ class ContractMatchesVectors(Base):
                     self.assertIn(name.split("::", 1)[1], self.text)
 
     def test_the_contract_states_the_plan_and_the_limits(self) -> None:
-        self.assertIn("101 cases: 4 meta, 45 vectors and 52 Rust tests", self.text)
+        self.assertIn("115 cases: 4 meta, 45 vectors and 66 Rust tests", self.text)
         self.assertIn("Numerical tests do not prove physical behavior", self.text)
         self.assertIn("second implementation of this contract by the same author", self.text)
         self.assertIn("scripts/e2e/g02 --tier full --judge", self.text)
         planned = len(runner.run("full", None)[0])
-        self.assertEqual(planned, 101)
+        self.assertEqual(planned, 115)
 
 
 class HandDerivedPins(Base):

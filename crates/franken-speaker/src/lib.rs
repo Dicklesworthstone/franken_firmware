@@ -24,6 +24,9 @@ pub mod render;
 pub mod render_log;
 
 #[cfg(any(test, feature = "harness"))]
+mod clock_log;
+
+#[cfg(any(test, feature = "harness"))]
 mod harness;
 
 #[cfg(any(test, feature = "harness"))]
@@ -31,3 +34,6 @@ pub use harness::{
     FencingProbeStats, MemberSimulationStats, RefusedBy, StreamAgreement, StreamOutcome,
     StreamRefusal, VirtualHouseReport, VirtualSpeakerNode, run_virtual_house_campaign,
 };
+
+#[cfg(any(test, feature = "harness"))]
+pub use clock_log::ClockLogSummary;
