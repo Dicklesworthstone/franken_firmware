@@ -697,6 +697,20 @@
         "each_planted_persistence_fault_fails_the_judge_by_name",
         "a_restart_answers_a_revoked_key_exactly_as_the_directory_did_before"
       ]
+    },
+    {
+      "id": "INV-HIGH-WATER-FLOOR",
+      "claim": "After a full process restart, a stored revision high-water mark restored before the first step raises the revision floor to at least the mark: a held-back copy composed against the old history is refused exactly as StaleRevision even after the rebuilt session climbs past its revision, a fresh command composed against the restored session is admitted, the local user is never affected, and a mark is accepted only before the first step; a restart that stores nothing or a stale mark admits the copy, one that overshoots locks fresh controllers out, and the judge catches each by name.",
+      "scenarios": [],
+      "scenario_inapplicable": "The Python scenario model has no process restart or persisted mark; the Rust tests judge it through the channel with planted persistence faults.",
+      "rust_tests": [
+        "a_faithful_restart_refuses_the_held_back_copy_and_admits_a_fresh_command",
+        "each_planted_mark_fault_fails_the_judge_by_name",
+        "the_mark_follows_every_commit_and_never_goes_down",
+        "a_mark_is_restored_before_the_first_step_only",
+        "the_floor_is_the_larger_of_the_first_steps_revision_and_the_mark",
+        "the_local_user_is_never_locked_out_by_a_mark_and_a_remote_controller_is_told_why"
+      ]
     }
   ],
   "other_rust_checks": {

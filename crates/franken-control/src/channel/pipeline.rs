@@ -74,8 +74,10 @@ use super::peer::{AuthFailure, Authenticated, PeerAuthority, PeerId, PeerRole};
 use super::request::{ControlCommand, ControlRequest, Lane, RequestBody};
 
 mod ack;
+mod restart;
 
 pub use ack::AckOutcome;
+pub use restart::HighWaterError;
 
 /// How a command ended, as remembered in the ledger and returned on a retry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -460,8 +462,11 @@ pub struct ControlChannel<A: PeerAuthority> {
     buckets: BTreeMap<(PeerId, Lane), TokenBucket>,
     next_session_seq: u64,
     /// The session's `state_revision` at this incarnation's first `step`. A volume or mute command
-    /// composed against anything older predates the incarnation and is refused as stale.
+    /// composed against anything older predates the incarnation and is refused as stale. After a full
+    /// process restart it is at least the restored high-water mark (see `restart`).
     revision_floor: Option<u64>,
+    /// The stored high-water mark the owner restored before the first `step`; zero if none.
+    restored_high_water: u64,
     /// The group lease (G01 `AuthorityToken`) under which this channel may mutate the group. `None`
     /// until the owner installs one, and again after a restart: the channel fails closed.
     lease: Option<AuthorityToken>,
@@ -482,6 +487,7 @@ impl<A: PeerAuthority> ControlChannel<A> {
             authority,
             next_session_seq: config.session_seq_base,
             revision_floor: None,
+            restored_high_water: 0,
             lease: None,
             config,
             ordinary: VecDeque::new(),
@@ -581,7 +587,8 @@ impl<A: PeerAuthority> ControlChannel<A> {
         self.log.as_mut()
     }
 
-    /// The session revision this incarnation started from, known once the first `step` has run.
+    /// The session revision this incarnation started from (or the restored high-water mark, if that is
+    /// higher), known once the first `step` has run.
     #[must_use]
     pub fn revision_floor(&self) -> Option<u64> {
         self.revision_floor
@@ -896,7 +903,9 @@ impl<A: PeerAuthority> ControlChannel<A> {
     /// outcome.
     pub fn step(&mut self, now_ns: u64, session: &mut UnifiedGroupSession) -> Vec<Settlement> {
         self.ledger.expire(now_ns);
-        let floor = *self.revision_floor.get_or_insert(session.state_revision);
+        let floor = *self
+            .revision_floor
+            .get_or_insert(session.state_revision.max(self.restored_high_water));
         let mut settled = Vec::new();
         self.expire_pending(now_ns, session.state_revision, &mut settled);
         for _ in 0..self.config.max_per_step {
