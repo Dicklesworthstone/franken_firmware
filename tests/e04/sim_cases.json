@@ -1,0 +1,1450 @@
+{
+ "schema": "ffw.e04.sim_cases.v1",
+ "cases": [
+  {
+   "id": "E04-SIM-001",
+   "title": "exclusive ownership: a second owner is refused, release, then restart",
+   "steps": [
+    {
+     "ev": {
+      "type": "acquire",
+      "owner": "a"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "acquire",
+      "owner": "b"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "busy"
+     }
+    },
+    {
+     "ev": {
+      "type": "release_device",
+      "owner": "b"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "not_owner"
+     }
+    },
+    {
+     "ev": {
+      "type": "release_device",
+      "owner": "a"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "acquire",
+      "owner": "b"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    }
+   ],
+   "final": {
+    "phase": "closed",
+    "amp": "muted",
+    "owner": "b",
+    "slots": [],
+    "submitted": 0,
+    "consumed": 0
+   }
+  },
+  {
+   "id": "E04-SIM-002",
+   "title": "no buffer release, and no device release, while the driver owns a buffer",
+   "steps": [
+    {
+     "ev": {
+      "type": "acquire",
+      "owner": "c"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "prepare",
+      "slots": 2
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "start"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "submit",
+      "slot": 0,
+      "frames": 48,
+      "accepted": 48
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "release_slot",
+      "slot": 0
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "release_while_dma_owned"
+     }
+    },
+    {
+     "ev": {
+      "type": "release_device",
+      "owner": "c"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "dma_owned_slots"
+     }
+    },
+    {
+     "ev": {
+      "type": "completion",
+      "slot": 0
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "release_slot",
+      "slot": 0
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "release_slot",
+      "slot": 0
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "already_released"
+     }
+    }
+   ],
+   "final": {
+    "phase": "running",
+    "amp": "unmuted",
+    "owner": "c",
+    "slots": [
+     "released",
+     "free"
+    ],
+    "submitted": 48,
+    "consumed": 0
+   }
+  },
+  {
+   "id": "E04-SIM-003",
+   "title": "partial submit, a zero-frame short write, and a driver that accepts more than offered",
+   "steps": [
+    {
+     "ev": {
+      "type": "acquire",
+      "owner": "d"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "prepare",
+      "slots": 3
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "start"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "submit",
+      "slot": 0,
+      "frames": 48,
+      "accepted": 20
+     },
+     "expect": {
+      "result": "partial",
+      "remainder": 28
+     }
+    },
+    {
+     "ev": {
+      "type": "submit",
+      "slot": 0,
+      "frames": 48,
+      "accepted": 48
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "slot_not_free"
+     }
+    },
+    {
+     "ev": {
+      "type": "submit",
+      "slot": 1,
+      "frames": 48,
+      "accepted": 0
+     },
+     "expect": {
+      "result": "partial",
+      "remainder": 48
+     }
+    },
+    {
+     "ev": {
+      "type": "submit",
+      "slot": 1,
+      "frames": 10,
+      "accepted": 11
+     },
+     "expect": {
+      "result": "anomaly",
+      "kind": "accepted_more_than_offered"
+     }
+    },
+    {
+     "ev": {
+      "type": "submit",
+      "slot": 2,
+      "frames": 0,
+      "accepted": 0
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "empty_submit"
+     }
+    },
+    {
+     "ev": {
+      "type": "submit",
+      "slot": 9,
+      "frames": 10,
+      "accepted": 10
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "bad_slot"
+     }
+    }
+   ],
+   "final": {
+    "phase": "running",
+    "amp": "unmuted",
+    "owner": "d",
+    "slots": [
+     "dma_owned",
+     "free",
+     "free"
+    ],
+    "submitted": 20,
+    "consumed": 0
+   }
+  },
+  {
+   "id": "E04-SIM-004",
+   "title": "stop requested is not flush acknowledged; a delayed completion inside the bound",
+   "steps": [
+    {
+     "ev": {
+      "type": "acquire",
+      "owner": "e"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "prepare",
+      "slots": 2
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "start"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "submit",
+      "slot": 0,
+      "frames": 48,
+      "accepted": 48
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "drain",
+      "max_wait_ticks": 5
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "tick",
+      "ticks": 3
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "completion",
+      "slot": 0
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "release_device",
+      "owner": "e"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "wrong_phase"
+     }
+    },
+    {
+     "ev": {
+      "type": "flush_ack"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "release_device",
+      "owner": "e"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    }
+   ],
+   "final": {
+    "phase": "closed",
+    "amp": "muted",
+    "owner": null,
+    "slots": [],
+    "submitted": 0,
+    "consumed": 0
+   }
+  },
+  {
+   "id": "E04-SIM-005",
+   "title": "a drain that times out quarantines what is in flight until a reset is acknowledged",
+   "steps": [
+    {
+     "ev": {
+      "type": "acquire",
+      "owner": "f"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "prepare",
+      "slots": 2
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "start"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "submit",
+      "slot": 0,
+      "frames": 48,
+      "accepted": 48
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "submit",
+      "slot": 1,
+      "frames": 48,
+      "accepted": 48
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "drain",
+      "max_wait_ticks": 4
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "tick",
+      "ticks": 3
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "tick",
+      "ticks": 1
+     },
+     "expect": {
+      "result": "drain_timed_out"
+     }
+    },
+    {
+     "ev": {
+      "type": "release_slot",
+      "slot": 0
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "slot_quarantined"
+     }
+    },
+    {
+     "ev": {
+      "type": "completion",
+      "slot": 1
+     },
+     "expect": {
+      "result": "anomaly",
+      "kind": "completion_for_quarantined_slot"
+     }
+    },
+    {
+     "ev": {
+      "type": "release_device",
+      "owner": "f"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "quarantined_slots"
+     }
+    },
+    {
+     "ev": {
+      "type": "device_reset",
+      "ack": true
+     },
+     "expect": {
+      "result": "ok"
+     }
+    }
+   ],
+   "final": {
+    "phase": "prepared",
+    "amp": "muted",
+    "owner": "f",
+    "slots": [
+     "free",
+     "free"
+    ],
+    "submitted": 96,
+    "consumed": 0
+   }
+  },
+  {
+   "id": "E04-SIM-006",
+   "title": "an unacknowledged mute blocks start, power-save and release until it is acknowledged",
+   "steps": [
+    {
+     "ev": {
+      "type": "acquire",
+      "owner": "g"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "prepare",
+      "slots": 1
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "start"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "abort_mute",
+      "ack": false
+     },
+     "expect": {
+      "result": "mute_failed"
+     }
+    },
+    {
+     "ev": {
+      "type": "release_device",
+      "owner": "g"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "mute_not_acknowledged"
+     }
+    },
+    {
+     "ev": {
+      "type": "start"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "wrong_phase"
+     }
+    },
+    {
+     "ev": {
+      "type": "device_reset",
+      "ack": true
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "start"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "mute_not_acknowledged"
+     }
+    },
+    {
+     "ev": {
+      "type": "power_save",
+      "enter": true
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "power_save_needs_mute"
+     }
+    },
+    {
+     "ev": {
+      "type": "abort_mute",
+      "ack": true
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "flush_ack"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    }
+   ],
+   "final": {
+    "phase": "prepared",
+    "amp": "muted",
+    "owner": "g",
+    "slots": [
+     "free"
+    ],
+    "submitted": 0,
+    "consumed": 0
+   }
+  },
+  {
+   "id": "E04-SIM-007",
+   "title": "power-save needs an idle, muted, prepared device",
+   "steps": [
+    {
+     "ev": {
+      "type": "acquire",
+      "owner": "h"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "prepare",
+      "slots": 2
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "power_save",
+      "enter": true
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "start"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "wrong_phase"
+     }
+    },
+    {
+     "ev": {
+      "type": "power_save",
+      "enter": false
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "start"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "power_save",
+      "enter": true
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "wrong_phase"
+     }
+    },
+    {
+     "ev": {
+      "type": "submit",
+      "slot": 0,
+      "frames": 48,
+      "accepted": 48
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "drain",
+      "max_wait_ticks": 9
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "power_save",
+      "enter": true
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "wrong_phase"
+     }
+    },
+    {
+     "ev": {
+      "type": "flush_ack"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "submit",
+      "slot": 1,
+      "frames": 10,
+      "accepted": 10
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "power_save",
+      "enter": true
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "power_save_needs_idle"
+     }
+    },
+    {
+     "ev": {
+      "type": "completion",
+      "slot": 1
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "power_save",
+      "enter": false
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "not_in_power_save"
+     }
+    },
+    {
+     "ev": {
+      "type": "power_save",
+      "enter": true
+     },
+     "expect": {
+      "result": "ok"
+     }
+    }
+   ],
+   "final": {
+    "phase": "power_save",
+    "amp": "muted",
+    "owner": "h",
+    "slots": [
+     "free",
+     "free"
+    ],
+    "submitted": 58,
+    "consumed": 0
+   }
+  },
+  {
+   "id": "E04-SIM-008",
+   "title": "driver counters are untrusted: wraparound is handled, overclaims are anomalies",
+   "start_counter": 4294967280,
+   "steps": [
+    {
+     "ev": {
+      "type": "acquire",
+      "owner": "i"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "prepare",
+      "slots": 1
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "start"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "submit",
+      "slot": 0,
+      "frames": 64,
+      "accepted": 64
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "consumed_counter",
+      "value": 2000000000
+     },
+     "expect": {
+      "result": "anomaly",
+      "kind": "counter_exceeds_in_flight"
+     }
+    },
+    {
+     "ev": {
+      "type": "consumed_counter",
+      "value": 16
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "consumed_counter",
+      "value": 4294967280
+     },
+     "expect": {
+      "result": "anomaly",
+      "kind": "counter_exceeds_in_flight"
+     }
+    },
+    {
+     "ev": {
+      "type": "consumed_counter",
+      "value": 48
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "consumed_counter",
+      "value": 49
+     },
+     "expect": {
+      "result": "anomaly",
+      "kind": "counter_exceeds_in_flight"
+     }
+    }
+   ],
+   "final": {
+    "phase": "running",
+    "amp": "unmuted",
+    "owner": "i",
+    "slots": [
+     "dma_owned"
+    ],
+    "submitted": 64,
+    "consumed": 64
+   }
+  },
+  {
+   "id": "E04-SIM-009",
+   "title": "device loss cannot be assumed muted and leaves in-flight slots quarantined",
+   "steps": [
+    {
+     "ev": {
+      "type": "acquire",
+      "owner": "j"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "prepare",
+      "slots": 2
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "start"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "submit",
+      "slot": 0,
+      "frames": 32,
+      "accepted": 32
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "device_loss"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "completion",
+      "slot": 0
+     },
+     "expect": {
+      "result": "anomaly",
+      "kind": "completion_for_quarantined_slot"
+     }
+    },
+    {
+     "ev": {
+      "type": "release_device",
+      "owner": "j"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "mute_not_acknowledged"
+     }
+    },
+    {
+     "ev": {
+      "type": "device_reset",
+      "ack": false
+     },
+     "expect": {
+      "result": "anomaly",
+      "kind": "reset_unacknowledged"
+     }
+    },
+    {
+     "ev": {
+      "type": "release_slot",
+      "slot": 0
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "slot_quarantined"
+     }
+    }
+   ],
+   "final": {
+    "phase": "faulted",
+    "amp": "mute_failed",
+    "owner": "j",
+    "slots": [
+     "quarantined",
+     "free"
+    ],
+    "submitted": 32,
+    "consumed": 0
+   }
+  },
+  {
+   "id": "E04-SIM-010",
+   "title": "daemon-owned radio duties are orphaned by daemon replacement, never assumed to continue",
+   "steps": [
+    {
+     "ev": {
+      "type": "declare_duty",
+      "duty": "power_save",
+      "owner": "daemon"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "declare_duty",
+      "duty": "roam",
+      "owner": "kernel_driver"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "declare_duty",
+      "duty": "congestion",
+      "owner": null
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "declare_duty",
+      "duty": "multicast_delivery",
+      "owner": "daemon"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "adopt_duty",
+      "duty": "power_save"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "daemon_not_replaced"
+     }
+    },
+    {
+     "ev": {
+      "type": "daemon_replaced"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "adopt_duty",
+      "duty": "roam"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "not_daemon_owned"
+     }
+    },
+    {
+     "ev": {
+      "type": "adopt_duty",
+      "duty": "mesh_membership"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "duty_not_declared"
+     }
+    },
+    {
+     "ev": {
+      "type": "adopt_duty",
+      "duty": "power_save"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "adopt_duty",
+      "duty": "power_save"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "declare_duty",
+      "duty": "unicast_delivery",
+      "owner": "daemon"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    }
+   ],
+   "final": {
+    "phase": "closed",
+    "amp": "muted",
+    "owner": null,
+    "slots": [],
+    "submitted": 0,
+    "consumed": 0,
+    "radio": {
+     "power_save": "adopted",
+     "roam": "held_kernel_driver",
+     "congestion": "owner_unknown",
+     "multicast_delivery": "orphaned",
+     "unicast_delivery": "orphaned"
+    }
+   }
+  },
+  {
+   "id": "E04-SIM-011",
+   "title": "prepare preconditions and slot bounds",
+   "steps": [
+    {
+     "ev": {
+      "type": "prepare",
+      "slots": 1
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "not_owner"
+     }
+    },
+    {
+     "ev": {
+      "type": "acquire",
+      "owner": "k"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "prepare",
+      "slots": 0
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "bad_slot_count"
+     }
+    },
+    {
+     "ev": {
+      "type": "prepare",
+      "slots": 65
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "bad_slot_count"
+     }
+    },
+    {
+     "ev": {
+      "type": "prepare",
+      "slots": 1
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "prepare",
+      "slots": 1
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "wrong_phase"
+     }
+    },
+    {
+     "ev": {
+      "type": "release_slot",
+      "slot": 7
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "bad_slot"
+     }
+    }
+   ],
+   "final": {
+    "phase": "prepared",
+    "amp": "muted",
+    "owner": "k",
+    "slots": [
+     "free"
+    ],
+    "submitted": 0,
+    "consumed": 0
+   }
+  },
+  {
+   "id": "E04-SIM-012",
+   "title": "an abort has no wait bound, and release still needs the flush acknowledgment",
+   "steps": [
+    {
+     "ev": {
+      "type": "acquire",
+      "owner": "l"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "prepare",
+      "slots": 2
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "start"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "submit",
+      "slot": 0,
+      "frames": 48,
+      "accepted": 30
+     },
+     "expect": {
+      "result": "partial",
+      "remainder": 18
+     }
+    },
+    {
+     "ev": {
+      "type": "abort_mute",
+      "ack": true
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "completion",
+      "slot": 0
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "tick",
+      "ticks": 100
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "release_device",
+      "owner": "l"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "wrong_phase"
+     }
+    },
+    {
+     "ev": {
+      "type": "flush_ack"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    }
+   ],
+   "final": {
+    "phase": "prepared",
+    "amp": "muted",
+    "owner": "l",
+    "slots": [
+     "free",
+     "free"
+    ],
+    "submitted": 30,
+    "consumed": 0
+   }
+  },
+  {
+   "id": "E04-SIM-013",
+   "title": "a flush acknowledgment outside a drain is a driver anomaly, not a state change",
+   "steps": [
+    {
+     "ev": {
+      "type": "acquire",
+      "owner": "m"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "prepare",
+      "slots": 1
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "flush_ack"
+     },
+     "expect": {
+      "result": "anomaly",
+      "kind": "flush_ack_outside_drain"
+     }
+    },
+    {
+     "ev": {
+      "type": "start"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "flush_ack"
+     },
+     "expect": {
+      "result": "anomaly",
+      "kind": "flush_ack_outside_drain"
+     }
+    }
+   ],
+   "final": {
+    "phase": "running",
+    "amp": "unmuted",
+    "owner": "m",
+    "slots": [
+     "free"
+    ],
+    "submitted": 0,
+    "consumed": 0
+   }
+  },
+  {
+   "id": "E04-SIM-014",
+   "title": "spurious completions are anomalies, including for a released slot and an unknown slot",
+   "steps": [
+    {
+     "ev": {
+      "type": "acquire",
+      "owner": "n"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "prepare",
+      "slots": 1
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "completion",
+      "slot": 0
+     },
+     "expect": {
+      "result": "anomaly",
+      "kind": "spurious_completion"
+     }
+    },
+    {
+     "ev": {
+      "type": "completion",
+      "slot": 5
+     },
+     "expect": {
+      "result": "anomaly",
+      "kind": "spurious_completion"
+     }
+    },
+    {
+     "ev": {
+      "type": "release_slot",
+      "slot": 0
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "completion",
+      "slot": 0
+     },
+     "expect": {
+      "result": "anomaly",
+      "kind": "spurious_completion"
+     }
+    }
+   ],
+   "final": {
+    "phase": "prepared",
+    "amp": "muted",
+    "owner": "n",
+    "slots": [
+     "released"
+    ],
+    "submitted": 0,
+    "consumed": 0
+   }
+  }
+ ]
+}

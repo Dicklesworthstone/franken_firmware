@@ -13,6 +13,10 @@
 
 #![forbid(unsafe_code)]
 
+pub mod contract;
+pub mod dma_sim;
+
+use contract::{ContractMatrix, MissingContract};
 use franken_board_profile::{AmplifierPolicy, BoardProfile, UnsupportedReasonCode};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, VecDeque};
@@ -40,6 +44,9 @@ pub enum HalError {
     },
     #[error("simulated hardware driver fault: {reason}")]
     DriverFault { reason: String },
+    /// The retained-driver contract matrix is not hardware-eligible. `missing` is the exact list.
+    #[error("retained-driver contract is not hardware-eligible ({} missing)", .missing.len())]
+    ContractIncomplete { missing: Vec<MissingContract> },
 }
 
 /// Shared state tracking free, active, and quarantined DMA buffer slots.
@@ -189,6 +196,29 @@ impl AudioHalDevice<state::Closed> {
             },
             _state: PhantomData,
         })
+    }
+
+    /// Open for real hardware: the board profile must verify (as for [`Self::open_for_profile`]) and
+    /// the retained-driver contract matrix must be hardware-eligible.
+    ///
+    /// An unknown field, a synthetic anchor, an unregistered artifact or a missing required
+    /// operation refuses the open with the exact list of what is missing. Nothing about the
+    /// driver's size or apparent simplicity is consulted. Offline use goes through
+    /// [`Self::open_for_profile`], which never reaches an amplifier.
+    pub fn open_for_hardware(
+        profile: BoardProfile,
+        matrix: &ContractMatrix,
+        dma_slots: u16,
+        required_silence_blocks: u32,
+    ) -> Result<Self, HalError> {
+        let device = Self::open_for_profile(profile, dma_slots, required_silence_blocks)?;
+        let report = matrix.evaluate();
+        if !report.hardware_eligible {
+            return Err(HalError::ContractIncomplete {
+                missing: report.missing,
+            });
+        }
+        Ok(device)
     }
 
     /// Transition `Closed -> Prepared` while asserting the hardware mute pin.
@@ -429,5 +459,95 @@ mod tests {
             .unwrap();
         assert!(fixture.is_synthetic_fixture());
         assert!(AudioHalDevice::open_for_profile(fixture, 4, 2).is_ok());
+    }
+
+    /// The committed matrix for the model-16 `audiodev.o`. Every field is still unknown.
+    const REAL_MATRIX_JSON: &str = include_str!("../../../tests/e04/matrix_audiodev_m16.json");
+
+    fn fixture_s5() -> BoardProfile {
+        canonical_board_catalog()
+            .into_iter()
+            .find(|p| p.model_number == "S5")
+            .unwrap()
+    }
+
+    fn missing_of(err: HalError) -> Vec<MissingContract> {
+        match err {
+            HalError::ContractIncomplete { missing } => missing,
+            other => panic!("expected ContractIncomplete, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hardware_open_refuses_the_committed_matrix_and_lists_the_exact_missing_contract() {
+        let matrix: ContractMatrix = serde_json::from_str(REAL_MATRIX_JSON).unwrap();
+        // The labelled fixture profile verifies, so the driver contract is the only thing in the way.
+        assert!(AudioHalDevice::open_for_profile(fixture_s5(), 4, 2).is_ok());
+        let err = AudioHalDevice::open_for_hardware(fixture_s5(), &matrix, 4, 2).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "retained-driver contract is not hardware-eligible (101 missing)"
+        );
+        let missing = missing_of(err);
+        assert_eq!(missing.len(), 101);
+        // Every required operation is named, with its interface among the unknowns.
+        for op in contract::REQUIRED_OPERATIONS {
+            let record = format!("op.{}", op.name());
+            assert!(
+                missing
+                    .iter()
+                    .any(|m| m.record == record && m.field == contract::ContractField::Interface),
+                "{record} interface is not listed"
+            );
+        }
+    }
+
+    #[test]
+    fn hardware_open_refuses_a_complete_but_synthetic_matrix() {
+        let matrix = contract::fixtures::complete_matrix(contract::fixtures::anchor_synthetic);
+        assert!(matrix.evaluate().offline_model_ok);
+        let missing =
+            missing_of(AudioHalDevice::open_for_hardware(fixture_s5(), &matrix, 4, 2).unwrap_err());
+        assert_eq!(missing.len(), 101);
+        assert!(
+            missing
+                .iter()
+                .all(|m| matches!(m.reason, contract::MissingReason::SyntheticAnchor { .. }))
+        );
+    }
+
+    #[test]
+    fn hardware_open_admits_a_fully_anchored_matrix_but_still_starts_muted() {
+        // Unit test of the gate with a constructed matrix. No committed data claims eligibility.
+        let matrix = contract::fixtures::complete_matrix(contract::fixtures::anchor_artifact);
+        let device = AudioHalDevice::open_for_hardware(fixture_s5(), &matrix, 4, 2).unwrap();
+        let telemetry = device.telemetry();
+        assert!(telemetry.hardware_muted);
+        assert_eq!(telemetry.free_dma_slots, 4);
+        assert_eq!(telemetry.primed_silence_blocks, 0);
+    }
+
+    #[test]
+    fn hardware_open_checks_the_profile_before_the_contract() {
+        let matrix = contract::fixtures::complete_matrix(contract::fixtures::anchor_artifact);
+        let hypothesis = franken_board_profile::canonical_board_catalog()
+            .into_iter()
+            .find(|p| p.model_number == "S5")
+            .unwrap();
+        // The matrix alone would pass, so only the unattested profile can be the reason.
+        assert!(matches!(
+            AudioHalDevice::open_for_hardware(hypothesis, &matrix, 4, 2),
+            Err(HalError::ProfileRejected(
+                UnsupportedReasonCode::UnattestedProfile { .. }
+            ))
+        ));
+    }
+
+    #[test]
+    fn contract_incomplete_survives_a_json_round_trip_inside_hal_error() {
+        let matrix: ContractMatrix = serde_json::from_str(REAL_MATRIX_JSON).unwrap();
+        let err = AudioHalDevice::open_for_hardware(fixture_s5(), &matrix, 4, 2).unwrap_err();
+        let back: HalError = serde_json::from_str(&serde_json::to_string(&err).unwrap()).unwrap();
+        assert_eq!(back, err);
     }
 }

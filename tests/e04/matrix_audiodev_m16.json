@@ -1,0 +1,829 @@
+{
+  "schema": "ffw.e04.contract_matrix.v1",
+  "artifacts": [
+    {
+      "sha256": "14c202fa115ffde39dcdfa5a6505ea1ead9ed41b89429c9dd319b47a61939bd2",
+      "size_bytes": 77380,
+      "description": "model-16 57.23 audiodev.o, ELF32 MSB relocatable PowerPC, not stripped; digest and sizes only, no firmware bytes",
+      "sections": [
+        {
+          "name": ".text",
+          "size": 39092
+        },
+        {
+          "name": ".rodata",
+          "size": 908
+        },
+        {
+          "name": ".rodata.str1.4",
+          "size": 4284
+        },
+        {
+          "name": ".rodata.cst4",
+          "size": 16
+        },
+        {
+          "name": ".modinfo",
+          "size": 52
+        },
+        {
+          "name": ".data",
+          "size": 696
+        },
+        {
+          "name": ".sdata",
+          "size": 4
+        }
+      ]
+    }
+  ],
+  "interfaces": [
+    {
+      "id": "op.query_capabilities",
+      "operation": "query_capabilities",
+      "device": null,
+      "interface": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements query_capabilities is not established"
+        }
+      },
+      "selector": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements query_capabilities is not established"
+        }
+      },
+      "full_command": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements query_capabilities is not established"
+        }
+      },
+      "direction": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "direction of the interface that implements query_capabilities is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "payload_size": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload size of the interface that implements query_capabilities is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "endianness": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload endianness of the interface that implements query_capabilities is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "alignment": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload alignment of the interface that implements query_capabilities is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "field_map": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "field map of the interface that implements query_capabilities is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      }
+    },
+    {
+      "id": "op.acquire_exclusive",
+      "operation": "acquire_exclusive",
+      "device": null,
+      "interface": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements acquire_exclusive is not established"
+        }
+      },
+      "selector": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements acquire_exclusive is not established"
+        }
+      },
+      "full_command": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements acquire_exclusive is not established"
+        }
+      },
+      "direction": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "direction of the interface that implements acquire_exclusive is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "payload_size": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload size of the interface that implements acquire_exclusive is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "endianness": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload endianness of the interface that implements acquire_exclusive is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "alignment": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload alignment of the interface that implements acquire_exclusive is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "field_map": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "field map of the interface that implements acquire_exclusive is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      }
+    },
+    {
+      "id": "op.prepare_format",
+      "operation": "prepare_format",
+      "device": null,
+      "interface": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements prepare_format is not established"
+        }
+      },
+      "selector": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements prepare_format is not established"
+        }
+      },
+      "full_command": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements prepare_format is not established"
+        }
+      },
+      "direction": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "direction of the interface that implements prepare_format is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "payload_size": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload size of the interface that implements prepare_format is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "endianness": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload endianness of the interface that implements prepare_format is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "alignment": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload alignment of the interface that implements prepare_format is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "field_map": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "field map of the interface that implements prepare_format is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      }
+    },
+    {
+      "id": "op.submit_block",
+      "operation": "submit_block",
+      "device": null,
+      "interface": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements submit_block is not established"
+        }
+      },
+      "selector": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements submit_block is not established"
+        }
+      },
+      "full_command": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements submit_block is not established"
+        }
+      },
+      "direction": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "direction of the interface that implements submit_block is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "payload_size": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload size of the interface that implements submit_block is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "endianness": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload endianness of the interface that implements submit_block is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "alignment": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload alignment of the interface that implements submit_block is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "field_map": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "field map of the interface that implements submit_block is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      }
+    },
+    {
+      "id": "op.query_position",
+      "operation": "query_position",
+      "device": null,
+      "interface": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements query_position is not established"
+        }
+      },
+      "selector": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements query_position is not established"
+        }
+      },
+      "full_command": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements query_position is not established"
+        }
+      },
+      "direction": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "direction of the interface that implements query_position is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "payload_size": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload size of the interface that implements query_position is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "endianness": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload endianness of the interface that implements query_position is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "alignment": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload alignment of the interface that implements query_position is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "field_map": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "field map of the interface that implements query_position is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      }
+    },
+    {
+      "id": "op.start",
+      "operation": "start",
+      "device": null,
+      "interface": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements start is not established"
+        }
+      },
+      "selector": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements start is not established"
+        }
+      },
+      "full_command": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements start is not established"
+        }
+      },
+      "direction": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "direction of the interface that implements start is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "payload_size": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload size of the interface that implements start is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "endianness": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload endianness of the interface that implements start is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "alignment": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload alignment of the interface that implements start is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "field_map": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "field map of the interface that implements start is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      }
+    },
+    {
+      "id": "op.set_gain",
+      "operation": "set_gain",
+      "device": null,
+      "interface": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements set_gain is not established"
+        }
+      },
+      "selector": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements set_gain is not established"
+        }
+      },
+      "full_command": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements set_gain is not established"
+        }
+      },
+      "direction": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "direction of the interface that implements set_gain is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "payload_size": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload size of the interface that implements set_gain is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "endianness": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload endianness of the interface that implements set_gain is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "alignment": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload alignment of the interface that implements set_gain is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "field_map": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "field map of the interface that implements set_gain is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      }
+    },
+    {
+      "id": "op.drain",
+      "operation": "drain",
+      "device": null,
+      "interface": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements drain is not established"
+        }
+      },
+      "selector": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements drain is not established"
+        }
+      },
+      "full_command": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements drain is not established"
+        }
+      },
+      "direction": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "direction of the interface that implements drain is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "payload_size": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload size of the interface that implements drain is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "endianness": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload endianness of the interface that implements drain is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "alignment": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload alignment of the interface that implements drain is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "field_map": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "field map of the interface that implements drain is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      }
+    },
+    {
+      "id": "op.abort_mute",
+      "operation": "abort_mute",
+      "device": null,
+      "interface": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements abort_mute is not established"
+        }
+      },
+      "selector": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements abort_mute is not established"
+        }
+      },
+      "full_command": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements abort_mute is not established"
+        }
+      },
+      "direction": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "direction of the interface that implements abort_mute is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "payload_size": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload size of the interface that implements abort_mute is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "endianness": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload endianness of the interface that implements abort_mute is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "alignment": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload alignment of the interface that implements abort_mute is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "field_map": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "field map of the interface that implements abort_mute is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      }
+    },
+    {
+      "id": "op.release",
+      "operation": "release",
+      "device": null,
+      "interface": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements release is not established"
+        }
+      },
+      "selector": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements release is not established"
+        }
+      },
+      "full_command": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-OP-MAPPING",
+          "needs": "which retained-driver interface implements release is not established"
+        }
+      },
+      "direction": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "direction of the interface that implements release is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "payload_size": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload size of the interface that implements release is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "endianness": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload endianness of the interface that implements release is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "alignment": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "payload alignment of the interface that implements release is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      },
+      "field_map": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-IOCTL-LAYOUT",
+          "needs": "field map of the interface that implements release is not established; needs the per-command handler decode or the userspace caller's call sites"
+        }
+      }
+    }
+  ],
+  "radio": [
+    {
+      "id": "radio.multicast_delivery",
+      "duty": "multicast_delivery",
+      "owner": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-RADIO-OWNERSHIP",
+          "needs": "who performs multicast_delivery in the stock system, and whether it survives daemon replacement, is not established; needs the retained radio driver and daemon analysis"
+        }
+      },
+      "survives_daemon_replacement": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-RADIO-OWNERSHIP",
+          "needs": "who performs multicast_delivery in the stock system, and whether it survives daemon replacement, is not established; needs the retained radio driver and daemon analysis"
+        }
+      },
+      "audio_interference_bound_us": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-LIVE-QUAL",
+          "needs": "worst-case audio scheduling delay from multicast_delivery needs the human-lane measurement on real hardware (multicast and unicast, power-save, roam, congestion)"
+        }
+      }
+    },
+    {
+      "id": "radio.unicast_delivery",
+      "duty": "unicast_delivery",
+      "owner": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-RADIO-OWNERSHIP",
+          "needs": "who performs unicast_delivery in the stock system, and whether it survives daemon replacement, is not established; needs the retained radio driver and daemon analysis"
+        }
+      },
+      "survives_daemon_replacement": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-RADIO-OWNERSHIP",
+          "needs": "who performs unicast_delivery in the stock system, and whether it survives daemon replacement, is not established; needs the retained radio driver and daemon analysis"
+        }
+      },
+      "audio_interference_bound_us": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-LIVE-QUAL",
+          "needs": "worst-case audio scheduling delay from unicast_delivery needs the human-lane measurement on real hardware (multicast and unicast, power-save, roam, congestion)"
+        }
+      }
+    },
+    {
+      "id": "radio.power_save",
+      "duty": "power_save",
+      "owner": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-RADIO-OWNERSHIP",
+          "needs": "who performs power_save in the stock system, and whether it survives daemon replacement, is not established; needs the retained radio driver and daemon analysis"
+        }
+      },
+      "survives_daemon_replacement": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-RADIO-OWNERSHIP",
+          "needs": "who performs power_save in the stock system, and whether it survives daemon replacement, is not established; needs the retained radio driver and daemon analysis"
+        }
+      },
+      "audio_interference_bound_us": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-LIVE-QUAL",
+          "needs": "worst-case audio scheduling delay from power_save needs the human-lane measurement on real hardware (multicast and unicast, power-save, roam, congestion)"
+        }
+      }
+    },
+    {
+      "id": "radio.roam",
+      "duty": "roam",
+      "owner": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-RADIO-OWNERSHIP",
+          "needs": "who performs roam in the stock system, and whether it survives daemon replacement, is not established; needs the retained radio driver and daemon analysis"
+        }
+      },
+      "survives_daemon_replacement": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-RADIO-OWNERSHIP",
+          "needs": "who performs roam in the stock system, and whether it survives daemon replacement, is not established; needs the retained radio driver and daemon analysis"
+        }
+      },
+      "audio_interference_bound_us": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-LIVE-QUAL",
+          "needs": "worst-case audio scheduling delay from roam needs the human-lane measurement on real hardware (multicast and unicast, power-save, roam, congestion)"
+        }
+      }
+    },
+    {
+      "id": "radio.congestion",
+      "duty": "congestion",
+      "owner": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-RADIO-OWNERSHIP",
+          "needs": "who performs congestion in the stock system, and whether it survives daemon replacement, is not established; needs the retained radio driver and daemon analysis"
+        }
+      },
+      "survives_daemon_replacement": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-RADIO-OWNERSHIP",
+          "needs": "who performs congestion in the stock system, and whether it survives daemon replacement, is not established; needs the retained radio driver and daemon analysis"
+        }
+      },
+      "audio_interference_bound_us": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-LIVE-QUAL",
+          "needs": "worst-case audio scheduling delay from congestion needs the human-lane measurement on real hardware (multicast and unicast, power-save, roam, congestion)"
+        }
+      }
+    },
+    {
+      "id": "radio.mesh_membership",
+      "duty": "mesh_membership",
+      "owner": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-RADIO-OWNERSHIP",
+          "needs": "who performs mesh_membership in the stock system, and whether it survives daemon replacement, is not established; needs the retained radio driver and daemon analysis"
+        }
+      },
+      "survives_daemon_replacement": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-RADIO-OWNERSHIP",
+          "needs": "who performs mesh_membership in the stock system, and whether it survives daemon replacement, is not established; needs the retained radio driver and daemon analysis"
+        }
+      },
+      "audio_interference_bound_us": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-LIVE-QUAL",
+          "needs": "worst-case audio scheduling delay from mesh_membership needs the human-lane measurement on real hardware (multicast and unicast, power-save, roam, congestion)"
+        }
+      }
+    },
+    {
+      "id": "radio.scheduler_interference",
+      "duty": "scheduler_interference",
+      "owner": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-RADIO-OWNERSHIP",
+          "needs": "who performs scheduler_interference in the stock system, and whether it survives daemon replacement, is not established; needs the retained radio driver and daemon analysis"
+        }
+      },
+      "survives_daemon_replacement": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-RADIO-OWNERSHIP",
+          "needs": "who performs scheduler_interference in the stock system, and whether it survives daemon replacement, is not established; needs the retained radio driver and daemon analysis"
+        }
+      },
+      "audio_interference_bound_us": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-LIVE-QUAL",
+          "needs": "worst-case audio scheduling delay from scheduler_interference needs the human-lane measurement on real hardware (multicast and unicast, power-save, roam, congestion)"
+        }
+      }
+    }
+  ]
+}

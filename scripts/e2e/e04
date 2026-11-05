@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# E04 end-to-end entry point (bead ffw-25l): retained audio driver ownership and protection contract.
+# Delegates to tests/e04/run_cases.py (offline, stdlib Python). It is a host simulation and a document
+# check: it boots nothing, builds nothing, touches no device and reads no network. With no arguments it
+# runs the full tier.
+#
+#   scripts/e2e/e04                          full tier
+#   scripts/e2e/e04 --tier smoke|full        explicit tier
+#   scripts/e2e/e04 --tier full --case E04-SIM-005 [--receipts DIR]     replay one case
+#   scripts/e2e/e04 --list                   list the selected cases
+#
+# Exit 0 only when every case passed and no required case is blocked; 1 on a failed case; 3 when the
+# only non-passes are blocked cases (reported, never counted as passed); 2 on usage or a malformed case
+# file. The full tier is expected to exit 3 until central Rust verification and external qualification
+# exist, because both are counted as blocked, not skipped.
+#
+# The Rust crate (crates/franken-hal) replays the same tests/e04/sim_cases.json and matrix under
+# `cargo test -p franken-hal`, which builds and so runs only through the centralized RCH path.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+if [ "$#" -eq 0 ]; then
+  set -- --tier full
+fi
+exec python3 -B "$ROOT/tests/e04/run_cases.py" "$@"

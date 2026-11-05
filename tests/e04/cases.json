@@ -1,0 +1,1113 @@
+{
+ "schema": "ffw.e04.cases.v1",
+ "note": "Expected values are hand-written. sim_trace cases come from sim_cases.json (E04-SIM-nnn).",
+ "cases": [
+  {
+   "id": "E04-IOCTL-001",
+   "kind": "ioctl_decode",
+   "tier": "smoke",
+   "cmd": "0x80041234",
+   "expect": {
+    "nr": 52,
+    "type_byte": 18,
+    "size": 4,
+    "dir_bits": 4
+   }
+  },
+  {
+   "id": "E04-IOCTL-002",
+   "kind": "ioctl_decode",
+   "tier": "smoke",
+   "cmd": "0x40000000",
+   "expect": {
+    "nr": 0,
+    "type_byte": 0,
+    "size": 0,
+    "dir_bits": 2
+   }
+  },
+  {
+   "id": "E04-IOCTL-003",
+   "kind": "ioctl_decode",
+   "tier": "smoke",
+   "cmd": "0x20000000",
+   "expect": {
+    "nr": 0,
+    "type_byte": 0,
+    "size": 0,
+    "dir_bits": 1
+   }
+  },
+  {
+   "id": "E04-IOCTL-004",
+   "kind": "ioctl_decode",
+   "tier": "smoke",
+   "cmd": "0xffffffff",
+   "expect": {
+    "nr": 255,
+    "type_byte": 255,
+    "size": 8191,
+    "dir_bits": 7
+   }
+  },
+  {
+   "id": "E04-IOCTL-005",
+   "kind": "ioctl_decode",
+   "tier": "smoke",
+   "cmd": "0x4010000a",
+   "expect": {
+    "nr": 10,
+    "type_byte": 0,
+    "size": 16,
+    "dir_bits": 2
+   }
+  },
+  {
+   "id": "E04-IOCTL-006",
+   "kind": "ioctl_encode",
+   "tier": "smoke",
+   "args": [
+    4,
+    18,
+    52,
+    4
+   ],
+   "expect": "0x80041234"
+  },
+  {
+   "id": "E04-IOCTL-007",
+   "kind": "ioctl_encode",
+   "tier": "smoke",
+   "args": [
+    2,
+    0,
+    10,
+    16
+   ],
+   "expect": "0x4010000a"
+  },
+  {
+   "id": "E04-IOCTL-008",
+   "kind": "ioctl_encode",
+   "tier": "smoke",
+   "args": [
+    8,
+    0,
+    0,
+    0
+   ],
+   "expect": null
+  },
+  {
+   "id": "E04-IOCTL-009",
+   "kind": "ioctl_encode",
+   "tier": "smoke",
+   "args": [
+    4,
+    0,
+    0,
+    8192
+   ],
+   "expect": null
+  },
+  {
+   "id": "E04-ENDIAN-001",
+   "kind": "read_uint",
+   "tier": "smoke",
+   "bytes": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+   ],
+   "offset": 0,
+   "width": 4,
+   "endian": "big",
+   "expect": {
+    "ok": "0x01020304"
+   }
+  },
+  {
+   "id": "E04-ENDIAN-002",
+   "kind": "read_uint",
+   "tier": "smoke",
+   "bytes": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+   ],
+   "offset": 0,
+   "width": 4,
+   "endian": "little",
+   "expect": {
+    "ok": "0x04030201"
+   }
+  },
+  {
+   "id": "E04-ENDIAN-003",
+   "kind": "read_uint",
+   "tier": "smoke",
+   "bytes": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+   ],
+   "offset": 4,
+   "width": 4,
+   "endian": "big",
+   "expect": {
+    "ok": "0x05060708"
+   }
+  },
+  {
+   "id": "E04-ENDIAN-004",
+   "kind": "read_uint",
+   "tier": "smoke",
+   "bytes": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+   ],
+   "offset": 2,
+   "width": 2,
+   "endian": "big",
+   "expect": {
+    "ok": "0x0304"
+   }
+  },
+  {
+   "id": "E04-ENDIAN-005",
+   "kind": "read_uint",
+   "tier": "smoke",
+   "bytes": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+   ],
+   "offset": 2,
+   "width": 2,
+   "endian": "little",
+   "expect": {
+    "ok": "0x0403"
+   }
+  },
+  {
+   "id": "E04-ENDIAN-006",
+   "kind": "read_uint",
+   "tier": "smoke",
+   "bytes": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+   ],
+   "offset": 0,
+   "width": 8,
+   "endian": "big",
+   "expect": {
+    "ok": "0x0102030405060708"
+   }
+  },
+  {
+   "id": "E04-ENDIAN-007",
+   "kind": "read_uint",
+   "tier": "smoke",
+   "bytes": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+   ],
+   "offset": 0,
+   "width": 8,
+   "endian": "little",
+   "expect": {
+    "ok": "0x0807060504030201"
+   }
+  },
+  {
+   "id": "E04-ENDIAN-008",
+   "kind": "read_uint",
+   "tier": "smoke",
+   "bytes": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+   ],
+   "offset": 2,
+   "width": 4,
+   "endian": "big",
+   "expect": {
+    "err": "misaligned"
+   }
+  },
+  {
+   "id": "E04-ENDIAN-009",
+   "kind": "read_uint",
+   "tier": "smoke",
+   "bytes": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+   ],
+   "offset": 4,
+   "width": 8,
+   "endian": "big",
+   "expect": {
+    "err": "misaligned"
+   }
+  },
+  {
+   "id": "E04-ENDIAN-010",
+   "kind": "read_uint",
+   "tier": "smoke",
+   "bytes": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+   ],
+   "offset": 8,
+   "width": 1,
+   "endian": "big",
+   "expect": {
+    "err": "out_of_bounds"
+   }
+  },
+  {
+   "id": "E04-ENDIAN-011",
+   "kind": "read_uint",
+   "tier": "smoke",
+   "bytes": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+   ],
+   "offset": 0,
+   "width": 3,
+   "endian": "big",
+   "expect": {
+    "err": "bad_width"
+   }
+  },
+  {
+   "id": "E04-MAP-001",
+   "kind": "field_map",
+   "tier": "smoke",
+   "payload_size": 8,
+   "alignment": 4,
+   "fields": [
+    {
+     "name": "rate",
+     "offset": 0,
+     "width": 4,
+     "kind": "unsigned"
+    },
+    {
+     "name": "gain",
+     "offset": 4,
+     "width": 2,
+     "kind": "signed"
+    },
+    {
+     "name": "reserved",
+     "offset": 6,
+     "width": 2,
+     "kind": "padding"
+    }
+   ],
+   "expect": null
+  },
+  {
+   "id": "E04-MAP-002",
+   "kind": "field_map",
+   "tier": "smoke",
+   "payload_size": 12,
+   "alignment": 4,
+   "fields": [
+    {
+     "name": "a",
+     "offset": 0,
+     "width": 4,
+     "kind": "unsigned"
+    },
+    {
+     "name": "b",
+     "offset": 8,
+     "width": 4,
+     "kind": "unsigned"
+    }
+   ],
+   "expect": "gap"
+  },
+  {
+   "id": "E04-MAP-003",
+   "kind": "field_map",
+   "tier": "smoke",
+   "payload_size": 8,
+   "alignment": 4,
+   "fields": [
+    {
+     "name": "rate",
+     "offset": 0,
+     "width": 4,
+     "kind": "unsigned"
+    },
+    {
+     "name": "gain",
+     "offset": 4,
+     "width": 2,
+     "kind": "signed"
+    }
+   ],
+   "expect": "gap"
+  },
+  {
+   "id": "E04-MAP-004",
+   "kind": "field_map",
+   "tier": "smoke",
+   "payload_size": 4,
+   "alignment": 4,
+   "fields": [],
+   "expect": "gap"
+  },
+  {
+   "id": "E04-MAP-005",
+   "kind": "field_map",
+   "tier": "smoke",
+   "payload_size": 4,
+   "alignment": 4,
+   "fields": [
+    {
+     "name": "a",
+     "offset": 0,
+     "width": 4,
+     "kind": "unsigned"
+    },
+    {
+     "name": "b",
+     "offset": 2,
+     "width": 2,
+     "kind": "unsigned"
+    }
+   ],
+   "expect": "overlap"
+  },
+  {
+   "id": "E04-MAP-006",
+   "kind": "field_map",
+   "tier": "smoke",
+   "payload_size": 3,
+   "alignment": 4,
+   "fields": [
+    {
+     "name": "a",
+     "offset": 0,
+     "width": 4,
+     "kind": "unsigned"
+    }
+   ],
+   "expect": "out_of_bounds"
+  },
+  {
+   "id": "E04-MAP-007",
+   "kind": "field_map",
+   "tier": "smoke",
+   "payload_size": 8,
+   "alignment": 4,
+   "fields": [
+    {
+     "name": "a",
+     "offset": 2,
+     "width": 4,
+     "kind": "unsigned"
+    }
+   ],
+   "expect": "misaligned"
+  },
+  {
+   "id": "E04-MAP-008",
+   "kind": "field_map",
+   "tier": "smoke",
+   "payload_size": 4,
+   "alignment": 2,
+   "fields": [
+    {
+     "name": "a",
+     "offset": 0,
+     "width": 4,
+     "kind": "unsigned"
+    }
+   ],
+   "expect": "alignment_too_small"
+  },
+  {
+   "id": "E04-MAP-009",
+   "kind": "field_map",
+   "tier": "smoke",
+   "payload_size": 3,
+   "alignment": 4,
+   "fields": [
+    {
+     "name": "a",
+     "offset": 0,
+     "width": 3,
+     "kind": "unsigned"
+    }
+   ],
+   "expect": "bad_integer_width"
+  },
+  {
+   "id": "E04-MAP-010",
+   "kind": "field_map",
+   "tier": "smoke",
+   "payload_size": 2,
+   "alignment": 1,
+   "fields": [
+    {
+     "name": "a",
+     "offset": 0,
+     "width": 1,
+     "kind": "unsigned"
+    },
+    {
+     "name": "a",
+     "offset": 1,
+     "width": 1,
+     "kind": "unsigned"
+    }
+   ],
+   "expect": "duplicate_name"
+  },
+  {
+   "id": "E04-MAP-011",
+   "kind": "field_map",
+   "tier": "smoke",
+   "payload_size": 4,
+   "alignment": 1,
+   "fields": [
+    {
+     "name": "a",
+     "offset": 0,
+     "width": 1,
+     "kind": "unsigned"
+    },
+    {
+     "name": "pad",
+     "offset": 1,
+     "width": 3,
+     "kind": "padding"
+    }
+   ],
+   "expect": null
+  },
+  {
+   "id": "E04-MAP-012",
+   "kind": "field_map",
+   "tier": "smoke",
+   "payload_size": 8,
+   "alignment": 3,
+   "fields": [
+    {
+     "name": "rate",
+     "offset": 0,
+     "width": 4,
+     "kind": "unsigned"
+    },
+    {
+     "name": "gain",
+     "offset": 4,
+     "width": 2,
+     "kind": "signed"
+    },
+    {
+     "name": "reserved",
+     "offset": 6,
+     "width": 2,
+     "kind": "padding"
+    }
+   ],
+   "expect": "bad_alignment"
+  },
+  {
+   "id": "E04-ELIG-001",
+   "kind": "matrix_real",
+   "tier": "smoke",
+   "expect": {
+    "hardware_eligible": false,
+    "offline_model_ok": false,
+    "missing_count": 101,
+    "by_kind": {
+     "unknown": 101
+    },
+    "by_blocker": {
+     "EXT-E04-IOCTL-LAYOUT": 50,
+     "EXT-E04-LIVE-QUAL": 7,
+     "EXT-E04-OP-MAPPING": 30,
+     "EXT-E04-RADIO-OWNERSHIP": 14
+    },
+    "first": {
+     "scope": "audio_output",
+     "record": "op.query_capabilities",
+     "field": "interface",
+     "kind": "unknown",
+     "blocker_id": "EXT-E04-OP-MAPPING"
+    }
+   }
+  },
+  {
+   "id": "E04-ELIG-002",
+   "kind": "matrix_scenario",
+   "tier": "smoke",
+   "scenario": "complete_artifact",
+   "expect": {
+    "hardware_eligible": true,
+    "offline_model_ok": true,
+    "missing_count": 0
+   }
+  },
+  {
+   "id": "E04-ELIG-003",
+   "kind": "matrix_scenario",
+   "tier": "smoke",
+   "scenario": "complete_synthetic",
+   "expect": {
+    "hardware_eligible": false,
+    "offline_model_ok": true,
+    "missing_count": 101,
+    "by_kind": {
+     "synthetic_anchor": 101
+    }
+   }
+  },
+  {
+   "id": "E04-ELIG-004",
+   "kind": "matrix_scenario",
+   "tier": "smoke",
+   "scenario": "one_unknown_payload_size",
+   "expect": {
+    "hardware_eligible": false,
+    "offline_model_ok": false,
+    "missing": [
+     {
+      "scope": "audio_output",
+      "record": "fixture.start",
+      "field": "payload_size",
+      "kind": "unknown",
+      "blocker_id": "EXT-TEST-SIZE"
+     }
+    ]
+   }
+  },
+  {
+   "id": "E04-ELIG-005",
+   "kind": "matrix_scenario",
+   "tier": "smoke",
+   "scenario": "missing_drain_and_roam",
+   "expect": {
+    "hardware_eligible": false,
+    "missing": [
+     {
+      "scope": "audio_output",
+      "record": "operation:drain",
+      "field": "record",
+      "kind": "no_record"
+     },
+     {
+      "scope": "radio_coexistence",
+      "record": "radio:roam",
+      "field": "record",
+      "kind": "no_record"
+     }
+    ]
+   }
+  },
+  {
+   "id": "E04-ELIG-006",
+   "kind": "matrix_size_independence",
+   "tier": "smoke",
+   "sizes": [
+    0,
+    1,
+    77380,
+    18446744073709551615
+   ],
+   "expect": {
+    "identical": true,
+    "hardware_eligible": false
+   }
+  },
+  {
+   "id": "E04-ELIG-007",
+   "kind": "matrix_scenario",
+   "tier": "smoke",
+   "scenario": "contradictory_start",
+   "expect": {
+    "hardware_eligible": false,
+    "missing": [
+     {
+      "scope": "audio_output",
+      "record": "fixture.start",
+      "field": "full_command",
+      "kind": "inconsistent"
+     },
+     {
+      "scope": "audio_output",
+      "record": "fixture.start",
+      "field": "direction",
+      "kind": "inconsistent"
+     },
+     {
+      "scope": "audio_output",
+      "record": "fixture.start",
+      "field": "payload_size",
+      "kind": "inconsistent"
+     },
+     {
+      "scope": "audio_output",
+      "record": "fixture.start",
+      "field": "field_map",
+      "kind": "inconsistent"
+     }
+    ]
+   }
+  },
+  {
+   "id": "E04-ELIG-008",
+   "kind": "matrix_scenario",
+   "tier": "smoke",
+   "scenario": "bad_anchor_offset",
+   "expect": {
+    "hardware_eligible": false,
+    "missing": [
+     {
+      "scope": "audio_output",
+      "record": "fixture.start",
+      "field": "endianness",
+      "kind": "bad_anchor",
+      "detail": "offset 0x1000 is outside section .text (0x1000 byte(s))"
+     }
+    ]
+   }
+  },
+  {
+   "id": "E04-ELIG-009",
+   "kind": "matrix_scenario",
+   "tier": "smoke",
+   "scenario": "unregistered_artifact",
+   "expect": {
+    "hardware_eligible": false,
+    "missing": [
+     {
+      "scope": "audio_output",
+      "record": "fixture.start",
+      "field": "endianness",
+      "kind": "unregistered_artifact",
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+     }
+    ]
+   }
+  },
+  {
+   "id": "E04-ELIG-010",
+   "kind": "matrix_scenario",
+   "tier": "smoke",
+   "scenario": "non_ioctl_with_selector",
+   "expect": {
+    "hardware_eligible": false,
+    "missing": [
+     {
+      "scope": "audio_output",
+      "record": "fixture.submit_block",
+      "field": "selector",
+      "kind": "inconsistent"
+     },
+     {
+      "scope": "audio_output",
+      "record": "fixture.submit_block",
+      "field": "full_command",
+      "kind": "inconsistent"
+     }
+    ]
+   }
+  },
+  {
+   "id": "E04-DEFECT-01",
+   "kind": "planted_defect",
+   "tier": "full",
+   "defect": "second_owner",
+   "caught_by": [
+    "E04-SIM-001"
+   ]
+  },
+  {
+   "id": "E04-DEFECT-02",
+   "kind": "planted_defect",
+   "tier": "full",
+   "defect": "release_while_dma_owned",
+   "caught_by": [
+    "E04-SIM-002"
+   ]
+  },
+  {
+   "id": "E04-DEFECT-03",
+   "kind": "planted_defect",
+   "tier": "full",
+   "defect": "release_with_quarantine",
+   "caught_by": [
+    "E04-SIM-005"
+   ]
+  },
+  {
+   "id": "E04-DEFECT-04",
+   "kind": "planted_defect",
+   "tier": "full",
+   "defect": "no_flush_ack_needed",
+   "caught_by": [
+    "E04-SIM-004"
+   ]
+  },
+  {
+   "id": "E04-DEFECT-05",
+   "kind": "planted_defect",
+   "tier": "full",
+   "defect": "mute_failure_ignored",
+   "caught_by": [
+    "E04-SIM-006"
+   ]
+  },
+  {
+   "id": "E04-DEFECT-06",
+   "kind": "planted_defect",
+   "tier": "full",
+   "defect": "start_after_mute_failure",
+   "caught_by": [
+    "E04-SIM-006"
+   ]
+  },
+  {
+   "id": "E04-DEFECT-07",
+   "kind": "planted_defect",
+   "tier": "full",
+   "defect": "power_save_with_dma",
+   "caught_by": [
+    "E04-SIM-007"
+   ]
+  },
+  {
+   "id": "E04-DEFECT-08",
+   "kind": "planted_defect",
+   "tier": "full",
+   "defect": "trust_counter",
+   "caught_by": [
+    "E04-SIM-008"
+   ]
+  },
+  {
+   "id": "E04-DEFECT-09",
+   "kind": "planted_defect",
+   "tier": "full",
+   "defect": "forgive_overclaim",
+   "caught_by": [
+    "E04-SIM-003"
+   ]
+  },
+  {
+   "id": "E04-DEFECT-10",
+   "kind": "planted_defect",
+   "tier": "full",
+   "defect": "daemon_not_orphaned",
+   "caught_by": [
+    "E04-SIM-010"
+   ]
+  },
+  {
+   "id": "E04-ANCHOR-001",
+   "kind": "anchor_facts",
+   "tier": "full"
+  },
+  {
+   "id": "E04-META-001",
+   "kind": "meta_files",
+   "tier": "full"
+  },
+  {
+   "id": "E04-META-002",
+   "kind": "meta_shared_vectors",
+   "tier": "full"
+  },
+  {
+   "id": "E04-META-003",
+   "kind": "meta_invariants",
+   "tier": "full"
+  },
+  {
+   "id": "E04-META-004",
+   "kind": "meta_matrix_vs_anchors",
+   "tier": "full"
+  },
+  {
+   "id": "E04-META-005",
+   "kind": "meta_hygiene",
+   "tier": "full"
+  },
+  {
+   "id": "E04-SELFTEST-001",
+   "kind": "runner_selftest",
+   "tier": "full"
+  },
+  {
+   "id": "E04-RUST-CENTRAL",
+   "kind": "blocked",
+   "tier": "full",
+   "owner": "orchestrator (central RCH)",
+   "blocker": "EXT-E04-RUST-CENTRAL",
+   "needs": "cargo test -p franken-hal, cargo clippy --workspace --all-targets -- -D warnings and cargo fmt --all -- --check, each via RCH_REQUIRE_REMOTE=1 rch exec; the Rust simulator and contract model replay the same sim_cases.json and matrix, and this runner never builds"
+  },
+  {
+   "id": "E04-EXT-QUAL",
+   "kind": "blocked",
+   "tier": "full",
+   "owner": "human-led qualification lane",
+   "blocker": "EXT-E04-LIVE-QUAL",
+   "needs": "multicast and unicast delivery, power-save, roam and congestion behavior on real hardware, plus the per-command ioctl layouts and operation mapping; no live test is performed or implied here"
+  }
+ ],
+ "invariants": [
+  {
+   "id": "INV-EXCLUSIVE-OWNER",
+   "text": "one owner at a time; a second acquire is refused; release then restart works",
+   "cases": [
+    "E04-SIM-001"
+   ]
+  },
+  {
+   "id": "INV-NO-RELEASE-WHILE-DMA",
+   "text": "a buffer or device the driver may still read is never released or reused",
+   "cases": [
+    "E04-SIM-002",
+    "E04-SIM-005",
+    "E04-SIM-009"
+   ]
+  },
+  {
+   "id": "INV-PARTIAL-SUBMIT",
+   "text": "a short write leaves the remainder with the host; driver over-acceptance is an anomaly",
+   "cases": [
+    "E04-SIM-003",
+    "E04-SIM-012"
+   ]
+  },
+  {
+   "id": "INV-STOP-IS-NOT-ACK",
+   "text": "a stop request is not an acknowledged flush; completions may be delayed",
+   "cases": [
+    "E04-SIM-004",
+    "E04-SIM-012"
+   ]
+  },
+  {
+   "id": "INV-DRAIN-TIMEOUT",
+   "text": "a drain past its bound quarantines in-flight slots until a reset is acknowledged",
+   "cases": [
+    "E04-SIM-005"
+   ]
+  },
+  {
+   "id": "INV-MUTE-FAILURE",
+   "text": "an unacknowledged mute blocks start, power-save and release",
+   "cases": [
+    "E04-SIM-006",
+    "E04-SIM-009"
+   ]
+  },
+  {
+   "id": "INV-POWER-SAVE",
+   "text": "power-save needs a prepared, muted, idle device",
+   "cases": [
+    "E04-SIM-007"
+   ]
+  },
+  {
+   "id": "INV-UNTRUSTED-COUNTERS",
+   "text": "driver counters wrap but never claim more than is in flight",
+   "cases": [
+    "E04-SIM-008"
+   ]
+  },
+  {
+   "id": "INV-DEVICE-LOSS",
+   "text": "device loss quarantines in-flight slots and leaves the mute unknown",
+   "cases": [
+    "E04-SIM-009"
+   ]
+  },
+  {
+   "id": "INV-DAEMON-RADIO-DUTIES",
+   "text": "daemon-owned radio duties are orphaned by replacement, owner unknown stays explicit",
+   "cases": [
+    "E04-SIM-010"
+   ]
+  },
+  {
+   "id": "INV-PHASES-AND-BOUNDS",
+   "text": "preconditions, slot bounds and stray driver reports never change state",
+   "cases": [
+    "E04-SIM-011",
+    "E04-SIM-013",
+    "E04-SIM-014"
+   ]
+  },
+  {
+   "id": "INV-IOCTL-LAYOUT",
+   "text": "the PowerPC command layout decodes and encodes to hand-computed golden values",
+   "cases": [
+    "E04-IOCTL-*"
+   ]
+  },
+  {
+   "id": "INV-ENDIAN-ALIGNMENT",
+   "text": "integer reads honor byte order, alignment and bounds",
+   "cases": [
+    "E04-ENDIAN-*"
+   ]
+  },
+  {
+   "id": "INV-FIELD-MAP",
+   "text": "a field map tiles the payload exactly with natural alignment",
+   "cases": [
+    "E04-MAP-*"
+   ]
+  },
+  {
+   "id": "INV-UNKNOWN-BLOCKS-HARDWARE",
+   "text": "any unknown field blocks hardware eligibility",
+   "cases": [
+    "E04-ELIG-001",
+    "E04-ELIG-004"
+   ]
+  },
+  {
+   "id": "INV-ANCHORS-REQUIRED",
+   "text": "synthetic, malformed or unregistered anchors never make hardware eligible",
+   "cases": [
+    "E04-ELIG-003",
+    "E04-ELIG-008",
+    "E04-ELIG-009"
+   ]
+  },
+  {
+   "id": "INV-EXACT-MISSING-CONTRACT",
+   "text": "the verdict lists the exact missing record and field",
+   "cases": [
+    "E04-ELIG-001",
+    "E04-ELIG-004",
+    "E04-ELIG-005",
+    "E04-ELIG-010"
+   ]
+  },
+  {
+   "id": "INV-NO-SIZE-INFERENCE",
+   "text": "driver size is never an input to eligibility",
+   "cases": [
+    "E04-ELIG-006"
+   ]
+  },
+  {
+   "id": "INV-CONSISTENCY",
+   "text": "a record that contradicts itself is reported per field",
+   "cases": [
+    "E04-ELIG-007",
+    "E04-ELIG-010"
+   ]
+  },
+  {
+   "id": "INV-POSITIVE-PATH",
+   "text": "a complete, artifact-anchored matrix is eligible (gate unit test only)",
+   "cases": [
+    "E04-ELIG-002"
+   ]
+  },
+  {
+   "id": "INV-ANCHOR-FACTS-REPRODUCE",
+   "text": "the committed anchor facts reproduce from the artifact",
+   "cases": [
+    "E04-ANCHOR-001"
+   ]
+  },
+  {
+   "id": "INV-CASES-DETECT-DEFECTS",
+   "text": "every planted defect is caught, against a green baseline",
+   "cases": [
+    "E04-DEFECT-*",
+    "E04-SELFTEST-001"
+   ]
+  },
+  {
+   "id": "INV-STRUCTURE",
+   "text": "files, shared vectors, mapping and hygiene hold",
+   "cases": [
+    "E04-META-*"
+   ]
+  },
+  {
+   "id": "INV-EXTERNAL-GATES",
+   "text": "what cannot be verified here is counted as blocked, never passed",
+   "cases": [
+    "E04-RUST-CENTRAL",
+    "E04-EXT-QUAL"
+   ]
+  }
+ ]
+}
