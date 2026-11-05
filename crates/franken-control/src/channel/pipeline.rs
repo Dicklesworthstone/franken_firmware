@@ -67,7 +67,7 @@ use franken_session::{
     LeaseTerms, LeaseWin, MembershipError, SessionError, UnifiedGroupSession,
 };
 
-use super::diag::{ChannelLog, Fact, session_error_kind};
+use super::diag::{ChannelLog, Fact, RejectFact, session_error_kind};
 use super::ledger::{LedgerError, Lookup, OutcomeLedger};
 use super::limiter::{RateLimit, TokenBucket};
 use super::peer::{AuthFailure, Authenticated, PeerAuthority, PeerId, PeerRole};
@@ -78,6 +78,7 @@ mod persist;
 #[cfg(test)]
 mod profile;
 mod restart;
+mod submit_log;
 
 pub use ack::AckOutcome;
 pub use persist::{
@@ -85,6 +86,7 @@ pub use persist::{
     step_then_store, store_high_water,
 };
 pub use restart::HighWaterError;
+pub use submit_log::MAX_PENDING_REJECTS;
 
 /// How a command ended, as remembered in the ledger and returned on a retry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -482,6 +484,9 @@ pub struct ControlChannel<A: PeerAuthority> {
     /// written to it at the end of the current `step`.
     log: Option<ChannelLog>,
     facts: Vec<Fact>,
+    /// The requests turned away at `submit` that are waiting for the session to be at hand so their records can
+    /// be written (see `submit_log`). Bounded by [`MAX_PENDING_REJECTS`]; empty unless a log is enabled.
+    reject_facts: Vec<RejectFact>,
     stats: ChannelStats,
 }
 
@@ -504,6 +509,7 @@ impl<A: PeerAuthority> ControlChannel<A> {
             last_internal_fault: None,
             log: None,
             facts: Vec::new(),
+            reject_facts: Vec::new(),
             stats: ChannelStats::default(),
         })
     }
@@ -579,8 +585,9 @@ impl<A: PeerAuthority> ControlChannel<A> {
         self.lease.as_ref()
     }
 
-    /// Start writing one JSONL record per settled command to `log` (see [`super::diag`]). Records are
-    /// written at the end of each `step`; the owner drains the log with [`ChannelLog::drain`].
+    /// Start writing one JSONL record per settled command to `log` (see [`super::diag`]), and one per request
+    /// turned away at `submit`. Records are written at the end of each `step` (and, for a request turned away, when
+    /// the owner calls `flush_log`); the owner drains the log with [`ChannelLog::drain`].
     pub fn enable_log(&mut self, log: ChannelLog) {
         self.log = Some(log);
     }
@@ -675,6 +682,18 @@ impl<A: PeerAuthority> ControlChannel<A> {
 
     /// Receive a request. See the module documentation for the order of the stages.
     pub fn submit(&mut self, now_ns: u64, request: ControlRequest) -> SubmitResult {
+        // What the sender claimed, kept only if a log will want it: the decision below consumes the request.
+        let claimed = self
+            .log
+            .is_some()
+            .then(|| (request.body().peer().clone(), request.body().seq()));
+        let result = self.decide_submit(now_ns, request);
+        self.note_submit(now_ns, claimed, &result);
+        result
+    }
+
+    /// The decision `submit` returns, made before any log is told of it.
+    fn decide_submit(&mut self, now_ns: u64, request: ControlRequest) -> SubmitResult {
         bump(&mut self.stats.received);
         let body = request.body();
 
@@ -927,6 +946,8 @@ impl<A: PeerAuthority> ControlChannel<A> {
             };
             self.settle(item.request.body().clone(), outcome, times, &mut settled);
         }
+        // The requests turned away since the last step were turned away first.
+        self.flush_log(session);
         if let Some(log) = self.log.as_mut() {
             for fact in self.facts.drain(..) {
                 log.emit(&fact, now_ns, session.current_epoch, &session.group_id);

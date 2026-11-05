@@ -8,8 +8,8 @@
 //!
 //! # What it does with a datagram
 //!
-//! * **A request** is decoded, submitted to the channel as it is, and answered with the reply the channel makes for the
-//!   submit result (section 9.1). A retry of a command whose outcome is on record is answered with that outcome and applies
+//! * **A request** is decoded, submitted to the channel as it is (a log, if one is enabled, then records a request that was
+//!   turned away), and answered with the reply the channel makes for the submit result (section 9.1). A retry of a command whose outcome is on record is answered with that outcome and applies
 //!   nothing: the one-transition guarantee of the ledger reaches the wire unchanged. A request whose reply the owner wants
 //!   to send later (the terminal outcome of a step) is answered through `ControlChannel::reply_to_outcome` and
 //!   `Reply::to_bytes`, which the caller already has; a client that never receives it asks again and is answered here.
@@ -114,6 +114,8 @@ impl Endpoint {
             Ok(Datagram::Request(request)) => {
                 bump(&mut self.stats.requests);
                 let result = channel.submit(now_ns, request.clone());
+                // A request turned away is written to the log now, under the epoch and revision it was turned away under.
+                channel.flush_log(session);
                 let reply = channel
                     .reply_to_submit(&request, &result, session)
                     .map(|reply| reply.to_bytes());
@@ -137,6 +139,7 @@ mod tests {
     use franken_session::AuthorityToken;
 
     use super::*;
+    use crate::channel::diag::{ChannelLog, LogConfig, LogKey};
     use crate::channel::limiter::RateLimit;
     use crate::channel::peer::ephemeral::{EphemeralPeers, test_key};
     use crate::channel::peer::{AuthFailure, PeerId, PeerRole, compute_proof};
@@ -532,6 +535,86 @@ mod tests {
             result,
             SubmitResult::Settled(Outcome::Committed { revision: 3 })
         );
+    }
+
+    #[test]
+    fn a_request_turned_away_is_logged_at_once_under_the_epoch_and_revision_it_was_turned_away_under()
+     {
+        let mut rig = Rig::new();
+        rig.channel.enable_log(ChannelLog::new(
+            LogConfig::new("run-1", "case-1", 16, 65_536).unwrap(),
+            LogKey::new([7; 32]),
+        ));
+        let records = |rig: &Rig| -> Vec<serde_json::Value> {
+            rig.channel
+                .log()
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect()
+        };
+        // A request that is queued and answered writes nothing.
+        let revision = rig.session.state_revision;
+        let genuine = request("ctl-a", 1, Some(revision), set_group(70));
+        let _ = answered(rig.send(0, &wire(&genuine)));
+        assert_eq!(records(&rig).len(), 0);
+        // A request that does not authenticate is answered with silence and logged at once.
+        let forged = {
+            let body =
+                RequestBody::new(id("ctl-a"), 2, EPOCH, Some(revision), set_group(10)).unwrap();
+            let proof = compute_proof(&test_key("panel"), &body.signing_bytes());
+            ControlRequest::new(body, proof)
+        };
+        assert_eq!(
+            rig.send(5, &wire(&forged)),
+            Handled::Request {
+                result: SubmitResult::Rejected(Rejection::Unauthenticated(AuthFailure::BadProof)),
+                reply: None
+            }
+        );
+        // One that authenticates and is then turned away is answered with a signed reply and logged too.
+        let stale = {
+            let body =
+                RequestBody::new(id("ctl-a"), 3, EPOCH - 1, Some(revision), set_group(10)).unwrap();
+            let proof = compute_proof(&test_key("ctl-a"), &body.signing_bytes());
+            ControlRequest::new(body, proof)
+        };
+        let (result, reply) = answered(rig.send(6, &wire(&stale)));
+        assert!(matches!(
+            result,
+            SubmitResult::Rejected(Rejection::EpochNotBound { .. })
+        ));
+        assert!(matches!(
+            status_of(&stale, &reply),
+            ReplyStatus::Rejected { .. }
+        ));
+        // Bytes that do not decode never reach the channel, so they write nothing.
+        assert!(matches!(rig.send(7, b"garbage"), Handled::Malformed(_)));
+        let lines = records(&rig);
+        let summary: Vec<(String, Option<String>)> = lines
+            .iter()
+            .map(|r| {
+                (
+                    r["event_kind"].as_str().unwrap().to_string(),
+                    r["cause"].as_str().map(str::to_string),
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                (
+                    "n02.submit.rejected.unauthenticated".to_string(),
+                    Some("bad_proof".to_string())
+                ),
+                ("n02.submit.rejected.epoch_not_bound".to_string(), None)
+            ]
+        );
+        for line in &lines {
+            assert_eq!(line["source_epoch"], EPOCH);
+            assert_eq!(line["state_revision"], revision);
+        }
+        assert_eq!(rig.channel.log().unwrap().stats().reject_stored, 2);
     }
 
     /// How the thing between the socket and the channel behaves. `Faithful` is the endpoint; each other variant is a fault.

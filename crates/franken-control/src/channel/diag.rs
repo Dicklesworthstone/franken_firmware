@@ -53,6 +53,24 @@
 //! counted (`ack_dropped`, which is also in `dropped`), and can never push a command-outcome record out.
 //! When an internal-fault record needs room, acknowledgement records are evicted before command records.
 //! The log never blocks, never fails the call that wrote to it, and has no effect on any result.
+//!
+//! # Records for requests turned away at `submit`
+//!
+//! A request that is turned away before it is queued is counted in `ChannelStats` and, since a controller
+//! that is refused needs to know why, also written as a record: `n02.submit.rejected.<why>` for
+//! `unauthenticated` (its `cause` is the failure word), `epoch_not_bound`, `revision_required`, `rate_limited`,
+//! `queue_full` and `id_reuse`, and `n02.submit.out_of_window` for a retry of a number the ledger has
+//! forgotten. A request that was queued, found already waiting, or answered from the ledger writes none.
+//! Its `correlation_id` is the claimed peer's pseudonym and the number it named; nothing the sender put in
+//! the request is copied, so an unauthenticated sender's claimed identifier appears only as a pseudonym.
+//!
+//! Anyone can send a request that does not authenticate, so these records are held to a **quarter** of the
+//! log's records and of its bytes (the acknowledgements' half and this quarter leave command records at least
+//! a quarter). Past it a record is dropped and counted (`reject_dropped`, also in `dropped`). When an
+//! internal-fault record needs room, acknowledgement records are evicted first, then these, then command
+//! records. The channel gathers the facts at `submit` and writes the records when the session is at hand
+//! (the next `step`, or `flush_log`); the facts waiting are bounded, and a request that does not fit is
+//! counted as a dropped record.
 
 use std::collections::VecDeque;
 use std::fmt::{self, Write as _};
@@ -61,7 +79,8 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use super::peer::{AuthFailure, PeerId};
-use super::pipeline::{AckOutcome, Outcome, Refusal};
+use super::pipeline::{AckOutcome, Outcome, Refusal, Rejection, SubmitResult};
+use super::request::Lane;
 use franken_session::SessionError;
 
 /// The shared diagnostics schema these records follow.
@@ -72,6 +91,9 @@ pub const MAX_LABEL_LEN: usize = 64;
 pub const MAX_LINE_BYTES: usize = 1024;
 /// Acknowledgement records may hold `1 / ACK_SHARE_DIVISOR` of the log's records and of its bytes.
 const ACK_SHARE_DIVISOR: usize = 2;
+/// Records of requests turned away at `submit` may hold `1 / REJECT_SHARE_DIVISOR` of the log's records and of
+/// its bytes.
+const REJECT_SHARE_DIVISOR: usize = 4;
 
 /// A log that cannot be built.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -170,6 +192,10 @@ pub struct LogStats {
     pub ack_stored: usize,
     /// Acknowledgement records not held (a share of `dropped`).
     pub ack_dropped: u64,
+    /// Records of requests turned away at `submit` currently held (a share of `stored`).
+    pub reject_stored: usize,
+    /// Such records not held (a share of `dropped`).
+    pub reject_dropped: u64,
 }
 
 /// What the channel knows about one settled command, gathered while the step runs and turned into a
@@ -220,6 +246,8 @@ enum Class {
     Critical,
     /// An acknowledgement record.
     Ack,
+    /// The record of a request turned away at `submit`.
+    Reject,
 }
 
 /// What the channel knows about one acknowledgement, turned into a record by [`ChannelLog::emit_ack`].
@@ -230,6 +258,42 @@ pub(crate) struct AckFact {
     /// The session's committed revision when the acknowledgement arrived.
     pub revision: u64,
     pub queue_depth: usize,
+}
+
+/// What the channel knows about one request it turned away at `submit`, turned into a record by
+/// [`ChannelLog::emit_reject`] once the session is at hand. The vocabulary is fixed when the fact is made, so
+/// nothing the sender supplied is held beyond the claimed identifier, which only a pseudonym ever leaves.
+pub(crate) struct RejectFact {
+    peer: PeerId,
+    seq: u64,
+    now_ns: u64,
+    queue_depth: usize,
+    kind: &'static str,
+    message: String,
+    cause: Option<&'static str>,
+}
+
+impl RejectFact {
+    /// The fact for what `submit` returned for a request claiming to be `peer` and naming number `seq`, or `None` if
+    /// it was not turned away (queued, already waiting, or answered from the ledger).
+    pub(crate) fn new(
+        peer: PeerId,
+        seq: u64,
+        now_ns: u64,
+        queue_depth: usize,
+        result: &SubmitResult,
+    ) -> Option<Self> {
+        let (kind, message, cause) = describe_submit(result)?;
+        Some(Self {
+            peer,
+            seq,
+            now_ns,
+            queue_depth,
+            kind,
+            message,
+            cause,
+        })
+    }
 }
 
 /// The bounded JSONL log of one control channel.
@@ -252,6 +316,11 @@ pub struct ChannelLog {
     ack_dropped: u64,
     /// The share, as a divisor. Always [`ACK_SHARE_DIVISOR`] outside the tests that plant a wrong one.
     ack_share_divisor: usize,
+    /// The same for the records of requests turned away at `submit`.
+    reject_lines: usize,
+    reject_bytes: usize,
+    reject_dropped: u64,
+    reject_share_divisor: usize,
 }
 
 impl fmt::Debug for ChannelLog {
@@ -283,6 +352,10 @@ impl ChannelLog {
             ack_bytes: 0,
             ack_dropped: 0,
             ack_share_divisor: ACK_SHARE_DIVISOR,
+            reject_lines: 0,
+            reject_bytes: 0,
+            reject_dropped: 0,
+            reject_share_divisor: REJECT_SHARE_DIVISOR,
         }
     }
 
@@ -313,6 +386,8 @@ impl ChannelLog {
         self.used_bytes = 0;
         self.ack_lines = 0;
         self.ack_bytes = 0;
+        self.reject_lines = 0;
+        self.reject_bytes = 0;
         self.lines.drain(..).map(|(line, _)| line).collect()
     }
 
@@ -326,6 +401,8 @@ impl ChannelLog {
             bytes: self.used_bytes,
             ack_stored: self.ack_lines,
             ack_dropped: self.ack_dropped,
+            reject_stored: self.reject_lines,
+            reject_dropped: self.reject_dropped,
         }
     }
 
@@ -353,11 +430,16 @@ impl ChannelLog {
     }
 
     fn evict_oldest_ordinary(&mut self) -> bool {
-        // Acknowledgement records go first: they are the cheaper evidence.
+        // Acknowledgement records go first, then the records of requests turned away: they are the cheaper evidence.
         let position = self
             .lines
             .iter()
             .position(|(_, class)| *class == Class::Ack)
+            .or_else(|| {
+                self.lines
+                    .iter()
+                    .position(|(_, class)| *class == Class::Reject)
+            })
             .or_else(|| {
                 self.lines
                     .iter()
@@ -373,6 +455,11 @@ impl ChannelLog {
                 self.ack_lines = self.ack_lines.saturating_sub(1);
                 self.ack_bytes = self.ack_bytes.saturating_sub(line.len());
                 self.ack_dropped = self.ack_dropped.saturating_add(1);
+            }
+            if class == Class::Reject {
+                self.reject_lines = self.reject_lines.saturating_sub(1);
+                self.reject_bytes = self.reject_bytes.saturating_sub(line.len());
+                self.reject_dropped = self.reject_dropped.saturating_add(1);
             }
         }
         true
@@ -424,11 +511,45 @@ impl ChannelLog {
         self.lines.push_back((line, Class::Ack));
     }
 
+    /// Hold the record of a request turned away if it fits its share of the log and the log has room;
+    /// otherwise drop it and count it. Such a record is never critical and never evicts anything.
+    fn push_reject(&mut self, line: String) {
+        self.emitted = self.emitted.saturating_add(1);
+        let bytes = line.len();
+        let in_share = self.reject_lines < self.max_records / self.reject_share_divisor
+            && self.reject_bytes.saturating_add(bytes)
+                <= self.max_bytes / self.reject_share_divisor;
+        if bytes > MAX_LINE_BYTES || !in_share || self.full_for(bytes) {
+            self.lose(false);
+            self.reject_dropped = self.reject_dropped.saturating_add(1);
+            return;
+        }
+        self.used_bytes += bytes;
+        self.reject_lines += 1;
+        self.reject_bytes += bytes;
+        self.lines.push_back((line, Class::Reject));
+    }
+
+    /// Count a record that was never written because the facts waiting for the session were already at their
+    /// bound. It is handed to the log and not held, like any other record that does not fit.
+    pub(crate) fn note_reject_overflow(&mut self) {
+        self.emitted = self.emitted.saturating_add(1);
+        self.lose(false);
+        self.reject_dropped = self.reject_dropped.saturating_add(1);
+    }
+
     /// Give acknowledgement records the whole budget instead of half of it. Tests only: it is the fault
     /// the flood judge in `pipeline/ack.rs` exists to catch.
     #[cfg(test)]
     pub(crate) fn plant_whole_budget_for_acks(&mut self) {
         self.ack_share_divisor = 1;
+    }
+
+    /// Give the records of requests turned away the whole budget instead of a quarter of it. Tests only: it is
+    /// the fault the flood judge in `pipeline/submit_log.rs` exists to catch.
+    #[cfg(test)]
+    pub(crate) fn plant_whole_budget_for_rejects(&mut self) {
+        self.reject_share_divisor = 1;
     }
 
     /// Write the record for one settled command.
@@ -502,6 +623,111 @@ impl ChannelLog {
                 self.ack_dropped = self.ack_dropped.saturating_add(1);
             }
         }
+    }
+}
+
+impl ChannelLog {
+    /// Write the record for one request turned away at `submit`, made under the epoch and revision the session is at
+    /// now (see the module documentation).
+    pub(crate) fn emit_reject(
+        &mut self,
+        fact: &RejectFact,
+        epoch: u64,
+        revision: u64,
+        group_id: &str,
+    ) {
+        let timestamp = fact.now_ns.max(self.last_ns);
+        self.last_ns = timestamp;
+        let line = {
+            let record = Record {
+                schema_version: LOG_SCHEMA_VERSION,
+                timestamp_mono_ns: timestamp,
+                run_id: &self.run_id,
+                case_id: &self.case_id,
+                correlation_id: format!("{}#{}", self.pseudonym_of(fact.peer.as_str()), fact.seq),
+                member_id: String::new(),
+                group_id: self.pseudonym_of(group_id),
+                source_epoch: epoch,
+                state_revision: revision,
+                event_kind: format!("n02.submit.{}", fact.kind),
+                message: fact.message.clone(),
+                queue_depth: fact.queue_depth,
+                latency_us: 0,
+                cause: fact.cause.map(str::to_string),
+            };
+            serde_json::to_string(&record)
+        };
+        match line {
+            Ok(line) => self.push_reject(line),
+            Err(_) => self.note_reject_overflow(),
+        }
+    }
+}
+
+/// The word for a lane, for a message.
+const fn lane_word(lane: Lane) -> &'static str {
+    match lane {
+        Lane::Ordinary => "ordinary",
+        Lane::Priority => "priority",
+    }
+}
+
+/// `(event kind suffix, message, cause)` for a `submit` result that turned the request away, from the fixed
+/// vocabulary and numbers only; `None` for a request that was queued, already waiting, or answered from the ledger.
+/// No result is matched by a wildcard, so a new one does not compile until it has a word.
+fn describe_submit(result: &SubmitResult) -> Option<(&'static str, String, Option<&'static str>)> {
+    match result {
+        SubmitResult::Queued { .. }
+        | SubmitResult::AlreadyQueued { .. }
+        | SubmitResult::Settled(_) => None,
+        SubmitResult::OutOfWindow { floor } => Some((
+            "out_of_window",
+            format!("forgotten: at or below the remembered floor {floor}"),
+            None,
+        )),
+        SubmitResult::Rejected(rejection) => Some(match rejection {
+            Rejection::Unauthenticated(failure) => (
+                "rejected.unauthenticated",
+                "did not authenticate".to_string(),
+                Some(match failure {
+                    AuthFailure::UnknownPeer => "unknown_peer",
+                    AuthFailure::Revoked => "revoked",
+                    AuthFailure::BadProof => "bad_proof",
+                }),
+            ),
+            Rejection::EpochNotBound { bound, request } => (
+                "rejected.epoch_not_bound",
+                format!("key bound to epoch {bound}, request named {request}"),
+                None,
+            ),
+            Rejection::RevisionRequired { command } => (
+                "rejected.revision_required",
+                format!("{command} must name the revision it last read"),
+                None,
+            ),
+            Rejection::RateLimited {
+                lane,
+                retry_after_ns,
+            } => (
+                "rejected.rate_limited",
+                format!(
+                    "rate limited on the {} lane, retry in {} us",
+                    lane_word(*lane),
+                    retry_after_ns / 1_000
+                ),
+                None,
+            ),
+            Rejection::QueueFull { lane } => (
+                "rejected.queue_full",
+                format!("the {} queue is full", lane_word(*lane)),
+                None,
+            ),
+            Rejection::IdReuse => (
+                "rejected.id_reuse",
+                "the number was used for a different request".to_string(),
+                None,
+            ),
+        }),
     }
 }
 
@@ -1235,6 +1461,273 @@ mod tests {
             (2, 0, 2, 1)
         );
         assert_eq!(l.lines().count(), 0);
+    }
+
+    fn reject_fact(seq: u64) -> RejectFact {
+        RejectFact::new(
+            PeerId::parse("ctl-a").unwrap(),
+            seq,
+            seq,
+            1,
+            &SubmitResult::Rejected(Rejection::QueueFull {
+                lane: Lane::Ordinary,
+            }),
+        )
+        .unwrap()
+    }
+
+    fn submit_result_for(o: &serde_json::Value) -> SubmitResult {
+        let n = |key: &str| o[key].as_u64().expect(key);
+        let lane = || match o["lane"].as_str() {
+            Some("ordinary") => Lane::Ordinary,
+            Some("priority") => Lane::Priority,
+            other => panic!("unknown lane {other:?} in the vectors"),
+        };
+        match o["kind"].as_str().expect("kind") {
+            "unauthenticated" => {
+                SubmitResult::Rejected(Rejection::Unauthenticated(match o["failure"].as_str() {
+                    Some("unknown_peer") => AuthFailure::UnknownPeer,
+                    Some("revoked") => AuthFailure::Revoked,
+                    Some("bad_proof") => AuthFailure::BadProof,
+                    other => panic!("unknown failure {other:?} in the vectors"),
+                }))
+            }
+            "epoch_not_bound" => SubmitResult::Rejected(Rejection::EpochNotBound {
+                bound: n("bound"),
+                request: n("request"),
+            }),
+            "revision_required" => SubmitResult::Rejected(Rejection::RevisionRequired {
+                command: match o["command"].as_str() {
+                    Some("set-group-volume") => "set-group-volume",
+                    Some("set-member-mute") => "set-member-mute",
+                    other => panic!("unknown command {other:?} in the vectors"),
+                },
+            }),
+            "rate_limited" => SubmitResult::Rejected(Rejection::RateLimited {
+                lane: lane(),
+                retry_after_ns: n("retry_after_ns"),
+            }),
+            "queue_full" => SubmitResult::Rejected(Rejection::QueueFull { lane: lane() }),
+            "id_reuse" => SubmitResult::Rejected(Rejection::IdReuse),
+            "out_of_window" => SubmitResult::OutOfWindow { floor: n("floor") },
+            other => panic!("unknown submit result `{other}` in the vectors"),
+        }
+    }
+
+    /// The lines of requests turned away were computed with Python's `hashlib` and `json`; the Rust builds each
+    /// from the result named in the fact, so the vocabulary, the arithmetic and the bytes are all pinned.
+    #[test]
+    fn submit_lines_match_the_independent_vectors() {
+        let doc: serde_json::Value = serde_json::from_str(VECTORS_JSON).expect("vectors parse");
+        let text = |v: &serde_json::Value, key: &str| v[key].as_str().expect(key).to_string();
+        let num = |v: &serde_json::Value, key: &str| v[key].as_u64().expect(key);
+        let key_hex = text(&doc, "pseudonym_key_hex");
+        let key: [u8; 32] = (0..key_hex.len() / 2)
+            .map(|i| u8::from_str_radix(&key_hex[2 * i..2 * i + 2], 16).expect("hex"))
+            .collect::<Vec<u8>>()
+            .try_into()
+            .expect("a 32-byte key");
+        let lines = doc["submit_golden_lines"]
+            .as_array()
+            .expect("submit_golden_lines");
+        assert_eq!(lines.len(), 9);
+        for g in lines {
+            let f = &g["fact"];
+            let fact = RejectFact::new(
+                PeerId::parse(&text(f, "peer")).unwrap(),
+                num(f, "seq"),
+                num(f, "now_ns"),
+                usize::try_from(num(f, "queue_depth")).unwrap(),
+                &submit_result_for(&f["result"]),
+            )
+            .expect("the vector names a request that was turned away");
+            let mut l = ChannelLog::new(
+                LogConfig::new(&text(&doc, "run_id"), &text(&doc, "case_id"), 16, 65_536).unwrap(),
+                LogKey::new(key),
+            );
+            l.emit_reject(
+                &fact,
+                num(f, "epoch"),
+                num(f, "revision"),
+                &text(f, "group"),
+            );
+            assert_eq!(
+                l.lines().next().unwrap(),
+                text(g, "line"),
+                "{}",
+                text(g, "id")
+            );
+        }
+    }
+
+    #[test]
+    fn a_request_that_was_not_turned_away_has_no_fact() {
+        let peer = || PeerId::parse("ctl-a").unwrap();
+        for (how, result) in [
+            (
+                "queued",
+                SubmitResult::Queued {
+                    lane: Lane::Ordinary,
+                },
+            ),
+            (
+                "already waiting",
+                SubmitResult::AlreadyQueued {
+                    lane: Lane::Priority,
+                },
+            ),
+            (
+                "answered from the ledger",
+                SubmitResult::Settled(Outcome::Committed { revision: 3 }),
+            ),
+        ] {
+            assert!(
+                RejectFact::new(peer(), 1, 1, 0, &result).is_none(),
+                "{how} must write no record"
+            );
+        }
+    }
+
+    #[test]
+    fn every_way_a_request_is_turned_away_has_its_own_word_and_no_text_from_the_sender() {
+        let results = [
+            SubmitResult::Rejected(Rejection::Unauthenticated(AuthFailure::UnknownPeer)),
+            SubmitResult::Rejected(Rejection::Unauthenticated(AuthFailure::Revoked)),
+            SubmitResult::Rejected(Rejection::Unauthenticated(AuthFailure::BadProof)),
+            SubmitResult::Rejected(Rejection::EpochNotBound {
+                bound: 10,
+                request: 9,
+            }),
+            SubmitResult::Rejected(Rejection::RevisionRequired {
+                command: "set-group-volume",
+            }),
+            SubmitResult::Rejected(Rejection::RateLimited {
+                lane: Lane::Ordinary,
+                retry_after_ns: 5_000,
+            }),
+            SubmitResult::Rejected(Rejection::QueueFull {
+                lane: Lane::Priority,
+            }),
+            SubmitResult::Rejected(Rejection::IdReuse),
+            SubmitResult::OutOfWindow { floor: 2 },
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for result in &results {
+            let (kind, message, cause) = describe_submit(result).expect("a word");
+            assert!(!kind.is_empty() && !message.is_empty());
+            // Only the vocabulary and numbers: lower-case words, digits and the few separators the messages use.
+            assert!(
+                message.bytes().all(|b| b.is_ascii_lowercase()
+                    || b.is_ascii_digit()
+                    || matches!(b, b' ' | b'-' | b',' | b':')),
+                "{message}"
+            );
+            seen.insert((kind, cause));
+        }
+        assert_eq!(seen.len(), results.len(), "two results share a word");
+    }
+
+    #[test]
+    fn records_of_requests_turned_away_hold_to_a_quarter_of_the_log_and_every_drop_is_counted() {
+        let mut l = log(8, 65_536);
+        for seq in 1..=10 {
+            l.emit_reject(&reject_fact(seq), 10, 3, "grp");
+        }
+        let s = l.stats();
+        assert_eq!(
+            (
+                s.emitted,
+                s.stored,
+                s.dropped,
+                s.reject_stored,
+                s.reject_dropped
+            ),
+            (10, 2, 8, 2, 8)
+        );
+        assert_eq!(s.emitted, s.stored as u64 + s.dropped);
+        // Acknowledgements keep their half and command records keep what is left: at least a quarter.
+        for seq in 1..=4 {
+            l.emit_ack(&ack_fact(seq), 20, 10, "grp");
+        }
+        for seq in 1..=4 {
+            l.emit(&committed(seq), 20, 10, "grp");
+        }
+        let s = l.stats();
+        assert_eq!((s.stored, s.ack_stored, s.reject_stored), (8, 4, 2));
+        assert_eq!(s.emitted, s.stored as u64 + s.dropped);
+        // Two command records are held beside the two records of requests turned away.
+        let steps = l
+            .lines()
+            .filter(|line| line.contains("\"event_kind\":\"n02.step."))
+            .count();
+        assert_eq!(steps, 2);
+    }
+
+    #[test]
+    fn the_share_of_requests_turned_away_is_held_in_bytes_as_well_as_records() {
+        let mut probe = log(64, 65_536);
+        probe.emit_reject(&reject_fact(1), 10, 3, "grp");
+        let one = probe.stats().bytes;
+        // Room for eight lines in all, so two for requests turned away.
+        let mut l = log(64, one * 8);
+        for seq in 1..=5 {
+            l.emit_reject(&reject_fact(seq), 10, 3, "grp");
+        }
+        let s = l.stats();
+        assert_eq!((s.reject_stored, s.reject_dropped, s.dropped), (2, 3, 3));
+        assert!(s.bytes <= one * 8);
+    }
+
+    #[test]
+    fn a_critical_record_evicts_the_records_of_requests_turned_away_after_acknowledgements_and_before_command_records()
+     {
+        let mut l = log(8, 65_536);
+        l.emit(&committed(1), 1, 10, "grp");
+        l.emit(&committed(2), 2, 10, "grp");
+        l.emit_ack(&ack_fact(3), 3, 10, "grp");
+        l.emit_reject(&reject_fact(4), 4, 3, "grp");
+        l.emit_reject(&reject_fact(5), 5, 3, "grp");
+        l.emit(&committed(6), 6, 10, "grp");
+        l.emit(&committed(7), 7, 10, "grp");
+        l.emit(&committed(8), 8, 10, "grp");
+        assert_eq!(l.stats().stored, 8);
+        let critical = |seq| fact(seq, Outcome::Refused(Refusal::InternalFault), true);
+        // The first critical record takes the acknowledgement's place.
+        l.emit(&critical(9), 9, 10, "grp");
+        let s = l.stats();
+        assert_eq!((s.stored, s.ack_stored, s.reject_stored), (8, 0, 2));
+        // The next two take the places of the two records of requests turned away.
+        l.emit(&critical(10), 10, 10, "grp");
+        l.emit(&critical(11), 11, 10, "grp");
+        let s = l.stats();
+        assert_eq!(
+            (
+                s.stored,
+                s.ack_stored,
+                s.reject_stored,
+                s.reject_dropped,
+                s.critical_lost
+            ),
+            (8, 0, 0, 2, 0)
+        );
+        // Only then does a command record go.
+        l.emit(&critical(12), 12, 10, "grp");
+        let s = l.stats();
+        assert_eq!((s.stored, s.critical_lost), (8, 0));
+        assert_eq!(s.emitted, s.stored as u64 + s.dropped);
+    }
+
+    #[test]
+    fn a_pending_overflow_is_counted_as_a_dropped_record() {
+        let mut l = log(8, 65_536);
+        l.note_reject_overflow();
+        l.note_reject_overflow();
+        let s = l.stats();
+        assert_eq!(
+            (s.emitted, s.stored, s.dropped, s.reject_dropped),
+            (2, 0, 2, 2)
+        );
+        assert!(l.is_evidence_complete());
     }
 
     #[test]

@@ -145,6 +145,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("pipeline/ack.rs", include_str!("ack.rs")),
     ("pipeline/persist.rs", include_str!("persist.rs")),
     ("pipeline/restart.rs", include_str!("restart.rs")),
+    ("pipeline/submit_log.rs", include_str!("submit_log.rs")),
 ];
 
 /// The scanner's verdict on the real sources: a list of `file:line: category`, empty if clean.
@@ -245,6 +246,11 @@ fn census<A: PeerAuthority>(channel: &ControlChannel<A>) -> Result<(), String> {
         ("ledger floors", channel.ledger.tracked_peers(), MAX_PEERS),
         ("rate buckets", channel.buckets.len(), 2 * MAX_PEERS),
         ("facts waiting for a log", channel.facts.len(), 0),
+        (
+            "rejections waiting for a log",
+            channel.reject_facts.len(),
+            super::submit_log::MAX_PENDING_REJECTS,
+        ),
     ];
     if let Some(log) = log {
         rows.push(("log records", log.stored, LOG_RECORDS));

@@ -928,6 +928,53 @@
         "malformed_datagrams_are_not_answered_and_never_reach_the_channel",
         "each_planted_endpoint_fault_fails_the_datagram_judge_by_name"
       ]
+    },
+    {
+      "id": "INV-LOG-SUBMIT-ONE",
+      "claim": "A request turned away at submit writes exactly one record in the shared schema, typed by why (unauthenticated with its failure word, epoch_not_bound, revision_required, rate_limited, queue_full, id_reuse, out_of_window), built from the fixed vocabulary and numbers and correlated by the claimed peer's pseudonym and the number it named; the channel's counters add up to the records written; a request that was queued, already waiting or answered from the ledger writes none; nine lines are pinned by an independent implementation.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the diagnostics log over the real channel, judged by Rust tests; the Python scenario model has no log. The independent evidence is tests/n02/gen_log_vectors.py (nine lines for requests turned away, computed with hashlib and json, which the Rust must reproduce byte for byte).",
+      "rust_tests": [
+        "every_way_a_request_is_turned_away_is_logged_once_with_its_cause",
+        "a_request_that_was_queued_waiting_or_answered_from_the_ledger_writes_no_record",
+        "submit_lines_match_the_independent_vectors",
+        "a_request_that_was_not_turned_away_has_no_fact",
+        "every_way_a_request_is_turned_away_has_its_own_word_and_no_text_from_the_sender",
+        "a_request_turned_away_is_logged_at_once_under_the_epoch_and_revision_it_was_turned_away_under"
+      ]
+    },
+    {
+      "id": "INV-LOG-SUBMIT-NO-ECHO",
+      "claim": "The claimed identifier of a sender that did not authenticate, and key-shaped text in its request, never reach the log: only the keyed pseudonym of the claimed peer does.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the diagnostics log over the real channel, judged by Rust tests; the Python scenario model has no log. The independent evidence is tests/n02/gen_log_vectors.py (nine lines for requests turned away, computed with hashlib and json, which the Rust must reproduce byte for byte).",
+      "rust_tests": [
+        "a_sender_that_did_not_authenticate_is_never_echoed_only_pseudonymized"
+      ]
+    },
+    {
+      "id": "INV-LOG-SUBMIT-BOUNDED",
+      "claim": "Records of requests turned away are held to a quarter of the log's records and bytes and every drop is counted, so a flood of forged requests cannot crowd command records out (a log that gives them the whole budget fails the flood judge by name); an internal fault evicts acknowledgement records first, then these, then command records; the facts waiting for the session are bounded and the overflow is counted, with emitted equal to stored plus dropped.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the diagnostics log over the real channel, judged by Rust tests; the Python scenario model has no log. The independent evidence is tests/n02/gen_log_vectors.py (nine lines for requests turned away, computed with hashlib and json, which the Rust must reproduce byte for byte).",
+      "rust_tests": [
+        "records_of_requests_turned_away_hold_to_a_quarter_of_the_log_and_every_drop_is_counted",
+        "the_share_of_requests_turned_away_is_held_in_bytes_as_well_as_records",
+        "a_critical_record_evicts_the_records_of_requests_turned_away_after_acknowledgements_and_before_command_records",
+        "a_pending_overflow_is_counted_as_a_dropped_record",
+        "a_flood_of_forged_requests_cannot_crowd_out_command_records",
+        "the_planted_log_that_gives_these_records_the_whole_budget_fails_the_flood_judge",
+        "the_facts_waiting_for_a_record_are_bounded_and_the_overflow_is_counted"
+      ]
+    },
+    {
+      "id": "INV-LOG-SUBMIT-NEUTRAL",
+      "claim": "No state of the log (absent, roomy, small, tiny, byte-starved) changes what any request gets, nor the counters or the session after a script of accepted, answered and turned-away requests.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the diagnostics log over the real channel, judged by Rust tests; the Python scenario model has no log. The independent evidence is tests/n02/gen_log_vectors.py (nine lines for requests turned away, computed with hashlib and json, which the Rust must reproduce byte for byte).",
+      "rust_tests": [
+        "no_log_state_changes_what_a_request_gets"
+      ]
     }
   ],
   "other_rust_checks": {
