@@ -491,8 +491,9 @@ def build(base):
     v.append(validate("P01-V-130", "permitted positive: franken-platform may depend on franken-atomic, which sits below it",
                       [P("/crates/name=franken-platform/deps", "franken-atomic")], []))
     v.append(validate("P01-V-131", "franken-atomic may not depend back on franken-platform: the layer order refuses the reverse edge",
-                      [P("/crates/name=franken-atomic/deps", "franken-platform")], ["layer_violation"],
-                      {"layer_violation": ["franken-atomic->franken-platform"]}))
+                      [P("/crates/name=franken-atomic/deps", "franken-platform")], ["dependency_cycle", "layer_violation"],
+                      {"dependency_cycle": ["franken-atomic,franken-platform"],
+                       "layer_violation": ["franken-atomic->franken-platform"]}))
 
     # --- linkers: the wrapper that links a device std artifact, declared with its digest and the ABI it must produce
     MIPS_LN = "/linkers/target=mips_be"

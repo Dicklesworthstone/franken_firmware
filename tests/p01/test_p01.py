@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import hashlib
 import io
 import json
 import os
@@ -16,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
@@ -26,6 +28,8 @@ import fixtures  # noqa: E402
 import metadata_check  # noqa: E402
 import pipeline  # noqa: E402
 import plan  # noqa: E402
+import planning_fixtures  # noqa: E402
+import planning_reconcile  # noqa: E402
 import reference as ref  # noqa: E402
 import run_cases  # noqa: E402
 
@@ -1397,6 +1401,115 @@ class SelftestVerdictTests(unittest.TestCase):
             if needle in match.group(2):
                 skipping.add(match.group(1))
         self.assertEqual(skipping, set(run_cases.EXPORT_SKIPS))
+
+
+class PlanningReconcileTests(unittest.TestCase):
+    """The generated planning files are reconciled to the live Beads (P01 acceptance, fresh-eyes refinement 2026-11-04): the
+    checker, its planted negatives (each with the unplanted control) and its read-only promise."""
+
+    def codes(self, name=None):
+        live, generated = planning_fixtures.planted(name) if name else planning_fixtures.world()
+        return planning_reconcile.codes(planning_reconcile.reconcile(live, generated))
+
+    def test_a_catalog_that_matches_the_live_data_reports_nothing(self):
+        self.assertEqual(self.codes(), [])
+
+    def test_every_plant_reports_exactly_its_hand_written_codes_and_the_control_is_clean(self):
+        for name, (_what, _plant, want) in planning_fixtures.PLANTS.items():
+            with self.subTest(name):
+                self.assertEqual(self.codes(), [])
+                self.assertEqual(self.codes(name), sorted(want))
+
+    def test_the_four_named_negatives_each_fail(self):
+        for name in ("required_task_absent_from_catalog", "only_acceptance_criteria_changed", "gate_edge_removed", "stale_export",
+                     "paginated_has_more"):
+            with self.subTest(name):
+                self.assertNotEqual(self.codes(name), [])
+
+    def test_a_plant_that_changes_nothing_is_refused_by_the_fixtures(self):
+        original = planning_fixtures.PLANTS["title_changed"]
+        planning_fixtures.PLANTS["title_changed"] = (original[0], lambda live, generated: None, original[2])
+        try:
+            with self.assertRaisesRegex(AssertionError, "changed nothing"):
+                planning_fixtures.planted("title_changed")
+        finally:
+            planning_fixtures.PLANTS["title_changed"] = original
+
+    def test_every_group_judge_passes_and_the_positive_goes_through_the_command_line(self):
+        planning_fixtures.judge_positive()
+        for group in planning_fixtures.GROUPS:
+            with self.subTest(group):
+                planning_fixtures.judge_group(group)
+
+    def write_files(self, tmp, live, generated):
+        return planning_fixtures._write_world(tmp, live, generated)
+
+    def test_the_command_line_exits_0_1_and_2_and_never_writes_its_inputs(self):
+        live, generated = planning_fixtures.world()
+        with tempfile.TemporaryDirectory() as tmp:
+            live_path, planning = self.write_files(tmp, live, generated)
+            watched = [live_path] + [os.path.join(planning, n) for n in sorted(os.listdir(planning))]
+            before = {p: (_file_sha256(p), os.stat(p).st_mtime_ns) for p in watched}
+            self.assertEqual(planning_fixtures._cli(live_path, planning), 0)
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(planning_fixtures._cli(os.path.join(tmp, "missing.json"), planning), 2)
+                self.assertEqual(planning_reconcile.main(["--live", live_path, "--planning", os.path.join(tmp, "nowhere")]), 2)
+            self.assertEqual({p: (_file_sha256(p), os.stat(p).st_mtime_ns) for p in watched}, before)
+            self.assertEqual(sorted(os.listdir(tmp)), ["live.json", "planning"])
+            live2, generated2 = planning_fixtures.planted("gate_edge_removed")
+        with tempfile.TemporaryDirectory() as tmp:
+            live_path, planning = self.write_files(tmp, live2, generated2)
+            self.assertEqual(planning_fixtures._cli(live_path, planning), 1)
+
+    def test_the_live_data_is_read_as_jsonl_a_list_or_an_envelope(self):
+        issue = {"id": "ffw-x", "title": "X: t"}
+        as_lines = planning_reconcile.parse_live(json.dumps(issue) + "\n" + json.dumps(dict(issue, id="ffw-y")) + "\n")
+        self.assertEqual([i["id"] for i in as_lines["issues"]], ["ffw-x", "ffw-y"])
+        self.assertIsNone(as_lines["envelope"])
+        self.assertEqual(len(planning_reconcile.parse_live(json.dumps([issue]))["issues"]), 1)
+        enveloped = planning_reconcile.parse_live(json.dumps({"issues": [issue], "total": 9, "limit": 1, "offset": 0, "has_more": True}))
+        self.assertEqual(enveloped["envelope"], {"total": 9, "limit": 1, "offset": 0, "has_more": True})
+        with self.assertRaises(planning_reconcile.InputError):
+            planning_reconcile.parse_live("{not json\n")
+        generated = planning_fixtures.world()[1]
+        self.assertIn("live_export_incomplete", planning_reconcile.codes(planning_reconcile.reconcile(
+            planning_reconcile.parse_live(""), generated)))
+
+    def test_the_module_never_writes_a_file_or_starts_a_process(self):
+        source = run_cases._read_text(os.path.join(run_cases.HERE, "planning_reconcile.py"))
+        forbidden = re.compile(r"open\([^)]*['\"][wax+]b?['\"]|\bsubprocess\b|os\.system|shutil|\.write_text|\.write_bytes|os\.remove|os\.rename")
+        self.assertIsNone(forbidden.search(source), forbidden.search(source))
+        planted = source + "\nwith open(path, 'w') as f:\n    f.write('x')\n"
+        self.assertIsNotNone(forbidden.search(planted))  # the guard can see the thing it guards against
+
+    def test_the_real_tree_case_is_blocked_without_an_export_and_names_the_differences_with_one(self):
+        case = {"owner": "someone"}
+        with mock.patch.dict(os.environ, {"FFW_BEADS_EXPORT": "/nonexistent/issues.jsonl"}):
+            status, detail = run_cases.run_planning_real(case)
+        self.assertEqual(status, run_cases.BLOCKED)
+        self.assertIn("no live Beads export", detail)
+        for name, want_status in ((None, run_cases.PASS), ("only_acceptance_criteria_changed", run_cases.BLOCKED)):
+            live, generated = planning_fixtures.planted(name) if name else planning_fixtures.world()
+            with tempfile.TemporaryDirectory() as tmp:
+                live_path, _planning = self.write_files(tmp, live, generated)
+                with mock.patch.dict(os.environ, {"FFW_BEADS_EXPORT": live_path}), \
+                        mock.patch.object(planning_reconcile, "load_generated", return_value=generated):
+                    status, detail = run_cases.run_planning_real(case)
+            self.assertEqual(status, want_status, detail)
+            if name:
+                self.assertIn("acceptance_criteria_differs=1", detail)
+                self.assertNotIn(tmp, detail)  # the message does not repeat a path outside the repository
+
+    def test_the_cases_are_in_the_case_file_under_stable_ids(self):
+        ids = {c["id"]: c["kind"] for c in run_cases.all_cases()}
+        for number in range(1, 7):
+            self.assertEqual(ids[f"P01-REC-{number:03d}"], "planning_plants")
+        self.assertEqual(ids["P01-REC-007"], "planning_real")
+
+
+def _file_sha256(path):
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
 
 
 class ResolveTests(unittest.TestCase):

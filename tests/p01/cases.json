@@ -2684,6 +2684,76 @@
    ],
    "reason": "no metadata documents were supplied: cargo runs only on the central rch path, so produce `cargo metadata --format-version 1 --locked --offline` once with default features and once with `--features franken-speaker/harness`, then run `scripts/e2e/p01 --tier full --metadata-default D --metadata-harness H`; supplied, the case is judged pass or fail and is never skipped",
    "owner": "BeigeMaple: central `cargo metadata --locked --offline` for both feature sets"
+  },
+  {
+   "id": "P01-REC-001",
+   "kind": "planning_plants",
+   "title": "reconcile: a catalog that matches the live Beads passes (permitted positive)",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "group": "permitted_positive"
+  },
+  {
+   "id": "P01-REC-002",
+   "kind": "planning_plants",
+   "title": "reconcile: a required task absent from the catalog fails",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "group": "required_task_absent"
+  },
+  {
+   "id": "P01-REC-003",
+   "kind": "planning_plants",
+   "title": "reconcile: a change to only acceptance_criteria fails",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "group": "acceptance_only"
+  },
+  {
+   "id": "P01-REC-004",
+   "kind": "planning_plants",
+   "title": "reconcile: a removed gate edge fails",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "group": "gate_edge"
+  },
+  {
+   "id": "P01-REC-005",
+   "kind": "planning_plants",
+   "title": "reconcile: a stale or paginated live export fails",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "group": "stale_or_paginated"
+  },
+  {
+   "id": "P01-REC-006",
+   "kind": "planning_plants",
+   "title": "reconcile: every other compared field (description, title, aliases, design packages, edge types, snapshot rows) fails when it differs",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "group": "every_other_compared_field"
+  },
+  {
+   "id": "P01-REC-007",
+   "kind": "planning_real",
+   "title": "reconcile: the real generated planning files against the real live Beads export, read-only",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "owner": "BeigeMaple: reconcile docs/planning to the live Beads (a regeneration that never overwrites live fields from old generated documents)"
   }
  ],
  "invariants": [
@@ -2952,6 +3022,21 @@
     "P01-PLAN-013"
    ],
    "status": "blocked"
+  },
+  {
+   "id": "INV-P01-27",
+   "statement": "Generated planning files are reconciled to the live Beads before generated validation is used as whole-project proof: complete ID sets, exact typed dependencies, titles, descriptions, acceptance_criteria and aliases are compared read-only, and a task absent from the catalog, a changed acceptance_criteria, a removed gate edge and a stale or paginated export each fail",
+   "cases": [
+    "P01-REC-001",
+    "P01-REC-002",
+    "P01-REC-003",
+    "P01-REC-004",
+    "P01-REC-005",
+    "P01-REC-006",
+    "P01-REC-007"
+   ],
+   "status": "partial",
+   "note": "the checker and its planted negatives are covered; the real tree is judged by P01-REC-007 and is blocked while the files differ (and has no live export in a git-archive snapshot); a required-feature registry is not compared because no generated planning file or live field carries one"
   },
   {
    "id": "INV-P01-20",

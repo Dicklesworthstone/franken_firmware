@@ -40,6 +40,8 @@ import facts as facts_mod  # noqa: E402
 import fixtures  # noqa: E402
 import metadata_check  # noqa: E402
 import plan as plan_mod  # noqa: E402
+import planning_fixtures  # noqa: E402
+import planning_reconcile  # noqa: E402
 import reference as ref  # noqa: E402
 
 VEC_DIR = os.path.join(REPO, "crates", "franken-board-profile", "tests", "vectors")
@@ -869,6 +871,37 @@ def run_central_evidence(c) -> Result:
     raise CaseError(detail)
 
 
+def run_planning_plants(c) -> Result:
+    """P01-REC-001..006: the planning reconcile check on synthetic worlds: the permitted positive passes, and every planted
+    negative fails with exactly its hand-written codes (see planning_fixtures.py)."""
+    try:
+        if c["group"] == "permitted_positive":
+            return PASS, planning_fixtures.judge_positive()
+        return PASS, planning_fixtures.judge_group(c["group"])
+    except AssertionError as err:
+        raise CaseError(str(err)) from err
+
+
+def run_planning_real(c) -> Result:
+    """P01-REC-007: the real generated planning files against the real live Beads export. Read-only. Not a pass until they agree,
+    and BLOCKED, never skipped, while they do not: the generated validation is not whole-project proof until reconciled."""
+    owner = f" [owner: {c['owner']}]"
+    path = os.environ.get("FFW_BEADS_EXPORT") or os.path.join(REPO, ".beads", "issues.jsonl")
+    if not os.path.isfile(path):
+        return BLOCKED, ("no live Beads export to compare with: .beads/issues.jsonl is git-ignored, so a git-archive export has "
+                         "none; set FFW_BEADS_EXPORT to a JSONL or JSON export of the live Beads" + owner)
+    try:
+        findings = planning_reconcile.reconcile(planning_reconcile.load_live(path), planning_reconcile.load_generated())
+    except (planning_reconcile.InputError, KeyError, TypeError) as err:
+        raise CaseError(f"the planning files or the live export cannot be read: {type(err).__name__}: {err}") from err
+    if not findings:
+        return PASS, "the generated planning files and the live Beads agree in every compared field"
+    counts = ", ".join(f"{code}={n}" for code, n in planning_reconcile.summarize(findings).items())
+    shown = os.path.relpath(path, REPO) if path.startswith(REPO + os.sep) else "<the export you supplied>"
+    return BLOCKED, (f"{len(findings)} differences between the generated planning files and the live Beads ({counts}); run "
+                     f"`python3 tests/p01/planning_reconcile.py --live {shown}` for the list" + owner)
+
+
 def run_blocked(c) -> Result:
     return BLOCKED, f"{c['reason']} [owner: {c['owner']}]"
 
@@ -882,6 +915,7 @@ HANDLERS: Dict[str, Callable[[Dict[str, Any]], Result]] = {
     "receipt_tamper": run_receipt_tamper, "meta_invariants": run_meta_invariants, "meta_codes": run_meta_codes,
     "meta_hygiene": run_meta_hygiene, "meta_vectors_current": run_meta_vectors_current,
     "mutation_canary": run_mutation_canary, "runner_selftest": run_runner_selftest, "blocked": run_blocked,
+    "planning_plants": run_planning_plants, "planning_real": run_planning_real,
 }
 
 

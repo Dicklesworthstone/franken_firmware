@@ -73,7 +73,8 @@
       "layer": 5,
       "unsafe_policy": "forbid",
       "deps": [
-        "franken-board-profile"
+        "franken-board-profile",
+        "franken-atomic"
       ],
       "optional_deps": [],
       "dev_deps": [
@@ -178,7 +179,8 @@
       "unsafe_policy": "forbid",
       "deps": [
         "franken-session",
-        "franken-clock"
+        "franken-clock",
+        "franken-journal"
       ],
       "optional_deps": [],
       "dev_deps": [
