@@ -873,6 +873,61 @@
         "the_smallest_journal_refuses_every_admission_and_a_label_that_does_not_fit_is_refused_and_nothing_changes",
         "a_rebind_or_a_revocation_the_journal_has_not_seen_is_refused_or_reported_and_changes_nothing"
       ]
+    },
+    {
+      "id": "INV-WIRE-REQUEST",
+      "claim": "A request is its signed bytes followed by its proof, exactly 32 bytes, and an acknowledgement is the same under its own magic: the encoder reproduces the independent vectors (every command kind, the longest and the shortest) byte for byte and the decoder gives each back; every shorter datagram is truncated and one byte more is trailing; neither kind decodes as the other; a proof that is not 32 bytes cannot be encoded.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the byte codec and the datagram glue over the real channel, judged by Rust tests; the Python scenario model has no wire to put them on. The independent evidence is tests/n02/gen_request_wire_vectors.py (hand-written layout, error names and their order, with a separately written decoder) and tests/n02/test_request_wire_vectors.py (17 sloppy decoders, each caught by a named vector).",
+      "rust_tests": [
+        "every_vector_request_encodes_to_the_independent_bytes_and_decodes_back",
+        "an_acknowledgement_round_trips_and_neither_kind_decodes_as_the_other",
+        "every_shorter_datagram_is_truncated_and_one_byte_more_is_trailing_or_too_long",
+        "the_encoder_refuses_a_proof_that_is_not_exactly_the_tag_length"
+      ]
+    },
+    {
+      "id": "INV-WIRE-STRICT",
+      "claim": "A decoder refuses everything that is not exactly the wire form, by a stable name and in a stated order (length, magic, version, peer, zero sequence, shape, then values); forty-six malformed datagrams fail with the named error and the names are distinct.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the byte codec and the datagram glue over the real channel, judged by Rust tests; the Python scenario model has no wire to put them on. The independent evidence is tests/n02/gen_request_wire_vectors.py (hand-written layout, error names and their order, with a separately written decoder) and tests/n02/test_request_wire_vectors.py (17 sloppy decoders, each caught by a named vector).",
+      "rust_tests": [
+        "every_malformed_datagram_fails_with_the_named_error",
+        "every_error_has_a_distinct_stable_name"
+      ]
+    },
+    {
+      "id": "INV-WIRE-BOUND",
+      "claim": "A datagram longer than the longest request (162 bytes) is refused as too_long without being read, whatever it holds, and the longest vector meets the bound exactly.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the byte codec and the datagram glue over the real channel, judged by Rust tests; the Python scenario model has no wire to put them on. The independent evidence is tests/n02/gen_request_wire_vectors.py (hand-written layout, error names and their order, with a separately written decoder) and tests/n02/test_request_wire_vectors.py (17 sloppy decoders, each caught by a named vector).",
+      "rust_tests": [
+        "the_bounds_are_the_sums_the_specification_gives_and_the_longest_vector_meets_them"
+      ]
+    },
+    {
+      "id": "INV-ENDPOINT-RETRY",
+      "claim": "From bytes to bytes over the real channel, a client whose committed reply was dropped sends the same bytes again and gets the recorded outcome in a reply it can check while the session changed once; a duplicate is answered as already queued; reordered datagrams each apply once and their replays change nothing; a retry after the retention window is answered out of window and not applied; an acknowledgement datagram completes its command once and a forged or unknown one changes nothing.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the byte codec and the datagram glue over the real channel, judged by Rust tests; the Python scenario model has no wire to put them on. The independent evidence is tests/n02/gen_request_wire_vectors.py (hand-written layout, error names and their order, with a separately written decoder) and tests/n02/test_request_wire_vectors.py (17 sloppy decoders, each caught by a named vector).",
+      "rust_tests": [
+        "a_dropped_reply_then_a_retry_of_the_same_bytes_is_one_effect_and_the_same_answer",
+        "a_duplicated_datagram_is_answered_as_already_queued_and_applied_once",
+        "reordered_datagrams_each_apply_once_in_arrival_order_and_replays_change_nothing",
+        "a_retry_after_retention_is_answered_out_of_window_and_not_applied_again",
+        "an_acknowledgement_datagram_completes_its_command_once_and_a_forged_one_changes_nothing"
+      ]
+    },
+    {
+      "id": "INV-ENDPOINT-SILENCE",
+      "claim": "A request that does not authenticate (a wrong key, an unknown peer, a revoked peer, a tampered byte) and a datagram that does not decode get no bytes back and change nothing, and a datagram that does not decode never reaches the channel; an endpoint that answers the unauthenticated, one that answers the malformed and one that applies a retry again each fail the judge by name, with the faithful endpoint shown to pass first.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the byte codec and the datagram glue over the real channel, judged by Rust tests; the Python scenario model has no wire to put them on. The independent evidence is tests/n02/gen_request_wire_vectors.py (hand-written layout, error names and their order, with a separately written decoder) and tests/n02/test_request_wire_vectors.py (17 sloppy decoders, each caught by a named vector).",
+      "rust_tests": [
+        "a_request_that_does_not_authenticate_gets_silence_and_changes_nothing",
+        "malformed_datagrams_are_not_answered_and_never_reach_the_channel",
+        "each_planted_endpoint_fault_fails_the_datagram_judge_by_name"
+      ]
     }
   ],
   "other_rust_checks": {

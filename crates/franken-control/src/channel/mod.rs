@@ -18,7 +18,9 @@
 //! The request format and the bytes the authentication proof covers are in [`request`]. The reply a client can
 //! check (an explicit encoding, bound to the command, its request and the epoch and revision it was made at)
 //! is in [`reply`]. The peers' keys, roles, epoch bindings and revocations are kept on U01's journal, and the
-//! peer directory is rebuilt from it at boot, by [`custody`].
+//! peer directory is rebuilt from it at boot, by [`custody`]. Requests and acknowledgements have a byte form that a
+//! decoder holds to by refusing everything else by name ([`wire`]), and [`endpoint`] turns a received datagram into the channel's call
+//! and the channel's answer into the datagram to send back, with no reply for anything that does not authenticate.
 //!
 //! Nothing here opens a socket or reads a clock: transport is the caller's, and time is passed in as
 //! nanoseconds. See `docs/contracts/n02.md` for the guarantees and for what is deliberately not
@@ -26,12 +28,14 @@
 
 pub mod custody;
 pub mod diag;
+pub mod endpoint;
 pub mod ledger;
 pub mod limiter;
 pub mod peer;
 pub mod pipeline;
 pub mod reply;
 pub mod request;
+pub mod wire;
 
 #[cfg(test)]
 mod replay;

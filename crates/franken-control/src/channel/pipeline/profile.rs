@@ -136,6 +136,8 @@ const SOURCES: &[(&str, &str)] = &[
     ("custody.rs", include_str!("../custody.rs")),
     ("request.rs", include_str!("../request.rs")),
     ("reply.rs", include_str!("../reply.rs")),
+    ("wire.rs", include_str!("../wire.rs")),
+    ("endpoint.rs", include_str!("../endpoint.rs")),
     ("ledger.rs", include_str!("../ledger.rs")),
     ("diag.rs", include_str!("../diag.rs")),
     ("mod.rs", include_str!("../mod.rs")),

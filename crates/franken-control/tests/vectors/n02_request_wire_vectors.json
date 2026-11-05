@@ -1,0 +1,510 @@
+{
+  "schema": "ffw.n02.request_wire_vectors.v1",
+  "notes": [
+    "Written by tests/n02/gen_request_wire_vectors.py from docs/contracts/n02.md section 9.3. The layout, the errors, their order and every expected result are hand-written; only the HMAC tags are computed (standard library).",
+    "wire = signing bytes || 32-byte tag; the signing bytes are exactly what RequestBody::signing_bytes covers, and tag = HMAC-SHA256(key, \"FFCP-v1-auth\" || signing bytes), the request's proof. An acknowledgement is the same under the magic FFCA.",
+    "X101..X105 are the hand-written signing vectors N02-W001..W005 of n02_scenarios.json, whose tags equal that file's auth vectors.",
+    "A malformed input must fail to decode with the named error, before any tag is looked at; where it has several faults the error is the first in the stated order."
+  ],
+  "context": "FFCP-v1-auth",
+  "max_request_len": 162,
+  "max_ack_len": 86,
+  "max_datagram_len": 162,
+  "requests": [
+    {
+      "id": "X101",
+      "what": "relative member volume with an expected revision (also pinned by a hand-written Rust unit test) (signing bytes: N02-W001)",
+      "peer": "ctl-a",
+      "seq": 7,
+      "epoch": 3,
+      "rev": 12,
+      "cmd": {
+        "kind": "adjust_member_volume",
+        "member": "kitchen",
+        "delta": -5
+      },
+      "hand_signing_hex": "46464350010563746c2d610000000000000007000000000000000301000000000000000c03076b69746368656efb",
+      "auth_vector": "N02-A001",
+      "auth_tag_hex": "06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a",
+      "key": "key-ctl-a-0123456789abcdef",
+      "signing_hex": "46464350010563746c2d610000000000000007000000000000000301000000000000000c03076b69746368656efb",
+      "tag_hex": "06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a",
+      "wire_hex": "46464350010563746c2d610000000000000007000000000000000301000000000000000c03076b69746368656efb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a"
+    },
+    {
+      "id": "X102",
+      "what": "stop without an expected revision (signing bytes: N02-W002)",
+      "peer": "panel",
+      "seq": 1,
+      "epoch": 10,
+      "rev": null,
+      "cmd": {
+        "kind": "stop",
+        "now_ns": 256,
+        "tail_ns": 65535
+      },
+      "hand_signing_hex": "46464350010570616e656c0000000000000001000000000000000a00060000000000000100000000000000ffff",
+      "auth_vector": "N02-A002",
+      "auth_tag_hex": "9fd98f378b92a73d5f5220cc624ec5b6f6bc05cf0dcb394c633cbee7272454d0",
+      "key": "key-panel-0123456789abcdef",
+      "signing_hex": "46464350010570616e656c0000000000000001000000000000000a00060000000000000100000000000000ffff",
+      "tag_hex": "9fd98f378b92a73d5f5220cc624ec5b6f6bc05cf0dcb394c633cbee7272454d0",
+      "wire_hex": "46464350010570616e656c0000000000000001000000000000000a00060000000000000100000000000000ffff9fd98f378b92a73d5f5220cc624ec5b6f6bc05cf0dcb394c633cbee7272454d0"
+    },
+    {
+      "id": "X103",
+      "what": "cancel naming an earlier command (signing bytes: N02-W003)",
+      "peer": "ctl-b",
+      "seq": 300,
+      "epoch": 11,
+      "rev": null,
+      "cmd": {
+        "kind": "cancel",
+        "target_seq": 299
+      },
+      "hand_signing_hex": "46464350010563746c2d62000000000000012c000000000000000b0007000000000000012b",
+      "auth_vector": "N02-A003",
+      "auth_tag_hex": "5d0bcc4a0eaf7f63d9b4d85eaacfd3d120e8e05d6381c8b0a641ca530d28c8be",
+      "key": "key-ctl-b-0123456789abcdef",
+      "signing_hex": "46464350010563746c2d62000000000000012c000000000000000b0007000000000000012b",
+      "tag_hex": "5d0bcc4a0eaf7f63d9b4d85eaacfd3d120e8e05d6381c8b0a641ca530d28c8be",
+      "wire_hex": "46464350010563746c2d62000000000000012c000000000000000b0007000000000000012b5d0bcc4a0eaf7f63d9b4d85eaacfd3d120e8e05d6381c8b0a641ca530d28c8be"
+    },
+    {
+      "id": "X104",
+      "what": "mute with a one-byte flag (signing bytes: N02-W004)",
+      "peer": "panel",
+      "seq": 2,
+      "epoch": 0,
+      "rev": null,
+      "cmd": {
+        "kind": "set_member_mute",
+        "member": "den",
+        "muted": true
+      },
+      "hand_signing_hex": "46464350010570616e656c0000000000000002000000000000000000050364656e01",
+      "auth_vector": "N02-A004",
+      "auth_tag_hex": "abee90c0d717a572b9527106c90ab39f318d3cee9d3e075f0ad5f3830946d689",
+      "key": "key-panel-0123456789abcdef",
+      "signing_hex": "46464350010570616e656c0000000000000002000000000000000000050364656e01",
+      "tag_hex": "abee90c0d717a572b9527106c90ab39f318d3cee9d3e075f0ad5f3830946d689",
+      "wire_hex": "46464350010570616e656c0000000000000002000000000000000000050364656e01abee90c0d717a572b9527106c90ab39f318d3cee9d3e075f0ad5f3830946d689"
+    },
+    {
+      "id": "X105",
+      "what": "absolute group volume at the top of the range, with an expected revision (signing bytes: N02-W005)",
+      "peer": "ctl-a",
+      "seq": 1,
+      "epoch": 10,
+      "rev": 2,
+      "cmd": {
+        "kind": "set_group_volume",
+        "volume": 100
+      },
+      "hand_signing_hex": "46464350010563746c2d610000000000000001000000000000000a0100000000000000020264",
+      "auth_vector": "N02-A005",
+      "auth_tag_hex": "1126286a5ec771d99a853c924cfc252940d9958a45aa8734210f61c4508c7e17",
+      "key": "key-ctl-a-0123456789abcdef",
+      "signing_hex": "46464350010563746c2d610000000000000001000000000000000a0100000000000000020264",
+      "tag_hex": "1126286a5ec771d99a853c924cfc252940d9958a45aa8734210f61c4508c7e17",
+      "wire_hex": "46464350010563746c2d610000000000000001000000000000000a01000000000000000202641126286a5ec771d99a853c924cfc252940d9958a45aa8734210f61c4508c7e17"
+    },
+    {
+      "id": "X001",
+      "what": "absolute member volume without an expected revision, hand-assembled hex",
+      "peer": "ctl-b",
+      "seq": 2,
+      "epoch": 5,
+      "rev": null,
+      "cmd": {
+        "kind": "set_member_volume",
+        "member": "den",
+        "volume": 30
+      },
+      "hand_signing_hex": "46464350010563746c2d620000000000000002000000000000000500010364656e1e",
+      "key": "key-ctl-b-0123456789abcdef",
+      "signing_hex": "46464350010563746c2d620000000000000002000000000000000500010364656e1e",
+      "tag_hex": "0255806252321641902bdabfdc5af539a8d221d19cb69779237340393b5715a3",
+      "wire_hex": "46464350010563746c2d620000000000000002000000000000000500010364656e1e0255806252321641902bdabfdc5af539a8d221d19cb69779237340393b5715a3"
+    },
+    {
+      "id": "X002",
+      "what": "relative group volume step up, with the revision it was computed from",
+      "peer": "ctl-a",
+      "seq": 3,
+      "epoch": 10,
+      "rev": 9,
+      "cmd": {
+        "kind": "adjust_group_volume",
+        "delta": 7
+      },
+      "key": "key-ctl-a-0123456789abcdef",
+      "signing_hex": "46464350010563746c2d610000000000000003000000000000000a0100000000000000090407",
+      "tag_hex": "43a6e1ea16875d80b3ef2cc8a20e6860a882b885fce0a6fa905fc6e58d59e45d",
+      "wire_hex": "46464350010563746c2d610000000000000003000000000000000a010000000000000009040743a6e1ea16875d80b3ef2cc8a20e6860a882b885fce0a6fa905fc6e58d59e45d"
+    },
+    {
+      "id": "X003",
+      "what": "the longest request: longest identity and member id, the largest numbers, a present revision",
+      "peer": "abcdefghijklmnopqrstuvwxyz012345",
+      "seq": 18446744073709551615,
+      "epoch": 18446744073709551615,
+      "rev": 18446744073709551615,
+      "cmd": {
+        "kind": "set_member_mute",
+        "member": "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm",
+        "muted": true
+      },
+      "key": "key-abcdefghijklmnopqrstuvwxyz012345-0123456789abcdef",
+      "signing_hex": "4646435001206162636465666768696a6b6c6d6e6f707172737475767778797a303132333435ffffffffffffffffffffffffffffffff01ffffffffffffffff05406d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d01",
+      "tag_hex": "a2028015a99457037c8c77ed23fdcbeb6bae121af4b6299e7bcc3f85f1f34f92",
+      "wire_hex": "4646435001206162636465666768696a6b6c6d6e6f707172737475767778797a303132333435ffffffffffffffffffffffffffffffff01ffffffffffffffff05406d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d01a2028015a99457037c8c77ed23fdcbeb6bae121af4b6299e7bcc3f85f1f34f92"
+    },
+    {
+      "id": "X004",
+      "what": "the shortest request: one-character identity, the smallest numbers, no revision",
+      "peer": "a",
+      "seq": 1,
+      "epoch": 0,
+      "rev": null,
+      "cmd": {
+        "kind": "set_group_volume",
+        "volume": 0
+      },
+      "key": "key-a-0123456789abcdef",
+      "signing_hex": "4646435001016100000000000000010000000000000000000200",
+      "tag_hex": "84330fa9a3a3768cb8b3793cf590bee403c5fa82cb18ced0c173c1ec5a4c7026",
+      "wire_hex": "464643500101610000000000000001000000000000000000020084330fa9a3a3768cb8b3793cf590bee403c5fa82cb18ced0c173c1ec5a4c7026"
+    },
+    {
+      "id": "X005",
+      "what": "relative step down by the largest allowed amount",
+      "peer": "ctl-a",
+      "seq": 4,
+      "epoch": 10,
+      "rev": 0,
+      "cmd": {
+        "kind": "adjust_member_volume",
+        "member": "kitchen",
+        "delta": -100
+      },
+      "key": "key-ctl-a-0123456789abcdef",
+      "signing_hex": "46464350010563746c2d610000000000000004000000000000000a01000000000000000003076b69746368656e9c",
+      "tag_hex": "9e28df3625acd94337e4402ae9c4e9b97de31f2248bbb45482b29f77e17e9b34",
+      "wire_hex": "46464350010563746c2d610000000000000004000000000000000a01000000000000000003076b69746368656e9c9e28df3625acd94337e4402ae9c4e9b97de31f2248bbb45482b29f77e17e9b34"
+    }
+  ],
+  "acks": [
+    {
+      "id": "K001",
+      "what": "an acknowledgement of command 7 issued under epoch 3",
+      "peer": "ctl-a",
+      "seq": 7,
+      "epoch": 3,
+      "key": "key-ctl-a-0123456789abcdef",
+      "signing_hex": "46464341010563746c2d6100000000000000070000000000000003",
+      "tag_hex": "30f7dbc2c08f7b947debfed7b32b600b1aaa38525bfe1114dabcaa82fb53dc45",
+      "wire_hex": "46464341010563746c2d610000000000000007000000000000000330f7dbc2c08f7b947debfed7b32b600b1aaa38525bfe1114dabcaa82fb53dc45"
+    },
+    {
+      "id": "K002",
+      "what": "the longest identity and the largest numbers: the longest acknowledgement",
+      "peer": "abcdefghijklmnopqrstuvwxyz012345",
+      "seq": 18446744073709551615,
+      "epoch": 18446744073709551615,
+      "key": "key-abcdefghijklmnopqrstuvwxyz012345-0123456789abcdef",
+      "signing_hex": "4646434101206162636465666768696a6b6c6d6e6f707172737475767778797a303132333435ffffffffffffffffffffffffffffffff",
+      "tag_hex": "50a2c83220561f1c5f8f99712bd028b115fb8639467ce97f7c275041671d5e35",
+      "wire_hex": "4646434101206162636465666768696a6b6c6d6e6f707172737475767778797a303132333435ffffffffffffffffffffffffffffffff50a2c83220561f1c5f8f99712bd028b115fb8639467ce97f7c275041671d5e35"
+    },
+    {
+      "id": "K003",
+      "what": "the shortest acknowledgement",
+      "peer": "a",
+      "seq": 1,
+      "epoch": 0,
+      "key": "key-a-0123456789abcdef",
+      "signing_hex": "4646434101016100000000000000010000000000000000",
+      "tag_hex": "fba9a98fced3a47ec842d1446576302e78f1438afc2befa0be137d8dc9b5fa6b",
+      "wire_hex": "4646434101016100000000000000010000000000000000fba9a98fced3a47ec842d1446576302e78f1438afc2befa0be137d8dc9b5fa6b"
+    }
+  ],
+  "malformed": [
+    {
+      "id": "M001",
+      "what": "no bytes at all",
+      "wire_hex": "",
+      "error": "truncated"
+    },
+    {
+      "id": "M002",
+      "what": "three bytes: the magic is cut",
+      "wire_hex": "464643",
+      "error": "truncated"
+    },
+    {
+      "id": "M003",
+      "what": "a magic that is not ours",
+      "wire_hex": "58464350010563746c2d610000000000000007000000000000000301000000000000000c03076b69746368656efb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a",
+      "error": "bad_magic"
+    },
+    {
+      "id": "M004",
+      "what": "the reply magic: a reply is not a request",
+      "wire_hex": "46464352010563746c2d610000000000000007000000000000000301000000000000000c03076b69746368656efb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a",
+      "error": "bad_magic"
+    },
+    {
+      "id": "M005",
+      "what": "version 2",
+      "wire_hex": "46464350020563746c2d610000000000000007000000000000000301000000000000000c03076b69746368656efb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a",
+      "error": "bad_version"
+    },
+    {
+      "id": "M006",
+      "what": "version 0",
+      "wire_hex": "46464350000563746c2d610000000000000007000000000000000301000000000000000c03076b69746368656efb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a",
+      "error": "bad_version"
+    },
+    {
+      "id": "M007",
+      "what": "an empty peer id",
+      "wire_hex": "4646435001000000000000000007000000000000000301000000000000000c03076b69746368656efb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a",
+      "error": "invalid_peer"
+    },
+    {
+      "id": "M008",
+      "what": "a 33-byte peer id",
+      "wire_hex": "4646435001216161616161616161616161616161616161616161616161616161616161616161610000000000000007000000000000000301000000000000000c03076b69746368656efb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a",
+      "error": "invalid_peer"
+    },
+    {
+      "id": "M009",
+      "what": "an upper-case letter in the peer id",
+      "wire_hex": "46464350010543746c2d610000000000000007000000000000000301000000000000000c03076b69746368656efb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a",
+      "error": "invalid_peer"
+    },
+    {
+      "id": "M010",
+      "what": "a peer id that starts with a dash",
+      "wire_hex": "4646435001052d746c2d610000000000000007000000000000000301000000000000000c03076b69746368656efb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a",
+      "error": "invalid_peer"
+    },
+    {
+      "id": "M011",
+      "what": "a peer id that is not text",
+      "wire_hex": "464643500105ff746c2d610000000000000007000000000000000301000000000000000c03076b69746368656efb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a",
+      "error": "invalid_peer"
+    },
+    {
+      "id": "M012",
+      "what": "a peer length of 40 and a datagram that ends first: the cut is reported before the id is judged",
+      "wire_hex": "46464350012863746c2d6100000000000000070000000000000003010000",
+      "error": "truncated"
+    },
+    {
+      "id": "M013",
+      "what": "sequence number zero",
+      "wire_hex": "46464350010563746c2d610000000000000000000000000000000301000000000000000c03076b69746368656efb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a",
+      "error": "zero_sequence"
+    },
+    {
+      "id": "M014",
+      "what": "sequence number zero and nothing after the epoch: the zero is reported, not the cut",
+      "wire_hex": "46464350010563746c2d6100000000000000000000000000000003",
+      "error": "zero_sequence"
+    },
+    {
+      "id": "M015",
+      "what": "a revision flag of 2",
+      "wire_hex": "46464350010563746c2d610000000000000007000000000000000302000000000000000c03076b69746368656efb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a",
+      "error": "bad_revision_flag"
+    },
+    {
+      "id": "M016",
+      "what": "command tag 0",
+      "wire_hex": "46464350010563746c2d610000000000000007000000000000000301000000000000000c00076b69746368656efb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a",
+      "error": "unknown_command"
+    },
+    {
+      "id": "M017",
+      "what": "command tag 8",
+      "wire_hex": "46464350010563746c2d610000000000000007000000000000000301000000000000000c08076b69746368656efb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a",
+      "error": "unknown_command"
+    },
+    {
+      "id": "M018",
+      "what": "a mute flag of 2",
+      "wire_hex": "46464350010570616e656c0000000000000002000000000000000000050364656e02abee90c0d717a572b9527106c90ab39f318d3cee9d3e075f0ad5f3830946d689",
+      "error": "bad_bool"
+    },
+    {
+      "id": "M019",
+      "what": "group volume 101",
+      "wire_hex": "46464350010563746c2d610000000000000001000000000000000a01000000000000000202651126286a5ec771d99a853c924cfc252940d9958a45aa8734210f61c4508c7e17",
+      "error": "volume_out_of_range"
+    },
+    {
+      "id": "M020",
+      "what": "a step of zero",
+      "wire_hex": "46464350010563746c2d610000000000000003000000000000000a010000000000000009040043a6e1ea16875d80b3ef2cc8a20e6860a882b885fce0a6fa905fc6e58d59e45d",
+      "error": "delta_out_of_range"
+    },
+    {
+      "id": "M021",
+      "what": "a step of +101",
+      "wire_hex": "46464350010563746c2d610000000000000003000000000000000a010000000000000009046543a6e1ea16875d80b3ef2cc8a20e6860a882b885fce0a6fa905fc6e58d59e45d",
+      "error": "delta_out_of_range"
+    },
+    {
+      "id": "M022",
+      "what": "a step of -101",
+      "wire_hex": "46464350010563746c2d610000000000000003000000000000000a010000000000000009049b43a6e1ea16875d80b3ef2cc8a20e6860a882b885fce0a6fa905fc6e58d59e45d",
+      "error": "delta_out_of_range"
+    },
+    {
+      "id": "M023",
+      "what": "a step of -128",
+      "wire_hex": "46464350010563746c2d610000000000000003000000000000000a010000000000000009048043a6e1ea16875d80b3ef2cc8a20e6860a882b885fce0a6fa905fc6e58d59e45d",
+      "error": "delta_out_of_range"
+    },
+    {
+      "id": "M024",
+      "what": "an empty member id",
+      "wire_hex": "46464350010563746c2d610000000000000007000000000000000301000000000000000c0300fb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a",
+      "error": "invalid_member_id"
+    },
+    {
+      "id": "M025",
+      "what": "an upper-case letter in the member id",
+      "wire_hex": "46464350010563746c2d610000000000000007000000000000000301000000000000000c03074b69746368656efb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a",
+      "error": "invalid_member_id"
+    },
+    {
+      "id": "M026",
+      "what": "a 65-byte member id",
+      "wire_hex": "46464350010563746c2d610000000000000007000000000000000301000000000000000c03416d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6dfb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a",
+      "error": "invalid_member_id"
+    },
+    {
+      "id": "M027",
+      "what": "a member id that is not text",
+      "wire_hex": "46464350010563746c2d610000000000000007000000000000000301000000000000000c0307ff69746368656efb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a",
+      "error": "invalid_member_id"
+    },
+    {
+      "id": "M028",
+      "what": "a relative step that names no revision",
+      "wire_hex": "46464350010563746c2d61000000000000000700000000000000030003076b69746368656efb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a",
+      "error": "relative_needs_revision"
+    },
+    {
+      "id": "M029",
+      "what": "a cancel with target zero",
+      "wire_hex": "46464350010563746c2d62000000000000012c000000000000000b000700000000000000005d0bcc4a0eaf7f63d9b4d85eaacfd3d120e8e05d6381c8b0a641ca530d28c8be",
+      "error": "zero_target"
+    },
+    {
+      "id": "M030",
+      "what": "a cancel of itself",
+      "wire_hex": "46464350010563746c2d62000000000000012c000000000000000b0007000000000000012c5d0bcc4a0eaf7f63d9b4d85eaacfd3d120e8e05d6381c8b0a641ca530d28c8be",
+      "error": "cancels_itself"
+    },
+    {
+      "id": "M031",
+      "what": "one byte after the tag",
+      "wire_hex": "46464350010563746c2d610000000000000007000000000000000301000000000000000c03076b69746368656efb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a00",
+      "error": "trailing_bytes"
+    },
+    {
+      "id": "M032",
+      "what": "the tag one byte short",
+      "wire_hex": "46464350010563746c2d610000000000000007000000000000000301000000000000000c03076b69746368656efb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe4",
+      "error": "truncated"
+    },
+    {
+      "id": "M033",
+      "what": "the signed bytes only, no tag",
+      "wire_hex": "46464350010563746c2d610000000000000007000000000000000301000000000000000c03076b69746368656efb",
+      "error": "truncated"
+    },
+    {
+      "id": "M034",
+      "what": "163 bytes: one more than the longest request, refused before it is read",
+      "wire_hex": "4646435001206162636465666768696a6b6c6d6e6f707172737475767778797a303132333435ffffffffffffffffffffffffffffffff01ffffffffffffffff05406d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d01a2028015a99457037c8c77ed23fdcbeb6bae121af4b6299e7bcc3f85f1f34f9200",
+      "error": "too_long"
+    },
+    {
+      "id": "M035",
+      "what": "a datagram of 163 zero bytes, which would not parse as anything: the length is judged first",
+      "wire_hex": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "error": "too_long"
+    },
+    {
+      "id": "M036",
+      "what": "a bad version and a bad peer: the version is reported",
+      "wire_hex": "46464350020543746c2d610000000000000007000000000000000301000000000000000c03076b69746368656efb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a",
+      "error": "bad_version"
+    },
+    {
+      "id": "M037",
+      "what": "a bad volume and a tag one byte short: the cut is reported, not the value",
+      "wire_hex": "46464350010563746c2d610000000000000001000000000000000a01000000000000000202651126286a5ec771d99a853c924cfc252940d9958a45aa8734210f61c4508c7e",
+      "error": "truncated"
+    },
+    {
+      "id": "M038",
+      "what": "a step of zero that also names no revision: the step is reported, not the missing revision",
+      "wire_hex": "46464350010563746c2d610000000000000003000000000000000a00040043a6e1ea16875d80b3ef2cc8a20e6860a882b885fce0a6fa905fc6e58d59e45d",
+      "error": "delta_out_of_range"
+    },
+    {
+      "id": "M039",
+      "what": "a bad member id and a byte after the tag: the shape is reported first",
+      "wire_hex": "46464350010563746c2d610000000000000007000000000000000301000000000000000c03074b69746368656efb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a00",
+      "error": "trailing_bytes"
+    },
+    {
+      "id": "M040",
+      "what": "a zero sequence number and an unknown command: the zero is reported",
+      "wire_hex": "46464350010563746c2d610000000000000000000000000000000301000000000000000c00076b69746368656efb06494199c88fecff454a7482462c72d98b1de783952a35497ea6ad21943fe44a",
+      "error": "zero_sequence"
+    },
+    {
+      "id": "M041",
+      "what": "an acknowledgement under the reply magic",
+      "wire_hex": "46464352010563746c2d610000000000000007000000000000000330f7dbc2c08f7b947debfed7b32b600b1aaa38525bfe1114dabcaa82fb53dc45",
+      "error": "bad_magic"
+    },
+    {
+      "id": "M042",
+      "what": "an acknowledgement of version 2",
+      "wire_hex": "46464341020563746c2d610000000000000007000000000000000330f7dbc2c08f7b947debfed7b32b600b1aaa38525bfe1114dabcaa82fb53dc45",
+      "error": "bad_version"
+    },
+    {
+      "id": "M043",
+      "what": "an acknowledgement of command zero",
+      "wire_hex": "46464341010563746c2d610000000000000000000000000000000330f7dbc2c08f7b947debfed7b32b600b1aaa38525bfe1114dabcaa82fb53dc45",
+      "error": "zero_sequence"
+    },
+    {
+      "id": "M044",
+      "what": "an acknowledgement with one byte after the tag",
+      "wire_hex": "46464341010563746c2d610000000000000007000000000000000330f7dbc2c08f7b947debfed7b32b600b1aaa38525bfe1114dabcaa82fb53dc4500",
+      "error": "trailing_bytes"
+    },
+    {
+      "id": "M045",
+      "what": "an acknowledgement with the tag one byte short",
+      "wire_hex": "46464341010563746c2d610000000000000007000000000000000330f7dbc2c08f7b947debfed7b32b600b1aaa38525bfe1114dabcaa82fb53dc",
+      "error": "truncated"
+    },
+    {
+      "id": "M046",
+      "what": "an acknowledgement with an upper-case peer id",
+      "wire_hex": "46464341010543746c2d610000000000000007000000000000000330f7dbc2c08f7b947debfed7b32b600b1aaa38525bfe1114dabcaa82fb53dc45",
+      "error": "invalid_peer"
+    }
+  ]
+}
