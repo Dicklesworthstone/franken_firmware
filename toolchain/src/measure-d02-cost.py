@@ -637,11 +637,59 @@ def _elf_summary(label: str, info: dict[str, Any]) -> str:
             f"fp_abi {info['fp_abi']}, {info['exec_words']} executable words scanned, {len(info['fpu_words'])} FPU opcode word(s)")
 
 
+def _compare_command(args: argparse.Namespace) -> int:
+    """`compare`: boot (or read the transcripts of) a build before and after one source change, judge before - after."""
+    run_mode = args.log_dir is not None
+    any_log = args.log_before is not None or args.log_after is not None
+    both_logs = args.log_before is not None and args.log_after is not None
+    if not ((run_mode and not any_log) or (not run_mode and both_logs)):
+        print("error: give either --log-dir (boot both ELFs) or both --log-before and --log-after (judge existing "
+              "transcripts), not a mixture and not one log alone", file=sys.stderr)
+        return 2
+    try:
+        elfs = {"before": read_elf(args.elf_before), "after": read_elf(args.elf_after)}
+        for label, info in elfs.items():
+            print(_elf_summary(label, info))
+        if run_mode:
+            if args.log_dir.exists() and any(args.log_dir.iterdir()):
+                raise MeasurementError(f"{args.log_dir} is not empty; choose a fresh directory (nothing is deleted)")
+            args.log_dir.mkdir(parents=True, exist_ok=True)
+            texts = {}
+            with tempfile.TemporaryDirectory() as scratch:
+                for label, elf in (("before", args.elf_before), ("after", args.elf_after)):
+                    text, meta = run_guest(elf, pathlib.Path(scratch), label, args.timeout)
+                    (args.log_dir / f"d02-cost-{label}.serial.log").write_text(text)
+                    print(f"[{label}] {meta['qemu']}; kernel {meta['kernel_sha256'][:8]}...; exit {meta['exit_code']}; "
+                          f"{len(text.splitlines())} serial lines")
+                    texts[label] = text
+        else:
+            texts = {"before": args.log_before.read_text(errors="replace"),
+                     "after": args.log_after.read_text(errors="replace")}
+        report = judge_conversion(texts["before"], texts["after"], elfs["before"], elfs["after"])
+    except (MeasurementError, OSError, subprocess.CalledProcessError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(render_saving(report, args.revision_before, args.revision_after))
+    if args.json:
+        print(json.dumps({k: v for k, v in report.items() if k != "analyses"}, indent=1, sort_keys=True, default=str))
+    return 0 if report["ok"] else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("prepare")
     p.add_argument("--work-dir", type=pathlib.Path, required=True)
+    p = sub.add_parser("compare", help="the saving one source change made, with the same section state in both builds")
+    p.add_argument("--elf-before", type=pathlib.Path, required=True)
+    p.add_argument("--elf-after", type=pathlib.Path, required=True)
+    p.add_argument("--revision-before", help="the git revision (or description) the before ELF was built from")
+    p.add_argument("--revision-after", help="the git revision (or description) the after ELF was built from")
+    p.add_argument("--json", action="store_true", help="also print the judged result as JSON on stdout")
+    p.add_argument("--log-dir", type=pathlib.Path, help="fresh directory for the raw serial logs; boots both ELFs")
+    p.add_argument("--timeout", type=float, default=900.0)
+    p.add_argument("--log-before", type=pathlib.Path, help="judge an existing transcript instead of booting")
+    p.add_argument("--log-after", type=pathlib.Path, help="judge an existing transcript instead of booting")
     for name in ("run", "analyze"):
         p = sub.add_parser(name)
         p.add_argument("--elf-f64", type=pathlib.Path, required=True)
@@ -659,6 +707,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "prepare":
             print(prepare(args.work_dir))
             return 0
+        if args.command == "compare":
+            return _compare_command(args)
         elfs = {"f64": read_elf(args.elf_f64), "f32": read_elf(args.elf_f32)}
         for label, info in elfs.items():
             print(_elf_summary(label, info))
