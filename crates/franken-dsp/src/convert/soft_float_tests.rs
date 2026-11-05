@@ -345,7 +345,9 @@ fn f32_to_int_matches_the_original_on_mantissas_at_every_boundary_of_every_expon
     for bits in [1u32, 2, 8, 15, 16, 17, 24, 25, 31, 32, 33] {
         let k = bits.clamp(1, 32) - 1;
         let low = (127 - i64::from(k) - 3).max(1);
-        let high = (127 + 3).min(254);
+        // Three binades above 1.0: every width saturates there. 130 is far below the largest finite exponent
+        // (254), so there is nothing to clamp.
+        let high = 127 + 3;
         let mut exponents: Vec<i64> = (low..=high).collect();
         exponents.extend([1, 2, 126 - 24, 253, 254]);
         for exponent in exponents {

@@ -577,7 +577,9 @@ fn run_render_loop(state: SinkState) -> (RenderOutcome, Option<SinkFacts>) {
             .chunks_exact_mut(f32_format.bytes_per_frame())
             .enumerate()
         {
-            for (channel, bytes) in chunk.chunks_exact_mut(4).enumerate() {
+            let (samples, rest) = chunk.as_chunks_mut::<4>();
+            assert!(rest.is_empty(), "a frame is whole 4-byte samples");
+            for (channel, bytes) in samples.iter_mut().enumerate() {
                 let sign = if (frame + channel).is_multiple_of(2) {
                     1.0f32
                 } else {

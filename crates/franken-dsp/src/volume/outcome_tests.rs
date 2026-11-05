@@ -167,6 +167,14 @@ fn a_refused_command_is_not_recorded_and_consumes_no_revision() {
     );
     assert_eq!(m.last_revision(), 0);
 
+    // What a caller sees for a refused id AFTER THE FACT, case 1: nothing newer has been applied. The id reads
+    // `NotApplied`, and resending the same command repeats the refusal, so the reason is recoverable by resending.
+    assert_eq!(
+        m.apply(stamp(EPOCH, 1), VolumeCommand::SetVolume(101)),
+        Err(VolumeError::VolumeOutOfRange { value: 101 })
+    );
+    assert_eq!(outcome(&m, 1), CommandOutcome::NotApplied);
+
     // The same revision, corrected, is accepted and is then what the id reports.
     let ok = apply(&mut m, 1, VolumeCommand::SetVolume(10));
     assert_eq!(
@@ -175,6 +183,24 @@ fn a_refused_command_is_not_recorded_and_consumes_no_revision() {
             command: VolumeCommand::SetVolume(10),
             receipt: ok
         }
+    );
+
+    // Case 2: a NEWER command was applied after the refusal. The refused id now reads `Skipped`, exactly like a
+    // lost one, and resending it is refused as stale, so the refusal REASON is no longer recoverable. This is the
+    // limit of not retaining refusals; the caller still learns the fact that matters, that it took no effect.
+    let mut later = member();
+    assert_eq!(
+        later.apply(stamp(EPOCH, 1), VolumeCommand::SetVolume(101)),
+        Err(VolumeError::VolumeOutOfRange { value: 101 })
+    );
+    apply(&mut later, 2, VolumeCommand::SetVolume(10));
+    assert_eq!(outcome(&later, 1), CommandOutcome::Skipped);
+    assert_eq!(
+        later.apply(stamp(EPOCH, 1), VolumeCommand::SetVolume(101)),
+        Err(VolumeError::StaleRevision {
+            revision: 1,
+            last: 2
+        })
     );
 }
 
