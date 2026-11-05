@@ -4,13 +4,15 @@
 
 **Replacement firmware for the Sonos hardware you already own**, written in
 memory-safe Rust. The fleet: eight Play:5 Gen1, four Play:1, a Play:3, a Sub,
-a Playbar, three Bridges. Two SoC families (big-endian PowerPC and
-big-endian MIPS), two firmware generations (S1 and S2), one target codebase.
+a Playbar, three Bridges. Two instruction-set families appear in the
+extracted firmware images (big-endian PowerPC and big-endian MIPS; the exact
+SoCs and which units run which image are still unresolved), two firmware
+generations (S1 and S2), one target codebase.
 
 ![status: research](https://img.shields.io/badge/status-research%2Fpre--alpha-orange)
 ![language: Rust 2021/2024](https://img.shields.io/badge/Rust-2021%2F2024-dea584)
 ![license: MIT + rider](https://img.shields.io/badge/license-MIT%20%2B%20OpenAI%2FAnthropic%20rider-blue)
-![targets: mips32 BE · powerpc BE](https://img.shields.io/badge/targets-mips32%20BE%20%C2%B7%20powerpc%20BE-7b4bff)
+![toolchain targets: mips BE · powerpc BE](https://img.shields.io/badge/toolchain%20targets-mips%20BE%20%C2%B7%20powerpc%20BE-7b4bff)
 ![safety: forbid(unsafe_code) app crates](https://img.shields.io/badge/safety-forbid%28unsafe_code%29%20app%20crates-blue)
 
 </div>
@@ -106,6 +108,13 @@ Evidence lives in `toolchain/results/` with committed serial logs.
 | Initramfs unpack, `/init` exec, user→kernel syscalls, clean reboot | BE-PPC (QEMU g3beige/OpenBIOS, 4.9 kernel) | done; console fd wiring is a per-machine open item |
 | std + full dependency graph cross-compiles | BE-PPC via `-Z build-std` | done |
 | asupersync lib compiles for BE-PPC | | open: 133 errors, one root cause (`AtomicU64` absent, `max-atomic-width=32`); fix scoped as a `portable-atomic` abstraction |
+
+These are cross-build and emulation results on generic QEMU machines (Malta,
+g3beige). They show the toolchain and boot path work for the two big-endian
+instruction-set families; they say nothing about Sonos silicon. The committed
+image evidence records no ISA revision, ABI or float ABI for the MIPS image
+(`abi: null` in `inventory/image-evidence.json`), and no live unit is mapped to
+that image (`inventory/INVENTORY.md`, `docs/contracts/e01.md` §11).
 
 Two porting bugs were found and fixed along the way, and both are documented
 in `toolchain/results/RESULTS.md`: MIPS o32 syscall numbers are 4000-based
