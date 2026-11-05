@@ -12,7 +12,9 @@
 
 #![forbid(unsafe_code)]
 
+pub mod events; // V01 (`ffw-err`): shared bounded critical-event buffer
 pub mod group; // N03 (`ffw-u07`)
+pub mod latency; // V01 (`ffw-err`)
 pub mod rate; // D03 (`ffw-j9r`)
 
 use franken_board_profile::BoardProfile;

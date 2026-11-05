@@ -73,6 +73,7 @@ name = "franken-alloc-probe"
 version = "0.1.0"
 dependencies = [
  "franken-board-profile",
+ "franken-clock",
  "franken-dsp",
 ]
 

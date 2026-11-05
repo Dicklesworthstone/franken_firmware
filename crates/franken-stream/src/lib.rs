@@ -23,6 +23,7 @@ use sha2::Sha256;
 use std::collections::BTreeMap;
 
 mod negotiation;
+pub mod playout; // N04 (`ffw-nx0`)
 pub use negotiation::{
     Capabilities, FEATURE_PARTIAL_FINAL_BLOCK, FEATURE_XOR_PARITY_FEC, FORMAT_PCM16_BE_STEREO_48K,
     HELLO_DATAGRAM_BYTES, Initiator, KNOWN_FEATURES, KNOWN_FORMATS, NegotiatedSession,
