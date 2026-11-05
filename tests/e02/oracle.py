@@ -619,14 +619,14 @@ def check_inventory(cases):
     referenced = set()
     for c in cases["cases"]:
         for a in c["args"]:
-            if a.startswith("captures/"):
+            if a.startswith("synthetic/"):
                 referenced.add(a)
         if "expect" in c:
             referenced.add(c["expect"])
     for rel in sorted(referenced):
         if not os.path.isfile(os.path.join(HERE, rel)):
             problems.append("%s is referenced but missing" % rel)
-    for sub in ("captures", "expected"):
+    for sub in ("synthetic", "expected"):
         for name in sorted(os.listdir(os.path.join(HERE, sub))):
             if "%s/%s" % (sub, name) not in referenced:
                 problems.append("%s/%s is not used by any case" % (sub, name))

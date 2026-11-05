@@ -154,7 +154,7 @@ fn no_capture_or_expected_file_is_orphaned_and_none_is_missing() {
     let mut referenced: BTreeSet<String> = BTreeSet::new();
     for case in cases["cases"].as_array().expect("cases") {
         for arg in case_args(case) {
-            if arg.starts_with("captures/") {
+            if arg.starts_with("synthetic/") {
                 referenced.insert(arg);
             }
         }
@@ -168,7 +168,7 @@ fn no_capture_or_expected_file_is_orphaned_and_none_is_missing() {
             "{rel} is referenced by a case but missing"
         );
     }
-    for sub in ["captures", "expected"] {
+    for sub in ["synthetic", "expected"] {
         for entry in std::fs::read_dir(dir.join(sub)).expect("fixture directory") {
             let name = entry
                 .expect("dir entry")
@@ -257,7 +257,7 @@ fn the_subset_matcher_rejects_every_kind_of_planted_difference() {
 #[test]
 fn a_real_report_fails_against_a_planted_wrong_expectation() {
     // The clean capture really has full coverage; an expectation that says otherwise must not match.
-    let out = run_cli(&["series", "captures/clean.cap"]);
+    let out = run_cli(&["series", "synthetic/clean.cap"]);
     assert_eq!(out.code, 0, "{}", out.stderr);
     let actual: Value = serde_json::from_str(out.stdout.trim()).expect("report is JSON");
     let right = json!({"denominators": {"coverage_ppm": 1_000_000}});
@@ -268,11 +268,11 @@ fn a_real_report_fails_against_a_planted_wrong_expectation() {
 
 #[test]
 fn the_cli_never_reports_a_bare_path_in_an_error() {
-    let out = run_cli(&["series", "captures/no_such_file.cap"]);
+    let out = run_cli(&["series", "synthetic/no_such_file.cap"]);
     assert_eq!(out.code, 2);
     assert!(out.stderr.contains("no_such_file.cap"));
     assert!(
-        !out.stderr.contains("captures/"),
+        !out.stderr.contains("synthetic/"),
         "diagnostics name the file, not its directory"
     );
     assert!(out.stdout.is_empty());

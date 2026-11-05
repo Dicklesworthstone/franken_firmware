@@ -1,0 +1,24 @@
+ffw.baseline.memory.v1 page_size=16384
+# SYNTHETIC and deliberately inconsistent: every sanity check should fire, and nothing is "fixed".
+snapshot label=bad at_mono_ns=5
+--- meminfo
+MemTotal:        1000 kB
+MemFree:         2000 kB
+Cached:           100 kB
+Mapped:           300 kB
+--- status pid=1
+Name:	x
+VmHWM:	    2000 kB
+VmRSS:	    2500 kB
+RssAnon:	    1000 kB
+RssFile:	    1400 kB
+RssShmem:	     200 kB
+--- smaps_rollup pid=1
+Rss:                2500 kB
+Pss:                3000 kB
+Shared_Clean:        900 kB
+Shared_Dirty:          0 kB
+Private_Clean:       500 kB
+Private_Dirty:      1000 kB
+--- statm pid=1
+1 625 0 0 0 0 0

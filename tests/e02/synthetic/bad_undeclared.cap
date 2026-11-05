@@ -1,0 +1,4 @@
+ffw.baseline.capture.v1
+meta evidence=synthetic profile=p cadence_ms=1000 declared_ms=2000
+counter name=a role=other width=32
+sample mono_ns=1 b=2

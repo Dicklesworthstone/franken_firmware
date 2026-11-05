@@ -1,0 +1,5 @@
+ffw.baseline.memory.v1 page_size=4096
+snapshot label=a at_mono_ns=1
+--- meminfo
+MemTotal: 100 kB
+MemFree: 40 MB

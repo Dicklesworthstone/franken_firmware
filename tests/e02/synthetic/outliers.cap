@@ -1,0 +1,19 @@
+ffw.baseline.capture.v1
+# SYNTHETIC capture: written by hand for the E02 analyzer's tests. It describes no device.
+# lat_us has a spike (5000, kept and flagged) and an implausible reading (4000000 > the declared
+# maximum 1000000, rejected). rss_kib is well behaved.
+meta evidence=synthetic profile=synthetic-outliers-v1 cadence_ms=1000 declared_ms=10000
+counter name=xruns role=dev_underruns width=32 max_rate_per_s=1000
+gauge name=lat_us role=value max=1000000
+gauge name=rss_kib role=value max=30000
+sample mono_ns=100000000000 xruns=0 lat_us=120 rss_kib=2400
+sample mono_ns=101000000000 xruns=0 lat_us=118 rss_kib=2410
+sample mono_ns=102000000000 xruns=0 lat_us=125 rss_kib=2405
+sample mono_ns=103000000000 xruns=0 lat_us=119 rss_kib=2420
+sample mono_ns=104000000000 xruns=0 lat_us=121 rss_kib=2415
+sample mono_ns=105000000000 xruns=0 lat_us=5000 rss_kib=2430
+sample mono_ns=106000000000 xruns=0 lat_us=117 rss_kib=2425
+sample mono_ns=107000000000 xruns=0 lat_us=123 rss_kib=2440
+sample mono_ns=108000000000 xruns=0 lat_us=122 rss_kib=2435
+sample mono_ns=109000000000 xruns=0 lat_us=4000000 rss_kib=2450
+sample mono_ns=110000000000 xruns=0 lat_us=120 rss_kib=2445

@@ -1,0 +1,20 @@
+ffw.baseline.capture.v1
+# SYNTHETIC capture: written by hand for the E02 analyzer's tests. It describes no device.
+# Clean playback: 10 s at a 1 s cadence, every signal present, nothing fires.
+meta evidence=synthetic profile=synthetic-clean-v1 cadence_ms=1000 declared_ms=10000 playout_ms=0 min_coverage_ppm=1000000 max_dropout_intervals=0
+counter name=xruns role=dev_underruns width=32 max_rate_per_s=1000
+counter name=late role=late_packets width=32 max_rate_per_s=1000
+counter name=cpu role=cpu_misses width=32 max_rate_per_s=1000
+counter name=src role=source_bytes width=64
+gauge name=play role=playing
+sample mono_ns=100000000000 xruns=0 late=0 cpu=0 src=0 play=1
+sample mono_ns=101000000000 xruns=0 late=0 cpu=0 src=100 play=1
+sample mono_ns=102000000000 xruns=0 late=0 cpu=0 src=200 play=1
+sample mono_ns=103000000000 xruns=0 late=0 cpu=0 src=300 play=1
+sample mono_ns=104000000000 xruns=0 late=0 cpu=0 src=400 play=1
+sample mono_ns=105000000000 xruns=0 late=0 cpu=0 src=500 play=1
+sample mono_ns=106000000000 xruns=0 late=0 cpu=0 src=600 play=1
+sample mono_ns=107000000000 xruns=0 late=0 cpu=0 src=700 play=1
+sample mono_ns=108000000000 xruns=0 late=0 cpu=0 src=800 play=1
+sample mono_ns=109000000000 xruns=0 late=0 cpu=0 src=900 play=1
+sample mono_ns=110000000000 xruns=0 late=0 cpu=0 src=1000 play=1

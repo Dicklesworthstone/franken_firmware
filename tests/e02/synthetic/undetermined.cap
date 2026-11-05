@@ -1,0 +1,19 @@
+ffw.baseline.capture.v1
+# SYNTHETIC capture: written by hand for the E02 analyzer's tests. It describes no device.
+# The capture carries only the underrun counter and the source byte counter: no playing state, no
+# late-packet counter, no CPU counter. The underrun's cause cannot be determined and the report must
+# say which signals it would have needed.
+meta evidence=synthetic profile=synthetic-undetermined-v1 cadence_ms=1000 declared_ms=10000
+counter name=xruns role=dev_underruns width=32 max_rate_per_s=1000
+counter name=src role=source_bytes width=64
+sample mono_ns=100000000000 xruns=0 src=0
+sample mono_ns=101000000000 xruns=0 src=100
+sample mono_ns=102000000000 xruns=0 src=200
+sample mono_ns=103000000000 xruns=0 src=300
+sample mono_ns=104000000000 xruns=2 src=400
+sample mono_ns=105000000000 xruns=2 src=500
+sample mono_ns=106000000000 xruns=2 src=600
+sample mono_ns=107000000000 xruns=2 src=700
+sample mono_ns=108000000000 xruns=2 src=800
+sample mono_ns=109000000000 xruns=2 src=900
+sample mono_ns=110000000000 xruns=2 src=1000

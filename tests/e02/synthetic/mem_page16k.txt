@@ -1,0 +1,15 @@
+ffw.baseline.memory.v1 page_size=16384
+# SYNTHETIC. 16 KiB pages: statm counts pages, so 300 pages are 4800 KiB and 150 pages are 2400 KiB.
+# Process 10 has status + statm that agree; process 11 has only statm.
+snapshot label=only at_mono_ns=1
+--- meminfo
+MemTotal:       64000 kB
+MemFree:        40000 kB
+--- status pid=10
+Name:	a
+VmHWM:	    5000 kB
+VmRSS:	    4800 kB
+--- statm pid=10
+1000 300 100 10 0 200 0
+--- statm pid=11
+500 150 40 10 0 100 0

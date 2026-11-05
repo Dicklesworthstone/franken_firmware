@@ -1,0 +1,64 @@
+ffw.baseline.memory.v1 page_size=4096 reserve_kib=4096
+# SYNTHETIC /proc captures for the E02 analyzer's tests. They describe no device.
+# Two processes share pages (so RSS sums double count), plus one kernel thread, in two snapshots.
+snapshot label=steady at_mono_ns=1000000000
+--- meminfo
+MemTotal:       30000 kB
+MemFree:        20000 kB
+MemAvailable:   24000 kB
+Buffers:          500 kB
+Cached:          7000 kB
+Mapped:          3000 kB
+Shmem:            400 kB
+Slab:            1500 kB
+KernelStack:      100 kB
+PageTables:       200 kB
+AnonPages:       4000 kB
+--- status pid=200
+Name:	netd
+VmHWM:	    1300 kB
+VmRSS:	    1200 kB
+--- smaps_rollup pid=200
+Rss:                1200 kB
+Pss:                 700 kB
+Shared_Clean:        800 kB
+Shared_Dirty:          0 kB
+Private_Clean:       100 kB
+Private_Dirty:       300 kB
+--- status pid=100
+Name:	player
+VmHWM:	    3000 kB
+VmRSS:	    2500 kB
+--- smaps_rollup pid=100
+Rss:                2500 kB
+Pss:                1800 kB
+Shared_Clean:        900 kB
+Shared_Dirty:          0 kB
+Private_Clean:       500 kB
+Private_Dirty:      1100 kB
+--- statm pid=100
+2000 625 150 100 0 400 0
+--- status pid=2
+Name:	kthreadd
+State:	S (sleeping)
+snapshot label=transition at_mono_ns=2000000000
+--- meminfo
+MemTotal:       30000 kB
+MemFree:        17000 kB
+Buffers:          500 kB
+Cached:          7000 kB
+Mapped:          3000 kB
+Slab:            1500 kB
+KernelStack:      100 kB
+PageTables:       200 kB
+--- status pid=100
+Name:	player
+VmHWM:	    3400 kB
+VmRSS:	    2800 kB
+--- smaps_rollup pid=100
+Rss:                2800 kB
+Pss:                2000 kB
+Shared_Clean:        900 kB
+Shared_Dirty:        100 kB
+Private_Clean:       600 kB
+Private_Dirty:      1200 kB

@@ -1,0 +1,12 @@
+ffw.baseline.capture.v1
+# SYNTHETIC capture: written by hand for the E02 analyzer's tests. It describes no device.
+# 48 kHz device clock, 32-bit. It wraps between t=1 and t=2 (52000 frames in that second, which a
+# 96000/s ceiling allows), then loses half a second of frames between t=3 and t=4: a stall.
+meta evidence=synthetic profile=synthetic-device-v1 cadence_ms=1000 declared_ms=5000 device_rate_hz=48000 device_width=32 device_stall_frames=4800
+counter name=xruns role=dev_underruns width=32 max_rate_per_s=1000
+sample mono_ns=100000000000 dev_frames=4294915296 xruns=0
+sample mono_ns=101000000000 dev_frames=4294963296 xruns=0
+sample mono_ns=102000000000 dev_frames=48000 xruns=0
+sample mono_ns=103000000000 dev_frames=96000 xruns=0
+sample mono_ns=104000000000 dev_frames=120000 xruns=0
+sample mono_ns=105000000000 dev_frames=168000 xruns=0

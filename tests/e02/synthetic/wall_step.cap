@@ -1,0 +1,17 @@
+ffw.baseline.capture.v1
+# SYNTHETIC capture: written by hand for the E02 analyzer's tests. It describes no device.
+# The wall clock steps +3600 s at t=5 and -1800 s at t=9 while the monotonic clock stays regular.
+# Neither step may create a coverage hole or a dropout. One real underrun at t=7 must still be found.
+meta evidence=synthetic profile=synthetic-wallstep-v1 cadence_ms=1000 declared_ms=10000
+counter name=xruns role=dev_underruns width=32 max_rate_per_s=1000
+sample mono_ns=100000000000 wall_ns=1700000000000000000 xruns=0
+sample mono_ns=101000000000 wall_ns=1700000001000000000 xruns=0
+sample mono_ns=102000000000 wall_ns=1700000002000000000 xruns=0
+sample mono_ns=103000000000 wall_ns=1700000003000000000 xruns=0
+sample mono_ns=104000000000 wall_ns=1700000004000000000 xruns=0
+sample mono_ns=105000000000 wall_ns=1700003605000000000 xruns=0
+sample mono_ns=106000000000 wall_ns=1700003606000000000 xruns=0
+sample mono_ns=107000000000 wall_ns=1700003607000000000 xruns=1
+sample mono_ns=108000000000 wall_ns=1700003608000000000 xruns=1
+sample mono_ns=109000000000 wall_ns=1700001809000000000 xruns=1
+sample mono_ns=110000000000 wall_ns=1700001810000000000 xruns=1

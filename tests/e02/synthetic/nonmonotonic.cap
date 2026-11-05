@@ -1,0 +1,11 @@
+ffw.baseline.capture.v1
+# SYNTHETIC capture: written by hand for the E02 analyzer's tests. It describes no device.
+# Samples arrive out of order (t=2, then t=1, then t=2 again). They are rejected, never re-ordered,
+# and the xruns=9 they carry never reaches the counter.
+meta evidence=synthetic profile=synthetic-nonmono-v1 cadence_ms=1000 declared_ms=4000
+counter name=xruns role=dev_underruns width=32 max_rate_per_s=1000
+sample mono_ns=100000000000 xruns=0
+sample mono_ns=102000000000 xruns=0
+sample mono_ns=101000000000 xruns=9
+sample mono_ns=102000000000 xruns=9
+sample mono_ns=103000000000 xruns=0

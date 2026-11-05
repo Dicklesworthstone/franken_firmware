@@ -1,0 +1,20 @@
+ffw.baseline.capture.v1
+# SYNTHETIC capture: written by hand for the E02 analyzer's tests. It describes no device.
+# xruns: a 32-bit counter wraps 4294967290 -> 5 (11 events, plausible at 1000/s).
+# late: a 32-bit counter falls 100 -> 2, far too many events for a wrap at 1000/s: a reset.
+# src: a 64-bit counter falls 1500 -> 50: a reset (64-bit counters do not wrap in practice).
+meta evidence=synthetic profile=synthetic-reset-wrap-v1 cadence_ms=1000 declared_ms=10000
+counter name=xruns role=dev_underruns width=32 max_rate_per_s=1000
+counter name=late role=late_packets width=32 max_rate_per_s=1000
+counter name=src role=source_bytes width=64
+sample mono_ns=100000000000 xruns=4294967290 late=100 src=1000
+sample mono_ns=101000000000 xruns=4294967290 late=100 src=1100
+sample mono_ns=102000000000 xruns=5 late=100 src=1200
+sample mono_ns=103000000000 xruns=5 late=100 src=1300
+sample mono_ns=104000000000 xruns=5 late=2 src=1400
+sample mono_ns=105000000000 xruns=5 late=2 src=1500
+sample mono_ns=106000000000 xruns=5 late=2 src=50
+sample mono_ns=107000000000 xruns=5 late=2 src=150
+sample mono_ns=108000000000 xruns=5 late=2 src=250
+sample mono_ns=109000000000 xruns=5 late=2 src=350
+sample mono_ns=110000000000 xruns=5 late=2 src=450

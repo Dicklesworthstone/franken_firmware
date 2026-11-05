@@ -1,0 +1,3 @@
+ffw.baseline.capture.v0
+# Wrong schema version: refused at line 1.
+meta evidence=synthetic profile=p cadence_ms=1000 declared_ms=1000

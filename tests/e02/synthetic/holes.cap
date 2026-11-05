@@ -1,0 +1,16 @@
+ffw.baseline.capture.v1
+# SYNTHETIC capture: written by hand for the E02 analyzer's tests. It describes no device.
+# Samples are missing between t=4 s and t=8 s (a 4 s coverage hole). The underrun counter rose by 3
+# somewhere inside it. Nothing is interpolated: the 3 events are reported as located nowhere.
+meta evidence=synthetic profile=synthetic-holes-v1 cadence_ms=1000 declared_ms=12000 min_coverage_ppm=900000 max_dropout_intervals=0
+counter name=xruns role=dev_underruns width=32 max_rate_per_s=1000
+sample mono_ns=100000000000 xruns=0
+sample mono_ns=101000000000 xruns=0
+sample mono_ns=102000000000 xruns=0
+sample mono_ns=103000000000 xruns=0
+sample mono_ns=104000000000 xruns=0
+sample mono_ns=108000000000 xruns=3
+sample mono_ns=109000000000 xruns=3
+sample mono_ns=110000000000 xruns=3
+sample mono_ns=111000000000 xruns=3
+sample mono_ns=112000000000 xruns=3

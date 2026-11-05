@@ -1,0 +1,12 @@
+ffw.baseline.capture.v1
+# SYNTHETIC capture: written by hand for the E02 analyzer's tests. It describes no device.
+# Declared 10 s but the capture stops at 6 s. The missing 4 s are not extrapolated.
+meta evidence=synthetic profile=synthetic-truncated-v1 cadence_ms=1000 declared_ms=10000 min_coverage_ppm=1000000
+counter name=xruns role=dev_underruns width=32 max_rate_per_s=1000
+sample mono_ns=100000000000 xruns=0
+sample mono_ns=101000000000 xruns=0
+sample mono_ns=102000000000 xruns=0
+sample mono_ns=103000000000 xruns=0
+sample mono_ns=104000000000 xruns=0
+sample mono_ns=105000000000 xruns=0
+sample mono_ns=106000000000 xruns=0
