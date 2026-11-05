@@ -44,11 +44,33 @@
       ]
     },
     {
+      "name": "franken-atomic",
+      "path": "crates/franken-atomic",
+      "owner": "P05",
+      "role": "library",
+      "unsafe_policy": "forbid",
+      "deps": [],
+      "optional_deps": [],
+      "dev_deps": [],
+      "layer": 3
+    },
+    {
+      "name": "franken-journal",
+      "path": "crates/franken-journal",
+      "owner": "U01",
+      "role": "library",
+      "unsafe_policy": "forbid",
+      "deps": [],
+      "optional_deps": [],
+      "dev_deps": [],
+      "layer": 4
+    },
+    {
       "name": "franken-platform",
       "path": "crates/franken-platform",
       "owner": "P02",
       "role": "platform",
-      "layer": 3,
+      "layer": 5,
       "unsafe_policy": "forbid",
       "deps": [
         "franken-board-profile"
@@ -63,7 +85,7 @@
       "path": "crates/franken-hal",
       "owner": "E04",
       "role": "library",
-      "layer": 4,
+      "layer": 7,
       "unsafe_policy": "forbid",
       "deps": [
         "franken-board-profile"
@@ -78,7 +100,7 @@
       "path": "crates/franken-dsp",
       "owner": "D01",
       "role": "library",
-      "layer": 5,
+      "layer": 8,
       "unsafe_policy": "forbid",
       "deps": [
         "franken-board-profile"
@@ -93,7 +115,7 @@
       "path": "crates/franken-clock",
       "owner": "N03",
       "role": "library",
-      "layer": 6,
+      "layer": 9,
       "unsafe_policy": "forbid",
       "deps": [
         "franken-board-profile"
@@ -108,7 +130,7 @@
       "path": "crates/franken-stream",
       "owner": "N01",
       "role": "library",
-      "layer": 7,
+      "layer": 10,
       "unsafe_policy": "forbid",
       "deps": [
         "franken-dsp"
@@ -124,7 +146,7 @@
       "path": "crates/franken-session",
       "owner": "G01",
       "role": "library",
-      "layer": 8,
+      "layer": 11,
       "unsafe_policy": "forbid",
       "deps": [
         "franken-board-profile"
@@ -139,7 +161,7 @@
       "path": "crates/franken-control",
       "owner": "G03",
       "role": "library",
-      "layer": 9,
+      "layer": 12,
       "unsafe_policy": "forbid",
       "deps": [
         "franken-session",
@@ -156,7 +178,7 @@
       "path": "crates/franken-speaker",
       "owner": "P01",
       "role": "application",
-      "layer": 10,
+      "layer": 13,
       "unsafe_policy": "forbid",
       "deps": [
         "franken-board-profile",
@@ -183,7 +205,7 @@
       "path": "crates/franken-alloc-probe",
       "owner": "D01",
       "role": "host_tool",
-      "layer": 11,
+      "layer": 14,
       "unsafe_policy": "deny_with_scoped_allow",
       "deps": [],
       "optional_deps": [],
@@ -199,7 +221,7 @@
       "path": "crates/franken-baseline",
       "owner": "E02",
       "role": "host_tool",
-      "layer": 12,
+      "layer": 15,
       "unsafe_policy": "forbid",
       "deps": [],
       "optional_deps": [],
@@ -284,6 +306,16 @@
     {
       "path": "toolchain/src/ffw-hello-init",
       "owner": "E07",
+      "kind": "crate"
+    },
+    {
+      "path": "crates/franken-atomic",
+      "owner": "P05",
+      "kind": "crate"
+    },
+    {
+      "path": "crates/franken-journal",
+      "owner": "U01",
       "kind": "crate"
     },
     {
@@ -439,6 +471,26 @@
     {
       "path": "tests/n04",
       "owner": "N04",
+      "kind": "fixture"
+    },
+    {
+      "path": "tests/d04",
+      "owner": "D04",
+      "kind": "fixture"
+    },
+    {
+      "path": "tests/p02",
+      "owner": "P02",
+      "kind": "fixture"
+    },
+    {
+      "path": "tests/p05",
+      "owner": "P05",
+      "kind": "fixture"
+    },
+    {
+      "path": "tests/u01",
+      "owner": "U01",
       "kind": "fixture"
     }
   ],

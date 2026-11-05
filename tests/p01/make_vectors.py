@@ -434,33 +434,39 @@ def build(base):
                        "layer_violation": ["franken-hal->franken-speaker"],
                        "optional_dep_wrong_owner": ["franken-hal->franken-speaker"]}))
 
-    # --- counted unsafe exceptions: an unsafe platform crate in a device image is allowed only through listed edges
-    UNSAFE = [S("/crates/name=franken-platform/unsafe_policy", "deny_with_scoped_allow")]
-    EDGE = {"from": "franken-speaker", "to": "franken-platform", "reason": "raw syscall trampolines for the clock and entropy"}
+    # --- counted unsafe exceptions: an unsafe platform crate in a device image is allowed only through listed edges.
+    # The vectors plant their OWN unsafe crate, so they hold whichever real crates the base contract has (the platform-linux
+    # leaf, once declared, is itself an unsafe crate behind the speaker and would otherwise take part in every one of them).
+    PROBE = "franken-sys-probe"
+    PLANT = [P("/crates", {"name": PROBE, "path": f"crates/{PROBE}", "owner": "P02", "role": "platform", "layer": 1,
+                           "unsafe_policy": "deny_with_scoped_allow", "deps": [], "optional_deps": [], "dev_deps": []}),
+             P("/assets", {"path": f"crates/{PROBE}", "owner": "P02", "kind": "crate"}),
+             P("/crates/name=franken-speaker/deps", PROBE)]
+    EDGE = {"from": "franken-speaker", "to": PROBE, "reason": "raw syscall trampolines for the clock and entropy"}
     DEVICE_SPEAKERS = ["speaker-mips-full", "speaker-mips-min", "speaker-ppc-full", "speaker-ppc-min"]
     in_closure = lambda crate: {"unsafe_in_device_closure": [f"{a}:{crate}" for a in DEVICE_SPEAKERS]}
     v.append(validate("P01-V-119", "an unsafe platform crate in a device artifact's closure with no exception is refused",
-                      UNSAFE, ["unsafe_in_device_closure"], in_closure("franken-platform")))
+                      PLANT, ["unsafe_in_device_closure"], in_closure(PROBE)))
     v.append(validate("P01-V-120", "permitted positive: a platform crate with a scoped unsafe allowance, reached through its one listed edge",
-                      UNSAFE + [P("/unsafe_exceptions", EDGE)], []))
+                      PLANT + [P("/unsafe_exceptions", EDGE)], []))
     v.append(validate("P01-V-121", "an unsafe exception with no reason is refused",
-                      UNSAFE + [P("/unsafe_exceptions", dict(EDGE, reason=""))], ["unsafe_exception_without_reason"],
-                      {"unsafe_exception_without_reason": ["franken-speaker->franken-platform"]}))
+                      PLANT + [P("/unsafe_exceptions", dict(EDGE, reason=""))], ["unsafe_exception_without_reason"],
+                      {"unsafe_exception_without_reason": [f"franken-speaker->{PROBE}"]}))
     v.append(validate("P01-V-122", "an exception for an edge that does not exist is stale and excuses nothing",
-                      UNSAFE + [P("/unsafe_exceptions", dict(EDGE, **{"from": "franken-control"}))],
+                      PLANT + [P("/unsafe_exceptions", dict(EDGE, **{"from": "franken-control"}))],
                       ["stale_unsafe_exception", "unsafe_in_device_closure"],
-                      dict(in_closure("franken-platform"), stale_unsafe_exception=["franken-control->franken-platform"])))
+                      dict(in_closure(PROBE), stale_unsafe_exception=[f"franken-control->{PROBE}"])))
     v.append(validate("P01-V-123", "an exception onto a crate with no scoped unsafe allowance is stale and excuses nothing",
-                      UNSAFE + [P("/unsafe_exceptions", dict(EDGE, to="franken-hal"))],
+                      PLANT + [P("/unsafe_exceptions", dict(EDGE, to="franken-hal"))],
                       ["stale_unsafe_exception", "unsafe_in_device_closure"],
-                      dict(in_closure("franken-platform"), stale_unsafe_exception=["franken-speaker->franken-hal"])))
-    SECOND = P("/crates/name=franken-hal/deps", "franken-platform")
+                      dict(in_closure(PROBE), stale_unsafe_exception=["franken-speaker->franken-hal"])))
+    SECOND = P("/crates/name=franken-hal/deps", PROBE)
     v.append(validate("P01-V-124", "a second, unlisted edge into the same unsafe crate is refused although the first is listed",
-                      UNSAFE + [P("/unsafe_exceptions", EDGE), SECOND], ["unsafe_in_device_closure"],
-                      in_closure("franken-platform")))
+                      PLANT + [P("/unsafe_exceptions", EDGE), SECOND], ["unsafe_in_device_closure"],
+                      in_closure(PROBE)))
     v.append(validate("P01-V-125", "permitted positive: both edges into the unsafe crate are listed",
-                      UNSAFE + [P("/unsafe_exceptions", EDGE), SECOND,
-                                P("/unsafe_exceptions", dict(EDGE, **{"from": "franken-hal"}))], []))
+                      PLANT + [P("/unsafe_exceptions", EDGE), SECOND,
+                               P("/unsafe_exceptions", dict(EDGE, **{"from": "franken-hal"}))], []))
     v.append(validate("P01-V-126", "an artifact's own crate with a scoped unsafe allowance is never excused",
                       [S("/crates/name=franken-speaker/unsafe_policy", "deny_with_scoped_allow")],
                       ["unsafe_in_device_closure", "unsafe_policy_not_permitted"],
@@ -480,6 +486,13 @@ def build(base):
                        TS_SECOND,
                        P("/test_support_exceptions", {"from": "franken-hal", "to": "franken-test-support", "reason": "rig"})], []))
     v.append(parse("P01-V-129", "a contract without the unsafe_exceptions list is not defaulted", [R("/unsafe_exceptions")]))
+
+    # --- layer order: franken-atomic (P05) sits below its intended consumer franken-platform
+    v.append(validate("P01-V-130", "permitted positive: franken-platform may depend on franken-atomic, which sits below it",
+                      [P("/crates/name=franken-platform/deps", "franken-atomic")], []))
+    v.append(validate("P01-V-131", "franken-atomic may not depend back on franken-platform: the layer order refuses the reverse edge",
+                      [P("/crates/name=franken-atomic/deps", "franken-platform")], ["layer_violation"],
+                      {"layer_violation": ["franken-atomic->franken-platform"]}))
 
     # --- linkers: the wrapper that links a device std artifact, declared with its digest and the ABI it must produce
     MIPS_LN = "/linkers/target=mips_be"

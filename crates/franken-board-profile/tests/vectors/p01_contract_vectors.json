@@ -1,7 +1,7 @@
 {
  "schema": "ffw.p01.vectors.v1",
  "base": "p01_workspace_contract.json",
- "base_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+ "base_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
  "vectors": [
   {
    "id": "P01-V-001",
@@ -15,7 +15,7 @@
    "title": "the contract digest is the pinned canonical-JSON SHA-256",
    "kind": "digest",
    "ops": [],
-   "expect_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94"
+   "expect_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2"
   },
   {
    "id": "P01-V-003",
@@ -2453,9 +2453,33 @@
    "kind": "validate",
    "ops": [
     {
-     "op": "set",
-     "path": "/crates/name=franken-platform/unsafe_policy",
-     "value": "deny_with_scoped_allow"
+     "op": "push",
+     "path": "/crates",
+     "value": {
+      "name": "franken-sys-probe",
+      "path": "crates/franken-sys-probe",
+      "owner": "P02",
+      "role": "platform",
+      "layer": 1,
+      "unsafe_policy": "deny_with_scoped_allow",
+      "deps": [],
+      "optional_deps": [],
+      "dev_deps": []
+     }
+    },
+    {
+     "op": "push",
+     "path": "/assets",
+     "value": {
+      "path": "crates/franken-sys-probe",
+      "owner": "P02",
+      "kind": "crate"
+     }
+    },
+    {
+     "op": "push",
+     "path": "/crates/name=franken-speaker/deps",
+     "value": "franken-sys-probe"
     }
    ],
    "expect_codes": [
@@ -2463,10 +2487,10 @@
    ],
    "expect_subjects": {
     "unsafe_in_device_closure": [
-     "speaker-mips-full:franken-platform",
-     "speaker-mips-min:franken-platform",
-     "speaker-ppc-full:franken-platform",
-     "speaker-ppc-min:franken-platform"
+     "speaker-mips-full:franken-sys-probe",
+     "speaker-mips-min:franken-sys-probe",
+     "speaker-ppc-full:franken-sys-probe",
+     "speaker-ppc-min:franken-sys-probe"
     ]
    }
   },
@@ -2476,16 +2500,40 @@
    "kind": "validate",
    "ops": [
     {
-     "op": "set",
-     "path": "/crates/name=franken-platform/unsafe_policy",
-     "value": "deny_with_scoped_allow"
+     "op": "push",
+     "path": "/crates",
+     "value": {
+      "name": "franken-sys-probe",
+      "path": "crates/franken-sys-probe",
+      "owner": "P02",
+      "role": "platform",
+      "layer": 1,
+      "unsafe_policy": "deny_with_scoped_allow",
+      "deps": [],
+      "optional_deps": [],
+      "dev_deps": []
+     }
+    },
+    {
+     "op": "push",
+     "path": "/assets",
+     "value": {
+      "path": "crates/franken-sys-probe",
+      "owner": "P02",
+      "kind": "crate"
+     }
+    },
+    {
+     "op": "push",
+     "path": "/crates/name=franken-speaker/deps",
+     "value": "franken-sys-probe"
     },
     {
      "op": "push",
      "path": "/unsafe_exceptions",
      "value": {
       "from": "franken-speaker",
-      "to": "franken-platform",
+      "to": "franken-sys-probe",
       "reason": "raw syscall trampolines for the clock and entropy"
      }
     }
@@ -2498,16 +2546,40 @@
    "kind": "validate",
    "ops": [
     {
-     "op": "set",
-     "path": "/crates/name=franken-platform/unsafe_policy",
-     "value": "deny_with_scoped_allow"
+     "op": "push",
+     "path": "/crates",
+     "value": {
+      "name": "franken-sys-probe",
+      "path": "crates/franken-sys-probe",
+      "owner": "P02",
+      "role": "platform",
+      "layer": 1,
+      "unsafe_policy": "deny_with_scoped_allow",
+      "deps": [],
+      "optional_deps": [],
+      "dev_deps": []
+     }
+    },
+    {
+     "op": "push",
+     "path": "/assets",
+     "value": {
+      "path": "crates/franken-sys-probe",
+      "owner": "P02",
+      "kind": "crate"
+     }
+    },
+    {
+     "op": "push",
+     "path": "/crates/name=franken-speaker/deps",
+     "value": "franken-sys-probe"
     },
     {
      "op": "push",
      "path": "/unsafe_exceptions",
      "value": {
       "from": "franken-speaker",
-      "to": "franken-platform",
+      "to": "franken-sys-probe",
       "reason": ""
      }
     }
@@ -2517,7 +2589,7 @@
    ],
    "expect_subjects": {
     "unsafe_exception_without_reason": [
-     "franken-speaker->franken-platform"
+     "franken-speaker->franken-sys-probe"
     ]
    }
   },
@@ -2527,16 +2599,40 @@
    "kind": "validate",
    "ops": [
     {
-     "op": "set",
-     "path": "/crates/name=franken-platform/unsafe_policy",
-     "value": "deny_with_scoped_allow"
+     "op": "push",
+     "path": "/crates",
+     "value": {
+      "name": "franken-sys-probe",
+      "path": "crates/franken-sys-probe",
+      "owner": "P02",
+      "role": "platform",
+      "layer": 1,
+      "unsafe_policy": "deny_with_scoped_allow",
+      "deps": [],
+      "optional_deps": [],
+      "dev_deps": []
+     }
+    },
+    {
+     "op": "push",
+     "path": "/assets",
+     "value": {
+      "path": "crates/franken-sys-probe",
+      "owner": "P02",
+      "kind": "crate"
+     }
+    },
+    {
+     "op": "push",
+     "path": "/crates/name=franken-speaker/deps",
+     "value": "franken-sys-probe"
     },
     {
      "op": "push",
      "path": "/unsafe_exceptions",
      "value": {
       "from": "franken-control",
-      "to": "franken-platform",
+      "to": "franken-sys-probe",
       "reason": "raw syscall trampolines for the clock and entropy"
      }
     }
@@ -2547,13 +2643,13 @@
    ],
    "expect_subjects": {
     "unsafe_in_device_closure": [
-     "speaker-mips-full:franken-platform",
-     "speaker-mips-min:franken-platform",
-     "speaker-ppc-full:franken-platform",
-     "speaker-ppc-min:franken-platform"
+     "speaker-mips-full:franken-sys-probe",
+     "speaker-mips-min:franken-sys-probe",
+     "speaker-ppc-full:franken-sys-probe",
+     "speaker-ppc-min:franken-sys-probe"
     ],
     "stale_unsafe_exception": [
-     "franken-control->franken-platform"
+     "franken-control->franken-sys-probe"
     ]
    }
   },
@@ -2563,9 +2659,33 @@
    "kind": "validate",
    "ops": [
     {
-     "op": "set",
-     "path": "/crates/name=franken-platform/unsafe_policy",
-     "value": "deny_with_scoped_allow"
+     "op": "push",
+     "path": "/crates",
+     "value": {
+      "name": "franken-sys-probe",
+      "path": "crates/franken-sys-probe",
+      "owner": "P02",
+      "role": "platform",
+      "layer": 1,
+      "unsafe_policy": "deny_with_scoped_allow",
+      "deps": [],
+      "optional_deps": [],
+      "dev_deps": []
+     }
+    },
+    {
+     "op": "push",
+     "path": "/assets",
+     "value": {
+      "path": "crates/franken-sys-probe",
+      "owner": "P02",
+      "kind": "crate"
+     }
+    },
+    {
+     "op": "push",
+     "path": "/crates/name=franken-speaker/deps",
+     "value": "franken-sys-probe"
     },
     {
      "op": "push",
@@ -2583,10 +2703,10 @@
    ],
    "expect_subjects": {
     "unsafe_in_device_closure": [
-     "speaker-mips-full:franken-platform",
-     "speaker-mips-min:franken-platform",
-     "speaker-ppc-full:franken-platform",
-     "speaker-ppc-min:franken-platform"
+     "speaker-mips-full:franken-sys-probe",
+     "speaker-mips-min:franken-sys-probe",
+     "speaker-ppc-full:franken-sys-probe",
+     "speaker-ppc-min:franken-sys-probe"
     ],
     "stale_unsafe_exception": [
      "franken-speaker->franken-hal"
@@ -2599,23 +2719,47 @@
    "kind": "validate",
    "ops": [
     {
-     "op": "set",
-     "path": "/crates/name=franken-platform/unsafe_policy",
-     "value": "deny_with_scoped_allow"
+     "op": "push",
+     "path": "/crates",
+     "value": {
+      "name": "franken-sys-probe",
+      "path": "crates/franken-sys-probe",
+      "owner": "P02",
+      "role": "platform",
+      "layer": 1,
+      "unsafe_policy": "deny_with_scoped_allow",
+      "deps": [],
+      "optional_deps": [],
+      "dev_deps": []
+     }
+    },
+    {
+     "op": "push",
+     "path": "/assets",
+     "value": {
+      "path": "crates/franken-sys-probe",
+      "owner": "P02",
+      "kind": "crate"
+     }
+    },
+    {
+     "op": "push",
+     "path": "/crates/name=franken-speaker/deps",
+     "value": "franken-sys-probe"
     },
     {
      "op": "push",
      "path": "/unsafe_exceptions",
      "value": {
       "from": "franken-speaker",
-      "to": "franken-platform",
+      "to": "franken-sys-probe",
       "reason": "raw syscall trampolines for the clock and entropy"
      }
     },
     {
      "op": "push",
      "path": "/crates/name=franken-hal/deps",
-     "value": "franken-platform"
+     "value": "franken-sys-probe"
     }
    ],
    "expect_codes": [
@@ -2623,10 +2767,10 @@
    ],
    "expect_subjects": {
     "unsafe_in_device_closure": [
-     "speaker-mips-full:franken-platform",
-     "speaker-mips-min:franken-platform",
-     "speaker-ppc-full:franken-platform",
-     "speaker-ppc-min:franken-platform"
+     "speaker-mips-full:franken-sys-probe",
+     "speaker-mips-min:franken-sys-probe",
+     "speaker-ppc-full:franken-sys-probe",
+     "speaker-ppc-min:franken-sys-probe"
     ]
    }
   },
@@ -2636,30 +2780,54 @@
    "kind": "validate",
    "ops": [
     {
-     "op": "set",
-     "path": "/crates/name=franken-platform/unsafe_policy",
-     "value": "deny_with_scoped_allow"
+     "op": "push",
+     "path": "/crates",
+     "value": {
+      "name": "franken-sys-probe",
+      "path": "crates/franken-sys-probe",
+      "owner": "P02",
+      "role": "platform",
+      "layer": 1,
+      "unsafe_policy": "deny_with_scoped_allow",
+      "deps": [],
+      "optional_deps": [],
+      "dev_deps": []
+     }
+    },
+    {
+     "op": "push",
+     "path": "/assets",
+     "value": {
+      "path": "crates/franken-sys-probe",
+      "owner": "P02",
+      "kind": "crate"
+     }
+    },
+    {
+     "op": "push",
+     "path": "/crates/name=franken-speaker/deps",
+     "value": "franken-sys-probe"
     },
     {
      "op": "push",
      "path": "/unsafe_exceptions",
      "value": {
       "from": "franken-speaker",
-      "to": "franken-platform",
+      "to": "franken-sys-probe",
       "reason": "raw syscall trampolines for the clock and entropy"
      }
     },
     {
      "op": "push",
      "path": "/crates/name=franken-hal/deps",
-     "value": "franken-platform"
+     "value": "franken-sys-probe"
     },
     {
      "op": "push",
      "path": "/unsafe_exceptions",
      "value": {
       "from": "franken-hal",
-      "to": "franken-platform",
+      "to": "franken-sys-probe",
       "reason": "raw syscall trampolines for the clock and entropy"
      }
     }
@@ -2777,6 +2945,39 @@
    "expect_codes": [
     "parse_error"
    ]
+  },
+  {
+   "id": "P01-V-130",
+   "title": "permitted positive: franken-platform may depend on franken-atomic, which sits below it",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/crates/name=franken-platform/deps",
+     "value": "franken-atomic"
+    }
+   ],
+   "expect_codes": []
+  },
+  {
+   "id": "P01-V-131",
+   "title": "franken-atomic may not depend back on franken-platform: the layer order refuses the reverse edge",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/crates/name=franken-atomic/deps",
+     "value": "franken-platform"
+    }
+   ],
+   "expect_codes": [
+    "layer_violation"
+   ],
+   "expect_subjects": {
+    "layer_violation": [
+     "franken-atomic->franken-platform"
+    ]
+   }
   },
   {
    "id": "P01-V-105",
@@ -3139,7 +3340,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3163,7 +3364,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": true,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3194,7 +3395,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": true,
      "isa_revision": "",
      "fp_abi": ""
@@ -3225,7 +3426,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "hard"
@@ -3256,7 +3457,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": false,
      "isa_revision": "mips32r1",
      "fp_abi": "soft"
@@ -3287,7 +3488,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3322,7 +3523,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": "soft"
@@ -3353,7 +3554,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": false,
      "isa_revision": "ppc",
      "fp_abi": "hard"
@@ -3383,7 +3584,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "00c11fee20ecad96b8fa7fe58577f2ef30e62fb7e533987ada486737ee0177b2",
+     "contract_digest": "4e6b2c151fec257c758a7a117959c94f044e805ca9aef66f619b19b1ae5fc540",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3407,7 +3608,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": true,
      "isa_revision": "",
      "fp_abi": ""
@@ -3431,7 +3632,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3445,7 +3646,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3469,7 +3670,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3483,7 +3684,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3514,7 +3715,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": false,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3540,7 +3741,7 @@
      "elf_machine": 8,
      "elf_class": 2,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3566,7 +3767,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3580,7 +3781,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3611,7 +3812,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3668,7 +3869,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3694,7 +3895,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3720,7 +3921,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3734,7 +3935,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3765,7 +3966,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3801,7 +4002,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3833,7 +4034,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "843fd3e5cc9f6f1a75c39808f83cce9e6fa35147eef8c2b0ea8430bb06e359a6",
+     "contract_digest": "8711f4ba8845482320db3b0cacfe20069f130f9e60ae816a6ce3ffab484f1060",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3859,7 +4060,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3885,7 +4086,7 @@
      "elf_machine": 0,
      "elf_class": 0,
      "elf_big_endian": false,
-     "contract_digest": "f4b0124e98d59c5ee5a7ed1397bdf8088c0d7d6665460161c68176784f8a9f94",
+     "contract_digest": "caf0e7b3a0f098c47ec716ce3b3060196137480c9ada3846024c2efbaf9021f2",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""

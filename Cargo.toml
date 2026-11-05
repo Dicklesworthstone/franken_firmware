@@ -11,6 +11,8 @@ members = [
     "crates/franken-session",
     "crates/franken-control",
     "crates/franken-speaker",
+    "crates/franken-atomic",
+    "crates/franken-journal",
     "crates/franken-alloc-probe",
     "crates/franken-baseline",
 ]

@@ -1,0 +1,17 @@
+[package]
+name = "franken-journal"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+
+[lints]
+workspace = true
+
+# No dependencies by default: the journal core is std-only and has no filesystem or flash access. It runs over the
+# `Storage` trait; the in-memory fake with fault injection and the file-backed storage of the crash example are test
+# and example code. serde_json and sha2 are used only to replay the shared vectors.
+[dependencies]
+
+[dev-dependencies]
+serde_json.workspace = true
+sha2.workspace = true

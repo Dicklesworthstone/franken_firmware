@@ -79,6 +79,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "franken-atomic"
+version = "0.1.0"
+
+[[package]]
 name = "franken-baseline"
 version = "0.1.0"
 dependencies = [
@@ -142,6 +146,14 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "franken-journal"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

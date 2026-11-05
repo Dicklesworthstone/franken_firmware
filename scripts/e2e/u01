@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# U01 end-to-end entry point (bead ffw-mgb): the crash-consistent state journal.
+# Delegates to tests/u01/e2e.py (offline, stdlib Python; it builds nothing and never invokes cargo).
+#
+#   scripts/e2e/u01                              host checks; the process-restart cases are BLOCKED (counted, never skipped)
+#   scripts/e2e/u01 --binary PATH                also kill a REAL process mid-write and recover (needs an example binary THIS host can run)
+#   scripts/e2e/u01 --mutants                    also run the mutation canary (about a minute)
+#   scripts/e2e/u01 --list                       the planned cases
+#   python3 tests/u01/make_vectors.py [--check]  regenerate (or check) crates/franken-journal/tests/vectors/u01_vectors.json
+#
+# The Rust suite and the example run only through the centralized RCH path:
+#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test --locked --offline --no-fail-fast -p franken-journal -j 2 -- --nocapture
+#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p franken-journal --all-targets -- -D warnings
+# The process cases run inside that same cargo test (tests/u01_process.rs, which uses the journal_crash example the invocation
+# built) and are judged by test name:  python3 tests/u01/judge_log.py <that log>.  A binary built by RCH is a Linux executable
+# on a worker and is not brought back to a macOS orchestrator (RCH-E327), so --binary is for a host that can run it (same OS
+# and architecture). tests/u01/fake_crash.py is a Python stand-in that exercises this driver's logic; it is not evidence
+# about the Rust code.
+#
+# Exit 0 only when every case passed and none is blocked; 1 on a failed case; 3 when the only non-passes are blocked cases
+# (reported, never counted as passed); 2 on usage errors.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+exec python3 -B "$ROOT/tests/u01/e2e.py" "$@"
