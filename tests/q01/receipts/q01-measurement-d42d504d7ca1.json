@@ -1,0 +1,198 @@
+{
+  "bead": "ffw-gmq",
+  "campaign": {
+    "blocks": 250,
+    "seed": 539365636
+  },
+  "cases_sha256": "1aebcbbc7ab9e1961c15e44f68cdd74d2722d6c1f198e51c15c1fd6cd1990422",
+  "contract_sha256": "288fc2054d4d97abbfeb79b9226972fe23db3f948e1c5a1bc746a36464d6a7b8",
+  "evidence": "simulation_only",
+  "logs": [
+    {
+      "bytes": 30978,
+      "sha256": "8257a8af73cc303c3c84b06e5eaaa5f4e0d371fdd6591bf322d4f2d3fe015c96"
+    }
+  ],
+  "members": [
+    {
+      "audible_authentic_blocks": 247,
+      "blocks": 250,
+      "channels": 2,
+      "digest": 14882135446442400487,
+      "member": "spk-bedroom-s1",
+      "rendered_blocks": 250,
+      "rendered_nonzero_blocks": 250,
+      "seed": 539365636,
+      "signal": "asymmetric"
+    },
+    {
+      "audible_authentic_blocks": 247,
+      "blocks": 250,
+      "channels": 3,
+      "digest": 7020733849592968225,
+      "member": "spk-den-s3",
+      "rendered_blocks": 250,
+      "rendered_nonzero_blocks": 250,
+      "seed": 539365636,
+      "signal": "asymmetric"
+    },
+    {
+      "audible_authentic_blocks": 249,
+      "blocks": 250,
+      "channels": 2,
+      "digest": 6208605296387421463,
+      "member": "spk-kitchen-s12",
+      "rendered_blocks": 250,
+      "rendered_nonzero_blocks": 250,
+      "seed": 539365636,
+      "signal": "asymmetric"
+    },
+    {
+      "audible_authentic_blocks": 247,
+      "blocks": 250,
+      "channels": 1,
+      "digest": 3680294967966717223,
+      "member": "spk-living-sub",
+      "rendered_blocks": 250,
+      "rendered_nonzero_blocks": 250,
+      "seed": 539365636,
+      "signal": "asymmetric"
+    },
+    {
+      "audible_authentic_blocks": 248,
+      "blocks": 250,
+      "channels": 5,
+      "digest": 3395001398779469239,
+      "member": "spk-office-s5",
+      "rendered_blocks": 250,
+      "rendered_nonzero_blocks": 250,
+      "seed": 539365636,
+      "signal": "asymmetric"
+    },
+    {
+      "audible_authentic_blocks": 247,
+      "blocks": 250,
+      "channels": 2,
+      "digest": 247748116559446821,
+      "member": "spk-bedroom-s1",
+      "rendered_blocks": 250,
+      "rendered_nonzero_blocks": 0,
+      "seed": 539365636,
+      "signal": "opposed"
+    },
+    {
+      "audible_authentic_blocks": 247,
+      "blocks": 250,
+      "channels": 3,
+      "digest": 9573472251582023752,
+      "member": "spk-den-s3",
+      "rendered_blocks": 250,
+      "rendered_nonzero_blocks": 250,
+      "seed": 539365636,
+      "signal": "opposed"
+    },
+    {
+      "audible_authentic_blocks": 249,
+      "blocks": 250,
+      "channels": 2,
+      "digest": 247748116559446821,
+      "member": "spk-kitchen-s12",
+      "rendered_blocks": 250,
+      "rendered_nonzero_blocks": 0,
+      "seed": 539365636,
+      "signal": "opposed"
+    },
+    {
+      "audible_authentic_blocks": 247,
+      "blocks": 250,
+      "channels": 1,
+      "digest": 13238091106517201701,
+      "member": "spk-living-sub",
+      "rendered_blocks": 250,
+      "rendered_nonzero_blocks": 0,
+      "seed": 539365636,
+      "signal": "opposed"
+    },
+    {
+      "audible_authentic_blocks": 248,
+      "blocks": 250,
+      "channels": 5,
+      "digest": 6168898010249488482,
+      "member": "spk-office-s5",
+      "rendered_blocks": 250,
+      "rendered_nonzero_blocks": 250,
+      "seed": 539365636,
+      "signal": "opposed"
+    }
+  ],
+  "not_measured": [
+    "any real board, device, provider account, network or kernel (every campaign is a simulation)",
+    "the absolute level of any block (the DSP applies gain before the crossover filters)",
+    "concealment quality"
+  ],
+  "plants": [
+    {
+      "member": null,
+      "message": null,
+      "outcome": "ok",
+      "planted": false
+    },
+    {
+      "member": "spk-office-s5",
+      "message": "member_rendered_silence: spk-office-s5: 248 authentic blocks sounded and every sample it rendered is zero",
+      "outcome": "error",
+      "planted": true
+    },
+    {
+      "member": "spk-bedroom-s1",
+      "message": "member_rendered_silence: spk-bedroom-s1: 247 authentic blocks sounded and every sample it rendered is zero",
+      "outcome": "error",
+      "planted": true
+    },
+    {
+      "member": "spk-kitchen-s12",
+      "message": "member_rendered_silence: spk-kitchen-s12: 249 authentic blocks sounded and every sample it rendered is zero",
+      "outcome": "error",
+      "planted": true
+    },
+    {
+      "member": "spk-den-s3",
+      "message": "member_rendered_silence: spk-den-s3: 247 authentic blocks sounded and every sample it rendered is zero",
+      "outcome": "error",
+      "planted": true
+    },
+    {
+      "member": "spk-living-sub",
+      "message": "member_rendered_silence: spk-living-sub: 247 authentic blocks sounded and every sample it rendered is zero",
+      "outcome": "error",
+      "planted": true
+    }
+  ],
+  "schema": "ffw.q01.measurement.v1",
+  "verdicts": {
+    "Q01-C01": "pass",
+    "Q01-C02": "pass",
+    "Q01-C03": "pass",
+    "Q01-C04": "pass",
+    "Q01-C05": "pass",
+    "Q01-C06": "pass",
+    "Q01-C07": "pass",
+    "Q01-C08": "pass",
+    "Q01-C09": "pass",
+    "Q01-C10": "pass",
+    "Q01-C11": "pass",
+    "Q01-C12": "pass",
+    "Q01-C13": "pass",
+    "Q01-C14": "pass",
+    "Q01-C15": "pass",
+    "Q01-C16": "pass",
+    "Q01-C17": "pass",
+    "Q01-C18": "pass",
+    "Q01-C19": "pass",
+    "Q01-C20": "pass",
+    "Q01-C21": "pass",
+    "Q01-C22": "pass",
+    "Q01-M01": "pass",
+    "Q01-M02": "pass"
+  }
+}

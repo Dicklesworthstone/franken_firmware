@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Q01 (ffw-gmq) end-to-end runner and judge.
 
-    run_cases.py [--list] [--judge LOG [LOG ...]] [--receipts DIR]
+    run_cases.py [--list] [--judge LOG [LOG ...]] [--receipts DIR] [--verify-receipt FILE [FILE ...]]
 
 Offline, standard library only; it builds and boots nothing and never invokes cargo.
 
@@ -22,6 +22,11 @@ The suite runs only through the centralized RCH path (never on the orchestrator)
 
     RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-speaker --features harness --lib --locked -- --nocapture
     RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p franken-speaker --features harness --all-targets --locked -- -D warnings
+
+A qualified run's redacted record (``--receipts DIR``) is committed under tests/q01/receipts/. ``--verify-receipt FILE`` re-verifies one
+without the raw log (which is not committable): its content hash, its fields, and every record re-derived as for a log, with the contract's
+limit-1 table held to it. META always re-verifies every committed receipt and requires that every cell the contract calls ``measured`` is
+backed by one, so a measurement claim cannot outlive the evidence behind it.
 
 Exit codes: 0 qualified (every case passed, none blocked), 1 a case or check failed, 3 only blocked cases stand in the way,
 2 usage or malformed input.
@@ -45,6 +50,11 @@ RUST_SOURCES = [
     ("crates/franken-speaker/src/control_adapter.rs", "control_adapter::tests::"),
 ]
 RECEIPT_SCHEMA = "ffw.q01.measurement.v1"
+RECEIPT_DIR = os.path.join(HERE, "receipts")
+RECEIPT_NAME = re.compile(r"^q01-measurement-([0-9a-f]{12})\.json$")
+RECEIPT_KEYS = {"schema", "bead", "evidence", "logs", "contract_sha256", "cases_sha256", "campaign", "verdicts", "members", "plants",
+                "not_measured"}
+SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 CLASSES = ("positive", "negative", "control", "limit", "measurement")
 
 # The campaign `franken-speaker --virtual-house` runs, and what the two measurement tests run.
@@ -160,7 +170,7 @@ class Log:
 
 # ---- the records ---------------------------------------------------------------------------------------------------------
 
-def check_members(records: List[dict], table: Dict[Tuple[str, str], Tuple[str, str]]) -> Tuple[List[str], List[str], Dict[Tuple[str, str], dict]]:
+def check_members(records: List[dict], table: Dict[Tuple[str, str], Tuple[str, str]], what: str = "the log") -> Tuple[List[str], List[str], Dict[Tuple[str, str], dict]]:
     """Returns (problems, notes, measured): measured maps (member, signal) -> the accepted record."""
     problems: List[str] = []
     notes: List[str] = []
@@ -213,9 +223,9 @@ def check_members(records: List[dict], table: Dict[Tuple[str, str], Tuple[str, s
         got = "silent" if record["rendered_nonzero_blocks"] == 0 else "renders"
         claim, basis = table[(member, signal)]
         if basis == "measured" and got != claim:
-            problems.append("docs/contracts/q01.md says %s under %s is %s (measured), the log shows it %s" % (member, signal, claim, got))
+            problems.append("docs/contracts/q01.md says %s under %s is %s (measured), %s shows it %s" % (member, signal, claim, what, got))
         elif basis == "by routing" and got != claim:
-            problems.append("docs/contracts/q01.md says %s under %s %s (by routing), the log contradicts it: %s" % (member, signal, claim, got))
+            problems.append("docs/contracts/q01.md says %s under %s %s (by routing), %s contradicts it: %s" % (member, signal, claim, what, got))
         elif basis == "by routing":
             notes.append("%s under %s: %s, confirmed by measurement; the contract may now say `(measured)`" % (member, signal, got))
     return problems, notes, measured
@@ -260,6 +270,94 @@ def check_plants(records: List[dict]) -> List[str]:
 
 # ---- the cases -----------------------------------------------------------------------------------------------------------
 
+def seal(record: dict) -> str:
+    """The 12 hex digits a receipt's file name carries: the start of the sha256 of its canonical JSON."""
+    return hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest()[:12]
+
+
+def verify_receipt(path: str, table: Dict[Tuple[str, str], Tuple[str, str]]) -> Tuple[List[str], List[str], Dict[Tuple[str, str], dict]]:
+    """Re-verify a committed receipt without the raw log: its seal, its fields, and every record re-derived exactly as for a log, with the
+    contract's limit-1 table held to it. Returns (problems, notes, measured)."""
+    name = os.path.basename(path)
+    problems: List[str] = []
+    notes: List[str] = []
+    try:
+        with open(path, encoding="utf-8") as handle:
+            record = json.load(handle)
+    except (OSError, ValueError) as error:
+        return ["%s cannot be read as JSON: %s" % (name, error)], notes, {}
+    if not isinstance(record, dict) or set(record) != RECEIPT_KEYS:
+        keys = sorted(record) if isinstance(record, dict) else type(record).__name__
+        return ["%s has the keys %r, not the receipt's" % (name, keys)], notes, {}
+    named = RECEIPT_NAME.match(name)
+    if not named:
+        problems.append("the file name is not q01-measurement-<12 hex digits>.json")
+    elif named.group(1) != seal(record):
+        problems.append("the name says %s but the content hashes to %s: the receipt was edited after it was sealed" % (named.group(1), seal(record)))
+    if record["schema"] != RECEIPT_SCHEMA:
+        problems.append("unknown schema %r" % (record["schema"],))
+    if record["bead"] != "ffw-gmq":
+        problems.append("it is a receipt for %r, not ffw-gmq" % (record["bead"],))
+    if record["evidence"] != "simulation_only":
+        problems.append("its evidence class is %r, not simulation_only" % (record["evidence"],))
+    if record["campaign"] != {"seed": SEED, "blocks": BLOCKS}:
+        problems.append("it is not the --virtual-house campaign: %r" % (record["campaign"],))
+    logs = record["logs"]
+    if not isinstance(logs, list) or not logs or not all(
+            isinstance(l, dict) and set(l) == {"sha256", "bytes"} and isinstance(l["sha256"], str) and SHA256_HEX.match(l["sha256"])
+            and isinstance(l["bytes"], int) and not isinstance(l["bytes"], bool) and l["bytes"] > 0 for l in logs):
+        problems.append("it does not name its log(s) by sha256 and size")
+    verdicts = record["verdicts"]
+    if not isinstance(verdicts, dict) or not verdicts or any(v != "pass" for v in verdicts.values()):
+        bad = sorted(k for k, v in verdicts.items() if v != "pass") if isinstance(verdicts, dict) else []
+        problems.append("a receipt records only qualified runs; verdicts that are not pass: %r" % (bad or "none recorded"))
+    elif isinstance(verdicts, dict):
+        current = {c["id"] for c in load_cases()}
+        if set(verdicts) != current:
+            notes.append("it was judged against an earlier case table (verdicts for %d cases, the table has %d)" % (len(verdicts), len(current)))
+    if not isinstance(record["not_measured"], list) or not record["not_measured"]:
+        problems.append("it does not say what is not measured")
+    measured: Dict[Tuple[str, str], dict] = {}
+    if isinstance(record["members"], list):
+        member_problems, member_notes, measured = check_members(record["members"], table, what="the receipt")
+        problems += member_problems
+        notes += member_notes
+    else:
+        problems.append("members is not a list")
+    if isinstance(record["plants"], list):
+        problems += check_plants(record["plants"])
+    else:
+        problems.append("plants is not a list")
+    if record["contract_sha256"] != sha256_file(CONTRACT):
+        notes.append("it was judged against an earlier text of the contract (expected once a cell has been flipped to measured)")
+    if record["cases_sha256"] != sha256_file(CASES):
+        notes.append("it was judged against an earlier case table")
+    return problems, notes, measured
+
+
+def receipt_files(directory: str = RECEIPT_DIR) -> List[str]:
+    if not os.path.isdir(directory):
+        return []
+    return sorted(os.path.join(directory, n) for n in os.listdir(directory) if n.endswith(".json"))
+
+
+def check_receipts(directory: str, table: Dict[Tuple[str, str], Tuple[str, str]]) -> Tuple[List[str], str]:
+    """Every committed receipt verifies, and every cell the contract calls `measured` is backed by one that does."""
+    files = receipt_files(directory)
+    covered = set()
+    problems: List[str] = []
+    for path in files:
+        found, _notes, measured = verify_receipt(path, table)
+        problems += ["%s: %s" % (os.path.basename(path), p) for p in found]
+        if not found:
+            covered |= set(measured)
+    claimed = {cell for cell, (_behaviour, basis) in table.items() if basis == "measured"}
+    unbacked = sorted(claimed - covered)
+    if unbacked:
+        problems.append("%d cell(s) the contract calls measured have no verified receipt behind them: %s" % (len(unbacked), unbacked[:4]))
+    return problems, "%d receipt(s) verify and back all %d measured cells" % (len(files), len(claimed))
+
+
 class Result:
     def __init__(self, case: str, status: str, detail: str) -> None:
         self.case, self.status, self.detail = case, status, detail
@@ -299,6 +397,13 @@ def meta_results() -> List[Result]:
              "the limit-1 table parses: %d cells for %d members; every fleet member is named" % (len(table), len(FLEET)))
     except (OSError, ValueError) as error:
         note("META-CONTRACT", str(error), "")
+    try:
+        with open(CONTRACT, encoding="utf-8") as handle:
+            contract_table = parse_limit_table(handle.read())
+        receipt_problems, receipt_summary = check_receipts(RECEIPT_DIR, contract_table)
+        note("META-RECEIPTS", "; ".join(receipt_problems[:3]) if receipt_problems else None, receipt_summary)
+    except (OSError, ValueError) as error:
+        note("META-RECEIPTS", str(error), "")
     anchor = silent_digest(400, 2)
     note("META-DIGEST", None if anchor == 5755000421370241829 else "the digest of silence is %d, b40 measured 5755000421370241829" % anchor,
          "the independent digest of 400 blocks of 2-channel silence is 5755000421370241829, the value measured centrally in b40")
@@ -380,7 +485,7 @@ def write_receipt(directory: str, logs: List[Tuple[str, str, int]], results: Lis
         "plants": plants,
         "not_measured": NOT_MEASURED,
     }
-    name = "q01-measurement-%s.json" % hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest()[:12]
+    name = "q01-measurement-%s.json" % seal(record)
     path = os.path.join(directory, name)
     if os.path.exists(path):
         raise FileExistsError(path)
@@ -395,9 +500,29 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--list", action="store_true", help="print the case ids and what each shows")
     parser.add_argument("--judge", nargs="+", metavar="LOG", help="judge the centrally run cargo test output")
     parser.add_argument("--receipts", metavar="DIR", help="with --judge: write the redacted verified record into this existing directory")
+    parser.add_argument("--verify-receipt", nargs="+", metavar="FILE", help="re-verify committed receipts against the contract (no raw log needed)")
     args = parser.parse_args(argv)
     if args.receipts and not args.judge:
         parser.error("--receipts needs --judge")
+    if args.verify_receipt and (args.judge or args.receipts or args.list):
+        parser.error("--verify-receipt stands alone")
+    if args.verify_receipt:
+        try:
+            with open(CONTRACT, encoding="utf-8") as handle:
+                table = parse_limit_table(handle.read())
+        except (OSError, ValueError) as error:
+            print("cannot read the contract's limit-1 table: %s" % error, file=sys.stderr)
+            return 2
+        code = 0
+        for receipt in args.verify_receipt:
+            found, notes, measured = verify_receipt(receipt, table)
+            print("%s: %s (%d of %d cells)" % (os.path.basename(receipt), "FAIL" if found else "PASS", len(measured), len(table)))
+            for p in found:
+                print("  problem:", p)
+            for n in notes:
+                print("  note:", n)
+            code = 1 if found else code
+        return code
     if args.list:
         for case in load_cases():
             print("%-8s %-12s %-11s %s" % (case["id"], case["group"], case["class"], case["what"]))

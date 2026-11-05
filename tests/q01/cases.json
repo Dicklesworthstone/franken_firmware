@@ -260,6 +260,29 @@
       ]
     },
     {
+      "id": "Q01-C23",
+      "group": "diagnostics",
+      "class": "positive",
+      "what": "(added by the N03 redaction fix, 4611dd2) a campaign's diagnostic events name a member only in member_id and in no free-text field; a keyed sink holds no raw member or group label in any field or in the JSONL; a planted fault names its member as a field and never in its text; a failure that names no member is recorded as the house's with its whole text as the cause; redacting a failure replaces every member label and names the first member it mentions; the redacted labels are the members the campaign has",
+      "tests": [
+        "harness::tests::a_campaign_record_names_its_member_in_member_id_and_in_no_free_text_field",
+        "harness::tests::a_keyed_campaign_sink_holds_no_raw_member_or_group_label_in_any_field_or_in_the_jsonl",
+        "harness::tests::a_planted_fault_names_its_member_as_a_field_and_never_in_its_text",
+        "harness::tests::a_failure_that_names_no_member_is_recorded_as_the_houses_with_its_whole_text_as_the_cause",
+        "harness::tests::redacting_a_failure_replaces_every_member_label_and_names_the_first_member_it_mentions",
+        "harness::tests::the_redacted_labels_are_the_members_the_campaign_has"
+      ]
+    },
+    {
+      "id": "Q01-C24",
+      "group": "diagnostics",
+      "class": "negative",
+      "what": "(added by the N03 redaction fix, 4611dd2) the leak scan names the free-text field a raw member id is put back in",
+      "tests": [
+        "harness::tests::the_leak_scan_names_the_free_text_field_a_raw_member_id_is_put_back_in"
+      ]
+    },
+    {
       "id": "Q01-M01",
       "group": "measurement",
       "class": "measurement",

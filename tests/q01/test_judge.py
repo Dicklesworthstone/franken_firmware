@@ -8,6 +8,7 @@ changes nothing cannot pass for a catch.
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -97,8 +98,8 @@ class Baseline(unittest.TestCase):
         self.assertEqual({r.status for r in results}, {"pass"}, failing(results))
         self.assertEqual(rc.exit_code(results), 0)
         self.assertEqual(len(measured), 10)
-        # The three `by routing` cells the contract makes are confirmed, never silently upgraded.
-        self.assertEqual(sum("confirmed by measurement" in n for n in notes), 3, notes)
+        # The contract has no `by routing` cell left (the committed receipt measured them), so there is nothing to upgrade.
+        self.assertEqual(notes, [])
 
     def test_no_log_blocks_every_case_and_never_passes_one(self):
         results, _, _ = rc.judge_cases(None)
@@ -108,7 +109,7 @@ class Baseline(unittest.TestCase):
     def test_the_meta_checks_pass_on_this_repository(self):
         results = rc.meta_results()
         self.assertEqual({r.status for r in results}, {"pass"}, [(r.case, r.detail) for r in results if r.status != "pass"])
-        self.assertEqual({r.case for r in results}, {"META-CASES", "META-CONTRACT", "META-DIGEST"})
+        self.assertEqual({r.case for r in results}, {"META-CASES", "META-CONTRACT", "META-DIGEST", "META-RECEIPTS"})
 
 
 class TestsAndCases(unittest.TestCase):
@@ -237,14 +238,23 @@ class MemberRecords(unittest.TestCase):
         problems, _ = self.plant(edit)
         self.assert_m01(problems, "says spk-kitchen-s12 under opposed is silent (measured), the log shows it renders")
 
+    def by_routing_table(self):
+        table = dict(self.s.table)
+        for cell in (("spk-bedroom-s1", "opposed"), ("spk-den-s3", "opposed"), ("spk-living-sub", "opposed")):
+            table[cell] = (table[cell][0], "by routing")
+        return table
+
     def test_a_by_routing_claim_the_log_contradicts_is_a_failure_and_one_it_confirms_is_a_note(self):
-        def edit(rs):
-            record = self.find(rs, "spk-bedroom-s1", "opposed")
-            record.update(rendered_nonzero_blocks=3, digest=4242)
-        problems, _ = self.plant(edit)
-        self.assert_m01(problems, "spk-bedroom-s1 under opposed silent (by routing), the log contradicts it")
-        _, notes = self.plant(lambda rs: None)
+        # The contract no longer has `by routing` cells (the committed receipt measured them), so the rule is held against a table that does.
+        table = self.by_routing_table()
+        problems, notes, _ = rc.check_members(self.base, table)
+        self.assertEqual(problems, [])
+        self.assertEqual(sum("confirmed by measurement" in n for n in notes), 3, notes)
         self.assertTrue(any("spk-bedroom-s1 under opposed: silent, confirmed by measurement" in n for n in notes), notes)
+        records = [dict(r) for r in self.base]
+        self.find(records, "spk-bedroom-s1", "opposed").update(rendered_nonzero_blocks=3, digest=4242)
+        problems, _, _ = rc.check_members(records, table)
+        self.assertTrue(any("spk-bedroom-s1 under opposed silent (by routing), the log contradicts it" in p for p in problems), problems)
 
 
 class PlantRecords(unittest.TestCase):
@@ -377,6 +387,202 @@ class EntryPoint(unittest.TestCase):
         with self.assertRaises(SystemExit) as raised, redirect_stderr(io.StringIO()):
             rc.main(["--receipts", "x"])
         self.assertEqual(raised.exception.code, 2)
+
+
+COMMITTED_RECEIPT = "q01-measurement-d42d504d7ca1.json"
+# The sha256 of the receipt file exactly as the central judge wrote it (b49); it is evidence and is never regenerated.
+COMMITTED_RECEIPT_SHA256 = "19f9efc6c7667a92523c035bfbfc2168ddd1ce5a570c0d660bb2388691ac006d"
+# The raw log it was judged from (not committable: it holds a worker address and local paths).
+COMMITTED_RECEIPT_LOG_SHA256 = "8257a8af73cc303c3c84b06e5eaaa5f4e0d371fdd6591bf322d4f2d3fe015c96"
+
+
+class Receipts(unittest.TestCase):
+    """The receipt verifier. The receipts built here are synthetic (the synthetic log, run through the real writer); the committed one is not."""
+
+    def setUp(self):
+        self.s = Synthetic()
+        self.table = contract_table()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = tmp.name
+        log = rc.Log()
+        log.add(self.s.text(), "synthetic")
+        results, _notes, measured = rc.judge_cases(log)
+        self.path = rc.write_receipt(self.dir, [("synthetic.log", "ab" * 32, 4096)], results, measured, log.plants)
+        with open(self.path, encoding="utf-8") as handle:
+            self.record = json.load(handle)
+        problems, _notes, _measured = rc.verify_receipt(self.path, self.table)
+        self.assertEqual(problems, [], "the unplanted control must verify")
+
+    def write(self, record, name=None):
+        """Write `record` under its own seal (so only the semantic check can fire), or under `name`."""
+        path = os.path.join(self.dir, name or "q01-measurement-%s.json" % rc.seal(record))
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(record, handle, indent=2, sort_keys=True)
+        return path
+
+    def edited(self, edit):
+        record = json.loads(json.dumps(self.record))
+        edit(record)
+        return self.write(record)
+
+    def problems(self, edit):
+        return rc.verify_receipt(self.edited(edit), self.table)[0]
+
+    def test_a_receipt_the_judge_wrote_verifies_and_backs_every_cell(self):
+        problems, _notes, measured = rc.verify_receipt(self.path, self.table)
+        self.assertEqual((problems, len(measured)), ([], 10))
+
+    def test_a_receipt_edited_after_it_was_sealed_is_refused(self):
+        record = json.loads(json.dumps(self.record))
+        record["members"][0]["digest"] += 1
+        path = self.write(record, name=os.path.basename(self.path))
+        problems, *_ = rc.verify_receipt(path, self.table)
+        self.assertTrue(any("edited after it was sealed" in p for p in problems), problems)
+
+    def test_a_receipt_with_a_malformed_name_or_content_is_refused(self):
+        problems, *_ = rc.verify_receipt(self.write(self.record, name="receipt.json"), self.table)
+        self.assertTrue(any("file name is not" in p for p in problems), problems)
+        bad = os.path.join(self.dir, "q01-measurement-000000000000.json")
+        with open(bad, "w", encoding="utf-8") as handle:
+            handle.write("not json")
+        self.assertTrue(any("cannot be read as JSON" in p for p in rc.verify_receipt(bad, self.table)[0]))
+        problems = self.problems(lambda r: r.update(extra=1))
+        self.assertTrue(any("has the keys" in p for p in problems), problems)
+        problems = self.problems(lambda r: r.pop("plants"))
+        self.assertTrue(any("has the keys" in p for p in problems), problems)
+
+    def test_a_receipt_of_the_wrong_kind_is_refused(self):
+        for key, value, fragment in (("schema", "ffw.q01.measurement.v0", "unknown schema"), ("bead", "ffw-other", "not ffw-gmq"),
+                                     ("evidence", "hardware", "not simulation_only"), ("campaign", {"seed": 1, "blocks": 250}, "not the --virtual-house campaign"),
+                                     ("campaign", {"seed": rc.SEED, "blocks": 400}, "not the --virtual-house campaign")):
+            problems = self.problems(lambda r, key=key, value=value: r.update({key: value}))
+            self.assertTrue(any(fragment in p for p in problems), (key, problems))
+
+    def test_a_receipt_must_name_its_log_by_hash_and_size(self):
+        for logs in ([], [{"sha256": "xyz", "bytes": 10}], [{"sha256": "ab" * 32, "bytes": 0}], [{"sha256": "ab" * 32}], "a.log"):
+            problems = self.problems(lambda r, logs=logs: r.update(logs=logs))
+            self.assertTrue(any("by sha256 and size" in p for p in problems), (logs, problems))
+
+    def test_a_receipt_records_only_qualified_runs(self):
+        problems = self.problems(lambda r: r["verdicts"].update({"Q01-C05": "fail"}))
+        self.assertTrue(any("verdicts that are not pass" in p and "Q01-C05" in p for p in problems), problems)
+        problems = self.problems(lambda r: r.update(verdicts={}))
+        self.assertTrue(any("none recorded" in p for p in problems), problems)
+
+    def test_a_receipt_with_a_record_the_contract_cannot_hold_is_refused(self):
+        def contradict(record):
+            member = next(m for m in record["members"] if m["member"] == "spk-kitchen-s12" and m["signal"] == "opposed")
+            member.update(rendered_nonzero_blocks=9, digest=31337)
+        problems = self.problems(contradict)
+        self.assertTrue(any("says spk-kitchen-s12 under opposed is silent (measured), the receipt shows it renders" in p for p in problems), problems)
+
+        def drop(record):
+            record["members"] = [m for m in record["members"] if not (m["member"] == "spk-den-s3" and m["signal"] == "asymmetric")]
+        problems = self.problems(drop)
+        self.assertTrue(any("spk-den-s3 under asymmetric: no record" in p for p in problems), problems)
+
+        def disagree(record):
+            member = next(m for m in record["members"] if m["member"] == "spk-office-s5" and m["signal"] == "opposed")
+            member["digest"] = self.s.silent[member["channels"]]
+        problems = self.problems(disagree)
+        self.assertTrue(any("the counter says sound and the digest says silent" in p for p in problems), problems)
+
+    def test_a_receipt_whose_plants_were_not_all_named_is_refused(self):
+        problems = self.problems(lambda r: r.update(plants=[p for p in r["plants"] if p["member"] != "spk-living-sub"]))
+        self.assertTrue(any("no record of the plant on spk-living-sub" in p for p in problems), problems)
+        problems = self.problems(lambda r: r.update(plants=[p for p in r["plants"] if p["planted"]]))
+        self.assertTrue(any("remove-the-plant control" in p for p in problems), problems)
+
+    def test_an_earlier_contract_text_is_a_note_and_not_a_failure(self):
+        path = self.edited(lambda r: r.update(contract_sha256="0" * 64))
+        problems, notes, _ = rc.verify_receipt(path, self.table)
+        self.assertEqual(problems, [])
+        self.assertTrue(any("earlier text of the contract" in n for n in notes), notes)
+
+    def test_the_contract_cannot_call_a_cell_measured_without_a_verified_receipt_behind_it(self):
+        problems, summary = rc.check_receipts(self.dir, self.table)
+        self.assertEqual(problems, [], problems)
+        self.assertIn("1 receipt(s) verify and back all", summary)
+        # No receipts at all: every measured cell is unbacked.
+        with tempfile.TemporaryDirectory() as empty:
+            problems, _ = rc.check_receipts(empty, self.table)
+        self.assertTrue(any("have no verified receipt behind them" in p for p in problems), problems)
+        # A receipt that does not verify backs nothing.
+        self.edited(lambda r: r["members"].pop())
+        os.unlink(self.path)
+        problems, _ = rc.check_receipts(self.dir, self.table)
+        self.assertTrue(any("have no verified receipt behind them" in p for p in problems), problems)
+        self.assertTrue(any("no record" in p for p in problems), problems)
+
+    def test_a_receipt_that_fails_backs_no_cell_even_when_its_records_are_fine(self):
+        # All ten records are good; only a plant is missing. The receipt fails, so the contract's measured cells have nothing behind them.
+        self.edited(lambda r: r.update(plants=[p for p in r["plants"] if p["member"] != "spk-living-sub"]))
+        os.unlink(self.path)
+        problems, _ = rc.check_receipts(self.dir, self.table)
+        self.assertTrue(any("no record of the plant on spk-living-sub" in p for p in problems), problems)
+        self.assertTrue(any("10 cell(s) the contract calls measured have no verified receipt behind them" in p for p in problems), problems)
+
+    def test_a_table_with_no_measured_cell_needs_no_receipt(self):
+        table = {cell: (behaviour, "by routing") for cell, (behaviour, _basis) in self.table.items()}
+        with tempfile.TemporaryDirectory() as empty:
+            problems, summary = rc.check_receipts(empty, table)
+        self.assertEqual(problems, [])
+        self.assertIn("back all 0 measured cells", summary)
+
+    def test_the_command_line_verifies_a_receipt(self):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = rc.main(["--verify-receipt", self.path])
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertIn("PASS (10 of 10 cells)", out.getvalue())
+        tampered = self.edited(lambda r: r["members"][0].update(digest=1))
+        os.rename(tampered, os.path.join(self.dir, "q01-measurement-111111111111.json"))
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = rc.main(["--verify-receipt", os.path.join(self.dir, "q01-measurement-111111111111.json")])
+        self.assertEqual(code, 1)
+        self.assertIn("problem:", out.getvalue())
+        with self.assertRaises(SystemExit) as raised, redirect_stderr(io.StringIO()):
+            rc.main(["--verify-receipt", self.path, "--list"])
+        self.assertEqual(raised.exception.code, 2)
+
+
+class CommittedReceipt(unittest.TestCase):
+    """The real evidence: the receipt the central judge wrote for b49, committed exactly as it was written."""
+
+    PATH = os.path.join(rc.RECEIPT_DIR, COMMITTED_RECEIPT)
+
+    def test_it_is_the_file_the_central_judge_wrote_and_has_not_been_regenerated(self):
+        self.assertEqual(rc.sha256_file(self.PATH), COMMITTED_RECEIPT_SHA256)
+        with open(self.PATH, encoding="utf-8") as handle:
+            record = json.load(handle)
+        self.assertEqual([l["sha256"] for l in record["logs"]], [COMMITTED_RECEIPT_LOG_SHA256])
+
+    def test_it_holds_no_site_data(self):
+        with open(self.PATH, encoding="utf-8") as handle:
+            raw = handle.read()
+        for needle in ("/Users/", "/private/", "/home/", "/tmp/", "@"):
+            self.assertNotIn(needle, raw)
+        self.assertIsNone(re.search(r"\b\d{1,3}(\.\d{1,3}){3}\b", raw), "an IPv4 address")
+        self.assertIsNone(re.search(r"\b[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}\b", raw), "a MAC address")
+
+    def test_it_verifies_against_the_contract_and_backs_every_measured_cell(self):
+        problems, notes, measured = rc.verify_receipt(self.PATH, contract_table())
+        self.assertEqual(problems, [])
+        self.assertEqual(len(measured), 10)
+        # The receipt was sealed against the contract text of b1fef3b; flipping the cells changed that text, which is a note and not a failure.
+        self.assertTrue(any("earlier text of the contract" in n for n in notes), notes)
+        problems, summary = rc.check_receipts(rc.RECEIPT_DIR, contract_table())
+        self.assertEqual(problems, [])
+
+    def test_it_measured_what_the_contract_now_says(self):
+        _problems, _notes, measured = rc.verify_receipt(self.PATH, contract_table())
+        silent = {("spk-bedroom-s1", "opposed"), ("spk-kitchen-s12", "opposed"), ("spk-living-sub", "opposed")}
+        for cell, record in measured.items():
+            self.assertEqual(record["rendered_nonzero_blocks"] == 0, cell in silent, cell)
+        table = contract_table()
+        self.assertEqual({basis for _behaviour, basis in table.values()}, {"measured"})
 
 
 if __name__ == "__main__":
