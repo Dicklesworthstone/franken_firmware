@@ -53,9 +53,12 @@ SKIP_DIRS = {"tests", "benches", "examples", "target", ".git"}
 # Build dependencies that bring native code; autocfg only probes the compiler, so it is listed apart.
 NATIVE_TOOLING_DEPS = {"cc", "cmake", "pkg-config", "bindgen", "vcpkg", "make", "bindgen-cli"}
 COMPILER_PROBE_DEPS = {"autocfg", "rustc_version", "version_check"}
-# Crates that may hold unsafe, by policy input (bead section 2: franken-platform is "the only userspace crate
-# permitted to reach raw device handles").  An input, not a discovered fact; override with --unsafe-allowed.
-DEFAULT_UNSAFE_ALLOWED = ("franken-platform",)
+# Crates that may hold unsafe, by policy input (bead section 2: the platform layer is "the only userspace crate
+# permitted to reach raw device handles").  Since P02 stage 2 (6ab9020) `franken-platform` itself forbids unsafe and the
+# syscall unsafe lives in its Linux leaf, so the leaf is the one name here; tests/e06/test_live.py pins that its unsafe
+# stays in `src/sys.rs` and that a crate which gains an unsafe token is flagged.  An input, not a discovered fact;
+# override with --unsafe-allowed.  Add a name only together with the review that says why.
+DEFAULT_UNSAFE_ALLOWED = ("franken-platform-linux",)
 
 CANDIDATES: List[Dict[str, Any]] = [
     {"name": "asupersync", "category": "runtime", "match": ["asupersync"],

@@ -119,6 +119,30 @@ def find(report, kind, package=None):
     return [f for f in report["findings"] if f["kind"] == kind and (package is None or f["package"] == package)]
 
 
+LEAF = "franken-platform-linux"
+LEAF_UNSAFE_FILES = ["src/sys.rs"]                       # the leaf's one `#[allow(unsafe_code)]` module
+
+
+def workspace_unsafe_problems(report):
+    """What the audit's unsafe policy objects to among the workspace crates, as sorted strings; [] is a pass.  The policy: only
+    the crates in AU.DEFAULT_UNSAFE_ALLOWED may hold an unsafe token (besides the documented test-only franken-alloc-probe, which
+    its own test covers); the one allowed crate is the Linux leaf and its unsafe stays in src/sys.rs; and the audit raises
+    neither `workspace-unsafe-linked` nor `workspace-unsafe-undeclared` for any crate.  The live test asserts [] on HEAD; each
+    planted case asserts exactly the one problem it plants, so a policy that stops objecting fails a named test."""
+    problems = set()
+    for p in report["packages"]:
+        if p["source_kind"] != "workspace" or not p["unsafe"]["tokens"] or p["name"] == "franken-alloc-probe":
+            continue
+        if p["name"] not in AU.DEFAULT_UNSAFE_ALLOWED:
+            problems.add("unsafe in %s" % p["name"])
+        elif p["name"] == LEAF and sorted(p["unsafe"]["files"]) != LEAF_UNSAFE_FILES:
+            problems.add("unsafe outside src/sys.rs in %s: %s" % (p["name"], ", ".join(sorted(p["unsafe"]["files"]))))
+    for kind in ("workspace-unsafe-linked", "workspace-unsafe-undeclared"):
+        for f in find(report, kind):
+            problems.add("%s %s" % (kind, f["package"].split("@")[0]))
+    return sorted(problems)
+
+
 @unittest.skipUnless(HAVE_CARGO, "cargo is not installed")
 class LiveContaminatedWorkspaceTests(unittest.TestCase):
     @classmethod
@@ -365,12 +389,24 @@ class ThisRepositorysWorkspaceTests(unittest.TestCase):
         self.assertEqual(f["severity"], "review")
 
     def test_no_other_workspace_crate_contains_unsafe_unless_policy_allows_it(self):
-        offenders = [p["key"] for p in self.report["packages"]
-                     if p["source_kind"] == "workspace" and p["unsafe"]["tokens"]
-                     and p["name"] not in AU.DEFAULT_UNSAFE_ALLOWED and p["name"] != "franken-alloc-probe"]
-        self.assertEqual(offenders, [])
+        self.assertEqual(workspace_unsafe_problems(self.report), [])
         self.assertEqual(find(self.report, "workspace-unsafe-linked"), [])
         self.assertEqual(find(self.report, "workspace-unsafe-undeclared"), [])
+
+    def test_the_linux_leafs_unsafe_is_the_one_permitted_exception_and_is_confined_to_its_sys_module(self):
+        # P02 stage 2 (6ab9020): franken-platform forbids unsafe, the syscall unsafe lives in the leaf that franken-speaker links.
+        leaf = next(p for p in self.report["packages"] if p["name"] == LEAF)
+        self.assertGreater(leaf["unsafe"]["tokens"], 0)
+        self.assertEqual(sorted(leaf["unsafe"]["files"]), LEAF_UNSAFE_FILES)
+        self.assertEqual({d["level"] for d in leaf["unsafe"]["declared"]}, {"deny"})
+        self.assertIn("franken-speaker", {d.split("@")[0] for d in leaf["platforms"]["mips"]["dependents"]})
+        permitted = find(self.report, "workspace-unsafe-permitted")
+        self.assertEqual({f["package"].split("@")[0] for f in permitted}, {LEAF})
+        self.assertEqual({f["severity"] for f in permitted}, {"info"})
+        platform = next(p for p in self.report["packages"] if p["name"] == "franken-platform")
+        self.assertEqual(platform["unsafe"]["tokens"], 0)
+        self.assertEqual({d["level"] for d in platform["unsafe"]["declared"]}, {"forbid"})
+        self.assertEqual(AU.DEFAULT_UNSAFE_ALLOWED, (LEAF,))                  # the list does not grow
 
     def test_proc_macro_crates_are_host_only_and_never_linked_into_a_target(self):
         for key in ("mips", "powerpc"):
@@ -403,6 +439,44 @@ class ThisRepositorysWorkspaceTests(unittest.TestCase):
         by = {c["name"]: c for c in self.report["candidates"]}
         for name in ("asupersync", "franken_kernel", "codecs"):
             self.assertEqual(by[name]["status"], "not in graph; unevaluated", name)
+
+
+@unittest.skipUnless(HAVE_CARGO, "cargo is not installed")
+class PlantedUnsafeInTheWorkspaceTests(unittest.TestCase):
+    """Negatives for the unsafe policy test above.  Each case audits a clean export of HEAD with ONE unsafe token planted in a
+    source file, through the same predicate (`workspace_unsafe_problems`) the live test uses, and expects exactly that problem:
+    the real leaf's own unsafe stays unreported in every case (the permitted positive), and a policy that stopped objecting
+    would fail the case by name.  Nothing is compiled: the audit reads tokens and cargo's resolver output."""
+
+    PLANT = "\n#[allow(dead_code)]\nunsafe fn planted_unsafe() {}\n"
+
+    def audit_with_plant(self, relative_path):
+        export = export_head()
+        if export is None:
+            self.skipTest("git or a git repository is not available")
+        self.addCleanup(export.cleanup)
+        target = os.path.join(export.name, relative_path)
+        self.assertTrue(os.path.isfile(target), relative_path)
+        with open(target, "a", encoding="utf-8") as fh:
+            fh.write(self.PLANT)
+        platforms, lock_text, root = AU.gather(os.path.join(export.name, "Cargo.toml"), dict(AU.DEFAULT_TARGETS), None)
+        return AU.analyze(platforms, lock_text, root)
+
+    def test_another_crate_the_speaker_links_that_gains_an_unsafe_token_is_flagged(self):
+        report = self.audit_with_plant("crates/franken-clock/src/lib.rs")
+        self.assertEqual(workspace_unsafe_problems(report),
+                         ["unsafe in franken-clock", "workspace-unsafe-linked franken-clock"])
+        self.assertEqual({f["severity"] for f in find(report, "workspace-unsafe-linked")}, {"blocker"})
+
+    def test_franken_platform_that_now_forbids_unsafe_is_no_longer_allowed_to_hold_it(self):
+        report = self.audit_with_plant("crates/franken-platform/src/lib.rs")
+        self.assertEqual(workspace_unsafe_problems(report),
+                         ["unsafe in franken-platform", "workspace-unsafe-linked franken-platform"])
+
+    def test_the_leaf_gaining_unsafe_outside_its_sys_module_is_flagged(self):
+        report = self.audit_with_plant("crates/franken-platform-linux/src/lib.rs")
+        self.assertEqual(workspace_unsafe_problems(report),
+                         ["unsafe outside src/sys.rs in franken-platform-linux: src/lib.rs, src/sys.rs"])
 
 
 if __name__ == "__main__":
