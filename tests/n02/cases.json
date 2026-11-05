@@ -680,6 +680,23 @@
         "a_critical_record_makes_room_by_evicting_acknowledgement_records_before_command_records",
         "the_planted_log_that_gives_acks_the_whole_budget_fails_the_flood_judge"
       ]
+    },
+    {
+      "id": "INV-TOMBSTONE-RESTART",
+      "claim": "A revocation survives a restart if the owner stores the tombstone snapshot and restores it into a fresh directory first: the stale admission of a revoked identity is refused at or below its tombstone, the key is answered Revoked exactly as before the restart, a deliberate re-admission one version up works, a malformed snapshot is refused whole, and a restart that forgets, mis-versions or restores a stale snapshot lets the revoked key back or leaves it refused for the wrong reason (the judge catches each by name).",
+      "scenarios": [],
+      "scenario_inapplicable": "The Python scenario model has no restart or persistence operation; the Rust tests judge it through the channel, with planted persistence faults.",
+      "rust_tests": [
+        "tombstones_are_exported_one_per_revoked_identity_with_a_generation",
+        "a_restored_directory_refuses_to_resurrect_a_revoked_identity_at_or_below_its_tombstone",
+        "the_generation_tells_the_owner_a_revocation_is_not_yet_stored",
+        "a_snapshot_that_cannot_be_restored_is_refused_whole_and_changes_nothing",
+        "restored_tombstones_still_count_as_identities_ever_admitted",
+        "a_faithful_restart_keeps_a_revoked_peer_revoked",
+        "a_deliberate_re_admission_at_a_higher_version_works_through_the_channel_after_a_restart",
+        "each_planted_persistence_fault_fails_the_judge_by_name",
+        "a_restart_answers_a_revoked_key_exactly_as_the_directory_did_before"
+      ]
     }
   ],
   "other_rust_checks": {

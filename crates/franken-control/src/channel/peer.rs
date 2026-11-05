@@ -226,6 +226,39 @@ pub enum AdmitError {
     Key(SecretError),
 }
 
+/// What a directory remembers about the identities it has revoked, in a form the owner can store and give
+/// back after a restart (N02 acceptance row 6, "tombstone generations across restart").
+///
+/// Where and how it is stored is U01's. The channel only produces it ([`PeerDirectory::tombstones`]) and
+/// accepts it ([`PeerDirectory::restore_tombstones`]). Without it a restart forgets every revocation, and
+/// the stale admission U01 may still hold for a revoked identity would bring its old key back.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Tombstones {
+    /// Bumped by every revocation that wiped a peer. A snapshot whose generation is below the directory's
+    /// is missing a revocation: **store the new snapshot before treating a revocation as done**.
+    pub generation: u64,
+    /// One entry per revoked identity, in identity order: the version it was revoked at. Only a strictly
+    /// higher version re-admits it.
+    pub entries: Vec<(PeerId, u64)>,
+}
+
+/// Why a [`Tombstones`] snapshot could not be restored. Nothing was changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum RestoreError {
+    /// Tombstones are restored first, into a directory that has admitted and revoked nobody, so no
+    /// admission can precede the memory of its revocation.
+    #[error(
+        "tombstones can only be restored into a directory that has admitted and revoked nobody"
+    )]
+    NotFresh,
+    /// A directory never knows more than [`MAX_PEERS`] identities.
+    #[error("a snapshot holds at most {max} tombstones")]
+    TooMany { max: usize },
+    /// A well-formed snapshot has one entry per identity.
+    #[error("the snapshot names one identity twice")]
+    Duplicate,
+}
+
 struct PeerRecord {
     role: PeerRole,
     bound_epoch: Option<u64>,
@@ -238,6 +271,7 @@ pub struct PeerDirectory<S: SecretStore> {
     keys: S,
     peers: BTreeMap<PeerId, PeerRecord>,
     tombstones: BTreeMap<PeerId, u64>,
+    tombstone_generation: u64,
 }
 
 fn key_handle(peer: &PeerId) -> Result<SecretHandle, SecretError> {
@@ -252,6 +286,7 @@ impl<S: SecretStore> PeerDirectory<S> {
             keys,
             peers: BTreeMap::new(),
             tombstones: BTreeMap::new(),
+            tombstone_generation: 0,
         }
     }
 
@@ -312,10 +347,51 @@ impl<S: SecretStore> PeerDirectory<S> {
             return false;
         };
         self.tombstones.insert(peer.clone(), record.version);
+        self.tombstone_generation = self.tombstone_generation.saturating_add(1);
         if let Ok(handle) = key_handle(peer) {
             let _ = self.keys.remove(&handle);
         }
         true
+    }
+
+    /// The revocations to store, so that a restart does not forget them. See [`Tombstones`].
+    #[must_use]
+    pub fn tombstones(&self) -> Tombstones {
+        Tombstones {
+            generation: self.tombstone_generation,
+            entries: self
+                .tombstones
+                .iter()
+                .map(|(peer, version)| (peer.clone(), *version))
+                .collect(),
+        }
+    }
+
+    /// The generation [`PeerDirectory::tombstones`] would carry now.
+    #[must_use]
+    pub const fn tombstone_generation(&self) -> u64 {
+        self.tombstone_generation
+    }
+
+    /// Put a stored snapshot back after a restart. It goes into a **fresh** directory, before any
+    /// admission, so the stale admission of a revoked identity that U01 may still hold is refused as the
+    /// resurrection it is. A snapshot that is too big or names an identity twice is refused whole.
+    pub fn restore_tombstones(&mut self, snapshot: &Tombstones) -> Result<(), RestoreError> {
+        if !self.peers.is_empty() || !self.tombstones.is_empty() {
+            return Err(RestoreError::NotFresh);
+        }
+        if snapshot.entries.len() > MAX_PEERS {
+            return Err(RestoreError::TooMany { max: MAX_PEERS });
+        }
+        let mut restored = BTreeMap::new();
+        for (peer, version) in &snapshot.entries {
+            if restored.insert(peer.clone(), *version).is_some() {
+                return Err(RestoreError::Duplicate);
+            }
+        }
+        self.tombstones = restored;
+        self.tombstone_generation = snapshot.generation;
+        Ok(())
     }
 
     /// Change the epoch a peer's key is bound to. Every earlier snapshot of the peer goes stale.
@@ -401,8 +477,13 @@ pub mod ephemeral {
 
 #[cfg(test)]
 mod tests {
+    use franken_session::AuthorityToken;
+
     use super::ephemeral::{EphemeralPeers, test_key};
     use super::*;
+    use crate::channel::pipeline::{ChannelConfig, ControlChannel, Rejection, SubmitResult};
+    use crate::channel::request::{ControlCommand, ControlRequest, RequestBody};
+    use crate::channel::testkit::fixture_session;
 
     fn id(raw: &str) -> PeerId {
         PeerId::parse(raw).unwrap()
@@ -770,5 +851,364 @@ mod tests {
                 )
                 .is_ok()
         );
+    }
+
+    // ------------------------------------------------------------------ tombstones across a restart
+
+    fn name_n(i: usize) -> String {
+        format!("p{i}")
+    }
+
+    fn snapshot_of(count: usize) -> Tombstones {
+        Tombstones {
+            generation: count as u64,
+            entries: (0..count).map(|i| (id(&name_n(i)), 1)).collect(),
+        }
+    }
+
+    #[test]
+    fn tombstones_are_exported_one_per_revoked_identity_with_a_generation() {
+        let mut peers = admitted();
+        assert_eq!(peers.tombstones(), Tombstones::default());
+        // Revoking someone who is not admitted changes nothing, generation included.
+        assert!(!peers.revoke(&id("nobody")));
+        assert_eq!(peers.tombstone_generation(), 0);
+
+        assert!(peers.revoke(&id("ctl-a")));
+        assert!(!peers.revoke(&id("ctl-a")), "already revoked");
+        assert_eq!(
+            peers.tombstones(),
+            Tombstones {
+                generation: 1,
+                entries: vec![(id("ctl-a"), 1)]
+            }
+        );
+
+        // A rebinding raises the version; a revocation after it leaves the higher tombstone, in order.
+        peers.rebind(&id("panel"), None);
+        assert!(peers.revoke(&id("panel")));
+        assert_eq!(
+            peers.tombstones(),
+            Tombstones {
+                generation: 2,
+                entries: vec![(id("ctl-a"), 1), (id("panel"), 2)]
+            }
+        );
+    }
+
+    #[test]
+    fn a_restored_directory_refuses_to_resurrect_a_revoked_identity_at_or_below_its_tombstone() {
+        let mut before = admitted();
+        before.revoke(&id("ctl-a"));
+        let stored = before.tombstones();
+
+        let mut after = EphemeralPeers::new();
+        after.restore_tombstones(&stored).unwrap();
+        assert_eq!(
+            after.tombstones(),
+            stored,
+            "the snapshot round-trips, generation included"
+        );
+        for stale in [0, 1] {
+            assert_eq!(
+                after.admit(
+                    &id("ctl-a"),
+                    PeerRole::Controller,
+                    &test_key("ctl-a"),
+                    Some(10),
+                    stale
+                ),
+                Err(AdmitError::Resurrection {
+                    tombstone: 1,
+                    offered: stale
+                }),
+                "version {stale}"
+            );
+        }
+        // The deliberate re-admission, one version up with a new key, works; the old key does not.
+        let new_key = b"a-replacement-key-0123456789".to_vec();
+        after
+            .admit(&id("ctl-a"), PeerRole::Controller, &new_key, Some(10), 2)
+            .unwrap();
+        let msg = b"play";
+        assert!(
+            after
+                .authenticate(&id("ctl-a"), msg, &compute_proof(&new_key, msg))
+                .is_ok()
+        );
+        assert_eq!(
+            after.authenticate(&id("ctl-a"), msg, &sign("ctl-a", msg)),
+            Err(AuthFailure::BadProof)
+        );
+        // The generation carries on from the restored one.
+        assert!(after.revoke(&id("ctl-a")));
+        assert_eq!(after.tombstone_generation(), 2);
+    }
+
+    #[test]
+    fn the_generation_tells_the_owner_a_revocation_is_not_yet_stored() {
+        let mut peers = admitted();
+        let stored = peers.tombstones();
+        assert_eq!(peers.tombstone_generation(), stored.generation);
+        peers.revoke(&id("ctl-a"));
+        assert_ne!(
+            peers.tombstone_generation(),
+            stored.generation,
+            "the stored snapshot is now behind: store the new one before the revocation counts as done"
+        );
+        let stored = peers.tombstones();
+        assert_eq!(peers.tombstone_generation(), stored.generation);
+    }
+
+    #[test]
+    fn a_snapshot_that_cannot_be_restored_is_refused_whole_and_changes_nothing() {
+        // Not into a directory that has admitted somebody, nor one that has revoked somebody.
+        let mut used = admitted();
+        assert_eq!(
+            used.restore_tombstones(&Tombstones::default()),
+            Err(RestoreError::NotFresh)
+        );
+        let mut revoked = EphemeralPeers::new();
+        revoked
+            .restore_tombstones(&snapshot_of(1))
+            .expect("a fresh directory takes a snapshot");
+        assert_eq!(
+            revoked.restore_tombstones(&snapshot_of(1)),
+            Err(RestoreError::NotFresh)
+        );
+
+        // Too many, and a duplicate: refused, and the directory is still fresh afterwards.
+        let mut fresh = EphemeralPeers::new();
+        assert_eq!(
+            fresh.restore_tombstones(&snapshot_of(MAX_PEERS + 1)),
+            Err(RestoreError::TooMany { max: MAX_PEERS })
+        );
+        let mut twice = snapshot_of(2);
+        twice.entries[1].0 = twice.entries[0].0.clone();
+        assert_eq!(
+            fresh.restore_tombstones(&twice),
+            Err(RestoreError::Duplicate)
+        );
+        assert_eq!(fresh.tombstones(), Tombstones::default());
+        assert!(
+            fresh.restore_tombstones(&snapshot_of(MAX_PEERS)).is_ok(),
+            "exactly the bound is fine"
+        );
+    }
+
+    #[test]
+    fn restored_tombstones_still_count_as_identities_ever_admitted() {
+        let mut peers = EphemeralPeers::new();
+        peers.restore_tombstones(&snapshot_of(MAX_PEERS)).unwrap();
+        let key = test_key("one-more");
+        assert_eq!(
+            peers.admit(&id("one-more"), PeerRole::Controller, &key, Some(1), 1),
+            Err(AdmitError::Full)
+        );
+        // A revoked identity itself can still come back at a higher version.
+        assert!(
+            peers
+                .admit(&id("p0"), PeerRole::Controller, &test_key("p0"), Some(1), 2)
+                .is_ok()
+        );
+    }
+
+    // ------------------------------------------------------------------ the judge, through the channel
+
+    /// What the persistence layer gives back across the restart. `Faithful` is exactly what was stored; the
+    /// others are faults a careless owner could have: nothing stored, versions off by one, a snapshot taken
+    /// before the revocation (a crash between the revocation and the store), and nothing stored where U01
+    /// also happens not to replay the revoked identity's old record.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Persisted {
+        Faithful,
+        Lost,
+        OffByOne,
+        Stale,
+        LostNotReplayed,
+    }
+
+    /// `ctl-a` is revoked; the process restarts into a fresh directory; U01 replays the admissions it still
+    /// holds, the revoked identity's among them; then the revoked key signs a command.
+    ///
+    /// What a faithful restart must show is **exactly** what the directory showed before it: the stale
+    /// admission is refused as a resurrection, and the key is answered `Revoked`, with nothing settled and
+    /// the volume untouched. "Some rejection" is not enough: `UnknownPeer` would mean the restart forgot
+    /// who was revoked. Failures begin with `RESURRECTED` (the key, or its admission, got back in) or
+    /// `WRONG-REASON` (it was refused, but not as `Revoked`).
+    fn judge_a_revoked_peer_stays_revoked_across_a_restart(
+        persisted: Persisted,
+    ) -> Result<(), String> {
+        let mut before = admitted();
+        let taken_before_the_revocation = before.tombstones();
+        before.revoke(&id("ctl-a"));
+        let stored = before.tombstones();
+
+        let handed_back = match persisted {
+            Persisted::Faithful => stored,
+            Persisted::Lost | Persisted::LostNotReplayed => Tombstones::default(),
+            Persisted::OffByOne => Tombstones {
+                generation: stored.generation,
+                entries: stored
+                    .entries
+                    .iter()
+                    .map(|(peer, version)| (peer.clone(), version - 1))
+                    .collect(),
+            },
+            Persisted::Stale => taken_before_the_revocation,
+        };
+        let mut after = EphemeralPeers::new();
+        after
+            .restore_tombstones(&handed_back)
+            .map_err(|e| format!("RESTORE: {e}"))?;
+
+        // U01's records, replayed as they were. The revoked identity's must be refused as a resurrection.
+        if persisted != Persisted::LostNotReplayed {
+            let replay = after.admit(
+                &id("ctl-a"),
+                PeerRole::Controller,
+                &test_key("ctl-a"),
+                Some(10),
+                1,
+            );
+            if !matches!(
+                replay,
+                Err(AdmitError::Resurrection {
+                    tombstone: 1,
+                    offered: 1
+                })
+            ) {
+                return Err(format!(
+                    "RESURRECTED: the stale admission of the revoked identity gave {replay:?}"
+                ));
+            }
+        }
+        after
+            .admit(
+                &id("panel"),
+                PeerRole::LocalUser,
+                &test_key("panel"),
+                None,
+                1,
+            )
+            .map_err(|e| format!("setup: {e:?}"))?;
+
+        let mut session = fixture_session(10);
+        let mut config = ChannelConfig::provisional();
+        config.session_seq_base = 1_000;
+        let mut channel = ControlChannel::new(after, config).map_err(|e| format!("setup: {e}"))?;
+        let token = AuthorityToken::issue(&session, 100_000_000_000);
+        channel
+            .install_lease(&session, token, 0)
+            .map_err(|e| format!("setup: {e}"))?;
+        let body = RequestBody::new(
+            id("ctl-a"),
+            1,
+            10,
+            Some(session.state_revision),
+            ControlCommand::SetGroupVolume { volume: 99 },
+        )
+        .map_err(|e| format!("setup: {e}"))?;
+        let proof = compute_proof(&test_key("ctl-a"), &body.signing_bytes());
+        let result = channel.submit(0, ControlRequest::new(body, proof));
+        let settled = channel.step(0, &mut session);
+        if !settled.is_empty() || session.group_master_volume != 50 {
+            return Err(format!(
+                "RESURRECTED: the revoked key was answered {result:?}, {} commands settled, group volume {}",
+                settled.len(),
+                session.group_master_volume
+            ));
+        }
+        let revoked = SubmitResult::Rejected(Rejection::Unauthenticated(AuthFailure::Revoked));
+        if result != revoked {
+            return Err(format!(
+                "WRONG-REASON: the revoked key was answered {result:?}, not as Revoked: the restart no longer remembers the revocation"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_faithful_restart_keeps_a_revoked_peer_revoked() {
+        assert_eq!(
+            judge_a_revoked_peer_stays_revoked_across_a_restart(Persisted::Faithful),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_restart_answers_a_revoked_key_exactly_as_the_directory_did_before() {
+        // Before: a revoked identity is Revoked, a stranger is UnknownPeer. After a faithful restore the
+        // same, because the answer comes from the remembered tombstone and nothing else.
+        let message = b"play";
+        let mut before = admitted();
+        before.revoke(&id("ctl-a"));
+        let mut after = EphemeralPeers::new();
+        after.restore_tombstones(&before.tombstones()).unwrap();
+        for directory in [&before, &after] {
+            assert_eq!(
+                directory.authenticate(&id("ctl-a"), message, &sign("ctl-a", message)),
+                Err(AuthFailure::Revoked)
+            );
+            assert_eq!(
+                directory.authenticate(&id("ghost"), message, &sign("ctl-a", message)),
+                Err(AuthFailure::UnknownPeer)
+            );
+        }
+    }
+
+    #[test]
+    fn each_planted_persistence_fault_fails_the_judge_by_name() {
+        // A judge that fails everything proves nothing, so the faithful restart passes first.
+        assert_eq!(
+            judge_a_revoked_peer_stays_revoked_across_a_restart(Persisted::Faithful),
+            Ok(())
+        );
+        for (fault, tag) in [
+            (Persisted::Lost, "RESURRECTED"),
+            (Persisted::OffByOne, "RESURRECTED"),
+            (Persisted::Stale, "RESURRECTED"),
+            (Persisted::LostNotReplayed, "WRONG-REASON"),
+        ] {
+            let verdict = judge_a_revoked_peer_stays_revoked_across_a_restart(fault);
+            assert!(
+                verdict.as_ref().is_err_and(|e| e.starts_with(tag)),
+                "{fault:?} was not caught as {tag}: {verdict:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_deliberate_re_admission_at_a_higher_version_works_through_the_channel_after_a_restart() {
+        let mut before = admitted();
+        before.revoke(&id("ctl-a"));
+        let mut after = EphemeralPeers::new();
+        after.restore_tombstones(&before.tombstones()).unwrap();
+        let new_key = b"a-replacement-key-0123456789".to_vec();
+        after
+            .admit(&id("ctl-a"), PeerRole::Controller, &new_key, Some(10), 2)
+            .unwrap();
+
+        let mut session = fixture_session(10);
+        let mut config = ChannelConfig::provisional();
+        config.session_seq_base = 1_000;
+        let mut channel = ControlChannel::new(after, config).unwrap();
+        let token = AuthorityToken::issue(&session, 100_000_000_000);
+        channel.install_lease(&session, token, 0).unwrap();
+        let body = RequestBody::new(
+            id("ctl-a"),
+            1,
+            10,
+            Some(session.state_revision),
+            ControlCommand::SetGroupVolume { volume: 99 },
+        )
+        .unwrap();
+        let proof = compute_proof(&new_key, &body.signing_bytes());
+        assert!(matches!(
+            channel.submit(0, ControlRequest::new(body, proof)),
+            SubmitResult::Queued { .. }
+        ));
+        assert_eq!(channel.step(0, &mut session).len(), 1);
+        assert_eq!(session.group_master_volume, 99);
     }
 }
