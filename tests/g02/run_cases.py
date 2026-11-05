@@ -64,6 +64,8 @@ d01.OBSERVED = re.compile(r"G02-OBSERVED (\{.*\})\s*$")
 d01.RUST_SOURCES = [
     ("crates/franken-dsp/src/volume/tests.rs", "franken_dsp", "volume::tests::"),
     ("crates/franken-dsp/src/volume/outcome_tests.rs", "franken_dsp", "volume::outcome_tests::"),
+    ("crates/franken-dsp/src/volume/progress_tests.rs", "franken_dsp", "volume::progress_tests::"),
+    ("crates/franken-dsp/src/volume/local_mute_tests.rs", "franken_dsp", "volume::local_mute_tests::"),
     ("crates/franken-dsp/tests/g02_vectors.rs", "g02_vectors", ""),
 ]
 Logs = d01.Logs

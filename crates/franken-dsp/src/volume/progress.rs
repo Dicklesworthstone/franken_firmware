@@ -80,12 +80,14 @@ impl MemberVolume {
         let handed_to_board = dsp.user_gain() == self.unmuted_gain() && dsp.is_muted() == silent;
         // What D02 is actually ramping toward, from its own state: it follows the user gain only while Active,
         // unmuted and not switching profile, and heads for silence otherwise.
-        let board_target =
-            if matches!(dsp.status(), BoardStatus::Active) && !dsp.is_muted() && !dsp.has_pending_switch() {
-                dsp.user_gain()
-            } else {
-                0.0
-            };
+        let board_target = if matches!(dsp.status(), BoardStatus::Active)
+            && !dsp.is_muted()
+            && !dsp.has_pending_switch()
+        {
+            dsp.user_gain()
+        } else {
+            0.0
+        };
         let applied_gain = dsp.applied_gain();
         if handed_to_board && board_target == target && applied_gain == target {
             Ok(CommandProgress::Completed {

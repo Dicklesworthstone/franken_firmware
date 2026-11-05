@@ -31,9 +31,16 @@ use franken_board_profile::{BoardProfile, TransducerRole};
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
+mod local_mute_tests;
+#[cfg(test)]
 mod outcome_tests;
+mod progress;
+#[cfg(test)]
+mod progress_tests;
 #[cfg(test)]
 mod tests;
+
+pub use progress::CommandProgress;
 
 /// How many applied commands a member remembers the result of. Older ones are reported as forgotten.
 pub const RESULT_RETENTION: usize = 32;
