@@ -7,8 +7,10 @@
 
 use crate::SpeakerReadinessState;
 use franken_board_profile::{BoardProfile, synthetic_test_fixture_catalog};
-use franken_clock::{
-    ClockExchangeSample, DEFAULT_MAX_ADMITTED_UNCERTAINTY_US, GroupClockEstimator, LatencyLedger,
+use franken_clock::LatencyLedger;
+use franken_clock::group::{
+    Accepted, ClockStatus, GroupClock, GroupClockConfig, MuteReason, Output, ProbeReject,
+    ProbeResponse, StartPlan, StartReject, StartSchedule, group_at,
 };
 use franken_control::{
     AirPlay2ReceiverState, AlexaDirective, FsonosSoapRequest, FsonosSoapResponse,
@@ -50,7 +52,14 @@ pub struct VirtualSpeakerNode {
     pub readiness_oracle: ReadinessOracle,
     /// One continuity/content oracle per hardware channel, so no channel is judged on another's evidence.
     pub continuity_oracles: Vec<SampleContinuityOracle>,
-    pub clock: GroupClockEstimator,
+    /// The member side of the N03 group clock. The node sounds only when this says so (see `gate_block`).
+    pub clock: GroupClock,
+    /// The node's own simulated monotonic clock; the group clock is true time. Tests may step it.
+    pub sim_clock: SimNodeClock,
+    /// The start the session controller last admitted for this node, as N03 planned it.
+    pub admitted_plan: Option<StartPlan>,
+    /// Whether the controller re-admits a start by itself once the clock is locked again after a reset or expiry.
+    pub auto_admit: bool,
     /// The only path from datagram bytes to the jitter buffer: structure, MAC, field validation,
     /// stream identity, epoch and replay window, in that order (`N01`).
     pub receiver: StreamReceiver,
@@ -68,6 +77,11 @@ pub struct VirtualSpeakerNode {
     /// Samples compared against the shadow render, summed over every channel.
     pub handoff_checked_samples: u64,
     pub max_skew_us: u64,
+    /// Blocks the gate let sound, and blocks it replaced with silence at the same stream position.
+    pub audible_blocks: u64,
+    pub muted_blocks: u64,
+    /// Clock correction handed to the resampler: the group clock's ratio in ppm while a rate estimate is in force.
+    pub drift_ppm: i32,
 }
 
 /// Silence blocks the virtual HAL must have primed before it may unmute. Stated by the harness,
@@ -75,15 +89,16 @@ pub struct VirtualSpeakerNode {
 const REQUIRED_SILENCE_BLOCKS: u32 = 2;
 const HAL_DMA_SLOTS: u16 = 8;
 /// What the readiness gate requires of the clock, stated here and not read back from the
-/// estimator. 2 ms is the N03 admission bound; a test pins it against the production constant.
-const CLOCK_LOCK_MIN_SAMPLES: u32 = 3;
+/// clock. 4 exchanges and 2 ms are the N03 lock count and admission bound; a test pins both
+/// against the production configuration.
+const CLOCK_LOCK_MIN_SAMPLES: u32 = 4;
 const CLOCK_LOCK_MAX_UNCERTAINTY_US: u64 = 2_000;
 const CLOCK_EXCHANGES: u32 = 4;
-/// The simulated clock exchange is built from a known truth, so the estimate can be checked
-/// against it instead of against the estimator's own `is_locked()`.
-const SIM_TRUE_OFFSET_NS: i64 = 0;
-const SIM_ONE_WAY_DELAY_NS: i64 = 400_000;
-const SIM_PEER_DWELL_NS: i64 = 50_000;
+/// The simulated clock exchange is built from a known truth (the group clock is true time and the node has
+/// its own `SimNodeClock`), so the estimate is checked against that truth and not against the clock's own
+/// `status()`.
+const SIM_ONE_WAY_DELAY_NS: u64 = 400_000;
+const SIM_PEER_DWELL_NS: u64 = 50_000;
 /// Logical time between bring-up steps; only the order of observations matters.
 const BRING_UP_STEP_NS: u64 = 1_000_000;
 
@@ -98,6 +113,14 @@ struct BringUpPlan {
     clock_exchanges: u32,
     /// Skip the node's own clock gate and rely on the independent oracle alone.
     bypass_own_clock_gate: bool,
+    /// The node's own simulated clock; `None` derives a member-specific one from the member id.
+    sim_clock: Option<SimNodeClock>,
+    /// Which boot of this member this is; it changes the first request number of the clock exchanges.
+    boot_index: u32,
+    /// The block whose presentation is the first admitted start; `None` leaves the node unadmitted.
+    first_start_block: Option<u64>,
+    /// Whether the controller re-admits a start by itself after a reset or expiry.
+    auto_admit: bool,
 }
 
 impl BringUpPlan {
@@ -106,6 +129,10 @@ impl BringUpPlan {
         silence_blocks_primed: REQUIRED_SILENCE_BLOCKS,
         clock_exchanges: CLOCK_EXCHANGES,
         bypass_own_clock_gate: false,
+        sim_clock: None,
+        boot_index: 0,
+        first_start_block: Some(0),
+        auto_admit: true,
     };
 }
 
@@ -403,28 +430,38 @@ impl VirtualSpeakerNode {
             .record_amplifier(amplifier_observation(t_ns, &running.telemetry()))
             .map_err(readiness_err)?;
 
-        let mut clock = GroupClockEstimator::new(8, DEFAULT_MAX_ADMITTED_UNCERTAINTY_US);
+        let sim_clock = plan
+            .sim_clock
+            .unwrap_or_else(|| SimNodeClock::for_member(member_id));
+        let clock_cfg = GroupClockConfig::for_board(&board).map_err(|e| e.to_string())?;
+        let seq_base = simulated_boot_entropy(member_id, initial_epoch, plan.boot_index);
+        let mut clock = GroupClock::new(clock_cfg, initial_epoch, COORDINATOR_ID, seq_base)
+            .map_err(|e| e.to_string())?;
+        let mut last_exchange_true_ns = 0_u64;
         for seq in 1..=u64::from(plan.clock_exchanges) {
-            let t1 = (seq as i64) * 10_000_000;
-            let t2 = t1 + SIM_TRUE_OFFSET_NS + SIM_ONE_WAY_DELAY_NS;
-            let t3 = t2 + SIM_PEER_DWELL_NS;
-            let t4 = t3 - SIM_TRUE_OFFSET_NS + SIM_ONE_WAY_DELAY_NS;
-            let sample = ClockExchangeSample::from_four_timestamps(seq, t1, t2, t3, t4)
-                .map_err(|e| e.to_string())?;
-            clock.ingest_sample(sample);
+            let true_ns = seq * BRING_UP_EXCHANGE_SPACING_NS;
+            sim_exchange(&mut clock, &sim_clock, true_ns)
+                .map_err(|e| format!("clock exchange {seq} refused: {}", e.code()))?;
+            last_exchange_true_ns = true_ns;
         }
-        if !plan.bypass_own_clock_gate && !clock.is_locked() {
+        let ready_true_ns = last_exchange_true_ns + BRING_UP_READY_AFTER_NS;
+        let ready_local_ns = sim_clock.local(ready_true_ns);
+        if !plan.bypass_own_clock_gate && clock.status(ready_local_ns) != ClockStatus::Locked {
             return Err("clock is not locked".to_string());
         }
         t_ns += BRING_UP_STEP_NS;
+        let reading = clock.reading(ready_local_ns);
         readiness_oracle
             .record_clock(ClockObservation {
                 t_ns,
                 ingested_samples: plan.clock_exchanges,
-                uncertainty_us: clock.uncertainty_us(),
-                offset_error_ns: clock
-                    .estimated_offset_ns()
-                    .saturating_sub(SIM_TRUE_OFFSET_NS),
+                uncertainty_us: reading.map_or(u64::MAX, |a| a.uncertainty_ns.div_ceil(1_000)),
+                // The group clock is true time, so the estimate's error is its reading minus the true instant.
+                offset_error_ns: reading.map_or(0, |a| {
+                    let error =
+                        i128::from(group_at(&a, ready_local_ns)) - i128::from(ready_true_ns);
+                    i64::try_from(error).unwrap_or(i64::MAX)
+                }),
             })
             .map_err(readiness_err)?;
 
@@ -432,6 +469,22 @@ impl VirtualSpeakerNode {
         readiness_oracle
             .announce_ready(t_ns)
             .map_err(readiness_err)?;
+
+        // The session controller admits the first start: the presentation of the chosen block.
+        let admitted_plan = match plan.first_start_block {
+            Some(block) => {
+                let sched = StartSchedule {
+                    epoch: initial_epoch,
+                    start_group_ns: Self::block_pts_group_ns(block),
+                };
+                Some(
+                    clock
+                        .admit(sched, ready_local_ns)
+                        .map_err(|e| format!("start admission refused: {}", e.code()))?,
+                )
+            }
+            None => None,
+        };
 
         let dsp = BoardProtectionDsp::new(board.clone()).map_err(|e| e.to_string())?;
         let shadow_dsp = dsp.clone();
@@ -447,6 +500,9 @@ impl VirtualSpeakerNode {
             readiness_oracle,
             continuity_oracles,
             clock,
+            sim_clock,
+            admitted_plan,
+            auto_admit: plan.auto_admit,
             receiver: StreamReceiver::new(
                 StreamKey::from_bytes(CAMPAIGN_STREAM_KEY),
                 campaign_stream_id()?,
@@ -462,7 +518,230 @@ impl VirtualSpeakerNode {
             concealed_blocks: 0,
             handoff_checked_samples: 0,
             max_skew_us: 0,
+            audible_blocks: 0,
+            muted_blocks: 0,
+            drift_ppm: 0,
         })
+    }
+}
+
+// ------------------------------------------------------------------------------------------------
+// The audible gate (`N03`): each node's playout decision rests on `franken_clock::group::GroupClock`.
+// ------------------------------------------------------------------------------------------------
+
+/// The coordinator (the group's leader) in the simulated house. A public test value.
+const COORDINATOR_ID: u64 = 0x5EED_C0DE_0000_0001;
+/// True time at which block 0 of a campaign is sent. The bring-up exchanges happen before it.
+const CAMPAIGN_ORIGIN_NS: u64 = 250_000_000;
+/// Stream lead: block `k` is presented this long after it is sent.
+const PLAYOUT_HORIZON_NS: u64 = 500_000_000;
+/// One clock exchange every this many blocks (about 170 ms of stream time).
+const PROBE_EVERY_BLOCKS: u64 = 32;
+/// The gate decides this long after a block's send instant, so an exchange started at the instant has completed.
+const GATE_AFTER_SEND_NS: u64 = 1_000_000;
+/// True time of the n-th bring-up exchange is `n` times this.
+const BRING_UP_EXCHANGE_SPACING_NS: u64 = 10_000_000;
+/// Bring-up considers the clock ready this long after its last exchange was sent.
+const BRING_UP_READY_AFTER_NS: u64 = 2_000_000;
+
+/// FNV-1a over bytes: a stable, dependency-free hash for deriving simulated per-node values.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut h = 0xcbf2_9ce4_8422_2325_u64;
+    for b in bytes {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    h
+}
+
+/// SIMULATED stand-in for the platform entropy source, used for the first request number of a node's clock
+/// exchanges (`GroupClock::new`'s `seq_base`). It is seeded and deterministic, so it is **not entropy**; it only
+/// gives each member and each boot a different, non-constant base so a response recorded before a restart cannot
+/// answer a request made after it. The production source is `franken_platform` `PlatformLayer::fill_random`
+/// (`P02`), which is not yet declared in that crate's `lib.rs`; swapping it in changes this one function.
+fn simulated_boot_entropy(member_id: &str, epoch: u64, boot_index: u32) -> u64 {
+    let mut h = fnv1a(member_id.as_bytes());
+    for part in [epoch, u64::from(boot_index), 0x5EA1_BA5E_u64] {
+        h ^= part;
+        h = h.wrapping_mul(0x0100_0000_01b3);
+        h ^= h >> 29;
+    }
+    h
+}
+
+/// A node's own monotonic clock in the simulated house. True time `t` (ns) is the campaign timeline; the
+/// coordinator's group clock reads `t` exactly, and this clock reads `local0 + t * (1 + skew)`, floored to 1 us.
+/// Nothing the node's code sees is true time: it exists so the node's claims can be checked against it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SimNodeClock {
+    pub skew_ppb: i64,
+    pub local0_ns: u64,
+}
+
+impl SimNodeClock {
+    const RESOLUTION_NS: u64 = 1_000;
+
+    /// A clock with a fixed, member-specific offset and a skew within +/-50 ppm.
+    #[must_use]
+    pub fn for_member(member_id: &str) -> Self {
+        let h = fnv1a(member_id.as_bytes());
+        let skew_ppb = i64::try_from(h % 100_001).unwrap_or(0) - 50_000;
+        let local0 = 1_000_000_000 + (h >> 20) % 4_000_000_000;
+        Self {
+            skew_ppb,
+            local0_ns: local0 - local0 % Self::RESOLUTION_NS,
+        }
+    }
+
+    /// The node's reading at true time `true_ns`.
+    #[must_use]
+    pub fn local(&self, true_ns: u64) -> u64 {
+        let skew = i128::from(true_ns) * i128::from(self.skew_ppb);
+        let v = i128::from(self.local0_ns) + i128::from(true_ns) + skew.div_euclid(1_000_000_000);
+        let v = u64::try_from(v).unwrap_or(0);
+        v - v % Self::RESOLUTION_NS
+    }
+
+    /// The first true time at which this clock reads `local_ns` or more (the clock never runs backwards).
+    #[must_use]
+    pub fn true_at_local(&self, local_ns: u64) -> u64 {
+        let (mut lo, mut hi) = (0_u64, 1_u64 << 50);
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if self.local(mid) < local_ns {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        lo
+    }
+}
+
+/// One simulated clock exchange started at true time `true_ns`: the request as the node sends it, the
+/// coordinator's answer, and the node's local reading of the arrival. The path is symmetric with the constant
+/// one-way delay and dwell above, so the exchange has a known truth.
+fn sim_probe(clock: &mut GroupClock, sim: &SimNodeClock, true_ns: u64) -> (ProbeResponse, u64) {
+    let req = clock.next_probe(sim.local(true_ns));
+    let t2 = true_ns + SIM_ONE_WAY_DELAY_NS;
+    let t3 = t2 + SIM_PEER_DWELL_NS;
+    let t4 = t3 + SIM_ONE_WAY_DELAY_NS;
+    let resp = ProbeResponse {
+        epoch: req.epoch,
+        leader: COORDINATOR_ID,
+        seq: req.seq,
+        t1_echo_ns: req.t1_local_ns,
+        t2_group_ns: t2,
+        t3_group_ns: t3,
+    };
+    (resp, sim.local(t4))
+}
+
+/// A clock exchange the node sends and the coordinator answers.
+fn sim_exchange(
+    clock: &mut GroupClock,
+    sim: &SimNodeClock,
+    true_ns: u64,
+) -> Result<Accepted, ProbeReject> {
+    let (resp, t4_local) = sim_probe(clock, sim, true_ns);
+    clock.on_response(resp, t4_local)
+}
+
+/// What the audible gate decided for one block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockGate {
+    /// What `GroupClock` says about this block's presentation instant.
+    pub output: Output,
+    /// Where the node's own transform puts the block's presentation, on its local clock.
+    pub presented_local_ns: Option<u64>,
+}
+
+impl BlockGate {
+    #[must_use]
+    pub const fn audible(&self) -> bool {
+        self.output.is_audible()
+    }
+}
+
+impl VirtualSpeakerNode {
+    /// The true time at which a sounding block is presented: the instant the node's own transform chose, mapped
+    /// back through its simulated clock. `None` for a block that does not sound.
+    #[must_use]
+    pub fn presented_true_ns(&self, gate: &BlockGate) -> Option<u64> {
+        match (gate.output, gate.presented_local_ns) {
+            (Output::Audible, Some(local)) => Some(self.sim_clock.true_at_local(local)),
+            _ => None,
+        }
+    }
+
+    /// Group time at which block `blk_idx` is presented. The group clock is true time in this house.
+    #[must_use]
+    pub const fn block_pts_group_ns(blk_idx: u64) -> u64 {
+        CAMPAIGN_ORIGIN_NS + blk_idx * BLOCK_PERIOD_NS + PLAYOUT_HORIZON_NS
+    }
+
+    /// One clock exchange with the coordinator, started at true time `true_ns`.
+    pub fn exchange_at(&mut self, true_ns: u64) -> Result<Accepted, ProbeReject> {
+        sim_exchange(&mut self.clock, &self.sim_clock, true_ns)
+    }
+
+    /// The session controller schedules a start at block `blk_idx`'s presentation. `now_true_ns` is the time of
+    /// the request. The node stays muted, catching up, until the group clock reaches the start.
+    pub fn admit_start_at_block(
+        &mut self,
+        blk_idx: u64,
+        now_true_ns: u64,
+    ) -> Result<StartPlan, StartReject> {
+        let now_local = self.sim_clock.local(now_true_ns);
+        let sched = StartSchedule {
+            epoch: self.clock.epoch(),
+            start_group_ns: Self::block_pts_group_ns(blk_idx),
+        };
+        let plan = self.clock.admit(sched, now_local)?;
+        self.admitted_plan = Some(plan);
+        Ok(plan)
+    }
+
+    /// The audible gate for block `blk_idx`: its clock exchange if one is due, the controller's re-admission once the
+    /// clock is locked again, and then N03's answer for the block's presentation instant. A block sounds only if
+    /// `GroupClock` says audible there (locked or in holdover, an admitted start reached, the authority live);
+    /// otherwise the caller feeds silence. A rejected exchange never changes what sounds.
+    pub fn gate_block(&mut self, blk_idx: u64) -> BlockGate {
+        let send_true = CAMPAIGN_ORIGIN_NS + blk_idx * BLOCK_PERIOD_NS;
+        if blk_idx > 0 && blk_idx.is_multiple_of(PROBE_EVERY_BLOCKS) {
+            let _ = self.exchange_at(send_true);
+        }
+        let now_local = self.sim_clock.local(send_true + GATE_AFTER_SEND_NS);
+        let pts_group = Self::block_pts_group_ns(blk_idx);
+        // Settle the clock's state at the real time first: an expiry or a reset clears an admitted start.
+        let _ = self.clock.tick(now_local);
+        if self.auto_admit
+            && self.clock.status(now_local) == ClockStatus::Locked
+            && self.clock.output(now_local) == Output::Muted(MuteReason::NotAdmitted)
+        {
+            let sched = StartSchedule {
+                epoch: self.clock.epoch(),
+                start_group_ns: pts_group,
+            };
+            if let Ok(plan) = self.clock.admit(sched, now_local) {
+                self.admitted_plan = Some(plan);
+            }
+        }
+        self.drift_ppm = match self.clock.reading(now_local) {
+            Some(anchor) if self.clock.rate_in_force() => i32::try_from(anchor.ratio_ppb / 1_000)
+                .unwrap_or(0)
+                .clamp(-500, 500),
+            _ => 0,
+        };
+        // Would this node be allowed to sound when the block is presented? Ask N03 about that instant.
+        let presented_local_ns = self.clock.local_for_group(pts_group, now_local);
+        let output = presented_local_ns.map_or(Output::Muted(MuteReason::NotLocked), |l| {
+            self.clock.output(l)
+        });
+        BlockGate {
+            output,
+            presented_local_ns,
+        }
     }
 }
 
@@ -496,6 +775,9 @@ pub struct MemberSimulationStats {
     pub rendered_blocks: u64,
     pub authentic_blocks: u64,
     pub concealed_blocks: u64,
+    /// Blocks the N03 audible gate let sound, and blocks it muted (replaced with silence at the same position).
+    pub audible_blocks: u64,
+    pub muted_blocks: u64,
     /// Frames verified continuous on every channel (the minimum across channels).
     pub verified_continuous_frames: u64,
     /// Samples compared with the shadow render, summed over every channel. This is a handoff
@@ -655,7 +937,7 @@ fn run_campaign_inner(
         epoch,
     );
     let block_period_ns: u64 = BLOCK_PERIOD_NS; // 256 / 48_000 s
-    let playout_horizon_ns: u64 = 500_000_000; // 500 ms
+    let playout_horizon_ns: u64 = PLAYOUT_HORIZON_NS; // 500 ms
 
     // Create deterministic per-member network schedules
     let mut schedules: BTreeMap<String, NetworkSchedule> = nodes
@@ -697,7 +979,7 @@ fn run_campaign_inner(
         };
         let wire = sender.send(frame).map_err(|e| e.to_string())?;
 
-        let mut member_dac_cursor_ns = Vec::with_capacity(nodes.len());
+        let mut presented_true = Vec::with_capacity(nodes.len());
         for (member_id, node) in &mut nodes {
             let sched = schedules.get_mut(member_id).unwrap();
             let decision = sched.evaluate_packet(blk_idx, send_time_ns);
@@ -720,6 +1002,8 @@ fn run_campaign_inner(
             node.dsp.set_volume_gain(gain);
             node.shadow_dsp.set_volume_gain(gain);
 
+            // The audible gate: N03's answer for this block's presentation instant.
+            let gate = node.gate_block(blk_idx);
             let pull = node.jitter_buffer.pull_for_frame(start_frame);
             let stereo_in = match pull {
                 PlayoutPullDecision::AuthenticBlock(b)
@@ -732,10 +1016,19 @@ fn run_campaign_inner(
                     block
                 }
             };
+            // A block the gate does not let sound is replaced by silence at the same stream position, so the
+            // continuity and shadow oracles still judge contiguous frames.
+            let stereo_in = if gate.audible() {
+                node.audible_blocks += 1;
+                stereo_in
+            } else {
+                node.muted_blocks += 1;
+                StereoAudioBlock::silence(start_frame)
+            };
 
             let resampled = node
                 .resampler
-                .process_stereo(&stereo_in, node.clock.estimated_drift_ppm())
+                .process_stereo(&stereo_in, node.drift_ppm)
                 .map_err(|e| e.to_string())?;
             let mut hw_out = node.dsp.render_block(&resampled);
             let shadow_out = node.shadow_dsp.render_block(&resampled);
@@ -817,20 +1110,15 @@ fn run_campaign_inner(
             lease.complete();
             node.rendered_blocks += 1;
 
-            let local_dac_ns = node
-                .clock
-                .map_presentation_to_local_dac_ns(pts_ns, &node.board)
-                .map_err(|e| e.to_string())?;
-            // Effective electrical output time adds back the board's calibrated delay
-            let electrical_out_ns =
-                local_dac_ns + u64::from(node.board.calibrated_output_delay_us) * 1_000;
-            member_dac_cursor_ns.push(electrical_out_ns);
+            // Where this node really presents the block: its own transform's local instant, mapped back to true time.
+            if let Some(true_ns) = node.presented_true_ns(&gate) {
+                presented_true.push(true_ns);
+            }
         }
 
-        if let (Some(&min_ns), Some(&max_ns)) = (
-            member_dac_cursor_ns.iter().min(),
-            member_dac_cursor_ns.iter().max(),
-        ) {
+        if let (Some(&min_ns), Some(&max_ns)) =
+            (presented_true.iter().min(), presented_true.iter().max())
+        {
             let skew_us = (max_ns - min_ns) / 1_000;
             max_inter_speaker_skew_us = max_inter_speaker_skew_us.max(skew_us);
         }
@@ -943,6 +1231,8 @@ fn run_campaign_inner(
                 rendered_blocks: node.rendered_blocks,
                 authentic_blocks: node.authentic_blocks,
                 concealed_blocks: node.concealed_blocks,
+                audible_blocks: node.audible_blocks,
+                muted_blocks: node.muted_blocks,
                 verified_continuous_frames: node
                     .continuity_oracles
                     .iter()
@@ -975,6 +1265,7 @@ fn run_campaign_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use franken_clock::DEFAULT_MAX_ADMITTED_UNCERTAINTY_US;
 
     #[test]
     fn virtual_house_streams_mixed_s1_s2_fleet_with_zero_output_discontinuities() {
@@ -1065,7 +1356,8 @@ mod tests {
 
     #[test]
     fn canary_false_ready_on_an_unlocked_clock_is_refused_even_when_the_node_skips_its_own_gate() {
-        for exchanges in [0u32, 1, 2] {
+        // N03 locks on its fourth accepted exchange, so 0..=3 exchanges are an unlocked clock.
+        for exchanges in [0u32, 1, 2, 3] {
             let gated = BringUpPlan {
                 clock_exchanges: exchanges,
                 ..BringUpPlan::NOMINAL
@@ -1081,12 +1373,398 @@ mod tests {
             let err = refusal(ungated);
             assert!(err.contains("clock_locked"), "{err}");
         }
-        // Paired positive at the boundary: three exchanges lock the clock.
-        let three = BringUpPlan {
-            clock_exchanges: 3,
+        // Paired positive at the boundary: four exchanges lock the clock.
+        let four = BringUpPlan {
+            clock_exchanges: 4,
             ..BringUpPlan::NOMINAL
         };
-        assert!(bring_up(three).is_ok());
+        assert!(bring_up(four).is_ok());
+    }
+
+    #[test]
+    fn harness_oracle_spec_for_the_clock_is_pinned_to_the_n03_configuration() {
+        let cfg = GroupClockConfig::standard().expect("standard configuration");
+        assert_eq!(CLOCK_LOCK_MIN_SAMPLES, cfg.min_probes_for_lock);
+        assert_eq!(
+            CLOCK_LOCK_MAX_UNCERTAINTY_US * 1_000,
+            cfg.lock_uncertainty_ns
+        );
+        assert_eq!(
+            CLOCK_EXCHANGES, cfg.min_probes_for_lock,
+            "nominal bring-up sends exactly the lock count"
+        );
+    }
+
+    /// A clock with no skew and an offset of whole microseconds: every timestamp of the bring-up exchanges is
+    /// exact, so N03's arithmetic can be checked against values the independent reference produced.
+    const EXACT_CLOCK: SimNodeClock = SimNodeClock {
+        skew_ppb: 0,
+        local0_ns: 7_000_000_000,
+    };
+
+    fn exact_plan() -> BringUpPlan {
+        BringUpPlan {
+            sim_clock: Some(EXACT_CLOCK),
+            ..BringUpPlan::NOMINAL
+        }
+    }
+
+    #[test]
+    fn a_locked_node_sounds_at_the_admitted_start_and_presents_the_scheduled_frame_at_the_reference_instant()
+     {
+        let mut node = bring_up(exact_plan()).expect("bring-up");
+        // Reference values: tests/n03/reference.py `run_script` on this exact script (board S5: output delay 1.85 ms,
+        // calibration uncertainty 150 us; four 800 us exchanges at true 10, 20, 30 and 40 ms on a clock that reads
+        // true time + 7 s; an admit at local 7.042 s of a start at group 750 ms).
+        let plan = node.admitted_plan.expect("admitted at bring-up");
+        assert_eq!(plan.start_group_ns, 750_000_000);
+        assert_eq!(plan.start_local_ns, 7_748_150_000);
+        assert_eq!(plan.deadline_local_ns, 7_648_150_000);
+        assert_eq!(plan.uncertainty_at_start_ns, 621_773);
+        assert_eq!(plan.valid_until_local_ns, 21_530_425_001);
+        assert_eq!(plan.binding.code(), "Uncertainty");
+
+        let first_pts = VirtualSpeakerNode::block_pts_group_ns(0);
+        assert_eq!(first_pts, plan.start_group_ns);
+        for blk in 0..100_u64 {
+            let gate = node.gate_block(blk);
+            assert_eq!(gate.output, Output::Audible, "block {blk}");
+            let pts = VirtualSpeakerNode::block_pts_group_ns(blk);
+            let true_ns = node
+                .presented_true_ns(&gate)
+                .expect("a sounding block has a presentation instant");
+            if blk < PROBE_EVERY_BLOCKS {
+                // Before the first in-campaign exchange the transform is the bring-up one: local = group + 7 s
+                // exactly, so the presentation instant is exact, and in true time it falls within one tick of the
+                // 1 us clock after the stream's own presentation time.
+                assert_eq!(
+                    gate.presented_local_ns,
+                    Some(pts + 7_000_000_000),
+                    "block {blk}"
+                );
+                assert!(
+                    (pts..pts + 1_000).contains(&true_ns),
+                    "block {blk}: {true_ns} vs {pts}"
+                );
+            } else {
+                // Later exchanges start at times that are not whole microseconds, so the anchor carries the 1 us
+                // clock's floor: the instant is right to within that.
+                assert!(
+                    true_ns.abs_diff(pts) < 2_000,
+                    "block {blk}: {true_ns} vs {pts}"
+                );
+            }
+            // The presented sample position: the frame at that group time is the block's first frame, to within one
+            // frame (the block period is rounded to a whole number of nanoseconds).
+            let frame_at = (pts - first_pts) * 48_000 / 1_000_000_000;
+            let block_frame = blk * (FRAMES_PER_BLOCK as u64);
+            assert!(
+                frame_at.abs_diff(block_frame) <= 1,
+                "block {blk}: frame {frame_at} vs {block_frame}"
+            );
+        }
+    }
+
+    #[test]
+    fn nothing_sounds_before_the_admitted_start_and_the_first_sounding_block_is_the_scheduled_one()
+    {
+        let plan = BringUpPlan {
+            first_start_block: Some(10),
+            ..exact_plan()
+        };
+        let mut node = bring_up(plan).expect("bring-up");
+        let mut first_audible = None;
+        for blk in 0..30_u64 {
+            let gate = node.gate_block(blk);
+            if gate.audible() {
+                first_audible.get_or_insert(blk);
+            } else {
+                assert!(
+                    matches!(gate.output, Output::Armed { .. }),
+                    "block {blk}: {:?}",
+                    gate.output
+                );
+                assert!(node.presented_true_ns(&gate).is_none(), "block {blk}");
+            }
+            if blk == 9 {
+                // Exactly one block period (5 333 333 ns) before the start, less the S5 board's 1.85 ms output delay.
+                assert_eq!(
+                    gate.output,
+                    Output::Armed {
+                        starts_in_ns: 5_333_333 - 1_850_000
+                    }
+                );
+            }
+        }
+        assert_eq!(first_audible, Some(10));
+        assert_eq!(
+            10 * (FRAMES_PER_BLOCK as u64),
+            2_560,
+            "the first sounding frame"
+        );
+    }
+
+    /// Step the node's own clock at block 40 by `delta_ns` and run 260 blocks.
+    fn run_with_clock_step(delta_ns: i64) -> (VirtualSpeakerNode, Vec<BlockGate>) {
+        let clock = SimNodeClock {
+            skew_ppb: 0,
+            local0_ns: 40_000_000_000,
+        };
+        let plan = BringUpPlan {
+            sim_clock: Some(clock),
+            ..BringUpPlan::NOMINAL
+        };
+        let mut node = bring_up(plan).expect("bring-up");
+        let mut gates = Vec::new();
+        for blk in 0..260_u64 {
+            if blk == 40 {
+                node.sim_clock.local0_ns = node
+                    .sim_clock
+                    .local0_ns
+                    .checked_add_signed(delta_ns)
+                    .expect("the clock stays positive");
+            }
+            gates.push(node.gate_block(blk));
+        }
+        (node, gates)
+    }
+
+    /// The shared shape of both clock-step cases: sounding until the step, muted from `first_muted` until a relock
+    /// (the reset needs `min_probes_for_lock` accepted exchanges, one per probe interval, after the probe that found
+    /// it) and a fresh admission, then sounding again to the end at a block boundary of the stream.
+    fn assert_mutes_and_resumes(
+        node: &VirtualSpeakerNode,
+        gates: &[BlockGate],
+        first_muted: usize,
+    ) {
+        let every = PROBE_EVERY_BLOCKS as usize;
+        assert!(
+            gates[..40].iter().all(BlockGate::audible),
+            "sounding until the step"
+        );
+        assert_eq!(gates.iter().position(|g| !g.audible()), Some(first_muted));
+        let probe_after_step = (40 / every + 1) * every;
+        let resume = probe_after_step + (CLOCK_LOCK_MIN_SAMPLES as usize) * every;
+        assert!(
+            gates[first_muted..resume].iter().all(|g| !g.audible()),
+            "muted from {first_muted} until the relock at {resume}"
+        );
+        assert!(
+            gates[resume..].iter().all(BlockGate::audible),
+            "sounding again from the new admitted start"
+        );
+        let plan = node.admitted_plan.expect("re-admitted");
+        assert_eq!(
+            plan.start_group_ns,
+            VirtualSpeakerNode::block_pts_group_ns(resume as u64),
+            "the new start is the first block presented after the relock"
+        );
+        for (blk, gate) in gates.iter().enumerate().skip(resume) {
+            let ideal = VirtualSpeakerNode::block_pts_group_ns(blk as u64);
+            let true_ns = node.presented_true_ns(gate).expect("sounding");
+            assert!(
+                true_ns.abs_diff(ideal) < 2_000,
+                "block {blk}: {true_ns} vs {ideal}"
+            );
+        }
+        assert_eq!(node.clock.stats().resets, 1, "exactly one reset");
+    }
+
+    #[test]
+    fn a_suspend_mid_stream_mutes_within_one_probe_and_a_relock_resumes_at_a_new_admitted_start() {
+        // The monotonic clock loses 30 s at block 40 (a suspend): the node cannot see it until its next exchange
+        // (block 64), where the local clock is found to have gone backwards.
+        let (node, gates) = run_with_clock_step(-30_000_000_000);
+        assert_mutes_and_resumes(&node, &gates, 64);
+        assert_eq!(
+            node.clock
+                .stats()
+                .rejected(ProbeReject::LocalClockRegression),
+            1
+        );
+    }
+
+    #[test]
+    fn a_leap_forward_mid_stream_mutes_at_once_and_a_relock_resumes_at_a_new_admitted_start() {
+        // The clock reads 30 s more at block 40: the last exchange is now far older than the freshness window, so
+        // the node mutes without waiting for a probe; the next exchange (block 64) then finds the offset step.
+        let (node, gates) = run_with_clock_step(30_000_000_000);
+        assert_mutes_and_resumes(&node, &gates, 40);
+        assert_eq!(node.clock.stats().rejected(ProbeReject::Discontinuity), 1);
+    }
+
+    #[test]
+    fn an_unadmitted_node_never_sounds_and_admitting_it_makes_it_sound_at_the_start() {
+        let plan = BringUpPlan {
+            first_start_block: None,
+            auto_admit: false,
+            ..exact_plan()
+        };
+        let mut node = bring_up(plan).expect("bring-up");
+        assert!(node.admitted_plan.is_none());
+        for blk in 0..40_u64 {
+            let gate = node.gate_block(blk);
+            assert_eq!(
+                gate.output,
+                Output::Muted(MuteReason::NotAdmitted),
+                "block {blk}"
+            );
+            assert!(node.presented_true_ns(&gate).is_none(), "block {blk}");
+        }
+        // Paired positive: the same node, admitted at block 45, is armed until then and sounds from there on.
+        let asked_at = CAMPAIGN_ORIGIN_NS + 40 * BLOCK_PERIOD_NS;
+        node.admit_start_at_block(45, asked_at).expect("admitted");
+        for blk in 40..60_u64 {
+            let gate = node.gate_block(blk);
+            assert_eq!(gate.audible(), blk >= 45, "block {blk}: {:?}", gate.output);
+        }
+    }
+
+    #[test]
+    fn unsolicited_replayed_stale_and_wrong_leader_probes_change_nothing_and_never_produce_audio() {
+        let mut node = bring_up(exact_plan()).expect("bring-up");
+        // A genuine exchange, recorded and delivered once.
+        let (resp, t4_local) = sim_probe(&mut node.clock, &node.sim_clock, 150_000_000);
+        node.clock
+            .on_response(resp, t4_local)
+            .expect("genuine exchange");
+        let accepted = node.clock.stats().accepted;
+        let attacks = [
+            (resp, ProbeReject::UnsolicitedOrReplayed),
+            (
+                ProbeResponse {
+                    epoch: resp.epoch - 1,
+                    ..resp
+                },
+                ProbeReject::StaleEpoch,
+            ),
+            (
+                ProbeResponse {
+                    epoch: resp.epoch + 1,
+                    ..resp
+                },
+                ProbeReject::FutureEpoch,
+            ),
+            (
+                ProbeResponse {
+                    leader: COORDINATOR_ID + 1,
+                    ..resp
+                },
+                ProbeReject::UnadmittedLeader,
+            ),
+            (
+                ProbeResponse {
+                    seq: resp.seq.wrapping_add(1_000),
+                    ..resp
+                },
+                ProbeReject::UnsolicitedOrReplayed,
+            ),
+        ];
+        for (bad, why) in attacks {
+            assert_eq!(node.clock.on_response(bad, t4_local + 1_000), Err(why));
+        }
+        assert_eq!(
+            node.clock.stats().accepted,
+            accepted,
+            "no attack was accepted"
+        );
+        assert_eq!(node.clock.stats().rejected_total(), 5);
+        // The locked, admitted node is unaffected: it sounds at the admitted start.
+        assert_eq!(node.gate_block(0).output, Output::Audible);
+
+        // A member that is not yet locked, given the same bad probes, stays silent and cannot be admitted.
+        let cfg = GroupClockConfig::for_board(&node.board).expect("configuration");
+        let mut lone = GroupClock::new(cfg, 1, COORDINATOR_ID, 77).expect("member");
+        let start = StartSchedule {
+            epoch: 1,
+            start_group_ns: 750_000_000,
+        };
+        for (bad, _) in attacks {
+            assert!(lone.on_response(bad, t4_local).is_err());
+        }
+        assert_eq!(lone.tick(t4_local), Output::Muted(MuteReason::NotLocked));
+        assert_eq!(lone.admit(start, t4_local), Err(StartReject::NotLocked));
+        // Paired positive: four genuine exchanges lock it, the start is admitted, and it sounds at the start.
+        for seq in 1..=4_u64 {
+            sim_exchange(&mut lone, &EXACT_CLOCK, seq * BRING_UP_EXCHANGE_SPACING_NS)
+                .expect("genuine exchange");
+        }
+        let ready_local = EXACT_CLOCK.local(42_000_000);
+        assert_eq!(lone.status(ready_local), ClockStatus::Locked);
+        lone.admit(start, ready_local)
+            .expect("admitted once locked");
+        assert_eq!(lone.tick(EXACT_CLOCK.local(750_000_000)), Output::Audible);
+    }
+
+    #[test]
+    fn each_member_and_each_boot_gets_a_different_request_base_and_a_recorded_answer_cannot_cross_a_reboot()
+     {
+        let ids = [
+            "spk-office-s5",
+            "spk-bedroom-s1",
+            "spk-kitchen-s12",
+            "spk-den-s3",
+            "spk-living-sub",
+        ];
+        let mut bases = std::collections::BTreeSet::new();
+        for id in ids {
+            for boot in 0..2 {
+                assert!(
+                    bases.insert(simulated_boot_entropy(id, 1, boot)),
+                    "{id} boot {boot}"
+                );
+            }
+        }
+        // The same member, the same simulated clock and the same send time on both boots: only the request base
+        // differs, and that alone makes the answer recorded on the first boot useless on the second.
+        let mut first = bring_up(BringUpPlan {
+            boot_index: 0,
+            ..exact_plan()
+        })
+        .expect("boot 0");
+        let mut second = bring_up(BringUpPlan {
+            boot_index: 1,
+            ..exact_plan()
+        })
+        .expect("boot 1");
+        let (recorded, t4_local) = sim_probe(&mut first.clock, &first.sim_clock, 150_000_000);
+        let request = second.clock.next_probe(second.sim_clock.local(150_000_000));
+        assert_eq!(
+            request.t1_local_ns, recorded.t1_echo_ns,
+            "same send time on both boots"
+        );
+        assert_ne!(request.seq, recorded.seq);
+        assert_eq!(
+            second.clock.on_response(recorded, t4_local),
+            Err(ProbeReject::UnsolicitedOrReplayed)
+        );
+        // Paired positive: the second boot's own exchange is accepted.
+        assert!(second.exchange_at(160_000_000).is_ok());
+    }
+
+    #[test]
+    fn the_campaign_sounds_every_block_of_every_member_and_measures_a_skew_from_independent_clocks()
+    {
+        let report = run_campaign(SEED, 200, None).expect("campaign");
+        for (id, stats) in &report.members {
+            assert_eq!(stats.audible_blocks, 200, "member {id}");
+            assert_eq!(stats.muted_blocks, 0, "member {id}");
+        }
+        assert!(report.within_2ms_skew_target);
+        // The figure is no longer the trivial zero of five nodes that all read true time: the members' clocks differ.
+        let clocks: Vec<SimNodeClock> = [
+            "spk-office-s5",
+            "spk-bedroom-s1",
+            "spk-kitchen-s12",
+            "spk-den-s3",
+            "spk-living-sub",
+        ]
+        .iter()
+        .map(|id| SimNodeClock::for_member(id))
+        .collect();
+        assert!(clocks.windows(2).all(|w| w[0] != w[1]));
+        assert!(clocks.iter().all(|c| c.skew_ppb.abs() <= 50_000));
+        assert!(report.max_inter_speaker_skew_us > 0);
     }
 
     #[test]
@@ -1429,5 +2107,29 @@ mod tests {
         // is not asserted here; the field is excluded from the comparison, not from the report.
         comparable.evidence_complete = baseline.evidence_complete;
         assert_eq!(comparable, baseline, "tiny sink changed the campaign");
+    }
+
+    #[test]
+    fn the_simulated_member_clocks_are_pinned_so_a_change_to_them_is_deliberate() {
+        // `within_2ms_skew_target` is now a measured gate on the `--virtual-house` exit code, so the simulated
+        // offsets and skews it rests on must not drift unnoticed. Values are the FNV-1a derivation of
+        // `SimNodeClock::for_member`, checked independently in Python.
+        let pinned = [
+            ("spk-office-s5", -44_166, 3_311_185_000),
+            ("spk-bedroom-s1", -44_711, 2_980_954_000),
+            ("spk-kitchen-s12", -38_850, 2_182_976_000),
+            ("spk-den-s3", -17_100, 2_032_073_000),
+            ("spk-living-sub", 863, 1_085_400_000),
+        ];
+        for (id, skew_ppb, local0_ns) in pinned {
+            assert_eq!(
+                SimNodeClock::for_member(id),
+                SimNodeClock {
+                    skew_ppb,
+                    local0_ns
+                },
+                "{id}"
+            );
+        }
     }
 }
