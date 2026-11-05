@@ -1,0 +1,2777 @@
+{
+ "schema": "ffw.p01.vectors.v1",
+ "base": "p01_workspace_contract.json",
+ "base_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9",
+ "vectors": [
+  {
+   "id": "P01-V-001",
+   "title": "the declared workspace contract is valid",
+   "kind": "validate",
+   "ops": [],
+   "expect_codes": []
+  },
+  {
+   "id": "P01-V-002",
+   "title": "the contract digest is the pinned canonical-JSON SHA-256",
+   "kind": "digest",
+   "ops": [],
+   "expect_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+  },
+  {
+   "id": "P01-V-003",
+   "title": "changing one field changes the digest",
+   "kind": "digest",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-host-full/sha256",
+     "value": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    }
+   ],
+   "expect_changed": true
+  },
+  {
+   "id": "P01-V-004",
+   "title": "a full-native speaker with no evidence is not qualified, every required feature named",
+   "kind": "admission",
+   "ops": [],
+   "artifact": "speaker-ppc-full",
+   "expect": {
+    "qualified": false,
+    "blocks": [
+     "required_feature_unqualified:airplay2",
+     "required_feature_unqualified:alexa_bridge",
+     "required_feature_unqualified:protected_render",
+     "required_feature_unqualified:spotify_connect",
+     "required_feature_unqualified:synchronized_groups",
+     "required_feature_unqualified:tailnet_native"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-005",
+   "title": "the minimal renderer cannot be qualified: disabled required features stay blocked",
+   "kind": "admission",
+   "ops": [],
+   "artifact": "speaker-ppc-min",
+   "expect": {
+    "qualified": false,
+    "blocks": [
+     "required_feature_disabled:airplay2",
+     "required_feature_disabled:alexa_bridge",
+     "required_feature_disabled:spotify_connect",
+     "required_feature_disabled:tailnet_native",
+     "required_feature_unqualified:protected_render",
+     "required_feature_unqualified:synchronized_groups"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-006",
+   "title": "the bootstrap probe is never a qualified product artifact",
+   "kind": "admission",
+   "ops": [],
+   "artifact": "hello-init-ppc",
+   "expect": {
+    "qualified": false,
+    "blocks": [
+     "required_feature_disabled:airplay2",
+     "required_feature_disabled:alexa_bridge",
+     "required_feature_disabled:protected_render",
+     "required_feature_disabled:spotify_connect",
+     "required_feature_disabled:synchronized_groups",
+     "required_feature_disabled:tailnet_native"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-007",
+   "title": "permitted positive: every required feature qualified with bound evidence",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-full/sha256",
+     "value": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "airplay2",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-airplay2"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "alexa_bridge",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-alexa_bridge"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "protected_render",
+      "evidence": {
+       "kind": "physical_output",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-protected_render"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "spotify_connect",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-spotify_connect"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "synchronized_groups",
+      "evidence": {
+       "kind": "physical_output",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-synchronized_groups"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "tailnet_native",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-tailnet_native"
+      }
+     }
+    },
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-full/status",
+     "value": "qualified"
+    }
+   ],
+   "expect_codes": [],
+   "expect_admission": {
+    "artifact": "speaker-ppc-full",
+    "qualified": true,
+    "blocks": []
+   }
+  },
+  {
+   "id": "P01-V-008",
+   "title": "permitted positive: an optional feature may be qualified by a host simulation",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-full/sha256",
+     "value": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "artwork",
+      "evidence": {
+       "kind": "host_simulation",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-artwork"
+      }
+     }
+    }
+   ],
+   "expect_codes": []
+  },
+  {
+   "id": "P01-V-010",
+   "title": "a PowerPC artifact marked MIPS is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-full/isa",
+     "value": "mips32_be"
+    }
+   ],
+   "expect_codes": [
+    "isa_target_mismatch"
+   ],
+   "expect_subjects": {
+    "isa_target_mismatch": [
+     "speaker-ppc-full"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-011",
+   "title": "a PowerPC artifact carrying the MIPS triple is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-full/triple",
+     "value": "mips-unknown-linux-musl"
+    }
+   ],
+   "expect_codes": [
+    "triple_target_mismatch"
+   ],
+   "expect_subjects": {
+    "triple_target_mismatch": [
+     "speaker-ppc-full"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-012",
+   "title": "an artifact claiming to run on PowerPC and MIPS is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/runs_on",
+     "value": "mips_be"
+    }
+   ],
+   "expect_codes": [
+    "universal_artifact_claim"
+   ],
+   "expect_subjects": {
+    "universal_artifact_claim": [
+     "speaker-ppc-full"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-013",
+   "title": "an artifact that runs on nothing is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-full/runs_on",
+     "value": []
+    }
+   ],
+   "expect_codes": [
+    "universal_artifact_claim"
+   ]
+  },
+  {
+   "id": "P01-V-014",
+   "title": "an ARM target does not parse: no ARM artifact is admitted",
+   "kind": "parse",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-full/target",
+     "value": "arm_le"
+    }
+   ],
+   "expect_codes": [
+    "parse_error"
+   ]
+  },
+  {
+   "id": "P01-V-015",
+   "title": "an ARM triple on a PowerPC artifact is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-full/triple",
+     "value": "arm-unknown-linux-gnueabihf"
+    }
+   ],
+   "expect_codes": [
+    "triple_target_mismatch"
+   ]
+  },
+  {
+   "id": "P01-V-016",
+   "title": "a host artifact declaring a device ISA is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-host-full/isa",
+     "value": "powerpc32_be"
+    }
+   ],
+   "expect_codes": [
+    "isa_target_mismatch"
+   ],
+   "expect_subjects": {
+    "isa_target_mismatch": [
+     "speaker-host-full"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-017",
+   "title": "a malformed artifact digest is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-mips-full/sha256",
+     "value": "zz"
+    }
+   ],
+   "expect_codes": [
+    "bad_digest"
+   ],
+   "expect_subjects": {
+    "bad_digest": [
+     "speaker-mips-full"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-018",
+   "title": "two artifacts with one id are refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-min/id",
+     "value": "speaker-ppc-full"
+    }
+   ],
+   "expect_codes": [
+    "duplicate_artifact"
+   ],
+   "expect_subjects": {
+    "duplicate_artifact": [
+     "speaker-ppc-full"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-019",
+   "title": "two artifacts with one crate, target and profile are refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-min/profile",
+     "value": "full_native"
+    }
+   ],
+   "expect_codes": [
+    "duplicate_artifact"
+   ],
+   "expect_subjects": {
+    "duplicate_artifact": [
+     "franken-speaker/powerpc_be/full_native"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-020",
+   "title": "an artifact of an unknown crate is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-host-full/crate",
+     "value": "franken-ghost"
+    }
+   ],
+   "expect_codes": [
+    "unknown_artifact_crate"
+   ]
+  },
+  {
+   "id": "P01-V-021",
+   "title": "an artifact of an unknown profile is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-host-full/profile",
+     "value": "turbo"
+    }
+   ],
+   "expect_codes": [
+    "unknown_profile"
+   ]
+  },
+  {
+   "id": "P01-V-022",
+   "title": "an excluded crate may only produce artifacts for the targets it declares",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/excluded/name=ffw-hello-init/targets",
+     "value": [
+      "mips_be"
+     ]
+    }
+   ],
+   "expect_codes": [
+    "artifact_target_not_declared"
+   ],
+   "expect_subjects": {
+    "artifact_target_not_declared": [
+     "hello-init-ppc"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-023",
+   "title": "a device artifact built without panic = abort is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/cargo_profiles/name=release/panic",
+     "value": "unwind"
+    }
+   ],
+   "expect_codes": [
+    "device_profile_not_abort"
+   ],
+   "expect_subjects": {
+    "device_profile_not_abort": [
+     "speaker-mips-full",
+     "speaker-mips-min",
+     "speaker-ppc-full",
+     "speaker-ppc-min"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-024",
+   "title": "the bootstrap probe is held to panic = abort too",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/cargo_profiles/name=bootstrap_release/panic",
+     "value": "unwind"
+    }
+   ],
+   "expect_codes": [
+    "device_profile_not_abort"
+   ],
+   "expect_subjects": {
+    "device_profile_not_abort": [
+     "hello-init-mips",
+     "hello-init-ppc"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-030",
+   "title": "a crate depending on itself is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/crates/name=franken-hal/deps",
+     "value": "franken-hal"
+    }
+   ],
+   "expect_codes": [
+    "self_dependency"
+   ],
+   "expect_subjects": {
+    "self_dependency": [
+     "franken-hal"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-031",
+   "title": "a dependency on a non-member is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/crates/name=franken-hal/deps",
+     "value": "franken-ghost"
+    }
+   ],
+   "expect_codes": [
+    "unknown_dependency"
+   ],
+   "expect_subjects": {
+    "unknown_dependency": [
+     "franken-hal->franken-ghost"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-032",
+   "title": "a two-crate dependency cycle is detected",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/crates/name=franken-board-profile/deps",
+     "value": "franken-hal"
+    }
+   ],
+   "expect_codes": [
+    "dependency_cycle",
+    "layer_violation"
+   ],
+   "expect_subjects": {
+    "dependency_cycle": [
+     "franken-board-profile,franken-hal"
+    ],
+    "layer_violation": [
+     "franken-board-profile->franken-hal"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-033",
+   "title": "a cycle that exists only through a dev-dependency is detected",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/crates/name=franken-board-profile/dev_deps",
+     "value": "franken-hal"
+    }
+   ],
+   "expect_codes": [
+    "dev_dependency_cycle"
+   ],
+   "expect_subjects": {
+    "dev_dependency_cycle": [
+     "franken-board-profile,franken-hal"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-034",
+   "title": "a normal dependency onto a higher layer is refused even without a cycle",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/crates/name=franken-hal/deps",
+     "value": "franken-clock"
+    }
+   ],
+   "expect_codes": [
+    "layer_violation"
+   ],
+   "expect_subjects": {
+    "layer_violation": [
+     "franken-hal->franken-clock"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-035",
+   "title": "a three-crate cycle is reported once with its members",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/crates/name=franken-clock/deps",
+     "value": "franken-stream"
+    },
+    {
+     "op": "push",
+     "path": "/crates/name=franken-dsp/deps",
+     "value": "franken-clock"
+    }
+   ],
+   "expect_codes": [
+    "dependency_cycle",
+    "layer_violation"
+   ],
+   "expect_subjects": {
+    "dependency_cycle": [
+     "franken-clock,franken-dsp,franken-stream"
+    ],
+    "layer_violation": [
+     "franken-clock->franken-stream",
+     "franken-dsp->franken-clock"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-040",
+   "title": "a crate with an empty owner is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/crates/name=franken-hal/owner",
+     "value": ""
+    }
+   ],
+   "expect_codes": [
+    "asset_owner_mismatch",
+    "owner_missing"
+   ],
+   "expect_subjects": {
+    "owner_missing": [
+     "franken-hal"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-041",
+   "title": "a crate with no ownership entry is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "remove",
+     "path": "/assets/path=crates~1franken-hal"
+    }
+   ],
+   "expect_codes": [
+    "asset_unowned"
+   ],
+   "expect_subjects": {
+    "asset_unowned": [
+     "franken-hal"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-042",
+   "title": "one path with two different owners is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/assets",
+     "value": {
+      "path": "crates/franken-hal",
+      "owner": "ZZ9",
+      "kind": "crate"
+     }
+    }
+   ],
+   "expect_codes": [
+    "asset_conflicting_owners"
+   ],
+   "expect_subjects": {
+    "asset_conflicting_owners": [
+     "crates/franken-hal"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-043",
+   "title": "one path listed twice is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/assets",
+     "value": {
+      "path": "crates/franken-hal",
+      "owner": "E04",
+      "kind": "crate"
+     }
+    }
+   ],
+   "expect_codes": [
+    "asset_duplicate"
+   ],
+   "expect_subjects": {
+    "asset_duplicate": [
+     "crates/franken-hal"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-044",
+   "title": "an ownership entry that disagrees with the crate record is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/assets/path=crates~1franken-hal/owner",
+     "value": "E99"
+    }
+   ],
+   "expect_codes": [
+    "asset_owner_mismatch"
+   ],
+   "expect_subjects": {
+    "asset_owner_mismatch": [
+     "franken-hal"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-045",
+   "title": "a test fixture with an empty owner is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/assets/path=tests~1d01/owner",
+     "value": ""
+    }
+   ],
+   "expect_codes": [
+    "owner_missing"
+   ],
+   "expect_subjects": {
+    "owner_missing": [
+     "tests/d01"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-046",
+   "title": "scoped unsafe is refused for a library, and for anything a device image contains",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/crates/name=franken-dsp/unsafe_policy",
+     "value": "deny_with_scoped_allow"
+    }
+   ],
+   "expect_codes": [
+    "unsafe_in_device_closure",
+    "unsafe_policy_not_permitted"
+   ],
+   "expect_subjects": {
+    "unsafe_in_device_closure": [
+     "speaker-mips-full:franken-dsp",
+     "speaker-mips-min:franken-dsp",
+     "speaker-ppc-full:franken-dsp",
+     "speaker-ppc-min:franken-dsp"
+    ],
+    "unsafe_policy_not_permitted": [
+     "franken-dsp"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-047",
+   "title": "the bootstrap-probe policy is refused for a workspace crate",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/crates/name=franken-hal/unsafe_policy",
+     "value": "bootstrap_probe"
+    }
+   ],
+   "expect_codes": [
+    "unsafe_policy_not_permitted"
+   ],
+   "expect_subjects": {
+    "unsafe_policy_not_permitted": [
+     "franken-hal"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-048",
+   "title": "an excluded crate must declare the bootstrap-probe policy",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/excluded/name=ffw-hello-init/unsafe_policy",
+     "value": "forbid"
+    }
+   ],
+   "expect_codes": [
+    "unsafe_policy_not_permitted"
+   ],
+   "expect_subjects": {
+    "unsafe_policy_not_permitted": [
+     "ffw-hello-init"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-049",
+   "title": "a pending member that reuses a member's name is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/pending_members",
+     "value": {
+      "name": "franken-hal",
+      "path": "crates/franken-baseline",
+      "owner": "E02",
+      "reason": "root edit pending"
+     }
+    }
+   ],
+   "expect_codes": [
+    "duplicate_crate"
+   ],
+   "expect_subjects": {
+    "duplicate_crate": [
+     "franken-hal"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-050",
+   "title": "a required feature cannot be removed by omitting it from a profile",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "remove",
+     "path": "/profiles/name=full_native/features/feature=tailnet_native"
+    }
+   ],
+   "expect_codes": [
+    "required_feature_missing"
+   ],
+   "expect_subjects": {
+    "required_feature_missing": [
+     "full_native:tailnet_native"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-051",
+   "title": "a full-product profile cannot disable a required feature",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/profiles/name=full_native/features/feature=tailnet_native/state",
+     "value": "disabled"
+    },
+    {
+     "op": "set",
+     "path": "/profiles/name=full_native/features/feature=tailnet_native/disabled_reason",
+     "value": "temporarily off"
+    }
+   ],
+   "expect_codes": [
+    "full_profile_disables_required"
+   ],
+   "expect_subjects": {
+    "full_profile_disables_required": [
+     "full_native:tailnet_native"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-052",
+   "title": "disabling a required feature with no reason is refused twice over",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/profiles/name=full_native/features/feature=tailnet_native/state",
+     "value": "disabled"
+    }
+   ],
+   "expect_codes": [
+    "disabled_without_reason",
+    "full_profile_disables_required"
+   ]
+  },
+  {
+   "id": "P01-V-053",
+   "title": "a narrow profile must say why it is narrow",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/profiles/name=minimal_renderer/narrow_reason",
+     "value": ""
+    }
+   ],
+   "expect_codes": [
+    "narrow_profile_without_reason"
+   ],
+   "expect_subjects": {
+    "narrow_profile_without_reason": [
+     "minimal_renderer"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-054",
+   "title": "a selection of a feature outside the registry is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/profiles/name=full_native/features",
+     "value": {
+      "feature": "teleport",
+      "state": "enabled",
+      "disabled_reason": ""
+     }
+    }
+   ],
+   "expect_codes": [
+    "unknown_feature"
+   ],
+   "expect_subjects": {
+    "unknown_feature": [
+     "full_native:teleport"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-055",
+   "title": "selecting a feature twice in one profile is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/profiles/name=full_native/features",
+     "value": {
+      "feature": "artwork",
+      "state": "enabled",
+      "disabled_reason": ""
+     }
+    }
+   ],
+   "expect_codes": [
+    "duplicate_feature_selection"
+   ],
+   "expect_subjects": {
+    "duplicate_feature_selection": [
+     "full_native:artwork"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-056",
+   "title": "permitted positive: an optional feature may be disabled, with a reason",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/profiles/name=full_native/features/feature=artwork/state",
+     "value": "disabled"
+    },
+    {
+     "op": "set",
+     "path": "/profiles/name=full_native/features/feature=artwork/disabled_reason",
+     "value": "artwork is optional and omitted in this build"
+    }
+   ],
+   "expect_codes": []
+  },
+  {
+   "id": "P01-V-057",
+   "title": "a native service depending on another native service is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/features/name=airplay2/requires",
+     "value": [
+      "protected_render",
+      "spotify_connect"
+     ]
+    }
+   ],
+   "expect_codes": [
+    "native_feature_requires_native"
+   ],
+   "expect_subjects": {
+    "native_feature_requires_native": [
+     "airplay2->spotify_connect"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-058",
+   "title": "the minimal renderer depending on a native service is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/features/name=synchronized_groups/requires",
+     "value": [
+      "protected_render",
+      "tailnet_native"
+     ]
+    }
+   ],
+   "expect_codes": [
+    "core_feature_requires_native"
+   ],
+   "expect_subjects": {
+    "core_feature_requires_native": [
+     "synchronized_groups->tailnet_native"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-059",
+   "title": "a feature requirement cycle is detected",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/features/name=protected_render/requires",
+     "value": [
+      "synchronized_groups"
+     ]
+    }
+   ],
+   "expect_codes": [
+    "feature_cycle"
+   ],
+   "expect_subjects": {
+    "feature_cycle": [
+     "protected_render,synchronized_groups"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-060",
+   "title": "a feature requiring itself is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/features/name=artwork/requires",
+     "value": [
+      "artwork"
+     ]
+    }
+   ],
+   "expect_codes": [
+    "feature_cycle"
+   ],
+   "expect_subjects": {
+    "feature_cycle": [
+     "artwork"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-061",
+   "title": "a requirement on a feature outside the registry is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/features/name=artwork/requires",
+     "value": [
+      "ghost"
+     ]
+    }
+   ],
+   "expect_codes": [
+    "unknown_feature"
+   ],
+   "expect_subjects": {
+    "unknown_feature": [
+     "artwork->ghost"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-062",
+   "title": "a feature owned by a non-member crate is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/features/name=artwork/owner_crate",
+     "value": "franken-ghost"
+    }
+   ],
+   "expect_codes": [
+    "feature_owner_unknown"
+   ],
+   "expect_subjects": {
+    "feature_owner_unknown": [
+     "artwork"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-063",
+   "title": "a feature that names no qualifying evidence kind is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/features/name=artwork/accepted_evidence",
+     "value": []
+    }
+   ],
+   "expect_codes": [
+    "evidence_policy_empty"
+   ],
+   "expect_subjects": {
+    "evidence_policy_empty": [
+     "artwork"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-064",
+   "title": "a feature listed twice in the registry is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/features",
+     "value": {
+      "name": "artwork",
+      "kind": "core",
+      "requirement": "optional",
+      "owner_crate": "franken-control",
+      "cargo_feature": "",
+      "requires": [],
+      "accepted_evidence": [
+       "host_simulation",
+       "guest_execution"
+      ]
+     }
+    }
+   ],
+   "expect_codes": [
+    "duplicate_feature"
+   ],
+   "expect_subjects": {
+    "duplicate_feature": [
+     "artwork"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-065",
+   "title": "a profile naming an undeclared cargo profile is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/profiles/name=full_native/cargo_profile",
+     "value": "turbo"
+    }
+   ],
+   "expect_codes": [
+    "unknown_cargo_profile"
+   ],
+   "expect_subjects": {
+    "unknown_cargo_profile": [
+     "full_native"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-066",
+   "title": "a cargo profile listed twice is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/cargo_profiles",
+     "value": {
+      "name": "release",
+      "opt_level": "z",
+      "lto": "true",
+      "codegen_units": 1,
+      "panic": "abort",
+      "strip": "symbols"
+     }
+    }
+   ],
+   "expect_codes": [
+    "duplicate_cargo_profile"
+   ],
+   "expect_subjects": {
+    "duplicate_cargo_profile": [
+     "release"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-067",
+   "title": "a build profile listed twice is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/profiles",
+     "value": {
+      "name": "bootstrap_probe",
+      "cargo_profile": "bootstrap_release",
+      "scope": "named_narrow",
+      "narrow_reason": "The freestanding bootstrap probe used to prove toolchain and boot path under QEMU; it is not the product and carries no product feature.",
+      "features": [
+       {
+        "feature": "protected_render",
+        "state": "disabled",
+        "disabled_reason": "Bootstrap probe only; not the product."
+       },
+       {
+        "feature": "synchronized_groups",
+        "state": "disabled",
+        "disabled_reason": "Bootstrap probe only; not the product."
+       },
+       {
+        "feature": "spotify_connect",
+        "state": "disabled",
+        "disabled_reason": "Bootstrap probe only; not the product."
+       },
+       {
+        "feature": "airplay2",
+        "state": "disabled",
+        "disabled_reason": "Bootstrap probe only; not the product."
+       },
+       {
+        "feature": "tailnet_native",
+        "state": "disabled",
+        "disabled_reason": "Bootstrap probe only; not the product."
+       },
+       {
+        "feature": "alexa_bridge",
+        "state": "disabled",
+        "disabled_reason": "Bootstrap probe only; not the product."
+       }
+      ]
+     }
+    }
+   ],
+   "expect_codes": [
+    "duplicate_profile"
+   ],
+   "expect_subjects": {
+    "duplicate_profile": [
+     "bootstrap_probe"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-070",
+   "title": "evidence on a feature the profile disables is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-min/sha256",
+     "value": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-min/qualifications",
+     "value": {
+      "feature": "spotify_connect",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+       "target": "powerpc_be",
+       "profile": "minimal_renderer",
+       "receipt_id": "rcpt-spotify_connect"
+      }
+     }
+    }
+   ],
+   "expect_codes": [
+    "qualified_while_disabled"
+   ],
+   "expect_subjects": {
+    "qualified_while_disabled": [
+     "speaker-ppc-min:spotify_connect"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-071",
+   "title": "even with evidence attached, a disabled required feature still blocks admission",
+   "kind": "admission",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-min/sha256",
+     "value": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-min/qualifications",
+     "value": {
+      "feature": "spotify_connect",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+       "target": "powerpc_be",
+       "profile": "minimal_renderer",
+       "receipt_id": "rcpt-spotify_connect"
+      }
+     }
+    }
+   ],
+   "artifact": "speaker-ppc-min",
+   "expect": {
+    "qualified": false,
+    "blocks": [
+     "required_feature_disabled:airplay2",
+     "required_feature_disabled:alexa_bridge",
+     "required_feature_disabled:spotify_connect",
+     "required_feature_disabled:tailnet_native",
+     "required_feature_unqualified:protected_render",
+     "required_feature_unqualified:synchronized_groups"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-072",
+   "title": "asserting 'qualified' while required features are disabled is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-min/status",
+     "value": "qualified"
+    }
+   ],
+   "expect_codes": [
+    "qualification_not_supported"
+   ],
+   "expect_subjects": {
+    "qualification_not_supported": [
+     "speaker-ppc-min"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-073",
+   "title": "asserting 'qualified' with no evidence at all is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-mips-full/status",
+     "value": "qualified"
+    }
+   ],
+   "expect_codes": [
+    "qualification_not_supported"
+   ],
+   "expect_subjects": {
+    "qualification_not_supported": [
+     "speaker-mips-full"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-074",
+   "title": "evidence gathered for another artifact digest is stale",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-full/sha256",
+     "value": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "airplay2",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-airplay2"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "alexa_bridge",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-alexa_bridge"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "protected_render",
+      "evidence": {
+       "kind": "physical_output",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-protected_render"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "spotify_connect",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-spotify_connect"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "synchronized_groups",
+      "evidence": {
+       "kind": "physical_output",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-synchronized_groups"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "tailnet_native",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-tailnet_native"
+      }
+     }
+    },
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications/feature=alexa_bridge/evidence/artifact_sha256",
+     "value": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+    }
+   ],
+   "expect_codes": [
+    "stale_evidence"
+   ],
+   "expect_subjects": {
+    "stale_evidence": [
+     "speaker-ppc-full:alexa_bridge"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-075",
+   "title": "evidence gathered for another target is stale",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-full/sha256",
+     "value": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "airplay2",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-airplay2"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "alexa_bridge",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-alexa_bridge"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "protected_render",
+      "evidence": {
+       "kind": "physical_output",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-protected_render"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "spotify_connect",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-spotify_connect"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "synchronized_groups",
+      "evidence": {
+       "kind": "physical_output",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-synchronized_groups"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "tailnet_native",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-tailnet_native"
+      }
+     }
+    },
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications/feature=alexa_bridge/evidence/target",
+     "value": "mips_be"
+    }
+   ],
+   "expect_codes": [
+    "stale_evidence"
+   ]
+  },
+  {
+   "id": "P01-V-076",
+   "title": "evidence gathered for another profile is stale",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-full/sha256",
+     "value": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "airplay2",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-airplay2"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "alexa_bridge",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-alexa_bridge"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "protected_render",
+      "evidence": {
+       "kind": "physical_output",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-protected_render"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "spotify_connect",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-spotify_connect"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "synchronized_groups",
+      "evidence": {
+       "kind": "physical_output",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-synchronized_groups"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "tailnet_native",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-tailnet_native"
+      }
+     }
+    },
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications/feature=alexa_bridge/evidence/profile",
+     "value": "minimal_renderer"
+    }
+   ],
+   "expect_codes": [
+    "stale_evidence"
+   ]
+  },
+  {
+   "id": "P01-V-077",
+   "title": "evidence cannot bind to an artifact whose digest is not yet known",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "airplay2",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-airplay2"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "alexa_bridge",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-alexa_bridge"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "protected_render",
+      "evidence": {
+       "kind": "physical_output",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-protected_render"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "spotify_connect",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-spotify_connect"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "synchronized_groups",
+      "evidence": {
+       "kind": "physical_output",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-synchronized_groups"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "tailnet_native",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-tailnet_native"
+      }
+     }
+    }
+   ],
+   "expect_codes": [
+    "stale_evidence"
+   ],
+   "expect_subjects": {
+    "stale_evidence": [
+     "speaker-ppc-full:airplay2",
+     "speaker-ppc-full:alexa_bridge",
+     "speaker-ppc-full:protected_render",
+     "speaker-ppc-full:spotify_connect",
+     "speaker-ppc-full:synchronized_groups",
+     "speaker-ppc-full:tailnet_native"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-078",
+   "title": "a host simulation cannot qualify a native service",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-full/sha256",
+     "value": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "airplay2",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-airplay2"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "alexa_bridge",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-alexa_bridge"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "protected_render",
+      "evidence": {
+       "kind": "physical_output",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-protected_render"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "spotify_connect",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-spotify_connect"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "synchronized_groups",
+      "evidence": {
+       "kind": "physical_output",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-synchronized_groups"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "tailnet_native",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-tailnet_native"
+      }
+     }
+    },
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications/feature=spotify_connect/evidence/kind",
+     "value": "host_simulation"
+    }
+   ],
+   "expect_codes": [
+    "evidence_kind_insufficient"
+   ],
+   "expect_subjects": {
+    "evidence_kind_insufficient": [
+     "speaker-ppc-full:spotify_connect"
+    ]
+   },
+   "expect_admission": {
+    "artifact": "speaker-ppc-full",
+    "qualified": false,
+    "blocks": [
+     "evidence_kind_insufficient:spotify_connect"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-079",
+   "title": "evidence that cites no receipt is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-full/sha256",
+     "value": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "airplay2",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-airplay2"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "alexa_bridge",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-alexa_bridge"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "protected_render",
+      "evidence": {
+       "kind": "physical_output",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-protected_render"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "spotify_connect",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-spotify_connect"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "synchronized_groups",
+      "evidence": {
+       "kind": "physical_output",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-synchronized_groups"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "tailnet_native",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-tailnet_native"
+      }
+     }
+    },
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications/feature=protected_render/evidence/receipt_id",
+     "value": ""
+    }
+   ],
+   "expect_codes": [
+    "evidence_receipt_missing"
+   ],
+   "expect_subjects": {
+    "evidence_receipt_missing": [
+     "speaker-ppc-full:protected_render"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-080",
+   "title": "a qualification for a feature outside the registry is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-full/sha256",
+     "value": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "teleport",
+      "evidence": {
+       "kind": "host_simulation",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-teleport"
+      }
+     }
+    }
+   ],
+   "expect_codes": [
+    "unknown_feature"
+   ],
+   "expect_subjects": {
+    "unknown_feature": [
+     "speaker-ppc-full:teleport"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-081",
+   "title": "stale evidence blocks admission by name",
+   "kind": "admission",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-full/sha256",
+     "value": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "airplay2",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-airplay2"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "alexa_bridge",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-alexa_bridge"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "protected_render",
+      "evidence": {
+       "kind": "physical_output",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-protected_render"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "spotify_connect",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-spotify_connect"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "synchronized_groups",
+      "evidence": {
+       "kind": "physical_output",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-synchronized_groups"
+      }
+     }
+    },
+    {
+     "op": "push",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications",
+     "value": {
+      "feature": "tailnet_native",
+      "evidence": {
+       "kind": "real_service",
+       "artifact_sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+       "target": "powerpc_be",
+       "profile": "full_native",
+       "receipt_id": "rcpt-tailnet_native"
+      }
+     }
+    },
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-full/qualifications/feature=tailnet_native/evidence/profile",
+     "value": "minimal_renderer"
+    }
+   ],
+   "artifact": "speaker-ppc-full",
+   "expect": {
+    "qualified": false,
+    "blocks": [
+     "stale_evidence:tailnet_native"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-090",
+   "title": "a test-only crate in a device closure with no exception is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/test_support_exceptions",
+     "value": []
+    }
+   ],
+   "expect_codes": [
+    "test_support_in_device_closure"
+   ],
+   "expect_subjects": {
+    "test_support_in_device_closure": [
+     "speaker-mips-full:franken-test-support",
+     "speaker-mips-min:franken-test-support",
+     "speaker-ppc-full:franken-test-support",
+     "speaker-ppc-min:franken-test-support"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-091",
+   "title": "an exception that names no test-support edge is stale and covers nothing",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/test_support_exceptions/from=franken-speaker/to",
+     "value": "franken-hal"
+    }
+   ],
+   "expect_codes": [
+    "stale_exception",
+    "test_support_in_device_closure"
+   ],
+   "expect_subjects": {
+    "stale_exception": [
+     "franken-speaker->franken-hal"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-092",
+   "title": "an exception with no reason is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/test_support_exceptions/from=franken-speaker/reason",
+     "value": ""
+    }
+   ],
+   "expect_codes": [
+    "exception_without_reason"
+   ],
+   "expect_subjects": {
+    "exception_without_reason": [
+     "franken-speaker->franken-test-support"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-093",
+   "title": "a host tool in a device closure is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/crates/name=franken-speaker/deps",
+     "value": "franken-alloc-probe"
+    }
+   ],
+   "expect_codes": [
+    "host_tool_in_device_closure",
+    "layer_violation",
+    "unsafe_in_device_closure"
+   ],
+   "expect_subjects": {
+    "host_tool_in_device_closure": [
+     "speaker-mips-full:franken-alloc-probe",
+     "speaker-mips-min:franken-alloc-probe",
+     "speaker-ppc-full:franken-alloc-probe",
+     "speaker-ppc-min:franken-alloc-probe"
+    ],
+    "layer_violation": [
+     "franken-speaker->franken-alloc-probe"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-100",
+   "title": "a different schema version is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/schema_version",
+     "value": "ffw.build_contract.v0"
+    }
+   ],
+   "expect_codes": [
+    "schema_version_mismatch"
+   ]
+  },
+  {
+   "id": "P01-V-101",
+   "title": "an unknown field is not tolerated",
+   "kind": "parse",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-host-full/extra",
+     "value": 1
+    }
+   ],
+   "expect_codes": [
+    "parse_error"
+   ]
+  },
+  {
+   "id": "P01-V-102",
+   "title": "a missing field is not defaulted",
+   "kind": "parse",
+   "ops": [
+    {
+     "op": "remove",
+     "path": "/artifacts/id=speaker-host-full/sha256"
+    }
+   ],
+   "expect_codes": [
+    "parse_error"
+   ]
+  },
+  {
+   "id": "P01-V-103",
+   "title": "a field of the wrong type is not coerced",
+   "kind": "parse",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/crates/name=franken-hal/layer",
+     "value": "four"
+    }
+   ],
+   "expect_codes": [
+    "parse_error"
+   ]
+  },
+  {
+   "id": "P01-V-104",
+   "title": "an unknown enum value is not accepted",
+   "kind": "parse",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/crates/name=franken-hal/role",
+     "value": "firmware"
+    }
+   ],
+   "expect_codes": [
+    "parse_error"
+   ]
+  },
+  {
+   "id": "P01-O-001",
+   "title": "permitted positive: distinct, correctly identified device artifacts",
+   "kind": "observed",
+   "ops": [],
+   "rows": [
+    {
+     "id": "speaker-mips-full",
+     "target": "mips_be",
+     "triple": "mips-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+     "elf_machine": 8,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+    },
+    {
+     "id": "speaker-ppc-full",
+     "target": "powerpc_be",
+     "triple": "powerpc-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+     "elf_machine": 20,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+    }
+   ],
+   "require_all": false,
+   "expect_codes": []
+  },
+  {
+   "id": "P01-O-002",
+   "title": "a PowerPC artifact whose ELF says MIPS is refused",
+   "kind": "observed",
+   "ops": [],
+   "rows": [
+    {
+     "id": "speaker-mips-full",
+     "target": "mips_be",
+     "triple": "mips-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+     "elf_machine": 8,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+    },
+    {
+     "id": "speaker-ppc-full",
+     "target": "powerpc_be",
+     "triple": "powerpc-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+     "elf_machine": 8,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+    }
+   ],
+   "require_all": false,
+   "expect_codes": [
+    "elf_machine_mismatch"
+   ],
+   "expect_subjects": {
+    "elf_machine_mismatch": [
+     "speaker-ppc-full"
+    ]
+   }
+  },
+  {
+   "id": "P01-O-003",
+   "title": "a little-endian device ELF is refused",
+   "kind": "observed",
+   "ops": [],
+   "rows": [
+    {
+     "id": "speaker-mips-full",
+     "target": "mips_be",
+     "triple": "mips-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+     "elf_machine": 8,
+     "elf_class": 1,
+     "elf_big_endian": false,
+     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+    }
+   ],
+   "require_all": false,
+   "expect_codes": [
+    "elf_not_32bit_big_endian"
+   ]
+  },
+  {
+   "id": "P01-O-004",
+   "title": "a 64-bit device ELF is refused",
+   "kind": "observed",
+   "ops": [],
+   "rows": [
+    {
+     "id": "speaker-mips-full",
+     "target": "mips_be",
+     "triple": "mips-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+     "elf_machine": 8,
+     "elf_class": 2,
+     "elf_big_endian": true,
+     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+    }
+   ],
+   "require_all": false,
+   "expect_codes": [
+    "elf_not_32bit_big_endian"
+   ]
+  },
+  {
+   "id": "P01-O-005",
+   "title": "one digest reported for both PowerPC and MIPS is a universal claim",
+   "kind": "observed",
+   "ops": [],
+   "rows": [
+    {
+     "id": "speaker-mips-full",
+     "target": "mips_be",
+     "triple": "mips-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+     "elf_machine": 8,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+    },
+    {
+     "id": "speaker-ppc-full",
+     "target": "powerpc_be",
+     "triple": "powerpc-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+     "elf_machine": 20,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+    }
+   ],
+   "require_all": false,
+   "expect_codes": [
+    "universal_artifact_claim"
+   ],
+   "expect_subjects": {
+    "universal_artifact_claim": [
+     "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+    ]
+   }
+  },
+  {
+   "id": "P01-O-006",
+   "title": "an artifact the contract does not declare is refused",
+   "kind": "observed",
+   "ops": [],
+   "rows": [
+    {
+     "id": "speaker-sparc-full",
+     "target": "mips_be",
+     "triple": "mips-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+     "elf_machine": 8,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+    }
+   ],
+   "require_all": false,
+   "expect_codes": [
+    "unknown_artifact"
+   ],
+   "expect_subjects": {
+    "unknown_artifact": [
+     "speaker-sparc-full"
+    ]
+   }
+  },
+  {
+   "id": "P01-O-007",
+   "title": "a receipt produced against another contract is refused",
+   "kind": "observed",
+   "ops": [],
+   "rows": [
+    {
+     "id": "speaker-mips-full",
+     "target": "mips_be",
+     "triple": "mips-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+     "elf_machine": 8,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+   ],
+   "require_all": false,
+   "expect_codes": [
+    "contract_digest_mismatch"
+   ]
+  },
+  {
+   "id": "P01-O-008",
+   "title": "an observed target that differs from the declaration is refused",
+   "kind": "observed",
+   "ops": [],
+   "rows": [
+    {
+     "id": "speaker-ppc-full",
+     "target": "mips_be",
+     "triple": "powerpc-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+     "elf_machine": 20,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+    }
+   ],
+   "require_all": false,
+   "expect_codes": [
+    "observed_target_mismatch"
+   ]
+  },
+  {
+   "id": "P01-O-009",
+   "title": "an observed profile that differs from the declaration is refused",
+   "kind": "observed",
+   "ops": [],
+   "rows": [
+    {
+     "id": "speaker-mips-full",
+     "target": "mips_be",
+     "triple": "mips-unknown-linux-musl",
+     "profile": "minimal_renderer",
+     "sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+     "elf_machine": 8,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+    }
+   ],
+   "require_all": false,
+   "expect_codes": [
+    "observed_profile_mismatch"
+   ]
+  },
+  {
+   "id": "P01-O-010",
+   "title": "one artifact id reported with two digests is refused",
+   "kind": "observed",
+   "ops": [],
+   "rows": [
+    {
+     "id": "speaker-mips-full",
+     "target": "mips_be",
+     "triple": "mips-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+     "elf_machine": 8,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+    },
+    {
+     "id": "speaker-mips-full",
+     "target": "mips_be",
+     "triple": "mips-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+     "elf_machine": 8,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+    }
+   ],
+   "require_all": false,
+   "expect_codes": [
+    "artifact_digest_conflict"
+   ],
+   "expect_subjects": {
+    "artifact_digest_conflict": [
+     "speaker-mips-full"
+    ]
+   }
+  },
+  {
+   "id": "P01-O-011",
+   "title": "with require_all, every declared artifact must be observed",
+   "kind": "observed",
+   "ops": [],
+   "rows": [
+    {
+     "id": "speaker-mips-full",
+     "target": "mips_be",
+     "triple": "mips-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+     "elf_machine": 8,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+    }
+   ],
+   "require_all": true,
+   "expect_codes": [
+    "artifact_not_observed"
+   ],
+   "expect_subjects": {
+    "artifact_not_observed": [
+     "hello-init-mips",
+     "hello-init-ppc",
+     "speaker-host-full",
+     "speaker-mips-min",
+     "speaker-ppc-full",
+     "speaker-ppc-min"
+    ]
+   }
+  },
+  {
+   "id": "P01-O-012",
+   "title": "a malformed observed digest is refused",
+   "kind": "observed",
+   "ops": [],
+   "rows": [
+    {
+     "id": "speaker-mips-full",
+     "target": "mips_be",
+     "triple": "mips-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "zz",
+     "elf_machine": 8,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+    }
+   ],
+   "require_all": false,
+   "expect_codes": [
+    "bad_digest"
+   ]
+  },
+  {
+   "id": "P01-O-013",
+   "title": "an observed digest that differs from the digest the contract records is refused",
+   "kind": "observed",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-mips-full/sha256",
+     "value": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    }
+   ],
+   "rows": [
+    {
+     "id": "speaker-mips-full",
+     "target": "mips_be",
+     "triple": "mips-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+     "elf_machine": 8,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "12d671c5785b3c8e4188ecb3bc17903f4e1f6156df614dc33564015f3d18f463"
+    }
+   ],
+   "require_all": false,
+   "expect_codes": [
+    "observed_digest_mismatch"
+   ]
+  },
+  {
+   "id": "P01-O-014",
+   "title": "an observed triple that differs from the declaration is refused",
+   "kind": "observed",
+   "ops": [],
+   "rows": [
+    {
+     "id": "speaker-ppc-full",
+     "target": "powerpc_be",
+     "triple": "mips-unknown-linux-musl",
+     "profile": "full_native",
+     "sha256": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+     "elf_machine": 20,
+     "elf_class": 1,
+     "elf_big_endian": true,
+     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+    }
+   ],
+   "require_all": false,
+   "expect_codes": [
+    "triple_target_mismatch"
+   ]
+  },
+  {
+   "id": "P01-O-015",
+   "title": "permitted positive: a host artifact needs no ELF identity",
+   "kind": "observed",
+   "ops": [],
+   "rows": [
+    {
+     "id": "speaker-host-full",
+     "target": "host",
+     "triple": "host",
+     "profile": "full_native",
+     "sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+     "elf_machine": 0,
+     "elf_class": 0,
+     "elf_big_endian": false,
+     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+    }
+   ],
+   "require_all": false,
+   "expect_codes": []
+  }
+ ]
+}

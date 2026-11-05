@@ -1,0 +1,730 @@
+{
+  "schema_version": "ffw.build_contract.v1",
+  "cargo_profiles": [
+    {
+      "name": "release",
+      "opt_level": "z",
+      "lto": "true",
+      "codegen_units": 1,
+      "panic": "abort",
+      "strip": "symbols"
+    },
+    {
+      "name": "bootstrap_release",
+      "opt_level": "z",
+      "lto": "true",
+      "codegen_units": 1,
+      "panic": "abort",
+      "strip": "true"
+    }
+  ],
+  "crates": [
+    {
+      "name": "franken-test-support",
+      "path": "crates/franken-test-support",
+      "owner": "Q00",
+      "role": "test_support",
+      "layer": 1,
+      "unsafe_policy": "forbid",
+      "deps": [],
+      "dev_deps": []
+    },
+    {
+      "name": "franken-board-profile",
+      "path": "crates/franken-board-profile",
+      "owner": "E01",
+      "role": "library",
+      "layer": 2,
+      "unsafe_policy": "forbid",
+      "deps": [],
+      "dev_deps": [
+        "franken-test-support"
+      ]
+    },
+    {
+      "name": "franken-platform",
+      "path": "crates/franken-platform",
+      "owner": "P02",
+      "role": "platform",
+      "layer": 3,
+      "unsafe_policy": "forbid",
+      "deps": [
+        "franken-board-profile"
+      ],
+      "dev_deps": [
+        "franken-test-support"
+      ]
+    },
+    {
+      "name": "franken-hal",
+      "path": "crates/franken-hal",
+      "owner": "E04",
+      "role": "library",
+      "layer": 4,
+      "unsafe_policy": "forbid",
+      "deps": [
+        "franken-board-profile"
+      ],
+      "dev_deps": [
+        "franken-test-support"
+      ]
+    },
+    {
+      "name": "franken-dsp",
+      "path": "crates/franken-dsp",
+      "owner": "D01",
+      "role": "library",
+      "layer": 5,
+      "unsafe_policy": "forbid",
+      "deps": [
+        "franken-board-profile"
+      ],
+      "dev_deps": [
+        "franken-test-support"
+      ]
+    },
+    {
+      "name": "franken-clock",
+      "path": "crates/franken-clock",
+      "owner": "N03",
+      "role": "library",
+      "layer": 6,
+      "unsafe_policy": "forbid",
+      "deps": [
+        "franken-board-profile"
+      ],
+      "dev_deps": [
+        "franken-test-support",
+        "franken-dsp"
+      ]
+    },
+    {
+      "name": "franken-stream",
+      "path": "crates/franken-stream",
+      "owner": "N01",
+      "role": "library",
+      "layer": 7,
+      "unsafe_policy": "forbid",
+      "deps": [
+        "franken-dsp"
+      ],
+      "dev_deps": [
+        "franken-test-support"
+      ]
+    },
+    {
+      "name": "franken-session",
+      "path": "crates/franken-session",
+      "owner": "G01",
+      "role": "library",
+      "layer": 8,
+      "unsafe_policy": "forbid",
+      "deps": [
+        "franken-board-profile"
+      ],
+      "dev_deps": [
+        "franken-test-support"
+      ]
+    },
+    {
+      "name": "franken-control",
+      "path": "crates/franken-control",
+      "owner": "G03",
+      "role": "library",
+      "layer": 9,
+      "unsafe_policy": "forbid",
+      "deps": [
+        "franken-session",
+        "franken-clock"
+      ],
+      "dev_deps": [
+        "franken-test-support",
+        "franken-board-profile"
+      ]
+    },
+    {
+      "name": "franken-speaker",
+      "path": "crates/franken-speaker",
+      "owner": "P01",
+      "role": "application",
+      "layer": 10,
+      "unsafe_policy": "forbid",
+      "deps": [
+        "franken-test-support",
+        "franken-board-profile",
+        "franken-platform",
+        "franken-hal",
+        "franken-dsp",
+        "franken-clock",
+        "franken-stream",
+        "franken-session",
+        "franken-control"
+      ],
+      "dev_deps": []
+    },
+    {
+      "name": "franken-alloc-probe",
+      "path": "crates/franken-alloc-probe",
+      "owner": "D01",
+      "role": "host_tool",
+      "layer": 11,
+      "unsafe_policy": "deny_with_scoped_allow",
+      "deps": [],
+      "dev_deps": [
+        "franken-dsp"
+      ]
+    },
+    {
+      "name": "franken-baseline",
+      "path": "crates/franken-baseline",
+      "owner": "E02",
+      "role": "host_tool",
+      "layer": 12,
+      "unsafe_policy": "forbid",
+      "deps": [],
+      "dev_deps": []
+    }
+  ],
+  "excluded": [
+    {
+      "name": "ffw-hello-init",
+      "path": "toolchain/src/ffw-hello-init",
+      "owner": "E07",
+      "reason": "Freestanding no_std PID-1 bootstrap probe with its own nightly build-std flags; listed in the root exclude and never a product artifact.",
+      "unsafe_policy": "bootstrap_probe",
+      "targets": [
+        "mips_be",
+        "powerpc_be"
+      ]
+    }
+  ],
+  "pending_members": [],
+  "assets": [
+    {
+      "path": "crates/franken-test-support",
+      "owner": "Q00",
+      "kind": "crate"
+    },
+    {
+      "path": "crates/franken-board-profile",
+      "owner": "E01",
+      "kind": "crate"
+    },
+    {
+      "path": "crates/franken-platform",
+      "owner": "P02",
+      "kind": "crate"
+    },
+    {
+      "path": "crates/franken-hal",
+      "owner": "E04",
+      "kind": "crate"
+    },
+    {
+      "path": "crates/franken-dsp",
+      "owner": "D01",
+      "kind": "crate"
+    },
+    {
+      "path": "crates/franken-clock",
+      "owner": "N03",
+      "kind": "crate"
+    },
+    {
+      "path": "crates/franken-stream",
+      "owner": "N01",
+      "kind": "crate"
+    },
+    {
+      "path": "crates/franken-session",
+      "owner": "G01",
+      "kind": "crate"
+    },
+    {
+      "path": "crates/franken-control",
+      "owner": "G03",
+      "kind": "crate"
+    },
+    {
+      "path": "crates/franken-speaker",
+      "owner": "P01",
+      "kind": "crate"
+    },
+    {
+      "path": "crates/franken-alloc-probe",
+      "owner": "D01",
+      "kind": "crate"
+    },
+    {
+      "path": "crates/franken-baseline",
+      "owner": "E02",
+      "kind": "crate"
+    },
+    {
+      "path": "toolchain/src/ffw-hello-init",
+      "owner": "E07",
+      "kind": "crate"
+    },
+    {
+      "path": "tests/d01",
+      "owner": "D01",
+      "kind": "fixture"
+    },
+    {
+      "path": "tests/d03",
+      "owner": "D03",
+      "kind": "fixture"
+    },
+    {
+      "path": "tests/e01",
+      "owner": "E01",
+      "kind": "fixture"
+    },
+    {
+      "path": "tests/e02",
+      "owner": "E02",
+      "kind": "fixture"
+    },
+    {
+      "path": "tests/e03",
+      "owner": "E03",
+      "kind": "fixture"
+    },
+    {
+      "path": "tests/e04",
+      "owner": "E04",
+      "kind": "fixture"
+    },
+    {
+      "path": "tests/e05",
+      "owner": "E05",
+      "kind": "fixture"
+    },
+    {
+      "path": "tests/e06",
+      "owner": "E06",
+      "kind": "fixture"
+    },
+    {
+      "path": "tests/n01",
+      "owner": "N01",
+      "kind": "fixture"
+    },
+    {
+      "path": "tests/p01",
+      "owner": "P01",
+      "kind": "fixture"
+    },
+    {
+      "path": "docs/contracts/d01.md",
+      "owner": "D01",
+      "kind": "interface"
+    },
+    {
+      "path": "docs/contracts/e01.md",
+      "owner": "E01",
+      "kind": "interface"
+    },
+    {
+      "path": "docs/contracts/e02.md",
+      "owner": "E02",
+      "kind": "interface"
+    },
+    {
+      "path": "docs/contracts/e03.md",
+      "owner": "E03",
+      "kind": "interface"
+    },
+    {
+      "path": "docs/contracts/e04.md",
+      "owner": "E04",
+      "kind": "interface"
+    },
+    {
+      "path": "docs/contracts/e05.md",
+      "owner": "E05",
+      "kind": "interface"
+    },
+    {
+      "path": "docs/contracts/n01.md",
+      "owner": "N01",
+      "kind": "interface"
+    },
+    {
+      "path": "docs/contracts/p01.md",
+      "owner": "P01",
+      "kind": "interface"
+    },
+    {
+      "path": "crates/franken-board-profile/src/build_contract.rs",
+      "owner": "P01",
+      "kind": "interface"
+    },
+    {
+      "path": "crates/franken-board-profile/tests/vectors/p01_workspace_contract.json",
+      "owner": "P01",
+      "kind": "fixture"
+    },
+    {
+      "path": "crates/franken-board-profile/tests/vectors/p01_contract_vectors.json",
+      "owner": "P01",
+      "kind": "fixture"
+    },
+    {
+      "path": "crates/franken-stream/tests/vectors",
+      "owner": "N01",
+      "kind": "fixture"
+    }
+  ],
+  "test_support_exceptions": [
+    {
+      "from": "franken-speaker",
+      "to": "franken-test-support",
+      "reason": "The speaker's --self-test and --virtual-house harness links the test-support oracles unconditionally; it is not yet behind a Cargo feature, so a device image carries test-only code. Counted here until virtual_house_harness is gated by cargo_feature."
+    }
+  ],
+  "features": [
+    {
+      "name": "protected_render",
+      "kind": "core",
+      "requirement": "required",
+      "owner_crate": "franken-hal",
+      "cargo_feature": "",
+      "requires": [],
+      "accepted_evidence": [
+        "physical_output"
+      ]
+    },
+    {
+      "name": "synchronized_groups",
+      "kind": "core",
+      "requirement": "required",
+      "owner_crate": "franken-session",
+      "cargo_feature": "",
+      "requires": [
+        "protected_render"
+      ],
+      "accepted_evidence": [
+        "physical_output"
+      ]
+    },
+    {
+      "name": "spotify_connect",
+      "kind": "native_service",
+      "requirement": "required",
+      "owner_crate": "franken-control",
+      "cargo_feature": "",
+      "requires": [
+        "protected_render"
+      ],
+      "accepted_evidence": [
+        "real_service"
+      ]
+    },
+    {
+      "name": "airplay2",
+      "kind": "native_service",
+      "requirement": "required",
+      "owner_crate": "franken-control",
+      "cargo_feature": "",
+      "requires": [
+        "protected_render"
+      ],
+      "accepted_evidence": [
+        "real_service"
+      ]
+    },
+    {
+      "name": "tailnet_native",
+      "kind": "native_service",
+      "requirement": "required",
+      "owner_crate": "franken-control",
+      "cargo_feature": "",
+      "requires": [
+        "protected_render"
+      ],
+      "accepted_evidence": [
+        "real_service"
+      ]
+    },
+    {
+      "name": "alexa_bridge",
+      "kind": "native_service",
+      "requirement": "required",
+      "owner_crate": "franken-control",
+      "cargo_feature": "",
+      "requires": [
+        "protected_render"
+      ],
+      "accepted_evidence": [
+        "real_service"
+      ]
+    },
+    {
+      "name": "artwork",
+      "kind": "core",
+      "requirement": "optional",
+      "owner_crate": "franken-control",
+      "cargo_feature": "",
+      "requires": [],
+      "accepted_evidence": [
+        "host_simulation",
+        "guest_execution"
+      ]
+    },
+    {
+      "name": "virtual_house_harness",
+      "kind": "core",
+      "requirement": "optional",
+      "owner_crate": "franken-speaker",
+      "cargo_feature": "",
+      "requires": [],
+      "accepted_evidence": [
+        "host_simulation"
+      ]
+    }
+  ],
+  "profiles": [
+    {
+      "name": "full_native",
+      "cargo_profile": "release",
+      "scope": "full_product",
+      "narrow_reason": "",
+      "features": [
+        {
+          "feature": "protected_render",
+          "state": "enabled",
+          "disabled_reason": ""
+        },
+        {
+          "feature": "synchronized_groups",
+          "state": "enabled",
+          "disabled_reason": ""
+        },
+        {
+          "feature": "spotify_connect",
+          "state": "enabled",
+          "disabled_reason": ""
+        },
+        {
+          "feature": "airplay2",
+          "state": "enabled",
+          "disabled_reason": ""
+        },
+        {
+          "feature": "tailnet_native",
+          "state": "enabled",
+          "disabled_reason": ""
+        },
+        {
+          "feature": "alexa_bridge",
+          "state": "enabled",
+          "disabled_reason": ""
+        },
+        {
+          "feature": "artwork",
+          "state": "enabled",
+          "disabled_reason": ""
+        },
+        {
+          "feature": "virtual_house_harness",
+          "state": "enabled",
+          "disabled_reason": ""
+        }
+      ]
+    },
+    {
+      "name": "minimal_renderer",
+      "cargo_profile": "release",
+      "scope": "named_narrow",
+      "narrow_reason": "Smallest-endpoint (32 MiB class) profile: the synchronized renderer only, until the shared memory budget admits native services. The disabled required features stay blocked, not satisfied.",
+      "features": [
+        {
+          "feature": "protected_render",
+          "state": "enabled",
+          "disabled_reason": ""
+        },
+        {
+          "feature": "synchronized_groups",
+          "state": "enabled",
+          "disabled_reason": ""
+        },
+        {
+          "feature": "spotify_connect",
+          "state": "disabled",
+          "disabled_reason": "Excluded from the minimal renderer profile; remains a required feature and stays blocked for this artifact."
+        },
+        {
+          "feature": "airplay2",
+          "state": "disabled",
+          "disabled_reason": "Excluded from the minimal renderer profile; remains a required feature and stays blocked for this artifact."
+        },
+        {
+          "feature": "tailnet_native",
+          "state": "disabled",
+          "disabled_reason": "Excluded from the minimal renderer profile; remains a required feature and stays blocked for this artifact."
+        },
+        {
+          "feature": "alexa_bridge",
+          "state": "disabled",
+          "disabled_reason": "Excluded from the minimal renderer profile; remains a required feature and stays blocked for this artifact."
+        },
+        {
+          "feature": "artwork",
+          "state": "disabled",
+          "disabled_reason": "Optional; omitted from the minimal profile."
+        },
+        {
+          "feature": "virtual_house_harness",
+          "state": "enabled",
+          "disabled_reason": ""
+        }
+      ]
+    },
+    {
+      "name": "bootstrap_probe",
+      "cargo_profile": "bootstrap_release",
+      "scope": "named_narrow",
+      "narrow_reason": "The freestanding bootstrap probe used to prove toolchain and boot path under QEMU; it is not the product and carries no product feature.",
+      "features": [
+        {
+          "feature": "protected_render",
+          "state": "disabled",
+          "disabled_reason": "Bootstrap probe only; not the product."
+        },
+        {
+          "feature": "synchronized_groups",
+          "state": "disabled",
+          "disabled_reason": "Bootstrap probe only; not the product."
+        },
+        {
+          "feature": "spotify_connect",
+          "state": "disabled",
+          "disabled_reason": "Bootstrap probe only; not the product."
+        },
+        {
+          "feature": "airplay2",
+          "state": "disabled",
+          "disabled_reason": "Bootstrap probe only; not the product."
+        },
+        {
+          "feature": "tailnet_native",
+          "state": "disabled",
+          "disabled_reason": "Bootstrap probe only; not the product."
+        },
+        {
+          "feature": "alexa_bridge",
+          "state": "disabled",
+          "disabled_reason": "Bootstrap probe only; not the product."
+        }
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "speaker-host-full",
+      "crate": "franken-speaker",
+      "bin": "franken-speaker",
+      "target": "host",
+      "triple": "host",
+      "isa": "",
+      "profile": "full_native",
+      "runs_on": [
+        "host"
+      ],
+      "status": "unqualified",
+      "sha256": "",
+      "qualifications": []
+    },
+    {
+      "id": "speaker-mips-full",
+      "crate": "franken-speaker",
+      "bin": "franken-speaker",
+      "target": "mips_be",
+      "triple": "mips-unknown-linux-musl",
+      "isa": "mips32_be",
+      "profile": "full_native",
+      "runs_on": [
+        "mips_be"
+      ],
+      "status": "unqualified",
+      "sha256": "",
+      "qualifications": []
+    },
+    {
+      "id": "speaker-ppc-full",
+      "crate": "franken-speaker",
+      "bin": "franken-speaker",
+      "target": "powerpc_be",
+      "triple": "powerpc-unknown-linux-musl",
+      "isa": "powerpc32_be",
+      "profile": "full_native",
+      "runs_on": [
+        "powerpc_be"
+      ],
+      "status": "unqualified",
+      "sha256": "",
+      "qualifications": []
+    },
+    {
+      "id": "speaker-mips-min",
+      "crate": "franken-speaker",
+      "bin": "franken-speaker",
+      "target": "mips_be",
+      "triple": "mips-unknown-linux-musl",
+      "isa": "mips32_be",
+      "profile": "minimal_renderer",
+      "runs_on": [
+        "mips_be"
+      ],
+      "status": "unqualified",
+      "sha256": "",
+      "qualifications": []
+    },
+    {
+      "id": "speaker-ppc-min",
+      "crate": "franken-speaker",
+      "bin": "franken-speaker",
+      "target": "powerpc_be",
+      "triple": "powerpc-unknown-linux-musl",
+      "isa": "powerpc32_be",
+      "profile": "minimal_renderer",
+      "runs_on": [
+        "powerpc_be"
+      ],
+      "status": "unqualified",
+      "sha256": "",
+      "qualifications": []
+    },
+    {
+      "id": "hello-init-mips",
+      "crate": "ffw-hello-init",
+      "bin": "ffw-hello-init",
+      "target": "mips_be",
+      "triple": "mips-unknown-linux-musl",
+      "isa": "mips32_be",
+      "profile": "bootstrap_probe",
+      "runs_on": [
+        "mips_be"
+      ],
+      "status": "unqualified",
+      "sha256": "",
+      "qualifications": []
+    },
+    {
+      "id": "hello-init-ppc",
+      "crate": "ffw-hello-init",
+      "bin": "ffw-hello-init",
+      "target": "powerpc_be",
+      "triple": "powerpc-unknown-linux-musl",
+      "isa": "powerpc32_be",
+      "profile": "bootstrap_probe",
+      "runs_on": [
+        "powerpc_be"
+      ],
+      "status": "unqualified",
+      "sha256": "",
+      "qualifications": []
+    }
+  ]
+}

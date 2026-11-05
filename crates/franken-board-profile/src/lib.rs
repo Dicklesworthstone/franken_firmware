@@ -28,6 +28,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
+/// Workspace build, target and profile contract (`P01` / `ffw-h3g`): distinct ISA artifacts, required
+/// versus optional features, owners, and exact artifact identity. It builds on [`CpuIsa`] above.
+pub mod build_contract;
+
 pub const BOARD_PROFILE_SCHEMA_VERSION: &str = "ffw.board_profile.v2";
 
 /// Text stored in a string fact that no evidence supports.

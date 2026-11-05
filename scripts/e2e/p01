@@ -1,4 +1,38 @@
 #!/usr/bin/env bash
+# P01 end-to-end entry point (bead ffw-h3g): workspace, target and build-profile contract; build identity.
+#
+# The script resolves the repository from its own location, so it behaves the same from any working directory.
+# It never invokes cargo itself; builds run only on the central path (`RCH_REQUIRE_REMOTE=1 rch exec -- ...`).
+#
+#   scripts/e2e/p01                              full tier of the host cases (tests/p01/run_cases.py)
+#   scripts/e2e/p01 --tier smoke|full [--case ID] [--list] [--receipts DIR]
+#   scripts/e2e/p01 print-plan [--cwd DIR] [--target-dir DIR]      the exact central command plan, checked, not run
+#   scripts/e2e/p01 collect --target-dir DIR [--receipts DIR]      identity of artifacts a central build produced
+#   scripts/e2e/p01 execute [--cwd DIR] [--target-dir DIR] [--receipts DIR]
+#                                                run the plan through rch (central operator), then verify
+#   scripts/e2e/p01 --workspace-suite [...]      the former cargo suite (test, clippy, cross-check, virtual house)
+#                                                via scripts/test/run-workspace-verification.py p01
+#
+# Exit codes of the host cases: 0 every case passed and none is blocked; 1 a case failed; 3 only blocked cases
+# stand in the way (reported, never counted as passed); 2 usage error. The full tier is expected to exit 3 until the
+# central run, the Rust replay and the E06 inventory exist, because those cases are counted as blocked, not skipped.
+#
+# The Rust half replays the same shared vectors under the centralized path:
+#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-board-profile
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-exec python3 "$ROOT/scripts/test/run-workspace-verification.py" p01 "$@"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+case "${1:-}" in
+  print-plan|collect|execute)
+    exec python3 -B "$ROOT/tests/p01/pipeline.py" "$@"
+    ;;
+  --workspace-suite)
+    shift
+    exec python3 "$ROOT/scripts/test/run-workspace-verification.py" p01 "$@"
+    ;;
+  "")
+    exec python3 -B "$ROOT/tests/p01/run_cases.py" --tier full
+    ;;
+  *)
+    exec python3 -B "$ROOT/tests/p01/run_cases.py" "$@"
+    ;;
+esac

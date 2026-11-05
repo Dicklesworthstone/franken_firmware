@@ -1,0 +1,1859 @@
+{
+ "schema": "ffw.p01.cases.v1",
+ "about": "P01 (ffw-h3g) host-side cases for the build-identity half: the typed target/profile contract (crates/franken-board-profile/src/build_contract.rs), its shared vectors, the drift check against the real manifests, the central command plan and the receipt pipeline. Expected values are written by hand. Nothing here builds, boots or contacts a device.",
+ "cases": [
+  {
+   "id": "P01-CON-001",
+   "kind": "contract_valid",
+   "title": "the declared contract is valid, its digest is the pinned one, nothing is claimed qualified",
+   "tiers": [
+    "smoke",
+    "full"
+   ]
+  },
+  {
+   "id": "P01-CON-002",
+   "kind": "drift_real",
+   "title": "the repository matches the declared contract: members, edges, lockfile, profiles, owners",
+   "tiers": [
+    "smoke",
+    "full"
+   ]
+  },
+  {
+   "id": "P01-CON-003",
+   "kind": "facts_cwd",
+   "title": "the workspace facts and their digest do not depend on the working directory",
+   "tiers": [
+    "full"
+   ]
+  },
+  {
+   "id": "P01-DRIFT-001",
+   "kind": "drift_planted",
+   "title": "a crate directory that is neither a member nor declared pending",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "push",
+     "path": "/extra_dirs",
+     "value": "c"
+    }
+   ],
+   "contract_ops": [],
+   "expect_codes": [
+    "asset_uncovered",
+    "crate_dir_unaccounted"
+   ],
+   "expect_subjects": {
+    "crate_dir_unaccounted": [
+     "c"
+    ],
+    "asset_uncovered": [
+     "crates/c"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-002",
+   "kind": "drift_planted",
+   "title": "permitted positive: a declared, owned pending member is accepted",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "push",
+     "path": "/extra_dirs",
+     "value": "c"
+    }
+   ],
+   "contract_ops": [
+    {
+     "op": "push",
+     "path": "/pending_members",
+     "value": {
+      "name": "c",
+      "path": "crates/c",
+      "owner": "T3",
+      "reason": "root edit pending"
+     }
+    },
+    {
+     "op": "push",
+     "path": "/assets",
+     "value": {
+      "path": "crates/c",
+      "owner": "T3",
+      "kind": "crate"
+     }
+    }
+   ],
+   "expect_codes": []
+  },
+  {
+   "id": "P01-DRIFT-003",
+   "kind": "drift_planted",
+   "title": "a pending member that is already a workspace member",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [],
+   "contract_ops": [
+    {
+     "op": "push",
+     "path": "/pending_members",
+     "value": {
+      "name": "a",
+      "path": "crates/a",
+      "owner": "T1",
+      "reason": "stale"
+     }
+    }
+   ],
+   "expect_codes": [
+    "pending_but_member"
+   ],
+   "expect_subjects": {
+    "pending_but_member": [
+     "a"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-004",
+   "kind": "drift_planted",
+   "title": "a pending member whose directory does not exist",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [],
+   "contract_ops": [
+    {
+     "op": "push",
+     "path": "/pending_members",
+     "value": {
+      "name": "ghost",
+      "path": "crates/ghost",
+      "owner": "T9",
+      "reason": "x"
+     }
+    }
+   ],
+   "expect_codes": [
+    "pending_missing_dir"
+   ],
+   "expect_subjects": {
+    "pending_missing_dir": [
+     "ghost"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-005",
+   "kind": "drift_planted",
+   "title": "a workspace member the contract does not list",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [],
+   "contract_ops": [
+    {
+     "op": "remove",
+     "path": "/crates/name=b"
+    }
+   ],
+   "expect_codes": [
+    "member_not_in_contract"
+   ],
+   "expect_subjects": {
+    "member_not_in_contract": [
+     "b"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-006",
+   "kind": "drift_planted",
+   "title": "a contract crate that is not a workspace member",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [],
+   "contract_ops": [
+    {
+     "op": "push",
+     "path": "/crates",
+     "value": {
+      "name": "z",
+      "path": "crates/z",
+      "owner": "T9",
+      "role": "library",
+      "layer": 3,
+      "unsafe_policy": "forbid",
+      "deps": [],
+      "dev_deps": []
+     }
+    }
+   ],
+   "expect_codes": [
+    "contract_crate_not_member"
+   ],
+   "expect_subjects": {
+    "contract_crate_not_member": [
+     "z"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-007",
+   "kind": "drift_planted",
+   "title": "a crate whose declared path differs from the real one",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [],
+   "contract_ops": [
+    {
+     "op": "set",
+     "path": "/crates/name=a/path",
+     "value": "crates/aa"
+    }
+   ],
+   "expect_codes": [
+    "crate_path_mismatch"
+   ],
+   "expect_subjects": {
+    "crate_path_mismatch": [
+     "a"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-008",
+   "kind": "drift_planted",
+   "title": "a dev-dependency the contract does not declare",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "push",
+     "path": "/members/b/dev",
+     "value": "a"
+    }
+   ],
+   "contract_ops": [],
+   "expect_codes": [
+    "dep_edge_mismatch"
+   ],
+   "expect_subjects": {
+    "dep_edge_mismatch": [
+     "dev:b->a"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-009",
+   "kind": "drift_planted",
+   "title": "a dependency the contract declares but the manifest lacks",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [],
+   "contract_ops": [
+    {
+     "op": "push",
+     "path": "/crates/name=a/deps",
+     "value": "b"
+    }
+   ],
+   "expect_codes": [
+    "dep_edge_mismatch"
+   ],
+   "expect_subjects": {
+    "dep_edge_mismatch": [
+     "normal:a->b"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-010",
+   "kind": "drift_planted",
+   "title": "a real dependency cycle in the manifests, also stale in the lockfile",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "push",
+     "path": "/members/a/deps",
+     "value": "b"
+    }
+   ],
+   "contract_ops": [],
+   "expect_codes": [
+    "actual_dependency_cycle",
+    "dep_edge_mismatch",
+    "lock_edge_mismatch"
+   ],
+   "expect_subjects": {
+    "actual_dependency_cycle": [
+     "a,b"
+    ],
+    "dep_edge_mismatch": [
+     "normal:a->b"
+    ],
+    "lock_edge_mismatch": [
+     "a->b"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-011",
+   "kind": "drift_planted",
+   "title": "a lockfile that lacks a dependency edge the manifests have",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "set",
+     "path": "/lock/b",
+     "value": []
+    }
+   ],
+   "contract_ops": [],
+   "expect_codes": [
+    "lock_edge_mismatch"
+   ],
+   "expect_subjects": {
+    "lock_edge_mismatch": [
+     "b->a"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-012",
+   "kind": "drift_planted",
+   "title": "a lockfile that lacks a member package",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "remove",
+     "path": "/lock/a"
+    }
+   ],
+   "contract_ops": [],
+   "expect_codes": [
+    "lock_edge_mismatch",
+    "lock_package_missing"
+   ],
+   "expect_subjects": {
+    "lock_package_missing": [
+     "a"
+    ],
+    "lock_edge_mismatch": [
+     "b->a"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-013",
+   "kind": "drift_planted",
+   "title": "a lockfile package that belongs to no member",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "set",
+     "path": "/lock/zzz",
+     "value": []
+    }
+   ],
+   "contract_ops": [],
+   "expect_codes": [
+    "lock_package_extra"
+   ],
+   "expect_subjects": {
+    "lock_package_extra": [
+     "zzz"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-014",
+   "kind": "drift_planted",
+   "title": "no Cargo.lock at all",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "set",
+     "path": "/lock_present",
+     "value": false
+    }
+   ],
+   "contract_ops": [],
+   "expect_codes": [
+    "lock_missing"
+   ],
+   "expect_subjects": {
+    "lock_missing": [
+     "Cargo.lock"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-015",
+   "kind": "drift_planted",
+   "title": "a crate whose lints no longer forbid unsafe",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "set",
+     "path": "/members/b/lints",
+     "value": "none"
+    }
+   ],
+   "contract_ops": [],
+   "expect_codes": [
+    "unsafe_policy_drift"
+   ],
+   "expect_subjects": {
+    "unsafe_policy_drift": [
+     "b"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-016",
+   "kind": "drift_planted",
+   "title": "the workspace lint table weakened below forbid",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "set",
+     "path": "/workspace_unsafe",
+     "value": "warn"
+    }
+   ],
+   "contract_ops": [],
+   "expect_codes": [
+    "unsafe_policy_drift"
+   ],
+   "expect_subjects": {
+    "unsafe_policy_drift": [
+     "a",
+     "b"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-017",
+   "kind": "drift_planted",
+   "title": "the release profile no longer aborts on panic",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "set",
+     "path": "/release/panic",
+     "value": "unwind"
+    }
+   ],
+   "contract_ops": [],
+   "expect_codes": [
+    "cargo_profile_drift"
+   ],
+   "expect_subjects": {
+    "cargo_profile_drift": [
+     "release.panic"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-018",
+   "kind": "drift_planted",
+   "title": "the release profile lost link-time optimisation",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "set",
+     "path": "/release/lto",
+     "value": false
+    }
+   ],
+   "contract_ops": [],
+   "expect_codes": [
+    "cargo_profile_drift"
+   ],
+   "expect_subjects": {
+    "cargo_profile_drift": [
+     "release.lto"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-019",
+   "kind": "drift_planted",
+   "title": "a member manifest defining a profile Cargo would ignore",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "set",
+     "path": "/member_profile_table",
+     "value": true
+    }
+   ],
+   "contract_ops": [],
+   "expect_codes": [
+    "profile_in_member_manifest"
+   ],
+   "expect_subjects": {
+    "profile_in_member_manifest": [
+     "b"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-020",
+   "kind": "drift_planted",
+   "title": "a feature the contract gates by a Cargo flag that the manifest lacks",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "set",
+     "path": "/members/b/features",
+     "value": []
+    }
+   ],
+   "contract_ops": [],
+   "expect_codes": [
+    "feature_flag_missing"
+   ],
+   "expect_subjects": {
+    "feature_flag_missing": [
+     "f"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-021",
+   "kind": "drift_planted",
+   "title": "an artifact naming a binary the crate does not build",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "set",
+     "path": "/members/b/bin",
+     "value": false
+    }
+   ],
+   "contract_ops": [],
+   "expect_codes": [
+    "bin_missing"
+   ],
+   "expect_subjects": {
+    "bin_missing": [
+     "b-host"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-022",
+   "kind": "drift_planted",
+   "title": "a tests directory with no owner",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "push",
+     "path": "/tests",
+     "value": "y"
+    }
+   ],
+   "contract_ops": [],
+   "expect_codes": [
+    "asset_uncovered"
+   ],
+   "expect_subjects": {
+    "asset_uncovered": [
+     "tests/y"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-023",
+   "kind": "drift_planted",
+   "title": "an ownership entry for a path that does not exist",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [],
+   "contract_ops": [
+    {
+     "op": "push",
+     "path": "/assets",
+     "value": {
+      "path": "docs/ghost.md",
+      "owner": "T1",
+      "kind": "interface"
+     }
+    }
+   ],
+   "expect_codes": [
+    "asset_path_missing"
+   ],
+   "expect_subjects": {
+    "asset_path_missing": [
+     "docs/ghost.md"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-024",
+   "kind": "drift_planted",
+   "title": "an excluded crate the contract does not declare",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "push",
+     "path": "/exclude",
+     "value": "tools/probe"
+    }
+   ],
+   "contract_ops": [],
+   "expect_codes": [
+    "excluded_mismatch"
+   ],
+   "expect_subjects": {
+    "excluded_mismatch": [
+     "tools/probe"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-025",
+   "kind": "drift_planted",
+   "title": "permitted positive: a declared excluded crate is accepted",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "push",
+     "path": "/exclude",
+     "value": "tools/probe"
+    }
+   ],
+   "contract_ops": [
+    {
+     "op": "push",
+     "path": "/excluded",
+     "value": {
+      "name": "probe",
+      "path": "tools/probe",
+      "owner": "T9",
+      "reason": "x",
+      "unsafe_policy": "bootstrap_probe",
+      "targets": []
+     }
+    }
+   ],
+   "expect_codes": []
+  },
+  {
+   "id": "P01-DRIFT-026",
+   "kind": "drift_planted",
+   "title": "an excluded crate whose declared name differs from its manifest",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "push",
+     "path": "/exclude",
+     "value": "tools/probe"
+    }
+   ],
+   "contract_ops": [
+    {
+     "op": "push",
+     "path": "/excluded",
+     "value": {
+      "name": "other",
+      "path": "tools/probe",
+      "owner": "T9",
+      "reason": "x",
+      "unsafe_policy": "bootstrap_probe",
+      "targets": []
+     }
+    }
+   ],
+   "expect_codes": [
+    "excluded_name_mismatch"
+   ],
+   "expect_subjects": {
+    "excluded_name_mismatch": [
+     "tools/probe"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-027",
+   "kind": "drift_planted",
+   "title": "a cargo profile the checker has no source for is reported, not trusted",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [],
+   "contract_ops": [
+    {
+     "op": "push",
+     "path": "/cargo_profiles",
+     "value": {
+      "name": "turbo",
+      "opt_level": "3",
+      "lto": "false",
+      "codegen_units": 1,
+      "panic": "abort",
+      "strip": "none"
+     }
+    }
+   ],
+   "expect_codes": [
+    "cargo_profile_unverified"
+   ],
+   "expect_subjects": {
+    "cargo_profile_unverified": [
+     "turbo"
+    ]
+   }
+  },
+  {
+   "id": "P01-PLAN-001",
+   "kind": "plan_exact",
+   "title": "the command plan is exactly the hand-written one: remote only, --locked --offline, absolute manifests, no root cwd",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "expect_step_ids": [
+    "build-ffw-hello-init-mips_be",
+    "build-ffw-hello-init-powerpc_be",
+    "build-franken-speaker-host",
+    "build-franken-speaker-mips_be",
+    "build-franken-speaker-powerpc_be",
+    "toolchain",
+    "workspace-test"
+   ],
+   "expect_argv": {
+    "toolchain": [
+     "rch",
+     "exec",
+     "--",
+     "rustc",
+     "+nightly",
+     "-vV"
+    ],
+    "workspace-test": [
+     "rch",
+     "exec",
+     "--",
+     "cargo",
+     "test",
+     "--locked",
+     "--offline",
+     "--manifest-path",
+     "<ROOT>/Cargo.toml",
+     "--workspace",
+     "--config",
+     "build.incremental=false"
+    ],
+    "build-franken-speaker-host": [
+     "rch",
+     "exec",
+     "--",
+     "cargo",
+     "build",
+     "--locked",
+     "--offline",
+     "--manifest-path",
+     "<ROOT>/crates/franken-speaker/Cargo.toml",
+     "--release",
+     "-p",
+     "franken-speaker"
+    ],
+    "build-franken-speaker-powerpc_be": [
+     "rch",
+     "exec",
+     "--",
+     "cargo",
+     "+nightly",
+     "build",
+     "--locked",
+     "--offline",
+     "--manifest-path",
+     "<ROOT>/crates/franken-speaker/Cargo.toml",
+     "--release",
+     "-p",
+     "franken-speaker",
+     "--target",
+     "powerpc-unknown-linux-musl",
+     "-Z",
+     "build-std=core,alloc,std,panic_abort"
+    ],
+    "build-ffw-hello-init-mips_be": [
+     "rch",
+     "exec",
+     "--",
+     "cargo",
+     "+nightly",
+     "build",
+     "--locked",
+     "--offline",
+     "--manifest-path",
+     "<ROOT>/toolchain/src/ffw-hello-init/Cargo.toml",
+     "--release",
+     "--config",
+     "<ROOT>/toolchain/src/ffw-hello-init/.cargo/config.toml",
+     "--target",
+     "mips-unknown-linux-musl",
+     "-Z",
+     "build-std=core,panic_abort"
+    ]
+   }
+  },
+  {
+   "id": "P01-PLAN-002",
+   "kind": "plan_rules",
+   "title": "a plan without --locked is refused",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "step": "workspace-test",
+   "plant": {
+    "op": "drop_arg",
+    "arg": "--locked"
+   },
+   "expect_codes": [
+    "plan_missing_locked"
+   ]
+  },
+  {
+   "id": "P01-PLAN-003",
+   "kind": "plan_rules",
+   "title": "a plan without --offline is refused",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "step": "build-franken-speaker-host",
+   "plant": {
+    "op": "drop_arg",
+    "arg": "--offline"
+   },
+   "expect_codes": [
+    "plan_missing_offline"
+   ]
+  },
+  {
+   "id": "P01-PLAN-004",
+   "kind": "plan_rules",
+   "title": "a relative manifest path is refused",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "step": "build-franken-speaker-mips_be",
+   "plant": {
+    "op": "relative_manifest"
+   },
+   "expect_codes": [
+    "plan_manifest_not_absolute"
+   ]
+  },
+  {
+   "id": "P01-PLAN-005",
+   "kind": "plan_rules",
+   "title": "a step run from the repository root is refused",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "step": "workspace-test",
+   "plant": {
+    "op": "cwd_root"
+   },
+   "expect_codes": [
+    "plan_cwd_is_root"
+   ]
+  },
+  {
+   "id": "P01-PLAN-006",
+   "kind": "plan_rules",
+   "title": "a step whose working directory does not exist is refused",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "step": "workspace-test",
+   "plant": {
+    "op": "cwd_missing"
+   },
+   "expect_codes": [
+    "plan_cwd_missing"
+   ]
+  },
+  {
+   "id": "P01-PLAN-007",
+   "kind": "plan_rules",
+   "title": "a local-build escape hatch in the environment is refused",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "step": "build-franken-speaker-host",
+   "plant": {
+    "op": "set_env",
+    "arg": "RCH_CARGO_WRAPPER_BYPASS",
+    "value": "1"
+   },
+   "expect_codes": [
+    "plan_bypass_env"
+   ]
+  },
+  {
+   "id": "P01-PLAN-008",
+   "kind": "plan_rules",
+   "title": "a step without RCH_REQUIRE_REMOTE=1 is refused",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "step": "build-franken-speaker-host",
+   "plant": {
+    "op": "drop_env",
+    "arg": "RCH_REQUIRE_REMOTE"
+   },
+   "expect_codes": [
+    "plan_require_remote_missing"
+   ]
+  },
+  {
+   "id": "P01-PLAN-009",
+   "kind": "plan_rules",
+   "title": "a step that does not go through rch exec is refused",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "step": "toolchain",
+   "plant": {
+    "op": "no_rch"
+   },
+   "expect_codes": [
+    "plan_not_remote"
+   ]
+  },
+  {
+   "id": "P01-PLAN-010",
+   "kind": "plan_rules",
+   "title": "a device build without --target is refused",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "step": "build-franken-speaker-powerpc_be",
+   "plant": {
+    "op": "drop_with_value",
+    "arg": "--target"
+   },
+   "expect_codes": [
+    "plan_device_without_target"
+   ]
+  },
+  {
+   "id": "P01-PLAN-011",
+   "kind": "plan_rules",
+   "title": "a device build without -Z build-std is refused",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "step": "build-franken-speaker-mips_be",
+   "plant": {
+    "op": "drop_with_value",
+    "arg": "-Z"
+   },
+   "expect_codes": [
+    "plan_device_without_build_std"
+   ]
+  },
+  {
+   "id": "P01-PLAN-012",
+   "kind": "plan_rules",
+   "title": "the bootstrap probe's build must name its .cargo/config.toml when run from another directory",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "step": "build-ffw-hello-init-mips_be",
+   "plant": {
+    "op": "drop_with_value",
+    "arg": "--config"
+   },
+   "expect_codes": [
+    "plan_config_not_explicit"
+   ]
+  },
+  {
+   "id": "P01-PLAN-013",
+   "kind": "plan_sharing",
+   "title": "full and minimal artifacts share one build; the receipt must say the minimal profile's disabled features have no Cargo flag",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "expect_shared": [
+    [
+     "speaker-mips-full",
+     "speaker-mips-min"
+    ],
+    [
+     "speaker-ppc-full",
+     "speaker-ppc-min"
+    ]
+   ],
+   "expect_unbacked": {
+    "speaker-host-full": [],
+    "speaker-mips-full": [],
+    "speaker-mips-min": [
+     "airplay2",
+     "alexa_bridge",
+     "artwork",
+     "spotify_connect",
+     "tailnet_native"
+    ],
+    "hello-init-mips": [
+     "airplay2",
+     "alexa_bridge",
+     "protected_render",
+     "spotify_connect",
+     "synchronized_groups",
+     "tailnet_native"
+    ]
+   }
+  },
+  {
+   "id": "P01-RCPT-001",
+   "kind": "receipt",
+   "title": "a complete run: every digest is the digest of the built file, and target, triple, profile and ELF identity propagate",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "scenario": "ok",
+   "expect": {
+    "exit": 0,
+    "status": "complete",
+    "codes": [],
+    "identity": true
+   }
+  },
+  {
+   "id": "P01-RCPT-002",
+   "kind": "receipt",
+   "title": "a PowerPC speaker whose ELF says MIPS fails the run",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "scenario": "wrong_isa",
+   "expect": {
+    "exit": 1,
+    "status": "failed",
+    "codes": [
+     "elf_machine_mismatch"
+    ],
+    "subjects": {
+     "elf_machine_mismatch": [
+      "speaker-ppc-full",
+      "speaker-ppc-min"
+     ]
+    }
+   }
+  },
+  {
+   "id": "P01-RCPT-003",
+   "kind": "receipt",
+   "title": "the same bytes for PowerPC and MIPS is a universal-artifact claim and fails the run",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "scenario": "universal",
+   "expect": {
+    "exit": 1,
+    "status": "failed",
+    "codes": [
+     "elf_machine_mismatch",
+     "universal_artifact_claim"
+    ]
+   }
+  },
+  {
+   "id": "P01-RCPT-004",
+   "kind": "receipt",
+   "title": "a build that fails is recorded as failed and the other steps still run",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "scenario": "build_fails",
+   "expect": {
+    "exit": 1,
+    "status": "failed",
+    "failed_steps": [
+     "build-franken-speaker-powerpc_be"
+    ],
+    "codes": []
+   }
+  },
+  {
+   "id": "P01-RCPT-005",
+   "kind": "receipt",
+   "title": "a cancelled run leaves an honest partial receipt; a restart writes a new one and never overwrites it",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "scenario": "cancel",
+   "expect": {
+    "exit": 130,
+    "status": "incomplete"
+   }
+  },
+  {
+   "id": "P01-RCPT-006",
+   "kind": "receipt",
+   "title": "a build that reports success but produced no artifact fails the step",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "scenario": "missing_artifact",
+   "expect": {
+    "exit": 1,
+    "status": "failed",
+    "failed_steps": [
+     "build-ffw-hello-init-mips_be",
+     "build-franken-speaker-mips_be"
+    ],
+    "codes": []
+   }
+  },
+  {
+   "id": "P01-RCPT-007",
+   "kind": "receipt_tamper",
+   "title": "a receipt for another contract is refused",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "ops": [
+    {
+     "op": "set",
+     "path": "/contract_digest",
+     "value": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+   ],
+   "expect_codes": [
+    "receipt_digest_mismatch"
+   ]
+  },
+  {
+   "id": "P01-RCPT-008",
+   "kind": "receipt_tamper",
+   "title": "an artifact row that dropped its profile is refused",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "ops": [
+    {
+     "op": "remove",
+     "path": "/artifacts/id=speaker-ppc-full/profile"
+    }
+   ],
+   "expect_codes": [
+    "receipt_row_incomplete"
+   ]
+  },
+  {
+   "id": "P01-RCPT-009",
+   "kind": "receipt_tamper",
+   "title": "a receipt that claims complete beside a failed step is refused",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "ops": [
+    {
+     "op": "set",
+     "path": "/steps/id=build-franken-speaker-powerpc_be/rc",
+     "value": 101
+    }
+   ],
+   "expect_codes": [
+    "receipt_status_inconsistent"
+   ]
+  },
+  {
+   "id": "P01-RCPT-010",
+   "kind": "receipt_tamper",
+   "title": "an edited ELF machine is caught and the stale verification block is named",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-full/elf_machine",
+     "value": 8
+    }
+   ],
+   "expect_codes": [
+    "elf_machine_mismatch",
+    "receipt_status_inconsistent",
+    "receipt_verification_stale"
+   ]
+  },
+  {
+   "id": "P01-RCPT-011",
+   "kind": "receipt_tamper",
+   "title": "one digest edited into both PowerPC and MIPS rows is a universal claim",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "ops": [
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-mips-full/sha256",
+     "value": "abababababababababababababababababababababababababababababababab"
+    },
+    {
+     "op": "set",
+     "path": "/artifacts/id=speaker-ppc-full/sha256",
+     "value": "abababababababababababababababababababababababababababababababab"
+    }
+   ],
+   "expect_codes": [
+    "receipt_status_inconsistent",
+    "receipt_verification_stale",
+    "universal_artifact_claim"
+   ]
+  },
+  {
+   "id": "P01-RCPT-012",
+   "kind": "receipt_tamper",
+   "title": "an unknown receipt schema is refused",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "ops": [
+    {
+     "op": "set",
+     "path": "/schema",
+     "value": "ffw.p01.receipt.v0"
+    }
+   ],
+   "expect_codes": [
+    "receipt_schema"
+   ]
+  },
+  {
+   "id": "P01-META-001",
+   "kind": "meta_invariants",
+   "title": "every invariant names existing cases, every case covers an invariant, inapplicability is explained",
+   "tiers": [
+    "smoke",
+    "full"
+   ]
+  },
+  {
+   "id": "P01-META-002",
+   "kind": "meta_codes",
+   "title": "every error code the Rust module can emit is exercised by a shared vector",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "not_vector_covered": []
+  },
+  {
+   "id": "P01-META-003",
+   "kind": "meta_hygiene",
+   "title": "no site identifier, address or serial appears in the P01 files",
+   "tiers": [
+    "smoke",
+    "full"
+   ]
+  },
+  {
+   "id": "P01-META-004",
+   "kind": "meta_vectors_current",
+   "title": "the committed vectors are exactly what make_vectors.py writes",
+   "tiers": [
+    "full"
+   ]
+  },
+  {
+   "id": "P01-META-005",
+   "kind": "mutation_canary",
+   "title": "breaking any one rule of the reference is noticed by the vectors",
+   "tiers": [
+    "full"
+   ],
+   "mutants": [
+    [
+     "universal claim",
+     "if art[\"runs_on\"] != [art[\"target\"]]:",
+     "if False:"
+    ],
+    [
+     "isa mismatch",
+     "if art[\"isa\"] != isa:",
+     "if False:"
+    ],
+    [
+     "triple mismatch",
+     "if art[\"triple\"] != triple:",
+     "if False:"
+    ],
+    [
+     "layer violation",
+     "if members[dep][\"layer\"] >= c[\"layer\"]:",
+     "if False:"
+    ],
+    [
+     "dependency cycle",
+     "errs.add((\"dependency_cycle\", \",\".join(comp)))",
+     "pass"
+    ],
+    [
+     "dev cycle",
+     "errs.add((\"dev_dependency_cycle\", \",\".join(comp)))",
+     "pass"
+    ],
+    [
+     "required feature omitted",
+     "errs.add((\"required_feature_missing\", f\"{p['name']}:{f['name']}\"))",
+     "pass"
+    ],
+    [
+     "full profile disables required",
+     "errs.add((\"full_profile_disables_required\", subject))",
+     "pass"
+    ],
+    [
+     "qualified while disabled",
+     "errs.add((\"qualified_while_disabled\", subject))",
+     "pass"
+    ],
+    [
+     "stale evidence",
+     "if not _binding_matches(art, q[\"evidence\"]):",
+     "if False:"
+    ],
+    [
+     "evidence kind",
+     "if q[\"evidence\"][\"kind\"] not in spec[\"accepted_evidence\"]:",
+     "if False:"
+    ],
+    [
+     "admission lets a disabled feature through",
+     "blocks.append(f\"required_feature_disabled:{name}\")",
+     "blocks.append(f\"required_feature_unqualified:{name}\")"
+    ],
+    [
+     "asserted qualification",
+     "errs.add((\"qualification_not_supported\", aid))",
+     "pass"
+    ],
+    [
+     "native requires native",
+     "errs.add((\"native_feature_requires_native\", edge))",
+     "pass"
+    ],
+    [
+     "test-support in device closure",
+     "errs.add((\"test_support_in_device_closure\", subject))",
+     "pass"
+    ],
+    [
+     "unsafe in device closure",
+     "errs.add((\"unsafe_in_device_closure\", subject))",
+     "pass"
+    ],
+    [
+     "device panic abort",
+     "if is_device and cargo is not None and cargo[\"panic\"] != \"abort\":",
+     "if False:"
+    ],
+    [
+     "conflicting owners",
+     "if len({a[\"owner\"] for a in group}) > 1 else",
+     "if False else"
+    ],
+    [
+     "universal digest",
+     "errs.add((\"universal_artifact_claim\", sha))",
+     "pass"
+    ],
+    [
+     "elf machine",
+     "if row[\"elf_machine\"] != machine:",
+     "if False:"
+    ],
+    [
+     "contract digest",
+     "errs.add((\"contract_digest_mismatch\", rid))",
+     "pass"
+    ],
+    [
+     "unknown fields tolerated",
+     "extra = sorted(set(value) - set(fields))",
+     "extra = []"
+    ]
+   ]
+  },
+  {
+   "id": "P01-META-006",
+   "kind": "runner_selftest",
+   "title": "the runner's own machinery (selection, expansion, exit codes, exclusive receipts) holds",
+   "tiers": [
+    "full"
+   ],
+   "min_tests": 20
+  },
+  {
+   "id": "P01-BLK-001",
+   "kind": "blocked",
+   "title": "workspace build and test from a different directory under --locked --offline on the central rch path",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "reason": "the command plan is built and checked here (P01-PLAN-*) but not executed: builds run only through RCH_REQUIRE_REMOTE=1 rch exec, which the supervisor runs centrally; offline mode also needs the registry present on the worker",
+   "owner": "BeigeMaple: central rch run of `scripts/e2e/p01 --execute`"
+  },
+  {
+   "id": "P01-BLK-002",
+   "kind": "blocked",
+   "title": "artifact identities observed from real central builds of franken-speaker for MIPS and PowerPC",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "reason": "only `cargo check` of the workspace for the device targets has ever run; no franken-speaker device binary has been built or linked, so no real digest or ELF header exists to hold to the contract",
+   "owner": "BeigeMaple: central build, then `scripts/e2e/p01 --collect`"
+  },
+  {
+   "id": "P01-BLK-003",
+   "kind": "blocked",
+   "title": "Rust replay of the shared vectors by the typed contract",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "reason": "crates/franken-board-profile/tests/p01_contract.rs replays the same vectors, but cargo runs only centrally and it has not run yet",
+   "owner": "BeigeMaple: RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-board-profile"
+  },
+  {
+   "id": "P01-BLK-004",
+   "kind": "blocked",
+   "title": "a pinned toolchain (rust-toolchain.toml) so rch --clean-overlay resolves the client toolchain",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "reason": "the file is deliberately not in the worktree: every in-flight central build would pick it up; proposed contents are in the P01 mail and docs/contracts/p01.md",
+   "owner": "BeigeMaple: land after the central QEMU run"
+  },
+  {
+   "id": "P01-BLK-005",
+   "kind": "blocked",
+   "title": "the pinned per-target dependency, unsafe and license feature inventory",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "reason": "E06 (ffw-unk) is the declared input to P01 and is still being built; closure of P01 waits on it",
+   "owner": "YellowBrook: E06 / ffw-unk"
+  },
+  {
+   "id": "P01-BLK-006",
+   "kind": "blocked",
+   "title": "Cargo feature flags for the native services",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "reason": "protected_render, the four native services, artwork and the harness have cargo_feature empty: they are compiled in unconditionally, so a profile that 'disables' one is a contract claim the build cannot honour; the minimal-renderer artifacts are the same bytes as the full ones until each service is gated",
+   "owner": "S01/A01/T01/X01 owners; P01 contract flags it per artifact in every receipt"
+  }
+ ],
+ "invariants": [
+  {
+   "id": "INV-P01-01",
+   "statement": "One shared source yields distinct per-ISA artifacts; no artifact is universal across PowerPC, MIPS or ARM",
+   "cases": [
+    "P01-V-010",
+    "P01-V-011",
+    "P01-V-012",
+    "P01-V-013",
+    "P01-V-014",
+    "P01-V-015",
+    "P01-V-016",
+    "P01-V-018",
+    "P01-V-019",
+    "P01-O-002",
+    "P01-O-005",
+    "P01-RCPT-002",
+    "P01-RCPT-003",
+    "P01-RCPT-011"
+   ],
+   "status": "covered"
+  },
+  {
+   "id": "INV-P01-02",
+   "statement": "An artifact's target, triple, ISA label and observed ELF machine/class/byte order agree",
+   "cases": [
+    "P01-V-010",
+    "P01-V-011",
+    "P01-V-015",
+    "P01-V-016",
+    "P01-O-002",
+    "P01-O-003",
+    "P01-O-004",
+    "P01-O-008",
+    "P01-O-014",
+    "P01-RCPT-001",
+    "P01-RCPT-010"
+   ],
+   "status": "covered"
+  },
+  {
+   "id": "INV-P01-03",
+   "statement": "The crate graph is a layered acyclic graph with no unknown or self dependency",
+   "cases": [
+    "P01-V-030",
+    "P01-V-031",
+    "P01-V-032",
+    "P01-V-033",
+    "P01-V-034",
+    "P01-V-035",
+    "P01-DRIFT-010"
+   ],
+   "status": "covered"
+  },
+  {
+   "id": "INV-P01-04",
+   "statement": "Every crate, interface and fixture has exactly one owner",
+   "cases": [
+    "P01-V-040",
+    "P01-V-041",
+    "P01-V-042",
+    "P01-V-043",
+    "P01-V-044",
+    "P01-V-045",
+    "P01-V-049",
+    "P01-DRIFT-001",
+    "P01-DRIFT-022",
+    "P01-DRIFT-023"
+   ],
+   "status": "covered"
+  },
+  {
+   "id": "INV-P01-05",
+   "statement": "Required features cannot be removed by omission or disabled in a full-product profile; optional ones may be disabled with a reason",
+   "cases": [
+    "P01-V-050",
+    "P01-V-051",
+    "P01-V-052",
+    "P01-V-053",
+    "P01-V-054",
+    "P01-V-055",
+    "P01-V-056",
+    "P01-V-062",
+    "P01-V-063",
+    "P01-V-064",
+    "P01-V-067"
+   ],
+   "status": "covered"
+  },
+  {
+   "id": "INV-P01-06",
+   "statement": "A disabled required feature can never become qualified, even with evidence attached; qualification is computed, never asserted",
+   "cases": [
+    "P01-V-004",
+    "P01-V-005",
+    "P01-V-006",
+    "P01-V-007",
+    "P01-V-070",
+    "P01-V-071",
+    "P01-V-072",
+    "P01-V-073"
+   ],
+   "status": "covered"
+  },
+  {
+   "id": "INV-P01-07",
+   "statement": "Qualification evidence is bound to the exact artifact digest, target and profile, and to an accepted evidence kind",
+   "cases": [
+    "P01-V-008",
+    "P01-V-074",
+    "P01-V-075",
+    "P01-V-076",
+    "P01-V-077",
+    "P01-V-078",
+    "P01-V-079",
+    "P01-V-080",
+    "P01-V-081"
+   ],
+   "status": "covered"
+  },
+  {
+   "id": "INV-P01-08",
+   "statement": "Native services are independent of each other and the minimal renderer does not depend on them",
+   "cases": [
+    "P01-V-057",
+    "P01-V-058",
+    "P01-V-059",
+    "P01-V-060",
+    "P01-V-061"
+   ],
+   "status": "covered"
+  },
+  {
+   "id": "INV-P01-09",
+   "statement": "Unsafe policy is declared per crate, and no test-only, host-only or scoped-unsafe crate is in a device artifact unless a counted exception names it",
+   "cases": [
+    "P01-V-046",
+    "P01-V-047",
+    "P01-V-048",
+    "P01-V-090",
+    "P01-V-091",
+    "P01-V-092",
+    "P01-V-093",
+    "P01-DRIFT-015",
+    "P01-DRIFT-016"
+   ],
+   "status": "covered"
+  },
+  {
+   "id": "INV-P01-10",
+   "statement": "Exact artifact and profile identity propagates into the receipt and is re-verified against the contract",
+   "cases": [
+    "P01-V-017",
+    "P01-O-*",
+    "P01-RCPT-*"
+   ],
+   "status": "covered"
+  },
+  {
+   "id": "INV-P01-11",
+   "statement": "The declared contract matches the repository: members, pending and excluded crates, dependency edges, lockfile, lints, profile values, binaries",
+   "cases": [
+    "P01-CON-001",
+    "P01-CON-002",
+    "P01-DRIFT-*"
+   ],
+   "status": "covered"
+  },
+  {
+   "id": "INV-P01-12",
+   "statement": "Build and test entry points run from a different directory, offline against the lockfile, and only through the remote path",
+   "cases": [
+    "P01-PLAN-*",
+    "P01-CON-003"
+   ],
+   "status": "covered"
+  },
+  {
+   "id": "INV-P01-13",
+   "statement": "Cancellation, restart, failed steps and missing artifacts leave honest receipts and never launder a pass",
+   "cases": [
+    "P01-RCPT-004",
+    "P01-RCPT-005",
+    "P01-RCPT-006",
+    "P01-RCPT-007",
+    "P01-RCPT-009"
+   ],
+   "status": "covered"
+  },
+  {
+   "id": "INV-P01-14",
+   "statement": "Build profile values (opt-level, LTO, panic = abort on device artifacts) match the manifests",
+   "cases": [
+    "P01-V-023",
+    "P01-V-024",
+    "P01-V-065",
+    "P01-V-066",
+    "P01-DRIFT-017",
+    "P01-DRIFT-018",
+    "P01-DRIFT-027"
+   ],
+   "status": "covered"
+  },
+  {
+   "id": "INV-P01-15",
+   "statement": "Every error code of the typed contract is exercised, and breaking any rule of the reference is noticed",
+   "cases": [
+    "P01-META-002",
+    "P01-META-005",
+    "P01-META-004",
+    "P01-V-100",
+    "P01-V-101",
+    "P01-V-102",
+    "P01-V-103",
+    "P01-V-104"
+   ],
+   "status": "covered"
+  },
+  {
+   "id": "INV-P01-16",
+   "statement": "The contract is data with a version and a digest that is the same across languages and layouts",
+   "cases": [
+    "P01-V-001",
+    "P01-V-002",
+    "P01-V-003",
+    "P01-CON-001",
+    "P01-RCPT-007"
+   ],
+   "status": "covered"
+  },
+  {
+   "id": "INV-P01-17",
+   "statement": "A reproducible lockfile and a pinned toolchain",
+   "cases": [
+    "P01-DRIFT-011",
+    "P01-DRIFT-012",
+    "P01-DRIFT-013",
+    "P01-DRIFT-014",
+    "P01-BLK-004"
+   ],
+   "status": "partial",
+   "note": "the lockfile is checked here; the pin is proposed, not landed"
+  },
+  {
+   "id": "INV-P01-18",
+   "statement": "Live central execution: offline builds from another directory, real device-artifact digests, the Rust replay",
+   "cases": [
+    "P01-BLK-001",
+    "P01-BLK-002",
+    "P01-BLK-003"
+   ],
+   "status": "blocked"
+  },
+  {
+   "id": "INV-P01-19",
+   "statement": "Required native features are enforceable in the build, not only claimed in the contract",
+   "cases": [
+    "P01-BLK-006",
+    "P01-PLAN-013"
+   ],
+   "status": "blocked"
+  },
+  {
+   "id": "INV-P01-20",
+   "statement": "Inputs from E06 (dependency, unsafe and license inventory per target)",
+   "cases": [
+    "P01-BLK-005"
+   ],
+   "status": "blocked"
+  },
+  {
+   "id": "INV-P01-21",
+   "statement": "Runner hygiene and honesty",
+   "cases": [
+    "P01-META-001",
+    "P01-META-003",
+    "P01-META-006"
+   ],
+   "status": "covered"
+  },
+  {
+   "id": "INV-P01-23",
+   "statement": "Every artifact maps to a known crate and profile, and an excluded crate yields artifacts only for the targets it declares",
+   "cases": [
+    "P01-V-020",
+    "P01-V-021",
+    "P01-V-022"
+   ],
+   "status": "covered"
+  },
+  {
+   "id": "INV-P01-22",
+   "statement": "Provider, device and physical qualification are out of scope of this offline contract",
+   "cases": [],
+   "status": "inapplicable",
+   "note": "P01 is a workspace and build-identity contract; provider and physical claims need separately authorized receipts, so no case here can apply"
+  }
+ ]
+}
