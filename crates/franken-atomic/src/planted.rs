@@ -47,7 +47,14 @@ impl SplitCell {
 
 impl StepCell for SplitCell {
     fn begin(&mut self, thread: usize, op: Op) {
-        self.pending[thread] = Some(Pending { op, phase: 0, hi: 0, lo: 0, seen: 0, carry: 0 });
+        self.pending[thread] = Some(Pending {
+            op,
+            phase: 0,
+            hi: 0,
+            lo: 0,
+            seen: 0,
+            carry: 0,
+        });
     }
 
     fn step(&mut self, thread: usize) -> Option<Resp> {
@@ -120,7 +127,10 @@ pub(crate) struct TruncCell {
 
 impl TruncCell {
     pub(crate) fn new(initial: u64, threads: usize) -> Self {
-        Self { word: AtomicU32::new(initial as u32), pending: vec![None; threads] }
+        Self {
+            word: AtomicU32::new(initial as u32),
+            pending: vec![None; threads],
+        }
     }
 }
 
@@ -146,9 +156,9 @@ impl StepCell for TruncCell {
                     Resp::Cas(Err(seen))
                 }
             }
-            Op::FetchAdd(delta) => {
-                Resp::Add(Ok(u64::from(self.word.fetch_add(delta as u32, Ordering::SeqCst))))
-            }
+            Op::FetchAdd(delta) => Resp::Add(Ok(u64::from(
+                self.word.fetch_add(delta as u32, Ordering::SeqCst),
+            ))),
         })
     }
 }

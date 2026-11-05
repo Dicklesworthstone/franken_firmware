@@ -245,7 +245,13 @@ mod private_tests {
         assert_eq!(cell.fetch_add(1), Ok(0x0000_0001_0000_0007));
         assert_eq!(cell.try_load(), Ok(0x0000_0001_0000_0008));
         cell.store(0xFFFF_FFFF_FFFF_FFFF);
-        assert_eq!(cell.fetch_add(1), Err(ArithError::Overflow { current: u64::MAX, delta: 1 }));
+        assert_eq!(
+            cell.fetch_add(1),
+            Err(ArithError::Overflow {
+                current: u64::MAX,
+                delta: 1
+            })
+        );
         assert_eq!(cell.into_inner(), u64::MAX);
     }
 

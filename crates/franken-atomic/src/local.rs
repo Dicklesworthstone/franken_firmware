@@ -19,7 +19,9 @@ impl LocalU64 {
     /// A new local value.
     #[must_use]
     pub const fn new(value: u64) -> Self {
-        Self { value: Cell::new(value) }
+        Self {
+            value: Cell::new(value),
+        }
     }
 
     /// The current value.
@@ -40,7 +42,10 @@ impl LocalU64 {
                 self.value.set(next);
                 Ok(seen)
             }
-            None => Err(ArithError::Overflow { current: seen, delta }),
+            None => Err(ArithError::Overflow {
+                current: seen,
+                delta,
+            }),
         }
     }
 

@@ -29,10 +29,16 @@ impl<T: fmt::Display> fmt::Display for ArithError<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Overflow { current, delta } => {
-                write!(f, "64-bit arithmetic overflow: current {current}, operand {delta}")
+                write!(
+                    f,
+                    "64-bit arithmetic overflow: current {current}, operand {delta}"
+                )
             }
             Self::Underflow { current, delta } => {
-                write!(f, "64-bit arithmetic underflow: current {current}, operand {delta}")
+                write!(
+                    f,
+                    "64-bit arithmetic underflow: current {current}, operand {delta}"
+                )
             }
         }
     }

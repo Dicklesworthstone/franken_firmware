@@ -21,7 +21,9 @@ impl Sequence {
     /// A sequence whose first identifier is `first`.
     #[must_use]
     pub const fn new(first: u64) -> Self {
-        Self { next: SharedU64::new(first) }
+        Self {
+            next: SharedU64::new(first),
+        }
     }
 
     /// The next identifier, or [`Exhausted`] once `u64::MAX - 1` has been issued.

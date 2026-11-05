@@ -14,7 +14,12 @@ use std::collections::HashSet;
 
 /// Values the generator draws stores and compare-exchange operands from. They straddle the 32-bit word
 /// boundary on purpose: a cell that tears or truncates must misreport one of them.
-pub(crate) const POOL: [u64; 4] = [0x0000_0000_FFFF_FFF0, 0x0000_0001_0000_0000, 0x0000_0001_FFFF_FFF0, 5];
+pub(crate) const POOL: [u64; 4] = [
+    0x0000_0000_FFFF_FFF0,
+    0x0000_0001_0000_0000,
+    0x0000_0001_FFFF_FFF0,
+    5,
+];
 /// Deltas for `fetch_add`. `16` carries out of the low word from `POOL[0]`.
 pub(crate) const DELTAS: [u64; 4] = [1, 7, 16, 0x20];
 /// The value every run starts from.
@@ -72,7 +77,13 @@ pub(crate) fn spec(state: u64, op: Op) -> (u64, Resp) {
         }
         Op::FetchAdd(delta) => match state.checked_add(delta) {
             Some(next) => (next, Resp::Add(Ok(state))),
-            None => (state, Resp::Add(Err(ArithError::Overflow { current: state, delta }))),
+            None => (
+                state,
+                Resp::Add(Err(ArithError::Overflow {
+                    current: state,
+                    delta,
+                })),
+            ),
         },
     }
 }
@@ -91,7 +102,10 @@ pub(crate) struct Event {
 pub(crate) fn describe(events: &[Event]) -> String {
     let mut text = String::new();
     for e in events {
-        text.push_str(&format!("\n  t{} [{}..{}] {:?} -> {:?}", e.thread, e.inv, e.res, e.op, e.resp));
+        text.push_str(&format!(
+            "\n  t{} [{}..{}] {:?} -> {:?}",
+            e.thread, e.inv, e.res, e.op, e.resp
+        ));
     }
     text
 }
@@ -154,8 +168,16 @@ impl Search<'_> {
 
 /// Wing-Gong linearizability search over at most 62 operations.
 pub(crate) fn check(initial: u64, events: &[Event], budget: usize) -> Verdict {
-    assert!(events.len() <= 62, "the checker handles at most 62 operations");
-    let mut search = Search { events, failed: HashSet::new(), nodes: 0, budget };
+    assert!(
+        events.len() <= 62,
+        "the checker handles at most 62 operations"
+    );
+    let mut search = Search {
+        events,
+        failed: HashSet::new(),
+        nodes: 0,
+        budget,
+    };
     match search.dfs(0, initial) {
         Some(true) => Verdict::Linearizable,
         Some(false) => Verdict::NotLinearizable,
@@ -190,7 +212,10 @@ pub(crate) struct RealCell {
 
 impl RealCell {
     pub(crate) fn new(initial: u64, threads: usize) -> Self {
-        Self { cell: SharedU64::new(initial), pending: vec![None; threads] }
+        Self {
+            cell: SharedU64::new(initial),
+            pending: vec![None; threads],
+        }
     }
 }
 
@@ -239,7 +264,11 @@ pub(crate) fn gen_op(rng: &mut SplitMix64) -> Op {
     }
 }
 
-pub(crate) fn gen_plans(rng: &mut SplitMix64, threads: usize, ops_per_thread: usize) -> Vec<Vec<Op>> {
+pub(crate) fn gen_plans(
+    rng: &mut SplitMix64,
+    threads: usize,
+    ops_per_thread: usize,
+) -> Vec<Vec<Op>> {
     let mut plans = Vec::new();
     for _ in 0..threads {
         let mut ops = Vec::new();
@@ -282,23 +311,41 @@ pub(crate) fn run_with(
         clock += 1;
         if let Some(resp) = finished {
             let (inv, op) = inflight[t].take().expect("an operation is in flight");
-            events.push(Event { thread: t, inv, res: clock, op, resp });
+            events.push(Event {
+                thread: t,
+                inv,
+                res: clock,
+                op,
+                resp,
+            });
         }
     }
     events
 }
 
 /// One seeded run: the seed draws every thread's plan, then every scheduling choice.
-pub(crate) fn seeded_run(kind: Kind, seed: u64, threads: usize, ops_per_thread: usize) -> Vec<Event> {
+pub(crate) fn seeded_run(
+    kind: Kind,
+    seed: u64,
+    threads: usize,
+    ops_per_thread: usize,
+) -> Vec<Event> {
     let mut rng = SplitMix64::new(seed);
     let plans = gen_plans(&mut rng, threads, ops_per_thread);
     let mut cell = build(kind, INITIAL, threads);
-    run_with(cell.as_mut(), &plans, &mut |runnable: &[usize]| runnable[rng.below(runnable.len())])
+    run_with(cell.as_mut(), &plans, &mut |runnable: &[usize]| {
+        runnable[rng.below(runnable.len())]
+    })
 }
 
 /// A scripted run. Picks are thread ids; one that is not runnable is skipped; when the script is used up
 /// the lowest runnable thread goes next.
-pub(crate) fn scripted_run(kind: Kind, initial: u64, plans: &[Vec<Op>], picks: &[usize]) -> Vec<Event> {
+pub(crate) fn scripted_run(
+    kind: Kind,
+    initial: u64,
+    plans: &[Vec<Op>],
+    picks: &[usize],
+) -> Vec<Event> {
     let mut cell = build(kind, initial, plans.len());
     let mut cursor = 0usize;
     run_with(cell.as_mut(), plans, &mut |runnable: &[usize]| {

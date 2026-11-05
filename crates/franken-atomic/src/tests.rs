@@ -6,8 +6,8 @@
 //! device, and a pass says nothing about a device kernel's futex support or scheduling.
 
 use crate::model::{
-    Event, INITIAL, Kind, Op, Resp, SplitMix64, Verdict, apply_real, check, describe, gen_plans, scripted_run,
-    seeded_run,
+    Event, INITIAL, Kind, Op, Resp, SplitMix64, Verdict, apply_real, check, describe, gen_plans,
+    scripted_run, seeded_run,
 };
 use crate::{ArithError, Exhausted, LocalU64, Sequence, SharedI64, SharedU64};
 use std::sync::Barrier;
@@ -26,7 +26,9 @@ fn vector(name: &str) -> Vec<u64> {
         }
         let mut parts = line.split_whitespace();
         if parts.next() == Some(name) {
-            return parts.map(|p| p.parse::<u64>().expect("vector numbers are decimal")).collect();
+            return parts
+                .map(|p| p.parse::<u64>().expect("vector numbers are decimal"))
+                .collect();
         }
     }
     panic!("vector {name} is missing from tests/p05/vectors.txt");
@@ -89,13 +91,20 @@ fn p05_vector_load_store_roundtrip_above_u32() {
     let mut previous = 0u64;
     for value in values {
         cell.store(value);
-        assert_eq!(cell.load(), value, "store then load must return all 64 bits of {value:#x}");
+        assert_eq!(
+            cell.load(),
+            value,
+            "store then load must return all 64 bits of {value:#x}"
+        );
         assert_eq!(cell.swap(previous), value, "swap returns the stored value");
         assert_eq!(cell.load(), previous);
         previous = value;
     }
     assert_eq!(SharedU64::default().load(), 0);
-    assert_eq!(SharedU64::new(0xABCD_EF01_2345_6789).into_inner(), 0xABCD_EF01_2345_6789);
+    assert_eq!(
+        SharedU64::new(0xABCD_EF01_2345_6789).into_inner(),
+        0xABCD_EF01_2345_6789
+    );
     let mut exclusive = SharedU64::new(7);
     *exclusive.get_mut() = 0x1_0000_0007;
     assert_eq!(exclusive.load(), 0x1_0000_0007);
@@ -105,7 +114,11 @@ fn p05_vector_load_store_roundtrip_above_u32() {
 fn p05_vector_fetch_add_carries_across_the_32_bit_boundary() {
     let cell = SharedU64::new(0xFFFF_FFFF);
     assert_eq!(cell.fetch_add(1), Ok(0xFFFF_FFFF));
-    assert_eq!(cell.load(), 0x1_0000_0000, "the carry out of the low word must reach the high word");
+    assert_eq!(
+        cell.load(),
+        0x1_0000_0000,
+        "the carry out of the low word must reach the high word"
+    );
     // An operand with a high word is not truncated to its low 32 bits.
     let cell = SharedU64::new(5);
     assert_eq!(cell.fetch_add(0x1_0000_0000), Ok(5));
@@ -120,13 +133,33 @@ fn p05_vector_checked_add_overflow_is_typed_and_leaves_value() {
     let cell = SharedU64::new(u64::MAX - 1);
     assert_eq!(cell.fetch_add(1), Ok(u64::MAX - 1));
     assert_eq!(cell.load(), u64::MAX);
-    assert_eq!(cell.fetch_add(1), Err(ArithError::Overflow { current: u64::MAX, delta: 1 }));
+    assert_eq!(
+        cell.fetch_add(1),
+        Err(ArithError::Overflow {
+            current: u64::MAX,
+            delta: 1
+        })
+    );
     assert_eq!(cell.load(), u64::MAX, "a refused add changes nothing");
-    assert_eq!(cell.fetch_add(0), Ok(u64::MAX), "adding zero cannot overflow");
+    assert_eq!(
+        cell.fetch_add(0),
+        Ok(u64::MAX),
+        "adding zero cannot overflow"
+    );
     let cell = SharedU64::new(1);
-    assert_eq!(cell.fetch_add(u64::MAX), Err(ArithError::Overflow { current: 1, delta: u64::MAX }));
+    assert_eq!(
+        cell.fetch_add(u64::MAX),
+        Err(ArithError::Overflow {
+            current: 1,
+            delta: u64::MAX
+        })
+    );
     assert_eq!(cell.load(), 1);
-    let message = ArithError::Overflow { current: 1u64, delta: 2u64 }.to_string();
+    let message = ArithError::Overflow {
+        current: 1u64,
+        delta: 2u64,
+    }
+    .to_string();
     assert!(message.contains("overflow"), "{message}");
 }
 
@@ -135,7 +168,13 @@ fn p05_vector_checked_sub_underflow_is_typed_and_leaves_value() {
     let cell = SharedU64::new(1);
     assert_eq!(cell.fetch_sub(1), Ok(1));
     assert_eq!(cell.load(), 0);
-    assert_eq!(cell.fetch_sub(1), Err(ArithError::Underflow { current: 0, delta: 1 }));
+    assert_eq!(
+        cell.fetch_sub(1),
+        Err(ArithError::Underflow {
+            current: 0,
+            delta: 1
+        })
+    );
     assert_eq!(cell.load(), 0, "a refused subtract changes nothing");
     assert_eq!(cell.fetch_sub(0), Ok(0));
     // A borrow out of the low word must reach the high word.
@@ -163,7 +202,11 @@ fn p05_vector_compare_exchange_is_full_width() {
     let cell = SharedU64::new(0x1_0000_0001);
     // The low words are equal, the high words are not: a 32-bit comparison would succeed here.
     assert_eq!(cell.compare_exchange(1, 9), Err(0x1_0000_0001));
-    assert_eq!(cell.load(), 0x1_0000_0001, "a failed compare-exchange changes nothing");
+    assert_eq!(
+        cell.load(),
+        0x1_0000_0001,
+        "a failed compare-exchange changes nothing"
+    );
     assert_eq!(cell.compare_exchange(0x1_0000_0001, 9), Ok(0x1_0000_0001));
     assert_eq!(cell.load(), 9);
     assert_eq!(cell.compare_exchange(9, 9), Ok(9));
@@ -192,15 +235,39 @@ fn p05_vector_swap_max_min_and_bit_ops() {
 #[test]
 fn p05_vector_i64_signed_range() {
     let cell = SharedI64::new(i64::MAX);
-    assert_eq!(cell.fetch_add(1), Err(ArithError::Overflow { current: i64::MAX, delta: 1 }));
+    assert_eq!(
+        cell.fetch_add(1),
+        Err(ArithError::Overflow {
+            current: i64::MAX,
+            delta: 1
+        })
+    );
     assert_eq!(cell.fetch_add(-1), Ok(i64::MAX));
     assert_eq!(cell.load(), i64::MAX - 1);
     assert_eq!(cell.fetch_sub(-1), Ok(i64::MAX - 1));
-    assert_eq!(cell.fetch_sub(-1), Err(ArithError::Overflow { current: i64::MAX, delta: -1 }));
+    assert_eq!(
+        cell.fetch_sub(-1),
+        Err(ArithError::Overflow {
+            current: i64::MAX,
+            delta: -1
+        })
+    );
 
     let cell = SharedI64::new(i64::MIN);
-    assert_eq!(cell.fetch_add(-1), Err(ArithError::Underflow { current: i64::MIN, delta: -1 }));
-    assert_eq!(cell.fetch_sub(1), Err(ArithError::Underflow { current: i64::MIN, delta: 1 }));
+    assert_eq!(
+        cell.fetch_add(-1),
+        Err(ArithError::Underflow {
+            current: i64::MIN,
+            delta: -1
+        })
+    );
+    assert_eq!(
+        cell.fetch_sub(1),
+        Err(ArithError::Underflow {
+            current: i64::MIN,
+            delta: 1
+        })
+    );
     assert_eq!(cell.load(), i64::MIN, "refused operations change nothing");
     assert_eq!(cell.fetch_sub(-1), Ok(i64::MIN));
     assert_eq!(cell.load(), i64::MIN + 1);
@@ -218,25 +285,42 @@ fn p05_vector_i64_signed_range() {
 #[test]
 fn p05_sequence_never_wraps_and_reserves_max() {
     let seq = Sequence::new(0);
-    assert_eq!((seq.next_id(), seq.next_id(), seq.next_id()), (Ok(0), Ok(1), Ok(2)));
+    assert_eq!(
+        (seq.next_id(), seq.next_id(), seq.next_id()),
+        (Ok(0), Ok(1), Ok(2))
+    );
 
     let seq = Sequence::new(u64::MAX - 2);
     assert_eq!(seq.next_id(), Ok(u64::MAX - 2));
     assert_eq!(seq.next_id(), Ok(u64::MAX - 1));
     assert_eq!(seq.peek(), u64::MAX);
     assert_eq!(seq.next_id(), Err(Exhausted), "u64::MAX is never issued");
-    assert_eq!(seq.next_id(), Err(Exhausted), "and the sequence does not wrap to reuse an identifier");
+    assert_eq!(
+        seq.next_id(),
+        Err(Exhausted),
+        "and the sequence does not wrap to reuse an identifier"
+    );
     assert_eq!(seq.peek(), u64::MAX);
 
     let seq = Sequence::new(u64::MAX);
-    assert_eq!(seq.next_id(), Err(Exhausted), "a sequence created at the end is exhausted from the start");
+    assert_eq!(
+        seq.next_id(),
+        Err(Exhausted),
+        "a sequence created at the end is exhausted from the start"
+    );
 }
 
 #[test]
 fn p05_local_u64_checked_wrapping_and_send() {
     let local = LocalU64::new(u64::MAX - 1);
     assert_eq!(local.add(1), Ok(u64::MAX - 1));
-    assert_eq!(local.add(1), Err(ArithError::Overflow { current: u64::MAX, delta: 1 }));
+    assert_eq!(
+        local.add(1),
+        Err(ArithError::Overflow {
+            current: u64::MAX,
+            delta: 1
+        })
+    );
     assert_eq!(local.get(), u64::MAX, "a refused add changes nothing");
     assert_eq!(local.add_wrapping(2), u64::MAX);
     assert_eq!(local.get(), 1);
@@ -256,25 +340,47 @@ fn p05_local_u64_checked_wrapping_and_send() {
 // ---- the checker, on hand-written histories ----------------------------------------------------------
 
 fn ev(thread: usize, inv: u64, res: u64, op: Op, resp: Resp) -> Event {
-    Event { thread, inv, res, op, resp }
+    Event {
+        thread,
+        inv,
+        res,
+        op,
+        resp,
+    }
 }
 
 #[test]
 fn p05_checker_accepts_legal_and_rejects_illegal_histories() {
     // A load that overlaps a store may return the old or the new value.
     for seen in [0u64, 1] {
-        let history = [ev(0, 0, 3, Op::Store(1), Resp::Stored), ev(1, 1, 2, Op::Load, Resp::Value(seen))];
-        assert_eq!(check(0, &history, BUDGET), Verdict::Linearizable, "overlapping load saw {seen}");
+        let history = [
+            ev(0, 0, 3, Op::Store(1), Resp::Stored),
+            ev(1, 1, 2, Op::Load, Resp::Value(seen)),
+        ];
+        assert_eq!(
+            check(0, &history, BUDGET),
+            Verdict::Linearizable,
+            "overlapping load saw {seen}"
+        );
     }
     // A value nobody stored.
-    let history = [ev(0, 0, 1, Op::Store(1), Resp::Stored), ev(1, 2, 3, Op::Load, Resp::Value(2))];
+    let history = [
+        ev(0, 0, 1, Op::Store(1), Resp::Stored),
+        ev(1, 2, 3, Op::Load, Resp::Value(2)),
+    ];
     assert_eq!(check(0, &history, BUDGET), Verdict::NotLinearizable);
     // A stale read: the store finished before the load started.
-    let history = [ev(0, 0, 1, Op::Store(1), Resp::Stored), ev(1, 2, 3, Op::Load, Resp::Value(0))];
+    let history = [
+        ev(0, 0, 1, Op::Store(1), Resp::Stored),
+        ev(1, 2, 3, Op::Load, Resp::Value(0)),
+    ];
     assert_eq!(check(0, &history, BUDGET), Verdict::NotLinearizable);
     // The same at a tie: the store's response and the load's invocation share a clock position, which
     // still orders them (`res <= inv`), so the stale value is still wrong.
-    let history = [ev(0, 0, 1, Op::Store(1), Resp::Stored), ev(1, 1, 2, Op::Load, Resp::Value(0))];
+    let history = [
+        ev(0, 0, 1, Op::Store(1), Resp::Stored),
+        ev(1, 1, 2, Op::Load, Resp::Value(0)),
+    ];
     assert_eq!(check(0, &history, BUDGET), Verdict::NotLinearizable);
     // Two compare-exchanges from the same value cannot both succeed ...
     let history = [
@@ -302,14 +408,20 @@ fn p05_checker_accepts_legal_and_rejects_illegal_histories() {
         0,
         1,
         Op::FetchAdd(1),
-        Resp::Add(Err(ArithError::Overflow { current: u64::MAX, delta: 1 })),
+        Resp::Add(Err(ArithError::Overflow {
+            current: u64::MAX,
+            delta: 1,
+        })),
     )];
     assert_eq!(check(u64::MAX, &typed, BUDGET), Verdict::Linearizable);
 }
 
 #[test]
 fn p05_checker_budget_exhaustion_is_inconclusive_not_a_pass() {
-    let history = [ev(0, 0, 1, Op::Store(1), Resp::Stored), ev(1, 2, 3, Op::Load, Resp::Value(1))];
+    let history = [
+        ev(0, 0, 1, Op::Store(1), Resp::Stored),
+        ev(1, 2, 3, Op::Load, Resp::Value(1)),
+    ];
     assert_eq!(check(0, &history, BUDGET), Verdict::Linearizable);
     assert_eq!(check(0, &history, 0), Verdict::Inconclusive);
 }
@@ -319,8 +431,15 @@ fn p05_checker_budget_exhaustion_is_inconclusive_not_a_pass() {
 #[test]
 fn p05_model_good_cell_is_linearizable_on_every_seed() {
     let (violations, inconclusive) = sweep(Kind::Real);
-    assert!(inconclusive.is_empty(), "inconclusive seeds: {inconclusive:?}");
-    assert_eq!(violations, Vec::<u64>::new(), "the real cell must pass every seed");
+    assert!(
+        inconclusive.is_empty(),
+        "inconclusive seeds: {inconclusive:?}"
+    );
+    assert_eq!(
+        violations,
+        Vec::<u64>::new(),
+        "the real cell must pass every seed"
+    );
     assert_eq!(scalar("good_violations"), 0);
     assert_eq!(scalar("good_inconclusive"), 0);
 }
@@ -328,7 +447,10 @@ fn p05_model_good_cell_is_linearizable_on_every_seed() {
 fn assert_caught_where_the_reference_says(kind: Kind, prefix: &str) {
     let p = profile();
     let (violations, inconclusive) = sweep(kind);
-    assert!(inconclusive.is_empty(), "inconclusive seeds: {inconclusive:?}");
+    assert!(
+        inconclusive.is_empty(),
+        "inconclusive seeds: {inconclusive:?}"
+    );
     assert_eq!(scalar(&format!("{prefix}_inconclusive")), 0);
     let expected = scalar(&format!("{prefix}_violations"));
     assert_eq!(
@@ -337,7 +459,10 @@ fn assert_caught_where_the_reference_says(kind: Kind, prefix: &str) {
         "violation count differs from the reference model; first violating seeds {:?}",
         &violations[..violations.len().min(8)]
     );
-    assert!(!violations.is_empty(), "the planted defect must be caught on at least one seed");
+    assert!(
+        !violations.is_empty(),
+        "the planted defect must be caught on at least one seed"
+    );
     for seed in vector(&format!("{prefix}_violation_seeds")) {
         let events = seeded_run(kind, seed, p.threads, p.ops);
         assert_eq!(
@@ -370,9 +495,21 @@ fn p05_model_truncating_is_caught_where_the_reference_says() {
 
 fn scenario(name: &str) -> (u64, Vec<Vec<Op>>, Vec<usize>) {
     match name {
-        "torn_store" => (INITIAL, vec![vec![Op::Store(0x0000_0001_0000_0000)], vec![Op::Load]], vec![0, 1, 1, 0]),
-        "torn_carry" => (INITIAL, vec![vec![Op::FetchAdd(0x10)], vec![Op::Load]], vec![0, 1, 1, 0]),
-        "truncated_store" => (INITIAL, vec![vec![Op::Store(0x0000_0001_0000_0001)], vec![Op::Load]], vec![0, 1]),
+        "torn_store" => (
+            INITIAL,
+            vec![vec![Op::Store(0x0000_0001_0000_0000)], vec![Op::Load]],
+            vec![0, 1, 1, 0],
+        ),
+        "torn_carry" => (
+            INITIAL,
+            vec![vec![Op::FetchAdd(0x10)], vec![Op::Load]],
+            vec![0, 1, 1, 0],
+        ),
+        "truncated_store" => (
+            INITIAL,
+            vec![vec![Op::Store(0x0000_0001_0000_0001)], vec![Op::Load]],
+            vec![0, 1],
+        ),
         _ => panic!("unknown scenario {name}"),
     }
 }
@@ -387,15 +524,45 @@ fn p05_model_directed_scripts_match_hand_written_table() {
     //   truncated_store t0 stores 0x1_0000_0001, t1 loads: the truncating cell returns 1. The split-word
     //                   cell gets lucky on this script and is linearizable: the script does not catch it.
     let table = [
-        ("torn_store", Kind::Real, Verdict::Linearizable, 0x0000_0001_0000_0000u64),
-        ("torn_store", Kind::SplitWord, Verdict::NotLinearizable, 0x0000_0001_FFFF_FFF0),
+        (
+            "torn_store",
+            Kind::Real,
+            Verdict::Linearizable,
+            0x0000_0001_0000_0000u64,
+        ),
+        (
+            "torn_store",
+            Kind::SplitWord,
+            Verdict::NotLinearizable,
+            0x0000_0001_FFFF_FFF0,
+        ),
         ("torn_store", Kind::Truncating, Verdict::NotLinearizable, 0),
-        ("torn_carry", Kind::Real, Verdict::Linearizable, 0x0000_0001_0000_0000),
+        (
+            "torn_carry",
+            Kind::Real,
+            Verdict::Linearizable,
+            0x0000_0001_0000_0000,
+        ),
         ("torn_carry", Kind::SplitWord, Verdict::NotLinearizable, 0),
         ("torn_carry", Kind::Truncating, Verdict::NotLinearizable, 0),
-        ("truncated_store", Kind::Real, Verdict::Linearizable, 0x0000_0001_0000_0001),
-        ("truncated_store", Kind::SplitWord, Verdict::Linearizable, 0x0000_0001_0000_0001),
-        ("truncated_store", Kind::Truncating, Verdict::NotLinearizable, 1),
+        (
+            "truncated_store",
+            Kind::Real,
+            Verdict::Linearizable,
+            0x0000_0001_0000_0001,
+        ),
+        (
+            "truncated_store",
+            Kind::SplitWord,
+            Verdict::Linearizable,
+            0x0000_0001_0000_0001,
+        ),
+        (
+            "truncated_store",
+            Kind::Truncating,
+            Verdict::NotLinearizable,
+            1,
+        ),
     ];
     for (name, kind, verdict, loaded) in table {
         let (initial, plans, picks) = scenario(name);
@@ -407,8 +574,18 @@ fn p05_model_directed_scripts_match_hand_written_table() {
                 _ => None,
             })
             .expect("every scenario loads once");
-        assert_eq!(got, loaded, "{name} on {kind:?}: loaded value{}", describe(&events));
-        assert_eq!(check(initial, &events, BUDGET), verdict, "{name} on {kind:?}{}", describe(&events));
+        assert_eq!(
+            got,
+            loaded,
+            "{name} on {kind:?}: loaded value{}",
+            describe(&events)
+        );
+        assert_eq!(
+            check(initial, &events, BUDGET),
+            verdict,
+            "{name} on {kind:?}{}",
+            describe(&events)
+        );
     }
 }
 
@@ -435,7 +612,13 @@ fn threaded_history(seed: u64, threads: usize, ops_per_thread: usize) -> Vec<Eve
                     let inv = u64::from(ticket.fetch_add(1, Ordering::SeqCst));
                     let resp = apply_real(cell, op);
                     let res = u64::from(ticket.fetch_add(1, Ordering::SeqCst));
-                    out.push(Event { thread, inv, res, op, resp });
+                    out.push(Event {
+                        thread,
+                        inv,
+                        res,
+                        op,
+                        resp,
+                    });
                 }
                 out
             }));
@@ -474,7 +657,10 @@ fn p05_threads_fetch_add_is_unique_and_complete() {
             handles.push(scope.spawn(|| {
                 let mut mine = Vec::with_capacity(PER_THREAD);
                 for _ in 0..PER_THREAD {
-                    mine.push(cell.fetch_add(1).expect("a count this small cannot overflow"));
+                    mine.push(
+                        cell.fetch_add(1)
+                            .expect("a count this small cannot overflow"),
+                    );
                 }
                 mine
             }));
@@ -485,14 +671,20 @@ fn p05_threads_fetch_add_is_unique_and_complete() {
     });
     let mut seen = vec![false; THREADS * PER_THREAD];
     for batch in &batches {
-        assert!(batch.windows(2).all(|w| w[0] < w[1]), "one thread's results must increase");
+        assert!(
+            batch.windows(2).all(|w| w[0] < w[1]),
+            "one thread's results must increase"
+        );
         for &value in batch {
             let index = usize::try_from(value).expect("small");
             assert!(!seen[index], "value {value} was returned to two callers");
             seen[index] = true;
         }
     }
-    assert!(seen.iter().all(|&s| s), "every value 0..N must be returned exactly once");
+    assert!(
+        seen.iter().all(|&s| s),
+        "every value 0..N must be returned exactly once"
+    );
     assert_eq!(cell.load(), (THREADS * PER_THREAD) as u64);
 }
 
@@ -517,7 +709,10 @@ fn p05_threads_compare_exchange_loop_loses_no_update_across_the_word_boundary() 
         }
     });
     assert_eq!(cell.load(), start + (THREADS * PER_THREAD) as u64);
-    assert!(cell.load() > 0xFFFF_FFFF, "the run must have crossed the 32-bit boundary");
+    assert!(
+        cell.load() > 0xFFFF_FFFF,
+        "the run must have crossed the 32-bit boundary"
+    );
 }
 
 #[test]
@@ -540,13 +735,27 @@ fn p05_threads_checked_add_overflow_race_is_typed() {
             results.extend(handle.join().expect("worker thread"));
         }
     });
-    let mut oks: Vec<u64> = results.iter().filter_map(|r| r.as_ref().ok().copied()).collect();
+    let mut oks: Vec<u64> = results
+        .iter()
+        .filter_map(|r| r.as_ref().ok().copied())
+        .collect();
     oks.sort_unstable();
-    assert_eq!(oks, vec![u64::MAX - 3, u64::MAX - 2, u64::MAX - 1], "exactly three adds fit");
-    let errors: Vec<ArithError<u64>> = results.iter().filter_map(|r| r.as_ref().err().copied()).collect();
+    assert_eq!(
+        oks,
+        vec![u64::MAX - 3, u64::MAX - 2, u64::MAX - 1],
+        "exactly three adds fit"
+    );
+    let errors: Vec<ArithError<u64>> = results
+        .iter()
+        .filter_map(|r| r.as_ref().err().copied())
+        .collect();
     assert_eq!(errors.len(), 8 * ATTEMPTS - 3);
     assert!(
-        errors.iter().all(|e| *e == ArithError::Overflow { current: u64::MAX, delta: 1 }),
+        errors.iter().all(|e| *e
+            == ArithError::Overflow {
+                current: u64::MAX,
+                delta: 1
+            }),
         "every refusal is the typed overflow at the maximum"
     );
     assert_eq!(cell.load(), u64::MAX, "no add wrapped the value");
@@ -574,7 +783,10 @@ fn p05_threads_sequence_exhaustion_is_exact() {
     });
     ids.sort_unstable();
     let expected: Vec<u64> = ((u64::MAX - SPAN)..u64::MAX).collect();
-    assert_eq!(ids, expected, "every identifier up to MAX-1 was issued exactly once and nothing wrapped");
+    assert_eq!(
+        ids, expected,
+        "every identifier up to MAX-1 was issued exactly once and nothing wrapped"
+    );
     assert_eq!(seq.next_id(), Err(Exhausted));
     assert_eq!(seq.peek(), u64::MAX);
 }
