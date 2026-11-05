@@ -1028,6 +1028,25 @@ mod tests {
     }
 
     #[test]
+    fn the_payload_limit_boundary_is_one_full_block_in_steps_of_four_for_either_party() {
+        for limit in [4u16, 512, 1020] {
+            let small = Capabilities {
+                max_payload_bytes: limit,
+                ..old_fw()
+            };
+            let refused = Err(NegotiationError::LimitsIncompatible {
+                common_max_payload: limit,
+            });
+            assert_eq!(select(&small, &old_fw()), refused, "{limit} as initiator");
+            assert_eq!(select(&old_fw(), &small), refused, "{limit} as responder");
+        }
+        assert_eq!(
+            select(&old_fw(), &old_fw()).map(|s| s.max_payload_bytes),
+            Ok(1024)
+        );
+    }
+
+    #[test]
     fn malformed_capability_claims_are_rejected() {
         let bad = [
             Capabilities {
@@ -1769,7 +1788,11 @@ mod tests {
             serde_json::from_str(VECTORS_JSON).expect("vector file parses");
         let key = key_from_hex(doc["key_hex"].as_str().unwrap());
         let cases = doc["negotiations"].as_array().expect("negotiations");
-        assert!(cases.len() >= 2);
+        assert!(
+            cases.len() >= 4,
+            "negotiation vectors shrank to {}",
+            cases.len()
+        );
         for c in cases {
             let id = c["id"].as_str().unwrap();
             let stream = StreamId::new(c["stream_id"].as_u64().unwrap()).unwrap();
@@ -1829,13 +1852,45 @@ mod tests {
     }
 
     #[test]
+    fn the_payload_limit_vectors_are_pinned_by_id_with_hand_written_codes() {
+        let doc: serde_json::Value =
+            serde_json::from_str(VECTORS_JSON).expect("vector file parses");
+        let rejections = doc["rejections"].as_array().expect("rejections");
+        // Written here by hand, so regenerating the file cannot change what these must be.
+        let pinned = [
+            ("N01-NR-119", "respond", "LIMITS_INCOMPATIBLE"),
+            ("N01-NR-120", "respond", "LIMITS_INCOMPATIBLE"),
+            ("N01-NR-121", "respond", "LIMITS_INCOMPATIBLE"),
+            ("N01-NR-122", "respond", "MANDATORY_FEATURE_MISSING"),
+            ("N01-NF-209", "finish", "LIMITS_INCOMPATIBLE"),
+        ];
+        for (id, op, code) in pinned {
+            let found = rejections
+                .iter()
+                .find(|c| c["id"] == id)
+                .unwrap_or_else(|| panic!("{id} is missing from the vectors"));
+            assert_eq!(found["op"], op, "{id}: which end judged it");
+            assert_eq!(found["expect"], code, "{id}: expected code");
+        }
+        // The accepted side of the boundary: a limit of exactly one block, as sender and as receiver.
+        let negotiations = doc["negotiations"].as_array().expect("negotiations");
+        for id in ["N01-NG-001", "N01-NG-004"] {
+            let found = negotiations
+                .iter()
+                .find(|c| c["id"] == id)
+                .unwrap_or_else(|| panic!("{id} is missing from the vectors"));
+            assert_eq!(found["selection"]["max_payload_bytes"], 1024, "{id}");
+        }
+    }
+
+    #[test]
     fn golden_negotiation_rejections_from_the_reference_carry_the_same_codes() {
         let doc: serde_json::Value =
             serde_json::from_str(VECTORS_JSON).expect("vector file parses");
         let key = key_from_hex(doc["key_hex"].as_str().unwrap());
         let cases = doc["rejections"].as_array().expect("rejections");
         assert!(
-            cases.len() >= 15,
+            cases.len() >= 30,
             "rejection vectors shrank to {}",
             cases.len()
         );

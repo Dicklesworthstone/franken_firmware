@@ -115,6 +115,43 @@
    },
    "transcript_hex": "e82d0df2d5c309a49c47f4a4adb4ad99534641142751638ac50ce96e53ec5a97",
    "session_key_hex": "babe73598b7d0f9d65ee4bf443ca55f995082f48322a5b225ede69c128969845"
+  },
+  {
+   "id": "N01-NG-004",
+   "name": "old_firmware_sender_with_current_receiver",
+   "sender_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 0
+   },
+   "receiver_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "sender_peer": 12249790986447749121,
+   "receiver_peer": 13474770085092524034,
+   "stream_id": 54324593195745281,
+   "epoch": 7,
+   "min_epoch": 0,
+   "offer_nonce_hex": "101112131415161718191a1b1c1d1e1f",
+   "answer_nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646574e01010001010104000000000000000000aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f00000000000000000000000000000000000000000000000000000000000000000000000000000000546cbc7c5146b48d4546d27d59035a81",
+   "answer_hex": "4646574e01020001010104000000000000000003bb0000000000000200c0ffee000000010000000000000007202122232425262728292a2b2c2d2e2f0101040000000000dd43d0c8f838b3de809c046a921b9f023535d0c079709bcdd92c51310e1730cc2b2d56df0ded0a5e171f7823399dd30a",
+   "selection": {
+    "wire_version": 1,
+    "format": 1,
+    "max_payload_bytes": 1024,
+    "features": 0
+   },
+   "transcript_hex": "87ca19bbfebf0c0a0b31208e570dba165d762f4b15bc15a11d357f14ad6105b0",
+   "session_key_hex": "0e5420cc0e6f9a39926e5fb23c1163e3d6b1e5417a22e311353be592433c4ce0"
   }
  ],
  "rejections": [
@@ -443,6 +480,78 @@
    "offer_hex": "4646574e01010001010104000000000100000002aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f00000000000000000000000000000000000000000000000000000000000000000000000000000000dc1173f937577e8b71cacb859140afe3"
   },
   {
+   "id": "N01-NR-119",
+   "name": "responder_accepts_only_half_a_block",
+   "op": "respond",
+   "expect": "LIMITS_INCOMPATIBLE",
+   "local_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 512,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "local_peer": 13474770085092524034,
+   "min_epoch": 0,
+   "nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646574e01010001010104000000000000000003aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f00000000000000000000000000000000000000000000000000000000000000000000000000000000ec7b7e5109979d46a5ce0daa7f0252a9"
+  },
+  {
+   "id": "N01-NR-120",
+   "name": "responder_accepts_one_step_below_a_full_block",
+   "op": "respond",
+   "expect": "LIMITS_INCOMPATIBLE",
+   "local_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1020,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "local_peer": 13474770085092524034,
+   "min_epoch": 0,
+   "nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646574e01010001010104000000000000000003aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f00000000000000000000000000000000000000000000000000000000000000000000000000000000ec7b7e5109979d46a5ce0daa7f0252a9"
+  },
+  {
+   "id": "N01-NR-121",
+   "name": "offer_advertises_only_half_a_block",
+   "op": "respond",
+   "expect": "LIMITS_INCOMPATIBLE",
+   "local_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "local_peer": 13474770085092524034,
+   "min_epoch": 0,
+   "nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646574e01010001010102000000000000000003aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f00000000000000000000000000000000000000000000000000000000000000000000000000000000527c822358b3e4476a45a4354b414145"
+  },
+  {
+   "id": "N01-NR-122",
+   "name": "small_limit_and_missing_mandatory_feature_report_the_feature",
+   "op": "respond",
+   "expect": "MANDATORY_FEATURE_MISSING",
+   "local_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 512,
+    "mandatory_features": 0,
+    "optional_features": 0
+   },
+   "local_peer": 13474770085092524034,
+   "min_epoch": 0,
+   "nonce_hex": "202122232425262728292a2b2c2d2e2f",
+   "offer_hex": "4646574e01010001010104000000000100000002aa0000000000000100c0ffee000000010000000000000007101112131415161718191a1b1c1d1e1f00000000000000000000000000000000000000000000000000000000000000000000000000000000dc1173f937577e8b71cacb859140afe3"
+  },
+  {
    "id": "N01-NF-201",
    "name": "answer_to_a_different_offer",
    "op": "finish",
@@ -593,6 +702,25 @@
    "epoch": 7,
    "offer_nonce_hex": "101112131415161718191a1b1c1d1e1f",
    "answer_hex": "4646574e01020001010104000000000000000003bb0000000000000200c0ffee000000010000000000000007202122232425262728292a2b2c2d2e2f0103040000000003f5b5cc5d6dca49749f7d922a430a2028fe23962eced27ae49942e785888d1065d591142dbbf39d120ebc4ec60a1a218a"
+  },
+  {
+   "id": "N01-NF-209",
+   "name": "answer_advertises_only_half_a_block",
+   "op": "finish",
+   "expect": "LIMITS_INCOMPATIBLE",
+   "sender_caps": {
+    "wire_min": 1,
+    "wire_max": 1,
+    "formats": 1,
+    "max_payload_bytes": 1024,
+    "mandatory_features": 0,
+    "optional_features": 3
+   },
+   "sender_peer": 12249790986447749121,
+   "stream_id": 54324593195745281,
+   "epoch": 7,
+   "offer_nonce_hex": "101112131415161718191a1b1c1d1e1f",
+   "answer_hex": "4646574e01020001010102000000000000000003bb0000000000000200c0ffee000000010000000000000007202122232425262728292a2b2c2d2e2f0101040000000003f5b5cc5d6dca49749f7d922a430a2028fe23962eced27ae49942e785888d1065d67e36825fc0cffb8bf52765b99348f6"
   }
  ]
 }

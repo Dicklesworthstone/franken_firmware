@@ -14,6 +14,7 @@ import re
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import reference_negotiation as rn  # noqa: E402
@@ -79,6 +80,106 @@ class Selection(unittest.TestCase):
         for bad in (rn.caps(wire_min=0), rn.caps(wire_min=2, wire_max=1), rn.caps(formats=0),
                     rn.caps(max_payload=6), rn.caps(max_payload=0), rn.caps(mandatory=1, optional=1)):
             self.assertEqual(rn.select(bad, rn.OLD_FIRMWARE)[0], "INVALID_CAPABILITIES", bad)
+
+
+class PayloadLimit(unittest.TestCase):
+    """LIMITS_INCOMPATIBLE is reachable through the public API: a build may claim less than it implements."""
+
+    def test_the_boundary_is_one_full_block_in_steps_of_four_for_either_party(self):
+        for limit, want in ((4, "LIMITS_INCOMPATIBLE"), (512, "LIMITS_INCOMPATIBLE"),
+                            (1020, "LIMITS_INCOMPATIBLE"), (1024, "OK")):
+            small = rn.caps(max_payload=limit)
+            for a, b in ((small, rn.BASELINE), (rn.BASELINE, small)):
+                self.assertEqual(rn.select(a, b)[0], want, (limit, a["max_payload_bytes"], b["max_payload_bytes"]))
+
+    def test_a_build_that_enforces_its_own_limits_still_reaches_it_through_respond(self):
+        _, offer = rn.make_offer(rn.KEY, rn.BASELINE)
+        for limit in (4, 512, 1020):
+            code, _ = rn.respond(rn.KEY, rn.caps(max_payload=limit), rn.RECEIVER_PEER, 0,
+                                 bytes(range(0x20, 0x30)), offer)
+            self.assertEqual(code, "LIMITS_INCOMPATIBLE", limit)
+        # While claiming MORE than the build implements is what validate_local refuses.
+        code, _ = rn.respond(rn.KEY, rn.caps(max_payload=1028), rn.RECEIVER_PEER, 0, bytes(range(0x20, 0x30)), offer)
+        self.assertEqual(code, "INVALID_CAPABILITIES")
+
+    def test_the_limit_is_judged_after_version_features_and_format(self):
+        needs_xor = rn.caps(mandatory=rn.FEATURE_XOR, optional=rn.FEATURE_PARTIAL)
+        small_old = rn.caps(max_payload=512, optional=0)
+        self.assertEqual(rn.select(needs_xor, small_old)[0], "MANDATORY_FEATURE_MISSING")
+        self.assertEqual(rn.select(rn.caps(wire_min=2, wire_max=3), small_old)[0], "NO_COMMON_VERSION")
+        self.assertEqual(rn.select(rn.caps(formats=0b10), small_old)[0], "NO_COMMON_FORMAT")
+
+
+class LimitVectors(unittest.TestCase):
+    NEW_REFUSALS = ("N01-NR-119", "N01-NR-120", "N01-NR-121", "N01-NF-209")
+
+    def test_the_committed_vectors_pin_the_refusal_at_each_end_and_its_place_in_the_order(self):
+        by_id = {r["id"]: r for r in load()["rejections"]}
+        self.assertEqual({cid: (by_id[cid]["op"], by_id[cid]["expect"]) for cid in self.NEW_REFUSALS + ("N01-NR-122",)}, {
+            "N01-NR-119": ("respond", "LIMITS_INCOMPATIBLE"),
+            "N01-NR-120": ("respond", "LIMITS_INCOMPATIBLE"),
+            "N01-NR-121": ("respond", "LIMITS_INCOMPATIBLE"),
+            "N01-NR-122": ("respond", "MANDATORY_FEATURE_MISSING"),
+            "N01-NF-209": ("finish", "LIMITS_INCOMPATIBLE"),
+        })
+        # Who carries the small limit: the responder, the responder one step below, the Offer, the Answer.
+        self.assertEqual(by_id["N01-NR-119"]["local_caps"]["max_payload_bytes"], 512)
+        self.assertEqual(by_id["N01-NR-120"]["local_caps"]["max_payload_bytes"], 1020)
+        self.assertEqual(rn.fields_of(bytes.fromhex(by_id["N01-NR-121"]["offer_hex"]))["caps"]["max_payload_bytes"], 512)
+        self.assertEqual(rn.fields_of(bytes.fromhex(by_id["N01-NF-209"]["answer_hex"]))["caps"]["max_payload_bytes"], 512)
+
+    def test_the_accepted_side_of_the_boundary_is_vectored_for_both_roles(self):
+        for cid in ("N01-NG-001", "N01-NG-004"):
+            self.assertEqual(case(cid)["selection"]["max_payload_bytes"], 1024, cid)
+        self.assertEqual(case("N01-NG-001")["receiver_caps"]["max_payload_bytes"], 1024)
+        self.assertEqual(case("N01-NG-004")["sender_caps"]["max_payload_bytes"], 1024)
+        self.assertEqual(case("N01-NG-004")["sender_caps"]["optional_features"], 0)
+
+    def failures_with(self, select, doc=None):
+        with mock.patch.object(rn, "select", select):
+            return rn.self_verify(doc if doc is not None else load())
+
+    def test_the_unmutated_reference_is_green_so_a_catch_below_means_something(self):
+        self.assertEqual(self.failures_with(rn.select), [])
+
+    def test_a_selection_that_skips_the_limit_check_fails_every_new_refusal(self):
+        original = rn.select
+
+        def no_limit_check(a, b):
+            return original({**a, "max_payload_bytes": 1024}, {**b, "max_payload_bytes": 1024})
+
+        failed = self.failures_with(no_limit_check)
+        for cid in self.NEW_REFUSALS:
+            self.assertTrue(any(line.startswith(cid) for line in failed), (cid, failed))
+        self.assertEqual(len(failed), len(self.NEW_REFUSALS), failed)
+
+    def test_a_selection_that_judges_the_limit_before_the_features_fails_only_the_order_vector(self):
+        original = rn.select
+
+        def limit_first(a, b):
+            code, selection = original(a, b)
+            if code == "MANDATORY_FEATURE_MISSING" and min(a["max_payload_bytes"], b["max_payload_bytes"]) < 1024:
+                return "LIMITS_INCOMPATIBLE", None
+            return code, selection
+
+        failed = self.failures_with(limit_first)
+        self.assertEqual([line.split(" ")[0] for line in failed], ["N01-NR-122"], failed)
+
+    def test_removing_the_small_limit_from_each_planted_case_makes_its_refusal_fail(self):
+        answer_nonce = bytes(range(0x20, 0x30))
+        _, plain_offer = rn.make_offer(rn.KEY, rn.BASELINE)
+        _, (plain_answer, _, _, _) = rn.respond(rn.KEY, rn.BASELINE, rn.RECEIVER_PEER, 0, answer_nonce, plain_offer)
+        for cid in self.NEW_REFUSALS:
+            doc = load()
+            planted = next(r for r in doc["rejections"] if r["id"] == cid)
+            if cid in ("N01-NR-119", "N01-NR-120"):
+                planted["local_caps"]["max_payload_bytes"] = 1024
+            elif cid == "N01-NR-121":
+                planted["offer_hex"] = plain_offer.hex()
+            else:
+                planted["answer_hex"] = plain_answer.hex()
+            failed = rn.self_verify(doc)
+            self.assertEqual([line.split(" ")[0] for line in failed], [cid], (cid, failed))
 
 
 class WireAndKeys(unittest.TestCase):

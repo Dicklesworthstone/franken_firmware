@@ -77,12 +77,13 @@ NEGOTIATION_CODES = (
     "DOWNGRADE_DETECTED",
     "SELECTION_MISMATCH",
 )
-# Reachable only with firmware claims this build refuses to make (wire version above 1, a second
-# format, a payload limit below one block); the Rust unit tests cover them with stand-in firmware.
+# Codes no vector exercises: reachable only with firmware claims this build refuses to make (wire version
+# above 1, a second format), or a lower selection than both ends support; the Rust unit tests cover them
+# with stand-in firmware. LIMITS_INCOMPATIBLE is not of that kind: a build may claim a smaller payload limit
+# than it implements (only a larger one is refused), so it is vectored (N01-NR-119..121, N01-NF-209).
 NOT_VECTORED = {
     "NO_COMMON_VERSION",
     "NO_COMMON_FORMAT",
-    "LIMITS_INCOMPATIBLE",
     "DOWNGRADE_DETECTED",
 }
 
@@ -306,6 +307,9 @@ def build_negotiations() -> list:
         negotiation_case("N01-NG-001", "current_sender_with_old_firmware_receiver", BASELINE, OLD_FIRMWARE),
         negotiation_case("N01-NG-002", "current_sender_with_current_receiver", BASELINE, BASELINE),
         negotiation_case("N01-NG-003", "mandatory_feature_satisfied_by_receiver", group, BASELINE),
+        # Exactly one full block is the smallest payload limit a session accepts. NG-001 has the receiver at
+        # that limit, this has the sender at it; the refusals one step below are N01-NR-119..121 and NF-209.
+        negotiation_case("N01-NG-004", "old_firmware_sender_with_current_receiver", OLD_FIRMWARE, BASELINE),
     ]
 
 
@@ -365,6 +369,17 @@ def build_rejections() -> list:
     _, needs_xor_offer = make_offer(KEY, needs_xor)
     respond_case("N01-NR-118", "mandatory_feature_missing_on_the_receiver", "MANDATORY_FEATURE_MISSING",
                  needs_xor_offer, local_caps=OLD_FIRMWARE)
+    # A payload limit below one full block (1024) is refused; the limit is judged last, after version,
+    # mandatory features and format. The responder, an Offer and (below) an Answer can each carry it.
+    half_a_block = caps(max_payload=512)
+    respond_case("N01-NR-119", "responder_accepts_only_half_a_block", "LIMITS_INCOMPATIBLE", offer,
+                 local_caps=half_a_block)
+    respond_case("N01-NR-120", "responder_accepts_one_step_below_a_full_block", "LIMITS_INCOMPATIBLE", offer,
+                 local_caps=caps(max_payload=1020))
+    _, half_block_offer = make_offer(KEY, half_a_block)
+    respond_case("N01-NR-121", "offer_advertises_only_half_a_block", "LIMITS_INCOMPATIBLE", half_block_offer)
+    respond_case("N01-NR-122", "small_limit_and_missing_mandatory_feature_report_the_feature",
+                 "MANDATORY_FEATURE_MISSING", needs_xor_offer, local_caps=caps(max_payload=512, optional=0))
 
     # Answers judged by the initiator that sent `offer`.
     # A genuine answer, but to an earlier offer with a different nonce.
@@ -383,6 +398,8 @@ def build_rejections() -> list:
                 altered(answer, selection={"features": KNOWN_FEATURES & ~FEATURE_XOR}))
     finish_case("N01-NF-208", "answer_with_a_malformed_selection", "MALFORMED_HELLO",
                 altered(answer, selection={"format": 0b11}))
+    finish_case("N01-NF-209", "answer_advertises_only_half_a_block", "LIMITS_INCOMPATIBLE",
+                altered(answer, caps={"max_payload_bytes": 512}))
     return out
 
 
