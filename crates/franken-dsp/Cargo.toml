@@ -9,7 +9,9 @@ workspace = true
 
 [dependencies]
 serde.workspace = true
-serde_json.workspace = true
+# float_roundtrip: parse f64 correctly rounded, so a calibration written by serde_json reads back
+# bit-exact. Validation runs on stored coefficients; a 1 ULP drift would change what is validated.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 thiserror.workspace = true
 franken-board-profile.workspace = true
 

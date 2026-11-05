@@ -10,6 +10,7 @@
 // Contract: `docs/contracts/d01.md`.
 pub mod convert;
 pub mod format;
+pub mod protection; // D02 (`ffw-7s0`): admitted, fail-muted board protection
 pub mod resample; // D03 (`ffw-j9r`), written by TealSeal
 pub mod ring;
 
