@@ -1,0 +1,618 @@
+{
+  "bead": "ffw-j9r",
+  "claims": [
+    "The D03 drift resampler, built for soft-float big-endian MIPS32r2 (mips-unknown-linux-musl) and run as PID 1, produced the f32 samples of the host quality tones; they meet the bands declared in docs/contracts/d03.md section 4.1 before any Rust ran, agree with the double-precision reference, and are byte-identical to the host build of the same source.",
+    "Guest instructions per output frame of DriftResampler::render, read from the CP0 Count through a ruler calibrated in the same boot.",
+    "A per-run seed (SplitMix64 phase) ties two extra cases to this boot; a replayed transcript and a truncated dump each fail the judge."
+  ],
+  "commands": {
+    "boot_and_judge_with_replay_plant": "FFW_BUILD_DIR=<kernel cache> python3 toolchain/src/measure-d03-target.py run --elf <elf> --log-dir <fresh dir> --host-log <host log> --revision 9282ba6 --plant replay",
+    "boot_and_judge_with_truncate_plant": "FFW_BUILD_DIR=<kernel cache> python3 toolchain/src/measure-d03-target.py run --elf <elf> --log-dir <fresh dir> --host-log <host log> --revision 9282ba6 --plant truncate",
+    "judge_a_stored_transcript": "python3 toolchain/src/measure-d03-target.py analyze --elf <elf> --host-log host-records.bin --log <transcript>.bin --seed <seed>",
+    "note": "The seeds are in each run entry. The ELF is not committed (its sha256 is above): rebuild it from the recorded sources, or supply the same bytes. The plant-replay transcript is judged under its own seed; plant-truncate under run 2's."
+  },
+  "date_utc": "2026-11-05",
+  "elf": {
+    "build_command": "cd <snapshot> && RCH_CANONICAL_PROJECT_ROOT=<snapshot> RCH_REQUIRE_REMOTE=1 RCH_WORKER=<worker set> CARGO_TARGET_DIR=<snapshot>/build/d03-target-target rch exec -- cargo +nightly build --offline --release --manifest-path toolchain/src/d03-target/Cargo.toml --target mips-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort --config 'target.mips-unknown-linux-musl.linker=\"<snapshot>/toolchain/linker/zig-cc-mips-be\"' --config 'target.mips-unknown-linux-musl.rustflags=[\"-C\",\"target-feature=+crt-static\",\"-C\",\"link-self-contained=no\"]' -j 2",
+    "build_result": "Finished `release` profile, remote worker <worker>, exit 0 (supervisor lane, build b25)",
+    "built_from": {
+      "franken_dsp_resample_rs_sha256_prefix": "531d75b56bada21e9160",
+      "plus_uncommitted_at_build_time": {
+        "toolchain/src/d03-target/Cargo.toml": "66d094db3de603a89f76060766d0b8196b8de965c4b2522e263e346cf953d4e7",
+        "toolchain/src/d03-target/src/cases.rs": "bb041432450be7e9553cbbfd41f8d6aea2093821be2ebe22010b06813ad25f39",
+        "toolchain/src/d03-target/src/main.rs": "60496ba350ae7b9da9baade661ed65432ab2a370845a8056331f81d9002576ca"
+      },
+      "repository_head": "0189791354ae2bd9ff99d460710191dd29eb7133",
+      "same_resample_rs_and_dsp_lib_rs_at_host_digest_head_9282ba6": true
+    },
+    "bytes": 562520,
+    "class": "ELF32 big-endian MIPS",
+    "e_flags": "0x70001005",
+    "executable_words_scanned": 102671,
+    "fpu_opcode_words": 0,
+    "mips_fp_abi": 3,
+    "name": "ffw-d03-target",
+    "sha256": "7ae93f2f64e43458dd9fe987345de5e6e0012cf1ded8a2f7c0a2e0c3ab769a4c",
+    "snapshot": "git archive of the repository head above plus the three files; the snapshot's Cargo.lock is the repository's",
+    "toolchain": "worker nightly toolchain; its library sources are version 1.99.0; `rustc -vV` was not captured for this build"
+  },
+  "evidence_class": "host simulation: QEMU TCG with -icount, a 24Kf MIPS model. Not hardware.",
+  "host_digests": {
+    "log_not_committed": "the full log carries worker names and local paths; only its four D03-TARGET-HOST records are kept",
+    "log_sha256": "a21c1b0e115e1c635f16c3a0af0f630fcd1b68fadf04f61334cf1bd3f8f590fc",
+    "records": [
+      {
+        "chunks": "<33 chunk digests in host-records.bin>",
+        "fnv": "c123f3f516f60922",
+        "frames": 32960,
+        "head": "000000003ba9aade3c5f88903ccd2d9e3d1f761f3d6042003d9335713db790ab",
+        "hz": 1000,
+        "id": "q-steady-1000-p500",
+        "ppb": 500000
+      },
+      {
+        "chunks": "<33 chunk digests in host-records.bin>",
+        "fnv": "05fd426cf11f19c4",
+        "frames": 32960,
+        "head": "000000003ba99cb63c5f6df93ccd12293d1f604e3d60248d3d9323f03db77e49",
+        "hz": 1000,
+        "id": "q-steady-1000-m500",
+        "ppb": -500000
+      },
+      {
+        "chunks": "<33 chunk digests in host-records.bin>",
+        "fnv": "70e94dc08579bed7",
+        "frames": 32960,
+        "head": "000000003c6425463bf5be82bd134d00bd22eab03d0c46c13da5acf43a56e6a8",
+        "hz": 10000,
+        "id": "q-steady-10000-p500",
+        "ppb": 500000
+      },
+      {
+        "chunks": "<33 chunk digests in host-records.bin>",
+        "fnv": "463b71c39838d240",
+        "frames": 32960,
+        "head": "000000003c6424983bf77169bd130c29bd23889b3d0b12c23da5ebe83ac20ed0",
+        "hz": 10000,
+        "id": "q-steady-10000-m500",
+        "ppb": -500000
+      }
+    ],
+    "records_file": "host-records.bin",
+    "records_sha256": "3e2b1de8515b9c7c1cecbed728a0b306e53af894fe3d379dbf2cd0cbf09fe682",
+    "source": "cargo test -p franken-dsp --locked -- --nocapture (test d03_target_canonical_samples_are_well_formed_and_digested), central run on repository head 9282ba6, exit 0"
+  },
+  "judge": {
+    "mkinitramfs_sha256": "7988c0c3a893e16dfef015cc318e9c4a2f5926ecc5d8fbf80d3b6b5bca47a5eb",
+    "mutation_checks": "14 of 14 deliberate breakages of a judge check are caught by the named test (scratch-copy sweep, run before the boots)",
+    "script": "toolchain/src/measure-d03-target.py",
+    "script_sha256": "6b0f556165f9576e15657ed3df97dad891d7b23b78f7fd30bbaebafdc041881d",
+    "self_test": "toolchain/tests/test_measure_d03_target.py",
+    "self_test_result": "45 tests, unittest rc 0, run 2026-11-05 after the boots",
+    "self_test_sha256": "ca67752615f567cae474c16688702ee34f872439b015617950bcba8ce0c897e2",
+    "thresholds": {
+      "bands": "docs/contracts/d03.md section 4.1 table d03-quality-bands",
+      "ruler_before_after_drift": 0.005,
+      "ruler_shape_agreement": 0.005,
+      "sample_vs_double_reference": 2e-06,
+      "two_lowest_reps_within": 0.01
+    }
+  },
+  "not_covered": [
+    "Cycles on a real core: QEMU icount counts executed instructions only; no cache, pipeline, memory-latency or multiplier timing.",
+    "A board clock: the repository records none for any MIPS board, so no percentage of a CPU is claimed.",
+    "The real DAC path, programme material, stereo cross-talk, quality during a slew, clipping.",
+    "A nominal-ratio figure is not the worst case: at exactly 0 ppb the fractional position is zero and soft-float zero fast paths apply.",
+    "The ruler's fitted intercept was negative (about -1270 ticks in run 1, -697 in run 2); the residual and drift gates held and the cause is not explained.",
+    "D03 is not closed by this receipt: it is blocked by D01 (which is blocked by P01, then E06)."
+  ],
+  "qemu": {
+    "command": "qemu-system-mips -M malta -cpu 24Kf -m 64M -nographic -no-reboot -icount shift=0,align=off,sleep=off -kernel <kernel> -initrd <initramfs> -append \"console=ttyS0,38400 rdinit=/init panic=-1 loglevel=3\"",
+    "initramfs": "toolchain/src/mkinitramfs.py: the ELF as /init plus the per-run seed as /ffw_seed (plant-replay also /plant-replay and /replay); sha256 of mkinitramfs.py in judge section",
+    "kernel": "vmlinux-4.19.0-21-4kc-malta (Debian)",
+    "kernel_sha256": "3803357ef7821dbf691c901105fb9b2b00382abf67fce8a4be2a0d592267dc61",
+    "version": "QEMU emulator version 11.1.2"
+  },
+  "runs": [
+    {
+      "cpu_instructions_per_output_frame": {
+        "fast500/noise": {
+          "max": 3050.3,
+          "median": 3043.9,
+          "min": 3040.0
+        },
+        "fast500/silence": {
+          "max": 2691.3,
+          "median": 2688.1,
+          "min": 2685.5
+        },
+        "nominal/noise": {
+          "max": 2291.6,
+          "median": 2289.7,
+          "min": 2283.7
+        },
+        "nominal/silence": {
+          "max": 2231.9,
+          "median": 2231.7,
+          "min": 2224.9
+        },
+        "slewing/noise": {
+          "max": 3074.6,
+          "median": 3053.3,
+          "min": 3044.1
+        },
+        "slow500/noise": {
+          "max": 3047.9,
+          "median": 3041.7,
+          "min": 3040.8
+        },
+        "slow500/silence": {
+          "max": 2692.5,
+          "median": 2690.4,
+          "min": 2685.3
+        }
+      },
+      "first_finding": null,
+      "gates": {
+        "D03T-CPU": "passed",
+        "D03T-ELF": "passed",
+        "D03T-HOST-BYTES": "passed",
+        "D03T-QUALITY": "passed",
+        "D03T-SEEDED": "passed",
+        "D03T-TRANSCRIPT": "passed"
+      },
+      "id": "normal-1",
+      "judge_exit_code": 0,
+      "judge_output": [
+        "ruler: 5.9310 instructions per Count tick (shapes disagree by 0.0060%, before/after drift 0.0164%, intercept -1269.5 ticks)",
+        "PASSED   D03T-TRANSCRIPT  complete: ALIVE, BEGIN, END",
+        "PASSED   D03T-ELF         32-bit big-endian MIPS, 102671 executable words, no FPU opcodes",
+        "PASSED   D03T-CPU         ruler gates held; every configuration has a stable floor",
+        "PASSED   D03T-QUALITY     all four target-ISA dumps meet the declared bands and the reference",
+        "PASSED   D03T-SEEDED      the seeded cases carry this run's phase and match its reference",
+        "PASSED   D03T-HOST-BYTES  every canonical case is byte-identical to the host build",
+        "",
+        "build revision: 9282ba6",
+        "",
+        "case/input          instr/frame min    median       max  Minstr/s (min)",
+        "fast500/noise                3040.0    3043.9    3050.3           145.9",
+        "fast500/silence              2685.5    2688.1    2691.3           128.9",
+        "nominal/noise                2283.7    2289.7    2291.6           109.6",
+        "nominal/silence              2224.9    2231.7    2231.9           106.8",
+        "slewing/noise                3044.1    3053.3    3074.6           146.1",
+        "slow500/noise                3040.8    3041.7    3047.9           146.0",
+        "slow500/silence              2685.3    2690.4    2692.5           128.9",
+        "",
+        "Minstr/s is instructions per frame x 48000 frames/s: what a core must retire per second to keep up, before cache or pipeline effects.",
+        "",
+        "case                        Q dB  floor    gain dB        gain band   max dev         host",
+        "q-steady-1000-p500        91.707   85.0   -0.00003   -0.01..0.01     2.53e-07    identical",
+        "q-steady-1000-m500        91.707   85.0   -0.00003   -0.01..0.01     2.63e-07    identical",
+        "q-steady-10000-p500       28.977   22.0   -0.27890    -0.6..0.05     2.39e-07    identical",
+        "q-steady-10000-m500       28.977   22.0   -0.27889    -0.6..0.05     2.23e-07    identical",
+        "",
+        "These are INSTRUCTIONS EXECUTED under QEMU TCG (-icount shift=0) on QEMU's 24Kf model, read through a ruler",
+        "calibrated in the guest, not cycles on a real core: no cache, pipeline, memory latency or multiplier timing is",
+        "modelled, and no board clock is involved. The quality rows are the resampler's f32 output on the target ISA, judged",
+        "against bands declared before any Rust ran; they say nothing about the real DAC path."
+      ],
+      "kind": "real boot",
+      "quality_on_target_isa": {
+        "q-steady-1000-m500": {
+          "band_q_db": 85.0,
+          "expect_q_db": 91.7068,
+          "fnv": "05fd426cf11f19c4",
+          "gain_db": -3.2e-05,
+          "gain_hi_db": 0.01,
+          "gain_lo_db": -0.01,
+          "host": "identical",
+          "hz": 1000,
+          "max_dev_vs_reference": 0.0,
+          "ppb": -500000,
+          "q_db": 91.706855
+        },
+        "q-steady-1000-p500": {
+          "band_q_db": 85.0,
+          "expect_q_db": 91.707,
+          "fnv": "c123f3f516f60922",
+          "gain_db": -3.2e-05,
+          "gain_hi_db": 0.01,
+          "gain_lo_db": -0.01,
+          "host": "identical",
+          "hz": 1000,
+          "max_dev_vs_reference": 0.0,
+          "ppb": 500000,
+          "q_db": 91.707057
+        },
+        "q-steady-10000-m500": {
+          "band_q_db": 22.0,
+          "expect_q_db": 28.9768,
+          "fnv": "463b71c39838d240",
+          "gain_db": -0.278894,
+          "gain_hi_db": 0.05,
+          "gain_lo_db": -0.6,
+          "host": "identical",
+          "hz": 10000,
+          "max_dev_vs_reference": 0.0,
+          "ppb": -500000,
+          "q_db": 28.976825
+        },
+        "q-steady-10000-p500": {
+          "band_q_db": 22.0,
+          "expect_q_db": 28.9769,
+          "fnv": "70e94dc08579bed7",
+          "gain_db": -0.278899,
+          "gain_hi_db": 0.05,
+          "gain_lo_db": -0.6,
+          "host": "identical",
+          "hz": 10000,
+          "max_dev_vs_reference": 0.0,
+          "ppb": 500000,
+          "q_db": 28.976903
+        }
+      },
+      "ruler": {
+        "before_after_drift": 0.000164,
+        "instructions_per_tick": 5.931,
+        "intercept_ticks": -1269.5,
+        "shape_disagreement": 6e-05
+      },
+      "seed": 4324807531862659301,
+      "seeded_cases": {
+        "seed-1000": {
+          "hz": 1000,
+          "max_dev_vs_reference": 0.0
+        },
+        "seed-10000": {
+          "hz": 10000,
+          "max_dev_vs_reference": 0.0
+        }
+      },
+      "transcript": "normal-1.serial.bin",
+      "transcript_bytes": 1234640,
+      "transcript_lines": 2289,
+      "transcript_sha256": "a6d29328e63ba21d2f1c0a07db4c6c012ff689c056b0191c9a89421e8196eff5"
+    },
+    {
+      "cpu_instructions_per_output_frame": {
+        "fast500/noise": {
+          "max": 3045.7,
+          "median": 3042.3,
+          "min": 3041.6
+        },
+        "fast500/silence": {
+          "max": 2691.9,
+          "median": 2687.8,
+          "min": 2684.7
+        },
+        "nominal/noise": {
+          "max": 2290.2,
+          "median": 2288.8,
+          "min": 2286.5
+        },
+        "nominal/silence": {
+          "max": 2234.7,
+          "median": 2233.3,
+          "min": 2230.2
+        },
+        "slewing/noise": {
+          "max": 3071.5,
+          "median": 3051.6,
+          "min": 3045.7
+        },
+        "slow500/noise": {
+          "max": 3046.8,
+          "median": 3041.7,
+          "min": 3036.2
+        },
+        "slow500/silence": {
+          "max": 2689.8,
+          "median": 2688.3,
+          "min": 2685.1
+        }
+      },
+      "first_finding": "D03T-SEEDED: seed-1000: the phase the guest used (400285bc912a048a) is not the one this run's seed derives (3ff90ebb09de799a): the samples were not computed from this run's seed",
+      "gates": {
+        "D03T-CPU": "passed",
+        "D03T-ELF": "passed",
+        "D03T-HOST-BYTES": "passed",
+        "D03T-QUALITY": "passed",
+        "D03T-SEEDED": "failed",
+        "D03T-TRANSCRIPT": "passed"
+      },
+      "id": "plant-replay",
+      "judge_exit_code": 1,
+      "judge_output": [
+        "ruler: 5.9091 instructions per Count tick (shapes disagree by 0.0063%, before/after drift 0.0027%, intercept -996.5 ticks)",
+        "PASSED   D03T-TRANSCRIPT  complete: ALIVE, BEGIN, END",
+        "PASSED   D03T-ELF         32-bit big-endian MIPS, 102671 executable words, no FPU opcodes",
+        "PASSED   D03T-CPU         ruler gates held; every configuration has a stable floor",
+        "PASSED   D03T-QUALITY     all four target-ISA dumps meet the declared bands and the reference",
+        "FAILED   D03T-SEEDED      seed-1000: the phase the guest used (400285bc912a048a) is not the one this run's seed derives (3ff90ebb09de799a): the samples were not computed from this run's seed; seed-1000: sample 1257 is 6.52e-01 from the reference for this run's seed (limit 2e-06): the samples were not computed from this run's seed; seed-10000: the phase the guest used (3fc04f24e3622f0f) is not the one this run's seed derives (401891e422714a2c): the samples were not computed from this run's seed; seed-10000: sample 72 is 2.38e-01 from the reference for this run's seed (limit 2e-06): the samples were not computed from this run's seed",
+        "PASSED   D03T-HOST-BYTES  every canonical case is byte-identical to the host build",
+        "",
+        "build revision: 9282ba6",
+        "",
+        "case/input          instr/frame min    median       max  Minstr/s (min)",
+        "fast500/noise                3041.6    3042.3    3045.7           146.0",
+        "fast500/silence              2684.7    2687.8    2691.9           128.9",
+        "nominal/noise                2286.5    2288.8    2290.2           109.8",
+        "nominal/silence              2230.2    2233.3    2234.7           107.1",
+        "slewing/noise                3045.7    3051.6    3071.5           146.2",
+        "slow500/noise                3036.2    3041.7    3046.8           145.7",
+        "slow500/silence              2685.1    2688.3    2689.8           128.9",
+        "",
+        "Minstr/s is instructions per frame x 48000 frames/s: what a core must retire per second to keep up, before cache or pipeline effects.",
+        "",
+        "case                        Q dB  floor    gain dB        gain band   max dev         host",
+        "q-steady-1000-p500        91.707   85.0   -0.00003   -0.01..0.01     2.53e-07    identical",
+        "q-steady-1000-m500        91.707   85.0   -0.00003   -0.01..0.01     2.63e-07    identical",
+        "q-steady-10000-p500       28.977   22.0   -0.27890    -0.6..0.05     2.39e-07    identical",
+        "q-steady-10000-m500       28.977   22.0   -0.27889    -0.6..0.05     2.23e-07    identical",
+        "",
+        "These are INSTRUCTIONS EXECUTED under QEMU TCG (-icount shift=0) on QEMU's 24Kf model, read through a ruler",
+        "calibrated in the guest, not cycles on a real core: no cache, pipeline, memory latency or multiplier timing is",
+        "modelled, and no board clock is involved. The quality rows are the resampler's f32 output on the target ISA, judged",
+        "against bands declared before any Rust ran; they say nothing about the real DAC path."
+      ],
+      "kind": "planted: the same ELF replays run 1's quality lines under another seed",
+      "quality_on_target_isa": {
+        "q-steady-1000-m500": {
+          "band_q_db": 85.0,
+          "expect_q_db": 91.7068,
+          "fnv": "05fd426cf11f19c4",
+          "gain_db": -3.2e-05,
+          "gain_hi_db": 0.01,
+          "gain_lo_db": -0.01,
+          "host": "identical",
+          "hz": 1000,
+          "max_dev_vs_reference": 0.0,
+          "ppb": -500000,
+          "q_db": 91.706855
+        },
+        "q-steady-1000-p500": {
+          "band_q_db": 85.0,
+          "expect_q_db": 91.707,
+          "fnv": "c123f3f516f60922",
+          "gain_db": -3.2e-05,
+          "gain_hi_db": 0.01,
+          "gain_lo_db": -0.01,
+          "host": "identical",
+          "hz": 1000,
+          "max_dev_vs_reference": 0.0,
+          "ppb": 500000,
+          "q_db": 91.707057
+        },
+        "q-steady-10000-m500": {
+          "band_q_db": 22.0,
+          "expect_q_db": 28.9768,
+          "fnv": "463b71c39838d240",
+          "gain_db": -0.278894,
+          "gain_hi_db": 0.05,
+          "gain_lo_db": -0.6,
+          "host": "identical",
+          "hz": 10000,
+          "max_dev_vs_reference": 0.0,
+          "ppb": -500000,
+          "q_db": 28.976825
+        },
+        "q-steady-10000-p500": {
+          "band_q_db": 22.0,
+          "expect_q_db": 28.9769,
+          "fnv": "70e94dc08579bed7",
+          "gain_db": -0.278899,
+          "gain_hi_db": 0.05,
+          "gain_lo_db": -0.6,
+          "host": "identical",
+          "hz": 10000,
+          "max_dev_vs_reference": 0.0,
+          "ppb": 500000,
+          "q_db": 28.976903
+        }
+      },
+      "ruler": {
+        "before_after_drift": 2.7e-05,
+        "instructions_per_tick": 5.9091,
+        "intercept_ticks": -996.5,
+        "shape_disagreement": 6.3e-05
+      },
+      "seed": 158811746788049551,
+      "seeded_cases": {
+        "seed-1000": {
+          "hz": 1000,
+          "max_dev_vs_reference": 0.65222
+        },
+        "seed-10000": {
+          "hz": 10000,
+          "max_dev_vs_reference": 0.238235
+        }
+      },
+      "transcript": "plant-replay.serial.bin",
+      "transcript_bytes": 1234639,
+      "transcript_lines": 2289,
+      "transcript_sha256": "10c799b29e22a5247174d7d5be56ee6ab00ad07d101794c5b1773a933c774957"
+    },
+    {
+      "cpu_instructions_per_output_frame": {
+        "fast500/noise": {
+          "max": 3047.9,
+          "median": 3041.4,
+          "min": 3038.9
+        },
+        "fast500/silence": {
+          "max": 2689.3,
+          "median": 2686.0,
+          "min": 2682.9
+        },
+        "nominal/noise": {
+          "max": 2289.5,
+          "median": 2288.2,
+          "min": 2281.5
+        },
+        "nominal/silence": {
+          "max": 2236.6,
+          "median": 2232.2,
+          "min": 2228.4
+        },
+        "slewing/noise": {
+          "max": 3069.1,
+          "median": 3057.5,
+          "min": 3038.2
+        },
+        "slow500/noise": {
+          "max": 3045.8,
+          "median": 3045.0,
+          "min": 3038.2
+        },
+        "slow500/silence": {
+          "max": 2689.4,
+          "median": 2688.5,
+          "min": 2683.3
+        }
+      },
+      "first_finding": null,
+      "gates": {
+        "D03T-CPU": "passed",
+        "D03T-ELF": "passed",
+        "D03T-HOST-BYTES": "passed",
+        "D03T-QUALITY": "passed",
+        "D03T-SEEDED": "passed",
+        "D03T-TRANSCRIPT": "passed"
+      },
+      "id": "normal-2",
+      "judge_exit_code": 0,
+      "judge_output": [
+        "ruler: 5.9298 instructions per Count tick (shapes disagree by 0.0026%, before/after drift 0.0037%, intercept -696.7 ticks)",
+        "PASSED   D03T-TRANSCRIPT  complete: ALIVE, BEGIN, END",
+        "PASSED   D03T-ELF         32-bit big-endian MIPS, 102671 executable words, no FPU opcodes",
+        "PASSED   D03T-CPU         ruler gates held; every configuration has a stable floor",
+        "PASSED   D03T-QUALITY     all four target-ISA dumps meet the declared bands and the reference",
+        "PASSED   D03T-SEEDED      the seeded cases carry this run's phase and match its reference",
+        "PASSED   D03T-HOST-BYTES  every canonical case is byte-identical to the host build",
+        "",
+        "build revision: 9282ba6",
+        "",
+        "case/input          instr/frame min    median       max  Minstr/s (min)",
+        "fast500/noise                3038.9    3041.4    3047.9           145.9",
+        "fast500/silence              2682.9    2686.0    2689.3           128.8",
+        "nominal/noise                2281.5    2288.2    2289.5           109.5",
+        "nominal/silence              2228.4    2232.2    2236.6           107.0",
+        "slewing/noise                3038.2    3057.5    3069.1           145.8",
+        "slow500/noise                3038.2    3045.0    3045.8           145.8",
+        "slow500/silence              2683.3    2688.5    2689.4           128.8",
+        "",
+        "Minstr/s is instructions per frame x 48000 frames/s: what a core must retire per second to keep up, before cache or pipeline effects.",
+        "",
+        "case                        Q dB  floor    gain dB        gain band   max dev         host",
+        "q-steady-1000-p500        91.707   85.0   -0.00003   -0.01..0.01     2.53e-07    identical",
+        "q-steady-1000-m500        91.707   85.0   -0.00003   -0.01..0.01     2.63e-07    identical",
+        "q-steady-10000-p500       28.977   22.0   -0.27890    -0.6..0.05     2.39e-07    identical",
+        "q-steady-10000-m500       28.977   22.0   -0.27889    -0.6..0.05     2.23e-07    identical",
+        "",
+        "These are INSTRUCTIONS EXECUTED under QEMU TCG (-icount shift=0) on QEMU's 24Kf model, read through a ruler",
+        "calibrated in the guest, not cycles on a real core: no cache, pipeline, memory latency or multiplier timing is",
+        "modelled, and no board clock is involved. The quality rows are the resampler's f32 output on the target ISA, judged",
+        "against bands declared before any Rust ran; they say nothing about the real DAC path."
+      ],
+      "kind": "real boot",
+      "quality_on_target_isa": {
+        "q-steady-1000-m500": {
+          "band_q_db": 85.0,
+          "expect_q_db": 91.7068,
+          "fnv": "05fd426cf11f19c4",
+          "gain_db": -3.2e-05,
+          "gain_hi_db": 0.01,
+          "gain_lo_db": -0.01,
+          "host": "identical",
+          "hz": 1000,
+          "max_dev_vs_reference": 0.0,
+          "ppb": -500000,
+          "q_db": 91.706855
+        },
+        "q-steady-1000-p500": {
+          "band_q_db": 85.0,
+          "expect_q_db": 91.707,
+          "fnv": "c123f3f516f60922",
+          "gain_db": -3.2e-05,
+          "gain_hi_db": 0.01,
+          "gain_lo_db": -0.01,
+          "host": "identical",
+          "hz": 1000,
+          "max_dev_vs_reference": 0.0,
+          "ppb": 500000,
+          "q_db": 91.707057
+        },
+        "q-steady-10000-m500": {
+          "band_q_db": 22.0,
+          "expect_q_db": 28.9768,
+          "fnv": "463b71c39838d240",
+          "gain_db": -0.278894,
+          "gain_hi_db": 0.05,
+          "gain_lo_db": -0.6,
+          "host": "identical",
+          "hz": 10000,
+          "max_dev_vs_reference": 0.0,
+          "ppb": -500000,
+          "q_db": 28.976825
+        },
+        "q-steady-10000-p500": {
+          "band_q_db": 22.0,
+          "expect_q_db": 28.9769,
+          "fnv": "70e94dc08579bed7",
+          "gain_db": -0.278899,
+          "gain_hi_db": 0.05,
+          "gain_lo_db": -0.6,
+          "host": "identical",
+          "hz": 10000,
+          "max_dev_vs_reference": 0.0,
+          "ppb": 500000,
+          "q_db": 28.976903
+        }
+      },
+      "ruler": {
+        "before_after_drift": 3.7e-05,
+        "instructions_per_tick": 5.9298,
+        "intercept_ticks": -696.7,
+        "shape_disagreement": 2.6e-05
+      },
+      "seed": 3699406174042101855,
+      "seeded_cases": {
+        "seed-1000": {
+          "hz": 1000,
+          "max_dev_vs_reference": 0.0
+        },
+        "seed-10000": {
+          "hz": 10000,
+          "max_dev_vs_reference": 0.0
+        }
+      },
+      "transcript": "normal-2.serial.bin",
+      "transcript_bytes": 1234640,
+      "transcript_lines": 2289,
+      "transcript_sha256": "af2ac9a5bb41f8046e12c299df9d765666db2a71bb8b6053cf35f62f0fd4c56e"
+    },
+    {
+      "first_finding": "D03T-TRANSCRIPT: transcript is incomplete (BEGIN True, END False)",
+      "gates": {
+        "D03T-TRANSCRIPT": "failed"
+      },
+      "id": "plant-truncate",
+      "judge_exit_code": 1,
+      "judge_output": [
+        "FAILED   D03T-TRANSCRIPT  transcript is incomplete (BEGIN True, END False)",
+        "",
+        "These are INSTRUCTIONS EXECUTED under QEMU TCG (-icount shift=0) on QEMU's 24Kf model, read through a ruler",
+        "calibrated in the guest, not cycles on a real core: no cache, pipeline, memory latency or multiplier timing is",
+        "modelled, and no board clock is involved. The quality rows are the resampler's f32 output on the target ISA, judged",
+        "against bands declared before any Rust ran; they say nothing about the real DAC path."
+      ],
+      "kind": "planted: run 2's transcript cut at 60 % of the sample dump (a derived file, not a captured boot)",
+      "seed": 3699406174042101855,
+      "transcript": "plant-truncate.serial.bin",
+      "transcript_bytes": 742908,
+      "transcript_lines": 1404,
+      "transcript_sha256": "37752cd49f32d339423fcf1b8d3d716b005990fab4d0c52a1cffe599dee2bcdb"
+    }
+  ],
+  "schema": "ffw.d03-target-receipt.v1"
+}

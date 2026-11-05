@@ -1,0 +1,2 @@
+# Raw serial evidence: retain every captured byte on checkout.
+*.bin binary
