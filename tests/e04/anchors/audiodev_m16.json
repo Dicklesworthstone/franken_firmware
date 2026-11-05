@@ -34,6 +34,572 @@
   "sha256": "14c202fa115ffde39dcdfa5a6505ea1ead9ed41b89429c9dd319b47a61939bd2",
   "size_bytes": 77380
  },
+ "audioctl_ioctl": {
+  "common_tail": {
+   "calls": [
+    "__copy_tofrom_user"
+   ],
+   "entry_offset": 29112
+  },
+  "decoded_instructions": {
+   "cmd_is_negative_test": {
+    "crf": 7,
+    "imm": 0,
+    "offset": 28588,
+    "op": "cmpwi",
+    "ra": 5
+   },
+   "common_tail_entry": {
+    "offset": 29112,
+    "op": "neg",
+    "ra": 30,
+    "rt": 0
+   },
+   "copy_in_size_clamp": {
+    "crf": 7,
+    "imm": 32,
+    "offset": 28632,
+    "op": "cmplwi",
+    "ra": 30
+   },
+   "copy_in_size_field": {
+    "mb": 19,
+    "me": 31,
+    "offset": 28628,
+    "op": "rlwinm",
+    "ra": 30,
+    "rs": 5,
+    "sh": 16
+   },
+   "copy_out_size_clamp": {
+    "imm": 32,
+    "offset": 29136,
+    "op": "addi",
+    "ra": 0,
+    "rt": 30
+   },
+   "copy_out_size_field": {
+    "mb": 19,
+    "me": 31,
+    "offset": 29132,
+    "op": "rlwinm",
+    "ra": 4,
+    "rs": 26,
+    "sh": 16
+   },
+   "no_copy_in_size_default": {
+    "imm": 32,
+    "offset": 28728,
+    "op": "addi",
+    "ra": 0,
+    "rt": 30
+   },
+   "number_base": {
+    "imm": -6,
+    "offset": 28720,
+    "op": "addi",
+    "ra": 31,
+    "rt": 0
+   },
+   "number_bound": {
+    "crf": 7,
+    "imm": 149,
+    "offset": 28724,
+    "op": "cmplwi",
+    "ra": 0
+   },
+   "number_is_low_byte": {
+    "mb": 24,
+    "me": 31,
+    "offset": 28616,
+    "op": "rlwinm",
+    "ra": 31,
+    "rs": 5,
+    "sh": 0
+   },
+   "out_of_range_to_default": {
+    "aa": 0,
+    "bi": 29,
+    "bo": 12,
+    "disp": 72,
+    "offset": 28732,
+    "op": "bc"
+   },
+   "read_bit_test": {
+    "mb": 31,
+    "me": 31,
+    "offset": 29120,
+    "op": "rlwinm",
+    "ra": 9,
+    "rs": 26,
+    "sh": 2
+   },
+   "skip_copy_in_unless_negative": {
+    "aa": 0,
+    "bi": 28,
+    "bo": 4,
+    "disp": 96,
+    "offset": 28624,
+    "op": "bc"
+   }
+  },
+  "derived": {
+   "arg_register": 6,
+   "cmd_register": 5,
+   "copy_out_size_limit_bytes": 32,
+   "copy_size_limit_bytes": 32,
+   "copy_to_from_user_call_offsets_from_symbol": [
+    112,
+    208,
+    612,
+    2388
+   ],
+   "number_base": 6,
+   "number_mask": 255,
+   "number_window_high": 155,
+   "number_window_low": 6,
+   "read_bit_mask": 1073741824,
+   "size_field_shift": 16,
+   "size_field_width_bits": 13,
+   "write_bit_mask": 2147483648
+  },
+  "dispatch": {
+   "default_is": "li 3, -1 (the block every unhandled number goes to)",
+   "default_nrs": [
+    7,
+    8,
+    9,
+    10,
+    11,
+    13,
+    14,
+    15,
+    16,
+    17,
+    19,
+    20,
+    21,
+    22,
+    23,
+    26,
+    27,
+    29,
+    31,
+    32,
+    33,
+    34,
+    35,
+    36,
+    37,
+    39,
+    40,
+    41,
+    42,
+    43,
+    50,
+    51,
+    55,
+    56,
+    57,
+    58,
+    60,
+    61,
+    65,
+    66,
+    67,
+    68,
+    69,
+    70,
+    71,
+    72,
+    73,
+    74,
+    75,
+    76,
+    77,
+    78,
+    79,
+    80,
+    81,
+    82,
+    83,
+    84,
+    85,
+    86,
+    87,
+    88,
+    89,
+    90,
+    91,
+    92,
+    93,
+    94,
+    95,
+    96,
+    97,
+    98,
+    99,
+    100,
+    101,
+    102,
+    103,
+    104,
+    105,
+    106,
+    107,
+    108,
+    109,
+    110,
+    111,
+    112,
+    113,
+    114,
+    115,
+    116,
+    117,
+    118,
+    119,
+    120,
+    121,
+    122,
+    123,
+    124,
+    125,
+    126,
+    127,
+    128,
+    129,
+    130,
+    131,
+    132,
+    133,
+    134,
+    135,
+    136,
+    137,
+    138,
+    139,
+    140,
+    141,
+    142,
+    143,
+    145,
+    146,
+    148,
+    149,
+    150,
+    151,
+    152,
+    153,
+    154
+   ],
+   "default_target": 28804,
+   "distinct_handler_targets": 23,
+   "entries": 150,
+   "entry_encoding": "R_PPC_REL32 addend = target + 4 * index",
+   "handled": [
+    {
+     "calls": [
+      "dsp_device_set_pwm",
+      "eden_set_pwm"
+     ],
+     "frame_accesses": [
+      "load4@0",
+      "store4@0"
+     ],
+     "nr": 6,
+     "payload_address_taken_at": [],
+     "target": 29224
+    },
+    {
+     "calls": [
+      "__cli",
+      "__down",
+      "__sti",
+      "__up",
+      "__wake_up",
+      "m8260_port_read",
+      "mio_set"
+     ],
+     "frame_accesses": [
+      "load4@0"
+     ],
+     "nr": 12,
+     "payload_address_taken_at": [],
+     "target": 28936
+    },
+    {
+     "calls": [
+      "i2c_write_reg"
+     ],
+     "frame_accesses": [
+      "load1@1",
+      "load1@3"
+     ],
+     "nr": 18,
+     "payload_address_taken_at": [],
+     "target": 30476
+    },
+    {
+     "calls": [
+      "i2c_read_reg"
+     ],
+     "frame_accesses": [
+      "store4@0",
+      "load1@3"
+     ],
+     "nr": 24,
+     "payload_address_taken_at": [],
+     "target": 30648
+    },
+    {
+     "calls": [
+      "i2c_write_reg"
+     ],
+     "frame_accesses": [
+      "load4@0"
+     ],
+     "nr": 25,
+     "payload_address_taken_at": [],
+     "target": 30624
+    },
+    {
+     "calls": [
+      "button_event_send",
+      "mio_set"
+     ],
+     "frame_accesses": [
+      "load4@0"
+     ],
+     "nr": 28,
+     "payload_address_taken_at": [],
+     "target": 30684
+    },
+    {
+     "calls": [
+      "__cli",
+      "__sti"
+     ],
+     "frame_accesses": [
+      "store4@0",
+      "store4@4",
+      "store4@8"
+     ],
+     "nr": 30,
+     "payload_address_taken_at": [],
+     "target": 30524
+    },
+    {
+     "calls": [
+      "i2c_write_reg"
+     ],
+     "frame_accesses": [
+      "load1@1",
+      "load1@3"
+     ],
+     "nr": 38,
+     "payload_address_taken_at": [],
+     "target": 30476
+    },
+    {
+     "calls": [
+      "__cli",
+      "__sti",
+      "audioctl_status"
+     ],
+     "frame_accesses": [
+      "store4@0"
+     ],
+     "nr": 44,
+     "payload_address_taken_at": [],
+     "target": 30456
+    },
+    {
+     "calls": [],
+     "frame_accesses": [],
+     "nr": 45,
+     "payload_address_taken_at": [
+      0
+     ],
+     "target": 30432
+    },
+    {
+     "calls": [
+      "mio_set"
+     ],
+     "frame_accesses": [
+      "load4@0",
+      "load4@4"
+     ],
+     "nr": 46,
+     "payload_address_taken_at": [],
+     "target": 30408
+    },
+    {
+     "calls": [
+      "m8260_port_read"
+     ],
+     "frame_accesses": [
+      "load4@0",
+      "store4@0"
+     ],
+     "nr": 47,
+     "payload_address_taken_at": [],
+     "target": 30208
+    },
+    {
+     "calls": [
+      "__cli",
+      "__down",
+      "__sti",
+      "__up",
+      "__wake_up",
+      "m8260_port_set",
+      "panic",
+      "schedule"
+     ],
+     "frame_accesses": [
+      "load4@0",
+      "store4@0",
+      "store4@4"
+     ],
+     "nr": 48,
+     "payload_address_taken_at": [],
+     "target": 29904
+    },
+    {
+     "calls": [
+      "__cli",
+      "__sti",
+      "m8260_port_read",
+      "mio_set"
+     ],
+     "frame_accesses": [
+      "load4@0"
+     ],
+     "nr": 49,
+     "payload_address_taken_at": [],
+     "target": 29748
+    },
+    {
+     "calls": [
+      "dsp_device_set_dcofs"
+     ],
+     "frame_accesses": [
+      "load4@0",
+      "load4@4",
+      "load4@8"
+     ],
+     "nr": 52,
+     "payload_address_taken_at": [],
+     "target": 29692
+    },
+    {
+     "calls": [
+      "__down",
+      "__up",
+      "__wake_up"
+     ],
+     "frame_accesses": [
+      "load4@0"
+     ],
+     "nr": 53,
+     "payload_address_taken_at": [],
+     "target": 29536
+    },
+    {
+     "calls": [
+      "__down",
+      "__up",
+      "__wake_up"
+     ],
+     "frame_accesses": [
+      "load4@0"
+     ],
+     "nr": 54,
+     "payload_address_taken_at": [],
+     "target": 28828
+    },
+    {
+     "calls": [
+      "populate_time_formats"
+     ],
+     "frame_accesses": [],
+     "nr": 59,
+     "payload_address_taken_at": [
+      0
+     ],
+     "target": 29104
+    },
+    {
+     "calls": [
+      "audioctl_get_button_state"
+     ],
+     "frame_accesses": [],
+     "nr": 62,
+     "payload_address_taken_at": [],
+     "target": 29300
+    },
+    {
+     "calls": [],
+     "frame_accesses": [
+      "store4@0"
+     ],
+     "nr": 63,
+     "payload_address_taken_at": [],
+     "target": 29328
+    },
+    {
+     "calls": [],
+     "frame_accesses": [
+      "load4@0"
+     ],
+     "nr": 64,
+     "payload_address_taken_at": [],
+     "target": 29520
+    },
+    {
+     "calls": [
+      "audioctl_set_leds",
+      "m8260_port_set"
+     ],
+     "frame_accesses": [
+      "load4@0"
+     ],
+     "nr": 144,
+     "payload_address_taken_at": [],
+     "target": 29412
+    },
+    {
+     "calls": [
+      "dsp_device_set_led_pwm"
+     ],
+     "frame_accesses": [
+      "load4@0"
+     ],
+     "nr": 147,
+     "payload_address_taken_at": [],
+     "target": 29400
+    },
+    {
+     "calls": [
+      "audioctl_ledtimer"
+     ],
+     "frame_accesses": [
+      "load4@8"
+     ],
+     "nr": 155,
+     "payload_address_taken_at": [
+      0
+     ],
+     "target": 29344
+    }
+   ],
+   "table_offset": 232,
+   "table_section": ".rodata"
+  },
+  "method": "control-flow walk over decoded branch instructions; calls are relocation or symbol names; frame_accesses are direct r1-relative loads and stores into the payload (a lower bound)"
+ },
  "dsp_ioctl": {
   "decoded_instructions": {
    "arg_register_copy": {
@@ -225,6 +791,31 @@
    "table_offset": 16,
    "table_section": ".rodata"
   }
+ },
+ "i2c_ioctl": {
+  "derived": {
+   "general_registers_read": [],
+   "reads_argument_registers": false,
+   "relocations_in_handler": 0,
+   "returns_constant": 0,
+   "size_bytes": 8
+  },
+  "instructions": [
+   {
+    "imm": 0,
+    "offset": 18644,
+    "op": "addi",
+    "ra": 0,
+    "rt": 3
+   },
+   {
+    "bi": 0,
+    "bo": 20,
+    "lk": 0,
+    "offset": 18648,
+    "op": "bclr"
+   }
+  ]
  },
  "ioctl_handlers": {
   "audioctl": {

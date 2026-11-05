@@ -1,0 +1,68 @@
+{
+ "schema": "ffw.e04.hand_derived.v1",
+ "about": "Facts about the retained model-16 audiodev.o ioctl handlers, read BY EYE from the llvm-objdump disassembly of audioctl_device_ioctl and i2c_device_ioctl (sha256 14c202fa...9bd2). Not produced by anchor_extract.py or anchor_crosscheck.py: it is the third, hand-made reading the runner compares the committed anchor facts against. Numbers and symbol names only; no instruction bytes. Each case lists the external functions its code reaches and the payload words it touches directly through the stack frame (a lower bound: a payload reached through a pointer in a register is not seen), excluding the shared copy-out tail. 'reading' is the plain-language trace; it is a description of the code, not a statement of what the command means.",
+ "audioctl": {
+  "copy_size_limit_bytes": 32,
+  "copy_out_size_limit_bytes": 32,
+  "number_base": 6,
+  "number_window": [6, 155],
+  "unhandled_numbers_go_to": "li 3, -1",
+  "common_tail_calls": ["__copy_tofrom_user"]
+ },
+ "cases": {
+  "6": {
+   "calls": ["dsp_device_set_pwm", "eden_set_pwm"],
+   "frame_accesses": ["load4@0", "store4@0"],
+   "payload_address_taken_at": [],
+   "reading": "loads payload word 0, a negative value becomes 0, a value above 256 becomes 256, stores it back, then calls eden_set_pwm or dsp_device_set_pwm depending on two fields of sys_mdp"
+  },
+  "59": {
+   "calls": ["populate_time_formats"],
+   "frame_accesses": [],
+   "payload_address_taken_at": [0],
+   "reading": "passes the address of the payload to populate_time_formats and returns it through the copy-out tail"
+  },
+  "62": {
+   "calls": ["audioctl_get_button_state"],
+   "frame_accesses": [],
+   "payload_address_taken_at": [],
+   "reading": "passes the caller's own pointer and the size field straight to audioctl_get_button_state; it never uses the stack copy"
+  },
+  "63": {
+   "calls": [],
+   "frame_accesses": ["store4@0"],
+   "payload_address_taken_at": [],
+   "reading": "copies a word from the driver's private state (audioctlpriv+0xac) into payload word 0"
+  },
+  "64": {
+   "calls": [],
+   "frame_accesses": ["load4@0"],
+   "payload_address_taken_at": [],
+   "reading": "copies payload word 0 into the driver's private state (audioctlpriv+0xac): the write half of the pair with 63"
+  },
+  "144": {
+   "calls": ["audioctl_set_leds", "m8260_port_set"],
+   "frame_accesses": ["load4@0"],
+   "payload_address_taken_at": [],
+   "reading": "tests bits of payload word 0, sets a port pin through m8260_port_set on one of two paths, then calls audioctl_set_leds with the word"
+  },
+  "147": {
+   "calls": ["dsp_device_set_led_pwm"],
+   "frame_accesses": ["load4@0"],
+   "payload_address_taken_at": [],
+   "reading": "passes payload word 0 to dsp_device_set_led_pwm"
+  },
+  "155": {
+   "calls": ["audioctl_ledtimer"],
+   "frame_accesses": ["load4@8"],
+   "payload_address_taken_at": [0],
+   "reading": "moves the payload's first 8 bytes to a global (a string-move through the address taken at offset 0, which the direct-access list cannot see), tests bit 0 of payload word 2, and calls audioctl_ledtimer when it is clear"
+  }
+ },
+ "i2c": {
+  "instruction_count": 2,
+  "returns_constant": 0,
+  "reads_argument_registers": false,
+  "reading": "li 3, 0 ; blr: returns 0 for every command and reads none of its arguments"
+ }
+}
