@@ -61,7 +61,7 @@ def _crate_facts(root: str, rel: str, workspace_deps: Dict[str, Any]) -> Dict[st
     manifest = _load(os.path.join(root, rel, "Cargo.toml"))
     package = manifest.get("package", {})
     name = package.get("name", "")
-    internal: Dict[str, Set[str]] = {"normal": set(), "dev": set(), "build": set()}
+    internal: Dict[str, Set[str]] = {"normal": set(), "optional": set(), "dev": set(), "build": set()}
     for kind, table in _dep_tables(manifest).items():
         for key, spec in table.items():
             real = spec.get("package", key) if isinstance(spec, dict) else key
@@ -69,7 +69,14 @@ def _crate_facts(root: str, rel: str, workspace_deps: Dict[str, Any]) -> Dict[st
             has_path = isinstance(spec, dict) and "path" in spec
             ws_internal = isinstance(ws, dict) and "path" in ws
             if has_path or ws_internal:
-                internal[kind].add(real)
+                is_optional = kind == "normal" and isinstance(spec, dict) and spec.get("optional") is True
+                internal["optional" if is_optional else kind].add(real)
+    # `dep:NAME` entries of [features] gate an optional dependency; the feature names that do are its flags.
+    gates: Dict[str, Set[str]] = {}
+    for fname, entries in manifest.get("features", {}).items():
+        for entry in entries:
+            if isinstance(entry, str) and entry.startswith("dep:"):
+                gates.setdefault(entry[4:], set()).add(fname)
     lints = manifest.get("lints", {})
     if lints.get("workspace") is True:
         lint = "workspace"
@@ -82,6 +89,8 @@ def _crate_facts(root: str, rel: str, workspace_deps: Dict[str, Any]) -> Dict[st
         "name": name, "path": rel, "lints": lint,
         "deps": {k: sorted(v) for k, v in internal.items()},
         "features": sorted(manifest.get("features", {}).keys()),
+        "feature_table": {k: list(v) for k, v in sorted(manifest.get("features", {}).items())},
+        "optional_gates": {dep: sorted(v) for dep, v in sorted(gates.items())},
         "bins": sorted(b for b in bins if b),
         "profile_tables": sorted(manifest.get("profile", {}).keys()),
         "profile_release": _profile_values(manifest.get("profile", {}).get("release", {})),
@@ -173,6 +182,57 @@ def _cycles(graph: Dict[str, Set[str]]) -> List[Tuple[str, ...]]:
     return sorted(found)
 
 
+def resolve_normal_closure(facts: Dict[str, Any], crate: str, features: Iterable[str] = (),
+                           default_features: bool = True) -> Set[str]:
+    """Workspace crates in `crate`'s normal-dependency closure when `features` (Cargo feature names of `crate`) are
+    enabled. A static re-derivation from the manifests, not a `cargo metadata` run. Plain dependencies are always in;
+    an optional dependency is in only if an enabled feature lists `dep:NAME` or `NAME/feature`; a feature implies
+    the features it lists, in its own crate or (as `NAME/feature`) in a dependency; a weak `NAME?/feature` applies
+    once NAME is in. Dev- and build-dependencies are not in a normal closure. Evaluated to a fixed point."""
+    members = {c["name"]: c for c in facts["members"]}
+    active: Set[str] = set()
+    enabled: Set[Tuple[str, str]] = set()
+
+    def activate(name: str) -> bool:
+        if name in members and name not in active:
+            active.add(name)
+            return True
+        return False
+
+    def enable(owner: str, feature: str) -> bool:
+        if owner in members and (owner, feature) not in enabled:
+            enabled.add((owner, feature))
+            return True
+        return False
+
+    activate(crate)
+    for feature in features:
+        enable(crate, feature)
+    if default_features and crate in members and "default" in members[crate]["feature_table"]:
+        enable(crate, "default")
+    changed = True
+    while changed:
+        changed = False
+        for name in sorted(active):
+            for dep in members[name]["deps"]["normal"]:
+                changed |= activate(dep)
+        for owner, feature in sorted(enabled):
+            for entry in members[owner]["feature_table"].get(feature, []):
+                if entry.startswith("dep:"):
+                    changed |= activate(entry[4:])
+                elif "/" in entry:
+                    dep, _, sub = entry.partition("/")
+                    weak = dep.endswith("?")
+                    dep = dep.rstrip("?")
+                    if not weak:
+                        changed |= activate(dep)
+                    if dep in active:
+                        changed |= enable(dep, sub)
+                else:
+                    changed |= enable(owner, entry)
+    return active
+
+
 def compare(contract: Dict[str, Any], facts: Dict[str, Any], root: str = "") -> List[Pair]:
     """Drift between the declared contract and the repository, as sorted unique (code, subject) pairs."""
     errs: Set[Pair] = set()
@@ -213,17 +273,25 @@ def compare(contract: Dict[str, Any], facts: Dict[str, Any], root: str = "") -> 
             errs.add(("excluded_name_mismatch", path))
 
     # dependency edges, both directions, per kind
+    flags = {f["name"]: f["cargo_feature"] for f in contract["features"]}
     for name in sorted(set(members) & set(declared)):
         have = members[name]["deps"]
-        want = {"normal": set(declared[name]["deps"]), "dev": set(declared[name]["dev_deps"])}
-        for kind in ("normal", "dev"):
+        opt = declared[name].get("optional_deps", [])
+        want = {"normal": set(declared[name]["deps"]), "optional": {o["dep"] for o in opt},
+                "dev": set(declared[name]["dev_deps"])}
+        for kind in ("normal", "optional", "dev"):
             for dep in sorted(set(have[kind]) ^ want[kind]):
                 errs.add(("dep_edge_mismatch", f"{kind}:{name}->{dep}"))
         for dep in have.get("build", []):
             errs.add(("dep_edge_mismatch", f"build:{name}->{dep}"))
+        # an optional dependency is gated, in the manifest, by the flag the contract names
+        for o in opt:
+            flag = flags.get(o["feature"], "")
+            if flag and o["dep"] in have["optional"] and flag not in members[name]["optional_gates"].get(o["dep"], []):
+                errs.add(("optional_gate_mismatch", f"{name}->{o['dep']}"))
 
     # the real graph, independent of what the contract says
-    actual = {n: set(c["deps"]["normal"]) & set(members) for n, c in members.items()}
+    actual = {n: (set(c["deps"]["normal"]) | set(c["deps"]["optional"])) & set(members) for n, c in members.items()}
     for comp in _cycles(actual):
         errs.add(("actual_dependency_cycle", ",".join(comp)))
 
@@ -236,8 +304,8 @@ def compare(contract: Dict[str, Any], facts: Dict[str, Any], root: str = "") -> 
             if name not in lock["packages"]:
                 errs.add(("lock_package_missing", name))
                 continue
-            want_edges = set(members[name]["deps"]["normal"]) | set(members[name]["deps"]["dev"]) \
-                | set(members[name]["deps"]["build"])
+            want_edges = set(members[name]["deps"]["normal"]) | set(members[name]["deps"]["optional"]) \
+                | set(members[name]["deps"]["dev"]) | set(members[name]["deps"]["build"])
             want_edges &= set(members)
             for dep in sorted(set(lock["packages"][name]) ^ want_edges):
                 errs.add(("lock_edge_mismatch", f"{name}->{dep}"))

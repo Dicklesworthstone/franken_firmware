@@ -10,6 +10,8 @@
 #   scripts/e2e/p01 collect --target-dir DIR [--receipts DIR]      identity of artifacts a central build produced
 #   scripts/e2e/p01 execute [--cwd DIR] [--target-dir DIR] [--receipts DIR]
 #                                                run the plan through rch (central operator), then verify
+#   scripts/e2e/p01 check-metadata --default D.json --harness H.json
+#                                                hold two centrally produced `cargo metadata` documents to the gate
 #   scripts/e2e/p01 --workspace-suite [...]      the former cargo suite (test, clippy, cross-check, virtual house)
 #                                                via scripts/test/run-workspace-verification.py p01
 #
@@ -22,7 +24,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 case "${1:-}" in
-  print-plan|collect|execute)
+  print-plan|collect|execute|check-metadata)
     exec python3 -B "$ROOT/tests/p01/pipeline.py" "$@"
     ;;
   --workspace-suite)

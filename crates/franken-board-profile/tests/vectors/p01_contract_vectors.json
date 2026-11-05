@@ -1,7 +1,7 @@
 {
  "schema": "ffw.p01.vectors.v1",
  "base": "p01_workspace_contract.json",
- "base_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9",
+ "base_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508",
  "vectors": [
   {
    "id": "P01-V-001",
@@ -15,7 +15,7 @@
    "title": "the contract digest is the pinned canonical-JSON SHA-256",
    "kind": "digest",
    "ops": [],
-   "expect_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+   "expect_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
   },
   {
    "id": "P01-V-003",
@@ -2187,14 +2187,36 @@
    }
   },
   {
-   "id": "P01-V-090",
-   "title": "a test-only crate in a device closure with no exception is refused",
+   "id": "P01-V-089",
+   "title": "permitted positive: a counted exception covers a test-only crate that a device profile enables",
    "kind": "validate",
    "ops": [
     {
      "op": "set",
+     "path": "/profiles/name=full_native/features/feature=virtual_house_harness/state",
+     "value": "enabled"
+    },
+    {
+     "op": "push",
      "path": "/test_support_exceptions",
-     "value": []
+     "value": {
+      "from": "franken-speaker",
+      "to": "franken-test-support",
+      "reason": "harness build for a hardware-in-the-loop rig"
+     }
+    }
+   ],
+   "expect_codes": []
+  },
+  {
+   "id": "P01-V-090",
+   "title": "enabling the harness in a device profile puts a test-only crate in the image",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/profiles/name=full_native/features/feature=virtual_house_harness/state",
+     "value": "enabled"
     }
    ],
    "expect_codes": [
@@ -2203,26 +2225,27 @@
    "expect_subjects": {
     "test_support_in_device_closure": [
      "speaker-mips-full:franken-test-support",
-     "speaker-mips-min:franken-test-support",
-     "speaker-ppc-full:franken-test-support",
-     "speaker-ppc-min:franken-test-support"
+     "speaker-ppc-full:franken-test-support"
     ]
    }
   },
   {
    "id": "P01-V-091",
-   "title": "an exception that names no test-support edge is stale and covers nothing",
+   "title": "an exception that names no test-support edge is stale",
    "kind": "validate",
    "ops": [
     {
-     "op": "set",
-     "path": "/test_support_exceptions/from=franken-speaker/to",
-     "value": "franken-hal"
+     "op": "push",
+     "path": "/test_support_exceptions",
+     "value": {
+      "from": "franken-speaker",
+      "to": "franken-hal",
+      "reason": "x"
+     }
     }
    ],
    "expect_codes": [
-    "stale_exception",
-    "test_support_in_device_closure"
+    "stale_exception"
    ],
    "expect_subjects": {
     "stale_exception": [
@@ -2236,9 +2259,13 @@
    "kind": "validate",
    "ops": [
     {
-     "op": "set",
-     "path": "/test_support_exceptions/from=franken-speaker/reason",
-     "value": ""
+     "op": "push",
+     "path": "/test_support_exceptions",
+     "value": {
+      "from": "franken-speaker",
+      "to": "franken-test-support",
+      "reason": ""
+     }
     }
    ],
    "expect_codes": [
@@ -2275,6 +2302,148 @@
     ],
     "layer_violation": [
      "franken-speaker->franken-alloc-probe"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-094",
+   "title": "an optional dependency gated by a feature with no Cargo flag is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/features/name=virtual_house_harness/cargo_feature",
+     "value": ""
+    }
+   ],
+   "expect_codes": [
+    "optional_dep_without_flag"
+   ],
+   "expect_subjects": {
+    "optional_dep_without_flag": [
+     "franken-speaker->franken-test-support"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-095",
+   "title": "the gating flag must belong to the crate that carries the dependency",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/features/name=virtual_house_harness/owner_crate",
+     "value": "franken-control"
+    }
+   ],
+   "expect_codes": [
+    "optional_dep_wrong_owner"
+   ],
+   "expect_subjects": {
+    "optional_dep_wrong_owner": [
+     "franken-speaker->franken-test-support"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-096",
+   "title": "an optional dependency gated by an unknown feature is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/crates/name=franken-speaker/optional_deps",
+     "value": [
+      {
+       "dep": "franken-test-support",
+       "feature": "ghost"
+      }
+     ]
+    }
+   ],
+   "expect_codes": [
+    "unknown_feature"
+   ],
+   "expect_subjects": {
+    "unknown_feature": [
+     "franken-speaker->franken-test-support"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-097",
+   "title": "an optional dependency on a non-member is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/crates/name=franken-speaker/optional_deps",
+     "value": {
+      "dep": "franken-ghost",
+      "feature": "virtual_house_harness"
+     }
+    }
+   ],
+   "expect_codes": [
+    "unknown_dependency"
+   ],
+   "expect_subjects": {
+    "unknown_dependency": [
+     "franken-speaker->franken-ghost"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-098",
+   "title": "an optional dependency onto a higher layer is refused like any normal edge",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/crates/name=franken-speaker/optional_deps",
+     "value": {
+      "dep": "franken-alloc-probe",
+      "feature": "virtual_house_harness"
+     }
+    }
+   ],
+   "expect_codes": [
+    "layer_violation"
+   ],
+   "expect_subjects": {
+    "layer_violation": [
+     "franken-speaker->franken-alloc-probe"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-099",
+   "title": "an optional edge takes part in cycle detection",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "push",
+     "path": "/crates/name=franken-hal/optional_deps",
+     "value": {
+      "dep": "franken-speaker",
+      "feature": "virtual_house_harness"
+     }
+    }
+   ],
+   "expect_codes": [
+    "dependency_cycle",
+    "layer_violation",
+    "optional_dep_wrong_owner"
+   ],
+   "expect_subjects": {
+    "dependency_cycle": [
+     "franken-hal,franken-speaker"
+    ],
+    "layer_violation": [
+     "franken-hal->franken-speaker"
+    ],
+    "optional_dep_wrong_owner": [
+     "franken-hal->franken-speaker"
     ]
    }
   },
@@ -2367,7 +2536,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
     },
     {
      "id": "speaker-ppc-full",
@@ -2378,7 +2547,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
     }
    ],
    "require_all": false,
@@ -2399,7 +2568,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
     },
     {
      "id": "speaker-ppc-full",
@@ -2410,7 +2579,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
     }
    ],
    "require_all": false,
@@ -2438,7 +2607,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": false,
-     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
     }
    ],
    "require_all": false,
@@ -2461,7 +2630,7 @@
      "elf_machine": 8,
      "elf_class": 2,
      "elf_big_endian": true,
-     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
     }
    ],
    "require_all": false,
@@ -2484,7 +2653,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
     },
     {
      "id": "speaker-ppc-full",
@@ -2495,7 +2664,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
     }
    ],
    "require_all": false,
@@ -2523,7 +2692,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
     }
    ],
    "require_all": false,
@@ -2574,7 +2743,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
     }
    ],
    "require_all": false,
@@ -2597,7 +2766,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
     }
    ],
    "require_all": false,
@@ -2620,7 +2789,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
     },
     {
      "id": "speaker-mips-full",
@@ -2631,7 +2800,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
     }
    ],
    "require_all": false,
@@ -2659,7 +2828,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
     }
    ],
    "require_all": true,
@@ -2692,7 +2861,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
     }
    ],
    "require_all": false,
@@ -2721,7 +2890,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "12d671c5785b3c8e4188ecb3bc17903f4e1f6156df614dc33564015f3d18f463"
+     "contract_digest": "77cbaedfba1a393de325d4b2e669b84f2f778863b648759450757431a758482d"
     }
    ],
    "require_all": false,
@@ -2744,7 +2913,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
     }
    ],
    "require_all": false,
@@ -2762,12 +2931,12 @@
      "id": "speaker-host-full",
      "target": "host",
      "triple": "host",
-     "profile": "full_native",
+     "profile": "host_full",
      "sha256": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
      "elf_machine": 0,
      "elf_class": 0,
      "elf_big_endian": false,
-     "contract_digest": "27f98c5751f726bb0a277763e3b5e10d4921ba996ccb72341b53710407b812f9"
+     "contract_digest": "11d928eda2b6d468410f30c5bc3e534269a5a9c1bcb17da4c68fb490c3ef2508"
     }
    ],
    "require_all": false,

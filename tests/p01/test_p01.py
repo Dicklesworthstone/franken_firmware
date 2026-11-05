@@ -18,6 +18,7 @@ sys.path.insert(0, HERE)
 
 import facts  # noqa: E402
 import fixtures  # noqa: E402
+import metadata_check  # noqa: E402
 import pipeline  # noqa: E402
 import plan  # noqa: E402
 import reference as ref  # noqa: E402
@@ -330,6 +331,80 @@ class PipelineTests(unittest.TestCase):
             plan.plan_steps = original
         self.assertEqual(code, 1)
         self.assertFalse(os.path.exists(tempfile.gettempdir() + "/p01-never-written"))
+
+
+class MetadataTests(unittest.TestCase):
+    PK = ["franken-speaker", "franken-hal", "franken-test-support"]
+
+    def doc(self, deps):
+        return metadata_check.build_metadata({"packages": self.PK, "deps": deps})
+
+    def test_dev_edges_are_not_part_of_the_normal_closure(self):
+        meta = self.doc({"franken-speaker": [["franken-hal", "normal"], ["franken-test-support", "dev"]]})
+        self.assertEqual(metadata_check.normal_closure(meta, "franken-speaker"), {"franken-speaker", "franken-hal"})
+
+    def test_a_build_dependency_is_not_a_normal_edge_either(self):
+        meta = self.doc({"franken-speaker": [["franken-test-support", "build"]]})
+        self.assertEqual(metadata_check.normal_closure(meta, "franken-speaker"), {"franken-speaker"})
+
+    def test_the_closure_follows_transitive_normal_edges(self):
+        meta = self.doc({"franken-speaker": [["franken-hal", "normal"]], "franken-hal": [["franken-test-support", "normal"]]})
+        self.assertIn("franken-test-support", metadata_check.normal_closure(meta, "franken-speaker"))
+
+    def test_a_malformed_document_raises_rather_than_passing(self):
+        with self.assertRaises(metadata_check.MetadataError):
+            metadata_check.normal_closure({"packages": []}, "franken-speaker")
+        with self.assertRaises(metadata_check.MetadataError):
+            metadata_check.normal_closure(self.doc({}), "franken-nonexistent")
+
+    def test_check_metadata_cli_exits_by_verdict(self):
+        good_default = self.doc({"franken-speaker": [["franken-hal", "normal"]]})
+        good_harness = self.doc({"franken-speaker": [["franken-hal", "normal"], ["franken-test-support", "normal"]]})
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = {}
+            for name, doc in (("d", good_default), ("h", good_harness), ("bad", good_harness)):
+                paths[name] = os.path.join(tmp, name + ".json")
+                with open(paths[name], "w") as f:
+                    json.dump(doc, f)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(pipeline.main(["check-metadata", "--default", paths["d"], "--harness", paths["h"]]), 0)
+                self.assertEqual(pipeline.main(["check-metadata", "--default", paths["bad"], "--harness", paths["h"]]), 1)
+            self.assertIn("metadata_default_has_edge", out.getvalue())
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(pipeline.main(["check-metadata", "--default", os.path.join(tmp, "missing.json"),
+                                                "--harness", paths["h"]]), 2)
+
+
+class ResolveTests(unittest.TestCase):
+    def facts_for(self, ops):
+        spec = ref.apply_ops(fixtures.base_spec(), ops)
+        with tempfile.TemporaryDirectory() as tmp:
+            fixtures.materialize(tmp, spec)
+            return facts.extract(tmp)
+
+    def test_weak_features_apply_only_to_an_already_active_dependency(self):
+        data = {"members": [
+            {"name": "x", "deps": {"normal": ["y"], "optional": []}, "feature_table": {"f": ["y?/g"]}},
+            {"name": "y", "deps": {"normal": [], "optional": ["z"]}, "feature_table": {"g": ["dep:z"]}},
+            {"name": "z", "deps": {"normal": [], "optional": []}, "feature_table": {}}]}
+        self.assertEqual(facts.resolve_normal_closure(data, "x", ["f"]), {"x", "y", "z"})
+        self.assertEqual(facts.resolve_normal_closure(data, "x"), {"x", "y"})
+
+    def test_a_feature_implied_by_another_enables_its_dependency(self):
+        data = {"members": [
+            {"name": "x", "deps": {"normal": [], "optional": ["y"]}, "feature_table": {"a": ["b"], "b": ["dep:y"]}},
+            {"name": "y", "deps": {"normal": [], "optional": []}, "feature_table": {}}]}
+        self.assertEqual(facts.resolve_normal_closure(data, "x", ["a"]), {"x", "y"})
+        self.assertEqual(facts.resolve_normal_closure(data, "x"), {"x"})
+
+    def test_an_unknown_start_crate_resolves_to_nothing(self):
+        self.assertEqual(facts.resolve_normal_closure({"members": []}, "nope"), set())
+
+    def test_the_real_speaker_default_build_has_no_test_support_edge(self):
+        data = facts.extract(run_cases.REPO)
+        self.assertNotIn("franken-test-support", facts.resolve_normal_closure(data, "franken-speaker"))
+        self.assertIn("franken-test-support", facts.resolve_normal_closure(data, "franken-speaker", ["harness"]))
 
 
 if __name__ == "__main__":

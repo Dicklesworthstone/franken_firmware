@@ -208,8 +208,11 @@ def suite_cases(suite: str, env=None) -> list[Case]:
                   ["clippy", "--workspace", "--all-targets", *no_incremental, "--", "-D", "warnings"]),
             cross_check("p01_workspace_cross_check_ppc_be", "powerpc-unknown-linux-musl", extra=["--workspace"]),
             cross_check("p01_workspace_cross_check_mips_be", "mips-unknown-linux-musl", extra=["--workspace"]),
+            # The Virtual House harness is behind the off-by-default `harness` feature (it links test-support, which a
+            # default speaker build must not). Without the feature this command exits 2 by design.
             cargo("p01_virtual_house_e2e", None,
-                  ["run", "-p", "franken-speaker", *no_incremental, "--", "--self-test", "--virtual-house"]),
+                  ["run", "-p", "franken-speaker", "--features", "harness", *no_incremental,
+                   "--", "--self-test", "--virtual-house"]),
         ],
         "p05": [
             cargo_test("p05_platform_portable_atomic_tests", "-p", "franken-platform"),

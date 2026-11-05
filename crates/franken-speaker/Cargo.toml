@@ -11,7 +11,10 @@ workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-franken-test-support.workspace = true
+# Test-only: the Virtual House harness links the test-support oracles and fixtures. It is optional and off by
+# default, so a default (device) build has no dependency edge onto franken-test-support. The P01 workspace
+# contract (virtual_house_harness, cargo_feature = "harness") records and checks this.
+franken-test-support = { workspace = true, optional = true }
 franken-board-profile.workspace = true
 franken-platform.workspace = true
 franken-hal.workspace = true
@@ -20,3 +23,11 @@ franken-clock.workspace = true
 franken-stream.workspace = true
 franken-session.workspace = true
 franken-control.workspace = true
+
+[dev-dependencies]
+franken-test-support.workspace = true
+
+[features]
+default = []
+# The Virtual House harness (`--virtual-house`, `--self-test`). Never part of a device image.
+harness = ["dep:franken-test-support"]

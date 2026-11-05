@@ -4,6 +4,7 @@
     pipeline.py print-plan [--cwd DIR] [--target-dir DIR]
     pipeline.py collect    --target-dir DIR [--receipts DIR]
     pipeline.py execute    [--cwd DIR] [--target-dir DIR] [--receipts DIR] [--timeout SECONDS]
+    pipeline.py check-metadata --default FILE --harness FILE
 
 print-plan   Print the central command plan as JSON and check it against the plan rules. Runs nothing.
 collect      Read the artifacts a central build already produced under --target-dir, extract their identity from
@@ -12,6 +13,10 @@ collect      Read the artifacts a central build already produced under --target-
 execute      Run the plan: every step is `RCH_REQUIRE_REMOTE=1 rch exec -- ...`; there is no local-cargo path and
              no bypass. Then collect and verify. A step that outlives --timeout is NOT killed (killing the local rch
              client would orphan or cancel the remote job); it is recorded as failed with its pid and left running.
+
+check-metadata  Read two `cargo metadata --format-version 1` documents produced centrally (default features, and
+             `--features franken-speaker/harness`) and check the gate from their resolve graphs: no normal edge onto
+             `franken-test-support` by default, and exactly that edge added with the harness. Runs no cargo.
 
 Exit codes: 0 receipt complete; 1 a step or an identity check failed; 3 collect found only some artifacts
 (incomplete, never reported as complete); 130 cancelled (a partial receipt is left); 2 usage error.
@@ -33,6 +38,7 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 
 import facts as facts_mod  # noqa: E402
+import metadata_check  # noqa: E402
 import plan as plan_mod  # noqa: E402
 import reference as ref  # noqa: E402
 
@@ -143,6 +149,18 @@ def cmd_execute(args) -> int:
     return code
 
 
+def cmd_check_metadata(args) -> int:
+    try:
+        pairs = metadata_check.check(metadata_check.load(args.default), metadata_check.load(args.harness))
+    except (OSError, ValueError) as err:
+        print(f"cannot read the metadata documents: {err}", file=sys.stderr)
+        return 2
+    for code, subject in pairs:
+        print(f"{code} [{subject}]")
+    print("check-metadata: " + ("the gate holds in both resolve graphs" if not pairs else f"{len(pairs)} violation(s)"))
+    return 1 if pairs else 0
+
+
 def main(argv: List[str]) -> int:
     ap = argparse.ArgumentParser(description="P01 build-identity pipeline", epilog=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -156,9 +174,13 @@ def main(argv: List[str]) -> int:
             p.add_argument("--receipts")
         if name == "execute":
             p.add_argument("--timeout", type=float, default=7200.0)
+    meta = sub.add_parser("check-metadata")
+    meta.add_argument("--default", required=True)
+    meta.add_argument("--harness", required=True)
     args = ap.parse_args(argv)
     try:
-        return {"print-plan": cmd_print_plan, "collect": cmd_collect, "execute": cmd_execute}[args.command](args)
+        return {"print-plan": cmd_print_plan, "collect": cmd_collect, "execute": cmd_execute,
+                "check-metadata": cmd_check_metadata}[args.command](args)
     except KeyboardInterrupt:
         return 130
 

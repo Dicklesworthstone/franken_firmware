@@ -48,7 +48,9 @@ CONTRACT_SPEC = ("obj", {
         "strip": "str"})),
     "crates": ("list", ("obj", {
         "name": "str", "path": "str", "owner": "str", "role": ("enum", "role"), "layer": "u32",
-        "unsafe_policy": ("enum", "unsafe"), "deps": ("list", "str"), "dev_deps": ("list", "str")})),
+        "unsafe_policy": ("enum", "unsafe"), "deps": ("list", "str"),
+        "optional_deps": ("list", ("obj", {"dep": "str", "feature": "str"})),
+        "dev_deps": ("list", "str")})),
     "excluded": ("list", ("obj", {
         "name": "str", "path": "str", "owner": "str", "reason": "str",
         "unsafe_policy": ("enum", "unsafe"), "targets": ("list", ("enum", "target"))})),
@@ -230,7 +232,8 @@ def validate(doc: Dict[str, Any]) -> List[Pair]:
     normal: Graph = {c["name"]: set() for c in doc["crates"]}
     union: Graph = {c["name"]: set() for c in doc["crates"]}
     for c in doc["crates"]:
-        for dep, is_dev in [(d, False) for d in c["deps"]] + [(d, True) for d in c["dev_deps"]]:
+        for dep, is_dev in ([(d, False) for d in c["deps"]] + [(o["dep"], False) for o in c["optional_deps"]]
+                            + [(d, True) for d in c["dev_deps"]]):
             edge = f"{c['name']}->{dep}"
             if dep == c["name"]:
                 errs.add(("self_dependency", c["name"]))
@@ -303,6 +306,19 @@ def validate(doc: Dict[str, Any]) -> List[Pair]:
                 errs.add(("core_feature_requires_native", edge))
     for comp in cycles(fgraph):
         errs.add(("feature_cycle", ",".join(comp)))
+
+    # --- an optional dependency is gated by a feature with a real Cargo flag that its own crate owns
+    for c in doc["crates"]:
+        for opt in c["optional_deps"]:
+            subject = f"{c['name']}->{opt['dep']}"
+            gate = features.get(opt["feature"])
+            if gate is None:
+                errs.add(("unknown_feature", subject))
+                continue
+            if gate["cargo_feature"] == "":
+                errs.add(("optional_dep_without_flag", subject))
+            if gate["owner_crate"] != c["name"]:
+                errs.add(("optional_dep_wrong_owner", subject))
 
     # --- build profiles select features
     for p in doc["profiles"]:
@@ -384,12 +400,13 @@ def validate(doc: Dict[str, Any]) -> List[Pair]:
     for art in doc["artifacts"]:
         if not TARGETS[art["target"]][3] or art["crate"] not in members:
             continue
-        reach = closure(normal, art["crate"])
+        active = active_graph(doc, art, members)
+        reach = closure(active, art["crate"])
         for member in reach:
             spec = members[member]
             subject = f"{art['id']}:{member}"
             if spec["role"] == "test_support":
-                covered = any(e["to"] == member and e["from"] in reach and member in normal.get(e["from"], ())
+                covered = any(e["to"] == member and e["from"] in reach and member in active.get(e["from"], ())
                               for e in doc["test_support_exceptions"])
                 if not covered:
                     errs.add(("test_support_in_device_closure", subject))
@@ -398,6 +415,22 @@ def validate(doc: Dict[str, Any]) -> List[Pair]:
             if spec["unsafe_policy"] == "deny_with_scoped_allow":
                 errs.add(("unsafe_in_device_closure", subject))
     return sorted(errs)
+
+
+def active_graph(doc: Dict[str, Any], art: Dict[str, Any], members: Dict[str, Any]) -> Graph:
+    """The normal edges live in one artifact's build: every plain dependency, and an optional one only when the
+    artifact's profile enables the feature that activates it."""
+    profile = next((p for p in doc["profiles"] if p["name"] == art["profile"]), None)
+    enabled = {s["feature"] for s in profile["features"] if s["state"] == "enabled"} if profile else set()
+    graph: Graph = {c["name"]: set() for c in doc["crates"]}
+    for c in doc["crates"]:
+        for dep in c["deps"]:
+            if dep != c["name"] and dep in members:
+                graph[c["name"]].add(dep)
+        for opt in c["optional_deps"]:
+            if opt["dep"] != c["name"] and opt["dep"] in members and opt["feature"] in enabled:
+                graph[c["name"]].add(opt["dep"])
+    return graph
 
 
 def codes(pairs: Iterable[Pair]) -> List[str]:

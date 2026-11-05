@@ -37,6 +37,7 @@ sys.path.insert(0, HERE)
 
 import facts as facts_mod  # noqa: E402
 import fixtures  # noqa: E402
+import metadata_check  # noqa: E402
 import plan as plan_mod  # noqa: E402
 import reference as ref  # noqa: E402
 
@@ -190,6 +191,63 @@ def run_drift_planted(c) -> Result:
         fixtures.materialize(tmp, spec2)
         pairs = facts_mod.compare(mini2, facts_mod.extract(tmp), root=tmp)
     got = facts_mod.codes(pairs)
+    if got != c["expect_codes"]:
+        raise CaseError(f"codes {got}, want {c['expect_codes']}")
+    subs = ref.subjects(pairs)
+    for code, want in c.get("expect_subjects", {}).items():
+        if subs.get(code) != sorted(want):
+            raise CaseError(f"subjects of {code}: {subs.get(code)}, want {sorted(want)}")
+    return PASS, ""
+
+
+def run_static_resolve(c) -> Result:
+    """The gate is a real switch: from the manifests alone, a default speaker build has no edge onto the test-only crate
+    and a `harness` build has exactly that one more. Then, per artifact, the contract's own idea of the closure must
+    equal the manifests' closure for the Cargo flags that artifact's profile turns on."""
+    doc = contract()
+    data = facts_mod.extract(REPO)
+    members = {x["name"]: x for x in doc["crates"]}
+    default = facts_mod.resolve_normal_closure(data, "franken-speaker")
+    harness = facts_mod.resolve_normal_closure(data, "franken-speaker", ["harness"])
+    if "franken-test-support" in default:
+        raise CaseError("a default franken-speaker build still has franken-test-support in its normal closure")
+    if harness - default != {"franken-test-support"} or default - harness:
+        raise CaseError(f"harness adds {sorted(harness - default)} and drops {sorted(default - harness)}; "
+                        "expected exactly franken-test-support added")
+    for art in doc["artifacts"]:
+        if art["crate"] not in members:
+            continue
+        profile = next(p for p in doc["profiles"] if p["name"] == art["profile"])
+        enabled = {sel["feature"] for sel in profile["features"] if sel["state"] == "enabled"}
+        flags = sorted(f["cargo_feature"] for f in doc["features"]
+                       if f["cargo_feature"] and f["owner_crate"] == art["crate"] and f["name"] in enabled)
+        from_manifests = facts_mod.resolve_normal_closure(data, art["crate"], flags)
+        from_contract = ref.closure(ref.active_graph(doc, art, members), art["crate"])
+        if from_manifests != from_contract:
+            raise CaseError(f"{art['id']}: manifests give {sorted(from_manifests)}, "
+                            f"the contract gives {sorted(from_contract)}")
+    return PASS, f"default closure {len(default)} crates, harness closure {len(harness)}"
+
+
+def run_resolve_planted(c) -> Result:
+    spec = ref.apply_ops(fixtures.base_spec(), c.get("spec_ops", []))
+    with tempfile.TemporaryDirectory() as tmp:
+        fixtures.materialize(tmp, spec)
+        data = facts_mod.extract(tmp)
+    for label, args in (("default", {}), ("no_default", {"default_features": False}), ("gate", {"features": ["gate"]})):
+        if label not in c["expect"]:
+            continue
+        got = sorted(facts_mod.resolve_normal_closure(data, "b", **args))
+        if got != c["expect"][label]:
+            raise CaseError(f"{label}: closure {got}, want {c['expect'][label]}")
+    return PASS, ""
+
+
+def run_metadata(c) -> Result:
+    def load(key):
+        return c[key + "_raw"] if (key + "_raw") in c else metadata_check.build_metadata(c[key])
+    pairs = metadata_check.check(load("default"), load("harness"))
+    got = metadata_check.codes(pairs)
     if got != c["expect_codes"]:
         raise CaseError(f"codes {got}, want {c['expect_codes']}")
     subs = ref.subjects(pairs)
@@ -608,7 +666,8 @@ def run_blocked(c) -> Result:
 
 HANDLERS: Dict[str, Callable[[Dict[str, Any]], Result]] = {
     "vector": run_vector, "contract_valid": run_contract_valid, "drift_real": run_drift_real,
-    "facts_cwd": run_facts_cwd, "drift_planted": run_drift_planted, "plan_exact": run_plan_exact,
+    "facts_cwd": run_facts_cwd, "drift_planted": run_drift_planted, "static_resolve": run_static_resolve,
+    "resolve_planted": run_resolve_planted, "metadata": run_metadata, "plan_exact": run_plan_exact,
     "plan_rules": run_plan_rules, "plan_sharing": run_plan_sharing, "receipt": run_receipt,
     "receipt_tamper": run_receipt_tamper, "meta_invariants": run_meta_invariants, "meta_codes": run_meta_codes,
     "meta_hygiene": run_meta_hygiene, "meta_vectors_current": run_meta_vectors_current,

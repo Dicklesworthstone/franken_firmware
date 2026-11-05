@@ -3,13 +3,20 @@
 #![forbid(unsafe_code)]
 
 use franken_board_profile::canonical_board_catalog;
+#[cfg(feature = "harness")]
 use franken_speaker::run_virtual_house_campaign;
 use std::env;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
-    let mode = args.get(1).map(String::as_str).unwrap_or("--virtual-house");
+    // The harness is a test tool: only a build with the `harness` feature runs it by default.
+    let default_mode = if cfg!(feature = "harness") {
+        "--virtual-house"
+    } else {
+        "--catalog"
+    };
+    let mode = args.get(1).map(String::as_str).unwrap_or(default_mode);
 
     match mode {
         "--catalog" => {
@@ -25,6 +32,7 @@ fn main() -> ExitCode {
                 }
             }
         }
+        #[cfg(feature = "harness")]
         "--virtual-house" | "--self-test" => match run_virtual_house_campaign(0x2026_1104, 250) {
             Ok(report) => {
                 println!(
@@ -45,9 +53,17 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        #[cfg(not(feature = "harness"))]
+        "--virtual-house" | "--self-test" => {
+            eprintln!(
+                "this build has no Virtual House harness; rebuild with `--features harness` to run {mode}"
+            );
+            ExitCode::from(2)
+        }
         other => {
             eprintln!(
-                "Usage: franken-speaker [--virtual-house|--self-test|--catalog] (got {other})"
+                "Usage: franken-speaker [--catalog|--virtual-house|--self-test] (got {other}); \
+                 --virtual-house and --self-test need a build with `--features harness`"
             );
             ExitCode::from(2)
         }

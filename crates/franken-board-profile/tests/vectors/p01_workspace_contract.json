@@ -27,6 +27,7 @@
       "layer": 1,
       "unsafe_policy": "forbid",
       "deps": [],
+      "optional_deps": [],
       "dev_deps": []
     },
     {
@@ -37,6 +38,7 @@
       "layer": 2,
       "unsafe_policy": "forbid",
       "deps": [],
+      "optional_deps": [],
       "dev_deps": [
         "franken-test-support"
       ]
@@ -51,6 +53,7 @@
       "deps": [
         "franken-board-profile"
       ],
+      "optional_deps": [],
       "dev_deps": [
         "franken-test-support"
       ]
@@ -65,6 +68,7 @@
       "deps": [
         "franken-board-profile"
       ],
+      "optional_deps": [],
       "dev_deps": [
         "franken-test-support"
       ]
@@ -79,6 +83,7 @@
       "deps": [
         "franken-board-profile"
       ],
+      "optional_deps": [],
       "dev_deps": [
         "franken-test-support"
       ]
@@ -93,9 +98,9 @@
       "deps": [
         "franken-board-profile"
       ],
+      "optional_deps": [],
       "dev_deps": [
-        "franken-test-support",
-        "franken-dsp"
+        "franken-test-support"
       ]
     },
     {
@@ -108,6 +113,7 @@
       "deps": [
         "franken-dsp"
       ],
+      "optional_deps": [],
       "dev_deps": [
         "franken-test-support"
       ]
@@ -122,6 +128,7 @@
       "deps": [
         "franken-board-profile"
       ],
+      "optional_deps": [],
       "dev_deps": [
         "franken-test-support"
       ]
@@ -137,6 +144,7 @@
         "franken-session",
         "franken-clock"
       ],
+      "optional_deps": [],
       "dev_deps": [
         "franken-test-support",
         "franken-board-profile"
@@ -150,7 +158,6 @@
       "layer": 10,
       "unsafe_policy": "forbid",
       "deps": [
-        "franken-test-support",
         "franken-board-profile",
         "franken-platform",
         "franken-hal",
@@ -160,7 +167,15 @@
         "franken-session",
         "franken-control"
       ],
-      "dev_deps": []
+      "optional_deps": [
+        {
+          "dep": "franken-test-support",
+          "feature": "virtual_house_harness"
+        }
+      ],
+      "dev_deps": [
+        "franken-test-support"
+      ]
     },
     {
       "name": "franken-alloc-probe",
@@ -170,7 +185,9 @@
       "layer": 11,
       "unsafe_policy": "deny_with_scoped_allow",
       "deps": [],
+      "optional_deps": [],
       "dev_deps": [
+        "franken-board-profile",
         "franken-dsp"
       ]
     },
@@ -182,6 +199,7 @@
       "layer": 12,
       "unsafe_policy": "forbid",
       "deps": [],
+      "optional_deps": [],
       "dev_deps": []
     }
   ],
@@ -374,15 +392,24 @@
       "path": "crates/franken-stream/tests/vectors",
       "owner": "N01",
       "kind": "fixture"
-    }
-  ],
-  "test_support_exceptions": [
+    },
     {
-      "from": "franken-speaker",
-      "to": "franken-test-support",
-      "reason": "The speaker's --self-test and --virtual-house harness links the test-support oracles unconditionally; it is not yet behind a Cargo feature, so a device image carries test-only code. Counted here until virtual_house_harness is gated by cargo_feature."
+      "path": "tests/d02",
+      "owner": "D02",
+      "kind": "fixture"
+    },
+    {
+      "path": "tests/n02",
+      "owner": "N02",
+      "kind": "fixture"
+    },
+    {
+      "path": "tests/p04",
+      "owner": "P04",
+      "kind": "fixture"
     }
   ],
+  "test_support_exceptions": [],
   "features": [
     {
       "name": "protected_render",
@@ -477,7 +504,7 @@
       "kind": "core",
       "requirement": "optional",
       "owner_crate": "franken-speaker",
-      "cargo_feature": "",
+      "cargo_feature": "harness",
       "requires": [],
       "accepted_evidence": [
         "host_simulation"
@@ -487,6 +514,54 @@
   "profiles": [
     {
       "name": "full_native",
+      "cargo_profile": "release",
+      "scope": "full_product",
+      "narrow_reason": "",
+      "features": [
+        {
+          "feature": "protected_render",
+          "state": "enabled",
+          "disabled_reason": ""
+        },
+        {
+          "feature": "synchronized_groups",
+          "state": "enabled",
+          "disabled_reason": ""
+        },
+        {
+          "feature": "spotify_connect",
+          "state": "enabled",
+          "disabled_reason": ""
+        },
+        {
+          "feature": "airplay2",
+          "state": "enabled",
+          "disabled_reason": ""
+        },
+        {
+          "feature": "tailnet_native",
+          "state": "enabled",
+          "disabled_reason": ""
+        },
+        {
+          "feature": "alexa_bridge",
+          "state": "enabled",
+          "disabled_reason": ""
+        },
+        {
+          "feature": "artwork",
+          "state": "enabled",
+          "disabled_reason": ""
+        },
+        {
+          "feature": "virtual_house_harness",
+          "state": "disabled",
+          "disabled_reason": "Host-only test harness: it links franken-test-support, so a device image must not enable it."
+        }
+      ]
+    },
+    {
+      "name": "host_full",
       "cargo_profile": "release",
       "scope": "full_product",
       "narrow_reason": "",
@@ -576,8 +651,8 @@
         },
         {
           "feature": "virtual_house_harness",
-          "state": "enabled",
-          "disabled_reason": ""
+          "state": "disabled",
+          "disabled_reason": "Host-only test harness: it links franken-test-support, so a device image must not enable it."
         }
       ]
     },
@@ -628,7 +703,7 @@
       "target": "host",
       "triple": "host",
       "isa": "",
-      "profile": "full_native",
+      "profile": "host_full",
       "runs_on": [
         "host"
       ],

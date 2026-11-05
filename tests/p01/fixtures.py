@@ -12,8 +12,9 @@ from typing import Any, Dict
 
 BASE_SPEC: Dict[str, Any] = {
     "members": {
-        "a": {"deps": [], "dev": [], "lints": "workspace", "features": [], "bin": False},
-        "b": {"deps": ["a"], "dev": [], "lints": "workspace", "features": ["gate"], "bin": True},
+        "a": {"deps": [], "optional": [], "dev": [], "lints": "workspace", "features": [], "bin": False},
+        "b": {"deps": ["a"], "optional": [], "dev": [], "lints": "workspace", "features": ["gate"], "bin": True,
+              "default": []},
     },
     "extra_dirs": [],          # crates/<name> directories that are not workspace members
     "exclude": [],             # excluded crate directories (relative)
@@ -57,10 +58,17 @@ def materialize(root: str, spec: Dict[str, Any]) -> None:
             lines += ["[lints.rust]", f'unsafe_code = "{rec["lints"]}"', ""]
         lines.append("[dependencies]")
         lines += [f"{d}.workspace = true" for d in rec["deps"]]
+        lines += [f"{dep} = {{ workspace = true, optional = true }}" for dep, _flag in rec.get("optional", [])]
         lines += ["", "[dev-dependencies]"]
         lines += [f"{d}.workspace = true" for d in rec["dev"]]
-        if rec["features"]:
-            lines += ["", "[features]"] + [f"{f} = []" for f in rec["features"]]
+        table = {f: [] for f in rec["features"]}
+        for dep, flag in rec.get("optional", []):
+            table.setdefault(flag, []).append(f"dep:{dep}")
+        if rec.get("default"):
+            table["default"] = list(rec["default"])
+        if table:
+            lines += ["", "[features]"] + [
+                f"{f} = [" + ", ".join(f'"{x}"' for x in entries) + "]" for f, entries in table.items()]
         if spec["member_profile_table"] and name == "b":
             lines += ["", "[profile.release]", 'opt-level = 3']
         _write(os.path.join(root, "crates", name, "Cargo.toml"), "\n".join(lines) + "\n")
@@ -90,7 +98,9 @@ def mini_contract(spec: Dict[str, Any]) -> Dict[str, Any]:
     for layer, (name, rec) in enumerate(spec["members"].items(), start=1):
         crates.append({"name": name, "path": f"crates/{name}", "owner": f"T{layer}", "role": "library",
                        "layer": layer, "unsafe_policy": "forbid" if rec["lints"] == "workspace" else "deny_with_scoped_allow",
-                       "deps": list(rec["deps"]), "dev_deps": list(rec["dev"])})
+                       "deps": list(rec["deps"]),
+                       "optional_deps": [{"dep": dep, "feature": "f"} for dep, _flag in rec.get("optional", [])],
+                       "dev_deps": list(rec["dev"])})
     assets = [{"path": f"crates/{n}", "owner": f"T{i}", "kind": "crate"}
               for i, n in enumerate(spec["members"], start=1)]
     assets += [{"path": f"tests/{t}", "owner": "T1", "kind": "fixture"} for t in spec["tests"]]

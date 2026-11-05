@@ -27,6 +27,9 @@
 //!   and a core feature may not depend on a native service.
 //! - **The crate graph is a layered DAG** with one owner per crate, interface and fixture, and no
 //!   test-only crate in a device artifact's dependency closure unless a counted exception names it.
+//!   A dependency that Cargo makes optional is modelled as such: it is part of an artifact's closure only
+//!   when that artifact's profile enables the feature that activates it, and that feature must have a real
+//!   Cargo flag owned by the same crate.
 //!
 //! Host checks here are offline and do not prove device operation. Whether the declared contract
 //! matches the actual manifests is checked by `tests/p01` against `Cargo.toml` and `Cargo.lock`.
@@ -90,6 +93,8 @@ pub mod code {
     pub const TEST_SUPPORT_IN_DEVICE_CLOSURE: &str = "test_support_in_device_closure";
     pub const HOST_TOOL_IN_DEVICE_CLOSURE: &str = "host_tool_in_device_closure";
     pub const UNSAFE_IN_DEVICE_CLOSURE: &str = "unsafe_in_device_closure";
+    pub const OPTIONAL_DEP_WITHOUT_FLAG: &str = "optional_dep_without_flag";
+    pub const OPTIONAL_DEP_WRONG_OWNER: &str = "optional_dep_wrong_owner";
     // Observed-artifact (receipt) codes.
     pub const CONTRACT_DIGEST_MISMATCH: &str = "contract_digest_mismatch";
     pub const UNKNOWN_ARTIFACT: &str = "unknown_artifact";
@@ -234,6 +239,18 @@ pub struct CargoProfileSpec {
     pub strip: String,
 }
 
+/// A normal dependency that exists only when a registry feature is enabled: Cargo's
+/// `dep = { optional = true }` gated by the feature's `cargo_feature` flag. The edge is real, and is checked
+/// like any other normal edge, but it is part of an artifact's dependency closure only when that artifact's
+/// profile enables `feature`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OptionalDep {
+    pub dep: String,
+    /// The registry feature that activates the dependency. Its `cargo_feature` is the Cargo flag.
+    pub feature: String,
+}
+
 /// A workspace member crate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -244,8 +261,10 @@ pub struct CrateSpec {
     pub role: CrateRole,
     pub layer: u32,
     pub unsafe_policy: UnsafePolicy,
-    /// Workspace members this crate depends on in `[dependencies]`.
+    /// Workspace members this crate depends on in `[dependencies]` (not optional).
     pub deps: Vec<String>,
+    /// Workspace members this crate depends on in `[dependencies]` with `optional = true`.
+    pub optional_deps: Vec<OptionalDep>,
     /// Workspace members this crate depends on in `[dev-dependencies]`.
     pub dev_deps: Vec<String>,
 }
@@ -611,15 +630,54 @@ impl WorkspaceContract {
             .collect()
     }
 
-    /// The normal-dependency graph over known, distinct crates.
-    fn normal_graph(&self) -> Graph {
+    /// Every normal edge the manifests can ever produce: `deps` plus `optional_deps`, over known,
+    /// distinct crates.
+    fn declared_graph(&self) -> Graph {
         let idx = self.crate_index();
+        let mut graph: Graph = BTreeMap::new();
+        for spec in &self.crates {
+            let edges = graph.entry(spec.name.clone()).or_default();
+            let optional = spec.optional_deps.iter().map(|opt| &opt.dep);
+            for dep in spec.deps.iter().chain(optional) {
+                if dep != &spec.name && idx.contains_key(dep.as_str()) {
+                    edges.insert(dep.clone());
+                }
+            }
+        }
+        graph
+    }
+
+    /// The normal edges that are live in `art`'s build: every plain dependency, and an optional one only
+    /// when the artifact's profile enables the feature that activates it.
+    fn active_graph(&self, art: &ArtifactSpec) -> Graph {
+        let idx = self.crate_index();
+        let enabled: BTreeSet<&str> = self
+            .profiles
+            .iter()
+            .find(|profile| profile.name == art.profile)
+            .map(|profile| {
+                profile
+                    .features
+                    .iter()
+                    .filter(|selection| selection.state == FeatureState::Enabled)
+                    .map(|selection| selection.feature.as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
         let mut graph: Graph = BTreeMap::new();
         for spec in &self.crates {
             let edges = graph.entry(spec.name.clone()).or_default();
             for dep in &spec.deps {
                 if dep != &spec.name && idx.contains_key(dep.as_str()) {
                     edges.insert(dep.clone());
+                }
+            }
+            for opt in &spec.optional_deps {
+                if opt.dep != spec.name
+                    && idx.contains_key(opt.dep.as_str())
+                    && enabled.contains(opt.feature.as_str())
+                {
+                    edges.insert(opt.dep.clone());
                 }
             }
         }
@@ -645,6 +703,7 @@ impl WorkspaceContract {
         self.check_ownership(&mut errs);
         self.check_unsafe_policy(&mut errs);
         self.check_features(&mut errs);
+        self.check_optional_deps(&mut errs);
         self.check_profiles(&mut errs);
         self.check_artifacts(&mut errs);
         self.check_test_support(&mut errs);
@@ -736,6 +795,11 @@ impl WorkspaceContract {
             spec.deps
                 .iter()
                 .map(move |dep| (spec, dep, false))
+                .chain(
+                    spec.optional_deps
+                        .iter()
+                        .map(move |opt| (spec, &opt.dep, false)),
+                )
                 .chain(spec.dev_deps.iter().map(move |dep| (spec, dep, true)))
         });
         for (spec, dep, is_dev) in edges {
@@ -771,7 +835,7 @@ impl WorkspaceContract {
                 ));
             }
         }
-        let normal = self.normal_graph();
+        let normal = self.declared_graph();
         let normal_cycles = cycles(&normal);
         for component in &normal_cycles {
             errs.push(ContractError::new(
@@ -961,6 +1025,46 @@ impl WorkspaceContract {
                 component.join(","),
                 format!("feature requirement cycle among {}", component.join(", ")),
             ));
+        }
+    }
+
+    /// An optional dependency must be gated by a registry feature that has a real Cargo flag, and that
+    /// flag must belong to the crate that carries the dependency.
+    fn check_optional_deps(&self, errs: &mut Vec<ContractError>) {
+        let features: BTreeMap<&str, &FeatureSpec> = self
+            .features
+            .iter()
+            .map(|spec| (spec.name.as_str(), spec))
+            .collect();
+        for spec in &self.crates {
+            for opt in &spec.optional_deps {
+                let subject = format!("{}->{}", spec.name, opt.dep);
+                let Some(feature) = features.get(opt.feature.as_str()) else {
+                    errs.push(ContractError::new(
+                        code::UNKNOWN_FEATURE,
+                        subject,
+                        format!(
+                            "optional dependency is gated by unknown feature {:?}",
+                            opt.feature
+                        ),
+                    ));
+                    continue;
+                };
+                if feature.cargo_feature.is_empty() {
+                    errs.push(ContractError::new(
+                        code::OPTIONAL_DEP_WITHOUT_FLAG,
+                        subject.clone(),
+                        "the gating feature has no Cargo flag, so the dependency cannot be optional",
+                    ));
+                }
+                if feature.owner_crate != spec.name {
+                    errs.push(ContractError::new(
+                        code::OPTIONAL_DEP_WRONG_OWNER,
+                        subject,
+                        "the Cargo flag belongs to another crate than the one carrying the dependency",
+                    ));
+                }
+            }
         }
     }
 
@@ -1200,10 +1304,10 @@ impl WorkspaceContract {
 
     fn check_test_support(&self, errs: &mut Vec<ContractError>) {
         let idx = self.crate_index();
-        let normal = self.normal_graph();
+        let declared = self.declared_graph();
         for exception in &self.test_support_exceptions {
             let subject = format!("{}->{}", exception.from, exception.to);
-            let is_edge = normal
+            let is_edge = declared
                 .get(&exception.from)
                 .is_some_and(|edges| edges.contains(&exception.to));
             let to_is_test_support = idx
@@ -1213,7 +1317,7 @@ impl WorkspaceContract {
                 errs.push(ContractError::new(
                     code::STALE_EXCEPTION,
                     subject.clone(),
-                    "exception does not match a normal dependency edge onto a test-support crate",
+                    "exception does not match a normal or optional dependency edge onto a test-support crate",
                 ));
             }
             if exception.reason.trim().is_empty() {
@@ -1228,7 +1332,8 @@ impl WorkspaceContract {
             if !art.target.is_device() || !idx.contains_key(art.crate_name.as_str()) {
                 continue;
             }
-            let reach = closure(&normal, &art.crate_name);
+            let active = self.active_graph(art);
+            let reach = closure(&active, &art.crate_name);
             for member in &reach {
                 let Some(spec) = idx.get(member.as_str()) else {
                     continue;
@@ -1238,7 +1343,7 @@ impl WorkspaceContract {
                     let covered = self.test_support_exceptions.iter().any(|exception| {
                         exception.to == *member
                             && reach.contains(&exception.from)
-                            && normal
+                            && active
                                 .get(&exception.from)
                                 .is_some_and(|edges| edges.contains(&exception.to))
                     });

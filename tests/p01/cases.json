@@ -781,6 +781,667 @@
    }
   },
   {
+   "id": "P01-DRIFT-028",
+   "kind": "drift_planted",
+   "title": "permitted positive: an optional dependency declared optional, gated by the declared flag",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "set",
+     "path": "/members/b/deps",
+     "value": []
+    },
+    {
+     "op": "set",
+     "path": "/members/b/optional",
+     "value": [
+      [
+       "a",
+       "gate"
+      ]
+     ]
+    }
+   ],
+   "contract_ops": [
+    {
+     "op": "set",
+     "path": "/crates/name=b/deps",
+     "value": []
+    },
+    {
+     "op": "set",
+     "path": "/crates/name=b/optional_deps",
+     "value": [
+      {
+       "dep": "a",
+       "feature": "f"
+      }
+     ]
+    }
+   ],
+   "expect_codes": []
+  },
+  {
+   "id": "P01-DRIFT-029",
+   "kind": "drift_planted",
+   "title": "a dependency that is optional in the manifest but plain in the contract",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "set",
+     "path": "/members/b/deps",
+     "value": []
+    },
+    {
+     "op": "set",
+     "path": "/members/b/optional",
+     "value": [
+      [
+       "a",
+       "gate"
+      ]
+     ]
+    }
+   ],
+   "contract_ops": [],
+   "expect_codes": [
+    "dep_edge_mismatch"
+   ],
+   "expect_subjects": {
+    "dep_edge_mismatch": [
+     "normal:b->a",
+     "optional:b->a"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-030",
+   "kind": "drift_planted",
+   "title": "a dependency that is plain in the manifest but optional in the contract",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [],
+   "contract_ops": [
+    {
+     "op": "set",
+     "path": "/crates/name=b/deps",
+     "value": []
+    },
+    {
+     "op": "set",
+     "path": "/crates/name=b/optional_deps",
+     "value": [
+      {
+       "dep": "a",
+       "feature": "f"
+      }
+     ]
+    }
+   ],
+   "expect_codes": [
+    "dep_edge_mismatch"
+   ],
+   "expect_subjects": {
+    "dep_edge_mismatch": [
+     "normal:b->a",
+     "optional:b->a"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-031",
+   "kind": "drift_planted",
+   "title": "an optional dependency gated by a different flag than the contract names",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "set",
+     "path": "/members/b/deps",
+     "value": []
+    },
+    {
+     "op": "set",
+     "path": "/members/b/optional",
+     "value": [
+      [
+       "a",
+       "other"
+      ]
+     ]
+    }
+   ],
+   "contract_ops": [
+    {
+     "op": "set",
+     "path": "/crates/name=b/deps",
+     "value": []
+    },
+    {
+     "op": "set",
+     "path": "/crates/name=b/optional_deps",
+     "value": [
+      {
+       "dep": "a",
+       "feature": "f"
+      }
+     ]
+    }
+   ],
+   "expect_codes": [
+    "optional_gate_mismatch"
+   ],
+   "expect_subjects": {
+    "optional_gate_mismatch": [
+     "b->a"
+    ]
+   }
+  },
+  {
+   "id": "P01-CON-004",
+   "kind": "static_resolve",
+   "title": "from the manifests alone: a default speaker build has no test-support edge, a harness build has exactly that one more, and the contract's closure equals the manifests' for every artifact",
+   "tiers": [
+    "smoke",
+    "full"
+   ]
+  },
+  {
+   "id": "P01-RESOLVE-001",
+   "kind": "resolve_planted",
+   "title": "a plain dependency is in every build",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [],
+   "expect": {
+    "default": [
+     "a",
+     "b"
+    ],
+    "no_default": [
+     "a",
+     "b"
+    ]
+   }
+  },
+  {
+   "id": "P01-RESOLVE-002",
+   "kind": "resolve_planted",
+   "title": "an optional dependency is out of the default build and in once its flag is on",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "set",
+     "path": "/members/b/deps",
+     "value": []
+    },
+    {
+     "op": "set",
+     "path": "/members/b/optional",
+     "value": [
+      [
+       "a",
+       "gate"
+      ]
+     ]
+    }
+   ],
+   "expect": {
+    "default": [
+     "b"
+    ],
+    "gate": [
+     "a",
+     "b"
+    ]
+   }
+  },
+  {
+   "id": "P01-RESOLVE-003",
+   "kind": "resolve_planted",
+   "title": "a default feature that turns the flag on puts the dependency back in every default build",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "set",
+     "path": "/members/b/deps",
+     "value": []
+    },
+    {
+     "op": "set",
+     "path": "/members/b/optional",
+     "value": [
+      [
+       "a",
+       "gate"
+      ]
+     ]
+    },
+    {
+     "op": "set",
+     "path": "/members/b/default",
+     "value": [
+      "gate"
+     ]
+    }
+   ],
+   "expect": {
+    "default": [
+     "a",
+     "b"
+    ],
+    "no_default": [
+     "b"
+    ]
+   }
+  },
+  {
+   "id": "P01-MD-001",
+   "kind": "metadata",
+   "title": "permitted positive: no test-support edge by default, the edge with the harness",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "default": {
+    "packages": [
+     "franken-speaker",
+     "franken-hal",
+     "franken-control",
+     "franken-test-support"
+    ],
+    "deps": {
+     "franken-speaker": [
+      [
+       "franken-hal",
+       "normal"
+      ],
+      [
+       "franken-control",
+       "normal"
+      ]
+     ]
+    }
+   },
+   "harness": {
+    "packages": [
+     "franken-speaker",
+     "franken-hal",
+     "franken-control",
+     "franken-test-support"
+    ],
+    "deps": {
+     "franken-speaker": [
+      [
+       "franken-hal",
+       "normal"
+      ],
+      [
+       "franken-control",
+       "normal"
+      ],
+      [
+       "franken-test-support",
+       "normal"
+      ]
+     ]
+    }
+   },
+   "expect_codes": []
+  },
+  {
+   "id": "P01-MD-002",
+   "kind": "metadata",
+   "title": "a default resolve that has the normal edge is refused",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "default": {
+    "packages": [
+     "franken-speaker",
+     "franken-hal",
+     "franken-control",
+     "franken-test-support"
+    ],
+    "deps": {
+     "franken-speaker": [
+      [
+       "franken-hal",
+       "normal"
+      ],
+      [
+       "franken-control",
+       "normal"
+      ],
+      [
+       "franken-test-support",
+       "normal"
+      ]
+     ]
+    }
+   },
+   "harness": {
+    "packages": [
+     "franken-speaker",
+     "franken-hal",
+     "franken-control",
+     "franken-test-support"
+    ],
+    "deps": {
+     "franken-speaker": [
+      [
+       "franken-hal",
+       "normal"
+      ],
+      [
+       "franken-control",
+       "normal"
+      ],
+      [
+       "franken-test-support",
+       "normal"
+      ]
+     ]
+    }
+   },
+   "expect_codes": [
+    "metadata_default_has_edge"
+   ],
+   "expect_subjects": {
+    "metadata_default_has_edge": [
+     "franken-speaker->franken-test-support"
+    ]
+   }
+  },
+  {
+   "id": "P01-MD-003",
+   "kind": "metadata",
+   "title": "permitted positive: a dev-dependency edge is not part of a build",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "default": {
+    "packages": [
+     "franken-speaker",
+     "franken-hal",
+     "franken-control",
+     "franken-test-support"
+    ],
+    "deps": {
+     "franken-speaker": [
+      [
+       "franken-hal",
+       "normal"
+      ],
+      [
+       "franken-control",
+       "normal"
+      ],
+      [
+       "franken-test-support",
+       "dev"
+      ]
+     ]
+    }
+   },
+   "harness": {
+    "packages": [
+     "franken-speaker",
+     "franken-hal",
+     "franken-control",
+     "franken-test-support"
+    ],
+    "deps": {
+     "franken-speaker": [
+      [
+       "franken-hal",
+       "normal"
+      ],
+      [
+       "franken-control",
+       "normal"
+      ],
+      [
+       "franken-test-support",
+       "normal"
+      ]
+     ]
+    }
+   },
+   "expect_codes": []
+  },
+  {
+   "id": "P01-MD-004",
+   "kind": "metadata",
+   "title": "a harness resolve without the edge means the gate is not a switch",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "default": {
+    "packages": [
+     "franken-speaker",
+     "franken-hal",
+     "franken-control",
+     "franken-test-support"
+    ],
+    "deps": {
+     "franken-speaker": [
+      [
+       "franken-hal",
+       "normal"
+      ],
+      [
+       "franken-control",
+       "normal"
+      ]
+     ]
+    }
+   },
+   "harness": {
+    "packages": [
+     "franken-speaker",
+     "franken-hal",
+     "franken-control",
+     "franken-test-support"
+    ],
+    "deps": {
+     "franken-speaker": [
+      [
+       "franken-hal",
+       "normal"
+      ],
+      [
+       "franken-control",
+       "normal"
+      ]
+     ]
+    }
+   },
+   "expect_codes": [
+    "metadata_harness_missing_edge"
+   ]
+  },
+  {
+   "id": "P01-MD-005",
+   "kind": "metadata",
+   "title": "a test-only crate reached through another normal dependency is still in the closure",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "default": {
+    "packages": [
+     "franken-speaker",
+     "franken-hal",
+     "franken-control",
+     "franken-test-support"
+    ],
+    "deps": {
+     "franken-speaker": [
+      [
+       "franken-hal",
+       "normal"
+      ],
+      [
+       "franken-control",
+       "normal"
+      ]
+     ],
+     "franken-control": [
+      [
+       "franken-test-support",
+       "normal"
+      ]
+     ]
+    }
+   },
+   "harness": {
+    "packages": [
+     "franken-speaker",
+     "franken-hal",
+     "franken-control",
+     "franken-test-support"
+    ],
+    "deps": {
+     "franken-speaker": [
+      [
+       "franken-hal",
+       "normal"
+      ],
+      [
+       "franken-control",
+       "normal"
+      ],
+      [
+       "franken-test-support",
+       "normal"
+      ]
+     ]
+    }
+   },
+   "expect_codes": [
+    "metadata_default_has_edge"
+   ]
+  },
+  {
+   "id": "P01-MD-006",
+   "kind": "metadata",
+   "title": "a harness resolve that drops a dependency the default had is refused",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "default": {
+    "packages": [
+     "franken-speaker",
+     "franken-hal",
+     "franken-control",
+     "franken-test-support"
+    ],
+    "deps": {
+     "franken-speaker": [
+      [
+       "franken-hal",
+       "normal"
+      ],
+      [
+       "franken-control",
+       "normal"
+      ]
+     ]
+    }
+   },
+   "harness": {
+    "packages": [
+     "franken-speaker",
+     "franken-hal",
+     "franken-control",
+     "franken-test-support"
+    ],
+    "deps": {
+     "franken-speaker": [
+      [
+       "franken-hal",
+       "normal"
+      ],
+      [
+       "franken-test-support",
+       "normal"
+      ]
+     ]
+    }
+   },
+   "expect_codes": [
+    "metadata_harness_dropped_dependency"
+   ],
+   "expect_subjects": {
+    "metadata_harness_dropped_dependency": [
+     "franken-control"
+    ]
+   }
+  },
+  {
+   "id": "P01-MD-007",
+   "kind": "metadata",
+   "title": "a document with no resolve graph is malformed, not a pass",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "default": null,
+   "harness": {
+    "packages": [
+     "franken-speaker",
+     "franken-hal",
+     "franken-control",
+     "franken-test-support"
+    ],
+    "deps": {
+     "franken-speaker": [
+      [
+       "franken-hal",
+       "normal"
+      ],
+      [
+       "franken-control",
+       "normal"
+      ],
+      [
+       "franken-test-support",
+       "normal"
+      ]
+     ]
+    }
+   },
+   "expect_codes": [
+    "metadata_malformed"
+   ],
+   "default_raw": {
+    "packages": []
+   }
+  },
+  {
    "id": "P01-PLAN-001",
    "kind": "plan_exact",
    "title": "the command plan is exactly the hand-written one: remote only, --locked --offline, absolute manifests, no root cwd",
@@ -832,7 +1493,9 @@
      "<ROOT>/crates/franken-speaker/Cargo.toml",
      "--release",
      "-p",
-     "franken-speaker"
+     "franken-speaker",
+     "--features",
+     "franken-speaker/harness"
     ],
     "build-franken-speaker-powerpc_be": [
      "rch",
@@ -1479,6 +2142,21 @@
      "unknown fields tolerated",
      "extra = sorted(set(value) - set(fields))",
      "extra = []"
+    ],
+    [
+     "optional dependency always active",
+     "if opt[\"dep\"] != c[\"name\"] and opt[\"dep\"] in members and opt[\"feature\"] in enabled:",
+     "if opt[\"dep\"] != c[\"name\"] and opt[\"dep\"] in members:"
+    ],
+    [
+     "optional dep without a flag",
+     "errs.add((\"optional_dep_without_flag\", subject))",
+     "pass"
+    ],
+    [
+     "optional dep flag owner",
+     "errs.add((\"optional_dep_wrong_owner\", subject))",
+     "pass"
     ]
    ]
   },
@@ -1527,13 +2205,13 @@
   {
    "id": "P01-BLK-004",
    "kind": "blocked",
-   "title": "a pinned toolchain (rust-toolchain.toml) so rch --clean-overlay resolves the client toolchain",
+   "title": "a pinned stable toolchain so rch --clean-overlay resolves the client toolchain",
    "tiers": [
     "smoke",
     "full"
    ],
-   "reason": "the file is deliberately not in the worktree: every in-flight central build would pick it up; proposed contents are in the P01 mail and docs/contracts/p01.md",
-   "owner": "BeigeMaple: land after the central QEMU run"
+   "reason": "the root nightly pin was declined (it would move the stable crates onto nightly, and the date it named is not what the workers run); a stable pin needs the release the central workspace builds actually use, which no committed receipt records; the `toolchain` step of `scripts/e2e/p01 execute` records it on the build host",
+   "owner": "BeigeMaple: read the stable release from a central receipt, then land the file between batches"
   },
   {
    "id": "P01-BLK-005",
@@ -1549,13 +2227,24 @@
   {
    "id": "P01-BLK-006",
    "kind": "blocked",
-   "title": "Cargo feature flags for the native services",
+   "title": "Cargo feature flags for the four native services (and artwork)",
    "tiers": [
     "smoke",
     "full"
    ],
-   "reason": "protected_render, the four native services, artwork and the harness have cargo_feature empty: they are compiled in unconditionally, so a profile that 'disables' one is a contract claim the build cannot honour; the minimal-renderer artifacts are the same bytes as the full ones until each service is gated",
+   "reason": "the harness is gated by the `harness` feature now; protected_render, the four native services and artwork still have cargo_feature empty: they are compiled in unconditionally, so a profile that 'disables' one is a contract claim the build cannot honour; the minimal-renderer artifacts are the same bytes as the full ones until each service is gated",
    "owner": "S01/A01/T01/X01 owners; P01 contract flags it per artifact in every receipt"
+  },
+  {
+   "id": "P01-BLK-007",
+   "kind": "blocked",
+   "title": "cargo metadata of the real workspace: the speaker's normal closure with default features and with --features franken-speaker/harness",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "reason": "tests/p01/metadata_check.py holds two `cargo metadata --format-version 1` documents to the gate (P01-MD-* run it on hand-written documents, P01-CON-004 re-derives it from the manifests), but cargo runs only centrally; produce both documents there and run `scripts/e2e/p01 check-metadata --default D --harness H`",
+   "owner": "BeigeMaple: central `cargo metadata --locked --offline` for both feature sets"
   }
  ],
  "invariants": [
@@ -1697,6 +2386,7 @@
     "P01-V-046",
     "P01-V-047",
     "P01-V-048",
+    "P01-V-089",
     "P01-V-090",
     "P01-V-091",
     "P01-V-092",
@@ -1807,7 +2497,8 @@
    "cases": [
     "P01-BLK-001",
     "P01-BLK-002",
-    "P01-BLK-003"
+    "P01-BLK-003",
+    "P01-BLK-007"
    ],
    "status": "blocked"
   },
@@ -1845,6 +2536,26 @@
     "P01-V-020",
     "P01-V-021",
     "P01-V-022"
+   ],
+   "status": "covered"
+  },
+  {
+   "id": "INV-P01-24",
+   "statement": "A dependency that exists only under a feature is modelled as such: live in an artifact's closure only when its profile enables the gating feature, gated by a real Cargo flag owned by the same crate, and the default build carries no test-only crate (from the manifests, and from cargo metadata once produced centrally)",
+   "cases": [
+    "P01-V-094",
+    "P01-V-095",
+    "P01-V-096",
+    "P01-V-097",
+    "P01-V-098",
+    "P01-V-099",
+    "P01-DRIFT-028",
+    "P01-DRIFT-029",
+    "P01-DRIFT-030",
+    "P01-DRIFT-031",
+    "P01-CON-004",
+    "P01-RESOLVE-*",
+    "P01-MD-*"
    ],
    "status": "covered"
   },

@@ -370,17 +370,22 @@ def build(base):
                    PPC_FULL, False, ["stale_evidence:tailnet_native"]))
 
     # --- test-only and host-only code stays out of device images
-    v.append(validate("P01-V-090", "a test-only crate in a device closure with no exception is refused",
-                      [S("/test_support_exceptions", [])], ["test_support_in_device_closure"],
-                      {"test_support_in_device_closure": [
-                          "speaker-mips-full:franken-test-support", "speaker-mips-min:franken-test-support",
-                          "speaker-ppc-full:franken-test-support", "speaker-ppc-min:franken-test-support"]}))
-    v.append(validate("P01-V-091", "an exception that names no test-support edge is stale and covers nothing",
-                      [S("/test_support_exceptions/from=franken-speaker/to", "franken-hal")],
-                      ["stale_exception", "test_support_in_device_closure"],
-                      {"stale_exception": ["franken-speaker->franken-hal"]}))
+    HARNESS = "/profiles/name=full_native/features/feature=virtual_house_harness/state"
+    v.append(validate("P01-V-089", "permitted positive: a counted exception covers a test-only crate that a device profile enables",
+                      [S(HARNESS, "enabled"),
+                       P("/test_support_exceptions", {"from": "franken-speaker", "to": "franken-test-support",
+                                                      "reason": "harness build for a hardware-in-the-loop rig"})],
+                      []))
+    v.append(validate("P01-V-090", "enabling the harness in a device profile puts a test-only crate in the image",
+                      [S(HARNESS, "enabled")], ["test_support_in_device_closure"],
+                      {"test_support_in_device_closure": ["speaker-mips-full:franken-test-support",
+                                                          "speaker-ppc-full:franken-test-support"]}))
+    v.append(validate("P01-V-091", "an exception that names no test-support edge is stale",
+                      [P("/test_support_exceptions", {"from": "franken-speaker", "to": "franken-hal", "reason": "x"})],
+                      ["stale_exception"], {"stale_exception": ["franken-speaker->franken-hal"]}))
     v.append(validate("P01-V-092", "an exception with no reason is refused",
-                      [S("/test_support_exceptions/from=franken-speaker/reason", "")],
+                      [P("/test_support_exceptions", {"from": "franken-speaker", "to": "franken-test-support",
+                                                      "reason": ""})],
                       ["exception_without_reason"],
                       {"exception_without_reason": ["franken-speaker->franken-test-support"]}))
     v.append(validate("P01-V-093", "a host tool in a device closure is refused",
@@ -390,6 +395,32 @@ def build(base):
                           "speaker-mips-full:franken-alloc-probe", "speaker-mips-min:franken-alloc-probe",
                           "speaker-ppc-full:franken-alloc-probe", "speaker-ppc-min:franken-alloc-probe"],
                        "layer_violation": ["franken-speaker->franken-alloc-probe"]}))
+
+    # --- a dependency that exists only under a feature
+    GATE = "/crates/name=franken-speaker/optional_deps"
+    v.append(validate("P01-V-094", "an optional dependency gated by a feature with no Cargo flag is refused",
+                      [S("/features/name=virtual_house_harness/cargo_feature", "")], ["optional_dep_without_flag"],
+                      {"optional_dep_without_flag": ["franken-speaker->franken-test-support"]}))
+    v.append(validate("P01-V-095", "the gating flag must belong to the crate that carries the dependency",
+                      [S("/features/name=virtual_house_harness/owner_crate", "franken-control")],
+                      ["optional_dep_wrong_owner"],
+                      {"optional_dep_wrong_owner": ["franken-speaker->franken-test-support"]}))
+    v.append(validate("P01-V-096", "an optional dependency gated by an unknown feature is refused",
+                      [S(GATE, [{"dep": "franken-test-support", "feature": "ghost"}])], ["unknown_feature"],
+                      {"unknown_feature": ["franken-speaker->franken-test-support"]}))
+    v.append(validate("P01-V-097", "an optional dependency on a non-member is refused",
+                      [P(GATE, {"dep": "franken-ghost", "feature": "virtual_house_harness"})],
+                      ["unknown_dependency"], {"unknown_dependency": ["franken-speaker->franken-ghost"]}))
+    v.append(validate("P01-V-098", "an optional dependency onto a higher layer is refused like any normal edge",
+                      [P(GATE, {"dep": "franken-alloc-probe", "feature": "virtual_house_harness"})],
+                      ["layer_violation"], {"layer_violation": ["franken-speaker->franken-alloc-probe"]}))
+    v.append(validate("P01-V-099", "an optional edge takes part in cycle detection",
+                      [P("/crates/name=franken-hal/optional_deps",
+                         {"dep": "franken-speaker", "feature": "virtual_house_harness"})],
+                      ["dependency_cycle", "layer_violation", "optional_dep_wrong_owner"],
+                      {"dependency_cycle": ["franken-hal,franken-speaker"],
+                       "layer_violation": ["franken-hal->franken-speaker"],
+                       "optional_dep_wrong_owner": ["franken-hal->franken-speaker"]}))
 
     # --- schema
     v.append(validate("P01-V-100", "a different schema version is refused",
@@ -447,7 +478,7 @@ def build(base):
                       [row(PPC_FULL, "powerpc_be", "full_native", H4, triple="mips-unknown-linux-musl")],
                       ["triple_target_mismatch"]))
     v.append(observed("P01-O-015", "permitted positive: a host artifact needs no ELF identity", [],
-                      [row("speaker-host-full", "host", "full_native", H1, klass=0, be=False)], []))
+                      [row("speaker-host-full", "host", "host_full", H1, klass=0, be=False)], []))
     return {"schema": SCHEMA, "base": "p01_workspace_contract.json", "base_digest": base_digest, "vectors": v}
 
 

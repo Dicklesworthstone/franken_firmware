@@ -140,7 +140,9 @@ REPO_WIDE_OFFENDERS = {
     "home toolchain cargo": re.compile(r"\.rustup/toolchains|\.rustup[\"']\s*/"),
 }
 SCAN_DIRS = ("scripts", "toolchain/src")
-SKIP_DIRS = {"__pycache__", "target", ".git"}  # ephemeral / git-ignored build output
+# Ephemeral / git-ignored build output. `build` is the git-ignored tree the QEMU runner syncs cargo target dirs
+# into (`.gitignore: build/`); a test below fails if a TRACKED file ever lives under one of these names.
+SKIP_DIRS = {"__pycache__", "target", "build", ".git"}
 MAX_SCAN_BYTES = 4 << 20
 SELF_REL = "scripts/test/test_run_workspace_verification.py"  # holds the patterns above as planted data
 
@@ -199,8 +201,10 @@ class TestRemoteOnlyArgv(unittest.TestCase):
         self.assertEqual(case_by_id("p01", "p01_workspace_cross_check_ppc_be").argv,
                          ["rch", "exec", "--", "cargo", "+nightly", "check", "--workspace", *inc,
                           "--target", "powerpc-unknown-linux-musl", *nightly_std])
+        # The harness is off by default (a default speaker build has no test-support edge), so the self-test
+        # must ask for it; without `--features harness` the binary exits 2.
         self.assertEqual(case_by_id("p01", "p01_virtual_house_e2e").argv,
-                         ["rch", "exec", "--", "cargo", "run", "-p", "franken-speaker", *inc,
+                         ["rch", "exec", "--", "cargo", "run", "-p", "franken-speaker", "--features", "harness", *inc,
                           "--", "--self-test", "--virtual-house"])
         mips = case_by_id("p05", "p05_asupersync_check_mips_be")
         self.assertEqual(mips.argv,
@@ -898,10 +902,36 @@ class TestRepoWidePolicy(unittest.TestCase):
         bad = self.PLANTED["personal build volume"]
         root = self.make_tree({
             "toolchain/src/crate/target/.rustc_info.json": bad,
+            "toolchain/src/crate/build/hello-init-target/.rustc_info.json": bad,
             "scripts/__pycache__/x.py": bad,
             "scripts/real.py": bad,
         })
         self.assertEqual(list(scan_tree(root)[0]), ["scripts/real.py"])
+
+    def test_skipping_build_is_by_exact_directory_name_so_lookalikes_are_still_scanned(self):
+        bad = self.PLANTED["personal build volume"]
+        root = self.make_tree({
+            "scripts/build/skipped.py": bad,
+            "scripts/builder/x.py": bad,
+            "scripts/rebuild/y.py": bad,
+            "scripts/e2e/build.py": bad,
+            "toolchain/src/crate/build.sh": bad,
+        })
+        self.assertEqual(sorted(scan_tree(root)[0]),
+                         ["scripts/builder/x.py", "scripts/e2e/build.py", "scripts/rebuild/y.py",
+                          "toolchain/src/crate/build.sh"])
+
+    def test_no_tracked_file_hides_under_a_skipped_directory(self):
+        """The scan skips SKIP_DIRS by name, so a tracked file under one would be an invisible blind spot."""
+        try:
+            out = subprocess.run(["git", "ls-files", "-z", "--", *SCAN_DIRS], cwd=W.REPO_ROOT,
+                                 capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.SubprocessError) as err:
+            self.skipTest(f"git is unavailable: {err}")
+        if out.returncode != 0:
+            self.skipTest(f"git ls-files failed: {out.stderr.strip()[:120]}")
+        hidden = [p for p in out.stdout.split("\0") if p and (set(Path(p).parts[:-1]) & SKIP_DIRS)]
+        self.assertEqual(hidden, [], "tracked files under a directory the policy scan skips would never be scanned")
 
     def test_unreadable_and_oversized_files_are_reported_as_skipped_not_silently_clean(self):
         root = self.make_tree({
