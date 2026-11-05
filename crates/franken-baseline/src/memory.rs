@@ -112,6 +112,7 @@ fn parse_snapshot_line(no: usize, line: &str) -> Result<SnapshotInput, ParseErro
     let label = kv.req("label")?;
     let at = kv.req_u64("at_mono_ns")?;
     kv.finish()?;
+    crate::redact::screen(no, "label", label)?;
     if !is_label(label) {
         return Err(ParseError::new(
             no,
@@ -1053,5 +1054,55 @@ Private_Dirty: 1000 kB
             e(&format!("{head}snapshot label=a b at_mono_ns=1\n")).kind,
             ParseKind::NotKeyValue("b".to_string())
         );
+    }
+
+    #[test]
+    fn a_snapshot_label_shaped_like_a_site_identifier_is_refused_by_name() {
+        let head = "ffw.baseline.memory.v1 page_size=4096\n";
+        for (label, class) in [
+            ("203.0.113.9", "ipv4"),
+            ("00-00-5E-00-53-01", "mac"),
+            ("SN0000EXAMPLE", "serial"),
+        ] {
+            let e = parse_memory(&format!("{head}snapshot label={label} at_mono_ns=1\n"))
+                .expect_err("must fail");
+            assert_eq!(
+                e,
+                ParseError::new(
+                    2,
+                    ParseKind::SiteIdentifier {
+                        field: "label",
+                        class
+                    }
+                )
+            );
+            assert!(!e.to_string().contains(label), "{label}");
+        }
+    }
+
+    #[test]
+    fn a_process_name_shaped_like_a_site_identifier_is_redacted_in_the_report() {
+        let text = "ffw.baseline.memory.v1 page_size=4096
+# SYNTHETIC. The address 192.0.2.17 in this comment is never copied anywhere.
+snapshot label=a at_mono_ns=1
+--- meminfo
+MemTotal: 1000 kB
+MemFree: 500 kB
+--- status pid=7
+Name:\tSN0000EXAMPLE
+VmRSS:\t 100 kB
+--- status pid=8
+Name:\tplayer
+VmRSS:\t 50 kB
+";
+        let report = account(&parse_memory(text).expect("parse"));
+        let names: Vec<&str> = report.snapshots[0]
+            .processes
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
+        assert_eq!(names, ["<redacted:serial>", "player"]);
+        let json = report.to_json().render();
+        assert!(!json.contains("SN0000EXAMPLE") && !json.contains("192.0.2.17"));
     }
 }

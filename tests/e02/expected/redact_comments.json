@@ -1,0 +1,8 @@
+{
+  "schema": "ffw.baseline.series-report.v1",
+  "evidence": "synthetic",
+  "profile": "synthetic-redact-comments-v1",
+  "denominators": {"samples_total": 3, "samples_accepted": 3, "intervals_total": 2, "coverage_ppm": 1000000},
+  "findings": [],
+  "findings_dropped": 0
+}

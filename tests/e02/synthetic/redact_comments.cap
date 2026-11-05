@@ -1,0 +1,9 @@
+ffw.baseline.capture.v1
+# SYNTHETIC. Documentation-range values only (RFC 5737 addresses, the IANA documentation MAC block, an invented serial). The comments below carry planted site identifiers: they are the point of this capture.
+# host 192.0.2.17 mac 00-00-5E-00-53-01 serial SN0000EXAMPLE
+# speaker-kitchen.local was here
+meta evidence=synthetic profile=synthetic-redact-comments-v1 cadence_ms=1000 declared_ms=2000
+counter name=xruns role=dev_underruns width=32
+sample mono_ns=1000000000 xruns=0
+sample mono_ns=2000000000 xruns=0
+sample mono_ns=3000000000 xruns=0

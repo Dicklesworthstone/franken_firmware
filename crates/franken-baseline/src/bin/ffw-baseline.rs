@@ -1,4 +1,5 @@
-//! `ffw-baseline`: run the E02 analyzer over a capture file and print the report as one line of JSON.
+//! `ffw-baseline`: run the E02 analyzer over a capture file and print the report as one line of JSON on stdout, then one
+//! concise human summary line on stderr (see `franken_baseline::summary`).
 //!
 //! ```text
 //! ffw-baseline series  <capture>                       time-series report
@@ -7,7 +8,8 @@
 //! ```
 //!
 //! Exit codes: 0 a report was written; 2 bad usage or unreadable or malformed input (a one-line
-//! diagnostic on stderr); 3 `compare` refused to make a comparative claim (the reason is in the JSON).
+//! diagnostic on stderr, no report and no summary); 3 `compare` refused to make a comparative claim (the reason is in the
+//! JSON, and the summary says refused).
 //! Nothing here touches a device, a network or the clock: it reads the files it is given.
 
 use std::process::ExitCode;
@@ -18,6 +20,7 @@ use franken_baseline::json::Json;
 use franken_baseline::memory::{account, parse_memory};
 use franken_baseline::parse::{bounded, parse_u64};
 use franken_baseline::series::analyze;
+use franken_baseline::summary;
 
 const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 const USAGE: &str = "usage: ffw-baseline series <capture> | memory <snapshots> | \
@@ -52,6 +55,11 @@ fn emit(json: &Json) {
     println!("{}", json.render());
 }
 
+/// The one human summary line, on stderr after the JSON report on stdout.
+fn note(line: &str) {
+    eprintln!("{line}");
+}
+
 fn run(args: &[String]) -> Result<ExitCode, String> {
     let Some(cmd) = args.first() else {
         return Err(USAGE.to_string());
@@ -61,7 +69,9 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             let [_, path] = args else {
                 return Err(USAGE.to_string());
             };
-            emit(&load_series(path)?.to_json());
+            let report = load_series(path)?.to_json();
+            emit(&report);
+            note(&summary::series(&report));
             Ok(ExitCode::SUCCESS)
         }
         "memory" => {
@@ -70,7 +80,9 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             };
             let text = read(path)?;
             let capture = parse_memory(&text).map_err(|e| format!("{}: {e}", short(path)))?;
-            emit(&account(&capture).to_json());
+            let report = account(&capture).to_json();
+            emit(&report);
+            note(&summary::memory(&report));
             Ok(ExitCode::SUCCESS)
         }
         "compare" => run_compare(&args[1..]),
@@ -121,7 +133,7 @@ fn run_compare(args: &[String]) -> Result<ExitCode, String> {
             Err(refused) => ("refused", Json::str(refused.as_str()), Json::Null),
         },
     };
-    emit(&Json::obj(vec![
+    let report = Json::obj(vec![
         ("schema", Json::str("ffw.baseline.comparison.v1")),
         ("claim", Json::str(claim)),
         ("reason", reason),
@@ -131,7 +143,9 @@ fn run_compare(args: &[String]) -> Result<ExitCode, String> {
             Json::str(current_summary.evidence.as_str()),
         ),
         ("current_profile", Json::str(&current_summary.profile)),
-    ]));
+    ]);
+    emit(&report);
+    note(&summary::comparison(&report));
     Ok(if claim == "made" {
         ExitCode::SUCCESS
     } else {

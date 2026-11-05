@@ -1,0 +1,31 @@
+{
+  "schema": "ffw.baseline.series-report.v1",
+  "evidence": "synthetic",
+  "profile": "recipe-example-v1",
+  "measured_on_device": false,
+  "denominators": {
+    "declared_ns": 5000000000, "cadence_ns": 1000000000, "expected_samples": 6,
+    "samples_total": 6, "samples_accepted": 6, "samples_rejected_non_monotonic": 0,
+    "intervals_total": 5, "intervals_observed": 5, "intervals_censored": 0,
+    "observed_ns": 5000000000, "censored_ns": 0, "coverage_ppm": 1000000
+  },
+  "holes": [],
+  "truncated": null,
+  "wall_clock": {"carried": true, "steps": []},
+  "counters": [
+    {"name": "xruns", "role": "dev_underruns", "width": 32, "points": 6, "missing_values": 0, "observed_events": 0, "observed_ns": 5000000000, "per_hour_milli": 0, "censored_spans": 0, "unlocated_events_min": 0, "resets": 0, "wraps": 0},
+    {"name": "late", "role": "late_packets", "width": 32, "points": 6, "observed_events": 0, "per_hour_milli": 0},
+    {"name": "cpu", "role": "cpu_misses", "width": 32, "points": 6, "observed_events": 0, "per_hour_milli": 0},
+    {"name": "src", "role": "source_bytes", "width": 64, "points": 6, "observed_events": 960000, "observed_ns": 5000000000, "per_hour_milli": 691200000000}
+  ],
+  "gauges": [
+    {"name": "play", "role": "playing", "points": 6, "implausible": 0, "playing_samples": 6, "idle_samples": 0}
+  ],
+  "dropouts": {
+    "known": true, "missing": [], "observed": [], "censored": [],
+    "totals": {"intervals": 0, "underrun_events": 0, "source_outage": 0, "network_lateness": 0, "cpu_deadline_miss": 0, "output_underrun": 0, "ambiguous": 0, "undetermined": 0, "censored_spans": 0, "censored_events_min": 0}
+  },
+  "findings": [],
+  "findings_dropped": 0,
+  "absolute": {"thresholds": {"min_coverage_ppm": 950000, "max_dropout_intervals": 0}, "verdict": "qualified", "reasons": []}
+}

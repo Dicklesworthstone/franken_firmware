@@ -1,0 +1,13 @@
+{
+  "schema": "ffw.baseline.memory-report.v1",
+  "snapshots": [
+    {
+      "label": "steady",
+      "processes": [
+        {"pid": 7, "name": "<redacted:serial>", "rss_kib": 100, "rss_source": "status", "kernel_thread": false},
+        {"pid": 8, "name": "player", "rss_kib": 50, "rss_source": "status", "kernel_thread": false}
+      ],
+      "system": {"mem_total_kib": 30000, "mem_free_kib": 20000, "used_kib": 10000, "process_rss_naive_sum_kib": 150}
+    }
+  ]
+}

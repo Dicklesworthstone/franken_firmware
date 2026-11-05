@@ -1,0 +1,14 @@
+ffw.baseline.capture.v1
+# SYNTHETIC. Written by the recipe's sampler from scripted stand-in files; it says nothing about any device.
+meta evidence=synthetic profile=recipe-example-v1 cadence_ms=1000 declared_ms=5000 wall_step_ms=2000 playout_ms=500 min_coverage_ppm=950000 max_dropout_intervals=0
+counter name=xruns role=dev_underruns width=32
+counter name=late role=late_packets width=32
+counter name=cpu role=cpu_misses width=32
+counter name=src role=source_bytes width=64
+gauge name=play role=playing max=1
+sample mono_ns=100000000000 wall_ns=1700000000000000000 xruns=0 late=0 cpu=0 src=0 play=1
+sample mono_ns=101010000000 wall_ns=1700000001000000000 xruns=0 late=0 cpu=0 src=192000 play=1
+sample mono_ns=102000000000 wall_ns=1700000002000000000 xruns=0 late=0 cpu=0 src=384000 play=1
+sample mono_ns=103020000000 wall_ns=1700000003000000000 xruns=0 late=0 cpu=0 src=576000 play=1
+sample mono_ns=104010000000 wall_ns=1700000004000000000 xruns=0 late=0 cpu=0 src=768000 play=1
+sample mono_ns=105000000000 wall_ns=1700000005000000000 xruns=0 late=0 cpu=0 src=960000 play=1

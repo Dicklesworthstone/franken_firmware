@@ -1,0 +1,12 @@
+ffw.baseline.memory.v1 page_size=4096
+# SYNTHETIC. Documentation-range values only (RFC 5737 addresses, the IANA documentation MAC block, an invented serial). A process is named by a serial; this comment holds an address, 192.0.2.17.
+snapshot label=steady at_mono_ns=1000000000
+--- meminfo
+MemTotal:       30000 kB
+MemFree:        20000 kB
+--- status pid=7
+Name:	SN0000EXAMPLE
+VmRSS:	     100 kB
+--- status pid=8
+Name:	player
+VmRSS:	      50 kB

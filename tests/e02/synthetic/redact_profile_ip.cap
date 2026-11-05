@@ -1,0 +1,4 @@
+ffw.baseline.capture.v1
+# SYNTHETIC. Documentation-range values only (RFC 5737 addresses, the IANA documentation MAC block, an invented serial). The profile is an address.
+meta evidence=synthetic profile=192.0.2.17 cadence_ms=1000 declared_ms=2000
+sample mono_ns=1000000000

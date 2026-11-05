@@ -7,6 +7,12 @@
 //! An expected file is a SUBSET of the report: every key it names must match exactly, extra keys in the
 //! report are ignored, arrays must have the same length and match element by element. The subset rule
 //! is itself tested below with planted differences, so a matcher that accepts anything would fail.
+//!
+//! A case may also name strings that must never appear in what the binary prints (`stderr_lacks`,
+//! `stdout_lacks`): the planted site identifiers. A case may name the one summary line the run must print on stderr
+//! (`summary`), written by hand; every run that writes a report must print exactly one summary line and exactly one line
+//! of JSON. Each such string must really be in the case's capture, so
+//! the check cannot pass vacuously, and `redaction_vectors.json` pins the classifier's answer for each shape.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -84,6 +90,62 @@ fn run_cli(args: &[&str]) -> Outcome {
     }
 }
 
+/// The planted strings a case says must never be printed, with the stream each one appeared in.
+fn echoed(case: &Value, out: &Outcome) -> Vec<String> {
+    let mut found = Vec::new();
+    for (key, text) in [("stderr_lacks", &out.stderr), ("stdout_lacks", &out.stdout)] {
+        if let Some(list) = case[key].as_array() {
+            for needle in list.iter().filter_map(Value::as_str) {
+                if text.contains(needle) {
+                    found.push(format!("{key} violated: the output repeats {needle:?}"));
+                }
+            }
+        }
+    }
+    found
+}
+
+/// What is wrong with the shape of a run's output: a run that writes a report prints exactly one line of JSON on stdout and
+/// exactly one summary line on stderr, and a run that does not (exit 2) prints no summary.
+fn shape_problems(want_code: i32, out: &Outcome) -> Vec<String> {
+    let mut found = Vec::new();
+    let err_lines: Vec<&str> = out.stderr.lines().collect();
+    if want_code == 0 || want_code == 3 {
+        let one_json_line = out.stdout.ends_with('\n') && out.stdout.matches('\n').count() == 1;
+        let one_summary_line =
+            err_lines.len() == 1 && err_lines.iter().all(|l| l.starts_with("ffw-baseline "));
+        if !one_json_line {
+            found.push(format!("stdout is not exactly one line: {:?}", out.stdout));
+        }
+        if !one_summary_line {
+            found.push(format!(
+                "stderr is not exactly one summary line: {:?}",
+                out.stderr
+            ));
+        }
+    } else if err_lines.iter().any(|l| l.starts_with("ffw-baseline ")) {
+        found.push(format!(
+            "a run that wrote no report printed a summary: {:?}",
+            out.stderr
+        ));
+    }
+    found
+}
+
+/// What is wrong with the summary line a run printed, against the line the case writes by hand; `None` if the case names no line
+/// or the line matches exactly.
+fn summary_problem(case: &Value, out: &Outcome) -> Option<String> {
+    let want = format!("{}\n", case["summary"].as_str()?);
+    if out.stderr == want {
+        None
+    } else {
+        Some(format!(
+            "stderr is {:?}, the case expects exactly {want:?}",
+            out.stderr
+        ))
+    }
+}
+
 fn case_args(case: &Value) -> Vec<String> {
     case["args"]
         .as_array()
@@ -122,6 +184,15 @@ fn every_case_in_cases_json_runs_and_matches_its_expected_output() {
                 "{id}: stderr {:?} lacks {needle:?}",
                 out.stderr.trim()
             ));
+        }
+        for violation in echoed(case, &out) {
+            failures.push(format!("{id}: {violation}"));
+        }
+        for problem in shape_problems(want_code, &out) {
+            failures.push(format!("{id}: {problem}"));
+        }
+        if let Some(problem) = summary_problem(case, &out) {
+            failures.push(format!("{id}: {problem}"));
         }
         if let Some(expected_file) = case["expect"].as_str() {
             let expected = read_json(&dir.join(expected_file));
@@ -276,4 +347,126 @@ fn the_cli_never_reports_a_bare_path_in_an_error() {
         "diagnostics name the file, not its directory"
     );
     assert!(out.stdout.is_empty());
+}
+
+// -- redaction: the planted identifiers are real, the classifier agrees with its vectors ----------------
+
+#[test]
+fn every_string_a_case_says_is_never_echoed_is_really_in_its_capture() {
+    let dir = e02_dir();
+    let cases = read_json(&dir.join("cases.json"));
+    let mut checked = 0;
+    for case in cases["cases"].as_array().expect("cases") {
+        let mut needles: Vec<&str> = Vec::new();
+        for key in ["stderr_lacks", "stdout_lacks"] {
+            if let Some(list) = case[key].as_array() {
+                needles.extend(list.iter().filter_map(Value::as_str));
+            }
+        }
+        let capture_text: String = case_args(case)
+            .iter()
+            .filter(|a| a.starts_with("synthetic/"))
+            .map(|a| std::fs::read_to_string(dir.join(a)).expect("capture file"))
+            .collect();
+        for needle in needles {
+            assert!(
+                capture_text.contains(needle),
+                "{}: {needle:?} is not in the capture, so 'never echoed' would pass vacuously",
+                case["id"]
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked > 0,
+        "no case names a string that must not be echoed"
+    );
+}
+
+#[test]
+fn the_never_echoed_check_catches_a_planted_echo() {
+    let case =
+        json!({"id": "x", "stderr_lacks": ["192.0.2.17"], "stdout_lacks": ["00-00-5E-00-53-01"]});
+    let leaky = Outcome {
+        code: 2,
+        stdout: "{\"profile\":\"00-00-5E-00-53-01\"}".to_string(),
+        stderr: "line 2: BadIdentifier(\"192.0.2.17\")".to_string(),
+    };
+    assert_eq!(echoed(&case, &leaky).len(), 2);
+    let clean = Outcome {
+        code: 2,
+        stdout: String::new(),
+        stderr: "line 2: SiteIdentifier { field: \"profile\", class: \"ipv4\" }".to_string(),
+    };
+    assert!(echoed(&case, &clean).is_empty());
+}
+
+#[test]
+fn the_redaction_vectors_agree_with_the_classifier() {
+    let vectors = read_json(&e02_dir().join("redaction_vectors.json"));
+    let list = vectors["vectors"].as_array().expect("vectors");
+    assert!(list.len() >= 20, "too few vectors to mean anything");
+    for v in list {
+        let text = v["text"].as_str().expect("text");
+        let want = v["class"].as_str();
+        let got = franken_baseline::redact::classify(text).map(|c| c.as_str());
+        assert_eq!(got, want, "{text:?}");
+    }
+}
+
+// -- the summary line ------------------------------------------------------------------------------------
+
+#[test]
+fn the_summary_checks_reject_planted_wrong_output() {
+    let case = json!({"id": "x", "summary": "ffw-baseline series: verdict qualified; right"});
+    let right = Outcome {
+        code: 0,
+        stdout: "{\"schema\":1}\n".to_string(),
+        stderr: "ffw-baseline series: verdict qualified; right\n".to_string(),
+    };
+    assert_eq!(summary_problem(&case, &right), None);
+    assert!(shape_problems(0, &right).is_empty());
+    // A summary that differs, a case with no summary to check, a second stderr line, a second stdout line, and an exit-2 run
+    // that printed a summary are each caught or ignored as they should be.
+    let wrong = Outcome {
+        stderr: "ffw-baseline series: verdict not_qualified; right\n".to_string(),
+        ..right_clone(&right)
+    };
+    assert!(summary_problem(&case, &wrong).is_some());
+    assert_eq!(summary_problem(&json!({"id": "y"}), &wrong), None);
+    let two_err = Outcome {
+        stderr: "ffw-baseline series: verdict qualified; right\nextra\n".to_string(),
+        ..right_clone(&right)
+    };
+    assert!(summary_problem(&case, &two_err).is_some());
+    assert!(!shape_problems(0, &two_err).is_empty());
+    let two_out = Outcome {
+        stdout: "{}\n{}\n".to_string(),
+        ..right_clone(&right)
+    };
+    assert!(!shape_problems(0, &two_out).is_empty());
+    assert!(!shape_problems(2, &right).is_empty());
+}
+
+fn right_clone(o: &Outcome) -> Outcome {
+    Outcome {
+        code: o.code,
+        stdout: o.stdout.clone(),
+        stderr: o.stderr.clone(),
+    }
+}
+
+#[test]
+fn every_summary_in_cases_json_is_one_short_plain_line() {
+    let cases = read_json(&e02_dir().join("cases.json"));
+    let mut seen = 0;
+    for case in cases["cases"].as_array().expect("cases") {
+        if let Some(line) = case["summary"].as_str() {
+            seen += 1;
+            assert!(line.starts_with("ffw-baseline "), "{line}");
+            assert!(line.is_ascii() && !line.contains('\n'), "{line}");
+            assert!(line.len() <= 400, "not concise: {line}");
+        }
+    }
+    assert!(seen > 0, "no case names a summary line");
 }

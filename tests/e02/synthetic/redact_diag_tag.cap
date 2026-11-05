@@ -1,0 +1,3 @@
+ffw.baseline.capture.v1
+# SYNTHETIC. Documentation-range values only (RFC 5737 addresses, the IANA documentation MAC block, an invented serial). The next line is not a record: its first token is an address.
+ip=192.0.2.17

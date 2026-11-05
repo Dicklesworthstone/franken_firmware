@@ -1,7 +1,9 @@
 //! Shared text-parsing helpers and the one error type every input parser returns.
 //!
-//! Errors carry a 1-based line number and a typed kind. Any text copied out of the input is cut to
-//! [`BOUND`] characters first, so a hostile or accidentally huge line cannot flood a diagnostic.
+//! Errors carry a 1-based line number and a typed kind. Any text copied out of the input goes through
+//! [`bounded`] first: it is cut to [`BOUND`] characters, so a hostile or accidentally huge line cannot flood
+//! a diagnostic, and text with the shape of a site identifier (an address, a hardware or serial number, a host
+//! name; see [`crate::redact`]) is replaced by its class and never repeated.
 
 use std::fmt;
 
@@ -10,8 +12,13 @@ use crate::procfs::ProcError;
 /// Longest piece of input text a diagnostic will repeat.
 pub const BOUND: usize = 32;
 
-/// Cut `s` to at most [`BOUND`] characters.
+/// The only way input text is repeated in a diagnostic or a report that the analyst did not pick: `s` cut to at
+/// most [`BOUND`] characters, or `<redacted:class>` when `s` has the shape of a site identifier anywhere in it.
+/// The whole of `s` is judged before it is cut, so no piece of an identifier survives the cut.
 pub fn bounded(s: &str) -> String {
+    if let Some(class) = crate::redact::classify(s) {
+        return format!("<redacted:{}>", class.as_str());
+    }
     s.chars().take(BOUND).collect()
 }
 
@@ -30,6 +37,12 @@ pub enum ParseKind {
     BadInteger(String),
     BadValue(String),
     BadIdentifier(String),
+    /// A profile, series name or snapshot label with the shape of a site identifier. Names the field and the class;
+    /// the text itself is never kept.
+    SiteIdentifier {
+        field: &'static str,
+        class: &'static str,
+    },
     ReservedName(String),
     DuplicateName(String),
     DuplicateRole(String),
@@ -262,6 +275,24 @@ mod tests {
         let long = "x".repeat(500);
         assert_eq!(bounded(&long).len(), BOUND);
         assert_eq!(bounded("short"), "short");
+    }
+
+    #[test]
+    fn diagnostics_never_repeat_a_site_identifier_or_any_piece_of_one() {
+        for (text, class) in [
+            ("192.0.2.17", "ipv4"),
+            ("00-00-5E-00-53-01", "mac"),
+            ("2001:db8::1", "ipv6"),
+            ("kitchen.local", "hostname"),
+            ("SN0000EXAMPLE", "serial"),
+            // An identifier past the cut is still judged: nothing is left to leak, and nothing is echoed.
+            (
+                "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 192.0.2.17",
+                "ipv4",
+            ),
+        ] {
+            assert_eq!(bounded(text), format!("<redacted:{class}>"), "{text:?}");
+        }
     }
 
     #[test]

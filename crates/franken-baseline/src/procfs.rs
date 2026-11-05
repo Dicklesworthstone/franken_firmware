@@ -356,6 +356,15 @@ AnonPages:       4000 kB\nActive(anon):    1234 kB\n";
     }
 
     #[test]
+    fn a_process_name_shaped_like_a_site_identifier_is_redacted_not_repeated() {
+        let s = parse_status("Name:\tSN0000EXAMPLE\nVmRSS:\t  100 kB\n").expect("status");
+        assert_eq!(s.name, "<redacted:serial>");
+        assert_eq!(s.vm_rss_kib, Some(100));
+        let plain = parse_status("Name:\tkworker/0:1\nState:\tI (idle)\n").expect("kthread");
+        assert_eq!(plain.name, "kworker/0:1");
+    }
+
+    #[test]
     fn status_without_a_name_or_with_a_bad_unit_is_an_error() {
         assert_eq!(
             parse_status("VmRSS:\t100 kB\n"),

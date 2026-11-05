@@ -30,6 +30,7 @@ use std::collections::BTreeMap;
 
 use crate::clock::{DeviceFrames, MonoNs, WallNs};
 use crate::parse::{Kv, ParseError, ParseKind, bounded, is_ident, is_label, parse_i64, parse_u64};
+use crate::redact::screen;
 
 pub const HEADER: &str = "ffw.baseline.capture.v1";
 pub const MAX_SAMPLES: usize = 2_000_000;
@@ -181,6 +182,7 @@ fn parse_meta(mut kv: Kv<'_>) -> Result<Meta, ParseError> {
     let evidence =
         Evidence::parse(kv.req("evidence")?).ok_or_else(|| bad_value(line, "evidence"))?;
     let profile = kv.req("profile")?;
+    screen(line, "profile", profile)?;
     if !is_label(profile) {
         return Err(ParseError::new(
             line,
@@ -249,6 +251,7 @@ fn parse_meta(mut kv: Kv<'_>) -> Result<Meta, ParseError> {
 }
 
 fn check_name(line: usize, name: &str, taken: &[&str]) -> Result<(), ParseError> {
+    screen(line, "name", name)?;
     if !is_ident(name) {
         return Err(ParseError::new(
             line,
@@ -702,5 +705,84 @@ sample mono_ns=200 xruns=4\n";
     fn oversized_lines_are_refused() {
         let long = format!("{HEADER}\n# {}\n", "x".repeat(MAX_LINE_BYTES + 1));
         assert_eq!(err(&long), ParseError::new(2, ParseKind::LineTooLong));
+    }
+
+    #[test]
+    fn a_profile_or_series_name_shaped_like_a_site_identifier_is_refused_by_name() {
+        let with_profile = |profile: &str| {
+            format!(
+                "{HEADER}\nmeta evidence=synthetic profile={profile} cadence_ms=1000 declared_ms=10000\nsample mono_ns=1\n"
+            )
+        };
+        for (profile, class) in [
+            ("192.0.2.17", "ipv4"),
+            ("00-00-5E-00-53-01", "mac"),
+            ("00:00:5E:00:53:01", "mac"),
+            ("kitchen.local", "hostname"),
+            ("SN0000EXAMPLE", "serial"),
+        ] {
+            let e = err(&with_profile(profile));
+            assert_eq!(
+                e,
+                ParseError::new(
+                    2,
+                    ParseKind::SiteIdentifier {
+                        field: "profile",
+                        class
+                    }
+                )
+            );
+            assert!(!e.to_string().contains(profile), "{profile}");
+        }
+        for (name, class) in [("SN0000EXAMPLE", "serial"), ("host_00005E005301", "mac")] {
+            let c = err(&doc(&format!(
+                "counter name={name} role=other width=32\nsample mono_ns=1\n"
+            )));
+            assert_eq!(
+                c,
+                ParseError::new(
+                    3,
+                    ParseKind::SiteIdentifier {
+                        field: "name",
+                        class
+                    }
+                )
+            );
+            assert!(!c.to_string().contains(name), "{name}");
+            let g = err(&doc(&format!(
+                "gauge name={name} role=value max=9\nsample mono_ns=1\n"
+            )));
+            assert_eq!(
+                g.kind,
+                ParseKind::SiteIdentifier {
+                    field: "name",
+                    class
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn comments_are_never_copied_into_the_capture() {
+        let c = Capture::parse(&doc(
+            "# 192.0.2.17 00-00-5E-00-53-01 SN0000EXAMPLE\nsample mono_ns=1\n",
+        ))
+        .expect("parse");
+        let dump = format!("{c:?}");
+        for planted in ["192.0.2.17", "00-00-5E-00-53-01", "SN0000EXAMPLE"] {
+            assert!(!dump.contains(planted), "{planted}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_token_that_is_a_site_identifier_is_redacted_in_the_diagnostic() {
+        assert_eq!(
+            err(&doc("ip=192.0.2.17\n")).kind,
+            ParseKind::UnknownTag("<redacted:ipv4>".to_string())
+        );
+        assert_eq!(
+            err(&doc("sample mono_ns=1 00-00-5E-00-53-01=7\n")).kind,
+            ParseKind::UndeclaredSeries("<redacted:mac>".to_string())
+        );
     }
 }

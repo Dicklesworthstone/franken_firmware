@@ -1,0 +1,6 @@
+ffw.baseline.memory.v1 page_size=4096
+# SYNTHETIC. Documentation-range values only (RFC 5737 addresses, the IANA documentation MAC block, an invented serial). A snapshot is labelled by a MAC address.
+snapshot label=00-00-5E-00-53-01 at_mono_ns=1000000000
+--- meminfo
+MemTotal:       30000 kB
+MemFree:        20000 kB

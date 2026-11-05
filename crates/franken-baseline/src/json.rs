@@ -49,6 +49,14 @@ impl Json {
         )
     }
 
+    /// The value under `key` when `self` is an object that has it.
+    pub fn get(&self, key: &str) -> Option<&Json> {
+        match self {
+            Json::Obj(fields) => fields.iter().find(|(k, _)| k == key).map(|(_, v)| v),
+            _ => None,
+        }
+    }
+
     pub fn render(&self) -> String {
         let mut out = String::new();
         self.write(&mut out);
@@ -127,6 +135,19 @@ mod tests {
         assert_eq!(Json::str("l1\nl2\t\r").render(), "\"l1\\nl2\\t\\r\"");
         assert_eq!(Json::str("\u{1}").render(), "\"\\u0001\"");
         assert_eq!(Json::str("plain-ascii_1").render(), "\"plain-ascii_1\"");
+    }
+
+    #[test]
+    fn get_finds_a_key_of_an_object_and_nothing_else() {
+        let v = Json::obj(vec![
+            ("a", Json::int(1u8)),
+            ("b", Json::obj(vec![("c", Json::Null)])),
+        ]);
+        assert_eq!(v.get("a"), Some(&Json::Int(1)));
+        assert_eq!(v.get("b").and_then(|b| b.get("c")), Some(&Json::Null));
+        assert_eq!(v.get("missing"), None);
+        assert_eq!(Json::Arr(vec![Json::Int(1)]).get("a"), None);
+        assert_eq!(Json::str("a").get("a"), None);
     }
 
     #[test]

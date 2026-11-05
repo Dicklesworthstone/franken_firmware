@@ -1,0 +1,304 @@
+{
+ "schema": "ffw.e02.redaction-vectors.v1",
+ "note": "What the site-identifier screen answers for each text: a class name, or null for no shape. Documentation-range values only. Read by the Rust integration test (against franken_baseline::redact::classify) and by tests/e02/oracle.py (against its own independent implementation).",
+ "vectors": [
+  {
+   "text": "192.0.2.17",
+   "class": "ipv4"
+  },
+  {
+   "text": "198.51.100.200",
+   "class": "ipv4"
+  },
+  {
+   "text": "203.0.113.9",
+   "class": "ipv4"
+  },
+  {
+   "text": "host-203.0.113.9",
+   "class": "ipv4",
+   "note": "found anywhere in the text"
+  },
+  {
+   "text": "room=192.0.2.17;x",
+   "class": "ipv4",
+   "note": "found anywhere in the text"
+  },
+  {
+   "text": "  192.0.2.17 ",
+   "class": "ipv4"
+  },
+  {
+   "text": "fw-192.0.2.21",
+   "class": "ipv4",
+   "note": "false alarm by design: four dotted groups look like an address, so a version of four groups is refused"
+  },
+  {
+   "text": "00-00-5E-00-53-01",
+   "class": "mac"
+  },
+  {
+   "text": "00:00:5E:00:53:01",
+   "class": "mac",
+   "note": "a MAC is also a run of hex digits and colons: it is called a MAC, not an IPv6 address"
+  },
+  {
+   "text": "00005E005301",
+   "class": "mac",
+   "note": "twelve hex digits as a whole run; also long enough for a serial, and called a MAC"
+  },
+  {
+   "text": "00-00-5E-00-53-01:9",
+   "class": "mac",
+   "note": "a MAC followed by a check digit"
+  },
+  {
+   "text": "a b 00-00-5E-00-53-01 c",
+   "class": "mac",
+   "note": "found anywhere in the text"
+  },
+  {
+   "text": "2001:db8::1",
+   "class": "ipv6"
+  },
+  {
+   "text": "2001:db8:0:0:0:0:0:1",
+   "class": "ipv6"
+  },
+  {
+   "text": "fe80::1",
+   "class": "ipv6"
+  },
+  {
+   "text": "12:30:45",
+   "class": "ipv6",
+   "note": "false alarm by design: a time of day looks like an address"
+  },
+  {
+   "text": "kitchen.local",
+   "class": "hostname"
+  },
+  {
+   "text": "speaker-01.home.arpa",
+   "class": "hostname"
+  },
+  {
+   "text": "nas.lan",
+   "class": "hostname"
+  },
+  {
+   "text": "x.local",
+   "class": "hostname"
+  },
+  {
+   "text": "Home.ARPA",
+   "class": "hostname",
+   "note": "the suffix is matched without regard to case"
+  },
+  {
+   "text": "SN0000EXAMPLE",
+   "class": "serial"
+  },
+  {
+   "text": "zp90a1b2c3d4",
+   "class": "serial",
+   "note": "twelve characters but not all hex digits, so a serial and not a MAC"
+  },
+  {
+   "text": "serial=SN0000EXAMPLE",
+   "class": "serial",
+   "note": "a run is delimited by anything that is not a letter or digit"
+  },
+  {
+   "text": "synthetic-clean-v1",
+   "class": null
+  },
+  {
+   "text": "synthetic-clean.v1",
+   "class": null
+  },
+  {
+   "text": "incumbent-music-v1",
+   "class": null
+  },
+  {
+   "text": "recipe-example-v1",
+   "class": null
+  },
+  {
+   "text": "late_packets",
+   "class": null
+  },
+  {
+   "text": "dev_underruns",
+   "class": null
+  },
+  {
+   "text": "rss_kib",
+   "class": null
+  },
+  {
+   "text": "kworker/0:1",
+   "class": null,
+   "note": "a kernel thread name has one colon"
+  },
+  {
+   "text": "kthreadd",
+   "class": null
+  },
+  {
+   "text": "player",
+   "class": null
+  },
+  {
+   "text": "1.2.3",
+   "class": null,
+   "note": "three groups"
+  },
+  {
+   "text": "1.2.3.4.5",
+   "class": null,
+   "note": "five groups"
+  },
+  {
+   "text": "1234.5.6.7",
+   "class": null,
+   "note": "a group of four digits"
+  },
+  {
+   "text": "12:30",
+   "class": null,
+   "note": "one colon"
+  },
+  {
+   "text": "a:b:cdef12",
+   "class": null,
+   "note": "a group longer than four characters"
+  },
+  {
+   "text": "::",
+   "class": null,
+   "note": "colons with no hex digit"
+  },
+  {
+   "text": "packets32",
+   "class": null,
+   "note": "nine characters but only two digits"
+  },
+  {
+   "text": "local",
+   "class": null,
+   "note": "no label before the suffix"
+  },
+  {
+   "text": ".local",
+   "class": null,
+   "note": "no label before the suffix"
+  },
+  {
+   "text": "kitchen.localx",
+   "class": null,
+   "note": "not a listed suffix"
+  },
+  {
+   "text": "ABCDEFGH12",
+   "class": null,
+   "note": "KNOWN LIMIT: two digits are below the serial threshold, so this passes"
+  },
+  {
+   "text": "kitchen",
+   "class": null,
+   "note": "KNOWN LIMIT: a bare word has no recognisable shape"
+  },
+  {
+   "text": "AB12CD3E",
+   "class": "serial",
+   "note": "exactly eight characters, three digits and three letters"
+  },
+  {
+   "text": "AB12CD3",
+   "class": null,
+   "note": "seven characters: one short"
+  },
+  {
+   "text": "ABCDEFG123",
+   "class": "serial",
+   "note": "exactly three digits"
+  },
+  {
+   "text": "123456ABC",
+   "class": "serial",
+   "note": "exactly three letters"
+  },
+  {
+   "text": "1234567AB",
+   "class": null,
+   "note": "two letters"
+  },
+  {
+   "text": "00-00-5E-00-53",
+   "class": null,
+   "note": "five groups are not a MAC"
+  },
+  {
+   "text": "00:00-5E:00-53:01",
+   "class": null,
+   "note": "a MAC uses one kind of separator throughout"
+  },
+  {
+   "text": "00005E0053010",
+   "class": null,
+   "note": "thirteen hex digits are not a MAC"
+  },
+  {
+   "text": "00005E00530",
+   "class": null,
+   "note": "eleven hex digits are not a MAC"
+  },
+  {
+   "text": "a:b:cdef1",
+   "class": null,
+   "note": "a group of five characters"
+  },
+  {
+   "text": "2001:0db8::1",
+   "class": "ipv6",
+   "note": "groups of exactly four characters"
+  },
+  {
+   "text": "192.0.2",
+   "class": null,
+   "note": "three groups"
+  },
+  {
+   "text": "198.51.100.7",
+   "class": "ipv4",
+   "note": "groups of one, two and three digits"
+  },
+  {
+   "text": "zz-zz-zz-zz-zz-zz",
+   "class": null,
+   "note": "the six pairs must be hex digits"
+  },
+  {
+   "text": ".192.0.2.17",
+   "class": "ipv4",
+   "note": "a leading dot is not part of the address"
+  },
+  {
+   "text": "192.0.2.17.",
+   "class": "ipv4",
+   "note": "a trailing dot, as at the end of a sentence, is not part of the address"
+  },
+  {
+   "text": "1..2.3",
+   "class": null,
+   "note": "four groups but one is empty"
+  },
+  {
+   "text": "ABCDEF012345",
+   "class": "mac",
+   "note": "twelve hex digits that would also be shaped like a serial are called a MAC"
+  }
+ ]
+}
