@@ -731,7 +731,14 @@ const REDACTED_ID: &str = "[REDACTED_ID]";
 const REDACTED_LAN_IP: &str = "[REDACTED_LAN_IP]";
 const REDACTED_MAC: &str = "[REDACTED_MAC]";
 const REDACTED_AUDIO: &str = "[REDACTED_AUDIO]";
-const REDACTION_MARKER_PREFIX: &str = "[REDACTED_";
+/// Every complete marker this module writes, and the only values treated as already redacted.
+const REDACTION_MARKERS: [&str; 5] = [
+    REDACTED_SECRET,
+    REDACTED_ID,
+    REDACTED_LAN_IP,
+    REDACTED_MAC,
+    REDACTED_AUDIO,
+];
 
 /// Key names, matched as a lowercase suffix, whose values are secrets.
 const SECRET_KEY_SUFFIXES: &[&str] = &[
@@ -925,8 +932,26 @@ fn redact_key_values(input: &str) -> String {
         let audio_array =
             kind == KeyKind::Audio && quote.is_none() && bytes.get(value_start) == Some(&b'[');
         let mut value_end = value_start;
+        // A bracket opened inside an unquoted value is closed inside it. `]`, `)` and `}` are
+        // delimiters only when nothing in the value opened them. Without this, a value such as
+        // `Bearer [REDACTED_SECRET]` (the bearer pass has already run) or `[x]glued-secret` ended
+        // at its first `]`, which left a stray `]` and the text after it, secret included, in
+        // the output. A closer is only ever consumed here, never searched for, so the scan stays
+        // linear and cannot run past the delimiters below (whitespace, `\n`, `&`, ...).
+        let mut depth = 0usize;
         while value_end < bytes.len() {
             let b = bytes[value_end];
+            if quote.is_none() && !audio_array {
+                match b {
+                    b'[' | b'(' | b'{' => depth += 1,
+                    b']' | b')' | b'}' if depth > 0 => {
+                        depth -= 1;
+                        value_end += 1;
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
             let stop = match quote {
                 Some(q) => b == q || b == b'\n',
                 None if audio_array => b == b']',
@@ -947,9 +972,10 @@ fn redact_key_values(input: &str) -> String {
         if audio_array && value_end < bytes.len() {
             value_end += 1; // include the closing bracket
         }
-        if value_end == value_start
-            || input[value_start..value_end].starts_with(REDACTION_MARKER_PREFIX)
-        {
+        // Already redacted means the value is exactly one finished marker. A value that merely
+        // starts like one (`[REDACTED_]secret`, `[REDACTED_SECRET]secret`) still holds a secret.
+        let value = &input[value_start..value_end];
+        if value.is_empty() || REDACTION_MARKERS.contains(&value) {
             i += 1;
             continue;
         }
@@ -1147,6 +1173,10 @@ fn redact_prefixed_ids(
 /// dash-separated MACs; RFC 1918, link-local and `100.64.0.0/10` IPv4 addresses; IPv6 unique-local
 /// and link-local addresses; and `RINCON_`, `Sonos_` and `HHID_` identifiers.
 ///
+/// A bracket opened inside an unquoted value closes inside it, so `[x]y` is one value. A value that
+/// is exactly one finished `[REDACTED_*]` marker is already redacted and is left alone; a value
+/// that merely starts like one (`[REDACTED_]secret`) is redacted like any other.
+///
 /// Not covered, deliberately or for now: unseparated 12-hex MACs (too many false positives against
 /// hashes), public IP addresses, global IPv6, credentials embedded in URLs (`user:pass@host`), and
 /// secrets that appear with no key. Over-redaction is intentional: `key: ready` is redacted too.
@@ -1309,10 +1339,8 @@ impl BoundedDiagnosticSink {
         ] {
             *field = redact_sensitive_text(field);
         }
-        for field in [&mut event.fault, &mut event.cause] {
-            if let Some(text) = field {
-                *text = redact_sensitive_text(text);
-            }
+        for text in [&mut event.fault, &mut event.cause].into_iter().flatten() {
+            *text = redact_sensitive_text(text);
         }
         if let Some(key) = pseudonym_key {
             event.member_id = pseudonym(key, &event.member_id);
@@ -2652,6 +2680,95 @@ mod tests {
         assert_eq!(
             redact_sensitive_text("authorization: bearer xyz"),
             "authorization: [REDACTED_SECRET]"
+        );
+        // The marker the bearer pass writes must not end the header value early (a stray `]`
+        // used to survive), yet a real delimiter after it still does, so later text is kept.
+        assert_eq!(
+            redact_sensitive_text("(Authorization: Bearer abc.def.ghi) next"),
+            "(Authorization: [REDACTED_SECRET]) next"
+        );
+        // The quoted and `=` forms end the value where they always did.
+        assert_eq!(
+            redact_sensitive_text(r#"{"Authorization":"Bearer abc.def.ghi"}"#),
+            r#"{"Authorization":"[REDACTED_SECRET]"}"#
+        );
+        assert_eq!(
+            redact_sensitive_text("Authorization=Bearer abc.def.ghi&x=1"),
+            "Authorization=[REDACTED_SECRET]&x=1"
+        );
+        // A header value never runs onto the next line, with a finished marker or an unfinished one.
+        assert_eq!(
+            redact_sensitive_text("Authorization: Bearer abc.def.ghi\nnext line"),
+            "Authorization: [REDACTED_SECRET]\nnext line"
+        );
+        assert_eq!(
+            redact_sensitive_text("Authorization: [REDACTED_\nrest"),
+            "Authorization: [REDACTED_SECRET]\nrest"
+        );
+        // Idempotent for real: the first pass must reach exactly this string, then change nothing.
+        let once = redact_sensitive_text("Authorization: Bearer abc.def.ghi end");
+        assert_eq!(once, "Authorization: [REDACTED_SECRET]");
+        assert_eq!(redact_sensitive_text(&once), once);
+    }
+
+    #[test]
+    fn text_that_only_looks_like_a_finished_marker_does_not_shield_a_secret() {
+        // Each of these was skipped as "already redacted" because the value merely started with
+        // `[REDACTED_`. The secret must be gone, and the result must be stable.
+        for (raw, secret, want) in [
+            (
+                "Authorization: [REDACTED_ID] sk-live-abcdef123",
+                "sk-live-abcdef123",
+                "Authorization: [REDACTED_SECRET]",
+            ),
+            (
+                "password=[REDACTED_X]hunter2",
+                "hunter2",
+                "password=[REDACTED_SECRET]",
+            ),
+            (
+                "token=[REDACTED_]realsecret",
+                "realsecret",
+                "token=[REDACTED_SECRET]",
+            ),
+            (
+                "token=[REDACTED_SECRET]hunter2",
+                "hunter2",
+                "token=[REDACTED_SECRET]",
+            ),
+            (
+                r#"{"password":"[REDACTED_X]hunter2"}"#,
+                "hunter2",
+                r#"{"password":"[REDACTED_SECRET]"}"#,
+            ),
+        ] {
+            let out = redact_sensitive_text(raw);
+            assert!(!out.contains(secret), "{raw} leaked: {out}");
+            assert_eq!(out, want, "{raw}");
+            assert_eq!(
+                redact_sensitive_text(&out),
+                out,
+                "{raw}: second pass differs"
+            );
+        }
+
+        // Paired positive: a value that IS exactly one of the five finished markers is left
+        // alone, and the text after it survives.
+        for already in [
+            "token=[REDACTED_SECRET] next",
+            "serial=[REDACTED_ID] next",
+            "Authorization: [REDACTED_SECRET]",
+            "mac=[REDACTED_MAC] next",
+            "samples=[REDACTED_AUDIO] next",
+            r#"{"token":"[REDACTED_SECRET]","ok":true}"#,
+        ] {
+            assert_eq!(redact_sensitive_text(already), already);
+        }
+
+        // Brackets that wrap a key=value pair from outside still end its value.
+        assert_eq!(
+            redact_sensitive_text("[token=abc] next"),
+            "[token=[REDACTED_SECRET]] next"
         );
     }
 

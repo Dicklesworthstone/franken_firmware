@@ -1191,13 +1191,21 @@ mod tests {
         assert!(outcome.is_ok());
     }
 
-    /// KNOWN LIMIT, pinned so it is not forgotten. The session still adopts the epoch of any
-    /// *valid* command and has no way to tell whether the sender was elected, so an
-    /// unauthenticated command at a far-future epoch applies and fences out the real coordinator.
-    /// The oracle objects because the harness never declared epoch 999.
+    /// KNOWN LIMIT, owned by bead ffw-kh0 (G01). Kept as a passing characterization so it stays in
+    /// the test counts. It is deliberately not `#[ignore]`d: the intended-behavior form needs an
+    /// authenticated-epoch or election API that does not exist yet, and none is invented here.
     ///
-    /// When commands are authenticated, or elections are declared to the session, invert the
-    /// assertions marked FLIP: the oracle accepts and `current_epoch` stays 1.
+    /// The session still adopts the epoch of any *valid* command and has no way to tell whether
+    /// the sender was elected, so an unauthenticated command at a far-future epoch applies and
+    /// fences out the real coordinator. The oracle objects because the harness never declared
+    /// epoch 999.
+    ///
+    /// When G01 lands authenticated epoch adoption, or elections are declared to the session,
+    /// invert the assertions marked FLIP so the test asserts all of:
+    /// - the command is rejected with a specific `SessionError` variant, not merely some error;
+    /// - the oracle accepts that rejection, so `deliver_new` returns `Ok`;
+    /// - `current_epoch` is still 1, and `group_master_volume` and `state_revision` are unchanged;
+    /// - a following epoch-1 command from the real coordinator is still applied.
     #[test]
     fn known_limit_a_valid_command_at_an_undeclared_epoch_is_still_applied() {
         let mut session = UnifiedGroupSession::new("grp-limit", "coord", 1);
@@ -1209,9 +1217,9 @@ mod tests {
         };
         let err = audit
             .deliver_new(&mut session, unelected)
-            .expect_err("the oracle must flag an epoch nobody declared"); // FLIP: expect Ok
-        assert!(err.contains("future epoch accepted"), "{err}");
-        assert_eq!(session.current_epoch, 999); // FLIP: expect 1
+            .expect_err("the oracle must flag an epoch nobody declared"); // FLIP: expect Ok, and assert the specific rejection inside it
+        assert!(err.contains("future epoch accepted"), "{err}"); // FLIP: drop
+        assert_eq!(session.current_epoch, 999); // FLIP: expect 1; volume and state_revision unchanged; then an epoch-1 command still applies
     }
 
     fn event_kinds(sink: &BoundedDiagnosticSink) -> Vec<&str> {
