@@ -261,12 +261,12 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(self.run_main("--tier", "smoke", "--case", "P01-V-001", "--receipts", tmp)[0], 0)
             first = sorted(os.listdir(tmp))
             self.assertEqual(len(first), 1)
-            before = open(os.path.join(tmp, first[0]), "rb").read()
+            before = run_cases._read_bytes(os.path.join(tmp, first[0]))
             self.assertEqual(self.run_main("--tier", "smoke", "--case", "P01-V-001", "--receipts", tmp)[0], 0)
             after = sorted(os.listdir(tmp))
             self.assertEqual(len(after), 2)
-            self.assertEqual(open(os.path.join(tmp, first[0]), "rb").read(), before)
-            doc = json.load(open(os.path.join(tmp, first[0])))
+            self.assertEqual(run_cases._read_bytes(os.path.join(tmp, first[0])), before)
+            doc = json.loads(run_cases._read_text(os.path.join(tmp, first[0])))
             self.assertEqual(doc["totals"], {"total": 1, "passed": 1, "failed": 0, "blocked": 0})
             self.assertEqual(doc["contract_digest"], ref.digest(small_contract()))
 
@@ -322,7 +322,7 @@ class PipelineTests(unittest.TestCase):
                                           "--receipts", os.path.join(tmp, "r"))
             self.assertEqual(code, 3)
             self.assertIn("status incomplete", out)
-            receipt = json.load(open(os.path.join(tmp, "r", os.listdir(os.path.join(tmp, "r"))[0])))
+            receipt = json.loads(run_cases._read_text(os.path.join(tmp, "r", os.listdir(os.path.join(tmp, "r"))[0])))
             self.assertEqual((receipt["status"], len(receipt["artifacts"]), len(receipt["missing"])), ("incomplete", 0, 7))
 
     def test_collect_of_a_correct_tree_is_complete_and_verifies(self):
@@ -331,7 +331,7 @@ class PipelineTests(unittest.TestCase):
             self.write_artifacts(target)
             code, _out = self.run_pipeline("collect", "--target-dir", target, "--receipts", os.path.join(tmp, "r"))
             self.assertEqual(code, 0)
-            receipt = json.load(open(os.path.join(tmp, "r", os.listdir(os.path.join(tmp, "r"))[0])))
+            receipt = json.loads(run_cases._read_text(os.path.join(tmp, "r", os.listdir(os.path.join(tmp, "r"))[0])))
             self.assertEqual(receipt["status"], "complete")
             self.assertEqual(plan.check_receipt(small_contract(), receipt), [])
 
@@ -864,7 +864,7 @@ class CentralEvidenceTests(unittest.TestCase):
         pattern = re.compile(r"/Users/|/private/|/home/|/var/folders|jemanuel|claude-501|@|\x1b|\b\d{1,3}(?:\.\d{1,3}){3}\b")
         for path in central.find_evidence(run_cases.REPO):
             with self.subTest(os.path.basename(os.path.dirname(path))):
-                text = open(path, encoding="utf-8").read()
+                text = run_cases._read_text(path)
                 self.assertIsNone(pattern.search(text), "an evidence record must not carry paths, users or addresses")
                 record = json.loads(text)
                 self.assertEqual(record["schema"], central.EVIDENCE_SCHEMA)
@@ -1275,7 +1275,7 @@ class CentralJudgementTests(unittest.TestCase):
             self.skipTest("git is unavailable")
         if head.returncode != 0:
             self.skipTest("no git history here")
-        names = central.rust_test_names(open(os.path.join(run_cases.REPO, *central.REPLAY_TEST_FILE.split("/"))).read())
+        names = central.rust_test_names(run_cases._read_text(os.path.join(run_cases.REPO, *central.REPLAY_TEST_FILE.split("/"))))
         with tempfile.TemporaryDirectory() as tmp:
             paths = {}
             for sid, text in self.logs.items():
@@ -1311,6 +1311,92 @@ class CentralJudgementTests(unittest.TestCase):
 def hashlib_sha(text):
     import hashlib
     return hashlib.sha256(text.encode()).hexdigest()
+
+
+class SelftestVerdictTests(unittest.TestCase):
+    """P01-META-006 used to require a bare `OK`, so it failed in every git-archive export (no .git, two tests skip) and the runner's
+    own machinery was never verified centrally. The verdict now reads the verbose run: it accepts a skip only for the two tests
+    that need git history, with their documented reasons, when this checkout has none; everything else is refused."""
+
+    NAMES = sorted(run_cases.EXPORT_SKIPS)
+
+    @staticmethod
+    def run_text(ran=119, skipped=(), summary=None, failures=0):
+        lines = ["test_a_ordinary_one (test_p01.X.test_a_ordinary_one) ... ok"]
+        for name, reason in skipped:
+            lines.append(f"{name} (test_p01.Y.{name}) ... skipped '{reason}'")
+        lines += ["", "-" * 70, f"Ran {ran} tests in 0.3s", ""]
+        if failures:
+            lines.append(f"FAILED (failures={failures})")
+        elif summary is not None:
+            lines.append(summary)
+        else:
+            lines.append(f"OK (skipped={len(skipped)})" if skipped else "OK")
+        return "\n".join(lines) + "\n"
+
+    def judge(self, text, rc=0, min_tests=20, history=False):
+        return run_cases.judge_selftest(rc, text, min_tests, history)
+
+    def both_skips(self, reason="no git history here"):
+        return [(n, reason) for n in self.NAMES]
+
+    def test_a_clean_run_in_a_checkout_with_history_passes(self):
+        self.assertEqual(self.judge(self.run_text(), history=True), "119 unit tests")
+
+    def test_the_two_documented_skips_pass_only_in_an_export_without_history(self):
+        text = self.run_text(skipped=self.both_skips())
+        self.assertIn("2 skipped", self.judge(text, history=False))
+        with self.assertRaisesRegex(run_cases.CaseError, "has git history"):
+            self.judge(text, history=True)  # the plant: the same skips where they have no excuse
+
+    def test_either_documented_reason_is_accepted(self):
+        for reason in ("git is unavailable", "no git history here"):
+            self.judge(self.run_text(skipped=self.both_skips(reason)), history=False)
+
+    def test_a_skip_of_any_other_test_is_refused(self):
+        text = self.run_text(skipped=[("test_something_else_entirely", "no git history here")])
+        with self.assertRaisesRegex(run_cases.CaseError, "only .* may skip"):
+            self.judge(text, history=False)
+        self.judge(self.run_text(skipped=[(self.NAMES[0], "no git history here")]), history=False)  # control: a documented one
+
+    def test_an_undocumented_reason_is_refused_for_a_documented_test(self):
+        text = self.run_text(skipped=[(self.NAMES[0], "this machine is slow")])
+        with self.assertRaisesRegex(run_cases.CaseError, "undocumented reason"):
+            self.judge(text, history=False)
+
+    def test_a_summary_that_declares_more_skips_than_the_lines_show_is_refused(self):
+        text = self.run_text(skipped=[(self.NAMES[0], "no git history here")], summary="OK (skipped=2)")
+        with self.assertRaisesRegex(run_cases.CaseError, "declares 2 skipped"):
+            self.judge(text, history=False)
+        # a skip line the parser cannot read (a docstring splits the line) cannot hide behind the summary either
+        hidden = self.run_text(summary="OK (skipped=1)")
+        with self.assertRaisesRegex(run_cases.CaseError, "declares 1 skipped"):
+            self.judge(hidden, history=False)
+
+    def test_a_failure_an_error_exit_or_a_summary_with_extra_outcomes_is_refused(self):
+        with self.assertRaisesRegex(run_cases.CaseError, "unit tests failed"):
+            self.judge(self.run_text(failures=1))
+        with self.assertRaisesRegex(run_cases.CaseError, "unit tests failed"):
+            self.judge(self.run_text(), rc=1)
+        with self.assertRaisesRegex(run_cases.CaseError, "unit tests failed"):
+            self.judge(self.run_text(summary="OK (expected failures=1)"))
+        self.judge(self.run_text())  # control: the unplanted text passes
+
+    def test_too_few_tests_is_refused_and_skips_do_not_count_toward_the_floor_silently(self):
+        with self.assertRaisesRegex(run_cases.CaseError, "only 10 unit tests ran"):
+            self.judge(self.run_text(ran=10), min_tests=20)
+        self.assertIn("117 executed", self.judge(self.run_text(ran=119, skipped=self.both_skips()), history=False))
+
+    def test_the_skip_names_are_exactly_the_tests_that_skip_in_this_file(self):
+        """The allow-list cannot drift from the tests: every test that skips for missing git history is listed, and every
+        listed test exists. (The needle is built in two pieces so this test's own text does not contain it.)"""
+        needle = "self.skip" + "Test("
+        source = run_cases._read_text(os.path.join(run_cases.HERE, "test_p01.py"))
+        skipping = set()
+        for match in re.finditer(r"    def (test_\w+)\(self\):(.*?)(?=\n    def |\nclass |\Z)", source, re.S):
+            if needle in match.group(2):
+                skipping.add(match.group(1))
+        self.assertEqual(skipping, set(run_cases.EXPORT_SKIPS))
 
 
 class ResolveTests(unittest.TestCase):

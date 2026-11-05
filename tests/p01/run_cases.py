@@ -539,7 +539,7 @@ def run_receipt(c) -> Result:
 
 def _check_identity(doc, receipt, target_dir, path) -> None:
     """Independent of plan.py: hash the files the executor wrote and compare with what the receipt says."""
-    on_disk = json.load(open(path, encoding="utf-8"))
+    on_disk = json.loads(_read_text(path))
     if on_disk != receipt:
         raise CaseError("the receipt on disk differs from the one returned")
     if receipt["contract_digest"] != sha256_bytes(ref.canonical_json(doc).encode("utf-8")):
@@ -584,14 +584,14 @@ def _check_identity(doc, receipt, target_dir, path) -> None:
 
 def _check_restart(receipts_dir, target_dir, first_path, first_receipt) -> None:
     """After a cancelled run, a restart writes a new receipt and leaves the cancelled one exactly as it was."""
-    before = open(first_path, "rb").read()
+    before = _read_bytes(first_path)
     if first_receipt["status"] != "incomplete" or [s["id"] for s in first_receipt["steps"]] != \
             ["toolchain", "toolchain-default", "workspace-test"]:
         raise CaseError(f"the cancelled receipt is not an honest partial: {first_receipt['status']}")
     doc, steps, code, path2, receipt2, _ = _run_scenario("ok", receipts_dir, target_dir)
     if path2 == first_path or code != 0 or receipt2["status"] != "complete":
         raise CaseError("the restart did not produce a separate complete receipt")
-    if open(first_path, "rb").read() != before:
+    if _read_bytes(first_path) != before:
         raise CaseError("the restart overwrote the original receipt")
 
 
@@ -648,7 +648,7 @@ def run_meta_invariants(c) -> Result:
 
 def run_meta_codes(c) -> Result:
     """Every error code the Rust module can emit is exercised by at least one shared vector."""
-    text = open(RUST_FILE, encoding="utf-8").read()
+    text = _read_text(RUST_FILE)
     block = text[text.index("pub mod code {"):]
     block = block[:block.index("\n}\n")]
     rust_codes = set(re.findall(r'pub const [A-Z0-9_]+: &str = "([a-z0-9_]+)";', block))
@@ -675,7 +675,7 @@ def run_meta_hygiene(c) -> Result:
     files += [CONTRACT_FILE, VECTORS_FILE, RUST_FILE]
     hits = []
     for path in files:
-        text = open(path, encoding="utf-8").read()
+        text = _read_text(path)
         for name, pat in patterns:
             if pat.search(text):
                 hits.append(f"{os.path.relpath(path, REPO)}: {name}")
@@ -694,7 +694,7 @@ def run_meta_vectors_current(c) -> Result:
 
 def run_mutation_canary(c) -> Result:
     """Break one rule at a time in a copy of reference.py; the vectors must notice every break."""
-    source = open(os.path.join(HERE, "reference.py"), encoding="utf-8").read()
+    source = _read_text(os.path.join(HERE, "reference.py"))
     vectors = load_json(VECTORS_FILE)
     base = contract()
     caught, missed = [], []
@@ -749,16 +749,65 @@ def _eval_with(namespace: Dict[str, Any], vec: Dict[str, Any], base, base_digest
         raise CaseError("observed")
 
 
-def run_runner_selftest(c) -> Result:
-    out = subprocess.run([sys.executable, "-B", "-m", "unittest", "test_p01"], cwd=HERE, capture_output=True,
-                         text=True, timeout=300)
-    match = re.search(r"^Ran (\d+) tests?", out.stderr, re.M)
+def _read_bytes(path: str) -> bytes:
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def _read_text(path: str) -> str:
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+# The two unit tests that skip when the checkout has no git history, which is what a `git archive` export (the central
+# snapshot) is: they need `git rev-parse HEAD`. A skip of any other test, for any other reason, or in a tree that HAS history,
+# is a defect and not an export artifact.
+EXPORT_SKIPS = {
+    "test_the_ingest_command_writes_one_record_and_refuses_to_overwrite_it": ("git is unavailable", "no git history here"),
+    "test_ingest_records_the_replay_tests_by_name_from_the_log_and_binds_them_to_the_files":
+        ("git is unavailable", "no git history here"),
+}
+_SKIPPED_LINE = re.compile(r"^(\w+) \([\w.]+\) \.\.\. skipped '(.*)'\s*$", re.M)
+_OK_SUMMARY = re.compile(r"^OK(?: \(skipped=(\d+)\))?\s*$", re.M)
+
+
+def judge_selftest(returncode: int, stderr: str, min_tests: int, history_present: bool) -> str:
+    """The verdict on one `python -m unittest -v test_p01` run, as a detail string, or CaseError. `history_present` is whether
+    this checkout answers `git rev-parse HEAD`; only without it may the two EXPORT_SKIPS tests skip."""
+    match = re.search(r"^Ran (\d+) tests?", stderr, re.M)
     ran = int(match.group(1)) if match else 0
-    if out.returncode != 0 or not re.search(r"^OK\s*$", out.stderr, re.M):
-        raise CaseError("unit tests failed: " + " ".join(out.stderr.split())[-200:])
-    if ran < c["min_tests"]:
-        raise CaseError(f"only {ran} unit tests ran, expected at least {c['min_tests']}")
-    return PASS, f"{ran} unit tests"
+    summary = _OK_SUMMARY.search(stderr)
+    if returncode != 0 or summary is None:
+        raise CaseError("unit tests failed: " + " ".join(stderr.split())[-200:])
+    declared = int(summary.group(1) or 0)
+    seen = _SKIPPED_LINE.findall(stderr)
+    if len(seen) != declared:
+        raise CaseError(f"the summary declares {declared} skipped tests but {len(seen)} skip lines were read")
+    for name, reason in seen:
+        if name not in EXPORT_SKIPS:
+            raise CaseError(f"unit test {name} was skipped ({reason!r}); only {sorted(EXPORT_SKIPS)} may skip")
+        if reason not in EXPORT_SKIPS[name]:
+            raise CaseError(f"unit test {name} was skipped for an undocumented reason {reason!r}")
+        if history_present:
+            raise CaseError(f"unit test {name} was skipped ({reason!r}) in a checkout that has git history")
+    if ran < min_tests:
+        raise CaseError(f"only {ran} unit tests ran, expected at least {min_tests}")
+    executed = ran - declared
+    return f"{ran} unit tests" if not declared else f"{ran} unit tests ({executed} executed, {declared} skipped: no git history in this export)"
+
+
+def _git_history_here() -> bool:
+    try:
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return head.returncode == 0
+
+
+def run_runner_selftest(c) -> Result:
+    out = subprocess.run([sys.executable, "-B", "-m", "unittest", "-v", "test_p01"], cwd=HERE, capture_output=True,
+                         text=True, timeout=300)
+    return PASS, judge_selftest(out.returncode, out.stderr, c["min_tests"], _git_history_here())
 
 
 def _revision_is_here(revision: str) -> Optional[bool]:
@@ -938,7 +987,7 @@ def main(argv: List[str]) -> int:
             "schema": "ffw.p01.case_receipt.v1", "kind": "host_check", "run_id": run_id, "tier": args.tier,
             "command": [sys.executable, "tests/p01/run_cases.py", "--tier", args.tier]
             + (["--case", args.case] if args.case else []),
-            "contract_digest": ref.digest(doc), "vectors_digest": sha256_bytes(open(VECTORS_FILE, "rb").read()),
+            "contract_digest": ref.digest(doc), "vectors_digest": sha256_bytes(_read_bytes(VECTORS_FILE)),
             "facts_digest": facts_mod.facts_digest(facts_mod.extract(REPO)),
             "python": sys.version.split()[0],
             "metadata_inputs": _metadata_receipt(metadata_inputs),

@@ -51,9 +51,98 @@ def expect_error(code: str, fn: Callable[[], Any]) -> ref.JournalError:
 
 def check_cut_points() -> None:
     """Power cut at every storage-operation boundary and every byte budget: old or new, never mixed."""
-    for name, stride in (("rejections", 1), ("credentials", 1), ("namespaces", 1), ("churn", 5)):
+    for name, stride in (("rejections", 1), ("credentials", 1), ("namespaces", 1), ("cross_namespace", 1), ("churn", 5)):
         for reverse in (False, True):
             ref.enumerate_cuts(LIM, sc.SCENARIOS[name], reverse=reverse, stride=stride)
+
+
+def check_cross_namespace_transactions() -> None:
+    """One transaction that spans credentials and calibration is all-or-nothing: at every power cut and under every injected
+    failure inside it, the credential and the calibration it wrote recover as the old pair or the new pair, never one of
+    each. This holds for a transaction that is appended as a frame and for one that is published by compaction. A
+    transaction rejected for one bad operation leaves even its valid operations unapplied."""
+    txn = ("commit", [("install", b("peer"), 2, b("secret-2")), ("put", ref.NS_CALIBRATION, b("board-a"), b("cal-2"))])
+    base = [("put", ref.NS_CALIBRATION, b("board-a"), b("cal-1")), ("install", b("peer"), 1, b("secret-1"))]
+    old_pair = (("live", 1, b("secret-1")), b("cal-1"))
+    new_pair = (("live", 2, b("secret-2")), b("cal-2"))
+
+    def pair(journal):
+        return journal.state[ref.NS_CREDENTIALS].get(b("peer")), journal.state[ref.NS_CALIBRATION].get(b("board-a"))
+
+    def fill(rounds):
+        return [s for i in range(rounds) for s in (("stage_setting", b("vol"), b(f"{i:02d}")), ("flush_settings", 100 * (i + 1)))]
+
+    def outcome_of(prefix):
+        _media, journal = fresh()
+        for step in prefix:
+            getattr(journal, step[0])(*step[1:])
+        return journal.commit(txn[1])
+
+    rounds = 0
+    while outcome_of(base + fill(rounds)) != "compacted":
+        rounds += 1
+        assert rounds < 30, "no amount of filler makes the transaction compact"
+
+    def cuts_and_failures(prefix):
+        script = prefix + [txn]
+        baseline = ref.Media(LIM.segment_bytes)
+        _states, ranges, _j = ref.run_script(LIM, script, baseline)
+        start, end = ranges[-1]
+        assert end - start >= 2, "the transaction must take at least a write and a sync"
+        pending = list(baseline.pending_before) + [0]
+        reached = set()
+        for n in range(start, end + 1):
+            for k in (range(pending[n] + 1) if n < baseline.ops_done else range(1)):
+                for reverse in (False, True):
+                    media = ref.Media(LIM.segment_bytes)
+                    media.cut_after_ops, media.cut_budget, media.cut_reverse = n, k, reverse
+                    try:
+                        ref.run_script(LIM, script, media)
+                    except ref.JournalError:
+                        pass
+                    if not media.dead:
+                        media.power_cut(0, reverse)
+                    recovered, _ = reopen(media)
+                    got = pair(recovered)
+                    assert got in (old_pair, new_pair), f"cut n={n} k={k} reverse={reverse}: credential and calibration mixed: {got}"
+                    reached.add(got == new_pair)
+        assert reached == {False, True}, "the cuts must reach both the old pair and the new pair, or the check proves nothing"
+        for i in range(start, end):
+            for mode in ("io", "sync_lost", "sync_kept"):
+                media = ref.Media(LIM.segment_bytes)
+                journal, _rec = ref.Journal.open(media, LIM)
+                for step in prefix:
+                    getattr(journal, step[0])(*step[1:])
+                before = ref.state_hex(journal.state)
+                if mode == "io":
+                    media.fail_op_at = i
+                else:
+                    media.sync_fail_at, media.sync_fail_persists = i, mode == "sync_kept"
+                try:
+                    journal.commit(txn[1])
+                except ref.JournalError as err:
+                    assert err.code == "storage", err.code
+                else:
+                    continue  # this op index is not of the kind the mode injects
+                assert journal.poisoned and ref.state_hex(journal.state) == before, "a failed transaction published something"
+                reopened, _ = reopen(media)
+                assert pair(reopened) in (old_pair, new_pair), f"failure {mode} at op {i}: credential and calibration mixed"
+
+    for label, prefix in (("appended", base), ("compacted", base + fill(rounds))):
+        assert outcome_of(prefix) == label, f"the {label} variant did not take the {label} path"
+        cuts_and_failures(prefix)
+
+    # A rejected transaction: the first operation is valid on its own, the second is not. Nothing may change.
+    _media, journal = fresh()
+    for step in base:
+        getattr(journal, step[0])(*step[1:])
+    before, ops_before = ref.state_hex(journal.state), journal.media.ops_done
+    rejected = [("put", ref.NS_CALIBRATION, b("board-a"), b("cal-REJ")), ("install", b("peer"), 1, b("secret-x"))]
+    expect_error("not_newer", lambda: journal.commit(rejected))
+    assert ref.state_hex(journal.state) == before, "a rejected transaction left its valid operations applied"
+    assert journal.media.ops_done == ops_before, "a rejected transaction wrote to the medium"
+    journal.commit(rejected[:1])  # control: the same first operation alone is valid and does change the state
+    assert ref.state_hex(journal.state) != before
 
 
 def check_failed_operations() -> None:
@@ -270,7 +359,8 @@ def check_redaction() -> None:
 
 
 CHECKS: List[Callable[[], None]] = [
-    check_cut_points, check_failed_operations, check_namespaces_are_separate, check_credentials_and_tombstones,
+    check_cut_points, check_failed_operations, check_cross_namespace_transactions, check_namespaces_are_separate,
+    check_credentials_and_tombstones,
     check_marks, check_bounds_and_errors, check_write_bounds, check_images, check_no_resurrection_across_compaction,
     check_redaction,
 ]

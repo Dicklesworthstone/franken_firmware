@@ -11,6 +11,12 @@ SIGNATURES: Dict[str, Tuple[str, ...]] = {
     "put": ("int", "bytes", "bytes"), "delete": ("int", "bytes"), "reset_settings": (), "clear_calibration": (),
     "install": ("bytes", "int", "bytes"), "revoke": ("bytes",), "reset_pairing": (), "raise_mark": ("bytes", "int"),
     "stage_setting": ("bytes", "bytes"), "flush_settings": ("int",),
+    "commit": ("ops",),  # one transaction of several operations, possibly in several namespaces
+}
+# The operations inside a `commit` step, spelled with the reference's operation tags (reference.apply_op).
+OP_SIGNATURES: Dict[str, Tuple[str, ...]] = {
+    "put": ("int", "bytes", "bytes"), "delete": ("int", "bytes"), "reset": ("int",), "install": ("bytes", "int", "bytes"),
+    "revoke": ("bytes",), "reset_pairing": (), "raise": ("bytes", "int"),
 }
 
 
@@ -18,14 +24,30 @@ def b(text: str) -> bytes:
     return text.encode("ascii")
 
 
+def _arg_to_json(kind: str, value: Any) -> Any:
+    if kind == "bytes":
+        return value.hex()
+    if kind == "ops":
+        return [{"op": op[0], "args": [_arg_to_json(k, a) for k, a in zip(OP_SIGNATURES[op[0]], op[1:])]} for op in value]
+    return value
+
+
+def _arg_from_json(kind: str, value: Any) -> Any:
+    if kind == "bytes":
+        return bytes.fromhex(value)
+    if kind == "ops":
+        return [(d["op"],) + tuple(_arg_from_json(k, a) for k, a in zip(OP_SIGNATURES[d["op"]], d["args"])) for d in value]
+    return value
+
+
 def step_to_json(step: Sequence[Any]) -> Dict[str, Any]:
     kinds = SIGNATURES[step[0]]
-    return {"op": step[0], "args": [a.hex() if k == "bytes" else a for k, a in zip(kinds, step[1:])]}
+    return {"op": step[0], "args": [_arg_to_json(k, a) for k, a in zip(kinds, step[1:])]}
 
 
 def step_from_json(doc: Dict[str, Any]) -> Tuple:
     kinds = SIGNATURES[doc["op"]]
-    return (doc["op"],) + tuple(bytes.fromhex(a) if k == "bytes" else a for k, a in zip(kinds, doc["args"]))
+    return (doc["op"],) + tuple(_arg_from_json(k, a) for k, a in zip(kinds, doc["args"]))
 
 
 def namespaces() -> List[Tuple]:
@@ -76,6 +98,33 @@ def churn(rounds: int = 40) -> List[Tuple]:
     return steps
 
 
+def cross_namespace() -> List[Tuple]:
+    """Transactions that span namespaces. Each `commit` is ONE frame, so a power cut recovers all of it or none of it: the
+    credential and the calibration that a transaction wrote are both the old pair or both the new pair, never one of each.
+    One transaction is rejected for its second operation; its valid first operation must not stay applied. Twelve settings
+    flushes then fill the segment, so the next transaction is published by compaction (a snapshot in the other segment), and
+    one more transaction follows it so the stale segment is retired inside the script."""
+    filler: List[Tuple] = []
+    for i in range(12):
+        filler += [("stage_setting", b("vol"), b(f"{i:02d}")), ("flush_settings", 100 * (i + 1))]
+    return [
+        ("put", ref.NS_CALIBRATION, b("board-a"), b("cal-1")),
+        ("install", b("peer"), 1, b("secret-1")),
+        # a credential replacement and a new calibration in one transaction
+        ("commit", [("install", b("peer"), 2, b("secret-2")), ("put", ref.NS_CALIBRATION, b("board-a"), b("cal-2"))]),
+        # three namespaces at once: calibration, a record and a mark
+        ("commit", [("put", ref.NS_CALIBRATION, b("board-a"), b("cal-3")), ("put", ref.NS_RECORDS, b("voter"), b("rec-1")),
+                    ("raise", b("epoch"), 5)]),
+        # rejected: the credential version is not newer. The calibration write before it is valid and must not stay.
+        ("commit", [("put", ref.NS_CALIBRATION, b("board-a"), b("cal-REJ")), ("install", b("peer"), 2, b("secret-x"))]),
+    ] + filler + [
+        # a revocation and a calibration clear together (published by compaction)
+        ("commit", [("revoke", b("peer")), ("reset", ref.NS_CALIBRATION)]),
+        # after the compaction: a record and a mark together, appended to the new segment (it also retires the old one)
+        ("commit", [("put", ref.NS_RECORDS, b("voter"), b("rec-2")), ("raise", b("epoch"), 6)]),
+    ]
+
+
 def limits_error_cases() -> List[Tuple]:
     long_key, long_value = b("k" * 9), b("v" * 17)
     return [
@@ -94,4 +143,5 @@ def limits_error_cases() -> List[Tuple]:
 
 SCENARIOS: Dict[str, List[Tuple]] = {
     "namespaces": namespaces(), "credentials": credentials(), "churn": churn(), "rejections": limits_error_cases(),
+    "cross_namespace": cross_namespace(),
 }

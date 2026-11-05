@@ -59,19 +59,27 @@ const STDERR_CAP: u64 = 8 * 1024;
 const MAX_CHILDREN: u32 = 4_000;
 const SWEEP_CAP: usize = 4_096;
 
-/// The scripts of the clean-run case: the four scenarios of the shared vectors.
-const CLEAN_SCRIPTS: [&str; 4] = ["U01-S-001", "U01-S-002", "U01-S-003", "U01-S-004"];
+/// The scripts of the clean-run case: the five scenarios of the shared vectors.
+const CLEAN_SCRIPTS: [&str; 5] = [
+    "U01-S-001",
+    "U01-S-002",
+    "U01-S-003",
+    "U01-S-004",
+    "U01-S-005",
+];
 /// The scripts of the death sweep and the byte stride, as the Python driver uses (the long churn script is sampled).
-const SWEEPS: [(&str, usize); 4] = [
+const SWEEPS: [(&str, usize); 5] = [
     ("U01-S-001", 1),
     ("U01-S-002", 1),
     ("U01-S-004", 1),
     ("U01-S-003", 29),
+    ("U01-S-005", 3),
 ];
 /// SIGKILL after this many acknowledged steps.
-const KILL_PLANS: [(&str, &[usize]); 2] = [
+const KILL_PLANS: [(&str, &[usize]); 3] = [
     ("U01-S-003", &[3, 17, 40, 41, 60, 83]),
     ("U01-S-002", &[2, 7, 14]),
+    ("U01-S-005", &[3, 4, 5, 6, 29, 30]),
 ];
 
 /// Printed at the start of the panic message when the example binary is absent; `tests/u01/judge_log.py` reads it.

@@ -13,7 +13,9 @@
 //! A process kill is not a power cut: bytes already handed to the OS survive it, synced or not. That is the same
 //! experiment as a power cut that keeps a prefix of the unsynced writes, which the in-memory fake covers exhaustively.
 
-use franken_journal::{Journal, JournalError, Limits, Namespace, Source, Storage, StorageFault};
+use franken_journal::{
+    Journal, JournalError, Limits, Namespace, Op, Source, Storage, StorageFault,
+};
 use serde_json::Value;
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -110,6 +112,40 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// One operation inside a `commit` step (the vectors' JSON form, with the reference's operation tags); `None` if unreadable.
+fn parse_op(doc: &Value) -> Option<Op> {
+    let args = doc["args"].as_array()?;
+    let bytes = |i: usize| unhex(args.get(i).and_then(Value::as_str).unwrap_or(""));
+    let int = |i: usize| args.get(i).and_then(Value::as_u64).unwrap_or(0);
+    let ns = |i: usize| {
+        Namespace::from_u8(u8::try_from(int(i)).unwrap_or(0)).unwrap_or(Namespace::Settings)
+    };
+    Some(match doc["op"].as_str()? {
+        "put" => Op::Put {
+            ns: ns(0),
+            key: bytes(1),
+            value: bytes(2),
+        },
+        "delete" => Op::Delete {
+            ns: ns(0),
+            key: bytes(1),
+        },
+        "reset" => Op::Reset { ns: ns(0) },
+        "install" => Op::Install {
+            id: bytes(0),
+            version: int(1),
+            secret: bytes(2),
+        },
+        "revoke" => Op::Revoke { id: bytes(0) },
+        "reset_pairing" => Op::ResetPairing,
+        "raise" => Op::Raise {
+            key: bytes(0),
+            value: int(1),
+        },
+        _ => return None,
+    })
+}
+
 /// Apply one scripted step (the vectors' JSON form). `Ok` means the step returned, whether it committed or was rejected.
 fn apply(journal: &mut Journal<FileStorage>, step: &Value) -> Result<(), JournalError> {
     let args = step["args"].as_array().cloned().unwrap_or_default();
@@ -129,6 +165,19 @@ fn apply(journal: &mut Journal<FileStorage>, step: &Value) -> Result<(), Journal
         "raise_mark" => journal.raise_mark(&bytes(0), int(1)).map(|_| ()),
         "stage_setting" => journal.stage_setting(&bytes(0), &bytes(1)),
         "flush_settings" => journal.flush_settings(int(0)).map(|_| ()),
+        "commit" => {
+            let parsed: Option<Vec<Op>> = args
+                .first()
+                .and_then(Value::as_array)
+                .and_then(|list| list.iter().map(parse_op).collect());
+            match parsed {
+                Some(ops) => journal.commit(&ops).map(|_| ()),
+                None => {
+                    eprintln!("unreadable commit step");
+                    return Err(JournalError::BadOp);
+                }
+            }
+        }
         other => {
             eprintln!("unknown step {other}");
             return Err(JournalError::BadOp);

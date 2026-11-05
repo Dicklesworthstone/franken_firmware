@@ -73,6 +73,17 @@ class ScenarioTests(unittest.TestCase):
             for step in steps:
                 self.assertEqual(sc.step_from_json(sc.step_to_json(step)), step)
 
+    def test_the_cross_namespace_scenario_really_spans_namespaces(self):
+        """The all-or-nothing claim across namespaces is only tested if some commit touches credentials and calibration."""
+        def namespaces_of(op):
+            if op[0] in ("put", "delete", "reset"):
+                return {op[1]}
+            return {ref.NS_CREDENTIALS} if op[0] in ("install", "revoke", "reset_pairing") else {ref.NS_MARKS}
+        commits = [step[1] for step in sc.SCENARIOS["cross_namespace"] if step[0] == "commit"]
+        spans = [set().union(*(namespaces_of(op) for op in ops)) for ops in commits]
+        self.assertTrue(any({ref.NS_CREDENTIALS, ref.NS_CALIBRATION} <= s for s in spans), spans)
+        self.assertTrue(any(len(s) >= 3 for s in spans), spans)
+
     def test_both_configurations_hold_their_own_worst_case(self):
         ref.TINY.validate()
         ref.STANDARD.validate()

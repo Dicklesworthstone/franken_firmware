@@ -13,6 +13,20 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 FILES = ("reference.py", "scenarios.py", "images.py", "battery.py")
 
 MUTANTS: List[Tuple[str, str, str]] = [
+    ("a multi-namespace transaction is written as one frame per namespace, each synced",
+     "        payload = encode_ops(ops)\n        if len(payload) > self.lim.max_txn_payload:",
+     "        ns_of = lambda op: op[1] if op[0] in (\"put\", \"delete\", \"reset\") else (NS_CREDENTIALS if op[0] in (\"install\", \"revoke\", \"reset_pairing\") else NS_MARKS)\n"
+     "        spans = sorted({ns_of(op) for op in ops})\n"
+     "        if len(spans) > 1:\n"
+     "            outcome = \"appended\"\n"
+     "            for ns in spans:\n"
+     "                outcome = self.commit([op for op in ops if ns_of(op) == ns])\n"
+     "            return outcome\n"
+     "        payload = encode_ops(ops)\n        if len(payload) > self.lim.max_txn_payload:"),
+    ("a rejected transaction leaves its earlier operations applied",
+     "        for op in ops:\n            apply_op(self.lim, trial, op)\n        if canonical(trial) == canonical(self.state):",
+     "        try:\n            for op in ops:\n                apply_op(self.lim, trial, op)\n        except JournalError:\n"
+     "            self.state = trial\n            raise\n        if canonical(trial) == canonical(self.state):"),
     ("frame checksum unchecked", 'if zlib.crc32(fh[:8] + payload) != crc:', "if False:"),
     ("header checksum unchecked", ' or struct.unpack(">I", head[12:16])[0] != zlib.crc32(head[:12])', ""),
     ("frame sequence unchecked", " or fseq != seq", ""),

@@ -4,7 +4,7 @@
 #![allow(dead_code)]
 
 use franken_journal::{
-    Commit, Journal, JournalError, Limits, MemStorage, Namespace, Storage, StorageFault,
+    Commit, Journal, JournalError, Limits, MemStorage, Namespace, Op, Storage, StorageFault,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -41,6 +41,39 @@ pub enum Step {
     RaiseMark(Vec<u8>, u64),
     Stage(Vec<u8>, Vec<u8>),
     Flush(u64),
+    /// One transaction of several operations, possibly in several namespaces, committed as a single frame.
+    Commit(Vec<Op>),
+}
+
+/// One operation inside a `commit` step, spelled with the reference's operation tags.
+pub fn parse_op(doc: &Value) -> Op {
+    let args = doc["args"].as_array().expect("args");
+    let bytes = |i: usize| unhex(args[i].as_str().expect("hex argument"));
+    let int = |i: usize| args[i].as_u64().expect("integer argument");
+    match doc["op"].as_str().expect("op") {
+        "put" => Op::Put {
+            ns: ns(int(0)),
+            key: bytes(1),
+            value: bytes(2),
+        },
+        "delete" => Op::Delete {
+            ns: ns(int(0)),
+            key: bytes(1),
+        },
+        "reset" => Op::Reset { ns: ns(int(0)) },
+        "install" => Op::Install {
+            id: bytes(0),
+            version: int(1),
+            secret: bytes(2),
+        },
+        "revoke" => Op::Revoke { id: bytes(0) },
+        "reset_pairing" => Op::ResetPairing,
+        "raise" => Op::Raise {
+            key: bytes(0),
+            value: int(1),
+        },
+        other => panic!("unknown operation {other}"),
+    }
 }
 
 pub fn parse_step(doc: &Value) -> Step {
@@ -58,6 +91,14 @@ pub fn parse_step(doc: &Value) -> Step {
         "raise_mark" => Step::RaiseMark(bytes(0), int(1)),
         "stage_setting" => Step::Stage(bytes(0), bytes(1)),
         "flush_settings" => Step::Flush(int(0)),
+        "commit" => Step::Commit(
+            args[0]
+                .as_array()
+                .expect("operations")
+                .iter()
+                .map(parse_op)
+                .collect(),
+        ),
         other => panic!("unknown step {other}"),
     }
 }
@@ -91,6 +132,7 @@ pub fn apply<S: Storage>(journal: &mut Journal<S>, step: &Step) -> Result<String
         Step::RaiseMark(k, v) => commit(journal.raise_mark(k, *v)),
         Step::Stage(k, v) => journal.stage_setting(k, v).map(|()| "ok".to_string()),
         Step::Flush(now) => commit(journal.flush_settings(*now)),
+        Step::Commit(ops) => commit(journal.commit(ops)),
     }
 }
 
