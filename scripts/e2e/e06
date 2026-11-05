@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# E06 end-to-end entry point (bead ffw-unk): dependency, feature and target-availability audit, offline.
+# Stdlib Python only. It reads the resolver (cargo metadata --locked --offline, a resolver read and not a build),
+# Cargo.lock and the dependency sources already in the local registry cache. It compiles nothing, runs no
+# QEMU and touches no device.
+#
+#   scripts/e2e/e06                      the tests, then the audit of this workspace
+#   scripts/e2e/e06 --tests-only         only the tests (hand-written graphs, a contaminated graph, real cargo)
+#   scripts/e2e/e06 --audit-only [ARGS]  only the audit; ARGS go to scripts/e06/audit.py audit
+#                                        (e.g. --json OUT, --build-results FILE, --unsafe-allowed a,b)
+#   python3 -B -I scripts/e06/audit.py plan     the minimal-graph `cargo check` lines for the central batch
+#
+# Exit codes: 1 a test failed or the audit has blockers; 3 the tests passed and only REVIEW items remain
+# (reported, never admitted: a human decides each one); 0 tests passed and nothing is left to review;
+# 2 usage. The audit never says "admitted".
+set -uo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+mode="both"
+case "${1:-}" in
+  --tests-only) mode="tests"; shift ;;
+  --audit-only) mode="audit"; shift ;;
+esac
+status=0
+if [ "$mode" != "audit" ]; then
+  python3 -B -I -m unittest discover -s "$ROOT/tests/e06" -p 'test_*.py' || status=1
+  if [ "$status" -ne 0 ]; then
+    echo "scripts/e2e/e06: tests FAILED; not running the audit on a tool that fails its own tests" >&2
+    exit 1
+  fi
+fi
+if [ "$mode" != "tests" ]; then
+  python3 -B -I "$ROOT/scripts/e06/audit.py" audit --manifest-path "$ROOT/Cargo.toml" "$@"
+  exit $?
+fi
+exit 0
