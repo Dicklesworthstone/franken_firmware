@@ -438,3 +438,5 @@ mod tests {
         );
     }
 }
+
+pub mod contracts;
