@@ -33,6 +33,12 @@ EVIDENCE_SCHEMA = "ffw.p01.central_evidence.v1"
 # builds are BLK-002's.
 BLK001_STEPS = ("toolchain", "toolchain-default", "workspace-test", "build-franken-speaker-host",
                 "build-ffw-hello-init-mips_be", "build-ffw-hello-init-powerpc_be")
+# P01-BLK-002: the two device speaker builds and the artifact rows they produced.
+BLK002_STEPS = ("build-franken-speaker-mips_be", "build-franken-speaker-powerpc_be")
+# P01-BLK-003: the workspace test, and in its log the replay of the shared vectors by the typed contract.
+BLK003_STEPS = ("workspace-test",)
+REPLAY_TEST_FILE = "crates/franken-board-profile/tests/p01_contract.rs"
+REPLAY_VECTORS_FILE = "crates/franken-board-profile/tests/vectors/p01_contract_vectors.json"
 EVIDENCE_GLOB_DIR = os.path.join("toolchain", "results", "p01")
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -41,6 +47,10 @@ _DONE = re.compile(r"Remote command finished: exit=(-?\d+) in (\d+)ms")
 _WORKER = re.compile(r"Selected worker: (\S+) at ")
 _TEST = re.compile(r"^test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored;", re.M)
 _STAMP = re.compile(r"\b(20\d\d-\d\d-\d\dT\d\d:\d\d:\d\d)")
+_RUNNING = re.compile(r"^running (\d+) tests?$")
+_TEST_LINE = re.compile(r"^test (.+?) \.\.\. (ok|FAILED|ignored)\b")
+_TEST_RESULT = re.compile(r"^test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored;")
+_RUST_TEST = re.compile(r"#\[test\]\s*(?:#\[[^\]]*\]\s*)*(?:pub\s+)?fn\s+([A-Za-z0-9_]+)")
 _HEX40 = re.compile(r"^[0-9a-f]{40}$")
 PLACEHOLDER = "<repo>"
 
@@ -111,6 +121,58 @@ def normalize(tokens: Sequence[str], roots: Sequence[str]) -> List[str]:
     return out
 
 
+def parse_test_blocks(text: str) -> List[Dict[str, Any]]:
+    """The libtest result blocks of a cargo test log: `running N tests`, one `test NAME ... STATUS` line per test, then
+    `test result: ...`. Cargo's own `Running ...` headers go to stderr and land anywhere in a combined log, so a block is
+    recognized by its stdout markers and the headers are ignored; a block is identified by the names it contains."""
+    blocks: List[Dict[str, Any]] = []
+    current: Optional[Dict[str, Any]] = None
+    for raw in strip_ansi(text).splitlines():
+        line = raw.strip()
+        running = _RUNNING.match(line)
+        if running:
+            current = {"declared": int(running.group(1)), "tests": {}}
+            continue
+        if current is None:
+            continue
+        result = _TEST_RESULT.match(line)
+        if result:
+            current.update(result=result.group(1), passed=int(result.group(2)), failed=int(result.group(3)),
+                           ignored=int(result.group(4)))
+            blocks.append(current)
+            current = None
+            continue
+        found = _TEST_LINE.match(line)
+        if found:
+            current["tests"][found.group(1)] = found.group(2)
+    return blocks
+
+
+def rust_test_names(source: str) -> List[str]:
+    """The names of the `#[test]` functions in a Rust source file, sorted."""
+    return sorted(set(_RUST_TEST.findall(source)))
+
+
+def replay_record(log_text: str, names: Sequence[str], test_file_sha256: str, vectors_sha256: str) -> Dict[str, Any]:
+    """What the workspace-test log shows about the replay tests: the block whose tests are exactly `names` (by name, not
+    by totals), with each test's status. `found` is false when no block in the log contains exactly those tests."""
+    record: Dict[str, Any] = {"test_file": REPLAY_TEST_FILE, "test_file_sha256": test_file_sha256,
+                              "vectors_sha256": vectors_sha256, "names": sorted(names), "found": False}
+    wanted = set(names)
+    for block in parse_test_blocks(log_text):
+        if wanted and set(block["tests"]) == wanted and block["declared"] == len(wanted):
+            record.update(found=True, tests=dict(sorted(block["tests"].items())), result=block["result"],
+                          passed=block["passed"], failed=block["failed"], ignored=block["ignored"])
+            break
+    return record
+
+
+def device_std_artifacts(contract: Dict[str, Any]) -> List[str]:
+    """Ids of the device artifacts that are linked through a declared linker (the speakers): BLK-002's subject."""
+    return [a["id"] for a in contract["artifacts"]
+            if a["bin"] and ref.TARGETS[a["target"]][3] and ref.linker_for(contract, a) is not None]
+
+
 def planned_command(step: Dict[str, Any], roots: Sequence[str]) -> List[str]:
     return normalize(plan_mod.inner_command(step["argv"]), roots)
 
@@ -126,7 +188,8 @@ def _sha256_text(text: str) -> str:
 def build_evidence(contract: Dict[str, Any], planned: Sequence[Dict[str, Any]], logs: Dict[str, str], revision: str,
                    lock_sha256: str, export_root: str, rows: List[Dict[str, Any]], missing: List[str],
                    sizes: Dict[str, int], attested_env: Dict[str, Dict[str, str]],
-                   tree: str = "clean git archive export of the revision") -> Dict[str, Any]:
+                   tree: str = "clean git archive export of the revision",
+                   replay_sources: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """The sanitized, revision-bound receipt of a central run. Pure: the caller reads the logs and the built files."""
     roots = roots_for(export_root)
     steps: List[Dict[str, Any]] = []
@@ -165,7 +228,11 @@ def build_evidence(contract: Dict[str, Any], planned: Sequence[Dict[str, Any]], 
             tests = {"result_blocks": len(found), "passed": sum(int(a) for a, _, _ in found),
                      "failed": sum(int(b) for _, b, _ in found), "ignored": sum(int(c) for _, _, c in found)}
     pairs = ref.verify_observed(contract, rows, require_all=False)
-    return {
+    replay = None
+    if replay_sources is not None:
+        replay = replay_record(logs.get("workspace-test", ""), replay_sources["names"],
+                               replay_sources["test_file_sha256"], replay_sources["vectors_sha256"])
+    doc = {
         "schema": EVIDENCE_SCHEMA, "kind": "central_run", "revision": revision, "tree": tree,
         "ran_at_utc": (min(stamps) + "Z") if stamps else "", "workers": sorted(set(workers)),
         "contract_digest": ref.digest(contract), "lock_sha256": lock_sha256,
@@ -177,11 +244,20 @@ def build_evidence(contract: Dict[str, Any], planned: Sequence[Dict[str, Any]], 
                      "plan from its raw log, which is not committed (it names the worker's address and local paths). "
                      "Not an attestation of the compiler. Says nothing about a guest, a boot or a device."),
     }
+    if replay is not None:
+        doc["replay"] = replay
+    return doc
 
 
 def judge(evidence: Dict[str, Any], contract_now: Dict[str, Any], planned_now: Sequence[Dict[str, Any]],
-          roots_now: Sequence[str], scope: Sequence[str] = BLK001_STEPS) -> Tuple[str, str]:
-    """('pass' | 'blocked' | 'fail', detail). See the module docstring for what each verdict means."""
+          roots_now: Sequence[str], scope: Sequence[str] = BLK001_STEPS, artifacts: Sequence[str] = (),
+          replay: Optional[Dict[str, str]] = None) -> Tuple[str, str]:
+    """('pass' | 'blocked' | 'fail', detail). See the module docstring for what each verdict means.
+
+    `scope` names the plan steps that must have run the CURRENT plan and exited 0. `artifacts` names artifact rows that must
+    be present and verify against the current contract (static, machine, ISA revision, float ABI, digests). `replay`, if
+    given, holds the SHA-256 of the replay test file and of the vectors as they are NOW: the record must show the replay
+    tests of exactly that file passing by name, against exactly those vectors."""
     if evidence.get("schema") != EVIDENCE_SCHEMA or evidence.get("kind") != "central_run":
         return "fail", f"not a {EVIDENCE_SCHEMA} central_run record"
     revision = evidence.get("revision", "")
@@ -201,6 +277,11 @@ def judge(evidence: Dict[str, Any], contract_now: Dict[str, Any], planned_now: S
               if sid in rec_steps and rec_steps[sid].get("status") == "failed"]
     if failed:
         return "fail", "a step failed centrally: " + ", ".join(failed)
+    rep = evidence.get("replay") if isinstance(evidence.get("replay"), dict) else None
+    if replay is not None and rep is not None and rep.get("found"):
+        bad = sorted(name for name, status in (rep.get("tests") or {}).items() if status != "ok")
+        if bad or rep.get("failed") or rep.get("result") != "ok":
+            return "fail", f"a replay test did not pass centrally: {', '.join(bad) or 'the block reports failures'}"
     tests = evidence.get("tests") or {}
     if tests.get("failed"):
         return "fail", f"{tests['failed']} workspace test(s) failed centrally"
@@ -216,6 +297,15 @@ def judge(evidence: Dict[str, Any], contract_now: Dict[str, Any], planned_now: S
             stale.append(f"step {sid} has not run")
         elif rec.get("command") != planned_command(current[sid], roots_now):
             stale.append(f"step {sid} ran a different command than the current plan")
+    if replay is not None:
+        if rep is None:
+            stale.append("the record has no replay block (it predates replay capture)")
+        elif rep.get("test_file_sha256") != replay.get("test_file_sha256"):
+            stale.append("the replay test file has changed since the run")
+        elif rep.get("vectors_sha256") != replay.get("vectors_sha256"):
+            stale.append("the shared vectors have changed since the run")
+        elif not rep.get("found"):
+            stale.append("the run's log has no test block with exactly the current replay tests")
     head = f"revision {revision[:12]}"
     in_scope = [sid for sid in scope if sid in current]
     matched = [sid for sid in in_scope if rec_steps.get(sid, {}).get("status") == "ok"
@@ -223,13 +313,25 @@ def judge(evidence: Dict[str, Any], contract_now: Dict[str, Any], planned_now: S
     if stale:
         return "blocked", (f"{head}: {len(matched)} of {len(in_scope)} steps ran the current plan and exited 0, but the "
                            "evidence is stale: " + "; ".join(stale[:5]) + (" ..." if len(stale) > 5 else ""))
+    rows = {r.get("id"): r for r in evidence["artifacts"]}
+    missing = [aid for aid in artifacts if aid not in rows]
+    if missing:
+        return "fail", "the build step exited 0 but no artifact row exists for: " + ", ".join(missing)
     pairs = ref.verify_observed(contract_now, evidence["artifacts"], require_all=False)
     if pairs:
         return "fail", "artifact identity fails the contract: " + ", ".join(sorted({c for c, _ in pairs}))
-    ran = [sid for sid in scope if sid in current]
-    return "pass", (f"{head}, worker {','.join(evidence.get('workers', []))}: {len(ran)} steps ran the current plan and "
-                    f"exited 0; {tests.get('passed', 0)} workspace tests passed, {tests.get('failed', 0)} failed, "
-                    f"{tests.get('ignored', 0)} ignored; {len(evidence['artifacts'])} artifact rows verified")
+    parts = [f"{head}, worker {','.join(evidence.get('workers', []))}: {len(in_scope)} steps ran the current plan and exited 0"]
+    if tests and BLK001_STEPS == tuple(scope):
+        parts.append(f"{tests.get('passed', 0)} workspace tests passed, {tests.get('failed', 0)} failed, {tests.get('ignored', 0)} ignored")
+    if artifacts:
+        parts.append("artifacts " + ", ".join(f"{aid} {str(rows[aid].get('sha256', ''))[:8]}" for aid in artifacts)
+                     + " are static big-endian ELF32 files of the right machine; MIPS carries the declared ISA revision and "
+                       "float ABI (PowerPC has no marker, so its declaration is not measured)")
+    if replay is not None and rep is not None:
+        parts.append(f"{len(rep['tests'])} replay tests passed by name ({', '.join(sorted(rep['tests']))})")
+    if scope == BLK001_STEPS:
+        parts.append(f"{len(evidence['artifacts'])} artifact rows verified")
+    return "pass", "; ".join(parts)
 
 
 def find_evidence(repo: str) -> List[str]:

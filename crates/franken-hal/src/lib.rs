@@ -16,6 +16,7 @@
 pub mod abi;
 pub mod backend;
 pub mod contract;
+pub mod contract_log;
 #[cfg(test)]
 mod diag;
 pub mod dma_sim;
@@ -210,18 +211,19 @@ impl AudioHalDevice<state::Closed> {
     /// Open for real hardware: the board profile must verify (as for [`Self::open_for_profile`]) and
     /// the retained-driver contract matrix must be hardware-eligible.
     ///
-    /// An unknown field, a synthetic anchor, an unregistered artifact or a missing required
-    /// operation refuses the open with the exact list of what is missing. Nothing about the
-    /// driver's size or apparent simplicity is consulted. Offline use goes through
-    /// [`Self::open_for_profile`], which never reaches an amplifier.
+    /// An unknown field, a synthetic anchor, an unregistered artifact, a missing required operation,
+    /// topology or amplifier sequence, or a channel map that contradicts the profile refuses the open
+    /// with the exact list of what is missing. Nothing about the driver's size or apparent
+    /// simplicity is consulted. Offline use goes through [`Self::open_for_profile`], which never
+    /// reaches an amplifier.
     pub fn open_for_hardware(
         profile: BoardProfile,
         matrix: &ContractMatrix,
         dma_slots: u16,
         required_silence_blocks: u32,
     ) -> Result<Self, HalError> {
-        let device = Self::open_for_profile(profile, dma_slots, required_silence_blocks)?;
-        let report = matrix.evaluate();
+        let device = Self::open_for_profile(profile.clone(), dma_slots, required_silence_blocks)?;
+        let report = matrix.evaluate_for_profile(&profile);
         if !report.hardware_eligible {
             return Err(HalError::ContractIncomplete {
                 missing: report.missing,
@@ -480,6 +482,17 @@ mod tests {
             .unwrap()
     }
 
+    /// The complete fixture matrix, with a topology that routes the same roles as `profile`.
+    fn complete_for(profile: &BoardProfile, anchor: fn() -> contract::Anchor) -> ContractMatrix {
+        let names: Vec<String> = profile
+            .channel_routing
+            .iter()
+            .map(|role| contract::transducer_role_name(*role))
+            .collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        contract::fixtures::complete_matrix_for(anchor, &refs)
+    }
+
     fn missing_of(err: HalError) -> Vec<MissingContract> {
         match err {
             HalError::ContractIncomplete { missing } => missing,
@@ -495,10 +508,10 @@ mod tests {
         let err = AudioHalDevice::open_for_hardware(fixture_s5(), &matrix, 4, 2).unwrap_err();
         assert_eq!(
             err.to_string(),
-            "retained-driver contract is not hardware-eligible (101 missing)"
+            "retained-driver contract is not hardware-eligible (111 missing)"
         );
         let missing = missing_of(err);
-        assert_eq!(missing.len(), 101);
+        assert_eq!(missing.len(), 111);
         // Every required operation is named, with its interface among the unknowns.
         for op in contract::REQUIRED_OPERATIONS {
             let record = format!("op.{}", op.name());
@@ -513,11 +526,11 @@ mod tests {
 
     #[test]
     fn hardware_open_refuses_a_complete_but_synthetic_matrix() {
-        let matrix = contract::fixtures::complete_matrix(contract::fixtures::anchor_synthetic);
+        let matrix = complete_for(&fixture_s5(), contract::fixtures::anchor_synthetic);
         assert!(matrix.evaluate().offline_model_ok);
         let missing =
             missing_of(AudioHalDevice::open_for_hardware(fixture_s5(), &matrix, 4, 2).unwrap_err());
-        assert_eq!(missing.len(), 101);
+        assert_eq!(missing.len(), 111);
         assert!(
             missing
                 .iter()
@@ -528,12 +541,38 @@ mod tests {
     #[test]
     fn hardware_open_admits_a_fully_anchored_matrix_but_still_starts_muted() {
         // Unit test of the gate with a constructed matrix. No committed data claims eligibility.
-        let matrix = contract::fixtures::complete_matrix(contract::fixtures::anchor_artifact);
+        let matrix = complete_for(&fixture_s5(), contract::fixtures::anchor_artifact);
         let device = AudioHalDevice::open_for_hardware(fixture_s5(), &matrix, 4, 2).unwrap();
         let telemetry = device.telemetry();
         assert!(telemetry.hardware_muted);
         assert_eq!(telemetry.free_dma_slots, 4);
         assert_eq!(telemetry.primed_silence_blocks, 0);
+    }
+
+    #[test]
+    fn hardware_open_refuses_a_channel_map_that_contradicts_the_profile() {
+        // The two-channel fixture topology on the five-channel S5 board: refused, and the list says
+        // exactly which two things disagree.
+        let two_channel = contract::fixtures::complete_matrix(contract::fixtures::anchor_artifact);
+        let missing = missing_of(
+            AudioHalDevice::open_for_hardware(fixture_s5(), &two_channel, 4, 2).unwrap_err(),
+        );
+        let fields: Vec<contract::ContractField> = missing.iter().map(|m| m.field).collect();
+        assert_eq!(
+            fields,
+            vec![
+                contract::ContractField::ChannelCount,
+                contract::ContractField::Routing
+            ]
+        );
+        assert!(
+            missing
+                .iter()
+                .all(|m| m.scope == contract::ContractScope::Topology)
+        );
+        // Permitted positive: the same matrix with this board's own channel map opens.
+        let own = complete_for(&fixture_s5(), contract::fixtures::anchor_artifact);
+        assert!(AudioHalDevice::open_for_hardware(fixture_s5(), &own, 4, 2).is_ok());
     }
 
     #[test]

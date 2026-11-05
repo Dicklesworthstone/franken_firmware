@@ -434,7 +434,7 @@ impl<B: DeviceBackend> HalSession<B> {
         config: SessionConfig,
         matrix: &ContractMatrix,
     ) -> Result<Self, SessionError> {
-        let report = matrix.evaluate();
+        let report = matrix.evaluate_for_profile(&profile);
         if !report.hardware_eligible {
             return Err(SessionError::ContractIncomplete {
                 missing: report.missing.len(),
@@ -2036,7 +2036,7 @@ mod tests {
             HalSession::open_hardware(profile(), Real, config(), &matrix)
                 .err()
                 .unwrap(),
-            SessionError::ContractIncomplete { missing: 101 }
+            SessionError::ContractIncomplete { missing: 111 }
         );
     }
 

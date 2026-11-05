@@ -20,7 +20,15 @@
 //!
 //! Offline simulation is a weaker bar: [`SyntheticFixture`](Anchor::SyntheticFixture) anchors let a
 //! test exercise the model but can never make a matrix hardware-eligible.
+//!
+//! Besides the driver's interfaces and the radio duties, a matrix carries the audio path's **channel
+//! topology** (how many channels, which transducer each feeds, which sample rates and encoding) and
+//! its **amplifier sequences** (what the mute pin, clocks and codec do on a startup, a stop and a
+//! fault, in what order and with what minimum delays). Both obey the same known / unknown /
+//! not-applicable rule, and a sequence that unmutes before the end of a startup, unmutes on a stop or
+//! does not wait for the mute to be acknowledged contradicts the safe-startup policy and is refused.
 
+use franken_board_profile::{BoardProfile, TransducerRole};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fmt;
@@ -610,6 +618,141 @@ pub struct RadioDuty {
     pub audio_interference_bound_us: FieldStatus<u32>,
 }
 
+/// The sample encodings an audio path may carry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SampleEncoding {
+    Signed16,
+    Signed24,
+    Signed32,
+}
+
+impl SampleEncoding {
+    /// Bytes one sample occupies.
+    #[must_use]
+    pub const fn bytes(self) -> u8 {
+        match self {
+            Self::Signed16 => 2,
+            Self::Signed24 => 3,
+            Self::Signed32 => 4,
+        }
+    }
+}
+
+/// One driver channel and the transducer role it feeds. Roles use the board-profile vocabulary, as
+/// [`transducer_role_name`] spells it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChannelRoute {
+    pub index: u8,
+    pub role: String,
+}
+
+/// Lowest and highest sample rate a topology may list, in hertz.
+pub const MIN_RATE_HZ: u32 = 8_000;
+pub const MAX_RATE_HZ: u32 = 384_000;
+
+/// The audio path's channel map and rates.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TopologyContract {
+    /// Unique in the matrix.
+    pub id: String,
+    pub channel_count: FieldStatus<u8>,
+    /// Which transducer each driver channel feeds.
+    pub routing: FieldStatus<Vec<ChannelRoute>>,
+    /// Supported sample rates, strictly increasing.
+    pub sample_rates_hz: FieldStatus<Vec<u32>>,
+    pub sample_encoding: FieldStatus<SampleEncoding>,
+}
+
+/// One thing a startup, stop or fault sequence does to the amplifier path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AmpAction {
+    AssertMute,
+    EnableClocks,
+    ConfigureCodec,
+    PrimeSilence,
+    DeassertMute,
+    DisableClocks,
+}
+
+impl AmpAction {
+    /// Where this action sits in a startup, or `None` for an action a startup may not contain.
+    #[must_use]
+    pub const fn startup_rank(self) -> Option<usize> {
+        match self {
+            Self::AssertMute => Some(0),
+            Self::EnableClocks => Some(1),
+            Self::ConfigureCodec => Some(2),
+            Self::PrimeSilence => Some(3),
+            Self::DeassertMute => Some(4),
+            Self::DisableClocks => None,
+        }
+    }
+}
+
+/// One step: the action, and the least time that must pass after the previous step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AmpStep {
+    pub action: AmpAction,
+    pub min_delay_us: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AmpSequenceKind {
+    Startup,
+    Shutdown,
+    Fault,
+}
+
+impl AmpSequenceKind {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Startup => "startup",
+            Self::Shutdown => "shutdown",
+            Self::Fault => "fault",
+        }
+    }
+}
+
+/// Every sequence a hardware-eligible matrix must cover.
+pub const REQUIRED_AMP_SEQUENCES: [AmpSequenceKind; 3] = [
+    AmpSequenceKind::Startup,
+    AmpSequenceKind::Shutdown,
+    AmpSequenceKind::Fault,
+];
+
+/// What the amplifier path does on a startup, a stop or a fault.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AmpSequence {
+    /// Unique in the matrix.
+    pub id: String,
+    pub kind: AmpSequenceKind,
+    pub steps: FieldStatus<Vec<AmpStep>>,
+    /// Whether the sequence waits for the driver to acknowledge the mute. It must: a mute that was
+    /// only requested is not a mute.
+    pub mute_acknowledgment_required: FieldStatus<bool>,
+}
+
+/// The board-profile spelling of a transducer role, for comparing a topology with a profile.
+#[must_use]
+pub fn transducer_role_name(role: TransducerRole) -> String {
+    match role {
+        TransducerRole::TweeterLeft => "tweeter_left".to_string(),
+        TransducerRole::TweeterRight => "tweeter_right".to_string(),
+        TransducerRole::MidLeft => "mid_left".to_string(),
+        TransducerRole::MidRight => "mid_right".to_string(),
+        TransducerRole::WooferCenter => "woofer_center".to_string(),
+        TransducerRole::WooferMono => "woofer_mono".to_string(),
+        TransducerRole::TweeterMono => "tweeter_mono".to_string(),
+        TransducerRole::SubwooferLfe => "subwoofer_lfe".to_string(),
+        TransducerRole::ArrayMidWoofer(n) => format!("array_mid_woofer_{n}"),
+        TransducerRole::ArrayTweeter(n) => format!("array_tweeter_{n}"),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactSection {
     pub name: String,
@@ -634,6 +777,12 @@ pub struct ContractMatrix {
     pub artifacts: Vec<ArtifactRef>,
     pub interfaces: Vec<InterfaceContract>,
     pub radio: Vec<RadioDuty>,
+    /// The channel map and rates. A matrix without one is not hardware-eligible.
+    #[serde(default)]
+    pub topology: Vec<TopologyContract>,
+    /// The startup, stop and fault sequences. All three are required.
+    #[serde(default)]
+    pub amp_sequences: Vec<AmpSequence>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -641,6 +790,8 @@ pub struct ContractMatrix {
 pub enum ContractScope {
     AudioOutput,
     RadioCoexistence,
+    Topology,
+    AmpSequencing,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -659,6 +810,12 @@ pub enum ContractField {
     Owner,
     SurvivesDaemonReplacement,
     AudioInterferenceBound,
+    ChannelCount,
+    Routing,
+    SampleRates,
+    SampleEncoding,
+    Steps,
+    MuteAcknowledgment,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -852,6 +1009,139 @@ impl InterfaceContract {
     }
 }
 
+impl TopologyContract {
+    /// Contradictions inside one record, as (field, explanation), in a fixed order.
+    fn consistency_problems(&self) -> Vec<(ContractField, String)> {
+        let mut problems = Vec::new();
+        let count = self.channel_count.value().copied();
+        if count == Some(0) {
+            problems.push((
+                ContractField::ChannelCount,
+                "a driver with no channel".to_string(),
+            ));
+        }
+        if let Some(routing) = self.routing.value() {
+            if let Some(n) = count
+                && routing.len() != usize::from(n)
+            {
+                problems.push((
+                    ContractField::Routing,
+                    format!(
+                        "{} route(s) for {n} channel(s): the route count differs from the channel count",
+                        routing.len()
+                    ),
+                ));
+            }
+            let mut indices: Vec<usize> = routing.iter().map(|r| usize::from(r.index)).collect();
+            indices.sort_unstable();
+            if indices != (0..routing.len()).collect::<Vec<usize>>() {
+                problems.push((
+                    ContractField::Routing,
+                    "the channel indices are not 0..n-1, once each".to_string(),
+                ));
+            }
+            if routing.iter().any(|r| r.role.trim().is_empty()) {
+                problems.push((
+                    ContractField::Routing,
+                    "a channel feeds no named role".to_string(),
+                ));
+            }
+        }
+        if let Some(rates) = self.sample_rates_hz.value() {
+            if rates.is_empty() {
+                problems.push((ContractField::SampleRates, "no sample rate".to_string()));
+            } else if rates
+                .iter()
+                .any(|r| !(MIN_RATE_HZ..=MAX_RATE_HZ).contains(r))
+            {
+                problems.push((
+                    ContractField::SampleRates,
+                    format!("a rate is outside {MIN_RATE_HZ} Hz to {MAX_RATE_HZ} Hz"),
+                ));
+            } else if rates.windows(2).any(|w| w[1] <= w[0]) {
+                problems.push((
+                    ContractField::SampleRates,
+                    "the rates are not strictly increasing".to_string(),
+                ));
+            }
+        }
+        problems
+    }
+}
+
+impl AmpSequence {
+    /// Contradictions inside one sequence: mute first, unmute only at the end of a startup, no
+    /// unmute on a stop or a fault, no repeated action, and a mute that is acknowledged.
+    fn consistency_problems(&self) -> Vec<(ContractField, String)> {
+        let mut problems = Vec::new();
+        if let Some(steps) = self.steps.value() {
+            let actions: Vec<AmpAction> = steps.iter().map(|s| s.action).collect();
+            match actions.first() {
+                None => {
+                    problems.push((ContractField::Steps, "a sequence with no step".to_string()))
+                }
+                Some(first) => {
+                    if *first != AmpAction::AssertMute {
+                        problems.push((
+                            ContractField::Steps,
+                            "mute must be asserted first".to_string(),
+                        ));
+                    }
+                    let distinct: BTreeSet<AmpAction> = actions.iter().copied().collect();
+                    if distinct.len() != actions.len() {
+                        problems.push((ContractField::Steps, "an action is repeated".to_string()));
+                    }
+                    if self.kind == AmpSequenceKind::Startup {
+                        if actions.last() != Some(&AmpAction::DeassertMute) {
+                            problems.push((
+                                ContractField::Steps,
+                                "a startup must end by deasserting mute".to_string(),
+                            ));
+                        }
+                        if actions.contains(&AmpAction::DisableClocks) {
+                            problems.push((
+                                ContractField::Steps,
+                                "a startup cannot disable the clocks".to_string(),
+                            ));
+                        }
+                        let ranks: Vec<usize> =
+                            actions.iter().filter_map(|a| a.startup_rank()).collect();
+                        let mut sorted = ranks.clone();
+                        sorted.sort_unstable();
+                        if ranks != sorted {
+                            problems.push((
+                                ContractField::Steps,
+                                "the startup steps are out of order".to_string(),
+                            ));
+                        }
+                    } else {
+                        if actions.contains(&AmpAction::DeassertMute) {
+                            problems
+                                .push((ContractField::Steps, "only a startup unmutes".to_string()));
+                        }
+                        if actions
+                            .iter()
+                            .any(|a| !matches!(a, AmpAction::AssertMute | AmpAction::DisableClocks))
+                        {
+                            problems.push((
+                                ContractField::Steps,
+                                "a stop sequence may only mute and cut the clocks".to_string(),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        if self.mute_acknowledgment_required.value() == Some(&false) {
+            problems.push((
+                ContractField::MuteAcknowledgment,
+                "mute-requested is not mute-acknowledged".to_string(),
+            ));
+        }
+        problems
+    }
+}
+
 impl ContractMatrix {
     /// Judge the matrix. Pure and deterministic; reads no artifact and no clock.
     #[must_use]
@@ -883,6 +1173,30 @@ impl ContractMatrix {
         }
         for record in &self.radio {
             self.check_radio(record, &mut missing);
+        }
+        if self.topology.is_empty() {
+            missing.push(MissingContract {
+                scope: ContractScope::Topology,
+                record: "topology:audio_output".to_string(),
+                field: ContractField::Record,
+                reason: MissingReason::NoRecord,
+            });
+        }
+        for record in &self.topology {
+            self.check_topology(record, &mut missing);
+        }
+        for kind in REQUIRED_AMP_SEQUENCES {
+            if !self.amp_sequences.iter().any(|r| r.kind == kind) {
+                missing.push(MissingContract {
+                    scope: ContractScope::AmpSequencing,
+                    record: format!("amp_sequence:{}", kind.name()),
+                    field: ContractField::Record,
+                    reason: MissingReason::NoRecord,
+                });
+            }
+        }
+        for record in &self.amp_sequences {
+            self.check_sequence(record, &mut missing);
         }
         let offline_model_ok = missing
             .iter()
@@ -933,7 +1247,9 @@ impl ContractMatrix {
             .interfaces
             .iter()
             .map(|r| r.id.as_str())
-            .chain(self.radio.iter().map(|r| r.id.as_str()));
+            .chain(self.radio.iter().map(|r| r.id.as_str()))
+            .chain(self.topology.iter().map(|r| r.id.as_str()))
+            .chain(self.amp_sequences.iter().map(|r| r.id.as_str()));
         for id in all_ids {
             if id.trim().is_empty() {
                 inconsistent("matrix", "a record has an empty id".to_string());
@@ -1068,6 +1384,128 @@ impl ContractMatrix {
         }
     }
 
+    fn check_topology(&self, r: &TopologyContract, out: &mut Vec<MissingContract>) {
+        let scope = ContractScope::Topology;
+        let id = r.id.as_str();
+        self.check_field(
+            scope,
+            id,
+            ContractField::ChannelCount,
+            &r.channel_count,
+            out,
+        );
+        self.check_field(scope, id, ContractField::Routing, &r.routing, out);
+        self.check_field(
+            scope,
+            id,
+            ContractField::SampleRates,
+            &r.sample_rates_hz,
+            out,
+        );
+        self.check_field(
+            scope,
+            id,
+            ContractField::SampleEncoding,
+            &r.sample_encoding,
+            out,
+        );
+        for (field, detail) in r.consistency_problems() {
+            out.push(MissingContract {
+                scope,
+                record: id.to_string(),
+                field,
+                reason: MissingReason::Inconsistent { detail },
+            });
+        }
+    }
+
+    fn check_sequence(&self, r: &AmpSequence, out: &mut Vec<MissingContract>) {
+        let scope = ContractScope::AmpSequencing;
+        let id = r.id.as_str();
+        self.check_field(scope, id, ContractField::Steps, &r.steps, out);
+        self.check_field(
+            scope,
+            id,
+            ContractField::MuteAcknowledgment,
+            &r.mute_acknowledgment_required,
+            out,
+        );
+        for (field, detail) in r.consistency_problems() {
+            out.push(MissingContract {
+                scope,
+                record: id.to_string(),
+                field,
+                reason: MissingReason::Inconsistent { detail },
+            });
+        }
+    }
+
+    /// [`evaluate`](Self::evaluate), and then the topology checked against the board profile it is
+    /// to run on: a driver that feeds a different number of channels, or a different transducer on a
+    /// channel, than the profile says is a contradiction, not an approximation. A topology that is
+    /// still unknown contributes nothing here; it is already in the verdict as unknown.
+    #[must_use]
+    pub fn evaluate_for_profile(&self, profile: &BoardProfile) -> EligibilityReport {
+        let mut report = self.evaluate();
+        for record in &self.topology {
+            let mut disagree = |field: ContractField, detail: String| {
+                report.missing.push(MissingContract {
+                    scope: ContractScope::Topology,
+                    record: record.id.clone(),
+                    field,
+                    reason: MissingReason::Inconsistent { detail },
+                });
+            };
+            if let Some(&count) = record.channel_count.value()
+                && count != profile.hardware_channels
+            {
+                disagree(
+                    ContractField::ChannelCount,
+                    format!(
+                        "the driver feeds {count} channel(s) but the profile has {}",
+                        profile.hardware_channels
+                    ),
+                );
+            }
+            if let Some(routes) = record.routing.value() {
+                if routes.len() == profile.channel_routing.len() {
+                    for route in routes {
+                        let wanted = profile
+                            .channel_routing
+                            .get(usize::from(route.index))
+                            .map(|role| transducer_role_name(*role));
+                        if wanted.as_deref() != Some(route.role.as_str()) {
+                            disagree(
+                                ContractField::Routing,
+                                format!(
+                                    "channel {} feeds {:?} but the profile says {:?}",
+                                    route.index,
+                                    route.role,
+                                    wanted.unwrap_or_default()
+                                ),
+                            );
+                        }
+                    }
+                } else {
+                    disagree(
+                        ContractField::Routing,
+                        format!(
+                            "the driver routes {} channel(s) but the profile routes {}",
+                            routes.len(),
+                            profile.channel_routing.len()
+                        ),
+                    );
+                }
+            }
+        }
+        report.hardware_eligible = report.missing.is_empty();
+        report.offline_model_ok = report
+            .missing
+            .iter()
+            .all(|m| matches!(m.reason, MissingReason::SyntheticAnchor { .. }));
+        report
+    }
+
     fn check_radio(&self, r: &RadioDuty, out: &mut Vec<MissingContract>) {
         let scope = ContractScope::RadioCoexistence;
         let id = r.id.as_str();
@@ -1130,9 +1568,16 @@ pub(crate) mod fixtures {
         }
     }
 
-    /// A matrix in which every required operation and duty has a fully known record: 10
-    /// interface records with 8 fields each and 7 radio records with 3 fields each, 101 fields.
+    /// A matrix in which every required operation, duty, topology and sequence has a fully known
+    /// record: 10 interface records with 8 fields each, 7 radio records with 3 fields each, one
+    /// topology with 4 and three sequences with 2 each, 111 fields. The topology is the two-channel
+    /// woofer and tweeter of the labelled `S1` fixture profile.
     pub(crate) fn complete_matrix(anchor: fn() -> Anchor) -> ContractMatrix {
+        complete_matrix_for(anchor, &["woofer_mono", "tweeter_mono"])
+    }
+
+    /// [`complete_matrix`] whose topology routes the given roles, one per channel in order.
+    pub(crate) fn complete_matrix_for(anchor: fn() -> Anchor, roles: &[&str]) -> ContractMatrix {
         let mut interfaces = Vec::new();
         for (i, op) in REQUIRED_OPERATIONS.iter().enumerate() {
             let nr = u8::try_from(i + 1).unwrap();
@@ -1177,12 +1622,72 @@ pub(crate) mod fixtures {
                 audio_interference_bound_us: FieldStatus::known(250, anchor()),
             })
             .collect();
+        let routes = roles
+            .iter()
+            .enumerate()
+            .map(|(i, role)| ChannelRoute {
+                index: u8::try_from(i).unwrap(),
+                role: (*role).to_string(),
+            })
+            .collect();
+        let topology = vec![TopologyContract {
+            id: "fixture.topology".to_string(),
+            channel_count: FieldStatus::known(u8::try_from(roles.len()).unwrap(), anchor()),
+            routing: FieldStatus::known(routes, anchor()),
+            sample_rates_hz: FieldStatus::known(vec![44_100, 48_000], anchor()),
+            sample_encoding: FieldStatus::known(SampleEncoding::Signed16, anchor()),
+        }];
+        let sequence = |kind: AmpSequenceKind, actions: &[AmpAction]| AmpSequence {
+            id: format!("fixture.amp.{}", kind.name()),
+            kind,
+            steps: FieldStatus::known(
+                actions
+                    .iter()
+                    .map(|&action| AmpStep {
+                        action,
+                        min_delay_us: 0,
+                    })
+                    .collect(),
+                anchor(),
+            ),
+            mute_acknowledgment_required: FieldStatus::known(true, anchor()),
+        };
+        let amp_sequences = vec![
+            sequence(
+                AmpSequenceKind::Startup,
+                &[
+                    AmpAction::AssertMute,
+                    AmpAction::EnableClocks,
+                    AmpAction::ConfigureCodec,
+                    AmpAction::PrimeSilence,
+                    AmpAction::DeassertMute,
+                ],
+            ),
+            sequence(
+                AmpSequenceKind::Shutdown,
+                &[AmpAction::AssertMute, AmpAction::DisableClocks],
+            ),
+            sequence(AmpSequenceKind::Fault, &[AmpAction::AssertMute]),
+        ];
         ContractMatrix {
             schema: CONTRACT_SCHEMA.to_string(),
             artifacts: vec![artifact()],
             interfaces,
             radio,
+            topology,
+            amp_sequences,
         }
+    }
+
+    pub(crate) fn sequence_mut(
+        matrix: &mut ContractMatrix,
+        kind: AmpSequenceKind,
+    ) -> &mut AmpSequence {
+        matrix
+            .amp_sequences
+            .iter_mut()
+            .find(|r| r.kind == kind)
+            .unwrap()
     }
 
     pub(crate) fn interface_mut(
@@ -1572,8 +2077,9 @@ mod tests {
         let report = complete_matrix(anchor_synthetic).evaluate();
         assert!(report.offline_model_ok);
         assert!(!report.hardware_eligible);
-        // One entry per known field: 10 * 8 interface fields + 7 * 3 radio fields.
-        assert_eq!(report.missing.len(), 101);
+        // One entry per known field: 10 * 8 interface fields + 7 * 3 radio fields + 4 topology
+        // fields + 3 * 2 sequence fields.
+        assert_eq!(report.missing.len(), 111);
         assert!(report.missing.iter().all(|m| m.reason
             == MissingReason::SyntheticAnchor {
                 label: "unit-test".to_string()
@@ -1895,8 +2401,9 @@ mod tests {
         let report = real.evaluate();
         assert!(!report.hardware_eligible);
         assert!(!report.offline_model_ok);
-        // 10 operations * 8 fields + 7 duties * 3 fields, all unknown, none inferred.
-        assert_eq!(report.missing.len(), 101);
+        // 10 operations * 8 fields + 7 duties * 3 fields + 4 topology fields + 3 sequences * 2
+        // fields, all unknown, none inferred.
+        assert_eq!(report.missing.len(), 111);
         assert!(
             report
                 .missing
@@ -1910,12 +2417,17 @@ mod tests {
             }
         }
         // Hand-written: which interface implements each operation (3 fields * 10), the ioctl
-        // layout (5 fields * 10), radio ownership (2 fields * 7), live interference bounds (7).
+        // layout (5 fields * 10), radio ownership (2 fields * 7), live interference bounds (7),
+        // the channel map (2), the rates (2), the sequence steps (3) and the mute acknowledgments (3).
         let expected: std::collections::BTreeMap<String, usize> = [
+            ("EXT-E04-AMP-SEQUENCE", 3),
+            ("EXT-E04-CHANNEL-TOPOLOGY", 2),
             ("EXT-E04-IOCTL-LAYOUT", 50),
             ("EXT-E04-LIVE-QUAL", 7),
+            ("EXT-E04-MUTE-ACK", 3),
             ("EXT-E04-OP-MAPPING", 30),
             ("EXT-E04-RADIO-OWNERSHIP", 14),
+            ("EXT-E04-RATES", 2),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
@@ -1942,5 +2454,275 @@ mod tests {
             "14c202fa115ffde39dcdfa5a6505ea1ead9ed41b89429c9dd319b47a61939bd2"
         );
         assert_eq!(real.artifacts[0].size_bytes, 77_380);
+    }
+    fn only(matrix: &ContractMatrix) -> Vec<(ContractScope, String, ContractField)> {
+        matrix
+            .evaluate()
+            .missing
+            .iter()
+            .map(|m| (m.scope, m.record.clone(), m.field))
+            .collect()
+    }
+
+    #[test]
+    fn a_topology_is_required_and_a_contradictory_one_is_named_exactly() {
+        // Required: with none, the verdict says so.
+        let mut m = complete_matrix(anchor_artifact);
+        m.topology.clear();
+        assert_eq!(
+            only(&m),
+            vec![(
+                ContractScope::Topology,
+                "topology:audio_output".to_string(),
+                ContractField::Record
+            )]
+        );
+        // Three routes for two channels.
+        let mut m = complete_matrix(anchor_artifact);
+        m.topology[0].routing = FieldStatus::known(
+            vec![
+                ChannelRoute {
+                    index: 0,
+                    role: "woofer_mono".to_string(),
+                },
+                ChannelRoute {
+                    index: 1,
+                    role: "tweeter_mono".to_string(),
+                },
+                ChannelRoute {
+                    index: 2,
+                    role: "subwoofer_lfe".to_string(),
+                },
+            ],
+            anchor_artifact(),
+        );
+        assert_eq!(
+            only(&m),
+            vec![(
+                ContractScope::Topology,
+                "fixture.topology".to_string(),
+                ContractField::Routing
+            )]
+        );
+        // Rates that go down, that are out of range, that are empty, and a channel count of nothing.
+        for (rates, expect_problem) in [
+            (vec![48_000, 44_100], true),
+            (vec![48_000, 48_000], true),
+            (vec![7_999], true),
+            (vec![384_001], true),
+            (Vec::new(), true),
+            (vec![8_000, 384_000], false),
+        ] {
+            let mut m = complete_matrix(anchor_artifact);
+            m.topology[0].sample_rates_hz = FieldStatus::known(rates.clone(), anchor_artifact());
+            assert_eq!(only(&m).is_empty(), !expect_problem, "rates {rates:?}");
+        }
+        let mut m = complete_matrix(anchor_artifact);
+        m.topology[0].channel_count = FieldStatus::known(0, anchor_artifact());
+        assert!(only(&m).contains(&(
+            ContractScope::Topology,
+            "fixture.topology".to_string(),
+            ContractField::ChannelCount
+        )));
+        // Indices must be 0..n-1 once each, and every channel must feed a named role.
+        let mut m = complete_matrix(anchor_artifact);
+        m.topology[0].routing = FieldStatus::known(
+            vec![
+                ChannelRoute {
+                    index: 1,
+                    role: "woofer_mono".to_string(),
+                },
+                ChannelRoute {
+                    index: 1,
+                    role: " ".to_string(),
+                },
+            ],
+            anchor_artifact(),
+        );
+        assert_eq!(
+            only(&m),
+            vec![
+                (
+                    ContractScope::Topology,
+                    "fixture.topology".to_string(),
+                    ContractField::Routing
+                );
+                2
+            ]
+        );
+    }
+
+    #[test]
+    fn the_amplifier_sequences_are_required_and_must_mute_first_and_unmute_last() {
+        let mut m = complete_matrix(anchor_artifact);
+        m.amp_sequences.retain(|r| r.kind != AmpSequenceKind::Fault);
+        assert_eq!(
+            only(&m),
+            vec![(
+                ContractScope::AmpSequencing,
+                "amp_sequence:fault".to_string(),
+                ContractField::Record
+            )]
+        );
+        let step = |action| AmpStep {
+            action,
+            min_delay_us: 0,
+        };
+        let steps_of = |kind: AmpSequenceKind, actions: &[AmpAction]| {
+            let mut m = complete_matrix(anchor_artifact);
+            sequence_mut(&mut m, kind).steps = FieldStatus::known(
+                actions.iter().map(|&a| step(a)).collect(),
+                anchor_artifact(),
+            );
+            only(&m)
+        };
+        let id = |kind: AmpSequenceKind| format!("fixture.amp.{}", kind.name());
+        let steps_problem =
+            |kind: AmpSequenceKind| (ContractScope::AmpSequencing, id(kind), ContractField::Steps);
+        // A startup that unmutes in the middle and then configures the codec.
+        assert_eq!(
+            steps_of(
+                AmpSequenceKind::Startup,
+                &[
+                    AmpAction::AssertMute,
+                    AmpAction::DeassertMute,
+                    AmpAction::ConfigureCodec
+                ]
+            ),
+            vec![steps_problem(AmpSequenceKind::Startup); 2]
+        );
+        // A stop that unmutes.
+        assert_eq!(
+            steps_of(
+                AmpSequenceKind::Shutdown,
+                &[AmpAction::AssertMute, AmpAction::DeassertMute]
+            ),
+            vec![steps_problem(AmpSequenceKind::Shutdown); 2]
+        );
+        // Mute is not first; an action repeats; a startup cuts the clocks; there is no step at all.
+        assert!(!steps_of(AmpSequenceKind::Fault, &[AmpAction::DisableClocks]).is_empty());
+        assert!(
+            !steps_of(
+                AmpSequenceKind::Shutdown,
+                &[AmpAction::AssertMute, AmpAction::AssertMute]
+            )
+            .is_empty()
+        );
+        assert!(
+            !steps_of(
+                AmpSequenceKind::Startup,
+                &[
+                    AmpAction::AssertMute,
+                    AmpAction::DisableClocks,
+                    AmpAction::DeassertMute
+                ]
+            )
+            .is_empty()
+        );
+        assert!(!steps_of(AmpSequenceKind::Fault, &[]).is_empty());
+        // Permitted positives: a minimal startup, a stop that only mutes, a fault that mutes and
+        // cuts the clocks.
+        assert!(
+            steps_of(
+                AmpSequenceKind::Startup,
+                &[AmpAction::AssertMute, AmpAction::DeassertMute]
+            )
+            .is_empty()
+        );
+        assert!(steps_of(AmpSequenceKind::Shutdown, &[AmpAction::AssertMute]).is_empty());
+        assert!(
+            steps_of(
+                AmpSequenceKind::Fault,
+                &[AmpAction::AssertMute, AmpAction::DisableClocks]
+            )
+            .is_empty()
+        );
+        // A mute that need not be acknowledged is not a mute.
+        let mut m = complete_matrix(anchor_artifact);
+        sequence_mut(&mut m, AmpSequenceKind::Fault).mute_acknowledgment_required =
+            FieldStatus::known(false, anchor_artifact());
+        assert_eq!(
+            only(&m),
+            vec![(
+                ContractScope::AmpSequencing,
+                id(AmpSequenceKind::Fault),
+                ContractField::MuteAcknowledgment
+            )]
+        );
+    }
+
+    #[test]
+    fn a_topology_is_checked_against_the_board_profile_it_will_run_on() {
+        let catalog = franken_board_profile::synthetic_test_fixture_catalog();
+        let s1 = catalog.iter().find(|p| p.model_number == "S1").unwrap();
+        let s5 = catalog.iter().find(|p| p.model_number == "S5").unwrap();
+        let roles = |p: &BoardProfile| -> Vec<String> {
+            p.channel_routing
+                .iter()
+                .map(|r| transducer_role_name(*r))
+                .collect()
+        };
+        let names = roles(s1);
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        // The topology built from the profile's own roles agrees with it.
+        let matrix = complete_matrix_for(anchor_artifact, &refs);
+        let report = matrix.evaluate_for_profile(s1);
+        assert!(report.hardware_eligible, "{:?}", report.missing);
+        // The same driver on a five-channel board contradicts the profile twice over: the count, and
+        // the number of routes.
+        let report = matrix.evaluate_for_profile(s5);
+        assert!(!report.hardware_eligible);
+        let fields: Vec<ContractField> = report.missing.iter().map(|m| m.field).collect();
+        assert_eq!(
+            fields,
+            vec![ContractField::ChannelCount, ContractField::Routing]
+        );
+        assert!(
+            report
+                .missing
+                .iter()
+                .all(|m| matches!(m.reason, MissingReason::Inconsistent { .. })
+                    && m.scope == ContractScope::Topology)
+        );
+        // Right count, wrong transducer on one channel.
+        let mut swapped = refs.clone();
+        swapped.swap(0, 1);
+        let report = complete_matrix_for(anchor_artifact, &swapped).evaluate_for_profile(s1);
+        assert_eq!(report.missing.len(), 2, "{:?}", report.missing);
+        assert!(
+            report
+                .missing
+                .iter()
+                .all(|m| m.field == ContractField::Routing)
+        );
+        // A topology that is still unknown says nothing about the profile: it is already unknown.
+        let real: ContractMatrix = serde_json::from_str(REAL_MATRIX_JSON).unwrap();
+        assert_eq!(
+            real.evaluate_for_profile(s5).missing,
+            real.evaluate().missing
+        );
+        // Synthetic anchors still pass the offline bar and never the hardware one.
+        let report = complete_matrix_for(anchor_synthetic, &refs).evaluate_for_profile(s1);
+        assert!(report.offline_model_ok && !report.hardware_eligible);
+    }
+
+    #[test]
+    fn role_names_follow_the_board_profile_vocabulary() {
+        assert_eq!(
+            transducer_role_name(TransducerRole::WooferMono),
+            "woofer_mono"
+        );
+        assert_eq!(
+            transducer_role_name(TransducerRole::SubwooferLfe),
+            "subwoofer_lfe"
+        );
+        assert_eq!(
+            transducer_role_name(TransducerRole::ArrayTweeter(3)),
+            "array_tweeter_3"
+        );
+        // The profile crate serializes a plain role in the same spelling.
+        let json = serde_json::to_value(TransducerRole::TweeterLeft).unwrap();
+        assert_eq!(json, serde_json::json!("tweeter_left"));
+        assert_eq!(SampleEncoding::Signed24.bytes(), 3);
     }
 }

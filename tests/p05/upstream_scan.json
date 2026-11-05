@@ -1,0 +1,1068 @@
+{
+ "all_rs_files": 6121,
+ "areas_top": [
+  {
+   "area": "src/observability",
+   "files": 25,
+   "mentions": 248,
+   "test_named_files": 14
+  },
+  {
+   "area": "src/runtime",
+   "files": 33,
+   "mentions": 245,
+   "test_named_files": 8
+  },
+  {
+   "area": "src/time",
+   "files": 9,
+   "mentions": 128,
+   "test_named_files": 4
+  },
+  {
+   "area": "src/lab",
+   "files": 11,
+   "mentions": 92,
+   "test_named_files": 3
+  },
+  {
+   "area": "src/net",
+   "files": 16,
+   "mentions": 92,
+   "test_named_files": 3
+  },
+  {
+   "area": "src/http",
+   "files": 9,
+   "mentions": 77,
+   "test_named_files": 2
+  },
+  {
+   "area": "src/channel",
+   "files": 8,
+   "mentions": 75,
+   "test_named_files": 2
+  },
+  {
+   "area": "src/atp",
+   "files": 13,
+   "mentions": 69,
+   "test_named_files": 4
+  },
+  {
+   "area": "src/transport",
+   "files": 4,
+   "mentions": 62,
+   "test_named_files": 2
+  },
+  {
+   "area": "src/messaging",
+   "files": 7,
+   "mentions": 59,
+   "test_named_files": 2
+  },
+  {
+   "area": "src/combinator",
+   "files": 5,
+   "mentions": 57,
+   "test_named_files": 0
+  },
+  {
+   "area": "src/service",
+   "files": 6,
+   "mentions": 39,
+   "test_named_files": 3
+  },
+  {
+   "area": "src/sync",
+   "files": 6,
+   "mentions": 37,
+   "test_named_files": 1
+  },
+  {
+   "area": "src/database",
+   "files": 3,
+   "mentions": 33,
+   "test_named_files": 1
+  },
+  {
+   "area": "src/cancel",
+   "files": 3,
+   "mentions": 32,
+   "test_named_files": 1
+  },
+  {
+   "area": "src/web",
+   "files": 5,
+   "mentions": 23,
+   "test_named_files": 2
+  },
+  {
+   "area": "src/distributed",
+   "files": 7,
+   "mentions": 21,
+   "test_named_files": 1
+  },
+  {
+   "area": "src/server",
+   "files": 4,
+   "mentions": 20,
+   "test_named_files": 2
+  },
+  {
+   "area": "src/grpc",
+   "files": 4,
+   "mentions": 19,
+   "test_named_files": 1
+  },
+  {
+   "area": "src/io",
+   "files": 4,
+   "mentions": 18,
+   "test_named_files": 0
+  },
+  {
+   "area": "src/trace",
+   "files": 4,
+   "mentions": 14,
+   "test_named_files": 0
+  },
+  {
+   "area": "src/fs",
+   "files": 4,
+   "mentions": 13,
+   "test_named_files": 2
+  },
+  {
+   "area": "src/types",
+   "files": 3,
+   "mentions": 12,
+   "test_named_files": 0
+  },
+  {
+   "area": "src/bytes",
+   "files": 1,
+   "mentions": 11,
+   "test_named_files": 0
+  },
+  {
+   "area": "src/bin",
+   "files": 3,
+   "mentions": 10,
+   "test_named_files": 1
+  },
+  {
+   "area": "src/record",
+   "files": 2,
+   "mentions": 10,
+   "test_named_files": 0
+  },
+  {
+   "area": "src/remote",
+   "files": 3,
+   "mentions": 9,
+   "test_named_files": 0
+  },
+  {
+   "area": "src/app",
+   "files": 1,
+   "mentions": 8,
+   "test_named_files": 0
+  },
+  {
+   "area": "src/error",
+   "files": 2,
+   "mentions": 8,
+   "test_named_files": 0
+  },
+  {
+   "area": "src/cx",
+   "files": 3,
+   "mentions": 6,
+   "test_named_files": 0
+  },
+  {
+   "area": "src/obligation",
+   "files": 2,
+   "mentions": 6,
+   "test_named_files": 0
+  },
+  {
+   "area": "src/security",
+   "files": 1,
+   "mentions": 6,
+   "test_named_files": 0
+  },
+  {
+   "area": "src/epoch",
+   "files": 1,
+   "mentions": 5,
+   "test_named_files": 0
+  },
+  {
+   "area": "src/gen_server",
+   "files": 1,
+   "mentions": 5,
+   "test_named_files": 0
+  },
+  {
+   "area": "src/signal",
+   "files": 2,
+   "mentions": 5,
+   "test_named_files": 0
+  },
+  {
+   "area": "src/evidence_sink",
+   "files": 1,
+   "mentions": 4,
+   "test_named_files": 0
+  },
+  {
+   "area": "src/link",
+   "files": 1,
+   "mentions": 3,
+   "test_named_files": 0
+  },
+  {
+   "area": "src/util",
+   "files": 1,
+   "mentions": 3,
+   "test_named_files": 0
+  },
+  {
+   "area": "src/test_logging",
+   "files": 1,
+   "mentions": 2,
+   "test_named_files": 0
+  }
+ ],
+ "caveat": "static text signal; method counts are upper bounds over every receiver in the files that name a 64-bit atomic",
+ "fence_calls_in_those_files": 11,
+ "method": "git ls-tree + git cat-file --batch on the object database; nothing checked out or written",
+ "methods_upper_bound": {
+  "compare_exchange": 34,
+  "compare_exchange_weak": 59,
+  "fetch_add": 1844,
+  "fetch_and": 2,
+  "fetch_max": 27,
+  "fetch_min": 3,
+  "fetch_or": 5,
+  "fetch_sub": 89,
+  "fetch_update": 9,
+  "fetch_xor": 0,
+  "get_mut": 478,
+  "into_inner": 83,
+  "load": 3096,
+  "store": 792,
+  "swap": 49
+ },
+ "module_area_count": 39,
+ "outside_src": {
+  "asupersync-tokio-compat": {
+   "direct_std_import_files": 2,
+   "files": 2,
+   "mentions": 9
+  },
+  "benches": {
+   "direct_std_import_files": 6,
+   "files": 6,
+   "mentions": 34
+  },
+  "conformance": {
+   "direct_std_import_files": 4,
+   "files": 4,
+   "mentions": 26
+  },
+  "frankenlab": {
+   "direct_std_import_files": 1,
+   "files": 1,
+   "mentions": 3
+  },
+  "fuzz": {
+   "direct_std_import_files": 13,
+   "files": 16,
+   "mentions": 76
+  },
+  "tests": {
+   "direct_std_import_files": 81,
+   "files": 87,
+   "mentions": 345
+  }
+ },
+ "repo_wide": {
+  "files_naming_a_64bit_atomic": 547,
+  "mentions": 3690
+ },
+ "revision": "8940119023c0e01b4d6d3e2c1399f41417c2ad24",
+ "schema": "ffw.p05.upstream_scan.v1",
+ "src": {
+  "atomic_i64_mentions": 23,
+  "atomic_u64_mentions": 3174,
+  "files_naming_a_64bit_atomic": 431,
+  "files_naming_the_crate_facade": 275,
+  "files_with_a_direct_core_or_std_path": [
+   "src/sync/atomic.rs"
+  ],
+  "mentions": 3197,
+  "rs_files": 2937,
+  "test_named_files_among_them": 271
+ },
+ "statics": {
+  "by_class": {
+   "clock": 2,
+   "identifier_or_counter": 46,
+   "statistic": 7,
+   "test_only": 51
+  },
+  "rows": [
+   [
+    "src/atp/journal/delta_cas.rs",
+    449,
+    "NEXT_STAGING_ID",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/atp/journal/platform_caps.rs",
+    20,
+    "PROBE_FILE_COUNTER",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/atp/journal/sparse_writer_durability_tests.rs",
+    14,
+    "NEXT",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/atp/journal/sparse_writer_integrity_tests.rs",
+    10,
+    "NEXT",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/atp/journal/sparse_writer_lifecycle_tests.rs",
+    9,
+    "NEXT",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/atp/journal/temp_management.rs",
+    12,
+    "NEXT_MANAGER_ID",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/atp/object.rs",
+    20,
+    "STREAM_ID_COUNTER",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/atp/sync/native/apply/tests.rs",
+    31,
+    "NEXT",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/atp/sync/native/tests.rs",
+    20,
+    "NEXT",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/bin/atpd_live/revocation_policy_inline_tests.rs",
+    13,
+    "NEXT",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/distributed/bridge.rs",
+    497,
+    "SNAPSHOT_ORIGIN_COUNTER",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/distributed/membership/durable/runtime/tests.rs",
+    26,
+    "NEXT",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/distributed/membership/durable/tests.rs",
+    201,
+    "NEXT",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/distributed/symbol_service/durable/tests.rs",
+    280,
+    "NEXT",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/distributed/symbol_service/service/durable_chunked.rs",
+    242,
+    "NEXT",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/distributed/symbol_service/service/durable_inline_tests.rs",
+    59,
+    "NEXT",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/error.rs",
+    498,
+    "NEXT_CORRELATION_ID",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/error.rs",
+    519,
+    "NEXT_CORRELATION_ID",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/fs/path_ops.rs",
+    704,
+    "ATOMIC_WRITE_COUNTER",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/fs/path_ops_inline_tests.rs",
+    56,
+    "BLOCKING_FALLBACKS",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/grpc/server_tests.rs",
+    728,
+    "OFFSET_NS",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/grpc/server_tests.rs",
+    826,
+    "NOW_OFFSET_NS",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/http/h2/connection_inline_tests.rs",
+    18,
+    "TEST_NOW_OFFSET_MS",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/lab/oracle/cancellation_protocol.rs",
+    183,
+    "TRACE_ID_COUNTER",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/link.rs",
+    108,
+    "LINK_COUNTER",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/messaging/stream_inline_tests.rs",
+    17,
+    "TEMP_DIR_COUNTER",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/net/atp/protocol/outcome.rs",
+    18,
+    "COUNTER",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/net/atp/sdk/mod.rs",
+    116,
+    "COUNTER",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/net/atp/transport_common/metadata.rs",
+    631,
+    "SYMLINK_COMMIT_SEQUENCE",
+    "u64",
+    "statistic"
+   ],
+   [
+    "src/net/atp/transport_quic/native_link.rs",
+    148,
+    "QUIC_STAGING_SEQ",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/net/atp/transport_rq/mod.rs",
+    478,
+    "RQ_STAGING_SEQ",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/net/atp/transport_rq/mod.rs",
+    481,
+    "RQ_TRANSFER_SEQ",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/net/atp/transport_tcp/mod.rs",
+    142,
+    "STAGING_SEQ",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/net/happy_eyeballs_inline_tests.rs",
+    323,
+    "TEST_NOW",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/net/happy_eyeballs_inline_tests.rs",
+    345,
+    "TEST_NOW",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/net/happy_eyeballs_inline_tests.rs",
+    374,
+    "TEST_NOW",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/net/happy_eyeballs_inline_tests.rs",
+    768,
+    "TEST_NOW",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/net/happy_eyeballs_inline_tests.rs",
+    800,
+    "TEST_NOW",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/net/happy_eyeballs_inline_tests.rs",
+    832,
+    "TEST_NOW",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/net/quic_native/endpoint.rs",
+    805,
+    "NEXT_ID",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/net/tcp/stream_inline_tests.rs",
+    239,
+    "FALLBACK_NOW",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/net/tcp/stream_inline_tests.rs",
+    267,
+    "TEST_NOW",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/net/tcp/stream_inline_tests.rs",
+    293,
+    "TEST_NOW",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/net/tcp/stream_inline_tests.rs",
+    316,
+    "TEST_NOW",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/net/udp.rs",
+    1725,
+    "REGISTRATIONS",
+    "u64",
+    "statistic"
+   ],
+   [
+    "src/net/udp.rs",
+    1728,
+    "REARMS",
+    "u64",
+    "statistic"
+   ],
+   [
+    "src/net/udp.rs",
+    1730,
+    "MIGRATIONS",
+    "u64",
+    "statistic"
+   ],
+   [
+    "src/net/udp.rs",
+    1732,
+    "SELF_WAKES",
+    "u64",
+    "statistic"
+   ],
+   [
+    "src/net/udp.rs",
+    1863,
+    "NEXT_OWNER",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/net/websocket/split.rs",
+    1008,
+    "COUNTER",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/obligation/session_types.rs",
+    173,
+    "SILENT_SESSION_CONSUME_COUNT",
+    "u64",
+    "statistic"
+   ],
+   [
+    "src/observability/cancellation_tracer.rs",
+    81,
+    "NEXT_ID",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/observability/context.rs",
+    24,
+    "NEXT_CONTEXT_GUARD_ID",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/observability/context.rs",
+    35,
+    "NEXT_ID",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/observability/otel.rs",
+    10600,
+    "NEXT_TEST_SPAN_SEED",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/observability/otel.rs",
+    10601,
+    "NEXT_TEST_TIME_TICK",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/observability/pressure_governor.rs",
+    162,
+    "NEXT_PRESSURE_GOVERNOR_INSTANCE_ID",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/observability/w3c_trace_id_randomness_audit_test.rs",
+    28,
+    "TEST_SPAN_SEED",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/raptorq/gf256_tests/gf256_validation_tests.rs",
+    16,
+    "TEST_SEQUENCE_COUNTER",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/real_database_sqlite_obligation_saga_integration_e2e_tests.rs",
+    881,
+    "COUNTER",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/real_distributed_bridge_obligation_marking_integration_e2e_tests.rs",
+    1454,
+    "COUNTER",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/real_distributed_bridge_trace_distributed_sheaf_integration_e2e_tests.rs",
+    946,
+    "COUNTER",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/real_distributed_bridge_trace_distributed_sheaf_integration_e2e_tests.rs",
+    951,
+    "COUNTER",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/real_grpc_server_obligation_marking_nested_calls_integration_e2e_tests.rs",
+    581,
+    "COUNTER",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/real_grpc_streaming_service_retry_integration_e2e_tests.rs",
+    1469,
+    "COUNTER",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/real_grpc_streaming_service_retry_integration_e2e_tests.rs",
+    1475,
+    "COUNTER",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/real_net_dns_transport_router_integration_e2e_tests.rs",
+    43,
+    "COUNTER",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/real_net_websocket_frame_sync_notify_integration_e2e_tests.rs",
+    1198,
+    "COUNTER",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/real_obligation_choreography_obligation_pipeline_integration_e2e_tests.rs",
+    1557,
+    "COUNTER",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/real_obligation_choreography_obligation_pipeline_integration_e2e_tests.rs",
+    1563,
+    "COUNTER",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/remote.rs",
+    130,
+    "REMOTE_TASK_COUNTER",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/remote/durable/tests.rs",
+    138,
+    "NEXT_FILE",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/runtime/blocking_pool_inline_tests.rs",
+    10,
+    "SCRIPTED_TIME_OFFSET_MS",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/runtime/deadline_monitor_inline_tests.rs",
+    21,
+    "TEST_NOW_OFFSET_NS",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/runtime/epoch_tracking.rs",
+    66,
+    "LAST_NANOS",
+    "u64",
+    "clock"
+   ],
+   [
+    "src/runtime/epoch_tracking.rs",
+    75,
+    "NEXT_PIN_ID",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/runtime/local.rs",
+    155,
+    "RETIRED_LOCAL_STORE_GENERATION",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/runtime/panic_isolation.rs",
+    24,
+    "PANIC_COUNTER",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/runtime/reactor/browser.rs",
+    123,
+    "NEXT_BROWSER_REACTOR_ID",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/runtime/reactor/source.rs",
+    34,
+    "SOURCE_ID_COUNTER",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/runtime/region_heap.rs",
+    109,
+    "GLOBAL_ALLOC_COUNT",
+    "u64",
+    "statistic"
+   ],
+   [
+    "src/runtime/resource_cleanup_verifier.rs",
+    120,
+    "NEXT_ID",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/runtime/resource_cleanup_verifier.rs",
+    364,
+    "NEXT_INSTANCE_ID",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/runtime/state.rs",
+    72,
+    "NEXT_RUNTIME_INSTANCE_ID",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/server/connection_inline_tests.rs",
+    16,
+    "TEST_NOW",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/server/shutdown_inline_tests.rs",
+    17,
+    "TEST_NOW",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/service/hedge_inline_tests.rs",
+    986,
+    "LOCAL_NOW",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/stream/throttle_inline_tests.rs",
+    15,
+    "TEST_NOW_NANOS",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/sync/lock_ordering.rs",
+    262,
+    "NEXT_ACQUISITION_ID",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/test_logging.rs",
+    2930,
+    "NEXT_CONTAINER_ID",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/time/delay_queue.rs",
+    29,
+    "NEXT_GENERATION",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/time/driver_inline_tests.rs",
+    498,
+    "FAKE_HOST_NANOS",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/time/sleep.rs",
+    65,
+    "LAST_NANOS",
+    "u64",
+    "clock"
+   ],
+   [
+    "src/time/sleep_inline_tests.rs",
+    28,
+    "CURRENT_TIME",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/trace/file.rs",
+    1840,
+    "MIGRATION_TEMP_COUNTER",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/transport/mock_inline_tests.rs",
+    17,
+    "STREAM_TEST_NOW",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/transport/mock_inline_tests.rs",
+    18,
+    "SINK_TEST_NOW",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/transport/mock_inline_tests.rs",
+    19,
+    "CONFIG_TEST_NOW",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/transport/mock_inline_tests.rs",
+    20,
+    "SHARED_TEST_NOW",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/transport/stream_inline_tests.rs",
+    1297,
+    "NOW",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/transport/stream_inline_tests.rs",
+    1340,
+    "NOW",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/transport/stream_inline_tests.rs",
+    1391,
+    "NOW",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/transport/stream_inline_tests.rs",
+    1433,
+    "NOW",
+    "u64",
+    "test_only"
+   ],
+   [
+    "src/types/resource.rs",
+    380,
+    "NEXT_SYMBOL_POOL_ID",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/types/wasm_abi.rs",
+    2889,
+    "PROVIDER_NONCE",
+    "u64",
+    "identifier_or_counter"
+   ],
+   [
+    "src/util/resource.rs",
+    300,
+    "NEXT_SYMBOL_POOL_ID",
+    "u64",
+    "identifier_or_counter"
+   ]
+  ],
+  "total": 106
+ },
+ "test_only_areas": {
+  "areas": 212,
+  "files": 212,
+  "mentions": 1611
+ }
+}

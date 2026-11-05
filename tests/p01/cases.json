@@ -2505,6 +2505,36 @@
      "pass"
     ],
     [
+     "a stale unsafe exception is accepted",
+     "errs.add((\"stale_unsafe_exception\", subject))",
+     "pass"
+    ],
+    [
+     "an unsafe exception needs no reason",
+     "errs.add((\"unsafe_exception_without_reason\", subject))",
+     "pass"
+    ],
+    [
+     "one listed edge excuses every edge into an unsafe crate",
+     "if not incoming or not incoming <= listed:\n                    errs.add((\"unsafe_in_device_closure\", subject))",
+     "if not (incoming & listed):\n                    errs.add((\"unsafe_in_device_closure\", subject))"
+    ],
+    [
+     "an artifact's own unsafe crate may be excused",
+     "if not incoming or not incoming <= listed:\n                    errs.add((\"unsafe_in_device_closure\", subject))",
+     "if not incoming <= listed:\n                    errs.add((\"unsafe_in_device_closure\", subject))"
+    ],
+    [
+     "one listed edge excuses every edge into a test-only crate",
+     "if not incoming or not incoming <= listed:\n                    errs.add((\"test_support_in_device_closure\", subject))",
+     "if not (incoming & listed):\n                    errs.add((\"test_support_in_device_closure\", subject))"
+    ],
+    [
+     "the platform role may not carry a scoped unsafe allowance",
+     "\"test_support\", \"platform\")))",
+     "\"test_support\")))"
+    ],
+    [
      "linker malformed",
      "errs.add((\"linker_malformed\", ln[\"target\"]))",
      "pass"
@@ -2583,30 +2613,33 @@
     "smoke",
     "full"
    ],
+   "judge": "steps",
    "reason": "the plan is built and checked here (P01-PLAN-*), but builds run only through RCH_REQUIRE_REMOTE=1 rch exec on the supervisor's central path; run the plan there, then `scripts/e2e/p01 ingest --revision REV --export-root DIR --target-dir DIR --step ID=LOG ...` writes the sanitized, revision-bound record under toolchain/results/p01 that this case judges",
    "owner": "BeigeMaple: central run of the current plan, then `scripts/e2e/p01 ingest`"
   },
   {
    "id": "P01-BLK-002",
-   "kind": "blocked",
-   "title": "artifact identities observed from real central builds of franken-speaker for MIPS and PowerPC",
+   "kind": "central_evidence",
+   "title": "the device speaker artifacts from a central build are static, the right machine, ISA revision and float ABI per the declared linkers, with digests, judged from committed evidence",
    "tiers": [
     "smoke",
     "full"
    ],
-   "reason": "only `cargo check` of the workspace for the device targets has ever run; no franken-speaker device binary has been built or linked, so no real digest or ELF header exists to hold to the contract",
-   "owner": "BeigeMaple: central build, then `scripts/e2e/p01 collect`"
+   "judge": "device_artifacts",
+   "reason": "no committed central-run record covers the two device speaker builds, or it is stale; run the current plan centrally, then `scripts/e2e/p01 ingest` (its artifact rows are read from the built bytes: PT_INTERP/PT_DYNAMIC, machine, .MIPS.abiflags)",
+   "owner": "BeigeMaple: central run of the current plan, then `scripts/e2e/p01 ingest`"
   },
   {
    "id": "P01-BLK-003",
-   "kind": "blocked",
-   "title": "Rust replay of the shared vectors by the typed contract",
+   "kind": "central_evidence",
+   "title": "the Rust replay of the shared vectors by the typed contract passed centrally, by test name, against the current vectors, judged from committed evidence",
    "tiers": [
     "smoke",
     "full"
    ],
-   "reason": "crates/franken-board-profile/tests/p01_contract.rs replays the same vectors, but cargo runs only centrally and it has not run yet",
-   "owner": "BeigeMaple: RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-board-profile"
+   "judge": "replay",
+   "reason": "no committed central-run record shows the current replay tests (crates/franken-board-profile/tests/p01_contract.rs) passing against the current vectors; run the workspace test centrally, then `scripts/e2e/p01 ingest` (it records those tests by name from the log, bound to the test file and the vectors)",
+   "owner": "BeigeMaple: central workspace test, then `scripts/e2e/p01 ingest`"
   },
   {
    "id": "P01-BLK-004",
@@ -2906,7 +2939,8 @@
     "P01-BLK-003",
     "P01-BLK-007"
    ],
-   "status": "blocked"
+   "status": "partial",
+   "note": "BLK-001/002/003 are judged from committed central-run evidence and pass only while it is current for the plan, contract, replay tests and vectors (otherwise BLOCKED, named); BLK-007 passes only when the cargo metadata documents are supplied"
   },
   {
    "id": "INV-P01-19",
@@ -3009,6 +3043,24 @@
    ],
    "status": "partial",
    "note": "the rules and the plan are checked here; no device speaker has linked yet, so a real static ELF with these ABI flags is P01-BLK-002"
+  },
+  {
+   "id": "INV-P01-26",
+   "statement": "A crate with a scoped unsafe allowance (a platform crate) may be in a device image only through edges a counted exception names: every active edge into it must be listed, a listed edge excuses no other, an exception for a missing edge or a safe crate is stale, and an artifact's own crate is never excused (the same all-edges rule now holds for test-only crates)",
+   "cases": [
+    "P01-V-119",
+    "P01-V-120",
+    "P01-V-121",
+    "P01-V-122",
+    "P01-V-123",
+    "P01-V-124",
+    "P01-V-125",
+    "P01-V-126",
+    "P01-V-127",
+    "P01-V-128",
+    "P01-V-129"
+   ],
+   "status": "covered"
   },
   {
    "id": "INV-P01-22",

@@ -1,7 +1,7 @@
 {
  "schema": "ffw.p01.vectors.v1",
  "base": "p01_workspace_contract.json",
- "base_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+ "base_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
  "vectors": [
   {
    "id": "P01-V-001",
@@ -15,7 +15,7 @@
    "title": "the contract digest is the pinned canonical-JSON SHA-256",
    "kind": "digest",
    "ops": [],
-   "expect_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88"
+   "expect_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179"
   },
   {
    "id": "P01-V-003",
@@ -2448,6 +2448,337 @@
    }
   },
   {
+   "id": "P01-V-119",
+   "title": "an unsafe platform crate in a device artifact's closure with no exception is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/crates/name=franken-platform/unsafe_policy",
+     "value": "deny_with_scoped_allow"
+    }
+   ],
+   "expect_codes": [
+    "unsafe_in_device_closure"
+   ],
+   "expect_subjects": {
+    "unsafe_in_device_closure": [
+     "speaker-mips-full:franken-platform",
+     "speaker-mips-min:franken-platform",
+     "speaker-ppc-full:franken-platform",
+     "speaker-ppc-min:franken-platform"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-120",
+   "title": "permitted positive: a platform crate with a scoped unsafe allowance, reached through its one listed edge",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/crates/name=franken-platform/unsafe_policy",
+     "value": "deny_with_scoped_allow"
+    },
+    {
+     "op": "push",
+     "path": "/unsafe_exceptions",
+     "value": {
+      "from": "franken-speaker",
+      "to": "franken-platform",
+      "reason": "raw syscall trampolines for the clock and entropy"
+     }
+    }
+   ],
+   "expect_codes": []
+  },
+  {
+   "id": "P01-V-121",
+   "title": "an unsafe exception with no reason is refused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/crates/name=franken-platform/unsafe_policy",
+     "value": "deny_with_scoped_allow"
+    },
+    {
+     "op": "push",
+     "path": "/unsafe_exceptions",
+     "value": {
+      "from": "franken-speaker",
+      "to": "franken-platform",
+      "reason": ""
+     }
+    }
+   ],
+   "expect_codes": [
+    "unsafe_exception_without_reason"
+   ],
+   "expect_subjects": {
+    "unsafe_exception_without_reason": [
+     "franken-speaker->franken-platform"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-122",
+   "title": "an exception for an edge that does not exist is stale and excuses nothing",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/crates/name=franken-platform/unsafe_policy",
+     "value": "deny_with_scoped_allow"
+    },
+    {
+     "op": "push",
+     "path": "/unsafe_exceptions",
+     "value": {
+      "from": "franken-control",
+      "to": "franken-platform",
+      "reason": "raw syscall trampolines for the clock and entropy"
+     }
+    }
+   ],
+   "expect_codes": [
+    "stale_unsafe_exception",
+    "unsafe_in_device_closure"
+   ],
+   "expect_subjects": {
+    "unsafe_in_device_closure": [
+     "speaker-mips-full:franken-platform",
+     "speaker-mips-min:franken-platform",
+     "speaker-ppc-full:franken-platform",
+     "speaker-ppc-min:franken-platform"
+    ],
+    "stale_unsafe_exception": [
+     "franken-control->franken-platform"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-123",
+   "title": "an exception onto a crate with no scoped unsafe allowance is stale and excuses nothing",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/crates/name=franken-platform/unsafe_policy",
+     "value": "deny_with_scoped_allow"
+    },
+    {
+     "op": "push",
+     "path": "/unsafe_exceptions",
+     "value": {
+      "from": "franken-speaker",
+      "to": "franken-hal",
+      "reason": "raw syscall trampolines for the clock and entropy"
+     }
+    }
+   ],
+   "expect_codes": [
+    "stale_unsafe_exception",
+    "unsafe_in_device_closure"
+   ],
+   "expect_subjects": {
+    "unsafe_in_device_closure": [
+     "speaker-mips-full:franken-platform",
+     "speaker-mips-min:franken-platform",
+     "speaker-ppc-full:franken-platform",
+     "speaker-ppc-min:franken-platform"
+    ],
+    "stale_unsafe_exception": [
+     "franken-speaker->franken-hal"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-124",
+   "title": "a second, unlisted edge into the same unsafe crate is refused although the first is listed",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/crates/name=franken-platform/unsafe_policy",
+     "value": "deny_with_scoped_allow"
+    },
+    {
+     "op": "push",
+     "path": "/unsafe_exceptions",
+     "value": {
+      "from": "franken-speaker",
+      "to": "franken-platform",
+      "reason": "raw syscall trampolines for the clock and entropy"
+     }
+    },
+    {
+     "op": "push",
+     "path": "/crates/name=franken-hal/deps",
+     "value": "franken-platform"
+    }
+   ],
+   "expect_codes": [
+    "unsafe_in_device_closure"
+   ],
+   "expect_subjects": {
+    "unsafe_in_device_closure": [
+     "speaker-mips-full:franken-platform",
+     "speaker-mips-min:franken-platform",
+     "speaker-ppc-full:franken-platform",
+     "speaker-ppc-min:franken-platform"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-125",
+   "title": "permitted positive: both edges into the unsafe crate are listed",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/crates/name=franken-platform/unsafe_policy",
+     "value": "deny_with_scoped_allow"
+    },
+    {
+     "op": "push",
+     "path": "/unsafe_exceptions",
+     "value": {
+      "from": "franken-speaker",
+      "to": "franken-platform",
+      "reason": "raw syscall trampolines for the clock and entropy"
+     }
+    },
+    {
+     "op": "push",
+     "path": "/crates/name=franken-hal/deps",
+     "value": "franken-platform"
+    },
+    {
+     "op": "push",
+     "path": "/unsafe_exceptions",
+     "value": {
+      "from": "franken-hal",
+      "to": "franken-platform",
+      "reason": "raw syscall trampolines for the clock and entropy"
+     }
+    }
+   ],
+   "expect_codes": []
+  },
+  {
+   "id": "P01-V-126",
+   "title": "an artifact's own crate with a scoped unsafe allowance is never excused",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/crates/name=franken-speaker/unsafe_policy",
+     "value": "deny_with_scoped_allow"
+    }
+   ],
+   "expect_codes": [
+    "unsafe_in_device_closure",
+    "unsafe_policy_not_permitted"
+   ],
+   "expect_subjects": {
+    "unsafe_in_device_closure": [
+     "speaker-mips-full:franken-speaker",
+     "speaker-mips-min:franken-speaker",
+     "speaker-ppc-full:franken-speaker",
+     "speaker-ppc-min:franken-speaker"
+    ],
+    "unsafe_policy_not_permitted": [
+     "franken-speaker"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-127",
+   "title": "a listed edge to a test-only crate does not excuse a second, unlisted one that the artifact's build activates",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/profiles/name=full_native/features/feature=virtual_house_harness/state",
+     "value": "enabled"
+    },
+    {
+     "op": "push",
+     "path": "/test_support_exceptions",
+     "value": {
+      "from": "franken-hal",
+      "to": "franken-test-support",
+      "reason": "rig"
+     }
+    },
+    {
+     "op": "push",
+     "path": "/crates/name=franken-hal/deps",
+     "value": "franken-test-support"
+    }
+   ],
+   "expect_codes": [
+    "test_support_in_device_closure"
+   ],
+   "expect_subjects": {
+    "test_support_in_device_closure": [
+     "speaker-mips-full:franken-test-support",
+     "speaker-ppc-full:franken-test-support"
+    ]
+   }
+  },
+  {
+   "id": "P01-V-128",
+   "title": "permitted positive: both edges to the test-only crate are listed",
+   "kind": "validate",
+   "ops": [
+    {
+     "op": "set",
+     "path": "/profiles/name=full_native/features/feature=virtual_house_harness/state",
+     "value": "enabled"
+    },
+    {
+     "op": "push",
+     "path": "/test_support_exceptions",
+     "value": {
+      "from": "franken-speaker",
+      "to": "franken-test-support",
+      "reason": "rig"
+     }
+    },
+    {
+     "op": "push",
+     "path": "/crates/name=franken-hal/deps",
+     "value": "franken-test-support"
+    },
+    {
+     "op": "push",
+     "path": "/test_support_exceptions",
+     "value": {
+      "from": "franken-hal",
+      "to": "franken-test-support",
+      "reason": "rig"
+     }
+    }
+   ],
+   "expect_codes": []
+  },
+  {
+   "id": "P01-V-129",
+   "title": "a contract without the unsafe_exceptions list is not defaulted",
+   "kind": "parse",
+   "ops": [
+    {
+     "op": "remove",
+     "path": "/unsafe_exceptions"
+    }
+   ],
+   "expect_codes": [
+    "parse_error"
+   ]
+  },
+  {
    "id": "P01-V-105",
    "title": "a linker whose wrapper digest is not a SHA-256 is refused",
    "kind": "validate",
@@ -2808,7 +3139,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -2832,7 +3163,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": true,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -2863,7 +3194,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": true,
      "isa_revision": "",
      "fp_abi": ""
@@ -2894,7 +3225,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "hard"
@@ -2925,7 +3256,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": false,
      "isa_revision": "mips32r1",
      "fp_abi": "soft"
@@ -2956,7 +3287,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -2991,7 +3322,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": "soft"
@@ -3022,7 +3353,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": false,
      "isa_revision": "ppc",
      "fp_abi": "hard"
@@ -3052,7 +3383,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "926e202443de1e4b76edec401568a472361e11c1119e9dbc3ecd7415a30e0bc5",
+     "contract_digest": "72a869b2b77cf6ccc7192924d4cad50b572b7a57fec0cb99cdb4cae0e2c6b651",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3076,7 +3407,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": true,
      "isa_revision": "",
      "fp_abi": ""
@@ -3100,7 +3431,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3114,7 +3445,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3138,7 +3469,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3152,7 +3483,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3183,7 +3514,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": false,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3209,7 +3540,7 @@
      "elf_machine": 8,
      "elf_class": 2,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3235,7 +3566,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3249,7 +3580,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3280,7 +3611,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3337,7 +3668,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3363,7 +3694,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3389,7 +3720,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3403,7 +3734,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3434,7 +3765,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3470,7 +3801,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3502,7 +3833,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "4ccd439558c83f9b75b578c6aedadb1b5d2b227bb2158b01e01465f02356c7c9",
+     "contract_digest": "aca505afa2752a25eb1860f4a0da525706912ad98b9aa4212d7b60824db4efe9",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3528,7 +3859,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3554,7 +3885,7 @@
      "elf_machine": 0,
      "elf_class": 0,
      "elf_big_endian": false,
-     "contract_digest": "b11e18853b52e3b06605911500eeef2f91242bc95fd6ac022d44ce9175044c88",
+     "contract_digest": "534e1d52b69e9b6b3f09e2d9f8fca0acd65e902b8f04228ca16c916286578179",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# P02 end-to-end entry point (bead ffw-jub): the minimal legacy platform capability layer, offline.
+# Stdlib Python only, no cargo, no QEMU, no device. Contract: docs/contracts/p02.md.
+#
+#   scripts/e2e/p02          the host-side cross-checks (errno and open-flag numbers against the E03 oracle, the Rust
+#                            table text and, when present, the libc crate), then prints the central cargo plan
+#   scripts/e2e/p02 --plan   only print the central plan
+#
+# The Rust unit tests, clippy and the device-target type checks are central work (`rch exec`), not run here; the plan
+# below is exactly what they are. Nothing in this entry point has run against a kernel.
+#
+# Exit codes: 0 the tests passed; 1 a test failed; 2 usage.
+set -uo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+MANIFEST="$ROOT/Cargo.toml"
+WORKERS="hz4,hz3,ts1,vmi1227854,vmi1153651,vmi1152480,vmi1156319,vmi1293453,vmi1149989,ovh-a"
+
+plan() {
+  cat <<EOF
+# Central plan for P02 (run from $ROOT/crates/franken-platform so rch syncs only the crate's Cargo closure; every cargo
+# step names its job count because rch ignores CARGO_BUILD_JOBS). fmt is not an rch command (RCH-E301): run locally.
+rustfmt --edition 2024 --check $ROOT/crates/franken-platform/src/lib.rs
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=$WORKERS rch exec -- cargo test   --locked --offline --manifest-path $MANIFEST -p franken-platform --config build.incremental=false -j 2
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=$WORKERS rch exec -- cargo clippy --locked --offline --manifest-path $MANIFEST -p franken-platform --all-targets --config build.incremental=false -j 2 -- -D warnings
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=$WORKERS rch exec -- cargo clippy --locked --offline --manifest-path $MANIFEST -p franken-platform --lib --features sim --config build.incremental=false -j 2 -- -D warnings
+# Device targets (type check only: nothing is linked or run). Workers need nightly rust-src: hz4, hz3, ts1.
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=hz4,hz3,ts1 rch exec -- cargo +nightly check --locked --offline --manifest-path $MANIFEST -p franken-platform --target mips-unknown-linux-musl    -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=hz4,hz3,ts1 rch exec -- cargo +nightly check --locked --offline --manifest-path $MANIFEST -p franken-platform --target powerpc-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2
+EOF
+}
+
+case "${1:-}" in
+  --plan) plan; exit 0 ;;
+  "") ;;
+  *) echo "usage: scripts/e2e/p02 [--plan]" >&2; exit 2 ;;
+esac
+python3 -B -I -m unittest discover -s "$ROOT/tests/p02" -p 'test_*.py' || { echo "scripts/e2e/p02: tests FAILED" >&2; exit 1; }
+echo
+plan
+exit 0

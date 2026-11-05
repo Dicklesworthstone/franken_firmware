@@ -1,0 +1,32 @@
+# P05 (ffw-ipz) pinned seeded-schedule vectors. Evidence: model, host simulation. No device is involved.
+#
+# One line per vector: a name, then decimal numbers. Lines starting with '#' are comments.
+#
+# Origin: `python3 tests/p05/reference.py predict` (an independent model of the scheduler, the sequential
+# specification and the linearizability checker). The numbers are pinned here so that
+#   * crates/franken-atomic/src/tests.rs reads this file with include_str! and requires the Rust model to
+#     reproduce every count and every pinned seed verdict, and
+#   * tests/p05/run_cases.py requires reference.py to still predict exactly this file.
+# A change to the generator, the scheduler or either cell on one side only fails one of the two.
+#
+# profile: 3 threads, 4 operations each, seeds first_seed .. first_seed + seeds - 1.
+profile_threads 3
+profile_ops_per_thread 4
+profile_first_seed 0
+profile_seeds 256
+#
+# The real cell (one indivisible step per operation): no run may be non-linearizable.
+good_violations 0
+good_inconclusive 0
+#
+# Planted split-word cell: two independent 32-bit atomics.
+split_violations 198
+split_inconclusive 0
+split_violation_seeds 0 1 2 3
+split_clean_seeds 8 13 16 25
+#
+# Planted truncating cell: one 32-bit atomic, values cut with `as u32`.
+trunc_violations 231
+trunc_inconclusive 0
+trunc_violation_seeds 0 2 3 4
+trunc_clean_seeds 1 12 16 17

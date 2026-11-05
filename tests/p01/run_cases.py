@@ -774,10 +774,12 @@ def _revision_is_here(revision: str) -> Optional[bool]:
 
 
 def run_central_evidence(c) -> Result:
-    """P01-BLK-001: the plan ran on the central path. Judged from committed, sanitized evidence records
-    (`scripts/e2e/p01 ingest`), newest run first, against the CURRENT plan and contract. No record: BLOCKED. A record
-    for another plan or contract, or with a step that never ran: BLOCKED and named. A failed step or an inconsistent
-    record: FAIL. Never skipped, never a pass on stale evidence."""
+    """P01-BLK-001/002/003: the plan ran on the central path (`judge` steps), the device speakers it built are static
+    and carry the declared ABI (`device_artifacts`), and the typed contract replayed the shared vectors (`replay`).
+    Judged from committed, sanitized evidence records (`scripts/e2e/p01 ingest`), newest run first, against the CURRENT
+    plan, contract and replay tests. No record: BLOCKED. A record for another plan or contract, or with a step that never
+    ran, or a replay of other tests or other vectors: BLOCKED and named. A failed step, a failed replay test, a dynamic or
+    mismatched device artifact, or an inconsistent record: FAIL. Never skipped, never a pass on stale evidence."""
     owner = f" [owner: {c['owner']}]"
     records = []
     for path in central.find_evidence(REPO):
@@ -790,7 +792,22 @@ def run_central_evidence(c) -> Result:
     records.sort(key=lambda r: str(r[0].get("ran_at_utc", "")))
     evidence, _path = records[-1]
     root, _target_dir, steps = _plan()
-    verdict, detail = central.judge(evidence, contract(), steps, central.roots_for(root))
+    doc = contract()
+    judgement = c.get("judge", "steps")
+    if judgement == "steps":
+        kwargs: Dict[str, Any] = {}
+    elif judgement == "device_artifacts":
+        kwargs = {"scope": central.BLK002_STEPS, "artifacts": central.device_std_artifacts(doc)}
+    elif judgement == "replay":
+        try:
+            now = {"test_file_sha256": metadata_check.sha256_file(os.path.join(REPO, *central.REPLAY_TEST_FILE.split("/"))),
+                   "vectors_sha256": metadata_check.sha256_file(os.path.join(REPO, *central.REPLAY_VECTORS_FILE.split("/")))}
+        except OSError as err:
+            raise CaseError(f"cannot read the replay files: {err}")
+        kwargs = {"scope": central.BLK003_STEPS, "replay": now}
+    else:
+        raise CaseError(f"unknown judgement {judgement!r}")
+    verdict, detail = central.judge(evidence, doc, steps, central.roots_for(root), **kwargs)
     here = _revision_is_here(str(evidence.get("revision", "")))
     if here is False:
         raise CaseError(f"the evidence names revision {str(evidence.get('revision'))[:12]}, which is not a commit of this repository")

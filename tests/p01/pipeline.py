@@ -187,6 +187,12 @@ def cmd_ingest(args) -> int:
         doc = json.loads(_git_show(revision, CONTRACT_REL).decode("utf-8"))
         ref.parse_contract(doc)
         lock_sha256 = hashlib.sha256(_git_show(revision, "Cargo.lock")).hexdigest()
+        # The replay tests are recorded BY NAME from the workspace-test log, bound to the test file and the vectors as they
+        # were at this revision, so P01-BLK-003 can tell a run of the current replay from a run of an older one.
+        test_source = _git_show(revision, central.REPLAY_TEST_FILE)
+        replay_sources = {"names": central.rust_test_names(test_source.decode("utf-8")),
+                          "test_file_sha256": hashlib.sha256(test_source).hexdigest(),
+                          "vectors_sha256": hashlib.sha256(_git_show(revision, central.REPLAY_VECTORS_FILE)).hexdigest()}
     except (OSError, ValueError, ref.ParseError) as err:
         print(f"cannot bind the evidence to {args.revision}: {err}", file=sys.stderr)
         return 2
@@ -230,7 +236,7 @@ def cmd_ingest(args) -> int:
         rows.append(plan_mod.observed_row(doc, art, ident))
         sizes[art["id"]] = ident["size"]
     evidence = central.build_evidence(doc, steps, logs, revision, lock_sha256, export_root, rows, missing, sizes,
-                                      attested)
+                                      attested, replay_sources=replay_sources)
     out_dir = os.path.join(args.out or os.path.join(REPO, central.EVIDENCE_GLOB_DIR), f"rev-{revision[:12]}")
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, "receipt.json")

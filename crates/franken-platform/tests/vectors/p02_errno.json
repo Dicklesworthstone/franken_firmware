@@ -1,0 +1,52 @@
+{
+ "abis": {
+  "mips32": {
+   "enosys": 89,
+   "errno": {
+    "EACCES": 13,
+    "EAFNOSUPPORT": 124,
+    "EAGAIN": 11,
+    "EBADF": 9,
+    "EFAULT": 14,
+    "EINTR": 4,
+    "EINVAL": 22,
+    "EIO": 5,
+    "EMFILE": 24,
+    "ENOENT": 2,
+    "ENOMEM": 12,
+    "ENOSYS": 89,
+    "ENOTSOCK": 95,
+    "EOPNOTSUPP": 122,
+    "EPERM": 1,
+    "EPROTONOSUPPORT": 120
+   },
+   "o_cloexec": 524288,
+   "o_nonblock": 128
+  },
+  "powerpc32": {
+   "enosys": 38,
+   "errno": {
+    "EACCES": 13,
+    "EAFNOSUPPORT": 97,
+    "EAGAIN": 11,
+    "EBADF": 9,
+    "EFAULT": 14,
+    "EINTR": 4,
+    "EINVAL": 22,
+    "EIO": 5,
+    "EMFILE": 24,
+    "ENOENT": 2,
+    "ENOMEM": 12,
+    "ENOSYS": 38,
+    "ENOTSOCK": 88,
+    "EOPNOTSUPP": 95,
+    "EPERM": 1,
+    "EPROTONOSUPPORT": 93
+   },
+   "o_cloexec": 524288,
+   "o_nonblock": 2048
+  }
+ },
+ "note": "Errno numbers per legacy big-endian Linux ABI, from tests/e03/abi.py (Linux uapi headers; only ENOSYS, ENOENT and EBADF are also seen in the committed QEMU transcripts). franken-platform's tables must equal this file (crates/franken-platform/src/abi.rs, a unit test) and tests/p02/test_errno_tables.py checks it against the oracle, the Rust source text and, when present, the libc crate.",
+ "schema": "ffw.p02.errno.v1"
+}

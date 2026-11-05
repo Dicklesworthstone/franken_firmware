@@ -21,3 +21,9 @@ portable-atomic.workspace = true
 
 [dev-dependencies]
 franken-test-support.workspace = true
+
+[features]
+default = []
+# Deterministic simulated kernel (`sim::SeededSim`) for host harnesses. Never enabled for a device image; the doubles
+# answer `Provenance::Simulated`. See docs/contracts/p02.md.
+sim = []

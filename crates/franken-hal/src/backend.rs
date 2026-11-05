@@ -220,6 +220,10 @@ struct FakeState {
     use_after_free: u32,
     modified_while_owned: u32,
     written_bytes: usize,
+    /// How many submissions to keep a copy of (0 keeps none).
+    capture_limit: usize,
+    /// What the device accepted from each submission, oldest first.
+    captured: Vec<Vec<u8>>,
 }
 
 impl FakeState {
@@ -327,6 +331,8 @@ impl FakeBackend {
             use_after_free: 0,
             modified_while_owned: 0,
             written_bytes: 0,
+            capture_limit: 0,
+            captured: Vec::new(),
         }));
         (
             Self {
@@ -418,6 +424,10 @@ impl DeviceBackend for FakeBackend {
                     Vec::new()
                 }
             };
+            if s.captured.len() < s.capture_limit {
+                let kept = snapshot.get(..accepted).unwrap_or(&snapshot).to_vec();
+                s.captured.push(kept);
+            }
             let due = s.tick + s.cfg.completion_delay_ticks;
             s.pending.push(Pending {
                 slot,
@@ -490,6 +500,18 @@ impl FakeProbe {
     /// Cap how many bytes a write or retained submit accepts (a short write).
     pub fn set_accept_limit(&self, limit: Option<usize>) {
         self.lock().accept_limit = limit;
+    }
+
+    /// Keep a copy of what the device accepts from the next `limit` retained submissions, so a test
+    /// can compare the bytes the device was given with what should have been produced.
+    pub fn capture_submissions(&self, limit: usize) {
+        self.lock().capture_limit = limit;
+    }
+
+    /// The accepted part of each captured submission, oldest first.
+    #[must_use]
+    pub fn captured_submissions(&self) -> Vec<Vec<u8>> {
+        self.lock().captured.clone()
     }
 
     /// While set, retained completions are never delivered (lost completions).

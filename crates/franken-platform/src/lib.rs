@@ -3,6 +3,18 @@
 
 #![forbid(unsafe_code)]
 
+pub mod abi;
+pub mod clock;
+pub mod entropy;
+pub mod layer;
+pub mod ops;
+pub mod wake;
+
+// Test doubles. Compiled for tests and under the `sim` feature only; a device image is built without it.
+#[cfg(any(test, feature = "sim"))]
+pub mod sim;
+
+use crate::entropy::EntropyAvailability;
 use franken_board_profile::{BoardProfile, CpuIsa};
 use serde::{Deserialize, Serialize};
 
@@ -53,6 +65,10 @@ pub enum CapabilityStatus {
     /// Observed absent (an exact `-ENOSYS` in the guest's own ABI numbering) in a guest whose kernel
     /// matches the profile, with a declared fallback admitted.
     AbsentFallbackAdmitted,
+    /// Observed in a matching guest: the call exists and answered `-EAGAIN` because the kernel's entropy pool was
+    /// not seeded at PID-1 boot (E03's `GETRANDOM` `UNSEEDED`). It is not `Supported` (no entropy was obtained) and
+    /// not an absence. Meaningful for `getrandom_syscall` only; any other field holding it fails `check_admission`.
+    ObservedUnseeded,
     /// Required capability is missing or broken; blocks runtime admission.
     MissingRequired,
     /// Only CPU user-mode or unverified guest evidence exists; not yet qualified for stock kernel.
@@ -76,13 +92,31 @@ pub struct KernelCapabilityMatrix {
     pub poll_syscall: CapabilityStatus,
     pub epoll_syscall: CapabilityStatus,
     pub udp_socket_io: CapabilityStatus,
+    /// `/dev/urandom` opens and reads: **liveness only**. The E03 guests' pools were unseeded or past their first
+    /// stage at PID-1 boot, so those bytes are not secure entropy, and nothing in this crate reads this field as a
+    /// secure-entropy claim. Secure entropy is `getrandom_syscall`.
     pub urandom_entropy: CapabilityStatus,
+    /// `getrandom(GRND_NONBLOCK)`: `Supported` when it returned bytes (`PASS`), [`CapabilityStatus::ObservedUnseeded`]
+    /// when it answered `-EAGAIN` (`UNSEEDED`). No fallback is admitted for entropy, so
+    /// [`CapabilityStatus::AbsentFallbackAdmitted`] here means "unavailable". See [`crate::entropy`].
+    pub getrandom_syscall: CapabilityStatus,
     pub atomics_32bit: CapabilityStatus,
     pub atomics_64bit_fallback: CapabilityStatus,
     pub eventfd_syscall: CapabilityStatus,
 }
 
 impl KernelCapabilityMatrix {
+    /// What this profile says about secure entropy: the `getrandom_syscall` observation and nothing else.
+    ///
+    /// `urandom_entropy` is deliberately not consulted. A `/dev/urandom` read succeeds on a guest whose pool is not
+    /// seeded (E03 run `1412ac47`: the MIPS kernel logged `uninitialized urandom read` while that read passed), so
+    /// treating it as entropy availability would be the insecure fallback `P02` forbids. Like every status here this
+    /// holds only for a matching guest; [`Self::check_admission`] is what refuses a profile without one.
+    #[must_use]
+    pub const fn secure_entropy(&self) -> EntropyAvailability {
+        EntropyAvailability::from_status(self.getrandom_syscall)
+    }
+
     /// Verify whether all mandatory capabilities for the single-threaded reactor + DSP loop are present.
     ///
     /// Refuses with [`PlatformAdmissionError::NoMatchingGuest`] before looking at any capability status
@@ -286,10 +320,60 @@ mod tests {
             epoll_syscall: CapabilityStatus::Supported,
             udp_socket_io: CapabilityStatus::Supported,
             urandom_entropy: CapabilityStatus::Supported,
+            getrandom_syscall: CapabilityStatus::Supported,
             atomics_32bit: CapabilityStatus::Supported,
             atomics_64bit_fallback: CapabilityStatus::Supported,
             eventfd_syscall: CapabilityStatus::Supported,
         }
+    }
+
+    #[test]
+    fn secure_entropy_follows_getrandom_alone_and_never_the_urandom_liveness_status() {
+        let mut matrix = all_supported_matrix(HARNESS_PPC_KERNEL, Some(HARNESS_PPC_KERNEL));
+        assert_eq!(matrix.secure_entropy(), EntropyAvailability::ObservedSeeded);
+
+        // The MIPS harness guest: /dev/urandom reads fine, getrandom answered EAGAIN. Entropy must follow getrandom.
+        matrix.getrandom_syscall = CapabilityStatus::ObservedUnseeded;
+        assert_eq!(matrix.urandom_entropy, CapabilityStatus::Supported);
+        assert_eq!(
+            matrix.secure_entropy(),
+            EntropyAvailability::ObservedUnseededAtBoot
+        );
+
+        // And the reverse: getrandom broken makes entropy unavailable even though /dev/urandom still reads fine,
+        // while admission (whose required set this field does not join) still passes. Entropy availability is its
+        // own fact; it is not folded into the gate and not inferred from urandom.
+        matrix.getrandom_syscall = CapabilityStatus::MissingRequired;
+        assert_eq!(
+            matrix.secure_entropy(),
+            EntropyAvailability::Unavailable {
+                status: CapabilityStatus::MissingRequired
+            }
+        );
+        assert_eq!(matrix.urandom_entropy, CapabilityStatus::Supported);
+        assert!(
+            matrix.check_admission().is_ok(),
+            "the gate's required set is unchanged by this field"
+        );
+    }
+
+    #[test]
+    fn an_unseeded_status_is_not_a_pass_for_any_capability_the_gate_requires() {
+        let mut matrix = all_supported_matrix(HARNESS_PPC_KERNEL, Some(HARNESS_PPC_KERNEL));
+        matrix.udp_socket_io = CapabilityStatus::ObservedUnseeded;
+        assert_eq!(
+            matrix.check_admission(),
+            Err(PlatformAdmissionError::MissingRequiredCapability {
+                capability: "udp_socket_io".to_string(),
+                observed: CapabilityStatus::ObservedUnseeded,
+            })
+        );
+        let mut matrix = all_supported_matrix(HARNESS_PPC_KERNEL, Some(HARNESS_PPC_KERNEL));
+        matrix.eventfd_syscall = CapabilityStatus::ObservedUnseeded;
+        assert!(matches!(
+            matrix.check_admission(),
+            Err(PlatformAdmissionError::MissingRequiredCapability { .. })
+        ));
     }
 
     #[test]

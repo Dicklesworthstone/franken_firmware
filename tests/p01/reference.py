@@ -58,6 +58,7 @@ CONTRACT_SPEC = ("obj", {
     "pending_members": ("list", ("obj", {"name": "str", "path": "str", "owner": "str", "reason": "str"})),
     "assets": ("list", ("obj", {"path": "str", "owner": "str", "kind": ("enum", "asset_kind")})),
     "test_support_exceptions": ("list", ("obj", {"from": "str", "to": "str", "reason": "str"})),
+    "unsafe_exceptions": ("list", ("obj", {"from": "str", "to": "str", "reason": "str"})),
     "features": ("list", ("obj", {
         "name": "str", "kind": ("enum", "feature_kind"), "requirement": ("enum", "requirement"),
         "owner_crate": "str", "cargo_feature": "str", "requires": ("list", "str"),
@@ -281,7 +282,7 @@ def validate(doc: Dict[str, Any]) -> List[Pair]:
     # --- unsafe policy
     for c in doc["crates"]:
         ok = (c["unsafe_policy"] == "forbid"
-              or (c["unsafe_policy"] == "deny_with_scoped_allow" and c["role"] in ("host_tool", "test_support")))
+              or (c["unsafe_policy"] == "deny_with_scoped_allow" and c["role"] in ("host_tool", "test_support", "platform")))
         if not ok:
             errs.add(("unsafe_policy_not_permitted", c["name"]))
     for e in doc["excluded"]:
@@ -422,6 +423,14 @@ def validate(doc: Dict[str, Any]) -> List[Pair]:
             errs.add(("stale_exception", subject))
         if exc["reason"].strip() == "":
             errs.add(("exception_without_reason", subject))
+    for exc in doc["unsafe_exceptions"]:
+        subject = f"{exc['from']}->{exc['to']}"
+        is_edge = exc["to"] in normal.get(exc["from"], ())
+        to_ok = exc["to"] in members and members[exc["to"]]["unsafe_policy"] == "deny_with_scoped_allow"
+        if not is_edge or not to_ok:
+            errs.add(("stale_unsafe_exception", subject))
+        if exc["reason"].strip() == "":
+            errs.add(("unsafe_exception_without_reason", subject))
     for art in doc["artifacts"]:
         if not TARGETS[art["target"]][3] or art["crate"] not in members:
             continue
@@ -430,15 +439,19 @@ def validate(doc: Dict[str, Any]) -> List[Pair]:
         for member in reach:
             spec = members[member]
             subject = f"{art['id']}:{member}"
+            # Every edge into the crate that this artifact's build activates must be listed: one listed edge does not
+            # excuse a second, unlisted one, and the artifact's own crate (no incoming edge) is never excused.
+            incoming = {f for f in reach if member in active.get(f, ())}
             if spec["role"] == "test_support":
-                covered = any(e["to"] == member and e["from"] in reach and member in active.get(e["from"], ())
-                              for e in doc["test_support_exceptions"])
-                if not covered:
+                listed = {e["from"] for e in doc["test_support_exceptions"] if e["to"] == member}
+                if not incoming or not incoming <= listed:
                     errs.add(("test_support_in_device_closure", subject))
             if spec["role"] == "host_tool":
                 errs.add(("host_tool_in_device_closure", subject))
             if spec["unsafe_policy"] == "deny_with_scoped_allow":
-                errs.add(("unsafe_in_device_closure", subject))
+                listed = {e["from"] for e in doc["unsafe_exceptions"] if e["to"] == member}
+                if not incoming or not incoming <= listed:
+                    errs.add(("unsafe_in_device_closure", subject))
     return sorted(errs)
 
 

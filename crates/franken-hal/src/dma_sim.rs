@@ -21,12 +21,16 @@
 //! * driver counters are untrusted: a consumed-frame counter may wrap but may never claim more than
 //!   is in flight, and is never used as an index;
 //! * radio duties owned by the stock daemon are orphaned when the daemon is replaced, never assumed
-//!   to carry on.
+//!   to carry on;
+//! * with a [`SimModel`] (a channel map, rates and an amplifier startup sequence), a startup step is
+//!   accepted only in the contract's order and after its minimum delay, `start` waits for the rate and
+//!   the whole sequence, a byte count must be a whole number of frames, and the clocks are cut only
+//!   while the amplifier is muted.
 //!
 //! The hand-written trace cases live in `tests/e04/sim_cases.json` and are replayed here and by the
 //! independent Python reference model in `tests/e04/`.
 
-use crate::contract::{DutyOwner, RadioDutyKind};
+use crate::contract::{AmpAction, DutyOwner, RadioDutyKind};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -107,6 +111,15 @@ pub enum Refusal {
     DutyNotDeclared,
     NotDaemonOwned,
     DaemonNotReplaced,
+    /// The event needs a [`SimModel`] and the trace has none.
+    NoModel,
+    RateNotSupported,
+    RateNotSet,
+    AmpStepOutOfOrder,
+    AmpStepTooEarly,
+    AmpSequenceIncomplete,
+    ClocksOffWhileUnmuted,
+    PartialFrame,
 }
 
 /// How a driver report contradicted the contract. The model state is left unchanged.
@@ -119,6 +132,8 @@ pub enum AnomalyKind {
     CounterExceedsInFlight,
     ResetUnacknowledged,
     FlushAckOutsideDrain,
+    /// The driver reported accepting a byte count that is not a whole number of frames.
+    AcceptedPartialFrame,
 }
 
 /// What one step did.
@@ -203,6 +218,38 @@ pub enum SimEvent {
     AdoptDuty {
         duty: RadioDutyKind,
     },
+    /// Choose the sample rate. Only while prepared, and only a rate the model lists.
+    SetRate {
+        hz: u32,
+    },
+    /// Perform one amplifier step. `disable_clocks` is a stop step; the others advance the startup.
+    AmpStep {
+        action: AmpAction,
+    },
+    /// Like `Submit`, in bytes: the host offers `bytes` and the driver reports it `accepted_bytes`.
+    SubmitBytes {
+        slot: u16,
+        bytes: u32,
+        accepted_bytes: u32,
+    },
+}
+
+/// One step of a model's startup sequence: the action, and the least sim time after the previous
+/// step. In a trace with a model, one sim tick is one microsecond.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelStep {
+    pub action: AmpAction,
+    pub min_delay_ticks: u64,
+}
+
+/// The contract a trace runs against: the channel map, the rates and the startup sequence. The last
+/// startup step is `deassert_mute`, which `start` performs; the steps before it are `amp_step`s.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SimModel {
+    pub channels: u8,
+    pub bytes_per_sample: u8,
+    pub rates_hz: Vec<u32>,
+    pub startup: Vec<ModelStep>,
 }
 
 /// The externally visible state of the model.
@@ -218,6 +265,14 @@ pub struct SimSnapshot {
     pub consumed: u64,
     #[serde(default)]
     pub radio: BTreeMap<RadioDutyKind, DutyState>,
+    /// The sample rate chosen, if any.
+    #[serde(default)]
+    pub rate_hz: Option<u32>,
+    /// Startup steps done so far, not counting the final unmute that `start` performs.
+    #[serde(default)]
+    pub amp_progress: usize,
+    #[serde(default)]
+    pub clocks_on: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -249,6 +304,11 @@ pub struct DmaSim {
     start_counter: u32,
     daemon_replaced: bool,
     duties: BTreeMap<RadioDutyKind, DutyRecord>,
+    model: Option<SimModel>,
+    rate_hz: Option<u32>,
+    amp_progress: usize,
+    last_amp_at: u64,
+    clocks_on: bool,
 }
 
 impl DmaSim {
@@ -269,7 +329,20 @@ impl DmaSim {
             start_counter,
             daemon_replaced: false,
             duties: BTreeMap::new(),
+            model: None,
+            rate_hz: None,
+            amp_progress: 0,
+            last_amp_at: 0,
+            clocks_on: false,
         }
+    }
+
+    /// As [`new`](Self::new), running against a channel map, rates and startup sequence.
+    #[must_use]
+    pub fn with_model(start_counter: u32, model: SimModel) -> Self {
+        let mut sim = Self::new(start_counter);
+        sim.model = Some(model);
+        sim
     }
 
     #[must_use]
@@ -286,6 +359,9 @@ impl DmaSim {
                 .iter()
                 .map(|(duty, record)| (*duty, record.state))
                 .collect(),
+            rate_hz: self.rate_hz,
+            amp_progress: self.amp_progress,
+            clocks_on: self.clocks_on,
         }
     }
 
@@ -314,6 +390,13 @@ impl DmaSim {
             SimEvent::DeclareDuty { duty, owner } => self.declare_duty(*duty, *owner),
             SimEvent::DaemonReplaced => self.daemon_replaced(),
             SimEvent::AdoptDuty { duty } => self.adopt_duty(*duty),
+            SimEvent::SetRate { hz } => self.set_rate(*hz),
+            SimEvent::AmpStep { action } => self.amp_step(*action),
+            SimEvent::SubmitBytes {
+                slot,
+                bytes,
+                accepted_bytes,
+            } => self.submit_bytes(*slot, *bytes, *accepted_bytes),
         }
     }
 
@@ -343,6 +426,9 @@ impl DmaSim {
         self.phase = Phase::Prepared;
         self.amp = AmpState::Muted;
         self.drain_deadline = None;
+        self.rate_hz = None;
+        self.amp_progress = 0;
+        self.clocks_on = false;
         StepOutcome::Applied
     }
 
@@ -353,22 +439,131 @@ impl DmaSim {
         if self.amp == AmpState::MuteFailed {
             return refused(Refusal::MuteNotAcknowledged);
         }
+        if let Some(model) = &self.model {
+            if self.rate_hz.is_none() {
+                return refused(Refusal::RateNotSet);
+            }
+            let last = model.startup.len().saturating_sub(1);
+            if self.amp_progress < last {
+                return refused(Refusal::AmpSequenceIncomplete);
+            }
+            if self.amp_progress > 0
+                && let Some(step) = model.startup.get(last)
+                && self.now.saturating_sub(self.last_amp_at) < step.min_delay_ticks
+            {
+                return refused(Refusal::AmpStepTooEarly);
+            }
+        }
         self.amp = AmpState::Unmuted;
         self.phase = Phase::Running;
+        self.amp_progress = 0;
         StepOutcome::Applied
     }
 
-    fn submit(&mut self, slot: u16, frames: u32, accepted: u32) -> StepOutcome {
+    /// The checks every submit shares: the phase, and a slot that exists and is free.
+    fn submit_preflight(&self, slot: u16) -> Option<StepOutcome> {
         if !matches!(self.phase, Phase::Prepared | Phase::Running) {
+            return Some(refused(Refusal::WrongPhase));
+        }
+        match self.slots.get(usize::from(slot)).copied() {
+            None => Some(refused(Refusal::BadSlot)),
+            Some(state) if state != SlotState::Free => Some(refused(Refusal::SlotNotFree)),
+            Some(_) => None,
+        }
+    }
+
+    fn submit(&mut self, slot: u16, frames: u32, accepted: u32) -> StepOutcome {
+        if let Some(early) = self.submit_preflight(slot) {
+            return early;
+        }
+        self.submit_frames(slot, frames, accepted)
+    }
+
+    /// A byte-level submit: the model's channel map says how many bytes make a frame.
+    fn submit_bytes(&mut self, slot: u16, bytes: u32, accepted_bytes: u32) -> StepOutcome {
+        let Some(model) = &self.model else {
+            return refused(Refusal::NoModel);
+        };
+        let frame_bytes = (u32::from(model.channels) * u32::from(model.bytes_per_sample)).max(1);
+        if let Some(early) = self.submit_preflight(slot) {
+            return early;
+        }
+        if bytes == 0 {
+            return refused(Refusal::EmptySubmit);
+        }
+        if !bytes.is_multiple_of(frame_bytes) {
+            return refused(Refusal::PartialFrame);
+        }
+        if accepted_bytes > bytes {
+            return anomaly(AnomalyKind::AcceptedMoreThanOffered);
+        }
+        if !accepted_bytes.is_multiple_of(frame_bytes) {
+            return anomaly(AnomalyKind::AcceptedPartialFrame);
+        }
+        self.submit_frames(slot, bytes / frame_bytes, accepted_bytes / frame_bytes)
+    }
+
+    fn set_rate(&mut self, hz: u32) -> StepOutcome {
+        let Some(model) = &self.model else {
+            return refused(Refusal::NoModel);
+        };
+        if self.owner.is_none() {
+            return refused(Refusal::NotOwner);
+        }
+        if self.phase != Phase::Prepared {
             return refused(Refusal::WrongPhase);
         }
-        let idx = usize::from(slot);
-        let Some(state) = self.slots.get(idx).copied() else {
-            return refused(Refusal::BadSlot);
-        };
-        if state != SlotState::Free {
-            return refused(Refusal::SlotNotFree);
+        if !model.rates_hz.contains(&hz) {
+            return refused(Refusal::RateNotSupported);
         }
+        self.rate_hz = Some(hz);
+        StepOutcome::Applied
+    }
+
+    fn amp_step(&mut self, action: AmpAction) -> StepOutcome {
+        let Some(model) = &self.model else {
+            return refused(Refusal::NoModel);
+        };
+        if self.owner.is_none() {
+            return refused(Refusal::NotOwner);
+        }
+        if action == AmpAction::DisableClocks {
+            // Cutting the clocks is a stop step: only once the amplifier is known muted.
+            if self.amp != AmpState::Muted {
+                return refused(Refusal::ClocksOffWhileUnmuted);
+            }
+            self.clocks_on = false;
+            self.amp_progress = 0;
+            return StepOutcome::Applied;
+        }
+        if self.phase != Phase::Prepared {
+            return refused(Refusal::WrongPhase);
+        }
+        let last = model.startup.len().saturating_sub(1);
+        if self.amp_progress >= last {
+            return refused(Refusal::AmpStepOutOfOrder);
+        }
+        let Some(expected) = model.startup.get(self.amp_progress) else {
+            return refused(Refusal::AmpStepOutOfOrder);
+        };
+        if action != expected.action {
+            return refused(Refusal::AmpStepOutOfOrder);
+        }
+        if self.amp_progress > 0
+            && self.now.saturating_sub(self.last_amp_at) < expected.min_delay_ticks
+        {
+            return refused(Refusal::AmpStepTooEarly);
+        }
+        self.amp_progress += 1;
+        self.last_amp_at = self.now;
+        if action == AmpAction::EnableClocks {
+            self.clocks_on = true;
+        }
+        StepOutcome::Applied
+    }
+
+    fn submit_frames(&mut self, slot: u16, frames: u32, accepted: u32) -> StepOutcome {
+        let idx = usize::from(slot);
         if frames == 0 {
             return refused(Refusal::EmptySubmit);
         }
@@ -422,6 +617,7 @@ impl DmaSim {
         self.phase = Phase::Draining;
         self.amp = AmpState::Muted;
         self.drain_deadline = Some(self.now.saturating_add(max_wait_ticks));
+        self.amp_progress = 0;
         StepOutcome::Applied
     }
 
@@ -461,6 +657,7 @@ impl DmaSim {
         if self.phase == Phase::Closed {
             return refused(Refusal::WrongPhase);
         }
+        self.amp_progress = 0;
         if ack {
             self.amp = AmpState::Muted;
             if self.phase != Phase::Faulted {
@@ -491,6 +688,7 @@ impl DmaSim {
             self.phase = Phase::Prepared;
         }
         self.drain_deadline = None;
+        self.amp_progress = 0;
         StepOutcome::Applied
     }
 
@@ -503,6 +701,7 @@ impl DmaSim {
         self.amp = AmpState::MuteFailed;
         self.phase = Phase::Faulted;
         self.drain_deadline = None;
+        self.amp_progress = 0;
         StepOutcome::Applied
     }
 
@@ -562,6 +761,9 @@ impl DmaSim {
         self.amp = AmpState::Muted;
         self.slots.clear();
         self.drain_deadline = None;
+        self.rate_hz = None;
+        self.amp_progress = 0;
+        self.clocks_on = false;
         self.submitted_total = 0;
         self.consumed_total = 0;
         self.last_counter = self.start_counter;
@@ -625,9 +827,23 @@ pub struct TraceCase {
     pub title: String,
     #[serde(default)]
     pub start_counter: u32,
+    /// The channel map, rates and startup sequence the trace runs against, if it uses any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<SimModel>,
     pub steps: Vec<TraceStep>,
     #[serde(rename = "final")]
     pub expect_final: SimSnapshot,
+}
+
+impl TraceCase {
+    /// A fresh simulator for this trace: with its model if it has one.
+    #[must_use]
+    pub fn sim(&self) -> DmaSim {
+        match &self.model {
+            Some(model) => DmaSim::with_model(self.start_counter, model.clone()),
+            None => DmaSim::new(self.start_counter),
+        }
+    }
 }
 
 /// The committed case file.
@@ -649,7 +865,7 @@ pub struct Mismatch {
 
 /// Replay a case and compare every step and the final state with the hand-written expectation.
 pub fn replay(case: &TraceCase) -> Result<(), Mismatch> {
-    let mut sim = DmaSim::new(case.start_counter);
+    let mut sim = case.sim();
     for (index, step) in case.steps.iter().enumerate() {
         let observed = sim.apply(&step.event);
         if observed != step.expect {
@@ -700,9 +916,9 @@ mod tests {
     fn every_committed_case_replays_to_its_hand_written_outcomes() {
         let file = cases();
         assert_eq!(file.schema, SIM_CASES_SCHEMA);
-        assert_eq!(file.cases.len(), 14, "a case was added or dropped");
+        assert_eq!(file.cases.len(), 20, "a case was added or dropped");
         let ids: BTreeSet<&str> = file.cases.iter().map(|c| c.id.as_str()).collect();
-        assert_eq!(ids.len(), 14, "case ids must be unique");
+        assert_eq!(ids.len(), 20, "case ids must be unique");
         for case in &file.cases {
             if let Err(mismatch) = replay(case) {
                 panic!("{mismatch:?}");
@@ -742,6 +958,15 @@ mod tests {
             "refused:DutyNotDeclared",
             "refused:NotDaemonOwned",
             "refused:DaemonNotReplaced",
+            "refused:NoModel",
+            "refused:RateNotSupported",
+            "refused:RateNotSet",
+            "refused:AmpStepOutOfOrder",
+            "refused:AmpStepTooEarly",
+            "refused:AmpSequenceIncomplete",
+            "refused:ClocksOffWhileUnmuted",
+            "refused:PartialFrame",
+            "anomaly:AcceptedPartialFrame",
             "anomaly:AcceptedMoreThanOffered",
             "anomaly:SpuriousCompletion",
             "anomaly:CompletionForQuarantinedSlot",

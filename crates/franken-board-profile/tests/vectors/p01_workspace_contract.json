@@ -188,6 +188,7 @@
       "optional_deps": [],
       "dev_deps": [
         "franken-board-profile",
+        "franken-clock",
         "franken-dsp"
       ]
     },
@@ -417,9 +418,30 @@
       "path": "tests/n03",
       "owner": "N03",
       "kind": "fixture"
+    },
+    {
+      "path": "tests/g01",
+      "owner": "G01",
+      "kind": "fixture"
+    },
+    {
+      "path": "tests/v01",
+      "owner": "V01",
+      "kind": "fixture"
+    },
+    {
+      "path": "tests/g03",
+      "owner": "G03",
+      "kind": "fixture"
+    },
+    {
+      "path": "tests/n04",
+      "owner": "N04",
+      "kind": "fixture"
     }
   ],
   "test_support_exceptions": [],
+  "unsafe_exceptions": [],
   "features": [
     {
       "name": "protected_render",

@@ -202,11 +202,27 @@ class RunnerTests(unittest.TestCase):
         return code, out.getvalue(), err.getvalue()
 
     def test_a_blocked_case_exits_3_and_is_never_counted_as_passed(self):
-        code, out, _ = self.run_main("--tier", "smoke", "--case", "P01-BLK-001")
+        # blocked by construction: a synthetic case of the static `blocked` kind, so this test cannot depend on which
+        # central-run evidence happens to be committed (P01-BLK-001/002/003 are judged from it and may pass)
+        synthetic = {"id": "P01-TEST-BLOCKED", "kind": "blocked", "title": "a case nothing here can verify",
+                     "tiers": ["smoke", "full"], "reason": "needs a central run", "owner": "nobody"}
+        original = run_cases.all_cases
+        run_cases.all_cases = lambda: [synthetic]
+        try:
+            code, out, _ = self.run_main("--tier", "smoke", "--case", "P01-TEST-BLOCKED")
+        finally:
+            run_cases.all_cases = original
         self.assertEqual(code, 3)
         self.assertIn("BLOCKED", out)
-        self.assertIn("passed=0", out)
+        self.assertIn("passed=0 failed=0 blocked=1", out)
         self.assertIn("NOT QUALIFIED", out)
+
+    def test_the_committed_evidence_cases_are_computed_not_static(self):
+        cases = {c["id"]: c for c in run_cases.all_cases()}
+        for cid in ("P01-BLK-001", "P01-BLK-002", "P01-BLK-003"):
+            self.assertEqual(cases[cid]["kind"], "central_evidence", cid)
+        self.assertEqual([cases[c]["judge"] for c in ("P01-BLK-001", "P01-BLK-002", "P01-BLK-003")],
+                         ["steps", "device_artifacts", "replay"])
 
     def test_a_passing_case_exits_0(self):
         code, out, _ = self.run_main("--tier", "smoke", "--case", "P01-V-001")
@@ -1045,6 +1061,256 @@ class LinkerEvidenceTests(unittest.TestCase):
             with self.subTest(label):
                 record = next(s for s in self.evidence_for(sid, command)["steps"] if s["id"] == sid)
                 self.assertEqual((record["status"], record["matches_plan"]), ("failed", False))
+
+
+def libtest_block(statuses, header_lines=()):
+    """A libtest result block as a combined stdout+stderr log shows it: cargo's own `Running ...` header lines (stderr) may
+    land between the `test ... ok` lines (stdout)."""
+    lines = [f"running {len(statuses)} tests"]
+    items = list(statuses.items())
+    for i, (name, status) in enumerate(items):
+        lines.append(f"test {name} ... {status}")
+        if i < len(header_lines):
+            lines.append(header_lines[i])
+    failed = sum(1 for _n, s in items if s == "FAILED")
+    ignored = sum(1 for _n, s in items if s == "ignored")
+    lines += ["", f"test result: {'FAILED' if failed else 'ok'}. {len(items) - failed - ignored} passed; {failed} failed; "
+                  f"{ignored} ignored; 0 measured; 0 filtered out; finished in 0.11s", ""]
+    return "\n".join(lines) + "\n"
+
+
+class TestBlockParsingTests(unittest.TestCase):
+    def test_a_block_is_recognized_by_its_stdout_markers_whatever_stderr_headers_land_inside_it(self):
+        other = libtest_block({"group::tests::a": "ok", "group::tests::b": "ok"})
+        mine = libtest_block({"first": "ok", "second": "ok", "third": "ok"},
+                             header_lines=["     Running tests/other.rs (target/debug/deps/other-abc)",
+                                           "     Running unittests src/lib.rs (target/debug/deps/clock-def)"])
+        blocks = central.parse_test_blocks(other + "\x1b[32m   Compiling x\x1b[0m\n" + mine)
+        self.assertEqual([sorted(b["tests"]) for b in blocks], [["group::tests::a", "group::tests::b"], ["first", "second", "third"]])
+        self.assertEqual([(b["declared"], b["passed"], b["failed"]) for b in blocks], [(2, 2, 0), (3, 3, 0)])
+
+    def test_failed_and_ignored_tests_are_kept_with_their_status(self):
+        (block,) = central.parse_test_blocks(libtest_block({"a": "ok", "b": "FAILED", "c": "ignored"}))
+        self.assertEqual(block["tests"], {"a": "ok", "b": "FAILED", "c": "ignored"})
+        self.assertEqual((block["result"], block["passed"], block["failed"], block["ignored"]), ("FAILED", 1, 1, 1))
+
+    def test_a_test_name_with_spaces_and_text_outside_a_block_are_handled(self):
+        text = "test stray ... ok\n" + libtest_block({"src/lib.rs - docs (line 3)": "ok"})
+        (block,) = central.parse_test_blocks(text)
+        self.assertEqual(list(block["tests"]), ["src/lib.rs - docs (line 3)"])
+
+    def test_rust_test_names_see_tests_with_other_attributes_and_ignore_helpers(self):
+        source = "fn helper() {}\n#[test]\nfn plain() {}\n#[test]\n#[should_panic(expected = \"x\")]\nfn panics() {}\n#[test]\npub fn public() {}\n"
+        self.assertEqual(central.rust_test_names(source), ["panics", "plain", "public"])
+
+
+class CentralJudgementTests(unittest.TestCase):
+    """BLK-002 (device artifacts) and BLK-003 (the replay) judged from the same kind of record as BLK-001, on synthetic
+    logs and rows. Every rejection starts from the passing baseline."""
+    NAMES = ["every_vector_id_is_unique", "the_declared_contract_is_valid", "the_digest_is_pinned", "the_shared_vectors_replay"]
+    SHA = {"test_file_sha256": "a" * 64, "vectors_sha256": "b" * 64}
+
+    def setUp(self):
+        self.doc = run_cases.contract()
+        self.root = os.path.realpath(run_cases.REPO)
+        self.export = "/srv/export-a1b2c3/ffw"
+        self.planned = plan.plan_steps(self.export, self.export + "/crates/franken-board-profile",
+                                       self.export + "/build/p01-target", self.doc)
+        self.now = plan.plan_steps(self.root, os.path.join(self.root, "crates", "franken-board-profile"), "/nonexistent/target", self.doc)
+        self.roots_now = central.roots_for(self.root)
+        self.logs = {}
+        for step in self.planned:
+            inner = plan.inner_command(step["argv"])
+            extra = {"toolchain": run_cases.RUSTC_VV, "toolchain_default": run_cases.RUSTC_VV_DEFAULT}.get(step["kind"], "")
+            if step["kind"] == "test":
+                extra = (libtest_block({"group::tests::a": "ok"}) + libtest_block({n: "ok" for n in self.NAMES}, header_lines=[
+                    "     Running tests/p01_contract.rs (target/debug/deps/p01_contract-aa)"]))
+            self.logs[step["id"]] = fake_rch_log(inner, extra=extra)
+        self.rows = self.good_rows()
+        self.device_ids = central.device_std_artifacts(self.doc)
+
+    def good_rows(self):
+        out = {}
+        for art in self.doc["artifacts"]:
+            if not art["bin"]:
+                continue
+            device = art["target"] != "host"
+            isa = "mips32r2" if art["target"] == "mips_be" else ""
+            fp = "soft" if art["target"] == "mips_be" else ""
+            ident = {"sha256": hashlib_sha(art["target"] + art["crate"]), "elf_machine": {"host": 62, "mips_be": 8, "powerpc_be": 20}[art["target"]],
+                     "elf_class": 1 if device else 2, "elf_big_endian": device, "elf_dynamic": not device, "isa_revision": isa, "fp_abi": fp}
+            out[art["id"]] = plan.observed_row(self.doc, art, ident)
+        return out
+
+    def build(self, rows=None, logs=None, sources="default", **kw):
+        sources = dict(names=self.NAMES, **self.SHA) if sources == "default" else sources
+        return central.build_evidence(self.doc, self.planned, logs if logs is not None else self.logs, "a" * 40, "b" * 64,
+                                      self.export, list((rows or self.rows).values()), [], {}, {}, replay_sources=sources, **kw)
+
+    def judge_devices(self, evidence, doc=None):
+        return central.judge(evidence, doc or self.doc, self.now, self.roots_now, scope=central.BLK002_STEPS, artifacts=self.device_ids)
+
+    def judge_replay(self, evidence, now=None, doc=None):
+        return central.judge(evidence, doc or self.doc, self.now, self.roots_now, scope=central.BLK003_STEPS, replay=now or self.SHA)
+
+    # ---- BLK-002: the device speaker artifacts
+    def test_the_four_device_speakers_pass_when_static_and_carrying_the_declared_abi(self):
+        verdict, detail = self.judge_devices(self.build())
+        self.assertEqual(verdict, "pass", detail)
+        self.assertEqual(len(self.device_ids), 4)
+        self.assertIn("speaker-ppc-full", detail)
+
+    def test_a_dynamic_a_hard_float_or_a_wrong_machine_device_artifact_fails(self):
+        for label, edit, code in (
+                ("dynamic mips", lambda r: r["speaker-mips-full"].update(elf_dynamic=True), "artifact_not_static"),
+                ("dynamic ppc", lambda r: r["speaker-ppc-full"].update(elf_dynamic=True), "artifact_not_static"),
+                ("hard float", lambda r: r["speaker-mips-min"].update(fp_abi="hard"), "float_abi_mismatch"),
+                ("isa revision", lambda r: r["speaker-mips-full"].update(isa_revision="mips32r1"), "isa_revision_mismatch"),
+                ("no abi marker on a measured target", lambda r: r["speaker-mips-full"].update(isa_revision="", fp_abi=""), "float_abi_mismatch"),
+                ("ppc says mips", lambda r: r["speaker-ppc-full"].update(elf_machine=8), "elf_machine_mismatch"),
+                ("little endian", lambda r: r["speaker-ppc-min"].update(elf_big_endian=False), "elf_not_32bit_big_endian")):
+            with self.subTest(label):
+                rows = json.loads(json.dumps(self.rows))
+                edit(rows)
+                verdict, detail = self.judge_devices(self.build(rows))
+                self.assertEqual(verdict, "fail", detail)
+                self.assertIn(code, detail)
+
+    def test_a_missing_device_row_after_an_exit_0_build_fails_and_an_unrun_build_only_blocks(self):
+        rows = {k: v for k, v in self.rows.items() if k != "speaker-ppc-full"}
+        verdict, detail = self.judge_devices(self.build(rows))
+        self.assertEqual(verdict, "fail")
+        self.assertIn("speaker-ppc-full", detail)
+        logs = {k: v for k, v in self.logs.items() if k != "build-franken-speaker-powerpc_be"}
+        verdict, detail = self.judge_devices(self.build(rows, logs))
+        self.assertEqual(verdict, "blocked")
+        self.assertIn("build-franken-speaker-powerpc_be has not run", detail)
+
+    def test_device_evidence_for_another_contract_is_stale_and_one_digest_for_both_isas_is_a_universal_claim(self):
+        other = json.loads(json.dumps(self.doc))
+        other["crates"][0]["owner"] += "-changed"
+        self.assertEqual(self.judge_devices(self.build(), doc=other)[0], "blocked")
+        rows = json.loads(json.dumps(self.rows))
+        rows["speaker-ppc-full"]["sha256"] = rows["speaker-mips-full"]["sha256"]
+        verdict, detail = self.judge_devices(self.build(rows))
+        self.assertEqual((verdict, "universal_artifact_claim" in detail), ("fail", True))
+
+    # ---- BLK-003: the replay tests, by name
+    def test_the_replay_passes_by_name_against_the_current_test_file_and_vectors(self):
+        evidence = self.build()
+        self.assertTrue(evidence["replay"]["found"])
+        self.assertEqual(sorted(evidence["replay"]["tests"]), sorted(self.NAMES))
+        verdict, detail = self.judge_replay(evidence)
+        self.assertEqual(verdict, "pass", detail)
+        self.assertIn("the_shared_vectors_replay", detail)
+
+    def test_a_failed_replay_test_fails_even_when_the_rest_of_the_workspace_passed(self):
+        statuses = {n: "ok" for n in self.NAMES}
+        statuses["the_shared_vectors_replay"] = "FAILED"
+        logs = dict(self.logs)
+        inner = plan.inner_command(next(s for s in self.planned if s["id"] == "workspace-test")["argv"])
+        logs["workspace-test"] = fake_rch_log(inner, extra=libtest_block(statuses))
+        verdict, detail = self.judge_replay(self.build(logs=logs))
+        self.assertEqual(verdict, "fail")
+        self.assertIn("the_shared_vectors_replay", detail)
+
+    def test_a_log_without_the_exact_replay_tests_blocks_rather_than_passing_on_totals(self):
+        inner = plan.inner_command(next(s for s in self.planned if s["id"] == "workspace-test")["argv"])
+        for label, extra in (("a replay test absent", libtest_block({n: "ok" for n in self.NAMES[:-1]})),
+                             ("an extra test in the block", libtest_block({**{n: "ok" for n in self.NAMES}, "surprise": "ok"})),
+                             ("no block at all", "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured\n")):
+            with self.subTest(label):
+                logs = dict(self.logs, **{"workspace-test": fake_rch_log(inner, extra=extra)})
+                verdict, detail = self.judge_replay(self.build(logs=logs))
+                self.assertEqual(verdict, "blocked", detail)
+                self.assertIn("no test block with exactly the current replay tests", detail)
+
+    def test_a_replay_of_an_older_test_file_or_older_vectors_is_stale(self):
+        evidence = self.build()
+        for label, now, text in (("test file", {**self.SHA, "test_file_sha256": "c" * 64}, "replay test file has changed"),
+                                 ("vectors", {**self.SHA, "vectors_sha256": "c" * 64}, "shared vectors have changed")):
+            with self.subTest(label):
+                verdict, detail = self.judge_replay(evidence, now=now)
+                self.assertEqual(verdict, "blocked")
+                self.assertIn(text, detail)
+
+    def test_a_record_from_before_replay_capture_is_stale_not_passed(self):
+        evidence = self.build(sources=None)
+        self.assertNotIn("replay", evidence)
+        verdict, detail = self.judge_replay(evidence)
+        self.assertEqual(verdict, "blocked")
+        self.assertIn("predates replay capture", detail)
+
+    # ---- the cases that read the committed records
+    def test_each_evidence_judgement_is_blocked_when_no_record_is_committed(self):
+        original = central.find_evidence
+        central.find_evidence = lambda repo: []
+        try:
+            for judgement in ("steps", "device_artifacts", "replay"):
+                with self.subTest(judgement):
+                    status, detail = run_cases.run_central_evidence({"judge": judgement, "reason": "r", "owner": "o"})
+                    self.assertEqual(status, run_cases.BLOCKED)
+                    self.assertIn("no central-run evidence is committed", detail)
+        finally:
+            central.find_evidence = original
+
+    def test_an_unknown_judgement_is_an_error_not_a_pass(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "rev-" + "a" * 12, "receipt.json")
+            os.makedirs(os.path.dirname(path))
+            with open(path, "w") as f:
+                json.dump(self.build(), f)
+            original = central.find_evidence
+            central.find_evidence = lambda repo: [path]
+            try:
+                with self.assertRaises(run_cases.CaseError):
+                    run_cases.run_central_evidence({"judge": "nonsense", "reason": "r", "owner": "o"})
+            finally:
+                central.find_evidence = original
+
+    def test_ingest_records_the_replay_tests_by_name_from_the_log_and_binds_them_to_the_files(self):
+        try:
+            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=run_cases.REPO, capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.SubprocessError):
+            self.skipTest("git is unavailable")
+        if head.returncode != 0:
+            self.skipTest("no git history here")
+        names = central.rust_test_names(open(os.path.join(run_cases.REPO, *central.REPLAY_TEST_FILE.split("/"))).read())
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = {}
+            for sid, text in self.logs.items():
+                if sid == "workspace-test":
+                    inner = plan.inner_command(next(s for s in self.planned if s["id"] == sid)["argv"])
+                    text = fake_rch_log(inner, extra=libtest_block({n: "ok" for n in names}))
+                paths[sid] = os.path.join(tmp, sid + ".log")
+                with open(paths[sid], "w") as f:
+                    f.write(text)
+            real = pipeline._git_show
+
+            def working_tree_show(revision, path):
+                with open(os.path.join(run_cases.REPO, *path.split("/")), "rb") as handle:
+                    return handle.read()
+            pipeline._git_show = working_tree_show
+            try:
+                args = ["ingest", "--revision", "HEAD", "--export-root", self.export, "--target-dir", os.path.join(tmp, "t"),
+                        "--out", os.path.join(tmp, "out")] + [a for sid, p in paths.items() for a in ("--step", f"{sid}={p}")]
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(pipeline.main(args), 0)
+            finally:
+                pipeline._git_show = real
+            (name,) = os.listdir(os.path.join(tmp, "out"))
+            with open(os.path.join(tmp, "out", name, "receipt.json")) as f:
+                record = json.load(f)
+        replay = record["replay"]
+        self.assertTrue(replay["found"])
+        self.assertEqual(sorted(replay["tests"]), names)
+        self.assertEqual(replay["test_file_sha256"], metadata_check.sha256_file(os.path.join(run_cases.REPO, *central.REPLAY_TEST_FILE.split("/"))))
+        self.assertEqual(replay["vectors_sha256"], metadata_check.sha256_file(os.path.join(run_cases.REPO, *central.REPLAY_VECTORS_FILE.split("/"))))
+
+
+def hashlib_sha(text):
+    import hashlib
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 class ResolveTests(unittest.TestCase):
