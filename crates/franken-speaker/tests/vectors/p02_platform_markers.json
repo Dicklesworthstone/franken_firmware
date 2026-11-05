@@ -1,0 +1,121 @@
+{
+ "schema": "ffw.p02.platform-markers.v2",
+ "note": "The FFW_PLATFORM:* lines `franken-speaker --platform-startup` prints on stdout, as pinned examples. platform_start.rs holds the speaker to this file (a unit test runs each scenario and compares), and tests/p02/test_platform_markers.py holds this file to the grammar below. A smoke judge can adopt both. The speaker prints no clock value and no entropy byte. BEGIN records `kernel=` (the running kernel's release: 1 to 64 bytes of [A-Za-z0-9._+-], or the literal `invalid`); it is evidence of which kernel answered and is never compared and never a reason to refuse. Scenarios use test doubles that declare Kernel or Simulated, so they prove the logic and not the real backend; the real backend is proved by the QEMU speaker smoke.",
+ "grammar": {
+  "lines": ["BEGIN", "KERNEL", "CLOCK", "ENTROPY", "WAKE", "END"],
+  "status": ["PASS", "REFUSED", "NOT_RUN"],
+  "provenance": ["kernel", "simulated", "none"],
+  "mechanism": ["eventfd", "self_pipe", "none"],
+  "abi": ["mips32", "powerpc32", "none"],
+  "evidence": ["harness-mips-4.19", "harness-ppc-4.9", "none"],
+  "kernel_field": {"charset": "A-Za-z0-9._+-", "min_len": 1, "max_len": 64, "otherwise": "invalid"},
+  "exit": {"started": 0, "refused": 3, "usage_or_no_kernel_backend": 2}
+ },
+ "reason_codes": {
+  "kernel": ["simulated_backend", "no_abi", "not_admitted", "unknown_abi", "abi_mismatch", "wake_open_failed"],
+  "clock": ["absent", "interrupted", "failed", "malformed", "unexpected_return", "invalid_timespec", "overflow", "went_backwards"],
+  "entropy": ["zero_length", "unavailable", "not_seeded", "absent", "interrupted", "invalid", "no_progress", "over_long", "degenerate", "failed", "malformed"],
+  "wake": ["absent", "sys", "unexpected", "bad_descriptor", "short_write", "short_read", "zero_counter", "end_of_file", "not_observed", "not_signalled", "close_failed"]
+ },
+ "examples": {
+  "powerpc_all_pass": {
+   "exit": 0,
+   "lines": [
+    "FFW_PLATFORM:BEGIN abi=powerpc32 evidence=harness-ppc-4.9 backend=kernel kernel=4.9.0-0.bpo.6-powerpc",
+    "FFW_PLATFORM:KERNEL status=PASS",
+    "FFW_PLATFORM:CLOCK status=PASS provenance=kernel",
+    "FFW_PLATFORM:ENTROPY status=PASS provenance=kernel",
+    "FFW_PLATFORM:WAKE status=PASS provenance=kernel mechanism=eventfd",
+    "FFW_PLATFORM:END started=1"
+   ]
+  },
+  "mips_all_pass": {
+   "exit": 0,
+   "lines": [
+    "FFW_PLATFORM:BEGIN abi=mips32 evidence=harness-mips-4.19 backend=kernel kernel=4.19.0-21-4kc-malta",
+    "FFW_PLATFORM:KERNEL status=PASS",
+    "FFW_PLATFORM:CLOCK status=PASS provenance=kernel",
+    "FFW_PLATFORM:ENTROPY status=PASS provenance=kernel",
+    "FFW_PLATFORM:WAKE status=PASS provenance=kernel mechanism=eventfd",
+    "FFW_PLATFORM:END started=1"
+   ]
+  },
+  "mips_entropy_not_seeded": {
+   "exit": 3,
+   "lines": [
+    "FFW_PLATFORM:BEGIN abi=mips32 evidence=harness-mips-4.19 backend=kernel kernel=4.19.0-21-4kc-malta",
+    "FFW_PLATFORM:KERNEL status=PASS",
+    "FFW_PLATFORM:CLOCK status=PASS provenance=kernel",
+    "FFW_PLATFORM:ENTROPY status=REFUSED provenance=kernel reason=not_seeded",
+    "FFW_PLATFORM:WAKE status=PASS provenance=kernel mechanism=eventfd",
+    "FFW_PLATFORM:END started=0 refused=entropy:not_seeded"
+   ]
+  },
+  "simulated_backend_refused": {
+   "exit": 3,
+   "lines": [
+    "FFW_PLATFORM:BEGIN abi=none evidence=none backend=simulated kernel=4.9.0-0.bpo.6-powerpc",
+    "FFW_PLATFORM:KERNEL status=REFUSED reason=simulated_backend",
+    "FFW_PLATFORM:CLOCK status=NOT_RUN provenance=none",
+    "FFW_PLATFORM:ENTROPY status=NOT_RUN provenance=none",
+    "FFW_PLATFORM:WAKE status=NOT_RUN provenance=none mechanism=none",
+    "FFW_PLATFORM:END started=0 refused=kernel:simulated_backend"
+   ]
+  },
+  "stock_kernel_release_recorded_not_refused": {
+   "exit": 0,
+   "lines": [
+    "FFW_PLATFORM:BEGIN abi=powerpc32 evidence=harness-ppc-4.9 backend=kernel kernel=2.6.14.7",
+    "FFW_PLATFORM:KERNEL status=PASS",
+    "FFW_PLATFORM:CLOCK status=PASS provenance=kernel",
+    "FFW_PLATFORM:ENTROPY status=PASS provenance=kernel",
+    "FFW_PLATFORM:WAKE status=PASS provenance=kernel mechanism=eventfd",
+    "FFW_PLATFORM:END started=1"
+   ]
+  },
+  "unreadable_kernel_release_recorded_as_invalid": {
+   "exit": 0,
+   "lines": [
+    "FFW_PLATFORM:BEGIN abi=powerpc32 evidence=harness-ppc-4.9 backend=kernel kernel=invalid",
+    "FFW_PLATFORM:KERNEL status=PASS",
+    "FFW_PLATFORM:CLOCK status=PASS provenance=kernel",
+    "FFW_PLATFORM:ENTROPY status=PASS provenance=kernel",
+    "FFW_PLATFORM:WAKE status=PASS provenance=kernel mechanism=eventfd",
+    "FFW_PLATFORM:END started=1"
+   ]
+  },
+  "wake_source_absent_powerpc": {
+   "exit": 3,
+   "lines": [
+    "FFW_PLATFORM:BEGIN abi=powerpc32 evidence=harness-ppc-4.9 backend=kernel kernel=2.6.14.7",
+    "FFW_PLATFORM:KERNEL status=REFUSED reason=wake_open_failed",
+    "FFW_PLATFORM:CLOCK status=NOT_RUN provenance=none",
+    "FFW_PLATFORM:ENTROPY status=NOT_RUN provenance=none",
+    "FFW_PLATFORM:WAKE status=NOT_RUN provenance=none mechanism=eventfd",
+    "FFW_PLATFORM:END started=0 refused=kernel:wake_open_failed"
+   ]
+  },
+  "clock_absent_powerpc": {
+   "exit": 3,
+   "lines": [
+    "FFW_PLATFORM:BEGIN abi=powerpc32 evidence=harness-ppc-4.9 backend=kernel kernel=4.9.0-0.bpo.6-powerpc",
+    "FFW_PLATFORM:KERNEL status=PASS",
+    "FFW_PLATFORM:CLOCK status=REFUSED provenance=kernel reason=absent",
+    "FFW_PLATFORM:ENTROPY status=PASS provenance=kernel",
+    "FFW_PLATFORM:WAKE status=PASS provenance=kernel mechanism=eventfd",
+    "FFW_PLATFORM:END started=0 refused=clock:absent"
+   ]
+  },
+  "wake_not_observed_powerpc": {
+   "exit": 3,
+   "lines": [
+    "FFW_PLATFORM:BEGIN abi=powerpc32 evidence=harness-ppc-4.9 backend=kernel kernel=4.9.0-0.bpo.6-powerpc",
+    "FFW_PLATFORM:KERNEL status=PASS",
+    "FFW_PLATFORM:CLOCK status=PASS provenance=kernel",
+    "FFW_PLATFORM:ENTROPY status=PASS provenance=kernel",
+    "FFW_PLATFORM:WAKE status=REFUSED provenance=kernel mechanism=eventfd reason=not_observed",
+    "FFW_PLATFORM:END started=0 refused=wake:not_observed"
+   ]
+  }
+ }
+}

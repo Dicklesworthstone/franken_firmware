@@ -169,6 +169,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "franken-platform-linux"
+version = "0.1.0"
+dependencies = [
+ "franken-platform",
+]
+
+[[package]]
 name = "franken-session"
 version = "0.1.0"
 dependencies = [
@@ -189,6 +196,7 @@ dependencies = [
  "franken-dsp",
  "franken-hal",
  "franken-platform",
+ "franken-platform-linux",
  "franken-session",
  "franken-stream",
  "franken-test-support",

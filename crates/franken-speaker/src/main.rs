@@ -26,6 +26,38 @@ fn virtual_house_passes(report: &franken_speaker::VirtualHouseReport) -> bool {
         && report.evidence_complete
 }
 
+/// `--platform-startup`: bring the platform layer up over the kernel backend and print one `FFW_PLATFORM:*` line per capability
+/// (`P02` / `ffw-jub`; contract `docs/contracts/p02.md`). Only a big-endian 32-bit MIPS or PowerPC build has a kernel backend, the
+/// Linux leaf `franken-platform-linux`. This function constructs nothing: it calls `platform_start::check_device`, which goes
+/// through `bring_up_device`, the one place the device speaker builds a layer or the backend (a source test pins that), so the
+/// clock, wakeup and entropy the device runs on come from the platform layer and not from a stand-in. Exit 0 when every capability
+/// passed, 3 when startup was refused (a typed refusal, printed), 2 on a target that has no kernel backend.
+#[cfg(all(
+    target_os = "linux",
+    target_endian = "big",
+    target_pointer_width = "32",
+    any(target_arch = "mips", target_arch = "powerpc")
+))]
+fn platform_startup() -> ExitCode {
+    let report = franken_speaker::platform_start::check_device();
+    print!("{}", report.markers());
+    ExitCode::from(report.exit_status())
+}
+
+#[cfg(not(all(
+    target_os = "linux",
+    target_endian = "big",
+    target_pointer_width = "32",
+    any(target_arch = "mips", target_arch = "powerpc")
+)))]
+fn platform_startup() -> ExitCode {
+    eprintln!(
+        "this build has no kernel backend: franken-platform-linux exists for big-endian 32-bit MIPS and PowerPC only, \
+         so --platform-startup runs on a device build"
+    );
+    ExitCode::from(2)
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
     // The harness is a test tool: only a build with the `harness` feature runs it by default.
@@ -50,6 +82,7 @@ fn main() -> ExitCode {
                 }
             }
         }
+        "--platform-startup" => platform_startup(),
         #[cfg(feature = "harness")]
         "--virtual-house" | "--self-test" => match run_virtual_house_campaign(SEED, BLOCKS) {
             Ok(report) => {
@@ -77,8 +110,9 @@ fn main() -> ExitCode {
         }
         other => {
             eprintln!(
-                "Usage: franken-speaker [--catalog|--virtual-house|--self-test] (got {other}); \
-                 --virtual-house and --self-test need a build with `--features harness`"
+                "Usage: franken-speaker [--catalog|--platform-startup|--virtual-house|--self-test] (got {other}); \
+                 --virtual-house and --self-test need a build with `--features harness`, \
+                 --platform-startup needs a big-endian MIPS or PowerPC device build"
             );
             ExitCode::from(2)
         }

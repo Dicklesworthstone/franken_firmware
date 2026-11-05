@@ -1,0 +1,20 @@
+[package]
+name = "franken-platform-linux"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish = false
+description = "Real Linux syscall backend for franken-platform's KernelOps seam: big-endian MIPS o32 and PowerPC32 only (P02)."
+
+# This crate does NOT inherit the workspace lint table: the workspace forbids `unsafe_code` in every crate, and a syscall is inline
+# assembly. Policy (P01 `deny_with_scoped_allow`, role `platform`):
+#   * `unsafe_code = "deny"` here, and exactly one `#[allow(unsafe_code)]`, on the `sys` module in src/lib.rs;
+#   * every `unsafe` block in src/sys.rs carries a SAFETY comment naming the invariants it relies on;
+#   * the only dependency is `franken-platform`, which stays `forbid(unsafe_code)`;
+#   * the only crate allowed to depend on this one is `franken-speaker`, through the single counted exception edge
+#     `franken-speaker -> franken-platform-linux` in the P01 workspace contract.
+[lints.rust]
+unsafe_code = "deny"
+
+[dependencies]
+franken-platform.workspace = true

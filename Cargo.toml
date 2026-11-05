@@ -4,6 +4,7 @@ members = [
     "crates/franken-test-support",
     "crates/franken-board-profile",
     "crates/franken-platform",
+    "crates/franken-platform-linux",
     "crates/franken-hal",
     "crates/franken-dsp",
     "crates/franken-clock",
@@ -40,6 +41,7 @@ portable-atomic = { version = "1.15.0", default-features = false, features = ["f
 franken-test-support = { path = "crates/franken-test-support" }
 franken-board-profile = { path = "crates/franken-board-profile" }
 franken-platform = { path = "crates/franken-platform" }
+franken-platform-linux = { path = "crates/franken-platform-linux" }
 franken-hal = { path = "crates/franken-hal" }
 franken-dsp = { path = "crates/franken-dsp" }
 franken-clock = { path = "crates/franken-clock" }

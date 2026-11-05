@@ -17,6 +17,10 @@ thiserror.workspace = true
 franken-test-support = { workspace = true, optional = true }
 franken-board-profile.workspace = true
 franken-platform.workspace = true
+# The one counted unsafe edge (P01 `unsafe_exceptions`): the Linux syscall backend the device speaker builds its platform layer over
+# (`--platform-startup`). A plain normal dependency so the contract sees the edge; on a host build the leaf is plain data and
+# the backend type exists only for big-endian 32-bit MIPS and PowerPC. The speaker itself keeps `forbid(unsafe_code)`.
+franken-platform-linux.workspace = true
 franken-hal.workspace = true
 franken-dsp.workspace = true
 franken-clock.workspace = true

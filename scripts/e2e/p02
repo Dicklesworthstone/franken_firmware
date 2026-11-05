@@ -2,8 +2,9 @@
 # P02 end-to-end entry point (bead ffw-jub): the minimal legacy platform capability layer, offline.
 # Stdlib Python only, no cargo, no QEMU, no device. Contract: docs/contracts/p02.md.
 #
-#   scripts/e2e/p02          the host-side cross-checks (errno and open-flag numbers against the E03 oracle, the Rust
-#                            table text and, when present, the libc crate), then prints the central cargo plan
+#   scripts/e2e/p02          the host-side cross-checks (errno and open-flag numbers and syscall numbers against the E03 oracle
+#                            and probes, the Rust text and, when present, the libc crate; the generated guest evidence against
+#                            the committed transcripts; the platform-startup marker grammar), then prints the central cargo plan
 #   scripts/e2e/p02 --plan   only print the central plan
 #
 # The Rust unit tests, clippy and the device-target type checks are central work (`rch exec`), not run here; the plan
@@ -23,9 +24,22 @@ rustfmt --edition 2024 --check $ROOT/crates/franken-platform/src/lib.rs
 RCH_REQUIRE_REMOTE=1 RCH_WORKER=$WORKERS rch exec -- cargo test   --locked --offline --manifest-path $MANIFEST -p franken-platform --config build.incremental=false -j 2
 RCH_REQUIRE_REMOTE=1 RCH_WORKER=$WORKERS rch exec -- cargo clippy --locked --offline --manifest-path $MANIFEST -p franken-platform --all-targets --config build.incremental=false -j 2 -- -D warnings
 RCH_REQUIRE_REMOTE=1 RCH_WORKER=$WORKERS rch exec -- cargo clippy --locked --offline --manifest-path $MANIFEST -p franken-platform --lib --features sim --config build.incremental=false -j 2 -- -D warnings
-# Device targets (type check only: nothing is linked or run). Workers need nightly rust-src: hz4, hz3, ts1.
-RCH_REQUIRE_REMOTE=1 RCH_WORKER=hz4,hz3,ts1 rch exec -- cargo +nightly check --locked --offline --manifest-path $MANIFEST -p franken-platform --target mips-unknown-linux-musl    -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2
-RCH_REQUIRE_REMOTE=1 RCH_WORKER=hz4,hz3,ts1 rch exec -- cargo +nightly check --locked --offline --manifest-path $MANIFEST -p franken-platform --target powerpc-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2
+# Device targets (type check only: nothing is linked or run). Workers need nightly rust-src: ts1 and hz3 (the set E06's batch uses; hz4 is not confirmed).
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=ts1,hz3 rch exec -- cargo +nightly check --locked --offline --manifest-path $MANIFEST -p franken-platform --target mips-unknown-linux-musl    -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=ts1,hz3 rch exec -- cargo +nightly check --locked --offline --manifest-path $MANIFEST -p franken-platform --target powerpc-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2
+# The Linux leaf (run from $ROOT): the only unsafe crate; clippy on both device targets compiles its asm.
+rustfmt --edition 2024 --check $ROOT/crates/franken-platform-linux/src/lib.rs
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=$WORKERS rch exec -- cargo test   --locked --offline --manifest-path $MANIFEST -p franken-platform-linux --config build.incremental=false -j 2
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=$WORKERS rch exec -- cargo clippy --locked --offline --manifest-path $MANIFEST -p franken-platform-linux --all-targets --config build.incremental=false -j 2 -- -D warnings
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=ts1,hz3 rch exec -- cargo +nightly clippy --locked --offline --manifest-path $MANIFEST -p franken-platform-linux --target mips-unknown-linux-musl    -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2 -- -D warnings
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=ts1,hz3 rch exec -- cargo +nightly clippy --locked --offline --manifest-path $MANIFEST -p franken-platform-linux --target powerpc-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2 -- -D warnings
+# The device speaker's startup (run from $ROOT: a crate-directory cwd syncs only that crate's cargo closure): platform_start unit tests, clippy, and both device targets (lib and bin).
+# The device speaker build with the contract's linker and static flags, and the QEMU speaker smoke, are the P01 plan and the E07 runner.
+rustfmt --edition 2024 --check $ROOT/crates/franken-speaker/src/lib.rs $ROOT/crates/franken-speaker/src/main.rs
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=$WORKERS rch exec -- cargo test   --locked --offline --manifest-path $MANIFEST -p franken-speaker --lib --config build.incremental=false -j 2 -- platform_start
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=$WORKERS rch exec -- cargo clippy --locked --offline --manifest-path $MANIFEST -p franken-speaker --all-targets --config build.incremental=false -j 2 -- -D warnings
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=ts1,hz3 rch exec -- cargo +nightly clippy --locked --offline --manifest-path $MANIFEST -p franken-speaker --target mips-unknown-linux-musl    -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2 -- -D warnings
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=ts1,hz3 rch exec -- cargo +nightly clippy --locked --offline --manifest-path $MANIFEST -p franken-speaker --target powerpc-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2 -- -D warnings
 EOF
 }
 

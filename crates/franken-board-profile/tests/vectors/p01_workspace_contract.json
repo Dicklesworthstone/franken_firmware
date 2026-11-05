@@ -81,6 +81,19 @@
       ]
     },
     {
+      "name": "franken-platform-linux",
+      "path": "crates/franken-platform-linux",
+      "owner": "P02",
+      "role": "platform",
+      "unsafe_policy": "deny_with_scoped_allow",
+      "deps": [
+        "franken-platform"
+      ],
+      "optional_deps": [],
+      "dev_deps": [],
+      "layer": 6
+    },
+    {
       "name": "franken-hal",
       "path": "crates/franken-hal",
       "owner": "E04",
@@ -188,7 +201,8 @@
         "franken-clock",
         "franken-stream",
         "franken-session",
-        "franken-control"
+        "franken-control",
+        "franken-platform-linux"
       ],
       "optional_deps": [
         {
@@ -316,6 +330,11 @@
     {
       "path": "crates/franken-journal",
       "owner": "U01",
+      "kind": "crate"
+    },
+    {
+      "path": "crates/franken-platform-linux",
+      "owner": "P02",
       "kind": "crate"
     },
     {
@@ -495,7 +514,13 @@
     }
   ],
   "test_support_exceptions": [],
-  "unsafe_exceptions": [],
+  "unsafe_exceptions": [
+    {
+      "from": "franken-speaker",
+      "to": "franken-platform-linux",
+      "reason": "the only route to eventfd, getrandom with flags and pipe2 on the device ABIs; one sys module, every unsafe block carries a SAFETY invariant, and the speaker itself keeps forbid(unsafe_code)"
+    }
+  ],
   "features": [
     {
       "name": "protected_render",
