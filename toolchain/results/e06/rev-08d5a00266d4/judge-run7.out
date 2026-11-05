@@ -1,0 +1,53 @@
+E06 batch judge  schema=ffw.e06.batch.v1  lines=50  workspace_rev=08d5a00266d4
+  workspace.franken-alloc-probe.mips                             pass      expected pass  as-predicted    
+  workspace.franken-alloc-probe.powerpc                          pass      expected pass  as-predicted    
+  workspace.franken-atomic.mips                                  pass      expected pass  as-predicted    
+  workspace.franken-atomic.powerpc                               pass      expected pass  as-predicted    
+  workspace.franken-baseline.mips                                pass      expected pass  as-predicted    
+  workspace.franken-baseline.powerpc                             pass      expected pass  as-predicted    
+  workspace.franken-board-profile.mips                           pass      expected pass  as-predicted    
+  workspace.franken-board-profile.powerpc                        pass      expected pass  as-predicted    
+  workspace.franken-clock.mips                                   pass      expected pass  as-predicted    
+  workspace.franken-clock.powerpc                                pass      expected pass  as-predicted    
+  workspace.franken-control.mips                                 pass      expected pass  as-predicted    
+  workspace.franken-control.powerpc                              pass      expected pass  as-predicted    
+  workspace.franken-dsp.mips                                     pass      expected pass  as-predicted    
+  workspace.franken-dsp.powerpc                                  pass      expected pass  as-predicted    
+  workspace.franken-hal.mips                                     pass      expected pass  as-predicted    
+  workspace.franken-hal.powerpc                                  pass      expected pass  as-predicted    
+  workspace.franken-journal.mips                                 pass      expected pass  as-predicted    
+  workspace.franken-journal.powerpc                              pass      expected pass  as-predicted    
+  workspace.franken-platform.mips                                pass      expected pass  as-predicted    
+  workspace.franken-platform.powerpc                             pass      expected pass  as-predicted    
+  workspace.franken-platform-linux.mips                          pass      expected pass  as-predicted    
+  workspace.franken-platform-linux.powerpc                       pass      expected pass  as-predicted    
+  workspace.franken-session.mips                                 pass      expected pass  as-predicted    
+  workspace.franken-session.powerpc                              pass      expected pass  as-predicted    
+  workspace.franken-speaker.mips                                 pass      expected pass  as-predicted    
+  workspace.franken-speaker.powerpc                              pass      expected pass  as-predicted    
+  workspace.franken-stream.mips                                  pass      expected pass  as-predicted    
+  workspace.franken-stream.powerpc                               pass      expected pass  as-predicted    
+  workspace.franken-test-support.mips                            pass      expected pass  as-predicted    
+  workspace.franken-test-support.powerpc                         pass      expected pass  as-predicted    
+  asupersync.default.asupersync.mips                             fail      expected fail  as-predicted    [build-script] error: failed to run custom build command for `asupersync v0.6.2 (<path>)`
+  asupersync.default.asupersync.powerpc                          fail      expected fail  as-predicted    [build-script] error: failed to run custom build command for `asupersync v0.6.2 (<path>)`
+  asupersync.no-default-features.asupersync.mips                 pass      expected pass  as-predicted    
+  asupersync.no-default-features.asupersync.powerpc              pass      expected pass  as-predicted    
+  asupersync.runtime-core-only.asupersync.mips                   pass      expected pass  as-predicted    
+  asupersync.runtime-core-only.asupersync.powerpc                pass      expected pass  as-predicted    
+  asupersync.runtime-core-and-native-runtime.asupersync.mips     pass      expected pass  as-predicted    
+  asupersync.runtime-core-and-native-runtime.asupersync.powerpc  pass      expected pass  as-predicted    
+  asupersync.franken-support-crates.franken-decision.mips        pass      expected pass  as-predicted    
+  asupersync.franken-support-crates.franken-decision.powerpc     pass      expected pass  as-predicted    
+  asupersync.franken-support-crates.franken-evidence.mips        pass      expected pass  as-predicted    
+  asupersync.franken-support-crates.franken-evidence.powerpc     pass      expected pass  as-predicted    
+  asupersync.franken-support-crates.franken-kernel.mips          pass      expected pass  as-predicted    
+  asupersync.franken-support-crates.franken-kernel.powerpc       pass      expected pass  as-predicted    
+  frankenlibc.runtime-crates.frankenlibc-abi.mips                fail      expected fail  as-predicted    [compile] error[E0432]: unresolved import `std::sync::atomic::AtomicU64`
+  frankenlibc.runtime-crates.frankenlibc-abi.powerpc             fail      expected fail  as-predicted    [compile] error[E0432]: unresolved import `std::sync::atomic::AtomicU64`
+  frankenlibc.runtime-crates.frankenlibc-core.mips               fail      expected fail  as-predicted    [compile] error[E0432]: unresolved import `std::sync::atomic::AtomicU64`
+  frankenlibc.runtime-crates.frankenlibc-core.powerpc            fail      expected fail  as-predicted    [compile] error[E0432]: unresolved import `std::sync::atomic::AtomicU64`
+  frankenlibc.runtime-crates.frankenlibc-membrane.mips           fail      expected fail  as-predicted    [compile] error[E0432]: unresolved import `std::sync::atomic::AtomicU64`
+  frankenlibc.runtime-crates.frankenlibc-membrane.powerpc        fail      expected fail  as-predicted    [compile] error[E0432]: unresolved import `std::sync::atomic::AtomicU64`
+by verdict (information only; the exit status is decided per line): as-predicted=50
+EXIT 0: every line resolved and was the predicted outcome

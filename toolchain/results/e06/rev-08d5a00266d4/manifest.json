@@ -1,0 +1,1792 @@
+{
+ "lines": [
+  {
+   "config": null,
+   "crate": "franken-alloc-probe",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-alloc-probe.mips",
+   "log": "workspace.franken-alloc-probe.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-alloc-probe",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-alloc-probe",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-alloc-probe.powerpc",
+   "log": "workspace.franken-alloc-probe.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-alloc-probe",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-atomic",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "low",
+    "outcome": "pass",
+    "why": "not among the 12 crates checked at 5b8d5696: the first target check of this crate, and its Rust may not have been compiled before this run; a failure is a first-compile finding for its owner"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-atomic.mips",
+   "log": "workspace.franken-atomic.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-atomic",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-atomic",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "low",
+    "outcome": "pass",
+    "why": "not among the 12 crates checked at 5b8d5696: the first target check of this crate, and its Rust may not have been compiled before this run; a failure is a first-compile finding for its owner"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-atomic.powerpc",
+   "log": "workspace.franken-atomic.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-atomic",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-baseline",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-baseline.mips",
+   "log": "workspace.franken-baseline.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-baseline",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-baseline",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-baseline.powerpc",
+   "log": "workspace.franken-baseline.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-baseline",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-board-profile",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-board-profile.mips",
+   "log": "workspace.franken-board-profile.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-board-profile",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-board-profile",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-board-profile.powerpc",
+   "log": "workspace.franken-board-profile.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-board-profile",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-clock",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-clock.mips",
+   "log": "workspace.franken-clock.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-clock",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-clock",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-clock.powerpc",
+   "log": "workspace.franken-clock.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-clock",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-control",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-control.mips",
+   "log": "workspace.franken-control.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-control",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-control",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-control.powerpc",
+   "log": "workspace.franken-control.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-control",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-dsp",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-dsp.mips",
+   "log": "workspace.franken-dsp.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-dsp",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-dsp",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-dsp.powerpc",
+   "log": "workspace.franken-dsp.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-dsp",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-hal",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-hal.mips",
+   "log": "workspace.franken-hal.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-hal",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-hal",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-hal.powerpc",
+   "log": "workspace.franken-hal.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-hal",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-journal",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "low",
+    "outcome": "pass",
+    "why": "not among the 12 crates checked at 5b8d5696: the first target check of this crate, and its Rust may not have been compiled before this run; a failure is a first-compile finding for its owner"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-journal.mips",
+   "log": "workspace.franken-journal.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-journal",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-journal",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "low",
+    "outcome": "pass",
+    "why": "not among the 12 crates checked at 5b8d5696: the first target check of this crate, and its Rust may not have been compiled before this run; a failure is a first-compile finding for its owner"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-journal.powerpc",
+   "log": "workspace.franken-journal.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-journal",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-platform",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-platform.mips",
+   "log": "workspace.franken-platform.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-platform",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-platform",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-platform.powerpc",
+   "log": "workspace.franken-platform.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-platform",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-platform-linux",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "low",
+    "outcome": "pass",
+    "why": "not among the 12 crates checked at 5b8d5696: the first target check of this crate, and its Rust may not have been compiled before this run; a failure is a first-compile finding for its owner"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-platform-linux.mips",
+   "log": "workspace.franken-platform-linux.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-platform-linux",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-platform-linux",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "low",
+    "outcome": "pass",
+    "why": "not among the 12 crates checked at 5b8d5696: the first target check of this crate, and its Rust may not have been compiled before this run; a failure is a first-compile finding for its owner"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-platform-linux.powerpc",
+   "log": "workspace.franken-platform-linux.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-platform-linux",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-session",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-session.mips",
+   "log": "workspace.franken-session.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-session",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-session",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-session.powerpc",
+   "log": "workspace.franken-session.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-session",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-speaker",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-speaker.mips",
+   "log": "workspace.franken-speaker.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-speaker",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-speaker",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-speaker.powerpc",
+   "log": "workspace.franken-speaker.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-speaker",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-stream",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-stream.mips",
+   "log": "workspace.franken-stream.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-stream",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-stream",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-stream.powerpc",
+   "log": "workspace.franken-stream.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-stream",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-test-support",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-test-support.mips",
+   "log": "workspace.franken-test-support.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-test-support",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": null,
+   "crate": "franken-test-support",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "type-checked clean for both big-endian targets at 5b8d5696 (24 of 24); a failure now is a regression since then"
+   },
+   "group": "workspace",
+   "id": "workspace.franken-test-support.powerpc",
+   "log": "workspace.franken-test-support.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-test-support",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "workspace",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": "default",
+   "crate": "asupersync",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "class": "build-script",
+    "confidence": "medium",
+    "diagnostic_any": [
+     "Try-trait probe failed",
+     "failed to run custom build command for `asupersync"
+    ],
+    "outcome": "fail",
+    "why": "the default features include nightly-outcome-try, whose build.rs runs its own `rustc --target <triple>` probe; under -Z build-std rustc's sysroot has no prebuilt core for a tier-3 target, so the probe fails with something other than E0554 and the script panics on purpose (build.rs: 'any other failure fails the build'). If cargo supplies a sysroot for build scripts the line passes, and that is the finding"
+   },
+   "group": "upstream",
+   "id": "asupersync.default.asupersync.mips",
+   "log": "asupersync.default.asupersync.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "asupersync",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "asupersync",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": "default",
+   "crate": "asupersync",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "class": "build-script",
+    "confidence": "medium",
+    "diagnostic_any": [
+     "Try-trait probe failed",
+     "failed to run custom build command for `asupersync"
+    ],
+    "outcome": "fail",
+    "why": "the default features include nightly-outcome-try, whose build.rs runs its own `rustc --target <triple>` probe; under -Z build-std rustc's sysroot has no prebuilt core for a tier-3 target, so the probe fails with something other than E0554 and the script panics on purpose (build.rs: 'any other failure fails the build'). If cargo supplies a sysroot for build scripts the line passes, and that is the finding"
+   },
+   "group": "upstream",
+   "id": "asupersync.default.asupersync.powerpc",
+   "log": "asupersync.default.asupersync.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "asupersync",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "asupersync",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": "no-default-features",
+   "crate": "asupersync",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "medium",
+    "outcome": "pass",
+    "why": "no direct 64-bit atomic import in the asupersync crate outside its portable-atomic facade, and every dependency's is gated on target_has_atomic (scanned: crossbeam-queue, crossbeam-utils, bincode-next, serde); signal-hook's C build is not enabled (no extended-siginfo-raw); no nightly-outcome-try probe in this configuration. NOT established: 32-bit width assumptions in about 3000 source files that have no big-endian 32-bit history; a failure is a finding for P05"
+   },
+   "group": "upstream",
+   "id": "asupersync.no-default-features.asupersync.mips",
+   "log": "asupersync.no-default-features.asupersync.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "asupersync",
+    "--no-default-features",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "asupersync",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": "no-default-features",
+   "crate": "asupersync",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "medium",
+    "outcome": "pass",
+    "why": "no direct 64-bit atomic import in the asupersync crate outside its portable-atomic facade, and every dependency's is gated on target_has_atomic (scanned: crossbeam-queue, crossbeam-utils, bincode-next, serde); signal-hook's C build is not enabled (no extended-siginfo-raw); no nightly-outcome-try probe in this configuration. NOT established: 32-bit width assumptions in about 3000 source files that have no big-endian 32-bit history; a failure is a finding for P05"
+   },
+   "group": "upstream",
+   "id": "asupersync.no-default-features.asupersync.powerpc",
+   "log": "asupersync.no-default-features.asupersync.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "asupersync",
+    "--no-default-features",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "asupersync",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": "runtime-core-only",
+   "crate": "asupersync",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "medium",
+    "outcome": "pass",
+    "why": "no direct 64-bit atomic import in the asupersync crate outside its portable-atomic facade, and every dependency's is gated on target_has_atomic (scanned: crossbeam-queue, crossbeam-utils, bincode-next, serde); signal-hook's C build is not enabled (no extended-siginfo-raw); no nightly-outcome-try probe in this configuration. NOT established: 32-bit width assumptions in about 3000 source files that have no big-endian 32-bit history; a failure is a finding for P05"
+   },
+   "group": "upstream",
+   "id": "asupersync.runtime-core-only.asupersync.mips",
+   "log": "asupersync.runtime-core-only.asupersync.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "asupersync",
+    "--no-default-features",
+    "--features",
+    "runtime-core",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "asupersync",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": "runtime-core-only",
+   "crate": "asupersync",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "medium",
+    "outcome": "pass",
+    "why": "no direct 64-bit atomic import in the asupersync crate outside its portable-atomic facade, and every dependency's is gated on target_has_atomic (scanned: crossbeam-queue, crossbeam-utils, bincode-next, serde); signal-hook's C build is not enabled (no extended-siginfo-raw); no nightly-outcome-try probe in this configuration. NOT established: 32-bit width assumptions in about 3000 source files that have no big-endian 32-bit history; a failure is a finding for P05"
+   },
+   "group": "upstream",
+   "id": "asupersync.runtime-core-only.asupersync.powerpc",
+   "log": "asupersync.runtime-core-only.asupersync.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "asupersync",
+    "--no-default-features",
+    "--features",
+    "runtime-core",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "asupersync",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": "runtime-core-and-native-runtime",
+   "crate": "asupersync",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "medium",
+    "outcome": "pass",
+    "why": "no direct 64-bit atomic import in the asupersync crate outside its portable-atomic facade, and every dependency's is gated on target_has_atomic (scanned: crossbeam-queue, crossbeam-utils, bincode-next, serde); signal-hook's C build is not enabled (no extended-siginfo-raw); no nightly-outcome-try probe in this configuration. NOT established: 32-bit width assumptions in about 3000 source files that have no big-endian 32-bit history; a failure is a finding for P05"
+   },
+   "group": "upstream",
+   "id": "asupersync.runtime-core-and-native-runtime.asupersync.mips",
+   "log": "asupersync.runtime-core-and-native-runtime.asupersync.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "asupersync",
+    "--no-default-features",
+    "--features",
+    "runtime-core,native-runtime",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "asupersync",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": "runtime-core-and-native-runtime",
+   "crate": "asupersync",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "medium",
+    "outcome": "pass",
+    "why": "no direct 64-bit atomic import in the asupersync crate outside its portable-atomic facade, and every dependency's is gated on target_has_atomic (scanned: crossbeam-queue, crossbeam-utils, bincode-next, serde); signal-hook's C build is not enabled (no extended-siginfo-raw); no nightly-outcome-try probe in this configuration. NOT established: 32-bit width assumptions in about 3000 source files that have no big-endian 32-bit history; a failure is a finding for P05"
+   },
+   "group": "upstream",
+   "id": "asupersync.runtime-core-and-native-runtime.asupersync.powerpc",
+   "log": "asupersync.runtime-core-and-native-runtime.asupersync.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "asupersync",
+    "--no-default-features",
+    "--features",
+    "runtime-core,native-runtime",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "asupersync",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": "franken-support-crates",
+   "crate": "franken-decision",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "three small crates over serde/serde_json (10 linked packages); no build script that runs a compiler, no direct 64-bit atomic import in them or in the packages they link (scanned), no C"
+   },
+   "group": "upstream",
+   "id": "asupersync.franken-support-crates.franken-decision.mips",
+   "log": "asupersync.franken-support-crates.franken-decision.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-decision",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "asupersync",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": "franken-support-crates",
+   "crate": "franken-decision",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "three small crates over serde/serde_json (10 linked packages); no build script that runs a compiler, no direct 64-bit atomic import in them or in the packages they link (scanned), no C"
+   },
+   "group": "upstream",
+   "id": "asupersync.franken-support-crates.franken-decision.powerpc",
+   "log": "asupersync.franken-support-crates.franken-decision.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-decision",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "asupersync",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": "franken-support-crates",
+   "crate": "franken-evidence",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "three small crates over serde/serde_json (10 linked packages); no build script that runs a compiler, no direct 64-bit atomic import in them or in the packages they link (scanned), no C"
+   },
+   "group": "upstream",
+   "id": "asupersync.franken-support-crates.franken-evidence.mips",
+   "log": "asupersync.franken-support-crates.franken-evidence.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-evidence",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "asupersync",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": "franken-support-crates",
+   "crate": "franken-evidence",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "three small crates over serde/serde_json (10 linked packages); no build script that runs a compiler, no direct 64-bit atomic import in them or in the packages they link (scanned), no C"
+   },
+   "group": "upstream",
+   "id": "asupersync.franken-support-crates.franken-evidence.powerpc",
+   "log": "asupersync.franken-support-crates.franken-evidence.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-evidence",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "asupersync",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": "franken-support-crates",
+   "crate": "franken-kernel",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "three small crates over serde/serde_json (10 linked packages); no build script that runs a compiler, no direct 64-bit atomic import in them or in the packages they link (scanned), no C"
+   },
+   "group": "upstream",
+   "id": "asupersync.franken-support-crates.franken-kernel.mips",
+   "log": "asupersync.franken-support-crates.franken-kernel.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-kernel",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "asupersync",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": "franken-support-crates",
+   "crate": "franken-kernel",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "confidence": "high",
+    "outcome": "pass",
+    "why": "three small crates over serde/serde_json (10 linked packages); no build script that runs a compiler, no direct 64-bit atomic import in them or in the packages they link (scanned), no C"
+   },
+   "group": "upstream",
+   "id": "asupersync.franken-support-crates.franken-kernel.powerpc",
+   "log": "asupersync.franken-support-crates.franken-kernel.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "franken-kernel",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "asupersync",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": "runtime-crates",
+   "crate": "frankenlibc-abi",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "class": "compile",
+    "confidence": "high",
+    "diagnostic_any": [
+     "could not compile `frankenlibc-membrane`"
+    ],
+    "outcome": "fail",
+    "why": "OBSERVED in run3 on both targets (identical logs): frankenlibc-abi depends on frankenlibc-membrane, cargo checks that first, and it fails with 35 errors, the first `error[E0432]: unresolved import std::sync::atomic::AtomicU64` at crates/frankenlibc-membrane/src/alien_cs_metrics.rs:23:25; this crate's own compile_error! (an x86_64/aarch64-only gate) is masked and cannot be reached at the pinned revision. The first version of this prediction named that gate and was judged unexpected-fail for frankenlibc-core. If membrane ever compiles, a failure here that no longer names it is a changed cause and is reported as unexpected"
+   },
+   "group": "upstream",
+   "id": "frankenlibc.runtime-crates.frankenlibc-abi.mips",
+   "log": "frankenlibc.runtime-crates.frankenlibc-abi.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "frankenlibc-abi",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "frankenlibc",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": "runtime-crates",
+   "crate": "frankenlibc-abi",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "class": "compile",
+    "confidence": "high",
+    "diagnostic_any": [
+     "could not compile `frankenlibc-membrane`"
+    ],
+    "outcome": "fail",
+    "why": "OBSERVED in run3 on both targets (identical logs): frankenlibc-abi depends on frankenlibc-membrane, cargo checks that first, and it fails with 35 errors, the first `error[E0432]: unresolved import std::sync::atomic::AtomicU64` at crates/frankenlibc-membrane/src/alien_cs_metrics.rs:23:25; this crate's own compile_error! (an x86_64/aarch64-only gate) is masked and cannot be reached at the pinned revision. The first version of this prediction named that gate and was judged unexpected-fail for frankenlibc-core. If membrane ever compiles, a failure here that no longer names it is a changed cause and is reported as unexpected"
+   },
+   "group": "upstream",
+   "id": "frankenlibc.runtime-crates.frankenlibc-abi.powerpc",
+   "log": "frankenlibc.runtime-crates.frankenlibc-abi.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "frankenlibc-abi",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "frankenlibc",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": "runtime-crates",
+   "crate": "frankenlibc-core",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "class": "compile",
+    "confidence": "high",
+    "diagnostic_any": [
+     "could not compile `frankenlibc-membrane`"
+    ],
+    "outcome": "fail",
+    "why": "OBSERVED in run3 on both targets (identical logs): frankenlibc-core depends on frankenlibc-membrane, cargo checks that first, and it fails with 35 errors, the first `error[E0432]: unresolved import std::sync::atomic::AtomicU64` at crates/frankenlibc-membrane/src/alien_cs_metrics.rs:23:25; this crate's own compile_error! (an x86_64/aarch64-only gate) is masked and cannot be reached at the pinned revision. The first version of this prediction named that gate and was judged unexpected-fail for frankenlibc-core. If membrane ever compiles, a failure here that no longer names it is a changed cause and is reported as unexpected"
+   },
+   "group": "upstream",
+   "id": "frankenlibc.runtime-crates.frankenlibc-core.mips",
+   "log": "frankenlibc.runtime-crates.frankenlibc-core.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "frankenlibc-core",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "frankenlibc",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": "runtime-crates",
+   "crate": "frankenlibc-core",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "class": "compile",
+    "confidence": "high",
+    "diagnostic_any": [
+     "could not compile `frankenlibc-membrane`"
+    ],
+    "outcome": "fail",
+    "why": "OBSERVED in run3 on both targets (identical logs): frankenlibc-core depends on frankenlibc-membrane, cargo checks that first, and it fails with 35 errors, the first `error[E0432]: unresolved import std::sync::atomic::AtomicU64` at crates/frankenlibc-membrane/src/alien_cs_metrics.rs:23:25; this crate's own compile_error! (an x86_64/aarch64-only gate) is masked and cannot be reached at the pinned revision. The first version of this prediction named that gate and was judged unexpected-fail for frankenlibc-core. If membrane ever compiles, a failure here that no longer names it is a changed cause and is reported as unexpected"
+   },
+   "group": "upstream",
+   "id": "frankenlibc.runtime-crates.frankenlibc-core.powerpc",
+   "log": "frankenlibc.runtime-crates.frankenlibc-core.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "frankenlibc-core",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "frankenlibc",
+   "target": "powerpc-unknown-linux-musl"
+  },
+  {
+   "config": "runtime-crates",
+   "crate": "frankenlibc-membrane",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "class": "compile",
+    "confidence": "medium",
+    "diagnostic_any": [
+     "AtomicU64",
+     "AtomicI64"
+    ],
+    "outcome": "fail",
+    "why": "356 uses of std::sync::atomic::AtomicU64/AtomicI64 with no target_has_atomic gate anywhere in the crate, and neither big-endian target has 64-bit atomics (E03 ATOMIC_WIDTH bits=32): the E0432 'no AtomicU64 in sync::atomic' failure. Medium because a nightly feature (allocator_api, btreemap_alloc) could fail first on the worker's newer nightly"
+   },
+   "group": "upstream",
+   "id": "frankenlibc.runtime-crates.frankenlibc-membrane.mips",
+   "log": "frankenlibc.runtime-crates.frankenlibc-membrane.mips.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "frankenlibc-membrane",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "frankenlibc",
+   "target": "mips-unknown-linux-musl"
+  },
+  {
+   "config": "runtime-crates",
+   "crate": "frankenlibc-membrane",
+   "cwd": ".",
+   "env": {
+    "RCH_REQUIRE_REMOTE": "1",
+    "RCH_WORKER": "trj,hz3"
+   },
+   "expect": {
+    "class": "compile",
+    "confidence": "medium",
+    "diagnostic_any": [
+     "AtomicU64",
+     "AtomicI64"
+    ],
+    "outcome": "fail",
+    "why": "356 uses of std::sync::atomic::AtomicU64/AtomicI64 with no target_has_atomic gate anywhere in the crate, and neither big-endian target has 64-bit atomics (E03 ATOMIC_WIDTH bits=32): the E0432 'no AtomicU64 in sync::atomic' failure. Medium because a nightly feature (allocator_api, btreemap_alloc) could fail first on the worker's newer nightly"
+   },
+   "group": "upstream",
+   "id": "frankenlibc.runtime-crates.frankenlibc-membrane.powerpc",
+   "log": "frankenlibc.runtime-crates.frankenlibc-membrane.powerpc.log",
+   "remote_argv": [
+    "cargo",
+    "+nightly",
+    "check",
+    "--locked",
+    "--release",
+    "-p",
+    "frankenlibc-membrane",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=std,panic_abort",
+    "-j",
+    "2"
+   ],
+   "source": "frankenlibc",
+   "target": "powerpc-unknown-linux-musl"
+  }
+ ],
+ "schema": "ffw.e06.batch.v1",
+ "sources": {
+  "asupersync": {
+   "archive": "git -C <asupersync repository> archive --format=tar 8940119023c0e01b4d6d3e2c1399f41417c2ad24 | tar -x -C <work dir>/asupersync-8940119023c0",
+   "rev": "8940119023c0e01b4d6d3e2c1399f41417c2ad24"
+  },
+  "frankenlibc": {
+   "archive": "git -C <frankenlibc repository> archive --format=tar 76d7f3469f5f5251661b3662926d3d6a2b36d494 | tar -x -C <work dir>/frankenlibc-76d7f3469f5f",
+   "edits": [
+    {
+     "file": "Cargo.toml",
+     "sha256_after": "7586d6ab5be79f0fccd8f5ea8caaf29c3014a53131eff0c55088ab4374e12128",
+     "sha256_before": "2c3a0a354b4694abae1feff0a907e5c8ceaa22b3aa3d81205fd0046434f7fed6"
+    },
+    {
+     "file": "crates/frankenlibc-membrane/Cargo.toml",
+     "sha256_after": "f0b3c12eb705840cef65c5aa62003540ed0ba1360d3e67f8025f036b07a14bc8",
+     "sha256_before": "b9c91993f3b9c584ee9d1624bca2c078c71e09345f1dbb4acf60a5a9c7a8eb4a"
+    }
+   ],
+   "keep_members": [
+    "frankenlibc-core",
+    "frankenlibc-abi",
+    "frankenlibc-membrane"
+   ],
+   "lock": {
+    "note": "generated OFFLINE from one machine's registry cache: not an upstream pin",
+    "sha256": "b2957df3533a3dcc2466ff7c0c2a4f7337ce1af25bed62d48ad7dd4c7cbc0214",
+    "source": "toolchain/results/e06/upstream/frankenlibc-76d7f3469f5f/Cargo.lock.generated"
+   },
+   "rev": "76d7f3469f5f5251661b3662926d3d6a2b36d494"
+  }
+ },
+ "workers": "trj,hz3",
+ "workspace": {
+  "plan_sha256": "dd4c00e8e33d6470b08c14fdce6a304d65878735ee630e0bb211e992ef8996f9",
+  "rev": "08d5a00266d4d7634e7374dc04402709151940e6"
+ }
+}
