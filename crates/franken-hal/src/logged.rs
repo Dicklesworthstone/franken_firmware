@@ -1,37 +1,41 @@
 //! Log emission around a [`HalSession`] (`P04` / `ffw-0bh`).
 //!
 //! [`LoggedSession`] is a decorator. Every call is forwarded to the session unchanged and its result
-//! is returned unchanged; afterwards one [`HalLogRecord`] is handed to a [`HalLogSink`]. It exists so
-//! diagnostics are emitted as the session runs, without editing the session itself.
+//! is returned unchanged; afterwards one [`HalLogRecord`] is handed to a [`HalLogSink`].
+//!
+//! What a record says about transitions comes from the session itself: [`HalSession`] emits an event
+//! at each transition into its own bounded queue (see [`crate::emit`]), and the wrapper takes those
+//! events after every call. Nothing is reconstructed from a receipt afterwards.
 //!
 //! The properties, each pinned by a test:
 //! * **Transparent.** The result of every call is exactly what the bare session returns. The sink is
 //!   written to after the call and its answer is only counted, so a healthy, slow, full or
 //!   unavailable sink cannot change what the session does.
 //! * **Non-blocking, bounded.** The sink trait takes a record and answers whether it kept it. The
-//!   wrapper holds O(1) state, and a record is bounded (it carries only the faults new since the last
-//!   call, and the session keeps at most 16).
-//! * **Loss is counted.** A refused record is counted, and a refused record that carried a new fault
-//!   marks the evidence incomplete.
+//!   wrapper holds O(1) state, and a record is bounded by the session's event queue capacity.
+//! * **Loss is counted, from both sides.** A record the sink refuses is counted, and one that carried
+//!   a fault marks the evidence incomplete. Events the session's own queue could not keep are
+//!   reported in the record that follows, and a lost fault marks the evidence incomplete too.
 //! * **Timebase.** `seq` counts calls. It is not wall time; this layer has no clock.
 //! * **No audio.** A record carries counters and fault codes, never samples.
 //!
 //! Each call builds a receipt, which allocates. This is a harness and diagnostics layer, not the
-//! render loop. A hot-path emitter would need allocation-free counters from the session itself,
-//! which would be a change to `session.rs` and is not made here.
+//! render loop.
 //!
 //! Records say `evidence: model` and `scope: host_simulation` for the fake, via the receipt, so a
 //! log can never be read as device evidence.
 
 use crate::backend::DeviceBackend;
+use crate::emit::{EmitStats, SessionEvent};
 use crate::session::{
-    AbortReport, Amp, DrainOutcome, FaultRecord, HalSession, PollReport, SessionError,
-    SessionPhase, StartPreconditions, SubmitReceipt,
+    AbortReport, Amp, DrainOutcome, HalSession, PollReport, SessionError, SessionPhase,
+    StartPreconditions, SubmitReceipt,
 };
 use serde::{Deserialize, Serialize};
 
-/// Schema string of a [`HalLogRecord`].
-pub const LOG_SCHEMA: &str = "ffw.p04.log.v1";
+/// Schema string of a [`HalLogRecord`]. `v2` replaced the receipt-diffed `new_faults` list with the
+/// session's own `events` and the two loss counters.
+pub const LOG_SCHEMA: &str = "ffw.p04.log.v2";
 
 /// The session operation a record is about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,7 +52,7 @@ pub enum LoggedOp {
     ResetDevice,
 }
 
-/// One log record: the state after a call, and the faults that call caused.
+/// One log record: the state after a call, and the events that call caused.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HalLogRecord {
     pub schema: String,
@@ -65,18 +69,24 @@ pub struct HalLogRecord {
     pub slots_in_flight: usize,
     pub slots_quarantined: usize,
     pub anomalies: u32,
-    /// Faults the session recorded during this call, and no earlier ones.
-    pub new_faults: Vec<FaultRecord>,
+    /// Events the session emitted that this record is the first to report, oldest first. Their
+    /// `seq` values show any gap.
+    pub events: Vec<SessionEvent>,
+    /// Ordinary events the session's queue dropped or evicted since the previous record.
+    pub events_lost: u64,
+    /// Critical events (faults) the session's queue could not keep since the previous record.
+    pub critical_events_lost: u64,
     /// `model` for a fake device, `driver` for a real one.
     pub evidence: String,
     pub scope: String,
 }
 
 impl HalLogRecord {
-    /// A record that carries a new fault is evidence a result cannot be trusted without.
+    /// A record that carries a fault, or reports that one was lost, is evidence a result cannot be
+    /// trusted without.
     #[must_use]
     pub fn is_critical(&self) -> bool {
-        !self.new_faults.is_empty()
+        self.critical_events_lost > 0 || self.events.iter().any(|e| e.kind.is_critical())
     }
 
     /// One JSON line, without a trailing newline.
@@ -86,7 +96,7 @@ impl HalLogRecord {
     }
 }
 
-/// Where records go. It must not block. `critical` marks a record that carries a new fault.
+/// Where records go. It must not block. `critical` marks a record that carries a fault.
 pub trait HalLogSink {
     /// Returns whether the record's evidence was kept. For a critical record that is the fault
     /// information it carries; a sink may drop that record's ordinary parts and still answer true.
@@ -109,7 +119,7 @@ pub struct LogStats {
     pub emitted: u64,
     pub kept: u64,
     pub dropped: u64,
-    /// Refused records that carried a new fault.
+    /// Refused records that carried a fault.
     pub critical_lost: u64,
 }
 
@@ -122,20 +132,22 @@ pub struct LoggedSession<B: DeviceBackend, L: HalLogSink> {
     session: HalSession<B>,
     sink: L,
     seq: u64,
-    faults_seen: usize,
+    /// The session's event accounting as of the previous record, so each record reports only what
+    /// was lost since.
+    events_seen: EmitStats,
     stats: LogStats,
 }
 
 impl<B: DeviceBackend, L: HalLogSink> LoggedSession<B, L> {
-    /// Wrap a session. Faults it has already recorded are not re-reported.
+    /// Wrap a session. Events it emitted earlier and nobody has taken are reported in the first
+    /// record, and so is any loss so far; events the owner already took are not repeated.
     #[must_use]
     pub fn new(session: HalSession<B>, sink: L) -> Self {
-        let faults_seen = session.receipt().faults.len();
         Self {
             session,
             sink,
             seq: 0,
-            faults_seen,
+            events_seen: EmitStats::default(),
             stats: LogStats::default(),
         }
     }
@@ -151,10 +163,11 @@ impl<B: DeviceBackend, L: HalLogSink> LoggedSession<B, L> {
         self.stats
     }
 
-    /// False once a record carrying a fault was refused.
+    /// False once a record carrying a fault was refused by the sink, or the session's own queue lost
+    /// a fault.
     #[must_use]
     pub const fn evidence_complete(&self) -> bool {
-        self.stats.critical_lost == 0
+        self.stats.critical_lost == 0 && self.session.event_evidence_complete()
     }
 
     /// Give the session and the sink back, for example to close the session.
@@ -165,13 +178,13 @@ impl<B: DeviceBackend, L: HalLogSink> LoggedSession<B, L> {
 
     fn log(&mut self, op: LoggedOp, error: Option<String>) {
         let receipt = self.session.receipt();
-        let new_faults: Vec<FaultRecord> = receipt
-            .faults
-            .iter()
-            .skip(self.faults_seen)
-            .cloned()
-            .collect();
-        self.faults_seen = receipt.faults.len();
+        let events: Vec<SessionEvent> = std::iter::from_fn(|| self.session.take_event()).collect();
+        let now = self.session.event_stats();
+        let before = self.events_seen;
+        let events_lost = (now.dropped_ordinary + now.evicted_ordinary)
+            .saturating_sub(before.dropped_ordinary + before.evicted_ordinary);
+        let critical_events_lost = now.lost_critical.saturating_sub(before.lost_critical);
+        self.events_seen = now;
         self.seq += 1;
         let record = HalLogRecord {
             schema: LOG_SCHEMA.to_string(),
@@ -186,7 +199,9 @@ impl<B: DeviceBackend, L: HalLogSink> LoggedSession<B, L> {
             slots_in_flight: receipt.slots_in_flight,
             slots_quarantined: receipt.slots_quarantined,
             anomalies: receipt.anomalies,
-            new_faults,
+            events,
+            events_lost,
+            critical_events_lost,
             evidence: receipt.evidence,
             scope: receipt.scope,
         };
@@ -262,6 +277,7 @@ mod tests {
     use super::*;
     use crate::abi::DeviceEvent;
     use crate::backend::{FakeBackend, FakeConfig, FakeProbe};
+    use crate::emit::SessionEventKind;
     use crate::session::{FaultCode, SessionConfig, SessionReceipt};
     use crate::slots::{CompletionProblem, LeakLedger};
     use std::sync::Arc;
@@ -280,6 +296,32 @@ mod tests {
             .unwrap();
         let config = SessionConfig::with_ledger(Arc::new(LeakLedger::new(64)), 2);
         (HalSession::open(profile, backend, config).unwrap(), probe)
+    }
+
+    fn session_caps(
+        cfg: FakeConfig,
+        quarantine_cap: usize,
+        event_cap: usize,
+    ) -> (HalSession<FakeBackend>, FakeProbe) {
+        let (backend, probe) = FakeBackend::new(cfg);
+        let profile = franken_board_profile::synthetic_test_fixture_catalog()
+            .into_iter()
+            .find(|p| p.model_number == "S5")
+            .unwrap();
+        let config = SessionConfig::with_ledger(Arc::new(LeakLedger::new(64)), quarantine_cap)
+            .with_event_queue_cap(event_cap);
+        (HalSession::open(profile, backend, config).unwrap(), probe)
+    }
+
+    fn stale_fault() -> SessionEventKind {
+        SessionEventKind::Fault {
+            code: FaultCode::BadCompletion {
+                problem: CompletionProblem::StaleGeneration {
+                    expected: 1,
+                    got: 99,
+                },
+            },
+        }
     }
 
     /// Keeps every record.
@@ -441,11 +483,33 @@ mod tests {
             vec![1, 2, 3, 4, 5, 6],
             "the timebase is the call count"
         );
-        assert!(
-            sink.records
-                .iter()
-                .all(|(r, critical)| r.ok && r.new_faults.is_empty() && !critical)
-        );
+        assert!(sink.records.iter().all(|(r, critical)| r.ok
+            && !critical
+            && r.events_lost == 0
+            && r.critical_events_lost == 0
+            && r.events.iter().all(|e| !e.kind.is_critical())));
+        // The events each record reports come from the session's own emission, traced by hand: only
+        // prepare, start and the acknowledged stop are transitions, and the stop is acknowledged
+        // with the block's four frames accepted.
+        let events: Vec<Vec<(u64, u64, SessionEventKind)>> = sink
+            .records
+            .iter()
+            .map(|(r, _)| {
+                r.events
+                    .iter()
+                    .map(|e| (e.seq, e.accepted_frames, e.kind.clone()))
+                    .collect()
+            })
+            .collect();
+        let want: Vec<Vec<(u64, u64, SessionEventKind)>> = vec![
+            vec![(1, 0, SessionEventKind::Prepared)],
+            vec![(2, 0, SessionEventKind::Started)],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![(3, 4, SessionEventKind::StopAcknowledged)],
+        ];
+        assert_eq!(events, want);
         assert!(sink.records.iter().all(|(r, _)| r.schema == LOG_SCHEMA
             && r.evidence == "model"
             && r.scope == "host_simulation"));
@@ -471,20 +535,17 @@ mod tests {
             (0, 1)
         );
         assert_eq!(first_poll.0.anomalies, 1);
+        // Prepare was event 1 and start was event 2, so the fault is event 3, with four frames accepted.
         assert_eq!(
-            first_poll.0.new_faults,
-            vec![FaultRecord {
-                code: FaultCode::BadCompletion {
-                    problem: CompletionProblem::StaleGeneration {
-                        expected: 1,
-                        got: 99
-                    }
-                },
-                accepted_frames: 4
+            first_poll.0.events,
+            vec![SessionEvent {
+                seq: 3,
+                accepted_frames: 4,
+                kind: stale_fault()
             }]
         );
         // The same fault is not reported again.
-        assert!(sink.records[4].0.new_faults.is_empty() && !sink.records[4].1);
+        assert!(sink.records[4].0.events.is_empty() && !sink.records[4].1);
         // A failed call is logged with its error and is not critical on its own.
         let failed = &sink.records[5];
         assert!(!failed.0.ok && !failed.1);
@@ -617,9 +678,11 @@ mod tests {
                 "amp",
                 "anomalies",
                 "consumed_frames",
+                "critical_events_lost",
                 "error",
+                "events",
+                "events_lost",
                 "evidence",
-                "new_faults",
                 "ok",
                 "op",
                 "phase",
@@ -633,12 +696,12 @@ mod tests {
         );
         assert_eq!(value["schema"], LOG_SCHEMA);
         assert_eq!(value["op"], "prepare");
+        assert_eq!(value["events"][0]["kind"]["kind"], "prepared");
         let back: HalLogRecord = serde_json::from_str(&line).unwrap();
         assert_eq!(back, sink.records[0].0);
     }
 
-    #[test]
-    fn faults_recorded_before_wrapping_are_not_reported_again() {
+    fn faulted_session() -> HalSession<FakeBackend> {
         let (mut s, probe) = session();
         s.prepare().unwrap();
         s.start(READY).unwrap();
@@ -649,11 +712,90 @@ mod tests {
         });
         s.poll();
         assert_eq!(s.receipt().faults.len(), 1);
+        s
+    }
+
+    #[test]
+    fn events_waiting_before_wrapping_are_reported_once_and_events_already_taken_are_not() {
+        // Nobody took them: the first record reports prepare, start and the fault.
+        let mut logged = LoggedSession::new(faulted_session(), KeepSink::default());
+        logged.poll();
+        logged.poll();
+        let (_session, sink) = logged.into_parts();
+        let first: Vec<(u64, SessionEventKind)> = sink.records[0]
+            .0
+            .events
+            .iter()
+            .map(|e| (e.seq, e.kind.clone()))
+            .collect();
+        let want: Vec<(u64, SessionEventKind)> = vec![
+            (1, SessionEventKind::Prepared),
+            (2, SessionEventKind::Started),
+            (3, stale_fault()),
+        ];
+        assert_eq!(first, want);
+        assert!(sink.records[0].1, "it carries a fault");
+        assert!(sink.records[1].0.events.is_empty(), "and not again");
+
+        // The owner took them first: nothing is repeated.
+        let mut s = faulted_session();
+        let taken: Vec<SessionEvent> = std::iter::from_fn(|| s.take_event()).collect();
+        assert_eq!(taken.len(), 3);
         let mut logged = LoggedSession::new(s, KeepSink::default());
         logged.poll();
         let (_session, sink) = logged.into_parts();
-        assert!(sink.records[0].0.new_faults.is_empty());
-        assert!(!sink.records[0].1);
+        assert!(sink.records[0].0.events.is_empty() && !sink.records[0].1);
+    }
+
+    #[test]
+    fn a_fault_the_sessions_own_queue_lost_is_reported_and_marks_the_evidence_incomplete() {
+        // A one-event queue and a quarantine cap of 1: the drain timeout records two faults in one
+        // call, and only the first fits.
+        let mut cfg = FakeConfig::retained();
+        cfg.flush_ack_delay_ticks = None;
+        let (s, probe) = session_caps(cfg, 1, 1);
+        let mut logged = LoggedSession::new(s, KeepSink::default());
+        logged.prepare().unwrap();
+        logged.start(READY).unwrap();
+        probe.set_lose_completions(true);
+        let _a = logged.submit(&BLOCK).unwrap().token.unwrap();
+        let _b = logged.submit(&BLOCK).unwrap().token.unwrap();
+        assert_eq!(
+            logged.drain(1),
+            Ok(DrainOutcome::TimedOut { waited_ticks: 1 })
+        );
+        logged.poll();
+        // The sink kept every record, so the loss is the session's, not the sink's.
+        assert_eq!(logged.log_stats().critical_lost, 0);
+        assert!(!logged.evidence_complete());
+        assert_eq!(logged.session().event_stats().lost_critical, 1);
+        let (_session, sink) = logged.into_parts();
+        let drain = &sink.records[4];
+        assert_eq!(drain.0.op, LoggedOp::Drain);
+        assert!(drain.1);
+        let kinds: Vec<(u64, u64, SessionEventKind)> = drain
+            .0
+            .events
+            .iter()
+            .map(|e| (e.seq, e.accepted_frames, e.kind.clone()))
+            .collect();
+        let want: Vec<(u64, u64, SessionEventKind)> = vec![(
+            3,
+            8,
+            SessionEventKind::Fault {
+                code: FaultCode::DrainTimedOut,
+            },
+        )];
+        assert_eq!(
+            kinds, want,
+            "event 4, the saturation fault, is the one missing"
+        );
+        assert_eq!((drain.0.events_lost, drain.0.critical_events_lost), (0, 1));
+        // The loss is reported once: the next record does not repeat it.
+        let after = &sink.records[5];
+        assert_eq!(after.0.op, LoggedOp::Poll);
+        assert_eq!((after.0.events_lost, after.0.critical_events_lost), (0, 0));
+        assert!(after.0.events.is_empty() && !after.1);
     }
 
     #[test]

@@ -5,8 +5,8 @@
 //!
 //! The path under test is the production one: a [`LoggedSession`] emits one [`HalLogRecord`] per
 //! call to a [`HalLogSink`]; [`DiagnosticAdapter`] is that sink, turning each record into a summary
-//! event and each new fault into a critical event on a [`BoundedDiagnosticSink`]. Nothing is
-//! reconstructed after the fact.
+//! event, each transition the session emitted into an ordinary event, and each fault into a critical
+//! event on a [`BoundedDiagnosticSink`]. Nothing is reconstructed after the fact.
 //!
 //! What is mapped, per `docs/contracts/p04.md`:
 //! * `run_id`, `case_id`, `correlation_id`: fixed by the harness; `member_id` and `group_id` are
@@ -15,11 +15,14 @@
 //! * `state_revision`: the frames the device has accepted (a monotonic counter);
 //! * `queue_depth`: slots in flight plus quarantined;
 //! * `fault`: the injected fault schedule entry the harness was running;
-//! * `cause`: the session's own fault code, which is the causal chain.
+//! * `cause`: the session's own fault code, which is the causal chain;
+//! * a record that reports the session's own queue lost a fault becomes a critical `hal_events_lost`
+//!   event, so the loss is in the log even though the fault itself is gone.
 //!
 //! Everything here is a host simulation: every summary carries the record's `evidence` and `scope`,
 //! so a log cannot be read as device evidence.
 
+use crate::emit::SessionEventKind;
 use crate::logged::{HalLogRecord, HalLogSink};
 use franken_test_support::{BoundedDiagnosticSink, DiagnosticEvent, LOG_SCHEMA_VERSION};
 
@@ -58,13 +61,39 @@ impl DiagnosticAdapter {
     }
 }
 
+/// The diagnostic event kind, message and cause for one session event.
+fn describe(kind: &SessionEventKind) -> (&'static str, &'static str, Option<String>) {
+    match kind {
+        SessionEventKind::Prepared => ("hal_transition", "the session was prepared", None),
+        SessionEventKind::Started => ("hal_transition", "the session started and unmuted", None),
+        SessionEventKind::StopAcknowledged => {
+            ("hal_transition", "the device acknowledged the stop", None)
+        }
+        SessionEventKind::ResetAcknowledged => {
+            ("hal_transition", "the device acknowledged the reset", None)
+        }
+        SessionEventKind::Fault { code } => (
+            "hal_fault",
+            "the session faulted and muted",
+            Some(format!("{code:?}")),
+        ),
+        SessionEventKind::DeviceLostWhileFaulted => (
+            "hal_fault",
+            "the device was lost while the session was already faulted",
+            Some("DeviceLostWhileFaulted".to_string()),
+        ),
+    }
+}
+
 impl HalLogSink for DiagnosticAdapter {
-    /// One summary event for the call, and one critical event for each fault the call caused.
+    /// One summary event for the call, one event for each transition or fault the session emitted,
+    /// and a critical notice if the session's own queue lost a fault.
     ///
-    /// What the return value means depends on the record. For a record that carries a fault it is
-    /// whether every fault event was stored: the summary is ordinary, may be dropped when the sink is
-    /// full, and must not make a stored fault look lost. For any other record it is whether the
-    /// summary was stored. The sink's own counters stay exact per event either way.
+    /// What the return value means depends on the record. For a record that carries a fault, or the
+    /// notice of a lost one, it is whether every critical event was stored: the summary and the
+    /// transitions are ordinary, may be dropped when the sink is full, and must not make a stored
+    /// fault look lost. For any other record it is whether the summary was stored. The sink's own
+    /// counters stay exact per event either way.
     fn emit(&mut self, record: HalLogRecord, _critical: bool) -> bool {
         let summary = format!(
             "op={:?} ok={} phase={:?} amp={:?} evidence={} scope={} anomalies={}",
@@ -79,21 +108,36 @@ impl HalLogSink for DiagnosticAdapter {
         let summary_kept = self
             .sink
             .try_emit(self.event(&record, "hal_call", summary, None));
-        if record.new_faults.is_empty() {
-            return summary_kept;
+        let mut carries_critical = false;
+        let mut critical_kept = true;
+        for event in &record.events {
+            let (kind, message, cause) = describe(&event.kind);
+            let diagnostic = self.event(&record, kind, message.to_string(), cause);
+            if event.kind.is_critical() {
+                carries_critical = true;
+                critical_kept &= self.sink.emit_critical(diagnostic);
+            } else {
+                let _ = self.sink.try_emit(diagnostic);
+            }
         }
-        let mut faults_kept = true;
-        for fault in &record.new_faults {
-            let cause = format!("{:?}", fault.code);
-            let event = self.event(
+        if record.critical_events_lost > 0 {
+            carries_critical = true;
+            let notice = self.event(
                 &record,
-                "hal_fault",
-                "the session faulted and muted".to_string(),
-                Some(cause),
+                "hal_events_lost",
+                format!(
+                    "the session's own queue lost {} fault event(s)",
+                    record.critical_events_lost
+                ),
+                None,
             );
-            faults_kept &= self.sink.emit_critical(event);
+            critical_kept &= self.sink.emit_critical(notice);
         }
-        faults_kept
+        if carries_critical {
+            critical_kept
+        } else {
+            summary_kept
+        }
     }
 }
 
@@ -119,12 +163,21 @@ mod tests {
         cfg: FakeConfig,
         quarantine_cap: usize,
     ) -> (HalSession<FakeBackend>, FakeProbe) {
+        session_with_event_cap(cfg, quarantine_cap, crate::emit::DEFAULT_EVENT_QUEUE_CAP)
+    }
+
+    fn session_with_event_cap(
+        cfg: FakeConfig,
+        quarantine_cap: usize,
+        event_cap: usize,
+    ) -> (HalSession<FakeBackend>, FakeProbe) {
         let (backend, probe) = FakeBackend::new(cfg);
         let profile = franken_board_profile::synthetic_test_fixture_catalog()
             .into_iter()
             .find(|p| p.model_number == "S5")
             .unwrap();
-        let config = SessionConfig::with_ledger(Arc::new(LeakLedger::new(64)), quarantine_cap);
+        let config = SessionConfig::with_ledger(Arc::new(LeakLedger::new(64)), quarantine_cap)
+            .with_event_queue_cap(event_cap);
         (HalSession::open(profile, backend, config).unwrap(), probe)
     }
 
@@ -165,8 +218,30 @@ mod tests {
             .lines()
             .map(|l| serde_json::from_str(l).unwrap())
             .collect();
-        // Six calls and one fault: six summaries and one critical fault event.
-        assert_eq!(lines.len(), 7);
+        // Six calls, two transitions (prepare, start) and one fault: six summaries, two ordinary
+        // transition events and one critical fault event.
+        assert_eq!(lines.len(), 9);
+        let count = |kind: &str| lines.iter().filter(|l| l["event_kind"] == kind).count();
+        assert_eq!(
+            (
+                count("hal_call"),
+                count("hal_transition"),
+                count("hal_fault")
+            ),
+            (6, 2, 1)
+        );
+        let transitions: Vec<&str> = lines
+            .iter()
+            .filter(|l| l["event_kind"] == "hal_transition")
+            .map(|l| l["message"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            transitions,
+            vec![
+                "the session was prepared",
+                "the session started and unmuted"
+            ]
+        );
         for line in &lines {
             assert_eq!(line["schema_version"], LOG_SCHEMA_VERSION);
             assert_eq!(line["run_id"], "p04-run-1");
@@ -205,9 +280,11 @@ mod tests {
 
     #[test]
     fn a_full_sink_drops_ordinary_events_but_keeps_the_fault() {
-        // Two events fit. Traced by hand: prepare and start fill it; submit's summary is dropped;
-        // the faulting poll's summary is dropped and its fault evicts the oldest ordinary event; the
-        // last two summaries are dropped.
+        // Two events fit. Traced by hand, summary first within each call: prepare's summary and its
+        // transition fill the sink; start's summary and transition, and submit's summary, are
+        // dropped; the faulting poll's summary is dropped and its fault evicts the oldest ordinary
+        // event (prepare's summary); the last two summaries are dropped. 9 emitted, 2 stored, 7
+        // dropped, 1 of those evicted.
         let (s, probe) = session_with(FakeConfig::retained(), 2);
         let mut logged = LoggedSession::new(s, adapter(2));
         stale_completion_run(&mut logged, &probe);
@@ -219,10 +296,10 @@ mod tests {
             .iter()
             .map(|e| e.event_kind.as_str())
             .collect();
-        assert_eq!(kinds, vec!["hal_call", "hal_fault"]);
+        assert_eq!(kinds, vec!["hal_transition", "hal_fault"]);
         assert_eq!(adapter.sink.events().len(), 2);
-        assert_eq!(adapter.sink.emitted_event_count(), 7);
-        assert_eq!(adapter.sink.dropped_event_count(), 5);
+        assert_eq!(adapter.sink.emitted_event_count(), 9);
+        assert_eq!(adapter.sink.dropped_event_count(), 7);
         assert_eq!(adapter.sink.evicted_event_count(), 1);
         assert!(adapter.sink.is_evidence_complete());
     }
@@ -230,7 +307,8 @@ mod tests {
     #[test]
     fn losing_a_fault_marks_both_the_sink_and_the_wrapper_incomplete() {
         // A drain that times out with the quarantine cap at 1 records two faults in one call. A sink
-        // that holds one event can keep only the first.
+        // that holds one event can keep only the first. 9 emitted: 5 summaries, 2 transitions and 2
+        // faults; 1 stored, 8 dropped (one of them evicted, one a lost fault).
         let mut cfg = FakeConfig::retained();
         cfg.flush_ack_delay_ticks = None;
         let (s, probe) = session_with(cfg, 1);
@@ -265,6 +343,74 @@ mod tests {
             u64::try_from(adapter.sink.events().len()).unwrap()
                 + adapter.sink.dropped_event_count(),
             "every event is stored or counted"
+        );
+        assert_eq!(adapter.sink.emitted_event_count(), 9);
+    }
+
+    #[test]
+    fn a_fault_lost_inside_the_session_is_still_noted_in_the_log() {
+        // The same drain, but the loss is in the session's own one-event queue, not the sink: the sink
+        // is roomy and keeps everything it is given.
+        let mut cfg = FakeConfig::retained();
+        cfg.flush_ack_delay_ticks = None;
+        let (s, probe) = session_with_event_cap(cfg, 1, 1);
+        let mut logged = LoggedSession::new(s, adapter(64));
+        logged.prepare().unwrap();
+        logged.start(READY).unwrap();
+        probe.set_lose_completions(true);
+        let _a = logged.submit(&BLOCK).unwrap().token.unwrap();
+        let _b = logged.submit(&BLOCK).unwrap().token.unwrap();
+        assert_eq!(
+            logged.drain(1),
+            Ok(DrainOutcome::TimedOut { waited_ticks: 1 })
+        );
+        assert!(
+            !logged.evidence_complete(),
+            "the saturation fault was lost in the session"
+        );
+        assert_eq!(
+            logged.log_stats().critical_lost,
+            0,
+            "the sink dropped nothing"
+        );
+        let (_session, adapter) = logged.into_parts();
+        assert!(adapter.sink.is_evidence_complete());
+        let jsonl = adapter.sink.to_jsonl();
+        let lines: Vec<serde_json::Value> = jsonl
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        let count = |kind: &str| lines.iter().filter(|l| l["event_kind"] == kind).count();
+        // 5 summaries, 2 transitions, the one fault that fit, and the notice of the one that did not.
+        assert_eq!(
+            (
+                count("hal_call"),
+                count("hal_transition"),
+                count("hal_fault"),
+                count("hal_events_lost")
+            ),
+            (5, 2, 1, 1)
+        );
+        assert_eq!(lines.len(), 9);
+        let fault = lines
+            .iter()
+            .find(|l| l["event_kind"] == "hal_fault")
+            .unwrap();
+        assert_eq!(fault["cause"], "DrainTimedOut");
+        let notice = lines
+            .iter()
+            .find(|l| l["event_kind"] == "hal_events_lost")
+            .unwrap();
+        assert!(
+            notice["message"]
+                .as_str()
+                .unwrap()
+                .contains("1 fault event"),
+            "{notice}"
+        );
+        assert!(
+            !jsonl.contains("QuarantineSaturated"),
+            "the lost fault itself is gone; only the notice remains"
         );
     }
 
@@ -319,7 +465,9 @@ mod tests {
                     slots_in_flight: 0,
                     slots_quarantined: 0,
                     anomalies: 0,
-                    new_faults: Vec::new(),
+                    events: Vec::new(),
+                    events_lost: 0,
+                    critical_events_lost: 0,
                     evidence: "model".to_string(),
                     scope: "host_simulation".to_string(),
                 },

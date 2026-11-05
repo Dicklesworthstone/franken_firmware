@@ -19,6 +19,7 @@ pub mod contract;
 #[cfg(test)]
 mod diag;
 pub mod dma_sim;
+pub mod emit;
 pub mod events;
 pub mod logged;
 pub mod session;

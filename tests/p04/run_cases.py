@@ -48,7 +48,8 @@ TIERS = ("smoke", "full")
 KINDS = ("abi_vector", "event_vector", "debounce_trace", "planted_defect", "event_defect", "meta_files",
          "meta_shared_vectors", "meta_events", "meta_invariants", "meta_hygiene", "meta_no_unsafe",
          "runner_selftest", "blocked")
-RUST_FILES = ("lib", "abi", "backend", "contract", "diag", "dma_sim", "events", "logged", "session", "slots")
+RUST_FILES = ("lib", "abi", "backend", "contract", "diag", "dma_sim", "emit", "events", "logged", "session",
+              "slots")
 PASS, FAIL, BLOCKED = "pass", "fail", "blocked"
 Result = Tuple[str, str]
 
@@ -244,7 +245,7 @@ def run_meta_events(c) -> Result:
     """The local-event and logging modules are declared, read the shared file, and agree on counts."""
     problems = []
     lib_rs = rust_source("lib")
-    for decl in ("pub mod events;", "pub mod logged;", "#[cfg(test)]\nmod diag;"):
+    for decl in ("pub mod emit;", "pub mod events;", "pub mod logged;", "#[cfg(test)]\nmod diag;"):
         if decl not in lib_rs:
             problems.append(f"lib.rs does not declare {decl!r}")
     events_rs = rust_source("events")
@@ -255,7 +256,7 @@ def run_meta_events(c) -> Result:
         m = re.search(key + r"\.len\(\),\s*(\d+)", events_rs)
         if not m or int(m.group(1)) != len(doc[field]):
             problems.append(f"events.rs expects {m.group(1) if m else 'no'} {field}, the file has {len(doc[field])}")
-    for module in ("events", "logged", "diag"):
+    for module in ("emit", "events", "logged", "diag"):
         if not rust_test_names(module):
             problems.append(f"{module}.rs has no #[test] functions")
     return (PASS, "") if not problems else (FAIL, "; ".join(problems))

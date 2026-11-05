@@ -22,6 +22,7 @@
 //! G02 owns what a press means and UX01 owns how status is shown; this layer only delivers events.
 
 use crate::backend::{DriverError, LocalEventCapability};
+use crate::emit::{Critical, CriticalQueue, PushOutcome};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -158,6 +159,12 @@ impl ChannelEvent {
     }
 }
 
+impl Critical for ChannelEvent {
+    fn critical(&self) -> bool {
+        Self::is_critical(self)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelState {
@@ -272,7 +279,7 @@ pub struct LocalEventChannel<S: LocalEventSource> {
     partial_since: Option<u64>,
     consecutive_bad: u32,
     buttons: Vec<Button>,
-    queue: VecDeque<ChannelEvent>,
+    queue: CriticalQueue<ChannelEvent>,
     stats: EventStats,
 }
 
@@ -307,7 +314,7 @@ impl<S: LocalEventSource> LocalEventChannel<S> {
             partial_since: None,
             consecutive_bad: 0,
             buttons: vec![Button::unknown(); usize::from(cfg.max_buttons)],
-            queue: VecDeque::new(),
+            queue: CriticalQueue::new(cfg.queue_cap),
             stats: EventStats::default(),
         })
     }
@@ -348,7 +355,7 @@ impl<S: LocalEventSource> LocalEventChannel<S> {
 
     /// The next delivered event, oldest first.
     pub fn take(&mut self) -> Option<ChannelEvent> {
-        let event = self.queue.pop_front();
+        let event = self.queue.pop();
         if event.is_some() {
             self.stats.delivered += 1;
         }
@@ -553,23 +560,13 @@ impl<S: LocalEventSource> LocalEventChannel<S> {
         }
     }
 
+    /// One queue policy, shared with the session's own events: see [`crate::emit::CriticalQueue`].
     fn push(&mut self, event: ChannelEvent) {
-        if self.queue.len() < self.cfg.queue_cap {
-            self.queue.push_back(event);
-            return;
-        }
-        if !event.is_critical() {
-            self.stats.dropped_button_events += 1;
-            return;
-        }
-        // A critical event makes room by evicting the oldest button change, and is lost only if the
-        // queue holds nothing but critical events.
-        if let Some(index) = self.queue.iter().position(|e| !e.is_critical()) {
-            let _evicted = self.queue.remove(index);
-            self.stats.evicted_button_events += 1;
-            self.queue.push_back(event);
-        } else {
-            self.stats.lost_critical += 1;
+        match self.queue.push(event) {
+            PushOutcome::Queued => {}
+            PushOutcome::DroppedOrdinary => self.stats.dropped_button_events += 1,
+            PushOutcome::EvictedOrdinary => self.stats.evicted_button_events += 1,
+            PushOutcome::LostCritical => self.stats.lost_critical += 1,
         }
     }
 }

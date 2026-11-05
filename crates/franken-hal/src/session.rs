@@ -19,12 +19,18 @@
 //! * **No audible transition without a stop deadline.** If the device cannot state how long a stop
 //!   takes, [`HalSession::start`] is refused.
 //!
+//! * **Transitions are emitted.** Prepare, start, an acknowledged stop or reset, every recorded
+//!   fault and a device lost while faulted go into a bounded, critical-first queue the owner reads
+//!   with [`HalSession::take_event`]. A full queue never changes what the session does, and what it
+//!   could not keep is counted (see [`crate::emit`]).
+//!
 //! This is a host model. Run against the fake device it shows the adapter logic and nothing about
 //! any board; the receipt says so.
 
 use crate::abi::{AbiError, DeviceEvent, RawGeometry, decode_event, decode_geometry};
 use crate::backend::{AbiKind, DeviceBackend, DriverError, LocalEventCapability, Op, Provenance};
 use crate::contract::ContractMatrix;
+use crate::emit::{DEFAULT_EVENT_QUEUE_CAP, EmitStats, EventQueue, SessionEvent, SessionEventKind};
 use crate::slots::{
     CompletionProblem, LeakLedger, MAX_BLOCK_BYTES, MAX_SLOTS, SlotError, SlotState, SlotTable,
     TokenState,
@@ -278,6 +284,8 @@ pub struct SessionReceipt {
 pub struct SessionConfig {
     pub ledger: Arc<LeakLedger>,
     pub quarantine_cap: usize,
+    /// Capacity of the session's event queue (at least 1).
+    pub event_queue_cap: usize,
 }
 
 impl SessionConfig {
@@ -287,6 +295,7 @@ impl SessionConfig {
         Self {
             ledger: LeakLedger::process(),
             quarantine_cap: DEFAULT_QUARANTINE_CAP,
+            event_queue_cap: DEFAULT_EVENT_QUEUE_CAP,
         }
     }
 
@@ -295,7 +304,15 @@ impl SessionConfig {
         Self {
             ledger,
             quarantine_cap,
+            event_queue_cap: DEFAULT_EVENT_QUEUE_CAP,
         }
+    }
+
+    /// The same configuration with a different event queue capacity.
+    #[must_use]
+    pub const fn with_event_queue_cap(mut self, event_queue_cap: usize) -> Self {
+        self.event_queue_cap = event_queue_cap;
+        self
     }
 }
 
@@ -311,7 +328,7 @@ pub enum SessionError {
     ContractIncomplete { missing: usize },
     #[error("a copying-write ABI needs stated evidence that the copy is synchronous")]
     CopyEvidenceMissing,
-    #[error("quarantine cap must be at least 1")]
+    #[error("quarantine cap and event queue capacity must each be at least 1")]
     BadConfig,
     #[error("the session id space is exhausted, so no new session can be created")]
     SessionIdsExhausted,
@@ -393,6 +410,7 @@ pub struct HalSession<B: DeviceBackend> {
     anomalies: u32,
     ledger: Arc<LeakLedger>,
     quarantine_cap: usize,
+    events: EventQueue,
 }
 
 impl<B: DeviceBackend> HalSession<B> {
@@ -452,7 +470,7 @@ impl<B: DeviceBackend> HalSession<B> {
         {
             return Err(SessionError::CopyEvidenceMissing);
         }
-        if config.quarantine_cap == 0 {
+        if config.quarantine_cap == 0 || config.event_queue_cap == 0 {
             return Err(SessionError::BadConfig);
         }
         // Last, so a refused open does not use up an id. Nothing has touched the device yet.
@@ -487,7 +505,34 @@ impl<B: DeviceBackend> HalSession<B> {
             anomalies: 0,
             ledger: config.ledger,
             quarantine_cap: config.quarantine_cap,
+            events: EventQueue::new(config.event_queue_cap),
         })
+    }
+
+    // ---- events
+
+    /// The next session event, oldest first. The queue is bounded: see [`Self::event_stats`] for
+    /// exactly what it could not keep. Events are never audio.
+    pub fn take_event(&mut self) -> Option<SessionEvent> {
+        self.events.take()
+    }
+
+    /// Events waiting to be taken.
+    #[must_use]
+    pub fn events_pending(&self) -> usize {
+        self.events.pending()
+    }
+
+    /// Exact accounting of every event the session emitted.
+    #[must_use]
+    pub const fn event_stats(&self) -> EmitStats {
+        self.events.stats()
+    }
+
+    /// False once a critical event (a fault, or a device lost while faulted) could not be kept.
+    #[must_use]
+    pub const fn event_evidence_complete(&self) -> bool {
+        self.events.stats().lost_critical == 0
     }
 
     // ---- read-only views
@@ -628,7 +673,22 @@ impl<B: DeviceBackend> HalSession<B> {
         }
     }
 
+    /// Emit a transition. This never changes what the session does: a full queue only counts.
+    fn emit(&mut self, kind: SessionEventKind) {
+        self.events.emit(kind, self.accepted_frames);
+    }
+
+    /// The device is gone and the session was already faulted, so no new fault is recorded. The
+    /// first time that happens it is emitted, because the amplifier is now `Unknown`.
+    fn note_loss_while_faulted(&mut self) {
+        if !self.device_lost {
+            self.emit(SessionEventKind::DeviceLostWhileFaulted);
+        }
+        self.device_lost = true;
+    }
+
     fn record_fault(&mut self, code: FaultCode) {
+        self.emit(SessionEventKind::Fault { code: code.clone() });
         if self.faults.len() < MAX_FAULT_RECORDS {
             self.faults.push(FaultRecord {
                 code,
@@ -736,6 +796,7 @@ impl<B: DeviceBackend> HalSession<B> {
         self.position_error_frames = caps.position_error_frames;
         self.local_events = caps.local_events;
         self.phase = SessionPhase::Prepared;
+        self.emit(SessionEventKind::Prepared);
         Ok(())
     }
 
@@ -762,6 +823,7 @@ impl<B: DeviceBackend> HalSession<B> {
             Ok(true) => {
                 self.amp = Amp::Unmuted;
                 self.phase = SessionPhase::Running;
+                self.emit(SessionEventKind::Started);
                 Ok(())
             }
             Ok(false) => Err(self.fail_muted(FaultCode::UnmuteNotAcknowledged)),
@@ -901,7 +963,7 @@ impl<B: DeviceBackend> HalSession<B> {
         if self.phase == SessionPhase::Faulted {
             // Already muted and quarantined. Draining what the device says changes nothing.
             if event == DeviceEvent::DeviceLost {
-                self.device_lost = true;
+                self.note_loss_while_faulted();
                 self.amp = Amp::Unknown;
             }
             report.ignored_in_fault += 1;
@@ -951,6 +1013,7 @@ impl<B: DeviceBackend> HalSession<B> {
                         .saturating_add(self.in_flight_frames());
                     self.phase = SessionPhase::Prepared;
                     self.stop_requested = false;
+                    self.emit(SessionEventKind::StopAcknowledged);
                 } else {
                     self.note_anomaly(report);
                 }
@@ -979,7 +1042,7 @@ impl<B: DeviceBackend> HalSession<B> {
                 Err(error) => {
                     if self.phase == SessionPhase::Faulted {
                         if error == DriverError::Gone {
-                            self.device_lost = true;
+                            self.note_loss_while_faulted();
                         }
                     } else {
                         let _ = self.driver_failed(Op::PollEvent, error);
@@ -1134,6 +1197,7 @@ impl<B: DeviceBackend> HalSession<B> {
                 self.stop_requested = false;
                 self.saturated_reported = false;
                 self.phase = SessionPhase::Prepared;
+                self.emit(SessionEventKind::ResetAcknowledged);
                 Ok(())
             }
             Ok(false) => Err(SessionError::ResetNotAcknowledged),
@@ -2092,6 +2156,318 @@ mod tests {
         // The process-wide counter is unaffected: an ordinary open still succeeds.
         let (ordinary, _probe, _ledger) = session(FakeConfig::retained());
         assert_eq!(ordinary.phase(), SessionPhase::Closed);
+    }
+
+    #[test]
+    fn concurrent_takers_never_get_the_same_session_id_and_the_counter_never_wraps() {
+        use std::collections::BTreeSet;
+        // Uncontended first: the baseline the contended run must agree with.
+        let solo = AtomicU32::new(1);
+        let ids: Vec<u32> = (0..8).map(|_| take_session_id(&solo).unwrap()).collect();
+        assert_eq!(ids, (1..=8u32).collect::<Vec<u32>>());
+
+        // Contended: 8 threads race for the last 1000 ids, each asking far more often than there
+        // are ids left, so the counter is certain to run out.
+        const LEFT: u32 = 1000;
+        let left = usize::try_from(LEFT).unwrap();
+        let counter = AtomicU32::new(u32::MAX - LEFT);
+        let mut all: Vec<u32> = Vec::new();
+        std::thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for _ in 0..8 {
+                handles.push(scope.spawn(|| {
+                    let mut mine = Vec::new();
+                    for _ in 0..left {
+                        if let Some(id) = take_session_id(&counter) {
+                            mine.push(id);
+                        }
+                    }
+                    mine
+                }));
+            }
+            for handle in handles {
+                all.extend(handle.join().unwrap());
+            }
+        });
+        assert_eq!(
+            all.len(),
+            left,
+            "the total handed out equals the space left"
+        );
+        let unique: BTreeSet<u32> = all.iter().copied().collect();
+        assert_eq!(unique.len(), all.len(), "no id was handed out twice");
+        assert_eq!(unique.first().copied(), Some(u32::MAX - LEFT));
+        assert_eq!(unique.last().copied(), Some(u32::MAX - 1));
+        assert_eq!(
+            counter.load(Ordering::Relaxed),
+            u32::MAX,
+            "it never wrapped"
+        );
+        assert_eq!(take_session_id(&counter), None, "every later call refuses");
+    }
+
+    fn session_events(
+        cfg: FakeConfig,
+        quarantine_cap: usize,
+        event_cap: usize,
+    ) -> (HalSession<FakeBackend>, FakeProbe) {
+        let (backend, probe) = FakeBackend::new(cfg);
+        let config = SessionConfig::with_ledger(Arc::new(LeakLedger::new(64)), quarantine_cap)
+            .with_event_queue_cap(event_cap);
+        (HalSession::open(profile(), backend, config).unwrap(), probe)
+    }
+
+    /// Everything waiting, oldest first, as (seq, accepted_frames, kind).
+    fn events_so_far(s: &mut HalSession<FakeBackend>) -> Vec<(u64, u64, SessionEventKind)> {
+        std::iter::from_fn(|| s.take_event())
+            .map(|e| (e.seq, e.accepted_frames, e.kind))
+            .collect()
+    }
+
+    #[test]
+    fn a_clean_cycle_emits_exactly_the_expected_events_in_order() {
+        let (mut s, _probe) = session_events(FakeConfig::retained(), 2, 8);
+        s.prepare().unwrap();
+        s.start(READY).unwrap();
+        let _t = token(&mut s);
+        s.step();
+        s.step();
+        assert_eq!(
+            s.drain(5),
+            Ok(DrainOutcome::Acknowledged { waited_ticks: 1 })
+        );
+        // Traced by hand: prepare and start happen before any frame is accepted; the block is four
+        // frames; the drain's flush is acknowledged one tick later, with those four frames accepted.
+        let want: Vec<(u64, u64, SessionEventKind)> = vec![
+            (1, 0, SessionEventKind::Prepared),
+            (2, 0, SessionEventKind::Started),
+            (3, 4, SessionEventKind::StopAcknowledged),
+        ];
+        assert_eq!(events_so_far(&mut s), want);
+        assert_eq!(
+            s.event_stats(),
+            EmitStats {
+                emitted: 3,
+                delivered: 3,
+                dropped_ordinary: 0,
+                evicted_ordinary: 0,
+                lost_critical: 0
+            }
+        );
+        assert!(s.event_evidence_complete());
+        assert_eq!(s.events_pending(), 0);
+    }
+
+    #[test]
+    fn a_lost_completion_emits_the_timeout_and_the_quarantine_saturation() {
+        let mut cfg = FakeConfig::retained();
+        cfg.flush_ack_delay_ticks = None;
+        let (mut s, probe) = session_events(cfg, 1, 8);
+        s.prepare().unwrap();
+        s.start(READY).unwrap();
+        probe.set_lose_completions(true);
+        let _a = token(&mut s);
+        let _b = token(&mut s);
+        assert_eq!(s.drain(1), Ok(DrainOutcome::TimedOut { waited_ticks: 1 }));
+        // Two blocks of four frames were accepted. With a quarantine cap of 1 the drain timeout
+        // quarantines both, which is over the cap: two faults, in that order.
+        let want: Vec<(u64, u64, SessionEventKind)> = vec![
+            (1, 0, SessionEventKind::Prepared),
+            (2, 0, SessionEventKind::Started),
+            (
+                3,
+                8,
+                SessionEventKind::Fault {
+                    code: FaultCode::DrainTimedOut,
+                },
+            ),
+            (
+                4,
+                8,
+                SessionEventKind::Fault {
+                    code: FaultCode::QuarantineSaturated,
+                },
+            ),
+        ];
+        assert_eq!(events_so_far(&mut s), want);
+        assert!(s.event_evidence_complete());
+    }
+
+    #[test]
+    fn an_unacknowledged_mute_and_a_lost_device_are_each_emitted_once() {
+        // A mute that is not acknowledged is one fault, however often the caller retries.
+        let mut cfg = FakeConfig::retained();
+        cfg.mute_ack = false;
+        let (mut s, _probe) = session_events(cfg, 2, 8);
+        assert!(s.prepare().is_err());
+        assert!(s.prepare().is_err());
+        let want: Vec<(u64, u64, SessionEventKind)> = vec![(
+            1,
+            0,
+            SessionEventKind::Fault {
+                code: FaultCode::MuteNotAcknowledged,
+            },
+        )];
+        assert_eq!(events_so_far(&mut s), want);
+
+        // A device lost while running is a fault, and losing it again adds nothing.
+        let (mut s, probe, _) = running(FakeConfig::retained());
+        probe.queue_event(DeviceEvent::DeviceLost);
+        s.poll();
+        probe.queue_event(DeviceEvent::DeviceLost);
+        s.poll();
+        let want: Vec<(u64, u64, SessionEventKind)> = vec![
+            (1, 0, SessionEventKind::Prepared),
+            (2, 0, SessionEventKind::Started),
+            (
+                3,
+                0,
+                SessionEventKind::Fault {
+                    code: FaultCode::DeviceLost,
+                },
+            ),
+        ];
+        assert_eq!(events_so_far(&mut s), want);
+
+        // A device lost after the session had already faulted records no fault, but it is emitted
+        // once, because the amplifier is now unknown.
+        let (mut s, probe, _) = running(FakeConfig::retained());
+        let _t = token(&mut s);
+        probe.queue_event(DeviceEvent::Completed {
+            slot: 0,
+            generation: 99,
+        });
+        s.poll();
+        assert_eq!(s.amp(), Amp::Muted);
+        probe.queue_event(DeviceEvent::DeviceLost);
+        s.poll();
+        probe.queue_event(DeviceEvent::DeviceLost);
+        s.poll();
+        assert_eq!(s.amp(), Amp::Unknown);
+        let want: Vec<(u64, u64, SessionEventKind)> = vec![
+            (1, 0, SessionEventKind::Prepared),
+            (2, 0, SessionEventKind::Started),
+            (
+                3,
+                4,
+                SessionEventKind::Fault {
+                    code: FaultCode::BadCompletion {
+                        problem: CompletionProblem::StaleGeneration {
+                            expected: 1,
+                            got: 99,
+                        },
+                    },
+                },
+            ),
+            (4, 4, SessionEventKind::DeviceLostWhileFaulted),
+        ];
+        assert_eq!(events_so_far(&mut s), want);
+    }
+
+    /// One fault and reset: start, submit a block, report a completion for a generation the slot was
+    /// never at, then reset. Each cycle emits `Started`, a `Fault` and `ResetAcknowledged`.
+    fn fault_and_reset(s: &mut HalSession<FakeBackend>, probe: &FakeProbe) {
+        s.start(READY).unwrap();
+        let _t = token(s);
+        probe.queue_event(DeviceEvent::Completed {
+            slot: 0,
+            generation: 9999,
+        });
+        s.poll();
+        assert_eq!(s.phase(), SessionPhase::Faulted);
+        s.reset_device().unwrap();
+    }
+
+    #[test]
+    fn an_event_flood_is_bounded_and_every_event_is_accounted_for() {
+        // 40 fault-and-reset cycles into a 4-event queue that nobody reads. Traced by hand:
+        // * cycle 1 fills it: [Prepared, Started, Fault, ResetAck];
+        // * cycles 2 to 4 each drop their Started and ResetAck, and the Fault evicts the oldest
+        //   ordinary event (Prepared, then Started, then ResetAck), leaving [F3, F6, F9, F12];
+        // * from cycle 5 the queue holds only faults, so each Fault is lost and counted.
+        let (mut s, probe) = session_events(FakeConfig::retained(), 2, 4);
+        s.prepare().unwrap();
+        for _ in 0..40 {
+            fault_and_reset(&mut s, &probe);
+            assert!(s.events_pending() <= 4, "the queue is never over its cap");
+        }
+        assert_eq!(
+            s.event_stats(),
+            EmitStats {
+                emitted: 121,
+                delivered: 0,
+                dropped_ordinary: 78,
+                evicted_ordinary: 3,
+                lost_critical: 36
+            }
+        );
+        let stats = s.event_stats();
+        let pending = u64::try_from(s.events_pending()).unwrap();
+        assert_eq!(pending, 4);
+        assert_eq!(
+            stats.emitted,
+            stats.delivered
+                + pending
+                + stats.dropped_ordinary
+                + stats.evicted_ordinary
+                + stats.lost_critical,
+            "every emitted event is delivered, queued, dropped, evicted or lost"
+        );
+        assert!(!s.event_evidence_complete());
+        let kept = events_so_far(&mut s);
+        let seqs: Vec<u64> = kept.iter().map(|(seq, _, _)| *seq).collect();
+        assert_eq!(seqs, vec![3, 6, 9, 12], "the gaps show what was lost");
+        assert!(kept.iter().all(|(_, _, kind)| kind.is_critical()));
+
+        // Permitted positive: a consumer that keeps up loses nothing, and sees every event once and
+        // in order.
+        let (mut s, probe) = session_events(FakeConfig::retained(), 2, 4);
+        s.prepare().unwrap();
+        let mut seen = events_so_far(&mut s);
+        for _ in 0..40 {
+            fault_and_reset(&mut s, &probe);
+            seen.extend(events_so_far(&mut s));
+        }
+        let seqs: Vec<u64> = seen.iter().map(|(seq, _, _)| *seq).collect();
+        assert_eq!(seqs, (1..=121u64).collect::<Vec<u64>>());
+        assert!(s.event_evidence_complete());
+        assert_eq!(s.event_stats().delivered, 121);
+        assert_eq!(s.event_stats().lost_critical, 0);
+    }
+
+    #[test]
+    fn an_unread_or_tiny_event_queue_never_changes_what_the_session_does() {
+        fn run(event_cap: usize, read: bool) -> (Vec<String>, SessionReceipt) {
+            let (mut s, probe) = session_events(FakeConfig::retained(), 2, event_cap);
+            let mut out = vec![
+                format!("{:?}", s.prepare()),
+                format!("{:?}", s.start(READY)),
+            ];
+            let _t = token(&mut s);
+            probe.queue_event(DeviceEvent::Completed {
+                slot: 0,
+                generation: 99,
+            });
+            out.push(s.poll().anomalies.to_string());
+            out.push(format!("{:?}", s.reset_device()));
+            out.push(format!("{:?}", s.start(READY)));
+            out.push(format!("{:?}", s.drain(5)));
+            if read {
+                events_so_far(&mut s);
+            }
+            (out, s.receipt())
+        }
+        let healthy = run(32, true);
+        assert_eq!(run(1, false), healthy);
+        assert_eq!(run(2, false), healthy);
+        // A queue that could hold nothing at all is a bad configuration, not a silent no-op.
+        let (backend, _probe) = FakeBackend::new(FakeConfig::retained());
+        let zero =
+            SessionConfig::with_ledger(Arc::new(LeakLedger::new(64)), 2).with_event_queue_cap(0);
+        assert_eq!(
+            HalSession::open(profile(), backend, zero).err().unwrap(),
+            SessionError::BadConfig
+        );
     }
 
     #[test]
