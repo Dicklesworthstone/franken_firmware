@@ -20,6 +20,7 @@ pub enum SpeakerReadinessState {
     FaultedSafeMuted { reason: String },
 }
 
+pub mod button_adapter;
 pub mod guest_evidence;
 pub mod platform_start;
 pub mod render;

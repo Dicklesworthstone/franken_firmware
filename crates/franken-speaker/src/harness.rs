@@ -8,7 +8,8 @@
 use crate::SpeakerReadinessState;
 use crate::clock_log::{ClockLog, ClockLogSummary};
 use crate::playout_adapter::{
-    CampaignTimeline, NodePlayout, Played, PlayoutMemberReport, SendLink, Silence,
+    CampaignTimeline, LinkFault, NodePlayout, Played, PlayoutMemberReport, PreviousEpoch, SendLink,
+    Silence,
 };
 use franken_board_profile::{BoardProfile, synthetic_test_fixture_catalog};
 use franken_clock::LatencyLedger;
@@ -134,6 +135,8 @@ struct MemberStream {
     outcome: StreamOutcome,
     receiver: Option<StreamReceiver>,
     sender: Option<StreamSender>,
+    /// One epoch earlier, keyed with the same media key: what a planted previous-epoch datagram is made with.
+    previous_epoch: Option<PreviousEpoch>,
 }
 
 fn refused(by: RefusedBy, error: &NegotiationError) -> MemberStream {
@@ -145,6 +148,7 @@ fn refused(by: RefusedBy, error: &NegotiationError) -> MemberStream {
         }),
         receiver: None,
         sender: None,
+        previous_epoch: None,
     }
 }
 
@@ -220,6 +224,22 @@ fn negotiate_member_stream(
         ));
     }
     let selection = *coordinator_session.selection();
+    // The epoch before this one, with this session's media key (`LinkFault::StaleEpoch`). Epoch 0 has no predecessor.
+    let previous_epoch = coordinator_session
+        .epoch()
+        .checked_sub(1)
+        .map(|earlier| PreviousEpoch {
+            sender: StreamSender::new(
+                coordinator_session.media_key().clone(),
+                coordinator_session.stream_id(),
+                earlier,
+            ),
+            receiver: StreamReceiver::new(
+                coordinator_session.media_key().clone(),
+                coordinator_session.stream_id(),
+                earlier,
+            ),
+        });
     let sender = StreamSender::from_negotiated(&coordinator_session).map_err(|e| {
         format!(
             "member {member_id}: coordinator cannot speak what was agreed: {}",
@@ -241,6 +261,7 @@ fn negotiate_member_stream(
         }),
         receiver: Some(receiver),
         sender: Some(sender),
+        previous_epoch,
     })
 }
 
@@ -294,6 +315,9 @@ pub struct VirtualSpeakerNode {
     /// The coordinator's end of the same session. The simulation owns both ends, so it lives with
     /// the member it sends to. `None` exactly when `receiver` is.
     pub coordinator_sender: Option<StreamSender>,
+    /// One epoch earlier, keyed with the member's own media key: what a planted `StaleEpochPacket` sends. `None` when the
+    /// stream was refused or its epoch has no predecessor.
+    pub(crate) previous_epoch: Option<PreviousEpoch>,
     /// What negotiation produced for this member's stream: the agreement, or the refusal that left it
     /// without one.
     pub stream: StreamOutcome,
@@ -556,6 +580,19 @@ enum OutputFault {
     /// The controller never schedules a start for any member but this one, so the others stay muted (and the skew
     /// of the one that sounds is trivially 0).
     UnadmittedExcept { member_id: &'static str },
+    /// The block's packet reaches the member's engine after the engine has decided the block (`LinkFault::Late`).
+    LateBlock { member_id: &'static str, block: u64 },
+    /// The packets of `block` and `block + 1` swap arrival instants (`LinkFault::SwapArrivals`).
+    ReorderedPair { member_id: &'static str, block: u64 },
+    /// A datagram of the previous epoch, keyed with the member's own media key, arrives beside the block's own packet
+    /// (`LinkFault::StaleEpoch`).
+    StaleEpochPacket { member_id: &'static str, block: u64 },
+    /// The member's own monotonic clock reads `delta_ns` more from the start of `block` on (a suspend, or a step).
+    ClockLeap {
+        member_id: &'static str,
+        block: u64,
+        delta_ns: u64,
+    },
 }
 
 /// One line describing a planted fault, for the `fault` field of the diagnostic log.
@@ -576,6 +613,20 @@ fn describe_fault(fault: OutputFault) -> String {
         OutputFault::UnadmittedExcept { member_id } => {
             format!("unadmitted_except member={member_id}")
         }
+        OutputFault::LateBlock { member_id, block } => {
+            format!("late_block member={member_id} block={block}")
+        }
+        OutputFault::ReorderedPair { member_id, block } => {
+            format!("reordered_pair member={member_id} block={block}")
+        }
+        OutputFault::StaleEpochPacket { member_id, block } => {
+            format!("stale_epoch_packet member={member_id} block={block}")
+        }
+        OutputFault::ClockLeap {
+            member_id,
+            block,
+            delta_ns,
+        } => format!("clock_leap member={member_id} block={block} delta_ns={delta_ns}"),
     }
 }
 
@@ -780,6 +831,7 @@ impl VirtualSpeakerNode {
             auto_admit: plan.auto_admit,
             receiver: link.receiver,
             coordinator_sender: link.sender,
+            previous_epoch: link.previous_epoch,
             stream: link.outcome,
             stream_refused_blocks: 0,
             playout,
@@ -1321,6 +1373,57 @@ fn run_campaign_inner(
         let send_time_ns = block_offset_ns(blk_idx);
         let mut presented_true = Vec::with_capacity(nodes.len());
         for (member_id, node) in &mut nodes {
+            // A fault planted on this member's link, and one on its own clock (which takes effect from this block on).
+            let link_fault = match fault {
+                Some(OutputFault::LateBlock {
+                    member_id: faulty,
+                    block,
+                }) if faulty == member_id.as_str() => Some(LinkFault::Late { block }),
+                Some(OutputFault::ReorderedPair {
+                    member_id: faulty,
+                    block,
+                }) if faulty == member_id.as_str() => Some(LinkFault::SwapArrivals { block }),
+                Some(OutputFault::StaleEpochPacket {
+                    member_id: faulty,
+                    block,
+                }) if faulty == member_id.as_str() => Some(LinkFault::StaleEpoch { block }),
+                _ => None,
+            };
+            let clock_leap = match fault {
+                Some(OutputFault::ClockLeap {
+                    member_id: faulty,
+                    block,
+                    delta_ns,
+                }) if faulty == member_id.as_str() && block == blk_idx => Some(delta_ns),
+                _ => None,
+            };
+            if clock_leap.is_some()
+                || matches!(
+                    link_fault,
+                    Some(
+                        LinkFault::Late { block }
+                            | LinkFault::SwapArrivals { block }
+                            | LinkFault::StaleEpoch { block }
+                    ) if block == blk_idx
+                )
+            {
+                sink.emit_critical(fault_injected_event(
+                    seed,
+                    blk_idx,
+                    send_time_ns,
+                    &session,
+                    fault,
+                ));
+            }
+            if let Some(delta_ns) = clock_leap {
+                node.sim_clock.local0_ns = node
+                    .sim_clock
+                    .local0_ns
+                    .checked_add(delta_ns)
+                    .ok_or_else(|| {
+                        "the planted clock leap overflows the node's clock".to_string()
+                    })?;
+            }
             // Each member is sent the block on its own negotiated session, so the datagram is keyed for
             // that member alone. The sender advances whether or not the network delivers the block, as
             // a real sender does. A member with no stream is sent nothing. The engine decides this block
@@ -1340,6 +1443,8 @@ fn run_campaign_inner(
                         sender,
                         receiver,
                         schedule,
+                        fault: link_fault,
+                        previous: node.previous_epoch.as_mut(),
                     },
                     timeline.decision_true_ns(blk_idx),
                     total_blocks,
@@ -2605,6 +2710,431 @@ mod tests {
             muted_after_a_long_gap,
             "the burst outage reached the engine"
         );
+    }
+
+    // ---- planted link and clock faults (Q01, second slice) -----------------------------------------------------------
+
+    /// Where a plant acts on one member, in the terms the independent model understands.
+    #[derive(Clone, Copy, Default)]
+    struct Plant {
+        late: Option<u64>,
+        swap: Option<u64>,
+        stale: Option<u64>,
+        leap: Option<u64>,
+    }
+
+    /// What one member's playout must come to, and the legacy counters that follow from it.
+    struct ModelMember {
+        playout: PlayoutMemberReport,
+        authentic: u64,
+        concealed: u64,
+    }
+
+    /// The seeded schedule's verdict for each block of a member, asked block by block on the campaign-relative axis, as the
+    /// sender does: `None` if the block is dropped, else (arrival, arrival of its duplicate).
+    fn schedule_link(seed: u64, member_index: u64, total: u64) -> Vec<Option<(u64, Option<u64>)>> {
+        let cfg = NetworkScheduleConfig {
+            seed: seed.wrapping_add(member_index * 101),
+            ..NetworkScheduleConfig::default()
+        };
+        let mut schedule = NetworkSchedule::new(cfg);
+        (0..total)
+            .map(|blk| {
+                let d = schedule.evaluate_packet(blk, block_offset_ns(blk));
+                if d.dropped {
+                    None
+                } else {
+                    d.deliver_time_ns
+                        .map(|arrival| (arrival, d.duplicate_deliver_time_ns))
+                }
+            })
+            .collect()
+    }
+
+    /// The interval in which a member's clock cannot be used after its own clock leaps forward at block `k`, as the
+    /// node-level tests pin it (`a_leap_forward_mid_stream_mutes_at_once...`): from `k`, when the last exchange is stale,
+    /// until the relock, which needs the lock count of accepted exchanges, one per probe interval, after the probe that
+    /// finds the step.
+    fn leap_outage(k: u64) -> (u64, u64) {
+        let probe_after_step = (k / PROBE_EVERY_BLOCKS + 1) * PROBE_EVERY_BLOCKS;
+        (
+            k,
+            probe_after_step + u64::from(CLOCK_LOCK_MIN_SAMPLES) * PROBE_EVERY_BLOCKS,
+        )
+    }
+
+    /// What a member's engine must do with a campaign of `total` blocks, from the seeded schedule and N04's contract alone.
+    /// The rules are restated here, not read from the engine: the order of checks on an arriving packet (epoch, clock,
+    /// already decided, beyond the horizon, already held), the decision for the next block (overdue if the clock is past its
+    /// presentation, real if held, then muted without history, muted after eight concealed, else concealed) and the render
+    /// loop's timing (a block is decided 3.5 ms before its presentation; everything that has arrived by then is handed over
+    /// first, in arrival order, and handed over refused if the clock cannot be used). Nothing here models an arrival between
+    /// a block's cutoff and its decision: the schedule's 50 ms of jitter against a 500 ms horizon never makes one.
+    fn model_member(seed: u64, member_index: u64, total: u64, plant: Plant) -> ModelMember {
+        use std::collections::BTreeSet;
+        const WORK_PLUS_LEAD_NS: u64 = 1_500_000 + 2_000_000;
+        const HORIZON_BLOCKS: u64 = 94;
+        const MAX_CONCEAL: u32 = 8;
+        const HISTORY_BLOCKS: u64 = 128;
+        const LATE_BEFORE_PRESENTATION_NS: u64 = 500_000;
+        const STALE_LEAD_NS: u64 = 1_000_000;
+        let index = |blk: u64| usize::try_from(blk).expect("a block index");
+        let decision_ns = |blk: u64| {
+            CAMPAIGN_ORIGIN_NS + block_offset_ns(blk) + PLAYOUT_HORIZON_NS - WORK_PLUS_LEAD_NS
+        };
+
+        let mut link = schedule_link(seed, member_index, total);
+        if let Some(k) = plant.swap
+            && let (Some(a), Some(b)) = (link[index(k)], link[index(k + 1)])
+        {
+            link[index(k)] = Some((b.0, a.1));
+            link[index(k + 1)] = Some((a.0, b.1));
+        }
+        // Everything that reaches the engine: (arrival, block, copy, from the previous epoch).
+        let mut arrivals: Vec<(u64, u64, u8, bool)> = Vec::new();
+        for blk in 0..total {
+            let slot = link[index(blk)];
+            let genuine = slot.map(|(arrival, _)| {
+                if plant.late == Some(blk) {
+                    block_offset_ns(blk) + PLAYOUT_HORIZON_NS - LATE_BEFORE_PRESENTATION_NS
+                } else {
+                    arrival
+                }
+            });
+            if let (Some(arrival), Some((_, duplicate))) = (genuine, slot) {
+                arrivals.push((CAMPAIGN_ORIGIN_NS + arrival, blk, 0, false));
+                if let Some(duplicate) = duplicate {
+                    arrivals.push((CAMPAIGN_ORIGIN_NS + duplicate, blk, 1, false));
+                }
+            }
+            if plant.stale == Some(blk) {
+                let at = genuine
+                    .unwrap_or(block_offset_ns(blk) + STALE_LEAD_NS)
+                    .saturating_sub(STALE_LEAD_NS);
+                arrivals.push((CAMPAIGN_ORIGIN_NS + at, blk, 2, true));
+            }
+        }
+        arrivals.sort_unstable();
+
+        let outage = plant.leap.map(leap_outage);
+        let mut report = PlayoutMemberReport {
+            stale_refused_at_receiver: u64::from(plant.stale.is_some()),
+            ..PlayoutMemberReport::default()
+        };
+        let (mut authentic, mut concealed_legacy) = (0, 0);
+        let (mut cursor, mut gap_run, mut have_last_real) = (0_u64, 0_u32, false);
+        let mut slots: BTreeSet<u64> = BTreeSet::new();
+        let mut decided_real: BTreeSet<u64> = BTreeSet::new();
+        let (mut highest, mut next) = (None, 0);
+        for j in 0..total {
+            let usable = outage.is_none_or(|(from, until)| !(from..until).contains(&j));
+            while next < arrivals.len() && arrivals[next].0 <= decision_ns(j) {
+                let (_, blk, _, previous_epoch) = arrivals[next];
+                next += 1;
+                report.packets_offered += 1;
+                if highest.is_some_and(|h| blk < h) {
+                    report.out_of_order_arrivals += 1;
+                }
+                highest = highest.max(Some(blk));
+                if previous_epoch {
+                    report.wrong_epoch += 1;
+                } else if !usable {
+                    report.clock_refused += 1;
+                } else if blk < cursor {
+                    if cursor - blk <= HISTORY_BLOCKS && decided_real.contains(&blk) {
+                        report.duplicate += 1;
+                    } else {
+                        report.late += 1;
+                    }
+                } else if blk >= cursor + HORIZON_BLOCKS {
+                    report.otherwise_refused += 1;
+                } else if slots.insert(blk) {
+                    report.admitted += 1;
+                } else {
+                    report.duplicate += 1;
+                }
+            }
+            if !usable {
+                report.blocks_without_a_decision += 1;
+                continue;
+            }
+            while cursor <= j {
+                let blk = cursor;
+                if blk < j {
+                    // Decided after its presentation: overdue, whatever it held.
+                    slots.remove(&blk);
+                    gap_run = (gap_run + 1).min(255);
+                    report.decided_muted_overdue += 1;
+                    report.catch_up_decisions += 1;
+                } else if slots.remove(&blk) {
+                    have_last_real = true;
+                    gap_run = 0;
+                    decided_real.insert(blk);
+                    report.decided_real += 1;
+                    authentic += 1;
+                } else if !have_last_real {
+                    gap_run = (gap_run + 1).min(255);
+                    report.decided_muted_nohistory += 1;
+                } else if gap_run >= MAX_CONCEAL {
+                    gap_run = (gap_run + 1).min(255);
+                    report.decided_muted_gap += 1;
+                    concealed_legacy += 1;
+                } else {
+                    gap_run += 1;
+                    report.decided_concealed += 1;
+                    concealed_legacy += 1;
+                }
+                cursor = blk + 1;
+            }
+        }
+        ModelMember {
+            playout: report,
+            authentic,
+            concealed: concealed_legacy,
+        }
+    }
+
+    /// Run the campaign without the plant and with `fault`, and hold both to the independent model member by member:
+    /// the control (no plant) must come out as the model says nominal is, the planted member as the model says the plant
+    /// makes it (and the model must see a difference, so the plant is not a no-op), every other member must be exactly as
+    /// without the plant, and every member's continuity and shadow oracles must have held to the last frame.
+    fn run_planted(
+        fault: OutputFault,
+        member: &str,
+        plant: Plant,
+        total: u64,
+    ) -> (VirtualHouseReport, VirtualHouseReport) {
+        let nominal = run_campaign(SEED, total, None).expect("the nominal campaign");
+        let mut sink = default_diagnostic_sink();
+        let planted = run_campaign_with_sink(SEED, total, Some(fault), &mut sink)
+            .expect("the planted campaign still runs: every oracle holds");
+        for (index, ((id, base), (planted_id, stats))) in nominal
+            .members
+            .iter()
+            .zip(planted.members.iter())
+            .enumerate()
+        {
+            assert_eq!(id, planted_id);
+            let control = model_member(SEED, index as u64, total, Plant::default());
+            assert_eq!(base.playout, control.playout, "nominal {id}");
+            assert_eq!(
+                (base.authentic_blocks, base.concealed_blocks),
+                (control.authentic, control.concealed),
+                "nominal {id}"
+            );
+            if id == member {
+                let expected = model_member(SEED, index as u64, total, plant);
+                assert_ne!(
+                    expected.playout, control.playout,
+                    "the plant must change something the model can see"
+                );
+                assert_eq!(stats.playout, expected.playout, "planted {id}");
+                assert_eq!(
+                    (stats.authentic_blocks, stats.concealed_blocks),
+                    (expected.authentic, expected.concealed),
+                    "planted {id}"
+                );
+            } else {
+                assert_eq!(stats, base, "{id} is untouched by a plant on {member}");
+            }
+            assert_eq!(
+                stats.verified_continuous_frames,
+                total * (FRAMES_PER_BLOCK as u64),
+                "{id}"
+            );
+            assert_eq!(stats.rendered_blocks, total, "{id}");
+            assert_eq!(stats.quarantined_dma_slots, 0, "{id}");
+        }
+        let injected: Vec<_> = sink
+            .events()
+            .iter()
+            .filter(|e| e.event_kind == "fault_injected")
+            .collect();
+        assert_eq!(injected.len(), 1, "the plant is on record once");
+        assert_eq!(
+            injected[0].fault.as_deref(),
+            Some(describe_fault(fault).as_str())
+        );
+        (nominal, planted)
+    }
+
+    const FAULT_BLOCKS: u64 = 400;
+
+    #[test]
+    fn a_late_block_in_the_whole_campaign_is_refused_as_late_and_concealed_and_nothing_else_moves()
+    {
+        let (member, index) = ("spk-bedroom-s1", 0);
+        let nominal = model_member(SEED, index, FAULT_BLOCKS, Plant::default());
+        // A block the schedule delivers alone, whose loss the engine would conceal at the first step.
+        let block = (120..300)
+            .find(|&k| {
+                let m = model_member(
+                    SEED,
+                    index,
+                    FAULT_BLOCKS,
+                    Plant {
+                        late: Some(k),
+                        ..Plant::default()
+                    },
+                );
+                m.playout.late == 1
+                    && m.playout.decided_real + 1 == nominal.playout.decided_real
+                    && m.playout.decided_concealed == nominal.playout.decided_concealed + 1
+            })
+            .expect("a block the schedule delivers alone");
+        let plant = Plant {
+            late: Some(block),
+            ..Plant::default()
+        };
+        let fault = OutputFault::LateBlock {
+            member_id: member,
+            block,
+        };
+        let (base, planted) = run_planted(fault, member, plant, FAULT_BLOCKS);
+        let (b, p) = (&base.members[member], &planted.members[member]);
+        // The control has nothing late; the plant makes exactly one block late, plays one block fewer and conceals one more.
+        assert_eq!((b.playout.late, p.playout.late), (0, 1));
+        assert_eq!(p.playout.decided_real + 1, b.playout.decided_real);
+        assert_eq!(p.playout.decided_concealed, b.playout.decided_concealed + 1);
+        assert_eq!(p.authentic_blocks + 1, b.authentic_blocks);
+        assert_eq!(p.concealed_blocks, b.concealed_blocks + 1);
+        assert_eq!(p.playout.admitted + 1, b.playout.admitted);
+    }
+
+    #[test]
+    fn a_reordered_pair_in_the_whole_campaign_changes_the_arrival_order_and_nothing_else() {
+        let (member, index) = ("spk-den-s3", 1);
+        let nominal = model_member(SEED, index, FAULT_BLOCKS, Plant::default());
+        // A pair the schedule delivers in order, so the swap puts the later block first.
+        let block = (120..300)
+            .find(|&k| {
+                let m = model_member(
+                    SEED,
+                    index,
+                    FAULT_BLOCKS,
+                    Plant {
+                        swap: Some(k),
+                        ..Plant::default()
+                    },
+                );
+                m.playout.out_of_order_arrivals > nominal.playout.out_of_order_arrivals
+            })
+            .expect("a pair the schedule delivers in order");
+        let plant = Plant {
+            swap: Some(block),
+            ..Plant::default()
+        };
+        let fault = OutputFault::ReorderedPair {
+            member_id: member,
+            block,
+        };
+        let (base, planted) = run_planted(fault, member, plant, FAULT_BLOCKS);
+        let (b, p) = (&base.members[member], &planted.members[member]);
+        assert!(p.playout.out_of_order_arrivals > b.playout.out_of_order_arrivals);
+        // Every block still plays its own bytes (the engine's bytes oracle ran in the campaign), and the decision counts and
+        // the legacy counters are the control's.
+        assert_eq!(
+            PlayoutMemberReport {
+                out_of_order_arrivals: p.playout.out_of_order_arrivals,
+                ..b.playout.clone()
+            },
+            p.playout
+        );
+        assert_eq!(
+            (p.authentic_blocks, p.concealed_blocks),
+            (b.authentic_blocks, b.concealed_blocks)
+        );
+    }
+
+    #[test]
+    fn a_previous_epoch_datagram_in_the_whole_campaign_is_refused_twice_and_nothing_else_moves() {
+        let (member, index) = ("spk-kitchen-s12", 2);
+        let link = schedule_link(SEED, index, FAULT_BLOCKS);
+        let block = (120..300)
+            .find(|&k| link[k as usize].is_some())
+            .expect("a delivered block");
+        let plant = Plant {
+            stale: Some(block),
+            ..Plant::default()
+        };
+        let fault = OutputFault::StaleEpochPacket {
+            member_id: member,
+            block,
+        };
+        let (base, planted) = run_planted(fault, member, plant, FAULT_BLOCKS);
+        let (b, p) = (&base.members[member], &planted.members[member]);
+        // The control saw no stale datagram. The plant is refused by the member's own receiver (N01's epoch check, with the
+        // member's key) and, handed on as an old receiver would have authenticated it, by the engine as the wrong epoch;
+        // the bytes it carried never sounded, and no other counter moved.
+        assert_eq!(
+            (b.playout.wrong_epoch, b.playout.stale_refused_at_receiver),
+            (0, 0)
+        );
+        assert_eq!(
+            (p.playout.wrong_epoch, p.playout.stale_refused_at_receiver),
+            (1, 1)
+        );
+        assert_eq!(
+            PlayoutMemberReport {
+                packets_offered: b.playout.packets_offered + 1,
+                wrong_epoch: 1,
+                stale_refused_at_receiver: 1,
+                ..b.playout.clone()
+            },
+            p.playout
+        );
+        assert_eq!(
+            (p.authentic_blocks, p.concealed_blocks),
+            (b.authentic_blocks, b.concealed_blocks)
+        );
+    }
+
+    #[test]
+    fn a_clock_leap_in_the_whole_campaign_blinds_the_engine_until_the_relock_and_it_catches_up_as_overdue()
+     {
+        let member = "spk-office-s5";
+        // The node-level tests pin this timeline for a 30 s leap forward at block 40: muted from 40, relocked and sounding
+        // from 192.
+        assert_eq!(leap_outage(40), (40, 192));
+        let (from, until) = (40, 192);
+        let plant = Plant {
+            leap: Some(from),
+            ..Plant::default()
+        };
+        let fault = OutputFault::ClockLeap {
+            member_id: member,
+            block: from,
+            delta_ns: 30_000_000_000,
+        };
+        let (base, planted) = run_planted(fault, member, plant, FAULT_BLOCKS);
+        let (b, p) = (&base.members[member], &planted.members[member]);
+        let outage = until - from;
+        // The control decided every position at once. With the leap, the positions in the outage had no decision, the engine
+        // decided each of them as overdue after the relock, and the monotone latch never moved on a reading the clock did
+        // not stand behind.
+        assert_eq!(
+            (
+                b.playout.blocks_without_a_decision,
+                b.playout.catch_up_decisions
+            ),
+            (0, 0)
+        );
+        assert_eq!(
+            (
+                p.playout.blocks_without_a_decision,
+                p.playout.catch_up_decisions,
+                p.playout.decided_muted_overdue,
+                p.playout.clamped_readings
+            ),
+            (outage, outage, outage, 0)
+        );
+        // The packets that arrived while the clock could not be used were refused for that, and are gone.
+        assert!(p.playout.clock_refused > 0);
+        // The node's own gate muted the same positions: the one fault reached both consumers of the clock.
+        assert_eq!(planted.skew_unmeasured_blocks, outage);
+        assert!(base.within_2ms_skew_target && !planted.within_2ms_skew_target);
+        assert_eq!(p.muted_blocks, b.muted_blocks + outage);
+        assert_eq!(p.audible_blocks + outage, b.audible_blocks);
     }
 
     #[test]

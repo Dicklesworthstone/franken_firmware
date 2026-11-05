@@ -549,11 +549,21 @@ fn a_local_mute_survives_cloud_retries_and_a_rejoin_and_unmuting_plays_the_group
         Ok(CommandProgress::Completed { .. })
     ));
 
-    // The room's mute button, a real HAL event, silences it.
+    // The room's mute button, a real HAL event, silences it. The button is released again: the channel reports a press
+    // only on a change of state, so the same button pressed a second time without a release in between would be a
+    // duplicate `Down` and deliver nothing (the unmute press at the end of this test depends on that release).
     assert!(matches!(
         rig.press_into(MUTE, &mut a, &mut m),
         ButtonAction::LocalMute { muted: true, .. }
     ));
+    assert_eq!(
+        rig.release_into(MUTE, &mut a, &mut m),
+        ButtonAction::Ignored(IgnoredButton::Release)
+    );
+    assert!(
+        m.persisted().local_mute,
+        "the release did not undo the press"
+    );
     m.sync(&mut dsp).expect("sync");
     render_silence(&mut dsp, 600);
     assert_eq!(dsp.applied_gain(), 0.0);

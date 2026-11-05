@@ -23,6 +23,10 @@
 //!   sent for that block (an FNV-1a digest taken at send time); a different byte is a campaign error. After the run
 //!   every block must have been decided exactly once ([`NodePlayout::finish`]).
 //!
+//! * **Planted faults.** A [`LinkFault`] acts on the packets of one block position (arrives late, swaps arrival order
+//!   with its neighbour, or is joined by a previous-epoch datagram), and the harness can leap a node's own clock; the
+//!   engine, the sender, the schedule and the receiver are still the real ones.
+//!
 //! What this is not: a model of N04 (the engine is the real one), evidence of any device, provider or audio output, or a
 //! check of concealment quality. The render costs below are illustrative simulation values (the same ones N04's vectors
 //! use), not board numbers.
@@ -35,7 +39,9 @@ use franken_stream::playout::{
     BLOCK_PAYLOAD_BYTES, ClockView, Decision, MediaPacket, Outcome, PlayoutConfig, PlayoutEngine,
     PlayoutProfile, Poll,
 };
-use franken_stream::{AuthenticatedStreamPacket, OutboundFrame, StreamReceiver, StreamSender};
+use franken_stream::{
+    AuthenticatedStreamPacket, OutboundFrame, StreamError, StreamReceiver, StreamSender,
+};
 use franken_test_support::NetworkSchedule;
 use serde::{Deserialize, Serialize};
 
@@ -47,6 +53,11 @@ pub(crate) const RENDER_WORK_NS: u64 = 1_500_000;
 pub(crate) const RENDER_LEAD_NS: u64 = 2_000_000;
 /// How far a packet's own presentation time may differ from the engine's timeline (N04 requires less than half a block).
 pub(crate) const TIMELINE_TOLERANCE_NS: u64 = 100_000;
+/// How long before its presentation the block of [`LinkFault::Late`] arrives: after the engine decided it (`work + lead` =
+/// 3.5 ms before), so it cannot be played, and yet before the block would have sounded, so it is not merely lost.
+pub(crate) const LATE_BEFORE_PRESENTATION_NS: u64 = 500_000;
+/// How long before the block's own packet the previous-epoch datagram of [`LinkFault::StaleEpoch`] arrives.
+pub(crate) const STALE_LEAD_NS: u64 = 1_000_000;
 
 /// The campaign's clocks. In the Virtual House the group clock is true time; `origin_ns` is the true time at which block
 /// 0 is sent, `offset_ns(k)` the exact offset of block `k`'s send from it, and a block is presented `horizon_ns` after it
@@ -113,14 +124,17 @@ impl MonotoneReading {
             ClockStatus::Locked | ClockStatus::Holdover
         );
         match (clock.group_ns(local), clock.report(local).uncertainty_ns) {
-            (Some(group), Some(uncertainty_ns)) => ClockView {
+            // Only a reading the clock stands behind moves the latch. An expired or unlocked clock still extrapolates its
+            // old fit to whatever local time it is asked about, so after a leap of the node's own clock that reading is
+            // far ahead of the group's; latching it would hold every view after the relock in the future.
+            (Some(group), Some(uncertainty_ns)) if usable => ClockView {
                 group_ns: self.stamp(group),
                 uncertainty_ns,
                 usable,
             },
-            _ => ClockView {
+            (_, uncertainty_ns) => ClockView {
                 group_ns: self.last_group_ns,
-                uncertainty_ns: 0,
+                uncertainty_ns: uncertainty_ns.unwrap_or(0),
                 usable: false,
             },
         }
@@ -189,6 +203,33 @@ pub struct PlayoutMemberReport {
     pub blocks_without_a_decision: u64,
     /// Times the node's clock reading had to be raised to keep the engine's views from going backwards.
     pub clamped_readings: u64,
+    /// Packets handed to the engine whose block was lower than one already handed to it. Jitter makes some; so does a
+    /// late packet, and a duplicate of an earlier block counts like any other.
+    pub out_of_order_arrivals: u64,
+    /// Planted previous-epoch datagrams that the member's own receiver refused as stale (N01's check, the first line; the
+    /// engine's `wrong_epoch` is the second).
+    pub stale_refused_at_receiver: u64,
+}
+
+/// A defect planted in the link between one member's sender and its engine. It acts on the packets of one block position;
+/// the sender, the seeded schedule and the member's receiver are called exactly as they are without it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LinkFault {
+    /// The block's packet arrives [`LATE_BEFORE_PRESENTATION_NS`] before the block is presented: after the engine has
+    /// decided the block, and before the block would have sounded.
+    Late { block: u64 },
+    /// The packets of `block` and `block + 1` swap arrival instants.
+    SwapArrivals { block: u64 },
+    /// A datagram of the previous epoch, keyed with the member's own media key and carrying other audio, arrives
+    /// [`STALE_LEAD_NS`] before the block's own packet.
+    StaleEpoch { block: u64 },
+}
+
+/// A sender and a receiver one epoch before the member's stream, keyed with the member's own media key: what a datagram of
+/// the previous epoch looks like on the wire, and once an old receiver has authenticated it.
+pub(crate) struct PreviousEpoch {
+    pub sender: StreamSender,
+    pub receiver: StreamReceiver,
 }
 
 /// The sender's end for one member, as the render loop holds it.
@@ -197,6 +238,18 @@ pub(crate) struct SendLink<'a> {
     pub sender: &'a mut StreamSender,
     pub receiver: &'a mut StreamReceiver,
     pub schedule: &'a mut NetworkSchedule,
+    /// The defect planted on this member's link, if any.
+    pub fault: Option<LinkFault>,
+    /// The previous-epoch endpoints a [`LinkFault::StaleEpoch`] needs.
+    pub previous: Option<&'a mut PreviousEpoch>,
+}
+
+/// One block as the link carries it: when the seeded schedule delivers it (and its duplicate), and the packet the member's
+/// receiver authenticated.
+struct Sent {
+    deliver_rel_ns: u64,
+    duplicate_rel_ns: Option<u64>,
+    packet: AuthenticatedStreamPacket,
 }
 
 /// One member's playout: the real engine, the packets in flight to it, and the sender's progress.
@@ -212,6 +265,10 @@ pub(crate) struct NodePlayout {
     sent_digest: BTreeMap<u64, u64>,
     blocks_without_a_decision: u64,
     catch_up_decisions: u64,
+    /// The highest block handed to the engine so far, and how many packets came after a higher one.
+    highest_delivered: Option<u64>,
+    out_of_order: u64,
+    stale_refused_at_receiver: u64,
 }
 
 impl NodePlayout {
@@ -225,6 +282,9 @@ impl NodePlayout {
             sent_digest: BTreeMap::new(),
             blocks_without_a_decision: 0,
             catch_up_decisions: 0,
+            highest_delivered: None,
+            out_of_order: 0,
+            stale_refused_at_receiver: 0,
         }
     }
 
@@ -279,31 +339,131 @@ impl NodePlayout {
         while self.next_send < total_blocks && tl.send_true_ns(self.next_send) <= until_true_ns {
             let blk = self.next_send;
             self.next_send += 1;
-            let frame = frame_for(blk);
-            let payload_digest = digest(&frame.payload);
-            let wire = link.sender.send(frame).map_err(|e| {
-                format!(
-                    "member {}: block {blk} could not be encoded: {e}",
-                    link.member_id
-                )
-            })?;
-            let decision = link.schedule.evaluate_packet(blk, tl.send_rel_ns(blk));
-            if !decision.dropped
-                && let Some(deliver_rel_ns) = decision.deliver_time_ns
+            let mut first = self.send_block(blk, link, tl, frame_for)?;
+            // A planted swap needs both packets' arrival instants, so the pair is sent together, still in block order.
+            let mut second = None;
+            if link.fault == Some(LinkFault::SwapArrivals { block: blk })
+                && self.next_send < total_blocks
             {
-                let verified = link.receiver.accept(&wire).map_err(|e| {
-                    format!(
-                        "member {}: block {blk} refused by the receiver: {e}",
-                        link.member_id
-                    )
-                })?;
-                self.sent_digest.insert(blk, payload_digest);
-                if let Some(dup_rel_ns) = decision.duplicate_deliver_time_ns {
-                    self.stage(tl.origin_ns + dup_rel_ns, 1, verified.clone());
+                let next = self.next_send;
+                self.next_send += 1;
+                second = self.send_block(next, link, tl, frame_for)?;
+                if let (Some(a), Some(b)) = (first.as_mut(), second.as_mut()) {
+                    std::mem::swap(&mut a.deliver_rel_ns, &mut b.deliver_rel_ns);
                 }
-                self.stage(tl.origin_ns + deliver_rel_ns, 0, verified);
+            }
+            if link.fault == Some(LinkFault::Late { block: blk })
+                && let Some(sent) = first.as_mut()
+            {
+                sent.deliver_rel_ns = (tl.send_rel_ns(blk) + tl.horizon_ns)
+                    .saturating_sub(LATE_BEFORE_PRESENTATION_NS);
+            }
+            let genuine_rel_ns = first.as_ref().map(|sent| sent.deliver_rel_ns);
+            for sent in first.into_iter().chain(second) {
+                self.stage_sent(sent, tl);
+            }
+            if link.fault == Some(LinkFault::StaleEpoch { block: blk }) {
+                self.plant_stale(blk, genuine_rel_ns, link, tl, frame_for)?;
             }
         }
+        Ok(())
+    }
+
+    /// Send one block: the member's N01 sender, the seeded schedule (asked once, for this block) and, if the schedule
+    /// delivers it, the member's receiver. `None` when the schedule drops the block.
+    fn send_block(
+        &mut self,
+        blk: u64,
+        link: &mut SendLink<'_>,
+        tl: &CampaignTimeline,
+        frame_for: &dyn Fn(u64) -> OutboundFrame,
+    ) -> Result<Option<Sent>, String> {
+        let frame = frame_for(blk);
+        let payload_digest = digest(&frame.payload);
+        let wire = link.sender.send(frame).map_err(|e| {
+            format!(
+                "member {}: block {blk} could not be encoded: {e}",
+                link.member_id
+            )
+        })?;
+        let decision = link.schedule.evaluate_packet(blk, tl.send_rel_ns(blk));
+        if decision.dropped {
+            return Ok(None);
+        }
+        let Some(deliver_rel_ns) = decision.deliver_time_ns else {
+            return Ok(None);
+        };
+        let packet = link.receiver.accept(&wire).map_err(|e| {
+            format!(
+                "member {}: block {blk} refused by the receiver: {e}",
+                link.member_id
+            )
+        })?;
+        self.sent_digest.insert(blk, payload_digest);
+        Ok(Some(Sent {
+            deliver_rel_ns,
+            duplicate_rel_ns: decision.duplicate_deliver_time_ns,
+            packet,
+        }))
+    }
+
+    /// Stage a sent block's duplicate (copy 1, if the schedule made one) and the block itself (copy 0).
+    fn stage_sent(&mut self, sent: Sent, tl: &CampaignTimeline) {
+        if let Some(duplicate_rel_ns) = sent.duplicate_rel_ns {
+            self.stage(tl.origin_ns + duplicate_rel_ns, 1, sent.packet.clone());
+        }
+        self.stage(tl.origin_ns + sent.deliver_rel_ns, 0, sent.packet);
+    }
+
+    /// Plant a datagram of the previous epoch for `blk`, other audio than the block's own, arriving [`STALE_LEAD_NS`]
+    /// before the block's own packet (`genuine_rel_ns`). The member's own receiver must refuse it as stale: it is keyed
+    /// with the member's media key, so only its epoch is wrong. It is then authenticated by the previous epoch's receiver
+    /// and handed to the engine, which must refuse it again: the second line, for a node whose engine moved to a new epoch
+    /// before its receiver did.
+    fn plant_stale(
+        &mut self,
+        blk: u64,
+        genuine_rel_ns: Option<u64>,
+        link: &mut SendLink<'_>,
+        tl: &CampaignTimeline,
+        frame_for: &dyn Fn(u64) -> OutboundFrame,
+    ) -> Result<(), String> {
+        let member = link.member_id;
+        let Some(previous) = link.previous.as_deref_mut() else {
+            return Err(format!(
+                "member {member}: a previous-epoch datagram was planted on a stream with no earlier epoch"
+            ));
+        };
+        let mut frame = frame_for(blk);
+        // Other audio than the block's own: a stale packet that was ever played would fail the bytes check.
+        for byte in &mut frame.payload {
+            *byte = !*byte;
+        }
+        let wire = previous.sender.send(frame).map_err(|e| {
+            format!("member {member}: the previous-epoch datagram for block {blk} could not be encoded: {e}")
+        })?;
+        match link.receiver.accept(&wire) {
+            Err(StreamError::StaleSessionEpoch { .. }) => self.stale_refused_at_receiver += 1,
+            Err(other) => {
+                return Err(format!(
+                    "member {member}: the previous-epoch datagram for block {blk} was refused for another reason: {other}"
+                ));
+            }
+            Ok(_) => {
+                return Err(format!(
+                    "member {member}: the receiver accepted a datagram of the previous epoch for block {blk}"
+                ));
+            }
+        }
+        let packet = previous.receiver.accept(&wire).map_err(|e| {
+            format!("member {member}: the previous epoch's own receiver refused its datagram for block {blk}: {e}")
+        })?;
+        let genuine = genuine_rel_ns.unwrap_or_else(|| tl.send_rel_ns(blk) + STALE_LEAD_NS);
+        self.stage(
+            tl.origin_ns + genuine.saturating_sub(STALE_LEAD_NS),
+            2,
+            packet,
+        );
         Ok(())
     }
 
@@ -325,6 +485,14 @@ impl NodePlayout {
             let Some((_, packet)) = self.in_flight.pop_first() else {
                 break;
             };
+            let block = packet.start_frame / (FRAMES_PER_BLOCK as u64);
+            if self
+                .highest_delivered
+                .is_some_and(|highest| block < highest)
+            {
+                self.out_of_order += 1;
+            }
+            self.highest_delivered = self.highest_delivered.max(Some(block));
             let view = self.mono.view(clock, sim, arrival);
             let media = MediaPacket::from_authenticated(&packet)
                 .ok_or_else(|| "a repair packet reached the playout path".to_string())?;
@@ -438,6 +606,8 @@ impl NodePlayout {
             catch_up_decisions: self.catch_up_decisions,
             blocks_without_a_decision: self.blocks_without_a_decision,
             clamped_readings: self.mono.clamped,
+            out_of_order_arrivals: self.out_of_order,
+            stale_refused_at_receiver: self.stale_refused_at_receiver,
             ..PlayoutMemberReport::default()
         };
         if let Some(engine) = self.engine.as_ref() {
@@ -1030,6 +1200,8 @@ mod tests {
             sender: &mut wire.sender,
             receiver: &mut wire.receiver,
             schedule: &mut schedule,
+            fault: None,
+            previous: None,
         };
         // Everything sent by the first decision instant: 94 blocks (0..=93).
         play.send_until(&mut link, tl.decision_true_ns(0), 1_000, &tl, &frame_for)
@@ -1066,5 +1238,233 @@ mod tests {
         play.send_until(&mut link, u64::MAX, 100, &tl, &frame_for)
             .expect("sends");
         assert_eq!(play.next_send, 100);
+    }
+
+    /// The previous-epoch endpoints for the unit tests' stream: the same key and stream id, one epoch earlier (epoch 0).
+    fn previous_epoch() -> PreviousEpoch {
+        let id = StreamId::new(0x5EED_5EED_0000_0001).expect("stream id");
+        PreviousEpoch {
+            sender: StreamSender::new(StreamKey::from_bytes([0x42; 32]), id, 0),
+            receiver: StreamReceiver::new(StreamKey::from_bytes([0x42; 32]), id, 0),
+        }
+    }
+
+    /// A member whose whole run goes through `send_until` over a link with no loss, no duplicates and no jitter, so a packet
+    /// arrives at the instant it is sent and the plant is the only thing that is not in block order.
+    struct Pumped {
+        play: NodePlayout,
+        clock: GroupClock,
+        sim: SimNodeClock,
+        tl: CampaignTimeline,
+        wire: Wire,
+        total: u64,
+    }
+
+    impl Pumped {
+        fn new(fault: Option<LinkFault>, total: u64) -> Self {
+            let (sim, tl) = (sim(), timeline());
+            let mut wire = Wire::new(1);
+            let mut previous = previous_epoch();
+            let mut schedule = NetworkSchedule::new(NetworkScheduleConfig {
+                seed: 7,
+                independent_loss_bps: 0,
+                burst_loss_interval_ns: 0,
+                max_jitter_ns: 0,
+                duplicate_bps: 0,
+                ..NetworkScheduleConfig::default()
+            });
+            let mut play = NodePlayout::bind(1, tl.pts_group_ns(0)).expect("binds");
+            let frame_for = |blk: u64| Wire::frame(&timeline(), blk, source_bytes(blk));
+            play.send_until(
+                &mut SendLink {
+                    member_id: "spk-test",
+                    sender: &mut wire.sender,
+                    receiver: &mut wire.receiver,
+                    schedule: &mut schedule,
+                    fault,
+                    previous: Some(&mut previous),
+                },
+                u64::MAX,
+                total,
+                &tl,
+                &frame_for,
+            )
+            .expect("sends");
+            Self {
+                play,
+                clock: locked_clock(&sim),
+                sim,
+                tl,
+                wire,
+                total,
+            }
+        }
+
+        fn decide_all(&mut self) -> Vec<(Played, Vec<u8>)> {
+            (0..self.total)
+                .map(|blk| {
+                    self.play
+                        .decide_with_bytes(blk, &self.tl, &self.clock, &self.sim)
+                        .expect("decides")
+                })
+                .collect()
+        }
+    }
+
+    /// Every block except `except` was played as real, with exactly the bytes the sender sent for it.
+    fn assert_plays_own_bytes(played: &[(Played, Vec<u8>)], except: &[u64]) {
+        for (blk, (what, bytes)) in played.iter().enumerate() {
+            let blk = blk as u64;
+            if except.contains(&blk) {
+                continue;
+            }
+            assert!(matches!(what, Played::Authentic(_)), "block {blk}");
+            assert_eq!(*bytes, source_bytes(blk), "block {blk}");
+        }
+    }
+
+    #[test]
+    fn a_planted_late_packet_is_late_its_block_is_concealed_and_the_control_without_the_plant_is_clean()
+     {
+        // Control: remove the plant and every block is real, nothing is late, nothing arrives out of order.
+        let mut control = Pumped::new(None, 60);
+        let played = control.decide_all();
+        assert_plays_own_bytes(&played, &[]);
+        let r = control.play.report();
+        assert_eq!(
+            (
+                r.late,
+                r.admitted,
+                r.decided_real,
+                r.decided_concealed,
+                r.out_of_order_arrivals
+            ),
+            (0, 60, 60, 0, 0)
+        );
+        control.play.finish(60).expect("every block decided once");
+
+        // Planted: block 20's packet arrives 0.5 ms before its presentation, 3 ms after the engine decided it.
+        let mut planted = Pumped::new(Some(LinkFault::Late { block: 20 }), 60);
+        let played = planted.decide_all();
+        assert_plays_own_bytes(&played, &[20]);
+        assert!(matches!(played[20].0, Played::Concealed(_)));
+        assert_eq!(played[20].1, concealed_expected(&source_bytes(19), 1));
+        let r = planted.play.report();
+        assert_eq!(
+            (
+                r.late,
+                r.admitted,
+                r.decided_real,
+                r.decided_concealed,
+                r.out_of_order_arrivals
+            ),
+            (1, 59, 59, 1, 1)
+        );
+        planted.play.finish(60).expect("every block decided once");
+    }
+
+    #[test]
+    fn a_planted_swap_reverses_one_pair_of_arrivals_and_every_block_still_plays_its_own_bytes() {
+        let mut control = Pumped::new(None, 60);
+        let mut planted = Pumped::new(Some(LinkFault::SwapArrivals { block: 20 }), 60);
+        // What was staged: with no jitter a packet arrives when it is sent, so the pair's instants are exactly swapped and
+        // every other packet is where it was.
+        let key = |blk: u64, other: u64| (ORIGIN + offset(other), blk, 0_u8);
+        assert!(planted.play.in_flight.contains_key(&key(20, 21)));
+        assert!(planted.play.in_flight.contains_key(&key(21, 20)));
+        assert!(!planted.play.in_flight.contains_key(&key(20, 20)));
+        assert!(!planted.play.in_flight.contains_key(&key(21, 21)));
+        assert_eq!(planted.play.in_flight.len(), control.play.in_flight.len());
+        for blk in (0..60).filter(|blk| *blk != 20 && *blk != 21) {
+            assert!(planted.play.in_flight.contains_key(&key(blk, blk)));
+        }
+        // The engine takes block 21 before block 20, and both still play their own bytes, in block order.
+        assert_plays_own_bytes(&control.decide_all(), &[]);
+        assert_plays_own_bytes(&planted.decide_all(), &[]);
+        let (c, p) = (control.play.report(), planted.play.report());
+        assert_eq!((c.out_of_order_arrivals, p.out_of_order_arrivals), (0, 1));
+        assert_eq!(
+            PlayoutMemberReport {
+                out_of_order_arrivals: 1,
+                ..c
+            },
+            p,
+            "the swap changed the arrival order and nothing else"
+        );
+    }
+
+    #[test]
+    fn a_planted_previous_epoch_datagram_is_refused_by_the_receiver_and_by_the_engine_and_changes_nothing_else()
+     {
+        let mut control = Pumped::new(None, 60);
+        assert_plays_own_bytes(&control.decide_all(), &[]);
+        let c = control.play.report();
+        assert_eq!(
+            (
+                c.wrong_epoch,
+                c.stale_refused_at_receiver,
+                c.packets_offered
+            ),
+            (0, 0, 60)
+        );
+
+        let mut planted = Pumped::new(Some(LinkFault::StaleEpoch { block: 20 }), 60);
+        // The planted packet: epoch 0, block 20's position, other audio, 1 ms ahead of the block's own packet.
+        let staged = planted
+            .play
+            .in_flight
+            .get(&(ORIGIN + offset(20) - STALE_LEAD_NS, 20, 2))
+            .expect("the stale packet is staged");
+        assert_eq!(staged.session_epoch, 0);
+        assert_eq!(staged.start_frame, 20 * (FRAMES_PER_BLOCK as u64));
+        assert_ne!(staged.payload, source_bytes(20));
+        // The member's receiver refused it at N01 (its replay window is untouched: the 60 real packets were accepted).
+        let counters = planted.wire.receiver.counters();
+        assert_eq!((counters.rejected_stale_epoch, counters.accepted), (1, 60));
+
+        let played = planted.decide_all();
+        assert_plays_own_bytes(&played, &[]);
+        let p = planted.play.report();
+        assert_eq!(
+            PlayoutMemberReport {
+                packets_offered: 61,
+                wrong_epoch: 1,
+                stale_refused_at_receiver: 1,
+                ..c
+            },
+            p,
+            "the engine refused the stale packet as the wrong epoch, and nothing else moved"
+        );
+        planted.play.finish(60).expect("every block decided once");
+    }
+
+    #[test]
+    fn a_leaped_node_clock_does_not_latch_a_reading_the_clock_does_not_stand_behind() {
+        let sim = sim();
+        let clock = locked_clock(&sim);
+        let mut latch = MonotoneReading::default();
+        let t0 = 700_000_000;
+        let before = latch.view(&clock, &sim, t0);
+        assert!(before.usable);
+        // The node's clock reads 10 000 s more from here on. Its fit is hopelessly stale, but it still extrapolates it, so
+        // `group_ns` answers with a time far in the future.
+        let leaped = SimNodeClock {
+            local0_ns: sim.local0_ns + 10_000_000_000_000,
+            ..sim
+        };
+        let extrapolated = clock.group_ns(leaped.local(t0 + 5_000_000));
+        assert!(extrapolated.is_some_and(|g| g > before.group_ns + 9_000_000_000_000));
+        let stale = latch.view(&clock, &leaped, t0 + 5_000_000);
+        assert!(!stale.usable);
+        assert_eq!(
+            stale.group_ns, before.group_ns,
+            "an unusable reading does not move the latch"
+        );
+        // The clock is whole again: the next view is the clock's own reading, and nothing was clamped.
+        let t1 = t0 + 10_000_000;
+        let after = latch.view(&clock, &sim, t1);
+        assert!(after.usable);
+        assert_eq!(Some(after.group_ns), clock.group_ns(sim.local(t1)));
+        assert_eq!(latch.clamped, 0);
     }
 }

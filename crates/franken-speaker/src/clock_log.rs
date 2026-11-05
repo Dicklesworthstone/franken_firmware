@@ -16,6 +16,11 @@
 //! * **Criticality is kept.** A clock event marked critical goes in with `emit_critical` (it evicts an ordinary event
 //!   rather than be lost, and is counted lost only if the sink holds nothing but critical ones); the rest go in with
 //!   `try_emit`.
+//! * **Labels are the owner's, and can be pseudonyms.** The lines carry the member and group labels the owner gives
+//!   (`LogContext`), and the clock builds `correlation_id` from the member label. A keyed sink rewrites only `member_id` and
+//!   `group_id`, so handing it raw labels leaves the raw member label in every `correlation_id`. [`ClockLog::new_with_key`]
+//!   therefore derives the labels first, through the shared sink's own keyed path, and keeps its own sink unkeyed (keying
+//!   it as well would hash a pseudonym a second time and the log could no longer be joined to any other).
 //! * **The counts are exposed.** [`ClockLogSummary`] carries the sink's emitted, stored, dropped and critical-lost counts,
 //!   the events the clock's own buffer dropped before the drain saw them, and events too long to write as a line.
 
@@ -27,6 +32,10 @@ use serde::{Deserialize, Serialize};
 /// ordinary events per second of the clock's own time.
 const CLOCK_LOG_MAX_EVENTS: usize = 256;
 const CLOCK_LOG_MAX_BYTES: usize = 128 * 1024;
+/// The group label a member's clock log carries (the harness has one group).
+const CLOCK_LOG_GROUP: &str = "grp-virtual-house";
+/// Room for the one probe event that [`log_labels`] hands a keyed sink.
+const PROBE_MAX_BYTES: usize = 4096;
 
 /// What one call of [`drain_clock_events`] did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -69,6 +78,42 @@ pub(crate) fn drain_clock_events(
     report
 }
 
+/// The member and group labels a clock log writes. Without a key they are `member_id` and `group_id` as given. With one
+/// they are the keyed pseudonyms (`p-` and sixteen hex characters) that the shared diagnostics sink gives those ids, read
+/// back from a one-event sink built with `with_pseudonym_key`, so the derivation is the sink's own and is not repeated here.
+/// A campaign sink with the same key therefore labels the same member identically, and the logs can be joined.
+fn log_labels(
+    member_id: &str,
+    group_id: &str,
+    key: Option<[u8; 32]>,
+) -> Result<(String, String), String> {
+    let Some(key) = key else {
+        return Ok((member_id.to_string(), group_id.to_string()));
+    };
+    let mut probe = BoundedDiagnosticSink::new(1, PROBE_MAX_BYTES).with_pseudonym_key(key);
+    let stored = probe.try_emit(DiagnosticEvent {
+        schema_version: String::new(),
+        timestamp_mono_ns: 0,
+        run_id: "probe".to_string(),
+        case_id: "probe".to_string(),
+        correlation_id: "probe".to_string(),
+        member_id: member_id.to_string(),
+        group_id: group_id.to_string(),
+        source_epoch: 0,
+        state_revision: 0,
+        event_kind: "probe".to_string(),
+        message: "pseudonym probe".to_string(),
+        queue_depth: 0,
+        latency_us: 0,
+        fault: None,
+        cause: None,
+    });
+    match probe.events().first() {
+        Some(event) if stored => Ok((event.member_id.clone(), event.group_id.clone())),
+        _ => Err("the pseudonym probe was not stored".to_string()),
+    }
+}
+
 /// The counts a member's clock log ends a run with.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ClockLogSummary {
@@ -98,14 +143,16 @@ pub(crate) struct ClockLog {
 
 impl ClockLog {
     pub(crate) fn new(member_id: &str) -> Result<Self, String> {
-        let ctx = LogContext::new(
-            "vh-clock",
-            "n03-clock",
-            member_id,
-            "grp-virtual-house",
-            None,
-        )
-        .map_err(|e| format!("clock log labels for member {member_id}: {e:?}"))?;
+        Self::new_with_key(member_id, None)
+    }
+
+    /// As [`Self::new`], pseudonymous when `key` is given: the member and group labels, and so the `correlation_id`
+    /// built from the member label, are the keyed pseudonyms, and no raw label reaches a stored field. The key is a
+    /// parameter; where a real one comes from is the platform's entropy capability (P02), and the harness has none.
+    pub(crate) fn new_with_key(member_id: &str, key: Option<[u8; 32]>) -> Result<Self, String> {
+        let (member, group) = log_labels(member_id, CLOCK_LOG_GROUP, key)?;
+        let ctx = LogContext::new("vh-clock", "n03-clock", &member, &group, None)
+            .map_err(|e| format!("clock log labels for member {member_id}: {e:?}"))?;
         Ok(Self {
             ctx,
             sink: BoundedDiagnosticSink::new(CLOCK_LOG_MAX_EVENTS, CLOCK_LOG_MAX_BYTES),
@@ -153,6 +200,7 @@ mod tests {
     use franken_clock::group::{
         Accepted, ClockStatus, GroupClockConfig, Output, ProbeReject, ProbeResponse, StartSchedule,
     };
+    use franken_control::channel::diag::{ChannelLog, LogConfig, LogKey};
 
     /// A group clock this many nanoseconds ahead of the local one.
     const GOFF: u64 = 8_995_000_000_000;
@@ -555,23 +603,233 @@ mod tests {
         assert!(judge_drain(real_drain).is_ok());
     }
 
-    #[test]
-    fn the_sink_pseudonymises_the_labels_the_drain_hands_it() {
-        let ctx = log_ctx();
+    /// The pseudonym key of the tests below, and the pseudonyms it gives, computed with Python's `hashlib` and not with
+    /// this code: `sha256(b"ffw.pseudonym.v1" + key + len(id) as big-endian u64 + id)`, first 8 bytes, prefixed `p-`.
+    const KEY: [u8; 32] = [7; 32];
+    const KEY_OTHER: [u8; 32] = [8; 32];
+    const OFFICE: &str = "spk-office-s5";
+    const DEN: &str = "spk-den-s3";
+
+    /// Drain every step of the relock script into `log`'s sink, as a node's gate does.
+    fn drained(mut log: ClockLog) -> ClockLog {
         let mut gc = new_clock();
-        let mut sink = BoundedDiagnosticSink::new(512, 256 * 1024).with_pseudonym_key([7; 32]);
         relock_script(&mut gc, |gc| {
-            drain_clock_events(gc, &ctx, &mut sink);
+            log.drain(gc);
         });
+        log
+    }
+
+    /// Every place a raw label appears in what a sink holds: the field it is in, for each stored event, and `to_jsonl`
+    /// for the serialised log. It looks at every field of the serialised event, so a field added later is covered too.
+    fn leaks_of(sink: &BoundedDiagnosticSink, raws: &[&str]) -> Vec<(String, String)> {
+        let mut found = Vec::new();
+        for event in sink.events() {
+            let value = serde_json::to_value(event).expect("an event serialises");
+            for (field, v) in value.as_object().expect("an event is an object") {
+                let text = v.to_string();
+                for raw in raws {
+                    if text.contains(raw) {
+                        found.push((field.clone(), (*raw).to_string()));
+                    }
+                }
+            }
+        }
+        let jsonl = sink.to_jsonl();
+        for raw in raws {
+            if jsonl.contains(raw) {
+                found.push(("to_jsonl".to_string(), (*raw).to_string()));
+            }
+        }
+        found.sort();
+        found.dedup();
+        found
+    }
+
+    #[test]
+    fn the_leak_scan_names_every_field_a_raw_label_is_in() {
+        // The scan itself is judged first: a label planted in each field in turn is found, by that field's name.
+        let blank = || DiagnosticEvent {
+            schema_version: String::new(),
+            timestamp_mono_ns: 1,
+            run_id: "run-1".into(),
+            case_id: "case-1".into(),
+            correlation_id: "corr-1".into(),
+            member_id: "member-1".into(),
+            group_id: "group-1".into(),
+            source_epoch: 1,
+            state_revision: 1,
+            event_kind: "kind-1".into(),
+            message: "message-1".into(),
+            queue_depth: 0,
+            latency_us: 0,
+            fault: None,
+            cause: None,
+        };
+        let plant = |put: &dyn Fn(&mut DiagnosticEvent)| {
+            let mut sink = BoundedDiagnosticSink::new(4, 4096);
+            let mut event = blank();
+            put(&mut event);
+            assert!(sink.try_emit(event));
+            leaks_of(&sink, &["raw-id"])
+        };
+        let named = |field: &str| {
+            vec![
+                (field.to_string(), "raw-id".to_string()),
+                ("to_jsonl".to_string(), "raw-id".to_string()),
+            ]
+        };
+        assert_eq!(plant(&|e| e.run_id = "x-raw-id".into()), named("run_id"));
+        assert_eq!(plant(&|e| e.case_id = "x-raw-id".into()), named("case_id"));
+        assert_eq!(
+            plant(&|e| e.correlation_id = "x-raw-id#4".into()),
+            named("correlation_id")
+        );
+        assert_eq!(
+            plant(&|e| e.member_id = "raw-id".into()),
+            named("member_id")
+        );
+        assert_eq!(plant(&|e| e.group_id = "raw-id".into()), named("group_id"));
+        assert_eq!(
+            plant(&|e| e.event_kind = "raw-id".into()),
+            named("event_kind")
+        );
+        assert_eq!(
+            plant(&|e| e.message = "for raw-id".into()),
+            named("message")
+        );
+        assert_eq!(plant(&|e| e.fault = Some("raw-id".into())), named("fault"));
+        assert_eq!(plant(&|e| e.cause = Some("raw-id".into())), named("cause"));
+        // and the control: an event with none of it is clean
+        assert_eq!(plant(&|_| {}), Vec::<(String, String)>::new());
+    }
+
+    #[test]
+    fn a_keyed_sink_alone_leaves_the_raw_member_label_in_the_correlation_id() {
+        // PLANT: the owner keys the sink but hands the drain raw labels. The sink rewrites `member_id` and `group_id`
+        // and nothing else, and `correlation_id` is `member#revision`.
+        let keyed = BoundedDiagnosticSink::new(512, 256 * 1024).with_pseudonym_key(KEY);
+        let log = drained(ClockLog::new("spk-test").expect("labels").with_sink(keyed));
+        let sink = log.sink();
         assert_eq!(sink.events().len(), 16);
         for event in sink.events() {
             assert!(event.member_id.starts_with("p-") && event.member_id != "spk-test");
-            assert!(event.group_id.starts_with("p-") && event.group_id != "grp-test");
+            assert!(event.group_id.starts_with("p-") && event.group_id != CLOCK_LOG_GROUP);
             assert_eq!(
                 event.member_id,
                 sink.events()[0].member_id,
                 "one member, one pseudonym"
             );
+        }
+        assert_eq!(
+            leaks_of(sink, &["spk-test", CLOCK_LOG_GROUP]),
+            vec![
+                ("correlation_id".to_string(), "spk-test".to_string()),
+                ("to_jsonl".to_string(), "spk-test".to_string()),
+            ],
+            "the raw member label is in every correlation_id, and so in the serialised log"
+        );
+    }
+
+    #[test]
+    fn a_pseudonymous_clock_log_carries_no_raw_label_in_any_field_or_in_the_jsonl() {
+        let log = drained(ClockLog::new_with_key("spk-test", Some(KEY)).expect("labels"));
+        let sink = log.sink();
+        // the same events as an unkeyed log, so pseudonymising changed what is written about, not whether it is
+        assert_eq!(pairs(sink), documented_relock_sequence());
+        assert_eq!(
+            leaks_of(sink, &["spk-test", CLOCK_LOG_GROUP]),
+            Vec::<(String, String)>::new()
+        );
+        for event in sink.events() {
+            assert_eq!(event.member_id, "p-c6192b6d33c1d5ad");
+            assert_eq!(event.group_id, "p-eb446a8738577621");
+            assert!(
+                event.correlation_id.starts_with("p-c6192b6d33c1d5ad#"),
+                "{}",
+                event.correlation_id
+            );
+        }
+        // the log's own sink is unkeyed: a second keying would have hashed the pseudonym again
+        let unkeyed = drained(ClockLog::new("spk-test").expect("labels"));
+        assert_eq!(unkeyed.sink().events().len(), sink.events().len());
+        assert_eq!(unkeyed.sink().events()[0].member_id, "spk-test");
+    }
+
+    #[test]
+    fn the_clock_log_pseudonyms_are_stable_keyed_and_the_ones_the_other_logs_give() {
+        let labels = |member: &str, key: [u8; 32]| log_labels(member, CLOCK_LOG_GROUP, Some(key));
+        let pair = |m: &str, g: &str| Ok((m.to_string(), g.to_string()));
+        // the independent vectors
+        assert_eq!(
+            labels(OFFICE, KEY),
+            pair("p-23c474019dcf2b45", "p-eb446a8738577621")
+        );
+        assert_eq!(
+            labels(DEN, KEY),
+            pair("p-62384aea378372b8", "p-eb446a8738577621")
+        );
+        assert_eq!(
+            labels(OFFICE, KEY_OTHER),
+            pair("p-adf579930c67676f", "p-613ef612fefe8ae4")
+        );
+        // stable; different for another member and for another key
+        assert_eq!(labels(OFFICE, KEY), labels(OFFICE, KEY));
+        assert_ne!(labels(OFFICE, KEY), labels(DEN, KEY));
+        assert_ne!(labels(OFFICE, KEY), labels(OFFICE, KEY_OTHER));
+        // without a key the labels are the ones given
+        assert_eq!(
+            log_labels(OFFICE, CLOCK_LOG_GROUP, None),
+            pair(OFFICE, CLOCK_LOG_GROUP)
+        );
+        // the pseudonym a campaign's keyed sink gives the raw id: the logs can be joined
+        let mut campaign = BoundedDiagnosticSink::new(4, 4096).with_pseudonym_key(KEY);
+        assert!(campaign.try_emit(DiagnosticEvent {
+            schema_version: String::new(),
+            timestamp_mono_ns: 1,
+            run_id: "run-1".into(),
+            case_id: "case-1".into(),
+            correlation_id: "corr-1".into(),
+            member_id: OFFICE.into(),
+            group_id: CLOCK_LOG_GROUP.into(),
+            source_epoch: 1,
+            state_revision: 1,
+            event_kind: "kind-1".into(),
+            message: "message-1".into(),
+            queue_depth: 0,
+            latency_us: 0,
+            fault: None,
+            cause: None,
+        }));
+        assert_eq!(
+            labels(OFFICE, KEY),
+            pair(
+                &campaign.events()[0].member_id,
+                &campaign.events()[0].group_id
+            )
+        );
+        // and the third implementation, the control channel's own log
+        let control = ChannelLog::new(
+            LogConfig::new("run-1", "case-1", 4, 4096).expect("config"),
+            LogKey::new(KEY),
+        );
+        assert_eq!(
+            labels(OFFICE, KEY),
+            pair(
+                &control.pseudonym_of(OFFICE),
+                &control.pseudonym_of(CLOCK_LOG_GROUP)
+            )
+        );
+        // every member of the house gets its own valid label, and a clock log can be made from it
+        let mut seen = std::collections::BTreeSet::new();
+        for id in [
+            "spk-office-s5",
+            "spk-bedroom-s1",
+            "spk-kitchen-s12",
+            "spk-den-s3",
+            "spk-living-sub",
+        ] {
+            ClockLog::new_with_key(id, Some(KEY)).unwrap_or_else(|e| panic!("{id}: {e}"));
+            assert!(seen.insert(labels(id, KEY).expect("labels").0), "{id}");
         }
     }
 
