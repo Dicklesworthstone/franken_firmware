@@ -81,6 +81,9 @@ def judge(lines, reasons):
                 problems.append("%s: a PASS with provenance=%s (only kernel is acceptable)" % (name, provenance))
             if status == "NOT_RUN" and provenance not in ("none",):
                 problems.append("%s: NOT_RUN with provenance=%s" % (name, provenance))
+            if status == "REFUSED" and provenance != "kernel":
+                # a capability can only be refused after the layer exists, and a simulated backend is refused at KERNEL before any layer
+                problems.append("%s: a REFUSED capability line must carry provenance=kernel, got provenance=%s" % (name, provenance))
     if backend == "simulated" and outcomes["kernel"][0] != "REFUSED":
         problems.append("a simulated backend must be refused at KERNEL")
     first = next(((n, outcomes[n][1]) for n in CAPABILITIES if outcomes[n][0] == "REFUSED"), None)
@@ -279,6 +282,43 @@ class PlantedFaultTests(unittest.TestCase):
         }
         for name, edit in plants.items():
             self.assertNotEqual(self.plant(edit), [], name)
+
+
+class RefusedLineProvenanceTests(unittest.TestCase):
+    """A REFUSED capability line is always `provenance=kernel`: the layer exists by then (`simulated` is what a test double prints, red anywhere; `none` belongs to
+    NOT_RUN lines only). DarkPeak's judge found this reference judge accepting both on `ENTROPY REFUSED` (their 4852). Each plant has its control: the unplanted line."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.vectors = load_vectors()
+        cls.reasons = cls.vectors["reason_codes"]
+        cls.refused = [(name, index, line) for name, example in cls.vectors["examples"].items() for index, line in enumerate(example["lines"])
+                       if index in (2, 3, 4) and " status=REFUSED " in line]
+
+    def test_the_committed_examples_have_exactly_these_refused_capability_lines(self):
+        self.assertEqual({(name, index) for name, index, _ in self.refused},
+                         {("clock_absent_powerpc", 2), ("mips_entropy_not_seeded", 3), ("wake_not_observed_powerpc", 4)})
+
+    def test_a_refused_capability_line_with_provenance_simulated_or_none_is_red_and_the_unplanted_line_is_green(self):
+        for name, index, line in self.refused:
+            example = self.vectors["examples"][name]
+            self.assertIn("provenance=kernel", line, name)
+            self.assertEqual(judge(example["lines"], self.reasons), [], "%s: the unplanted example must be clean" % name)             # the control
+            for bad in ("simulated", "none"):
+                lines = list(example["lines"])
+                lines[index] = line.replace("provenance=kernel", "provenance=" + bad)
+                self.assertNotEqual(lines[index], line)
+                problems = judge(lines, self.reasons)
+                self.assertTrue(any("a REFUSED capability line must carry provenance=kernel, got provenance=" + bad in p for p in problems), (name, bad, problems))
+                self.assertEqual(len(problems), 1, (name, bad, problems))         # only that fault, not a side effect of the plant
+
+    def test_the_mips_degraded_outcome_is_accepted_only_with_provenance_kernel(self):
+        lines = list(self.vectors["examples"]["mips_entropy_not_seeded"]["lines"])
+        self.assertEqual(judge_for_guest(lines, "mips", self.reasons), [])                   # the permitted positive: degraded, kernel
+        for bad in ("simulated", "none"):
+            planted = list(lines)
+            planted[3] = planted[3].replace("provenance=kernel", "provenance=" + bad)
+            self.assertNotEqual(judge_for_guest(planted, "mips", self.reasons), [], bad)
 
 
 SPEAKER_SRC = os.path.join(ROOT, "crates", "franken-speaker", "src")
