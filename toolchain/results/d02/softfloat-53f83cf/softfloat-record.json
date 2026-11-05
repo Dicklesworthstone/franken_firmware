@@ -1,0 +1,263 @@
+{
+ "artefacts": [
+  {
+   "build_mode": "rlib",
+   "bytes": 421858,
+   "kind": "rlib",
+   "name": "libfranken_dsp-4ba94165e5b2af33.rlib",
+   "sha256": "6814d1db294bafbd302ef57564691e70e7112ae414596c6412e03c61eeef6791"
+  },
+  {
+   "build_mode": "obj",
+   "bytes": 359256,
+   "kind": "obj",
+   "name": "franken_dsp-5b4f199e070ecefc.o",
+   "sha256": "bcde5338557e109ab2f830a6c12a47147083ca043dd65dd59a67775ad4beb939"
+  }
+ ],
+ "build": {
+  "build_script": "toolchain/src/softfloat-build.sh",
+  "build_script_sha256": "49054c206701baa3cffe4df30cac53f66b1bf36fd099e926e9df74a14c8cd6e6",
+  "cargo_config": "profile.release.lto=\"off\" profile.release.strip=\"none\" target.mips-unknown-linux-musl.rustflags=[\"-C\",\"target-feature=+crt-static\",\"-C\",\"link-self-contained=no\",\"-Z\",\"unstable-options\",\"-C\",\"symbol-mangling-version=legacy\"]",
+  "cargo_messages_sha256": {
+   "franken_dsp-5b4f199e070ecefc.o": "46f9b70ce9ba6b6abe92e10396b29b8450fd28e32b87d94bb004c6277d2f58dc",
+   "libfranken_dsp-4ba94165e5b2af33.rlib": "247f1636c3e9c78b3643f57287303e82bae338670c52df0ed1c3d2bb324ab581"
+  },
+  "deviations": [
+   "lto=off. The shipped speaker ELF is built with lto = true (fat LTO) and strip = \"symbols\"; this object was built with profile.release.lto=\"off\" because under lto = true rustc emits LLVM bitcode for the rlib and for --emit=obj, which has no relocations to read. The shipped ELF is fat-LTO'd and may inline differently.",
+   "strip=none (profile.release.strip=\"none\"). It acts only at link, which is not run; no code-generation effect.",
+   "symbol-mangling-version=legacy (-C flag in the rustflags, with -Z unstable-options ahead of it: the flag is UNSTABLE, nightly-only, on this toolchain). It changes symbol NAMES only, so that the checker can demangle them (it does not read v0 names); no code-generation effect."
+  ],
+  "found_by": "cargo --message-format=json (compiler-artifact of franken_dsp), not by a path glob",
+  "modes": [
+   "obj",
+   "rlib"
+  ],
+  "target": "mips-unknown-linux-musl"
+ },
+ "checker": {
+  "exit_codes": {
+   "0": "PASS",
+   "1": "FAIL",
+   "2": "REFUSED",
+   "3": "INTERNAL ERROR"
+  },
+  "script": "toolchain/src/check-softfloat-symbols.py",
+  "sha256": "80b046c39400f1b537d84fd9ee6c3c71e0a6b48665dfd2aa160ec11163510329"
+ },
+ "commands": {
+  "check": "python3 -B -I toolchain/src/check-softfloat-symbols.py --json build/softfloat/<mode>/<artefact>",
+  "obj": "cd <root> && RCH_CANONICAL_PROJECT_ROOT=<root> RCH_REQUIRE_REMOTE=1 rch exec --job --worker <nightly worker> --result-dir build/softfloat/obj -- sh toolchain/src/softfloat-build.sh obj build/softfloat/obj",
+  "rlib": "cd <root> && RCH_CANONICAL_PROJECT_ROOT=<root> RCH_REQUIRE_REMOTE=1 rch exec --job --worker <nightly worker> --result-dir build/softfloat/rlib -- sh toolchain/src/softfloat-build.sh rlib build/softfloat/rlib"
+ },
+ "cross_check": {
+  "byte_equal": true,
+  "meaning": "two separate cargo invocations produced the same machine code for franken-dsp",
+  "rlib_code_member_sha256": "bcde5338557e109ab2f830a6c12a47147083ca043dd65dd59a67775ad4beb939",
+  "separately_built_object_sha256": "bcde5338557e109ab2f830a6c12a47147083ca043dd65dd59a67775ad4beb939"
+ },
+ "limits": [
+  "judges the object it read, not the final LTO'd and linked speaker ELF: the root release profile sets lto = true and strip = \"symbols\", and under lto = true rustc writes LLVM bitcode (refused here), so an object that can be read was built with LTO off; the shipped ELF is fat-LTO'd and may inline differently",
+  "attribution is per surviving function: a function inlined into its caller is judged as part of the caller; an extra widen, multiply, add, subtract or narrow contributed by inlined non-Section code is not visible to the helper-set rule",
+  "reachability follows relocations in executable sections, a call and an address taken alike (so it over-approximates); an indirect call through a pointer is not resolved. Helper counts are CALL SITES in the object (one per R_MIPS_26 or CALL16), not executions",
+  "no numerical or instruction-count claim is made"
+ ],
+ "notes": [
+  "Built from a git archive export of 53f83cf plus the d02-softfloat-check v4 patch (sha256 812eafc9fb051c69...), central run b56, one worker. The build script is unchanged since; this record was read by the v5 checker, because the v4 checker crashed rendering the rlib's text report.",
+  "Helper counts are CALL SITES. The b56 summary counted every relocation and so doubled each PIC call (CALL16 plus the JALR hint); v5 counts calls, and the counts agree with the source (Section::process: 1 widen, 5 mul, 2 add, 2 sub, 1 narrow; Section::from_stored: 5 casts)."
+ ],
+ "readings": {
+  "franken_dsp-5b4f199e070ecefc.o": {
+   "allowed_helpers": [
+    "__adddf3",
+    "__extendsfdf2",
+    "__muldf3",
+    "__subdf3",
+    "__truncdfsf2"
+   ],
+   "coarse_sections_on_the_path": [],
+   "code_sections": 446,
+   "convert_functions_on_the_path": [
+    "franken_dsp::convert::f32_to_s16",
+    "franken_dsp::convert::f32_to_int"
+   ],
+   "exit_code": 0,
+   "f64_helper_call_sites_on_the_path": {
+    "__adddf3": 2,
+    "__extendsfdf2": 6,
+    "__muldf3": 5,
+    "__subdf3": 2,
+    "__truncdfsf2": 1
+   },
+   "f64_users_not_reachable_from_the_root": [
+    "alloc::vec::Vec<T,A>::extend_trusted",
+    "franken_dsp::protection::calibration::butterworth2_highpass",
+    "franken_dsp::protection::calibration::butterworth2_lowpass",
+    "franken_dsp::protection::calibration::chain_bounds::_{{closure}}",
+    "franken_dsp::protection::calibration::dc_pole",
+    "franken_dsp::protection::calibration::quantize_section",
+    "franken_dsp::protection::calibration::smoothing_coefficient",
+    "franken_dsp::protection::calibration::validate",
+    "franken_dsp::protection::calibration::validate::_{{closure}}",
+    "serde_json::de::ParserNumber::visit"
+   ],
+   "f64_users_on_the_path": [
+    {
+     "call_path": [
+      "franken_dsp::protection::runtime::ProtectedBoardDsp::render_into"
+     ],
+     "function": "franken_dsp::protection::runtime::ProtectedBoardDsp::render_into",
+     "helpers": {
+      "__adddf3": 2,
+      "__extendsfdf2": 1,
+      "__muldf3": 5,
+      "__subdf3": 2,
+      "__truncdfsf2": 1
+     },
+     "section_process_copies": 1
+    },
+    {
+     "call_path": [
+      "franken_dsp::protection::runtime::ProtectedBoardDsp::render_into",
+      "franken_dsp::protection::runtime::ProtectedBoardDsp::install",
+      "franken_dsp::protection::runtime::Section::from_stored"
+     ],
+     "function": "franken_dsp::protection::runtime::Section::from_stored",
+     "helpers": {
+      "__extendsfdf2": 5
+     },
+     "section_process_copies": null
+    }
+   ],
+   "non_code_members": [],
+   "objects_with_code": [
+    {
+     "code_sections": 446,
+     "executable_words_scanned": 26881,
+     "fp_abi": 0,
+     "member": "franken_dsp-5b4f199e070ecefc.o",
+     "sha256": "bcde5338557e109ab2f830a6c12a47147083ca043dd65dd59a67775ad4beb939",
+     "soft_float_evidence": "no FPU opcode in the executable words; the abiflags state no float ABI"
+    }
+   ],
+   "reachable_sections": 23,
+   "root": [
+    "franken_dsp::protection::runtime::ProtectedBoardDsp::render_into"
+   ],
+   "skipped_metadata_members": [],
+   "verdict": "PASS",
+   "violations": []
+  },
+  "libfranken_dsp-4ba94165e5b2af33.rlib": {
+   "allowed_helpers": [
+    "__adddf3",
+    "__extendsfdf2",
+    "__muldf3",
+    "__subdf3",
+    "__truncdfsf2"
+   ],
+   "coarse_sections_on_the_path": [],
+   "code_sections": 446,
+   "convert_functions_on_the_path": [
+    "franken_dsp::convert::f32_to_s16",
+    "franken_dsp::convert::f32_to_int"
+   ],
+   "exit_code": 0,
+   "f64_helper_call_sites_on_the_path": {
+    "__adddf3": 2,
+    "__extendsfdf2": 6,
+    "__muldf3": 5,
+    "__subdf3": 2,
+    "__truncdfsf2": 1
+   },
+   "f64_users_not_reachable_from_the_root": [
+    "alloc::vec::Vec<T,A>::extend_trusted",
+    "franken_dsp::protection::calibration::butterworth2_highpass",
+    "franken_dsp::protection::calibration::butterworth2_lowpass",
+    "franken_dsp::protection::calibration::chain_bounds::_{{closure}}",
+    "franken_dsp::protection::calibration::dc_pole",
+    "franken_dsp::protection::calibration::quantize_section",
+    "franken_dsp::protection::calibration::smoothing_coefficient",
+    "franken_dsp::protection::calibration::validate",
+    "franken_dsp::protection::calibration::validate::_{{closure}}",
+    "serde_json::de::ParserNumber::visit"
+   ],
+   "f64_users_on_the_path": [
+    {
+     "call_path": [
+      "franken_dsp::protection::runtime::ProtectedBoardDsp::render_into"
+     ],
+     "function": "franken_dsp::protection::runtime::ProtectedBoardDsp::render_into",
+     "helpers": {
+      "__adddf3": 2,
+      "__extendsfdf2": 1,
+      "__muldf3": 5,
+      "__subdf3": 2,
+      "__truncdfsf2": 1
+     },
+     "section_process_copies": 1
+    },
+    {
+     "call_path": [
+      "franken_dsp::protection::runtime::ProtectedBoardDsp::render_into",
+      "franken_dsp::protection::runtime::ProtectedBoardDsp::install",
+      "franken_dsp::protection::runtime::Section::from_stored"
+     ],
+     "function": "franken_dsp::protection::runtime::Section::from_stored",
+     "helpers": {
+      "__extendsfdf2": 5
+     },
+     "section_process_copies": null
+    }
+   ],
+   "non_code_members": [
+    {
+     "bytes": 448,
+     "member": "lib.rmeta",
+     "sections": [
+      ".rmeta"
+     ],
+     "sha256": "68390e28f7cecf50e983777f9a3f16c4432629c5e6a1e58dda757238211ec954"
+    },
+    {
+     "bytes": 396,
+     "member": "lib.rmeta-link",
+     "sections": [
+      ".rmeta-link"
+     ],
+     "sha256": "ee158a5f169efa2ea668dd0c7a7504acc45605b0b445888bf203ec9d1b6701d8"
+    }
+   ],
+   "objects_with_code": [
+    {
+     "code_sections": 446,
+     "executable_words_scanned": 26881,
+     "fp_abi": 0,
+     "member": "franken_dsp-4ba94165e5b2af33.franken_dsp.1e8c1debe93f1cd1-cgu.0.rcgu.o",
+     "sha256": "bcde5338557e109ab2f830a6c12a47147083ca043dd65dd59a67775ad4beb939",
+     "soft_float_evidence": "no FPU opcode in the executable words; the abiflags state no float ABI"
+    }
+   ],
+   "reachable_sections": 23,
+   "root": [
+    "franken_dsp::protection::runtime::ProtectedBoardDsp::render_into"
+   ],
+   "skipped_metadata_members": [],
+   "verdict": "PASS",
+   "violations": []
+  }
+ },
+ "revision": "53f83cf",
+ "schema": "ffw.d02.softfloat.record.v1",
+ "scope": "host reading of compiled object code for soft-float big-endian MIPS32 (mips-unknown-linux-musl); no device, no execution, no timing",
+ "toolchain": {
+  "cargo": "cargo 1.101.0-nightly (31d3246e0 2026-10-27)",
+  "cargo_home": "the worker's rch cargo cache (path not recorded)",
+  "commit_date": "2026-11-03",
+  "commit_hash": "708c94ef093ecc42fb8851e17d8383d999727abc",
+  "host": "x86_64-unknown-linux-gnu",
+  "llvm_version": "23.1.5",
+  "release": "1.101.0-nightly",
+  "rustc": "rustc 1.101.0-nightly (708c94ef0 2026-11-03)"
+ }
+}
