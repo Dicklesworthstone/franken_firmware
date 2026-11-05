@@ -154,12 +154,12 @@ class ContractMatchesVectors(Base):
                     self.assertIn(name.split("::", 1)[1], self.text)
 
     def test_the_contract_states_the_plan_and_the_limits(self) -> None:
-        self.assertIn("74 cases: 4 meta, 45 vectors and 25 Rust tests", self.text)
+        self.assertIn("86 cases: 4 meta, 45 vectors and 37 Rust tests", self.text)
         self.assertIn("Numerical tests do not prove physical behavior", self.text)
         self.assertIn("second implementation of this contract by the same author", self.text)
         self.assertIn("scripts/e2e/g02 --tier full --judge", self.text)
         planned = len(runner.run("full", None)[0])
-        self.assertEqual(planned, 74)
+        self.assertEqual(planned, 86)
 
 
 class HandDerivedPins(Base):

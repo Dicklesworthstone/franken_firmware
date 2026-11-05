@@ -63,6 +63,7 @@ d01 = _load(D01_RUNNER, "g02_private_d01_runner")
 d01.OBSERVED = re.compile(r"G02-OBSERVED (\{.*\})\s*$")
 d01.RUST_SOURCES = [
     ("crates/franken-dsp/src/volume/tests.rs", "franken_dsp", "volume::tests::"),
+    ("crates/franken-dsp/src/volume/outcome_tests.rs", "franken_dsp", "volume::outcome_tests::"),
     ("crates/franken-dsp/tests/g02_vectors.rs", "g02_vectors", ""),
 ]
 Logs = d01.Logs
