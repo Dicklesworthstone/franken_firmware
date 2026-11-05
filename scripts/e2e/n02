@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# N02 end-to-end entry point (bead ffw-ugf): reliable bounded control channel, offline reference side.
+#
+#   scripts/e2e/n02            replay the hand-written golden scenarios against the independent
+#                              reference model, check the signing-bytes vectors, and run the model's
+#                              own checks (broken variants are caught, the limiter agrees with the
+#                              token-bucket formulation, every invariant maps to scenarios and to
+#                              Rust tests that exist)
+#
+# Exit 0 only when every check passes; any failure exits non-zero.
+#
+# There is no --write on purpose: the vectors are hand-written, so that an implementation is judged
+# against expectations it did not produce.
+#
+# THIS SCRIPT DOES NOT RUN THE RUST IMPLEMENTATION. It shows that the vectors are self-consistent and
+# that an independently built model reaches them. The Rust channel replays the same vectors, and
+# runs its unit tests, only under the centralized builds:
+#   RCH_REQUIRE_REMOTE=1 rch exec --source-content-receipt -- cargo test -p franken-control --locked
+# A green exit here is therefore not evidence about franken-control.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+if [ "$#" -ne 0 ]; then
+  echo "usage: scripts/e2e/n02" >&2
+  exit 2
+fi
+
+python3 -B -I "$ROOT/tests/n02/reference.py" --check
+python3 -B -m unittest discover -s "$ROOT/tests/n02" -p 'test_*.py' -v
+echo "N02 reference side: PASS (Rust half not run here; see the note in this script)"

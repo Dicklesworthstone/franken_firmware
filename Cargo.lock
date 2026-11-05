@@ -112,8 +112,10 @@ dependencies = [
  "franken-clock",
  "franken-session",
  "franken-test-support",
+ "hmac",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror",
 ]
 

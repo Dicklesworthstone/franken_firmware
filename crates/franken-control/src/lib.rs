@@ -439,4 +439,5 @@ mod tests {
     }
 }
 
+pub mod channel;
 pub mod contracts;

@@ -1,0 +1,2005 @@
+//! The reliable bounded control channel (N02 / `ffw-ugf`).
+//!
+//! [`ControlChannel`] sits between peers and one [`UnifiedGroupSession`]. A peer
+//! [`submit`](ControlChannel::submit)s a signed request; the owner of the session calls
+//! [`step`](ControlChannel::step) to apply what has been accepted. The two are separate on purpose:
+//! **accepted is not committed**, and the channel never reports one as the other.
+//!
+//! # Submit: nothing changes until the caller is who it says it is
+//!
+//! In this order, each stage refusing without having changed the stages after it:
+//!
+//! 1. **Authenticate** the proof over the request's canonical bytes. A failure changes no state at
+//!    all, so a forger cannot spend a real peer's allowance.
+//! 2. **Epoch binding**: a peer whose key is bound to epoch *e* cannot issue under any other epoch.
+//! 3. **Rate limit**, per authenticated peer and per lane.
+//! 4. **Duplicates.** A request already waiting is acknowledged as queued, once. A request that has a
+//!    recorded outcome is answered with *that outcome* and is never applied again. The same number
+//!    with different content is refused. A number the ledger has forgotten is answered
+//!    [`SubmitResult::OutOfWindow`]: unknown, and not applied.
+//! 5. **Bounded enqueue** into the ordinary or the priority lane. A full lane refuses.
+//!
+//! # Step: apply, with the authority re-checked
+//!
+//! Priority first (stop, mute, cancel), at most [`ChannelConfig::max_per_step`] commands per call.
+//! Before anything is applied the peer's authority is checked again, so a peer revoked after its
+//! command was accepted changes nothing. A remote controller is then held to the **epoch** (stale and
+//! ahead are both refused, and the channel never advances the epoch itself) and to its **expected
+//! revision**. The local user is never refused for epoch or revision reasons: it acts on what is
+//! audible in front of it. Relative volume is resolved against the live state and sent to the session
+//! as an absolute. Each outcome is recorded by `(peer, seq)`.
+//!
+//! # What this is not
+//!
+//! It does not promise exactly-once delivery forever. It promises *at most one application*, an
+//! answer for as long as the outcome is remembered, and an explicit "unknown" afterwards. Commands
+//! that wait too long expire. Sustained authenticated priority traffic can delay ordinary work; that
+//! is bounded by the per-peer priority rate limit and the pending TTL, not eliminated.
+//!
+//! The channel calls [`UnifiedGroupSession::apply_command`] with its own strictly increasing command
+//! numbers, starting at [`ChannelConfig::session_seq_base`]. Client numbers never reach the session,
+//! because two peers' numbers would collide in its single per-epoch sequence space.
+//!
+//! **Known limit.** That space is shared with every other caller in the same epoch (membership
+//! changes), and the session remembers only the newest `COMMAND_DEDUP_WINDOW` numbers of it. Once
+//! the channel has committed more than that in one epoch, the session's floor has risen past the small
+//! numbers a membership caller would use, and the session refuses them as below its window. Until
+//! the session gives the channel a sequence space of its own, a membership change needs a new epoch
+//! after that many channel commits. `docs/contracts/n02.md` states this as an open dependency.
+
+use std::collections::{BTreeMap, VecDeque};
+
+use franken_session::{
+    FencedControlCommand, GroupCommandPayload, SessionError, UnifiedGroupSession,
+};
+
+use super::ledger::{LedgerError, Lookup, OutcomeLedger};
+use super::limiter::{RateLimit, TokenBucket};
+use super::peer::{AuthFailure, Authenticated, PeerAuthority, PeerId, PeerRole};
+use super::request::{ControlCommand, ControlRequest, Lane, RequestBody};
+
+/// How a command ended, as remembered in the ledger and returned on a retry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Outcome {
+    /// Applied; `revision` is the session's state revision after it.
+    Committed { revision: u64 },
+    /// Removed by a cancel before it was applied.
+    Withdrawn,
+    /// This command was a cancel, and it withdrew `target_seq`.
+    CancelApplied { target_seq: u64 },
+    /// Accepted, then refused with no effect.
+    Refused(Refusal),
+}
+
+/// Why an accepted command had no effect.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Refusal {
+    StaleEpoch {
+        request: u64,
+        current: u64,
+    },
+    EpochAhead {
+        request: u64,
+        current: u64,
+    },
+    RevisionMismatch {
+        expected: u64,
+        actual: u64,
+    },
+    UnknownMember {
+        member_id: String,
+    },
+    /// The session refused the command it was handed.
+    Session(SessionError),
+    /// The peer was revoked, or its binding changed, after the command was accepted.
+    AuthorityExpired,
+    /// Waited in the queue longer than the pending TTL.
+    Expired,
+    /// A cancel found its target already settled.
+    TooLateToCancel,
+    /// A cancel found no such command of the same peer.
+    NothingToCancel,
+    /// A cancel's target is older than the ledger remembers.
+    TargetOutOfWindow {
+        floor: u64,
+    },
+    /// A cancel's target is a stop or a mute, which are not withdrawn.
+    NotCancellable,
+}
+
+/// Why a request was turned away before it was accepted. Nothing was recorded and its number is not
+/// consumed, so it can be sent again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Rejection {
+    Unauthenticated(AuthFailure),
+    EpochNotBound {
+        bound: u64,
+        request: u64,
+    },
+    RateLimited {
+        lane: Lane,
+        retry_after_ns: u64,
+    },
+    QueueFull {
+        lane: Lane,
+    },
+    /// The same peer and number as an earlier request, with different content.
+    IdReuse,
+}
+
+/// What `submit` tells the sender.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubmitResult {
+    /// Received and queued. **Not** committed.
+    Queued {
+        lane: Lane,
+    },
+    /// A copy of this request is already waiting.
+    AlreadyQueued {
+        lane: Lane,
+    },
+    /// A retry of a command whose outcome is on record: here is that outcome.
+    Settled(Outcome),
+    /// The ledger no longer remembers this number. Whether it was applied is unknown; it will not be
+    /// applied now. Read the group state to reconcile.
+    OutOfWindow {
+        floor: u64,
+    },
+    Rejected(Rejection),
+}
+
+/// One command that reached its terminal outcome during a `step`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Settlement {
+    pub peer: PeerId,
+    pub seq: u64,
+    pub outcome: Outcome,
+}
+
+/// A configuration the channel cannot run with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ConfigError {
+    #[error("`{field}` must be at least 1")]
+    Zero { field: &'static str },
+    #[error("invalid ledger: {0}")]
+    Ledger(#[from] LedgerError),
+}
+
+/// Sizes, windows and limits. Every one is a bound; none is unlimited.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChannelConfig {
+    /// Most ordinary commands waiting at once.
+    pub ordinary_capacity: usize,
+    /// Priority slots any authenticated peer may use.
+    pub priority_shared_capacity: usize,
+    /// Priority slots only the local user may use, so a flood of remote stops cannot take them.
+    pub priority_local_reserved: usize,
+    /// Most outcomes remembered.
+    pub ledger_capacity: usize,
+    /// How long an outcome is remembered.
+    pub retention_ns: u64,
+    /// How long an accepted command may wait before it expires unapplied.
+    pub pending_ttl_ns: u64,
+    /// Most commands applied per `step`.
+    pub max_per_step: usize,
+    pub ordinary_rate: RateLimit,
+    pub priority_rate: RateLimit,
+    /// First command number the channel passes to the session.
+    pub session_seq_base: u64,
+}
+
+impl ChannelConfig {
+    /// A starting point, **provisional and unmeasured**: the bead names no numbers for these, and
+    /// they have not been tuned against a board. Callers that need different bounds set the fields.
+    #[must_use]
+    pub fn provisional() -> Self {
+        Self {
+            ordinary_capacity: 16,
+            priority_shared_capacity: 4,
+            priority_local_reserved: 2,
+            ledger_capacity: 64,
+            retention_ns: 30_000 * MS,
+            pending_ttl_ns: 5_000 * MS,
+            max_per_step: 4,
+            ordinary_rate: PROVISIONAL_ORDINARY_RATE,
+            priority_rate: PROVISIONAL_PRIORITY_RATE,
+            session_seq_base: 1 << 32,
+        }
+    }
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        let fields = [
+            ("ordinary_capacity", self.ordinary_capacity),
+            ("priority_shared_capacity", self.priority_shared_capacity),
+            ("priority_local_reserved", self.priority_local_reserved),
+            ("max_per_step", self.max_per_step),
+        ];
+        for (field, value) in fields {
+            if value == 0 {
+                return Err(ConfigError::Zero { field });
+            }
+        }
+        if self.pending_ttl_ns == 0 {
+            return Err(ConfigError::Zero {
+                field: "pending_ttl_ns",
+            });
+        }
+        // The ledger checks its own capacity and retention when it is built.
+        Ok(())
+    }
+}
+
+const MS: u64 = 1_000_000;
+
+/// A rate limit from constants. A zero parameter is a compile-time error here, not a runtime one.
+const fn const_rate(burst: u32, interval_ns: u64) -> RateLimit {
+    match RateLimit::new(burst, interval_ns) {
+        Ok(limit) => limit,
+        Err(_) => panic!("a provisional rate limit must have a non-zero burst and interval"),
+    }
+}
+
+const PROVISIONAL_ORDINARY_RATE: RateLimit = const_rate(8, 100 * MS);
+const PROVISIONAL_PRIORITY_RATE: RateLimit = const_rate(4, 250 * MS);
+
+/// Counters. Every call to `submit` lands in exactly one of the first nine buckets after `received`,
+/// so `accounted() == received` always; `committed` and the rest count what `step` did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ChannelStats {
+    pub received: u64,
+    pub rejected_unauthenticated: u64,
+    pub rejected_epoch_not_bound: u64,
+    pub rejected_rate_limited: u64,
+    pub rejected_queue_full: u64,
+    pub rejected_id_reuse: u64,
+    pub answered_from_ledger: u64,
+    pub answered_already_queued: u64,
+    pub out_of_window: u64,
+    pub accepted: u64,
+    pub committed: u64,
+    pub cancels_applied: u64,
+    pub withdrawn: u64,
+    pub refused: u64,
+    pub expired_pending: u64,
+    /// An outcome that could not be recorded. Zero in correct operation.
+    pub ledger_record_failures: u64,
+}
+
+impl ChannelStats {
+    /// Everything `submit` did with the requests it received.
+    #[must_use]
+    pub const fn accounted(&self) -> u64 {
+        self.rejected_unauthenticated
+            + self.rejected_epoch_not_bound
+            + self.rejected_rate_limited
+            + self.rejected_queue_full
+            + self.rejected_id_reuse
+            + self.answered_from_ledger
+            + self.answered_already_queued
+            + self.out_of_window
+            + self.accepted
+    }
+}
+
+/// A snapshot for diagnostics. `received` and `committed_revision` are reported side by side so a
+/// request that arrived is never presented as one that took effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Diagnostics {
+    pub stats: ChannelStats,
+    pub ordinary_pending: usize,
+    pub priority_pending: usize,
+    pub ledger_len: usize,
+    pub tracked_peers: usize,
+    pub committed_revision: u64,
+}
+
+struct Queued {
+    auth: Authenticated,
+    request: ControlRequest,
+    accepted_ns: u64,
+}
+
+enum Looked {
+    Settled { same: bool, outcome: Outcome },
+    OutOfWindow(u64),
+    Unseen,
+}
+
+fn bump(counter: &mut u64) {
+    *counter = counter.saturating_add(1);
+}
+
+/// The channel. Generic over the [`PeerAuthority`] that decides who may speak.
+pub struct ControlChannel<A: PeerAuthority> {
+    authority: A,
+    config: ChannelConfig,
+    ordinary: VecDeque<Queued>,
+    priority: VecDeque<Queued>,
+    ledger: OutcomeLedger<RequestBody, Outcome>,
+    buckets: BTreeMap<(PeerId, Lane), TokenBucket>,
+    next_session_seq: u64,
+    stats: ChannelStats,
+}
+
+impl<A: PeerAuthority> ControlChannel<A> {
+    /// Build a channel, refusing a configuration with a zero bound.
+    pub fn new(authority: A, config: ChannelConfig) -> Result<Self, ConfigError> {
+        config.validate()?;
+        let ledger = OutcomeLedger::new(config.ledger_capacity, config.retention_ns)?;
+        Ok(Self {
+            authority,
+            next_session_seq: config.session_seq_base,
+            config,
+            ordinary: VecDeque::new(),
+            priority: VecDeque::new(),
+            ledger,
+            buckets: BTreeMap::new(),
+            stats: ChannelStats::default(),
+        })
+    }
+
+    #[must_use]
+    pub fn authority(&self) -> &A {
+        &self.authority
+    }
+
+    pub fn authority_mut(&mut self) -> &mut A {
+        &mut self.authority
+    }
+
+    #[must_use]
+    pub fn config(&self) -> &ChannelConfig {
+        &self.config
+    }
+
+    #[must_use]
+    pub fn stats(&self) -> &ChannelStats {
+        &self.stats
+    }
+
+    #[must_use]
+    pub fn pending(&self, lane: Lane) -> usize {
+        match lane {
+            Lane::Ordinary => self.ordinary.len(),
+            Lane::Priority => self.priority.len(),
+        }
+    }
+
+    #[must_use]
+    pub fn diagnostics(&self, session: &UnifiedGroupSession) -> Diagnostics {
+        Diagnostics {
+            stats: self.stats,
+            ordinary_pending: self.ordinary.len(),
+            priority_pending: self.priority.len(),
+            ledger_len: self.ledger.len(),
+            tracked_peers: self.ledger.tracked_peers(),
+            committed_revision: session.state_revision,
+        }
+    }
+
+    fn take_token(&mut self, peer: &PeerId, lane: Lane, now_ns: u64) -> Result<(), u64> {
+        let limit = match lane {
+            Lane::Ordinary => self.config.ordinary_rate,
+            Lane::Priority => self.config.priority_rate,
+        };
+        self.buckets
+            .entry((peer.clone(), lane))
+            .or_insert_with(|| TokenBucket::new(limit, now_ns))
+            .try_take(now_ns)
+    }
+
+    fn find_pending(&self, peer: &PeerId, seq: u64) -> Option<(Lane, &Queued)> {
+        let matches =
+            |q: &&Queued| q.request.body().peer() == peer && q.request.body().seq() == seq;
+        if let Some(q) = self.priority.iter().find(matches) {
+            return Some((Lane::Priority, q));
+        }
+        self.ordinary
+            .iter()
+            .find(matches)
+            .map(|q| (Lane::Ordinary, q))
+    }
+
+    fn has_room(&self, lane: Lane, role: PeerRole) -> bool {
+        match lane {
+            Lane::Ordinary => self.ordinary.len() < self.config.ordinary_capacity,
+            Lane::Priority => {
+                let reserved = self.config.priority_local_reserved;
+                let shared = self.config.priority_shared_capacity;
+                let local = self
+                    .priority
+                    .iter()
+                    .filter(|q| q.auth.role == PeerRole::LocalUser)
+                    .count();
+                let others = self.priority.len() - local;
+                // Local entries beyond the reserved slots spill into the shared pool.
+                let shared_used = others + local.saturating_sub(reserved);
+                match role {
+                    PeerRole::LocalUser => local < reserved || shared_used < shared,
+                    PeerRole::Controller => shared_used < shared,
+                }
+            }
+        }
+    }
+
+    /// Receive a request. See the module documentation for the order of the stages.
+    pub fn submit(&mut self, now_ns: u64, request: ControlRequest) -> SubmitResult {
+        bump(&mut self.stats.received);
+        let body = request.body();
+
+        // 1. Authenticate, before anything else is touched.
+        let auth =
+            match self
+                .authority
+                .authenticate(body.peer(), &body.signing_bytes(), request.proof())
+            {
+                Ok(auth) => auth,
+                Err(failure) => {
+                    bump(&mut self.stats.rejected_unauthenticated);
+                    return SubmitResult::Rejected(Rejection::Unauthenticated(failure));
+                }
+            };
+
+        // 2. A key bound to one epoch is not valid under another.
+        if let Some(bound) = auth.bound_epoch
+            && bound != body.epoch()
+        {
+            bump(&mut self.stats.rejected_epoch_not_bound);
+            return SubmitResult::Rejected(Rejection::EpochNotBound {
+                bound,
+                request: body.epoch(),
+            });
+        }
+
+        // 3. Rate limit, per peer and lane.
+        let lane = body.command().lane();
+        if let Err(retry_after_ns) = self.take_token(&auth.peer, lane, now_ns) {
+            bump(&mut self.stats.rejected_rate_limited);
+            return SubmitResult::Rejected(Rejection::RateLimited {
+                lane,
+                retry_after_ns,
+            });
+        }
+
+        // 4a. A copy already waiting.
+        let waiting = self
+            .find_pending(body.peer(), body.seq())
+            .map(|(found_lane, queued)| (found_lane, queued.request.body() == body));
+        match waiting {
+            Some((found_lane, true)) => {
+                bump(&mut self.stats.answered_already_queued);
+                return SubmitResult::AlreadyQueued { lane: found_lane };
+            }
+            Some((_, false)) => {
+                bump(&mut self.stats.rejected_id_reuse);
+                return SubmitResult::Rejected(Rejection::IdReuse);
+            }
+            None => {}
+        }
+
+        // 4b. An outcome on record, or a number the ledger has forgotten.
+        self.ledger.expire(now_ns);
+        let looked = match self.ledger.lookup(body.peer(), body.seq()) {
+            Lookup::Settled {
+                body: recorded,
+                outcome,
+            } => Looked::Settled {
+                same: recorded == body,
+                outcome: outcome.clone(),
+            },
+            Lookup::OutOfWindow { floor } => Looked::OutOfWindow(floor),
+            Lookup::Unseen => Looked::Unseen,
+        };
+        match looked {
+            Looked::Settled {
+                same: true,
+                outcome,
+            } => {
+                bump(&mut self.stats.answered_from_ledger);
+                return SubmitResult::Settled(outcome);
+            }
+            Looked::Settled { same: false, .. } => {
+                bump(&mut self.stats.rejected_id_reuse);
+                return SubmitResult::Rejected(Rejection::IdReuse);
+            }
+            Looked::OutOfWindow(floor) => {
+                bump(&mut self.stats.out_of_window);
+                return SubmitResult::OutOfWindow { floor };
+            }
+            Looked::Unseen => {}
+        }
+
+        // 5. Bounded enqueue.
+        if !self.has_room(lane, auth.role) {
+            bump(&mut self.stats.rejected_queue_full);
+            return SubmitResult::Rejected(Rejection::QueueFull { lane });
+        }
+        let queued = Queued {
+            auth,
+            request,
+            accepted_ns: now_ns,
+        };
+        match lane {
+            Lane::Ordinary => self.ordinary.push_back(queued),
+            Lane::Priority => self.priority.push_back(queued),
+        }
+        bump(&mut self.stats.accepted);
+        SubmitResult::Queued { lane }
+    }
+
+    fn settle(
+        &mut self,
+        body: RequestBody,
+        outcome: Outcome,
+        now_ns: u64,
+        out: &mut Vec<Settlement>,
+    ) {
+        match &outcome {
+            Outcome::Committed { .. } => bump(&mut self.stats.committed),
+            Outcome::Withdrawn => bump(&mut self.stats.withdrawn),
+            Outcome::CancelApplied { .. } => bump(&mut self.stats.cancels_applied),
+            Outcome::Refused(refusal) => {
+                bump(&mut self.stats.refused);
+                if matches!(refusal, Refusal::Expired) {
+                    bump(&mut self.stats.expired_pending);
+                }
+            }
+        }
+        let peer = body.peer().clone();
+        let seq = body.seq();
+        if !self
+            .ledger
+            .record(peer.clone(), seq, body, outcome.clone(), now_ns)
+        {
+            bump(&mut self.stats.ledger_record_failures);
+        }
+        out.push(Settlement { peer, seq, outcome });
+    }
+
+    fn expire_pending(&mut self, now_ns: u64, out: &mut Vec<Settlement>) {
+        let ttl = self.config.pending_ttl_ns;
+        let stale = |q: &Queued| now_ns.saturating_sub(q.accepted_ns) >= ttl;
+        let mut expired = Vec::new();
+        for queue in [&mut self.priority, &mut self.ordinary] {
+            while let Some(pos) = queue.iter().position(stale) {
+                if let Some(item) = queue.remove(pos) {
+                    expired.push(item);
+                }
+            }
+        }
+        for item in expired {
+            self.settle(
+                item.request.body().clone(),
+                Outcome::Refused(Refusal::Expired),
+                now_ns,
+                out,
+            );
+        }
+    }
+
+    /// The next priority command: the local user's first, otherwise the oldest. A remote peer, however
+    /// many shared slots it fills, therefore cannot put anything ahead of the person at the device.
+    fn pop_priority(&mut self) -> Option<Queued> {
+        let position = self
+            .priority
+            .iter()
+            .position(|q| q.auth.role == PeerRole::LocalUser)
+            .unwrap_or(0);
+        self.priority.remove(position)
+    }
+
+    /// Apply what has been accepted: expire stale entries, then at most `max_per_step` commands,
+    /// priority first (the local user's before any remote peer's). Returns what reached a terminal
+    /// outcome.
+    pub fn step(&mut self, now_ns: u64, session: &mut UnifiedGroupSession) -> Vec<Settlement> {
+        self.ledger.expire(now_ns);
+        let mut settled = Vec::new();
+        self.expire_pending(now_ns, &mut settled);
+        for _ in 0..self.config.max_per_step {
+            let Some(item) = self.pop_priority().or_else(|| self.ordinary.pop_front()) else {
+                break;
+            };
+            let outcome = self.execute(&item, now_ns, session, &mut settled);
+            self.settle(item.request.body().clone(), outcome, now_ns, &mut settled);
+        }
+        settled
+    }
+
+    fn execute(
+        &mut self,
+        item: &Queued,
+        now_ns: u64,
+        session: &mut UnifiedGroupSession,
+        out: &mut Vec<Settlement>,
+    ) -> Outcome {
+        // The authority behind this command must still stand.
+        if !self.authority.is_current(&item.auth) {
+            return Outcome::Refused(Refusal::AuthorityExpired);
+        }
+        let body = item.request.body();
+        if let ControlCommand::Cancel { target_seq } = body.command() {
+            return self.execute_cancel(body.peer(), *target_seq, now_ns, out);
+        }
+
+        // A remote controller is held to the epoch and to the revision it last saw.
+        if item.auth.role == PeerRole::Controller {
+            let current = session.current_epoch;
+            if body.epoch() < current {
+                return Outcome::Refused(Refusal::StaleEpoch {
+                    request: body.epoch(),
+                    current,
+                });
+            }
+            if body.epoch() > current {
+                return Outcome::Refused(Refusal::EpochAhead {
+                    request: body.epoch(),
+                    current,
+                });
+            }
+            if let Some(expected) = body.expected_revision()
+                && expected != session.state_revision
+            {
+                return Outcome::Refused(Refusal::RevisionMismatch {
+                    expected,
+                    actual: session.state_revision,
+                });
+            }
+        }
+
+        let payload = match body.command() {
+            ControlCommand::SetMemberVolume { member_id, volume } => {
+                GroupCommandPayload::SetMemberVolume {
+                    member_id: member_id.clone(),
+                    volume_0_to_100: *volume,
+                }
+            }
+            ControlCommand::SetGroupVolume { volume } => GroupCommandPayload::SetGroupVolume {
+                volume_0_to_100: *volume,
+            },
+            ControlCommand::AdjustMemberVolume { member_id, delta } => {
+                let Some(member) = session.members.get(member_id) else {
+                    return Outcome::Refused(Refusal::UnknownMember {
+                        member_id: member_id.clone(),
+                    });
+                };
+                GroupCommandPayload::SetMemberVolume {
+                    member_id: member_id.clone(),
+                    volume_0_to_100: stepped(member.volume_0_to_100, *delta),
+                }
+            }
+            ControlCommand::AdjustGroupVolume { delta } => GroupCommandPayload::SetGroupVolume {
+                volume_0_to_100: stepped(session.group_master_volume, *delta),
+            },
+            ControlCommand::SetMemberMute { member_id, muted } => {
+                GroupCommandPayload::SetMemberMute {
+                    member_id: member_id.clone(),
+                    muted: *muted,
+                }
+            }
+            ControlCommand::StopGroupPlayback {
+                now_ns,
+                irrevocable_dma_tail_ns,
+            } => GroupCommandPayload::StopGroupPlayback {
+                now_ns: *now_ns,
+                irrevocable_dma_tail_ns: *irrevocable_dma_tail_ns,
+            },
+            // Handled above; present so the match is total without a panic.
+            ControlCommand::Cancel { .. } => return Outcome::Refused(Refusal::NotCancellable),
+        };
+
+        let command_seq = self.next_session_seq;
+        self.next_session_seq = self.next_session_seq.saturating_add(1);
+        match session.apply_command(FencedControlCommand {
+            epoch: session.current_epoch,
+            command_seq,
+            payload,
+        }) {
+            Ok(revision) => Outcome::Committed { revision },
+            Err(error) => Outcome::Refused(Refusal::Session(error)),
+        }
+    }
+
+    fn execute_cancel(
+        &mut self,
+        peer: &PeerId,
+        target_seq: u64,
+        now_ns: u64,
+        out: &mut Vec<Settlement>,
+    ) -> Outcome {
+        let is_target =
+            |q: &Queued| q.request.body().peer() == peer && q.request.body().seq() == target_seq;
+        if let Some(pos) = self.ordinary.iter().position(is_target)
+            && let Some(target) = self.ordinary.remove(pos)
+        {
+            self.settle(
+                target.request.body().clone(),
+                Outcome::Withdrawn,
+                now_ns,
+                out,
+            );
+            return Outcome::CancelApplied { target_seq };
+        }
+        if self.priority.iter().any(is_target) {
+            return Outcome::Refused(Refusal::NotCancellable);
+        }
+        match self.ledger.lookup(peer, target_seq) {
+            Lookup::Settled { .. } => Outcome::Refused(Refusal::TooLateToCancel),
+            Lookup::OutOfWindow { floor } => Outcome::Refused(Refusal::TargetOutOfWindow { floor }),
+            Lookup::Unseen => Outcome::Refused(Refusal::NothingToCancel),
+        }
+    }
+}
+
+/// `current + delta`, clamped to 0..=100.
+fn stepped(current: u8, delta: i8) -> u8 {
+    let moved = i16::from(current) + i16::from(delta);
+    u8::try_from(moved.clamp(0, 100)).unwrap_or(100)
+}
+
+#[cfg(test)]
+mod tests {
+    use franken_test_support::{CommandObservation, FencedCommandOracle};
+
+    use super::super::peer::compute_proof;
+    use super::super::peer::ephemeral::{EphemeralPeers, test_key};
+    use super::super::testkit::fixture_session;
+    use super::*;
+
+    const EPOCH: u64 = 10;
+
+    fn id(raw: &str) -> PeerId {
+        PeerId::parse(raw).unwrap()
+    }
+
+    /// Epoch 10, members `kitchen` and `den` at volume 50 and a group master at 50; revision 2.
+    fn session() -> UnifiedGroupSession {
+        fixture_session(EPOCH)
+    }
+
+    fn peers() -> EphemeralPeers {
+        let mut p = EphemeralPeers::new();
+        p.admit(
+            &id("ctl-a"),
+            PeerRole::Controller,
+            test_key("ctl-a").as_slice(),
+            Some(EPOCH),
+            1,
+        )
+        .unwrap();
+        p.admit(
+            &id("ctl-b"),
+            PeerRole::Controller,
+            test_key("ctl-b").as_slice(),
+            Some(EPOCH),
+            1,
+        )
+        .unwrap();
+        p.admit(
+            &id("panel"),
+            PeerRole::LocalUser,
+            test_key("panel").as_slice(),
+            None,
+            1,
+        )
+        .unwrap();
+        p
+    }
+
+    /// Generous rate limits and room, so a test exercises one mechanism at a time.
+    fn roomy() -> ChannelConfig {
+        let mut c = ChannelConfig::provisional();
+        c.ordinary_rate = RateLimit::new(100_000, MS).unwrap();
+        c.priority_rate = RateLimit::new(100_000, MS).unwrap();
+        c.ordinary_capacity = 64;
+        c.ledger_capacity = 128;
+        c.session_seq_base = 1_000;
+        c
+    }
+
+    struct Rig {
+        channel: ControlChannel<EphemeralPeers>,
+        session: UnifiedGroupSession,
+        now: u64,
+    }
+
+    impl Rig {
+        fn new(config: ChannelConfig) -> Self {
+            Self {
+                channel: ControlChannel::new(peers(), config).unwrap(),
+                session: session(),
+                now: 0,
+            }
+        }
+
+        fn roomy() -> Self {
+            Self::new(roomy())
+        }
+
+        fn body(
+            peer: &str,
+            seq: u64,
+            epoch: u64,
+            rev: Option<u64>,
+            command: ControlCommand,
+        ) -> RequestBody {
+            RequestBody::new(id(peer), seq, epoch, rev, command).unwrap()
+        }
+
+        fn sign(&self, body: RequestBody) -> ControlRequest {
+            let proof = compute_proof(&test_key(body.peer().as_str()), &body.signing_bytes());
+            ControlRequest::new(body, proof)
+        }
+
+        fn req(
+            &self,
+            peer: &str,
+            seq: u64,
+            epoch: u64,
+            rev: Option<u64>,
+            command: ControlCommand,
+        ) -> ControlRequest {
+            self.sign(Self::body(peer, seq, epoch, rev, command))
+        }
+
+        fn submit(&mut self, request: ControlRequest) -> SubmitResult {
+            self.channel.submit(self.now, request)
+        }
+
+        fn step(&mut self) -> Vec<Settlement> {
+            self.channel.step(self.now, &mut self.session)
+        }
+
+        fn at(&mut self, ns: u64) {
+            self.now = ns;
+        }
+
+        fn volume(&self, member: &str) -> u8 {
+            self.session.members[member].volume_0_to_100
+        }
+    }
+
+    fn set_group(volume: u8) -> ControlCommand {
+        ControlCommand::SetGroupVolume { volume }
+    }
+
+    fn adjust(member: &str, delta: i8) -> ControlCommand {
+        ControlCommand::AdjustMemberVolume {
+            member_id: member.to_string(),
+            delta,
+        }
+    }
+
+    fn mute(member: &str, on: bool) -> ControlCommand {
+        ControlCommand::SetMemberMute {
+            member_id: member.to_string(),
+            muted: on,
+        }
+    }
+
+    fn stop() -> ControlCommand {
+        ControlCommand::StopGroupPlayback {
+            now_ns: 1_000,
+            irrevocable_dma_tail_ns: 500,
+        }
+    }
+
+    fn committed(revision: u64) -> Outcome {
+        Outcome::Committed { revision }
+    }
+
+    // ----------------------------------------------------------------- the basic path
+
+    #[test]
+    fn a_request_is_queued_then_committed_and_those_are_different_things() {
+        let mut rig = Rig::roomy();
+        let r = rig.req("ctl-a", 1, EPOCH, None, set_group(70));
+        assert_eq!(
+            rig.submit(r),
+            SubmitResult::Queued {
+                lane: Lane::Ordinary
+            }
+        );
+        // Received, not applied.
+        assert_eq!(rig.session.group_master_volume, 50);
+        assert_eq!(rig.session.state_revision, 2);
+        assert_eq!(rig.channel.diagnostics(&rig.session).stats.committed, 0);
+
+        let settled = rig.step();
+        assert_eq!(
+            settled,
+            vec![Settlement {
+                peer: id("ctl-a"),
+                seq: 1,
+                outcome: committed(3)
+            }]
+        );
+        assert_eq!(rig.session.group_master_volume, 70);
+        let d = rig.channel.diagnostics(&rig.session);
+        assert_eq!(
+            (d.stats.received, d.stats.committed, d.committed_revision),
+            (1, 1, 3)
+        );
+    }
+
+    #[test]
+    fn every_command_kind_reaches_the_session() {
+        let mut rig = Rig::roomy();
+        let cases = [
+            (
+                1,
+                ControlCommand::SetMemberVolume {
+                    member_id: "kitchen".into(),
+                    volume: 20,
+                },
+            ),
+            (2, set_group(60)),
+            (3, mute("den", true)),
+            (4, stop()),
+        ];
+        for (seq, command) in cases {
+            let r = rig.req("ctl-a", seq, EPOCH, None, command);
+            assert!(matches!(rig.submit(r), SubmitResult::Queued { .. }));
+        }
+        let settled = rig.step();
+        assert_eq!(settled.len(), 4);
+        assert!(
+            settled
+                .iter()
+                .all(|s| matches!(s.outcome, Outcome::Committed { .. }))
+        );
+        assert_eq!(rig.volume("kitchen"), 20);
+        assert_eq!(rig.session.group_master_volume, 60);
+        assert!(rig.session.members["den"].muted);
+        assert!(matches!(
+            rig.session.members["den"].lifecycle,
+            franken_session::MemberLifecycleState::StoppingDmaTail { .. }
+        ));
+    }
+
+    // ----------------------------------------------------------------- duplicates and exactly one effect
+
+    #[test]
+    fn a_lost_acknowledgement_after_commit_is_answered_with_the_same_outcome_and_no_second_effect()
+    {
+        let mut rig = Rig::roomy();
+        let mut oracle = FencedCommandOracle::new(EPOCH);
+        oracle.record_issued(1, EPOCH, 1).unwrap();
+
+        let r = rig.req("ctl-a", 1, EPOCH, Some(2), adjust("kitchen", 10));
+        let before = rig.session.state_revision;
+        assert!(matches!(rig.submit(r.clone()), SubmitResult::Queued { .. }));
+        rig.step();
+        assert_eq!(rig.volume("kitchen"), 60);
+        // Delivery 1 is judged by the harness from the session itself, not from the channel's report.
+        oracle
+            .observe_outcome(CommandObservation {
+                command_id: 1,
+                applied: rig.session.state_revision > before,
+                system_epoch_after: rig.session.current_epoch,
+            })
+            .unwrap();
+
+        // The acknowledgement is lost; the client sends the identical request again.
+        let before_retry = rig.session.state_revision;
+        assert_eq!(rig.submit(r), SubmitResult::Settled(committed(3)));
+        rig.step();
+        assert_eq!(
+            rig.volume("kitchen"),
+            60,
+            "the delta was applied once, not twice"
+        );
+        assert_eq!(rig.session.state_revision, 3);
+        oracle
+            .observe_outcome(CommandObservation {
+                command_id: 1,
+                applied: rig.session.state_revision > before_retry,
+                system_epoch_after: rig.session.current_epoch,
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn a_duplicate_relative_volume_has_exactly_one_logical_effect_whenever_the_copy_arrives() {
+        // Before the first copy is applied.
+        let mut rig = Rig::roomy();
+        let r = rig.req("ctl-a", 1, EPOCH, Some(2), adjust("kitchen", 10));
+        assert!(matches!(rig.submit(r.clone()), SubmitResult::Queued { .. }));
+        assert_eq!(
+            rig.submit(r.clone()),
+            SubmitResult::AlreadyQueued {
+                lane: Lane::Ordinary
+            }
+        );
+        assert_eq!(rig.channel.pending(Lane::Ordinary), 1);
+        rig.step();
+        // After it.
+        assert_eq!(rig.submit(r.clone()), SubmitResult::Settled(committed(3)));
+        assert_eq!(rig.submit(r), SubmitResult::Settled(committed(3)));
+        assert_eq!(rig.step(), vec![]);
+        assert_eq!(rig.volume("kitchen"), 60);
+        assert_eq!(rig.session.state_revision, 3);
+    }
+
+    #[test]
+    fn without_the_ledger_the_copy_would_have_been_refused_as_a_stale_revision() {
+        // Why the cached outcome must be consulted before the revision check: the retry still names
+        // revision 2, which the first delivery has already moved past.
+        let mut rig = Rig::roomy();
+        let r = rig.req("ctl-a", 1, EPOCH, Some(2), adjust("kitchen", 10));
+        rig.submit(r);
+        rig.step();
+        assert_eq!(rig.session.state_revision, 3);
+        let fresh = rig.req("ctl-a", 2, EPOCH, Some(2), adjust("kitchen", 10));
+        rig.submit(fresh);
+        let settled = rig.step();
+        assert_eq!(
+            settled[0].outcome,
+            Outcome::Refused(Refusal::RevisionMismatch {
+                expected: 2,
+                actual: 3
+            })
+        );
+        assert_eq!(rig.volume("kitchen"), 60);
+    }
+
+    #[test]
+    fn a_retry_storm_leaves_the_queue_and_the_ledger_bounded() {
+        let mut rig = Rig::roomy();
+        let r = rig.req("ctl-a", 1, EPOCH, Some(2), adjust("kitchen", 5));
+        assert!(matches!(rig.submit(r.clone()), SubmitResult::Queued { .. }));
+        for _ in 0..1_000 {
+            assert_eq!(
+                rig.submit(r.clone()),
+                SubmitResult::AlreadyQueued {
+                    lane: Lane::Ordinary
+                }
+            );
+        }
+        assert_eq!(rig.channel.pending(Lane::Ordinary), 1);
+        rig.step();
+        for _ in 0..1_000 {
+            assert_eq!(rig.submit(r.clone()), SubmitResult::Settled(committed(3)));
+        }
+        let d = rig.channel.diagnostics(&rig.session);
+        assert_eq!((d.ordinary_pending, d.ledger_len), (0, 1));
+        assert_eq!(
+            rig.volume("kitchen"),
+            55,
+            "one delta, after two thousand deliveries"
+        );
+        assert_eq!(rig.session.state_revision, 3);
+    }
+
+    #[test]
+    fn the_same_number_with_different_content_is_refused_everywhere() {
+        let mut rig = Rig::roomy();
+        let first = rig.req("ctl-a", 1, EPOCH, None, set_group(70));
+        let other = rig.req("ctl-a", 1, EPOCH, None, set_group(90));
+        assert!(matches!(rig.submit(first), SubmitResult::Queued { .. }));
+        // While the first is waiting.
+        assert_eq!(
+            rig.submit(other.clone()),
+            SubmitResult::Rejected(Rejection::IdReuse)
+        );
+        rig.step();
+        // And after it settled.
+        assert_eq!(
+            rig.submit(other),
+            SubmitResult::Rejected(Rejection::IdReuse)
+        );
+        assert_eq!(rig.session.group_master_volume, 70);
+        // A different number is a different command.
+        let next = rig.req("ctl-a", 2, EPOCH, None, set_group(90));
+        assert!(matches!(rig.submit(next), SubmitResult::Queued { .. }));
+    }
+
+    #[test]
+    fn the_same_number_from_two_peers_is_two_commands() {
+        let mut rig = Rig::roomy();
+        let a = rig.req("ctl-a", 1, EPOCH, None, set_group(70));
+        let b = rig.req("ctl-b", 1, EPOCH, None, set_group(30));
+        assert!(matches!(rig.submit(a), SubmitResult::Queued { .. }));
+        assert!(matches!(rig.submit(b), SubmitResult::Queued { .. }));
+        let settled = rig.step();
+        assert_eq!(settled.len(), 2);
+        assert_eq!(
+            rig.session.group_master_volume, 30,
+            "applied in arrival order"
+        );
+    }
+
+    // ----------------------------------------------------------------- the window: expiry, eviction, unknown
+
+    #[test]
+    fn after_retention_a_retry_is_unknown_and_is_not_applied_again() {
+        let mut config = roomy();
+        config.retention_ns = 1_000 * MS;
+        let mut rig = Rig::new(config);
+        let r = rig.req("ctl-a", 1, EPOCH, Some(2), adjust("kitchen", 10));
+        rig.submit(r.clone());
+        rig.step();
+        assert_eq!(rig.volume("kitchen"), 60);
+
+        rig.at(999 * MS);
+        assert_eq!(rig.submit(r.clone()), SubmitResult::Settled(committed(3)));
+        rig.at(1_000 * MS);
+        assert_eq!(
+            rig.submit(r.clone()),
+            SubmitResult::OutOfWindow { floor: 1 }
+        );
+        assert_eq!(rig.step(), vec![], "nothing was queued");
+        assert_eq!(
+            rig.volume("kitchen"),
+            60,
+            "unknown, and not applied a second time"
+        );
+        assert_eq!(rig.session.state_revision, 3);
+        // It stays unknown; the sender must reconcile from the group state.
+        assert_eq!(rig.submit(r), SubmitResult::OutOfWindow { floor: 1 });
+        assert_eq!(rig.channel.stats().out_of_window, 2);
+    }
+
+    #[test]
+    fn a_full_ledger_forgets_the_oldest_and_says_so() {
+        let mut config = roomy();
+        config.ledger_capacity = 2;
+        let mut rig = Rig::new(config);
+        let mut requests = Vec::new();
+        for seq in 1..=3u64 {
+            let r = rig.req("ctl-a", seq, EPOCH, None, set_group(60 + seq as u8));
+            rig.submit(r.clone());
+            requests.push(r);
+        }
+        rig.step();
+        assert_eq!(rig.channel.diagnostics(&rig.session).ledger_len, 2);
+        assert_eq!(
+            rig.submit(requests[0].clone()),
+            SubmitResult::OutOfWindow { floor: 1 }
+        );
+        assert!(matches!(
+            rig.submit(requests[2].clone()),
+            SubmitResult::Settled(_)
+        ));
+    }
+
+    // ----------------------------------------------------------------- authentication comes first
+
+    #[test]
+    fn a_forged_or_unknown_or_revoked_peer_changes_nothing() {
+        let mut rig = Rig::roomy();
+        let body = Rig::body("ctl-a", 1, EPOCH, None, set_group(99));
+        let forged = ControlRequest::new(
+            body.clone(),
+            compute_proof(b"attacker", &body.signing_bytes()),
+        );
+        assert_eq!(
+            rig.submit(forged),
+            SubmitResult::Rejected(Rejection::Unauthenticated(AuthFailure::BadProof))
+        );
+        let ghost_body = Rig::body("ghost", 1, EPOCH, None, set_group(99));
+        let ghost = ControlRequest::new(
+            ghost_body.clone(),
+            compute_proof(b"k", &ghost_body.signing_bytes()),
+        );
+        assert_eq!(
+            rig.submit(ghost),
+            SubmitResult::Rejected(Rejection::Unauthenticated(AuthFailure::UnknownPeer))
+        );
+        let genuine = rig.req("ctl-b", 1, EPOCH, None, set_group(99));
+        rig.channel.authority_mut().revoke(&id("ctl-b"));
+        assert_eq!(
+            rig.submit(genuine),
+            SubmitResult::Rejected(Rejection::Unauthenticated(AuthFailure::Revoked))
+        );
+        let d = rig.channel.diagnostics(&rig.session);
+        assert_eq!(
+            (d.ordinary_pending, d.priority_pending, d.ledger_len),
+            (0, 0, 0)
+        );
+        assert_eq!(d.stats.rejected_unauthenticated, 3);
+        assert_eq!(rig.session.group_master_volume, 50);
+    }
+
+    #[test]
+    fn a_flood_of_forgeries_cannot_spend_the_real_peers_allowance() {
+        // The default limits are tight enough for the flood to matter: a burst of 8.
+        let mut rig = Rig::new(ChannelConfig::provisional());
+        for seq in 1..=500u64 {
+            let body = Rig::body("ctl-a", seq, EPOCH, None, set_group(1));
+            let forged = ControlRequest::new(
+                body.clone(),
+                compute_proof(b"attacker", &body.signing_bytes()),
+            );
+            assert!(matches!(
+                rig.submit(forged),
+                SubmitResult::Rejected(Rejection::Unauthenticated(_))
+            ));
+        }
+        // The real ctl-a, in the same instant, still has its whole burst.
+        for seq in 1..=8u64 {
+            let r = rig.req("ctl-a", seq, EPOCH, None, set_group(40));
+            assert!(
+                matches!(rig.submit(r), SubmitResult::Queued { .. }),
+                "genuine request {seq} was refused"
+            );
+        }
+    }
+
+    #[test]
+    fn changing_any_single_signed_field_voids_the_proof() {
+        let mut rig = Rig::roomy();
+        let base = Rig::body("ctl-a", 5, EPOCH, Some(2), adjust("kitchen", 10));
+        let proof = compute_proof(&test_key(base.peer().as_str()), &base.signing_bytes());
+        // The unmodified request is accepted, so the refusals below are due to the change alone.
+        assert!(matches!(
+            rig.submit(ControlRequest::new(base.clone(), proof.clone())),
+            SubmitResult::Queued { .. }
+        ));
+        let changed = [
+            (
+                "seq",
+                Rig::body("ctl-a", 6, EPOCH, Some(2), adjust("kitchen", 10)),
+            ),
+            (
+                "epoch",
+                Rig::body("ctl-a", 5, EPOCH + 1, Some(2), adjust("kitchen", 10)),
+            ),
+            (
+                "expected revision",
+                Rig::body("ctl-a", 5, EPOCH, Some(3), adjust("kitchen", 10)),
+            ),
+            (
+                "member",
+                Rig::body("ctl-a", 5, EPOCH, Some(2), adjust("den", 10)),
+            ),
+            (
+                "delta",
+                Rig::body("ctl-a", 5, EPOCH, Some(2), adjust("kitchen", 11)),
+            ),
+            (
+                "command kind",
+                Rig::body(
+                    "ctl-a",
+                    5,
+                    EPOCH,
+                    Some(2),
+                    ControlCommand::AdjustGroupVolume { delta: 10 },
+                ),
+            ),
+        ];
+        for (field, body) in changed {
+            let replayed = ControlRequest::new(body, proof.clone());
+            assert_eq!(
+                rig.submit(replayed),
+                SubmitResult::Rejected(Rejection::Unauthenticated(AuthFailure::BadProof)),
+                "changing the {field} did not void the proof"
+            );
+        }
+        // A proof for one peer does not carry over to another peer.
+        let other_peer = Rig::body("ctl-b", 5, EPOCH, Some(2), adjust("kitchen", 10));
+        assert_eq!(
+            rig.submit(ControlRequest::new(other_peer, proof)),
+            SubmitResult::Rejected(Rejection::Unauthenticated(AuthFailure::BadProof))
+        );
+    }
+
+    #[test]
+    fn a_peer_revoked_after_acceptance_has_no_effect_when_the_step_runs() {
+        let mut rig = Rig::roomy();
+        let r = rig.req("ctl-a", 1, EPOCH, None, set_group(95));
+        assert!(matches!(rig.submit(r.clone()), SubmitResult::Queued { .. }));
+        rig.channel.authority_mut().revoke(&id("ctl-a"));
+        assert_eq!(
+            rig.step()[0].outcome,
+            Outcome::Refused(Refusal::AuthorityExpired)
+        );
+        assert_eq!(rig.session.group_master_volume, 50);
+        assert_eq!(rig.session.state_revision, 2);
+        // The terminal outcome is on record, but only a peer that authenticates can read it.
+        assert_eq!(
+            rig.submit(r),
+            SubmitResult::Rejected(Rejection::Unauthenticated(AuthFailure::Revoked))
+        );
+    }
+
+    #[test]
+    fn rebinding_a_key_after_acceptance_also_expires_the_commands_accepted_under_the_old_binding() {
+        let mut rig = Rig::roomy();
+        let r = rig.req("ctl-a", 1, EPOCH, None, set_group(95));
+        rig.submit(r);
+        rig.channel
+            .authority_mut()
+            .rebind(&id("ctl-a"), Some(EPOCH + 1));
+        assert_eq!(
+            rig.step()[0].outcome,
+            Outcome::Refused(Refusal::AuthorityExpired)
+        );
+        assert_eq!(rig.session.group_master_volume, 50);
+    }
+
+    // ----------------------------------------------------------------- stale leaders and revisions
+
+    #[test]
+    fn a_stale_leader_cannot_alter_the_group_after_the_epoch_moves_on() {
+        let mut rig = Rig::roomy();
+        let mut oracle = FencedCommandOracle::new(EPOCH);
+        // The group moves to epoch 11 (a new coordinator, outside this channel).
+        rig.session
+            .apply_command(FencedControlCommand {
+                epoch: 11,
+                command_seq: 3,
+                payload: GroupCommandPayload::MarkMemberClockLocked {
+                    member_id: "kitchen".to_string(),
+                },
+            })
+            .unwrap();
+        oracle.declare_authority(11).unwrap();
+        let revision = rig.session.state_revision;
+
+        // The old leader, still holding a key bound to epoch 10, tries to act.
+        oracle.record_issued(7, EPOCH, 1).unwrap();
+        let r = rig.req("ctl-a", 1, EPOCH, None, set_group(5));
+        assert!(matches!(rig.submit(r), SubmitResult::Queued { .. }));
+        assert_eq!(
+            rig.step()[0].outcome,
+            Outcome::Refused(Refusal::StaleEpoch {
+                request: EPOCH,
+                current: 11
+            })
+        );
+        assert_eq!(rig.session.group_master_volume, 50);
+        assert_eq!(rig.session.state_revision, revision);
+        oracle
+            .observe_outcome(CommandObservation {
+                command_id: 7,
+                applied: rig.session.state_revision > revision,
+                system_epoch_after: rig.session.current_epoch,
+            })
+            .unwrap();
+
+        // Rebound to the new epoch, the same peer works again.
+        rig.channel.authority_mut().rebind(&id("ctl-a"), Some(11));
+        let again = rig.req("ctl-a", 2, 11, None, set_group(5));
+        assert!(matches!(rig.submit(again), SubmitResult::Queued { .. }));
+        assert!(matches!(rig.step()[0].outcome, Outcome::Committed { .. }));
+        assert_eq!(rig.session.group_master_volume, 5);
+    }
+
+    #[test]
+    fn a_key_bound_to_one_epoch_is_rejected_at_the_door_under_another() {
+        let mut rig = Rig::roomy();
+        for epoch in [EPOCH - 1, EPOCH + 1, 0] {
+            let r = rig.req("ctl-a", 1, epoch, None, set_group(5));
+            assert_eq!(
+                rig.submit(r),
+                SubmitResult::Rejected(Rejection::EpochNotBound {
+                    bound: EPOCH,
+                    request: epoch
+                })
+            );
+        }
+        assert_eq!(rig.channel.pending(Lane::Ordinary), 0);
+    }
+
+    #[test]
+    fn an_epoch_jump_from_a_peer_whose_key_allows_it_still_cannot_fence_out_the_group() {
+        // A controller whose key is (wrongly or maliciously) bound to a far-future epoch: the channel
+        // refuses to apply it, so the session's epoch never moves.
+        let mut rig = Rig::roomy();
+        rig.channel
+            .authority_mut()
+            .admit(
+                &id("rogue"),
+                PeerRole::Controller,
+                test_key("rogue").as_slice(),
+                Some(900),
+                1,
+            )
+            .unwrap();
+        let r = rig.req("rogue", 1, 900, None, set_group(1));
+        assert!(matches!(rig.submit(r), SubmitResult::Queued { .. }));
+        assert_eq!(
+            rig.step()[0].outcome,
+            Outcome::Refused(Refusal::EpochAhead {
+                request: 900,
+                current: EPOCH
+            })
+        );
+        assert_eq!(rig.session.current_epoch, EPOCH);
+        assert_eq!(rig.session.group_master_volume, 50);
+    }
+
+    #[test]
+    fn a_wrong_expected_revision_is_refused_without_effect() {
+        let mut rig = Rig::roomy();
+        let r = rig.req("ctl-a", 1, EPOCH, Some(99), set_group(5));
+        rig.submit(r.clone());
+        assert_eq!(
+            rig.step()[0].outcome,
+            Outcome::Refused(Refusal::RevisionMismatch {
+                expected: 99,
+                actual: 2
+            })
+        );
+        assert_eq!(rig.session.group_master_volume, 50);
+        // The refusal is the terminal outcome for that number; a retry is told the same.
+        assert_eq!(
+            rig.submit(r),
+            SubmitResult::Settled(Outcome::Refused(Refusal::RevisionMismatch {
+                expected: 99,
+                actual: 2
+            }))
+        );
+    }
+
+    #[test]
+    fn a_relative_command_computed_against_an_old_revision_is_not_applied() {
+        let mut rig = Rig::roomy();
+        // ctl-a and ctl-b both read revision 2; ctl-b's change lands first.
+        let b = rig.req("ctl-b", 1, EPOCH, Some(2), adjust("kitchen", 20));
+        let a = rig.req("ctl-a", 1, EPOCH, Some(2), adjust("kitchen", 10));
+        rig.submit(b);
+        rig.submit(a);
+        let settled = rig.step();
+        assert_eq!(settled[0].outcome, committed(3));
+        assert_eq!(
+            settled[1].outcome,
+            Outcome::Refused(Refusal::RevisionMismatch {
+                expected: 2,
+                actual: 3
+            })
+        );
+        assert_eq!(rig.volume("kitchen"), 70, "only the first delta applied");
+    }
+
+    #[test]
+    fn relative_volume_clamps_and_an_unknown_member_is_a_recorded_refusal() {
+        let mut rig = Rig::roomy();
+        let r = rig.req("ctl-a", 1, EPOCH, Some(2), adjust("kitchen", 100));
+        rig.submit(r);
+        rig.step();
+        assert_eq!(rig.volume("kitchen"), 100);
+        let down = rig.req("ctl-a", 2, EPOCH, Some(3), adjust("kitchen", -100));
+        rig.submit(down);
+        rig.step();
+        assert_eq!(rig.volume("kitchen"), 0);
+
+        let missing = rig.req("ctl-a", 3, EPOCH, Some(4), adjust("nowhere", 5));
+        rig.submit(missing.clone());
+        assert_eq!(
+            rig.step()[0].outcome,
+            Outcome::Refused(Refusal::UnknownMember {
+                member_id: "nowhere".to_string()
+            })
+        );
+        assert_eq!(rig.session.state_revision, 4);
+        assert!(matches!(
+            rig.submit(missing),
+            SubmitResult::Settled(Outcome::Refused(Refusal::UnknownMember { .. }))
+        ));
+    }
+
+    // ----------------------------------------------------------------- bounds, lanes, flood
+
+    #[test]
+    fn the_ordinary_lane_is_bounded_and_a_duplicate_of_a_waiting_command_is_still_answered() {
+        let mut config = roomy();
+        config.ordinary_capacity = 3;
+        let mut rig = Rig::new(config);
+        let mut waiting = Vec::new();
+        for seq in 1..=3u64 {
+            let r = rig.req("ctl-a", seq, EPOCH, None, set_group(10 + seq as u8));
+            assert!(matches!(rig.submit(r.clone()), SubmitResult::Queued { .. }));
+            waiting.push(r);
+        }
+        let fourth = rig.req("ctl-a", 4, EPOCH, None, set_group(99));
+        assert_eq!(
+            rig.submit(fourth.clone()),
+            SubmitResult::Rejected(Rejection::QueueFull {
+                lane: Lane::Ordinary
+            })
+        );
+        // A copy of one that is already waiting needs no room.
+        assert_eq!(
+            rig.submit(waiting[0].clone()),
+            SubmitResult::AlreadyQueued {
+                lane: Lane::Ordinary
+            }
+        );
+        // Refused for want of room: its number is not consumed, so it is accepted once room appears.
+        rig.step();
+        assert!(matches!(rig.submit(fourth), SubmitResult::Queued { .. }));
+    }
+
+    #[test]
+    fn rate_limits_are_per_peer_and_per_lane_and_report_the_wait() {
+        let mut config = roomy();
+        config.ordinary_rate = RateLimit::new(2, 100 * MS).unwrap();
+        config.priority_rate = RateLimit::new(1, 100 * MS).unwrap();
+        let mut rig = Rig::new(config);
+        for seq in 1..=2u64 {
+            let r = rig.req("ctl-a", seq, EPOCH, None, set_group(20));
+            assert!(matches!(rig.submit(r), SubmitResult::Queued { .. }));
+        }
+        let third = rig.req("ctl-a", 3, EPOCH, None, set_group(20));
+        assert_eq!(
+            rig.submit(third.clone()),
+            SubmitResult::Rejected(Rejection::RateLimited {
+                lane: Lane::Ordinary,
+                retry_after_ns: 100 * MS
+            })
+        );
+        // ctl-b has its own allowance; ctl-a's priority lane has its own too.
+        let b = rig.req("ctl-b", 1, EPOCH, None, set_group(20));
+        assert!(matches!(rig.submit(b), SubmitResult::Queued { .. }));
+        let m = rig.req("ctl-a", 4, EPOCH, None, mute("den", true));
+        assert!(matches!(
+            rig.submit(m),
+            SubmitResult::Queued {
+                lane: Lane::Priority
+            }
+        ));
+        let m2 = rig.req("ctl-a", 5, EPOCH, None, mute("den", false));
+        assert!(matches!(
+            rig.submit(m2),
+            SubmitResult::Rejected(Rejection::RateLimited {
+                lane: Lane::Priority,
+                ..
+            })
+        ));
+        // After the wait, the refused request goes through.
+        rig.at(100 * MS);
+        assert!(matches!(rig.submit(third), SubmitResult::Queued { .. }));
+    }
+
+    #[test]
+    fn a_step_applies_at_most_its_budget_priority_first() {
+        let mut config = roomy();
+        config.max_per_step = 2;
+        let mut rig = Rig::new(config);
+        for seq in 1..=3u64 {
+            let r = rig.req("ctl-a", seq, EPOCH, None, set_group(10 + seq as u8));
+            rig.submit(r);
+        }
+        let s = rig.req("ctl-a", 4, EPOCH, None, stop());
+        rig.submit(s);
+        // The stop was queued last but is applied first.
+        let first = rig.step();
+        assert_eq!(first.len(), 2);
+        assert_eq!((first[0].seq, first[1].seq), (4, 1));
+        assert_eq!(rig.step().len(), 2);
+        assert_eq!(rig.step().len(), 0);
+    }
+
+    #[test]
+    fn a_local_stop_runs_in_its_first_step_through_a_full_queue_a_retry_storm_and_a_remote_flood() {
+        let mut config = ChannelConfig::provisional();
+        config.ordinary_rate = RateLimit::new(100_000, MS).unwrap();
+        config.priority_rate = RateLimit::new(100_000, MS).unwrap();
+        config.session_seq_base = 1_000;
+        let mut rig = Rig::new(config);
+
+        // Fill the ordinary lane, then storm it with retries and with refused new work.
+        for seq in 1..=16u64 {
+            let r = rig.req("ctl-a", seq, EPOCH, None, set_group(10 + seq as u8));
+            assert!(matches!(rig.submit(r), SubmitResult::Queued { .. }));
+        }
+        let waiting = rig.req("ctl-a", 1, EPOCH, None, set_group(11));
+        for _ in 0..500 {
+            assert!(matches!(
+                rig.submit(waiting.clone()),
+                SubmitResult::AlreadyQueued { .. }
+            ));
+            let extra = rig.req("ctl-b", 9_000, EPOCH, None, set_group(1));
+            assert!(matches!(
+                rig.submit(extra),
+                SubmitResult::Rejected(Rejection::QueueFull {
+                    lane: Lane::Ordinary
+                })
+            ));
+        }
+        // A compromised but authenticated remote controller floods the shared priority slots.
+        let mut remote_accepted = 0;
+        for seq in 1..=50u64 {
+            let r = rig.req("ctl-b", seq, EPOCH, None, mute("den", seq % 2 == 0));
+            if matches!(rig.submit(r), SubmitResult::Queued { .. }) {
+                remote_accepted += 1;
+            }
+        }
+        assert_eq!(
+            remote_accepted, 4,
+            "the remote peer is held to the shared priority slots"
+        );
+
+        // The person at the device presses stop. It is accepted despite everything above...
+        let local = rig.req("panel", 1, 0, None, stop());
+        assert_eq!(
+            rig.submit(local),
+            SubmitResult::Queued {
+                lane: Lane::Priority
+            }
+        );
+        // ...and it is applied first in the very next step, ahead of the four remote priority
+        // commands queued before it and of all the ordinary work, with epoch 0 and no revision: the
+        // local user is not refused for epoch reasons.
+        let settled = rig.step();
+        assert_eq!(settled.len(), 4, "the step budget is four");
+        assert_eq!(
+            settled[0].peer,
+            id("panel"),
+            "the local stop must run first"
+        );
+        assert!(matches!(settled[0].outcome, Outcome::Committed { .. }));
+        assert!(matches!(
+            rig.session.members["kitchen"].lifecycle,
+            franken_session::MemberLifecycleState::StoppingDmaTail { .. }
+        ));
+    }
+
+    #[test]
+    fn the_local_user_keeps_reserved_priority_slots_and_a_remote_flood_cannot_take_them() {
+        let mut config = roomy();
+        config.priority_shared_capacity = 2;
+        config.priority_local_reserved = 1;
+        let mut rig = Rig::new(config);
+        for seq in 1..=2u64 {
+            let r = rig.req("ctl-a", seq, EPOCH, None, mute("den", true));
+            assert!(matches!(
+                rig.submit(r),
+                SubmitResult::Queued {
+                    lane: Lane::Priority
+                }
+            ));
+        }
+        let third = rig.req("ctl-b", 1, EPOCH, None, mute("den", true));
+        assert_eq!(
+            rig.submit(third),
+            SubmitResult::Rejected(Rejection::QueueFull {
+                lane: Lane::Priority
+            })
+        );
+        // The reserved slot is the local user's.
+        let local = rig.req("panel", 1, 0, None, mute("kitchen", true));
+        assert!(matches!(
+            rig.submit(local),
+            SubmitResult::Queued {
+                lane: Lane::Priority
+            }
+        ));
+        // Once the reserved slot is used and the shared pool is full, even the local user waits.
+        let local2 = rig.req("panel", 2, 0, None, mute("kitchen", false));
+        assert_eq!(
+            rig.submit(local2),
+            SubmitResult::Rejected(Rejection::QueueFull {
+                lane: Lane::Priority
+            })
+        );
+        assert_eq!(rig.channel.pending(Lane::Priority), 3);
+    }
+
+    #[test]
+    fn priority_is_not_an_authentication_bypass() {
+        let mut rig = Rig::roomy();
+        let body = Rig::body("panel", 1, 0, None, stop());
+        let forged = ControlRequest::new(
+            body.clone(),
+            compute_proof(b"not-the-panel-key", &body.signing_bytes()),
+        );
+        assert_eq!(
+            rig.submit(forged),
+            SubmitResult::Rejected(Rejection::Unauthenticated(AuthFailure::BadProof))
+        );
+        assert_eq!(rig.channel.pending(Lane::Priority), 0);
+        assert_eq!(rig.step(), vec![]);
+    }
+
+    #[test]
+    fn the_local_user_is_never_refused_for_epoch_or_revision_but_a_controller_is() {
+        let mut rig = Rig::roomy();
+        // Stale epoch and a wrong revision for a volume change: the panel is applied...
+        let local = rig.req("panel", 1, 3, Some(999), adjust("kitchen", 10));
+        rig.submit(local);
+        // ...and a controller in the same position is not.
+        let remote = rig.req("ctl-a", 1, EPOCH, Some(999), adjust("kitchen", 10));
+        rig.submit(remote);
+        let settled = rig.step();
+        assert_eq!(settled[0].peer, id("panel"));
+        assert!(matches!(settled[0].outcome, Outcome::Committed { .. }));
+        assert_eq!(
+            settled[1].outcome,
+            Outcome::Refused(Refusal::RevisionMismatch {
+                expected: 999,
+                actual: 3
+            })
+        );
+        assert_eq!(rig.volume("kitchen"), 60);
+    }
+
+    // ----------------------------------------------------------------- expiry and cancellation
+
+    #[test]
+    fn a_command_that_waits_past_the_ttl_expires_unapplied_and_that_is_its_recorded_outcome() {
+        let mut config = roomy();
+        config.pending_ttl_ns = 5_000 * MS;
+        let mut rig = Rig::new(config);
+        let r = rig.req("ctl-a", 1, EPOCH, Some(2), adjust("kitchen", 10));
+        rig.submit(r.clone());
+        rig.at(4_999 * MS);
+        assert_eq!(rig.channel.pending(Lane::Ordinary), 1);
+        rig.at(5_000 * MS);
+        let settled = rig.step();
+        assert_eq!(settled[0].outcome, Outcome::Refused(Refusal::Expired));
+        assert_eq!(rig.volume("kitchen"), 50);
+        assert_eq!(rig.channel.pending(Lane::Ordinary), 0);
+        assert_eq!(rig.channel.stats().expired_pending, 1);
+        assert_eq!(
+            rig.submit(r),
+            SubmitResult::Settled(Outcome::Refused(Refusal::Expired))
+        );
+    }
+
+    #[test]
+    fn a_cancel_withdraws_a_waiting_command_and_the_retry_is_told_so() {
+        let mut rig = Rig::roomy();
+        let target = rig.req("ctl-a", 1, EPOCH, Some(2), adjust("kitchen", 30));
+        rig.submit(target.clone());
+        let cancel = rig.req(
+            "ctl-a",
+            2,
+            EPOCH,
+            None,
+            ControlCommand::Cancel { target_seq: 1 },
+        );
+        assert_eq!(
+            rig.submit(cancel),
+            SubmitResult::Queued {
+                lane: Lane::Priority
+            }
+        );
+        let settled = rig.step();
+        assert_eq!(settled.len(), 2);
+        assert_eq!(settled[0].outcome, Outcome::Withdrawn);
+        assert_eq!(settled[1].outcome, Outcome::CancelApplied { target_seq: 1 });
+        assert_eq!(rig.volume("kitchen"), 50, "the withdrawn command never ran");
+        assert_eq!(rig.session.state_revision, 2);
+        assert_eq!(
+            rig.submit(target),
+            SubmitResult::Settled(Outcome::Withdrawn)
+        );
+    }
+
+    #[test]
+    fn a_cancel_that_arrives_too_late_or_too_wrong_changes_nothing() {
+        let mut rig = Rig::roomy();
+        let done = rig.req("ctl-a", 1, EPOCH, None, set_group(70));
+        rig.submit(done);
+        rig.step();
+
+        let cancels = [
+            (
+                2,
+                ControlCommand::Cancel { target_seq: 1 },
+                Refusal::TooLateToCancel,
+            ),
+            (
+                3,
+                ControlCommand::Cancel { target_seq: 77 },
+                Refusal::NothingToCancel,
+            ),
+        ];
+        for (seq, command, expected) in cancels {
+            let r = rig.req("ctl-a", seq, EPOCH, None, command);
+            rig.submit(r);
+            assert_eq!(rig.step()[0].outcome, Outcome::Refused(expected));
+        }
+        assert_eq!(rig.session.group_master_volume, 70);
+
+        // A stop that is still waiting is not withdrawn by a cancel. The cancel is submitted first, so
+        // it is processed while its target is still in the priority queue.
+        let cancel_stop = rig.req(
+            "ctl-a",
+            5,
+            EPOCH,
+            None,
+            ControlCommand::Cancel { target_seq: 6 },
+        );
+        rig.submit(cancel_stop);
+        let stopping = rig.req("ctl-a", 6, EPOCH, None, stop());
+        rig.submit(stopping);
+        let settled = rig.step();
+        assert_eq!(
+            settled[0].outcome,
+            Outcome::Refused(Refusal::NotCancellable)
+        );
+        assert!(
+            matches!(settled[1].outcome, Outcome::Committed { .. }),
+            "the stop was not withdrawn and ran"
+        );
+    }
+
+    #[test]
+    fn one_peer_cannot_cancel_another_peers_command() {
+        let mut rig = Rig::roomy();
+        let victim = rig.req("ctl-a", 1, EPOCH, None, set_group(80));
+        rig.submit(victim);
+        let attack = rig.req(
+            "ctl-b",
+            2,
+            EPOCH,
+            None,
+            ControlCommand::Cancel { target_seq: 1 },
+        );
+        rig.submit(attack);
+        let settled = rig.step();
+        assert_eq!(settled[0].peer, id("ctl-b"));
+        assert_eq!(
+            settled[0].outcome,
+            Outcome::Refused(Refusal::NothingToCancel)
+        );
+        assert_eq!(
+            settled[1].outcome,
+            committed(3),
+            "the victim's command still ran"
+        );
+        assert_eq!(rig.session.group_master_volume, 80);
+    }
+
+    #[test]
+    fn a_cancel_of_a_number_the_ledger_forgot_says_so() {
+        let mut config = roomy();
+        config.ledger_capacity = 1;
+        let mut rig = Rig::new(config);
+        for seq in 1..=2u64 {
+            let r = rig.req("ctl-a", seq, EPOCH, None, set_group(40 + seq as u8));
+            rig.submit(r);
+        }
+        rig.step();
+        let cancel = rig.req(
+            "ctl-a",
+            3,
+            EPOCH,
+            None,
+            ControlCommand::Cancel { target_seq: 1 },
+        );
+        rig.submit(cancel);
+        assert_eq!(
+            rig.step()[0].outcome,
+            Outcome::Refused(Refusal::TargetOutOfWindow { floor: 1 })
+        );
+    }
+
+    // ----------------------------------------------------------------- the session boundary and accounting
+
+    #[test]
+    fn the_channels_own_command_numbers_never_collide_with_the_session_even_past_its_window() {
+        let mut config = roomy();
+        config.ledger_capacity = 4;
+        let mut rig = Rig::new(config);
+        // More commits in one epoch than the session remembers (its window is 1024).
+        for seq in 1..=1_100u64 {
+            let r = rig.req("ctl-a", seq, EPOCH, None, set_group((seq % 100) as u8));
+            assert!(
+                matches!(rig.submit(r), SubmitResult::Queued { .. }),
+                "seq {seq}"
+            );
+            let settled = rig.step();
+            assert!(
+                matches!(settled[0].outcome, Outcome::Committed { .. }),
+                "seq {seq}: {:?}",
+                settled[0].outcome
+            );
+        }
+        assert_eq!(rig.session.state_revision, 2 + 1_100);
+        assert_eq!(rig.channel.stats().ledger_record_failures, 0);
+    }
+
+    #[test]
+    fn every_submit_lands_in_exactly_one_bucket() {
+        let mut rig = Rig::new({
+            let mut c = roomy();
+            c.ordinary_capacity = 2;
+            c.ordinary_rate = RateLimit::new(6, 100 * MS).unwrap();
+            c
+        });
+        let good = rig.req("ctl-a", 1, EPOCH, None, set_group(60));
+        let body = Rig::body("ctl-a", 2, EPOCH, None, set_group(61));
+        let forged = ControlRequest::new(body.clone(), compute_proof(b"x", &body.signing_bytes()));
+        let reuse = rig.req("ctl-a", 1, EPOCH, None, set_group(99));
+        let wrong_epoch = rig.req("ctl-a", 3, EPOCH + 5, None, set_group(1));
+        let second = rig.req("ctl-a", 4, EPOCH, None, set_group(62));
+        let overflow = rig.req("ctl-a", 5, EPOCH, None, set_group(63));
+        let sequence = [
+            good.clone(),
+            good.clone(),
+            forged,
+            reuse,
+            wrong_epoch,
+            second,
+            overflow,
+        ];
+        for r in sequence {
+            rig.submit(r);
+        }
+        rig.step();
+        rig.submit(good);
+        rig.at(10_000 * MS);
+        rig.submit(rig.req("ctl-a", 9, EPOCH, None, set_group(1)));
+        let s = *rig.channel.stats();
+        assert_eq!(s.accounted(), s.received, "{s:?}");
+        assert!(s.received >= 9);
+    }
+
+    #[test]
+    fn diagnostics_show_received_beside_committed() {
+        let mut rig = Rig::roomy();
+        for seq in 1..=3u64 {
+            let r = rig.req("ctl-a", seq, EPOCH, None, set_group(60 + seq as u8));
+            rig.submit(r);
+        }
+        let queued = rig.channel.diagnostics(&rig.session);
+        assert_eq!((queued.stats.received, queued.stats.accepted), (3, 3));
+        assert_eq!((queued.stats.committed, queued.committed_revision), (0, 2));
+        rig.step();
+        let done = rig.channel.diagnostics(&rig.session);
+        assert_eq!((done.stats.committed, done.committed_revision), (3, 5));
+        assert_eq!(done.tracked_peers, 0, "nothing has been forgotten yet");
+    }
+
+    #[test]
+    fn a_configuration_with_a_zero_bound_is_refused() {
+        let zero = |edit: fn(&mut ChannelConfig)| {
+            let mut c = ChannelConfig::provisional();
+            edit(&mut c);
+            ControlChannel::new(peers(), c).err()
+        };
+        assert_eq!(
+            zero(|c| c.ordinary_capacity = 0),
+            Some(ConfigError::Zero {
+                field: "ordinary_capacity"
+            })
+        );
+        assert_eq!(
+            zero(|c| c.priority_shared_capacity = 0),
+            Some(ConfigError::Zero {
+                field: "priority_shared_capacity"
+            })
+        );
+        assert_eq!(
+            zero(|c| c.priority_local_reserved = 0),
+            Some(ConfigError::Zero {
+                field: "priority_local_reserved"
+            })
+        );
+        assert_eq!(
+            zero(|c| c.max_per_step = 0),
+            Some(ConfigError::Zero {
+                field: "max_per_step"
+            })
+        );
+        assert_eq!(
+            zero(|c| c.pending_ttl_ns = 0),
+            Some(ConfigError::Zero {
+                field: "pending_ttl_ns"
+            })
+        );
+        assert_eq!(
+            zero(|c| c.ledger_capacity = 0),
+            Some(ConfigError::Ledger(LedgerError::ZeroCapacity))
+        );
+        assert_eq!(
+            zero(|c| c.retention_ns = 0),
+            Some(ConfigError::Ledger(LedgerError::ZeroRetention))
+        );
+        assert!(ControlChannel::new(peers(), ChannelConfig::provisional()).is_ok());
+    }
+
+    #[test]
+    fn stepping_an_idle_channel_does_nothing() {
+        let mut rig = Rig::roomy();
+        assert_eq!(rig.step(), vec![]);
+        assert_eq!(
+            rig.channel.diagnostics(&rig.session).stats,
+            ChannelStats::default()
+        );
+    }
+}

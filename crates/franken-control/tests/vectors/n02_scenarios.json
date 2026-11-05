@@ -1,0 +1,389 @@
+{
+  "schema": "ffw.n02.scenarios.v1",
+  "notes": [
+    "Golden scenarios for the N02 control channel (bead ffw-ugf). Each `expect` was worked out by hand from docs/contracts/n02.md before any implementation produced it.",
+    "They are replayed by tests/n02/reference.py (an independently structured model) and by the Rust channel (crates/franken-control, test `replay`). A disagreement between any two of the three is a finding.",
+    "Start state of every scenario: group epoch 10, state revision 2, members kitchen and den at volume 50 and unmuted, group master volume 50, nothing stopped.",
+    "Peers: ctl-a and ctl-b (remote controllers, keys bound to epoch 10), panel (the local user, not epoch-bound), rogue (a remote controller whose key is bound to epoch 900).",
+    "Times are in milliseconds. A rate limit [burst, interval_ms] allows `burst` actions at once and one more per interval.",
+    "These are host-simulation vectors for a message-handling state machine. They say nothing about a network, a real MAC, or a board."
+  ],
+  "base_config": {
+    "ordinary_capacity": 64,
+    "priority_shared_capacity": 4,
+    "priority_local_reserved": 2,
+    "ledger_capacity": 128,
+    "retention_ms": 30000,
+    "pending_ttl_ms": 5000,
+    "max_per_step": 4,
+    "ordinary_rate": [100000, 1],
+    "priority_rate": [100000, 1]
+  },
+  "signing_vectors": [
+    {
+      "id": "N02-W001",
+      "what": "relative member volume with an expected revision (also pinned by a hand-written Rust unit test)",
+      "peer": "ctl-a", "seq": 7, "epoch": 3, "rev": 12,
+      "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": -5},
+      "hex": "46464350010563746c2d610000000000000007000000000000000301000000000000000c03076b69746368656efb"},
+    {
+      "id": "N02-W002",
+      "what": "stop without an expected revision",
+      "peer": "panel", "seq": 1, "epoch": 10, "rev": null,
+      "cmd": {"kind": "stop", "now_ns": 256, "tail_ns": 65535},
+      "hex": "46464350010570616e656c0000000000000001000000000000000a00060000000000000100000000000000ffff"},
+    {
+      "id": "N02-W003",
+      "what": "cancel naming an earlier command",
+      "peer": "ctl-b", "seq": 300, "epoch": 11, "rev": null,
+      "cmd": {"kind": "cancel", "target_seq": 299},
+      "hex": "46464350010563746c2d62000000000000012c000000000000000b0007000000000000012b"},
+    {
+      "id": "N02-W004",
+      "what": "mute with a one-byte flag",
+      "peer": "panel", "seq": 2, "epoch": 0, "rev": null,
+      "cmd": {"kind": "set_member_mute", "member": "den", "muted": true},
+      "hex": "46464350010570616e656c0000000000000002000000000000000000050364656e01"},
+    {
+      "id": "N02-W005",
+      "what": "absolute group volume at the top of the range, with an expected revision",
+      "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2,
+      "cmd": {"kind": "set_group_volume", "volume": 100},
+      "hex": "46464350010563746c2d610000000000000001000000000000000a0100000000000000020264"}
+  ],
+  "scenarios": [
+    {
+      "id": "N02-S001",
+      "title": "the acknowledgement is lost after the commit; the retry gets the recorded outcome and nothing is applied twice",
+      "invariants": ["INV-LOST-ACK", "INV-ONE-EFFECT"],
+      "config": {},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 10}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=committed:3"]},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 10}, "expect": "settled:committed:3"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 10}, "expect": "settled:committed:3"},
+        {"op": "step", "at_ms": 0, "expect": []}
+      ],
+      "final": {"revision": 3, "epoch": 10, "group_volume": 50, "kitchen": 60, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S002",
+      "title": "a duplicate relative volume produces one effect whether the copy arrives before or after the command is applied",
+      "invariants": ["INV-DUP-RELATIVE", "INV-ONE-EFFECT"],
+      "config": {},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 10}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 10}, "expect": "already_queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=committed:3"]},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 10}, "expect": "settled:committed:3"}
+      ],
+      "final": {"revision": 3, "epoch": 10, "group_volume": 50, "kitchen": 60, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S003",
+      "title": "after the retention window a retry is explicitly unknown and is not applied again",
+      "invariants": ["INV-WINDOW-AGE", "INV-NOT-FOREVER"],
+      "config": {"retention_ms": 1000},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 10}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=committed:3"]},
+        {"op": "submit", "at_ms": 999, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 10}, "expect": "settled:committed:3"},
+        {"op": "submit", "at_ms": 1000, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 10}, "expect": "out_of_window:1"},
+        {"op": "step", "at_ms": 1000, "expect": []},
+        {"op": "submit", "at_ms": 1000, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 10}, "expect": "out_of_window:1"}
+      ],
+      "final": {"revision": 3, "epoch": 10, "group_volume": 50, "kitchen": 60, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S004",
+      "title": "a full ledger forgets its oldest outcome and says so; newer ones are still answered",
+      "invariants": ["INV-WINDOW-COUNT", "INV-NOT-FOREVER"],
+      "config": {"ledger_capacity": 2},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 61}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 2, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 62}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 3, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 63}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=committed:3", "ctl-a#2=committed:4", "ctl-a#3=committed:5"]},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 61}, "expect": "out_of_window:1"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 3, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 63}, "expect": "settled:committed:5"}
+      ],
+      "final": {"revision": 5, "epoch": 10, "group_volume": 63, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S005",
+      "title": "a stale leader cannot alter a group whose epoch has moved on; rebinding its key to the new epoch restores it",
+      "invariants": ["INV-STALE-LEADER", "INV-EXPIRED-AUTHORITY"],
+      "config": {},
+      "steps": [
+        {"op": "session_epoch", "epoch": 11},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 5}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=refused:stale_epoch"]},
+        {"op": "rebind", "peer": "ctl-a", "epoch": 11},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 2, "epoch": 11, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 5}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#2=committed:4"]}
+      ],
+      "final": {"revision": 4, "epoch": 11, "group_volume": 5, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S006",
+      "title": "a key bound to one epoch is refused under another, and an epoch jump from a peer bound to one is refused and never fences the group",
+      "invariants": ["INV-EPOCH-BINDING", "INV-NO-EPOCH-ADVANCE"],
+      "config": {},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 9, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 5}, "expect": "rejected:epoch_not_bound"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 11, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 5}, "expect": "rejected:epoch_not_bound"},
+        {"op": "submit", "at_ms": 0, "peer": "rogue", "seq": 1, "epoch": 900, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 1}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["rogue#1=refused:epoch_ahead"]}
+      ],
+      "final": {"revision": 2, "epoch": 10, "group_volume": 50, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S007",
+      "title": "two controllers read the same revision; only the first relative change applies and the second is refused",
+      "invariants": ["INV-EXPECTED-REVISION"],
+      "config": {},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-b", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 20}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 10}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-b#1=committed:3", "ctl-a#1=refused:revision_mismatch"]},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 10}, "expect": "settled:refused:revision_mismatch"}
+      ],
+      "final": {"revision": 3, "epoch": 10, "group_volume": 50, "kitchen": 70, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S008",
+      "title": "the same command number with different content is refused, while waiting and after it settled",
+      "invariants": ["INV-ID-REUSE"],
+      "config": {},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 70}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 90}, "expect": "rejected:id_reuse"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=committed:3"]},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 90}, "expect": "rejected:id_reuse"}
+      ],
+      "final": {"revision": 3, "epoch": 10, "group_volume": 70, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S009",
+      "title": "the ordinary queue is bounded; a copy of a waiting command is still answered; a refused number is not consumed",
+      "invariants": ["INV-BOUNDED-QUEUE", "INV-REFUSAL-KEEPS-NUMBER"],
+      "config": {"ordinary_capacity": 3},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 11}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 2, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 12}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 3, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 13}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 4, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 99}, "expect": "rejected:queue_full:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 11}, "expect": "already_queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=committed:3", "ctl-a#2=committed:4", "ctl-a#3=committed:5"]},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 4, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 99}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#4=committed:6"]}
+      ],
+      "final": {"revision": 6, "epoch": 10, "group_volume": 99, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S010",
+      "title": "rate limits are per peer and per lane, and report the exact wait",
+      "invariants": ["INV-RATE-LIMIT"],
+      "config": {"ordinary_rate": [2, 100], "priority_rate": [1, 100]},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 20}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 2, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 20}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 3, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 20}, "expect": "rejected:rate_limited:ordinary:100"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-b", "seq": 1, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 20}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 4, "epoch": 10, "rev": null, "cmd": {"kind": "set_member_mute", "member": "den", "muted": true}, "expect": "queued:priority"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 5, "epoch": 10, "rev": null, "cmd": {"kind": "set_member_mute", "member": "den", "muted": false}, "expect": "rejected:rate_limited:priority:100"},
+        {"op": "submit", "at_ms": 100, "peer": "ctl-a", "seq": 3, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 20}, "expect": "queued:ordinary"}
+      ],
+      "final": {"revision": 2, "epoch": 10, "group_volume": 50, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S011",
+      "title": "a flood of forged requests cannot spend the real peer's allowance",
+      "invariants": ["INV-AUTH-FIRST", "INV-RATE-LIMIT"],
+      "config": {"ordinary_rate": [3, 100]},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 1}, "proof": "forged", "repeat": 20, "expect": "rejected:unauthenticated:bad_proof"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 41}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 2, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 42}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 3, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 43}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 4, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 44}, "expect": "rejected:rate_limited:ordinary:100"}
+      ],
+      "final": {"revision": 2, "epoch": 10, "group_volume": 50, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S012",
+      "title": "a local stop runs first through a full ordinary queue and a remote peer's flood of priority commands",
+      "invariants": ["INV-LOCAL-STOP-FIRST", "INV-BOUNDED-QUEUE", "INV-PRIORITY-LANE"],
+      "config": {"ordinary_capacity": 4},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 11}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 2, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 12}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 3, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 13}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 4, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 14}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 5, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 15}, "expect": "rejected:queue_full:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-b", "seq": 1, "epoch": 10, "rev": null, "cmd": {"kind": "set_member_mute", "member": "den", "muted": true}, "expect": "queued:priority"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-b", "seq": 2, "epoch": 10, "rev": null, "cmd": {"kind": "set_member_mute", "member": "den", "muted": false}, "expect": "queued:priority"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-b", "seq": 3, "epoch": 10, "rev": null, "cmd": {"kind": "set_member_mute", "member": "den", "muted": true}, "expect": "queued:priority"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-b", "seq": 4, "epoch": 10, "rev": null, "cmd": {"kind": "set_member_mute", "member": "den", "muted": false}, "expect": "queued:priority"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-b", "seq": 5, "epoch": 10, "rev": null, "cmd": {"kind": "set_member_mute", "member": "den", "muted": true}, "expect": "rejected:queue_full:priority"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-b", "seq": 6, "epoch": 10, "rev": null, "cmd": {"kind": "set_member_mute", "member": "den", "muted": false}, "expect": "rejected:queue_full:priority"},
+        {"op": "submit", "at_ms": 0, "peer": "panel", "seq": 1, "epoch": 0, "rev": null, "cmd": {"kind": "stop", "now_ns": 1000, "tail_ns": 500}, "expect": "queued:priority"},
+        {"op": "step", "at_ms": 0, "expect": ["panel#1=committed:3", "ctl-b#1=committed:4", "ctl-b#2=committed:5", "ctl-b#3=committed:6"]}
+      ],
+      "final": {"revision": 6, "epoch": 10, "group_volume": 50, "kitchen": 50, "den": 50, "muted": ["den"], "stopped": true}
+    },
+    {
+      "id": "N02-S013",
+      "title": "the local user keeps priority slots a remote flood cannot take, but the lane is still bounded",
+      "invariants": ["INV-RESERVED-SLOTS", "INV-PRIORITY-LANE"],
+      "config": {"priority_shared_capacity": 2, "priority_local_reserved": 1},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": null, "cmd": {"kind": "set_member_mute", "member": "den", "muted": true}, "expect": "queued:priority"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 2, "epoch": 10, "rev": null, "cmd": {"kind": "set_member_mute", "member": "den", "muted": false}, "expect": "queued:priority"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-b", "seq": 1, "epoch": 10, "rev": null, "cmd": {"kind": "set_member_mute", "member": "den", "muted": true}, "expect": "rejected:queue_full:priority"},
+        {"op": "submit", "at_ms": 0, "peer": "panel", "seq": 1, "epoch": 0, "rev": null, "cmd": {"kind": "set_member_mute", "member": "kitchen", "muted": true}, "expect": "queued:priority"},
+        {"op": "submit", "at_ms": 0, "peer": "panel", "seq": 2, "epoch": 0, "rev": null, "cmd": {"kind": "set_member_mute", "member": "kitchen", "muted": false}, "expect": "rejected:queue_full:priority"}
+      ],
+      "final": {"revision": 2, "epoch": 10, "group_volume": 50, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S014",
+      "title": "a peer revoked after its command was accepted has no effect, and can no longer read the outcome",
+      "invariants": ["INV-EXPIRED-AUTHORITY", "INV-AUTH-FIRST"],
+      "config": {},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 95}, "expect": "queued:ordinary"},
+        {"op": "revoke", "peer": "ctl-a"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=refused:authority_expired"]},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 95}, "expect": "rejected:unauthenticated:revoked"}
+      ],
+      "final": {"revision": 2, "epoch": 10, "group_volume": 50, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S015",
+      "title": "rebinding a peer's key after acceptance also expires the commands accepted under the old binding",
+      "invariants": ["INV-EXPIRED-AUTHORITY"],
+      "config": {},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 95}, "expect": "queued:ordinary"},
+        {"op": "rebind", "peer": "ctl-a", "epoch": 11},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=refused:authority_expired"]}
+      ],
+      "final": {"revision": 2, "epoch": 10, "group_volume": 50, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S016",
+      "title": "an accepted command that waits past its time limit expires unapplied, and that is its recorded outcome",
+      "invariants": ["INV-PENDING-EXPIRY", "INV-NO-UNBOUNDED-RETRY"],
+      "config": {"pending_ttl_ms": 5000},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 10}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 5000, "expect": ["ctl-a#1=refused:expired"]},
+        {"op": "submit", "at_ms": 5000, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 10}, "expect": "settled:refused:expired"}
+      ],
+      "final": {"revision": 2, "epoch": 10, "group_volume": 50, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S017",
+      "title": "cancel: before the commit it withdraws; after, across peers and against a stop it changes nothing",
+      "invariants": ["INV-CANCEL"],
+      "config": {},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 30}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 2, "epoch": 10, "rev": null, "cmd": {"kind": "cancel", "target_seq": 1}, "expect": "queued:priority"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=withdrawn", "ctl-a#2=cancel_applied:1"]},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 30}, "expect": "settled:withdrawn"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 3, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 70}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#3=committed:3"]},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 4, "epoch": 10, "rev": null, "cmd": {"kind": "cancel", "target_seq": 3}, "expect": "queued:priority"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#4=refused:too_late_to_cancel"]},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 5, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 40}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-b", "seq": 2, "epoch": 10, "rev": null, "cmd": {"kind": "cancel", "target_seq": 5}, "expect": "queued:priority"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-b#2=refused:nothing_to_cancel", "ctl-a#5=committed:4"]},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 6, "epoch": 10, "rev": null, "cmd": {"kind": "cancel", "target_seq": 7}, "expect": "queued:priority"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 7, "epoch": 10, "rev": null, "cmd": {"kind": "stop", "now_ns": 1000, "tail_ns": 500}, "expect": "queued:priority"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#6=refused:not_cancellable", "ctl-a#7=committed:5"]}
+      ],
+      "final": {"revision": 5, "epoch": 10, "group_volume": 40, "kitchen": 50, "den": 50, "muted": [], "stopped": true}
+    },
+    {
+      "id": "N02-S018",
+      "title": "the local user is never refused for epoch or revision, but a remote controller in the same position is",
+      "invariants": ["INV-LOCAL-EXEMPT"],
+      "config": {},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "panel", "seq": 1, "epoch": 3, "rev": 999, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 10}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 999, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 10}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["panel#1=committed:3", "ctl-a#1=refused:revision_mismatch"]}
+      ],
+      "final": {"revision": 3, "epoch": 10, "group_volume": 50, "kitchen": 60, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S019",
+      "title": "priority is not an authentication bypass: a forged stop from the local user's identity is refused",
+      "invariants": ["INV-PRIORITY-NOT-BYPASS", "INV-AUTH-FIRST"],
+      "config": {},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "panel", "seq": 1, "epoch": 0, "rev": null, "cmd": {"kind": "stop", "now_ns": 1000, "tail_ns": 500}, "proof": "forged", "expect": "rejected:unauthenticated:bad_proof"},
+        {"op": "step", "at_ms": 0, "expect": []}
+      ],
+      "final": {"revision": 2, "epoch": 10, "group_volume": 50, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S020",
+      "title": "a retry storm leaves the queue and the ledger bounded and produces one effect",
+      "invariants": ["INV-RETRY-STORM", "INV-ONE-EFFECT", "INV-BOUNDED-QUEUE"],
+      "config": {},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 5}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 5}, "repeat": 300, "expect": "already_queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=committed:3"]},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 5}, "repeat": 300, "expect": "settled:committed:3"}
+      ],
+      "final": {"revision": 3, "epoch": 10, "group_volume": 50, "kitchen": 55, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S021",
+      "title": "a command naming a member the group does not have is refused with no effect, and the refusal is the recorded outcome",
+      "invariants": ["INV-REFUSAL-RECORDED", "INV-ONE-EFFECT"],
+      "config": {},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": null, "cmd": {"kind": "set_member_volume", "member": "nowhere", "volume": 10}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 2, "epoch": 10, "rev": null, "cmd": {"kind": "set_member_mute", "member": "nowhere", "muted": true}, "expect": "queued:priority"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 3, "epoch": 10, "rev": 2, "cmd": {"kind": "adjust_member_volume", "member": "nowhere", "delta": 5}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#2=refused:session", "ctl-a#1=refused:session", "ctl-a#3=refused:unknown_member"]},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": null, "cmd": {"kind": "set_member_volume", "member": "nowhere", "volume": 10}, "expect": "settled:refused:session"}
+      ],
+      "final": {"revision": 2, "epoch": 10, "group_volume": 50, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S022",
+      "title": "relative volume is resolved against the live value and clamped at both ends of 0..=100",
+      "invariants": ["INV-RELATIVE-CLAMP", "INV-EXPECTED-REVISION"],
+      "config": {},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 100}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 2, "epoch": 10, "rev": 3, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": -100}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 3, "epoch": 10, "rev": 4, "cmd": {"kind": "adjust_group_volume", "delta": 25}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=committed:3", "ctl-a#2=committed:4", "ctl-a#3=committed:5"]}
+      ],
+      "final": {"revision": 5, "epoch": 10, "group_volume": 75, "kitchen": 0, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S023",
+      "title": "a step applies at most its budget, priority first, and what is left waits for the next step",
+      "invariants": ["INV-STEP-BUDGET", "INV-PRIORITY-LANE"],
+      "config": {"max_per_step": 2},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 11}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 2, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 12}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 3, "epoch": 10, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 13}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 4, "epoch": 10, "rev": null, "cmd": {"kind": "stop", "now_ns": 1000, "tail_ns": 500}, "expect": "queued:priority"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#4=committed:3", "ctl-a#1=committed:4"]},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#2=committed:5", "ctl-a#3=committed:6"]},
+        {"op": "step", "at_ms": 0, "expect": []}
+      ],
+      "final": {"revision": 6, "epoch": 10, "group_volume": 13, "kitchen": 50, "den": 50, "muted": [], "stopped": true}
+    }
+  ]
+}
