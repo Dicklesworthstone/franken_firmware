@@ -1,0 +1,32 @@
+[package]
+name = "ffw-n03-target"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# N03's group clock on the soft-float big-endian MIPS device target, run as PID 1 under QEMU (ffw-u07): the scripted
+# worlds of tests/n03/vectors.json and two seeded simulated worlds through the public API of `franken_clock::group`, and
+# guest instructions for a steady stream of exchanges and for the per-block gate path. Consumer:
+# toolchain/src/measure-n03-target.py. It is built only for that measurement and never ships.
+#
+# Its own workspace root, like ffw-hello-init, ffw-d02-cost and ffw-d03-target, so the application workspace, its lockfile
+# and the P01 workspace contract are not touched. It needs `unsafe` for exactly three things (reading the cycle counter,
+# the calibration loops, and the reboot call, all in `main.rs`), which the workspace's `forbid(unsafe_code)` would refuse,
+# so it does not inherit it. `src/cases.rs` has no `unsafe` and is also compiled into the host test
+# `crates/franken-clock/tests/n03_target_worlds.rs`, so both builds run the same source text.
+
+[workspace]
+
+[dependencies]
+franken-clock = { path = "../../../crates/franken-clock" }
+serde_json = "1.0"
+
+# The device speaker's release profile, copied from the workspace root because a profile is read from the workspace
+# root and this package is its own. Instruction counts depend on opt-level (`z` favours size), so a measurement at
+# another level would not describe the shipped code. `strip` is left off so the ELF can be disassembled; it does not
+# change generated code.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
