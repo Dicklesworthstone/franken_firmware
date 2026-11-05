@@ -178,6 +178,17 @@ def registry(vec: dict) -> List[dict]:
                 "n03_requests_are_numbered_from_the_base_and_wrap_without_panicking",
                 "n03_a_response_for_an_older_request_does_not_answer_a_newer_one_with_the_same_send_time",
                 "n03_every_world_in_the_vectors_has_a_test_above"), []),
+        _case("N03-DIAGNOSTICS", "AC-DIAGNOSTICS", "smoke",
+              "structured clock events on the shared bounded buffer: lock, loss, holdover with its binding, expiry, reset and relock progress n of 4, each reject with its cause, estimated error against known truth (every scripted world's per-op event list is re-derived here); exact drop, rate-limit and unavailable accounting with critical events kept or counted lost; a full, unpopped or unavailable buffer changes no decision; production ffw.log.v1 lines that parse back byte for byte and equal the reference's",
+              T("n03_events_follow_lock_replay_jump_and_relock_with_progress_counts",
+                "n03_a_platform_clock_fault_is_logged_as_a_reset_then_unlocked_then_muted",
+                "n03_events_are_monotonic_numbered_and_each_states_the_clock_fit_claim",
+                "n03_estimated_error_against_known_truth_is_logged_and_a_violation_is_critical",
+                "n03_event_buffer_is_bounded_counts_every_drop_and_flags_lost_critical_events",
+                "n03_a_full_unpopped_or_unavailable_event_buffer_changes_no_decision",
+                "n03_events_are_written_as_ffw_log_v1_lines_that_parse_back_byte_for_byte",
+                "n03_log_labels_are_validated_and_a_fault_entry_rides_along_when_given"),
+              ["n03-events", "n03-log-lines"]),
         _case("N03-MIXED-PROFILE", "AC-MIXED", "full",
               "two members with different skews and board profiles join one future start within their summed uncertainty and the provisional 2 ms gate",
               T("n03_mixed_profile_members_begin_within_their_summed_uncertainty"),
@@ -422,6 +433,18 @@ def judge_observed(rec: dict, vec: dict) -> Optional[str]:
             if obs.get("min_margin_ns", -1) < 0 or obs.get("max_err_ns", 1 << 62) > obs.get("max_unc_ns", 0):
                 return "seed %d: the truth left the reported uncertainty" % args[0]
         return None
+    if kind == "events":
+        want = ref.ring_scenario()
+        got = {k: rec.get(k) for k in ("after_rejections", "final", "pending_kinds", "rate", "unavailable")}
+        return None if got == want else "event accounting %s differs from the reference %s" % (got, want)
+    if kind == "log_lines":
+        want = ref.log_scenario()
+        got = rec.get("lines")
+        if got == want:
+            return None
+        first = next((i for i, (a, b) in enumerate(zip(got or [], want)) if a != b), min(len(got or []), len(want)))
+        return "log lines differ from the reference at line %d (observed %s lines, reference %d)" % (
+            first, len(got or []), len(want))
     if kind == "property":
         if rec.get("audible", 0) < 100 or rec.get("resets_checked", 0) < 20:
             return "the property run was too thin: %s" % ({k: rec.get(k) for k in ("audible", "resets_checked")},)

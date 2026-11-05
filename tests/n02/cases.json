@@ -410,7 +410,8 @@
       "scenarios": [
         "N02-S029",
         "N02-S030",
-        "N02-S031"
+        "N02-S031",
+        "N02-S035"
       ],
       "rust_tests": [
         "without_a_lease_group_changes_are_refused_but_a_local_stop_and_mute_on_are_not",
@@ -565,6 +566,30 @@
       "scenario_inapplicable": "The diagnostics are written by the Rust channel only; the Python model does not model the log. They are checked by the Rust unit tests named here and by independent pseudonym and golden-line vectors (n02_log_vectors.json, generated with hashlib and json).",
       "rust_tests": [
         "timestamps_never_go_backwards"
+      ]
+    },
+    {
+      "id": "INV-LEASE-MARGIN",
+      "claim": "With a clock-uncertainty margin u the held lease stops being usable u before its expiry, exactly where G01's own liveness rule stops it; a lease with no more than u left cannot be installed.",
+      "scenarios": [
+        "N02-S035"
+      ],
+      "rust_tests": [
+        "the_channels_gate_and_install_agree_with_g1s_own_liveness_rule_at_every_boundary",
+        "the_margin_is_taken_from_g1s_lease_terms",
+        "a_holder_that_renews_through_a_quorum_win_keeps_applying_commands_with_no_gap"
+      ]
+    },
+    {
+      "id": "INV-LEASE-RENEWAL",
+      "claim": "A holder whose lease is about to expire renews it through a quorum win and keeps applying commands with no gap; a lapsed holder's renewal is refused and its commands stay refused until it wins a new epoch; a newer holder's adoption fences the old lease; a renewal needs a held lease and a quorum group and cannot be replayed to stretch the lease.",
+      "scenarios": [],
+      "scenario_inapplicable": "Renewal needs G01's real quorum machinery (voters, rounds, wins), which the Python model does not model; the Rust tests drive G01's own LeaseVoter, QuorumRound and GroupMembership.",
+      "rust_tests": [
+        "a_holder_that_renews_through_a_quorum_win_keeps_applying_commands_with_no_gap",
+        "a_lapsed_holders_renewal_is_refused_and_its_commands_stay_refused_until_it_wins_a_new_epoch",
+        "adopting_a_newer_holders_lease_fences_a_channel_that_still_holds_the_old_one",
+        "a_renewal_needs_a_lease_to_renew_and_a_quorum_group_to_renew_in"
       ]
     }
   ],

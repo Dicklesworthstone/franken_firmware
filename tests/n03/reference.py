@@ -11,6 +11,7 @@ t2 and t3 are the coordinator's GROUP-clock readings (receive, transmit).  "mid"
 from __future__ import annotations
 
 import importlib.util
+import json as _json
 import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -105,6 +106,86 @@ def local_of(s: Dict[str, int], group_ns: int, ratio_ppb: int) -> int:
 # ---- holdover --------------------------------------------------------------------------------------
 
 BINDING_ORDER = ("Authority", "Buffer", "Uncertainty")
+EVENT_RING_CAPACITY = 64
+EVENT_RATE_PER_WINDOW = 32
+EVENT_WINDOW_NS = 1_000_000_000
+CLAIM = "network-clock-fit-only: not DAC or acoustic alignment"
+LOG_SCHEMA_VERSION = "ffw.log.v1"
+MAX_LOG_LINE_BYTES = 1024
+
+
+class EventBufferModel:
+    """The shared fixed-storage buffer (crates/franken-clock/src/events.rs), restated: a bounded queue where
+    ordinary events are rate- and capacity-limited, a critical event bypasses the rate cap and evicts the oldest
+    ordinary event when full, and loss is counted exactly."""
+
+    def __init__(self, capacity: int, max_per_window: int, window_ns: int) -> None:
+        self.cap, self.max_per_window, self.window_ns = capacity, max_per_window, max(1, window_ns)
+        self.queue: List[Tuple[bool, int, Any]] = []
+        self.stats = {"emitted": 0, "delivered": 0, "dropped_ordinary": 0, "evicted_ordinary": 0,
+                      "lost_critical": 0, "rate_limited": 0, "unavailable_drops": 0, "regression_drops": 0,
+                      "dropped": 0, "critical_lost": 0}
+        self.available = True
+        self.window_start: Optional[int] = None
+        self.window_count = 0
+        self.last_ts: Optional[int] = None
+
+    def _loss(self, critical: bool) -> None:
+        self.stats["dropped"] += 1
+        if critical:
+            self.stats["critical_lost"] += 1
+
+    def emit(self, now: int, payload: Any, critical: bool) -> bool:
+        st = self.stats
+        st["emitted"] += 1
+        if self.last_ts is not None and now < self.last_ts:
+            st["regression_drops"] += 1
+            self._loss(critical)
+            return False
+        self.last_ts = now
+        if not self.available:
+            st["unavailable_drops"] += 1
+            self._loss(critical)
+            return False
+        if not critical:
+            if self.window_start is None or now - self.window_start >= self.window_ns:
+                self.window_start, self.window_count = now, 0
+            if self.window_count >= self.max_per_window:
+                st["rate_limited"] += 1
+                self._loss(False)
+                return False
+            self.window_count += 1
+        if len(self.queue) == self.cap:
+            if not critical:
+                st["dropped_ordinary"] += 1
+                self._loss(False)
+                return False
+            idx = next((i for i, e in enumerate(self.queue) if not e[0]), None)
+            if idx is None:
+                st["lost_critical"] += 1
+                self._loss(True)
+                return False
+            del self.queue[idx]
+            st["evicted_ordinary"] += 1
+            self._loss(False)
+        self.queue.append((critical, now, payload))
+        return True
+
+    def pop(self) -> Optional[Any]:
+        if not self.queue:
+            return None
+        self.stats["delivered"] += 1
+        return self.queue.pop(0)[2]
+
+
+def event_label(ev: Dict[str, Any]) -> str:
+    """The short stable label the Rust `ClockEvent::label` produces: kind, relock progress, cause."""
+    label = ev["kind"]
+    if label == "n03.probe.accepted":
+        label += "@%d/%d" % (ev["accepted_in_epoch"], ev["lock_needed"])
+    if ev["cause"] is not None:
+        label += ":" + ev["cause"]
+    return label
 
 
 def holdover(s: Dict[str, int], ratio_unc_ppb: int, cfg: Dict[str, int],
@@ -323,6 +404,12 @@ class Model:
         self.mute = "NotLocked"
         self.stats = {"probes_sent": 0, "probes_lost": 0, "accepted": 0, "resets": 0, "rate_restarts": 0,
                       "epochs": 0, "rejected": {}}
+        # diagnostics: events in the shared bounded buffer (docs/contracts/n03.md section 13)
+        self.events = EventBufferModel(EVENT_RING_CAPACITY, EVENT_RATE_PER_WINDOW, EVENT_WINDOW_NS)
+        self.revision = 0
+        self.last_event_ns = 0
+        self.last_status = "Unlocked"
+        self.last_output: Optional[Tuple[str, Optional[str]]] = None
 
     # ---- bookkeeping --------------------------------------------------------------------------
     def _clear(self, mute: str) -> None:
@@ -350,11 +437,17 @@ class Model:
         self.authority_until = None
         self._clear("EpochChange")
         self.stats["epochs"] += 1
+        self._push_event(self._new_event("n03.epoch.begin", self.last_event_ns, True))
+        self._observe_status(self.last_event_ns)
         return "ok"
 
     def report_clock_fault(self) -> str:
         self._clear("ClockFault")
         self.stats["resets"] += 1
+        ev = self._new_event("n03.reset", self.last_event_ns, True)
+        ev["cause"] = "ClockFault"
+        self._push_event(ev)
+        self._observe_status(self.last_event_ns)
         return "ok"
 
     def set_authority(self, epoch: int, expires: int, now: int) -> str:
@@ -385,6 +478,27 @@ class Model:
         return req
 
     def on_response(self, resp: Dict[str, int], t4: int) -> Any:
+        """('ok', info) or ('reject', code); every outcome is also recorded as diagnostic events."""
+        resets_before = self.stats["resets"]
+        outcome = self._probe_outcome(resp, t4)
+        if outcome[0] == "ok":
+            ev = self._new_event("n03.probe.accepted", t4, False)
+            ev["delay_ns"] = outcome[1]["delay"]
+            anchor = self._anchor(t4)
+            ev["uncertainty_ns"] = None if anchor is None else anchor["unc"]
+            self._push_event(ev)
+        else:
+            ev = self._new_event("n03.probe.rejected", t4, False)
+            ev["cause"] = outcome[1]
+            self._push_event(ev)
+            if self.stats["resets"] > resets_before:
+                reset = self._new_event("n03.reset", t4, True)
+                reset["cause"] = outcome[1]
+                self._push_event(reset)
+        self._observe_status(t4)
+        return outcome
+
+    def _probe_outcome(self, resp: Dict[str, int], t4: int) -> Any:
         """('ok', info) or ('reject', code)."""
         if resp["epoch"] < self.epoch:
             return ("reject", self._reject("StaleEpoch"))
@@ -498,6 +612,12 @@ class Model:
         plan = self.plan_start(sched, now)
         if plan.get("ok"):
             self.armed = sched["start_group_ns"]
+            ev = self._new_event("n03.admit.accepted", now, False)
+            ev["uncertainty_ns"] = plan["uncertainty_at_start_ns"]
+        else:
+            ev = self._new_event("n03.admit.rejected", now, False)
+            ev["cause"] = plan["reject"]
+        self._push_event(ev)
         return plan
 
     def _settle(self, now: int) -> str:
@@ -533,7 +653,70 @@ class Model:
 
     def tick(self, now: int) -> Dict[str, Any]:
         status = self._settle(now)
-        return self.output_at(status, now)
+        out = self.output_at(status, now)
+        self._observe_status(now)
+        self._observe_output(out, now)
+        return out
+
+    # ---- diagnostics: the bounded event ring ----------------------------------------------------
+    def _new_event(self, kind: str, now: int, critical: bool) -> Dict[str, Any]:
+        self.revision += 1
+        t = max(now, self.last_event_ns)
+        self.last_event_ns = t
+        return {"kind": kind, "local_ns": t, "epoch": self.epoch, "revision": self.revision,
+                "samples": len(self.samples), "accepted_in_epoch": self.accepted_in_epoch,
+                "lock_needed": self.cfg["min_probes_for_lock"], "delay_ns": None, "uncertainty_ns": None,
+                "error_ns": None, "cause": None, "critical": critical}
+
+    def _push_event(self, ev: Dict[str, Any]) -> None:
+        self.events.emit(ev["local_ns"], ev, ev["critical"])
+
+    def set_events_available(self, available: bool) -> None:
+        self.events.available = available
+
+    def _observe_status(self, now: int) -> None:
+        status = self.status(now)
+        if status == self.last_status:
+            return
+        ev = self._new_event("n03.status." + status.lower(), now, True)
+        a = self._anchor(now)
+        ev["uncertainty_ns"] = None if a is None else a["unc"]
+        if status == "Holdover":
+            h = self.holdover_of(now)
+            ev["cause"] = None if h is None else h[1]
+        self._push_event(ev)
+        self.last_status = status
+
+    def _observe_output(self, out: Dict[str, Any], now: int) -> None:
+        reason = out.get("mute") if out["output"] == "Muted" else None
+        key = (out["output"], reason)
+        if self.last_output == key:
+            return
+        ev = self._new_event("n03.output." + out["output"].lower(), now, False)
+        ev["cause"] = reason
+        self._push_event(ev)
+        self.last_output = key
+
+    def note_truth(self, now: int, true_group_ns: int) -> Optional[int]:
+        a = self._anchor(now)
+        if a is None:
+            return None
+        error = group_at(a["sample"], now, a["ratio"]) - true_group_ns
+        error = max(-(1 << 63), min((1 << 63) - 1, error))
+        within = abs(error) <= a["unc"]
+        ev = self._new_event("n03.truth.within" if within else "n03.truth.violated", now, not within)
+        ev["uncertainty_ns"] = a["unc"]
+        ev["error_ns"] = error
+        self._push_event(ev)
+        return error
+
+    def drain_events(self) -> List[Dict[str, Any]]:
+        out = []
+        while True:
+            ev = self.events.pop()
+            if ev is None:
+                return out
+            out.append(ev)
 
     def snapshot(self, now: int) -> Dict[str, Any]:
         """What Rust's report() plus group_ns says, without side effects."""
@@ -599,6 +782,8 @@ def run_script(cfg: Optional[Dict[str, int]], epoch: int, leader: int, seq_base:
             rec["seq"] = model.next_probe(op["t1"])["seq"]
         elif kind == "check":
             rec.update(model.snapshot(op["now"]))
+            if "truth_group" in op:
+                model.note_truth(op["now"], op["truth_group"])
         elif kind == "tick":
             rec.update(model.tick(op["now"]))
         elif kind in ("admit", "plan"):
@@ -622,6 +807,7 @@ def run_script(cfg: Optional[Dict[str, int]], epoch: int, leader: int, seq_base:
         else:
             raise ValueError("unknown op %r" % kind)
         rec["rate_in_force"] = model.rate_in_force()
+        rec["events"] = [event_label(e) for e in model.drain_events()]
         out.append(rec)
     return out
 
@@ -725,3 +911,107 @@ SIM_WORLDS = [
     (4, 25_000, 200, 800, 400, 20, 600),
     (5, -3_000, 50, 100, 900, 5, 300),
 ]
+
+
+def _unsolicited(m: "Model", i: int, t4: int) -> None:
+    m.on_response({"epoch": 1, "leader": 7, "seq": 5000 + i, "t1_echo": 0, "t2": 0, "t3": 0}, t4)
+
+
+def ring_scenario() -> Dict[str, Any]:
+    """The shared buffer's accounting through a clock, hand-derived (docs/contracts/n03.md section 13).
+
+    * ring: 100 unsolicited responses one second apart into a 64-event buffer, never popped: 64 pending, 36
+      dropped (ordinary, buffer full). Then 70 critical epoch events: the first 64 each evict one ordinary event
+      (dropped 36 + 64 = 100), the buffer is then all critical so the last 6 are lost: emitted 170, dropped 106,
+      critical_lost 6, pending 64, and 170 = 64 pending + 106 dropped.
+    * rate: 100 unsolicited responses one microsecond apart: the first 32 are admitted in the 1 s window and the
+      other 68 are rate limited; nothing is evicted or dropped for capacity.
+    * unavailable: with the log unavailable, 10 ordinary events and 3 critical ones are all dropped, the 3 critical
+      ones counted lost; nothing is stored."""
+    def snap(m: "Model") -> Dict[str, Any]:
+        return dict(m.events.stats, pending=len(m.events.queue))
+
+    m = Model(None, 1, 7, 1)
+    for i in range(100):
+        _unsolicited(m, i, 1000 + i * NS)
+    after = snap(m)
+    for e in range(2, 72):
+        m.begin_epoch(e, 7)
+    final = snap(m)
+    kinds = sorted({q[2]["kind"] for q in m.events.queue})
+    r = Model(None, 1, 7, 1)
+    for i in range(100):
+        _unsolicited(r, i, 1000 + i * 1000)
+    rate = snap(r)
+    u = Model(None, 1, 7, 1)
+    u.set_events_available(False)
+    for i in range(10):
+        _unsolicited(u, i, 1000 + i * NS)
+    for e in range(2, 5):
+        u.begin_epoch(e, 7)
+    return {"after_rejections": after, "final": final, "pending_kinds": kinds, "rate": rate,
+            "unavailable": snap(u)}
+
+
+def log_context() -> Dict[str, Any]:
+    return {"run_id": "run-n03", "case_id": "n03-log", "member": "p-0123456789abcdef",
+            "group": "p-fedcba9876543210", "fault": None}
+
+
+def log_line(ev: Dict[str, Any], ctx: Dict[str, Any]) -> Optional[str]:
+    """The `ffw.log.v1` line for an event: the field order of franken-test-support's `DiagnosticEvent`, the
+    claim in the message, nothing but the fixed vocabulary and numbers."""
+    def opt(v: Optional[int]) -> str:
+        return "-" if v is None else str(v)
+    message = "%s; samples=%d accepted=%d/%d delay_ns=%s unc_ns=%s err_ns=%s" % (
+        CLAIM, ev["samples"], ev["accepted_in_epoch"], ev["lock_needed"], opt(ev["delay_ns"]),
+        opt(ev["uncertainty_ns"]), opt(ev["error_ns"]))
+    fields: List[Tuple[str, Any]] = [
+        ("schema_version", LOG_SCHEMA_VERSION), ("timestamp_mono_ns", ev["local_ns"]), ("run_id", ctx["run_id"]),
+        ("case_id", ctx["case_id"]), ("correlation_id", "%s#%d" % (ctx["member"], ev["revision"])),
+        ("member_id", ctx["member"]), ("group_id", ctx["group"]), ("source_epoch", ev["epoch"]),
+        ("state_revision", ev["revision"]), ("event_kind", ev["kind"]), ("message", message),
+        ("queue_depth", ev["samples"]), ("latency_us", (ev["delay_ns"] or 0) // 1000)]
+    if ctx.get("fault") is not None:
+        fields.append(("fault", ctx["fault"]))
+    if ev["cause"] is not None:
+        fields.append(("cause", ev["cause"]))
+    line = "{" + ",".join(_json.dumps(k) + ":" + _json.dumps(v) for k, v in fields) + "}"
+    return line if len(line) < MAX_LOG_LINE_BYTES else None
+
+
+def log_scenario() -> List[str]:
+    """Lock, tick, replay, 2 s group step, tick, relock: the lines the clock's events become. The same calls the
+    Rust test makes (exact world, no skew, no quantisation, a group clock `goff` ahead)."""
+    goff = 8_995_000_000_000
+    m = Model(None, 1, 7, 100)
+    lines: List[str] = []
+    ctx = log_context()
+
+    def probe(t1: int, off: int) -> Tuple[Dict[str, int], int, Any]:
+        req = m.next_probe(t1)
+        resp = {"epoch": req["epoch"], "leader": m.leader, "seq": req["seq"], "t1_echo": t1,
+                "t2": t1 + off + 200_000, "t3": t1 + off + 250_000}
+        t4 = t1 + 450_000
+        return resp, t4, m.on_response(resp, t4)
+
+    def take() -> None:
+        lines.extend(log_line(e, ctx) for e in m.drain_events())
+
+    last = None
+    for k in range(4):
+        last = probe(10 * NS + k * NS, goff)
+        take()
+    resp, t4, _ = last
+    m.tick(t4 + 500_000_000)
+    take()
+    m.on_response(resp, t4 + 1000)
+    take()
+    probe(14 * NS, goff + 2 * NS)
+    take()
+    m.tick(14_500_000_000)
+    take()
+    for k in range(4):
+        probe(15 * NS + k * NS, goff + 2 * NS)
+        take()
+    return lines

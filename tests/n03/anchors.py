@@ -236,7 +236,10 @@ def c_model_unlocked_cannot_output() -> Tuple[bool, str]:
     ops.append({"op": "admit", "now": n, "sched": {"epoch": 1, "start_group_ns": w.group(5 * S)}})
     ops.append({"op": "tick", "now": w.local(5 * S) + 1_000_000})
     r = ref.run_script(None, 1, 7, 1000, ops)
-    return r[3]["result"] == "NotLocked" and r[4] == {"op": "tick", "output": "Muted", "mute": "NotLocked", "rate_in_force": False}, "%s" % (r[3:],)
+    # events, by hand: the refused admission is logged with its cause; the first tick logs the muted output
+    return (r[3]["result"] == "NotLocked" and r[3]["events"] == ["n03.admit.rejected:NotLocked"]
+            and r[4] == {"op": "tick", "output": "Muted", "mute": "NotLocked", "rate_in_force": False,
+                         "events": ["n03.output.muted:NotLocked"]}), "%s" % (r[3:],)
 
 
 def c_model_stale_and_replay() -> Tuple[bool, str]:
@@ -272,6 +275,73 @@ def e_rate_estimator_model_matches_the_d03_reference() -> Tuple[bool, str]:
     return (ratio, unc) == (0, 0.0) and e is not None and e["ratio_ppb"] == 0 and e["status"] == "Valid", "%s %s" % (ratio, e)
 
 
+def f_event_sequence_by_hand() -> Tuple[bool, str]:
+    # Four good exchanges: the relock progress counts 1/4 .. 4/4 and the fourth also logs the lock. A replayed
+    # answer logs its rejection only. A 2 s step of the group clock logs the rejection, the reset and the fall to
+    # unlocked, in that order. The progress then starts again from 1/4.
+    w = ref.World(0, 5_000_000_000, 9_000_000_000_000, 1000)
+    ops = []
+    for k in range(4):
+        t1, t2, t3, t4 = w.exchange(k * S, 200_000, 50_000, 200_000)
+        ops.append({"op": "probe", "t1": t1, "t2": t2, "t3": t3, "t4": t4})
+    ops.append({"op": "replay", "of": 3, "t4": ops[3]["t4"] + 1_000})
+    w2 = ref.World(0, 5_000_000_000, 9_000_000_000_000 + 2 * S, 1000)
+    t1, t2, t3, t4 = w2.exchange(5 * S, 200_000, 50_000, 200_000)
+    ops.append({"op": "probe", "t1": t1, "t2": t2, "t3": t3, "t4": t4})
+    t1, t2, t3, t4 = w2.exchange(6 * S, 200_000, 50_000, 200_000)
+    ops.append({"op": "probe", "t1": t1, "t2": t2, "t3": t3, "t4": t4})
+    r = ref.run_script(None, 1, 7, 1000, ops)
+    got = [x["events"] for x in r]
+    want = [["n03.probe.accepted@1/4"], ["n03.probe.accepted@2/4"], ["n03.probe.accepted@3/4"],
+            ["n03.probe.accepted@4/4", "n03.status.locked"],
+            ["n03.probe.rejected:UnsolicitedOrReplayed"],
+            ["n03.probe.rejected:Discontinuity", "n03.reset:Discontinuity", "n03.status.unlocked"],
+            ["n03.probe.accepted@1/4"]]
+    return got == want, "%s" % (got,)
+
+
+def f_event_ring_accounting_by_hand() -> Tuple[bool, str]:
+    # 100 unsolicited responses into a 64-event ring: 64 pending, 36 dropped. Then 70 critical epoch events: the
+    # first 64 each evict one ordinary event (dropped +64 -> 100), the ring is then all critical, so the last 6 are
+    # dropped and counted lost: emitted 170 = 64 pending + 106 dropped, critical_lost 6.
+    got = ref.ring_scenario()
+
+    def stats(**kw):
+        base = {"emitted": 0, "delivered": 0, "dropped_ordinary": 0, "evicted_ordinary": 0, "lost_critical": 0,
+                "rate_limited": 0, "unavailable_drops": 0, "regression_drops": 0, "dropped": 0, "critical_lost": 0,
+                "pending": 0}
+        base.update(kw)
+        return base
+    # rate: 100 responses 1 us apart in one 1 s window with 32 admitted per window: 32 stored, 68 refused.
+    # unavailable: 10 ordinary + 3 critical events offered to a down log: all 13 dropped, the 3 critical ones lost.
+    want = {"after_rejections": stats(emitted=100, dropped=36, dropped_ordinary=36, pending=64),
+            "final": stats(emitted=170, dropped=106, dropped_ordinary=36, evicted_ordinary=64, lost_critical=6,
+                           critical_lost=6, pending=64),
+            "pending_kinds": ["n03.epoch.begin"],
+            "rate": stats(emitted=100, dropped=68, rate_limited=68, pending=32),
+            "unavailable": stats(emitted=13, dropped=13, unavailable_drops=13, critical_lost=3)}
+    return got == want, "%s" % (got,)
+
+
+def f_truth_events_by_hand() -> Tuple[bool, str]:
+    # An exact world: the estimate equals the truth (error 0, within); a truth one nanosecond outside the reported
+    # uncertainty is a violation with the signed error.
+    w = ref.World(0, 5_000_000_000, 9_000_000_000_000, 1000)
+    m = ref.Model(None, 1, 7, 1000)
+    for k in range(4):
+        t1, t2, t3, t4 = w.exchange(k * S, 200_000, 50_000, 200_000)
+        req = m.next_probe(t1)
+        m.on_response({"epoch": 1, "leader": 7, "seq": req["seq"], "t1_echo": t1, "t2": t2, "t3": t3}, t4)
+    m.drain_events()
+    now = w.local(3 * S + 2_000_000)
+    exact = w.group(3 * S + 2_000_000)
+    e0 = m.note_truth(now, exact)
+    unc = m._anchor(now)["unc"]
+    e1 = m.note_truth(now, exact + unc + 1)
+    kinds = [ev["kind"] for ev in m.drain_events()]
+    return (e0 == 0 and e1 == -(unc + 1) and kinds == ["n03.truth.within", "n03.truth.violated"]), "%s %s %s" % (e0, e1, kinds)
+
+
 ANCHORS: List[Tuple[str, Callable[[], Tuple[bool, str]]]] = [
     ("hand exchange", a_hand_exchange),
     ("hand odd halves", a_hand_odd_halves),
@@ -292,6 +362,9 @@ ANCHORS: List[Tuple[str, Callable[[], Tuple[bool, str]]]] = [
     ("stale epoch, replay, unadmitted leader", c_model_stale_and_replay),
     ("truth bound in the noisy world", d_truth_bound_in_a_noisy_world),
     ("rate model agrees with the D03 reference", e_rate_estimator_model_matches_the_d03_reference),
+    ("event sequence by hand", f_event_sequence_by_hand),
+    ("event ring accounting by hand", f_event_ring_accounting_by_hand),
+    ("truth events by hand", f_truth_events_by_hand),
 ]
 
 

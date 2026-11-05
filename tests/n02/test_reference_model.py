@@ -67,7 +67,7 @@ class Scenarios(unittest.TestCase):
         d = doc()
         ids = [s["id"] for s in d["scenarios"]]
         self.assertEqual(len(ids), len(set(ids)))
-        self.assertGreaterEqual(len(ids), 34)
+        self.assertGreaterEqual(len(ids), 35)
         for s in d["scenarios"]:
             self.assertTrue(s["invariants"], s["id"])
             self.assertTrue(s["title"], s["id"])
@@ -228,6 +228,13 @@ class LeaseIgnoresExpiry(ref.Model):
         return None if refused == "refused:lease:authority_expired" else refused
 
 
+class IgnoresMargin(ref.Model):
+    """Judges the lease against its plain expiry, as if the clocks agreed exactly."""
+
+    def __init__(self, config):
+        super().__init__(dict(config, lease_margin_ms=0))
+
+
 class UnboundedQueue(ref.Model):
     def _room(self, lane, role):
         return True
@@ -270,6 +277,7 @@ class Mutations(unittest.TestCase):
             RecordsLeaseRefusals: "N02-S030",
             InstallUnchecked: "N02-S032",
             LeaseIgnoresExpiry: "N02-S031",
+            IgnoresMargin: "N02-S035",
             NoExpiry: "N02-S016",
         }
         for broken, sid in expected.items():

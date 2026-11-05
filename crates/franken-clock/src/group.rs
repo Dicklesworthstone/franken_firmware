@@ -23,6 +23,8 @@
 //!   fit; the group timeline is fed to it as a wrapping 48 kHz `u32` frame counter, so counter wrap and
 //!   half-range ambiguity are handled by the code that already handles them.
 
+pub use crate::events::EventStats;
+use crate::events::{BufferedEvent, EventBuffer};
 use crate::rate::{EstimateStatus, Observation, RateConfig, RateError, RateEstimator, ResetReason};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -704,9 +706,63 @@ pub struct ClockReport {
     pub holdover_until_local_ns: Option<u64>,
     pub holdover_binding: Option<&'static str>,
     pub last_accept_age_ns: Option<u64>,
+    /// Diagnostic events dropped because the ring was full, and critical ones that could not be stored at all.
+    pub events_dropped: u64,
+    pub events_critical_lost: u64,
 }
 
-#[derive(Debug, Clone)]
+/// Events the clock keeps for its owner to pop, in the crate's shared fixed-storage buffer ([`crate::events`]). The
+/// buffer never feeds back into any decision: popping it, not popping it, a full buffer or an unavailable one
+/// changes nothing the clock decides.
+pub const EVENT_RING_CAPACITY: usize = 64;
+/// Ordinary events are admitted at most this many per window of the clock's own time; critical events bypass the
+/// rate cap but never the storage cap.
+pub const EVENT_RATE_PER_WINDOW: u32 = 32;
+pub const EVENT_WINDOW_NS: u64 = 1_000_000_000;
+
+/// One thing the clock did or saw, as plain data for a structured log. `kind` and `cause` come from a fixed
+/// vocabulary and nothing a peer supplied is copied in; the numbers are this member's own counters, its epoch and
+/// nanosecond readings of its own clock. Every event states, in `claim`, that it is a clock-fit claim and not
+/// DAC or acoustic alignment. `critical` events (status changes, resets, epochs, truth violations) are the
+/// evidence a run cannot be trusted without: a full buffer evicts the oldest ordinary event to keep one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ClockEvent {
+    pub kind: &'static str,
+    pub claim: &'static str,
+    /// The member's own monotonic reading when it happened, clamped never to go backwards.
+    pub local_ns: u64,
+    pub epoch: u64,
+    /// Counts events created by this clock, including any later dropped.
+    pub revision: u64,
+    pub samples: u32,
+    /// Exchanges accepted since the last reset, against the `lock_needed` that locks: relock progress "n of 4".
+    pub accepted_in_epoch: u32,
+    pub lock_needed: u32,
+    pub delay_ns: Option<u64>,
+    pub uncertainty_ns: Option<u64>,
+    /// The estimate minus the known truth, only on `n03.truth.*` events.
+    pub error_ns: Option<i64>,
+    pub cause: Option<&'static str>,
+    pub critical: bool,
+}
+
+impl ClockEvent {
+    /// A short stable label: the kind, the relock progress for an accepted exchange, and the cause.
+    #[must_use]
+    pub fn label(&self) -> String {
+        let mut label = self.kind.to_string();
+        if self.kind == "n03.probe.accepted" {
+            label.push_str(&format!("@{}/{}", self.accepted_in_epoch, self.lock_needed));
+        }
+        if let Some(cause) = self.cause {
+            label.push(':');
+            label.push_str(cause);
+        }
+        label
+    }
+}
+
+#[derive(Debug)]
 pub struct GroupClock {
     cfg: GroupClockConfig,
     epoch: u64,
@@ -725,6 +781,11 @@ pub struct GroupClock {
     armed: Option<u64>,
     mute: MuteReason,
     stats: GroupStats,
+    events: EventBuffer<ClockEvent, EVENT_RING_CAPACITY>,
+    revision: u64,
+    last_event_ns: u64,
+    last_status: ClockStatus,
+    last_output: Option<(&'static str, Option<&'static str>)>,
 }
 
 fn fresh_rate(cfg: &GroupClockConfig) -> Result<RateEstimator, GroupClockError> {
@@ -762,6 +823,11 @@ impl GroupClock {
             armed: None,
             mute: MuteReason::NotLocked,
             stats: GroupStats::default(),
+            events: EventBuffer::new(EVENT_RATE_PER_WINDOW, EVENT_WINDOW_NS),
+            revision: 0,
+            last_event_ns: 0,
+            last_status: ClockStatus::Unlocked,
+            last_output: None,
         })
     }
 
@@ -805,6 +871,9 @@ impl GroupClock {
         self.authority_until = None;
         self.clear_timing(MuteReason::EpochChange);
         self.stats.epochs = self.stats.epochs.saturating_add(1);
+        let event = self.new_event("n03.epoch.begin", self.last_event_ns, true);
+        self.push_event(event);
+        self.observe_status(self.last_event_ns);
         Ok(())
     }
 
@@ -813,6 +882,10 @@ impl GroupClock {
     pub fn report_clock_fault(&mut self) {
         self.clear_timing(MuteReason::ClockFault);
         self.stats.resets = self.stats.resets.saturating_add(1);
+        let mut event = self.new_event("n03.reset", self.last_event_ns, true);
+        event.cause = Some("ClockFault");
+        self.push_event(event);
+        self.observe_status(self.last_event_ns);
     }
 
     /// Record the authority's validity for this epoch (`expires_at_local_ns` is a local instant, the way G01's token
@@ -897,8 +970,38 @@ impl GroupClock {
 
     /// Take one probe response, received at local time `t4_local_ns`. The checks run in this order, which is part
     /// of the contract. A rejection leaves the fit as it was, except `Discontinuity` and a `LocalClockRegression`
-    /// between two exchanges, which clear it.
+    /// between two exchanges, which clear it. Every outcome is also recorded as diagnostic events (see
+    /// [`ClockEvent`]); recording never changes the outcome.
     pub fn on_response(
+        &mut self,
+        resp: ProbeResponse,
+        t4_local_ns: u64,
+    ) -> Result<Accepted, ProbeReject> {
+        let resets_before = self.stats.resets;
+        let outcome = self.probe_outcome(resp, t4_local_ns);
+        match &outcome {
+            Ok(accepted) => {
+                let mut event = self.new_event("n03.probe.accepted", t4_local_ns, false);
+                event.delay_ns = Some(accepted.delay_ns);
+                event.uncertainty_ns = self.anchor_at(t4_local_ns).map(|a| a.uncertainty_ns);
+                self.push_event(event);
+            }
+            Err(reason) => {
+                let mut event = self.new_event("n03.probe.rejected", t4_local_ns, false);
+                event.cause = Some(reason.code());
+                self.push_event(event);
+                if self.stats.resets > resets_before {
+                    let mut reset = self.new_event("n03.reset", t4_local_ns, true);
+                    reset.cause = Some(reason.code());
+                    self.push_event(reset);
+                }
+            }
+        }
+        self.observe_status(t4_local_ns);
+        outcome
+    }
+
+    fn probe_outcome(
         &mut self,
         resp: ProbeResponse,
         t4_local_ns: u64,
@@ -1125,9 +1228,21 @@ impl GroupClock {
         now_local_ns: u64,
     ) -> Result<StartPlan, StartReject> {
         self.settle(now_local_ns);
-        let plan = self.plan_start(sched, now_local_ns)?;
-        self.armed = Some(plan.start_group_ns);
-        Ok(plan)
+        match self.plan_start(sched, now_local_ns) {
+            Ok(plan) => {
+                self.armed = Some(plan.start_group_ns);
+                let mut event = self.new_event("n03.admit.accepted", now_local_ns, false);
+                event.uncertainty_ns = Some(plan.uncertainty_at_start_ns);
+                self.push_event(event);
+                Ok(plan)
+            }
+            Err(reason) => {
+                let mut event = self.new_event("n03.admit.rejected", now_local_ns, false);
+                event.cause = Some(reason.code());
+                self.push_event(event);
+                Err(reason)
+            }
+        }
     }
 
     /// Apply to the state what has become true by local time `now`: a stale clock, an expired authority or a reset
@@ -1191,7 +1306,10 @@ impl GroupClock {
     /// valid authority and an admitted start that the group clock has reached. Everything else is muted.
     pub fn tick(&mut self, now_local_ns: u64) -> Output {
         let status = self.settle(now_local_ns);
-        self.output_at(status, now_local_ns)
+        let output = self.output_at(status, now_local_ns);
+        self.observe_status(now_local_ns);
+        self.observe_output(output, now_local_ns);
+        output
     }
 
     /// What the output may do at local time `now`, with no side effects (unlike [`Self::tick`], it does not clear an
@@ -1235,7 +1353,274 @@ impl GroupClock {
             holdover_until_local_ns: hold.map(|h| h.until_local_ns),
             holdover_binding: hold.map(|h| h.binding.code()),
             last_accept_age_ns: self.last_accept_ns.map(|t| now_local_ns.saturating_sub(t)),
+            events_dropped: self.events.stats().dropped,
+            events_critical_lost: self.events.stats().critical_lost,
         }
+    }
+}
+
+// ---- diagnostics: events in the shared fixed-storage buffer ------------------------------------------------
+
+impl GroupClock {
+    /// Take the oldest pending event. The buffer holds at most [`EVENT_RING_CAPACITY`] events; an owner that never
+    /// pops only increases the dropped count, and no decision changes.
+    pub fn pop_event(&mut self) -> Option<BufferedEvent<ClockEvent>> {
+        self.events.pop()
+    }
+
+    /// Exact accounting of the buffer: `emitted == delivered + pending + dropped`, with `critical_lost` (a subset
+    /// of `dropped`) counting evidence that could not be kept.
+    #[must_use]
+    pub const fn event_stats(&self) -> EventStats {
+        self.events.stats()
+    }
+
+    #[must_use]
+    pub const fn pending_events(&self) -> usize {
+        self.events.pending()
+    }
+
+    /// Model an unavailable log (the subsystem that carries the events is down): events are then counted as
+    /// dropped, critical ones as lost, and no decision changes.
+    pub fn set_events_available(&mut self, available: bool) {
+        self.events.set_available(available);
+    }
+
+    /// Record the estimated error against a truth the owner knows (a test world, a reference clock): the clock's
+    /// group time at local time `now` minus `true_group_ns`, against the uncertainty it reported. Returns the
+    /// signed error, or `None` while there is no estimate. A true time outside the reported uncertainty is a
+    /// critical `n03.truth.violated` event.
+    pub fn note_truth(&mut self, now_local_ns: u64, true_group_ns: u64) -> Option<i64> {
+        let anchor = self.anchor_at(now_local_ns)?;
+        let estimate = group_at(&anchor, now_local_ns);
+        let raw = i128::from(estimate) - i128::from(true_group_ns);
+        let error = i64::try_from(raw.clamp(i128::from(i64::MIN), i128::from(i64::MAX)))
+            .unwrap_or(i64::MAX);
+        let within = error.unsigned_abs() <= anchor.uncertainty_ns;
+        let kind = if within {
+            "n03.truth.within"
+        } else {
+            "n03.truth.violated"
+        };
+        let mut event = self.new_event(kind, now_local_ns, !within);
+        event.uncertainty_ns = Some(anchor.uncertainty_ns);
+        event.error_ns = Some(error);
+        self.push_event(event);
+        Some(error)
+    }
+
+    fn new_event(&mut self, kind: &'static str, now_ns: u64, critical: bool) -> ClockEvent {
+        self.revision = self.revision.saturating_add(1);
+        let local_ns = now_ns.max(self.last_event_ns);
+        self.last_event_ns = local_ns;
+        ClockEvent {
+            kind,
+            claim: CLAIM,
+            local_ns,
+            epoch: self.epoch,
+            revision: self.revision,
+            samples: u32::try_from(self.samples.len()).unwrap_or(u32::MAX),
+            accepted_in_epoch: self.accepted_in_epoch,
+            lock_needed: self.cfg.min_probes_for_lock,
+            delay_ns: None,
+            uncertainty_ns: None,
+            error_ns: None,
+            cause: None,
+            critical,
+        }
+    }
+
+    /// Hand an event to the shared buffer, which stores it or counts it; it never blocks. Ordinary events are rate-
+    /// and capacity-limited; a critical one bypasses the rate cap and evicts the oldest ordinary event when full,
+    /// and is counted lost only when the buffer holds nothing but critical events.
+    fn push_event(&mut self, event: ClockEvent) {
+        if event.critical {
+            self.events.try_emit_critical(event.local_ns, event);
+        } else {
+            self.events.try_emit(event.local_ns, event);
+        }
+    }
+
+    /// Record a change of status since the last observation: lock gained, holdover entered (and which limit binds
+    /// it), expiry, or back to unlocked.
+    fn observe_status(&mut self, now_ns: u64) {
+        let status = self.status(now_ns);
+        if status == self.last_status {
+            return;
+        }
+        let kind = match status {
+            ClockStatus::Unlocked => "n03.status.unlocked",
+            ClockStatus::Locked => "n03.status.locked",
+            ClockStatus::Holdover => "n03.status.holdover",
+            ClockStatus::Expired => "n03.status.expired",
+        };
+        let mut event = self.new_event(kind, now_ns, true);
+        event.uncertainty_ns = self.anchor_at(now_ns).map(|a| a.uncertainty_ns);
+        if status == ClockStatus::Holdover {
+            event.cause = self.holdover(now_ns).map(|h| h.binding.code());
+        }
+        self.push_event(event);
+        self.last_status = status;
+    }
+
+    /// Record a change in what the output may do (muted with a reason, armed, audible).
+    fn observe_output(&mut self, output: Output, now_ns: u64) {
+        let reason = match output {
+            Output::Muted(reason) => Some(reason.code()),
+            _ => None,
+        };
+        let key = (output.code(), reason);
+        if self.last_output == Some(key) {
+            return;
+        }
+        let kind = match output {
+            Output::Muted(_) => "n03.output.muted",
+            Output::Armed { .. } => "n03.output.armed",
+            Output::Audible => "n03.output.audible",
+        };
+        let mut event = self.new_event(kind, now_ns, false);
+        event.cause = reason;
+        self.push_event(event);
+        self.last_output = Some(key);
+    }
+}
+
+// ---- the production `ffw.log.v1` line ----------------------------------------------------------------------
+
+/// The schema every diagnostic line follows; the same shape as `franken-test-support`'s `DiagnosticEvent`, which
+/// only a test links.
+pub const LOG_SCHEMA_VERSION: &str = "ffw.log.v1";
+/// No line is longer than this (with its newline); a longer one is refused, never truncated.
+pub const MAX_LOG_LINE_BYTES: usize = 1024;
+/// Longest label in a [`LogContext`].
+pub const MAX_LABEL_LEN: usize = 64;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum LogContextError {
+    #[error(
+        "`{field}` must be 1 to 64 bytes of a-z, 0-9, '.', '_' and '-', starting with a letter or digit"
+    )]
+    InvalidLabel { field: &'static str },
+}
+
+fn valid_label(raw: &str) -> bool {
+    let starts_ok = raw
+        .bytes()
+        .next()
+        .is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
+    starts_ok
+        && raw.len() <= MAX_LABEL_LEN
+        && raw.bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-')
+        })
+}
+
+/// Who is speaking in a log line: labels the owner chooses, never data from a peer. The member and group labels are
+/// the owner's pseudonyms (for example `p-` and sixteen hex digits from a keyed hash); `franken-clock` does no
+/// hashing and never sees a real identifier. `fault` names the injected fault schedule entry in force, if any.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogContext {
+    run_id: String,
+    case_id: String,
+    member: String,
+    group: String,
+    fault: Option<String>,
+}
+
+impl LogContext {
+    pub fn new(
+        run_id: &str,
+        case_id: &str,
+        member: &str,
+        group: &str,
+        fault: Option<&str>,
+    ) -> Result<Self, LogContextError> {
+        let checks = [
+            ("run_id", run_id),
+            ("case_id", case_id),
+            ("member", member),
+            ("group", group),
+        ];
+        for (field, value) in checks {
+            if !valid_label(value) {
+                return Err(LogContextError::InvalidLabel { field });
+            }
+        }
+        if fault.is_some_and(|f| !valid_label(f)) {
+            return Err(LogContextError::InvalidLabel { field: "fault" });
+        }
+        Ok(Self {
+            run_id: run_id.to_string(),
+            case_id: case_id.to_string(),
+            member: member.to_string(),
+            group: group.to_string(),
+            fault: fault.map(str::to_string),
+        })
+    }
+}
+
+/// Field order is the order of `DiagnosticEvent`, so the bytes are the same as serializing one.
+#[derive(Serialize)]
+struct LogRecord<'a> {
+    schema_version: &'static str,
+    timestamp_mono_ns: u64,
+    run_id: &'a str,
+    case_id: &'a str,
+    correlation_id: String,
+    member_id: &'a str,
+    group_id: &'a str,
+    source_epoch: u64,
+    state_revision: u64,
+    event_kind: &'static str,
+    message: String,
+    queue_depth: u64,
+    latency_us: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fault: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cause: Option<&'static str>,
+}
+
+impl ClockEvent {
+    /// One `ffw.log.v1` line (no trailing newline) for this event, or `None` if it would exceed
+    /// [`MAX_LOG_LINE_BYTES`] (the caller counts that as a dropped event). The text fields are built only from the
+    /// fixed vocabulary, the claim and numbers; nothing a peer supplied can reach them.
+    #[must_use]
+    pub fn to_log_line(&self, ctx: &LogContext) -> Option<String> {
+        let number = |v: Option<u64>| v.map_or_else(|| "-".to_string(), |n| n.to_string());
+        let error = self
+            .error_ns
+            .map_or_else(|| "-".to_string(), |n| n.to_string());
+        let message = format!(
+            "{}; samples={} accepted={}/{} delay_ns={} unc_ns={} err_ns={}",
+            self.claim,
+            self.samples,
+            self.accepted_in_epoch,
+            self.lock_needed,
+            number(self.delay_ns),
+            number(self.uncertainty_ns),
+            error
+        );
+        let record = LogRecord {
+            schema_version: LOG_SCHEMA_VERSION,
+            timestamp_mono_ns: self.local_ns,
+            run_id: &ctx.run_id,
+            case_id: &ctx.case_id,
+            correlation_id: format!("{}#{}", ctx.member, self.revision),
+            member_id: &ctx.member,
+            group_id: &ctx.group,
+            source_epoch: self.epoch,
+            state_revision: self.revision,
+            event_kind: self.kind,
+            message,
+            queue_depth: u64::from(self.samples),
+            latency_us: self.delay_ns.unwrap_or(0) / 1_000,
+            fault: ctx.fault.as_deref(),
+            cause: self.cause,
+        };
+        serde_json::to_string(&record)
+            .ok()
+            .filter(|line| line.len() < MAX_LOG_LINE_BYTES)
     }
 }
 

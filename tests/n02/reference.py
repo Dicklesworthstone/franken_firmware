@@ -205,8 +205,9 @@ class Model:
         """Whether the session accepts `token` at `at_ms`, checked in G01's order (G01 slice 2): group,
         stale epoch, future epoch, issuer, expiry. A replaced coordinator names the old issuer and the old
         epoch; it is refused as stale, not as a foreign issuer, so the epoch is judged before the issuer.
-        An accepted token replaces the lease; a refused one does not. Returns "installed" or the
-        refusal's code."""
+        Expiry is judged with G01's clock-uncertainty margin: a holder stops that long before its lease
+        ends, so a token with no more than the margin left is already expired. An accepted token replaces
+        the lease; a refused one does not. Returns "installed" or the refusal's code."""
         if not token["group_ok"]:
             return "WRONG_GROUP"
         if token["epoch"] < self.epoch:
@@ -215,7 +216,7 @@ class Model:
             return "FUTURE_AUTHORITY"
         if not token["issuer_ok"]:
             return "NOT_CONFIGURED_ISSUER"
-        if at_ms >= token["expires_ms"]:
+        if at_ms + self.cfg.get("lease_margin_ms", 0) >= token["expires_ms"]:
             return "AUTHORITY_EXPIRED"
         self.lease = {"epoch": token["epoch"], "expires_ms": token["expires_ms"]}
         return "installed"
@@ -237,7 +238,7 @@ class Model:
             return "refused:lease:stale_authority"
         if self.lease["epoch"] > self.epoch:
             return "refused:lease:future_authority"
-        if self.now >= self.lease["expires_ms"]:
+        if self.now + self.cfg.get("lease_margin_ms", 0) >= self.lease["expires_ms"]:
             return "refused:lease:authority_expired"
         return None
 

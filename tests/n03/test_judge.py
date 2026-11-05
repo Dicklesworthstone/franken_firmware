@@ -92,6 +92,8 @@ def good_records():
         sims.append(r)
     recs.append({"kind": "sim", "id": "n03-sim", "worlds": sims})
     recs.append({"kind": "property", "id": "n03-property", "audible": 900, "resets_checked": 150})
+    recs.append(dict(ref.ring_scenario(), kind="events", id="n03-events"))
+    recs.append({"kind": "log_lines", "id": "n03-log-lines", "lines": ref.log_scenario()})
     return recs
 
 
@@ -318,6 +320,48 @@ class JudgeSelfTest(unittest.TestCase):
         def m(r):
             r["worlds"][2]["max_err_ns"] += 1
         self.failing(tampered("n03-sim", m), "N03-TRUTH-SIM")
+
+    def test_buffer_accounting_that_loses_a_critical_event_silently_is_caught(self):
+        def m(r):
+            r["final"]["critical_lost"] = 0
+        self.failing(tampered("n03-events", m), "N03-DIAGNOSTICS")
+
+    def test_a_rate_limit_that_does_not_count_is_caught(self):
+        def m(r):
+            r["rate"]["rate_limited"] = 0
+        self.failing(tampered("n03-events", m), "N03-DIAGNOSTICS")
+
+    def test_an_unavailable_log_that_hides_its_losses_is_caught(self):
+        def m(r):
+            r["unavailable"]["critical_lost"] = 0
+        self.failing(tampered("n03-events", m), "N03-DIAGNOSTICS")
+
+    def test_a_log_line_that_differs_from_the_reference_is_caught(self):
+        def m(r):
+            r["lines"][3] = r["lines"][3].replace("accepted=4/4", "accepted=3/4")
+        self.failing(tampered("n03-log-lines", m), "N03-DIAGNOSTICS")
+
+    def test_a_log_line_that_leaks_a_field_or_drops_the_claim_is_caught(self):
+        def m(r):
+            r["lines"][0] = r["lines"][0].replace("network-clock-fit-only: not DAC or acoustic alignment", "ok")
+        self.failing(tampered("n03-log-lines", m), "N03-DIAGNOSTICS")
+
+    def test_a_dropped_count_that_does_not_add_up_is_caught(self):
+        def m(r):
+            r["after_rejections"]["dropped"] = 0
+        self.failing(tampered("n03-events", m), "N03-DIAGNOSTICS")
+
+    def test_a_world_whose_events_differ_from_the_reference_is_caught(self):
+        def m(r):
+            step = first_step(r, "probe", result="Discontinuity")
+            step["events"] = [e for e in step["events"] if not e.startswith("n03.reset")]
+        self.failing(tampered("S08A-JUMP-LOCAL-SUSPEND", m), "N03-JUMP")
+
+    def test_a_lock_that_is_not_logged_is_caught(self):
+        def m(r):
+            step = next(s for s in r["steps"] if "n03.status.locked" in s["events"])
+            step["events"] = [e for e in step["events"] if e != "n03.status.locked"]
+        self.failing(tampered("S01-SYMMETRIC", m), "N03-LOCK")
 
     def test_a_thin_property_run_is_caught(self):
         def m(r):

@@ -661,6 +661,10 @@ fn run_ops(w: &Value) -> Vec<Value> {
                     rec.insert("holdover_until".into(), json!(h.until_local_ns));
                     rec.insert("binding".into(), json!(h.binding.code()));
                 }
+                // The world carries the known truth: record the estimated error against it.
+                if let Some(truth) = op.get("truth_group").and_then(Value::as_u64) {
+                    let _ = gc.note_truth(now, truth);
+                }
             }
             "tick" => {
                 let o = gc.tick(u(op, "now"));
@@ -710,6 +714,11 @@ fn run_ops(w: &Value) -> Vec<Value> {
         }
         sent.push(this_resp);
         rec.insert("rate_in_force".into(), json!(gc.rate_in_force()));
+        let mut labels = Vec::new();
+        while let Some(event) = gc.pop_event() {
+            labels.push(json!(event.payload.label()));
+        }
+        rec.insert("events".into(), Value::Array(labels));
         out.push(Value::Object(rec));
     }
     out
@@ -1362,4 +1371,512 @@ fn n03_a_response_for_an_older_request_does_not_answer_a_newer_one_with_the_same
         Err(ProbeReject::UnsolicitedOrReplayed)
     );
     assert!(gc.on_response(resp(second.seq), 1_000_600_000).is_ok());
+}
+
+// ------------------------------------------------------------------------------------------ diagnostics
+
+/// Pop everything pending, oldest first.
+fn drain(gc: &mut GroupClock) -> Vec<BufferedEvent<ClockEvent>> {
+    let mut out = Vec::new();
+    while let Some(event) = gc.pop_event() {
+        out.push(event);
+    }
+    out
+}
+
+fn labels(gc: &mut GroupClock) -> Vec<String> {
+    drain(gc).iter().map(|e| e.payload.label()).collect()
+}
+
+/// One exact exchange (no skew, no quantisation, a group clock `goff` ahead of the local one) delivered at once.
+fn exact_probe(
+    gc: &mut GroupClock,
+    t1: u64,
+    goff: u64,
+) -> (ProbeResponse, u64, Result<Accepted, ProbeReject>) {
+    let req = gc.next_probe(t1);
+    let resp = ProbeResponse {
+        epoch: req.epoch,
+        leader: gc.leader(),
+        seq: req.seq,
+        t1_echo_ns: t1,
+        t2_group_ns: t1 + goff + 200_000,
+        t3_group_ns: t1 + goff + 250_000,
+    };
+    let t4 = t1 + 450_000;
+    let outcome = gc.on_response(resp, t4);
+    (resp, t4, outcome)
+}
+
+/// Hand-derived, not from the vectors: the events of a lock, a replay, a clock jump and the relock that follows.
+#[test]
+fn n03_events_follow_lock_replay_jump_and_relock_with_progress_counts() {
+    let mut gc = GroupClock::new(std_cfg(), 1, 7, 100).expect("member");
+    let goff = 8_995_000_000_000;
+    let mut seen: Vec<String> = Vec::new();
+    // Four exchanges: relock progress counts up, and the fourth locks.
+    let mut last = None;
+    for k in 0..4_u64 {
+        let (resp, t4, outcome) = exact_probe(&mut gc, 10_000_000_000 + k * 1_000_000_000, goff);
+        outcome.expect("accepted");
+        last = Some((resp, t4));
+        seen.extend(labels(&mut gc));
+    }
+    assert_eq!(
+        seen,
+        [
+            "n03.probe.accepted@1/4",
+            "n03.probe.accepted@2/4",
+            "n03.probe.accepted@3/4",
+            "n03.probe.accepted@4/4",
+            "n03.status.locked",
+        ]
+    );
+    let (resp, t4) = last.expect("a last exchange");
+    // The first tick reports the output: locked but no start admitted.
+    gc.tick(t4 + 500_000_000);
+    assert_eq!(labels(&mut gc), ["n03.output.muted:NotAdmitted"]);
+    // A replayed answer is rejected and changes no status.
+    assert_eq!(
+        gc.on_response(resp, t4 + 1_000),
+        Err(ProbeReject::UnsolicitedOrReplayed)
+    );
+    assert_eq!(
+        labels(&mut gc),
+        ["n03.probe.rejected:UnsolicitedOrReplayed"]
+    );
+    // The group clock steps by 2 s: a discontinuity, a reset, and the status falls back to unlocked.
+    let (_, _, jump) = exact_probe(&mut gc, 14_000_000_000, goff + 2_000_000_000);
+    assert_eq!(jump, Err(ProbeReject::Discontinuity));
+    assert_eq!(
+        labels(&mut gc),
+        [
+            "n03.probe.rejected:Discontinuity",
+            "n03.reset:Discontinuity",
+            "n03.status.unlocked"
+        ]
+    );
+    gc.tick(14_500_000_000);
+    assert_eq!(labels(&mut gc), ["n03.output.muted:Discontinuity"]);
+    // Relock progress starts again from 1 of 4, on the new timeline.
+    let mut relock = Vec::new();
+    for k in 0..4_u64 {
+        let (_, _, outcome) = exact_probe(
+            &mut gc,
+            15_000_000_000 + k * 1_000_000_000,
+            goff + 2_000_000_000,
+        );
+        outcome.expect("accepted");
+        relock.extend(labels(&mut gc));
+    }
+    assert_eq!(
+        relock,
+        [
+            "n03.probe.accepted@1/4",
+            "n03.probe.accepted@2/4",
+            "n03.probe.accepted@3/4",
+            "n03.probe.accepted@4/4",
+            "n03.status.locked",
+        ]
+    );
+}
+
+/// The events of a platform clock fault, pinned by hand: the admitted start is logged, then the reset with its
+/// cause, then the fall to unlocked; the next tick logs the muted output with the fault as the reason.
+#[test]
+fn n03_a_platform_clock_fault_is_logged_as_a_reset_then_unlocked_then_muted() {
+    let goff = 8_995_000_000_000;
+    let (mut gc, t4) = locked_member(goff);
+    let _ = drain(&mut gc);
+    let sched = StartSchedule {
+        epoch: 1,
+        start_group_ns: gc.group_ns(t4).expect("group time") + 500_000_000,
+    };
+    gc.admit(sched, t4).expect("admitted");
+    gc.report_clock_fault();
+    assert_eq!(
+        labels(&mut gc),
+        [
+            "n03.admit.accepted",
+            "n03.reset:ClockFault",
+            "n03.status.unlocked"
+        ]
+    );
+    gc.tick(t4 + 1);
+    assert_eq!(labels(&mut gc), ["n03.output.muted:ClockFault"]);
+}
+
+#[test]
+fn n03_events_are_monotonic_numbered_and_each_states_the_clock_fit_claim() {
+    let (mut gc, _) = locked_member(8_995_000_000_000);
+    let events = drain(&mut gc);
+    assert!(
+        events.len() >= 6,
+        "5 accepted exchanges and a lock: {}",
+        events.len()
+    );
+    for pair in events.windows(2) {
+        assert!(pair[1].payload.revision > pair[0].payload.revision);
+        assert!(
+            pair[1].payload.local_ns >= pair[0].payload.local_ns,
+            "timestamps never go backwards"
+        );
+        assert!(pair[1].sequence > pair[0].sequence);
+    }
+    for event in &events {
+        assert_eq!(event.payload.claim, CLAIM);
+        assert_eq!(event.payload.epoch, 1);
+        assert_eq!(event.payload.lock_needed, 4);
+        assert_eq!(event.timestamp_mono_ns, event.payload.local_ns);
+    }
+    // the lock is critical evidence, an accepted exchange is not
+    assert!(!events[0].critical);
+    assert!(
+        events
+            .iter()
+            .any(|e| e.critical && e.payload.kind == "n03.status.locked")
+    );
+    let line = serde_json::to_string(&events[0].payload).expect("serializes");
+    assert!(line.contains("network-clock-fit-only"), "{line}");
+    assert!(line.contains("\"kind\":\"n03.probe.accepted\""), "{line}");
+}
+
+#[test]
+fn n03_estimated_error_against_known_truth_is_logged_and_a_violation_is_critical() {
+    let goff = 8_995_000_000_000;
+    let (mut gc, t4) = locked_member(goff);
+    let _ = drain(&mut gc);
+    let now = t4 + 1_000_000;
+    // The transform is exact in this world, so the estimate equals the truth.
+    assert_eq!(gc.note_truth(now, now + goff), Some(0));
+    let within = drain(&mut gc);
+    assert_eq!(within.len(), 1);
+    assert_eq!(within[0].payload.kind, "n03.truth.within");
+    assert_eq!(
+        (within[0].payload.error_ns, within[0].critical),
+        (Some(0), false)
+    );
+    // A truth outside the reported uncertainty is a critical violation carrying the signed error.
+    let unc = gc.reading(now).expect("reading").uncertainty_ns;
+    let wrong = now + goff + unc + 1;
+    let expected_error = -i64::try_from(unc).expect("fits") - 1;
+    assert_eq!(gc.note_truth(now, wrong), Some(expected_error));
+    let violated = drain(&mut gc);
+    assert_eq!(violated[0].payload.kind, "n03.truth.violated");
+    assert!(violated[0].critical);
+    assert_eq!(violated[0].payload.uncertainty_ns, Some(unc));
+    // A truth absurdly far above the estimate saturates the signed error with the right sign.
+    assert_eq!(gc.note_truth(now, u64::MAX), Some(i64::MIN));
+    let _ = drain(&mut gc);
+    // Without an estimate there is nothing to compare.
+    let mut empty = GroupClock::new(std_cfg(), 1, 7, 1).expect("member");
+    assert_eq!(empty.note_truth(1, 1), None);
+    assert_eq!(empty.pending_events(), 0);
+}
+
+fn stats_json(gc: &GroupClock) -> Value {
+    let st = gc.event_stats();
+    json!({"emitted": st.emitted, "delivered": st.delivered, "dropped_ordinary": st.dropped_ordinary,
+           "evicted_ordinary": st.evicted_ordinary, "lost_critical": st.lost_critical,
+           "rate_limited": st.rate_limited, "unavailable_drops": st.unavailable_drops,
+           "regression_drops": st.regression_drops, "dropped": st.dropped, "critical_lost": st.critical_lost,
+           "pending": gc.pending_events()})
+}
+
+fn unsolicited(gc: &mut GroupClock, i: u64, t4: u64) {
+    let resp = ProbeResponse {
+        epoch: 1,
+        leader: 7,
+        seq: 5_000 + i,
+        t1_echo_ns: 0,
+        t2_group_ns: 0,
+        t3_group_ns: 0,
+    };
+    assert_eq!(
+        gc.on_response(resp, t4),
+        Err(ProbeReject::UnsolicitedOrReplayed)
+    );
+}
+
+/// Hand-derived (see `reference.ring_scenario`): the shared buffer's accounting through a clock.
+#[test]
+fn n03_event_buffer_is_bounded_counts_every_drop_and_flags_lost_critical_events() {
+    // 100 unsolicited responses one second apart fill the 64-event buffer and drop 36.
+    let mut gc = GroupClock::new(std_cfg(), 1, 7, 1).expect("member");
+    for i in 0..100_u64 {
+        unsolicited(&mut gc, i, 1_000 + i * 1_000_000_000);
+    }
+    let after = stats_json(&gc);
+    let st = gc.event_stats();
+    assert_eq!(
+        (
+            st.emitted,
+            st.dropped,
+            st.dropped_ordinary,
+            st.critical_lost
+        ),
+        (100, 36, 36, 0)
+    );
+    assert_eq!(gc.pending_events(), 64);
+    // 70 critical epoch events: 64 evict an ordinary event each, the last 6 find only critical events and are lost.
+    for epoch in 2..72_u64 {
+        gc.begin_epoch(epoch, 7).expect("advances");
+    }
+    let fin = stats_json(&gc);
+    let st = gc.event_stats();
+    assert_eq!(
+        (
+            st.emitted,
+            st.dropped,
+            st.evicted_ordinary,
+            st.lost_critical,
+            st.critical_lost
+        ),
+        (170, 106, 64, 6, 6)
+    );
+    assert_eq!(gc.pending_events(), 64);
+    assert_eq!(
+        gc.pending_events() as u64 + st.delivered + st.dropped,
+        st.emitted,
+        "every event is delivered, pending or counted dropped"
+    );
+    assert_eq!(
+        gc.report(1_000).events_critical_lost,
+        6,
+        "the report exposes lost evidence"
+    );
+    assert!(!st.loss_free());
+    let mut kinds = std::collections::BTreeSet::new();
+    for event in drain(&mut gc) {
+        kinds.insert(event.payload.kind);
+    }
+    assert_eq!(kinds.into_iter().collect::<Vec<_>>(), ["n03.epoch.begin"]);
+    // A flood inside one window is rate limited: 32 are admitted, 68 refused and counted, nothing evicted.
+    let mut flooded = GroupClock::new(std_cfg(), 1, 7, 1).expect("member");
+    for i in 0..100_u64 {
+        unsolicited(&mut flooded, i, 1_000 + i * 1_000);
+    }
+    let rate = stats_json(&flooded);
+    let st = flooded.event_stats();
+    assert_eq!(
+        (st.rate_limited, st.dropped, st.dropped_ordinary),
+        (68, 68, 0)
+    );
+    assert_eq!(flooded.pending_events(), 32);
+    // An unavailable log drops everything it is offered, and says which of it was critical.
+    let mut down = GroupClock::new(std_cfg(), 1, 7, 1).expect("member");
+    down.set_events_available(false);
+    for i in 0..10_u64 {
+        unsolicited(&mut down, i, 1_000 + i * 1_000_000_000);
+    }
+    for epoch in 2..5_u64 {
+        down.begin_epoch(epoch, 7).expect("advances");
+    }
+    let unavailable = stats_json(&down);
+    let st = down.event_stats();
+    assert_eq!(
+        (st.unavailable_drops, st.dropped, st.critical_lost),
+        (13, 13, 3)
+    );
+    assert_eq!(down.pending_events(), 0);
+    observed(&json!({
+        "kind": "events", "id": "n03-events",
+        "after_rejections": after, "final": fin, "pending_kinds": ["n03.epoch.begin"],
+        "rate": rate, "unavailable": unavailable
+    }));
+}
+
+/// The same world with its events popped after every step, never popped, and with the log unavailable: every
+/// decision is identical, the popped run drops nothing, and the others drop and count.
+#[test]
+fn n03_a_full_unpopped_or_unavailable_event_buffer_changes_no_decision() {
+    let goff = 8_995_000_000_000;
+    let mut popped = GroupClock::new(std_cfg(), 1, 7, 100).expect("member");
+    let mut ignored = GroupClock::new(std_cfg(), 1, 7, 100).expect("member");
+    let mut down = GroupClock::new(std_cfg(), 1, 7, 100).expect("member");
+    down.set_events_available(false);
+    let mut decisions = (Vec::new(), Vec::new(), Vec::new());
+    for step in 0..300_u64 {
+        let t1 = 10_000_000_000 + step * 1_000_000_000;
+        // every 61st step the group clock steps (a discontinuity); every 7th step an answer is replayed
+        let offset = goff + (step / 61) * 2_000_000_000;
+        for (gc, record) in [
+            (&mut popped, &mut decisions.0),
+            (&mut ignored, &mut decisions.1),
+            (&mut down, &mut decisions.2),
+        ] {
+            let (resp, t4, outcome) = exact_probe(gc, t1, offset);
+            if step % 7 == 3 {
+                let _ = gc.on_response(resp, t4 + 1_000);
+            }
+            let now = t4 + 500_000;
+            let start = StartSchedule {
+                epoch: 1,
+                start_group_ns: now + offset + 1_000_000_000,
+            };
+            if gc.status(now) == ClockStatus::Locked && !gc.output(now).is_audible() {
+                let _ = gc.admit(start, now);
+            }
+            record.push((
+                outcome.is_ok(),
+                gc.tick(now + 2_000_000_000),
+                gc.status(now),
+                gc.group_ns(now),
+            ));
+        }
+        let _ = drain(&mut popped);
+    }
+    assert_eq!(
+        decisions.0, decisions.1,
+        "a popped and an unpopped buffer decide alike"
+    );
+    assert_eq!(decisions.0, decisions.2, "and so does an unavailable log");
+    assert!(
+        decisions.0.iter().any(|d| d.1.is_audible()),
+        "the run reached the audible state"
+    );
+    assert!(decisions.0.iter().any(|d| !d.0), "and rejected exchanges");
+    assert_eq!(popped.event_stats().dropped, 0);
+    assert_eq!(popped.event_stats().critical_lost, 0);
+    assert!(
+        ignored.event_stats().dropped > 0,
+        "the unpopped buffer dropped and counted"
+    );
+    assert_eq!(ignored.pending_events(), EVENT_RING_CAPACITY);
+    assert_eq!(down.pending_events(), 0);
+    assert_eq!(
+        down.event_stats().unavailable_drops,
+        down.event_stats().emitted
+    );
+    assert!(
+        down.event_stats().critical_lost > 0,
+        "an unavailable log loses critical evidence, and says so"
+    );
+}
+
+fn log_ctx() -> LogContext {
+    LogContext::new(
+        "run-n03",
+        "n03-log",
+        "p-0123456789abcdef",
+        "p-fedcba9876543210",
+        None,
+    )
+    .expect("valid labels")
+}
+
+/// The production lines parse as the shared diagnostics schema and re-serialize to the same bytes, and they are the
+/// lines the independent reference produces for the same scenario.
+#[test]
+fn n03_events_are_written_as_ffw_log_v1_lines_that_parse_back_byte_for_byte() {
+    let goff = 8_995_000_000_000;
+    let ctx = log_ctx();
+    let mut gc = GroupClock::new(std_cfg(), 1, 7, 100).expect("member");
+    let mut lines = Vec::new();
+    let take = |gc: &mut GroupClock, lines: &mut Vec<String>| {
+        for event in drain(gc) {
+            lines.push(
+                event
+                    .payload
+                    .to_log_line(&ctx)
+                    .expect("a line within the bound"),
+            );
+        }
+    };
+    let mut last = None;
+    for k in 0..4_u64 {
+        let (resp, t4, outcome) = exact_probe(&mut gc, 10_000_000_000 + k * 1_000_000_000, goff);
+        outcome.expect("accepted");
+        last = Some((resp, t4));
+        take(&mut gc, &mut lines);
+    }
+    let (resp, t4) = last.expect("a last exchange");
+    gc.tick(t4 + 500_000_000);
+    take(&mut gc, &mut lines);
+    let _ = gc.on_response(resp, t4 + 1_000);
+    take(&mut gc, &mut lines);
+    let _ = exact_probe(&mut gc, 14_000_000_000, goff + 2_000_000_000);
+    take(&mut gc, &mut lines);
+    gc.tick(14_500_000_000);
+    take(&mut gc, &mut lines);
+    for k in 0..4_u64 {
+        let _ = exact_probe(
+            &mut gc,
+            15_000_000_000 + k * 1_000_000_000,
+            goff + 2_000_000_000,
+        );
+        take(&mut gc, &mut lines);
+    }
+    assert_eq!(lines.len(), 16);
+    for line in &lines {
+        assert!(line.len() < MAX_LOG_LINE_BYTES);
+        let parsed: franken_test_support::DiagnosticEvent =
+            serde_json::from_str(line).expect("a line is a DiagnosticEvent");
+        assert_eq!(parsed.schema_version, LOG_SCHEMA_VERSION);
+        assert_eq!(parsed.run_id, "run-n03");
+        assert_eq!(parsed.member_id, "p-0123456789abcdef");
+        assert!(parsed.message.contains("network-clock-fit-only"), "{line}");
+        assert_eq!(
+            serde_json::to_string(&parsed).expect("serializes"),
+            *line,
+            "the line is exactly what the shared schema serializes"
+        );
+    }
+    observed(&json!({"kind": "log_lines", "id": "n03-log-lines", "lines": lines}));
+}
+
+#[test]
+fn n03_log_labels_are_validated_and_a_fault_entry_rides_along_when_given() {
+    let too_long = "g".repeat(MAX_LABEL_LEN + 1);
+    for (run, case, member, group, field) in [
+        ("", "c", "m", "g", "run_id"),
+        ("Run", "c", "m", "g", "run_id"),
+        ("r", "c d", "m", "g", "case_id"),
+        ("r", "c", "m@x", "g", "member"),
+        ("r", "c", "m", too_long.as_str(), "group"),
+    ] {
+        assert_eq!(
+            LogContext::new(run, case, member, group, None),
+            Err(LogContextError::InvalidLabel { field })
+        );
+    }
+    assert_eq!(
+        LogContext::new("r", "c", "m", "g", Some("bad fault")),
+        Err(LogContextError::InvalidLabel { field: "fault" })
+    );
+    // Paired positive: the longest legal labels, and a fault entry, still make a line within the bound.
+    let long = "a".repeat(MAX_LABEL_LEN);
+    let label = long.as_str();
+    let ctx = LogContext::new(label, label, label, label, Some(label)).expect("legal labels");
+    let (mut gc, _) = locked_member(8_995_000_000_000);
+    let event = drain(&mut gc).remove(0).payload;
+    let line = event.to_log_line(&ctx).expect("within the bound");
+    assert!(line.len() < MAX_LOG_LINE_BYTES);
+    let parsed: franken_test_support::DiagnosticEvent =
+        serde_json::from_str(&line).expect("parses");
+    assert_eq!(parsed.fault.as_deref(), Some(long.as_str()));
+    assert_eq!(parsed.cause, None);
+    // No peer string can reach a line: the leader id of a stranger's response is a number the clock never copies.
+    let mut gc = GroupClock::new(std_cfg(), 1, 7, 1).expect("member");
+    let stranger = ProbeResponse {
+        epoch: 1,
+        leader: 0xDEAD_BEEF,
+        seq: 1,
+        t1_echo_ns: 0,
+        t2_group_ns: 0,
+        t3_group_ns: 0,
+    };
+    assert_eq!(
+        gc.on_response(stranger, 10),
+        Err(ProbeReject::UnadmittedLeader)
+    );
+    let line = drain(&mut gc)[0]
+        .payload
+        .to_log_line(&log_ctx())
+        .expect("line");
+    assert!(
+        !line.to_lowercase().contains("deadbeef") && !line.contains("3735928559"),
+        "{line}"
+    );
+    assert!(line.contains("\"cause\":\"UnadmittedLeader\""), "{line}");
 }
