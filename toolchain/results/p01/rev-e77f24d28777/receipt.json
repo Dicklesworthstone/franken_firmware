@@ -1,0 +1,401 @@
+{
+ "artifact_sizes": {
+  "hello-init-mips": 27556,
+  "hello-init-ppc": 24512,
+  "speaker-host-full": 649408,
+  "speaker-mips-full": 564328,
+  "speaker-mips-min": 564328,
+  "speaker-ppc-full": 408128,
+  "speaker-ppc-min": 408128
+ },
+ "artifacts": [
+  {
+   "contract_digest": "88c4d5227a86984436c339bf0e7d6f8089f6efb2b9b0b1155d424b706a6bb31e",
+   "elf_big_endian": false,
+   "elf_class": 2,
+   "elf_dynamic": true,
+   "elf_machine": 62,
+   "fp_abi": "",
+   "id": "speaker-host-full",
+   "isa_revision": "",
+   "profile": "host_full",
+   "sha256": "a00ddd17b1d8fabeef7c0c3307a5f1160bafe328cafa9158e3d4bd350544f18f",
+   "target": "host",
+   "triple": "host"
+  },
+  {
+   "contract_digest": "88c4d5227a86984436c339bf0e7d6f8089f6efb2b9b0b1155d424b706a6bb31e",
+   "elf_big_endian": true,
+   "elf_class": 1,
+   "elf_dynamic": false,
+   "elf_machine": 8,
+   "fp_abi": "soft",
+   "id": "speaker-mips-full",
+   "isa_revision": "mips32r2",
+   "profile": "full_native",
+   "sha256": "616cc22f0283fc80f3ac4c62bb45b845c3d167f72d9e389ce690af1daa19c78d",
+   "target": "mips_be",
+   "triple": "mips-unknown-linux-musl"
+  },
+  {
+   "contract_digest": "88c4d5227a86984436c339bf0e7d6f8089f6efb2b9b0b1155d424b706a6bb31e",
+   "elf_big_endian": true,
+   "elf_class": 1,
+   "elf_dynamic": false,
+   "elf_machine": 20,
+   "fp_abi": "",
+   "id": "speaker-ppc-full",
+   "isa_revision": "",
+   "profile": "full_native",
+   "sha256": "e6e8e35a2cd8006d01d5646d1e5b5d38598454d745a930f37411a7be33dbbfd6",
+   "target": "powerpc_be",
+   "triple": "powerpc-unknown-linux-musl"
+  },
+  {
+   "contract_digest": "88c4d5227a86984436c339bf0e7d6f8089f6efb2b9b0b1155d424b706a6bb31e",
+   "elf_big_endian": true,
+   "elf_class": 1,
+   "elf_dynamic": false,
+   "elf_machine": 8,
+   "fp_abi": "soft",
+   "id": "speaker-mips-min",
+   "isa_revision": "mips32r2",
+   "profile": "minimal_renderer",
+   "sha256": "616cc22f0283fc80f3ac4c62bb45b845c3d167f72d9e389ce690af1daa19c78d",
+   "target": "mips_be",
+   "triple": "mips-unknown-linux-musl"
+  },
+  {
+   "contract_digest": "88c4d5227a86984436c339bf0e7d6f8089f6efb2b9b0b1155d424b706a6bb31e",
+   "elf_big_endian": true,
+   "elf_class": 1,
+   "elf_dynamic": false,
+   "elf_machine": 20,
+   "fp_abi": "",
+   "id": "speaker-ppc-min",
+   "isa_revision": "",
+   "profile": "minimal_renderer",
+   "sha256": "e6e8e35a2cd8006d01d5646d1e5b5d38598454d745a930f37411a7be33dbbfd6",
+   "target": "powerpc_be",
+   "triple": "powerpc-unknown-linux-musl"
+  },
+  {
+   "contract_digest": "88c4d5227a86984436c339bf0e7d6f8089f6efb2b9b0b1155d424b706a6bb31e",
+   "elf_big_endian": true,
+   "elf_class": 1,
+   "elf_dynamic": false,
+   "elf_machine": 8,
+   "fp_abi": "soft",
+   "id": "hello-init-mips",
+   "isa_revision": "mips32r2",
+   "profile": "bootstrap_probe",
+   "sha256": "0c939105cfb1e1b04f2e26690abc18d55b80004b6444b0e103b3e48058351014",
+   "target": "mips_be",
+   "triple": "mips-unknown-linux-musl"
+  },
+  {
+   "contract_digest": "88c4d5227a86984436c339bf0e7d6f8089f6efb2b9b0b1155d424b706a6bb31e",
+   "elf_big_endian": true,
+   "elf_class": 1,
+   "elf_dynamic": false,
+   "elf_machine": 20,
+   "fp_abi": "",
+   "id": "hello-init-ppc",
+   "isa_revision": "",
+   "profile": "bootstrap_probe",
+   "sha256": "b818d0a078d766f5cfc8ddb49a6af146c2aa989cda01d29484a7bd54c1b424e8",
+   "target": "powerpc_be",
+   "triple": "powerpc-unknown-linux-musl"
+  }
+ ],
+ "attested_env": {
+  "build-ffw-hello-init-mips_be": {
+   "RCH_REQUIRE_REMOTE": "1"
+  },
+  "build-ffw-hello-init-powerpc_be": {
+   "RCH_REQUIRE_REMOTE": "1"
+  },
+  "build-franken-speaker-host": {
+   "RCH_ALLOW_FOREIGN_ARTIFACTS": "1",
+   "RCH_REQUIRE_REMOTE": "1"
+  },
+  "build-franken-speaker-mips_be": {
+   "RCH_REQUIRE_REMOTE": "1"
+  },
+  "build-franken-speaker-powerpc_be": {
+   "RCH_REQUIRE_REMOTE": "1"
+  },
+  "toolchain": {
+   "RCH_REQUIRE_REMOTE": "1"
+  },
+  "toolchain-default": {
+   "RCH_REQUIRE_REMOTE": "1"
+  },
+  "workspace-test": {
+   "RCH_REQUIRE_REMOTE": "1"
+  }
+ },
+ "boundary": "A supervisor ran these commands on a worker at this revision; each step was checked against the plan from its raw log, which is not committed (it names the worker's address and local paths). Not an attestation of the compiler. Says nothing about a guest, a boot or a device.",
+ "contract_digest": "88c4d5227a86984436c339bf0e7d6f8089f6efb2b9b0b1155d424b706a6bb31e",
+ "kind": "central_run",
+ "lock_sha256": "8e3ea0d826c2eceaea978d7c64cbfb5c45e30c7eff6359617071c4d2e5364f82",
+ "missing": [],
+ "ran_at_utc": "2026-11-05T17:21:52Z",
+ "replay": {
+  "failed": 0,
+  "found": true,
+  "ignored": 0,
+  "names": [
+   "every_vector_id_is_unique_and_every_kind_is_known",
+   "the_contract_digest_is_the_pinned_value_and_independent_of_the_file_layout",
+   "the_declared_contract_is_valid_before_any_defect_is_planted",
+   "the_shared_vectors_replay_exactly"
+  ],
+  "passed": 4,
+  "result": "ok",
+  "test_file": "crates/franken-board-profile/tests/p01_contract.rs",
+  "test_file_sha256": "dfa0147af46aa8eeda28326a9a740adb46d367a65a0b2034bce8434680e9cfeb",
+  "tests": {
+   "every_vector_id_is_unique_and_every_kind_is_known": "ok",
+   "the_contract_digest_is_the_pinned_value_and_independent_of_the_file_layout": "ok",
+   "the_declared_contract_is_valid_before_any_defect_is_planted": "ok",
+   "the_shared_vectors_replay_exactly": "ok"
+  },
+  "vectors_sha256": "6372e13965c4d4e05785a3e3d3b7cedc07080391c29da6fd8c5a27f602e46394"
+ },
+ "revision": "e77f24d287776a5c958871b506e14af2553e0a75",
+ "schema": "ffw.p01.central_evidence.v1",
+ "steps": [
+  {
+   "command": [
+    "rustc",
+    "+nightly",
+    "-vV"
+   ],
+   "exit": 0,
+   "id": "toolchain",
+   "kind": "toolchain",
+   "log_sha256": "ec2a25929b40a2335d9d7c922d4998e3153842779b01e38f386db1795b1cc86e",
+   "matches_plan": true,
+   "millis": 1759,
+   "problems": [],
+   "status": "ok",
+   "worker": "trj"
+  },
+  {
+   "command": [
+    "rustc",
+    "-vV"
+   ],
+   "exit": 0,
+   "id": "toolchain-default",
+   "kind": "toolchain_default",
+   "log_sha256": "c2251c187d96d97644c823a1ee7673d53969d93edc9781b6f563ac402fd48603",
+   "matches_plan": true,
+   "millis": 2045,
+   "problems": [],
+   "status": "ok",
+   "worker": "trj"
+  },
+  {
+   "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "--manifest-path",
+    "<repo>/Cargo.toml",
+    "--workspace",
+    "--config",
+    "build.incremental=false",
+    "-j",
+    "2"
+   ],
+   "exit": 0,
+   "id": "workspace-test",
+   "kind": "test",
+   "log_sha256": "9cddb38df801e16100e7b1c04d9943fadce127ecc7499d384b857b8849e0d59c",
+   "matches_plan": true,
+   "millis": 1015079,
+   "problems": [],
+   "status": "ok",
+   "worker": "trj"
+  },
+  {
+   "command": [
+    "cargo",
+    "build",
+    "--locked",
+    "--offline",
+    "--manifest-path",
+    "<repo>/crates/franken-speaker/Cargo.toml",
+    "--release",
+    "-p",
+    "franken-speaker",
+    "--features",
+    "franken-speaker/harness",
+    "-j",
+    "2"
+   ],
+   "exit": 0,
+   "id": "build-franken-speaker-host",
+   "kind": "build",
+   "log_sha256": "a9ffde292d8bfc81f77dcb5d1e9d5ddf2264a2985cb002325768da0b33b9ed91",
+   "matches_plan": true,
+   "millis": 23208,
+   "problems": [],
+   "status": "ok",
+   "worker": "trj"
+  },
+  {
+   "command": [
+    "cargo",
+    "+nightly",
+    "build",
+    "--locked",
+    "--offline",
+    "--manifest-path",
+    "<repo>/crates/franken-speaker/Cargo.toml",
+    "--release",
+    "-p",
+    "franken-speaker",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=core,alloc,std,panic_abort",
+    "--config",
+    "target.mips-unknown-linux-musl.linker=\"<repo>/toolchain/linker/zig-cc-mips-be\"",
+    "--config",
+    "target.mips-unknown-linux-musl.rustflags=[\"-C\",\"target-feature=+crt-static\",\"-C\",\"link-self-contained=no\"]",
+    "-j",
+    "2"
+   ],
+   "exit": 0,
+   "id": "build-franken-speaker-mips_be",
+   "kind": "build",
+   "log_sha256": "d4e5686bb87a0c2328b056a55ec4d6e98224a91c4be8f017b123ba9e98adde4e",
+   "matches_plan": true,
+   "millis": 50132,
+   "problems": [],
+   "status": "ok",
+   "worker": "trj"
+  },
+  {
+   "command": [
+    "cargo",
+    "+nightly",
+    "build",
+    "--locked",
+    "--offline",
+    "--manifest-path",
+    "<repo>/crates/franken-speaker/Cargo.toml",
+    "--release",
+    "-p",
+    "franken-speaker",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=core,alloc,std,panic_abort",
+    "--config",
+    "target.powerpc-unknown-linux-musl.linker=\"<repo>/toolchain/linker/zig-cc-powerpc-be\"",
+    "--config",
+    "target.powerpc-unknown-linux-musl.rustflags=[\"-C\",\"target-feature=+crt-static\",\"-C\",\"link-self-contained=no\"]",
+    "-j",
+    "2"
+   ],
+   "exit": 0,
+   "id": "build-franken-speaker-powerpc_be",
+   "kind": "build",
+   "log_sha256": "8ac48c69031769f3e79f9775082ffa3e3fd11bcfd95df7ea0076836b6919ea62",
+   "matches_plan": true,
+   "millis": 47597,
+   "problems": [],
+   "status": "ok",
+   "worker": "trj"
+  },
+  {
+   "command": [
+    "cargo",
+    "+nightly",
+    "build",
+    "--locked",
+    "--offline",
+    "--manifest-path",
+    "<repo>/toolchain/src/ffw-hello-init/Cargo.toml",
+    "--release",
+    "--config",
+    "<repo>/toolchain/src/ffw-hello-init/.cargo/config.toml",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=core,panic_abort",
+    "-j",
+    "2"
+   ],
+   "exit": 0,
+   "id": "build-ffw-hello-init-mips_be",
+   "kind": "build",
+   "log_sha256": "8107bac9d6ded883e5051eadc9945b965efb15a828addd42b3c9d4410b7f229a",
+   "matches_plan": true,
+   "millis": 15261,
+   "problems": [],
+   "status": "ok",
+   "worker": "trj"
+  },
+  {
+   "command": [
+    "cargo",
+    "+nightly",
+    "build",
+    "--locked",
+    "--offline",
+    "--manifest-path",
+    "<repo>/toolchain/src/ffw-hello-init/Cargo.toml",
+    "--release",
+    "--config",
+    "<repo>/toolchain/src/ffw-hello-init/.cargo/config.toml",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=core,panic_abort",
+    "-j",
+    "2"
+   ],
+   "exit": 0,
+   "id": "build-ffw-hello-init-powerpc_be",
+   "kind": "build",
+   "log_sha256": "5b1a7e55e5d0006956b9b09bbee8a590c17952ac430c3ff69745dfba4d9ef1be",
+   "matches_plan": true,
+   "millis": 14846,
+   "problems": [],
+   "status": "ok",
+   "worker": "trj"
+  }
+ ],
+ "tests": {
+  "failed": 0,
+  "ignored": 2,
+  "passed": 1524,
+  "result_blocks": 57
+ },
+ "toolchain": {
+  "LLVM version": "23.1.5",
+  "commit-hash": "708c94ef093ecc42fb8851e17d8383d999727abc",
+  "host": "x86_64-unknown-linux-gnu",
+  "release": "1.101.0-nightly"
+ },
+ "toolchain_default": {
+  "LLVM version": "23.1.5",
+  "commit-hash": "708c94ef093ecc42fb8851e17d8383d999727abc",
+  "host": "x86_64-unknown-linux-gnu",
+  "release": "1.101.0-nightly"
+ },
+ "tree": "clean git archive export of the revision",
+ "verification": {
+  "codes": [],
+  "pairs": []
+ },
+ "workers": [
+  "trj"
+ ]
+}
