@@ -23,6 +23,13 @@
 //!   sent for that block (an FNV-1a digest taken at send time); a different byte is a campaign error. After the run
 //!   every block must have been decided exactly once ([`NodePlayout::finish`]).
 //!
+//! * **Streams.** A source change is a new stream (N01 §4: a fresh stream id, the receiver told to rebind), and the N04
+//!   engine holds exactly one stream (`begin_stream` clears its queue). So each stream generation has its own engine
+//!   ([`NodePlayout::open_stream`]): the old one drains the blocks below the cutover frame, the new one is bound when the
+//!   change is admitted and already holds the new stream's blocks, which arrive about 490 ms before the old tail has
+//!   drained. A packet goes to the engine of its own stream; one for a stream whose last block is decided is refused.
+//! * **The publish gate.** Every block the pump sends is first passed through the source arbiter's gate ([`Publish`]), so
+//!   a replaced adapter that keeps offering its blocks is refused and its audio never reaches a member.
 //! * **Planted faults.** A [`LinkFault`] acts on the packets of one block position (arrives late, swaps arrival order
 //!   with its neighbour, or is joined by a previous-epoch datagram), and the harness can leap a node's own clock; the
 //!   engine, the sender, the schedule and the receiver are still the real ones.
@@ -37,7 +44,7 @@ use franken_clock::group::{ClockStatus, GroupClock};
 use franken_dsp::{FRAMES_PER_BLOCK, StereoAudioBlock};
 use franken_stream::playout::{
     BLOCK_PAYLOAD_BYTES, ClockView, Decision, MediaPacket, Outcome, PlayoutConfig, PlayoutEngine,
-    PlayoutProfile, Poll,
+    PlayoutProfile, Poll, frames_to_ns,
 };
 use franken_stream::{
     AuthenticatedStreamPacket, OutboundFrame, StreamError, StreamReceiver, StreamSender,
@@ -209,6 +216,15 @@ pub struct PlayoutMemberReport {
     /// Planted previous-epoch datagrams that the member's own receiver refused as stale (N01's check, the first line; the
     /// engine's `wrong_epoch` is the second).
     pub stale_refused_at_receiver: u64,
+    /// Stream generations this member's playout opened: 1 for its negotiated stream, one more for every source change.
+    pub streams_opened: u64,
+    /// Packets that arrived for a stream whose last block had already been decided (it was retired at its cutover).
+    pub retired_stream_refused: u64,
+    /// Planted datagrams of the stream a source change replaced that the member's own receiver refused as `WRONG_STREAM`.
+    pub wrong_stream_refused_at_receiver: u64,
+    /// Blocks the replaced adapter offered after its replacement that the arbiter's publish gate refused, by the gate's
+    /// stable refusal code.
+    pub replaced_publishes_refused: BTreeMap<String, u64>,
 }
 
 /// A defect planted in the link between one member's sender and its engine. It acts on the packets of one block position;
@@ -223,6 +239,9 @@ pub(crate) enum LinkFault {
     /// A datagram of the previous epoch, keyed with the member's own media key and carrying other audio, arrives
     /// [`STALE_LEAD_NS`] before the block's own packet.
     StaleEpoch { block: u64 },
+    /// A datagram of the stream a source change replaced, keyed with the member's own media key and carrying other audio,
+    /// sent by the old sender after the member's receiver rebound to the new stream.
+    StaleStream { block: u64 },
 }
 
 /// A sender and a receiver one epoch before the member's stream, keyed with the member's own media key: what a datagram of
@@ -242,6 +261,22 @@ pub(crate) struct SendLink<'a> {
     pub fault: Option<LinkFault>,
     /// The previous-epoch endpoints a [`LinkFault::StaleEpoch`] needs.
     pub previous: Option<&'a mut PreviousEpoch>,
+    /// The sender of the stream a source change replaced, which a [`LinkFault::StaleStream`] sends with.
+    pub replaced: Option<&'a mut StreamSender>,
+    /// The source arbiter's publish gate, when the campaign has one.
+    pub publish: Option<Publish<'a>>,
+}
+
+/// What a block must pass before the pump sends it: the source arbiter's publish gate and, as a planted defect, a replaced
+/// adapter that keeps offering its own blocks after it was told to stop.
+pub(crate) struct Publish<'a> {
+    /// From this block on the replaced adapter offers each block before the owner does. `None`: it stops when replaced.
+    pub stale_from: Option<u64>,
+    /// The frame the replaced adapter offers for a block.
+    pub stale_frame: &'a dyn Fn(u64) -> OutboundFrame,
+    /// The arbiter's answer for a block: `Ok` if the adapter asked may publish it, else the refusal's stable code. The flag
+    /// says which adapter is asked: `true` the replaced one, `false` the owner.
+    pub gate: &'a dyn Fn(bool, u64) -> Result<(), String>,
 }
 
 /// One block as the link carries it: when the seeded schedule delivers it (and its duplicate), and the packet the member's
@@ -252,10 +287,36 @@ struct Sent {
     packet: AuthenticatedStreamPacket,
 }
 
-/// One member's playout: the real engine, the packets in flight to it, and the sender's progress.
+/// One stream generation of a member's playout: its id on the wire and its own N04 engine (see the module documentation).
+struct StreamEngine {
+    stream_id: u64,
+    engine: PlayoutEngine,
+    /// The first block this stream carries.
+    first_block: u64,
+    /// The first block of the next stream: this one decides nothing at or after it. `None` while it is the latest.
+    until_block: Option<u64>,
+}
+
+impl StreamEngine {
+    /// Blocks below the cutover that this stream has not decided yet.
+    fn owes(&self) -> bool {
+        self.until_block
+            .is_some_and(|until| self.engine.snapshot().cursor < until)
+    }
+
+    /// Every block below the cutover is decided: nothing of this stream is wanted any more.
+    fn retired(&self) -> bool {
+        self.until_block
+            .is_some_and(|until| self.engine.snapshot().cursor >= until)
+    }
+}
+
+/// One member's playout: its engines (one per stream), the packets in flight to them, and the sender's progress.
 pub(crate) struct NodePlayout {
-    /// `None` exactly when negotiation left the member without a stream.
-    engine: Option<PlayoutEngine>,
+    /// Stream generations in block order; empty exactly when negotiation left the member without a stream.
+    engines: Vec<StreamEngine>,
+    /// Group time at which block 0 is presented: every later stream continues this timeline.
+    origin_group_ns: u64,
     mono: MonotoneReading,
     /// Authenticated packets that have been sent and not yet arrived: (arrival true time, block, copy) -> packet.
     in_flight: BTreeMap<(u64, u64, u8), AuthenticatedStreamPacket>,
@@ -265,17 +326,44 @@ pub(crate) struct NodePlayout {
     sent_digest: BTreeMap<u64, u64>,
     blocks_without_a_decision: u64,
     catch_up_decisions: u64,
-    /// The highest block handed to the engine so far, and how many packets came after a higher one.
+    /// The highest block handed to an engine so far, and how many packets came after a higher one.
     highest_delivered: Option<u64>,
     out_of_order: u64,
     stale_refused_at_receiver: u64,
+    retired_stream_refused: u64,
+    wrong_stream_refused_at_receiver: u64,
+    replaced_refusals: BTreeMap<String, u64>,
+}
+
+/// A fresh N04 engine bound to `stream_epoch`, with `anchor_block` presented at `anchor_group_ns` on the group clock.
+fn new_engine(
+    stream_epoch: u64,
+    anchor_block: u64,
+    anchor_group_ns: u64,
+) -> Result<PlayoutEngine, String> {
+    let cfg = PlayoutConfig {
+        work_ns: RENDER_WORK_NS,
+        lead_ns: RENDER_LEAD_NS,
+        tolerance_ns: TIMELINE_TOLERANCE_NS,
+    };
+    let mut engine = PlayoutEngine::new(PlayoutProfile::MUSIC, cfg)
+        .map_err(|e| format!("playout configuration refused: {}", e.code()))?;
+    engine
+        .begin_stream(
+            stream_epoch,
+            anchor_block * (FRAMES_PER_BLOCK as u64),
+            anchor_group_ns,
+        )
+        .map_err(|e| format!("playout stream refused: {}", e.code()))?;
+    Ok(engine)
 }
 
 impl NodePlayout {
     /// A member with no stream: nothing to send, nothing to decide.
     pub(crate) fn unbound() -> Self {
         Self {
-            engine: None,
+            engines: Vec::new(),
+            origin_group_ns: 0,
             mono: MonotoneReading::default(),
             in_flight: BTreeMap::new(),
             next_send: 0,
@@ -285,25 +373,76 @@ impl NodePlayout {
             highest_delivered: None,
             out_of_order: 0,
             stale_refused_at_receiver: 0,
+            retired_stream_refused: 0,
+            wrong_stream_refused_at_receiver: 0,
+            replaced_refusals: BTreeMap::new(),
         }
     }
 
-    /// A member whose stream is bound to `stream_epoch`, block 0 presented at `anchor_group_ns` on the group clock.
-    pub(crate) fn bind(stream_epoch: u64, anchor_group_ns: u64) -> Result<Self, String> {
-        let cfg = PlayoutConfig {
-            work_ns: RENDER_WORK_NS,
-            lead_ns: RENDER_LEAD_NS,
-            tolerance_ns: TIMELINE_TOLERANCE_NS,
-        };
-        let mut engine = PlayoutEngine::new(PlayoutProfile::MUSIC, cfg)
-            .map_err(|e| format!("playout configuration refused: {}", e.code()))?;
-        engine
-            .begin_stream(stream_epoch, 0, anchor_group_ns)
-            .map_err(|e| format!("playout stream refused: {}", e.code()))?;
+    /// A member whose stream `stream_id` is bound to `stream_epoch`, block 0 presented at `anchor_group_ns` on the group
+    /// clock.
+    pub(crate) fn bind(
+        stream_id: u64,
+        stream_epoch: u64,
+        anchor_group_ns: u64,
+    ) -> Result<Self, String> {
+        let engine = new_engine(stream_epoch, 0, anchor_group_ns)?;
         Ok(Self {
-            engine: Some(engine),
+            engines: vec![StreamEngine {
+                stream_id,
+                engine,
+                first_block: 0,
+                until_block: None,
+            }],
+            origin_group_ns: anchor_group_ns,
             ..Self::unbound()
         })
+    }
+
+    /// The first block this member's sender has not sent yet: where a source change admitted now cuts over.
+    pub(crate) fn first_unsent(&self) -> u64 {
+        self.next_send
+    }
+
+    /// A source change was admitted: open stream `stream_id` at `cutover_block`. Its own engine is bound now, so it takes the
+    /// new stream's packets as they arrive; the previous stream's engine keeps deciding the blocks below the cutover (drain
+    /// to a common future cutover) and is retired once it has. The new stream continues the group's timeline.
+    pub(crate) fn open_stream(
+        &mut self,
+        stream_id: u64,
+        stream_epoch: u64,
+        cutover_block: u64,
+    ) -> Result<(), String> {
+        let Some(latest) = self.engines.last() else {
+            return Err("a stream was opened on a member that has none".to_string());
+        };
+        if cutover_block <= latest.first_block {
+            return Err(format!(
+                "a stream cannot start at block {cutover_block}, the latest one starts at {}",
+                latest.first_block
+            ));
+        }
+        if self.engines.iter().any(|e| e.stream_id == stream_id) {
+            return Err(format!("stream {stream_id:#x} was already opened"));
+        }
+        let anchor_group_ns =
+            self.origin_group_ns + frames_to_ns(cutover_block * (FRAMES_PER_BLOCK as u64));
+        let engine = new_engine(stream_epoch, cutover_block, anchor_group_ns)?;
+        if let Some(latest) = self.engines.last_mut() {
+            latest.until_block = Some(cutover_block);
+        }
+        self.engines.push(StreamEngine {
+            stream_id,
+            engine,
+            first_block: cutover_block,
+            until_block: None,
+        });
+        Ok(())
+    }
+
+    /// The stream generation that decides block `blk`: the latest one that starts at or before it.
+    fn engine_index_for_block(&self, blk: u64) -> Option<usize> {
+        self.engines.iter().rposition(|e| e.first_block <= blk)
     }
 
     /// Stage an authenticated packet to arrive at true time `arrival_true_ns` (`copy` 0 is the packet, 1 its duplicate).
@@ -365,6 +504,9 @@ impl NodePlayout {
             if link.fault == Some(LinkFault::StaleEpoch { block: blk }) {
                 self.plant_stale(blk, genuine_rel_ns, link, tl, frame_for)?;
             }
+            if link.fault == Some(LinkFault::StaleStream { block: blk }) {
+                self.plant_stale_stream(blk, link, frame_for)?;
+            }
         }
         Ok(())
     }
@@ -378,7 +520,32 @@ impl NodePlayout {
         tl: &CampaignTimeline,
         frame_for: &dyn Fn(u64) -> OutboundFrame,
     ) -> Result<Option<Sent>, String> {
-        let frame = frame_for(blk);
+        let frame = match link.publish.as_ref() {
+            None => frame_for(blk),
+            Some(publish) => {
+                // The replaced adapter, if it keeps publishing, offers first; the gate decides. A refusal of it is counted by
+                // its code. If the gate lets it through, its frame is what is sent, and the harness's bytes oracle finds out.
+                let mut offered = None;
+                if publish.stale_from.is_some_and(|from| blk >= from) {
+                    match (publish.gate)(true, blk) {
+                        Ok(()) => offered = Some((publish.stale_frame)(blk)),
+                        Err(code) => *self.replaced_refusals.entry(code).or_default() += 1,
+                    }
+                }
+                match offered {
+                    Some(frame) => frame,
+                    None => {
+                        (publish.gate)(false, blk).map_err(|code| {
+                            format!(
+                                "member {}: the publish gate refused the owner's block {blk}: {code}",
+                                link.member_id
+                            )
+                        })?;
+                        frame_for(blk)
+                    }
+                }
+            }
+        };
         let payload_digest = digest(&frame.payload);
         let wire = link.sender.send(frame).map_err(|e| {
             format!(
@@ -467,17 +634,55 @@ impl NodePlayout {
         Ok(())
     }
 
-    /// Hand the engine every staged packet that arrives at or before `until_true_ns`, in arrival order, each with the
-    /// view of the node's own clock at its arrival instant.
+    /// Send a datagram of the stream a source change replaced for `blk`, with other audio than the block's own. It is the
+    /// old sender's, keyed with the member's media key, so only its stream identity is wrong: the member's own receiver
+    /// (rebound to the new stream) must refuse it as `WRONG_STREAM` (N01 §3 step 6). The engine never sees it.
+    fn plant_stale_stream(
+        &mut self,
+        blk: u64,
+        link: &mut SendLink<'_>,
+        frame_for: &dyn Fn(u64) -> OutboundFrame,
+    ) -> Result<(), String> {
+        let member = link.member_id;
+        let Some(replaced) = link.replaced.as_deref_mut() else {
+            return Err(format!(
+                "member {member}: a previous-stream datagram was planted on a stream that no source change replaced"
+            ));
+        };
+        let mut frame = frame_for(blk);
+        for byte in &mut frame.payload {
+            *byte = !*byte;
+        }
+        let wire = replaced.send(frame).map_err(|e| {
+            format!("member {member}: the previous-stream datagram for block {blk} could not be encoded: {e}")
+        })?;
+        match link.receiver.accept(&wire) {
+            Err(StreamError::WrongStream { .. }) => self.wrong_stream_refused_at_receiver += 1,
+            Err(other) => {
+                return Err(format!(
+                    "member {member}: the previous-stream datagram for block {blk} was refused for another reason: {other}"
+                ));
+            }
+            Ok(_) => {
+                return Err(format!(
+                    "member {member}: the receiver accepted a datagram of the replaced stream for block {blk}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Hand each engine the staged packets of its own stream that arrive at or before `until_true_ns`, in arrival order,
+    /// each with the view of the node's own clock at its arrival instant.
     pub(crate) fn deliver_until(
         &mut self,
         clock: &GroupClock,
         sim: &SimNodeClock,
         until_true_ns: u64,
     ) -> Result<(), String> {
-        let Some(engine) = self.engine.as_mut() else {
+        if self.engines.is_empty() {
             return Ok(());
-        };
+        }
         while let Some((&(arrival, _, _), _)) = self.in_flight.first_key_value() {
             if arrival > until_true_ns {
                 break;
@@ -493,17 +698,27 @@ impl NodePlayout {
                 self.out_of_order += 1;
             }
             self.highest_delivered = self.highest_delivered.max(Some(block));
+            let stream = packet.stream_id.get();
+            let Some(at) = self.engines.iter().position(|e| e.stream_id == stream) else {
+                return Err(format!(
+                    "a packet of stream {stream:#x} reached a playout path that has no such stream"
+                ));
+            };
+            if self.engines[at].retired() {
+                self.retired_stream_refused += 1;
+                continue;
+            }
             let view = self.mono.view(clock, sim, arrival);
             let media = MediaPacket::from_authenticated(&packet)
                 .ok_or_else(|| "a repair packet reached the playout path".to_string())?;
-            let _ = engine.on_packet(view, &media);
+            let _ = self.engines[at].engine.on_packet(view, &media);
         }
         Ok(())
     }
 
-    /// Decide block `blk`: deliver what has arrived by the decision instant, then ask the engine. The engine must answer
-    /// with this block (or with an earlier one it still owed, which is counted); a block it plays as real must carry the
-    /// bytes the sender sent.
+    /// Decide block `blk`: deliver what has arrived by the decision instant, then ask the engine of the stream that owns
+    /// the block. The engine must answer with this block (or with an earlier one it still owed, which is counted); a block
+    /// it plays as real must carry the bytes the sender sent.
     pub(crate) fn decide_block(
         &mut self,
         blk: u64,
@@ -526,13 +741,20 @@ impl NodePlayout {
     ) -> Result<(Played, Vec<u8>), String> {
         let at = tl.decision_true_ns(blk);
         self.deliver_until(clock, sim, at)?;
-        let Some(engine) = self.engine.as_mut() else {
+        let Some(idx) = self.engine_index_for_block(blk) else {
             return Err(format!("block {blk} decided on a member with no stream"));
         };
+        // A stream whose cutover has passed must have decided everything below it. If the clock was unusable when its last
+        // blocks were due, it still owes them; a source change during a clock outage is not supported, and says so.
+        if let Some(owing) = self.engines[..idx].iter().position(StreamEngine::owes) {
+            return Err(format!(
+                "block {blk}: stream {owing} still owes decisions at its cutover (the clock was unusable); a source change during a clock outage is not supported"
+            ));
+        }
         let mut bytes = [0u8; BLOCK_PAYLOAD_BYTES];
         loop {
             let view = self.mono.view(clock, sim, at);
-            match engine.decide(view, &mut bytes) {
+            match self.engines[idx].engine.decide(view, &mut bytes) {
                 Poll::Decision(d) if d.block < blk => {
                     // A block already rendered as silence because the clock was unusable when it was due.
                     self.catch_up_decisions += 1;
@@ -564,43 +786,49 @@ impl NodePlayout {
         }
     }
 
-    /// The state oracle for the end of a run of `total_blocks` positions: every position was decided exactly once (unless
-    /// the clock was unusable for some), nothing is queued beyond the profile, and the engine's decision counters add up
-    /// to its cursor.
+    /// The state oracle for the end of a run of `total_blocks` positions: for every stream, every position it carries was
+    /// decided exactly once (unless the clock was unusable for some), nothing is queued beyond the profile, and the
+    /// engine's decision counters add up to its cursor.
     pub(crate) fn finish(&self, total_blocks: u64) -> Result<(), String> {
-        let Some(engine) = self.engine.as_ref() else {
-            return Ok(());
-        };
-        let snap = engine.snapshot();
-        let s = engine.stats();
-        let decided = s.decided_real
-            + s.decided_concealed
-            + s.decided_muted_gap
-            + s.decided_muted_nohistory
-            + s.decided_muted_overdue
-            + s.decided_skipped;
-        if decided != snap.cursor {
-            return Err(format!(
-                "the engine's decisions ({decided}) do not add up to its cursor ({})",
-                snap.cursor
-            ));
-        }
-        if snap.cursor > total_blocks {
-            return Err(format!(
-                "the engine decided {} blocks of {total_blocks}",
-                snap.cursor
-            ));
-        }
-        if self.blocks_without_a_decision == 0 && snap.cursor != total_blocks {
-            return Err(format!(
-                "{total_blocks} blocks were due and the engine decided {}",
-                snap.cursor
-            ));
+        for (index, stream) in self.engines.iter().enumerate() {
+            let snap = stream.engine.snapshot();
+            let s = stream.engine.stats();
+            let decided = s.decided_real
+                + s.decided_concealed
+                + s.decided_muted_gap
+                + s.decided_muted_nohistory
+                + s.decided_muted_overdue
+                + s.decided_skipped;
+            let span = snap.cursor.checked_sub(stream.first_block).ok_or_else(|| {
+                format!(
+                    "stream {index}: the cursor ({}) is before the stream's first block ({})",
+                    snap.cursor, stream.first_block
+                )
+            })?;
+            if decided != span {
+                return Err(format!(
+                    "stream {index}: the engine's decisions ({decided}) do not add up to its cursor ({})",
+                    snap.cursor
+                ));
+            }
+            let end = stream.until_block.unwrap_or(total_blocks);
+            if snap.cursor > end {
+                return Err(format!(
+                    "stream {index}: the engine decided {} blocks of {end}",
+                    snap.cursor
+                ));
+            }
+            if self.blocks_without_a_decision == 0 && snap.cursor != end {
+                return Err(format!(
+                    "stream {index}: {end} blocks were due and the engine decided {}",
+                    snap.cursor
+                ));
+            }
         }
         Ok(())
     }
 
-    /// The member's counters.
+    /// The member's counters, summed over its streams.
     pub(crate) fn report(&self) -> PlayoutMemberReport {
         let mut r = PlayoutMemberReport {
             catch_up_decisions: self.catch_up_decisions,
@@ -608,23 +836,28 @@ impl NodePlayout {
             clamped_readings: self.mono.clamped,
             out_of_order_arrivals: self.out_of_order,
             stale_refused_at_receiver: self.stale_refused_at_receiver,
+            streams_opened: u64::try_from(self.engines.len()).unwrap_or(u64::MAX),
+            retired_stream_refused: self.retired_stream_refused,
+            wrong_stream_refused_at_receiver: self.wrong_stream_refused_at_receiver,
+            replaced_publishes_refused: self.replaced_refusals.clone(),
             ..PlayoutMemberReport::default()
         };
-        if let Some(engine) = self.engine.as_ref() {
-            let s = engine.stats();
-            r.packets_offered = s.packets_seen;
-            r.admitted = s.admitted;
-            r.duplicate = s.duplicate;
-            r.late = s.late;
-            r.wrong_epoch = s.stale_epoch + s.future_epoch;
-            r.clock_refused = s.clock_unusable + s.clock_regressions;
-            r.otherwise_refused = s.bad_input + s.too_far_ahead + s.timeline_mismatch + s.not_bound;
-            r.decided_real = s.decided_real;
-            r.decided_concealed = s.decided_concealed;
-            r.decided_muted_gap = s.decided_muted_gap;
-            r.decided_muted_nohistory = s.decided_muted_nohistory;
-            r.decided_muted_overdue = s.decided_muted_overdue;
-            r.decided_skipped = s.decided_skipped;
+        for stream in &self.engines {
+            let s = stream.engine.stats();
+            r.packets_offered += s.packets_seen;
+            r.admitted += s.admitted;
+            r.duplicate += s.duplicate;
+            r.late += s.late;
+            r.wrong_epoch += s.stale_epoch + s.future_epoch;
+            r.clock_refused += s.clock_unusable + s.clock_regressions;
+            r.otherwise_refused +=
+                s.bad_input + s.too_far_ahead + s.timeline_mismatch + s.not_bound;
+            r.decided_real += s.decided_real;
+            r.decided_concealed += s.decided_concealed;
+            r.decided_muted_gap += s.decided_muted_gap;
+            r.decided_muted_nohistory += s.decided_muted_nohistory;
+            r.decided_muted_overdue += s.decided_muted_overdue;
+            r.decided_skipped += s.decided_skipped;
         }
         r
     }
@@ -671,6 +904,10 @@ mod tests {
     use franken_test_support::NetworkScheduleConfig;
 
     const COORDINATOR: u64 = 0x5EED_C0DE_0000_00AA;
+    /// The stream id the unit tests' wires use.
+    const STREAM: u64 = 0x5EED_5EED_0000_0001;
+    /// A second stream: what a source change opens.
+    const STREAM_B: u64 = 0x5EED_5EED_0000_0002;
     const ORIGIN: u64 = 250_000_000;
     const HORIZON: u64 = 500_000_000;
     /// N04's concealment gains (`round(0.7^n * 32768)`, n = 1..8), restated here from the contract, not read from the
@@ -802,7 +1039,7 @@ mod tests {
         fn with_epochs(engine_epoch: u64, wire_epoch: u64) -> Self {
             let (sim, tl) = (sim(), timeline());
             Self {
-                play: NodePlayout::bind(engine_epoch, tl.pts_group_ns(0)).expect("binds"),
+                play: NodePlayout::bind(STREAM, engine_epoch, tl.pts_group_ns(0)).expect("binds"),
                 clock: locked_clock(&sim),
                 sim,
                 tl,
@@ -1193,7 +1430,7 @@ mod tests {
         };
         let mut wire = Wire::new(1);
         let mut schedule = NetworkSchedule::new(cfg.clone());
-        let mut play = NodePlayout::bind(1, tl.pts_group_ns(0)).expect("binds");
+        let mut play = NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0)).expect("binds");
         let frame_for = |blk: u64| Wire::frame(&timeline(), blk, source_bytes(blk));
         let mut link = SendLink {
             member_id: "spk-test",
@@ -1202,6 +1439,8 @@ mod tests {
             schedule: &mut schedule,
             fault: None,
             previous: None,
+            replaced: None,
+            publish: None,
         };
         // Everything sent by the first decision instant: 94 blocks (0..=93).
         play.send_until(&mut link, tl.decision_true_ns(0), 1_000, &tl, &frame_for)
@@ -1273,7 +1512,7 @@ mod tests {
                 duplicate_bps: 0,
                 ..NetworkScheduleConfig::default()
             });
-            let mut play = NodePlayout::bind(1, tl.pts_group_ns(0)).expect("binds");
+            let mut play = NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0)).expect("binds");
             let frame_for = |blk: u64| Wire::frame(&timeline(), blk, source_bytes(blk));
             play.send_until(
                 &mut SendLink {
@@ -1283,6 +1522,8 @@ mod tests {
                     schedule: &mut schedule,
                     fault,
                     previous: Some(&mut previous),
+                    replaced: None,
+                    publish: None,
                 },
                 u64::MAX,
                 total,
@@ -1466,5 +1707,400 @@ mod tests {
         assert!(after.usable);
         assert_eq!(Some(after.group_ns), clock.group_ns(sim.local(t1)));
         assert_eq!(latch.clamped, 0);
+    }
+
+    impl Wire {
+        /// A sender and receiver for stream `stream_id` (same media key as [`Wire::new`]), at epoch 1.
+        fn on_stream(stream_id: u64) -> Self {
+            let id = StreamId::new(stream_id).expect("stream id");
+            Self {
+                sender: StreamSender::new(StreamKey::from_bytes([0x42; 32]), id, 1),
+                receiver: StreamReceiver::new(StreamKey::from_bytes([0x42; 32]), id, 1),
+            }
+        }
+    }
+
+    /// The other program's bytes: every byte of block `blk`'s payload inverted, so no block of one stream can be taken for
+    /// the same position of the other.
+    fn other_bytes(blk: u64) -> Vec<u8> {
+        source_bytes(blk).iter().map(|b| !b).collect()
+    }
+
+    /// A member whose first stream carries blocks 0..`cutover` (its audio is [`source_bytes`]) and whose second, opened at
+    /// `cutover`, carries the rest to `total` (its audio is [`other_bytes`]). Every packet arrives 5 ms after it was sent.
+    struct TwoStreams {
+        play: NodePlayout,
+        clock: GroupClock,
+        sim: SimNodeClock,
+        tl: CampaignTimeline,
+        old: Wire,
+        cutover: u64,
+        total: u64,
+    }
+
+    impl TwoStreams {
+        fn new(cutover: u64, total: u64) -> Self {
+            let (sim, tl) = (sim(), timeline());
+            let mut play = NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0)).expect("binds");
+            let mut old = Wire::on_stream(STREAM);
+            let mut new = Wire::on_stream(STREAM_B);
+            for blk in 0..cutover {
+                let payload = source_bytes(blk);
+                play.note_sent(blk, &payload);
+                let packet = old.packet(&tl, blk, payload);
+                play.stage(tl.send_true_ns(blk) + 5_000_000, 0, packet);
+            }
+            play.next_send = cutover;
+            play.open_stream(STREAM_B, 1, cutover).expect("opens");
+            for blk in cutover..total {
+                let payload = other_bytes(blk);
+                play.note_sent(blk, &payload);
+                let packet = new.packet(&tl, blk, payload);
+                play.stage(tl.send_true_ns(blk) + 5_000_000, 0, packet);
+            }
+            Self {
+                play,
+                clock: locked_clock(&sim),
+                sim,
+                tl,
+                old,
+                cutover,
+                total,
+            }
+        }
+
+        fn decide(&mut self, blk: u64) -> (Played, Vec<u8>) {
+            self.play
+                .decide_with_bytes(blk, &self.tl, &self.clock, &self.sim)
+                .expect("decides")
+        }
+    }
+
+    #[test]
+    fn a_new_stream_has_its_own_engine_that_holds_its_blocks_while_the_old_tail_drains() {
+        let mut s = TwoStreams::new(20, 40);
+        assert_eq!(s.play.first_unsent(), 20);
+        // After block 9 is decided, every new-stream block has arrived (5 ms after it was sent, 490 ms before the old tail
+        // is drained) and is queued in the new engine: all 20 of them.
+        for blk in 0..10 {
+            s.decide(blk);
+        }
+        assert_eq!(s.play.engines[1].engine.snapshot().queued, 20);
+        for blk in 10..s.total {
+            s.decide(blk);
+        }
+        let r = s.play.report();
+        assert_eq!(
+            (r.streams_opened, r.late, r.retired_stream_refused),
+            (2, 0, 0)
+        );
+        s.play
+            .finish(40)
+            .expect("both streams decided what they carry");
+    }
+
+    #[test]
+    fn every_block_plays_the_bytes_of_the_stream_that_owns_its_position() {
+        let mut s = TwoStreams::new(20, 40);
+        for blk in 0..s.total {
+            let want = if blk < s.cutover {
+                source_bytes(blk)
+            } else {
+                other_bytes(blk)
+            };
+            let played = s.decide(blk);
+            assert_eq!(authentic(played, blk), want, "block {blk}");
+        }
+        let r = s.play.report();
+        assert_eq!(
+            (r.decided_real, r.admitted, r.packets_offered),
+            (40, 40, 40)
+        );
+    }
+
+    #[test]
+    fn one_engine_rebound_at_the_cutover_would_discard_the_new_streams_queued_blocks() {
+        // Why the new stream gets its own engine: begin_stream clears the engine's queue (N04 §2), so rebinding the one
+        // engine at the cutover would throw away every block of the new stream that has already arrived.
+        let (sim, tl) = (sim(), timeline());
+        let clock = locked_clock(&sim);
+        let mut engine = PlayoutEngine::new(
+            PlayoutProfile::MUSIC,
+            PlayoutConfig {
+                work_ns: RENDER_WORK_NS,
+                lead_ns: RENDER_LEAD_NS,
+                tolerance_ns: TIMELINE_TOLERANCE_NS,
+            },
+        )
+        .expect("engine");
+        engine
+            .begin_stream(1, 0, tl.pts_group_ns(0))
+            .expect("bound");
+        let mut wire = Wire::on_stream(STREAM_B);
+        let mut mono = MonotoneReading::default();
+        for blk in 20..40 {
+            let packet = wire.packet(&tl, blk, other_bytes(blk));
+            let view = mono.view(&clock, &sim, tl.send_true_ns(blk) + 5_000_000);
+            let media = MediaPacket::from_authenticated(&packet).expect("media");
+            let _ = engine.on_packet(view, &media);
+        }
+        assert_eq!(engine.snapshot().queued, 20);
+        engine
+            .begin_stream(
+                1,
+                20 * (FRAMES_PER_BLOCK as u64),
+                tl.pts_group_ns(0) + frames_to_ns(20 * (FRAMES_PER_BLOCK as u64)),
+            )
+            .expect("rebound");
+        assert_eq!(
+            engine.snapshot().queued,
+            0,
+            "a rebind discards what the new stream had queued"
+        );
+    }
+
+    #[test]
+    fn a_packet_of_a_retired_stream_is_refused_and_a_packet_of_an_unknown_stream_is_an_error() {
+        let mut s = TwoStreams::new(20, 40);
+        // A late copy of block 5 of the old stream, arriving once the old tail has been decided.
+        let late_copy = s.old.packet(&s.tl, 5, source_bytes(5));
+        s.play
+            .stage(s.tl.decision_true_ns(25) - 1_000_000, 1, late_copy);
+        for blk in 0..s.total {
+            s.decide(blk);
+        }
+        let r = s.play.report();
+        assert_eq!(
+            (
+                r.retired_stream_refused,
+                r.late,
+                r.duplicate,
+                r.decided_real
+            ),
+            (1, 0, 0, 40),
+            "the old stream's engine was retired, so the copy never reached it"
+        );
+        s.play.finish(40).expect("finishes");
+
+        // A stream nobody opened.
+        let mut other = Wire::on_stream(0x5EED_5EED_0000_00FF);
+        let mut fresh = TwoStreams::new(20, 40);
+        let stray = other.packet(&fresh.tl, 3, source_bytes(3));
+        fresh.play.stage(fresh.tl.send_true_ns(3), 0, stray);
+        let err = match fresh
+            .play
+            .decide_block(0, &fresh.tl, &fresh.clock, &fresh.sim)
+        {
+            Err(e) => e,
+            Ok(_) => panic!("a packet of an unknown stream was accepted"),
+        };
+        assert!(err.contains("no such stream"), "{err}");
+    }
+
+    #[test]
+    fn a_stream_cannot_be_opened_twice_at_the_same_block_or_before_the_latest_one() {
+        let tl = timeline();
+        let mut play = NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0)).expect("binds");
+        assert!(play.open_stream(STREAM_B, 1, 0).is_err());
+        play.open_stream(STREAM_B, 1, 10).expect("opens");
+        assert!(
+            play.open_stream(STREAM, 1, 20).is_err(),
+            "a stream id is never reused"
+        );
+        assert!(
+            play.open_stream(0x77, 1, 10).is_err(),
+            "not at or before the latest start"
+        );
+        assert!(NodePlayout::unbound().open_stream(STREAM, 1, 10).is_err());
+    }
+
+    /// The pump over a link with no loss, no jitter and no duplicates, with a publish gate and a replaced adapter that keeps
+    /// publishing from block 20. The owner's frames are [`source_bytes`], the replaced adapter's [`other_bytes`].
+    fn pump_with_gate(
+        gate: &dyn Fn(bool, u64) -> Result<(), String>,
+    ) -> Result<NodePlayout, String> {
+        let tl = timeline();
+        let mut wire = Wire::new(1);
+        let mut schedule = NetworkSchedule::new(NetworkScheduleConfig {
+            seed: 7,
+            independent_loss_bps: 0,
+            burst_loss_interval_ns: 0,
+            max_jitter_ns: 0,
+            duplicate_bps: 0,
+            ..NetworkScheduleConfig::default()
+        });
+        let mut play = NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0)).expect("binds");
+        let owner = |blk: u64| Wire::frame(&timeline(), blk, source_bytes(blk));
+        let stale = |blk: u64| Wire::frame(&timeline(), blk, other_bytes(blk));
+        play.send_until(
+            &mut SendLink {
+                member_id: "spk-test",
+                sender: &mut wire.sender,
+                receiver: &mut wire.receiver,
+                schedule: &mut schedule,
+                fault: None,
+                previous: None,
+                replaced: None,
+                publish: Some(Publish {
+                    stale_from: Some(20),
+                    stale_frame: &stale,
+                    gate,
+                }),
+            },
+            u64::MAX,
+            40,
+            &tl,
+            &owner,
+        )?;
+        Ok(play)
+    }
+
+    #[test]
+    fn the_publish_gate_decides_whose_frame_is_sent_and_a_refused_adapter_is_counted_by_the_code() {
+        let staged = |play: &NodePlayout, blk: u64| {
+            play.in_flight
+                .get(&(ORIGIN + offset(blk), blk, 0))
+                .expect("staged")
+                .payload
+                .clone()
+        };
+        // The gate refuses the replaced adapter (as `SOURCE_REPLACED`) and admits the owner.
+        let refusing = |replaced: bool, _blk: u64| -> Result<(), String> {
+            if replaced {
+                Err("SOURCE_REPLACED".to_string())
+            } else {
+                Ok(())
+            }
+        };
+        let play = pump_with_gate(&refusing).expect("sends");
+        for blk in 20..40 {
+            assert_eq!(
+                staged(&play, blk),
+                source_bytes(blk),
+                "block {blk}: the owner's audio"
+            );
+        }
+        let r = play.report();
+        assert_eq!(
+            r.replaced_publishes_refused,
+            BTreeMap::from([("SOURCE_REPLACED".to_string(), 20)])
+        );
+
+        // Control: with a gate that lets the replaced adapter through, its frames are what goes out.
+        let open = |_replaced: bool, _blk: u64| -> Result<(), String> { Ok(()) };
+        let play = pump_with_gate(&open).expect("sends");
+        for blk in 20..40 {
+            assert_eq!(
+                staged(&play, blk),
+                other_bytes(blk),
+                "block {blk}: the replaced adapter's audio"
+            );
+        }
+        assert!(play.report().replaced_publishes_refused.is_empty());
+        for blk in 0..20 {
+            assert_eq!(
+                staged(&play, blk),
+                source_bytes(blk),
+                "before the replacement"
+            );
+        }
+
+        // A gate that refuses the owner is a campaign error, not a silent drop.
+        let closed = |_replaced: bool, _blk: u64| -> Result<(), String> {
+            Err("NOT_SOURCE_OWNER".to_string())
+        };
+        let err = match pump_with_gate(&closed) {
+            Err(e) => e,
+            Ok(_) => panic!("a refused owner was sent"),
+        };
+        assert!(err.contains("refused the owner's block"), "{err}");
+    }
+
+    #[test]
+    fn a_planted_datagram_of_the_replaced_stream_is_refused_by_the_receiver_and_changes_nothing_else()
+     {
+        let tl = timeline();
+        let run = |fault: Option<LinkFault>| -> Result<(NodePlayout, Wire), String> {
+            let mut new = Wire::on_stream(STREAM_B);
+            let mut old = StreamSender::new(
+                StreamKey::from_bytes([0x42; 32]),
+                StreamId::new(STREAM).expect("stream id"),
+                1,
+            );
+            let mut schedule = NetworkSchedule::new(NetworkScheduleConfig {
+                seed: 7,
+                independent_loss_bps: 0,
+                burst_loss_interval_ns: 0,
+                max_jitter_ns: 0,
+                duplicate_bps: 0,
+                ..NetworkScheduleConfig::default()
+            });
+            let mut play = NodePlayout::bind(STREAM_B, 1, tl.pts_group_ns(0)).expect("binds");
+            let owner = |blk: u64| Wire::frame(&timeline(), blk, source_bytes(blk));
+            play.send_until(
+                &mut SendLink {
+                    member_id: "spk-test",
+                    sender: &mut new.sender,
+                    receiver: &mut new.receiver,
+                    schedule: &mut schedule,
+                    fault,
+                    previous: None,
+                    replaced: Some(&mut old),
+                    publish: None,
+                },
+                u64::MAX,
+                40,
+                &tl,
+                &owner,
+            )?;
+            Ok((play, new))
+        };
+        let (control, control_wire) = run(None).expect("control");
+        let (planted, planted_wire) =
+            run(Some(LinkFault::StaleStream { block: 25 })).expect("planted");
+        let (c, p) = (control.report(), planted.report());
+        assert_eq!(
+            (
+                c.wrong_stream_refused_at_receiver,
+                p.wrong_stream_refused_at_receiver
+            ),
+            (0, 1)
+        );
+        assert_eq!(
+            PlayoutMemberReport {
+                wrong_stream_refused_at_receiver: 1,
+                ..c
+            },
+            p
+        );
+        // The member's real receiver refused it, by name, and accepted exactly the 40 genuine packets; nothing was staged for it.
+        assert_eq!(control_wire.receiver.counters().rejected_wrong_stream, 0);
+        assert_eq!(planted_wire.receiver.counters().rejected_wrong_stream, 1);
+        assert_eq!(planted_wire.receiver.counters().accepted, 40);
+        assert_eq!(planted.in_flight.len(), control.in_flight.len());
+        // A fault with no replaced stream to send from is a campaign error.
+        let mut wire = Wire::on_stream(STREAM_B);
+        let mut schedule = NetworkSchedule::new(NetworkScheduleConfig::default());
+        let mut play = NodePlayout::bind(STREAM_B, 1, tl.pts_group_ns(0)).expect("binds");
+        let owner = |blk: u64| Wire::frame(&timeline(), blk, source_bytes(blk));
+        let err = play
+            .send_until(
+                &mut SendLink {
+                    member_id: "spk-test",
+                    sender: &mut wire.sender,
+                    receiver: &mut wire.receiver,
+                    schedule: &mut schedule,
+                    fault: Some(LinkFault::StaleStream { block: 3 }),
+                    previous: None,
+                    replaced: None,
+                    publish: None,
+                },
+                u64::MAX,
+                10,
+                &tl,
+                &owner,
+            )
+            .expect_err("nothing to send the stale datagram with");
+        assert!(err.contains("no source change replaced"), "{err}");
     }
 }

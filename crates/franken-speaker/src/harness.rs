@@ -8,8 +8,8 @@
 use crate::SpeakerReadinessState;
 use crate::clock_log::{ClockLog, ClockLogSummary};
 use crate::playout_adapter::{
-    CampaignTimeline, LinkFault, NodePlayout, Played, PlayoutMemberReport, PreviousEpoch, SendLink,
-    Silence,
+    CampaignTimeline, LinkFault, NodePlayout, Played, PlayoutMemberReport, PreviousEpoch, Publish,
+    SendLink, Silence,
 };
 use franken_board_profile::{BoardProfile, synthetic_test_fixture_catalog};
 use franken_clock::LatencyLedger;
@@ -25,7 +25,9 @@ use franken_dsp::{BoardProtectionDsp, BoundedDriftResampler, FRAMES_PER_BLOCK, S
 use franken_hal::{AudioHalDevice, HalTelemetry, state as hal_state};
 use franken_platform::MemoryBudgetLedger;
 use franken_session::{
-    ChannelRole, FencedControlCommand, GroupCommandPayload, SessionError, UnifiedGroupSession,
+    Admitted, AuthorityToken, ChannelRole, CommandClass, FencedControlCommand, GroupCommandPayload,
+    SessionError, SourceArbiter, SourceCommand, SourceConfig, SourceEpoch, SourceError, SourceId,
+    SourceKind, UnifiedGroupSession,
 };
 use franken_stream::{
     Capabilities, Initiator, NegotiationError, OutboundFrame, StreamId, StreamKey, StreamReceiver,
@@ -48,6 +50,19 @@ const CAMPAIGN_STREAM_ID: u64 = 0x5EED_5EED_0000_0001;
 
 fn campaign_stream_id() -> Result<StreamId, String> {
     StreamId::new(CAMPAIGN_STREAM_ID).map_err(|e| e.to_string())
+}
+
+/// SIMULATED stand-in for the stream id a sender draws from admitted entropy at every stream start (`N01` §4): nonzero and
+/// different for every member and every source epoch, and **not entropy**. The production source is `P02`; swapping it in
+/// changes this one function.
+fn simulated_stream_id(member_id: &str, source_epoch: u64) -> u64 {
+    let mut h = fnv1a(member_id.as_bytes());
+    for part in [source_epoch, 0x57_4EA1_u64] {
+        h ^= part;
+        h = h.wrapping_mul(0x0100_0000_01b3);
+        h ^= h >> 29;
+    }
+    h | 1
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -137,6 +152,8 @@ struct MemberStream {
     sender: Option<StreamSender>,
     /// One epoch earlier, keyed with the same media key: what a planted previous-epoch datagram is made with.
     previous_epoch: Option<PreviousEpoch>,
+    /// The media key of the negotiated session, kept so a source change can start a new stream on it (`N01` §4).
+    media_key: Option<StreamKey>,
 }
 
 fn refused(by: RefusedBy, error: &NegotiationError) -> MemberStream {
@@ -149,6 +166,7 @@ fn refused(by: RefusedBy, error: &NegotiationError) -> MemberStream {
         receiver: None,
         sender: None,
         previous_epoch: None,
+        media_key: None,
     }
 }
 
@@ -262,6 +280,7 @@ fn negotiate_member_stream(
         receiver: Some(receiver),
         sender: Some(sender),
         previous_epoch,
+        media_key: Some(coordinator_session.media_key().clone()),
     })
 }
 
@@ -318,6 +337,12 @@ pub struct VirtualSpeakerNode {
     /// One epoch earlier, keyed with the member's own media key: what a planted `StaleEpochPacket` sends. `None` when the
     /// stream was refused or its epoch has no predecessor.
     pub(crate) previous_epoch: Option<PreviousEpoch>,
+    /// The media key of this member's stream, so a source change can start a new stream on it. `None` when refused.
+    pub(crate) stream_key: Option<StreamKey>,
+    /// The sender of the stream a source change replaced: what a planted `StaleStreamDatagram` sends with.
+    pub(crate) replaced_sender: Option<StreamSender>,
+    /// Real blocks played per source epoch, identified from the bytes that sounded.
+    pub(crate) source_blocks: BTreeMap<u64, u64>,
     /// What negotiation produced for this member's stream: the agreement, or the refusal that left it
     /// without one.
     pub stream: StreamOutcome,
@@ -593,6 +618,13 @@ enum OutputFault {
         block: u64,
         delta_ns: u64,
     },
+    /// A replaced source adapter keeps offering its own blocks after the arbiter replaced it. The publish gate must refuse
+    /// them: only the owner's audio may sound. Needs a source change in the scenario.
+    ReplacedSourceKeepsPublishing,
+    /// A datagram of the stream a source change replaced reaches `member_id`'s receiver, sent with the old stream's sender
+    /// at a block position at or after the cutover: the receiver, rebound to the new stream, must refuse it. Needs a source
+    /// change in the scenario.
+    StaleStreamDatagram { member_id: &'static str, block: u64 },
 }
 
 /// One line describing a planted fault, for the `fault` field of the diagnostic log.
@@ -627,7 +659,303 @@ fn describe_fault(fault: OutputFault) -> String {
             block,
             delta_ns,
         } => format!("clock_leap member={member_id} block={block} delta_ns={delta_ns}"),
+        OutputFault::ReplacedSourceKeepsPublishing => {
+            "replaced_source_keeps_publishing".to_string()
+        }
+        OutputFault::StaleStreamDatagram { member_id, block } => {
+            format!("stale_stream_datagram member={member_id} block={block}")
+        }
     }
+}
+
+/// Which of two source adapters that raced from the same view reaches the arbiter first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(test), allow(dead_code))]
+enum Racer {
+    /// An AirPlay 2 sender that wants the group (`start`, which the policy table lets replace Spotify).
+    AirPlay,
+    /// The incumbent Spotify session starting its next stream (a new track).
+    Spotify,
+}
+
+/// A legitimate source change during a campaign (a scenario, not a defect): at the start of render iteration `block` two
+/// source adapters, both having last seen the same source epoch, race to start a stream. The arbiter admits exactly one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(test), allow(dead_code))]
+struct SourceSwitch {
+    block: u64,
+    first: Racer,
+}
+
+/// What a campaign does beyond streaming the first source to the end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Scenario {
+    source_switch: Option<SourceSwitch>,
+}
+
+impl Scenario {
+    const NONE: Self = Self {
+        source_switch: None,
+    };
+}
+
+/// The two racing adapters' identities, as the arbiter sees them. Synthetic labels.
+const SPOTIFY_LABEL: &str = "spotify-house";
+const AIRPLAY_LABEL: &str = "airplay-living-room";
+
+fn source_id(kind: SourceKind, label: &str) -> Result<SourceId, String> {
+    SourceId::new(kind, label).map_err(|e| e.code().to_string())
+}
+
+/// The source that owns block positions from `from_block` on, under source epoch `epoch`.
+struct ProgramEntry {
+    from_block: u64,
+    source: SourceId,
+    epoch: SourceEpoch,
+}
+
+/// Who owns which block positions. A start, a replacement or a restart opens a new stream at its cutover block.
+struct Program {
+    entries: Vec<ProgramEntry>,
+}
+
+impl Program {
+    fn starting(source: SourceId, epoch: SourceEpoch) -> Self {
+        Self {
+            entries: vec![ProgramEntry {
+                from_block: 0,
+                source,
+                epoch,
+            }],
+        }
+    }
+
+    fn index_at(&self, blk: u64) -> usize {
+        self.entries
+            .iter()
+            .rposition(|entry| entry.from_block <= blk)
+            .unwrap_or(0)
+    }
+
+    /// The program that owns block position `blk`.
+    fn owner_at(&self, blk: u64) -> &ProgramEntry {
+        &self.entries[self.index_at(blk)]
+    }
+
+    /// The program that `blk`'s program replaced, if it replaced one: the adapter that was told to stop.
+    fn replaced_at(&self, blk: u64) -> Option<&ProgramEntry> {
+        self.index_at(blk)
+            .checked_sub(1)
+            .map(|index| &self.entries[index])
+    }
+
+    fn push(&mut self, from_block: u64, source: SourceId, epoch: SourceEpoch) {
+        self.entries.push(ProgramEntry {
+            from_block,
+            source,
+            epoch,
+        });
+    }
+}
+
+/// The audio source epoch `epoch` publishes for block `blk`. Epoch 1 is the campaign's original signal; every later epoch is
+/// a different program, so the bytes of a block name the stream they came from.
+fn source_block(blk: u64, epoch: u64) -> StereoAudioBlock {
+    let mut block = StereoAudioBlock::silence(blk * (FRAMES_PER_BLOCK as u64));
+    let base = ((blk % 32) as f32) * 0.02 + 0.05;
+    let amp = if epoch <= 1 {
+        base
+    } else {
+        base * 0.5 + 0.01 * (epoch.min(20) as f32)
+    };
+    block.left = [amp; FRAMES_PER_BLOCK];
+    block.right = [-amp; FRAMES_PER_BLOCK];
+    block
+}
+
+/// The block a source epoch publishes for `blk`, decoded the way a member's playout decodes what it plays.
+fn heard_block(blk: u64, epoch: u64) -> Result<StereoAudioBlock, String> {
+    StereoAudioBlock::from_be_i16_bytes(
+        blk * (FRAMES_PER_BLOCK as u64),
+        &source_block(blk, epoch).to_be_i16_bytes(),
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Block `blk` of source epoch `epoch` as a media frame. Blocks are coded in groups of four; the sender assigns `seq == blk`
+/// within a stream.
+fn frame_of(timeline: &CampaignTimeline, blk: u64, epoch: u64) -> OutboundFrame {
+    let start_frame = blk * (FRAMES_PER_BLOCK as u64);
+    let pts_ns = timeline.pts_group_ns(blk);
+    let consume_by_ns = pts_ns - BLOCK_PERIOD_NS;
+    OutboundFrame {
+        fec_group_id: (blk / 4) as u16,
+        fec_index: (blk % 4) as u8,
+        fec_group_size: 4,
+        ..OutboundFrame::media(
+            start_frame,
+            pts_ns,
+            consume_by_ns,
+            source_block(blk, epoch).to_be_i16_bytes(),
+        )
+    }
+}
+
+/// What the source arbiter did during a campaign (`G01` §10), as receipts: how many commands it admitted, how it refused
+/// the rest, who owned the group at the end, and where the program changed.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceReport {
+    /// Commands the arbiter admitted: the first start, and the winner of a race.
+    pub admitted: u64,
+    /// Commands it refused, by the refusal's stable code.
+    pub refused: BTreeMap<String, u64>,
+    /// The source epoch in force at the end and the source that owned the group (`kind:label`).
+    pub final_epoch: u64,
+    pub final_owner: Option<String>,
+    /// The first block of the new program when the owner changed streams: every member cut over here.
+    pub cutover_block: Option<u64>,
+}
+
+/// The source side of a campaign: the real arbiter, the authority token it judges under, the program it has produced and the
+/// report. The simulation owns both the arbiter and the adapters that submit to it; no real transport is involved (`G01` §10).
+struct SourceDesk {
+    token: AuthorityToken,
+    arbiter: SourceArbiter,
+    program: Program,
+    report: SourceReport,
+}
+
+impl SourceDesk {
+    /// The first source starts: Spotify, as the Alexa directive that began the campaign asked.
+    fn start(session: &UnifiedGroupSession) -> Result<Self, String> {
+        let token = AuthorityToken::issue(session, u64::MAX);
+        let mut arbiter = SourceArbiter::new(SourceConfig::default());
+        let spotify = source_id(SourceKind::Spotify, SPOTIFY_LABEL)?;
+        let command = SourceCommand {
+            source: spotify.clone(),
+            class: CommandClass::Start,
+            expected_epoch: arbiter.view(session).epoch,
+        };
+        let started = arbiter
+            .submit(session, &token, CAMPAIGN_ORIGIN_NS, &command)
+            .map_err(|e| format!("the first source could not start: {}", e.code()))?;
+        Ok(Self {
+            token,
+            arbiter,
+            program: Program::starting(spotify, started.epoch),
+            report: SourceReport {
+                admitted: 1,
+                ..SourceReport::default()
+            },
+        })
+    }
+}
+
+/// Two source adapters race to start a stream from the same view, in the order `switch` says. The arbiter admits exactly one
+/// (a start that saw the same epoch as another cannot both mint), the other is refused as stale and told the epoch the winner
+/// minted. The winner's start begins a new stream: every member that has a stream cuts over at the first block its sender has
+/// not sent yet (drain to a common future cutover), with a new stream id, its receiver rebound, a new sender and a new engine.
+/// Returns the cutover block.
+fn execute_source_switch(
+    switch: SourceSwitch,
+    total_blocks: u64,
+    session: &UnifiedGroupSession,
+    desk: &mut SourceDesk,
+    nodes: &mut BTreeMap<String, VirtualSpeakerNode>,
+) -> Result<u64, String> {
+    let view = desk.arbiter.view(session);
+    let incumbent = desk
+        .program
+        .entries
+        .last()
+        .map(|entry| entry.source.clone())
+        .ok_or_else(|| "the program has no owner".to_string())?;
+    let challenger = source_id(SourceKind::AirPlay2, AIRPLAY_LABEL)?;
+    let order = match switch.first {
+        Racer::AirPlay => [challenger, incumbent],
+        Racer::Spotify => [incumbent, challenger],
+    };
+    let now_ns = CAMPAIGN_ORIGIN_NS + block_offset_ns(switch.block);
+    let mut winner: Option<Admitted> = None;
+    for source in order {
+        let command = SourceCommand {
+            source: source.clone(),
+            class: CommandClass::Start,
+            expected_epoch: view.epoch,
+        };
+        match desk.arbiter.submit(session, &desk.token, now_ns, &command) {
+            Ok(admitted) => {
+                desk.report.admitted += 1;
+                if winner.replace(admitted).is_some() {
+                    return Err(format!(
+                        "both racing starts were admitted, the second from {source}"
+                    ));
+                }
+            }
+            Err(SourceError::SourceEpochStale { expected, current }) => {
+                // The loser is told it lost the race: it saw the epoch it presented, and the winner minted the next one.
+                let minted = winner.as_ref().map(|won| won.epoch.get());
+                if expected != view.epoch.get() || minted != Some(current) {
+                    return Err(format!(
+                        "{source} was refused as stale with epochs {expected} and {current}, but it saw {} and the winner minted {minted:?}",
+                        view.epoch.get()
+                    ));
+                }
+                *desk
+                    .report
+                    .refused
+                    .entry("SOURCE_EPOCH_STALE".to_string())
+                    .or_default() += 1;
+            }
+            Err(other) => {
+                return Err(format!(
+                    "the racing start of {source} was refused as {}, not as stale",
+                    other.code()
+                ));
+            }
+        }
+    }
+    let admitted = winner.ok_or_else(|| "no racing start was admitted".to_string())?;
+    if !admitted.minted || admitted.epoch.get() != view.epoch.get() + 1 {
+        return Err(format!(
+            "the winning start minted epoch {} from {}",
+            admitted.epoch.get(),
+            view.epoch.get()
+        ));
+    }
+    let owner = admitted
+        .owner
+        .clone()
+        .ok_or_else(|| "a start left the group with no owner".to_string())?;
+
+    let mut cutover = None;
+    for (id, node) in nodes.iter() {
+        if node.coordinator_sender.is_none() {
+            continue;
+        }
+        let first_unsent = node.playout.first_unsent();
+        match cutover {
+            None => cutover = Some(first_unsent),
+            Some(agreed) if agreed != first_unsent => {
+                return Err(format!(
+                    "member {id} would cut over at block {first_unsent}, the others at {agreed}"
+                ));
+            }
+            Some(_) => {}
+        }
+    }
+    let cutover = cutover.ok_or_else(|| "no member has a stream to switch".to_string())?;
+    if cutover >= total_blocks {
+        return Err(format!(
+            "the source change was admitted too late: the new stream would start at block {cutover} of {total_blocks}"
+        ));
+    }
+    for node in nodes.values_mut() {
+        node.switch_stream(admitted.epoch.get(), cutover)?;
+    }
+    desk.program.push(cutover, owner, admitted.epoch);
+    desk.report.cutover_block = Some(cutover);
+    Ok(cutover)
 }
 
 /// The campaign's nominal block period (256 frames at 48 kHz), in nanoseconds, rounded down. It is a DURATION to
@@ -672,6 +1000,32 @@ fn fault_injected_event(
 }
 
 impl VirtualSpeakerNode {
+    /// This member's stream after a source change (`N01` §4: "a restarted or rekeyed sender uses a fresh [stream id] and the
+    /// receiver is told over the control channel"): a new stream id on the same media key, the member's real receiver rebound
+    /// to it, a new sender, and a new playout engine bound at the cutover. The old sender is kept: a replaced adapter's
+    /// datagrams are what a planted `StaleStreamDatagram` sends. A member with no stream has nothing to switch.
+    fn switch_stream(&mut self, source_epoch: u64, cutover_block: u64) -> Result<(), String> {
+        let Some(old_sender) = self.coordinator_sender.take() else {
+            return Ok(());
+        };
+        let (Some(key), Some(receiver)) = (self.stream_key.clone(), self.receiver.as_mut()) else {
+            self.coordinator_sender = Some(old_sender);
+            return Err(format!(
+                "member {}: has a sender but no media key or receiver",
+                self.member_id
+            ));
+        };
+        let id = StreamId::new(simulated_stream_id(&self.member_id, source_epoch))
+            .map_err(|e| e.to_string())?;
+        let epoch = receiver.active_epoch();
+        receiver.bind_stream(id, epoch);
+        self.coordinator_sender = Some(StreamSender::new(key, id, epoch));
+        self.replaced_sender = Some(old_sender);
+        self.playout
+            .open_stream(id.get(), epoch, cutover_block)
+            .map_err(|e| format!("member {}: {e}", self.member_id))
+    }
+
     pub fn bring_up_admitted(
         member_id: &str,
         board: BoardProfile,
@@ -807,7 +1161,11 @@ impl VirtualSpeakerNode {
         clock_log.drain(&mut clock);
         // The engine is bound to the stream negotiation produced: its epoch, and the presentation time of block 0.
         let playout = if link.sender.is_some() {
-            NodePlayout::bind(initial_epoch, Self::block_pts_group_ns(0))?
+            NodePlayout::bind(
+                CAMPAIGN_STREAM_ID,
+                initial_epoch,
+                Self::block_pts_group_ns(0),
+            )?
         } else {
             NodePlayout::unbound()
         };
@@ -832,6 +1190,9 @@ impl VirtualSpeakerNode {
             receiver: link.receiver,
             coordinator_sender: link.sender,
             previous_epoch: link.previous_epoch,
+            stream_key: link.media_key,
+            replaced_sender: None,
+            source_blocks: BTreeMap::new(),
             stream: link.outcome,
             stream_refused_blocks: 0,
             playout,
@@ -1108,6 +1469,9 @@ pub struct VirtualHouseReport {
     /// False when critical evidence (the campaign summary) could not be stored. A report with
     /// `evidence_complete == false` is incomplete and must not be read as a clean pass.
     pub evidence_complete: bool,
+    /// What the source arbiter did (`G01` §10).
+    #[serde(default)]
+    pub source: SourceReport,
     pub members: BTreeMap<String, MemberSimulationStats>,
 }
 
@@ -1142,6 +1506,10 @@ pub struct MemberSimulationStats {
     /// wrong epoch, and what was decided for every block.
     #[serde(default)]
     pub playout: PlayoutMemberReport,
+    /// Real blocks played per source epoch, identified from the bytes that sounded (not from the arbiter's view): the
+    /// program each block position actually carried.
+    #[serde(default)]
+    pub source_blocks: BTreeMap<u64, u64>,
 }
 
 /// Run a complete deterministic Virtual House simulation across 5 mixed-generation Sonos models
@@ -1171,6 +1539,17 @@ fn run_campaign(
     run_campaign_with_sink(seed, total_blocks, fault, &mut sink)
 }
 
+#[cfg(test)]
+fn run_scenario(
+    seed: u64,
+    total_blocks: u64,
+    fault: Option<OutputFault>,
+    scenario: Scenario,
+) -> Result<VirtualHouseReport, String> {
+    let mut sink = default_diagnostic_sink();
+    run_scenario_with_sink(seed, total_blocks, fault, scenario, &mut sink)
+}
+
 /// The campaign, logging to `sink` (which the caller keeps, so the log can be read afterwards).
 /// The render loop emits one bounded `block_rendered` event per block and never waits on the
 /// sink: a full, zero-capacity or unavailable sink only increases `dropped_log_events`, and must
@@ -1182,7 +1561,18 @@ fn run_campaign_with_sink(
     fault: Option<OutputFault>,
     sink: &mut BoundedDiagnosticSink,
 ) -> Result<VirtualHouseReport, String> {
-    let result = run_campaign_inner(seed, total_blocks, fault, sink, &[]);
+    run_scenario_with_sink(seed, total_blocks, fault, Scenario::NONE, sink)
+}
+
+/// [`run_campaign_with_sink`] for a campaign that also changes its source (see [`Scenario`]).
+fn run_scenario_with_sink(
+    seed: u64,
+    total_blocks: u64,
+    fault: Option<OutputFault>,
+    scenario: Scenario,
+    sink: &mut BoundedDiagnosticSink,
+) -> Result<VirtualHouseReport, String> {
+    let result = run_campaign_scenario(seed, total_blocks, fault, sink, &[], scenario);
     if let Err(cause) = &result {
         sink.emit_critical(DiagnosticEvent {
             schema_version: String::new(),
@@ -1206,13 +1596,26 @@ fn run_campaign_with_sink(
 }
 
 /// `firmware` plants members whose negotiation differs from this build's own (see [`PeerFirmware`]);
-/// a member not named runs [`PeerFirmware::CURRENT`].
+/// a member not named runs [`PeerFirmware::CURRENT`]. Only the unit tests plant firmware, so only they call this.
+#[cfg(test)]
 fn run_campaign_inner(
     seed: u64,
     total_blocks: u64,
     fault: Option<OutputFault>,
     sink: &mut BoundedDiagnosticSink,
     firmware: &[(&str, PeerFirmware)],
+) -> Result<VirtualHouseReport, String> {
+    run_campaign_scenario(seed, total_blocks, fault, sink, firmware, Scenario::NONE)
+}
+
+/// The campaign, with its scenario: `run_campaign_inner` (tests only) runs it with none.
+fn run_campaign_scenario(
+    seed: u64,
+    total_blocks: u64,
+    fault: Option<OutputFault>,
+    sink: &mut BoundedDiagnosticSink,
+    firmware: &[(&str, PeerFirmware)],
+    scenario: Scenario,
 ) -> Result<VirtualHouseReport, String> {
     let catalog = synthetic_test_fixture_catalog();
     let find_board = |model: &str| -> BoardProfile {
@@ -1304,6 +1707,26 @@ fn run_campaign_inner(
     )
     .map_err(|e| e.to_string())?;
 
+    // Spotify's start goes through the real source arbiter (`G01` §10), which decides who may publish. Planted source faults
+    // and a source change need the arbiter's scenario to exist.
+    let mut desk = SourceDesk::start(&session)?;
+    if matches!(
+        fault,
+        Some(OutputFault::ReplacedSourceKeepsPublishing | OutputFault::StaleStreamDatagram { .. })
+    ) && scenario.source_switch.is_none()
+    {
+        return Err("a planted source fault needs a source change in the scenario".to_string());
+    }
+    if let Some(switch) = scenario.source_switch
+        && !(1..total_blocks).contains(&switch.block)
+    {
+        return Err(format!(
+            "the source change is at block {}, outside 1..{total_blocks}",
+            switch.block
+        ));
+    }
+    let mut stale_publisher_from: Option<u64> = None;
+
     // Each member's stream came out of its own negotiation, so each has its own sender; a sender owns
     // stream identity, epoch and sequence, and sequence 0 is the first block. A member whose
     // negotiation was refused has none and is on record as muted with N01's diagnostic.
@@ -1312,7 +1735,6 @@ fn run_campaign_inner(
             sink.emit_critical(stream_refused_event(seed, member_id, &session, refusal));
         }
     }
-    let block_period_ns: u64 = BLOCK_PERIOD_NS; // 256 / 48_000 s
     let playout_horizon_ns: u64 = PLAYOUT_HORIZON_NS; // 500 ms
 
     // Create deterministic per-member network schedules
@@ -1337,41 +1759,60 @@ fn run_campaign_inner(
         .filter(|node| node.coordinator_sender.is_some())
         .count();
     // The N04 engine decides a block `work + lead` before its presentation, about 496 ms after it was sent, so each
-    // member's sender runs ahead of the render loop (see `playout_adapter`). A block's frame depends on the block alone,
-    // so it is built when the sender reaches it. The presentation time it carries is on the group clock: the engine's
+    // member's sender runs ahead of the render loop (see `playout_adapter`). A block's frame depends on the block and on
+    // the source epoch that owns its position, so it is built when the sender reaches it. The presentation time it carries is on the group clock: the engine's
     // timeline and the node's clock readings share that axis.
     let timeline = CampaignTimeline {
         origin_ns: CAMPAIGN_ORIGIN_NS,
         horizon_ns: playout_horizon_ns,
         offset_ns: block_offset_ns,
     };
-    let frame_for = |blk: u64| -> OutboundFrame {
-        let start_frame = blk * (FRAMES_PER_BLOCK as u64);
-        let pts_ns = timeline.pts_group_ns(blk);
-        let consume_by_ns = pts_ns - block_period_ns;
-
-        let mut src_block = StereoAudioBlock::silence(start_frame);
-        let amp = ((blk % 32) as f32) * 0.02 + 0.05;
-        src_block.left = [amp; FRAMES_PER_BLOCK];
-        src_block.right = [-amp; FRAMES_PER_BLOCK];
-
-        // Blocks are coded in groups of four; the sender assigns `seq == blk`.
-        OutboundFrame {
-            fec_group_id: (blk / 4) as u16,
-            fec_index: (blk % 4) as u8,
-            fec_group_size: 4,
-            ..OutboundFrame::media(
-                start_frame,
-                pts_ns,
-                consume_by_ns,
-                src_block.to_be_i16_bytes(),
-            )
-        }
-    };
     for blk_idx in 0..total_blocks {
         let start_frame = blk_idx * (FRAMES_PER_BLOCK as u64);
         let send_time_ns = block_offset_ns(blk_idx);
         let mut presented_true = Vec::with_capacity(nodes.len());
+        // A source change is decided here, at the start of the iteration: the sender is ~93 blocks ahead of this block, and
+        // every block it has not sent yet belongs to the new program.
+        if let Some(switch) = scenario.source_switch
+            && switch.block == blk_idx
+        {
+            let cutover =
+                execute_source_switch(switch, total_blocks, &session, &mut desk, &mut nodes)?;
+            if matches!(fault, Some(OutputFault::ReplacedSourceKeepsPublishing)) {
+                stale_publisher_from = Some(cutover);
+                sink.emit_critical(fault_injected_event(
+                    seed,
+                    blk_idx,
+                    send_time_ns,
+                    &session,
+                    fault,
+                ));
+            }
+        }
+        let frame_for = |blk: u64| frame_of(&timeline, blk, desk.program.owner_at(blk).epoch.get());
+        let stale_frame = |blk: u64| {
+            frame_of(
+                &timeline,
+                blk,
+                desk.program
+                    .replaced_at(blk)
+                    .map_or(0, |entry| entry.epoch.get()),
+            )
+        };
+        // The source arbiter's gate: may the owner (or the replaced adapter, if it kept publishing) publish this block?
+        let gate = |replaced: bool, blk: u64| -> Result<(), String> {
+            let entry = if replaced {
+                desk.program.replaced_at(blk)
+            } else {
+                Some(desk.program.owner_at(blk))
+            };
+            let Some(entry) = entry else {
+                return Err("NO_REPLACED_ADAPTER".to_string());
+            };
+            desk.arbiter
+                .check_publish(&session, &entry.source, entry.epoch)
+                .map_err(|e| e.code().to_string())
+        };
         for (member_id, node) in &mut nodes {
             // A fault planted on this member's link, and one on its own clock (which takes effect from this block on).
             let link_fault = match fault {
@@ -1387,6 +1828,10 @@ fn run_campaign_inner(
                     member_id: faulty,
                     block,
                 }) if faulty == member_id.as_str() => Some(LinkFault::StaleEpoch { block }),
+                Some(OutputFault::StaleStreamDatagram {
+                    member_id: faulty,
+                    block,
+                }) if faulty == member_id.as_str() => Some(LinkFault::StaleStream { block }),
                 _ => None,
             };
             let clock_leap = match fault {
@@ -1404,6 +1849,7 @@ fn run_campaign_inner(
                         LinkFault::Late { block }
                             | LinkFault::SwapArrivals { block }
                             | LinkFault::StaleEpoch { block }
+                            | LinkFault::StaleStream { block }
                     ) if block == blk_idx
                 )
             {
@@ -1445,6 +1891,12 @@ fn run_campaign_inner(
                         schedule,
                         fault: link_fault,
                         previous: node.previous_epoch.as_mut(),
+                        replaced: node.replaced_sender.as_mut(),
+                        publish: Some(Publish {
+                            stale_from: stale_publisher_from,
+                            stale_frame: &stale_frame,
+                            gate: &gate,
+                        }),
                     },
                     timeline.decision_true_ns(blk_idx),
                     total_blocks,
@@ -1475,6 +1927,21 @@ fn run_campaign_inner(
             let stereo_in = match played {
                 None => StereoAudioBlock::silence(start_frame),
                 Some(Played::Authentic(block)) => {
+                    // Which program's audio sounded, read from the bytes, and whose position it is: they must agree. The
+                    // engine has already shown that these are the bytes the sender sent; this shows they are the owner's.
+                    let owner = desk.program.owner_at(blk_idx).epoch.get();
+                    let heard = desk
+                        .program
+                        .entries
+                        .iter()
+                        .map(|entry| entry.epoch.get())
+                        .find(|&epoch| heard_block(blk_idx, epoch).is_ok_and(|b| b == block));
+                    if heard != Some(owner) {
+                        return Err(format!(
+                            "member {member_id}: block {blk_idx} played the audio of source epoch {heard:?}, but source epoch {owner} owns that position"
+                        ));
+                    }
+                    *node.source_blocks.entry(owner).or_default() += 1;
                     node.authentic_blocks += 1;
                     block
                 }
@@ -1632,6 +2099,22 @@ fn run_campaign_inner(
         });
     }
 
+    // What the arbiter ended with, before the fencing probe moves the group to a newer epoch.
+    let end_view = desk.arbiter.view(&session);
+    desk.report.final_epoch = end_view.epoch.get();
+    desk.report.final_owner = end_view.owner.map(|owner| owner.to_string());
+    if let Some(OutputFault::StaleStreamDatagram { member_id, block }) = fault {
+        // A planted datagram that was never refused proves nothing: it was not sent (is the block at or after the cutover?).
+        let refused = nodes
+            .get(member_id)
+            .map(|node| node.playout.report().wrong_stream_refused_at_receiver);
+        if refused != Some(1) {
+            return Err(format!(
+                "the planted previous-stream datagram for {member_id} block {block} was refused {refused:?} times by its receiver, not once"
+            ));
+        }
+    }
+
     // Tail check: the harness streamed `total_blocks` blocks, so every channel of every member must
     // have produced exactly that many frames. A dropped final block shows up here and nowhere
     // earlier. (A zero-block campaign makes no claim, so there is nothing to finalize.)
@@ -1741,6 +2224,7 @@ fn run_campaign_inner(
                 readiness: node.readiness.clone(),
                 clock_log: node.clock_log.summary(&node.clock),
                 playout: node.playout.report(),
+                source_blocks: node.source_blocks.clone(),
             },
         );
     }
@@ -1762,6 +2246,7 @@ fn run_campaign_inner(
         video_sync_within_40ms_gate: video_eval.within_40ms_p99_gate,
         dropped_log_events: sink.dropped_event_count(),
         evidence_complete: sink.is_evidence_complete(),
+        source: desk.report,
         members: member_stats,
     })
 }
@@ -2721,6 +3206,12 @@ mod tests {
         swap: Option<u64>,
         stale: Option<u64>,
         leap: Option<u64>,
+        /// The first block of the second stream when a source change cuts the house over (the scenario, not a defect).
+        cutover: Option<u64>,
+        /// A datagram of the replaced stream was sent at this block.
+        stale_stream: Option<u64>,
+        /// The replaced adapter kept publishing after the cutover, and the gate refused it with this code.
+        replaced_publishes: Option<&'static str>,
     }
 
     /// What one member's playout must come to, and the legacy counters that follow from it.
@@ -2728,6 +3219,8 @@ mod tests {
         playout: PlayoutMemberReport,
         authentic: u64,
         concealed: u64,
+        /// Real blocks per source epoch: 1 before the cutover, 2 from it.
+        source_blocks: BTreeMap<u64, u64>,
     }
 
     /// The seeded schedule's verdict for each block of a member, asked block by block on the campaign-relative axis, as the
@@ -2763,13 +3256,16 @@ mod tests {
         )
     }
 
-    /// What a member's engine must do with a campaign of `total` blocks, from the seeded schedule and N04's contract alone.
-    /// The rules are restated here, not read from the engine: the order of checks on an arriving packet (epoch, clock,
-    /// already decided, beyond the horizon, already held), the decision for the next block (overdue if the clock is past its
-    /// presentation, real if held, then muted without history, muted after eight concealed, else concealed) and the render
-    /// loop's timing (a block is decided 3.5 ms before its presentation; everything that has arrived by then is handed over
-    /// first, in arrival order, and handed over refused if the clock cannot be used). Nothing here models an arrival between
-    /// a block's cutoff and its decision: the schedule's 50 ms of jitter against a 500 ms horizon never makes one.
+    /// What a member's engines must do with a campaign of `total` blocks, from the seeded schedule and N04's contract alone.
+    /// The rules are restated here, not read from the engine: the order of checks on an arriving packet (stream, epoch,
+    /// clock, already decided, beyond the horizon, already held), the decision for the next block (overdue if the clock is
+    /// past its presentation, real if held, then muted without history, muted after eight concealed, else concealed) and the
+    /// render loop's timing (a block is decided 3.5 ms before its presentation; everything that has arrived by then is
+    /// handed over first, in arrival order, and handed over refused if the clock cannot be used). A source change adds a
+    /// second engine that starts empty at the cutover block, so nothing it was told before, no concealment history either,
+    /// carries across; a packet for a stream whose last block is decided is refused before the engine sees it. Nothing here
+    /// models an arrival between a block's cutoff and its decision: the schedule's 50 ms of jitter against a 500 ms horizon
+    /// never makes one.
     fn model_member(seed: u64, member_index: u64, total: u64, plant: Plant) -> ModelMember {
         use std::collections::BTreeSet;
         const WORK_PLUS_LEAD_NS: u64 = 1_500_000 + 2_000_000;
@@ -2778,10 +3274,40 @@ mod tests {
         const HISTORY_BLOCKS: u64 = 128;
         const LATE_BEFORE_PRESENTATION_NS: u64 = 500_000;
         const STALE_LEAD_NS: u64 = 1_000_000;
+
+        /// One stream generation's engine as N04's contract states it.
+        struct Engine {
+            until: Option<u64>,
+            cursor: u64,
+            gap_run: u32,
+            have_last_real: bool,
+            slots: BTreeSet<u64>,
+            decided_real: BTreeSet<u64>,
+        }
+
+        impl Engine {
+            fn new(first: u64, until: Option<u64>) -> Self {
+                Self {
+                    until,
+                    cursor: first,
+                    gap_run: 0,
+                    have_last_real: false,
+                    slots: BTreeSet::new(),
+                    decided_real: BTreeSet::new(),
+                }
+            }
+
+            fn retired(&self) -> bool {
+                self.until.is_some_and(|until| self.cursor >= until)
+            }
+        }
+
         let index = |blk: u64| usize::try_from(blk).expect("a block index");
         let decision_ns = |blk: u64| {
             CAMPAIGN_ORIGIN_NS + block_offset_ns(blk) + PLAYOUT_HORIZON_NS - WORK_PLUS_LEAD_NS
         };
+        // The stream generation that owns a block position.
+        let engine_of = |blk: u64| usize::from(plant.cutover.is_some_and(|cutover| blk >= cutover));
 
         let mut link = schedule_link(seed, member_index, total);
         if let Some(k) = plant.swap
@@ -2816,39 +3342,54 @@ mod tests {
         }
         arrivals.sort_unstable();
 
+        let mut engines = vec![Engine::new(0, plant.cutover)];
+        if let Some(cutover) = plant.cutover {
+            engines.push(Engine::new(cutover, None));
+        }
         let outage = plant.leap.map(leap_outage);
         let mut report = PlayoutMemberReport {
             stale_refused_at_receiver: u64::from(plant.stale.is_some()),
+            streams_opened: engines.len() as u64,
+            wrong_stream_refused_at_receiver: u64::from(plant.stale_stream.is_some()),
+            replaced_publishes_refused: match (plant.replaced_publishes, plant.cutover) {
+                (Some(code), Some(cutover)) => {
+                    BTreeMap::from([(code.to_string(), total - cutover)])
+                }
+                _ => BTreeMap::new(),
+            },
             ..PlayoutMemberReport::default()
         };
         let (mut authentic, mut concealed_legacy) = (0, 0);
-        let (mut cursor, mut gap_run, mut have_last_real) = (0_u64, 0_u32, false);
-        let mut slots: BTreeSet<u64> = BTreeSet::new();
-        let mut decided_real: BTreeSet<u64> = BTreeSet::new();
+        let mut source_blocks = BTreeMap::new();
         let (mut highest, mut next) = (None, 0);
         for j in 0..total {
             let usable = outage.is_none_or(|(from, until)| !(from..until).contains(&j));
             while next < arrivals.len() && arrivals[next].0 <= decision_ns(j) {
                 let (_, blk, _, previous_epoch) = arrivals[next];
                 next += 1;
-                report.packets_offered += 1;
                 if highest.is_some_and(|h| blk < h) {
                     report.out_of_order_arrivals += 1;
                 }
                 highest = highest.max(Some(blk));
+                let engine = &mut engines[engine_of(blk)];
+                if engine.retired() {
+                    report.retired_stream_refused += 1;
+                    continue;
+                }
+                report.packets_offered += 1;
                 if previous_epoch {
                     report.wrong_epoch += 1;
                 } else if !usable {
                     report.clock_refused += 1;
-                } else if blk < cursor {
-                    if cursor - blk <= HISTORY_BLOCKS && decided_real.contains(&blk) {
+                } else if blk < engine.cursor {
+                    if engine.cursor - blk <= HISTORY_BLOCKS && engine.decided_real.contains(&blk) {
                         report.duplicate += 1;
                     } else {
                         report.late += 1;
                     }
-                } else if blk >= cursor + HORIZON_BLOCKS {
+                } else if blk >= engine.cursor + HORIZON_BLOCKS {
                     report.otherwise_refused += 1;
-                } else if slots.insert(blk) {
+                } else if engine.slots.insert(blk) {
                     report.admitted += 1;
                 } else {
                     report.duplicate += 1;
@@ -2858,55 +3399,68 @@ mod tests {
                 report.blocks_without_a_decision += 1;
                 continue;
             }
-            while cursor <= j {
-                let blk = cursor;
+            let engine = &mut engines[engine_of(j)];
+            while engine.cursor <= j {
+                let blk = engine.cursor;
                 if blk < j {
                     // Decided after its presentation: overdue, whatever it held.
-                    slots.remove(&blk);
-                    gap_run = (gap_run + 1).min(255);
+                    engine.slots.remove(&blk);
+                    engine.gap_run = (engine.gap_run + 1).min(255);
                     report.decided_muted_overdue += 1;
                     report.catch_up_decisions += 1;
-                } else if slots.remove(&blk) {
-                    have_last_real = true;
-                    gap_run = 0;
-                    decided_real.insert(blk);
+                } else if engine.slots.remove(&blk) {
+                    engine.have_last_real = true;
+                    engine.gap_run = 0;
+                    engine.decided_real.insert(blk);
                     report.decided_real += 1;
                     authentic += 1;
-                } else if !have_last_real {
-                    gap_run = (gap_run + 1).min(255);
+                    *source_blocks
+                        .entry(if plant.cutover.is_some_and(|cutover| blk >= cutover) {
+                            2
+                        } else {
+                            1
+                        })
+                        .or_default() += 1;
+                } else if !engine.have_last_real {
+                    engine.gap_run = (engine.gap_run + 1).min(255);
                     report.decided_muted_nohistory += 1;
-                } else if gap_run >= MAX_CONCEAL {
-                    gap_run = (gap_run + 1).min(255);
+                } else if engine.gap_run >= MAX_CONCEAL {
+                    engine.gap_run = (engine.gap_run + 1).min(255);
                     report.decided_muted_gap += 1;
                     concealed_legacy += 1;
                 } else {
-                    gap_run += 1;
+                    engine.gap_run += 1;
                     report.decided_concealed += 1;
                     concealed_legacy += 1;
                 }
-                cursor = blk + 1;
+                engine.cursor = blk + 1;
             }
         }
         ModelMember {
             playout: report,
             authentic,
             concealed: concealed_legacy,
+            source_blocks,
         }
     }
 
     /// Run the campaign without the plant and with `fault`, and hold both to the independent model member by member:
-    /// the control (no plant) must come out as the model says nominal is, the planted member as the model says the plant
+    /// the control (no plant) must come out as the model says nominal is, every planted member as the model says the plant
     /// makes it (and the model must see a difference, so the plant is not a no-op), every other member must be exactly as
-    /// without the plant, and every member's continuity and shadow oracles must have held to the last frame.
-    fn run_planted(
+    /// without the plant, and every member's continuity and shadow oracles must have held to the last frame. The control
+    /// keeps the scenario, so a plant on a source change is judged against the same source change without it.
+    fn run_planted_in(
+        scenario: Scenario,
         fault: OutputFault,
-        member: &str,
+        planted_members: &[&str],
         plant: Plant,
+        control_plant: Plant,
         total: u64,
     ) -> (VirtualHouseReport, VirtualHouseReport) {
-        let nominal = run_campaign(SEED, total, None).expect("the nominal campaign");
+        let nominal = run_scenario(SEED, total, None, scenario)
+            .expect("the control campaign: the same scenario without the plant");
         let mut sink = default_diagnostic_sink();
-        let planted = run_campaign_with_sink(SEED, total, Some(fault), &mut sink)
+        let planted = run_scenario_with_sink(SEED, total, Some(fault), scenario, &mut sink)
             .expect("the planted campaign still runs: every oracle holds");
         for (index, ((id, base), (planted_id, stats))) in nominal
             .members
@@ -2915,14 +3469,15 @@ mod tests {
             .enumerate()
         {
             assert_eq!(id, planted_id);
-            let control = model_member(SEED, index as u64, total, Plant::default());
+            let control = model_member(SEED, index as u64, total, control_plant);
             assert_eq!(base.playout, control.playout, "nominal {id}");
             assert_eq!(
                 (base.authentic_blocks, base.concealed_blocks),
                 (control.authentic, control.concealed),
                 "nominal {id}"
             );
-            if id == member {
+            assert_eq!(base.source_blocks, control.source_blocks, "nominal {id}");
+            if planted_members.contains(&id.as_str()) {
                 let expected = model_member(SEED, index as u64, total, plant);
                 assert_ne!(
                     expected.playout, control.playout,
@@ -2934,8 +3489,12 @@ mod tests {
                     (expected.authentic, expected.concealed),
                     "planted {id}"
                 );
+                assert_eq!(stats.source_blocks, expected.source_blocks, "planted {id}");
             } else {
-                assert_eq!(stats, base, "{id} is untouched by a plant on {member}");
+                assert_eq!(
+                    stats, base,
+                    "{id} is untouched by a plant on {planted_members:?}"
+                );
             }
             assert_eq!(
                 stats.verified_continuous_frames,
@@ -2956,6 +3515,23 @@ mod tests {
             Some(describe_fault(fault).as_str())
         );
         (nominal, planted)
+    }
+
+    /// [`run_planted_in`] for a plant on one member of a campaign with no source change.
+    fn run_planted(
+        fault: OutputFault,
+        member: &str,
+        plant: Plant,
+        total: u64,
+    ) -> (VirtualHouseReport, VirtualHouseReport) {
+        run_planted_in(
+            Scenario::NONE,
+            fault,
+            &[member],
+            plant,
+            Plant::default(),
+            total,
+        )
     }
 
     const FAULT_BLOCKS: u64 = 400;
@@ -3135,6 +3711,283 @@ mod tests {
         assert!(base.within_2ms_skew_target && !planted.within_2ms_skew_target);
         assert_eq!(p.muted_blocks, b.muted_blocks + outage);
         assert_eq!(p.audible_blocks + outage, b.audible_blocks);
+    }
+
+    // ---- a source change through the real arbiter (Q01, third slice) -----------------------------------------------------
+
+    const HOUSE: [&str; 5] = [
+        "spk-bedroom-s1",
+        "spk-den-s3",
+        "spk-kitchen-s12",
+        "spk-living-sub",
+        "spk-office-s5",
+    ];
+
+    /// The first block a member's sender has not sent when a source change is admitted at the start of render iteration `r`:
+    /// every block whose send instant is not later than the instant block `r - 1` is decided. Restated from the timeline.
+    fn cutover_for(r: u64) -> u64 {
+        let until = CAMPAIGN_ORIGIN_NS + block_offset_ns(r - 1) + PLAYOUT_HORIZON_NS
+            - (1_500_000 + 2_000_000);
+        (0_u64..)
+            .take_while(|&k| CAMPAIGN_ORIGIN_NS + block_offset_ns(k) <= until)
+            .count() as u64
+    }
+
+    fn scenario_at(r: u64, first: Racer) -> Scenario {
+        Scenario {
+            source_switch: Some(SourceSwitch { block: r, first }),
+        }
+    }
+
+    fn switch_plant(r: u64) -> Plant {
+        Plant {
+            cutover: Some(cutover_for(r)),
+            ..Plant::default()
+        }
+    }
+
+    /// A switch point at which a member loses the first block of the new stream, found with the independent model: the lost
+    /// block is muted for want of history (the new stream's engine has none), where the one engine that carried history
+    /// across would have concealed it. Returns the render iteration and the member's index.
+    fn a_switch_where_history_does_not_cross() -> (u64, usize) {
+        for r in 100..300 {
+            for index in 0..HOUSE.len() {
+                let with = model_member(SEED, index as u64, FAULT_BLOCKS, switch_plant(r));
+                let without = model_member(SEED, index as u64, FAULT_BLOCKS, Plant::default());
+                if with.playout.decided_muted_nohistory
+                    == without.playout.decided_muted_nohistory + 1
+                {
+                    return (r, index);
+                }
+            }
+        }
+        panic!("no switch point in 100..300 loses a block of the new stream");
+    }
+
+    #[test]
+    fn each_source_epoch_publishes_its_own_audio_and_epoch_one_is_the_campaigns_original_signal() {
+        let bytes = |blk: u64, epoch: u64| source_block(blk, epoch).to_be_i16_bytes();
+        for blk in 0..64 {
+            let amp = ((blk % 32) as f32) * 0.02 + 0.05;
+            let one = source_block(blk, 1);
+            assert_eq!(one.left, [amp; FRAMES_PER_BLOCK], "block {blk}");
+            assert_eq!(one.right, [-amp; FRAMES_PER_BLOCK], "block {blk}");
+            assert_ne!(bytes(blk, 1), bytes(blk, 2), "block {blk}");
+            assert_ne!(bytes(blk, 2), bytes(blk, 3), "block {blk}");
+            assert_ne!(bytes(blk, 1), bytes(blk, 3), "block {blk}");
+        }
+    }
+
+    #[test]
+    fn the_cutover_the_model_restates_is_where_the_pump_stands_93_blocks_ahead() {
+        for r in [1, 2, 50, 150, 299] {
+            assert_eq!(cutover_for(r), r + 93, "iteration {r}");
+        }
+    }
+
+    #[test]
+    fn a_campaign_with_no_source_change_has_one_program_and_the_nominal_counts() {
+        let report = run_scenario(SEED, FAULT_BLOCKS, None, Scenario::NONE).expect("campaign");
+        let spotify = source_id(SourceKind::Spotify, SPOTIFY_LABEL).expect("id");
+        assert_eq!(
+            report.source,
+            SourceReport {
+                admitted: 1,
+                refused: BTreeMap::new(),
+                final_epoch: 1,
+                final_owner: Some(spotify.to_string()),
+                cutover_block: None,
+            }
+        );
+        for (index, (id, stats)) in report.members.iter().enumerate() {
+            let want = model_member(SEED, index as u64, FAULT_BLOCKS, Plant::default());
+            assert_eq!(stats.playout, want.playout, "{id}");
+            assert_eq!(stats.playout.streams_opened, 1, "{id}");
+            assert_eq!(stats.source_blocks, want.source_blocks, "{id}");
+            assert_eq!(
+                stats.source_blocks.get(&1),
+                Some(&stats.authentic_blocks),
+                "{id}"
+            );
+        }
+    }
+
+    #[test]
+    fn two_adapters_racing_to_replace_the_source_admit_exactly_one_in_either_order_and_the_house_cuts_over_at_one_frame()
+     {
+        let (r, lossy) = a_switch_where_history_does_not_cross();
+        let cutover = cutover_for(r);
+        let airplay = source_id(SourceKind::AirPlay2, AIRPLAY_LABEL).expect("id");
+        let spotify = source_id(SourceKind::Spotify, SPOTIFY_LABEL).expect("id");
+        for (first, winner) in [(Racer::AirPlay, &airplay), (Racer::Spotify, &spotify)] {
+            let report = run_scenario(SEED, FAULT_BLOCKS, None, scenario_at(r, first))
+                .unwrap_or_else(|e| panic!("{first:?} first: the campaign failed: {e}"));
+            // State: the first start and the race's one winner were admitted; the loser was told it was stale; one epoch was
+            // minted by the race; every member cut over at the same, restated frame.
+            assert_eq!(
+                report.source,
+                SourceReport {
+                    admitted: 2,
+                    refused: BTreeMap::from([("SOURCE_EPOCH_STALE".to_string(), 1)]),
+                    final_epoch: 2,
+                    final_owner: Some(winner.to_string()),
+                    cutover_block: Some(cutover),
+                },
+                "{first:?} first"
+            );
+            // Samples: each member's engines decided what the model says, every block that sounded is the owner's audio (the
+            // campaign checks that from the bytes), and the audio is continuous across the cutover on every channel.
+            for (index, (id, stats)) in report.members.iter().enumerate() {
+                let want = model_member(SEED, index as u64, FAULT_BLOCKS, switch_plant(r));
+                assert_eq!(stats.playout, want.playout, "{first:?} first, {id}");
+                assert_eq!(
+                    stats.source_blocks, want.source_blocks,
+                    "{first:?} first, {id}"
+                );
+                assert_eq!(
+                    (stats.authentic_blocks, stats.concealed_blocks),
+                    (want.authentic, want.concealed),
+                    "{first:?} first, {id}"
+                );
+                assert_eq!(stats.playout.streams_opened, 2, "{id}");
+                assert_eq!(
+                    stats.source_blocks.values().sum::<u64>(),
+                    stats.authentic_blocks,
+                    "{id}: every real block is attributed to exactly one program"
+                );
+                assert_eq!(
+                    stats.verified_continuous_frames,
+                    FAULT_BLOCKS * (FRAMES_PER_BLOCK as u64),
+                    "{id}"
+                );
+            }
+            // History does not cross a stream: the member that lost a block right at the cutover muted it for want of
+            // history, which the one-engine alternative would have concealed.
+            let with = &report.members[HOUSE[lossy]].playout;
+            let without = model_member(SEED, lossy as u64, FAULT_BLOCKS, Plant::default()).playout;
+            assert_eq!(
+                (with.decided_muted_nohistory, with.decided_concealed + 1),
+                (
+                    without.decided_muted_nohistory + 1,
+                    without.decided_concealed
+                ),
+                "{first:?} first"
+            );
+        }
+    }
+
+    #[test]
+    fn a_replaced_adapter_that_keeps_publishing_is_refused_by_the_gate_and_its_audio_never_sounds()
+    {
+        let (r, _) = a_switch_where_history_does_not_cross();
+        let cutover = cutover_for(r);
+        // The code names why: another source replaced it, or it is the same source's own earlier stream.
+        for (first, code) in [
+            (Racer::AirPlay, "SOURCE_REPLACED"),
+            (Racer::Spotify, "SOURCE_EPOCH_STALE"),
+        ] {
+            let plant = Plant {
+                replaced_publishes: Some(code),
+                ..switch_plant(r)
+            };
+            let (control, planted) = run_planted_in(
+                scenario_at(r, first),
+                OutputFault::ReplacedSourceKeepsPublishing,
+                &HOUSE,
+                plant,
+                switch_plant(r),
+                FAULT_BLOCKS,
+            );
+            for (id, stats) in &planted.members {
+                // Every block position from the cutover on was offered by the replaced adapter first and refused; the audio
+                // that sounded is the control's, block for block.
+                assert_eq!(
+                    stats.playout.replaced_publishes_refused,
+                    BTreeMap::from([(code.to_string(), FAULT_BLOCKS - cutover)]),
+                    "{first:?} first, {id}"
+                );
+                let base = &control.members[id];
+                assert_eq!(stats.source_blocks, base.source_blocks, "{id}");
+                assert_eq!(
+                    (stats.authentic_blocks, stats.concealed_blocks),
+                    (base.authentic_blocks, base.concealed_blocks),
+                    "{id}"
+                );
+                assert!(base.playout.replaced_publishes_refused.is_empty(), "{id}");
+            }
+            assert_eq!(
+                planted.source, control.source,
+                "the gate does not change the arbiter's state"
+            );
+        }
+    }
+
+    #[test]
+    fn a_datagram_of_the_replaced_stream_after_the_rebind_is_refused_by_the_receiver_and_changes_nothing_else()
+     {
+        let (r, _) = a_switch_where_history_does_not_cross();
+        let block = cutover_for(r) + 10;
+        let member = "spk-kitchen-s12";
+        let plant = Plant {
+            stale_stream: Some(block),
+            ..switch_plant(r)
+        };
+        let (control, planted) = run_planted_in(
+            scenario_at(r, Racer::AirPlay),
+            OutputFault::StaleStreamDatagram {
+                member_id: member,
+                block,
+            },
+            &[member],
+            plant,
+            switch_plant(r),
+            FAULT_BLOCKS,
+        );
+        let (b, p) = (
+            &control.members[member].playout,
+            &planted.members[member].playout,
+        );
+        // The member's own receiver, rebound to the new stream, refused the old stream's datagram by name; the engines never
+        // saw it, so no other counter moved.
+        assert_eq!(
+            (
+                b.wrong_stream_refused_at_receiver,
+                p.wrong_stream_refused_at_receiver
+            ),
+            (0, 1)
+        );
+        assert_eq!(
+            PlayoutMemberReport {
+                wrong_stream_refused_at_receiver: 1,
+                ..b.clone()
+            },
+            *p
+        );
+    }
+
+    #[test]
+    fn a_planted_source_fault_without_a_source_change_and_a_change_outside_the_campaign_are_errors()
+    {
+        let err = run_scenario(
+            SEED,
+            40,
+            Some(OutputFault::ReplacedSourceKeepsPublishing),
+            Scenario::NONE,
+        )
+        .expect_err("nothing was replaced");
+        assert!(err.contains("needs a source change"), "{err}");
+        for block in [0, 40, 41] {
+            let err = run_scenario(SEED, 40, None, scenario_at(block, Racer::AirPlay))
+                .expect_err("outside the campaign");
+            assert!(err.contains("outside 1..40"), "{block}: {err}");
+        }
+        // Admitted so late that no block of the new stream is left: the stream would start at block 94 of 94.
+        let err =
+            run_scenario(SEED, 94, None, scenario_at(1, Racer::Spotify)).expect_err("too late");
+        assert!(err.contains("too late"), "{err}");
+        // Paired positive: the same switch one block earlier still has a block to carry.
+        run_scenario(SEED, 95, None, scenario_at(1, Racer::Spotify))
+            .expect("one block of the new stream");
     }
 
     #[test]
