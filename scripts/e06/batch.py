@@ -43,7 +43,7 @@ import checks  # noqa: E402
 
 SCHEMA = "ffw.e06.batch.v1"
 RECORD_SCHEMA = "ffw.e06.batch-record.v1"
-WORKERS = "ts1,hz3"                       # nightly -Z build-std lines go on the workers that have rust-src
+WORKERS = "trj,hz3"                       # nightly -Z build-std lines go on the workers that have rust-src (ts1 removed: its shim refuses strict-remote jobs)
 JOBS = 2
 TARGETS = {"mips-unknown-linux-musl": "mips", "powerpc-unknown-linux-musl": "powerpc"}
 EVIDENCE_REL = os.path.join("toolchain", "results", "e06", "upstream")

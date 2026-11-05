@@ -72,7 +72,7 @@ def make_repo(base):
     return repo, rev
 
 
-def synthetic_log(argv, rc=0, worker="ts1", errors=(), finished=True, second_command=False, drop=(), address="192.0.2.7",
+def synthetic_log(argv, rc=0, worker="trj", errors=(), finished=True, second_command=False, drop=(), address="192.0.2.7",
                   command_override=None, extra=()):
     """What `rch exec -- cargo ...` prints for `argv` (the remote cargo argv)."""
     cmd = shlex.join(command_override if command_override is not None else argv)
@@ -96,7 +96,7 @@ def synthetic_log(argv, rc=0, worker="ts1", errors=(), finished=True, second_com
     return "\n".join(out) + "\n"
 
 
-def log_as_predicted(line, worker="ts1"):
+def log_as_predicted(line, worker="trj"):
     """A log that makes the line come out as predicted, run by `worker`."""
     e = line["expect"]
     if e["outcome"] == "pass":
@@ -186,7 +186,7 @@ class ManifestTests(Fixture):
             self.assertEqual(argv[:4], ["cargo", "+nightly", "check", "--locked"], l["id"])
             self.assertEqual(argv[-2:], ["-j", "2"], l["id"])
             self.assertFalse(any(re.search(r"[;|&$`<>\\\n]", a) for a in argv), l["id"])
-            self.assertEqual(l["env"], {"RCH_REQUIRE_REMOTE": "1", "RCH_WORKER": "ts1,hz3"}, l["id"])
+            self.assertEqual(l["env"], {"RCH_REQUIRE_REMOTE": "1", "RCH_WORKER": "trj,hz3"}, l["id"])
             self.assertEqual(l["cwd"], ".")
 
     def test_every_line_states_its_prediction_and_the_eight_predicted_failures_are_exactly_these(self):
@@ -447,7 +447,7 @@ class JudgeTests(Fixture):
             self.assertEqual(len(data["lines"]), len(self.manifest["lines"]))
             first = data["lines"][0]
             self.assertEqual(first["log_sha256"], BA.sha256_bytes(slurp(os.path.join(logs, first["id"] + ".log"), "rb")))
-            self.assertTrue(first["command"].startswith("RCH_REQUIRE_REMOTE=1 RCH_WORKER=ts1,hz3 rch exec -- cargo +nightly check --locked"))
+            self.assertTrue(first["command"].startswith("RCH_REQUIRE_REMOTE=1 RCH_WORKER=trj,hz3 rch exec -- cargo +nightly check --locked"))
             code, _, err = self.run_judge(logs, extra=["--record", record])
             self.assertEqual(code, 2, err)
 
@@ -623,8 +623,8 @@ sys.exit(entry["exit"])
             self.assertEqual(sorted(os.listdir(logs)) if os.path.isdir(logs) else [], [])
         for line_id in ids:
             row = [l for l in out.splitlines() if l.startswith(line_id + "  ")][0]
-            self.assertIn("RCH_REQUIRE_REMOTE=1 RCH_WORKER=ts1,hz3 RCH_CANONICAL_PROJECT_ROOT=", row)
-            self.assertRegex(row, r"rch exec --worker (ts1|hz3) -- cargo \+nightly check --locked --release -p")
+            self.assertIn("RCH_REQUIRE_REMOTE=1 RCH_WORKER=trj,hz3 RCH_CANONICAL_PROJECT_ROOT=", row)
+            self.assertRegex(row, r"rch exec --worker (trj|hz3) -- cargo \+nightly check --locked --release -p")
             self.assertIn("-Z build-std=std,panic_abort -j 2", row)
             self.assertIn("cwd=", row)
             self.assertNotIn("&&", row)                       # a display of one command, never a shell chain
@@ -638,7 +638,7 @@ sys.exit(entry["exit"])
             record = json.loads(slurp(os.path.join(logs, ids[0] + ".run.json")))
             self.assertEqual((record["id"], record["exit"]), (ids[0], 0))
             text = slurp(os.path.join(logs, ids[0] + ".log"))
-            self.assertIn("worker=ts1,hz3", text)                                  # the worker set reached rch
+            self.assertIn("worker=trj,hz3", text)                                  # the worker set reached rch
             self.assertIn("canonical=%s" % os.path.abspath(self.export), text.replace("\\", ""))
             # a second run over the same logs is refused: nothing is overwritten
             code, _, err, _ = self.run_runner(tmp, ids)
@@ -656,9 +656,67 @@ sys.exit(entry["exit"])
             self.assertEqual(code, 0, err)
             self.assertIn("canonical=None", slurp(os.path.join(logs, ids[0] + ".log")))
 
+    def test_the_admitted_set_is_trj_and_hz3_and_the_refused_ts1_is_not_in_it(self):
+        # ts1's worker-side shim refuses strict-remote jobs (BeigeMaple 4745/4824); trj has proven nightly with rust-src. A line that ran on ts1 is
+        # therefore no result, by name; the same log on trj is the remove-the-plant control. `run` also refuses ts1 before anything starts.
+        self.assertEqual(BA.WORKERS, "trj,hz3")
+        self.assertEqual(self.manifest["workers"], "trj,hz3")
+        victim = "workspace.alpha.mips"
+        argv = self.line(victim)["remote_argv"]
+        for worker, verdict in (("trj", "as-predicted"), ("hz3", "as-predicted"), ("ts1", "malformed")):
+            with tempfile.TemporaryDirectory() as tmp:
+                code, out, _ = self.run_judge(self.logs(tmp, lambda d: write(os.path.join(d, victim + ".log"), synthetic_log(argv, worker=worker))))
+            row = [l for l in rows(out) if victim in l][0]
+            self.assertIn(verdict, row, worker)
+            if worker == "ts1":
+                self.assertIn("ran on worker ts1, not one of trj,hz3", out)
+                self.assertEqual(code, 1, out)
+            else:
+                self.assertEqual(code, 0, out)
+        with tempfile.TemporaryDirectory() as tmp:
+            code, _, err, logs = self.run_runner(tmp, [victim], extra=["--worker", "ts1"])
+            self.assertEqual(code, 2)
+            self.assertIn("not in the manifest's worker set", err)
+            self.assertEqual(os.listdir(logs) if os.path.isdir(logs) else [], [])
+
+    def test_a_manifest_generated_with_the_old_set_still_judges_from_its_own_set(self):
+        # Run3's manifest carries `ts1,hz3`. The judge and the runner read the set from the manifest, never from the constant, so changing
+        # the constant must not change what an old manifest means: its ts1 logs stay valid and a trj log is outside ITS set.
+        old = json.loads(json.dumps(self.manifest))
+        old["workers"] = "ts1,hz3"
+        for l in old["lines"]:
+            l["env"] = {"RCH_REQUIRE_REMOTE": "1", "RCH_WORKER": "ts1,hz3"}
+        self.assertEqual(BA.validate_manifest(old), [])
+        victim = "workspace.alpha.mips"
+        argv = self.line(victim)["remote_argv"]
+        for worker, verdict in (("ts1", "as-predicted"), ("trj", "malformed")):
+            with tempfile.TemporaryDirectory() as tmp:
+                logs = self.logs(tmp, lambda d: write(os.path.join(d, victim + ".log"), synthetic_log(argv, worker=worker)))
+                code, out, _ = self.run_judge(logs, manifest=old)
+            self.assertIn(verdict, [l for l in rows(out) if victim in l][0], worker)
+            if worker == "trj":
+                self.assertIn("ran on worker trj, not one of ts1,hz3", out)
+        # the runner too: against the OLD manifest `--worker ts1` is accepted (it is in that manifest's set) and the pin reaches rch and the run
+        # record, while `--worker trj` (the new constant's worker, not in the old set) is refused before anything starts
+        with tempfile.TemporaryDirectory() as tmp:
+            old_path = os.path.join(tmp, "old-manifest.json")
+            write(old_path, json.dumps(old))
+            code, out, err, logs = self.run_runner(tmp, [victim], extra=["--worker", "ts1"], manifest=old_path, ran_on={victim: "ts1"})
+            self.assertEqual(code, 0, err)
+            self.assertIn("worker_flag=ts1", slurp(os.path.join(logs, victim + ".log")))
+            record = json.loads(slurp(os.path.join(logs, victim + ".run.json")))
+            self.assertEqual((record["planned_worker"], record["worker_set"]), ("ts1", "ts1,hz3"))
+        with tempfile.TemporaryDirectory() as tmp:
+            old_path = os.path.join(tmp, "old-manifest.json")
+            write(old_path, json.dumps(old))
+            code, _, err, logs = self.run_runner(tmp, [victim], extra=["--worker", "trj"], manifest=old_path)
+            self.assertEqual(code, 2)
+            self.assertIn("not in the manifest's worker set ts1,hz3", err)
+            self.assertEqual(os.listdir(logs) if os.path.isdir(logs) else [], [])
+
     def test_each_line_is_pinned_to_one_worker_of_the_set_before_the_separator_and_the_remote_argv_is_untouched(self):
         planned = [BA.planned_worker(self.manifest, l["id"]) for l in self.manifest["lines"]]
-        self.assertEqual(set(planned), {"ts1", "hz3"})                                     # both workers with rust-src are used
+        self.assertEqual(set(planned), {"trj", "hz3"})                                     # both admitted workers are used
         self.assertTrue(all(a != b for a, b in zip(planned, planned[1:])))                  # dealt out in manifest order
         ids = [l["id"] for l in self.manifest["lines"]]
         late = ids[3]
@@ -670,8 +728,8 @@ sys.exit(entry["exit"])
             self.assertIn("worker_flag=%s" % planned[3], text)
             record = json.loads(slurp(os.path.join(logs, late + ".run.json")))
             self.assertEqual(record["argv"], ["rch", "exec", "--worker", planned[3], "--"] + self.line(late)["remote_argv"])
-            self.assertEqual((record["planned_worker"], record["selected_workers"], record["worker_set"]), (planned[3], [planned[3]], "ts1,hz3"))
-            self.assertIn("worker planned %s (set ts1,hz3), RCH selected %s: as planned" % (planned[3], planned[3]), out)
+            self.assertEqual((record["planned_worker"], record["selected_workers"], record["worker_set"]), (planned[3], [planned[3]], "trj,hz3"))
+            self.assertIn("worker planned %s (set trj,hz3), RCH selected %s: as planned" % (planned[3], planned[3]), out)
             judged, jout, _ = self.run_judge(logs, only=[late])
             self.assertEqual(judged, 4, jout)                                               # a subset, never 0
             self.assertIn("as-predicted", [l for l in rows(jout) if late in l][0])
@@ -679,14 +737,14 @@ sys.exit(entry["exit"])
     def test_the_runner_prints_what_rch_selected_next_to_the_plan_and_a_route_off_the_plan_is_malformed_by_name(self):
         ids = [l["id"] for l in self.manifest["lines"]][:3]
         planned = [BA.planned_worker(self.manifest, i) for i in ids]
-        other_in_set = "hz3" if planned[1] == "ts1" else "ts1"
+        other_in_set = "hz3" if planned[1] == "trj" else "trj"
         ran_on = {ids[1]: other_in_set, ids[2]: "vmi9"}      # one routed to the OTHER worker of the set, one off the set altogether
         with tempfile.TemporaryDirectory() as tmp:
             code, out, err, logs = self.run_runner(tmp, ids, ran_on=ran_on)
             self.assertEqual(code, 0, err)
             self.assertIn("RCH selected %s: as planned" % planned[0], out)
-            self.assertIn("worker planned %s (set ts1,hz3), RCH selected %s: OFF-PLAN" % (planned[1], other_in_set), out)
-            self.assertIn("worker planned %s (set ts1,hz3), RCH selected vmi9: OFF-PLAN" % planned[2], out)
+            self.assertIn("worker planned %s (set trj,hz3), RCH selected %s: OFF-PLAN" % (planned[1], other_in_set), out)
+            self.assertIn("worker planned %s (set trj,hz3), RCH selected vmi9: OFF-PLAN" % planned[2], out)
             self.assertEqual(out.count("OFF-PLAN"), 2)
             judged, jout, _ = self.run_judge(logs, only=ids)
             by_line = {i: [l for l in rows(jout) if i in l][0] for i in ids}
@@ -722,7 +780,7 @@ sys.exit(entry["exit"])
         for name, planned in (("a planned worker outside the set", "vmi9"), ("another worker of the set", "hz3")):
             with tempfile.TemporaryDirectory() as tmp:
                 def plant(d):
-                    write(os.path.join(d, victim + ".log"), synthetic_log(argv, worker="ts1"))
+                    write(os.path.join(d, victim + ".log"), synthetic_log(argv, worker="trj"))
                     write(os.path.join(d, victim + ".run.json"), json.dumps({"id": victim, "exit": 0, "planned_worker": planned}))
                 code, out, _ = self.run_judge(self.logs(tmp, plant))
             self.assertEqual(code, 1, name)

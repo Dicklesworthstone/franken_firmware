@@ -64,7 +64,7 @@ python3 -B -I toolchain/results/e06/codecs/prepare_candidates.py --archives-dir 
 ```
 It verifies both archive digests and the three lock digests, extracts with tarfile's `data` filter, and prints a tree digest for each directory;
 they must equal `consumers.json` (`consumer_tree_sha256`, `lint_tree_sha256`, `lint_planted_tree_sha256`). Then, each with its `cwd` and
-`RCH_CANONICAL_PROJECT_ROOT` set to that directory, `RCH_WORKER=ts1,hz3` (the workers with `rust-src`), `-j 2`:
+`RCH_CANONICAL_PROJECT_ROOT` set to that directory, `RCH_WORKER=trj,hz3` (the workers with `rust-src`; ts1 is not admitted), `-j 2`:
 
 | id | cwd (under P) | command after `rch exec --` | predicted |
 |---|---|---|---|
