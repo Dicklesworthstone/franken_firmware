@@ -21,6 +21,7 @@
 //! nanoseconds. See `docs/contracts/n02.md` for the guarantees and for what is deliberately not
 //! promised.
 
+pub mod diag;
 pub mod ledger;
 pub mod limiter;
 pub mod peer;

@@ -482,6 +482,90 @@
       "rust_tests": [
         "a_forged_request_fails_authentication_before_the_lease_is_consulted"
       ]
+    },
+    {
+      "id": "INV-LOG-ONE-PER-OUTCOME",
+      "claim": "Every command that reaches a terminal outcome in a step is written to the log exactly once, with its correlation id, the committed revision, the epoch, the queue depth and the time it waited.",
+      "scenarios": [],
+      "scenario_inapplicable": "The diagnostics are written by the Rust channel only; the Python model does not model the log. They are checked by the Rust unit tests named here and by independent pseudonym and golden-line vectors (n02_log_vectors.json, generated with hashlib and json).",
+      "rust_tests": [
+        "every_settled_command_is_logged_once_in_the_shared_schema_with_its_correlation_and_revision"
+      ]
+    },
+    {
+      "id": "INV-LOG-SHARED-SCHEMA",
+      "claim": "A record is one line of JSON in the shared ffw.log.v1 shape, byte-identical to the shared event after a round trip, with keyed pseudonyms identical to the shared sink's.",
+      "scenarios": [],
+      "scenario_inapplicable": "The diagnostics are written by the Rust channel only; the Python model does not model the log. They are checked by the Rust unit tests named here and by independent pseudonym and golden-line vectors (n02_log_vectors.json, generated with hashlib and json).",
+      "rust_tests": [
+        "a_record_is_a_valid_ffw_log_v1_event_and_round_trips_exactly",
+        "a_record_has_the_documented_fields",
+        "pseudonyms_and_golden_lines_match_the_independent_vectors",
+        "pseudonyms_are_stable_keyed_and_agree_with_the_shared_sink"
+      ]
+    },
+    {
+      "id": "INV-LOG-NO-ECHO",
+      "claim": "Nothing a peer supplied reaches the log: a refusal that carries a key-shaped peer id or member id never echoes it, nor the peer's key or proof; identifiers appear only as keyed pseudonyms.",
+      "scenarios": [],
+      "scenario_inapplicable": "The diagnostics are written by the Rust channel only; the Python model does not model the log. They are checked by the Rust unit tests named here and by independent pseudonym and golden-line vectors (n02_log_vectors.json, generated with hashlib and json).",
+      "rust_tests": [
+        "a_refusal_carrying_a_key_shaped_input_never_echoes_it",
+        "every_refusal_has_a_distinct_vocabulary_word_and_no_text_from_a_peer",
+        "session_errors_are_named_by_variant_never_by_text",
+        "the_key_never_prints",
+        "labels_and_bounds_are_validated"
+      ]
+    },
+    {
+      "id": "INV-LOG-BOUNDED",
+      "claim": "The log holds at most its record and byte bounds, no line is longer than the line bound, nothing blocks, and every record handed to it ends stored or counted as dropped.",
+      "scenarios": [],
+      "scenario_inapplicable": "The diagnostics are written by the Rust channel only; the Python model does not model the log. They are checked by the Rust unit tests named here and by independent pseudonym and golden-line vectors (n02_log_vectors.json, generated with hashlib and json).",
+      "rust_tests": [
+        "the_record_count_is_bounded_and_a_full_log_does_not_slow_or_change_the_channel",
+        "the_log_is_bounded_by_records_and_every_record_is_accounted",
+        "the_log_is_bounded_by_bytes",
+        "a_line_longer_than_the_bound_is_dropped_not_truncated"
+      ]
+    },
+    {
+      "id": "INV-LOG-CRITICAL-EVIDENCE",
+      "claim": "An internal-fault record evicts the oldest ordinary record to make room, and if even that cannot make room it is counted as lost evidence and the log reports itself incomplete.",
+      "scenarios": [],
+      "scenario_inapplicable": "The diagnostics are written by the Rust channel only; the Python model does not model the log. They are checked by the Rust unit tests named here and by independent pseudonym and golden-line vectors (n02_log_vectors.json, generated with hashlib and json).",
+      "rust_tests": [
+        "an_internal_fault_evicts_ordinary_records_and_lost_evidence_is_counted",
+        "an_internal_fault_record_survives_a_log_full_of_ordinary_records"
+      ]
+    },
+    {
+      "id": "INV-LOG-CAUSE",
+      "claim": "A refusal's underlying reason is logged as a vocabulary word (a session error's variant, a lease error's code), never as the error's text.",
+      "scenarios": [],
+      "scenario_inapplicable": "The diagnostics are written by the Rust channel only; the Python model does not model the log. They are checked by the Rust unit tests named here and by independent pseudonym and golden-line vectors (n02_log_vectors.json, generated with hashlib and json).",
+      "rust_tests": [
+        "lease_refusals_and_internal_faults_are_logged_with_their_cause",
+        "session_errors_are_named_by_variant_never_by_text"
+      ]
+    },
+    {
+      "id": "INV-LOG-NO-EFFECT",
+      "claim": "Turning the log on changes nothing the channel does: the same settlements, counters and session state.",
+      "scenarios": [],
+      "scenario_inapplicable": "The diagnostics are written by the Rust channel only; the Python model does not model the log. They are checked by the Rust unit tests named here and by independent pseudonym and golden-line vectors (n02_log_vectors.json, generated with hashlib and json).",
+      "rust_tests": [
+        "turning_the_log_on_changes_nothing_the_channel_does"
+      ]
+    },
+    {
+      "id": "INV-LOG-MONOTONIC",
+      "claim": "Record timestamps never go backwards, whatever clock the owner passes.",
+      "scenarios": [],
+      "scenario_inapplicable": "The diagnostics are written by the Rust channel only; the Python model does not model the log. They are checked by the Rust unit tests named here and by independent pseudonym and golden-line vectors (n02_log_vectors.json, generated with hashlib and json).",
+      "rust_tests": [
+        "timestamps_never_go_backwards"
+      ]
     }
   ],
   "other_rust_checks": {
@@ -508,6 +592,11 @@
     "restart": [
       "after_a_restart_late_absolute_and_relative_copies_are_refused_and_a_fresh_command_applies",
       "a_restarted_channel_starts_its_numbers_above_everything_the_session_remembers"
+    ],
+    "diagnostics": [
+      "drain_empties_the_log_and_keeps_its_counters",
+      "the_summary_names_the_run_and_the_counts_and_nothing_else",
+      "a_command_with_no_member_has_an_empty_member_id"
     ]
   }
 }

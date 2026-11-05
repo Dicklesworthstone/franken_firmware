@@ -67,6 +67,7 @@ use franken_session::{
     UnifiedGroupSession,
 };
 
+use super::diag::{ChannelLog, Fact, session_error_kind};
 use super::ledger::{LedgerError, Lookup, OutcomeLedger};
 use super::limiter::{RateLimit, TokenBucket};
 use super::peer::{AuthFailure, Authenticated, PeerAuthority, PeerId, PeerRole};
@@ -352,6 +353,27 @@ struct Queued {
     accepted_ns: u64,
 }
 
+/// When a command settled, when it was accepted, and the session's revision at that moment.
+#[derive(Clone, Copy)]
+struct Settled {
+    now_ns: u64,
+    accepted_ns: u64,
+    revision: u64,
+}
+
+/// The member a command names, if it names one. Used only to pseudonymize it for the log.
+fn member_named(command: &ControlCommand) -> Option<String> {
+    match command {
+        ControlCommand::SetMemberVolume { member_id, .. }
+        | ControlCommand::AdjustMemberVolume { member_id, .. }
+        | ControlCommand::SetMemberMute { member_id, .. } => Some(member_id.clone()),
+        ControlCommand::SetGroupVolume { .. }
+        | ControlCommand::AdjustGroupVolume { .. }
+        | ControlCommand::StopGroupPlayback { .. }
+        | ControlCommand::Cancel { .. } => None,
+    }
+}
+
 enum Looked {
     Settled { same: bool, outcome: Outcome },
     OutOfWindow(u64),
@@ -378,6 +400,10 @@ pub struct ControlChannel<A: PeerAuthority> {
     /// until the owner installs one, and again after a restart: the channel fails closed.
     lease: Option<AuthorityToken>,
     last_internal_fault: Option<SessionError>,
+    /// The JSONL diagnostics log, if the owner enabled one, and the settled commands waiting to be
+    /// written to it at the end of the current `step`.
+    log: Option<ChannelLog>,
+    facts: Vec<Fact>,
     stats: ChannelStats,
 }
 
@@ -397,6 +423,8 @@ impl<A: PeerAuthority> ControlChannel<A> {
             ledger,
             buckets: BTreeMap::new(),
             last_internal_fault: None,
+            log: None,
+            facts: Vec::new(),
             stats: ChannelStats::default(),
         })
     }
@@ -444,6 +472,21 @@ impl<A: PeerAuthority> ControlChannel<A> {
     #[must_use]
     pub fn lease(&self) -> Option<&AuthorityToken> {
         self.lease.as_ref()
+    }
+
+    /// Start writing one JSONL record per settled command to `log` (see [`super::diag`]). Records are
+    /// written at the end of each `step`; the owner drains the log with [`ChannelLog::drain`].
+    pub fn enable_log(&mut self, log: ChannelLog) {
+        self.log = Some(log);
+    }
+
+    #[must_use]
+    pub fn log(&self) -> Option<&ChannelLog> {
+        self.log.as_ref()
+    }
+
+    pub fn log_mut(&mut self) -> Option<&mut ChannelLog> {
+        self.log.as_mut()
     }
 
     /// The session revision this incarnation started from, known once the first `step` has run.
@@ -644,9 +687,14 @@ impl<A: PeerAuthority> ControlChannel<A> {
         &mut self,
         body: RequestBody,
         outcome: Outcome,
-        now_ns: u64,
+        times: Settled,
         out: &mut Vec<Settlement>,
     ) {
+        let Settled {
+            now_ns,
+            accepted_ns,
+            revision,
+        } = times;
         match &outcome {
             Outcome::Committed { .. } => bump(&mut self.stats.committed),
             Outcome::Withdrawn => bump(&mut self.stats.withdrawn),
@@ -672,17 +720,50 @@ impl<A: PeerAuthority> ControlChannel<A> {
             outcome,
             Outcome::Refused(Refusal::NoLease | Refusal::Lease(_))
         );
+        let member = member_named(body.command());
+        let mut critical = matches!(outcome, Outcome::Refused(Refusal::InternalFault));
         if !transient
             && !self
                 .ledger
                 .record(peer.clone(), seq, body, outcome.clone(), now_ns)
         {
             bump(&mut self.stats.ledger_record_failures);
+            critical = true;
+        }
+        if self.log.is_some() {
+            let cause = self.cause_of(&outcome);
+            let queue_depth = self.ordinary.len() + self.priority.len();
+            self.facts.push(Fact {
+                peer: peer.clone(),
+                seq,
+                member,
+                cause,
+                outcome: outcome.clone(),
+                revision,
+                queue_depth,
+                waited_ns: now_ns.saturating_sub(accepted_ns),
+                critical,
+            });
         }
         out.push(Settlement { peer, seq, outcome });
     }
 
-    fn expire_pending(&mut self, now_ns: u64, out: &mut Vec<Settlement>) {
+    /// The vocabulary word behind a refusal, for the log. Never a session error's text.
+    fn cause_of(&self, outcome: &Outcome) -> Option<String> {
+        match outcome {
+            Outcome::Refused(Refusal::Lease(error)) => Some(error.code().to_lowercase()),
+            Outcome::Refused(Refusal::Session(error)) => {
+                Some(session_error_kind(error).to_string())
+            }
+            Outcome::Refused(Refusal::InternalFault) => self
+                .last_internal_fault
+                .as_ref()
+                .map(|error| session_error_kind(error).to_string()),
+            _ => None,
+        }
+    }
+
+    fn expire_pending(&mut self, now_ns: u64, revision: u64, out: &mut Vec<Settlement>) {
         let ttl = self.config.pending_ttl_ns;
         let stale = |q: &Queued| now_ns.saturating_sub(q.accepted_ns) >= ttl;
         let mut expired = Vec::new();
@@ -697,7 +778,11 @@ impl<A: PeerAuthority> ControlChannel<A> {
             self.settle(
                 item.request.body().clone(),
                 Outcome::Refused(Refusal::Expired),
-                now_ns,
+                Settled {
+                    now_ns,
+                    accepted_ns: item.accepted_ns,
+                    revision,
+                },
                 out,
             );
         }
@@ -721,13 +806,23 @@ impl<A: PeerAuthority> ControlChannel<A> {
         self.ledger.expire(now_ns);
         let floor = *self.revision_floor.get_or_insert(session.state_revision);
         let mut settled = Vec::new();
-        self.expire_pending(now_ns, &mut settled);
+        self.expire_pending(now_ns, session.state_revision, &mut settled);
         for _ in 0..self.config.max_per_step {
             let Some(item) = self.pop_priority().or_else(|| self.ordinary.pop_front()) else {
                 break;
             };
             let outcome = self.execute(&item, now_ns, floor, session, &mut settled);
-            self.settle(item.request.body().clone(), outcome, now_ns, &mut settled);
+            let times = Settled {
+                now_ns,
+                accepted_ns: item.accepted_ns,
+                revision: session.state_revision,
+            };
+            self.settle(item.request.body().clone(), outcome, times, &mut settled);
+        }
+        if let Some(log) = self.log.as_mut() {
+            for fact in self.facts.drain(..) {
+                log.emit(&fact, now_ns, session.current_epoch, &session.group_id);
+            }
         }
         settled
     }
@@ -746,7 +841,16 @@ impl<A: PeerAuthority> ControlChannel<A> {
         }
         let body = item.request.body();
         if let ControlCommand::Cancel { target_seq } = body.command() {
-            return self.execute_cancel(body.peer(), *target_seq, now_ns, out);
+            return self.execute_cancel(
+                body.peer(),
+                *target_seq,
+                Settled {
+                    now_ns,
+                    accepted_ns: item.accepted_ns,
+                    revision: session.state_revision,
+                },
+                out,
+            );
         }
 
         // G01: a group-affecting command is applied only under a live lease for this group, judged by
@@ -886,7 +990,7 @@ impl<A: PeerAuthority> ControlChannel<A> {
         &mut self,
         peer: &PeerId,
         target_seq: u64,
-        now_ns: u64,
+        times: Settled,
         out: &mut Vec<Settlement>,
     ) -> Outcome {
         let is_target =
@@ -897,7 +1001,10 @@ impl<A: PeerAuthority> ControlChannel<A> {
             self.settle(
                 target.request.body().clone(),
                 Outcome::Withdrawn,
-                now_ns,
+                Settled {
+                    accepted_ns: target.accepted_ns,
+                    ..times
+                },
                 out,
             );
             return Outcome::CancelApplied { target_seq };
@@ -922,7 +1029,11 @@ fn stepped(current: u8, delta: i8) -> u8 {
 #[cfg(test)]
 mod tests {
     use franken_session::{GroupMembership, GroupTime, MembershipConfig};
-    use franken_test_support::{CommandObservation, FencedCommandOracle};
+    use franken_test_support::{
+        CommandObservation, DiagnosticEvent, FencedCommandOracle, redact_sensitive_text,
+    };
+
+    use super::super::diag::{LogConfig, LogKey, MAX_LINE_BYTES};
 
     use super::super::peer::compute_proof;
     use super::super::peer::ephemeral::{EphemeralPeers, test_key};
@@ -1002,6 +1113,26 @@ mod tests {
                 session: session(),
                 now: 0,
             }
+        }
+
+        /// Turn the JSONL log on, with the run and case labels and key the log tests expect.
+        fn log_on(&mut self, max_records: usize, max_bytes: usize) {
+            let config = LogConfig::new("run-1", "case-1", max_records, max_bytes).unwrap();
+            self.channel
+                .enable_log(ChannelLog::new(config, LogKey::new([7; 32])));
+        }
+
+        fn records(&self) -> Vec<DiagnosticEvent> {
+            self.channel
+                .log()
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).expect("a shared-schema event"))
+                .collect()
+        }
+
+        fn pseudonym(&self, id: &str) -> String {
+            self.channel.log().unwrap().pseudonym_of(id)
         }
 
         /// The owner installs a fresh lease for the session's current epoch.
@@ -2739,5 +2870,328 @@ mod tests {
             vec![Outcome::Withdrawn, Outcome::CancelApplied { target_seq: 1 }]
         );
         assert_eq!(rig.channel.stats().refused_for_lease, 0);
+    }
+
+    // ----------------------------------------------------------------- JSONL diagnostics
+
+    #[test]
+    fn every_settled_command_is_logged_once_in_the_shared_schema_with_its_correlation_and_revision()
+    {
+        let mut rig = Rig::roomy();
+        rig.log_on(64, 65_536);
+        let script = [
+            rig.req("ctl-a", 1, EPOCH, None, set_group(60)),
+            rig.req("ctl-a", 2, EPOCH, Some(3), adjust("kitchen", 10)),
+            rig.req("ctl-b", 1, EPOCH, Some(3), adjust("kitchen", 5)),
+            rig.req(
+                "ctl-a",
+                3,
+                EPOCH,
+                None,
+                ControlCommand::SetMemberVolume {
+                    member_id: "nowhere".to_string(),
+                    volume: 10,
+                },
+            ),
+        ];
+        for r in script {
+            rig.submit(r);
+        }
+        rig.at(2 * MS);
+        let settled = rig.step();
+        assert_eq!(settled.len(), 4);
+
+        let records = rig.records();
+        assert_eq!(
+            records.len(),
+            settled.len(),
+            "one record per settled command"
+        );
+        let group = rig.pseudonym("grp");
+        let a = rig.pseudonym("ctl-a");
+        let b = rig.pseudonym("ctl-b");
+        let expected = [
+            (
+                format!("{a}#1"),
+                String::new(),
+                "n02.step.committed",
+                "committed at revision 3",
+                3,
+                3,
+                None,
+            ),
+            (
+                format!("{a}#2"),
+                rig.pseudonym("kitchen"),
+                "n02.step.committed",
+                "committed at revision 4",
+                4,
+                2,
+                None,
+            ),
+            (
+                format!("{b}#1"),
+                rig.pseudonym("kitchen"),
+                "n02.step.refused.revision_mismatch",
+                "revision 3 named, current is 4",
+                4,
+                1,
+                None,
+            ),
+            (
+                format!("{a}#3"),
+                rig.pseudonym("nowhere"),
+                "n02.step.refused.session",
+                "the session refused the command",
+                4,
+                0,
+                Some("unknown_member".to_string()),
+            ),
+        ];
+        for (record, (correlation, member, kind, message, revision, depth, cause)) in
+            records.iter().zip(expected)
+        {
+            assert_eq!(record.schema_version, "ffw.log.v1");
+            assert_eq!(
+                (record.run_id.as_str(), record.case_id.as_str()),
+                ("run-1", "case-1")
+            );
+            assert_eq!(record.correlation_id, correlation);
+            assert_eq!(record.member_id, member);
+            assert_eq!(record.group_id, group);
+            assert_eq!(record.event_kind, kind);
+            assert_eq!(record.message, message);
+            assert_eq!(
+                (record.source_epoch, record.state_revision),
+                (EPOCH, revision),
+                "{kind}"
+            );
+            assert_eq!(record.queue_depth, depth, "{kind}");
+            assert_eq!(record.timestamp_mono_ns, 2 * MS);
+            assert_eq!(record.latency_us, 2_000, "queued for 2 ms");
+            assert_eq!(record.cause, cause, "{kind}");
+        }
+        for line in rig.channel.log().unwrap().lines() {
+            assert!(line.len() <= MAX_LINE_BYTES);
+            assert_eq!(redact_sensitive_text(line), line);
+        }
+        let stats = rig.channel.log().unwrap().stats();
+        assert_eq!((stats.emitted, stats.stored, stats.dropped), (4, 4, 0));
+    }
+
+    #[test]
+    fn a_refusal_carrying_a_key_shaped_input_never_echoes_it() {
+        let mut rig = Rig::roomy();
+        rig.log_on(64, 65_536);
+        // A peer id and a member id that look like credentials: legal labels, but not to be logged.
+        let peer_name = "tok-9f3a1c77e0b2";
+        let member_name = "sk-live-4e7d9a1c5b22";
+        rig.channel
+            .authority_mut()
+            .admit(
+                &id(peer_name),
+                PeerRole::Controller,
+                &test_key(peer_name),
+                Some(EPOCH),
+                1,
+            )
+            .unwrap();
+        let set = rig.req(
+            peer_name,
+            1,
+            EPOCH,
+            None,
+            ControlCommand::SetMemberVolume {
+                member_id: member_name.to_string(),
+                volume: 10,
+            },
+        );
+        let relative = rig.req(peer_name, 2, EPOCH, Some(2), adjust(member_name, 5));
+        let proofs = [set.proof().clone(), relative.proof().clone()];
+        rig.submit(set);
+        rig.submit(relative);
+        let settled = rig.step();
+
+        // The refusals themselves do carry the input back to the sender: that is the positive control.
+        assert_eq!(
+            outcome_of(&settled, peer_name, 2),
+            Outcome::Refused(Refusal::UnknownMember {
+                member_id: member_name.to_string()
+            })
+        );
+        assert!(matches!(
+            outcome_of(&settled, peer_name, 1),
+            Outcome::Refused(Refusal::Session(SessionError::UnknownMember { .. }))
+        ));
+
+        // The log does not. Not the peer, not the member, not any recognisable piece of either, not the
+        // peer's key, and not the proofs.
+        let log = rig.channel.log().unwrap();
+        let everything: String = log.lines().collect::<Vec<_>>().join("\n");
+        let mut secrets = vec![
+            peer_name.to_string(),
+            member_name.to_string(),
+            "9f3a1c77e0b2".to_string(),
+            "4e7d9a1c5b22".to_string(),
+            "sk-live".to_string(),
+            "0123456789abcdef".to_string(),
+        ];
+        for proof in &proofs {
+            secrets.push(
+                proof
+                    .as_bytes()
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect(),
+            );
+        }
+        for secret in &secrets {
+            assert!(
+                !everything.contains(secret.as_str()),
+                "the log echoes {secret:?}"
+            );
+        }
+        // What it holds instead is the keyed pseudonyms, which the owner can compute.
+        assert!(everything.contains(&log.pseudonym_of(peer_name)));
+        assert!(everything.contains(&log.pseudonym_of(member_name)));
+        for line in log.lines() {
+            assert_eq!(redact_sensitive_text(line), line, "{line}");
+        }
+        assert_eq!(log.stats().stored, 2);
+    }
+
+    #[test]
+    fn the_record_count_is_bounded_and_a_full_log_does_not_slow_or_change_the_channel() {
+        let mut rig = Rig::roomy();
+        rig.log_on(5, 65_536);
+        let mut seq = 0;
+        for _ in 0..10 {
+            for _ in 0..4 {
+                seq += 1;
+                let r = rig.req("ctl-a", seq, EPOCH, None, set_group(50 + (seq % 40) as u8));
+                rig.submit(r);
+            }
+            rig.step();
+        }
+        let stats = rig.channel.log().unwrap().stats();
+        assert_eq!(stats.stored, 5, "no more records than the bound");
+        assert_eq!((stats.emitted, stats.dropped), (40, 35));
+        assert_eq!(stats.emitted, stats.stored as u64 + stats.dropped);
+        assert!(stats.bytes <= 65_536);
+        assert!(rig.channel.log().unwrap().is_evidence_complete());
+        // The channel carried on regardless: every one of the 40 commands was applied.
+        assert_eq!(rig.channel.stats().committed, 40);
+        assert_eq!(rig.session.state_revision, 2 + 40);
+        // The facts waiting for the end of a step never pile up.
+        assert!(rig.channel.facts.is_empty());
+    }
+
+    #[test]
+    fn lease_refusals_and_internal_faults_are_logged_with_their_cause() {
+        let mut rig = Rig::without_lease(roomy());
+        rig.log_on(16, 65_536);
+
+        // No lease at all.
+        let r = rig.req("ctl-a", 1, EPOCH, None, set_group(60));
+        rig.submit(r);
+        rig.step();
+        // A lease that has expired.
+        rig.grant_until(1_000 * MS);
+        rig.at(1_000 * MS);
+        let r = rig.req("ctl-a", 2, EPOCH, None, set_group(60));
+        rig.submit(r);
+        rig.step();
+        // Another caller of the session takes the number the channel would mint next.
+        rig.grant();
+        rig.session
+            .apply_command(FencedControlCommand {
+                epoch: EPOCH,
+                command_seq: 1_003,
+                payload: GroupCommandPayload::MarkMemberClockLocked {
+                    member_id: "kitchen".to_string(),
+                },
+            })
+            .unwrap();
+        let r = rig.req("ctl-a", 3, EPOCH, None, set_group(60));
+        rig.submit(r);
+        rig.step();
+
+        let records = rig.records();
+        let summary: Vec<(&str, Option<&str>)> = records
+            .iter()
+            .map(|r| (r.event_kind.as_str(), r.cause.as_deref()))
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("n02.step.refused.no_lease", None),
+                ("n02.step.refused.lease", Some("authority_expired")),
+                ("n02.step.refused.internal_fault", Some("duplicate_command")),
+            ]
+        );
+        assert_eq!(records[0].message, "no group lease is held");
+        assert_eq!(records[2].state_revision, 3);
+        assert!(rig.channel.log().unwrap().is_evidence_complete());
+    }
+
+    #[test]
+    fn an_internal_fault_record_survives_a_log_full_of_ordinary_records() {
+        let mut rig = Rig::roomy();
+        rig.log_on(3, 65_536);
+        for seq in 1..=3u64 {
+            let r = rig.req("ctl-a", seq, EPOCH, None, set_group(60 + seq as u8));
+            rig.submit(r);
+        }
+        rig.step();
+        assert_eq!(rig.channel.log().unwrap().stats().stored, 3);
+        // Another caller takes the number the channel would mint next, so the next command faults.
+        let next = 1_000 + rig.session.state_revision + 1;
+        rig.session
+            .apply_command(FencedControlCommand {
+                epoch: EPOCH,
+                command_seq: next,
+                payload: GroupCommandPayload::MarkMemberClockLocked {
+                    member_id: "kitchen".to_string(),
+                },
+            })
+            .unwrap();
+        let r = rig.req("ctl-a", 4, EPOCH, None, set_group(70));
+        rig.submit(r);
+        rig.step();
+        let kinds: Vec<String> = rig.records().into_iter().map(|r| r.event_kind).collect();
+        assert_eq!(kinds.len(), 3);
+        assert_eq!(
+            kinds[2], "n02.step.refused.internal_fault",
+            "the fault evicted the oldest ordinary record"
+        );
+        assert!(rig.channel.log().unwrap().is_evidence_complete());
+    }
+
+    #[test]
+    fn turning_the_log_on_changes_nothing_the_channel_does() {
+        let run = |with_log: bool| {
+            let mut rig = Rig::roomy();
+            if with_log {
+                rig.log_on(8, 65_536);
+            }
+            let mut seen = Vec::new();
+            for seq in 1..=9u64 {
+                let r = rig.req("ctl-a", seq, EPOCH, None, set_group(50 + seq as u8));
+                rig.submit(r);
+            }
+            let cancel = rig.req(
+                "ctl-a",
+                10,
+                EPOCH,
+                None,
+                ControlCommand::Cancel { target_seq: 9 },
+            );
+            rig.submit(cancel);
+            while rig.channel.pending(Lane::Ordinary) + rig.channel.pending(Lane::Priority) > 0 {
+                seen.extend(rig.step());
+            }
+            (seen, *rig.channel.stats(), rig.session.state_revision)
+        };
+        assert_eq!(run(false), run(true));
     }
 }

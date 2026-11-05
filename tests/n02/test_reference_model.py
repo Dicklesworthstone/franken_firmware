@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import gen_auth_vectors as gen  # noqa: E402
+import gen_log_vectors as genlog  # noqa: E402
 import reference as ref  # noqa: E402
 
 CHANNEL_SRC = ref.ROOT / "crates" / "franken-control" / "src" / "channel"
@@ -544,6 +545,61 @@ class GeneratedVectors(unittest.TestCase):
         self.assertNotIn(tamper["cmd"]["kind"], ref.RELATIVE)
 
 
+class LogVectors(unittest.TestCase):
+    """The JSONL diagnostics are produced by the Rust only; these vectors are computed here with
+    hashlib and json so that the keyed pseudonyms and the exact bytes of a line are pinned by an
+    independent implementation. The Rust replays them (diag.rs)."""
+
+    FIELD_ORDER = ["schema_version", "timestamp_mono_ns", "run_id", "case_id", "correlation_id", "member_id",
+                   "group_id", "source_epoch", "state_revision", "event_kind", "message", "queue_depth", "latency_us"]
+
+    def vectors(self):
+        return json.loads(genlog.DEFAULT_OUT.read_text(encoding="utf-8"))
+
+    def test_the_file_is_what_the_generator_produces(self):
+        self.assertEqual(genlog.main(["--check"]), 0)
+
+    def test_pseudonyms_are_recomputed_keyed_unique_and_well_formed(self):
+        v = self.vectors()
+        key = bytes.fromhex(v["pseudonym_key_hex"])
+        self.assertEqual(len(key), 32)
+        seen = set()
+        for entry in v["pseudonyms"]:
+            ident = entry["id"].encode()
+            full = hashlib.sha256(b"ffw.pseudonym.v1" + key + len(ident).to_bytes(8, "big") + ident).hexdigest()
+            self.assertEqual(entry["pseudonym"], "p-" + full[:16], entry["id"])
+            self.assertRegex(entry["pseudonym"], r"^p-[0-9a-f]{16}$")
+            seen.add(entry["pseudonym"])
+        self.assertEqual(len(seen), len(v["pseudonyms"]))
+        # A different key gives different pseudonyms: they are keyed, not a plain hash of the id.
+        other = hashlib.sha256(b"ffw.pseudonym.v1" + bytes(32) + (5).to_bytes(8, "big") + b"ctl-a").hexdigest()
+        self.assertNotEqual("p-" + other[:16], next(p["pseudonym"] for p in v["pseudonyms"] if p["id"] == "ctl-a"))
+
+    def test_golden_lines_follow_the_shared_schema_and_carry_no_raw_identifier(self):
+        v = self.vectors()
+        raw = [p["id"] for p in v["pseudonyms"]]
+        self.assertGreaterEqual(len(v["golden_lines"]), 4)
+        for g in v["golden_lines"]:
+            record = json.loads(g["line"])
+            keys = list(record)
+            self.assertEqual(keys[: len(self.FIELD_ORDER)], self.FIELD_ORDER, g["id"])
+            self.assertIn(keys[len(self.FIELD_ORDER):], ([], ["cause"]), g["id"])
+            self.assertEqual(record["schema_version"], "ffw.log.v1")
+            self.assertLessEqual(len(g["line"]), 1024)
+            self.assertEqual(record["latency_us"], g["fact"]["waited_ns"] // 1000, g["id"])
+            self.assertEqual(record["state_revision"], g["fact"]["revision"], g["id"])
+            for ident in raw:
+                self.assertNotIn(ident, g["line"], f"{g['id']} echoes {ident}")
+            self.assertRegex(record["correlation_id"], r"^p-[0-9a-f]{16}#[0-9]+$")
+            self.assertRegex(record["group_id"], r"^p-[0-9a-f]{16}$")
+            self.assertRegex(record["member_id"], r"^(p-[0-9a-f]{16})?$")
+            self.assertEqual(g["line"], json.dumps(record, separators=(",", ":")), "compact, field order kept")
+
+    def test_a_cause_appears_only_where_the_fact_has_one(self):
+        for g in self.vectors()["golden_lines"]:
+            self.assertEqual("cause" in json.loads(g["line"]), g["fact"]["cause"] is not None, g["id"])
+
+
 class Mapping(unittest.TestCase):
     def cases(self):
         return json.loads(CASES.read_text(encoding="utf-8"))
@@ -557,9 +613,12 @@ class Mapping(unittest.TestCase):
         for s in d["scenarios"]:
             used.update(s["invariants"])
         self.assertEqual(used - declared, set(), "scenario names an undeclared invariant")
-        self.assertEqual(declared - used, set(), "declared invariant has no scenario")
+        no_scenario = {i["id"] for i in c["invariants"] if i.get("scenario_inapplicable")}
+        self.assertEqual(declared - used - no_scenario, set(), "declared invariant has no scenario and no stated reason")
         for inv in c["invariants"]:
-            self.assertTrue(inv["claim"] and inv["rust_tests"] and inv["scenarios"], inv["id"])
+            self.assertTrue(inv["claim"] and inv["rust_tests"] and (inv["scenarios"] or inv.get("scenario_inapplicable")), inv["id"])
+            if inv.get("scenario_inapplicable"):
+                self.assertEqual(inv["scenarios"], [], f"{inv['id']} states that no scenario applies, so it lists none")
             for sid in inv["scenarios"]:
                 self.assertIn(sid, scenario_ids, inv["id"])
                 self.assertIn(inv["id"], scenario(d, sid)["invariants"], f"{sid} does not list {inv['id']}")
