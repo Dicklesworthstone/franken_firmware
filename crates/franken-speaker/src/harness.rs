@@ -7,7 +7,10 @@
 
 use crate::SpeakerReadinessState;
 use crate::clock_log::{ClockLog, ClockLogSummary};
-use crate::control_adapter::{VolumeDefect, VolumeDesk, VolumeReport, VolumeStep};
+use crate::control_adapter::{
+    END_OF_CAMPAIGN_GROUP_VOLUME, GroupSetReport, VolumeDefect, VolumeDesk, VolumeReport,
+    VolumeStep, exercise_group_volume_set,
+};
 use crate::playout_adapter::{
     CampaignTimeline, LinkFault, NodePlayout, Played, PlayoutMemberReport, PreviousEpoch, Publish,
     SendLink, Silence,
@@ -19,8 +22,7 @@ use franken_clock::group::{
     ProbeResponse, StartPlan, StartReject, StartSchedule, group_at,
 };
 use franken_control::{
-    AirPlay2ReceiverState, AlexaDirective, FsonosSoapRequest, FsonosSoapResponse,
-    SpotifySessionState, dispatch_alexa_directive, handle_fsonos_soap,
+    AirPlay2ReceiverState, AlexaDirective, SpotifySessionState, dispatch_alexa_directive,
 };
 use franken_dsp::{BoardProtectionDsp, BoundedDriftResampler, FRAMES_PER_BLOCK, StereoAudioBlock};
 use franken_hal::{AudioHalDevice, HalTelemetry, state as hal_state};
@@ -1597,6 +1599,10 @@ pub struct VirtualHouseReport {
     /// What the relative-volume steps did through the real G03 endpoint (`None` for a campaign with no volume plan).
     #[serde(default)]
     pub volume: Option<VolumeReport>,
+    /// What the end of the campaign asked of the real G03 endpoint (an absolute group volume set, its plain-SOAP repeat, and an
+    /// out-of-range request that must be refused). It replaced a call to the superseded `handle_fsonos_soap` skeleton.
+    #[serde(default)]
+    pub group_set: GroupSetReport,
     pub members: BTreeMap<String, MemberSimulationStats>,
 }
 
@@ -2391,26 +2397,20 @@ fn run_campaign_scenario(
         }
     }
 
-    // The volume plan is judged here, before the skeleton SOAP call and the fencing probe below change the group volume.
+    // The volume plan is judged here, before the end-of-campaign group volume update and the fencing probe below change the group volume.
     let volume_report = match volume_desk.as_mut() {
         Some(volume) => Some(volume.finish(&session)?),
         None => None,
     };
 
-    // Exercise fsonos SOAP group volume update
-    match handle_fsonos_soap(
+    // The campaign ends with a group volume update through the real G03 endpoint over local legacy SOAP (`control_adapter`), and no longer
+    // through the superseded `handle_fsonos_soap` skeleton, which has no authentication, lease or ledger.
+    let group_set = exercise_group_volume_set(
         &mut session,
-        FsonosSoapRequest::SetGroupVolume {
-            epoch,
-            command_seq: cmd_seq,
-            desired_volume: 65,
-        },
-    )
-    .map_err(|e| e.to_string())?
-    {
-        FsonosSoapResponse::StateUpdated { .. } => {}
-        other => return Err(format!("unexpected SOAP response: {other:?}")),
-    }
+        VOLUME_ENDPOINT_MEMBER,
+        CAMPAIGN_ORIGIN_NS + block_offset_ns(total_blocks),
+        END_OF_CAMPAIGN_GROUP_VOLUME,
+    )?;
 
     // Exercise cooperative AirPlay 2 / YouTube video lip-sync evaluation
     let mut airplay = AirPlay2ReceiverState {
@@ -2511,6 +2511,7 @@ fn run_campaign_scenario(
         evidence_complete: sink.is_evidence_complete(),
         source: desk.report,
         volume: volume_report,
+        group_set,
         members: member_stats,
     })
 }
@@ -5597,5 +5598,31 @@ mod tests {
                 "{error}"
             );
         }
+    }
+
+    // ---- the end of every campaign goes through the real endpoint: the superseded SOAP skeleton is no longer called ---------------
+
+    #[test]
+    fn every_campaign_ends_with_a_group_volume_set_through_the_real_endpoint() {
+        // 65, applied twice (the set and its plain-SOAP repeat: an absolute set is safe to repeat), and one out-of-range request
+        // refused. The revision moves by exactly the two applications; the refusal moves nothing.
+        let expect = |report: &VirtualHouseReport| {
+            let set = &report.group_set;
+            assert_eq!((set.volume, set.applied, set.refused), (65, 2, 1));
+            assert_eq!(set.end_revision, set.start_revision + 2);
+        };
+        let plain = run_scenario(SEED, 200, None, Scenario::NONE).expect("campaign");
+        expect(&plain);
+        // After a volume plan the step starts exactly where the plan ended: nothing else touched the session in between.
+        let raced =
+            run_scenario(SEED, FAULT_BLOCKS, None, volume_scenario(plans::RACE)).expect("campaign");
+        expect(&raced);
+        assert_eq!(
+            raced.group_set.start_revision,
+            raced.volume.as_ref().expect("a plan ran").end_revision
+        );
+        // A campaign with no blocks still ends with it.
+        let empty = run_scenario(SEED, 0, None, Scenario::NONE).expect("campaign");
+        expect(&empty);
     }
 }

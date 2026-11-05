@@ -78,6 +78,11 @@ MEMBER_KEYS = {"signal", "member", "seed", "blocks", "channels", "rendered_block
 PLANT_KEYS = {"member", "planted", "outcome", "message"}
 PLANT_MESSAGE = re.compile(r"^member_rendered_silence: (\S+): (\d+) authentic blocks sounded and every sample it rendered is zero$")
 TEST_LINE = re.compile(r"\btest (\S+) \.\.\. (ok|FAILED|ignored)\b")
+# libtest writes `test X ... ` and then its result in two writes; a test thread's --nocapture output can land between them, leaving the
+# name with other text after it and the result alone on the next line.
+TEST_START = re.compile(r"\btest (\S+) \.\.\.")
+RESULT_ALONE = re.compile(r"^(ok|FAILED|ignored)$")
+ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 RECORD_MARKER = re.compile(r"\bQ01-(MEMBER|PLANT)\b ?(.*?)\s*$")
 LIMIT_BEGIN, LIMIT_END = "<!-- q01-limit-1:begin -->", "<!-- q01-limit-1:end -->"
 CELL = re.compile(r"^(renders|silent) \((measured|by routing)\)$")
@@ -147,11 +152,30 @@ class Log:
         self.members: List[dict] = []
         self.plants: List[dict] = []
         self.problems: List[str] = []
+        # Tests whose name was printed but whose result never was (the log ended, or another test started first): never passed.
+        self.unterminated: List[str] = []
 
     def add(self, text: str, source: str) -> None:
-        for number, line in enumerate(text.splitlines(), 1):
-            for name, status in TEST_LINE.findall(line):
+        pending: Optional[str] = None  # a test whose name was printed but whose result was not on the same line
+        for number, raw in enumerate(text.splitlines(), 1):
+            line = ANSI.sub("", raw)
+            found = TEST_LINE.findall(line)
+            for name, status in found:
                 self.tests.setdefault(name, []).append(status)
+            if found:
+                if pending is not None:
+                    self.unterminated.append(pending)
+                pending = None  # a complete line ends any wait
+            else:
+                started = TEST_START.search(line)
+                alone = RESULT_ALONE.match(line.strip())
+                if started:
+                    if pending is not None:
+                        self.unterminated.append(pending)
+                    pending = started.group(1)
+                elif alone and pending is not None:
+                    self.tests.setdefault(pending, []).append(alone.group(1))
+                    pending = None
             # Any marker must carry a record that parses: a truncated or interleaved line is a problem, never silently dropped.
             marker = RECORD_MARKER.search(line)
             if marker:
@@ -160,6 +184,8 @@ class Log:
                     (self.members if marker.group(1) == "MEMBER" else self.plants).append(json.loads(marker.group(2)))
                 except ValueError:
                     self.problems.append("%s:%d: a %s record is not valid JSON" % (source, number, kind))
+        if pending is not None:
+            self.unterminated.append(pending)
 
     def status(self, test: str) -> Optional[str]:
         seen = self.tests.get(test)
@@ -420,6 +446,9 @@ def judge_cases(log: Optional[Log]) -> Tuple[List[Result], List[str], Dict[Tuple
     record_problems: Dict[str, List[str]] = {}
     if log is not None:
         member_problems, notes, measured = check_members(log.members, table)
+        if log.unterminated:
+            notes = notes + ["%d test(s) printed their name and no result (they are blocked, never passed): %s"
+                             % (len(log.unterminated), ", ".join(sorted(set(log.unterminated))[:3]))]
         record_problems["Q01-M01"] = member_problems + [p for p in log.problems if "Q01-MEMBER" in p]
         record_problems["Q01-M02"] = check_plants(log.plants) + [p for p in log.problems if "Q01-PLANT" in p]
     for case in cases:

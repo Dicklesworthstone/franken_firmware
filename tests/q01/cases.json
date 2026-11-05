@@ -283,6 +283,27 @@
       ]
     },
     {
+      "id": "Q01-C25",
+      "group": "end of campaign",
+      "class": "positive",
+      "what": "the SOAP skeleton call is retired: every campaign ends with an absolute group volume set through the real endpoint over local legacy SOAP; it applies, a plain-SOAP repeat leaves the volume where it was (an absolute set is safe to repeat), only the group moves, and the report records it",
+      "tests": [
+        "control_adapter::tests::an_absolute_group_set_over_plain_soap_applies_and_a_repeat_leaves_the_volume_where_it_was",
+        "control_adapter::tests::the_end_of_campaign_step_applies_the_set_and_its_repeat_and_is_refused_nothing_else",
+        "harness::tests::every_campaign_ends_with_a_group_volume_set_through_the_real_endpoint"
+      ]
+    },
+    {
+      "id": "Q01-C26",
+      "group": "end of campaign",
+      "class": "negative",
+      "what": "an out-of-range group volume is refused (UPnP 402) with no effect and the boundary values are accepted; a set the endpoint refuses fails the end-of-campaign step by name, each against its control",
+      "tests": [
+        "control_adapter::tests::an_out_of_range_group_set_is_refused_with_no_effect_and_the_boundary_is_accepted",
+        "control_adapter::tests::a_set_the_endpoint_refuses_fails_the_end_of_campaign_step_by_name"
+      ]
+    },
+    {
       "id": "Q01-M01",
       "group": "measurement",
       "class": "measurement",

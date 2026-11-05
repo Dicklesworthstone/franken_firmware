@@ -1,7 +1,8 @@
 //! The real G03 endpoint and N02 control channel inside the Virtual House (`Q01` / `ffw-gmq`).
 //!
-//! Until now the harness changed the group's volume through `handle_fsonos_soap`, the earlier skeleton that calls the session
-//! directly with no authentication, lease or ledger (`docs/contracts/g03.md` section 9 calls it superseded). The acceptance
+//! The harness used to change the group's volume through `handle_fsonos_soap`, the earlier skeleton that calls the session
+//! directly with no authentication, lease or ledger (`docs/contracts/g03.md` section 9 calls it superseded); every campaign now
+//! ends with a group volume set through the real endpoint instead ([`exercise_group_volume_set`]). The acceptance
 //! text asks for relative volume to be *retried through real adapter interfaces*. This module puts the real
 //! `franken_control::fsonos::Endpoint`, a real `ControlChannel` and a real `PeerDirectory` in that place, unchanged and unwrapped,
 //! and drives the two ingresses a controller really has:
@@ -57,6 +58,12 @@ const DIRECT_SEQ_BASE: u64 = 2_000_000;
 const LAN_PEER_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10));
 /// UPnP error code for "action failed", which is what the endpoint answers to a refused relative step.
 const UPNP_ACTION_FAILED: u16 = 501;
+/// UPnP error code for "invalid arguments", which is what the endpoint answers to a volume outside 0..=100.
+const UPNP_INVALID_ARGS: u16 = 402;
+/// The group volume every campaign ends by setting through the endpoint.
+pub(crate) const END_OF_CAMPAIGN_GROUP_VOLUME: u8 = 65;
+/// A volume the endpoint must refuse.
+const OUT_OF_RANGE_VOLUME: u8 = 101;
 
 /// A public fixture key for `peer`: long enough to be admitted, different for every peer. A fixture, not a secret.
 fn fixture_key(peer: &str) -> Vec<u8> {
@@ -161,6 +168,19 @@ pub struct VolumeReport {
     pub end_member_volume: u8,
     pub start_group_volume: u8,
     pub end_group_volume: u8,
+}
+
+/// What the end of a campaign asked of the real endpoint, as receipts ([`exercise_group_volume_set`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroupSetReport {
+    /// The group volume the set asked for.
+    pub volume: u8,
+    /// Requests the endpoint applied: the set and its plain-SOAP repeat.
+    pub applied: u64,
+    /// Requests it refused (a volume outside 0..=100, UPnP 402), with no effect.
+    pub refused: u64,
+    pub start_revision: u64,
+    pub end_revision: u64,
 }
 
 // ---- the keys ------------------------------------------------------------------------------------------------------
@@ -508,6 +528,31 @@ impl ControlPlane {
         )
     }
 
+    /// An ABSOLUTE group volume over plain SOAP on the local link (`SetGroupVolume`). It carries no command id either, so a repeat is a
+    /// second command, but an absolute set is safe to repeat: the volume ends where it did (`g03.md` section 3.1).
+    pub(crate) fn send_legacy_group_set(
+        &mut self,
+        session: &mut UnifiedGroupSession,
+        now_ns: u64,
+        volume: u8,
+    ) -> Sent {
+        let volume_text = volume.to_string();
+        let service = Service::GroupRenderingControl;
+        let action = "SetGroupVolume";
+        let args = [("InstanceID", "0"), ("DesiredVolume", volume_text.as_str())];
+        let body = envelope(service, action, &args);
+        let soap_action = format!("\"{}#{action}\"", service.urn());
+        let headers = [("SOAPACTION", soap_action.as_str())];
+        self.dispatch(
+            session,
+            now_ns,
+            Ingress::LocalLegacy,
+            service,
+            &headers,
+            &body,
+        )
+    }
+
     /// A relative step over the tailnet, signed with the controller's key: `seq` is its command number and `revision` the revision
     /// it was computed against.
     pub(crate) fn send_tailnet(
@@ -584,6 +629,82 @@ impl ControlPlane {
         ];
         Ok(self.dispatch(session, now_ns, Ingress::Tailnet, service, &headers, &body))
     }
+}
+
+// ---- the end of a campaign: an absolute group volume through the real endpoint ---------------------------------------------
+
+/// The step every campaign ends with, in place of the superseded `handle_fsonos_soap` call: over the real endpoint and channel, a
+/// local legacy SOAP request sets the group volume to `volume`; it must apply (HTTP 200, the volume set, the revision moved by one);
+/// a plain-SOAP repeat of the same absolute set must leave the volume where it was and move the revision again (it is a new command
+/// and an absolute set is safe to repeat, `g03.md` section 3.1); and a volume outside 0..=100 must be refused with UPnP 402 and change
+/// nothing (the group volume, the revision and every member's volume stay). Any other answer fails the campaign by name.
+pub(crate) fn exercise_group_volume_set(
+    session: &mut UnifiedGroupSession,
+    member_id: &str,
+    now_ns: u64,
+    volume: u8,
+) -> Result<GroupSetReport, String> {
+    let mut plane = ControlPlane::new(session, member_id, now_ns)?;
+    let start_revision = session.state_revision;
+    let members_before: Vec<(String, u8)> = session
+        .members
+        .iter()
+        .map(|(id, state)| (id.clone(), state.volume_0_to_100))
+        .collect();
+    let applied = Sent {
+        status: 200,
+        new_volume: None,
+        fault_code: None,
+    };
+    for send in 0..2_u64 {
+        let sent = plane.send_legacy_group_set(session, now_ns, volume);
+        if sent != applied {
+            return Err(format!(
+                "group_set_response_mismatch: send {send}: the contract says {applied:?}, the endpoint answered {sent:?}"
+            ));
+        }
+        let wanted = (volume, start_revision + send + 1);
+        let seen = (session.group_master_volume, session.state_revision);
+        if seen != wanted {
+            return Err(format!(
+                "group_set_state_mismatch: send {send}: the session has (group volume, revision) {seen:?}, the contract says {wanted:?}"
+            ));
+        }
+    }
+    let refusal = Sent {
+        status: 500,
+        new_volume: None,
+        fault_code: Some(UPNP_INVALID_ARGS),
+    };
+    let sent = plane.send_legacy_group_set(session, now_ns, OUT_OF_RANGE_VOLUME);
+    if sent != refusal {
+        return Err(format!(
+            "group_set_refusal_mismatch: the contract says {refusal:?}, the endpoint answered {sent:?}"
+        ));
+    }
+    let members_after: Vec<(String, u8)> = session
+        .members
+        .iter()
+        .map(|(id, state)| (id.clone(), state.volume_0_to_100))
+        .collect();
+    let seen = (
+        session.group_master_volume,
+        session.state_revision,
+        members_after,
+    );
+    let wanted = (volume, start_revision + 2, members_before);
+    if seen != wanted {
+        return Err(format!(
+            "group_set_state_mismatch: the refused request changed the group: {seen:?}, the contract says {wanted:?}"
+        ));
+    }
+    Ok(GroupSetReport {
+        volume,
+        applied: 2,
+        refused: 1,
+        start_revision,
+        end_revision: session.state_revision,
+    })
 }
 
 // ---- the model: what the contract says each delivery does -------------------------------------------------------------
@@ -1457,5 +1578,122 @@ mod tests {
             keys.insert(&full, value("0123456789abcdef")),
             Err(SecretError::StoreFull { max: 8 })
         ));
+    }
+
+    #[test]
+    fn an_absolute_group_set_over_plain_soap_applies_and_a_repeat_leaves_the_volume_where_it_was() {
+        let (mut plane, mut session) = plane_and_session();
+        let start = session.state_revision;
+        let applied = Sent {
+            status: 200,
+            new_volume: None,
+            fault_code: None,
+        };
+        assert_eq!(
+            plane.send_legacy_group_set(&mut session, NOW_NS, 65),
+            applied
+        );
+        assert_eq!(
+            (session.group_master_volume, session.state_revision),
+            (65, start + 1)
+        );
+        // The response was lost and the controller sends the same plain SOAP request again: an absolute set is safe to repeat, so the
+        // volume stays, and the repeat is a second command, so the revision moves again.
+        assert_eq!(
+            plane.send_legacy_group_set(&mut session, NOW_NS, 65),
+            applied
+        );
+        assert_eq!(
+            (session.group_master_volume, session.state_revision),
+            (65, start + 2)
+        );
+        // Only the group moved.
+        assert_eq!(member_volume(&session), 50);
+    }
+
+    #[test]
+    fn an_out_of_range_group_set_is_refused_with_no_effect_and_the_boundary_is_accepted() {
+        let (mut plane, mut session) = plane_and_session();
+        let start = session.state_revision;
+        let refused = Sent {
+            status: 500,
+            new_volume: None,
+            fault_code: Some(UPNP_INVALID_ARGS),
+        };
+        for volume in [101, 200, 255] {
+            assert_eq!(
+                plane.send_legacy_group_set(&mut session, NOW_NS, volume),
+                refused,
+                "{volume}"
+            );
+        }
+        assert_eq!(
+            (session.group_master_volume, session.state_revision),
+            (50, start)
+        );
+        // The control: the same call accepts the largest and the smallest valid volume.
+        let applied = Sent {
+            status: 200,
+            new_volume: None,
+            fault_code: None,
+        };
+        assert_eq!(
+            plane.send_legacy_group_set(&mut session, NOW_NS, 100),
+            applied
+        );
+        assert_eq!(
+            (session.group_master_volume, session.state_revision),
+            (100, start + 1)
+        );
+        assert_eq!(
+            plane.send_legacy_group_set(&mut session, NOW_NS, 0),
+            applied
+        );
+        assert_eq!(
+            (session.group_master_volume, session.state_revision),
+            (0, start + 2)
+        );
+    }
+
+    #[test]
+    fn the_end_of_campaign_step_applies_the_set_and_its_repeat_and_is_refused_nothing_else() {
+        let mut session = fixture_session();
+        let start = session.state_revision;
+        let report =
+            exercise_group_volume_set(&mut session, KITCHEN, NOW_NS, END_OF_CAMPAIGN_GROUP_VOLUME)
+                .expect("the step passes");
+        assert_eq!(
+            report,
+            GroupSetReport {
+                volume: 65,
+                applied: 2,
+                refused: 1,
+                start_revision: start,
+                end_revision: start + 2,
+            }
+        );
+        assert_eq!(session.group_master_volume, 65);
+        assert_eq!(member_volume(&session), 50);
+    }
+
+    #[test]
+    fn a_set_the_endpoint_refuses_fails_the_end_of_campaign_step_by_name() {
+        // The control: a valid set passes.
+        let mut session = fixture_session();
+        exercise_group_volume_set(&mut session, KITCHEN, NOW_NS, 65)
+            .expect("the control: a valid set passes");
+        // The plant: asked to set a volume the endpoint refuses, the step says so by name and changes nothing.
+        let mut session = fixture_session();
+        let start = session.state_revision;
+        let error = exercise_group_volume_set(&mut session, KITCHEN, NOW_NS, 101)
+            .expect_err("a refused set must fail the step");
+        assert!(
+            error.starts_with("group_set_response_mismatch: send 0:"),
+            "{error}"
+        );
+        assert_eq!(
+            (session.group_master_volume, session.state_revision),
+            (50, start)
+        );
     }
 }

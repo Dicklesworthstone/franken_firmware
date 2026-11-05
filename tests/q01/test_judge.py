@@ -62,13 +62,21 @@ class Synthetic:
                             "message": "member_rendered_silence: %s: 244 authentic blocks sounded and every sample it rendered is zero" % member})
         return records
 
-    def text(self, members=None, plants=None, drop=(), fail=(), noise=True, raw_lines=()):
+    def text(self, members=None, plants=None, drop=(), fail=(), noise=True, raw_lines=(), split=(), ansi=False):
         lines = ["running %d tests" % sum(len(c["tests"]) for c in self.cases)] if noise else []
         for case in self.cases:
             for test in case["tests"]:
                 if test in drop:
                     continue
-                lines.append("test %s ... %s" % (test, "FAILED" if test in fail else "ok"))
+                result = "FAILED" if test in fail else "ok"
+                if ansi:
+                    result = "\x1b[%dm%s\x1b[0m" % (31 if test in fail else 32, result)
+                if test in split:
+                    # Another test thread printed between libtest's `test X ... ` and its result (cargo test -- --nocapture).
+                    lines.append("test %s ... warning: output of another test thread" % test)
+                    lines.append(result)
+                else:
+                    lines.append("test %s ... %s" % (test, result))
                 if noise and test.endswith("measure_planted_silence_is_named_for_every_member"):
                     lines.append("warning: unused dependency `x` (cargo noise between lines)")
         for record in (self.member_records() if members is None else members):
@@ -583,6 +591,101 @@ class CommittedReceipt(unittest.TestCase):
             self.assertEqual(record["rendered_nonzero_blocks"] == 0, cell in silent, cell)
         table = contract_table()
         self.assertEqual({basis for _behaviour, basis in table.values()}, {"measured"})
+
+
+class SplitLines(unittest.TestCase):
+    """b52 showed that a test thread's --nocapture output can land between libtest's `test X ... ` and its result. The judge must read the
+    result that follows, never mistake a split result for an absent one, and never hand one test another test's result."""
+
+    MEASURE = "harness::tests::q01_measure_what_every_member_renders_under_each_source"
+
+    def setUp(self):
+        self.s = Synthetic()
+        results, *_ = judge(self.s.text())
+        self.assertEqual({r.status for r in results}, {"pass"})  # the unplanted control: a clean log is qualified
+
+    def first_test(self, case_id):
+        return next(c for c in self.s.cases if c["id"] == case_id)["tests"][0]
+
+    def status(self, text):
+        results, notes, _measured, log = judge(text)
+        return {r.case: r.status for r in results}, notes, log
+
+    def test_a_result_split_from_its_test_line_is_still_read(self):
+        split = {self.first_test(c) for c in ("Q01-C05", "Q01-C12", "Q01-C15", "Q01-C23")}
+        status, notes, log = self.status(self.s.text(split=split))
+        self.assertEqual(set(status.values()), {"pass"}, status)
+        self.assertEqual(log.unterminated, [])
+        self.assertEqual(notes, [])
+
+    def test_every_result_split_at_once_is_still_read(self):
+        every = {t for c in self.s.cases for t in c["tests"]}
+        status, _notes, _log = self.status(self.s.text(split=every))
+        self.assertEqual(set(status.values()), {"pass"}, status)
+
+    def test_a_split_failure_still_fails_its_case(self):
+        test = self.first_test("Q01-C08")
+        status, _notes, _log = self.status(self.s.text(split={test}, fail={test}))
+        self.assertEqual(status["Q01-C08"], "fail")
+        self.assertEqual([c for c, s in status.items() if s != "pass"], ["Q01-C08"])
+
+    def test_a_record_printed_on_the_test_line_is_still_read(self):
+        lines = self.s.text().splitlines()
+        first = next(i for i, l in enumerate(lines) if l.startswith("Q01-MEMBER "))
+        record = lines.pop(first)
+        at = next(i for i, l in enumerate(lines) if l == "test %s ... ok" % self.MEASURE)
+        lines[at:at + 1] = ["test %s ... %s" % (self.MEASURE, record), "ok"]
+        status, _notes, log = self.status("\n".join(lines) + "\n")
+        self.assertEqual(set(status.values()), {"pass"}, status)
+        self.assertEqual(len(log.members), 10)
+
+    def test_colour_does_not_hide_a_result(self):
+        test = self.first_test("Q01-C05")
+        status, _notes, _log = self.status(self.s.text(ansi=True, split={test}))
+        self.assertEqual(set(status.values()), {"pass"}, status)
+        status, _notes, _log = self.status(self.s.text(ansi=True, split={test}, fail={test}))
+        self.assertEqual(status["Q01-C05"], "fail")
+
+    def insert_before_the_first_test_line(self, text, new_lines):
+        lines = text.splitlines()
+        at = next(i for i, l in enumerate(lines) if l.startswith("test ") and l.endswith("... ok"))
+        lines[at:at] = new_lines
+        return "\n".join(lines) + "\n"
+
+    def test_a_test_that_printed_its_name_and_never_got_a_result_is_blocked_and_a_stray_ok_is_not_credited_to_it(self):
+        lonely, finished = self.first_test("Q01-C12"), self.first_test("Q01-C14")
+        # `lonely` prints its name; a COMPLETE line for another test follows (so the wait is over); then an `ok` that belongs to nobody.
+        text = self.insert_before_the_first_test_line(
+            self.s.text(drop={lonely, finished}),
+            ["test %s ... output of another thread" % lonely, "test %s ... ok" % finished, "ok"])
+        status, notes, log = self.status(text)
+        self.assertEqual({c: s for c, s in status.items() if s != "pass"}, {"Q01-C12": "blocked"}, status)
+        self.assertEqual(log.unterminated, [lonely])
+        self.assertNotIn(lonely, log.tests)
+        self.assertTrue(any("printed their name and no result" in n for n in notes), notes)
+
+    def test_a_second_test_name_before_any_result_takes_the_result_and_the_first_stays_blocked(self):
+        lonely, second = self.first_test("Q01-C12"), self.first_test("Q01-C13")
+        text = self.insert_before_the_first_test_line(
+            self.s.text(drop={lonely, second}),
+            ["test %s ... output of another thread" % lonely, "test %s ... more output" % second, "ok"])
+        status, _notes, log = self.status(text)
+        self.assertEqual({c: s for c, s in status.items() if s != "pass"}, {"Q01-C12": "blocked"}, status)
+        self.assertEqual(log.unterminated, [lonely])
+        self.assertEqual(log.tests[second], ["ok"])
+
+    def test_a_log_that_ends_after_a_test_name_does_not_pass_that_test(self):
+        test = self.first_test("Q01-C20")
+        lines = self.s.text(drop={test}, noise=False).splitlines()
+        lines.append("test %s ... " % test)
+        status, _notes, log = self.status("\n".join(lines) + "\n")
+        self.assertEqual(status["Q01-C20"], "blocked")
+        self.assertEqual(log.unterminated, [test])
+
+    def test_a_result_with_no_test_before_it_is_ignored(self):
+        status, _notes, log = self.status("ok\nFAILED\nignored\n" + self.s.text())
+        self.assertEqual(set(status.values()), {"pass"}, status)
+        self.assertEqual(log.unterminated, [])
 
 
 if __name__ == "__main__":
