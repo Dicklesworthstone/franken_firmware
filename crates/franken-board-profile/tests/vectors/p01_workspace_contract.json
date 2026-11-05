@@ -513,6 +513,16 @@
       "path": "tests/u01",
       "owner": "U01",
       "kind": "fixture"
+    },
+    {
+      "path": "tests/q01",
+      "owner": "Q01",
+      "kind": "fixture"
+    },
+    {
+      "path": "crates/franken-stream/fuzz",
+      "owner": "N01",
+      "kind": "fixture"
     }
   ],
   "test_support_exceptions": [],
