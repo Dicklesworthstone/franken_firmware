@@ -350,6 +350,80 @@ impl ControlRequest {
     }
 }
 
+/// Magic that opens every signed acknowledgement body. It differs from [`WIRE_MAGIC`], so a proof made for
+/// a request can never verify as an acknowledgement, or the other way round.
+pub const ACK_MAGIC: [u8; 4] = *b"FFCA";
+
+/// What a peer signs to say it received the outcome of its command `seq`, issued under `epoch`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AckBody {
+    peer: PeerId,
+    seq: u64,
+    epoch: u64,
+}
+
+impl AckBody {
+    /// A command number of at least 1, as for a request.
+    pub fn new(peer: PeerId, seq: u64, epoch: u64) -> Result<Self, RequestError> {
+        if seq == 0 {
+            return Err(RequestError::ZeroSequence);
+        }
+        Ok(Self { peer, seq, epoch })
+    }
+
+    #[must_use]
+    pub const fn peer(&self) -> &PeerId {
+        &self.peer
+    }
+
+    #[must_use]
+    pub const fn seq(&self) -> u64 {
+        self.seq
+    }
+
+    #[must_use]
+    pub const fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    /// The bytes the proof is computed over: magic, version, peer, `seq` and `epoch`, big-endian, in
+    /// that order.
+    #[must_use]
+    pub fn signing_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(32);
+        out.extend_from_slice(&ACK_MAGIC);
+        out.push(WIRE_VERSION);
+        put_label(&mut out, self.peer.as_str());
+        out.extend_from_slice(&self.seq.to_be_bytes());
+        out.extend_from_slice(&self.epoch.to_be_bytes());
+        out
+    }
+}
+
+/// An acknowledgement as it arrives: a body and the proof over it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AckRequest {
+    body: AckBody,
+    proof: AuthProof,
+}
+
+impl AckRequest {
+    #[must_use]
+    pub const fn new(body: AckBody, proof: AuthProof) -> Self {
+        Self { body, proof }
+    }
+
+    #[must_use]
+    pub const fn body(&self) -> &AckBody {
+        &self.body
+    }
+
+    #[must_use]
+    pub const fn proof(&self) -> &AuthProof {
+        &self.proof
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

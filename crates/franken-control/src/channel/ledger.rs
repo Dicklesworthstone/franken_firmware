@@ -41,6 +41,20 @@ struct Entry<B, O> {
     body: B,
     outcome: O,
     recorded_ns: u64,
+    /// When the sender first acknowledged this outcome, if it has. Acknowledging changes nothing else:
+    /// not the retention, not the eviction order, not the floor.
+    acked_ns: Option<u64>,
+}
+
+/// What marking an entry acknowledged did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Marked {
+    /// The first acknowledgement. The entry was `age_ns` old.
+    First { age_ns: u64 },
+    /// It had been acknowledged before; nothing changed.
+    Already,
+    /// There is no such entry (never recorded, or forgotten).
+    Absent,
 }
 
 /// What the ledger knows about a `(peer, seq)`.
@@ -176,9 +190,36 @@ impl<B, O> OutcomeLedger<B, O> {
                 body,
                 outcome,
                 recorded_ns: self.clock_ns,
+                acked_ns: None,
             },
         );
         true
+    }
+
+    /// Note that the sender acknowledged `(peer, seq)`. Entries past their retention are forgotten first,
+    /// so a forgotten entry is `Absent`. Only the flag is set; nothing about how long the entry lives.
+    pub fn mark_acked(&mut self, peer: &PeerId, seq: u64, now_ns: u64) -> Marked {
+        self.expire(now_ns);
+        let clock_ns = self.clock_ns;
+        match self.entries.get_mut(&(peer.clone(), seq)) {
+            None => Marked::Absent,
+            Some(entry) if entry.acked_ns.is_some() => Marked::Already,
+            Some(entry) => {
+                entry.acked_ns = Some(clock_ns);
+                Marked::First {
+                    age_ns: clock_ns.saturating_sub(entry.recorded_ns),
+                }
+            }
+        }
+    }
+
+    /// How many remembered outcomes nobody has acknowledged.
+    #[must_use]
+    pub fn unacked(&self) -> usize {
+        self.entries
+            .values()
+            .filter(|entry| entry.acked_ns.is_none())
+            .count()
     }
 }
 
@@ -397,5 +438,55 @@ mod tests {
         l.expire(1_100);
         assert_eq!(l.lookup(&a, 1), Lookup::OutOfWindow { floor: 2 });
         assert_eq!(l.lookup(&a, 2), Lookup::OutOfWindow { floor: 2 });
+    }
+
+    #[test]
+    fn marking_acknowledged_is_first_once_then_already_and_absent_when_unknown() {
+        let mut l = ledger(8, 1_000);
+        let a = id("a");
+        assert!(l.record(a.clone(), 1, "x", 1, 100));
+        assert_eq!(l.unacked(), 1);
+        assert_eq!(l.mark_acked(&a, 1, 130), Marked::First { age_ns: 30 });
+        assert_eq!(l.unacked(), 0);
+        assert_eq!(l.mark_acked(&a, 1, 140), Marked::Already);
+        assert_eq!(l.mark_acked(&a, 2, 140), Marked::Absent);
+        assert_eq!(l.mark_acked(&id("b"), 1, 140), Marked::Absent);
+    }
+
+    #[test]
+    fn an_acknowledged_entry_is_remembered_exactly_as_long_as_an_unacknowledged_one() {
+        let mut l = ledger(8, 1_000);
+        let a = id("a");
+        assert!(l.record(a.clone(), 1, "x", 1, 0));
+        assert!(l.record(a.clone(), 2, "y", 2, 0));
+        assert_eq!(l.mark_acked(&a, 1, 10), Marked::First { age_ns: 10 });
+        l.expire(999);
+        assert_eq!(settled(&l, &a, 1), Some(("x", 1)));
+        assert_eq!(settled(&l, &a, 2), Some(("y", 2)));
+        l.expire(1_000);
+        assert_eq!(l.lookup(&a, 1), Lookup::OutOfWindow { floor: 2 });
+        assert_eq!(l.lookup(&a, 2), Lookup::OutOfWindow { floor: 2 });
+        assert_eq!(l.unacked(), 0);
+    }
+
+    #[test]
+    fn marking_a_forgotten_entry_is_absent_even_at_the_instant_it_expires() {
+        let mut l = ledger(8, 1_000);
+        let a = id("a");
+        assert!(l.record(a.clone(), 1, "x", 1, 0));
+        assert_eq!(l.mark_acked(&a, 1, 1_000), Marked::Absent);
+        assert_eq!(l.lookup(&a, 1), Lookup::OutOfWindow { floor: 1 });
+    }
+
+    #[test]
+    fn eviction_for_capacity_forgets_the_unacknowledged_count_with_the_entry() {
+        let mut l = ledger(2, 1_000);
+        let a = id("a");
+        assert!(l.record(a.clone(), 1, "x", 1, 0));
+        assert!(l.record(a.clone(), 2, "y", 2, 0));
+        assert_eq!(l.unacked(), 2);
+        assert!(l.record(a.clone(), 3, "z", 3, 0));
+        assert_eq!(l.len(), 2);
+        assert_eq!(l.unacked(), 2, "the evicted entry no longer counts");
     }
 }

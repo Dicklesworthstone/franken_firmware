@@ -73,6 +73,10 @@ use super::limiter::{RateLimit, TokenBucket};
 use super::peer::{AuthFailure, Authenticated, PeerAuthority, PeerId, PeerRole};
 use super::request::{ControlCommand, ControlRequest, Lane, RequestBody};
 
+mod ack;
+
+pub use ack::AckOutcome;
+
 /// How a command ended, as remembered in the ledger and returned on a retry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
@@ -244,6 +248,11 @@ pub struct ChannelConfig {
     /// gate identical to the plain expiry check. Set it from the engine's terms with
     /// [`ChannelConfig::with_lease_terms`] so the channel and the engine refuse at the same instant.
     pub lease_margin_ns: u64,
+    /// How long after its outcome was recorded an acknowledgement is still on time. A later one, while
+    /// the outcome is still remembered, is recorded as `Late`. It has no other effect: nothing waits for
+    /// an acknowledgement. Provisional, and unrelated to `retention_ns` except that a budget at or above
+    /// the retention can never be exceeded while the outcome is remembered.
+    pub ack_budget_ns: u64,
     /// The lowest command number the channel passes to the session. Each number is the larger of the
     /// previous one plus one and this base plus the session's `state_revision`, so a channel that
     /// restarts against a session that kept running is carried above every number it used before
@@ -268,6 +277,7 @@ impl ChannelConfig {
             ordinary_rate: PROVISIONAL_ORDINARY_RATE,
             priority_rate: PROVISIONAL_PRIORITY_RATE,
             lease_margin_ns: 0,
+            ack_budget_ns: 2_000 * MS,
             session_seq_base: 1 << 32,
         }
     }
@@ -294,6 +304,11 @@ impl ChannelConfig {
         if self.pending_ttl_ns == 0 {
             return Err(ConfigError::Zero {
                 field: "pending_ttl_ns",
+            });
+        }
+        if self.ack_budget_ns == 0 {
+            return Err(ConfigError::Zero {
+                field: "ack_budget_ns",
             });
         }
         // The ledger checks its own capacity and retention when it is built.
@@ -341,9 +356,35 @@ pub struct ChannelStats {
     pub refused_for_lease: u64,
     /// An outcome that could not be recorded. Zero in correct operation.
     pub ledger_record_failures: u64,
+    /// Every acknowledgement received, and then exactly one of the buckets below
+    /// (`acks_accounted() == acks_received`).
+    pub acks_received: u64,
+    pub acks_rejected_unauthenticated: u64,
+    pub acks_on_time: u64,
+    pub acks_late: u64,
+    pub acks_superseded: u64,
+    pub acks_duplicate: u64,
+    pub acks_not_settled: u64,
+    pub acks_unknown: u64,
+    pub acks_out_of_window: u64,
+    pub acks_mismatch: u64,
 }
 
 impl ChannelStats {
+    /// Everything `acknowledge` did with the acknowledgements it received.
+    #[must_use]
+    pub const fn acks_accounted(&self) -> u64 {
+        self.acks_rejected_unauthenticated
+            + self.acks_on_time
+            + self.acks_late
+            + self.acks_superseded
+            + self.acks_duplicate
+            + self.acks_not_settled
+            + self.acks_unknown
+            + self.acks_out_of_window
+            + self.acks_mismatch
+    }
+
     /// Everything `submit` did with the requests it received.
     #[must_use]
     pub const fn accounted(&self) -> u64 {

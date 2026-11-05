@@ -135,6 +135,7 @@ fn config_from(doc: &Value, scenario: &Value) -> ChannelConfig {
         ordinary_rate: rate(&config["ordinary_rate"]),
         priority_rate: rate(&config["priority_rate"]),
         lease_margin_ns: number(&config, "lease_margin_ms") * MS,
+        ack_budget_ns: ChannelConfig::provisional().ack_budget_ns,
         session_seq_base: number(&config, "session_seq_base"),
     }
 }

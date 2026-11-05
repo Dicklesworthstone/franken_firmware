@@ -35,6 +35,24 @@
 //! `emitted == len + dropped`.
 //!
 //! Timestamps are the `now_ns` the owner gives `step`, clamped never to go backwards.
+//!
+//! # Acknowledgement records
+//!
+//! [`ControlChannel::acknowledge`](super::pipeline::ControlChannel::acknowledge) writes one more kind of
+//! record, in the same shape: `n02.ack.on_time`, `n02.ack.late` or `n02.ack.superseded` for an
+//! acknowledgement that completed its entry, and `n02.ack.rejected.<why>` for one that did not
+//! (`duplicate`, `not_settled`, `unknown`, `out_of_window`, `mismatch`, `unauthenticated`). Its
+//! `correlation_id` is the command's own (`p-<peer pseudonym>#<seq>`), so the two records join; its
+//! `latency_us` is how long after the outcome was recorded the acknowledgement came (zero where that is
+//! not meaningful); a rejected-for-authentication record carries the failure word as its `cause`. Nothing
+//! the peer sent is copied: an unauthenticated acknowledgement's claimed identifier appears only as a
+//! pseudonym.
+//!
+//! Acknowledgements are cheap for anyone to send, so their records are held to a **share** of the log:
+//! at most half of `max_records` and half of `max_bytes`. Past it an acknowledgement record is dropped and
+//! counted (`ack_dropped`, which is also in `dropped`), and can never push a command-outcome record out.
+//! When an internal-fault record needs room, acknowledgement records are evicted before command records.
+//! The log never blocks, never fails the call that wrote to it, and has no effect on any result.
 
 use std::collections::VecDeque;
 use std::fmt::{self, Write as _};
@@ -42,8 +60,8 @@ use std::fmt::{self, Write as _};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use super::peer::PeerId;
-use super::pipeline::{Outcome, Refusal};
+use super::peer::{AuthFailure, PeerId};
+use super::pipeline::{AckOutcome, Outcome, Refusal};
 use franken_session::SessionError;
 
 /// The shared diagnostics schema these records follow.
@@ -52,6 +70,8 @@ pub const LOG_SCHEMA_VERSION: &str = "ffw.log.v1";
 pub const MAX_LABEL_LEN: usize = 64;
 /// No record line is longer than this; a longer one is dropped and counted, never truncated.
 pub const MAX_LINE_BYTES: usize = 1024;
+/// Acknowledgement records may hold `1 / ACK_SHARE_DIVISOR` of the log's records and of its bytes.
+const ACK_SHARE_DIVISOR: usize = 2;
 
 /// A log that cannot be built.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -146,6 +166,10 @@ pub struct LogStats {
     pub critical_lost: u64,
     /// Bytes currently held.
     pub bytes: usize,
+    /// Acknowledgement records currently held (a share of `stored`).
+    pub ack_stored: usize,
+    /// Acknowledgement records not held (a share of `dropped`).
+    pub ack_dropped: u64,
 }
 
 /// What the channel knows about one settled command, gathered while the step runs and turned into a
@@ -187,6 +211,27 @@ struct Record<'a> {
     cause: Option<String>,
 }
 
+/// What a held line is, for eviction and for the acknowledgement share.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Class {
+    /// A command-outcome record.
+    Step,
+    /// An internal-fault record: never evicted to make room for another.
+    Critical,
+    /// An acknowledgement record.
+    Ack,
+}
+
+/// What the channel knows about one acknowledgement, turned into a record by [`ChannelLog::emit_ack`].
+pub(crate) struct AckFact {
+    pub peer: PeerId,
+    pub seq: u64,
+    pub outcome: AckOutcome,
+    /// The session's committed revision when the acknowledgement arrived.
+    pub revision: u64,
+    pub queue_depth: usize,
+}
+
 /// The bounded JSONL log of one control channel.
 pub struct ChannelLog {
     run_id: String,
@@ -194,13 +239,19 @@ pub struct ChannelLog {
     key: LogKey,
     max_records: usize,
     max_bytes: usize,
-    /// Each held line, and whether it is critical (never evicted to make room for another record).
-    lines: VecDeque<(String, bool)>,
+    /// Each held line, and what it is (a critical line is never evicted to make room for another).
+    lines: VecDeque<(String, Class)>,
     used_bytes: usize,
     emitted: u64,
     dropped: u64,
     critical_lost: u64,
     last_ns: u64,
+    /// The acknowledgement records held, their bytes, and how many were not held.
+    ack_lines: usize,
+    ack_bytes: usize,
+    ack_dropped: u64,
+    /// The share, as a divisor. Always [`ACK_SHARE_DIVISOR`] outside the tests that plant a wrong one.
+    ack_share_divisor: usize,
 }
 
 impl fmt::Debug for ChannelLog {
@@ -228,6 +279,10 @@ impl ChannelLog {
             dropped: 0,
             critical_lost: 0,
             last_ns: 0,
+            ack_lines: 0,
+            ack_bytes: 0,
+            ack_dropped: 0,
+            ack_share_divisor: ACK_SHARE_DIVISOR,
         }
     }
 
@@ -256,6 +311,8 @@ impl ChannelLog {
     /// Take every held line out, oldest first, leaving the log empty (its counters are kept).
     pub fn drain(&mut self) -> Vec<String> {
         self.used_bytes = 0;
+        self.ack_lines = 0;
+        self.ack_bytes = 0;
         self.lines.drain(..).map(|(line, _)| line).collect()
     }
 
@@ -267,6 +324,8 @@ impl ChannelLog {
             dropped: self.dropped,
             critical_lost: self.critical_lost,
             bytes: self.used_bytes,
+            ack_stored: self.ack_lines,
+            ack_dropped: self.ack_dropped,
         }
     }
 
@@ -294,12 +353,27 @@ impl ChannelLog {
     }
 
     fn evict_oldest_ordinary(&mut self) -> bool {
-        let Some(position) = self.lines.iter().position(|(_, critical)| !critical) else {
+        // Acknowledgement records go first: they are the cheaper evidence.
+        let position = self
+            .lines
+            .iter()
+            .position(|(_, class)| *class == Class::Ack)
+            .or_else(|| {
+                self.lines
+                    .iter()
+                    .position(|(_, class)| *class == Class::Step)
+            });
+        let Some(position) = position else {
             return false;
         };
-        if let Some((line, _)) = self.lines.remove(position) {
+        if let Some((line, class)) = self.lines.remove(position) {
             self.used_bytes = self.used_bytes.saturating_sub(line.len());
             self.dropped = self.dropped.saturating_add(1);
+            if class == Class::Ack {
+                self.ack_lines = self.ack_lines.saturating_sub(1);
+                self.ack_bytes = self.ack_bytes.saturating_sub(line.len());
+                self.ack_dropped = self.ack_dropped.saturating_add(1);
+            }
         }
         true
     }
@@ -324,7 +398,37 @@ impl ChannelLog {
             return;
         }
         self.used_bytes += bytes;
-        self.lines.push_back((line, critical));
+        let class = if critical {
+            Class::Critical
+        } else {
+            Class::Step
+        };
+        self.lines.push_back((line, class));
+    }
+
+    /// Hold an acknowledgement record if it fits its share of the log and the log has room; otherwise
+    /// drop it and count it. An acknowledgement record is never critical and never evicts anything.
+    fn push_ack(&mut self, line: String) {
+        self.emitted = self.emitted.saturating_add(1);
+        let bytes = line.len();
+        let in_share = self.ack_lines < self.max_records / self.ack_share_divisor
+            && self.ack_bytes.saturating_add(bytes) <= self.max_bytes / self.ack_share_divisor;
+        if bytes > MAX_LINE_BYTES || !in_share || self.full_for(bytes) {
+            self.lose(false);
+            self.ack_dropped = self.ack_dropped.saturating_add(1);
+            return;
+        }
+        self.used_bytes += bytes;
+        self.ack_lines += 1;
+        self.ack_bytes += bytes;
+        self.lines.push_back((line, Class::Ack));
+    }
+
+    /// Give acknowledgement records the whole budget instead of half of it. Tests only: it is the fault
+    /// the flood judge in `pipeline/ack.rs` exists to catch.
+    #[cfg(test)]
+    pub(crate) fn plant_whole_budget_for_acks(&mut self) {
+        self.ack_share_divisor = 1;
     }
 
     /// Write the record for one settled command.
@@ -362,6 +466,108 @@ impl ChannelLog {
                 self.lose(fact.critical);
             }
         }
+    }
+}
+
+impl ChannelLog {
+    /// Write the record for one acknowledgement (see the module documentation).
+    pub(crate) fn emit_ack(&mut self, fact: &AckFact, now_ns: u64, epoch: u64, group_id: &str) {
+        let timestamp = now_ns.max(self.last_ns);
+        self.last_ns = timestamp;
+        let (kind, message, cause, age_ns) = describe_ack(&fact.outcome);
+        let line = {
+            let record = Record {
+                schema_version: LOG_SCHEMA_VERSION,
+                timestamp_mono_ns: timestamp,
+                run_id: &self.run_id,
+                case_id: &self.case_id,
+                correlation_id: format!("{}#{}", self.pseudonym_of(fact.peer.as_str()), fact.seq),
+                member_id: String::new(),
+                group_id: self.pseudonym_of(group_id),
+                source_epoch: epoch,
+                state_revision: fact.revision,
+                event_kind: format!("n02.ack.{kind}"),
+                message,
+                queue_depth: fact.queue_depth,
+                latency_us: age_ns / 1_000,
+                cause: cause.map(str::to_string),
+            };
+            serde_json::to_string(&record)
+        };
+        match line {
+            Ok(line) => self.push_ack(line),
+            Err(_) => {
+                self.emitted = self.emitted.saturating_add(1);
+                self.lose(false);
+                self.ack_dropped = self.ack_dropped.saturating_add(1);
+            }
+        }
+    }
+}
+
+/// `(event kind suffix, message, cause, age in ns)` for an acknowledgement outcome, from the fixed
+/// vocabulary and numbers only. The age is how long after the outcome was recorded the acknowledgement
+/// came, where the outcome says; zero otherwise.
+fn describe_ack(outcome: &AckOutcome) -> (&'static str, String, Option<&'static str>, u64) {
+    match outcome {
+        AckOutcome::OnTime { age_ns } => (
+            "on_time",
+            format!("acknowledged {} us after the outcome", age_ns / 1_000),
+            None,
+            *age_ns,
+        ),
+        AckOutcome::Late { age_ns, over_by_ns } => (
+            "late",
+            format!("acknowledged {} us over the budget", over_by_ns / 1_000),
+            None,
+            *age_ns,
+        ),
+        AckOutcome::Superseded { epoch, current } => (
+            "superseded",
+            format!("command issued under epoch {epoch}, the group is at {current}"),
+            None,
+            0,
+        ),
+        AckOutcome::Duplicate => (
+            "rejected.duplicate",
+            "already acknowledged".to_string(),
+            None,
+            0,
+        ),
+        AckOutcome::NotSettled => (
+            "rejected.not_settled",
+            "the command is still waiting".to_string(),
+            None,
+            0,
+        ),
+        AckOutcome::Unknown => (
+            "rejected.unknown",
+            "the channel never recorded this command".to_string(),
+            None,
+            0,
+        ),
+        AckOutcome::OutOfWindow { floor } => (
+            "rejected.out_of_window",
+            format!("forgotten: at or below the remembered floor {floor}"),
+            None,
+            0,
+        ),
+        AckOutcome::Mismatch { recorded_epoch } => (
+            "rejected.mismatch",
+            format!("the command was issued under epoch {recorded_epoch}"),
+            None,
+            0,
+        ),
+        AckOutcome::Unauthenticated(failure) => (
+            "rejected.unauthenticated",
+            "did not authenticate".to_string(),
+            Some(match failure {
+                AuthFailure::UnknownPeer => "unknown_peer",
+                AuthFailure::Revoked => "revoked",
+                AuthFailure::BadProof => "bad_proof",
+            }),
+            0,
+        ),
     }
 }
 
@@ -899,5 +1105,177 @@ mod tests {
                 text(g, "id")
             );
         }
+    }
+
+    fn ack_fact(seq: u64) -> AckFact {
+        AckFact {
+            peer: PeerId::parse("ctl-a").unwrap(),
+            seq,
+            outcome: AckOutcome::Duplicate,
+            revision: 3,
+            queue_depth: 0,
+        }
+    }
+
+    fn ack_outcome_for(o: &serde_json::Value) -> AckOutcome {
+        let n = |key: &str| o[key].as_u64().expect(key);
+        match o["kind"].as_str().expect("kind") {
+            "on_time" => AckOutcome::OnTime {
+                age_ns: n("age_ns"),
+            },
+            "late" => AckOutcome::Late {
+                age_ns: n("age_ns"),
+                over_by_ns: n("over_by_ns"),
+            },
+            "superseded" => AckOutcome::Superseded {
+                epoch: n("epoch"),
+                current: n("current"),
+            },
+            "out_of_window" => AckOutcome::OutOfWindow { floor: n("floor") },
+            "mismatch" => AckOutcome::Mismatch {
+                recorded_epoch: n("recorded_epoch"),
+            },
+            "unauthenticated" => AckOutcome::Unauthenticated(match o["failure"].as_str() {
+                Some("unknown_peer") => AuthFailure::UnknownPeer,
+                Some("revoked") => AuthFailure::Revoked,
+                Some("bad_proof") => AuthFailure::BadProof,
+                other => panic!("unknown failure {other:?} in the vectors"),
+            }),
+            other => panic!("unknown acknowledgement outcome `{other}` in the vectors"),
+        }
+    }
+
+    /// The acknowledgement lines were computed with Python's `hashlib` and `json`; the Rust builds each from
+    /// the outcome named in the fact, so the vocabulary, the arithmetic and the bytes are all pinned.
+    #[test]
+    fn acknowledgement_lines_match_the_independent_vectors() {
+        let doc: serde_json::Value = serde_json::from_str(VECTORS_JSON).expect("vectors parse");
+        let text = |v: &serde_json::Value, key: &str| v[key].as_str().expect(key).to_string();
+        let num = |v: &serde_json::Value, key: &str| v[key].as_u64().expect(key);
+        let key_hex = text(&doc, "pseudonym_key_hex");
+        let key: [u8; 32] = (0..key_hex.len() / 2)
+            .map(|i| u8::from_str_radix(&key_hex[2 * i..2 * i + 2], 16).expect("hex"))
+            .collect::<Vec<u8>>()
+            .try_into()
+            .expect("a 32-byte key");
+        let lines = doc["ack_golden_lines"]
+            .as_array()
+            .expect("ack_golden_lines");
+        assert!(lines.len() >= 6);
+        for g in lines {
+            let f = &g["fact"];
+            let fact = AckFact {
+                peer: PeerId::parse(&text(f, "peer")).unwrap(),
+                seq: num(f, "seq"),
+                outcome: ack_outcome_for(&f["outcome"]),
+                revision: num(f, "revision"),
+                queue_depth: usize::try_from(num(f, "queue_depth")).unwrap(),
+            };
+            let mut l = ChannelLog::new(
+                LogConfig::new(&text(&doc, "run_id"), &text(&doc, "case_id"), 16, 65_536).unwrap(),
+                LogKey::new(key),
+            );
+            l.emit_ack(&fact, num(f, "now_ns"), num(f, "epoch"), &text(f, "group"));
+            assert_eq!(
+                l.lines().next().unwrap(),
+                text(g, "line"),
+                "{}",
+                text(g, "id")
+            );
+        }
+    }
+
+    #[test]
+    fn acknowledgement_records_hold_to_half_the_log_and_every_drop_is_counted() {
+        let mut l = log(8, 65_536);
+        for seq in 1..=10 {
+            l.emit_ack(&ack_fact(seq), seq, 10, "grp");
+        }
+        let s = l.stats();
+        assert_eq!(
+            (s.emitted, s.stored, s.dropped, s.ack_stored, s.ack_dropped),
+            (10, 4, 6, 4, 6)
+        );
+        assert_eq!(s.emitted, s.stored as u64 + s.dropped);
+        // Command records still have the other half, and the next one finds the log full: counted.
+        for seq in 1..=4 {
+            l.emit(&committed(seq), 20, 10, "grp");
+        }
+        let s = l.stats();
+        assert_eq!((s.stored, s.dropped), (8, 6));
+        l.emit(&committed(5), 21, 10, "grp");
+        let s = l.stats();
+        assert_eq!((s.dropped, s.emitted), (7, 15));
+        assert_eq!(s.emitted, s.stored as u64 + s.dropped);
+    }
+
+    #[test]
+    fn the_acknowledgement_share_is_held_in_bytes_as_well_as_records() {
+        let mut probe = log(64, 65_536);
+        probe.emit_ack(&ack_fact(1), 1, 10, "grp");
+        let one = probe.stats().bytes;
+        // Room for four lines in all, so two for acknowledgements.
+        let mut l = log(64, one * 4);
+        for seq in 1..=5 {
+            l.emit_ack(&ack_fact(seq), 1, 10, "grp");
+        }
+        let s = l.stats();
+        assert_eq!((s.ack_stored, s.ack_dropped, s.dropped), (2, 3, 3));
+        assert!(s.bytes <= one * 4);
+    }
+
+    #[test]
+    fn a_record_too_big_for_any_log_is_dropped_and_counted_never_truncated() {
+        let mut l = log(8, 10);
+        l.emit_ack(&ack_fact(1), 1, 10, "grp");
+        l.emit(&committed(1), 1, 10, "grp");
+        let s = l.stats();
+        assert_eq!(
+            (s.emitted, s.stored, s.dropped, s.ack_dropped),
+            (2, 0, 2, 1)
+        );
+        assert_eq!(l.lines().count(), 0);
+    }
+
+    #[test]
+    fn a_critical_record_makes_room_by_evicting_acknowledgement_records_before_command_records() {
+        let mut l = log(4, 65_536);
+        l.emit(&committed(1), 1, 10, "grp");
+        l.emit(&committed(2), 2, 10, "grp");
+        l.emit_ack(&ack_fact(3), 3, 10, "grp");
+        l.emit_ack(&ack_fact(4), 4, 10, "grp");
+        assert_eq!(l.stats().stored, 4);
+        let critical = fact(5, Outcome::Refused(Refusal::InternalFault), true);
+        l.emit(&critical, 5, 10, "grp");
+        let s = l.stats();
+        assert_eq!(
+            (
+                s.stored,
+                s.ack_stored,
+                s.ack_dropped,
+                s.dropped,
+                s.critical_lost
+            ),
+            (4, 1, 1, 1, 0)
+        );
+        let kinds: Vec<String> = l
+            .lines()
+            .map(|line| {
+                let record: serde_json::Value = serde_json::from_str(line).unwrap();
+                record["event_kind"].as_str().unwrap().to_string()
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                "n02.step.committed",
+                "n02.step.committed",
+                "n02.ack.rejected.duplicate",
+                "n02.step.refused.internal_fault"
+            ]
+        );
+        // Draining empties the log, including the acknowledgement share.
+        assert_eq!(l.drain().len(), 4);
+        assert_eq!((l.stats().stored, l.stats().ack_stored), (0, 0));
     }
 }
