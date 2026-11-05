@@ -16,6 +16,25 @@
 //! behind the issuer's current token, does, and it aborts any proposal in flight. The token's
 //! *authenticity* is the transport's job (N01/N02); this layer decides whether it is *current*.
 //!
+//! Leases and partitions. A lease is only as safe as the rule for replacing it, so replacement is a
+//! quorum protocol over a configured electorate of [`LeaseVoter`]s (crash and partition faults; the
+//! shared group key puts Byzantine peers out of scope). A holder extends its lease only with
+//! acknowledgements from a strict majority of voters: a renewal it could grant itself would let a
+//! partitioned holder renew forever while the majority took over. A voter acknowledges a renewal by
+//! extending its view of the lease. It grants a takeover only if the lease has expired by *its own*
+//! conservative bound, only for the next epoch, and to one candidate per epoch, and having granted
+//! one it refuses every older epoch. Any renewal quorum and any takeover quorum therefore share a
+//! voter that orders them, and because the holder stops `u` (the clock-uncertainty bound) before its
+//! lease expires while a taker waits `u` after it, two valid leaders never overlap. Two partitioned
+//! candidates cannot both reach a majority, and a split vote is a refusal, never a tie. A stale
+//! holder's mutation is fenced by epoch. When a lease lapses, buffered output continues only to the
+//! frame already granted and then mutes; no new output grant is issued without a live lease.
+//!
+//! The one authority-safety state that must survive a restart is each voter's
+//! [`DurableVoterRecord`] (voter id, highest granted epoch, lease view expiry). A voter that restarts
+//! without it refuses to grant or acknowledge anything. That is a deliberate exception to "persist
+//! only stable intent": it is a fencing record, not a convenience.
+//!
 //! Missing acknowledgements never hold the group: at the ack deadline the configured
 //! [`MissingAckPolicy`] either aborts the proposal or excludes the unreachable existing members. An
 //! unreachable *joiner* always aborts. An excluded member is **not** evidence of silence: it is
@@ -108,6 +127,54 @@ pub enum MembershipError {
     EpochNotAdvancing { requested: u64, current: u64 },
     #[error("member `{member_id}` has no unresolved output grant")]
     NoUnresolvedOutput { member_id: String },
+    #[error("the electorate must name at least one voter")]
+    EmptyElectorate,
+    #[error("`{member_id}` is not a voter of this group")]
+    NotAVoter { member_id: String },
+    #[error(
+        "this voter's durable record is unavailable (restart); it refuses until it is restored"
+    )]
+    VoterRecordUnavailable,
+    #[error("this voter has observed no lease, so it cannot judge expiry")]
+    NoLeaseView,
+    #[error("takeover asked for epoch {requested}, but the next epoch is {expected}")]
+    NotNextEpoch { requested: u64, expected: u64 },
+    #[error(
+        "the lease is not expired by this voter's conservative bound ({conservative_expiry_ns} ns; now {now_ns} ns)"
+    )]
+    LeaseNotExpired {
+        conservative_expiry_ns: u64,
+        now_ns: u64,
+    },
+    #[error("epoch {epoch} is held by `{holder}`, not by the requester")]
+    NotLeaseHolder { epoch: u64, holder: String },
+    #[error("the acknowledgement does not match the open request")]
+    AttemptMismatch,
+    #[error("the lease would be over by now ({now_ns} ns; usable until {deadline_ns} ns)")]
+    AttemptExpired { now_ns: u64, deadline_ns: u64 },
+    #[error("no quorum: {have} of {need} acknowledgements")]
+    NoQuorum { have: usize, need: usize },
+    #[error("lease expiry {expires_at_ns} ns is beyond the maximum {max_ns} ns")]
+    LeaseTooLong { expires_at_ns: u64, max_ns: u64 },
+    #[error("lease expiry {expires_at_ns} ns does not extend the current {current_ns} ns")]
+    LeaseNotExtended { expires_at_ns: u64, current_ns: u64 },
+    #[error("epoch {epoch} is held by `{held_by}`; `{announced_by}` also claims it")]
+    ConflictingLeaders {
+        epoch: u64,
+        held_by: String,
+        announced_by: String,
+    },
+    #[error("this quorum result does not apply to the presented token or session")]
+    WinNotApplicable,
+    #[error("output through frame {requested_frame} is beyond the grant horizon {max_frame}")]
+    OutputHorizonExceeded {
+        requested_frame: u64,
+        max_frame: u64,
+    },
+    #[error("this group mints epochs only by voter quorum; the issuer cannot advance it alone")]
+    QuorumRequired,
+    #[error("this group has no voter electorate; its epochs come only from the configured issuer")]
+    NotAQuorumGroup,
 }
 
 impl MembershipError {
@@ -140,6 +207,23 @@ impl MembershipError {
             Self::CutoverBeforeOutputTail { .. } => "CUTOVER_BEFORE_OUTPUT_TAIL",
             Self::EpochNotAdvancing { .. } => "EPOCH_NOT_ADVANCING",
             Self::NoUnresolvedOutput { .. } => "NO_UNRESOLVED_OUTPUT",
+            Self::EmptyElectorate => "EMPTY_ELECTORATE",
+            Self::NotAVoter { .. } => "NOT_A_VOTER",
+            Self::VoterRecordUnavailable => "VOTER_RECORD_UNAVAILABLE",
+            Self::NoLeaseView => "NO_LEASE_VIEW",
+            Self::NotNextEpoch { .. } => "NOT_NEXT_EPOCH",
+            Self::LeaseNotExpired { .. } => "LEASE_NOT_EXPIRED",
+            Self::NotLeaseHolder { .. } => "NOT_LEASE_HOLDER",
+            Self::AttemptMismatch => "ATTEMPT_MISMATCH",
+            Self::AttemptExpired { .. } => "ATTEMPT_EXPIRED",
+            Self::NoQuorum { .. } => "NO_QUORUM",
+            Self::LeaseTooLong { .. } => "LEASE_TOO_LONG",
+            Self::LeaseNotExtended { .. } => "LEASE_NOT_EXTENDED",
+            Self::ConflictingLeaders { .. } => "CONFLICTING_LEADERS",
+            Self::WinNotApplicable => "WIN_NOT_APPLICABLE",
+            Self::OutputHorizonExceeded { .. } => "OUTPUT_HORIZON_EXCEEDED",
+            Self::QuorumRequired => "QUORUM_REQUIRED",
+            Self::NotAQuorumGroup => "NOT_A_QUORUM_GROUP",
         }
     }
 }
@@ -167,11 +251,21 @@ impl AuthorityToken {
 
     /// Whether `session` accepts this token as current at `now_ns`. Pure: nothing changes.
     pub fn check(&self, session: &UnifiedGroupSession, now_ns: u64) -> Result<(), MembershipError> {
+        self.check_with_margin(session, now_ns, 0)
+    }
+
+    /// As [`AuthorityToken::check`], but the holder treats its lease as over `margin_ns` early (the
+    /// clock-uncertainty bound), so it has stopped acting before any taker may start. The epoch is
+    /// judged before the issuer: a stale coordinator names the old issuer *and* the old epoch, and
+    /// is fenced by epoch.
+    pub fn check_with_margin(
+        &self,
+        session: &UnifiedGroupSession,
+        now_ns: u64,
+        margin_ns: u64,
+    ) -> Result<(), MembershipError> {
         if self.group_id != session.group_id {
             return Err(MembershipError::WrongGroup);
-        }
-        if self.issuer_id != session.coordinator_id {
-            return Err(MembershipError::NotConfiguredIssuer);
         }
         if self.epoch < session.current_epoch {
             return Err(MembershipError::StaleAuthority {
@@ -185,13 +279,27 @@ impl AuthorityToken {
                 current_epoch: session.current_epoch,
             });
         }
-        if now_ns >= self.expires_at_ns {
+        if self.issuer_id != session.coordinator_id {
+            return Err(MembershipError::NotConfiguredIssuer);
+        }
+        if now_ns.saturating_add(margin_ns) >= self.expires_at_ns {
             return Err(MembershipError::AuthorityExpired {
                 expires_at_ns: self.expires_at_ns,
                 now_ns,
             });
         }
         Ok(())
+    }
+
+    /// What this lease looks like to a follower or voter that is told about it.
+    #[must_use]
+    pub fn lease_view(&self) -> LeaseView {
+        LeaseView {
+            group_id: self.group_id.clone(),
+            epoch: self.epoch,
+            holder: self.issuer_id.clone(),
+            expires_at_ns: self.expires_at_ns,
+        }
     }
 }
 
@@ -252,12 +360,51 @@ pub enum MissingAckPolicy {
     ExcludeUnreachable,
 }
 
+/// Timing bounds for leases (provisional placeholders until N03 supplies real clock bounds).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LeaseTerms {
+    /// No lease may be proposed or extended further ahead than this.
+    pub max_lease_ns: u64,
+    /// How far apart two nodes' readings of one instant may be. A holder stops this long *before*
+    /// its lease expires and a taker waits this long *after*. The default of 0 assumes perfectly
+    /// agreeing clocks, which no real deployment has: it keeps behaviour exact until a bound exists.
+    pub clock_uncertainty_ns: u64,
+    /// How long after its lease a holder's already-granted output may still sound.
+    pub max_output_horizon_ns: u64,
+}
+
+impl Default for LeaseTerms {
+    fn default() -> Self {
+        Self {
+            max_lease_ns: 5_000_000_000,
+            clock_uncertainty_ns: 0,
+            max_output_horizon_ns: 10_000_000_000,
+        }
+    }
+}
+
+/// Who may mint a new epoch. The two must never be mixed in one group: an issuer that bumps the
+/// epoch alone while a quorum elects someone else at the same epoch would make two leaders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EpochMint {
+    /// The first admitted profile: the configured issuer alone, through
+    /// [`GroupMembership::advance_epoch`]. No electorate exists.
+    ConfiguredIssuer,
+    /// A group with a voter electorate: only a quorum win ([`GroupMembership::assume_authority`])
+    /// mints an epoch, and `advance_epoch` refuses.
+    Quorum,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MembershipConfig {
     /// A cutover must be at least this many frames ahead, so acknowledgements can arrive.
     pub min_cutover_lead_frames: u64,
     pub max_members: usize,
     pub missing_ack_policy: MissingAckPolicy,
+    pub lease: LeaseTerms,
+    /// How far ahead of now an output grant may reach, in frames (10 s at 48 kHz; provisional).
+    pub max_output_horizon_frames: u64,
+    pub epoch_mint: EpochMint,
 }
 
 impl Default for MembershipConfig {
@@ -266,6 +413,9 @@ impl Default for MembershipConfig {
             min_cutover_lead_frames: 4_800,
             max_members: MAX_GROUP_MEMBERS,
             missing_ack_policy: MissingAckPolicy::Abort,
+            lease: LeaseTerms::default(),
+            max_output_horizon_frames: 480_000,
+            epoch_mint: EpochMint::ConfiguredIssuer,
         }
     }
 }
@@ -414,6 +564,582 @@ impl Proposal {
     }
 }
 
+/// What a node last learned about the live lease: who holds it, for which epoch, until when (in the
+/// holder's clock).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LeaseView {
+    pub group_id: String,
+    pub epoch: u64,
+    pub holder: String,
+    pub expires_at_ns: u64,
+}
+
+/// The configured electorate of one group incarnation. A quorum is a strict majority, so an even
+/// electorate can split with nobody winning: that is a refusal, never a tie. Use an odd number.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuorumConfig {
+    group_id: String,
+    voters: BTreeSet<String>,
+}
+
+impl QuorumConfig {
+    pub fn new(group_id: &str, voters: &[&str]) -> Result<Self, MembershipError> {
+        if voters.is_empty() {
+            return Err(MembershipError::EmptyElectorate);
+        }
+        Ok(Self {
+            group_id: group_id.to_string(),
+            voters: voters.iter().map(|v| (*v).to_string()).collect(),
+        })
+    }
+
+    /// Acknowledgements needed: a strict majority of the electorate.
+    #[must_use]
+    pub fn quorum(&self) -> usize {
+        self.voters.len() / 2 + 1
+    }
+
+    #[must_use]
+    pub const fn voters(&self) -> &BTreeSet<String> {
+        &self.voters
+    }
+
+    #[must_use]
+    pub fn group_id(&self) -> &str {
+        &self.group_id
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LeaseRequestKind {
+    /// The holder extends its own epoch's lease.
+    Renew,
+    /// A candidate asks for the next epoch.
+    Takeover,
+}
+
+/// A request to the voters. `expires_at_ns` is the lease the requester proposes, in its own clock.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LeaseRequest {
+    pub kind: LeaseRequestKind,
+    pub group_id: String,
+    pub requester: String,
+    pub epoch: u64,
+    pub expires_at_ns: u64,
+}
+
+/// A voter's answer. `prior_expires_at_ns` is the latest expiry of any earlier lease the voter
+/// knew of (0 for a renewal), so a winner learns how long the previous term could still sound.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LeaseAck {
+    pub kind: LeaseRequestKind,
+    pub group_id: String,
+    pub voter: String,
+    pub requester: String,
+    pub epoch: u64,
+    pub expires_at_ns: u64,
+    pub prior_expires_at_ns: u64,
+}
+
+/// A takeover this voter granted: it will grant no other candidate this epoch or any earlier one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GrantRecord {
+    pub epoch: u64,
+    pub candidate: String,
+    pub expires_at_ns: u64,
+    pub prior_expires_at_ns: u64,
+}
+
+/// The authority-safety state a voter must not lose: its id, the lease it last knew, and the
+/// highest takeover it granted. Losing it could let a voter grant the same epoch twice.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DurableVoterRecord {
+    pub voter_id: String,
+    pub view: Option<LeaseView>,
+    pub grant: Option<GrantRecord>,
+}
+
+/// One voter's side of the lease protocol (see the module documentation).
+#[derive(Debug, Clone)]
+pub struct LeaseVoter {
+    id: String,
+    quorum: QuorumConfig,
+    terms: LeaseTerms,
+    view: Option<LeaseView>,
+    grant: Option<GrantRecord>,
+    record_trusted: bool,
+}
+
+impl LeaseVoter {
+    /// A voter of a newly formed group: there is no earlier record to lose.
+    pub fn new(id: &str, quorum: QuorumConfig, terms: LeaseTerms) -> Result<Self, MembershipError> {
+        if !quorum.voters.contains(id) {
+            return Err(MembershipError::NotAVoter {
+                member_id: id.to_string(),
+            });
+        }
+        Ok(Self {
+            id: id.to_string(),
+            quorum,
+            terms,
+            view: None,
+            grant: None,
+            record_trusted: true,
+        })
+    }
+
+    /// A voter after a restart: it refuses to grant or acknowledge until
+    /// [`LeaseVoter::restore`] gives it the record that was persisted.
+    pub fn after_restart(
+        id: &str,
+        quorum: QuorumConfig,
+        terms: LeaseTerms,
+    ) -> Result<Self, MembershipError> {
+        Ok(Self {
+            record_trusted: false,
+            ..Self::new(id, quorum, terms)?
+        })
+    }
+
+    /// Reinstate the persisted record (what U01 stores).
+    pub fn restore(&mut self, record: DurableVoterRecord) -> Result<(), MembershipError> {
+        if record.voter_id != self.id {
+            return Err(MembershipError::VoterRecordUnavailable);
+        }
+        self.view = record.view;
+        self.grant = record.grant;
+        self.record_trusted = true;
+        Ok(())
+    }
+
+    /// What must be persisted after every change.
+    #[must_use]
+    pub fn durable_record(&self) -> DurableVoterRecord {
+        DurableVoterRecord {
+            voter_id: self.id.clone(),
+            view: self.view.clone(),
+            grant: self.grant.clone(),
+        }
+    }
+
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    #[must_use]
+    pub const fn view(&self) -> Option<&LeaseView> {
+        self.view.as_ref()
+    }
+
+    /// The highest epoch this voter has seen a lease for or granted.
+    fn high_epoch(&self) -> Option<u64> {
+        match (&self.view, &self.grant) {
+            (Some(v), Some(g)) => Some(v.epoch.max(g.epoch)),
+            (Some(v), None) => Some(v.epoch),
+            (None, Some(g)) => Some(g.epoch),
+            (None, None) => None,
+        }
+    }
+
+    /// Adopt `view` as the confirmed lease and drop a grant it supersedes.
+    fn confirm(&mut self, view: LeaseView) {
+        if self.grant.as_ref().is_some_and(|g| g.epoch <= view.epoch) {
+            self.grant = None;
+        }
+        self.view = Some(view);
+    }
+
+    /// Learn a lease announced by its holder (or told by a peer). Older epochs are stale; a second
+    /// holder for an epoch already confirmed is a conflict (which a correct protocol never produces).
+    pub fn observe(&mut self, view: &LeaseView) -> Result<(), MembershipError> {
+        if view.group_id != self.quorum.group_id {
+            return Err(MembershipError::WrongGroup);
+        }
+        if !self.quorum.voters.contains(&view.holder) {
+            return Err(MembershipError::NotAVoter {
+                member_id: view.holder.clone(),
+            });
+        }
+        if let Some(high) = self.high_epoch()
+            && view.epoch < high
+        {
+            return Err(MembershipError::StaleAuthority {
+                token_epoch: view.epoch,
+                current_epoch: high,
+            });
+        }
+        let mut expires_at_ns = view.expires_at_ns;
+        if let Some(current) = &self.view
+            && current.epoch == view.epoch
+        {
+            if current.holder != view.holder {
+                return Err(MembershipError::ConflictingLeaders {
+                    epoch: view.epoch,
+                    held_by: current.holder.clone(),
+                    announced_by: view.holder.clone(),
+                });
+            }
+            expires_at_ns = expires_at_ns.max(current.expires_at_ns);
+        }
+        self.confirm(LeaseView {
+            expires_at_ns,
+            ..view.clone()
+        });
+        Ok(())
+    }
+
+    /// The request this voter, as the lease holder, sends to extend its lease to `now + lease_ns`.
+    pub fn renew_request(
+        &self,
+        now_ns: u64,
+        lease_ns: u64,
+    ) -> Result<LeaseRequest, MembershipError> {
+        let Some(view) = &self.view else {
+            return Err(MembershipError::NoLeaseView);
+        };
+        if view.holder != self.id {
+            return Err(MembershipError::NotLeaseHolder {
+                epoch: view.epoch,
+                holder: view.holder.clone(),
+            });
+        }
+        self.request(LeaseRequestKind::Renew, view.epoch, now_ns, lease_ns)
+    }
+
+    /// The request this voter, as a candidate, sends to take over. A candidate that already holds
+    /// its own unfinished grant asks for that same epoch again; otherwise for the next one.
+    pub fn takeover_request(
+        &self,
+        now_ns: u64,
+        lease_ns: u64,
+    ) -> Result<LeaseRequest, MembershipError> {
+        let Some(high) = self.high_epoch() else {
+            return Err(MembershipError::NoLeaseView);
+        };
+        let epoch = match &self.grant {
+            Some(g) if g.candidate == self.id => g.epoch,
+            _ => high.saturating_add(1),
+        };
+        self.request(LeaseRequestKind::Takeover, epoch, now_ns, lease_ns)
+    }
+
+    fn request(
+        &self,
+        kind: LeaseRequestKind,
+        epoch: u64,
+        now_ns: u64,
+        lease_ns: u64,
+    ) -> Result<LeaseRequest, MembershipError> {
+        if lease_ns > self.terms.max_lease_ns {
+            return Err(MembershipError::LeaseTooLong {
+                expires_at_ns: now_ns.saturating_add(lease_ns),
+                max_ns: now_ns.saturating_add(self.terms.max_lease_ns),
+            });
+        }
+        Ok(LeaseRequest {
+            kind,
+            group_id: self.quorum.group_id.clone(),
+            requester: self.id.clone(),
+            epoch,
+            expires_at_ns: now_ns.saturating_add(lease_ns),
+        })
+    }
+
+    /// Answer a renewal or takeover request, judged by this voter's own clock reading `now_ns`.
+    pub fn respond(
+        &mut self,
+        request: &LeaseRequest,
+        now_ns: u64,
+    ) -> Result<LeaseAck, MembershipError> {
+        if !self.record_trusted {
+            return Err(MembershipError::VoterRecordUnavailable);
+        }
+        if request.group_id != self.quorum.group_id {
+            return Err(MembershipError::WrongGroup);
+        }
+        if !self.quorum.voters.contains(&request.requester) {
+            return Err(MembershipError::NotAVoter {
+                member_id: request.requester.clone(),
+            });
+        }
+        let prior_expires_at_ns = match request.kind {
+            LeaseRequestKind::Renew => self.acknowledge_renewal(request)?,
+            LeaseRequestKind::Takeover => self.grant_takeover(request, now_ns)?,
+        };
+        Ok(LeaseAck {
+            kind: request.kind,
+            group_id: request.group_id.clone(),
+            voter: self.id.clone(),
+            requester: request.requester.clone(),
+            epoch: request.epoch,
+            expires_at_ns: request.expires_at_ns,
+            prior_expires_at_ns,
+        })
+    }
+
+    fn acknowledge_renewal(&mut self, request: &LeaseRequest) -> Result<u64, MembershipError> {
+        let Some(high) = self.high_epoch() else {
+            return Err(MembershipError::NoLeaseView);
+        };
+        // A voter that granted epoch e+1 refuses every renewal of an older epoch: this is the
+        // ordering that keeps a renewal quorum and a takeover quorum from both succeeding.
+        if request.epoch < high {
+            return Err(MembershipError::StaleAuthority {
+                token_epoch: request.epoch,
+                current_epoch: high,
+            });
+        }
+        // A renewal extends a lease this voter knows to be the requester's: the confirmed lease,
+        // or the takeover it granted to the requester. An epoch it has never heard of cannot be
+        // minted by renewing it.
+        let expires_at_ns = match (&self.view, &self.grant) {
+            (Some(view), _) if view.epoch == request.epoch => {
+                if view.holder != request.requester {
+                    return Err(MembershipError::NotLeaseHolder {
+                        epoch: view.epoch,
+                        holder: view.holder.clone(),
+                    });
+                }
+                request.expires_at_ns.max(view.expires_at_ns)
+            }
+            (_, Some(grant)) if grant.epoch == request.epoch => {
+                if grant.candidate != request.requester {
+                    return Err(MembershipError::NotLeaseHolder {
+                        epoch: grant.epoch,
+                        holder: grant.candidate.clone(),
+                    });
+                }
+                request.expires_at_ns.max(grant.expires_at_ns)
+            }
+            _ => {
+                return Err(MembershipError::FutureAuthority {
+                    token_epoch: request.epoch,
+                    current_epoch: high,
+                });
+            }
+        };
+        self.confirm(LeaseView {
+            group_id: request.group_id.clone(),
+            epoch: request.epoch,
+            holder: request.requester.clone(),
+            expires_at_ns,
+        });
+        Ok(0)
+    }
+
+    fn grant_takeover(
+        &mut self,
+        request: &LeaseRequest,
+        now_ns: u64,
+    ) -> Result<u64, MembershipError> {
+        let Some(high) = self.high_epoch() else {
+            return Err(MembershipError::NoLeaseView);
+        };
+        // The same candidate asking again for the epoch it was already granted: idempotent.
+        if let Some(grant) = &mut self.grant
+            && grant.epoch == request.epoch
+            && grant.candidate == request.requester
+        {
+            grant.expires_at_ns = grant.expires_at_ns.max(request.expires_at_ns);
+            return Ok(grant.prior_expires_at_ns);
+        }
+        // One candidate per epoch: a rival for an epoch already granted is refused, never tied.
+        if let Some(grant) = &self.grant
+            && grant.epoch == request.epoch
+        {
+            return Err(MembershipError::ConflictingLeaders {
+                epoch: grant.epoch,
+                held_by: grant.candidate.clone(),
+                announced_by: request.requester.clone(),
+            });
+        }
+        if request.epoch != high.saturating_add(1) {
+            return Err(MembershipError::NotNextEpoch {
+                requested: request.epoch,
+                expected: high.saturating_add(1),
+            });
+        }
+        // The previous term may last until the latest expiry this voter knows of, in the holder's
+        // clock; wait out the clock uncertainty on top, by this voter's own reading.
+        let latest = self
+            .view
+            .iter()
+            .map(|v| v.expires_at_ns)
+            .chain(self.grant.iter().map(|g| g.expires_at_ns))
+            .max()
+            .unwrap_or(0);
+        let conservative_expiry_ns = latest.saturating_add(self.terms.clock_uncertainty_ns);
+        if now_ns < conservative_expiry_ns {
+            return Err(MembershipError::LeaseNotExpired {
+                conservative_expiry_ns,
+                now_ns,
+            });
+        }
+        self.grant = Some(GrantRecord {
+            epoch: request.epoch,
+            candidate: request.requester.clone(),
+            expires_at_ns: request.expires_at_ns,
+            prior_expires_at_ns: latest,
+        });
+        Ok(latest)
+    }
+}
+
+/// What a requester gathers acknowledgements into. Everything it concludes is judged against the
+/// lease it proposed: once that lease could no longer be relied on, the round is over.
+#[derive(Debug, Clone)]
+pub struct QuorumRound {
+    request: LeaseRequest,
+    quorum: usize,
+    voters: BTreeSet<String>,
+    uncertainty_ns: u64,
+    acks: BTreeMap<String, u64>,
+}
+
+/// A request that gathered a quorum. It is evidence that the protocol agreed, not itself authority:
+/// the engine applies it ([`GroupMembership::renew_lease`], [`GroupMembership::assume_authority`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeaseWin {
+    kind: LeaseRequestKind,
+    group_id: String,
+    requester: String,
+    epoch: u64,
+    expires_at_ns: u64,
+    prior_expires_at_ns: u64,
+    acks: usize,
+}
+
+impl LeaseWin {
+    #[must_use]
+    pub const fn kind(&self) -> LeaseRequestKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub fn requester(&self) -> &str {
+        &self.requester
+    }
+
+    #[must_use]
+    pub const fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    #[must_use]
+    pub const fn expires_at_ns(&self) -> u64 {
+        self.expires_at_ns
+    }
+
+    /// The latest expiry of the previous term among the acknowledging voters.
+    #[must_use]
+    pub const fn prior_expires_at_ns(&self) -> u64 {
+        self.prior_expires_at_ns
+    }
+
+    #[must_use]
+    pub const fn acks(&self) -> usize {
+        self.acks
+    }
+}
+
+impl QuorumRound {
+    pub fn start(
+        quorum: &QuorumConfig,
+        terms: LeaseTerms,
+        request: LeaseRequest,
+        now_ns: u64,
+    ) -> Result<Self, MembershipError> {
+        if request.group_id != quorum.group_id {
+            return Err(MembershipError::WrongGroup);
+        }
+        if !quorum.voters.contains(&request.requester) {
+            return Err(MembershipError::NotAVoter {
+                member_id: request.requester.clone(),
+            });
+        }
+        let max_ns = now_ns.saturating_add(terms.max_lease_ns);
+        if request.expires_at_ns > max_ns {
+            return Err(MembershipError::LeaseTooLong {
+                expires_at_ns: request.expires_at_ns,
+                max_ns,
+            });
+        }
+        let round = Self {
+            quorum: quorum.quorum(),
+            voters: quorum.voters.clone(),
+            uncertainty_ns: terms.clock_uncertainty_ns,
+            acks: BTreeMap::new(),
+            request,
+        };
+        round.check_live(now_ns)?;
+        Ok(round)
+    }
+
+    #[must_use]
+    pub const fn request(&self) -> &LeaseRequest {
+        &self.request
+    }
+
+    /// The proposed lease has to be usable with the margin to spare, or the round is over.
+    fn check_live(&self, now_ns: u64) -> Result<(), MembershipError> {
+        let deadline_ns = self
+            .request
+            .expires_at_ns
+            .saturating_sub(self.uncertainty_ns);
+        if now_ns >= deadline_ns {
+            return Err(MembershipError::AttemptExpired {
+                now_ns,
+                deadline_ns,
+            });
+        }
+        Ok(())
+    }
+
+    /// Record one voter's acknowledgement. A repeat counts once.
+    pub fn record(&mut self, ack: &LeaseAck, now_ns: u64) -> Result<(), MembershipError> {
+        let r = &self.request;
+        if ack.kind != r.kind
+            || ack.group_id != r.group_id
+            || ack.requester != r.requester
+            || ack.epoch != r.epoch
+            || ack.expires_at_ns != r.expires_at_ns
+        {
+            return Err(MembershipError::AttemptMismatch);
+        }
+        if !self.voters.contains(&ack.voter) {
+            return Err(MembershipError::NotAVoter {
+                member_id: ack.voter.clone(),
+            });
+        }
+        self.check_live(now_ns)?;
+        self.acks.insert(ack.voter.clone(), ack.prior_expires_at_ns);
+        Ok(())
+    }
+
+    /// The result so far: a win once a strict majority has acknowledged; otherwise a refusal
+    /// (`NO_QUORUM`) that says how far short it is.
+    pub fn outcome(&self, now_ns: u64) -> Result<LeaseWin, MembershipError> {
+        self.check_live(now_ns)?;
+        if self.acks.len() < self.quorum {
+            return Err(MembershipError::NoQuorum {
+                have: self.acks.len(),
+                need: self.quorum,
+            });
+        }
+        Ok(LeaseWin {
+            kind: self.request.kind,
+            group_id: self.request.group_id.clone(),
+            requester: self.request.requester.clone(),
+            epoch: self.request.epoch,
+            expires_at_ns: self.request.expires_at_ns,
+            prior_expires_at_ns: self.acks.values().copied().max().unwrap_or(0),
+            acks: self.acks.len(),
+        })
+    }
+}
+
 /// The membership cutover engine for one group. Methods that read the group take the session;
 /// only activation (in [`GroupMembership::tick`]) and [`GroupMembership::advance_epoch`] change it.
 #[derive(Debug)]
@@ -424,6 +1150,10 @@ pub struct GroupMembership {
     current: Option<Proposal>,
     history: VecDeque<(u64, ProposalStatus)>,
     unresolved_output: BTreeMap<String, OutputBound>,
+    /// Output this holder has granted, per member: sounding is permitted only below this frame.
+    output_grants: BTreeMap<String, u64>,
+    /// After a takeover: the earliest instant (this node's clock) a conflicting program may start.
+    takeover_gate_until_ns: Option<u64>,
 }
 
 impl GroupMembership {
@@ -437,7 +1167,31 @@ impl GroupMembership {
             current: None,
             history: VecDeque::new(),
             unresolved_output: BTreeMap::new(),
+            output_grants: BTreeMap::new(),
+            takeover_gate_until_ns: None,
         }
+    }
+
+    /// The one authority rule every mutation applies: the token is current for this group and the
+    /// holder is still `clock_uncertainty_ns` short of its lease expiry.
+    fn authorize(
+        &self,
+        session: &UnifiedGroupSession,
+        token: &AuthorityToken,
+        now_ns: u64,
+    ) -> Result<(), MembershipError> {
+        token.check_with_margin(session, now_ns, self.config.lease.clock_uncertainty_ns)
+    }
+
+    /// Whether `token` still lets its holder act, by this engine's conservative reading.
+    #[must_use]
+    pub fn lease_is_live(
+        &self,
+        session: &UnifiedGroupSession,
+        token: &AuthorityToken,
+        now_ns: u64,
+    ) -> bool {
+        self.authorize(session, token, now_ns).is_ok()
     }
 
     /// An engine after a restart: every mutation is refused until
@@ -457,7 +1211,7 @@ impl GroupMembership {
         token: &AuthorityToken,
         now_ns: u64,
     ) -> Result<(), MembershipError> {
-        token.check(session, now_ns)?;
+        self.authorize(session, token, now_ns)?;
         self.authority_discovered = true;
         Ok(())
     }
@@ -485,6 +1239,15 @@ impl GroupMembership {
             Ok(())
         } else {
             Err(MembershipError::AuthorityNotDiscovered)
+        }
+    }
+
+    /// Lease renewal, takeover and adoption exist only for a group that elects by voter quorum.
+    fn require_quorum_group(&self) -> Result<(), MembershipError> {
+        if self.config.epoch_mint == EpochMint::Quorum {
+            Ok(())
+        } else {
+            Err(MembershipError::NotAQuorumGroup)
         }
     }
 
@@ -539,7 +1302,7 @@ impl GroupMembership {
         now: GroupTime,
     ) -> Result<u64, MembershipError> {
         self.require_discovered()?;
-        token.check(session, now.ns)?;
+        self.authorize(session, token, now.ns)?;
         if let Some(current) = &self.current {
             return Err(MembershipError::ProposalPending {
                 pending: current.id,
@@ -664,7 +1427,7 @@ impl GroupMembership {
         now: GroupTime,
     ) -> Result<ProposalStatus, MembershipError> {
         self.require_discovered()?;
-        token.check(session, now.ns)?;
+        self.authorize(session, token, now.ns)?;
         self.ensure_live(proposal_id)?;
         let Some(p) = self.current.as_mut() else {
             return Err(MembershipError::UnknownProposal { id: proposal_id });
@@ -719,7 +1482,7 @@ impl GroupMembership {
         now: GroupTime,
     ) -> Result<ProposalStatus, MembershipError> {
         self.require_discovered()?;
-        token.check(session, now.ns)?;
+        self.authorize(session, token, now.ns)?;
         self.ensure_live(proposal_id)?;
         let status = ProposalStatus::Aborted {
             reason: AbortReason::ByAuthority,
@@ -838,7 +1601,10 @@ impl GroupMembership {
         now: GroupTime,
     ) -> Result<AuthorityToken, MembershipError> {
         self.require_discovered()?;
-        token.check(session, now.ns)?;
+        if self.config.epoch_mint == EpochMint::Quorum {
+            return Err(MembershipError::QuorumRequired);
+        }
+        self.authorize(session, token, now.ns)?;
         if new_epoch <= session.current_epoch {
             return Err(MembershipError::EpochNotAdvancing {
                 requested: new_epoch,
@@ -855,6 +1621,193 @@ impl GroupMembership {
         }
         session.begin_epoch(new_epoch);
         Ok(AuthorityToken::issue(session, token.expires_at_ns))
+    }
+
+    /// Extend the holder's own lease to what a voter quorum acknowledged. The holder must still be
+    /// live: once its lease has lapsed (by its conservative reading) it cannot be renewed, because
+    /// the majority may already be taking over; it has to win a new epoch instead.
+    pub fn renew_lease(
+        &mut self,
+        session: &UnifiedGroupSession,
+        token: &AuthorityToken,
+        win: &LeaseWin,
+        now: GroupTime,
+    ) -> Result<AuthorityToken, MembershipError> {
+        self.require_quorum_group()?;
+        self.require_discovered()?;
+        self.authorize(session, token, now.ns)?;
+        if win.kind != LeaseRequestKind::Renew
+            || win.group_id != token.group_id
+            || win.requester != token.issuer_id
+            || win.epoch != token.epoch
+        {
+            return Err(MembershipError::WinNotApplicable);
+        }
+        if win.expires_at_ns <= token.expires_at_ns {
+            return Err(MembershipError::LeaseNotExtended {
+                expires_at_ns: win.expires_at_ns,
+                current_ns: token.expires_at_ns,
+            });
+        }
+        let max_ns = now.ns.saturating_add(self.config.lease.max_lease_ns);
+        if win.expires_at_ns > max_ns {
+            return Err(MembershipError::LeaseTooLong {
+                expires_at_ns: win.expires_at_ns,
+                max_ns,
+            });
+        }
+        Ok(AuthorityToken {
+            expires_at_ns: win.expires_at_ns,
+            ..token.clone()
+        })
+    }
+
+    /// Become the group's issuer for the epoch a voter quorum granted. The previous holder's
+    /// session state is not touched here; it is fenced by epoch wherever the new epoch is known.
+    /// Any proposal in flight under the old authority is aborted, and conflicting programs stay
+    /// gated until the previous term's already-granted output can no longer sound.
+    pub fn assume_authority(
+        &mut self,
+        session: &mut UnifiedGroupSession,
+        win: &LeaseWin,
+        now: GroupTime,
+    ) -> Result<AuthorityToken, MembershipError> {
+        self.require_quorum_group()?;
+        self.require_discovered()?;
+        if win.kind != LeaseRequestKind::Takeover || win.group_id != session.group_id {
+            return Err(MembershipError::WinNotApplicable);
+        }
+        if win.epoch <= session.current_epoch {
+            return Err(MembershipError::StaleAuthority {
+                token_epoch: win.epoch,
+                current_epoch: session.current_epoch,
+            });
+        }
+        let margin = self.config.lease.clock_uncertainty_ns;
+        if now.ns.saturating_add(margin) >= win.expires_at_ns {
+            return Err(MembershipError::AuthorityExpired {
+                expires_at_ns: win.expires_at_ns,
+                now_ns: now.ns,
+            });
+        }
+        if let Some(p) = self.current.take() {
+            self.finish(
+                p.id,
+                ProposalStatus::Aborted {
+                    reason: AbortReason::EpochAdvanced,
+                },
+            );
+        }
+        session.coordinator_id.clone_from(&win.requester);
+        session.begin_epoch(win.epoch);
+        // Output the previous holder granted can sound for its horizon after its last lease expired.
+        self.takeover_gate_until_ns = Some(
+            win.prior_expires_at_ns
+                .saturating_add(self.config.lease.max_output_horizon_ns)
+                .saturating_add(margin),
+        );
+        Ok(AuthorityToken {
+            group_id: session.group_id.clone(),
+            issuer_id: win.requester.clone(),
+            epoch: win.epoch,
+            expires_at_ns: win.expires_at_ns,
+        })
+    }
+
+    /// Learn that a newer epoch has a holder (an announcement, or the first message of the new term).
+    /// A node that was the old holder stops being able to act the moment it adopts. Two different
+    /// holders for one epoch can only come from a protocol violation and is reported as a conflict.
+    pub fn adopt_authority(
+        &mut self,
+        session: &mut UnifiedGroupSession,
+        view: &LeaseView,
+    ) -> Result<(), MembershipError> {
+        self.require_quorum_group()?;
+        if view.group_id != session.group_id {
+            return Err(MembershipError::WrongGroup);
+        }
+        if view.epoch < session.current_epoch {
+            return Err(MembershipError::StaleAuthority {
+                token_epoch: view.epoch,
+                current_epoch: session.current_epoch,
+            });
+        }
+        if view.epoch == session.current_epoch {
+            return if view.holder == session.coordinator_id {
+                // Learning who holds the epoch is how a restarted follower rediscovers authority.
+                self.authority_discovered = true;
+                Ok(())
+            } else {
+                Err(MembershipError::ConflictingLeaders {
+                    epoch: view.epoch,
+                    held_by: session.coordinator_id.clone(),
+                    announced_by: view.holder.clone(),
+                })
+            };
+        }
+        if let Some(p) = self.current.take() {
+            self.finish(
+                p.id,
+                ProposalStatus::Aborted {
+                    reason: AbortReason::EpochAdvanced,
+                },
+            );
+        }
+        session.coordinator_id.clone_from(&view.holder);
+        session.begin_epoch(view.epoch);
+        self.authority_discovered = true;
+        Ok(())
+    }
+
+    /// Authorise `member_id` to sound output through (not including) `through_frame`. Needs a live
+    /// lease. Grants are bounded by a horizon and only ever extend, so when a lease lapses the
+    /// member plays out exactly what it was already granted and then mutes; nothing new is issued
+    /// without a live lease.
+    pub fn grant_output(
+        &mut self,
+        session: &UnifiedGroupSession,
+        token: &AuthorityToken,
+        member_id: &str,
+        through_frame: u64,
+        now: GroupTime,
+    ) -> Result<u64, MembershipError> {
+        self.require_discovered()?;
+        self.authorize(session, token, now.ns)?;
+        if !session.members.contains_key(member_id) {
+            return Err(MembershipError::UnknownMember {
+                member_id: member_id.to_string(),
+            });
+        }
+        let max_frame = now
+            .frame
+            .saturating_add(self.config.max_output_horizon_frames);
+        if through_frame > max_frame {
+            return Err(MembershipError::OutputHorizonExceeded {
+                requested_frame: through_frame,
+                max_frame,
+            });
+        }
+        let granted = self.output_grants.entry(member_id.to_string()).or_insert(0);
+        *granted = (*granted).max(through_frame);
+        Ok(*granted)
+    }
+
+    /// May `member_id` sound the sample at `frame`? Only below a frame it was granted.
+    #[must_use]
+    pub fn output_permitted(&self, member_id: &str, frame: u64) -> bool {
+        self.output_grants
+            .get(member_id)
+            .is_some_and(|through| frame < *through)
+    }
+
+    /// After a takeover, may a program that conflicts with the previous term's output start at
+    /// `now_ns` (this node's clock)? `Err` carries the instant it may. A node that never took over
+    /// has no gate.
+    pub fn takeover_start_gate(&self, now_ns: u64) -> Result<(), u64> {
+        match self.takeover_gate_until_ns {
+            Some(until) if now_ns < until => Err(until),
+            _ => Ok(()),
+        }
     }
 
     /// Members excluded from a cutover whose earlier output is not yet shown to have ended.
@@ -971,7 +1924,12 @@ mod tests {
 
     /// Epoch 1, issuer `coord`, members `a` (S5) and `b` (S12), state revision 2.
     fn session() -> UnifiedGroupSession {
-        let mut s = UnifiedGroupSession::new("grp", "coord", 1);
+        session_for("coord")
+    }
+
+    /// As [`session`], with `issuer` as the configured issuer.
+    fn session_for(issuer: &str) -> UnifiedGroupSession {
+        let mut s = UnifiedGroupSession::new("grp", issuer, 1);
         for (seq, (id, model)) in [("a", "S5"), ("b", "S12")].into_iter().enumerate() {
             s.apply_command(FencedControlCommand {
                 epoch: 1,
@@ -2356,5 +3314,1635 @@ mod tests {
             }
         }
         counts
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Leases, quorum renewal, takeover and partitions (slice 2). Every number below is derived
+    // by hand from the protocol rules, not read back from the code under test.
+    // ---------------------------------------------------------------------------------------
+
+    fn lease_terms(uncertainty_ns: u64) -> LeaseTerms {
+        LeaseTerms {
+            max_lease_ns: 1_000,
+            clock_uncertainty_ns: uncertainty_ns,
+            max_output_horizon_ns: 500,
+        }
+    }
+
+    fn quorum_membership_config(terms: LeaseTerms) -> MembershipConfig {
+        MembershipConfig {
+            epoch_mint: EpochMint::Quorum,
+            lease: terms,
+            max_output_horizon_frames: 1_000,
+            ..MembershipConfig::default()
+        }
+    }
+
+    fn quorum_engine(terms: LeaseTerms) -> GroupMembership {
+        GroupMembership::new(quorum_membership_config(terms))
+    }
+
+    /// Voters `v1..vN` of group `grp`.
+    fn quorum_config(n: usize) -> QuorumConfig {
+        let ids: Vec<String> = (1..=n).map(|i| format!("v{i}")).collect();
+        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+        QuorumConfig::new("grp", &refs).unwrap()
+    }
+
+    /// One voter per electorate member, in id order (`v1` is index 0).
+    fn voters_of(q: &QuorumConfig, terms: LeaseTerms) -> Vec<LeaseVoter> {
+        q.voters()
+            .iter()
+            .map(|id| LeaseVoter::new(id, q.clone(), terms).unwrap())
+            .collect()
+    }
+
+    fn lease_view(epoch: u64, holder: &str, expires_at_ns: u64) -> LeaseView {
+        LeaseView {
+            group_id: "grp".to_string(),
+            epoch,
+            holder: holder.to_string(),
+            expires_at_ns,
+        }
+    }
+
+    /// Group formation: every voter learns the founding lease (epoch 1).
+    fn found(voters: &mut [LeaseVoter], holder: &str, expires_at_ns: u64) {
+        let view = lease_view(1, holder, expires_at_ns);
+        for voter in voters {
+            voter.observe(&view).unwrap();
+        }
+    }
+
+    /// The requester (clock reading `now_ns`) sends `request` to the voters at `reach`; voter `i`
+    /// judges it by `clocks[i]`. A refusing voter simply does not acknowledge.
+    fn gather(
+        q: &QuorumConfig,
+        terms: LeaseTerms,
+        voters: &mut [LeaseVoter],
+        request: &LeaseRequest,
+        reach: &[usize],
+        clocks: &[u64],
+        now_ns: u64,
+    ) -> Result<LeaseWin, MembershipError> {
+        let mut round = QuorumRound::start(q, terms, request.clone(), now_ns)?;
+        for &i in reach {
+            if let Ok(ack) = voters[i].respond(request, clocks[i]) {
+                round.record(&ack, now_ns)?;
+            }
+        }
+        round.outcome(now_ns)
+    }
+
+    #[test]
+    fn a_quorum_is_a_strict_majority_and_only_voters_may_take_part() {
+        assert_eq!(
+            QuorumConfig::new("grp", &[]),
+            Err(MembershipError::EmptyElectorate)
+        );
+        for (n, need) in [(1, 1), (2, 2), (3, 2), (4, 3), (5, 3), (7, 4)] {
+            assert_eq!(quorum_config(n).quorum(), need, "{n} voters");
+        }
+        // A repeated name is one voter.
+        assert_eq!(
+            QuorumConfig::new("grp", &["a", "a", "b"]).unwrap().quorum(),
+            2
+        );
+        let q = quorum_config(3);
+        assert_eq!(
+            LeaseVoter::new("zz", q.clone(), lease_terms(0)).err(),
+            Some(MembershipError::NotAVoter {
+                member_id: "zz".to_string()
+            })
+        );
+        let mut voters = voters_of(&q, lease_terms(0));
+        let stranger = LeaseRequest {
+            kind: LeaseRequestKind::Takeover,
+            group_id: "grp".to_string(),
+            requester: "zz".to_string(),
+            epoch: 2,
+            expires_at_ns: 2_000,
+        };
+        assert_eq!(
+            voters[0].respond(&stranger, 5_000).err(),
+            Some(MembershipError::NotAVoter {
+                member_id: "zz".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn a_renewal_needs_a_majority_so_a_minority_cannot_extend_a_lease() {
+        let terms = lease_terms(50);
+        let q = quorum_config(3);
+        let mut voters = voters_of(&q, terms);
+        found(&mut voters, "v1", 1_000);
+        let s = session_for("v1");
+        let mut m = quorum_engine(terms);
+        let tok = AuthorityToken::issue(&s, 1_000);
+        let clocks = [500; 3];
+
+        // Alone, the holder has one acknowledgement of the two it needs.
+        let request = voters[0].renew_request(500, 900).unwrap();
+        assert_eq!(request.expires_at_ns, 1_400);
+        assert_eq!(
+            gather(&q, terms, &mut voters, &request, &[0], &clocks, 500).err(),
+            Some(MembershipError::NoQuorum { have: 1, need: 2 })
+        );
+        // With a second voter it extends.
+        let win = gather(&q, terms, &mut voters, &request, &[0, 1], &clocks, 500).unwrap();
+        assert_eq!(
+            (
+                win.kind(),
+                win.requester(),
+                win.epoch(),
+                win.expires_at_ns(),
+                win.prior_expires_at_ns(),
+                win.acks()
+            ),
+            (LeaseRequestKind::Renew, "v1", 1, 1_400, 0, 2)
+        );
+        let renewed = m.renew_lease(&s, &tok, &win, t(500, 10_000)).unwrap();
+        assert_eq!(
+            (
+                renewed.epoch,
+                renewed.expires_at_ns,
+                renewed.issuer_id.as_str()
+            ),
+            (1, 1_400, "v1")
+        );
+        // The same result extends nothing the second time.
+        assert_eq!(
+            m.renew_lease(&s, &renewed, &win, t(510, 10_100)).err(),
+            Some(MembershipError::LeaseNotExtended {
+                expires_at_ns: 1_400,
+                current_ns: 1_400
+            })
+        );
+        // A lease cannot be asked for beyond the maximum (500 + 1_000 = 1_500).
+        assert_eq!(
+            voters[0].renew_request(500, 1_001).err(),
+            Some(MembershipError::LeaseTooLong {
+                expires_at_ns: 1_501,
+                max_ns: 1_500
+            })
+        );
+        // Once the holder's own margin has passed (1_360 + 50 >= 1_400) it cannot renew at all:
+        // the majority may already be taking over, and a new epoch has to be won instead.
+        assert_eq!(
+            m.renew_lease(&s, &renewed, &win, t(1_360, 10_000)).err(),
+            Some(MembershipError::AuthorityExpired {
+                expires_at_ns: 1_400,
+                now_ns: 1_360
+            })
+        );
+    }
+
+    #[test]
+    fn acknowledgements_must_match_the_open_request_and_a_repeat_counts_once() {
+        let terms = lease_terms(50);
+        let q = quorum_config(3);
+        let mut voters = voters_of(&q, terms);
+        found(&mut voters, "v1", 1_000);
+        let request = voters[0].renew_request(500, 900).unwrap();
+        let mut round = QuorumRound::start(&q, terms, request.clone(), 500).unwrap();
+        let ack = voters[1].respond(&request, 500).unwrap();
+        for (label, bad) in [
+            (
+                "epoch",
+                LeaseAck {
+                    epoch: 2,
+                    ..ack.clone()
+                },
+            ),
+            (
+                "expiry",
+                LeaseAck {
+                    expires_at_ns: 1_300,
+                    ..ack.clone()
+                },
+            ),
+            (
+                "kind",
+                LeaseAck {
+                    kind: LeaseRequestKind::Takeover,
+                    ..ack.clone()
+                },
+            ),
+            (
+                "requester",
+                LeaseAck {
+                    requester: "v3".to_string(),
+                    ..ack.clone()
+                },
+            ),
+            (
+                "group",
+                LeaseAck {
+                    group_id: "other".to_string(),
+                    ..ack.clone()
+                },
+            ),
+        ] {
+            assert_eq!(
+                round.record(&bad, 500),
+                Err(MembershipError::AttemptMismatch),
+                "{label}"
+            );
+        }
+        assert_eq!(
+            round.record(
+                &LeaseAck {
+                    voter: "zz".to_string(),
+                    ..ack.clone()
+                },
+                500
+            ),
+            Err(MembershipError::NotAVoter {
+                member_id: "zz".to_string()
+            })
+        );
+        round.record(&ack, 500).unwrap();
+        round.record(&ack, 500).unwrap();
+        assert_eq!(
+            round.outcome(500).err(),
+            Some(MembershipError::NoQuorum { have: 1, need: 2 }),
+            "one voter acknowledging twice is still one voter"
+        );
+        // Requests from outside the electorate, or for another group, never start a round.
+        let outsider = LeaseRequest {
+            requester: "zz".to_string(),
+            ..request.clone()
+        };
+        assert_eq!(
+            QuorumRound::start(&q, terms, outsider, 500).err(),
+            Some(MembershipError::NotAVoter {
+                member_id: "zz".to_string()
+            })
+        );
+        let foreign = LeaseRequest {
+            group_id: "other".to_string(),
+            ..request.clone()
+        };
+        assert_eq!(
+            QuorumRound::start(&q, terms, foreign, 500).err(),
+            Some(MembershipError::WrongGroup)
+        );
+        // The round is over once the lease it proposed could no longer be relied on:
+        // 1_400 - 50 = 1_350. A late quorum is no quorum.
+        let second = voters[2].respond(&request, 500).unwrap();
+        round.record(&second, 1_349).unwrap();
+        assert!(round.outcome(1_349).is_ok());
+        let over = MembershipError::AttemptExpired {
+            now_ns: 1_350,
+            deadline_ns: 1_350,
+        };
+        assert_eq!(round.outcome(1_350).err(), Some(over.clone()));
+        assert_eq!(round.record(&ack, 1_350), Err(over.clone()));
+        assert_eq!(
+            QuorumRound::start(&q, terms, request, 1_350).err(),
+            Some(over)
+        );
+    }
+
+    #[test]
+    fn a_takeover_waits_for_the_conservative_expiry_and_is_granted_to_one_candidate() {
+        let terms = lease_terms(50);
+        let q = quorum_config(3);
+        let mut voters = voters_of(&q, terms);
+        found(&mut voters, "v1", 1_000);
+        let request = voters[1].takeover_request(1_050, 500).unwrap();
+        assert_eq!(
+            (
+                request.epoch,
+                request.expires_at_ns,
+                request.requester.as_str()
+            ),
+            (2, 1_550, "v2")
+        );
+        // The lease ends at 1_000 by the holder's clock; this voter waits the 50 ns of clock
+        // uncertainty on top, by its own reading.
+        assert_eq!(
+            voters[2].respond(&request, 1_049).err(),
+            Some(MembershipError::LeaseNotExpired {
+                conservative_expiry_ns: 1_050,
+                now_ns: 1_049
+            })
+        );
+        assert_eq!(
+            voters[2].durable_record().grant,
+            None,
+            "a refusal records nothing"
+        );
+        let ack = voters[2].respond(&request, 1_050).unwrap();
+        assert_eq!(
+            (ack.voter.as_str(), ack.epoch, ack.prior_expires_at_ns),
+            ("v3", 2, 1_000)
+        );
+        assert_eq!(
+            voters[2].respond(&request, 1_060).unwrap(),
+            ack,
+            "the same candidate asking again is answered the same"
+        );
+        assert_eq!(
+            voters[2].durable_record().grant,
+            Some(GrantRecord {
+                epoch: 2,
+                candidate: "v2".to_string(),
+                expires_at_ns: 1_550,
+                prior_expires_at_ns: 1_000
+            })
+        );
+        // One candidate per epoch.
+        let rival = LeaseRequest {
+            requester: "v1".to_string(),
+            ..request.clone()
+        };
+        assert_eq!(
+            voters[2].respond(&rival, 1_100).err(),
+            Some(MembershipError::ConflictingLeaders {
+                epoch: 2,
+                held_by: "v2".to_string(),
+                announced_by: "v1".to_string()
+            })
+        );
+        // Only the next epoch.
+        let skip = LeaseRequest {
+            epoch: 5,
+            ..request.clone()
+        };
+        assert_eq!(
+            voters[2].respond(&skip, 1_100).err(),
+            Some(MembershipError::NotNextEpoch {
+                requested: 5,
+                expected: 3
+            })
+        );
+        // A voter that has seen no lease cannot judge expiry, so it grants nothing.
+        let mut blank = LeaseVoter::new("v3", q.clone(), terms).unwrap();
+        assert_eq!(
+            blank.respond(&request, 9_999).err(),
+            Some(MembershipError::NoLeaseView)
+        );
+        assert_eq!(
+            blank.takeover_request(9_999, 500).err(),
+            Some(MembershipError::NoLeaseView)
+        );
+        assert_eq!(
+            blank.renew_request(9_999, 500).err(),
+            Some(MembershipError::NoLeaseView)
+        );
+    }
+
+    #[test]
+    fn a_holder_stops_u_before_its_lease_ends_and_a_taker_starts_u_after_so_they_never_overlap() {
+        let u = 50;
+        let terms = lease_terms(u);
+        let q = quorum_config(3);
+        let mut voters = voters_of(&q, terms);
+        found(&mut voters, "v1", 1_000);
+        let s = session_for("v1");
+        let mut m = quorum_engine(terms);
+        let tok = AuthorityToken::issue(&s, 1_000);
+
+        // The holder: live through 949, over from 950 (= 1_000 - u), and then refuses to act.
+        assert!(m.lease_is_live(&s, &tok, 949));
+        assert!(!m.lease_is_live(&s, &tok, 950));
+        let before = fingerprint(&m, &s);
+        assert_eq!(
+            m.propose(&s, &tok, join("c", "S1", 100_000, 2_000), t(950, 10_000))
+                .err(),
+            Some(MembershipError::AuthorityExpired {
+                expires_at_ns: 1_000,
+                now_ns: 950
+            })
+        );
+        assert_eq!(fingerprint(&m, &s), before);
+        assert!(
+            m.propose(&s, &tok, join("c", "S1", 100_000, 2_000), t(949, 10_000))
+                .is_ok()
+        );
+
+        // The taker: no voter grants before 1_050 (= 1_000 + u), so the interval 950..1_050 has no
+        // leader at all. That gap of 2u is the price of safety under clock uncertainty.
+        let request = voters[1].takeover_request(1_050, 500).unwrap();
+        for now in 950..1_050 {
+            assert!(
+                voters[2].respond(&request, now).is_err(),
+                "a voter granted at {now}"
+            );
+        }
+        assert!(voters[2].respond(&request, 1_050).is_ok());
+    }
+
+    #[test]
+    fn a_voter_in_both_quorums_orders_a_renewal_and_a_takeover_so_only_one_wins() {
+        let terms = lease_terms(50);
+        let q = quorum_config(3);
+
+        // Order one: the takeover is granted first. The majority then refuses the late renewal of
+        // the older epoch, so the holder is left with its own acknowledgement alone.
+        let mut voters = voters_of(&q, terms);
+        found(&mut voters, "v1", 1_000);
+        let take = voters[1].takeover_request(1_050, 500).unwrap();
+        let win = gather(&q, terms, &mut voters, &take, &[1, 2], &[1_050; 3], 1_050).unwrap();
+        assert_eq!(win.epoch(), 2);
+        let renew = voters[0].renew_request(900, 500).unwrap();
+        assert_eq!(
+            gather(&q, terms, &mut voters, &renew, &[0, 1, 2], &[1_100; 3], 900).err(),
+            Some(MembershipError::NoQuorum { have: 1, need: 2 })
+        );
+        let stale = MembershipError::StaleAuthority {
+            token_epoch: 1,
+            current_epoch: 2,
+        };
+        assert_eq!(voters[1].respond(&renew, 1_100).err(), Some(stale.clone()));
+        assert_eq!(voters[2].respond(&renew, 1_100).err(), Some(stale));
+
+        // Order two: the renewal is acknowledged first. The voter that acknowledged it now holds
+        // the longer lease and refuses a takeover until it has passed (1_400 + 50 = 1_450).
+        let mut voters = voters_of(&q, terms);
+        found(&mut voters, "v1", 1_000);
+        let renew = voters[0].renew_request(900, 500).unwrap();
+        let won = gather(&q, terms, &mut voters, &renew, &[0, 1], &[900; 3], 900).unwrap();
+        assert_eq!(won.expires_at_ns(), 1_400);
+        // v3 never heard of the renewal, so it alone would grant at 1_050.
+        let take = voters[2].takeover_request(1_050, 500).unwrap();
+        assert_eq!(
+            gather(
+                &q,
+                terms,
+                &mut voters,
+                &take,
+                &[0, 1, 2],
+                &[1_050; 3],
+                1_050
+            )
+            .err(),
+            Some(MembershipError::NoQuorum { have: 1, need: 2 })
+        );
+        let too_early = MembershipError::LeaseNotExpired {
+            conservative_expiry_ns: 1_450,
+            now_ns: 1_050,
+        };
+        assert_eq!(
+            voters[0].respond(&take, 1_050).err(),
+            Some(too_early.clone())
+        );
+        assert_eq!(voters[1].respond(&take, 1_050).err(), Some(too_early));
+    }
+
+    #[test]
+    fn two_candidates_cannot_both_win_an_epoch_and_a_split_vote_is_a_refusal_not_a_tie() {
+        let terms = lease_terms(50);
+
+        // Three voters: the first candidate wins; the second finds the epoch taken.
+        let q = quorum_config(3);
+        let mut voters = voters_of(&q, terms);
+        found(&mut voters, "v1", 1_000);
+        let clocks = [1_100; 3];
+        let first = voters[1].takeover_request(1_100, 500).unwrap();
+        let second = voters[2].takeover_request(1_100, 500).unwrap();
+        assert_eq!((first.epoch, second.epoch), (2, 2));
+        let win = gather(&q, terms, &mut voters, &first, &[1, 0], &clocks, 1_100).unwrap();
+        assert_eq!(win.requester(), "v2");
+        assert_eq!(
+            gather(&q, terms, &mut voters, &second, &[2, 0, 1], &clocks, 1_100).err(),
+            Some(MembershipError::NoQuorum { have: 1, need: 2 })
+        );
+        assert_eq!(
+            voters[0].respond(&second, 1_100).err(),
+            Some(MembershipError::ConflictingLeaders {
+                epoch: 2,
+                held_by: "v2".to_string(),
+                announced_by: "v3".to_string()
+            })
+        );
+
+        // Four voters (even): two candidates each reach two voters and neither has the three it
+        // needs. Nobody wins; nobody ties.
+        let q = quorum_config(4);
+        let mut voters = voters_of(&q, terms);
+        found(&mut voters, "v1", 1_000);
+        let a = voters[2].takeover_request(1_100, 500).unwrap();
+        let b = voters[3].takeover_request(1_100, 500).unwrap();
+        let split = Some(MembershipError::NoQuorum { have: 2, need: 3 });
+        assert_eq!(
+            gather(&q, terms, &mut voters, &a, &[2, 0], &[1_100; 4], 1_100).err(),
+            split
+        );
+        assert_eq!(
+            gather(&q, terms, &mut voters, &b, &[3, 1], &[1_100; 4], 1_100).err(),
+            split
+        );
+        // A voter that voted for one candidate cannot be completed for the other afterwards.
+        assert_eq!(
+            voters[0].respond(&b, 1_200).err(),
+            Some(MembershipError::ConflictingLeaders {
+                epoch: 2,
+                held_by: "v3".to_string(),
+                announced_by: "v4".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn a_voter_only_extends_a_lease_it_knows_to_be_the_requesters_and_learns_only_forward() {
+        let terms = lease_terms(50);
+        let q = quorum_config(3);
+        let mut v = LeaseVoter::new("v3", q.clone(), terms).unwrap();
+        v.observe(&lease_view(1, "v1", 1_000)).unwrap();
+        let renewal = |who: &str, epoch: u64| LeaseRequest {
+            kind: LeaseRequestKind::Renew,
+            group_id: "grp".to_string(),
+            requester: who.to_string(),
+            epoch,
+            expires_at_ns: 1_300,
+        };
+        assert_eq!(
+            v.respond(&renewal("v2", 1), 500).err(),
+            Some(MembershipError::NotLeaseHolder {
+                epoch: 1,
+                holder: "v1".to_string()
+            })
+        );
+        assert_eq!(
+            v.respond(&renewal("v2", 7), 500).err(),
+            Some(MembershipError::FutureAuthority {
+                token_epoch: 7,
+                current_epoch: 1
+            }),
+            "an epoch nobody was granted cannot be minted by renewing it"
+        );
+        // What a voter is told only moves forward, and never names a second holder for an epoch.
+        assert_eq!(
+            v.observe(&lease_view(0, "v1", 900)).err(),
+            Some(MembershipError::StaleAuthority {
+                token_epoch: 0,
+                current_epoch: 1
+            })
+        );
+        assert_eq!(
+            v.observe(&lease_view(1, "v2", 1_000)).err(),
+            Some(MembershipError::ConflictingLeaders {
+                epoch: 1,
+                held_by: "v1".to_string(),
+                announced_by: "v2".to_string()
+            })
+        );
+        assert_eq!(
+            v.observe(&lease_view(1, "zz", 1_000)).err(),
+            Some(MembershipError::NotAVoter {
+                member_id: "zz".to_string()
+            })
+        );
+        let foreign = LeaseView {
+            group_id: "other".to_string(),
+            ..lease_view(1, "v1", 1_000)
+        };
+        assert_eq!(v.observe(&foreign).err(), Some(MembershipError::WrongGroup));
+        // Hearing the held lease again can only extend it.
+        v.observe(&lease_view(1, "v1", 900)).unwrap();
+        assert_eq!(v.view().map(|x| x.expires_at_ns), Some(1_000));
+        v.observe(&lease_view(1, "v1", 1_200)).unwrap();
+        assert_eq!(v.view().map(|x| x.expires_at_ns), Some(1_200));
+
+        // A voter that granted epoch 2 to v2 acknowledges v2's renewal of it, and nobody else's;
+        // doing so turns the grant into the confirmed lease.
+        let mut v = LeaseVoter::new("v3", q, terms).unwrap();
+        v.observe(&lease_view(1, "v1", 1_000)).unwrap();
+        let take = LeaseRequest {
+            kind: LeaseRequestKind::Takeover,
+            expires_at_ns: 1_550,
+            epoch: 2,
+            ..renewal("v2", 2)
+        };
+        v.respond(&take, 1_050).unwrap();
+        let renew_two = |who: &str| LeaseRequest {
+            expires_at_ns: 1_700,
+            ..renewal(who, 2)
+        };
+        assert_eq!(
+            v.respond(&renew_two("v1"), 1_100).err(),
+            Some(MembershipError::NotLeaseHolder {
+                epoch: 2,
+                holder: "v2".to_string()
+            })
+        );
+        v.respond(&renew_two("v2"), 1_100).unwrap();
+        let record = v.durable_record();
+        assert_eq!(record.grant, None);
+        assert_eq!(record.view, Some(lease_view(2, "v2", 1_700)));
+    }
+
+    #[test]
+    fn a_partitioned_holder_cannot_renew_the_majority_takes_over_and_the_old_holder_is_fenced() {
+        let terms = lease_terms(50);
+        let q = quorum_config(3);
+        let mut voters = voters_of(&q, terms);
+        found(&mut voters, "v1", 1_000);
+        let mut sessions: Vec<UnifiedGroupSession> = (0..3).map(|_| session_for("v1")).collect();
+        let mut engines: Vec<GroupMembership> = (0..3).map(|_| quorum_engine(terms)).collect();
+        let old = AuthorityToken::issue(&sessions[0], 1_000);
+
+        // v1 is cut off from v2 and v3. Its renewal reaches itself: one acknowledgement of two.
+        let renew = voters[0].renew_request(600, 900).unwrap();
+        assert_eq!(
+            gather(&q, terms, &mut voters, &renew, &[0], &[600; 3], 600).err(),
+            Some(MembershipError::NoQuorum { have: 1, need: 2 })
+        );
+        assert!(engines[0].lease_is_live(&sessions[0], &old, 949));
+        assert!(!engines[0].lease_is_live(&sessions[0], &old, 950));
+
+        // The majority side: too early at 1_049 (nobody grants), possible at 1_050.
+        let take = voters[1].takeover_request(1_050, 500).unwrap();
+        assert_eq!(
+            gather(&q, terms, &mut voters, &take, &[1, 2], &[1_049; 3], 1_050).err(),
+            Some(MembershipError::NoQuorum { have: 0, need: 2 })
+        );
+        let win = gather(&q, terms, &mut voters, &take, &[1, 2], &[1_050; 3], 1_050).unwrap();
+        assert_eq!(
+            (win.epoch(), win.prior_expires_at_ns(), win.acks()),
+            (2, 1_000, 2)
+        );
+        let new_token = engines[1]
+            .assume_authority(&mut sessions[1], &win, t(1_050, 20_000))
+            .unwrap();
+        assert_eq!(
+            (
+                new_token.epoch,
+                new_token.issuer_id.as_str(),
+                new_token.expires_at_ns
+            ),
+            (2, "v2", 1_550)
+        );
+        assert_eq!(
+            (
+                sessions[1].current_epoch,
+                sessions[1].coordinator_id.as_str()
+            ),
+            (2, "v2")
+        );
+        // Until the previous term's already-granted output cannot sound (1_000 + 500 + 50 = 1_550)
+        // a conflicting program may not start.
+        assert_eq!(engines[1].takeover_start_gate(1_549), Err(1_550));
+        assert_eq!(engines[1].takeover_start_gate(1_550), Ok(()));
+        assert_eq!(
+            quorum_engine(terms).takeover_start_gate(0),
+            Ok(()),
+            "a node that never took over has no gate"
+        );
+
+        // Still partitioned: at no instant do both hold a live lease.
+        for now in 900..1_700 {
+            let live_old = engines[0].lease_is_live(&sessions[0], &old, now);
+            let live_new = now >= 1_050 && engines[1].lease_is_live(&sessions[1], &new_token, now);
+            assert!(!(live_old && live_new), "two live leaders at {now}");
+        }
+
+        // The partition heals and v1 hears of the new term. Its old token is fenced by epoch no
+        // matter what its clock says, and it can no longer renew the old epoch.
+        let view = new_token.lease_view();
+        voters[0].observe(&view).unwrap();
+        engines[0].adopt_authority(&mut sessions[0], &view).unwrap();
+        assert_eq!(
+            (
+                sessions[0].current_epoch,
+                sessions[0].coordinator_id.as_str()
+            ),
+            (2, "v2")
+        );
+        let before = fingerprint(&engines[0], &sessions[0]);
+        assert_eq!(
+            engines[0]
+                .propose(
+                    &sessions[0],
+                    &old,
+                    join("c", "S1", 100_000, 2_000),
+                    t(600, 10_000)
+                )
+                .err(),
+            Some(MembershipError::StaleAuthority {
+                token_epoch: 1,
+                current_epoch: 2
+            })
+        );
+        assert_eq!(fingerprint(&engines[0], &sessions[0]), before);
+        assert_eq!(
+            voters[0].renew_request(1_600, 400).err(),
+            Some(MembershipError::NotLeaseHolder {
+                epoch: 2,
+                holder: "v2".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn adopting_a_newer_epoch_aborts_the_proposal_in_flight_and_fences_an_unexpired_stale_token() {
+        let terms = lease_terms(50);
+        let mut s = session_for("v1");
+        let mut m = quorum_engine(terms);
+        // A token that is nowhere near its own expiry: only the epoch can stop it.
+        let stale = AuthorityToken::issue(&s, 100_000);
+        let id = m
+            .propose(&s, &stale, join("c", "S1", 100_000, 2_000), t(100, 10_000))
+            .unwrap();
+        let view = lease_view(2, "v2", 5_000);
+        let revision = s.state_revision;
+        m.adopt_authority(&mut s, &view).unwrap();
+        assert_eq!(
+            m.status(id),
+            Ok(ProposalStatus::Aborted {
+                reason: AbortReason::EpochAdvanced
+            })
+        );
+        assert_eq!(m.pending_proposal(), None);
+        assert_eq!(
+            (s.current_epoch, s.coordinator_id.as_str(), s.state_revision),
+            (2, "v2", revision + 1)
+        );
+
+        // The old issuer is also no longer the configured one; epoch is judged first, so the
+        // refusal names the real problem.
+        let expected = Some(MembershipError::StaleAuthority {
+            token_epoch: 1,
+            current_epoch: 2,
+        });
+        let before = fingerprint(&m, &s);
+        assert_eq!(
+            m.propose(&s, &stale, join("d", "S1", 100_000, 2_000), t(200, 10_100))
+                .err(),
+            expected
+        );
+        assert_eq!(m.abort(&s, &stale, id, t(200, 10_100)).err(), expected);
+        assert_eq!(
+            m.grant_output(&s, &stale, "a", 10_200, t(200, 10_100))
+                .err(),
+            expected
+        );
+        assert_eq!(m.discover_authority(&s, &stale, 200).err(), expected);
+        assert_eq!(fingerprint(&m, &s), before, "a refusal changes nothing");
+
+        // Adoption is forward-only and names one holder per epoch.
+        assert_eq!(m.adopt_authority(&mut s, &view), Ok(()));
+        assert_eq!(
+            s.state_revision,
+            revision + 1,
+            "re-adopting changes nothing"
+        );
+        assert_eq!(
+            m.adopt_authority(&mut s, &lease_view(2, "v3", 5_000)),
+            Err(MembershipError::ConflictingLeaders {
+                epoch: 2,
+                held_by: "v2".to_string(),
+                announced_by: "v3".to_string()
+            })
+        );
+        assert_eq!(
+            m.adopt_authority(&mut s, &lease_view(1, "v2", 5_000)),
+            Err(MembershipError::StaleAuthority {
+                token_epoch: 1,
+                current_epoch: 2
+            })
+        );
+        let foreign = LeaseView {
+            group_id: "other".to_string(),
+            ..view
+        };
+        assert_eq!(
+            m.adopt_authority(&mut s, &foreign),
+            Err(MembershipError::WrongGroup)
+        );
+    }
+
+    #[test]
+    fn when_a_lease_lapses_granted_output_plays_out_and_nothing_new_is_issued() {
+        let terms = lease_terms(50);
+        let s = session_for("v1");
+        // Output grants reach at most 1_000 frames ahead in this configuration.
+        let mut m = quorum_engine(terms);
+        let tok = AuthorityToken::issue(&s, 1_000);
+        let now = t(100, 10_000);
+        assert_eq!(m.grant_output(&s, &tok, "a", 10_500, now), Ok(10_500));
+        assert_eq!(
+            m.grant_output(&s, &tok, "a", 10_200, now),
+            Ok(10_500),
+            "a grant only ever extends"
+        );
+        assert_eq!(
+            m.grant_output(&s, &tok, "a", 11_001, now).err(),
+            Some(MembershipError::OutputHorizonExceeded {
+                requested_frame: 11_001,
+                max_frame: 11_000
+            })
+        );
+        assert_eq!(
+            m.grant_output(&s, &tok, "zz", 10_100, now).err(),
+            Some(MembershipError::UnknownMember {
+                member_id: "zz".to_string()
+            })
+        );
+        assert!(m.output_permitted("a", 10_499));
+        assert!(!m.output_permitted("a", 10_500));
+        assert!(!m.output_permitted("b", 0), "no grant, no output");
+
+        // The lease lapses by the holder's margin at 950. Nothing new is granted; what was granted
+        // plays out to its frame and then mutes.
+        let lapsed = t(950, 20_000);
+        let expired = Some(MembershipError::AuthorityExpired {
+            expires_at_ns: 1_000,
+            now_ns: 950,
+        });
+        assert_eq!(m.grant_output(&s, &tok, "a", 20_100, lapsed).err(), expired);
+        assert_eq!(m.grant_output(&s, &tok, "b", 20_100, lapsed).err(), expired);
+        assert!(m.output_permitted("a", 10_499), "granted output plays out");
+        assert!(!m.output_permitted("a", 10_500), "and then mutes");
+        assert!(!m.output_permitted("b", 20_050), "nothing new was issued");
+        // The frame horizon (what a grant may reach) and the nanosecond horizon (how long after
+        // its lease a previous term's output may still sound) are two numbers for one duration.
+        // The test configuration above uses small independent values; the defaults must agree:
+        // 10 s as 48 kHz frames and as nanoseconds.
+        let defaults = MembershipConfig::default();
+        assert_eq!(
+            defaults.max_output_horizon_frames * 1_000_000_000 / 48_000,
+            defaults.lease.max_output_horizon_ns
+        );
+    }
+
+    #[test]
+    fn a_voter_without_its_durable_record_refuses_everything_until_it_is_restored() {
+        let terms = lease_terms(50);
+        let q = quorum_config(3);
+        let mut voters = voters_of(&q, terms);
+        found(&mut voters, "v1", 1_000);
+        let take = voters[1].takeover_request(1_050, 500).unwrap();
+        let ack = voters[2].respond(&take, 1_050).unwrap(); // v3 grants epoch 2 to v2
+        let record = voters[2].durable_record();
+        assert_eq!(record.voter_id, "v3");
+        assert_eq!(
+            record
+                .grant
+                .as_ref()
+                .map(|g| (g.epoch, g.candidate.as_str())),
+            Some((2, "v2"))
+        );
+        let json = serde_json::to_string(&record).unwrap();
+        assert_eq!(
+            serde_json::from_str::<DurableVoterRecord>(&json).unwrap(),
+            record,
+            "the record survives its own serialisation"
+        );
+
+        let rival = LeaseRequest {
+            requester: "v1".to_string(),
+            ..take.clone()
+        };
+        let stale_renewal = voters[0].renew_request(900, 400).unwrap();
+        let mut restarted = LeaseVoter::after_restart("v3", q.clone(), terms).unwrap();
+        let unavailable = Some(MembershipError::VoterRecordUnavailable);
+        assert_eq!(restarted.respond(&rival, 1_100).err(), unavailable);
+        assert_eq!(restarted.respond(&stale_renewal, 1_100).err(), unavailable);
+        // Another voter's record does not unlock it.
+        assert_eq!(
+            restarted.restore(voters[1].durable_record()),
+            Err(MembershipError::VoterRecordUnavailable)
+        );
+        assert_eq!(restarted.respond(&rival, 1_100).err(), unavailable);
+
+        // With its own record back it remembers: one candidate per epoch, and no renewal of the
+        // older epoch.
+        restarted.restore(record).unwrap();
+        assert_eq!(
+            restarted.respond(&rival, 1_100).err(),
+            Some(MembershipError::ConflictingLeaders {
+                epoch: 2,
+                held_by: "v2".to_string(),
+                announced_by: "v1".to_string()
+            })
+        );
+        assert_eq!(
+            restarted.respond(&stale_renewal, 1_100).err(),
+            Some(MembershipError::StaleAuthority {
+                token_epoch: 1,
+                current_epoch: 2
+            })
+        );
+        assert_eq!(restarted.respond(&take, 1_100).unwrap(), ack);
+
+        // The control: a voter that forgot (restarted as if new, re-learning only the founding
+        // lease) grants the rival the very epoch it already granted. That is what the record is for.
+        let mut forgetful = LeaseVoter::new("v3", q, terms).unwrap();
+        found(std::slice::from_mut(&mut forgetful), "v1", 1_000);
+        assert!(forgetful.respond(&rival, 1_100).is_ok());
+    }
+
+    #[test]
+    fn a_group_mints_epochs_by_one_rule_only_and_a_restarted_node_must_learn_the_holder_first() {
+        let terms = lease_terms(50);
+        let q = quorum_config(3);
+        let mut voters = voters_of(&q, terms);
+        found(&mut voters, "v1", 1_000);
+        let renew = voters[0].renew_request(500, 900).unwrap();
+        let renewal = gather(&q, terms, &mut voters, &renew, &[0, 1], &[500; 3], 500).unwrap();
+        // Both views now read 1_400, so the takeover has to wait for 1_450.
+        let take = voters[1].takeover_request(1_450, 500).unwrap();
+        let win = gather(&q, terms, &mut voters, &take, &[1, 2], &[1_450; 3], 1_450).unwrap();
+        assert_eq!((win.epoch(), win.prior_expires_at_ns()), (2, 1_400));
+
+        // A quorum group: the issuer alone cannot advance the epoch.
+        let mut s = session_for("v1");
+        let mut m = quorum_engine(terms);
+        let tok = AuthorityToken::issue(&s, 1_000);
+        let before = fingerprint(&m, &s);
+        assert_eq!(
+            m.advance_epoch(&mut s, &tok, 2, t(100, 10_000)).err(),
+            Some(MembershipError::QuorumRequired)
+        );
+        assert_eq!(fingerprint(&m, &s), before);
+
+        // A configured-issuer group has no electorate: the quorum entry points refuse.
+        let mut plain_s = session_for("coord");
+        let mut plain = GroupMembership::new(MembershipConfig::default());
+        let plain_tok = token(&plain_s);
+        let view = lease_view(2, "v2", 5_000);
+        let not_quorum = Some(MembershipError::NotAQuorumGroup);
+        assert_eq!(plain.adopt_authority(&mut plain_s, &view).err(), not_quorum);
+        assert_eq!(
+            plain
+                .assume_authority(&mut plain_s, &win, t(1_450, 20_000))
+                .err(),
+            not_quorum
+        );
+        assert_eq!(
+            plain
+                .renew_lease(&plain_s, &plain_tok, &renewal, t(500, 10_000))
+                .err(),
+            not_quorum
+        );
+        assert!(
+            plain
+                .advance_epoch(&mut plain_s, &plain_tok, 2, t(100, 10_000))
+                .is_ok()
+        );
+
+        // A restarted node must first learn who holds the epoch.
+        let mut rs = session_for("v1");
+        let mut restarted = GroupMembership::after_restart(quorum_membership_config(terms));
+        let undiscovered = Some(MembershipError::AuthorityNotDiscovered);
+        assert_eq!(
+            restarted
+                .assume_authority(&mut rs, &win, t(1_450, 20_000))
+                .err(),
+            undiscovered
+        );
+        assert_eq!(
+            restarted
+                .renew_lease(&rs, &tok, &renewal, t(500, 10_000))
+                .err(),
+            undiscovered
+        );
+        restarted
+            .adopt_authority(&mut rs, &tok.lease_view())
+            .unwrap();
+        assert!(
+            restarted
+                .assume_authority(&mut rs, &win, t(1_450, 20_000))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_quorum_result_applies_only_to_what_it_was_gathered_for() {
+        let terms = lease_terms(50);
+        let q = quorum_config(3);
+        let mut voters = voters_of(&q, terms);
+        found(&mut voters, "v1", 1_000);
+        let renew = voters[0].renew_request(500, 900).unwrap();
+        let renewal = gather(&q, terms, &mut voters, &renew, &[0, 1], &[500; 3], 500).unwrap();
+        let take = voters[1].takeover_request(1_450, 500).unwrap();
+        let takeover = gather(&q, terms, &mut voters, &take, &[1, 2], &[1_450; 3], 1_450).unwrap();
+        assert_eq!(takeover.expires_at_ns(), 1_950);
+
+        let s = session_for("v1");
+        let mut m = quorum_engine(terms);
+        let tok = AuthorityToken::issue(&s, 1_000);
+        let not_applicable = Some(MembershipError::WinNotApplicable);
+        // A takeover result cannot renew; a renewal result cannot take over.
+        assert_eq!(
+            m.renew_lease(&s, &tok, &takeover, t(500, 10_000)).err(),
+            not_applicable
+        );
+        let mut s_taking = session_for("v1");
+        assert_eq!(
+            m.assume_authority(&mut s_taking, &renewal, t(500, 10_000))
+                .err(),
+            not_applicable
+        );
+        // A renewal won by v1 cannot extend the token of a session whose issuer is v2.
+        let s_v2 = session_for("v2");
+        let tok_v2 = AuthorityToken::issue(&s_v2, 1_000);
+        assert_eq!(
+            m.renew_lease(&s_v2, &tok_v2, &renewal, t(500, 10_000))
+                .err(),
+            not_applicable
+        );
+        // A takeover result for an epoch the session already has is stale.
+        let mut s_there = session_for("v1");
+        s_there.begin_epoch(2);
+        assert_eq!(
+            m.assume_authority(&mut s_there, &takeover, t(1_450, 20_000))
+                .err(),
+            Some(MembershipError::StaleAuthority {
+                token_epoch: 2,
+                current_epoch: 2
+            })
+        );
+        // And a result gathered long ago is useless once its lease is nearly over:
+        // 1_900 + 50 >= 1_950.
+        let mut s_late = session_for("v1");
+        assert_eq!(
+            m.assume_authority(&mut s_late, &takeover, t(1_900, 20_000))
+                .err(),
+            Some(MembershipError::AuthorityExpired {
+                expires_at_ns: 1_950,
+                now_ns: 1_900
+            })
+        );
+        let mut s_ok = session_for("v1");
+        assert!(
+            m.assume_authority(&mut s_ok, &takeover, t(1_899, 20_000))
+                .is_ok()
+        );
+    }
+
+    /// Instants (true time) at which the old holder and the new leader both consider their lease
+    /// live, when the holder's clock reads 40 ns behind everyone else's.
+    fn overlap_times(uncertainty_ns: u64) -> Vec<u64> {
+        const HOLDER_BEHIND: u64 = 40;
+        let terms = lease_terms(uncertainty_ns);
+        let q = quorum_config(3);
+        let mut voters = voters_of(&q, terms);
+        found(&mut voters, "v1", 1_000);
+        let holder_session = session_for("v1");
+        let holder_engine = quorum_engine(terms);
+        let holder_token = AuthorityToken::issue(&holder_session, 1_000);
+
+        // The earliest instant the others will grant, by their own clocks.
+        let grant_at = 1_000 + uncertainty_ns;
+        let request = voters[1].takeover_request(grant_at, 500).unwrap();
+        let win = gather(
+            &q,
+            terms,
+            &mut voters,
+            &request,
+            &[1, 2],
+            &[grant_at; 3],
+            grant_at,
+        )
+        .unwrap();
+        let mut taker_session = session_for("v1");
+        let mut taker_engine = quorum_engine(terms);
+        let taker_token = taker_engine
+            .assume_authority(&mut taker_session, &win, t(grant_at, 20_000))
+            .unwrap();
+        (900..1_700)
+            .filter(|&true_ns| {
+                let holder_live = holder_engine.lease_is_live(
+                    &holder_session,
+                    &holder_token,
+                    true_ns - HOLDER_BEHIND,
+                );
+                let taker_live = true_ns >= grant_at
+                    && taker_engine.lease_is_live(&taker_session, &taker_token, true_ns);
+                holder_live && taker_live
+            })
+            .collect()
+    }
+
+    #[test]
+    fn without_the_uncertainty_margin_clock_skew_gives_two_live_leaders_and_with_it_it_does_not() {
+        // The planted failure: assume perfectly agreeing clocks (u = 0) while the holder's clock
+        // actually runs 40 ns behind. The majority grants at its 1_000, which is the holder's 960,
+        // and for 40 ns both believe they lead.
+        let broken = overlap_times(0);
+        assert_eq!(broken, (1_000..1_040).collect::<Vec<u64>>());
+        // With a margin at least as large as the skew the same schedule has no overlap.
+        assert_eq!(overlap_times(50), Vec::<u64>::new());
+        assert_eq!(overlap_times(40), Vec::<u64>::new());
+        // Both sides take the margin (the holder stops u early, the taker waits u late), so the
+        // overlap window is [1_000 + u, 1_040 - u): it closes at u = 20 and has exactly two
+        // instants at u = 19. The contract still requires u to bound the pairwise skew; the extra
+        // slack here is not something to rely on.
+        assert_eq!(overlap_times(20), Vec::<u64>::new());
+        assert_eq!(overlap_times(19), vec![1_019, 1_020]);
+    }
+
+    // ---- the seeded partition schedule --------------------------------------------------------
+
+    struct Node {
+        voter: LeaseVoter,
+        engine: GroupMembership,
+        session: UnifiedGroupSession,
+        token: Option<AuthorityToken>,
+        /// This node's clock reads true time plus this offset.
+        offset: i64,
+    }
+
+    #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+    struct PartitionCounts {
+        renewals: u32,
+        minority_refused: u32,
+        takeovers: u32,
+        takeovers_refused: u32,
+        fenced: u32,
+        mutations_accepted: u32,
+        led_steps: u32,
+        leaderless_steps: u32,
+        /// Steps at which two or more nodes considered their lease live at once.
+        overlaps: u32,
+        /// Two different holders announced for one epoch.
+        conflicts: u32,
+    }
+
+    /// Nodes that renew, take over, mutate and hear announcements, on a network that partitions at
+    /// random and clocks that disagree by up to a bounded offset.
+    struct Cluster {
+        q: QuorumConfig,
+        terms: LeaseTerms,
+        nodes: Vec<Node>,
+        /// Which side of the current partition each node is on; nodes talk only within a side.
+        side: Vec<u8>,
+        true_ns: u64,
+        winners: BTreeMap<u64, usize>,
+        counts: PartitionCounts,
+        rng: SplitMix64,
+        /// After the prologue, an announcement to a random third of the reachable nodes is lost, so
+        /// a voter's own memory of what it granted is what stands between two candidates.
+        lossy: bool,
+        /// Every announcement is lost (a scripted stretch of the prologue).
+        mute: bool,
+    }
+
+    impl Cluster {
+        fn new(
+            seed: u64,
+            voters: usize,
+            uncertainty_ns: u64,
+            max_offset: i64,
+            skew_holder: bool,
+        ) -> Self {
+            let terms = LeaseTerms {
+                max_lease_ns: 2_000,
+                clock_uncertainty_ns: uncertainty_ns,
+                max_output_horizon_ns: 1_000,
+            };
+            let q = quorum_config(voters);
+            let mut rng = SplitMix64(seed);
+            let span = u64::try_from(2 * max_offset + 1).unwrap();
+            let founding = 11_500;
+            let mut nodes: Vec<Node> = Vec::new();
+            for mut voter in voters_of(&q, terms) {
+                voter.observe(&lease_view(1, "v1", founding)).unwrap();
+                let mut offset = i64::try_from(rng.below(span)).unwrap() - max_offset;
+                if skew_holder {
+                    // The worst case: the holder's clock is the slowest, everyone else's the fastest.
+                    offset = if nodes.is_empty() {
+                        -max_offset
+                    } else {
+                        max_offset
+                    };
+                }
+                let session = session_for("v1");
+                let token = if nodes.is_empty() {
+                    Some(AuthorityToken::issue(&session, founding))
+                } else {
+                    None
+                };
+                nodes.push(Node {
+                    voter,
+                    engine: quorum_engine(terms),
+                    session,
+                    token,
+                    offset,
+                });
+            }
+            Self {
+                q,
+                terms,
+                nodes,
+                side: vec![0; voters],
+                true_ns: 10_000,
+                winners: BTreeMap::new(),
+                counts: PartitionCounts::default(),
+                rng,
+                lossy: false,
+                mute: false,
+            }
+        }
+
+        fn clock(&self, i: usize) -> u64 {
+            self.true_ns
+                .checked_add_signed(self.nodes[i].offset)
+                .expect("clocks stay positive")
+        }
+
+        fn time(&self, i: usize) -> GroupTime {
+            let ns = self.clock(i);
+            GroupTime { ns, frame: ns }
+        }
+
+        /// Nodes on the same side of the partition as `i`, `i` included.
+        fn reach(&self, i: usize) -> Vec<usize> {
+            (0..self.nodes.len())
+                .filter(|&j| self.side[j] == self.side[i])
+                .collect()
+        }
+
+        /// The node holding the highest-epoch token (the lowest index on a tie), if any.
+        fn newest_holder(&self) -> Option<usize> {
+            (0..self.nodes.len())
+                .filter_map(|i| {
+                    self.nodes[i]
+                        .token
+                        .as_ref()
+                        .map(|t| (t.epoch, std::cmp::Reverse(i)))
+                })
+                .max()
+                .map(|(_, std::cmp::Reverse(i))| i)
+        }
+
+        fn pick_node(&mut self) -> usize {
+            let n = u64::try_from(self.nodes.len()).unwrap();
+            usize::try_from(self.rng.below(n)).unwrap()
+        }
+
+        /// Node `i` sends `request` to its side and gathers the acknowledgements that come back,
+        /// each voter judging it by its own clock. `None` if no round could even start.
+        fn collect(
+            &mut self,
+            i: usize,
+            request: &LeaseRequest,
+        ) -> Option<Result<LeaseWin, MembershipError>> {
+            let now = self.clock(i);
+            let mut round = QuorumRound::start(&self.q, self.terms, request.clone(), now).ok()?;
+            for j in self.reach(i) {
+                let at = self.clock(j);
+                if let Ok(ack) = self.nodes[j].voter.respond(request, at) {
+                    let _ = round.record(&ack, now);
+                }
+            }
+            Some(round.outcome(now))
+        }
+
+        fn try_renew(&mut self, i: usize, len: u64) {
+            let Some(token) = self.nodes[i].token.clone() else {
+                return;
+            };
+            let now = self.clock(i);
+            let Ok(request) = self.nodes[i].voter.renew_request(now, len) else {
+                return;
+            };
+            match self.collect(i, &request) {
+                Some(Ok(win)) => {
+                    let time = self.time(i);
+                    let node = &mut self.nodes[i];
+                    if let Ok(renewed) = node.engine.renew_lease(&node.session, &token, &win, time)
+                    {
+                        node.token = Some(renewed);
+                        self.counts.renewals += 1;
+                    }
+                }
+                Some(Err(MembershipError::NoQuorum { .. })) => self.counts.minority_refused += 1,
+                Some(Err(_)) | None => {}
+            }
+        }
+
+        fn try_takeover(&mut self, i: usize, len: u64) {
+            let now = self.clock(i);
+            let Ok(request) = self.nodes[i].voter.takeover_request(now, len) else {
+                return;
+            };
+            match self.collect(i, &request) {
+                Some(Ok(win)) => {
+                    let time = self.time(i);
+                    let node = &mut self.nodes[i];
+                    match node.engine.assume_authority(&mut node.session, &win, time) {
+                        Ok(token) => {
+                            node.token = Some(token.clone());
+                            // The winner learns its own lease like every other voter; without
+                            // this its voter keeps the grant and could not renew or retake.
+                            node.voter
+                                .observe(&token.lease_view())
+                                .expect("the winner can observe its own lease");
+                            let first = *self.winners.entry(win.epoch()).or_insert(i);
+                            assert_eq!(first, i, "two nodes won epoch {}", win.epoch());
+                            self.counts.takeovers += 1;
+                            self.announce(i, &token.lease_view());
+                        }
+                        Err(_) => self.counts.takeovers_refused += 1,
+                    }
+                }
+                Some(Err(_)) => self.counts.takeovers_refused += 1,
+                None => {}
+            }
+        }
+
+        /// `from` tells every node on its side which lease is current.
+        fn announce(&mut self, from: usize, view: &LeaseView) {
+            if self.mute {
+                return;
+            }
+            for j in self.reach(from) {
+                if j == from {
+                    continue;
+                }
+                if self.lossy && self.rng.below(3) == 0 {
+                    continue;
+                }
+                let node = &mut self.nodes[j];
+                if matches!(
+                    node.voter.observe(view),
+                    Err(MembershipError::ConflictingLeaders { .. })
+                ) {
+                    self.counts.conflicts += 1;
+                }
+                if matches!(
+                    node.engine.adopt_authority(&mut node.session, view),
+                    Err(MembershipError::ConflictingLeaders { .. })
+                ) {
+                    self.counts.conflicts += 1;
+                }
+            }
+        }
+
+        /// The newest holder tells everyone it can reach.
+        fn gossip(&mut self) {
+            let Some(holder) = self.newest_holder() else {
+                return;
+            };
+            let Some(view) = self.nodes[holder]
+                .token
+                .as_ref()
+                .map(AuthorityToken::lease_view)
+            else {
+                return;
+            };
+            self.announce(holder, &view);
+        }
+
+        /// Node `i` tries to start a membership change under whatever token it holds.
+        fn try_mutation(&mut self, i: usize) {
+            let Some(token) = self.nodes[i].token.clone() else {
+                return;
+            };
+            let time = self.time(i);
+            let node = &mut self.nodes[i];
+            let live = node.engine.lease_is_live(&node.session, &token, time.ns);
+            let spec = join("c", "S1", time.frame + 100_000, time.ns + 10_000);
+            match node.engine.propose(&node.session, &token, spec, time) {
+                Ok(id) => {
+                    assert!(live, "node {i} proposed on a lease it should consider over");
+                    let _ = node.engine.abort(&node.session, &token, id, time);
+                    self.counts.mutations_accepted += 1;
+                }
+                Err(error) => {
+                    let fenced = matches!(error, MembershipError::StaleAuthority { .. });
+                    if fenced {
+                        self.counts.fenced += 1;
+                    }
+                    if !live {
+                        assert!(
+                            fenced || matches!(error, MembershipError::AuthorityExpired { .. }),
+                            "node {i} was refused for the wrong reason: {error:?}"
+                        );
+                    }
+                }
+            }
+        }
+
+        fn repartition(&mut self) {
+            let together = self.rng.below(4) == 0;
+            let sides: Vec<u8> = (0..self.nodes.len())
+                .map(|_| {
+                    if together {
+                        0
+                    } else {
+                        u8::try_from(self.rng.below(2)).unwrap()
+                    }
+                })
+                .collect();
+            self.side = sides;
+            self.gossip();
+        }
+
+        /// Checked after every step: how many nodes consider their own lease live right now.
+        fn check(&mut self) {
+            let live = (0..self.nodes.len())
+                .filter(|&i| {
+                    let node = &self.nodes[i];
+                    node.token.as_ref().is_some_and(|token| {
+                        node.engine
+                            .lease_is_live(&node.session, token, self.clock(i))
+                    })
+                })
+                .count();
+            match live {
+                0 => self.counts.leaderless_steps += 1,
+                1 => self.counts.led_steps += 1,
+                _ => self.counts.overlaps += 1,
+            }
+        }
+
+        /// The paths random choice reaches only occasionally, taken on purpose: a renewal with
+        /// everyone connected, a holder cut off from the majority that cannot renew, a takeover by
+        /// the majority at the earliest instant every one of its voters will grant (the boundary
+        /// probe), the heal, the old holder's fenced mutation, and then the duel for one epoch.
+        fn prologue(&mut self) {
+            self.true_ns += 200;
+            self.try_renew(0, 1_500);
+            assert_eq!(self.counts.renewals, 1, "a connected holder renews");
+            self.side[0] = 1;
+            self.true_ns += 100;
+            self.try_renew(0, 1_500);
+            assert_eq!(
+                self.counts.minority_refused, 1,
+                "an isolated holder gets one acknowledgement and no more"
+            );
+            // The earliest true time at which every other node's clock has reached the holder's
+            // expiry plus u. With u = 0 and the holder's clock slowest, the holder still reads a
+            // live lease at that instant; with u at least the skew it does not.
+            let expiry = self.nodes[0]
+                .token
+                .as_ref()
+                .expect("the holder renewed")
+                .expires_at_ns;
+            let slowest = self.nodes[1..]
+                .iter()
+                .map(|n| n.offset)
+                .min()
+                .expect("there are other nodes");
+            let boundary = (expiry + self.terms.clock_uncertainty_ns)
+                .checked_add_signed(-slowest)
+                .expect("clocks stay positive");
+            self.true_ns = self.true_ns.max(boundary);
+            self.check();
+            self.try_takeover(1, 1_500);
+            assert_eq!(self.counts.takeovers, 1, "the majority side takes over");
+            self.check();
+            self.side = vec![0; self.nodes.len()];
+            self.gossip();
+            self.try_mutation(0);
+            assert_eq!(self.counts.fenced, 1, "the old holder is fenced by epoch");
+            self.check();
+            self.duel();
+        }
+
+        /// Two candidates for one epoch, the first announcement lost. Node 2 wins epoch 3 with
+        /// {0, 2, 3}; nodes 1 (and 4) are on the other side and never hear of it, and the
+        /// announcement is lost anyway, so node 0 still holds only its grant. Later node 1,
+        /// unaware, asks node 0 for the same epoch. Node 0's memory of its grant is all that
+        /// stands in the way; a voter that let a rival overwrite it would hand out epoch 3 twice.
+        fn duel(&mut self) {
+            let n = self.nodes.len();
+            let late: Vec<usize> = if n == 5 { vec![1, 4] } else { vec![1] };
+            self.true_ns += 4_000;
+            self.side = (0..n).map(|j| u8::from(late.contains(&j))).collect();
+            self.mute = true;
+            let before = self.counts.takeovers;
+            self.try_takeover(2, 1_500);
+            self.mute = false;
+            assert_eq!(
+                self.counts.takeovers,
+                before + 1,
+                "the first candidate wins"
+            );
+            self.true_ns += 3_000;
+            let together: Vec<usize> = if n == 5 { vec![0, 1, 4] } else { vec![0, 1] };
+            self.side = (0..n).map(|j| u8::from(!together.contains(&j))).collect();
+            self.try_takeover(1, 1_500);
+            assert_eq!(
+                self.counts.takeovers,
+                before + 1,
+                "a rival for a granted epoch must not win"
+            );
+            self.side = vec![0; n];
+            self.gossip();
+            self.check();
+        }
+
+        fn step(&mut self) {
+            self.true_ns += 1 + self.rng.below(300);
+            let len = 500 + self.rng.below(1_500);
+            let actor = self.pick_node();
+            match self.rng.below(100) {
+                0..30 => {
+                    // The newest holder usually renews; sometimes any node, possibly a stale one.
+                    let i = if self.rng.below(4) == 0 {
+                        actor
+                    } else {
+                        self.newest_holder().unwrap_or(actor)
+                    };
+                    self.try_renew(i, len);
+                }
+                30..65 => self.try_takeover(actor, len),
+                65..85 => self.try_mutation(actor),
+                _ => self.repartition(),
+            }
+            self.check();
+        }
+    }
+
+    fn run_partition_schedule(
+        seed: u64,
+        uncertainty_ns: u64,
+        max_offset: i64,
+        skew_holder: bool,
+        steps: usize,
+    ) -> PartitionCounts {
+        let voters = 3 + 2 * usize::try_from(seed % 2).unwrap();
+        let mut cluster = Cluster::new(seed, voters, uncertainty_ns, max_offset, skew_holder);
+        cluster.prologue();
+        cluster.lossy = true;
+        for _ in 0..steps {
+            cluster.step();
+        }
+        cluster.counts
+    }
+
+    #[test]
+    fn seeded_partitions_never_produce_two_live_leaders_or_two_winners_of_an_epoch() {
+        let mut total = PartitionCounts::default();
+        // Random clock offsets, and the worst case (the holder 50 ns slow, the rest 50 ns fast).
+        // Any two clocks differ by at most 100 ns, which is the uncertainty declared.
+        for skew_holder in [false, true] {
+            for seed in 0..8_u64 {
+                let c = run_partition_schedule(seed, 100, 50, skew_holder, 400);
+                assert_eq!(
+                    c.overlaps, 0,
+                    "seed {seed} (worst-case skew {skew_holder}): two nodes held a live lease at once"
+                );
+                assert_eq!(
+                    c.conflicts, 0,
+                    "seed {seed}: two holders were announced for one epoch"
+                );
+                assert!(
+                    c.renewals >= 1 && c.minority_refused >= 1 && c.takeovers >= 1 && c.fenced >= 1,
+                    "seed {seed} skipped a path: {c:?}"
+                );
+                total.renewals += c.renewals;
+                total.minority_refused += c.minority_refused;
+                total.takeovers += c.takeovers;
+                total.takeovers_refused += c.takeovers_refused;
+                total.fenced += c.fenced;
+                total.mutations_accepted += c.mutations_accepted;
+                total.led_steps += c.led_steps;
+                total.leaderless_steps += c.leaderless_steps;
+            }
+        }
+        // The prologue gives every run one of each path; the random part has to add real traffic
+        // on top, with and without a leader. The floors are about a third of what the 16 runs
+        // produce, so they trip on a generator that stopped reaching these paths (a winner that
+        // never learned of its own lease cannot renew, and its renewals fall far below the floor).
+        assert!(total.renewals >= 70, "renewals: {total:?}");
+        assert!(total.takeovers >= 45, "takeovers: {total:?}");
+        assert!(
+            total.takeovers_refused >= 700,
+            "refused takeovers: {total:?}"
+        );
+        assert!(
+            total.minority_refused >= 300,
+            "minority renewals: {total:?}"
+        );
+        assert!(total.fenced >= 230, "fenced mutations: {total:?}");
+        assert!(
+            total.mutations_accepted >= 25,
+            "accepted mutations: {total:?}"
+        );
+        assert!(total.led_steps >= 550, "steps with a leader: {total:?}");
+        assert!(
+            total.leaderless_steps >= 550,
+            "steps without one: {total:?}"
+        );
+    }
+
+    #[test]
+    fn the_same_schedules_without_the_margin_do_produce_two_live_leaders() {
+        // The plant: the configuration assumes the clocks agree (u = 0) while the holder's runs
+        // 100 ns behind the others. The prologue's boundary probe then finds two live leaders in
+        // every seed, so the clean result above is attributable to the margin.
+        for seed in 0..8_u64 {
+            let c = run_partition_schedule(seed, 0, 50, true, 400);
+            assert!(
+                c.overlaps >= 1,
+                "seed {seed}: no overlap without the margin, so the schedule cannot tell the \
+                 difference"
+            );
+        }
+        // Clocks that really do agree need no margin: the default configuration is exact.
+        for seed in 0..8_u64 {
+            let c = run_partition_schedule(seed, 0, 0, false, 400);
+            assert_eq!(c.overlaps, 0, "seed {seed} with agreeing clocks");
+            assert_eq!(c.conflicts, 0, "seed {seed} with agreeing clocks");
+        }
     }
 }

@@ -17,9 +17,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod membership;
 pub use membership::{
-    AbortReason, AuthorityToken, GroupMembership, GroupTime, IntendedMember, MAX_GROUP_MEMBERS,
-    MAX_TERMINAL_HISTORY, MembershipChange, MembershipConfig, MembershipError, MembershipIntent,
-    MissingAckPolicy, OutputBound, OutputResolution, ProposalPhase, ProposalSpec, ProposalStatus,
+    AbortReason, AuthorityToken, DurableVoterRecord, EpochMint, GrantRecord, GroupMembership,
+    GroupTime, IntendedMember, LeaseAck, LeaseRequest, LeaseRequestKind, LeaseTerms, LeaseView,
+    LeaseVoter, LeaseWin, MAX_GROUP_MEMBERS, MAX_TERMINAL_HISTORY, MembershipChange,
+    MembershipConfig, MembershipError, MembershipIntent, MissingAckPolicy, OutputBound,
+    OutputResolution, ProposalPhase, ProposalSpec, ProposalStatus, QuorumConfig, QuorumRound,
     ReadinessReport,
 };
 
