@@ -346,6 +346,10 @@ pub struct VirtualSpeakerNode {
     pub(crate) source_blocks: BTreeMap<u64, u64>,
     /// FNV-1a over every sample this node rendered, in block, channel and frame order (see [`fnv1a_extend_samples`]).
     pub(crate) output_digest: u64,
+    /// Blocks the gate let sound whose audio was the engine's authentic block (not concealed, not silence).
+    pub(crate) audible_authentic_blocks: u64,
+    /// Blocks in which at least one sample of at least one channel was not zero.
+    pub(crate) rendered_nonzero_blocks: u64,
     /// What negotiation produced for this member's stream: the agreement, or the refusal that left it
     /// without one.
     pub stream: StreamOutcome,
@@ -634,6 +638,10 @@ enum OutputFault {
     /// A tailnet client that composed a relative step against an older revision names the current one, so a step the contract says
     /// is stale applies on top of another controller's change. Needs a volume plan in the scenario.
     TailnetStaleRevisionRefreshed,
+    /// The render path hands both DSPs a silent block wherever the member's stream delivered audio and the gate let it sound, and
+    /// still counts the block as audible. The live and shadow renders agree (both are silent), so continuity, shadow, fencing and
+    /// playout all hold; only the question "did a member that sounded render anything" can see it.
+    SilentInput { member_id: &'static str },
 }
 
 /// One line describing a planted fault, for the `fault` field of the diagnostic log.
@@ -678,6 +686,7 @@ fn describe_fault(fault: OutputFault) -> String {
         OutputFault::TailnetStaleRevisionRefreshed => {
             "tailnet_stale_revision_refreshed".to_string()
         }
+        OutputFault::SilentInput { member_id } => format!("silent_input member={member_id}"),
     }
 }
 
@@ -707,12 +716,16 @@ struct Scenario {
     /// Relative-volume steps driven through the real G03 endpoint and N02 channel (or, for a reference run, absolute sets applied
     /// directly), each at the start of a render iteration. See `control_adapter`.
     volume: Option<&'static [VolumeStep]>,
+    /// What the source's two channels are. Under [`SourceSignal::Asymmetric`] the campaign also asks that every member that was
+    /// sent audio and sounded it rendered something.
+    signal: SourceSignal,
 }
 
 impl Scenario {
     const NONE: Self = Self {
         source_switch: None,
         volume: None,
+        signal: SourceSignal::Opposed,
     };
 }
 
@@ -775,9 +788,21 @@ impl Program {
     }
 }
 
+/// How the campaign's source relates its two channels (`docs/contracts/q01.md`, limit 1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(test), allow(dead_code))]
+enum SourceSignal {
+    /// The campaign's original signal, `right = -left`. The mono mix `0.5 * (l + r)` is exactly zero, so a member whose every
+    /// channel comes from that mix (S12, S1, the sub) renders silence at any volume. Every existing assertion is about this one.
+    Opposed,
+    /// `right = 0.5 * left`: the mono mix is `0.75 * left`, so every member has something to render. Used by the scenarios that
+    /// ask whether a member renders sound.
+    Asymmetric,
+}
+
 /// The audio source epoch `epoch` publishes for block `blk`. Epoch 1 is the campaign's original signal; every later epoch is
-/// a different program, so the bytes of a block name the stream they came from.
-fn source_block(blk: u64, epoch: u64) -> StereoAudioBlock {
+/// a different program, so the bytes of a block name the stream they came from. `signal` only changes the right channel.
+fn source_block_in(signal: SourceSignal, blk: u64, epoch: u64) -> StereoAudioBlock {
     let mut block = StereoAudioBlock::silence(blk * (FRAMES_PER_BLOCK as u64));
     let base = ((blk % 32) as f32) * 0.02 + 0.05;
     let amp = if epoch <= 1 {
@@ -786,22 +811,36 @@ fn source_block(blk: u64, epoch: u64) -> StereoAudioBlock {
         base * 0.5 + 0.01 * (epoch.min(20) as f32)
     };
     block.left = [amp; FRAMES_PER_BLOCK];
-    block.right = [-amp; FRAMES_PER_BLOCK];
+    block.right = match signal {
+        SourceSignal::Opposed => [-amp; FRAMES_PER_BLOCK],
+        SourceSignal::Asymmetric => [0.5 * amp; FRAMES_PER_BLOCK],
+    };
     block
 }
 
+/// The campaign's original signal ([`SourceSignal::Opposed`]): what the existing tests state about the source.
+#[cfg(test)]
+fn source_block(blk: u64, epoch: u64) -> StereoAudioBlock {
+    source_block_in(SourceSignal::Opposed, blk, epoch)
+}
+
 /// The block a source epoch publishes for `blk`, decoded the way a member's playout decodes what it plays.
-fn heard_block(blk: u64, epoch: u64) -> Result<StereoAudioBlock, String> {
+fn heard_block(signal: SourceSignal, blk: u64, epoch: u64) -> Result<StereoAudioBlock, String> {
     StereoAudioBlock::from_be_i16_bytes(
         blk * (FRAMES_PER_BLOCK as u64),
-        &source_block(blk, epoch).to_be_i16_bytes(),
+        &source_block_in(signal, blk, epoch).to_be_i16_bytes(),
     )
     .map_err(|e| e.to_string())
 }
 
 /// Block `blk` of source epoch `epoch` as a media frame. Blocks are coded in groups of four; the sender assigns `seq == blk`
 /// within a stream.
-fn frame_of(timeline: &CampaignTimeline, blk: u64, epoch: u64) -> OutboundFrame {
+fn frame_of(
+    timeline: &CampaignTimeline,
+    signal: SourceSignal,
+    blk: u64,
+    epoch: u64,
+) -> OutboundFrame {
     let start_frame = blk * (FRAMES_PER_BLOCK as u64);
     let pts_ns = timeline.pts_group_ns(blk);
     let consume_by_ns = pts_ns - BLOCK_PERIOD_NS;
@@ -813,7 +852,7 @@ fn frame_of(timeline: &CampaignTimeline, blk: u64, epoch: u64) -> OutboundFrame 
             start_frame,
             pts_ns,
             consume_by_ns,
-            source_block(blk, epoch).to_be_i16_bytes(),
+            source_block_in(signal, blk, epoch).to_be_i16_bytes(),
         )
     }
 }
@@ -1211,6 +1250,8 @@ impl VirtualSpeakerNode {
             replaced_sender: None,
             source_blocks: BTreeMap::new(),
             output_digest: OUTPUT_DIGEST_START,
+            audible_authentic_blocks: 0,
+            rendered_nonzero_blocks: 0,
             stream: link.outcome,
             stream_refused_blocks: 0,
             playout,
@@ -1557,6 +1598,13 @@ pub struct MemberSimulationStats {
     /// a reference that sets the same volumes directly.
     #[serde(default)]
     pub output_fnv1a64: u64,
+    /// Blocks the gate let sound whose audio was the engine's authentic block.
+    #[serde(default)]
+    pub audible_authentic_blocks: u64,
+    /// Blocks in which at least one rendered sample was not zero. A member whose every channel comes from the mono mix of the
+    /// original opposed source has none (`docs/contracts/q01.md`, limit 1).
+    #[serde(default)]
+    pub rendered_nonzero_blocks: u64,
 }
 
 /// Run a complete deterministic Virtual House simulation across 5 mixed-generation Sonos models
@@ -1878,10 +1926,18 @@ fn run_campaign_scenario(
                 &mut session,
             )?;
         }
-        let frame_for = |blk: u64| frame_of(&timeline, blk, desk.program.owner_at(blk).epoch.get());
+        let frame_for = |blk: u64| {
+            frame_of(
+                &timeline,
+                scenario.signal,
+                blk,
+                desk.program.owner_at(blk).epoch.get(),
+            )
+        };
         let stale_frame = |blk: u64| {
             frame_of(
                 &timeline,
+                scenario.signal,
                 blk,
                 desk.program
                     .replaced_at(blk)
@@ -2013,6 +2069,7 @@ fn run_campaign_scenario(
             } else {
                 None
             };
+            let authentic = matches!(played, Some(Played::Authentic(_)));
             let stereo_in = match played {
                 None => StereoAudioBlock::silence(start_frame),
                 Some(Played::Authentic(block)) => {
@@ -2024,7 +2081,9 @@ fn run_campaign_scenario(
                         .entries
                         .iter()
                         .map(|entry| entry.epoch.get())
-                        .find(|&epoch| heard_block(blk_idx, epoch).is_ok_and(|b| b == block));
+                        .find(|&epoch| {
+                            heard_block(scenario.signal, blk_idx, epoch).is_ok_and(|b| b == block)
+                        });
                     if heard != Some(owner) {
                         return Err(format!(
                             "member {member_id}: block {blk_idx} played the audio of source epoch {heard:?}, but source epoch {owner} owns that position"
@@ -2055,6 +2114,9 @@ fn run_campaign_scenario(
             // whose negotiation was refused.
             let stereo_in = if gate.audible() && streaming {
                 node.audible_blocks += 1;
+                if authentic {
+                    node.audible_authentic_blocks += 1;
+                }
                 stereo_in
             } else {
                 node.muted_blocks += 1;
@@ -2062,6 +2124,26 @@ fn run_campaign_scenario(
                     node.stream_refused_blocks += 1;
                 }
                 StereoAudioBlock::silence(start_frame)
+            };
+
+            // Planted defect: the member's audio never reaches either DSP, but the block is still counted as having sounded.
+            let stereo_in = if let Some(OutputFault::SilentInput { member_id: faulty }) = fault
+                && faulty == member_id.as_str()
+                && gate.audible()
+                && streaming
+            {
+                if blk_idx == 0 {
+                    sink.emit_critical(fault_injected_event(
+                        seed,
+                        blk_idx,
+                        send_time_ns,
+                        &session,
+                        fault,
+                    ));
+                }
+                StereoAudioBlock::silence(start_frame)
+            } else {
+                stereo_in
             };
 
             let resampled = node
@@ -2147,6 +2229,13 @@ fn run_campaign_scenario(
                 node.output_digest =
                     fnv1a_extend_samples(node.output_digest, &samples[..hw_out.frames]);
             }
+            if hw_out
+                .channel_samples
+                .iter()
+                .any(|samples| samples[..hw_out.frames].iter().any(|&sample| sample != 0))
+            {
+                node.rendered_nonzero_blocks += 1;
+            }
 
             let lease = node.hal.submit_dma_block().map_err(|e| e.to_string())?;
             lease.complete();
@@ -2228,6 +2317,21 @@ fn run_campaign_scenario(
         node.playout
             .finish(total_blocks)
             .map_err(|e| format!("member {id}: {e}"))?;
+    }
+
+    // With a source whose channels do not cancel, a member that sounded audio it was sent and rendered only zeros has lost its
+    // output somewhere the other oracles cannot see (both DSPs are handed the same input). Under the original opposed source this is
+    // not asked: a member whose every channel comes from the mono mix legitimately renders zeros (`docs/contracts/q01.md`, limit 1).
+    // A member the gate never let sound is not asked either.
+    if scenario.signal == SourceSignal::Asymmetric {
+        for (id, node) in &nodes {
+            if node.audible_authentic_blocks > 0 && node.rendered_nonzero_blocks == 0 {
+                return Err(format!(
+                    "member_rendered_silence: {id}: {} authentic blocks sounded and every sample it rendered is zero",
+                    node.audible_authentic_blocks
+                ));
+            }
+        }
     }
 
     // The volume plan is judged here, before the skeleton SOAP call and the fencing probe below change the group volume.
@@ -2325,6 +2429,8 @@ fn run_campaign_scenario(
                 playout: node.playout.report(),
                 source_blocks: node.source_blocks.clone(),
                 output_fnv1a64: node.output_digest,
+                audible_authentic_blocks: node.audible_authentic_blocks,
+                rendered_nonzero_blocks: node.rendered_nonzero_blocks,
             },
         );
     }
@@ -4884,5 +4990,138 @@ mod tests {
         }
         // Five different boards render different samples: the digest is not one constant.
         assert!(digests.len() > 1);
+    }
+
+    // ---- Q01: a source whose channels do not cancel, and the question "did a member that sounded render anything" ---------------
+    //
+    // The default source has `right = -left`, so the mono mix is exactly zero and a member whose every channel comes from it
+    // (S12, S1, the sub) renders silence at any volume. Every assertion above is about that source and is unchanged. These
+    // scenarios use `SourceSignal::Asymmetric` and add one question the other oracles cannot answer, because the live and the
+    // shadow DSP are handed the same input: did a member that sounded audio it was sent render a single non-zero sample?
+
+    fn asymmetric() -> Scenario {
+        Scenario {
+            signal: SourceSignal::Asymmetric,
+            ..Scenario::NONE
+        }
+    }
+
+    #[test]
+    fn the_asymmetric_source_keeps_the_left_channel_and_its_mono_mix_never_cancels() {
+        for blk in 0..64 {
+            for epoch in 1..=3 {
+                let opposed = source_block_in(SourceSignal::Opposed, blk, epoch);
+                let asym = source_block_in(SourceSignal::Asymmetric, blk, epoch);
+                assert_eq!(asym.left, opposed.left, "block {blk} epoch {epoch}");
+                assert_eq!(asym.right, [0.5 * asym.left[0]; FRAMES_PER_BLOCK]);
+                // The original cancels exactly; the new one never does: the mix is 0.75 of the left channel, whose smallest amplitude
+                // over these blocks and epochs is 0.045 (epoch 2, block 0), so the mix is at least 0.03375.
+                assert_eq!(0.5 * (opposed.left[0] + opposed.right[0]), 0.0);
+                assert!(0.5 * (asym.left[0] + asym.right[0]) > 0.03);
+                assert_ne!(asym.to_be_i16_bytes(), opposed.to_be_i16_bytes());
+            }
+        }
+    }
+
+    #[test]
+    fn with_a_source_whose_channels_do_not_cancel_every_member_renders_sound() {
+        let report = run_scenario(SEED, FAULT_BLOCKS, None, asymmetric())
+            .expect("the campaign: every oracle, and every member that sounded rendered something");
+        for (id, stats) in &report.members {
+            assert!(stats.audible_authentic_blocks > 0, "{id} never sounded");
+            assert!(
+                stats.rendered_nonzero_blocks > 0,
+                "{id} rendered only zeros"
+            );
+            assert!(
+                stats.rendered_nonzero_blocks <= stats.rendered_blocks,
+                "{id}"
+            );
+            assert_ne!(
+                stats.output_fnv1a64,
+                silent_digest(FAULT_BLOCKS, stats.hardware_channels),
+                "{id} rendered silence"
+            );
+        }
+    }
+
+    #[test]
+    fn under_the_original_source_the_mono_routed_member_renders_only_zeros_and_that_is_not_a_failure()
+     {
+        // The limit, measured: the same campaign with the original source. S12 sounded (the gate let its authentic blocks through)
+        // and rendered not one non-zero sample, and the campaign is still a pass: the other oracles cannot tell, and this question is
+        // not asked of the original source.
+        let report = run_scenario(SEED, FAULT_BLOCKS, None, Scenario::NONE).expect("campaign");
+        let s12 = &report.members["spk-kitchen-s12"];
+        assert!(s12.audible_authentic_blocks > 0);
+        assert_eq!(s12.rendered_nonzero_blocks, 0);
+        assert_eq!(
+            s12.output_fnv1a64,
+            silent_digest(FAULT_BLOCKS, s12.hardware_channels)
+        );
+        // A member with channels fed from the left and the right renders in the same campaign.
+        let s5 = &report.members["spk-office-s5"];
+        assert!(s5.rendered_nonzero_blocks > 0);
+    }
+
+    /// The control (the same scenario with no plant) must pass; then the plant must fail the campaign with a message that names it.
+    fn assert_silence_is_named(member: &'static str) {
+        run_scenario(SEED, FAULT_BLOCKS, None, asymmetric())
+            .expect("the control: the same scenario without the plant passes");
+        let error = run_scenario(
+            SEED,
+            FAULT_BLOCKS,
+            Some(OutputFault::SilentInput { member_id: member }),
+            asymmetric(),
+        )
+        .expect_err("a member that renders silence must fail the campaign");
+        assert!(
+            error.starts_with(&format!("member_rendered_silence: {member}:")),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_member_that_renders_silence_fails_the_campaign_by_name() {
+        // A member with L/R channels (S5) and one that only a non-cancelling source gives anything to (S12).
+        assert_silence_is_named("spk-office-s5");
+        assert_silence_is_named("spk-kitchen-s12");
+    }
+
+    #[test]
+    fn without_the_new_question_a_member_handed_silence_passes_every_other_oracle() {
+        // Why the question is needed: the same plant under the original source, where it is not asked. Continuity, shadow, fencing,
+        // playout and the skew all hold, and the member's output is exactly the digest of silence.
+        let plant = OutputFault::SilentInput {
+            member_id: "spk-office-s5",
+        };
+        let report = run_scenario(SEED, FAULT_BLOCKS, Some(plant), Scenario::NONE)
+            .expect("every other oracle holds: both DSPs were handed the same silence");
+        let s5 = &report.members["spk-office-s5"];
+        assert!(s5.audible_authentic_blocks > 0);
+        assert_eq!(s5.rendered_nonzero_blocks, 0);
+        assert_eq!(
+            s5.output_fnv1a64,
+            silent_digest(FAULT_BLOCKS, s5.hardware_channels)
+        );
+    }
+
+    #[test]
+    fn a_member_that_never_sounded_may_render_only_zeros_under_the_new_source() {
+        // The permitted positive: members the controller never admitted stay muted, render zeros, and are not asked to have
+        // rendered anything. Only the member that sounded is.
+        let plant = OutputFault::UnadmittedExcept {
+            member_id: "spk-office-s5",
+        };
+        let report = run_scenario(SEED, 200, Some(plant), asymmetric())
+            .expect("a member that never sounded is not a silent member");
+        for (id, stats) in &report.members {
+            if id == "spk-office-s5" {
+                assert!(stats.rendered_nonzero_blocks > 0, "{id}");
+            } else {
+                assert_eq!(stats.audible_authentic_blocks, 0, "{id}");
+                assert_eq!(stats.rendered_nonzero_blocks, 0, "{id}");
+            }
+        }
     }
 }
