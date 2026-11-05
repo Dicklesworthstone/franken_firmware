@@ -149,15 +149,27 @@ def judge_records(doc, records):
         if len(records_for) != 1:
             problems.append("plant %s was reported %d times" % (name, len(records_for)))
         record = records_for[0]
-        if not record.get("broken"):
+        broken = record.get("broken")
+        if not broken:
             problems.append("plant %s broke no scenario in the engine, so the replay cannot fail" % name)
-        if record.get("broken") != plants[name]:
-            problems.append("plant %s: the engine breaks %s, the model predicts %s" % (name, record.get("broken"), plants[name]))
+            continue
+        # "exactly the scenarios the model predicts" is a property of sets: the engine lists them in the
+        # vector file's order and the model sorted, so order is not compared. A scenario named twice is
+        # refused, so that comparing sets cannot hide it.
+        if len(set(broken)) != len(broken):
+            problems.append("plant %s: the engine names a scenario twice: %s" % (name, broken))
+        if len(set(plants[name])) != len(plants[name]):
+            problems.append("plant %s: the model names a scenario twice: %s" % (name, plants[name]))
+        if set(broken) != set(plants[name]):
+            problems.append("plant %s: the engine breaks %s, the model predicts %s (only the engine: %s; only the model: %s)" % (
+                name, sorted(broken), sorted(plants[name]), sorted(set(broken) - set(plants[name])),
+                sorted(set(plants[name]) - set(broken))))
 
     # the replay can fail at all
     corrupted = by_kind.get("corrupted", [])
     shown = ("wrong_number_reported", "wrong_code_reported", "dropped_details_reported",
-             "null_for_empty_reported", "bare_refusal_is_an_empty_object")
+             "null_for_empty_reported", "bare_refusal_is_an_empty_object", "reordered_sets_accepted",
+             "one_id_missing_reported", "one_id_swapped_reported", "duplicate_reported")
     if len(corrupted) != 1 or not all(corrupted[0].get(field) is True for field in shown):
         problems.append("the replay did not show that a corrupted expectation is reported: %s" % corrupted)
 

@@ -8,6 +8,10 @@
 //! Membership changes (join, leave, exclusion) go through the cutover protocol in
 //! [`membership`]: propose a future frame, gather readiness acknowledgements, commit, and
 //! activate at that frame. It is additive and has its own error type; `apply_command` is unchanged.
+//!
+//! Which source owns the group's program (Spotify, AirPlay 2, line-in) is decided by
+//! [`SourceArbiter`] in [`source`]: replace or reject by kind and command class, one source epoch per
+//! observed epoch, and a publish gate that refuses a replaced source.
 
 #![forbid(unsafe_code)]
 
@@ -16,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod membership;
+mod source;
 pub use membership::{
     AbortReason, AuthorityToken, DurableVoterRecord, EpochMint, GrantRecord, GroupMembership,
     GroupTime, IntendedMember, LeaseAck, LeaseRequest, LeaseRequestKind, LeaseTerms, LeaseView,
@@ -23,6 +28,10 @@ pub use membership::{
     MembershipConfig, MembershipError, MembershipIntent, MissingAckPolicy, OutputBound,
     OutputResolution, ProposalPhase, ProposalSpec, ProposalStatus, QuorumConfig, QuorumRound,
     ReadinessReport,
+};
+pub use source::{
+    Admitted, CommandClass, MAX_SOURCE_LABEL_BYTES, SourceArbiter, SourceCommand, SourceConfig,
+    SourceEpoch, SourceError, SourceId, SourceKind, SourcePolicy, SourcePolicyTable, SourceView,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

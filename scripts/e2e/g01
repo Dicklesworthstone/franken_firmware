@@ -6,7 +6,9 @@
 #                                      model side, then judge the centrally run cargo output of the Rust
 #                                      replay of the same scenarios
 #
-# MODEL side (stdlib Python; builds and boots nothing): replay the hand-written golden scenarios against
+# MODEL side (stdlib Python; builds and boots nothing): the source-ownership model of section 10
+# (tests/g01/source_reference.py: 51 scenarios, a seeded interleaving schedule and a mutation matrix over
+# its 16 rules, with its own Rust-agreement checks), then replay the hand-written golden scenarios against
 # the independent reference model, check the model's predicted counts for the seeded partition schedule
 # and the scenarios each planted fault must break, and run the model's own checks (every rule of the
 # contract can be switched off and the scenarios or the schedule notice; the Rust's view-plus-grant
@@ -46,6 +48,7 @@ if [ "$#" -gt 0 ]; then
 fi
 
 python3 -B -I "$ROOT/tests/g01/reference.py" --check
+python3 -B -I "$ROOT/tests/g01/source_reference.py" --check
 python3 -B -m unittest discover -s "$ROOT/tests/g01" -p 'test_*.py' -v
 echo "G01 model side: PASS"
 

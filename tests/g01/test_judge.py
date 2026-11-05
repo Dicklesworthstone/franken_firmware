@@ -43,7 +43,9 @@ def good_records():
               for p in DOC["plants"]]
     corrupted = [{"kind": "corrupted", "wrong_number_reported": True, "wrong_code_reported": True,
                   "dropped_details_reported": True, "null_for_empty_reported": True,
-                  "bare_refusal_is_an_empty_object": True}]
+                  "bare_refusal_is_an_empty_object": True, "reordered_sets_accepted": True,
+                  "one_id_missing_reported": True, "one_id_swapped_reported": True,
+                  "duplicate_reported": True}]
     vectors = [{"kind": "vectors", "scenarios": len(DOC["scenarios"]),
                 "step_entries": sum(len(s["steps"]) for s in DOC["scenarios"]),
                 "schedule_runs": len(DOC["schedule"]["runs"]), "plants": len(DOC["plants"])}]
@@ -138,6 +140,42 @@ class Judge(unittest.TestCase):
         g[key][3]["matches"] = False
         self.assertTrue(any("did not report a match" in p for p in problems_of(g)))
 
+    def test_the_order_of_the_engines_list_is_not_compared_but_the_set_is(self):
+        """b22h: the engine listed flipped_mint's 25 scenarios in vector-file order (S124 before S119) and
+        the model listed them sorted; the sets were identical. Order must not fail the judge; a set that
+        differs by one id, or a scenario named twice, must."""
+        key = "a_planted_fault_breaks_exactly_the_scenarios_the_model_predicts"
+
+        def plant(g, name):
+            return next(r for r in g[key] if r["kind"] == "plant" and r["name"] == name)
+
+        g = good_records()
+        broken = plant(g, "flipped_mint")["broken"]
+        self.assertIn("G01-S119", broken)
+        self.assertIn("G01-S124", broken)
+        reordered = [i for i in broken if i != "G01-S124"]
+        reordered.insert(reordered.index("G01-S119"), "G01-S124")  # S124 before S119, as in the vector file
+        self.assertNotEqual(reordered, broken)
+        self.assertEqual(sorted(reordered), sorted(broken))
+        plant(g, "flipped_mint")["broken"] = reordered
+        self.assertEqual(problems_of(g), [])
+        g = good_records()
+        plant(g, "flipped_mint")["broken"] = list(reversed(broken))
+        self.assertEqual(problems_of(g), [])
+
+        outsider = next(s["id"] for s in DOC["scenarios"] if s["id"] not in broken)
+        for label, changed, needle in (
+            ("one id missing", [i for i in broken if i != "G01-S119"], "only the model: ['G01-S119']"),
+            ("one id extra", broken + [outsider], "only the engine: ['%s']" % outsider),
+            ("one id swapped", [i for i in broken if i != "G01-S119"] + [outsider], "only the engine: ['%s']" % outsider),
+            ("one id twice", broken + [broken[0]], "names a scenario twice"),
+        ):
+            with self.subTest(label):
+                g = good_records()
+                plant(g, "flipped_mint")["broken"] = changed
+                found = problems_of(g)
+                self.assertTrue(any(needle in p for p in found), (label, found))
+
     def test_a_plant_that_breaks_nothing_or_the_wrong_scenarios_or_is_missing_fails(self):
         key = "a_planted_fault_breaks_exactly_the_scenarios_the_model_predicts"
         g = good_records()
@@ -153,7 +191,8 @@ class Judge(unittest.TestCase):
     def test_a_replay_that_cannot_show_it_reports_corruption_fails(self):
         key = "a_planted_fault_breaks_exactly_the_scenarios_the_model_predicts"
         for field in ("wrong_number_reported", "wrong_code_reported", "dropped_details_reported",
-                      "null_for_empty_reported", "bare_refusal_is_an_empty_object"):
+                      "null_for_empty_reported", "bare_refusal_is_an_empty_object", "reordered_sets_accepted",
+                      "one_id_missing_reported", "one_id_swapped_reported", "duplicate_reported"):
             g = good_records()
             next(r for r in g[key] if r["kind"] == "corrupted")[field] = False
             self.assertTrue(any("corrupted expectation" in p for p in problems_of(g)), field)

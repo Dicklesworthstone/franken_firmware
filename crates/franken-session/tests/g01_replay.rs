@@ -1657,6 +1657,40 @@ fn corrupt_code(scenario: &Value) -> Value {
     panic!("no refusal to corrupt");
 }
 
+/// Whether the engine and the model name the same scenarios. The order does not matter (the engine
+/// collects in vector-file order, the model sorts), but a scenario named twice is refused before sorting
+/// could hide it, and a difference reports which ids only one side has. On success: the sorted ids.
+fn same_scenarios(engine: &[String], model: &[String]) -> Result<Vec<String>, String> {
+    let mut by_engine = engine.to_vec();
+    let mut by_model = model.to_vec();
+    by_engine.sort();
+    by_model.sort();
+    if by_engine.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(format!("the engine names a scenario twice: {engine:?}"));
+    }
+    if by_model.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(format!("the model names a scenario twice: {model:?}"));
+    }
+    if by_engine == by_model {
+        return Ok(by_engine);
+    }
+    let only_engine: Vec<&String> = by_engine
+        .iter()
+        .filter(|id| !by_model.contains(*id))
+        .collect();
+    let only_model: Vec<&String> = by_model
+        .iter()
+        .filter(|id| !by_engine.contains(*id))
+        .collect();
+    Err(format!(
+        "only the engine breaks {only_engine:?}, only the model predicts {only_model:?}"
+    ))
+}
+
+fn ids(names: &[&str]) -> Vec<String> {
+    names.iter().map(|name| (*name).to_string()).collect()
+}
+
 #[test]
 fn a_planted_fault_breaks_exactly_the_scenarios_the_model_predicts() {
     let doc = doc();
@@ -1694,13 +1728,24 @@ fn a_planted_fault_breaks_exactly_the_scenarios_the_model_predicts() {
             .iter()
             .filter_map(|v| v.as_str().map(str::to_string))
             .collect();
-        observe(&json!({"kind": "plant", "name": name, "broken": broken, "predicted": predicted}));
+        // Both lists are reported sorted: the engine collects them in vector-file order and the model
+        // lists them sorted, and "breaks exactly the scenarios the model predicts" is about the set.
+        let mut sorted_broken = broken.clone();
+        sorted_broken.sort();
+        let mut sorted_predicted = predicted.clone();
+        sorted_predicted.sort();
+        observe(&json!({
+            "kind": "plant",
+            "name": name,
+            "broken": sorted_broken,
+            "predicted": sorted_predicted,
+        }));
         assert!(
             !broken.is_empty(),
             "plant {name} broke nothing, so the replay cannot tell the fault from the engine"
         );
-        if broken != predicted {
-            disagreements.push(format!("{name}: engine {broken:?}, model {predicted:?}"));
+        if let Err(problem) = same_scenarios(&broken, &predicted) {
+            disagreements.push(format!("{name}: {problem}"));
         }
     }
 
@@ -1734,6 +1779,27 @@ fn a_planted_fault_breaks_exactly_the_scenarios_the_model_predicts() {
     let bare_is_an_empty_object = bare.details == json!({});
     let bare_meets_an_expectation_without_details = judge_refusal(&no_details, &bare).is_none();
     let null_for_none_reported = judge_refusal(&no_details, &nulled).is_some();
+    // The plant comparison is about sets: a different order is accepted, a missing, a swapped or a
+    // twice-named scenario is not.
+    let reordered_sets_accepted = same_scenarios(
+        &ids(&["G01-S124", "G01-S119", "G01-S001"]),
+        &ids(&["G01-S001", "G01-S119", "G01-S124"]),
+    ) == Ok(ids(&["G01-S001", "G01-S119", "G01-S124"]));
+    let one_id_missing_reported = same_scenarios(
+        &ids(&["G01-S001", "G01-S119"]),
+        &ids(&["G01-S001", "G01-S119", "G01-S124"]),
+    )
+    .is_err();
+    let one_id_swapped_reported = same_scenarios(
+        &ids(&["G01-S001", "G01-S119"]),
+        &ids(&["G01-S001", "G01-S120"]),
+    )
+    .is_err();
+    let duplicate_reported = same_scenarios(
+        &ids(&["G01-S001", "G01-S001", "G01-S119"]),
+        &ids(&["G01-S001", "G01-S119"]),
+    )
+    .is_err();
     observe(&json!({
         "kind": "corrupted",
         "wrong_number_reported": !wrong_number.is_empty(),
@@ -1741,7 +1807,23 @@ fn a_planted_fault_breaks_exactly_the_scenarios_the_model_predicts() {
         "dropped_details_reported": dropped_numbers_reported,
         "null_for_empty_reported": null_for_none_reported,
         "bare_refusal_is_an_empty_object": bare_is_an_empty_object,
+        "reordered_sets_accepted": reordered_sets_accepted,
+        "one_id_missing_reported": one_id_missing_reported,
+        "one_id_swapped_reported": one_id_swapped_reported,
+        "duplicate_reported": duplicate_reported,
     }));
+    assert!(
+        reordered_sets_accepted,
+        "the same scenarios in another order were refused"
+    );
+    assert!(
+        one_id_missing_reported && one_id_swapped_reported,
+        "a scenario missing from, or swapped in, the engine's list was accepted"
+    );
+    assert!(
+        duplicate_reported,
+        "a scenario named twice was hidden by sorting"
+    );
     assert!(
         !wrong_number.is_empty(),
         "a wrong expected number was accepted"
