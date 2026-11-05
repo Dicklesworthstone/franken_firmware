@@ -58,7 +58,18 @@ def _cached_fit(samples, hz, ppb, skip, n_meas):
     return _orig_fit(list(samples), hz, ppb, skip, n_meas)
 
 
+_orig_fnv, _orig_chunks = m.fnv1a64, m.chunk_digests
+_cached_fnv = functools.lru_cache(maxsize=None)(_orig_fnv)
+
+
+@functools.lru_cache(maxsize=None)
+def _cached_chunks(samples):
+    return _orig_chunks(list(samples))
+
+
 m.reference_canonical, m.reference_seeded = _cached_canonical, _cached_seeded
+m.fnv1a64 = _cached_fnv
+m.chunk_digests = lambda samples: _cached_chunks(tuple(samples))
 m.fit_window = lambda samples, hz, ppb, skip, n_meas: _cached_fit(tuple(samples), hz, ppb, skip, n_meas)
 
 SEED_A, SEED_B = 4_611_686_018_427_387_903, 123_456_789_012_345
@@ -130,14 +141,15 @@ def cpu_lines():
     return out
 
 
-def good_transcript(seed=SEED_A, canonical_kind="catmull_rom"):
+def good_transcript(seed=SEED_A, canonical_kind="catmull_rom", kind_by_hz=None):
     lines = ["FFW_D03T_ALIVE",
              f"FFW_D03T_BEGIN version=1 block_frames=256 blocks_per_rep=8 reps=5 warmup_blocks=6 ruler_reps=2 skip=192 "
              f"n_meas=32768 seeded_frames={SEEDED_FRAMES}",
              f"FFW_D03T_SEED value={seed}", "FFW_D03T_EMPTY ticks=[3, 3, 3, 3, 3, 3, 3, 3]"]
     lines += ruler_lines()[:16] + cpu_lines() + ruler_lines()[16:]
     for cid, hz, ppb in m.CANONICAL:
-        lines += dump("Q", cid, f"hz={hz} ppb={ppb}", canonical_samples(hz, ppb, canonical_kind))
+        kind = (kind_by_hz or {}).get(hz, canonical_kind)
+        lines += dump("Q", cid, f"hz={hz} ppb={ppb}", canonical_samples(hz, ppb, kind))
     for cid, hz in m.SEEDED:
         lines += dump("S", cid, f"hz={hz} ppb={m.SEEDED_PPB} phase_bits={m.f64_bits(m.seeded_phase(seed, hz)):016x}",
                       seeded_samples(hz, seed))
@@ -334,6 +346,18 @@ class PlantedNegativeTest(unittest.TestCase):
         self.assertEqual(gates["D03T-SEEDED"].status, "failed")
         self.assertRegex(gates["D03T-SEEDED"].detail, r"seed-1000: sample \d+ is .* from the reference for this run's seed")
 
+    def test_a_wrong_phase_echo_alone_is_caught(self):
+        """D03T-PLANT-PHASE-ONLY: the samples are right for seed B, the phase echoed is seed A's: only the echo is wrong."""
+        text = good_transcript(seed=SEED_B)
+        for _cid, hz in m.SEEDED:
+            old, new = f"{m.f64_bits(m.seeded_phase(SEED_B, hz)):016x}", f"{m.f64_bits(m.seeded_phase(SEED_A, hz)):016x}"
+            self.assertIn(old, text)
+            text = text.replace(old, new)
+        gates, _ = judge(text, seed=SEED_B)
+        self.assertEqual(gates["D03T-SEEDED"].status, "failed")
+        self.assertIn("is not the one this run's seed derives", gates["D03T-SEEDED"].detail)
+        self.assertNotIn("from the reference for this run's seed", gates["D03T-SEEDED"].detail)
+
     def test_host_samples_without_the_seeded_section_are_caught(self):
         """D03T-PLANT-HOST-ONLY: a guest that emits the canonical (host-identical) samples and nothing seeded."""
         lines = [ln for ln in GOOD.split("\n") if "FFW_D03T_S" not in ln or "FFW_D03T_SEED" in ln]
@@ -367,6 +391,26 @@ class PlantedNegativeTest(unittest.TestCase):
         self.assertEqual(gates["D03T-QUALITY"].status, "failed")
         self.assertIn("truncated", gates["D03T-QUALITY"].detail)
 
+    def test_a_short_dump_whose_digest_matches_what_was_printed_is_still_short(self):
+        """The cleverest truncation: the guest prints fewer samples than it promised, with a matching digest, a
+        contiguous offset run and an END line. Only the promised-versus-printed count can tell."""
+        cid = "q-steady-10000-p500"
+        t = m.parse_transcript(GOOD)
+        samples, _ = m.decode_case(t["cases"][("Q", cid)])
+        short = list(samples[:-64])
+        lines = GOOD.split("\n")
+        start = next(i for i, ln in enumerate(lines) if f"FFW_D03T_QBEGIN id={cid}" in ln)
+        stop = next(i for i, ln in enumerate(lines) if f"FFW_D03T_QEND id={cid}" in ln)
+        rebuilt = dump("Q", cid, "hz=10000 ppb=500000", short)
+        rebuilt[0] = rebuilt[0].replace(f"frames={len(short)}", f"frames={len(samples)}")                   # the promise
+        rebuilt[-1] = rebuilt[-1].replace(f"frames={len(short)}", f"frames={len(samples)}")                  # the END claim
+        lines[start:stop + 1] = rebuilt
+        gates, _ = judge("\n".join(lines))
+        self.assertEqual(gates["D03T-QUALITY"].status, "failed")
+        self.assertIn("the dump is truncated", gates["D03T-QUALITY"].detail)
+        self.assertNotIn("does not hash", gates["D03T-QUALITY"].detail)
+        self.assertNotIn("a gap", gates["D03T-QUALITY"].detail)
+
     def test_a_corrupted_sample_fails_the_digest_check(self):
         lines = GOOD.split("\n")
         i = next(k for k, ln in enumerate(lines) if "FFW_D03T_QDATA id=q-steady-10000-m500 off=640 " in ln)
@@ -392,6 +436,16 @@ class QualityBandTest(unittest.TestCase):
         self.assertIn("MISSED", gates["D03T-QUALITY"].detail)
         self.assertIn("(reported, not moved)", gates["D03T-QUALITY"].detail)
         self.assertEqual(m.exit_code(report), 1)
+
+    def test_linear_interpolation_at_10_khz_is_rejected_by_the_gain_band_not_the_q_floor(self):
+        """The erratum, on the target: the 10 kHz linear plant clears the Q floor by ~0.3 dB; only gain rejects it."""
+        text = good_transcript(kind_by_hz={10_000: "linear"})
+        gates, _ = judge(text, host=host_log(text))
+        detail = gates["D03T-QUALITY"].detail
+        self.assertEqual(gates["D03T-QUALITY"].status, "failed")
+        self.assertIn("MISSED the declared gain band", detail)
+        self.assertNotIn("MISSED the declared Q band", detail)
+        self.assertNotIn("q-steady-1000-", detail)   # the 1 kHz cases are untouched
 
     def test_a_nearest_neighbour_interpolator_misses_by_a_wide_margin(self):
         text = good_transcript(canonical_kind="nearest")

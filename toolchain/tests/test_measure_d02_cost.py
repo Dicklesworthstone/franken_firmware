@@ -626,5 +626,186 @@ class CommandLine(unittest.TestCase):
             self.assertIn("FFW_BUILD_DIR", err)
 
 
+def costs_after_a_change(saving_per_channel=600.0):
+    """COSTS with the f64 columns lowered by a fixed saving per channel: what a per-sample change would remove."""
+    return {name: (channels, sections,
+                   None if noise64 is None else noise64 - channels * saving_per_channel, noise32,
+                   None if silence64 is None else silence64 - channels * saving_per_channel, silence32)
+            for name, (channels, sections, noise64, noise32, silence64, silence32) in COSTS.items()}
+
+
+def judged_saving(before_text=None, after_text=None, before_elf=None, after_elf=None):
+    return m.judge_conversion(before_text if before_text is not None else transcript("f64"),
+                              after_text if after_text is not None else transcript("f64", costs=costs_after_a_change()),
+                              before_elf, after_elf)
+
+
+class ConversionSaving(unittest.TestCase):
+    """`compare`: the saving ONE source change made, with the same section state in both builds. The third D02 cost
+    build (the integer-only D01 conversion) is judged this way against the f64 build that still had the f64
+    conversion."""
+
+    def test_the_saving_is_before_minus_after_and_follows_the_ticks(self):
+        report = judged_saving(before_elf=clean_elf_info(), after_elf=make_other_elf_info())
+        self.assertTrue(report["ok"], report["problems"])
+        s5 = report["rows"]["S5/noise"]
+        self.assertAlmostEqual(s5["before_per_frame"], 6400.0, delta=0.5)
+        self.assertAlmostEqual(s5["after_per_frame"], 6400.0 - 5 * 600.0, delta=0.5)
+        self.assertAlmostEqual(s5["saving_per_frame"], 3000.0, delta=1.0)
+        self.assertAlmostEqual(s5["saving_per_channel_per_frame"], 600.0, delta=0.5)
+        self.assertAlmostEqual(s5["saving_fraction"], 3000.0 / 6400.0, places=3)
+        self.assertAlmostEqual(s5["saving_minstr_per_second"], 3000.0 * 48000 / 1e6, delta=0.05)
+        self.assertIn("S5/silence", report["rows"])
+        self.assertNotIn("S1/silence", report["rows"])
+        # the saving per channel is the same in every configuration, whatever the section count: it is not a section effect
+        for key, row in report["rows"].items():
+            self.assertAlmostEqual(row["saving_per_channel_per_frame"], 600.0, delta=0.5, msg=key)
+
+    def test_a_build_that_got_slower_is_reported_as_a_negative_saving_not_hidden(self):
+        report = judged_saving(before_text=transcript("f64", costs=costs_after_a_change()), after_text=transcript("f64"))
+        self.assertTrue(report["ok"], report["problems"])
+        self.assertLess(report["rows"]["S5/noise"]["saving_per_frame"], 0)
+        text = m.render_saving(report, "b", "a")
+        self.assertNotIn("NO HEADLINE NUMBER", text)
+        self.assertRegex(text, r"S5/noise\s+5\s+3\s+3400\.\d\s+6400\.\d\s+-3000\.\d\s+-88\.24%")
+
+    def refuses(self, **kwargs):
+        report = judged_saving(**kwargs)
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["rows"], {}, "a failed gate must not leave numbers behind")
+        return " | ".join(report["problems"])
+
+    def test_two_builds_with_different_section_states_are_refused(self):
+        self.assertTrue(judged_saving()["ok"])
+        self.assertIn("different section realizations", self.refuses(after_text=transcript("f32")))
+
+    def test_a_build_compared_with_itself_is_refused(self):
+        same = clean_elf_info()
+        self.assertTrue(judged_saving(before_elf=clean_elf_info(), after_elf=make_other_elf_info())["ok"])
+        self.assertIn("identical", self.refuses(before_elf=same, after_elf=clean_elf_info()))
+
+    def test_builds_that_measured_different_configurations_are_refused(self):
+        smaller = {k: v for k, v in costs_after_a_change().items() if k != "S1"}
+        self.assertIn("different configurations", self.refuses(after_text=transcript("f64", costs=smaller)))
+
+    def test_a_ruler_that_drifted_in_either_build_refuses_the_whole_comparison(self):
+        self.assertTrue(judged_saving()["ok"])
+        # 2% between the ruler before and after the D02 phase, four times the 0.5% limit
+        drifted = transcript("f64", costs=costs_after_a_change(), phase_b_slope=SLOPE * 1.02)
+        self.assertIn("drifted", self.refuses(after_text=drifted))
+        self.assertIn("drifted", self.refuses(before_text=transcript("f64", phase_b_slope=SLOPE * 1.02)))
+
+    def test_a_chain_that_never_ran_in_one_build_is_refused_rather_than_reported_as_a_saving(self):
+        def dead(lines):
+            return [re.sub(r"min_channel_peak=\d+", "min_channel_peak=0", l) if "input=noise" in l else l for l in lines]
+        self.assertIn("may not have been live", self.refuses(after_text=transcript("f64", costs=costs_after_a_change(), mutate=dead)))
+
+    def test_fpu_opcodes_in_the_after_build_are_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            hard = m.read_elf(write(d, "hard.elf", make_elf(CLEAN_WORDS + [LWC1_WORD], fp_abi=3)))
+        self.assertIn("soft-float is NOT proven", self.refuses(before_elf=clean_elf_info(), after_elf=hard))
+
+    def test_the_noise_is_the_larger_of_the_two_builds_floor_gaps_whichever_build_is_noisier(self):
+        def noisy(lines):
+            # S5 noise: repetitions 1..4 are 0.5% above repetition 0, so the two lowest repetitions differ by 0.5%
+            out = []
+            for line in lines:
+                if "name=S5 input=noise rep=" in line and not line.startswith("FFW_D02COST_RUN name=S5 input=noise rep=0 "):
+                    line = re.sub(r"ticks=(\d+)", lambda hit: f"ticks={round(int(hit.group(1)) * 1.005)}", line)
+                out.append(line)
+            return out
+        for before_is_noisy in (True, False):
+            report = judged_saving(
+                before_text=transcript("f64", mutate=noisy if before_is_noisy else None),
+                after_text=transcript("f64", costs=costs_after_a_change(), mutate=None if before_is_noisy else noisy))
+            self.assertTrue(report["ok"], report["problems"])
+            self.assertAlmostEqual(report["rows"]["S5/noise"]["noise_fraction"], 0.005, places=3, msg=f"before noisy: {before_is_noisy}")
+            self.assertEqual(report["rows"]["S1/noise"]["noise_fraction"], 0.0, "a configuration with agreeing repetitions has no noise")
+
+    def test_the_report_gives_the_noise_beside_the_saving_and_states_what_the_numbers_are_not(self):
+        text = m.render_saving(judged_saving(before_elf=clean_elf_info(), after_elf=make_other_elf_info()), "rev-before", "rev-after")
+        self.assertIn("rev-before", text)
+        self.assertIn("rev-after", text)
+        self.assertIn("noise %", text)
+        self.assertIn("SAME section state", text)
+        self.assertIn("not a result", text)
+        self.assertIn("INSTRUCTIONS EXECUTED", text)
+        self.assertIn("no percentage of a CPU is claimed", text)
+        failed = m.render_saving(judged_saving(after_text=transcript("f32")), None, None)
+        self.assertIn("NO HEADLINE NUMBER", failed)
+        self.assertNotIn("S5/noise", failed)
+
+
+def make_other_elf_info():
+    """A second, different, soft-float ELF (one extra integer word), so two ELFs do not hash alike."""
+    with tempfile.TemporaryDirectory() as d:
+        return m.read_elf(write(d, "y.elf", make_elf(CLEAN_WORDS + [0x00000000], fp_abi=3)))
+
+
+class CompareCommandLine(unittest.TestCase):
+    def run_main(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = m.main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def files(self, d):
+        before = write(d, "before.elf", make_elf(CLEAN_WORDS, fp_abi=3))
+        after = write(d, "after.elf", make_elf(CLEAN_WORDS + [0x00000000], fp_abi=3))
+        log_before = write(d, "before.log", transcript("f64"))
+        log_after = write(d, "after.log", transcript("f64", costs=costs_after_a_change()))
+        return before, after, log_before, log_after
+
+    def test_compare_judges_existing_transcripts_and_prints_the_saving(self):
+        with tempfile.TemporaryDirectory() as d:
+            before, after, log_before, log_after = self.files(d)
+            code, out, _ = self.run_main(["compare", "--elf-before", str(before), "--elf-after", str(after), "--log-before",
+                                          str(log_before), "--log-after", str(log_after), "--revision-before", "old",
+                                          "--revision-after", "new"])
+            self.assertEqual(code, 0, out)
+            self.assertIn("S5/noise", out)
+            self.assertIn("saving %", out)
+            self.assertIn("0 FPU opcode word(s)", out)
+            # the same transcripts in the wrong state: no number
+            code, out, _ = self.run_main(["compare", "--elf-before", str(before), "--elf-after", str(after), "--log-before",
+                                          str(log_before), "--log-after", str(write(d, "f32.log", transcript("f32")))])
+            self.assertEqual(code, 1)
+            self.assertIn("NO HEADLINE NUMBER", out)
+
+    def test_a_mixture_of_boot_and_transcript_arguments_is_a_usage_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            before, after, log_before, log_after = self.files(d)
+            base = ["compare", "--elf-before", str(before), "--elf-after", str(after)]
+            for extra in (["--log-dir", str(pathlib.Path(d) / "logs"), "--log-before", str(log_before)],
+                          ["--log-before", str(log_before)],
+                          ["--log-after", str(log_after)],
+                          []):
+                code, _out, err = self.run_main(base + extra)
+                self.assertEqual(code, 2, extra)
+                self.assertIn("either --log-dir", err)
+            self.assertFalse((pathlib.Path(d) / "logs").exists(), "nothing may be created before the arguments are valid")
+
+    def test_compare_without_a_kernel_cache_is_a_clear_error_not_a_guess(self):
+        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.dict("os.environ", {}, clear=False):
+            import os
+            os.environ.pop("FFW_BUILD_DIR", None)
+            before, after, _lb, _la = self.files(d)
+            code, _out, err = self.run_main(["compare", "--elf-before", str(before), "--elf-after", str(after),
+                                             "--log-dir", str(pathlib.Path(d) / "logs")])
+            self.assertEqual(code, 2)
+            self.assertIn("FFW_BUILD_DIR", err)
+
+    def test_a_non_empty_log_directory_is_refused_and_nothing_in_it_is_touched(self):
+        with tempfile.TemporaryDirectory() as d:
+            before, after, _lb, _la = self.files(d)
+            logs = pathlib.Path(d) / "logs"
+            logs.mkdir()
+            keep = write(logs, "keep.txt", "evidence")
+            code, _out, err = self.run_main(["compare", "--elf-before", str(before), "--elf-after", str(after), "--log-dir", str(logs)])
+            self.assertEqual(code, 2)
+            self.assertIn("not empty", err)
+            self.assertEqual(keep.read_text(), "evidence")
+
+
 if __name__ == "__main__":
     unittest.main()
