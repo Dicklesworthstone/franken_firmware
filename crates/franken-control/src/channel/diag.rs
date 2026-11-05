@@ -71,6 +71,19 @@
 //! records. The channel gathers the facts at `submit` and writes the records when the session is at hand
 //! (the next `step`, or `flush_log`); the facts waiting are bounded, and a request that does not fit is
 //! counted as a dropped record.
+//!
+//! # Handing records to a sink
+//!
+//! The channel never writes a record anywhere: `submit`, `step` and `acknowledge` only push a line into the bounded ring
+//! in this module and return. Getting lines out is the owner's, in its diagnostic drain, between those calls:
+//! [`ChannelLog::drain`] takes everything, and [`ChannelLog::drain_to`] offers lines to a [`LineSink`], oldest first, at most
+//! `budget` offers per call. A sink answers [`SinkReply::Taken`] (the line leaves the ring), or `Full` or `Unavailable` (the
+//! line stays queued and this drain stops). So a slow, full, short-writing or absent sink can stall only the drain, never a
+//! decision, and whatever it does the channel takes the decisions it takes with no log at all. Nothing is lost silently:
+//! every record handed to the log is held, delivered, or counted as dropped, `emitted == stored + dropped + drained`, and a
+//! critical record is offered as critical so a sink can keep room for it. A run whose critical records were lost, or are
+//! still waiting when the run ends, is not complete ([`LogStats::critical_held`], [`ChannelLog::is_evidence_complete`]).
+//! The real file sink is `crate::logfile`; it is the only code in this crate that touches a filesystem.
 
 use std::collections::VecDeque;
 use std::fmt::{self, Write as _};
@@ -196,6 +209,15 @@ pub struct LogStats {
     pub reject_stored: usize,
     /// Such records not held (a share of `dropped`).
     pub reject_dropped: u64,
+    /// Records that left the ring for a sink (`drain`, or a line a sink took in `drain_to`). `emitted == stored +
+    /// dropped + drained`.
+    pub drained: u64,
+    /// Lines offered to a sink by `drain_to`, and how many of those offers were answered `Full` and `Unavailable`.
+    pub offers: u64,
+    pub sink_full_polls: u64,
+    pub sink_unavailable_polls: u64,
+    /// Critical records held now: evidence that has not reached a sink yet. A run that ends with any is incomplete.
+    pub critical_held: usize,
 }
 
 /// What the channel knows about one settled command, gathered while the step runs and turned into a
@@ -296,6 +318,54 @@ impl RejectFact {
     }
 }
 
+/// What a sink said to one offered line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SinkReply {
+    /// The sink has the line; it leaves the ring.
+    Taken,
+    /// The sink cannot take it right now (its file or its budget is full, or it would block); it stays queued and this
+    /// drain stops.
+    Full,
+    /// The sink is down; it stays queued and this drain stops.
+    Unavailable,
+}
+
+/// A consumer of log lines. `offer` is called only from [`ChannelLog::drain_to`], never from `submit`, `step` or
+/// `acknowledge`, and should return promptly: a drain makes at most `budget` offers.
+pub trait LineSink {
+    /// One complete line, without a trailing newline. `critical` is true for a record a run cannot be trusted
+    /// without (an internal fault), which a sink may keep room for.
+    fn offer(&mut self, line: &str, critical: bool) -> SinkReply;
+}
+
+/// Why a drain stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DrainStop {
+    /// Nothing is queued.
+    Empty,
+    /// The offer budget was used up with lines still queued.
+    Budget,
+    SinkFull,
+    SinkUnavailable,
+}
+
+/// What one `drain_to` did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DrainReport {
+    pub offered: usize,
+    pub taken: usize,
+    pub stop: DrainStop,
+}
+
+/// What a sink counts of its own, for the closing record: lines it wrote, lines it took and dropped (over its caps, or not
+/// one line), and how many of those were critical.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SinkCounts {
+    pub written: u64,
+    pub dropped: u64,
+    pub critical_dropped: u64,
+}
+
 /// The bounded JSONL log of one control channel.
 pub struct ChannelLog {
     run_id: String,
@@ -321,6 +391,13 @@ pub struct ChannelLog {
     reject_bytes: usize,
     reject_dropped: u64,
     reject_share_divisor: usize,
+    /// Lines that left the ring for a sink, offers made, and the offers that were refused.
+    drained: u64,
+    offers: u64,
+    sink_full_polls: u64,
+    sink_unavailable_polls: u64,
+    /// Critical lines held now.
+    critical_lines: usize,
 }
 
 impl fmt::Debug for ChannelLog {
@@ -356,6 +433,11 @@ impl ChannelLog {
             reject_bytes: 0,
             reject_dropped: 0,
             reject_share_divisor: REJECT_SHARE_DIVISOR,
+            drained: 0,
+            offers: 0,
+            sink_full_polls: 0,
+            sink_unavailable_polls: 0,
+            critical_lines: 0,
         }
     }
 
@@ -388,7 +470,117 @@ impl ChannelLog {
         self.ack_bytes = 0;
         self.reject_lines = 0;
         self.reject_bytes = 0;
+        self.critical_lines = 0;
+        self.drained = self
+            .drained
+            .saturating_add(u64::try_from(self.lines.len()).unwrap_or(u64::MAX));
         self.lines.drain(..).map(|(line, _)| line).collect()
+    }
+
+    /// Offer the held lines to `sink`, oldest first, at most `budget` offers. A line leaves the ring only when the sink
+    /// answers [`SinkReply::Taken`]; on `Full` or `Unavailable` it stays and the drain stops (see the module documentation).
+    /// This is the only call that gives a sink anything, and nothing the channel does on its own paths calls it.
+    pub fn drain_to(&mut self, sink: &mut dyn LineSink, budget: usize) -> DrainReport {
+        let mut report = DrainReport {
+            offered: 0,
+            taken: 0,
+            stop: DrainStop::Empty,
+        };
+        while report.offered < budget {
+            let Some((line, class)) = self.lines.front() else {
+                return report;
+            };
+            let critical = *class == Class::Critical;
+            self.offers = self.offers.saturating_add(1);
+            report.offered += 1;
+            match sink.offer(line, critical) {
+                SinkReply::Taken => {
+                    if let Some((line, class)) = self.lines.pop_front() {
+                        self.release(line.len(), class);
+                    }
+                    self.drained = self.drained.saturating_add(1);
+                    report.taken += 1;
+                }
+                SinkReply::Full => {
+                    self.sink_full_polls = self.sink_full_polls.saturating_add(1);
+                    report.stop = DrainStop::SinkFull;
+                    return report;
+                }
+                SinkReply::Unavailable => {
+                    self.sink_unavailable_polls = self.sink_unavailable_polls.saturating_add(1);
+                    report.stop = DrainStop::SinkUnavailable;
+                    return report;
+                }
+            }
+        }
+        if !self.lines.is_empty() {
+            report.stop = DrainStop::Budget;
+        }
+        report
+    }
+
+    /// A held line of `len` bytes and `class` has left the ring: give back its bytes and its share.
+    fn release(&mut self, len: usize, class: Class) {
+        self.used_bytes = self.used_bytes.saturating_sub(len);
+        match class {
+            Class::Step => {}
+            Class::Critical => self.critical_lines = self.critical_lines.saturating_sub(1),
+            Class::Ack => {
+                self.ack_lines = self.ack_lines.saturating_sub(1);
+                self.ack_bytes = self.ack_bytes.saturating_sub(len);
+            }
+            Class::Reject => {
+                self.reject_lines = self.reject_lines.saturating_sub(1);
+                self.reject_bytes = self.reject_bytes.saturating_sub(len);
+            }
+        }
+    }
+
+    /// The record that closes a run's file: the log's own counts and the sink's as numbers in the shared `ffw.log.v1` shape
+    /// (`n02.log.summary`), so a reader that has only the file can check the counts against the lines it holds. It carries
+    /// the cause `evidence_incomplete` when a critical record was lost, is still waiting, or was dropped by the sink.
+    /// `None` only if it cannot be serialized, which the record's fields do not allow.
+    pub(crate) fn closing_line_for(
+        &self,
+        stats: &LogStats,
+        sink: &SinkCounts,
+        now_ns: u64,
+    ) -> Option<String> {
+        let incomplete =
+            stats.critical_lost > 0 || stats.critical_held > 0 || sink.critical_dropped > 0;
+        let record = Record {
+            schema_version: LOG_SCHEMA_VERSION,
+            timestamp_mono_ns: now_ns.max(self.last_ns),
+            run_id: &self.run_id,
+            case_id: &self.case_id,
+            correlation_id: "n02.log".to_string(),
+            member_id: String::new(),
+            group_id: String::new(),
+            source_epoch: 0,
+            state_revision: 0,
+            event_kind: "n02.log.summary".to_string(),
+            message: format!(
+                "emitted={} stored={} dropped={} drained={} written={} sink_dropped={} critical_lost={} critical_held={} critical_sink_dropped={}",
+                stats.emitted,
+                stats.stored,
+                stats.dropped,
+                stats.drained,
+                sink.written,
+                sink.dropped,
+                stats.critical_lost,
+                stats.critical_held,
+                sink.critical_dropped
+            ),
+            queue_depth: stats.stored,
+            latency_us: 0,
+            cause: incomplete.then(|| "evidence_incomplete".to_string()),
+        };
+        serde_json::to_string(&record).ok()
+    }
+
+    /// The closing record for the log as it stands now.
+    pub(crate) fn closing_line(&self, sink: &SinkCounts, now_ns: u64) -> Option<String> {
+        self.closing_line_for(&self.stats(), sink, now_ns)
     }
 
     #[must_use]
@@ -403,6 +595,11 @@ impl ChannelLog {
             ack_dropped: self.ack_dropped,
             reject_stored: self.reject_lines,
             reject_dropped: self.reject_dropped,
+            drained: self.drained,
+            offers: self.offers,
+            sink_full_polls: self.sink_full_polls,
+            sink_unavailable_polls: self.sink_unavailable_polls,
+            critical_held: self.critical_lines,
         }
     }
 
@@ -486,6 +683,7 @@ impl ChannelLog {
         }
         self.used_bytes += bytes;
         let class = if critical {
+            self.critical_lines += 1;
             Class::Critical
         } else {
             Class::Step
@@ -1461,6 +1659,227 @@ mod tests {
             (2, 0, 2, 1)
         );
         assert_eq!(l.lines().count(), 0);
+    }
+
+    /// A sink the test controls: the replies it gives in order (then `Taken`), and what it was offered.
+    struct Scripted {
+        replies: Vec<SinkReply>,
+        seen: Vec<(String, bool)>,
+    }
+
+    impl Scripted {
+        fn new(replies: &[SinkReply]) -> Self {
+            Self {
+                replies: replies.to_vec(),
+                seen: Vec::new(),
+            }
+        }
+    }
+
+    impl LineSink for Scripted {
+        fn offer(&mut self, line: &str, critical: bool) -> SinkReply {
+            self.seen.push((line.to_string(), critical));
+            if self.replies.is_empty() {
+                SinkReply::Taken
+            } else {
+                self.replies.remove(0)
+            }
+        }
+    }
+
+    fn accounted(s: &LogStats) -> bool {
+        s.emitted == s.stored as u64 + s.dropped + s.drained
+    }
+
+    #[test]
+    fn a_drain_offers_oldest_first_and_removes_only_what_the_sink_took() {
+        let mut l = log(8, 65_536);
+        for seq in 1..=3 {
+            l.emit(&committed(seq), seq, 10, "grp");
+        }
+        let held: Vec<String> = l.lines().map(str::to_string).collect();
+        let mut sink = Scripted::new(&[SinkReply::Taken, SinkReply::Taken, SinkReply::Full]);
+        let report = l.drain_to(&mut sink, 10);
+        assert_eq!(
+            report,
+            DrainReport {
+                offered: 3,
+                taken: 2,
+                stop: DrainStop::SinkFull
+            }
+        );
+        // The sink saw the lines in the order they were written, and the one it refused is still the oldest held.
+        let offered: Vec<&str> = sink.seen.iter().map(|(line, _)| line.as_str()).collect();
+        assert_eq!(
+            offered,
+            [held[0].as_str(), held[1].as_str(), held[2].as_str()]
+        );
+        assert_eq!(l.lines().collect::<Vec<_>>(), [held[2].as_str()]);
+        let s = l.stats();
+        assert_eq!(
+            (
+                s.stored,
+                s.drained,
+                s.offers,
+                s.sink_full_polls,
+                s.sink_unavailable_polls
+            ),
+            (1, 2, 3, 1, 0)
+        );
+        assert!(accounted(&s));
+        // A sink that takes it empties the log, and an empty drain says so.
+        let mut open = Scripted::new(&[]);
+        assert_eq!(l.drain_to(&mut open, 10).stop, DrainStop::Empty);
+        assert_eq!(l.stats().stored, 0);
+        assert_eq!(l.drain_to(&mut open, 10).offered, 0);
+        assert!(accounted(&l.stats()));
+    }
+
+    #[test]
+    fn an_unavailable_sink_stops_the_drain_and_keeps_the_line() {
+        let mut l = log(8, 65_536);
+        l.emit(&committed(1), 1, 10, "grp");
+        let mut sink = Scripted::new(&[SinkReply::Unavailable]);
+        let report = l.drain_to(&mut sink, 10);
+        assert_eq!(
+            (report.offered, report.taken, report.stop),
+            (1, 0, DrainStop::SinkUnavailable)
+        );
+        let s = l.stats();
+        assert_eq!(
+            (
+                s.stored,
+                s.drained,
+                s.sink_unavailable_polls,
+                s.sink_full_polls
+            ),
+            (1, 0, 1, 0)
+        );
+    }
+
+    #[test]
+    fn the_budget_bounds_the_offers_of_one_drain() {
+        let mut l = log(8, 65_536);
+        for seq in 1..=5 {
+            l.emit(&committed(seq), seq, 10, "grp");
+        }
+        let mut sink = Scripted::new(&[]);
+        let report = l.drain_to(&mut sink, 2);
+        assert_eq!(
+            (report.offered, report.taken, report.stop),
+            (2, 2, DrainStop::Budget)
+        );
+        // No budget at all offers nothing, and a log with lines still says it stopped for the budget.
+        let none = l.drain_to(&mut sink, 0);
+        assert_eq!((none.offered, none.stop), (0, DrainStop::Budget));
+        assert_eq!(l.stats().stored, 3);
+        assert_eq!(l.drain_to(&mut sink, 3).stop, DrainStop::Empty);
+        assert!(accounted(&l.stats()));
+    }
+
+    #[test]
+    fn a_drain_gives_back_the_shares_of_the_records_it_removed() {
+        let mut l = log(8, 65_536);
+        for seq in 1..=4 {
+            l.emit_ack(&ack_fact(seq), seq, 10, "grp");
+        }
+        for seq in 1..=2 {
+            l.emit_reject(&reject_fact(seq), 10, 3, "grp");
+        }
+        let s = l.stats();
+        assert_eq!((s.ack_stored, s.reject_stored, s.stored), (4, 2, 6));
+        // The acknowledgement share is full: the next one is dropped. A drain frees it.
+        l.emit_ack(&ack_fact(5), 5, 10, "grp");
+        assert_eq!(l.stats().ack_dropped, 1);
+        let mut sink = Scripted::new(&[]);
+        assert_eq!(l.drain_to(&mut sink, 100).taken, 6);
+        let s = l.stats();
+        assert_eq!(
+            (s.stored, s.bytes, s.ack_stored, s.reject_stored),
+            (0, 0, 0, 0)
+        );
+        for seq in 6..=9 {
+            l.emit_ack(&ack_fact(seq), seq, 10, "grp");
+        }
+        assert_eq!(l.stats().ack_stored, 4, "the share is whole again");
+        assert!(accounted(&l.stats()));
+    }
+
+    #[test]
+    fn a_critical_line_is_offered_as_critical_and_counted_until_it_is_taken() {
+        let mut l = log(8, 65_536);
+        l.emit(&committed(1), 1, 10, "grp");
+        let critical = fact(2, Outcome::Refused(Refusal::InternalFault), true);
+        l.emit(&critical, 2, 10, "grp");
+        assert_eq!(l.stats().critical_held, 1);
+        let mut sink = Scripted::new(&[SinkReply::Taken, SinkReply::Full]);
+        l.drain_to(&mut sink, 10);
+        let flags: Vec<bool> = sink.seen.iter().map(|(_, critical)| *critical).collect();
+        assert_eq!(flags, [false, true]);
+        // Refused, it is still held, and the run is not complete until it is delivered.
+        assert_eq!(l.stats().critical_held, 1);
+        assert!(
+            l.is_evidence_complete(),
+            "nothing is lost yet, only waiting"
+        );
+        let mut open = Scripted::new(&[]);
+        l.drain_to(&mut open, 10);
+        assert_eq!(l.stats().critical_held, 0);
+        // drain() takes everything and counts it too.
+        l.emit(&critical, 3, 10, "grp");
+        assert_eq!(l.stats().critical_held, 1);
+        assert_eq!(l.drain().len(), 1);
+        let s = l.stats();
+        assert_eq!((s.critical_held, s.stored), (0, 0));
+        assert!(accounted(&s));
+    }
+
+    #[test]
+    fn the_closing_record_is_a_valid_ffw_log_v1_event_and_matches_the_independent_vectors() {
+        let doc: serde_json::Value = serde_json::from_str(VECTORS_JSON).expect("vectors parse");
+        let text = |v: &serde_json::Value, key: &str| v[key].as_str().expect(key).to_string();
+        let num = |v: &serde_json::Value, key: &str| v[key].as_u64().expect(key);
+        let key_hex = text(&doc, "pseudonym_key_hex");
+        let key: [u8; 32] = (0..key_hex.len() / 2)
+            .map(|i| u8::from_str_radix(&key_hex[2 * i..2 * i + 2], 16).expect("hex"))
+            .collect::<Vec<u8>>()
+            .try_into()
+            .expect("a 32-byte key");
+        let lines = doc["summary_golden_lines"]
+            .as_array()
+            .expect("summary_golden_lines");
+        assert_eq!(lines.len(), 3);
+        for g in lines {
+            let f = &g["fact"];
+            let s = &f["stats"];
+            let stats = LogStats {
+                emitted: num(s, "emitted"),
+                stored: usize::try_from(num(s, "stored")).unwrap(),
+                dropped: num(s, "dropped"),
+                drained: num(s, "drained"),
+                critical_lost: num(s, "critical_lost"),
+                critical_held: usize::try_from(num(s, "critical_held")).unwrap(),
+                ..LogStats::default()
+            };
+            let l = ChannelLog::new(
+                LogConfig::new(&text(&doc, "run_id"), &text(&doc, "case_id"), 16, 65_536).unwrap(),
+                LogKey::new(key),
+            );
+            let sink = SinkCounts {
+                written: num(&f["sink"], "written"),
+                dropped: num(&f["sink"], "dropped"),
+                critical_dropped: num(&f["sink"], "critical_dropped"),
+            };
+            let line = l
+                .closing_line_for(&stats, &sink, num(f, "now_ns"))
+                .expect("the record serializes");
+            assert_eq!(line, text(g, "line"), "{}", text(g, "id"));
+            // It is an ordinary event of the shared schema, and it round-trips exactly.
+            let event: DiagnosticEvent = serde_json::from_str(&line).expect("a valid event");
+            assert_eq!(event.event_kind, "n02.log.summary");
+            assert_eq!(serde_json::to_string(&event).unwrap(), line);
+            assert_eq!(redact_sensitive_text(&line), line);
+        }
     }
 
     fn reject_fact(seq: u64) -> RejectFact {

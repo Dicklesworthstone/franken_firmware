@@ -39,5 +39,6 @@ pub mod wire;
 
 #[cfg(test)]
 mod replay;
+// The file sink's tests (`crate::logfile`, outside this module on purpose) build the same fixture session.
 #[cfg(test)]
-mod testkit;
+pub(crate) mod testkit;

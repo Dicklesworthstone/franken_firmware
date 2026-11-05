@@ -975,6 +975,76 @@
       "rust_tests": [
         "no_log_state_changes_what_a_request_gets"
       ]
+    },
+    {
+      "id": "INV-LOG-SINK-DRAIN",
+      "claim": "Lines leave the ring for a sink only through the owner's drain, oldest first, at most budget offers per call, and only a line the sink takes is removed (Full and Unavailable stop the drain and keep the line); a removed line gives back its bytes and its share; a critical line is offered as critical; every record is held, delivered or counted as dropped.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the diagnostics ring, the owner's drain and the file sink, judged by Rust tests (a real temporary file and simulated devices); the Python scenario model has no log or sink. The independent evidence is tests/n02/gen_log_vectors.py (three closing-record lines computed with hashlib and json, which the Rust must reproduce byte for byte).",
+      "rust_tests": [
+        "a_drain_offers_oldest_first_and_removes_only_what_the_sink_took",
+        "an_unavailable_sink_stops_the_drain_and_keeps_the_line",
+        "the_budget_bounds_the_offers_of_one_drain",
+        "a_drain_gives_back_the_shares_of_the_records_it_removed",
+        "a_critical_line_is_offered_as_critical_and_counted_until_it_is_taken"
+      ]
+    },
+    {
+      "id": "INV-LOG-SINK-ROUND-TRIP",
+      "claim": "A real temporary file written by the drain of a real channel schedule reads back as exactly the lines the log produced, whole and in order, then one closing record whose counts agree with the file; every line is an ffw.log.v1 event of the shared schema that survives the shared redactor, re-serializes to the same bytes and goes forward in time; a file is created exclusively and owner-only and a missing directory is reported.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the diagnostics ring, the owner's drain and the file sink, judged by Rust tests (a real temporary file and simulated devices); the Python scenario model has no log or sink. The independent evidence is tests/n02/gen_log_vectors.py (three closing-record lines computed with hashlib and json, which the Rust must reproduce byte for byte).",
+      "rust_tests": [
+        "a_real_temporary_file_round_trips_the_channels_lines_byte_for_byte",
+        "a_file_is_created_exclusively_and_a_missing_directory_is_reported",
+        "the_closing_record_is_a_valid_ffw_log_v1_event_and_matches_the_independent_vectors"
+      ]
+    },
+    {
+      "id": "INV-LOG-SINK-CAPS",
+      "claim": "The file never holds more than its byte or line cap (ordinary lines all but a quarter, critical lines all of it); a line over its bound, or that is not one line, is dropped by the sink and counted; every offer is exactly one of written, dropped or refused; a tiny cap over a real channel schedule drops and counts and the file stops at the cap.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the diagnostics ring, the owner's drain and the file sink, judged by Rust tests (a real temporary file and simulated devices); the Python scenario model has no log or sink. The independent evidence is tests/n02/gen_log_vectors.py (three closing-record lines computed with hashlib and json, which the Rust must reproduce byte for byte).",
+      "rust_tests": [
+        "a_zero_bound_is_refused_and_a_valid_one_is_kept",
+        "lines_are_written_whole_one_per_line_and_counted",
+        "the_caps_hold_and_a_critical_line_may_use_the_reserved_quarter",
+        "a_line_that_is_not_one_line_is_dropped_and_counted_and_a_critical_one_makes_the_evidence_incomplete",
+        "a_file_with_a_tiny_cap_drops_and_counts_and_never_grows_past_it_and_says_it_is_incomplete"
+      ]
+    },
+    {
+      "id": "INV-LOG-SINK-DEVICE",
+      "claim": "A short-writing device gets whole lines with every short write counted; a full device, a file over its size limit, a write that would block or a timeout answers Full and the line stays queued; any other error answers Unavailable; a write that fails after part of a line leaves a fragment that is counted once, ended with a newline, and the line is then written whole, the fragment counting against the cap; a real /dev/full answers Full.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the diagnostics ring, the owner's drain and the file sink, judged by Rust tests (a real temporary file and simulated devices); the Python scenario model has no log or sink. The independent evidence is tests/n02/gen_log_vectors.py (three closing-record lines computed with hashlib and json, which the Rust must reproduce byte for byte).",
+      "rust_tests": [
+        "a_short_writing_device_gets_whole_lines_and_every_short_write_is_counted",
+        "a_full_device_refuses_cleanly_keeps_the_line_for_later_and_loses_nothing",
+        "a_write_that_fails_midway_leaves_a_fragment_that_is_ended_and_the_line_is_written_whole_later",
+        "an_unavailable_device_is_reported_and_recovers_and_a_device_that_would_block_is_full",
+        "a_real_full_device_answers_full_and_loses_nothing"
+      ]
+    },
+    {
+      "id": "INV-LOG-SINK-NEUTRAL",
+      "claim": "Over one scripted schedule of commands, forged requests, duplicates, acknowledgements, an internal fault and steps with a drain after every round, no sink changes what any request or acknowledgement gets, the channel's counters or the session (no drain, a faithful file, a short-writing device, a full device, a device that is down, a device that always would block, a tiny cap); nothing is offered to a sink until the owner drains.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the diagnostics ring, the owner's drain and the file sink, judged by Rust tests (a real temporary file and simulated devices); the Python scenario model has no log or sink. The independent evidence is tests/n02/gen_log_vectors.py (three closing-record lines computed with hashlib and json, which the Rust must reproduce byte for byte).",
+      "rust_tests": [
+        "the_same_schedule_gives_the_same_results_whatever_the_sink_does",
+        "a_sink_is_offered_nothing_until_the_owner_drains"
+      ]
+    },
+    {
+      "id": "INV-LOG-SINK-INCOMPLETE",
+      "claim": "Critical evidence that did not reach the file makes the result incomplete and nothing reports it clean: a critical record still waiting in the ring, dropped by the sink, lost by the ring, or a closing record that could not be written; when the device recovers and the ring drains the run is complete.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the diagnostics ring, the owner's drain and the file sink, judged by Rust tests (a real temporary file and simulated devices); the Python scenario model has no log or sink. The independent evidence is tests/n02/gen_log_vectors.py (three closing-record lines computed with hashlib and json, which the Rust must reproduce byte for byte).",
+      "rust_tests": [
+        "a_critical_record_that_the_sink_keeps_refusing_is_reported_waiting_and_a_recovered_sink_completes_the_run",
+        "the_closing_record_goes_into_the_reserved_part_and_a_file_with_no_room_says_incomplete"
+      ]
     }
   ],
   "other_rust_checks": {

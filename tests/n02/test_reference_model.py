@@ -22,8 +22,9 @@ import gen_log_vectors as genlog  # noqa: E402
 import reference as ref  # noqa: E402
 
 CHANNEL_SRC = ref.ROOT / "crates" / "franken-control" / "src" / "channel"
+LOGFILE_SRC = ref.ROOT / "crates" / "franken-control" / "src" / "logfile.rs"
 CONTRACT = ref.ROOT / "docs" / "contracts" / "n02.md"
-CASES = Path(__file__).resolve().parent / "cases.json"
+CASES =Path(__file__).resolve().parent / "cases.json"
 
 
 def doc():
@@ -663,7 +664,10 @@ class Mapping(unittest.TestCase):
                 self.assertIn(s["id"], listed, f"{i} does not list {s['id']}")
 
     def test_every_named_rust_test_exists(self):
-        source = "\n".join(p.read_text(encoding="utf-8") for p in sorted(CHANNEL_SRC.rglob("*.rs")))
+        # The file sink (logfile.rs) is outside channel/ on purpose: the runtime-profile scan forbids the filesystem
+        # in the channel's sources. Its tests are named by the same invariants, so it is read as well.
+        sources = sorted(CHANNEL_SRC.rglob("*.rs")) + [LOGFILE_SRC]
+        source = "\n".join(p.read_text(encoding="utf-8") for p in sources)
         names = {n for i in self.cases()["invariants"] for n in i["rust_tests"]}
         for group in self.cases()["other_rust_checks"].values():
             names.update(group)
