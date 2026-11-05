@@ -14,8 +14,14 @@ Offline, standard library only; it builds and boots nothing.
           bound, final ratio, discontinuity reason), so a loosened assertion in the Rust cannot hide.
 
 A case with no Rust observation is ``blocked``: counted, named, and the run is not qualified. It is
-never passed and never dropped. CPU time on the target ISA cannot be measured here and is reported as
-``not measured: needs BE guest or hardware`` with the per-block operation count instead.
+never passed and never dropped. Cycles on a real core cannot be measured here and are reported as
+``not measured: needs hardware``; what exists instead is the per-block operation count and the guest instructions per
+output frame of the committed QEMU run (``D03-TARGET-RECEIPT``).
+
+* TARGET - ``D03-TARGET-RECEIPT`` re-judges the committed big-endian MIPS guest run
+          (``toolchain/results/runs/*/d03-target-receipt.json``): the stored serial transcripts are hashed and judged again by
+          ``toolchain/src/measure-d03-target.py``, and every re-derivable gate must equal the receipt's. The guest ELF is not
+          committed, so its soft-float facts are recorded in the receipt and not re-derived here. No receipt: blocked.
 
 The Rust suites run only through the centralized RCH path:
 
@@ -51,8 +57,16 @@ CONTRACT = os.path.join(REPO, "docs", "contracts", "d03.md")
 TIERS = ("smoke", "full", "soak")
 RECEIPT_SCHEMA = "ffw.d03.receipt.v1"
 MAX_PRINTED = 12
-NOT_MEASURED = [{"item": "cpu_on_target_isa", "status": "not measured: needs BE guest or hardware",
-                 "recorded_instead": "float operations per output frame and per 256-frame block"}]
+NOT_MEASURED = [{"item": "cpu_cycles_on_real_core", "status": "not measured: needs hardware",
+                 "recorded_instead": "float operations per output frame and per 256-frame block, and guest instructions per output "
+                                     "frame under QEMU icount on the soft-float BE MIPS target (D03-TARGET-RECEIPT; executed "
+                                     "instructions, not cycles: no cache, pipeline, memory or multiplier timing, no board clock)"}]
+TARGET_JUDGE = os.path.join(REPO, "toolchain", "src", "measure-d03-target.py")
+TARGET_RECEIPT_ROOT = os.path.join(REPO, "toolchain", "results", "runs")
+TARGET_RECEIPT_SCHEMA = "ffw.d03-target-receipt.v1"
+TARGET_RECEIPT_ID = "D03-TARGET-RECEIPT"
+# The gates the judge can re-derive from a stored transcript. D03T-ELF needs the ELF, which is not committed.
+TARGET_REDERIVABLE = ("D03T-TRANSCRIPT", "D03T-CPU", "D03T-QUALITY", "D03T-SEEDED", "D03T-HOST-BYTES")
 
 # (path, binary stem, module prefix in cargo's test names)
 RUST_SOURCES = [
@@ -456,6 +470,138 @@ def judge_observed(rec: dict, vec: dict) -> Optional[str]:
 _ANCHOR_CACHE: List[Any] = []
 
 
+_TARGET_CACHE: List[Result] = []
+
+
+def _load_target_judge() -> Any:
+    spec = importlib.util.spec_from_file_location("d03_target_judge_for_runner", TARGET_JUDGE)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _file_sha256(path: str) -> str:
+    return sha256_file(path)
+
+
+def _check_target_receipt(path: str, vec: dict, judge_module: Any) -> List[str]:
+    """Problems with one committed receipt: its files do not match it, or the judge no longer says what it recorded."""
+    where = os.path.basename(os.path.dirname(path))
+    try:
+        with open(path, encoding="utf-8") as handle:
+            receipt = json.load(handle)
+    except (OSError, ValueError) as exc:
+        return ["%s: unreadable receipt (%s)" % (where, exc)]
+    if receipt.get("schema") != TARGET_RECEIPT_SCHEMA:
+        return ["%s: schema is %r, expected %s" % (where, receipt.get("schema"), TARGET_RECEIPT_SCHEMA)]
+    problems: List[str] = []
+    directory = os.path.dirname(path)
+
+    def plain(name: Any) -> Optional[str]:
+        """A file in the receipt's own directory, by a plain name: nothing the receipt says can point elsewhere."""
+        if not isinstance(name, str) or not name or os.path.basename(name) != name or name.startswith("."):
+            return None
+        full = os.path.join(directory, name)
+        return full if os.path.isfile(full) else None
+
+    elf = receipt.get("elf") or {}
+    if not re.fullmatch(r"[0-9a-f]{64}", str(elf.get("sha256", ""))):
+        problems.append("%s: the receipt records no ELF sha256" % where)
+    if elf.get("fpu_opcode_words") != 0 or elf.get("mips_fp_abi") != 3:
+        problems.append("%s: the recorded ELF is not proven soft-float (fpu_opcode_words %r, mips_fp_abi %r)" % (
+            where, elf.get("fpu_opcode_words"), elf.get("mips_fp_abi")))
+    host_name = (receipt.get("host_digests") or {}).get("records_file")
+    host_path = plain(host_name)
+    host_text: Optional[str] = None
+    if host_path is None:
+        problems.append("%s: host records file %r is missing" % (where, host_name))
+    elif _file_sha256(host_path) != (receipt.get("host_digests") or {}).get("records_sha256"):
+        problems.append("%s: %s does not match its recorded sha256" % (where, host_name))
+    else:
+        with open(host_path, encoding="utf-8", errors="replace") as handle:
+            host_text = handle.read()
+    runs = receipt.get("runs")
+    if not isinstance(runs, list) or not runs:
+        return problems + ["%s: the receipt holds no runs" % where]
+    normals, plants = 0, 0
+    plant_failures: set = set()
+    for entry in runs:
+        rid = str(entry.get("id"))
+        name = plain(entry.get("transcript"))
+        if name is None:
+            problems.append("%s/%s: transcript %r is missing" % (where, rid, entry.get("transcript")))
+            continue
+        with open(name, "rb") as handle:
+            raw = handle.read()
+        if hashlib.sha256(raw).hexdigest() != entry.get("transcript_sha256") or len(raw) != entry.get("transcript_bytes"):
+            problems.append("%s/%s: the transcript does not match its recorded sha256 and size" % (where, rid))
+            continue
+        if host_text is None or not isinstance(entry.get("seed"), int):
+            problems.append("%s/%s: cannot re-judge (no host records or no seed)" % (where, rid))
+            continue
+        try:
+            report = judge_module.judge(raw.decode("utf-8", "replace"), None, entry["seed"], host_text, vec)
+        except Exception as exc:  # a judge that raises is a failure of the evidence, never a pass
+            problems.append("%s/%s: the judge raised %r" % (where, rid, exc))
+            continue
+        got = {g.gate_id: g.status for g in report["gates"]}
+        recorded = entry.get("gates") or {}
+        for gate in TARGET_REDERIVABLE:
+            if gate in recorded or gate in got:
+                if got.get(gate) != recorded.get(gate):
+                    problems.append("%s/%s: gate %s is %r now and was recorded as %r" % (
+                        where, rid, gate, got.get(gate), recorded.get(gate)))
+        failing = sorted(g.gate_id for g in report["gates"] if g.status == "failed")
+        first = next((("%s: %s" % (g.gate_id, g.detail.split("; ")[0])) for g in report["gates"] if g.status == "failed"), None)
+        if first != entry.get("first_finding"):
+            problems.append("%s/%s: first finding is %r now and was recorded as %r" % (where, rid, first, entry.get("first_finding")))
+        if (entry.get("judge_exit_code") == 0) != (not failing):
+            problems.append("%s/%s: recorded exit %r disagrees with the re-judged gates %s" % (
+                where, rid, entry.get("judge_exit_code"), failing or "all passed"))
+        if failing:
+            plants += 1
+            plant_failures.update(failing)
+        else:
+            normals += 1
+    if normals < 1:
+        problems.append("%s: no real run that passes every re-derivable gate" % where)
+    if plants < 2 or "D03T-SEEDED" not in plant_failures or not plant_failures & {"D03T-TRANSCRIPT", "D03T-QUALITY"}:
+        problems.append("%s: the receipt does not hold both planted negatives failing (a replay on D03T-SEEDED and a truncation); "
+                        "failing gates seen: %s" % (where, sorted(plant_failures) or "none"))
+    return problems
+
+
+def target_receipt_result(vec: dict, root: Optional[str] = None) -> Result:
+    """D03-TARGET-RECEIPT: every committed D03 target-ISA receipt is re-judged from its stored transcripts. The default
+    root is cached per process (the judge takes seconds per transcript); an explicit root is always read afresh."""
+    if root is None and _TARGET_CACHE:
+        return _TARGET_CACHE[0]
+    directory = root if root is not None else TARGET_RECEIPT_ROOT
+    paths = sorted(os.path.join(directory, name, "d03-target-receipt.json")
+                   for name in (os.listdir(directory) if os.path.isdir(directory) else [])
+                   if os.path.isfile(os.path.join(directory, name, "d03-target-receipt.json")))
+    if not paths:
+        result = Result(TARGET_RECEIPT_ID, "blocked", "no committed D03 target-ISA receipt (toolchain/results/runs/*/"
+                        "d03-target-receipt.json): a booted BE MIPS guest run has not been recorded", "AC3")
+    else:
+        try:
+            judge_module = _load_target_judge()
+            problems: List[str] = []
+            for path in paths:
+                problems += _check_target_receipt(path, vec, judge_module)
+        except Exception as exc:
+            problems = ["the target judge could not be loaded: %r" % (exc,)]
+        if problems:
+            result = Result(TARGET_RECEIPT_ID, "failed", "; ".join(problems[:MAX_PRINTED]), "AC3")
+        else:
+            result = Result(TARGET_RECEIPT_ID, "passed", "%d committed receipt(s) re-judged from their stored transcripts; "
+                            "the ELF's soft-float facts are recorded, not re-derived" % len(paths), "AC3")
+    if root is None:
+        _TARGET_CACHE.append(result)
+    return result
+
+
 def meta_results(vec: Optional[dict]) -> List[Result]:
     out: List[Result] = []
     if not _ANCHOR_CACHE:                      # the brute-force anchors take seconds; compute once per process
@@ -501,6 +647,8 @@ def meta_results(vec: Optional[dict]) -> List[Result]:
     except OSError:
         text = ""
     absent = [c["id"] for c in registry(vec) if c["id"] not in text]
+    if TARGET_RECEIPT_ID not in text:
+        absent.append(TARGET_RECEIPT_ID)
     out.append(Result("D03-META-CONTRACT-NAMES-CASES", "failed" if absent else "passed",
                       ("docs/contracts/d03.md does not name: " + ", ".join(absent)) if absent else
                       "docs/contracts/d03.md names every case", "AC4"))
@@ -518,6 +666,7 @@ def run(tier: str, logs: Optional[Logs]) -> Tuple[List[Result], dict]:
     meta: dict = {"vectors_sha256": sha256_file(VECTORS) if os.path.isfile(VECTORS) else None}
     if vec is None:
         return results, meta
+    results.append(target_receipt_result(vec))
     for case in registry(vec):
         if TIERS.index(case["tier"]) > TIERS.index(tier):
             continue
@@ -643,6 +792,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         for case in registry(vec):
             if TIERS.index(case["tier"]) <= TIERS.index(args.tier):
                 print(case["id"])
+        print(TARGET_RECEIPT_ID)
         return 0
     logs: Optional[Logs] = None
     if args.judge:

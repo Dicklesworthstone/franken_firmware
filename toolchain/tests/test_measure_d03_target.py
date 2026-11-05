@@ -411,6 +411,21 @@ class PlantedNegativeTest(unittest.TestCase):
         self.assertNotIn("does not hash", gates["D03T-QUALITY"].detail)
         self.assertNotIn("a gap", gates["D03T-QUALITY"].detail)
 
+    def test_a_dump_that_fails_its_checks_is_not_read_as_identical_to_the_host(self):
+        """D03T-HOST-NOT-VACUOUS: a case whose dump is rejected has no row to compare, and the byte gate must say it was
+        not compared instead of passing on the cases that were."""
+        lines = GOOD.split("\n")
+        i = next(k for k, ln in enumerate(lines) if "FFW_D03T_QDATA id=q-steady-10000-m500 off=640 " in ln)
+        head, words = lines[i].rsplit(" ", 1)
+        other = "00000000" if words[:8] != "00000000" else "00000001"
+        lines[i] = f"{head} {other}{words[8:]}"
+        gates, report = judge("\n".join(lines))
+        self.assertEqual(gates["D03T-QUALITY"].status, "failed")
+        self.assertEqual(gates["D03T-HOST-BYTES"].status, "failed", gates["D03T-HOST-BYTES"].detail)
+        self.assertIn("q-steady-10000-m500: not compared with the host build", gates["D03T-HOST-BYTES"].detail)
+        self.assertNotIn("q-steady-1000-p500", gates["D03T-HOST-BYTES"].detail, "the three intact cases were compared")
+        self.assertEqual(m.exit_code(report), 1)
+
     def test_a_corrupted_sample_fails_the_digest_check(self):
         lines = GOOD.split("\n")
         i = next(k for k, ln in enumerate(lines) if "FFW_D03T_QDATA id=q-steady-10000-m500 off=640 " in ln)

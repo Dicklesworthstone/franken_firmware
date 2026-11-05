@@ -19,7 +19,8 @@
 #
 # Exit 0 only when every case passed and none is blocked; 1 on a failed case; 3 when the only
 # non-passes are blocked cases (reported, never counted as passed); 2 on usage errors.
-# CPU time on the target ISA is reported as "not measured: needs BE guest or hardware".
+# Cycles on a real core are reported as "not measured: needs hardware"; D03-TARGET-RECEIPT re-judges the committed QEMU run of
+# the big-endian MIPS guest (guest instructions per frame and the target-ISA samples; toolchain/results/runs/*/d03-target-receipt.json).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 if [ "$#" -eq 0 ]; then

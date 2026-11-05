@@ -1,6 +1,6 @@
 --- a/crates/franken-dsp/src/protection/runtime.rs
 +++ b/crates/franken-dsp/src/protection/runtime.rs
-@@ -19,30 +19,25 @@
+@@ -19,32 +19,25 @@
  /// Run-time guard on every filter output: the admitted intermediate range, as an `f32`.
  const INTERMEDIATE_LIMIT: f32 = MAX_INTERMEDIATE as f32;
  
@@ -22,7 +22,9 @@
 -/// within 512 samples, because the poles sit at radius 0.973 and 0.989 and the roundoff is amplified
 -/// by roughly `1/(1-r)`. `f64` state removes it (difference below 1e-13). The coefficients stay
 -/// `f32` on purpose: they are what validation judges (finite, at most 8, stable, bounded), and the
--/// reference uses the same stored values. CPU cost of `f64` on the target ISAs is not measured.
+-/// reference uses the same stored values. CPU cost: on a soft-float MIPS32r2 guest under QEMU the `f64` state
+-/// costs about 541 more instructions per section per frame than `f32` (guest instructions, not core cycles; no
+-/// board clock; `docs/contracts/d02.md`). The PowerPC targets are not measured.
  #[derive(Debug, Clone, Copy, PartialEq)]
  pub struct Section {
 -    b0: f64,
@@ -42,7 +44,7 @@
  }
  
  impl Section {
-@@ -52,14 +47,13 @@
+@@ -54,14 +47,13 @@
          quantize_section(spec, 0, 0).map(Self::from_stored)
      }
  
@@ -62,7 +64,7 @@
              z1: 0.0,
              z2: 0.0,
          }
-@@ -72,11 +66,10 @@
+@@ -74,11 +66,10 @@
  
      #[inline]
      pub fn process(&mut self, x: f32) -> f32 {
@@ -75,7 +77,7 @@
      }
  
      pub fn reset(&mut self) {
-@@ -86,8 +79,8 @@
+@@ -88,8 +79,8 @@
  
      /// The two state variables `(z1, z2)`.
      #[must_use]
@@ -86,7 +88,7 @@
      }
  }
  
-@@ -577,7 +570,7 @@
+@@ -579,7 +570,7 @@
      #[cfg(test)]
      pub(super) fn corrupt_section_state_for_test(&mut self, channel: usize, z1: f32) {
          if let Some(runtime) = self.channels[..self.channel_count].get_mut(channel) {

@@ -567,6 +567,12 @@ def quality_analysis(t: dict[str, Any], vec: dict[str, Any], host: dict[str, dic
                     f"host digest {h['fnv']}. The guest agrees with the double-precision reference to {dev:.2e}. "
                     f"This is a finding about the target ISA's float behaviour, not something to adjust.")
         rows[cid] = row
+    if host is not None:
+        # A case whose dump failed the checks above has no row and so was never compared. The byte gate must not read
+        # that as "identical": it passes only when every canonical case was compared and matched.
+        for cid, _hz, _ppb in CANONICAL:
+            if cid not in rows:
+                host_problems.append(f"{cid}: not compared with the host build, its dump failed the quality checks")
     return {"rows": rows, "problems": problems, "host_problems": host_problems}
 
 

@@ -20,8 +20,11 @@ franken-board-profile = { path = "../../../crates/franken-board-profile" }
 
 # The device speaker's release profile, copied from the workspace root because a profile is read from the workspace
 # root and this package is its own. Instruction counts depend on opt-level (`z` favours size), so a measurement at
-# another level would not describe the shipped code. `strip` is left off so the ELF can be disassembled; it does not
-# change generated code.
+# another level would not describe the shipped code. `strip` is deliberately not set here, so that this profile does not
+# ask for it; it does not change generated code. Observed, not explained: the ELFs the central builds produced (b20,
+# b22) have no symbol table, so the symbol-level check in docs/contracts/d01.md and d02.md cannot run on them. Whatever
+# removed the symbols (the build environment's flags or the target's defaults) has not been identified; a build that
+# keeps them must be shown to (`file` reports "not stripped") before anything is concluded from its symbols.
 [profile.release]
 opt-level = "z"
 lto = true
