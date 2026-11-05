@@ -522,4 +522,273 @@ mod tests {
             })
         );
     }
+
+    fn set_volume(epoch: u64, command_seq: u64, volume_0_to_100: u8) -> FencedControlCommand {
+        FencedControlCommand {
+            epoch,
+            command_seq,
+            payload: GroupCommandPayload::SetGroupVolume { volume_0_to_100 },
+        }
+    }
+
+    fn admit(
+        epoch: u64,
+        command_seq: u64,
+        member_id: &str,
+        board: BoardProfile,
+    ) -> FencedControlCommand {
+        FencedControlCommand {
+            epoch,
+            command_seq,
+            payload: GroupCommandPayload::AdmitMember {
+                member_id: member_id.to_string(),
+                board,
+                role: ChannelRole::Stereo,
+            },
+        }
+    }
+
+    fn remove(epoch: u64, command_seq: u64, member_id: &str) -> FencedControlCommand {
+        FencedControlCommand {
+            epoch,
+            command_seq,
+            payload: GroupCommandPayload::RemoveMember {
+                member_id: member_id.to_string(),
+            },
+        }
+    }
+
+    fn fixture_s5() -> BoardProfile {
+        canonical_board_catalog()
+            .into_iter()
+            .find(|p| p.model_number == "S5")
+            .unwrap()
+    }
+
+    fn hypothesis_s5() -> BoardProfile {
+        franken_board_profile::canonical_board_catalog()
+            .into_iter()
+            .find(|p| p.model_number == "S5")
+            .unwrap()
+    }
+
+    #[test]
+    fn a_rejected_command_does_not_burn_its_sequence_number_and_a_corrected_retry_is_applied() {
+        let hypothesis = hypothesis_s5();
+        let hypothesis_id = hypothesis.profile_id.clone();
+        let mut session = UnifiedGroupSession::new("grp-retry", "spk-coordinator", 1);
+
+        // Seq 1 carries an ineligible board: refused, and nothing is recorded or changed.
+        assert_eq!(
+            session.apply_command(admit(1, 1, "spk-a", hypothesis.clone())),
+            Err(SessionError::IneligibleAudioBoard {
+                profile_id: hypothesis_id.clone()
+            })
+        );
+        assert_eq!(session.state_revision, 0);
+        assert!(session.members.is_empty());
+        assert!(session.applied_commands.seqs.is_empty());
+
+        // The same command again is judged afresh and refused for its real reason, not as a duplicate.
+        assert_eq!(
+            session.apply_command(admit(1, 1, "spk-a", hypothesis)),
+            Err(SessionError::IneligibleAudioBoard {
+                profile_id: hypothesis_id
+            })
+        );
+
+        // The corrected command under the same sequence number gets its real outcome: applied.
+        assert_eq!(
+            session.apply_command(admit(1, 1, "spk-a", fixture_s5())),
+            Ok(1)
+        );
+        assert_eq!(session.members.len(), 1);
+
+        // Now that seq 1 was applied, redelivering it is a duplicate and changes nothing, even
+        // with a payload that would otherwise be admitted.
+        assert_eq!(
+            session.apply_command(admit(1, 1, "spk-b", fixture_s5())),
+            Err(SessionError::DuplicateCommand {
+                epoch: 1,
+                command_seq: 1
+            })
+        );
+        assert_eq!(session.members.len(), 1);
+        assert_eq!(session.state_revision, 1);
+    }
+
+    #[test]
+    fn a_duplicate_of_an_applied_command_stays_a_duplicate_even_when_its_payload_would_now_fail() {
+        let mut session = UnifiedGroupSession::new("grp-dup", "spk-coordinator", 1);
+        session
+            .apply_command(admit(1, 1, "spk-a", fixture_s5()))
+            .unwrap();
+        assert_eq!(session.apply_command(remove(1, 2, "spk-a")), Ok(2));
+
+        // The member is gone, so running this payload again would fail with UnknownMember. The
+        // answer is still Duplicate, because the command was applied.
+        assert_eq!(
+            session.apply_command(remove(1, 2, "spk-a")),
+            Err(SessionError::DuplicateCommand {
+                epoch: 1,
+                command_seq: 2
+            })
+        );
+        // A never-applied sequence number with the same payload gets the real reason...
+        assert_eq!(
+            session.apply_command(remove(1, 3, "spk-a")),
+            Err(SessionError::UnknownMember {
+                member_id: "spk-a".to_string()
+            })
+        );
+        // ...and that refusal did not burn seq 3.
+        let tracked: Vec<u64> = session.applied_commands.seqs.iter().copied().collect();
+        assert_eq!(tracked, [1, 2]);
+    }
+
+    #[test]
+    fn out_of_order_and_gapped_sequence_numbers_are_each_applied_exactly_once() {
+        let mut session = UnifiedGroupSession::new("grp-order", "spk-coordinator", 1);
+        for seq in [1u64, 3, 2] {
+            assert!(
+                session.apply_command(set_volume(1, seq, 10)).is_ok(),
+                "seq {seq}"
+            );
+        }
+        assert_eq!(
+            session.apply_command(set_volume(1, 2, 11)),
+            Err(SessionError::DuplicateCommand {
+                epoch: 1,
+                command_seq: 2
+            })
+        );
+        assert_eq!(session.group_master_volume, 10);
+        assert_eq!(session.state_revision, 3);
+    }
+
+    #[test]
+    fn the_record_stays_bounded_over_a_long_stream_and_below_window_commands_are_refused() {
+        let mut session = UnifiedGroupSession::new("grp-long", "spk-coordinator", 1);
+        for seq in 1..=100_000u64 {
+            assert!(
+                session.apply_command(set_volume(1, seq, 20)).is_ok(),
+                "seq {seq}"
+            );
+            assert!(session.applied_commands.seqs.len() <= COMMAND_DEDUP_WINDOW);
+        }
+        assert_eq!(session.state_revision, 100_000);
+        assert_eq!(session.applied_commands.seqs.len(), COMMAND_DEDUP_WINDOW);
+        // The newest 1024 numbers, 98_977..=100_000, are remembered; 98_976 and below are not.
+        assert_eq!(session.applied_commands.evicted_through, Some(98_976));
+        assert_eq!(session.applied_commands.seqs.first(), Some(&98_977));
+        assert_eq!(session.applied_commands.seqs.last(), Some(&100_000));
+
+        let before = (session.state_revision, session.group_master_volume);
+        // A long-evicted number is refused as below the window and is not applied again.
+        assert_eq!(
+            session.apply_command(set_volume(1, 1, 99)),
+            Err(SessionError::CommandBelowWindow {
+                epoch: 1,
+                command_seq: 1,
+                window_floor: 98_976
+            })
+        );
+        // So is the floor itself, which can no longer be proven unapplied.
+        assert_eq!(
+            session.apply_command(set_volume(1, 98_976, 99)),
+            Err(SessionError::CommandBelowWindow {
+                epoch: 1,
+                command_seq: 98_976,
+                window_floor: 98_976
+            })
+        );
+        assert_eq!(
+            (session.state_revision, session.group_master_volume),
+            before
+        );
+
+        // The oldest and newest remembered numbers are still plain duplicates.
+        for seq in [98_977u64, 100_000] {
+            assert_eq!(
+                session.apply_command(set_volume(1, seq, 99)),
+                Err(SessionError::DuplicateCommand {
+                    epoch: 1,
+                    command_seq: seq
+                })
+            );
+        }
+        assert_eq!(
+            (session.state_revision, session.group_master_volume),
+            before
+        );
+
+        // Permitted positive: the next fresh number is applied.
+        assert_eq!(
+            session.apply_command(set_volume(1, 100_001, 21)),
+            Ok(100_001)
+        );
+        assert_eq!(session.group_master_volume, 21);
+    }
+
+    #[test]
+    fn a_large_sequence_jump_costs_one_slot_and_does_not_lock_out_the_numbers_below_it() {
+        let mut session = UnifiedGroupSession::new("grp-jump", "spk-coordinator", 1);
+        assert!(session.apply_command(set_volume(1, 1_000_000, 30)).is_ok());
+        assert!(session.apply_command(set_volume(1, u64::MAX, 31)).is_ok());
+        for seq in 1..=3u64 {
+            assert!(
+                session.apply_command(set_volume(1, seq, 32)).is_ok(),
+                "seq {seq} must still be accepted after a jump"
+            );
+        }
+        assert_eq!(session.applied_commands.seqs.len(), 5);
+        assert_eq!(session.applied_commands.evicted_through, None);
+        assert_eq!(session.group_master_volume, 32);
+    }
+
+    #[test]
+    fn adopting_a_newer_epoch_drops_the_older_epochs_record() {
+        let mut session = UnifiedGroupSession::new("grp-epochs", "spk-coordinator", 1);
+        for seq in 1..=2_000u64 {
+            session.apply_command(set_volume(1, seq, 5)).unwrap();
+        }
+        // 2000 applied, 1024 remembered (977..=2000), floor 976.
+        assert_eq!(session.applied_commands.evicted_through, Some(976));
+
+        // A rejected command at a newer epoch records nothing and adopts nothing.
+        assert_eq!(
+            session.apply_command(remove(7, 1, "ghost")),
+            Err(SessionError::UnknownMember {
+                member_id: "ghost".to_string()
+            })
+        );
+        assert_eq!(session.current_epoch, 1);
+        assert_eq!(session.applied_commands.seqs.len(), COMMAND_DEDUP_WINDOW);
+        assert_eq!(session.applied_commands.evicted_through, Some(976));
+
+        // The corrected command at the same epoch and sequence is applied: the epoch is adopted
+        // and the old epoch's record, floor included, is dropped.
+        assert_eq!(session.apply_command(set_volume(7, 1, 6)), Ok(2_001));
+        assert_eq!(session.current_epoch, 7);
+        assert_eq!(session.applied_commands.seqs.len(), 1);
+        assert_eq!(session.applied_commands.evicted_through, None);
+
+        // Within the new epoch a duplicate is a duplicate and a low fresh number is fresh.
+        assert_eq!(
+            session.apply_command(set_volume(7, 1, 7)),
+            Err(SessionError::DuplicateCommand {
+                epoch: 7,
+                command_seq: 1
+            })
+        );
+        assert_eq!(session.apply_command(set_volume(7, 2, 7)), Ok(2_002));
+        // The old epoch is fenced as stale, not as a duplicate or below-window.
+        assert_eq!(
+            session.apply_command(set_volume(1, 5, 9)),
+            Err(SessionError::StaleEpoch {
+                command_epoch: 1,
+                current_epoch: 7
+            })
+        );
+    }
 }

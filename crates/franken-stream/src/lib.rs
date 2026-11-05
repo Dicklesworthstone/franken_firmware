@@ -1869,9 +1869,10 @@ mod tests {
         for n in [0usize, 1, 3, 2, 5, 4] {
             assert!(rx.accept(&wires[n]).is_ok(), "datagram {n}");
         }
-        for n in 0..6 {
+        // The index of each datagram is the sequence number the sender gave it.
+        for (n, wire) in wires.iter().enumerate() {
             assert_eq!(
-                rx.accept(&wires[n]),
+                rx.accept(wire),
                 Err(StreamError::ReplayOrDuplicatePacket { seq: n as u64 })
             );
         }
