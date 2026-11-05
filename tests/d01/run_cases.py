@@ -60,7 +60,11 @@ PACKAGE_BINARIES = {
 TEST_FN = re.compile(r"#\[test\]\s*((?:#\[[^\]]*\]\s*)*)fn\s+([A-Za-z0-9_]+)")
 OBSERVED = re.compile(r"D01-OBSERVED (\{.*\})\s*$")
 TEST_LINE = re.compile(r"\btest (\S+) \.\.\. (ok|FAILED|ignored)\b")
-RUNNING = re.compile(r"Running .*\(.*?([A-Za-z0-9_]+)-[0-9a-f]{6,}\)")
+# `Running unittests src/lib.rs (<any path>/<stem>-<hash>)`: the stem is the last path component.
+RUNNING = re.compile(r"^\s*Running .*?\((?:[^()]*/)?([A-Za-z0-9_]+)-[0-9a-f]{6,}\)\s*$")
+DOC_TESTS = re.compile(r"^\s*Doc-tests\s+(\S+)\s*$")
+SECTION_START = re.compile(r"^running (\d+) tests?\s*$")
+SECTION_RESULT = re.compile(r"^test result: (?:ok|FAILED)\.")
 
 
 def _load(name: str) -> Any:
@@ -115,42 +119,118 @@ def derive_rust_tests(repo: str = REPO) -> List[Tuple[str, str]]:
 
 
 class Logs:
+    """Parsed cargo-test output.
+
+    Attribution of a test to its binary cannot rely on the nearest preceding ``Running`` header:
+    through RCH the header lines (stderr) and the test sections (stdout) arrive as separate
+    streams, so a header block can precede all of the tests and stray headers can land in the
+    middle of a section. Both streams keep cargo's execution order, so the n-th header belongs to
+    the n-th ``running N tests`` ... ``test result:`` section. That pairing is used only when the
+    counts match and every section holds exactly the tests it declared; otherwise tests are
+    matched by exact name, and a name seen in more than one section is ambiguous (stays blocked).
+
+    Repeated inputs never change the denominator: a log with the same sha256 is read once, an
+    identical repeated observation is ignored, and a *conflicting* one is reported on its own
+    case, not as an extra case.
+    """
+
     def __init__(self) -> None:
         self.observed: Dict[str, dict] = {}
-        self.duplicates: List[str] = []
+        self.conflicting_observations: set = set()
+        self.identical_repeats = 0
+        self.repeated_inputs: List[str] = []
         self.tests: Dict[Tuple[Optional[str], str], str] = {}
-        self.saw_running = False
+        self.conflicting_tests: set = set()
+        self.ambiguous_names: set = set()
+        self.unattributed_logs: List[str] = []
         self.files: List[Tuple[str, str]] = []
+        self._digests: set = set()
+
+    def _record_observation(self, text: str) -> None:
+        try:
+            record = json.loads(text)
+        except ValueError:
+            return
+        case_id = record.get("id")
+        if case_id not in self.observed:
+            self.observed[case_id] = record
+        elif self.observed[case_id] == record:
+            self.identical_repeats += 1
+        else:
+            self.conflicting_observations.add(case_id)
+
+    def _record_test(self, stem: Optional[str], name: str, status: str) -> None:
+        key = (stem, name)
+        if key not in self.tests:
+            self.tests[key] = status
+        elif self.tests[key] != status:
+            self.conflicting_tests.add(key)
 
     def add(self, path: str) -> None:
-        stem: Optional[str] = None
+        digest = sha256_file(path)
+        if digest in self._digests:
+            self.repeated_inputs.append(os.path.basename(path))
+            return
+        self._digests.add(digest)
+        self.files.append((path, digest))
+
+        headers: List[str] = []
+        sections: List[dict] = []
+        orphans: List[Tuple[str, str]] = []
+        current: Optional[dict] = None
         with open(path, encoding="utf-8", errors="replace") as handle:
             for line in handle:
-                running = RUNNING.search(line)
+                running = RUNNING.match(line)
                 if running:
-                    stem, self.saw_running = running.group(1), True
+                    headers.append(running.group(1))
+                    continue
+                doc = DOC_TESTS.match(line)
+                if doc:
+                    headers.append("doc:" + doc.group(1))
+                    continue
+                start = SECTION_START.match(line)
+                if start:
+                    current = {"declared": int(start.group(1)), "tests": []}
+                    sections.append(current)
                     continue
                 observed = OBSERVED.search(line)
                 if observed:
-                    try:
-                        record = json.loads(observed.group(1))
-                    except ValueError:
-                        continue
-                    case_id = record.get("id")
-                    if case_id in self.observed:
-                        self.duplicates.append(case_id)
-                    self.observed[case_id] = record
+                    self._record_observation(observed.group(1))
                     continue
                 test = TEST_LINE.search(line)
                 if test:
-                    self.tests[(stem, test.group(1))] = test.group(2)
-        self.files.append((path, sha256_file(path)))
+                    (current["tests"] if current is not None else orphans).append((test.group(1), test.group(2)))
+                    continue
+                if SECTION_RESULT.match(line):
+                    current = None
+
+        consistent = not orphans and all(len(s["tests"]) == s["declared"] for s in sections)
+        if headers and len(headers) == len(sections) and consistent:
+            for stem, section in zip(headers, sections):
+                for name, status in section["tests"]:
+                    self._record_test(stem, name, status)
+            return
+        # Attribution unavailable: keep exact names, flag names that appear more than once.
+        self.unattributed_logs.append(
+            f"{os.path.basename(path)}: {len(headers)} header(s), {len(sections)} section(s), "
+            f"{len(orphans)} orphan test line(s)")
+        seen: Dict[str, int] = {}
+        for name, _ in orphans + [t for s in sections for t in s["tests"]]:
+            seen[name] = seen.get(name, 0) + 1
+        self.ambiguous_names.update(n for n, count in seen.items() if count > 1)
+        for name, status in orphans + [t for s in sections for t in s["tests"]]:
+            self._record_test(None, name, status)
 
     def test_status(self, stem: str, name: str) -> Optional[str]:
-        if (stem, name) in self.tests:
-            return self.tests[(stem, name)]
-        if not self.saw_running and (None, name) in self.tests:
-            return self.tests[(None, name)]
+        """``ok`` / ``FAILED`` / ``ignored``; ``CONFLICT`` or ``AMBIGUOUS`` when the logs disagree
+        or cannot say which binary ran it; ``None`` when no log reports the test."""
+        for key in ((stem, name), (None, name)):
+            if key in self.conflicting_tests:
+                return "CONFLICT"
+            if key in self.tests:
+                if key[0] is None and name in self.ambiguous_names:
+                    return "AMBIGUOUS"
+                return self.tests[key]
         return None
 
 
@@ -313,13 +393,13 @@ def run(tier: str, logs: Optional[Logs]) -> Tuple[List[Result], dict]:
             results.append(Result(case["id"], "blocked", "no Rust observation (central cargo log not supplied "
                                   "or the case did not run)", "vector"))
             continue
+        if case["id"] in logs.conflicting_observations:
+            results.append(Result(case["id"], "failed", "the logs hold conflicting observations of this case", "vector"))
+            continue
         problem = judge_case(case, logs.observed[case["id"]])
         results.append(Result(case["id"], "failed" if problem else "passed", problem or "", "vector"))
-    if logs is not None:
-        for dup in sorted(set(logs.duplicates)):
-            results.append(Result(f"D01-OBS-DUP-{dup}", "failed", "observed more than once in the logs", "vector"))
 
-    # Rust tests that must have reported ok
+    # Rust tests that must have reported ok. Repeated inputs never add or remove entries here.
     needed = required if tier == "full" else [HARNESS_TEST] + external_pairs
     for stem, name in needed:
         case_id = f"RUST:{stem}::{name}"
@@ -328,9 +408,15 @@ def run(tier: str, logs: Optional[Logs]) -> Tuple[List[Result], dict]:
             results.append(Result(case_id, "passed", "", "rust"))
         elif status == "FAILED":
             results.append(Result(case_id, "failed", "cargo reported FAILED", "rust"))
+        elif status == "CONFLICT":
+            results.append(Result(case_id, "failed", "the logs report this test with conflicting statuses", "rust"))
+        elif status == "AMBIGUOUS":
+            results.append(Result(case_id, "blocked", "name appears in more than one test section and the log "
+                                  "cannot attribute it to a binary", "rust"))
+        elif status == "ignored":
+            results.append(Result(case_id, "blocked", "reported ignored", "rust"))
         else:
-            reason = "reported ignored" if status == "ignored" else "not reported in the supplied logs"
-            results.append(Result(case_id, "blocked", reason, "rust"))
+            results.append(Result(case_id, "blocked", "not reported in the supplied logs", "rust"))
 
     meta = {"vectors_sha256": sha256_file(VECTORS) if os.path.isfile(VECTORS) else None,
             "planned_vectors": len(selected), "planned_rust_tests": len(needed)}
@@ -372,6 +458,9 @@ def write_receipt(directory: str, tier: str, results: List[Result], meta: dict, 
         "finished_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
         "counts": summarize(results), "exit_code": exit_code(results),
         "judged_logs": [{"path": os.path.basename(p), "sha256": h} for p, h in (logs.files if logs else [])],
+        "repeated_inputs_skipped": list(logs.repeated_inputs) if logs else [],
+        "identical_repeated_observations": logs.identical_repeats if logs else 0,
+        "unattributed_logs": list(logs.unattributed_logs) if logs else [],
         "replay": "scripts/e2e/d01 --tier " + tier + (" --judge <cargo-test-log>..." if logs else ""),
         **meta, "results": [r.as_dict() for r in results],
     }

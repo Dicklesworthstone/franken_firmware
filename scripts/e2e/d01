@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# D01 end-to-end entry point (bead ffw-f3b): fixed-size audio blocks and conversion.
+# Delegates to tests/d01/run_cases.py (offline, stdlib Python; it builds and boots nothing).
+#
+#   scripts/e2e/d01                              META checks only; every Rust-backed case is BLOCKED
+#   scripts/e2e/d01 --judge LOG [LOG ...]        judge the centrally run cargo test output
+#   scripts/e2e/d01 --tier smoke|full --judge LOG [--receipts DIR]
+#   scripts/e2e/d01 --list                       planned case ids
+#   scripts/e2e/d01 --write-vectors              regenerate tests/d01/vectors.json (Python reference only)
+#
+# The Rust suites run only through the centralized RCH path; this script never invokes cargo:
+#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-dsp -- --nocapture
+#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-alloc-probe
+#
+# Exit 0 only when every case passed and none is blocked; 1 on a failed case; 3 when the only
+# non-passes are blocked cases (reported, never counted as passed); 2 on usage errors.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+if [ "$#" -eq 0 ]; then
+  set -- --tier full
+fi
+exec python3 -B "$ROOT/tests/d01/run_cases.py" "$@"
