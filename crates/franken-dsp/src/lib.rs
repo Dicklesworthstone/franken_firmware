@@ -6,6 +6,19 @@
 
 #![forbid(unsafe_code)]
 
+// D01 (`ffw-f3b`): canonical stream formats, bit-exact conversion, bounded SPSC ring and sink.
+// Contract: `docs/contracts/d01.md`.
+pub mod convert;
+pub mod format;
+pub mod ring;
+
+pub use convert::{ConvertStats, convert_block, convert_packed};
+pub use format::{
+    BufferSpec, CANONICAL_WIRE_FORMAT, Endian, Layout, MAX_BLOCK_FRAMES, PcmError, SampleFormat,
+    StreamFormat, frames_in_packed_bytes,
+};
+pub use ring::{BlockSink, BoundedCaptureSink, RingConsumer, RingProducer, ring_channel};
+
 use franken_board_profile::{BoardProfile, TransducerRole};
 use serde::{Deserialize, Serialize};
 
@@ -109,22 +122,23 @@ pub fn sanitize_sample(x: f32) -> f32 {
     }
 }
 
+/// `i16` to normalized `f32` on the D01 scale: `sample / 32768`.
+///
+/// D01 changed this from the earlier `/ 32767` scale (which sent `-32768 -> -1.0 -> -32767`
+/// and so did not round-trip). On the D01 scale every one of the 65 536 `i16` values survives
+/// `i16 -> f32 -> i16` unchanged. Results differ from the old scale by at most 1 LSB.
 #[must_use]
 #[inline]
 pub fn i16_to_unit_f32(sample: i16) -> f32 {
-    if sample == i16::MIN {
-        -1.0
-    } else {
-        f32::from(sample) / 32767.0
-    }
+    convert::s16_to_f32(sample)
 }
 
+/// Normalized `f32` to `i16` on the D01 scale: `round_ties_even(sample * 32768)`, saturating
+/// to `-32768..=32767`. NaN and +/-infinity become `0` (silence, never a full-scale burst).
 #[must_use]
 #[inline]
 pub fn unit_f32_to_i16(sample: f32) -> i16 {
-    let clean = sanitize_sample(sample);
-    let scaled = (clean * 32767.0).round();
-    scaled.clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16
+    convert::f32_to_s16(sample)
 }
 
 /// Direct-Form II Transposed biquad filter with finite-coefficient validation and NaN guard.
@@ -425,8 +439,9 @@ mod tests {
         block.right[1] = f32::INFINITY;
 
         let be_bytes = block.to_be_i16_bytes();
+        // +1.0 saturates to the largest code; -1.0 is exactly the smallest (D01 scale, 2^15).
         assert_eq!(&be_bytes[0..2], &32767i16.to_be_bytes());
-        assert_eq!(&be_bytes[2..4], &(-32767i16).to_be_bytes());
+        assert_eq!(&be_bytes[2..4], &i16::MIN.to_be_bytes());
         // NaN sits at 0, +Inf is sanitized to 0 before scaling
         assert_eq!(&be_bytes[4..6], &0i16.to_be_bytes());
         assert_eq!(&be_bytes[6..8], &0i16.to_be_bytes());
@@ -434,6 +449,19 @@ mod tests {
         let decoded = StereoAudioBlock::from_be_i16_bytes(0, &be_bytes).unwrap();
         assert!((decoded.left[0] - 1.0).abs() < 1e-4);
         assert!((decoded.right[0] + 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn wire_path_round_trips_every_i16_value_exactly() {
+        // 65 536 values as 32 768 stereo frames in blocks of FRAMES_PER_BLOCK. Before D01 the
+        // value -32768 came back as -32767.
+        let all: Vec<i16> = (i16::MIN..=i16::MAX).collect();
+        for chunk in all.chunks(2 * FRAMES_PER_BLOCK) {
+            let bytes: Vec<u8> = chunk.iter().flat_map(|v| v.to_be_bytes()).collect();
+            let block = StereoAudioBlock::from_be_i16_bytes(0, &bytes).unwrap();
+            assert_eq!(block.to_be_i16_bytes(), bytes);
+        }
+        assert_eq!(unit_f32_to_i16(i16_to_unit_f32(i16::MIN)), i16::MIN);
     }
 
     #[test]
