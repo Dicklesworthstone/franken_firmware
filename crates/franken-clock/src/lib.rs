@@ -44,6 +44,8 @@ pub enum ClockError {
     },
     #[error("video source `{source_kind}` does not provide cooperative lip-sync delay telemetry")]
     UncooperativeVideoSource { source_kind: String },
+    #[error("latency arithmetic is not representable")]
+    LatencyArithmeticOverflow,
 }
 
 /// Single 4-timestamp clock probe sample (`t1` member tx, `t2` coord rx, `t3` coord tx, `t4` member rx).
@@ -181,6 +183,20 @@ pub struct LatencyLedger {
 }
 
 impl LatencyLedger {
+    /// Checked compatibility sum. Measured overlapping stages use `latency::LatencyTimeline`.
+    pub fn checked_total_audio_latency_us(&self) -> Result<u64, ClockError> {
+        [
+            self.network_ingress_us,
+            self.jitter_buffer_target_us,
+            self.dsp_block_period_us,
+            self.dma_queue_us,
+            self.calibrated_dac_delay_us,
+        ]
+        .into_iter()
+        .try_fold(0u64, u64::checked_add)
+        .ok_or(ClockError::LatencyArithmeticOverflow)
+    }
+
     #[must_use]
     pub const fn total_audio_latency_us(&self) -> u64 {
         self.network_ingress_us
@@ -199,6 +215,7 @@ pub struct VideoSyncEvaluation {
     pub measured_end_to_end_audio_latency_us: u64,
     pub commanded_video_delay_us: u64,
     pub residual_av_skew_us: i64,
+    /// Legacy name: a single-observation bound, not a measured percentile.
     pub within_40ms_p99_gate: bool,
 }
 
@@ -213,9 +230,13 @@ pub fn compute_cooperative_video_sync(
             source_kind: source_kind.to_string(),
         });
     }
-    let audio_us = ledger.total_audio_latency_us();
-    let residual = (audio_us as i64) - (applied_source_video_delay_us as i64);
-    let within_gate = residual.unsigned_abs() <= VIDEO_RESIDUAL_P99_GATE_US;
+    let audio_us = ledger.checked_total_audio_latency_us()?;
+    let residual = i64::try_from(i128::from(audio_us) - i128::from(applied_source_video_delay_us))
+        .map_err(|_| ClockError::LatencyArithmeticOverflow)?;
+    let within_gate = residual
+        .unsigned_abs()
+        .checked_add(ledger.calibration_uncertainty_us)
+        .is_some_and(|bound| bound <= VIDEO_RESIDUAL_P99_GATE_US);
     Ok(VideoSyncEvaluation {
         source_kind: source_kind.to_string(),
         cooperative: true,
