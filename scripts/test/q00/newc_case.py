@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Planted-defect canary for newc archive alignment, as a run-suite case (result contract ffw.case-result.v1, v1.1).
+"""SUPERSEDED - do not use, extend or register this file.  Nothing references it.
+
+The newc canaries are `scripts/test/test_support/newc_case.py` (YellowBrook; tested by `test_newc_case.py`).  It runs the
+correct control archive first and reports `incomplete` if the parser rejects it, so an over-strict or blind parser can
+never earn a detection; this earlier draft lacked that guard.  Kept only because it is already committed and AGENTS.md
+forbids deleting files without explicit permission; its removal has been requested from root.
+
+Planted-defect canary for newc archive alignment, as a run-suite case (result contract ffw.case-result.v1, v1.1).
 
     newc_case.py positive           [--parser PATH]
     newc_case.py canary DEFECT      [--parser PATH]

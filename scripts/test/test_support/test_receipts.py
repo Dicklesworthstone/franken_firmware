@@ -54,17 +54,21 @@ def dumps(obj):
     return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("ascii")
 
 
-def seal(lines, case_records=None):
-    """Append a correct footer, computed independently of StreamWriter."""
+def seal(lines, case_records=None, footer=None):
+    """Append a correct footer, computed independently of StreamWriter.
+
+    ``footer`` overrides individual footer fields; the digest still covers the real body, so a
+    test can plant exactly one wrong field in an otherwise valid footer."""
     body = b"".join(line + b"\n" for line in lines)
-    footer = {
+    record = {
         "schema": R.SCHEMA,
         "kind": "run_footer",
         "case_records": len(lines) - 1 if case_records is None else case_records,
         "lines": len(lines),
         "stream_sha256": hashlib.sha256(body).hexdigest(),
     }
-    return body + dumps(footer) + b"\n"
+    record.update(footer or {})
+    return body + dumps(record) + b"\n"
 
 
 class Run:
@@ -340,6 +344,93 @@ class TestTruncationAndStreamIntegrity(Base):
         canary_flip = {**EXPECTED, "q00.sample.loss": {"mandatory": True, "proof_class": "host-simulation",
                                                           "canary": True, "oracle": "sample", "violation": "lost_samples"}}
         self.assertUnqualified(agg(data2, canary_flip), "registry_mismatch")
+
+
+class TestEachStructuralCheckStandsAlone(Base):
+    """Every check below rejects a stream whose ONLY defect is the one planted, so removing the check
+    would let it qualify (complete, no problems).  Found by IvoryFalcon's mutation sweep; each site was
+    reproduced first.  The unmodified good stream is the permitted twin in every test."""
+
+    def setUp(self):
+        self.small = Run(SMALL)
+        self.recs = self.small.all_pass()
+        self.good = self.small.lines(self.recs)
+
+    def with_header(self, **over):
+        return seal([dumps(self.small.header(**over))] + [dumps(r) for r in self.recs])
+
+    def assertGoodQualifies(self):
+        s = agg(seal(self.good), SMALL)
+        self.assertTrue(s["qualified"] and s["complete"] and s["problems_total"] == 0, s["problems"])
+
+    def details(self, s, code):
+        return " | ".join(p["detail"] for p in s["problems"] if p["code"] == code)
+
+    def test_a_record_of_an_unknown_kind_is_a_problem_and_never_silently_ignored(self):
+        for label, odd in (("unknown kind", {"kind": "weird"}), ("no kind at all", {"hello": 1}),
+                           ("kind of the wrong type", {"kind": ["case"]})):
+            with self.subTest(label):
+                # the footer counts only the real case records, and its digest covers the odd line, so the
+                # unknown record is the stream's only defect
+                data = seal(self.good + [dumps(odd)], case_records=len(self.good) - 1)
+                s = agg(data, SMALL)
+                self.assertUnqualified(s, "unknown_kind")
+                self.assertFalse(s["complete"])
+                self.assertEqual({p["code"] for p in s["problems"]}, {"unknown_kind"}, "nothing else flags it")
+        self.assertGoodQualifies()
+
+    def test_the_header_must_declare_exactly_the_registry_size(self):
+        for declared in (len(SMALL) + 1, len(SMALL) - 1):
+            with self.subTest(declared=declared):
+                s = agg(self.with_header(expected_cases=declared), SMALL)
+                self.assertUnqualified(s, "registry_mismatch")
+                self.assertIn("expected_cases", self.details(s, "registry_mismatch"),
+                              "the digest matches, so only the declared count can be what is flagged")
+                self.assertEqual(self.small.header(expected_cases=declared)["registry_digest"], R.registry_digest(SMALL))
+        self.assertGoodQualifies()
+
+    def test_the_footer_line_count_must_match_even_when_its_digest_is_correct(self):
+        for delta in (3, -1):
+            with self.subTest(delta=delta):
+                s = agg(seal(self.good, footer={"lines": len(self.good) + delta}), SMALL)
+                self.assertUnqualified(s, "footer_count_mismatch")
+                self.assertIn("footer lines", self.details(s, "footer_count_mismatch"))
+                self.assertNotIn("footer_digest_mismatch", codes(s), "the digest is right; only the count is wrong")
+                self.assertFalse(s["complete"])
+        self.assertGoodQualifies()
+
+    def test_the_header_timebase_must_be_monotonic_ns(self):
+        for bad in ("wall", "monotonic_us", "", 5, None):
+            with self.subTest(timebase=bad):
+                self.assertIn(("bad_field", "header.timebase"), R.validate_header(self.small.header(timebase=bad)))
+                s = agg(self.with_header(timebase=bad), SMALL)
+                self.assertUnqualified(s, "bad_field", "no_valid_header")
+                self.assertIn("header.timebase", self.details(s, "bad_field"))
+        self.assertEqual(R.validate_header(self.small.header()), [])
+        self.assertGoodQualifies()
+
+    def test_every_header_version_must_be_a_string_and_the_map_non_empty(self):
+        for bad in ({"python": 3}, {"python": None}, {"python": ["3"]}, {"python": "3", "runner": 1.5},
+                    {"": "x"}, {}, [], "3.11"):
+            with self.subTest(versions=bad):
+                self.assertIn(("bad_field", "header.versions must be a non-empty str->str map"),
+                              R.validate_header(self.small.header(versions=bad)))
+                s = agg(self.with_header(versions=bad), SMALL)
+                self.assertUnqualified(s, "bad_field", "no_valid_header")
+        self.assertEqual(R.validate_header(self.small.header(versions={"python": "3", "runner": "x"})), [])
+        self.assertGoodQualifies()
+
+    def test_the_footer_must_carry_the_stream_schema_version(self):
+        for bad in ("other/9", "ffw.receipt-stream/2", "", None, 1):
+            with self.subTest(schema=bad):
+                s = agg(seal(self.good, footer={"schema": bad}), SMALL)
+                self.assertUnqualified(s, "bad_schema")
+                self.assertFalse(s["complete"])
+                self.assertEqual({p["code"] for p in s["problems"]}, {"bad_schema"}, "the schema is the only defect")
+        ok = {"schema": R.SCHEMA, "kind": "run_footer", "case_records": 2, "lines": 3, "stream_sha256": "0" * 64}
+        self.assertEqual(R.validate_footer(ok), [])
+        self.assertEqual([c for c, _ in R.validate_footer(dict(ok, schema="other/9"))], ["bad_schema"])
+        self.assertGoodQualifies()
 
 
 class TestCaseEvidenceCompleteness(Base):

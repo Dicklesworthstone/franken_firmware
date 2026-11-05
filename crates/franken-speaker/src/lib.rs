@@ -425,6 +425,9 @@ pub struct VirtualHouseReport {
     pub video_sync_residual_us: i64,
     pub video_sync_within_40ms_gate: bool,
     pub dropped_log_events: u64,
+    /// False when critical evidence (the campaign summary) could not be stored. A report with
+    /// `evidence_complete == false` is incomplete and must not be read as a clean pass.
+    pub evidence_complete: bool,
     pub members: BTreeMap<String, MemberSimulationStats>,
 }
 
@@ -789,7 +792,9 @@ fn run_campaign_with_sink(
         )
         .map_err(|e| e.to_string())?;
 
-    sink.try_emit(DiagnosticEvent {
+    // The campaign summary is critical evidence: if it cannot be stored the report must say so
+    // (`evidence_complete`), not quietly look like a clean run.
+    sink.emit_critical(DiagnosticEvent {
         schema_version: String::new(),
         timestamp_mono_ns: total_blocks * block_period_ns,
         run_id: format!("vh-seed-{seed}"),
@@ -845,6 +850,7 @@ fn run_campaign_with_sink(
         video_sync_residual_us: video_eval.residual_av_skew_us,
         video_sync_within_40ms_gate: video_eval.within_40ms_p99_gate,
         dropped_log_events: sink.dropped_event_count(),
+        evidence_complete: sink.is_evidence_complete(),
         members: member_stats,
     })
 }
@@ -1125,26 +1131,39 @@ mod tests {
             baseline.dropped_log_events, 0,
             "the default sink holds a campaign this size"
         );
+        assert!(baseline.evidence_complete);
 
         let mut unavailable = default_diagnostic_sink();
         unavailable.set_unavailable(true);
-        for (label, sink, expected_dropped) in [
-            ("unavailable", unavailable, EVENTS),
-            ("zero capacity", BoundedDiagnosticSink::new(0, 0), EVENTS),
+        // (label, sink, events that must be counted as dropped, whether the critical summary
+        // survives). A full sink evicts one ordinary event to keep the summary; a sink that
+        // cannot store anything loses it, and the report says so.
+        for (label, sink, expected_dropped, expected_complete) in [
+            ("unavailable", unavailable, EVENTS, false),
+            (
+                "zero capacity",
+                BoundedDiagnosticSink::new(0, 0),
+                EVENTS,
+                false,
+            ),
             (
                 "full after 5 events",
                 BoundedDiagnosticSink::new(5, 256 * 1024),
                 EVENTS - 5,
+                true,
             ),
         ] {
             let report = run_campaign_with_sink(SEED, BLOCKS, None, sink)
                 .unwrap_or_else(|e| panic!("{label}: the campaign failed: {e}"));
             // The loss is counted exactly, never silent...
             assert_eq!(report.dropped_log_events, expected_dropped, "{label}");
+            // ...a lost summary marks the result incomplete instead of looking like a clean run...
+            assert_eq!(report.evidence_complete, expected_complete, "{label}");
             // ...and nothing else differs: every timing field, every member's stats, the fencing
             // probe and the readiness outcome are the same as with a healthy sink.
             let mut comparable = report.clone();
             comparable.dropped_log_events = baseline.dropped_log_events;
+            comparable.evidence_complete = baseline.evidence_complete;
             assert_eq!(
                 comparable, baseline,
                 "{label}: the sink changed the campaign"
@@ -1161,6 +1180,9 @@ mod tests {
         );
         let mut comparable = tiny.clone();
         comparable.dropped_log_events = baseline.dropped_log_events;
+        // Whether the summary fits in such a small budget depends on its serialized size, which
+        // is not asserted here; the field is excluded from the comparison, not from the report.
+        comparable.evidence_complete = baseline.evidence_complete;
         assert_eq!(comparable, baseline, "tiny sink changed the campaign");
     }
 }

@@ -1155,15 +1155,30 @@ pub struct DiagnosticEvent {
     pub latency_us: u64,
 }
 
-/// Non-blocking bounded diagnostic sink with rate/memory/byte caps and dropped-event accounting.
+/// Non-blocking diagnostic sink with event-count and byte caps and exact loss accounting. (There
+/// is no events-per-second limit: the caps bound memory and size, not rate.)
+///
+/// `try_emit` stores an ordinary event while there is room and otherwise drops it, counted.
+/// `emit_critical` is for evidence a result cannot be trusted without: when the sink is full it
+/// evicts the oldest ordinary event to make room, and when it cannot store the event at all it
+/// records `critical_evidence_lost`, which makes `is_evidence_complete` false. Nothing here blocks
+/// or waits. Every event handed to the sink ends either stored or counted as dropped (an evicted
+/// event counts as dropped), so `emitted_event_count == events().len() + dropped_event_count`.
 #[derive(Debug, Clone)]
 pub struct BoundedDiagnosticSink {
     max_events: usize,
     max_bytes: usize,
     sink_unavailable: bool,
     events: Vec<DiagnosticEvent>,
+    /// Serialized size of each stored event; parallel to `events`.
+    event_bytes: Vec<usize>,
+    /// Whether each stored event is critical, and so never evicted; parallel to `events`.
+    critical: Vec<bool>,
     used_bytes: usize,
+    emitted_event_count: u64,
     dropped_event_count: u64,
+    evicted_event_count: u64,
+    critical_evidence_lost: u64,
 }
 
 impl BoundedDiagnosticSink {
@@ -1174,8 +1189,13 @@ impl BoundedDiagnosticSink {
             max_bytes,
             sink_unavailable: false,
             events: Vec::new(),
+            event_bytes: Vec::new(),
+            critical: Vec::new(),
             used_bytes: 0,
+            emitted_event_count: 0,
             dropped_event_count: 0,
+            evicted_event_count: 0,
+            critical_evidence_lost: 0,
         }
     }
 
@@ -1183,15 +1203,10 @@ impl BoundedDiagnosticSink {
         self.sink_unavailable = unavailable;
     }
 
-    /// Non-blocking emit. Never panics or blocks even when full or unavailable.
-    pub fn try_emit(&mut self, mut event: DiagnosticEvent) -> bool {
-        if self.sink_unavailable || self.events.len() >= self.max_events {
-            self.dropped_event_count = self.dropped_event_count.saturating_add(1);
-            return false;
-        }
+    /// Redact every free-text field, not only `message` (an identifier placed in any of them
+    /// would otherwise reach the log), and measure the serialized event.
+    fn prepare(mut event: DiagnosticEvent) -> (DiagnosticEvent, usize) {
         event.schema_version = LOG_SCHEMA_VERSION.to_string();
-        // Every free-text field, not only `message`: an identifier placed in any of them would
-        // otherwise reach the log.
         for field in [
             &mut event.run_id,
             &mut event.case_id,
@@ -1204,13 +1219,89 @@ impl BoundedDiagnosticSink {
             *field = redact_sensitive_text(field);
         }
         let serialized = serde_json::to_string(&event).unwrap_or_default();
-        let event_bytes = serialized.len() + 1;
-        if self.used_bytes.saturating_add(event_bytes) > self.max_bytes {
-            self.dropped_event_count = self.dropped_event_count.saturating_add(1);
+        let bytes = serialized.len() + 1;
+        (event, bytes)
+    }
+
+    fn store(&mut self, event: DiagnosticEvent, bytes: usize, critical: bool) {
+        self.used_bytes += bytes;
+        self.event_bytes.push(bytes);
+        self.critical.push(critical);
+        self.events.push(event);
+    }
+
+    fn count_dropped(&mut self) {
+        self.dropped_event_count = self.dropped_event_count.saturating_add(1);
+    }
+
+    fn lose_critical(&mut self) -> bool {
+        self.critical_evidence_lost = self.critical_evidence_lost.saturating_add(1);
+        self.count_dropped();
+        false
+    }
+
+    fn evict(&mut self, index: usize) {
+        let bytes = self.event_bytes.remove(index);
+        self.critical.remove(index);
+        self.events.remove(index);
+        self.used_bytes = self.used_bytes.saturating_sub(bytes);
+        self.count_dropped();
+        self.evicted_event_count = self.evicted_event_count.saturating_add(1);
+    }
+
+    /// Non-blocking emit of an ordinary event. Never panics or blocks even when full or
+    /// unavailable; a dropped event is counted.
+    pub fn try_emit(&mut self, event: DiagnosticEvent) -> bool {
+        self.emitted_event_count = self.emitted_event_count.saturating_add(1);
+        if self.sink_unavailable || self.events.len() >= self.max_events {
+            self.count_dropped();
             return false;
         }
-        self.used_bytes += event_bytes;
-        self.events.push(event);
+        let (event, bytes) = Self::prepare(event);
+        if self.used_bytes.saturating_add(bytes) > self.max_bytes {
+            self.count_dropped();
+            return false;
+        }
+        self.store(event, bytes, false);
+        true
+    }
+
+    /// Non-blocking emit of evidence that must not be lost. Critical events are never evicted.
+    /// If there is no room, the oldest ordinary events are evicted (each counted as dropped) until
+    /// there is; if that cannot make room, nothing is evicted, the event is dropped, and
+    /// `critical_evidence_lost` is incremented.
+    pub fn emit_critical(&mut self, event: DiagnosticEvent) -> bool {
+        self.emitted_event_count = self.emitted_event_count.saturating_add(1);
+        if self.sink_unavailable {
+            return self.lose_critical();
+        }
+        let (event, bytes) = Self::prepare(event);
+
+        // Decide first whether evicting could possibly make room, so that good events are never
+        // thrown away for nothing.
+        let mut evictable_count = 0usize;
+        let mut evictable_bytes = 0usize;
+        for (index, is_critical) in self.critical.iter().enumerate() {
+            if !*is_critical {
+                evictable_count += 1;
+                evictable_bytes += self.event_bytes[index];
+            }
+        }
+        let kept_count = self.events.len() - evictable_count;
+        let kept_bytes = self.used_bytes.saturating_sub(evictable_bytes);
+        if kept_count >= self.max_events || kept_bytes.saturating_add(bytes) > self.max_bytes {
+            return self.lose_critical();
+        }
+
+        while self.events.len() >= self.max_events
+            || self.used_bytes.saturating_add(bytes) > self.max_bytes
+        {
+            let Some(index) = self.critical.iter().position(|is_critical| !*is_critical) else {
+                return self.lose_critical();
+            };
+            self.evict(index);
+        }
+        self.store(event, bytes, true);
         true
     }
 
@@ -1219,9 +1310,35 @@ impl BoundedDiagnosticSink {
         &self.events
     }
 
+    /// Every event ever handed to the sink, stored or not.
+    #[must_use]
+    pub const fn emitted_event_count(&self) -> u64 {
+        self.emitted_event_count
+    }
+
+    /// Events not in the log: refused at emit time, or evicted to make room for a critical one.
     #[must_use]
     pub const fn dropped_event_count(&self) -> u64 {
         self.dropped_event_count
+    }
+
+    /// The part of `dropped_event_count` that was stored first and then evicted.
+    #[must_use]
+    pub const fn evicted_event_count(&self) -> u64 {
+        self.evicted_event_count
+    }
+
+    /// Critical events that could not be stored.
+    #[must_use]
+    pub const fn critical_evidence_lost(&self) -> u64 {
+        self.critical_evidence_lost
+    }
+
+    /// False once any critical event has been lost: the evidence behind a result is then
+    /// incomplete and the result must not be reported as a clean pass.
+    #[must_use]
+    pub const fn is_evidence_complete(&self) -> bool {
+        self.critical_evidence_lost == 0
     }
 
     #[must_use]
@@ -1984,6 +2101,145 @@ mod tests {
         assert!(first_msg.contains("[REDACTED_LAN_IP]"));
         assert!(first_msg.contains("[REDACTED_MAC]"));
         assert!(first_msg.contains("[REDACTED_SECRET]"));
+    }
+
+    fn diag(correlation_id: &str, message: &str) -> DiagnosticEvent {
+        DiagnosticEvent {
+            schema_version: String::new(),
+            timestamp_mono_ns: 1,
+            run_id: "run-01".to_string(),
+            case_id: "Q00-sink".to_string(),
+            correlation_id: correlation_id.to_string(),
+            member_id: "spk-a".to_string(),
+            group_id: "grp-1".to_string(),
+            source_epoch: 1,
+            state_revision: 1,
+            event_kind: "test".to_string(),
+            message: message.to_string(),
+            queue_depth: 0,
+            latency_us: 0,
+        }
+    }
+
+    /// Serialized size of a `diag` event. Every event in the sink tests below uses a 6-character
+    /// correlation id and an 8-character message, so they all have exactly this size.
+    fn one_event_bytes() -> usize {
+        let mut probe = BoundedDiagnosticSink::new(1, 1 << 20);
+        assert!(probe.try_emit(diag("corr-1", "ordinary")));
+        probe.used_bytes()
+    }
+
+    fn kept_ids(sink: &BoundedDiagnosticSink) -> Vec<&str> {
+        sink.events()
+            .iter()
+            .map(|e| e.correlation_id.as_str())
+            .collect()
+    }
+
+    /// Every event handed to the sink is either stored or counted as dropped.
+    fn assert_accounting_holds(sink: &BoundedDiagnosticSink) {
+        assert_eq!(
+            sink.emitted_event_count(),
+            sink.events().len() as u64 + sink.dropped_event_count()
+        );
+    }
+
+    #[test]
+    fn a_critical_event_evicts_the_oldest_ordinary_event_when_the_sink_is_full() {
+        let one = one_event_bytes();
+        let mut sink = BoundedDiagnosticSink::new(100, one * 2);
+        assert!(sink.try_emit(diag("corr-1", "ordinary")));
+        assert!(sink.try_emit(diag("corr-2", "ordinary")));
+        // No room for a third ordinary event: it is dropped, and counted.
+        assert!(!sink.try_emit(diag("corr-3", "ordinary")));
+        assert!(sink.emit_critical(diag("corr-C", "critical")));
+        assert_eq!(kept_ids(&sink), ["corr-2", "corr-C"]);
+        assert_eq!(
+            (sink.dropped_event_count(), sink.evicted_event_count()),
+            (2, 1)
+        );
+        assert!(sink.is_evidence_complete());
+        assert_accounting_holds(&sink);
+    }
+
+    #[test]
+    fn eviction_skips_older_critical_events_and_takes_the_oldest_ordinary_one() {
+        let one = one_event_bytes();
+        let mut sink = BoundedDiagnosticSink::new(100, one * 3);
+        assert!(sink.emit_critical(diag("corr-1", "critical")));
+        assert!(sink.try_emit(diag("corr-2", "ordinary")));
+        assert!(sink.try_emit(diag("corr-3", "ordinary")));
+        assert!(sink.emit_critical(diag("corr-C", "critical")));
+        assert_eq!(kept_ids(&sink), ["corr-1", "corr-3", "corr-C"]);
+        assert_eq!(sink.evicted_event_count(), 1);
+        assert!(sink.is_evidence_complete());
+        assert_accounting_holds(&sink);
+    }
+
+    #[test]
+    fn critical_events_are_never_evicted_and_losing_one_marks_the_evidence_incomplete() {
+        let mut sink = BoundedDiagnosticSink::new(2, 1 << 20);
+        assert!(sink.emit_critical(diag("corr-1", "critical")));
+        assert!(sink.emit_critical(diag("corr-2", "critical")));
+        assert!(sink.is_evidence_complete());
+        // The sink is full of critical events: there is nothing to evict.
+        assert!(!sink.emit_critical(diag("corr-3", "critical")));
+        assert!(!sink.is_evidence_complete());
+        assert_eq!(sink.critical_evidence_lost(), 1);
+        assert!(!sink.try_emit(diag("corr-4", "ordinary")));
+        assert_eq!(kept_ids(&sink), ["corr-1", "corr-2"]);
+        assert_eq!(
+            (sink.dropped_event_count(), sink.evicted_event_count()),
+            (2, 0)
+        );
+        assert_eq!(sink.critical_evidence_lost(), 1);
+        assert_accounting_holds(&sink);
+    }
+
+    #[test]
+    fn an_unavailable_or_zero_capacity_sink_loses_critical_evidence_without_blocking() {
+        let mut unavailable = BoundedDiagnosticSink::new(10, 1 << 20);
+        unavailable.set_unavailable(true);
+        assert!(!unavailable.emit_critical(diag("corr-1", "critical")));
+        assert_eq!(unavailable.critical_evidence_lost(), 1);
+        assert_eq!(unavailable.dropped_event_count(), 1);
+        assert!(!unavailable.is_evidence_complete());
+        // Storing the next critical event once the sink is back does not forgive the loss.
+        unavailable.set_unavailable(false);
+        assert!(unavailable.emit_critical(diag("corr-2", "critical")));
+        assert!(!unavailable.is_evidence_complete());
+        assert_accounting_holds(&unavailable);
+
+        let mut zero = BoundedDiagnosticSink::new(0, 0);
+        assert!(!zero.emit_critical(diag("corr-1", "critical")));
+        assert!(!zero.is_evidence_complete());
+        assert_accounting_holds(&zero);
+    }
+
+    #[test]
+    fn a_critical_event_that_cannot_fit_evicts_nothing() {
+        let one = one_event_bytes();
+        let mut sink = BoundedDiagnosticSink::new(10, one + 10);
+        assert!(sink.try_emit(diag("corr-1", "ordinary")));
+        // Larger than the whole byte budget: evicting the ordinary event would not help.
+        let too_big = "x".repeat(300);
+        assert!(!sink.emit_critical(diag("corr-C", &too_big)));
+        assert_eq!(kept_ids(&sink), ["corr-1"]);
+        assert_eq!(sink.evicted_event_count(), 0);
+        assert_eq!(sink.critical_evidence_lost(), 1);
+        assert_accounting_holds(&sink);
+    }
+
+    #[test]
+    fn a_healthy_sink_keeps_critical_evidence_complete_and_still_redacts_it() {
+        let mut sink = BoundedDiagnosticSink::new(10, 1 << 20);
+        assert!(sink.emit_critical(diag("corr-1", "token=abc123 ok")));
+        assert!(sink.try_emit(diag("corr-2", "ordinary")));
+        assert!(sink.is_evidence_complete());
+        assert_eq!(sink.events()[0].message, "token=[REDACTED_SECRET] ok");
+        assert!(!sink.to_jsonl().contains("abc123"));
+        assert_eq!(sink.dropped_event_count(), 0);
+        assert_accounting_holds(&sink);
     }
 
     #[test]

@@ -191,7 +191,7 @@ def main(argv: Any = None) -> int:
         sp = sub.add_parser(name)
         sp.add_argument("--tier", required=True, choices=TIERS, help="explicit; the full tier adds the unit-test modules")
         sp.add_argument("--oracles", default=DEFAULT_ORACLES, help="path to oracles.py (default: test_support/oracles.py)")
-        sp.add_argument("--newc", default=DEFAULT_NEWC, help="path to the newc adapter (default: q00/newc_case.py)")
+        sp.add_argument("--newc", default=DEFAULT_NEWC, help="path to the newc adapter (default: test_support/newc_case.py)")
         sp.add_argument("--unit-root", action="append", default=None, metavar="DIR",
                         help="directory scanned for test_*.py (repeatable; default: scripts/test and scripts/test/test_support)")
         if name == "emit":
