@@ -15,7 +15,7 @@ use franken_session::{FencedControlCommand, GroupCommandPayload, MemberLifecycle
 
 use super::limiter::RateLimit;
 use super::peer::ephemeral::{EphemeralPeers, test_key};
-use super::peer::{AuthFailure, PeerId, PeerRole, compute_proof};
+use super::peer::{AuthFailure, AuthProof, PeerAuthority, PeerId, PeerRole, compute_proof};
 use super::pipeline::{
     ChannelConfig, ControlChannel, Outcome, Refusal, Rejection, Settlement, SubmitResult,
 };
@@ -25,7 +25,6 @@ use super::testkit::fixture_session;
 const VECTORS_JSON: &str = include_str!("../../tests/vectors/n02_scenarios.json");
 const MS: u64 = 1_000_000;
 const EPOCH: u64 = 10;
-const SESSION_SEQ_BASE: u64 = 1_000;
 
 /// Who speaks in the scenarios: name, role and the epoch the key is bound to. Each peer's key is
 /// `test_key(name)`, held by the client side of the replay and by the authority.
@@ -136,7 +135,7 @@ fn config_from(doc: &Value, scenario: &Value) -> ChannelConfig {
         max_per_step: size("max_per_step"),
         ordinary_rate: rate(&config["ordinary_rate"]),
         priority_rate: rate(&config["priority_rate"]),
-        session_seq_base: SESSION_SEQ_BASE,
+        session_seq_base: number(&config, "session_seq_base"),
     }
 }
 
@@ -145,8 +144,10 @@ fn refusal_name(refusal: &Refusal) -> &'static str {
         Refusal::StaleEpoch { .. } => "stale_epoch",
         Refusal::EpochAhead { .. } => "epoch_ahead",
         Refusal::RevisionMismatch { .. } => "revision_mismatch",
+        Refusal::StaleRevision { .. } => "stale_revision",
         Refusal::UnknownMember { .. } => "unknown_member",
         Refusal::Session(_) => "session",
+        Refusal::InternalFault => "internal_fault",
         Refusal::AuthorityExpired => "authority_expired",
         Refusal::Expired => "expired",
         Refusal::TooLateToCancel => "too_late_to_cancel",
@@ -181,6 +182,7 @@ fn show_submit(result: &SubmitResult) -> String {
                 }
             ),
             Rejection::EpochNotBound { .. } => "rejected:epoch_not_bound".to_string(),
+            Rejection::RevisionRequired { .. } => "rejected:revision_required".to_string(),
             Rejection::RateLimited {
                 lane,
                 retry_after_ns,
@@ -233,18 +235,23 @@ fn final_state(session: &franken_session::UnifiedGroupSession) -> Value {
     })
 }
 
-/// Replay one scenario; the returned list is empty when everything matched.
-fn replay(doc: &Value, scenario: &Value) -> Vec<String> {
-    let scenario_id = text(scenario, "id");
-    let mut problems = Vec::new();
+/// The scenario peers, each admitted with `test_key(name)`.
+fn directory() -> EphemeralPeers {
     let mut peers = EphemeralPeers::new();
     for (name, role, bound) in PEERS {
         peers
             .admit(&id(name), role, &test_key(name), bound, 1)
             .expect("scenario peers are admitted");
     }
-    let mut channel =
-        ControlChannel::new(peers, config_from(doc, scenario)).expect("scenario config is valid");
+    peers
+}
+
+/// Replay one scenario; the returned list is empty when everything matched.
+fn replay(doc: &Value, scenario: &Value) -> Vec<String> {
+    let scenario_id = text(scenario, "id");
+    let mut problems = Vec::new();
+    let mut channel = ControlChannel::new(directory(), config_from(doc, scenario))
+        .expect("scenario config is valid");
     let mut session = fixture_session(EPOCH);
 
     for (index, step) in scenario["steps"]
@@ -308,6 +315,24 @@ fn replay(doc: &Value, scenario: &Value) -> Vec<String> {
                     "{where_}: the peer must be admitted"
                 );
             }
+            "restart" => {
+                // A new incarnation: no queue, no outcome, no limiter, no revision floor. The group
+                // state, the session's record and the peer directory carry on.
+                channel = ControlChannel::new(directory(), config_from(doc, scenario))
+                    .expect("scenario config is valid");
+            }
+            "external_command" => {
+                // Another caller of the session, in the same epoch, using a number of its own choosing.
+                session
+                    .apply_command(FencedControlCommand {
+                        epoch: session.current_epoch,
+                        command_seq: number(step, "seq"),
+                        payload: GroupCommandPayload::MarkMemberClockLocked {
+                            member_id: "kitchen".to_string(),
+                        },
+                    })
+                    .expect("the external command applies");
+            }
             "revoke" => {
                 assert!(
                     channel.authority_mut().revoke(&id(text(step, "peer"))),
@@ -337,6 +362,13 @@ fn replay(doc: &Value, scenario: &Value) -> Vec<String> {
 
 fn doc() -> Value {
     serde_json::from_str(VECTORS_JSON).expect("the scenario file parses")
+}
+
+fn unhex(text: &str) -> Vec<u8> {
+    assert_eq!(text.len() % 2, 0, "hex has an even number of digits");
+    (0..text.len() / 2)
+        .map(|i| u8::from_str_radix(&text[2 * i..2 * i + 2], 16).expect("hex digits"))
+        .collect()
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -372,14 +404,7 @@ fn the_signing_bytes_match_the_independently_derived_vectors() {
     let vectors = doc["signing_vectors"].as_array().expect("signing_vectors");
     assert!(vectors.len() >= 5);
     for vector in vectors {
-        let body = RequestBody::new(
-            id(text(vector, "peer")),
-            number(vector, "seq"),
-            number(vector, "epoch"),
-            vector["rev"].as_u64(),
-            command_from(&vector["cmd"]),
-        )
-        .expect("vector request is well formed");
+        let body = body_from(vector);
         assert_eq!(
             hex(&body.signing_bytes()),
             text(vector, "hex"),
@@ -424,10 +449,99 @@ fn scenario_ids_are_unique_and_every_operation_is_known() {
         );
         for step in scenario["steps"].as_array().expect("steps") {
             assert!(
-                ["submit", "step", "session_epoch", "rebind", "revoke"].contains(&text(step, "op")),
+                [
+                    "submit",
+                    "step",
+                    "session_epoch",
+                    "rebind",
+                    "revoke",
+                    "restart",
+                    "external_command"
+                ]
+                .contains(&text(step, "op")),
                 "unknown op in {}",
                 text(scenario, "id")
             );
         }
+    }
+}
+
+/// The expected tags were computed with Python's standard `hmac`, a different implementation of the
+/// same standard, so this also pins the context label, the order of the parts and the full length.
+#[test]
+fn the_proofs_match_the_python_hmac_vectors_and_the_directory_accepts_them() {
+    let doc = doc();
+    let signing = doc["signing_vectors"].as_array().expect("signing_vectors");
+    let auth = doc["auth_vectors"].as_array().expect("auth_vectors");
+    assert!(
+        auth.len() >= signing.len(),
+        "one auth vector per signing vector"
+    );
+    let peers = directory();
+    for vector in auth {
+        let source = signing
+            .iter()
+            .find(|s| text(s, "id") == text(vector, "signing_vector"))
+            .expect("the auth vector names a signing vector");
+        let body = body_from(source);
+        let key = text(vector, "key");
+        assert_eq!(
+            key.as_bytes(),
+            test_key(text(source, "peer")).as_slice(),
+            "{}: the vector key is the fixture key of its peer",
+            text(vector, "id")
+        );
+        let proof = compute_proof(key.as_bytes(), &body.signing_bytes());
+        assert_eq!(
+            hex(proof.as_bytes()),
+            text(vector, "tag_hex"),
+            "{}",
+            text(vector, "id")
+        );
+        // The directory accepts the Python-computed tag itself, not only its own.
+        let python_tag = AuthProof::new(unhex(text(vector, "tag_hex"))).expect("a 32-byte tag");
+        assert!(
+            peers
+                .authenticate(body.peer(), &body.signing_bytes(), &python_tag)
+                .is_ok(),
+            "{}",
+            text(vector, "id")
+        );
+    }
+}
+
+#[test]
+fn every_tampered_field_is_refused_under_the_original_tag() {
+    let doc = doc();
+    let signing = doc["signing_vectors"].as_array().expect("signing_vectors");
+    let auth = doc["auth_vectors"].as_array().expect("auth_vectors");
+    let tampers = doc["tamper_vectors"].as_array().expect("tamper_vectors");
+    assert!(tampers.len() >= 8, "one per signed field");
+    let peers = directory();
+    for tamper in tampers {
+        let base_auth = auth
+            .iter()
+            .find(|a| text(a, "id") == text(tamper, "auth_vector"))
+            .expect("the tamper names an auth vector");
+        let base = signing
+            .iter()
+            .find(|s| text(s, "id") == text(base_auth, "signing_vector"))
+            .expect("the auth vector names a signing vector");
+        let original = body_from(base);
+        let changed = body_from(tamper);
+        assert_ne!(
+            original.signing_bytes(),
+            changed.signing_bytes(),
+            "{}: a tamper must change the signed bytes",
+            text(tamper, "id")
+        );
+        let tag = AuthProof::new(unhex(text(base_auth, "tag_hex"))).expect("a 32-byte tag");
+        assert_eq!(
+            peers.authenticate(changed.peer(), &changed.signing_bytes(), &tag),
+            Err(AuthFailure::BadProof),
+            "{} ({})",
+            text(tamper, "id"),
+            text(tamper, "field")
+        );
     }
 }

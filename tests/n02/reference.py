@@ -25,6 +25,8 @@ built model reaches them. The Rust half runs only in the centralized builds:
 """
 
 import argparse
+import hashlib
+import hmac
 import json
 import struct
 import sys
@@ -43,6 +45,8 @@ LANE = {
     "cancel": "priority",
 }
 RELATIVE = {"adjust_member_volume", "adjust_group_volume"}
+# Commands a remote controller must send with the revision it last read, besides the relative ones.
+NEEDS_REVISION = {"set_member_volume", "set_group_volume", "set_member_mute"}
 
 # Peers of every scenario: role, the epoch the key is bound to (None = not epoch-scoped), version.
 PEERS = {
@@ -52,7 +56,40 @@ PEERS = {
     "rogue": ("controller", 900),
 }
 START = {"epoch": 10, "revision": 2, "group": 50, "members": {"kitchen": 50, "den": 50}}
-SESSION_SEQ_BASE = 1000  # only matters to the Rust; recorded here so the vectors state it
+AUTH_CONTEXT = b"FFCP-v1-auth"  # hashed before every request, so a tag is tied to this protocol
+FIXTURE_SESSION_SEQS = {1, 2}  # the two membership admissions the fixture session starts with
+
+
+# ---------------------------------------------------------------- well-formedness
+
+MEMBER_ALPHABET = frozenset("abcdefghijklmnopqrstuvwxyz0123456789._-")
+MAX_MEMBER_LEN = 64
+MAX_DELTA = 100
+
+
+def malformed(seq, rev, cmd):
+    """Why the Rust `RequestBody::new` would refuse this request, or None if it would build it.
+
+    The rules are copied from the contract (section 2), not from the Rust: a sequence of at least 1; a
+    member label of 1..=64 characters from the label alphabet; a volume of at most 100; a nonzero
+    delta of at most 100 in size; a relative command that names its revision; a cancel that names
+    an earlier command and not itself. A vector or a scenario step that breaks one cannot be replayed
+    by the Rust, so the Python side must not call it valid either."""
+    kind = cmd["kind"]
+    if seq < 1:
+        return "zero sequence"
+    member = cmd.get("member")
+    if member is not None and not (0 < len(member) <= MAX_MEMBER_LEN and set(member) <= MEMBER_ALPHABET):
+        return "invalid member id"
+    if cmd.get("volume", 0) > 100:
+        return "volume out of range"
+    if "delta" in cmd and (cmd["delta"] == 0 or abs(cmd["delta"]) > MAX_DELTA):
+        return "delta out of range"
+    if kind in RELATIVE and rev is None:
+        return "a relative command needs an expected revision"
+    if kind == "cancel" and (cmd["target_seq"] < 1 or cmd["target_seq"] == seq):
+        return "a cancel must name an earlier command, not itself"
+    return None
 
 
 # ---------------------------------------------------------------- signing bytes
@@ -117,6 +154,11 @@ class Model:
         self.group = START["group"]
         self.members = {name: {"volume": v, "muted": False} for name, v in START["members"].items()}
         self.stopped = False
+        # The session refuses a command number it has already applied in this epoch.
+        self.session_seqs = set(FIXTURE_SESSION_SEQS)
+        self.next_seq = config["session_seq_base"]
+        # The session revision at this incarnation's first step; None until then.
+        self.floor = None
         # peer directory
         self.peers = {n: {"role": r, "bound": b, "version": 1} for n, (r, b) in PEERS.items()}
         self.revoked = set()
@@ -129,7 +171,7 @@ class Model:
         self.clock = 0
         self.stats = dict.fromkeys(
             [
-                "received", "unauthenticated", "epoch_not_bound", "rate_limited", "queue_full",
+                "received", "unauthenticated", "epoch_not_bound", "revision_required", "rate_limited", "queue_full",
                 "id_reuse", "from_ledger", "already_queued", "out_of_window", "accepted",
             ],
             0,
@@ -141,18 +183,27 @@ class Model:
         """A membership change under a newer epoch, outside the channel (one revision)."""
         self.epoch = epoch
         self.revision += 1
+        self.session_seqs = {3}  # a new epoch drops the old record; the change itself used number 3
 
     def commit(self):
         self.revision += 1
         return self.revision
 
+    def external_command(self, seq):
+        """Another caller of the session, in the same epoch, applies a change under a number of its own."""
+        self.session_seqs.add(seq)
+        self.revision += 1
+
     def restart(self):
-        """The channel process restarts: every queue, limiter and outcome is forgotten, the group state
-        and the peer directory are not. Used only by the hazard test; no golden scenario restarts."""
+        """The channel restarts: every queue, limiter, outcome and the revision floor is forgotten and
+        its counter starts again at the configured base. The group state, the session's record of
+        applied numbers and the peer directory carry on."""
         self.queues = {"ordinary": [], "priority": []}
         self.limits = {}
         self.records = []
         self.floors = {}
+        self.floor = None
+        self.next_seq = self.cfg["session_seq_base"]
 
     # -- authority -----------------------------------------------------------
 
@@ -230,6 +281,9 @@ class Model:
         if wait is not None:
             self.stats["rate_limited"] += 1
             return f"rejected:rate_limited:{lane}:{wait}"
+        if record["role"] == "controller" and cmd["kind"] in NEEDS_REVISION and rev is None:
+            self.stats["revision_required"] += 1
+            return "rejected:revision_required"
         item = {"peer": peer, "seq": seq, "epoch": epoch, "rev": rev, "cmd": cmd, "role": record["role"],
                 "version": record["version"], "accepted": now, "lane": lane}
         # 4. a copy that is waiting, an outcome on record, a number forgotten
@@ -264,6 +318,8 @@ class Model:
 
     def step(self, now):
         self._age_out(now)
+        if self.floor is None:
+            self.floor = self.revision
         done = []
 
         def settle(item, outcome):
@@ -308,27 +364,44 @@ class Model:
                 return "refused:stale_epoch"
             if item["epoch"] > self.epoch:
                 return "refused:epoch_ahead"
-            if item["rev"] is not None and item["rev"] != self.revision:
-                return "refused:revision_mismatch"
+            observed = item["rev"]
+            if observed is not None:
+                relative = item["cmd"]["kind"] in RELATIVE
+                if observed > self.revision or (relative and observed != self.revision):
+                    return "refused:revision_mismatch"
+                if observed < self.floor:
+                    return "refused:stale_revision"
         kind = cmd["kind"]
+        if kind == "adjust_member_volume" and cmd["member"] not in self.members:
+            return "refused:unknown_member"  # resolved in the channel, before a number is spent
+        number = self._mint()
+        if number in self.session_seqs:
+            return "refused:internal_fault"  # the session already applied this number: not the sender's doing
+        if kind in ("set_member_volume", "set_member_mute") and cmd["member"] not in self.members:
+            return "refused:session"
         if kind == "set_group_volume":
             self.group = cmd["volume"]
         elif kind == "adjust_group_volume":
             self.group = min(100, max(0, self.group + cmd["delta"]))
-        elif kind in ("set_member_volume", "adjust_member_volume", "set_member_mute"):
-            member = self.members.get(cmd["member"])
-            if member is None:
-                # A relative command resolves its member in the channel; the others reach the session.
-                return "refused:unknown_member" if kind == "adjust_member_volume" else "refused:session"
-            if kind == "set_member_volume":
-                member["volume"] = cmd["volume"]
-            elif kind == "adjust_member_volume":
-                member["volume"] = min(100, max(0, member["volume"] + cmd["delta"]))
-            else:
-                member["muted"] = cmd["muted"]
+        elif kind == "set_member_volume":
+            self.members[cmd["member"]]["volume"] = cmd["volume"]
+        elif kind == "adjust_member_volume":
+            member = self.members[cmd["member"]]
+            member["volume"] = min(100, max(0, member["volume"] + cmd["delta"]))
+        elif kind == "set_member_mute":
+            self.members[cmd["member"]]["muted"] = cmd["muted"]
         elif kind == "stop":
             self.stopped = True
+        self.session_seqs.add(number)
         return f"committed:{self.commit()}"
+
+    def _mint(self):
+        """The next session command number: at least the counter, and at least base + revision. The
+        revision only ever grows, so a restarted channel lands above everything its predecessor used;
+        the counter keeps a refused number (which the revision does not move on) from being tried twice."""
+        number = max(self.next_seq, self.cfg["session_seq_base"] + self.revision)
+        self.next_seq = number + 1
+        return number
 
     def _cancel(self, item, withdrawn):
         target = item["cmd"]["target_seq"]
@@ -384,6 +457,10 @@ def replay(doc, scenario, model_class=Model):
         where = f"{scenario['id']} step {index} ({step['op']})"
         op = step["op"]
         if op == "submit":
+            why = malformed(step["seq"], step["rev"], step["cmd"])
+            if why:
+                problems.append(f"{where}: the Rust body constructor refuses this request ({why})")
+                continue
             for repeat in range(step.get("repeat", 1)):
                 got = model.submit(
                     step["at_ms"], step["peer"], step["seq"], step["epoch"], step["rev"], step["cmd"],
@@ -402,6 +479,10 @@ def replay(doc, scenario, model_class=Model):
             model.rebind(step["peer"], step["epoch"])
         elif op == "revoke":
             model.revoke(step["peer"])
+        elif op == "restart":
+            model.restart()
+        elif op == "external_command":
+            model.external_command(step["seq"])
         else:
             problems.append(f"{where}: unknown op")
     if model.final() != scenario["final"]:
@@ -411,12 +492,44 @@ def replay(doc, scenario, model_class=Model):
     return problems
 
 
+def proof(key, message):
+    """HMAC-SHA256 over the context label then the signed bytes, from the standard library."""
+    return hmac.new(key, AUTH_CONTEXT + message, hashlib.sha256).digest()
+
+
+def request_bytes(vector):
+    return signing_bytes(vector["peer"], vector["seq"], vector["epoch"], vector["rev"], vector["cmd"])
+
+
 def check_vectors(doc):
     problems = []
+    signing = {v["id"]: v for v in doc["signing_vectors"]}
+    for vector in list(doc["signing_vectors"]) + list(doc["tamper_vectors"]):
+        why = malformed(vector["seq"], vector["rev"], vector["cmd"])
+        if why:
+            problems.append(f"{vector['id']}: the Rust body constructor refuses this request ({why})")
     for vector in doc["signing_vectors"]:
-        got = signing_bytes(vector["peer"], vector["seq"], vector["epoch"], vector["rev"], vector["cmd"]).hex()
+        got = request_bytes(vector).hex()
         if got != vector["hex"]:
             problems.append(f"{vector['id']}: expected {vector['hex']}, built {got}")
+    auth = {a["id"]: a for a in doc["auth_vectors"]}
+    for vector in doc["auth_vectors"]:
+        source = signing[vector["signing_vector"]]
+        got = proof(vector["key"].encode("ascii"), bytes.fromhex(source["hex"])).hex()
+        if got != vector["tag_hex"]:
+            problems.append(f"{vector['id']}: expected {vector['tag_hex']}, computed {got}")
+        if len(vector["tag_hex"]) != 64:
+            problems.append(f"{vector['id']}: the tag is not 32 bytes")
+    for tamper in doc["tamper_vectors"]:
+        base = auth[tamper["auth_vector"]]
+        original = bytes.fromhex(signing[base["signing_vector"]]["hex"])
+        changed = request_bytes(tamper)
+        if changed == original:
+            problems.append(f"{tamper['id']}: the tamper does not change the signed bytes")
+        # The claimed peer's own key, as the directory would use, under the original tag.
+        key = f"key-{tamper['peer']}-0123456789abcdef".encode("ascii")
+        if hmac.compare_digest(proof(key, changed), bytes.fromhex(base["tag_hex"])):
+            problems.append(f"{tamper['id']} ({tamper['field']}): the original tag still verifies")
     return problems
 
 
@@ -437,7 +550,8 @@ def main(argv=None):
         print("MISMATCH", line, file=sys.stderr)
     status = "FAIL" if problems else "PASS"
     print(f"N02 reference: {status} ({len(doc['scenarios'])} scenarios, "
-          f"{len(doc['signing_vectors'])} signing vectors, {len(problems)} mismatches)")
+          f"{len(doc['signing_vectors'])} signing vectors, {len(doc['auth_vectors'])} hmac vectors, "
+          f"{len(doc['tamper_vectors'])} tampers, {len(problems)} mismatches)")
     return 1 if problems else 0
 
 

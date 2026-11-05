@@ -37,8 +37,10 @@
 //! is bounded by the per-peer priority rate limit and the pending TTL, not eliminated.
 //!
 //! The channel calls [`UnifiedGroupSession::apply_command`] with its own strictly increasing command
-//! numbers, starting at [`ChannelConfig::session_seq_base`]. Client numbers never reach the session,
-//! because two peers' numbers would collide in its single per-epoch sequence space.
+//! numbers, each at least [`ChannelConfig::session_seq_base`] plus the session's revision. Client
+//! numbers never reach the session, because two peers' numbers would collide in its single per-epoch
+//! sequence space. Tying the number to the revision means a channel that restarts against a session
+//! that kept running starts above every number its predecessor used.
 //!
 //! **Known limit.** That space is shared with every other caller in the same epoch (membership
 //! changes), and the session remembers only the newest `COMMAND_DEDUP_WINDOW` numbers of it. Once
@@ -82,15 +84,30 @@ pub enum Refusal {
         request: u64,
         current: u64,
     },
+    /// A relative command's revision is not the current one, or a command names a revision that does
+    /// not exist yet.
     RevisionMismatch {
         expected: u64,
         actual: u64,
     },
+    /// A volume or mute command was composed against a revision older than this incarnation's start,
+    /// which is how a copy delayed across a restart looks. Nothing was changed; read the group state
+    /// and send a fresh command.
+    StaleRevision {
+        observed: u64,
+        floor: u64,
+    },
     UnknownMember {
         member_id: String,
     },
-    /// The session refused the command it was handed.
+    /// The session refused the command for a reason about its content, such as an unknown member.
     Session(SessionError),
+    /// The session refused the command for a reason that cannot be the sender's doing: a repeated or
+    /// out-of-window command number, or a stale epoch. The channel's own bookkeeping disagrees with the
+    /// session. It is counted (`ChannelStats::internal_faults`) and the detail is kept for the operator
+    /// (`ControlChannel::last_internal_fault`), but it is never shown to the sender. The sender should
+    /// read the group state and send a new command under a new number.
+    InternalFault,
     /// The peer was revoked, or its binding changed, after the command was accepted.
     AuthorityExpired,
     /// Waited in the queue longer than the pending TTL.
@@ -115,6 +132,10 @@ pub enum Rejection {
     EpochNotBound {
         bound: u64,
         request: u64,
+    },
+    /// A remote controller sent a volume or mute command without the revision it last read.
+    RevisionRequired {
+        command: &'static str,
     },
     RateLimited {
         lane: Lane,
@@ -184,7 +205,11 @@ pub struct ChannelConfig {
     pub max_per_step: usize,
     pub ordinary_rate: RateLimit,
     pub priority_rate: RateLimit,
-    /// First command number the channel passes to the session.
+    /// The lowest command number the channel passes to the session. Each number is the larger of the
+    /// previous one plus one and this base plus the session's `state_revision`, so a channel that
+    /// restarts against a session that kept running is carried above every number it used before
+    /// without remembering any of them. Other callers of the session in the same epoch keep to numbers
+    /// below the base.
     pub session_seq_base: u64,
 }
 
@@ -242,13 +267,14 @@ const fn const_rate(burst: u32, interval_ns: u64) -> RateLimit {
 const PROVISIONAL_ORDINARY_RATE: RateLimit = const_rate(8, 100 * MS);
 const PROVISIONAL_PRIORITY_RATE: RateLimit = const_rate(4, 250 * MS);
 
-/// Counters. Every call to `submit` lands in exactly one of the first nine buckets after `received`,
+/// Counters. Every call to `submit` lands in exactly one of the buckets after `received`,
 /// so `accounted() == received` always; `committed` and the rest count what `step` did.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ChannelStats {
     pub received: u64,
     pub rejected_unauthenticated: u64,
     pub rejected_epoch_not_bound: u64,
+    pub rejected_revision_required: u64,
     pub rejected_rate_limited: u64,
     pub rejected_queue_full: u64,
     pub rejected_id_reuse: u64,
@@ -261,6 +287,8 @@ pub struct ChannelStats {
     pub withdrawn: u64,
     pub refused: u64,
     pub expired_pending: u64,
+    /// Commands the session refused for a reason that was not the sender's. Zero in correct operation.
+    pub internal_faults: u64,
     /// An outcome that could not be recorded. Zero in correct operation.
     pub ledger_record_failures: u64,
 }
@@ -271,6 +299,7 @@ impl ChannelStats {
     pub const fn accounted(&self) -> u64 {
         self.rejected_unauthenticated
             + self.rejected_epoch_not_bound
+            + self.rejected_revision_required
             + self.rejected_rate_limited
             + self.rejected_queue_full
             + self.rejected_id_reuse
@@ -318,6 +347,10 @@ pub struct ControlChannel<A: PeerAuthority> {
     ledger: OutcomeLedger<RequestBody, Outcome>,
     buckets: BTreeMap<(PeerId, Lane), TokenBucket>,
     next_session_seq: u64,
+    /// The session's `state_revision` at this incarnation's first `step`. A volume or mute command
+    /// composed against anything older predates the incarnation and is refused as stale.
+    revision_floor: Option<u64>,
+    last_internal_fault: Option<SessionError>,
     stats: ChannelStats,
 }
 
@@ -329,11 +362,13 @@ impl<A: PeerAuthority> ControlChannel<A> {
         Ok(Self {
             authority,
             next_session_seq: config.session_seq_base,
+            revision_floor: None,
             config,
             ordinary: VecDeque::new(),
             priority: VecDeque::new(),
             ledger,
             buckets: BTreeMap::new(),
+            last_internal_fault: None,
             stats: ChannelStats::default(),
         })
     }
@@ -355,6 +390,19 @@ impl<A: PeerAuthority> ControlChannel<A> {
     #[must_use]
     pub fn stats(&self) -> &ChannelStats {
         &self.stats
+    }
+
+    /// The session revision this incarnation started from, known once the first `step` has run.
+    #[must_use]
+    pub fn revision_floor(&self) -> Option<u64> {
+        self.revision_floor
+    }
+
+    /// The session error behind the most recent `Refusal::InternalFault`, for the operator. Holds a
+    /// member id or numbers at most; never a key or a proof.
+    #[must_use]
+    pub fn last_internal_fault(&self) -> Option<&SessionError> {
+        self.last_internal_fault.as_ref()
     }
 
     #[must_use]
@@ -461,6 +509,17 @@ impl<A: PeerAuthority> ControlChannel<A> {
             });
         }
 
+        // 3b. A remote controller's volume or mute command names the revision it last read.
+        if auth.role == PeerRole::Controller
+            && body.command().needs_observed_revision()
+            && body.expected_revision().is_none()
+        {
+            bump(&mut self.stats.rejected_revision_required);
+            return SubmitResult::Rejected(Rejection::RevisionRequired {
+                command: body.command().label(),
+            });
+        }
+
         // 4a. A copy already waiting.
         let waiting = self
             .find_pending(body.peer(), body.seq())
@@ -543,6 +602,9 @@ impl<A: PeerAuthority> ControlChannel<A> {
                 if matches!(refusal, Refusal::Expired) {
                     bump(&mut self.stats.expired_pending);
                 }
+                if matches!(refusal, Refusal::InternalFault) {
+                    bump(&mut self.stats.internal_faults);
+                }
             }
         }
         let peer = body.peer().clone();
@@ -593,13 +655,14 @@ impl<A: PeerAuthority> ControlChannel<A> {
     /// outcome.
     pub fn step(&mut self, now_ns: u64, session: &mut UnifiedGroupSession) -> Vec<Settlement> {
         self.ledger.expire(now_ns);
+        let floor = *self.revision_floor.get_or_insert(session.state_revision);
         let mut settled = Vec::new();
         self.expire_pending(now_ns, &mut settled);
         for _ in 0..self.config.max_per_step {
             let Some(item) = self.pop_priority().or_else(|| self.ordinary.pop_front()) else {
                 break;
             };
-            let outcome = self.execute(&item, now_ns, session, &mut settled);
+            let outcome = self.execute(&item, now_ns, floor, session, &mut settled);
             self.settle(item.request.body().clone(), outcome, now_ns, &mut settled);
         }
         settled
@@ -609,6 +672,7 @@ impl<A: PeerAuthority> ControlChannel<A> {
         &mut self,
         item: &Queued,
         now_ns: u64,
+        floor: u64,
         session: &mut UnifiedGroupSession,
         out: &mut Vec<Settlement>,
     ) -> Outcome {
@@ -636,13 +700,24 @@ impl<A: PeerAuthority> ControlChannel<A> {
                     current,
                 });
             }
-            if let Some(expected) = body.expected_revision()
-                && expected != session.state_revision
-            {
-                return Outcome::Refused(Refusal::RevisionMismatch {
-                    expected,
-                    actual: session.state_revision,
-                });
+            if let Some(observed) = body.expected_revision() {
+                let revision = session.state_revision;
+                // A relative command is held to the exact revision its delta was computed against.
+                // Any command naming a revision the session has not reached is refused: it was
+                // composed against some other state than this one.
+                if observed > revision || (body.command().is_relative() && observed != revision) {
+                    return Outcome::Refused(Refusal::RevisionMismatch {
+                        expected: observed,
+                        actual: revision,
+                    });
+                }
+                // An absolute command stays valid however far the group has moved since, as long as it
+                // was composed after this incarnation began: absolute volume is naturally repeatable,
+                // so a client may pipeline updates and two controllers may interleave. What it may not
+                // be is older than the start of this incarnation: that is a copy that outlived a restart.
+                if observed < floor {
+                    return Outcome::Refused(Refusal::StaleRevision { observed, floor });
+                }
             }
         }
 
@@ -687,15 +762,30 @@ impl<A: PeerAuthority> ControlChannel<A> {
             ControlCommand::Cancel { .. } => return Outcome::Refused(Refusal::NotCancellable),
         };
 
-        let command_seq = self.next_session_seq;
-        self.next_session_seq = self.next_session_seq.saturating_add(1);
+        // The larger of the next counter value and base + revision. The revision only ever grows, so a
+        // restarted channel lands above everything its predecessor used; the counter keeps a refused
+        // number (which the revision does not move on) from being tried twice.
+        let command_seq = self.next_session_seq.max(
+            self.config
+                .session_seq_base
+                .saturating_add(session.state_revision),
+        );
+        self.next_session_seq = command_seq.saturating_add(1);
         match session.apply_command(FencedControlCommand {
             epoch: session.current_epoch,
             command_seq,
             payload,
         }) {
             Ok(revision) => Outcome::Committed { revision },
-            Err(error) => Outcome::Refused(Refusal::Session(error)),
+            Err(error @ SessionError::UnknownMember { .. }) => {
+                Outcome::Refused(Refusal::Session(error))
+            }
+            // Every other session error is about the command number or the epoch, both of which the
+            // channel chose itself. The next command gets a fresh number, so a collision heals.
+            Err(error) => {
+                self.last_internal_fault = Some(error);
+                Outcome::Refused(Refusal::InternalFault)
+            }
         }
     }
 
@@ -830,7 +920,26 @@ mod tests {
             ControlRequest::new(body, proof)
         }
 
+        /// A request from a client that has just read the group state: when a remote controller sends
+        /// a volume or mute change and names no revision, the session's current one is supplied. The
+        /// local user needs none. Tests about the missing-revision rule use `req_raw`.
         fn req(
+            &self,
+            peer: &str,
+            seq: u64,
+            epoch: u64,
+            rev: Option<u64>,
+            command: ControlCommand,
+        ) -> ControlRequest {
+            let rev = rev.or_else(|| {
+                (peer != "panel" && command.needs_observed_revision())
+                    .then_some(self.session.state_revision)
+            });
+            self.req_raw(peer, seq, epoch, rev, command)
+        }
+
+        /// Exactly the fields given, signed.
+        fn req_raw(
             &self,
             peer: &str,
             seq: u64,
@@ -2000,6 +2109,263 @@ mod tests {
         assert_eq!(
             rig.channel.diagnostics(&rig.session).stats,
             ChannelStats::default()
+        );
+    }
+
+    // ----------------------------------------------------------------- revisions and restarts
+
+    #[test]
+    fn a_controller_must_name_the_revision_it_read_for_volume_and_mute() {
+        let mut rig = Rig::roomy();
+        let no_revision = [
+            ("set-group-volume", set_group(60)),
+            (
+                "set-member-volume",
+                ControlCommand::SetMemberVolume {
+                    member_id: "kitchen".to_string(),
+                    volume: 20,
+                },
+            ),
+            ("set-member-mute", mute("den", true)),
+        ];
+        for (n, (label, command)) in no_revision.into_iter().enumerate() {
+            let r = rig.req_raw("ctl-a", n as u64 + 1, EPOCH, None, command);
+            assert_eq!(
+                rig.submit(r),
+                SubmitResult::Rejected(Rejection::RevisionRequired { command: label }),
+                "{label}"
+            );
+        }
+        assert_eq!(rig.channel.stats().rejected_revision_required, 3);
+        assert_eq!(rig.channel.pending(Lane::Ordinary), 0);
+        assert_eq!(rig.channel.pending(Lane::Priority), 0);
+
+        // Turned away at the door, the number is free: the same number with the revision is accepted.
+        let fixed = rig.req_raw("ctl-a", 1, EPOCH, Some(2), set_group(60));
+        assert!(matches!(rig.submit(fixed), SubmitResult::Queued { .. }));
+        // A stop and a cancel need none, and neither does the local user.
+        let stop_no_rev = rig.req_raw("ctl-a", 7, EPOCH, None, stop());
+        assert!(matches!(
+            rig.submit(stop_no_rev),
+            SubmitResult::Queued { .. }
+        ));
+        let cancel = rig.req_raw(
+            "ctl-a",
+            8,
+            EPOCH,
+            None,
+            ControlCommand::Cancel { target_seq: 1 },
+        );
+        assert!(matches!(rig.submit(cancel), SubmitResult::Queued { .. }));
+        let local = rig.req_raw("panel", 1, 0, None, set_group(20));
+        assert!(matches!(rig.submit(local), SubmitResult::Queued { .. }));
+        let s = *rig.channel.stats();
+        assert_eq!(s.accounted(), s.received);
+    }
+
+    #[test]
+    fn a_volume_composed_against_an_older_revision_still_applies_within_an_incarnation() {
+        // Absolute volume is naturally repeatable: two controllers read the same revision, or one client
+        // pipelines updates before the first acknowledgement, and none of them is stale.
+        let mut rig = Rig::roomy();
+        let a = rig.req_raw("ctl-a", 1, EPOCH, Some(2), set_group(60));
+        let b = rig.req_raw("ctl-b", 1, EPOCH, Some(2), set_group(30));
+        let a2 = rig.req_raw("ctl-a", 2, EPOCH, Some(2), set_group(35));
+        for r in [a, b, a2] {
+            assert!(matches!(rig.submit(r), SubmitResult::Queued { .. }));
+        }
+        let outcomes: Vec<Outcome> = rig.step().into_iter().map(|s| s.outcome).collect();
+        assert_eq!(outcomes, vec![committed(3), committed(4), committed(5)]);
+        assert_eq!(rig.session.group_master_volume, 35);
+    }
+
+    #[test]
+    fn a_revision_the_session_has_not_reached_is_refused() {
+        let mut rig = Rig::roomy();
+        for (seq, command) in [(1, set_group(60)), (2, mute("den", true))] {
+            let r = rig.req_raw("ctl-a", seq, EPOCH, Some(99), command);
+            rig.submit(r);
+        }
+        let outcomes: Vec<Outcome> = rig.step().into_iter().map(|s| s.outcome).collect();
+        let refused = Outcome::Refused(Refusal::RevisionMismatch {
+            expected: 99,
+            actual: 2,
+        });
+        assert_eq!(outcomes, vec![refused.clone(), refused]);
+        assert_eq!(rig.session.state_revision, 2);
+    }
+
+    #[test]
+    fn the_revision_floor_is_the_session_revision_at_the_first_step() {
+        let mut rig = Rig::roomy();
+        assert_eq!(rig.channel.revision_floor(), None);
+        rig.step();
+        assert_eq!(rig.channel.revision_floor(), Some(2));
+        let r = rig.req("ctl-a", 1, EPOCH, None, set_group(60));
+        rig.submit(r);
+        rig.step();
+        assert_eq!(rig.session.state_revision, 3);
+        assert_eq!(
+            rig.channel.revision_floor(),
+            Some(2),
+            "fixed for the incarnation"
+        );
+    }
+
+    /// The fix for the restart finding: a copy composed before a restart is refused, whatever its
+    /// kind, and a fresh command is applied.
+    #[test]
+    fn after_a_restart_late_absolute_and_relative_copies_are_refused_and_a_fresh_command_applies() {
+        let mut rig = Rig::roomy();
+        let absolute = rig.req("ctl-a", 1, EPOCH, None, set_group(70));
+        rig.submit(absolute.clone());
+        rig.step();
+        let newer = rig.req("ctl-b", 1, EPOCH, None, set_group(40));
+        rig.submit(newer);
+        rig.step();
+        let relative = rig.req("ctl-a", 2, EPOCH, Some(4), adjust("kitchen", 10));
+        rig.submit(relative.clone());
+        rig.step();
+        assert_eq!(
+            (rig.session.group_master_volume, rig.volume("kitchen")),
+            (40, 60)
+        );
+        assert_eq!(rig.session.state_revision, 5);
+        // Without a restart the late copies are answered from memory and change nothing.
+        assert_eq!(
+            rig.submit(absolute.clone()),
+            SubmitResult::Settled(committed(3))
+        );
+        assert_eq!(rig.step(), vec![]);
+
+        // The channel restarts; the group state is kept. Nothing remembers the copies.
+        rig.channel = ControlChannel::new(peers(), roomy()).unwrap();
+        assert!(matches!(rig.submit(absolute), SubmitResult::Queued { .. }));
+        assert!(matches!(rig.submit(relative), SubmitResult::Queued { .. }));
+        let outcomes: Vec<Outcome> = rig.step().into_iter().map(|s| s.outcome).collect();
+        assert_eq!(
+            outcomes,
+            vec![
+                // Composed against revision 2; this incarnation began at revision 5.
+                Outcome::Refused(Refusal::StaleRevision {
+                    observed: 2,
+                    floor: 5
+                }),
+                // A relative copy is held to the exact revision, as before.
+                Outcome::Refused(Refusal::RevisionMismatch {
+                    expected: 4,
+                    actual: 5
+                }),
+            ]
+        );
+        assert_eq!(
+            rig.session.group_master_volume, 40,
+            "the newer change was not reverted"
+        );
+        assert_eq!(rig.volume("kitchen"), 60, "one delta, not two");
+        assert_eq!(rig.session.state_revision, 5);
+
+        // The positive path: a client that read the state after the restart is applied.
+        let fresh = rig.req("ctl-a", 3, EPOCH, Some(5), set_group(55));
+        rig.submit(fresh);
+        assert_eq!(rig.step()[0].outcome, committed(6));
+        assert_eq!(rig.session.group_master_volume, 55);
+        assert_eq!(rig.channel.stats().internal_faults, 0);
+    }
+
+    #[test]
+    fn a_restarted_channel_starts_its_numbers_above_everything_the_session_remembers() {
+        // Three commands under the old incarnation take numbers 1002..1004 (base 1000 plus the
+        // revision). A new incarnation counting from the same base must not meet them.
+        let mut rig = Rig::roomy();
+        for seq in 1..=3u64 {
+            let r = rig.req("ctl-a", seq, EPOCH, None, set_group(50 + seq as u8));
+            rig.submit(r);
+        }
+        assert!(
+            rig.step()
+                .iter()
+                .all(|s| matches!(s.outcome, Outcome::Committed { .. }))
+        );
+        rig.channel = ControlChannel::new(peers(), roomy()).unwrap();
+        for seq in 4..=9u64 {
+            let r = rig.req("ctl-a", seq, EPOCH, None, set_group(50 + seq as u8));
+            rig.submit(r);
+        }
+        // The step budget is four, so the six take two steps.
+        let mut outcomes: Vec<Outcome> = rig.step().into_iter().map(|s| s.outcome).collect();
+        outcomes.extend(rig.step().into_iter().map(|s| s.outcome));
+        assert_eq!(outcomes.len(), 6);
+        assert!(
+            outcomes
+                .iter()
+                .all(|o| matches!(o, Outcome::Committed { .. })),
+            "{outcomes:?}"
+        );
+        assert_eq!(rig.channel.stats().internal_faults, 0);
+        assert_eq!(rig.channel.last_internal_fault(), None);
+        assert_eq!(rig.session.state_revision, 2 + 3 + 6);
+    }
+
+    #[test]
+    fn a_number_taken_by_another_caller_is_an_internal_fault_that_clears() {
+        // Another caller of the session uses exactly the number the channel would mint next: base +
+        // the revision the session will have after that caller's own change.
+        let mut rig = Rig::roomy();
+        rig.session
+            .apply_command(FencedControlCommand {
+                epoch: EPOCH,
+                command_seq: 1_003,
+                payload: GroupCommandPayload::MarkMemberClockLocked {
+                    member_id: "kitchen".to_string(),
+                },
+            })
+            .unwrap();
+        assert_eq!(rig.session.state_revision, 3);
+        for seq in 1..=3u64 {
+            let r = rig.req("ctl-a", seq, EPOCH, None, set_group(60 + seq as u8));
+            rig.submit(r);
+        }
+        let missing = rig.req(
+            "ctl-a",
+            4,
+            EPOCH,
+            None,
+            ControlCommand::SetMemberVolume {
+                member_id: "nowhere".to_string(),
+                volume: 10,
+            },
+        );
+        rig.submit(missing);
+        let outcomes: Vec<Outcome> = rig.step().into_iter().map(|s| s.outcome).collect();
+        assert_eq!(outcomes[0], Outcome::Refused(Refusal::InternalFault));
+        assert_eq!(outcomes[1], committed(4));
+        assert_eq!(outcomes[2], committed(5));
+        assert!(
+            matches!(
+                outcomes[3],
+                Outcome::Refused(Refusal::Session(SessionError::UnknownMember { .. }))
+            ),
+            "an unknown member is still the sender's: {:?}",
+            outcomes[3]
+        );
+        assert_eq!(
+            rig.session.group_master_volume, 63,
+            "the first took no effect"
+        );
+        assert_eq!(rig.channel.stats().internal_faults, 1);
+        assert_eq!(
+            rig.channel.last_internal_fault(),
+            Some(&SessionError::DuplicateCommand {
+                epoch: EPOCH,
+                command_seq: 1_003
+            })
+        );
+        // A retry is told the recorded outcome, which carries no session detail.
+        let again = rig.req("ctl-a", 1, EPOCH, Some(3), set_group(61));
+        assert_eq!(
+            rig.submit(again),
+            SubmitResult::Settled(Outcome::Refused(Refusal::InternalFault))
         );
     }
 }

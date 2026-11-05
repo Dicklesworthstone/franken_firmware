@@ -78,6 +78,18 @@ impl ControlCommand {
         }
     }
 
+    /// Commands that set a volume or a mute state from a remote controller must name the revision the
+    /// sender last read, so a copy composed before a restart can be told from a fresh command. (Relative
+    /// commands name it too, and are held to it exactly.) A stop and a cancel need none: a stale stop
+    /// only silences, and a cancel only withdraws its own sender's waiting work.
+    #[must_use]
+    pub const fn needs_observed_revision(&self) -> bool {
+        matches!(
+            self,
+            Self::SetMemberVolume { .. } | Self::SetGroupVolume { .. } | Self::SetMemberMute { .. }
+        )
+    }
+
     /// Relative commands depend on what the sender last saw, so they must name that revision.
     #[must_use]
     pub const fn is_relative(&self) -> bool {
@@ -566,6 +578,28 @@ mod tests {
         assert!(ControlCommand::AdjustGroupVolume { delta: 1 }.is_relative());
         assert!(!ControlCommand::SetGroupVolume { volume: 1 }.is_relative());
         assert!(!ControlCommand::Cancel { target_seq: 1 }.is_relative());
+    }
+
+    #[test]
+    fn only_volume_and_mute_setters_need_an_observed_revision_besides_the_relative_ones() {
+        let needs = |c: ControlCommand| c.needs_observed_revision();
+        assert!(needs(ControlCommand::SetGroupVolume { volume: 1 }));
+        assert!(needs(ControlCommand::SetMemberVolume {
+            member_id: "m".into(),
+            volume: 1
+        }));
+        assert!(needs(ControlCommand::SetMemberMute {
+            member_id: "m".into(),
+            muted: true
+        }));
+        // A stop only silences and a cancel only withdraws the sender's own waiting work.
+        assert!(!needs(ControlCommand::StopGroupPlayback {
+            now_ns: 1,
+            irrevocable_dma_tail_ns: 1
+        }));
+        assert!(!needs(ControlCommand::Cancel { target_seq: 1 }));
+        // The relative commands are held to a revision by the body constructor instead.
+        assert!(!needs(adjust("m", 1)) && adjust("m", 1).is_relative());
     }
 
     #[test]

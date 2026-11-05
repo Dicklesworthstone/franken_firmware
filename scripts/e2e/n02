@@ -9,8 +9,10 @@
 #
 # Exit 0 only when every check passes; any failure exits non-zero.
 #
-# There is no --write on purpose: the vectors are hand-written, so that an implementation is judged
-# against expectations it did not produce.
+# The scenario expectations and the signing-byte vectors are hand-written on purpose, so that an
+# implementation is judged against expectations it did not produce. Only the HMAC tags (computed by the
+# standard library) and the tamper list are generated, by tests/n02/gen_auth_vectors.py; this script
+# runs its --check, which also refuses a tamper the Rust could not build or that changes two fields.
 #
 # THIS SCRIPT DOES NOT RUN THE RUST IMPLEMENTATION. It shows that the vectors are self-consistent and
 # that an independently built model reaches them. The Rust channel replays the same vectors, and
@@ -25,6 +27,7 @@ if [ "$#" -ne 0 ]; then
   exit 2
 fi
 
+python3 -B -I "$ROOT/tests/n02/gen_auth_vectors.py" --check
 python3 -B -I "$ROOT/tests/n02/reference.py" --check
 python3 -B -m unittest discover -s "$ROOT/tests/n02" -p 'test_*.py' -v
 echo "N02 reference side: PASS (Rust half not run here; see the note in this script)"
