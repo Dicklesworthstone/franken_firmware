@@ -603,6 +603,33 @@ class LogVectors(unittest.TestCase):
             self.assertRegex(record["member_id"], r"^(p-[0-9a-f]{16})?$")
             self.assertEqual(g["line"], json.dumps(record, separators=(",", ":")), "compact, field order kept")
 
+    def test_acknowledgement_lines_follow_the_schema_correlate_and_carry_no_raw_identifier(self):
+        v = self.vectors()
+        raw = [p["id"] for p in v["pseudonyms"]]
+        steps = {json.loads(g["line"])["correlation_id"] for g in v["golden_lines"]}
+        self.assertGreaterEqual(len(v["ack_golden_lines"]), 6)
+        kinds = set()
+        for g in v["ack_golden_lines"]:
+            record = json.loads(g["line"])
+            keys = list(record)
+            self.assertEqual(keys[: len(self.FIELD_ORDER)], self.FIELD_ORDER, g["id"])
+            self.assertIn(keys[len(self.FIELD_ORDER):], ([], ["cause"]), g["id"])
+            self.assertEqual("cause" in record, g["fact"]["cause"] is not None, g["id"])
+            self.assertEqual(record["schema_version"], "ffw.log.v1")
+            self.assertRegex(record["event_kind"], r"^n02\.ack\.(on_time|late|superseded|rejected\.[a-z_]+)$")
+            self.assertEqual(record["member_id"], "", g["id"])
+            self.assertLessEqual(len(g["line"]), 1024)
+            self.assertEqual(record["latency_us"], g["fact"]["age_ns"] // 1000, g["id"])
+            self.assertEqual(record["state_revision"], g["fact"]["revision"], g["id"])
+            self.assertRegex(record["correlation_id"], r"^p-[0-9a-f]{16}#[0-9]+$")
+            for ident in raw:
+                self.assertNotIn(ident, g["line"], f"{g['id']} echoes {ident}")
+            kinds.add(record["event_kind"])
+        # An acknowledgement of a command joins that command's own step record by correlation id.
+        on_time = next(g for g in v["ack_golden_lines"] if g["id"] == "N02-A001")
+        self.assertIn(json.loads(on_time["line"])["correlation_id"], steps)
+        self.assertGreaterEqual(len(kinds), 6, "every kind is distinct")
+
     def test_a_cause_appears_only_where_the_fact_has_one(self):
         for g in self.vectors()["golden_lines"]:
             self.assertEqual("cause" in json.loads(g["line"]), g["fact"]["cause"] is not None, g["id"])
@@ -636,7 +663,7 @@ class Mapping(unittest.TestCase):
                 self.assertIn(s["id"], listed, f"{i} does not list {s['id']}")
 
     def test_every_named_rust_test_exists(self):
-        source = "\n".join(p.read_text(encoding="utf-8") for p in sorted(CHANNEL_SRC.glob("*.rs")))
+        source = "\n".join(p.read_text(encoding="utf-8") for p in sorted(CHANNEL_SRC.rglob("*.rs")))
         names = {n for i in self.cases()["invariants"] for n in i["rust_tests"]}
         for group in self.cases()["other_rust_checks"].values():
             names.update(group)
