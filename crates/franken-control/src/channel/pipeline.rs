@@ -29,6 +29,17 @@
 //! audible in front of it. Relative volume is resolved against the live state and sent to the session
 //! as an absolute. Each outcome is recorded by `(peer, seq)`.
 //!
+//! # The group lease (G01)
+//!
+//! A command that changes the group is applied only under a live lease: an `AuthorityToken` the
+//! owner installed with [`ControlChannel::install_lease`] and that the session still accepts at the
+//! time of the `step`. A deposed leader (a newer epoch), an expired lease, or no lease at all (a
+//! channel that has not been given one, or has restarted) refuses before the session is touched.
+//! These refusals are **transient**: they are reported in the `step` result but not recorded, so a
+//! request sent again after the lease is renewed is judged afresh. A local stop and a local mute-on
+//! only silence and need no lease; a cancel only withdraws its own sender's waiting work and needs
+//! none either.
+//!
 //! # What this is not
 //!
 //! It does not promise exactly-once delivery forever. It promises *at most one application*, an
@@ -52,7 +63,8 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use franken_session::{
-    FencedControlCommand, GroupCommandPayload, SessionError, UnifiedGroupSession,
+    AuthorityToken, FencedControlCommand, GroupCommandPayload, MembershipError, SessionError,
+    UnifiedGroupSession,
 };
 
 use super::ledger::{LedgerError, Lookup, OutcomeLedger};
@@ -108,8 +120,17 @@ pub enum Refusal {
     /// (`ControlChannel::last_internal_fault`), but it is never shown to the sender. The sender should
     /// read the group state and send a new command under a new number.
     InternalFault,
-    /// The peer was revoked, or its binding changed, after the command was accepted.
+    /// The peer was revoked, or its binding changed, after the command was accepted. (This is the
+    /// peer's key authority, not the group lease below.)
     AuthorityExpired,
+    /// The channel holds no group lease: none was installed, or the channel restarted since. Nothing
+    /// was changed. **Transient:** not recorded, so the same request can be sent again once a lease is
+    /// installed.
+    NoLease,
+    /// The group lease the channel holds is no longer live for this group (superseded by a newer
+    /// epoch, or expired), as the session's own `AuthorityToken::check` judges it. Nothing was
+    /// changed. **Transient:** not recorded; renew the lease and send the request again.
+    Lease(MembershipError),
     /// Waited in the queue longer than the pending TTL.
     Expired,
     /// A cancel found its target already settled.
@@ -289,6 +310,9 @@ pub struct ChannelStats {
     pub expired_pending: u64,
     /// Commands the session refused for a reason that was not the sender's. Zero in correct operation.
     pub internal_faults: u64,
+    /// Commands refused because the channel held no live group lease (`NoLease` or `Lease`). These are
+    /// also counted in `refused`; they are not recorded in the ledger.
+    pub refused_for_lease: u64,
     /// An outcome that could not be recorded. Zero in correct operation.
     pub ledger_record_failures: u64,
 }
@@ -350,6 +374,9 @@ pub struct ControlChannel<A: PeerAuthority> {
     /// The session's `state_revision` at this incarnation's first `step`. A volume or mute command
     /// composed against anything older predates the incarnation and is refused as stale.
     revision_floor: Option<u64>,
+    /// The group lease (G01 `AuthorityToken`) under which this channel may mutate the group. `None`
+    /// until the owner installs one, and again after a restart: the channel fails closed.
+    lease: Option<AuthorityToken>,
     last_internal_fault: Option<SessionError>,
     stats: ChannelStats,
 }
@@ -363,6 +390,7 @@ impl<A: PeerAuthority> ControlChannel<A> {
             authority,
             next_session_seq: config.session_seq_base,
             revision_floor: None,
+            lease: None,
             config,
             ordinary: VecDeque::new(),
             priority: VecDeque::new(),
@@ -390,6 +418,32 @@ impl<A: PeerAuthority> ControlChannel<A> {
     #[must_use]
     pub fn stats(&self) -> &ChannelStats {
         &self.stats
+    }
+
+    /// Install the group lease this channel acts under, if `session` accepts it at `now_ns`. This is
+    /// the same gate G01's `discover_authority` applies: a token for another group or issuer, for a
+    /// stale or future epoch, or already expired is refused with the session's own error, and the
+    /// lease already held is left alone. `now_ns` must be on the timebase of the token's
+    /// `expires_at_ns` (the group's monotonic nanoseconds), the same one `step` is given.
+    ///
+    /// The token is not a credential: it names no secret and anyone could write one. Installing it is
+    /// the owner's act, after it has obtained the lease from the group's authority; what the channel
+    /// adds is that it keeps checking the lease against the session on every group-affecting command.
+    pub fn install_lease(
+        &mut self,
+        session: &UnifiedGroupSession,
+        token: AuthorityToken,
+        now_ns: u64,
+    ) -> Result<(), MembershipError> {
+        token.check(session, now_ns)?;
+        self.lease = Some(token);
+        Ok(())
+    }
+
+    /// The lease currently held, if any.
+    #[must_use]
+    pub fn lease(&self) -> Option<&AuthorityToken> {
+        self.lease.as_ref()
     }
 
     /// The session revision this incarnation started from, known once the first `step` has run.
@@ -605,13 +659,23 @@ impl<A: PeerAuthority> ControlChannel<A> {
                 if matches!(refusal, Refusal::InternalFault) {
                     bump(&mut self.stats.internal_faults);
                 }
+                if matches!(refusal, Refusal::NoLease | Refusal::Lease(_)) {
+                    bump(&mut self.stats.refused_for_lease);
+                }
             }
         }
         let peer = body.peer().clone();
         let seq = body.seq();
-        if !self
-            .ledger
-            .record(peer.clone(), seq, body, outcome.clone(), now_ns)
+        // A refusal for want of a live lease says nothing about the command, only about the moment:
+        // it took no effect, so recording it would make a resend after renewal come back refused.
+        let transient = matches!(
+            outcome,
+            Outcome::Refused(Refusal::NoLease | Refusal::Lease(_))
+        );
+        if !transient
+            && !self
+                .ledger
+                .record(peer.clone(), seq, body, outcome.clone(), now_ns)
         {
             bump(&mut self.stats.ledger_record_failures);
         }
@@ -683,6 +747,12 @@ impl<A: PeerAuthority> ControlChannel<A> {
         let body = item.request.body();
         if let ControlCommand::Cancel { target_seq } = body.command() {
             return self.execute_cancel(body.peer(), *target_seq, now_ns, out);
+        }
+
+        // G01: a group-affecting command is applied only under a live lease for this group, judged by
+        // the session's own `AuthorityToken::check`. Refused here, nothing has been touched.
+        if let Some(refusal) = self.lease_refusal(body.command(), item.auth.role, session, now_ns) {
+            return Outcome::Refused(refusal);
         }
 
         // A remote controller is held to the epoch and to the revision it last saw.
@@ -789,6 +859,29 @@ impl<A: PeerAuthority> ControlChannel<A> {
         }
     }
 
+    /// Why the lease does not cover this command, or `None` if it does. A local stop and a local mute
+    /// are exempt because they only silence; a cancel never reaches here.
+    fn lease_refusal(
+        &self,
+        command: &ControlCommand,
+        role: PeerRole,
+        session: &UnifiedGroupSession,
+        now_ns: u64,
+    ) -> Option<Refusal> {
+        let silences = matches!(
+            command,
+            ControlCommand::StopGroupPlayback { .. }
+                | ControlCommand::SetMemberMute { muted: true, .. }
+        );
+        if role == PeerRole::LocalUser && silences {
+            return None;
+        }
+        match &self.lease {
+            None => Some(Refusal::NoLease),
+            Some(token) => token.check(session, now_ns).err().map(Refusal::Lease),
+        }
+    }
+
     fn execute_cancel(
         &mut self,
         peer: &PeerId,
@@ -828,6 +921,7 @@ fn stepped(current: u8, delta: i8) -> u8 {
 
 #[cfg(test)]
 mod tests {
+    use franken_session::{GroupMembership, GroupTime, MembershipConfig};
     use franken_test_support::{CommandObservation, FencedCommandOracle};
 
     use super::super::peer::compute_proof;
@@ -836,6 +930,8 @@ mod tests {
     use super::*;
 
     const EPOCH: u64 = 10;
+    /// A lease that outlasts every test clock.
+    const LEASE_EXPIRY_NS: u64 = 1_000_000 * MS;
 
     fn id(raw: &str) -> PeerId {
         PeerId::parse(raw).unwrap()
@@ -894,11 +990,30 @@ mod tests {
 
     impl Rig {
         fn new(config: ChannelConfig) -> Self {
+            let mut rig = Self::without_lease(config);
+            rig.grant();
+            rig
+        }
+
+        /// A channel that has been given no lease, as a fresh or restarted one is.
+        fn without_lease(config: ChannelConfig) -> Self {
             Self {
                 channel: ControlChannel::new(peers(), config).unwrap(),
                 session: session(),
                 now: 0,
             }
+        }
+
+        /// The owner installs a fresh lease for the session's current epoch.
+        fn grant(&mut self) {
+            self.grant_until(LEASE_EXPIRY_NS);
+        }
+
+        fn grant_until(&mut self, expires_at_ns: u64) {
+            let token = AuthorityToken::issue(&self.session, expires_at_ns);
+            self.channel
+                .install_lease(&self.session, token, self.now)
+                .unwrap();
         }
 
         fn roomy() -> Self {
@@ -1443,6 +1558,9 @@ mod tests {
             })
             .unwrap();
         oracle.declare_authority(11).unwrap();
+        // The owner has renewed the group lease for the new epoch, so what is judged below is the
+        // controller's own epoch; a channel left on the old lease is the next test.
+        rig.grant();
         let revision = rig.session.state_revision;
 
         // The old leader, still holding a key bound to epoch 10, tries to act.
@@ -2240,6 +2358,7 @@ mod tests {
 
         // The channel restarts; the group state is kept. Nothing remembers the copies.
         rig.channel = ControlChannel::new(peers(), roomy()).unwrap();
+        rig.grant();
         assert!(matches!(rig.submit(absolute), SubmitResult::Queued { .. }));
         assert!(matches!(rig.submit(relative), SubmitResult::Queued { .. }));
         let outcomes: Vec<Outcome> = rig.step().into_iter().map(|s| s.outcome).collect();
@@ -2288,6 +2407,7 @@ mod tests {
                 .all(|s| matches!(s.outcome, Outcome::Committed { .. }))
         );
         rig.channel = ControlChannel::new(peers(), roomy()).unwrap();
+        rig.grant();
         for seq in 4..=9u64 {
             let r = rig.req("ctl-a", seq, EPOCH, None, set_group(50 + seq as u8));
             rig.submit(r);
@@ -2367,5 +2487,257 @@ mod tests {
             rig.submit(again),
             SubmitResult::Settled(Outcome::Refused(Refusal::InternalFault))
         );
+    }
+
+    // ----------------------------------------------------------------- the group lease (G01)
+
+    fn outcome_of(settled: &[Settlement], peer: &str, seq: u64) -> Outcome {
+        settled
+            .iter()
+            .find(|s| s.peer == id(peer) && s.seq == seq)
+            .unwrap_or_else(|| panic!("{peer}#{seq} was not settled in {settled:?}"))
+            .outcome
+            .clone()
+    }
+
+    #[test]
+    fn a_deposed_leaders_late_command_is_refused_and_the_same_command_under_the_new_lease_applies()
+    {
+        let mut rig = Rig::roomy();
+        // The group's authority moves to epoch 11 through G01's only epoch mint. The channel still
+        // holds the lease it was given for epoch 10.
+        let issuer = AuthorityToken::issue(&rig.session, LEASE_EXPIRY_NS);
+        let mut membership = GroupMembership::new(MembershipConfig::default());
+        let renewed = membership
+            .advance_epoch(&mut rig.session, &issuer, 11, GroupTime { ns: 0, frame: 0 })
+            .unwrap();
+        assert_eq!(
+            (rig.session.current_epoch, rig.session.state_revision),
+            (11, 3)
+        );
+        rig.channel.authority_mut().rebind(&id("ctl-a"), Some(11));
+
+        let late = rig.req("ctl-a", 1, 11, None, set_group(70));
+        assert!(matches!(
+            rig.submit(late.clone()),
+            SubmitResult::Queued { .. }
+        ));
+        assert_eq!(
+            rig.step()[0].outcome,
+            Outcome::Refused(Refusal::Lease(MembershipError::StaleAuthority {
+                token_epoch: 10,
+                current_epoch: 11
+            }))
+        );
+        assert_eq!(rig.session.group_master_volume, 50, "nothing was touched");
+        assert_eq!(rig.session.state_revision, 3);
+        assert_eq!(rig.channel.stats().refused_for_lease, 1);
+
+        // The refusal was not recorded, so the same request is judged afresh under the new lease.
+        rig.channel
+            .install_lease(&rig.session, renewed, rig.now)
+            .unwrap();
+        assert!(matches!(rig.submit(late), SubmitResult::Queued { .. }));
+        assert_eq!(rig.step()[0].outcome, committed(4));
+        assert_eq!(rig.session.group_master_volume, 70);
+    }
+
+    #[test]
+    fn an_expired_lease_is_refused_and_renewal_plus_resubmit_applies() {
+        let mut rig = Rig::roomy();
+        rig.grant_until(1_000 * MS);
+        let first = rig.req("ctl-a", 1, EPOCH, None, set_group(60));
+        rig.submit(first);
+        rig.at(999 * MS);
+        assert_eq!(
+            rig.step()[0].outcome,
+            committed(3),
+            "still live just before the expiry"
+        );
+
+        let second = rig.req("ctl-a", 2, EPOCH, None, set_group(61));
+        rig.at(1_000 * MS);
+        rig.submit(second.clone());
+        assert_eq!(
+            rig.step()[0].outcome,
+            Outcome::Refused(Refusal::Lease(MembershipError::AuthorityExpired {
+                expires_at_ns: 1_000 * MS,
+                now_ns: 1_000 * MS
+            }))
+        );
+        assert_eq!(rig.session.group_master_volume, 60);
+
+        rig.grant_until(5_000 * MS);
+        assert!(
+            matches!(rig.submit(second), SubmitResult::Queued { .. }),
+            "not answered from memory"
+        );
+        assert_eq!(rig.step()[0].outcome, committed(4));
+        assert_eq!(rig.session.group_master_volume, 61);
+    }
+
+    #[test]
+    fn a_lease_the_session_does_not_accept_cannot_be_installed_and_leaves_the_held_one_alone() {
+        let mut rig = Rig::roomy();
+        let good = AuthorityToken::issue(&rig.session, LEASE_EXPIRY_NS);
+        let flawed = [
+            (
+                AuthorityToken {
+                    issuer_id: "intruder".to_string(),
+                    ..good.clone()
+                },
+                MembershipError::NotConfiguredIssuer,
+            ),
+            (
+                AuthorityToken {
+                    group_id: "elsewhere".to_string(),
+                    ..good.clone()
+                },
+                MembershipError::WrongGroup,
+            ),
+            (
+                AuthorityToken {
+                    epoch: EPOCH - 1,
+                    ..good.clone()
+                },
+                MembershipError::StaleAuthority {
+                    token_epoch: EPOCH - 1,
+                    current_epoch: EPOCH,
+                },
+            ),
+            (
+                AuthorityToken {
+                    epoch: EPOCH + 1,
+                    ..good.clone()
+                },
+                MembershipError::FutureAuthority {
+                    token_epoch: EPOCH + 1,
+                    current_epoch: EPOCH,
+                },
+            ),
+            (
+                AuthorityToken {
+                    expires_at_ns: 5,
+                    ..good.clone()
+                },
+                MembershipError::AuthorityExpired {
+                    expires_at_ns: 5,
+                    now_ns: 5,
+                },
+            ),
+        ];
+        for (token, expected) in flawed {
+            assert_eq!(
+                rig.channel.install_lease(&rig.session, token, 5),
+                Err(expected.clone()),
+                "{expected:?}"
+            );
+            assert_eq!(
+                rig.channel.lease(),
+                Some(&good),
+                "the held lease was replaced"
+            );
+        }
+        let r = rig.req("ctl-a", 1, EPOCH, None, set_group(60));
+        rig.submit(r);
+        assert_eq!(rig.step()[0].outcome, committed(3));
+    }
+
+    #[test]
+    fn without_a_lease_group_changes_are_refused_but_a_local_stop_and_mute_on_are_not() {
+        // A fresh channel, or one that restarted, holds no lease.
+        let mut rig = Rig::without_lease(roomy());
+        assert_eq!(rig.channel.lease(), None);
+        let remote_volume = rig.req("ctl-a", 1, EPOCH, None, set_group(60));
+        let remote_stop = rig.req("ctl-a", 2, EPOCH, None, stop());
+        let local_stop = rig.req("panel", 1, 0, None, stop());
+        let local_mute_on = rig.req("panel", 2, 0, None, mute("den", true));
+        let local_mute_off = rig.req("panel", 3, 0, None, mute("den", false));
+        let local_volume = rig.req("panel", 4, 0, None, set_group(20));
+        for r in [
+            remote_volume.clone(),
+            remote_stop,
+            local_stop,
+            local_mute_on,
+            local_mute_off,
+            local_volume,
+        ] {
+            assert!(matches!(rig.submit(r), SubmitResult::Queued { .. }));
+        }
+        let mut settled = rig.step();
+        settled.extend(rig.step());
+        assert_eq!(settled.len(), 6);
+        let refused = Outcome::Refused(Refusal::NoLease);
+        // Only silencing is allowed to the person at the device.
+        assert!(matches!(
+            outcome_of(&settled, "panel", 1),
+            Outcome::Committed { .. }
+        ));
+        assert!(matches!(
+            outcome_of(&settled, "panel", 2),
+            Outcome::Committed { .. }
+        ));
+        assert_eq!(
+            outcome_of(&settled, "panel", 3),
+            refused,
+            "an unmute is not silencing"
+        );
+        assert_eq!(outcome_of(&settled, "panel", 4), refused);
+        assert_eq!(outcome_of(&settled, "ctl-a", 1), refused);
+        assert_eq!(
+            outcome_of(&settled, "ctl-a", 2),
+            refused,
+            "a remote stop needs the lease"
+        );
+        assert!(rig.session.members["den"].muted);
+        assert_eq!(rig.session.group_master_volume, 50);
+        assert_eq!(rig.channel.stats().refused_for_lease, 4);
+
+        // Not recorded: once a lease is installed, the same request is queued, not answered "refused".
+        rig.grant();
+        assert!(matches!(
+            rig.submit(remote_volume),
+            SubmitResult::Queued { .. }
+        ));
+        assert!(matches!(rig.step()[0].outcome, Outcome::Committed { .. }));
+        assert_eq!(rig.session.group_master_volume, 60);
+    }
+
+    #[test]
+    fn a_forged_request_fails_authentication_before_the_lease_is_consulted() {
+        let mut rig = Rig::without_lease(roomy());
+        let body = Rig::body("ctl-a", 1, EPOCH, Some(2), set_group(99));
+        let forged = ControlRequest::new(
+            body.clone(),
+            compute_proof(b"an-attackers-key-0123456789", &body.signing_bytes()),
+        );
+        assert_eq!(
+            rig.submit(forged),
+            SubmitResult::Rejected(Rejection::Unauthenticated(AuthFailure::BadProof))
+        );
+        assert_eq!(rig.channel.pending(Lane::Ordinary), 0);
+        assert_eq!(rig.step(), vec![], "nothing reached the lease check");
+        assert_eq!(rig.channel.stats().refused_for_lease, 0);
+    }
+
+    #[test]
+    fn a_cancel_needs_no_lease() {
+        let mut rig = Rig::without_lease(roomy());
+        let waiting = rig.req("ctl-a", 1, EPOCH, None, set_group(60));
+        let cancel = rig.req(
+            "ctl-a",
+            2,
+            EPOCH,
+            None,
+            ControlCommand::Cancel { target_seq: 1 },
+        );
+        rig.submit(waiting);
+        rig.submit(cancel);
+        let outcomes: Vec<Outcome> = rig.step().into_iter().map(|s| s.outcome).collect();
+        assert_eq!(
+            outcomes,
+            vec![Outcome::Withdrawn, Outcome::CancelApplied { target_seq: 1 }]
+        );
+        assert_eq!(rig.channel.stats().refused_for_lease, 0);
     }
 }

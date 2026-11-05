@@ -18,7 +18,8 @@
     "max_per_step": 4,
     "ordinary_rate": [100000, 1],
     "priority_rate": [100000, 1],
-    "session_seq_base": 1000
+    "session_seq_base": 1000,
+    "lease_ms": 1000000
   },
   "signing_vectors": [
     {
@@ -139,6 +140,7 @@
       "config": {},
       "steps": [
         {"op": "session_epoch", "epoch": 11},
+        {"op": "lease", "at_ms": 0, "expires_ms": 1000000, "expect": "installed"},
         {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 5}, "expect": "queued:ordinary"},
         {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=refused:stale_epoch"]},
         {"op": "rebind", "peer": "ctl-a", "epoch": 11},
@@ -438,6 +440,7 @@
         {"op": "step", "at_ms": 0, "expect": ["ctl-a#2=committed:5"]},
         {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 70}, "expect": "settled:committed:3"},
         {"op": "restart"},
+        {"op": "lease", "at_ms": 0, "expires_ms": 1000000, "expect": "installed"},
         {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 70}, "expect": "queued:ordinary"},
         {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 2, "epoch": 10, "rev": 4, "cmd": {"kind": "adjust_member_volume", "member": "kitchen", "delta": 10}, "expect": "queued:ordinary"},
         {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=refused:stale_revision", "ctl-a#2=refused:revision_mismatch"]},
@@ -457,6 +460,7 @@
         {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 3, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 53}, "expect": "queued:ordinary"},
         {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=committed:3", "ctl-a#2=committed:4", "ctl-a#3=committed:5"]},
         {"op": "restart"},
+        {"op": "lease", "at_ms": 0, "expires_ms": 1000000, "expect": "installed"},
         {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 4, "epoch": 10, "rev": 5, "cmd": {"kind": "set_group_volume", "volume": 54}, "expect": "queued:ordinary"},
         {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 5, "epoch": 10, "rev": 5, "cmd": {"kind": "set_group_volume", "volume": 55}, "expect": "queued:ordinary"},
         {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 6, "epoch": 10, "rev": 5, "cmd": {"kind": "set_group_volume", "volume": 56}, "expect": "queued:ordinary"},
@@ -492,6 +496,99 @@
         {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=committed:3", "panel#1=committed:4", "ctl-b#1=refused:revision_mismatch"]}
       ],
       "final": {"revision": 4, "epoch": 10, "group_volume": 20, "kitchen": 50, "den": 50, "muted": [], "stopped": true}
+    },
+    {
+      "id": "N02-S029",
+      "title": "with no group lease (a fresh or restarted channel) group-changing commands are refused before the session is touched, a local stop and mute-on still work, and the refusals are not recorded",
+      "invariants": ["INV-LEASE-REQUIRED", "INV-LEASE-REFUSAL-TRANSIENT", "INV-SILENCE-NEEDS-NO-LEASE"],
+      "config": {"lease": "none"},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 60}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 2, "epoch": 10, "rev": null, "cmd": {"kind": "stop", "now_ns": 1000, "tail_ns": 500}, "expect": "queued:priority"},
+        {"op": "submit", "at_ms": 0, "peer": "panel", "seq": 1, "epoch": 0, "rev": null, "cmd": {"kind": "stop", "now_ns": 1000, "tail_ns": 500}, "expect": "queued:priority"},
+        {"op": "submit", "at_ms": 0, "peer": "panel", "seq": 2, "epoch": 0, "rev": null, "cmd": {"kind": "set_member_mute", "member": "den", "muted": true}, "expect": "queued:priority"},
+        {"op": "submit", "at_ms": 0, "peer": "panel", "seq": 3, "epoch": 0, "rev": null, "cmd": {"kind": "set_member_mute", "member": "den", "muted": false}, "expect": "queued:priority"},
+        {"op": "submit", "at_ms": 0, "peer": "panel", "seq": 4, "epoch": 0, "rev": null, "cmd": {"kind": "set_group_volume", "volume": 20}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["panel#1=committed:3", "panel#2=committed:4", "panel#3=refused:no_lease", "ctl-a#2=refused:no_lease"]},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=refused:no_lease", "panel#4=refused:no_lease"]},
+        {"op": "lease", "at_ms": 0, "expires_ms": 1000000, "expect": "installed"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 60}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=committed:5"]}
+      ],
+      "final": {"revision": 5, "epoch": 10, "group_volume": 60, "kitchen": 50, "den": 50, "muted": ["den"], "stopped": true}
+    },
+    {
+      "id": "N02-S030",
+      "title": "a deposed leader's late command is refused after the issuer advances the epoch, and the same command is applied once the new epoch's lease is installed",
+      "invariants": ["INV-DEPOSED-LEADER", "INV-LEASE-REQUIRED", "INV-LEASE-REFUSAL-TRANSIENT"],
+      "config": {},
+      "steps": [
+        {"op": "advance_epoch", "at_ms": 0, "epoch": 11},
+        {"op": "rebind", "peer": "ctl-a", "epoch": 11},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 11, "rev": 3, "cmd": {"kind": "set_group_volume", "volume": 70}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=refused:lease:stale_authority"]},
+        {"op": "lease", "at_ms": 0, "expires_ms": 1000000, "expect": "installed"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 11, "rev": 3, "cmd": {"kind": "set_group_volume", "volume": 70}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=committed:4"]}
+      ],
+      "final": {"revision": 4, "epoch": 11, "group_volume": 70, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S031",
+      "title": "an expired lease is refused at the instant it expires, and renewal plus resubmit is applied",
+      "invariants": ["INV-LEASE-EXPIRY", "INV-LEASE-REQUIRED", "INV-LEASE-REFUSAL-TRANSIENT"],
+      "config": {"lease_ms": 1000},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 60}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 999, "expect": ["ctl-a#1=committed:3"]},
+        {"op": "submit", "at_ms": 1000, "peer": "ctl-a", "seq": 2, "epoch": 10, "rev": 3, "cmd": {"kind": "set_group_volume", "volume": 61}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 1000, "expect": ["ctl-a#2=refused:lease:authority_expired"]},
+        {"op": "lease", "at_ms": 1000, "expires_ms": 5000, "expect": "installed"},
+        {"op": "submit", "at_ms": 1000, "peer": "ctl-a", "seq": 2, "epoch": 10, "rev": 3, "cmd": {"kind": "set_group_volume", "volume": 61}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 1001, "expect": ["ctl-a#2=committed:4"]}
+      ],
+      "final": {"revision": 4, "epoch": 10, "group_volume": 61, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S032",
+      "title": "a lease the session does not accept (foreign issuer, foreign group, stale, future, already expired) cannot be installed, and the lease already held keeps working",
+      "invariants": ["INV-LEASE-INSTALL-CHECKED"],
+      "config": {},
+      "steps": [
+        {"op": "foreign_lease", "at_ms": 5, "flaw": "issuer", "expect": "NOT_CONFIGURED_ISSUER"},
+        {"op": "foreign_lease", "at_ms": 5, "flaw": "group", "expect": "WRONG_GROUP"},
+        {"op": "foreign_lease", "at_ms": 5, "flaw": "stale", "expect": "STALE_AUTHORITY"},
+        {"op": "foreign_lease", "at_ms": 5, "flaw": "future", "expect": "FUTURE_AUTHORITY"},
+        {"op": "foreign_lease", "at_ms": 5, "flaw": "expired", "expect": "AUTHORITY_EXPIRED"},
+        {"op": "submit", "at_ms": 5, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 60}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 5, "expect": ["ctl-a#1=committed:3"]}
+      ],
+      "final": {"revision": 3, "epoch": 10, "group_volume": 60, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S033",
+      "title": "a forged request fails authentication before the lease is consulted; a genuine one reaches the lease check",
+      "invariants": ["INV-AUTH-BEFORE-LEASE", "INV-AUTH-FIRST"],
+      "config": {"lease": "none"},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 99}, "proof": "forged", "expect": "rejected:unauthenticated:bad_proof"},
+        {"op": "step", "at_ms": 0, "expect": []},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 60}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=refused:no_lease"]}
+      ],
+      "final": {"revision": 2, "epoch": 10, "group_volume": 50, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S034",
+      "title": "a cancel needs no lease: it only withdraws its own sender's waiting work",
+      "invariants": ["INV-SILENCE-NEEDS-NO-LEASE", "INV-CANCEL"],
+      "config": {"lease": "none"},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 60}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 2, "epoch": 10, "rev": null, "cmd": {"kind": "cancel", "target_seq": 1}, "expect": "queued:priority"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=withdrawn", "ctl-a#2=cancel_applied:1"]}
+      ],
+      "final": {"revision": 2, "epoch": 10, "group_volume": 50, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
     }
   ]
 }

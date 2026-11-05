@@ -159,6 +159,10 @@ class Model:
         self.next_seq = config["session_seq_base"]
         # The session revision at this incarnation's first step; None until then.
         self.floor = None
+        # The group lease the channel acts under: the epoch it was issued for and when it expires.
+        # None until the owner installs one, and again after a restart (the channel fails closed).
+        self.lease = None if config.get("lease") == "none" else {"epoch": START["epoch"], "expires_ms": config["lease_ms"]}
+        self.now = 0
         # peer directory
         self.peers = {n: {"role": r, "bound": b, "version": 1} for n, (r, b) in PEERS.items()}
         self.revoked = set()
@@ -189,6 +193,52 @@ class Model:
         self.revision += 1
         return self.revision
 
+    def advance_epoch(self, epoch):
+        """The issuer moves the group to a newer epoch (G01): the epoch changes, the command record
+        belongs to the old epoch and is dropped, and the revision moves once. The channel's lease is not
+        replaced."""
+        self.epoch = epoch
+        self.session_seqs = set()
+        self.revision += 1
+
+    def install_lease(self, token, at_ms):
+        """Whether the session accepts `token` at `at_ms`, checked in G01's order: group, issuer,
+        stale epoch, future epoch, expiry. An accepted token replaces the lease; a refused one does not.
+        Returns "installed" or the refusal's code."""
+        if not token["group_ok"]:
+            return "WRONG_GROUP"
+        if not token["issuer_ok"]:
+            return "NOT_CONFIGURED_ISSUER"
+        if token["epoch"] < self.epoch:
+            return "STALE_AUTHORITY"
+        if token["epoch"] > self.epoch:
+            return "FUTURE_AUTHORITY"
+        if at_ms >= token["expires_ms"]:
+            return "AUTHORITY_EXPIRED"
+        self.lease = {"epoch": token["epoch"], "expires_ms": token["expires_ms"]}
+        return "installed"
+
+    @staticmethod
+    def _transient(outcome):
+        return outcome == "refused:no_lease" or outcome.startswith("refused:lease:")
+
+    def _lease_gate(self, item):
+        """Why the lease does not cover this command, or None. A local stop and a local mute-on only
+        silence and need none; a cancel never reaches here."""
+        cmd = item["cmd"]
+        silences = cmd["kind"] == "stop" or (cmd["kind"] == "set_member_mute" and cmd["muted"])
+        if item["role"] == "local" and silences:
+            return None
+        if self.lease is None:
+            return "refused:no_lease"
+        if self.lease["epoch"] < self.epoch:
+            return "refused:lease:stale_authority"
+        if self.lease["epoch"] > self.epoch:
+            return "refused:lease:future_authority"
+        if self.now >= self.lease["expires_ms"]:
+            return "refused:lease:authority_expired"
+        return None
+
     def external_command(self, seq):
         """Another caller of the session, in the same epoch, applies a change under a number of its own."""
         self.session_seqs.add(seq)
@@ -203,6 +253,7 @@ class Model:
         self.records = []
         self.floors = {}
         self.floor = None
+        self.lease = None
         self.next_seq = self.cfg["session_seq_base"]
 
     # -- authority -----------------------------------------------------------
@@ -318,12 +369,16 @@ class Model:
 
     def step(self, now):
         self._age_out(now)
+        self.now = now
         if self.floor is None:
             self.floor = self.revision
         done = []
 
         def settle(item, outcome):
-            self._remember(item, outcome, now)
+            # A refusal for want of a live lease says nothing about the command, only about the moment:
+            # it took no effect, so it is reported but not remembered, and a resend is judged afresh.
+            if not self._transient(outcome):
+                self._remember(item, outcome, now)
             done.append(f"{item['peer']}#{item['seq']}={outcome}")
 
         for lane in ("priority", "ordinary"):
@@ -359,6 +414,9 @@ class Model:
         cmd = item["cmd"]
         if cmd["kind"] == "cancel":
             return self._cancel(item, withdrawn)
+        refused = self._lease_gate(item)
+        if refused:
+            return refused
         if item["role"] == "controller":
             if item["epoch"] < self.epoch:
                 return "refused:stale_epoch"
@@ -449,42 +507,80 @@ def config_for(doc, scenario):
     return cfg
 
 
+def foreign_token(model, flaw, at_ms):
+    """A token G01 must not accept, built from the lease the issuer would mint now."""
+    token = {"group_ok": True, "issuer_ok": True, "epoch": model.epoch, "expires_ms": model.cfg["lease_ms"]}
+    if flaw == "issuer":
+        token["issuer_ok"] = False
+    elif flaw == "group":
+        token["group_ok"] = False
+    elif flaw == "stale":
+        token["epoch"] -= 1
+    elif flaw == "future":
+        token["epoch"] += 1
+    elif flaw == "expired":
+        token["expires_ms"] = at_ms
+    else:
+        raise ValueError(flaw)
+    return token
+
+
+def run_step(model, step):
+    """Perform one scenario step on `model`. Returns what it produced, to be compared with the step's
+    `expect`: a string for a submit or a lease operation, a list for a step, or None."""
+    op = step["op"]
+    if op == "submit":
+        got = None
+        for _ in range(step.get("repeat", 1)):
+            got = model.submit(
+                step["at_ms"], step["peer"], step["seq"], step["epoch"], step["rev"], step["cmd"],
+                forged=step.get("proof") == "forged",
+            )
+            if got != step["expect"]:
+                break
+        return got
+    if op == "step":
+        return model.step(step["at_ms"])
+    if op == "session_epoch":
+        model.force_epoch(step["epoch"])
+    elif op == "rebind":
+        model.rebind(step["peer"], step["epoch"])
+    elif op == "revoke":
+        model.revoke(step["peer"])
+    elif op == "restart":
+        model.restart()
+    elif op == "external_command":
+        model.external_command(step["seq"])
+    elif op == "advance_epoch":
+        model.advance_epoch(step["epoch"])
+    elif op == "lease":
+        token = {"group_ok": True, "issuer_ok": True, "epoch": model.epoch, "expires_ms": step["expires_ms"]}
+        return model.install_lease(token, step.get("at_ms", 0))
+    elif op == "foreign_lease":
+        return model.install_lease(foreign_token(model, step["flaw"], step["at_ms"]), step["at_ms"])
+    else:
+        raise ValueError(f"unknown op {op}")
+    return None
+
+
 def replay(doc, scenario, model_class=Model):
     """Replay one scenario; return a list of mismatch descriptions (empty means it matched)."""
     problems = []
     model = model_class(config_for(doc, scenario))
     for index, step in enumerate(scenario["steps"]):
         where = f"{scenario['id']} step {index} ({step['op']})"
-        op = step["op"]
-        if op == "submit":
+        if step["op"] == "submit":
             why = malformed(step["seq"], step["rev"], step["cmd"])
             if why:
                 problems.append(f"{where}: the Rust body constructor refuses this request ({why})")
                 continue
-            for repeat in range(step.get("repeat", 1)):
-                got = model.submit(
-                    step["at_ms"], step["peer"], step["seq"], step["epoch"], step["rev"], step["cmd"],
-                    forged=step.get("proof") == "forged",
-                )
-                if got != step["expect"]:
-                    problems.append(f"{where} repeat {repeat}: expected {step['expect']!r}, got {got!r}")
-                    break
-        elif op == "step":
-            got = model.step(step["at_ms"])
-            if got != step["expect"]:
-                problems.append(f"{where}: expected {step['expect']!r}, got {got!r}")
-        elif op == "session_epoch":
-            model.force_epoch(step["epoch"])
-        elif op == "rebind":
-            model.rebind(step["peer"], step["epoch"])
-        elif op == "revoke":
-            model.revoke(step["peer"])
-        elif op == "restart":
-            model.restart()
-        elif op == "external_command":
-            model.external_command(step["seq"])
-        else:
-            problems.append(f"{where}: unknown op")
+        try:
+            got = run_step(model, step)
+        except ValueError as error:
+            problems.append(f"{where}: {error}")
+            continue
+        if "expect" in step and got != step["expect"]:
+            problems.append(f"{where}: expected {step['expect']!r}, got {got!r}")
     if model.final() != scenario["final"]:
         problems.append(f"{scenario['id']} final: expected {scenario['final']!r}, got {model.final()!r}")
     if model.accounted() != model.stats["received"]:

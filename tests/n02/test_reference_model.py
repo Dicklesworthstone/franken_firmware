@@ -66,13 +66,14 @@ class Scenarios(unittest.TestCase):
         d = doc()
         ids = [s["id"] for s in d["scenarios"]]
         self.assertEqual(len(ids), len(set(ids)))
-        self.assertGreaterEqual(len(ids), 28)
+        self.assertGreaterEqual(len(ids), 34)
         for s in d["scenarios"]:
             self.assertTrue(s["invariants"], s["id"])
             self.assertTrue(s["title"], s["id"])
             self.assertIn("final", s)
             for step in s["steps"]:
-                self.assertIn(step["op"], {"submit", "step", "session_epoch", "rebind", "revoke", "restart", "external_command"})
+                self.assertIn(step["op"], {"submit", "step", "session_epoch", "rebind", "revoke", "restart", "external_command",
+                                           "lease", "foreign_lease", "advance_epoch"})
 
     def test_the_replay_reports_a_wrong_expectation(self):
         d = doc()
@@ -89,22 +90,7 @@ class Scenarios(unittest.TestCase):
             with self.subTest(s["id"]):
                 model = ref.Model(ref.config_for(d, s))
                 for step in s["steps"]:
-                    if step["op"] == "submit":
-                        for _ in range(step.get("repeat", 1)):
-                            model.submit(step["at_ms"], step["peer"], step["seq"], step["epoch"],
-                                         step["rev"], step["cmd"], forged=step.get("proof") == "forged")
-                    elif step["op"] == "step":
-                        model.step(step["at_ms"])
-                    elif step["op"] == "session_epoch":
-                        model.force_epoch(step["epoch"])
-                    elif step["op"] == "rebind":
-                        model.rebind(step["peer"], step["epoch"])
-                    elif step["op"] == "revoke":
-                        model.revoke(step["peer"])
-                    elif step["op"] == "restart":
-                        model.restart()
-                    elif step["op"] == "external_command":
-                        model.external_command(step["seq"])
+                    ref.run_step(model, step)
                 self.assertEqual(model.accounted(), model.stats["received"])
 
 
@@ -204,6 +190,43 @@ class NoRevisionRequired(ref.Model):
         return super().submit(now, peer, seq, epoch, rev, cmd, forged)
 
 
+class NoLeaseGate(ref.Model):
+    """Applies group-changing commands whatever the lease says."""
+
+    def _lease_gate(self, item):
+        return None
+
+
+class GatesSilencing(ref.Model):
+    """Holds a local stop and mute-on to the lease as well."""
+
+    def _lease_gate(self, item):
+        return super()._lease_gate(dict(item, role="controller"))
+
+
+class RecordsLeaseRefusals(ref.Model):
+    """Remembers a lease refusal as the command's outcome, so a resend after renewal is answered
+    "refused" from memory instead of being applied."""
+
+    @staticmethod
+    def _transient(outcome):
+        return False
+
+
+class InstallUnchecked(ref.Model):
+    """Accepts any token as the lease."""
+
+    def install_lease(self, token, at_ms):
+        self.lease = {"epoch": token["epoch"], "expires_ms": token["expires_ms"]}
+        return "installed"
+
+
+class LeaseIgnoresExpiry(ref.Model):
+    def _lease_gate(self, item):
+        refused = super()._lease_gate(item)
+        return None if refused == "refused:lease:authority_expired" else refused
+
+
 class UnboundedQueue(ref.Model):
     def _room(self, lane, role):
         return True
@@ -241,6 +264,11 @@ class Mutations(unittest.TestCase):
             StrictAbsolute: "N02-S027",
             RestartAtBase: "N02-S026",
             NoRevisionRequired: "N02-S028",
+            NoLeaseGate: "N02-S029",
+            GatesSilencing: "N02-S029",
+            RecordsLeaseRefusals: "N02-S030",
+            InstallUnchecked: "N02-S032",
+            LeaseIgnoresExpiry: "N02-S031",
             NoExpiry: "N02-S016",
         }
         for broken, sid in expected.items():
@@ -320,6 +348,12 @@ class Restart(unittest.TestCase):
     ABS40 = {"kind": "set_group_volume", "volume": 40}
     REL = {"kind": "adjust_member_volume", "member": "kitchen", "delta": 10}
 
+    @staticmethod
+    def relase(m):
+        """The owner installs a lease on the new incarnation, as it must: a restarted channel has none."""
+        token = {"group_ok": True, "issuer_ok": True, "epoch": m.epoch, "expires_ms": 1_000_000}
+        assert m.install_lease(token, 0) == "installed"
+
     def history(self):
         m = ref.Model(ref.config_for(doc(), {}))
         m.submit(0, "ctl-a", 1, 10, 2, self.ABS70)
@@ -339,6 +373,7 @@ class Restart(unittest.TestCase):
     def test_after_a_restart_late_absolute_and_relative_copies_are_refused(self):
         m = self.history()
         m.restart()
+        self.relase(m)
         self.assertEqual(m.submit(0, "ctl-a", 1, 10, 2, self.ABS70), "queued:ordinary")
         self.assertEqual(m.submit(0, "ctl-a", 2, 10, 4, self.REL), "queued:ordinary")
         self.assertEqual(m.step(0), ["ctl-a#1=refused:stale_revision", "ctl-a#2=refused:revision_mismatch"])
@@ -347,6 +382,7 @@ class Restart(unittest.TestCase):
     def test_after_a_restart_a_command_composed_after_it_is_applied(self):
         m = self.history()
         m.restart()
+        self.relase(m)
         m.submit(0, "ctl-a", 3, 10, 5, {"kind": "set_group_volume", "volume": 55})
         self.assertEqual(m.step(0), ["ctl-a#3=committed:6"])
         self.assertEqual(m.group, 55)
@@ -354,6 +390,7 @@ class Restart(unittest.TestCase):
     def test_the_first_commands_after_a_restart_are_not_session_faults(self):
         m = self.history()
         m.restart()
+        self.relase(m)
         for seq in range(3, 9):
             m.submit(0, "ctl-a", seq, 10, 5, {"kind": "set_group_volume", "volume": 50 + seq})
         got = m.step(0) + m.step(0)

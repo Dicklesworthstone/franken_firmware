@@ -11,7 +11,10 @@
 
 use serde_json::{Value, json};
 
-use franken_session::{FencedControlCommand, GroupCommandPayload, MemberLifecycleState};
+use franken_session::{
+    AuthorityToken, FencedControlCommand, GroupCommandPayload, GroupMembership, GroupTime,
+    MemberLifecycleState, MembershipConfig,
+};
 
 use super::limiter::RateLimit;
 use super::peer::ephemeral::{EphemeralPeers, test_key};
@@ -119,11 +122,7 @@ fn rate(v: &Value) -> RateLimit {
 }
 
 fn config_from(doc: &Value, scenario: &Value) -> ChannelConfig {
-    let mut merged = doc["base_config"].as_object().expect("base_config").clone();
-    if let Some(overrides) = scenario["config"].as_object() {
-        merged.extend(overrides.clone());
-    }
-    let config = Value::Object(merged);
+    let config = merged_config(doc, scenario);
     let size = |key: &str| usize::try_from(number(&config, key)).expect("size fits");
     ChannelConfig {
         ordinary_capacity: size("ordinary_capacity"),
@@ -139,21 +138,23 @@ fn config_from(doc: &Value, scenario: &Value) -> ChannelConfig {
     }
 }
 
-fn refusal_name(refusal: &Refusal) -> &'static str {
+fn refusal_name(refusal: &Refusal) -> String {
     match refusal {
-        Refusal::StaleEpoch { .. } => "stale_epoch",
-        Refusal::EpochAhead { .. } => "epoch_ahead",
-        Refusal::RevisionMismatch { .. } => "revision_mismatch",
-        Refusal::StaleRevision { .. } => "stale_revision",
-        Refusal::UnknownMember { .. } => "unknown_member",
-        Refusal::Session(_) => "session",
-        Refusal::InternalFault => "internal_fault",
-        Refusal::AuthorityExpired => "authority_expired",
-        Refusal::Expired => "expired",
-        Refusal::TooLateToCancel => "too_late_to_cancel",
-        Refusal::NothingToCancel => "nothing_to_cancel",
-        Refusal::TargetOutOfWindow { .. } => "target_out_of_window",
-        Refusal::NotCancellable => "not_cancellable",
+        Refusal::StaleEpoch { .. } => "stale_epoch".to_string(),
+        Refusal::EpochAhead { .. } => "epoch_ahead".to_string(),
+        Refusal::RevisionMismatch { .. } => "revision_mismatch".to_string(),
+        Refusal::StaleRevision { .. } => "stale_revision".to_string(),
+        Refusal::UnknownMember { .. } => "unknown_member".to_string(),
+        Refusal::Session(_) => "session".to_string(),
+        Refusal::InternalFault => "internal_fault".to_string(),
+        Refusal::NoLease => "no_lease".to_string(),
+        Refusal::Lease(error) => format!("lease:{}", error.code().to_lowercase()),
+        Refusal::AuthorityExpired => "authority_expired".to_string(),
+        Refusal::Expired => "expired".to_string(),
+        Refusal::TooLateToCancel => "too_late_to_cancel".to_string(),
+        Refusal::NothingToCancel => "nothing_to_cancel".to_string(),
+        Refusal::TargetOutOfWindow { .. } => "target_out_of_window".to_string(),
+        Refusal::NotCancellable => "not_cancellable".to_string(),
     }
 }
 
@@ -253,6 +254,16 @@ fn replay(doc: &Value, scenario: &Value) -> Vec<String> {
     let mut channel = ControlChannel::new(directory(), config_from(doc, scenario))
         .expect("scenario config is valid");
     let mut session = fixture_session(EPOCH);
+    let lease_ms = lease_ms(doc, scenario);
+    // The issuer's own token, as G01 mints it. The channel is given a copy unless the scenario starts
+    // without a lease.
+    let mut issuer_token = AuthorityToken::issue(&session, lease_ms * MS);
+    let mut membership = GroupMembership::new(MembershipConfig::default());
+    if !starts_without_lease(doc, scenario) {
+        channel
+            .install_lease(&session, issuer_token.clone(), 0)
+            .expect("the first lease is accepted");
+    }
 
     for (index, step) in scenario["steps"]
         .as_array()
@@ -315,6 +326,53 @@ fn replay(doc: &Value, scenario: &Value) -> Vec<String> {
                     "{where_}: the peer must be admitted"
                 );
             }
+            "lease" => {
+                // The issuer mints a lease for the session's current epoch and the owner installs it.
+                let at = step["at_ms"].as_u64().unwrap_or(0) * MS;
+                let token = AuthorityToken::issue(&session, number(step, "expires_ms") * MS);
+                issuer_token = token.clone();
+                let got = show_install(channel.install_lease(&session, token, at));
+                if got != text(step, "expect") {
+                    problems.push(format!(
+                        "{where_}: expected {:?}, got {got:?}",
+                        text(step, "expect")
+                    ));
+                }
+            }
+            "foreign_lease" => {
+                // A token the session must not accept: the owner tries to install it.
+                let at = number(step, "at_ms") * MS;
+                let mut token = AuthorityToken::issue(&session, lease_ms * MS);
+                match text(step, "flaw") {
+                    "issuer" => token.issuer_id = "intruder".to_string(),
+                    "group" => token.group_id = "elsewhere".to_string(),
+                    "stale" => token.epoch -= 1,
+                    "future" => token.epoch += 1,
+                    "expired" => token.expires_at_ns = at,
+                    other => panic!("unknown flaw `{other}`"),
+                }
+                let got = show_install(channel.install_lease(&session, token, at));
+                if got != text(step, "expect") {
+                    problems.push(format!(
+                        "{where_}: expected {:?}, got {got:?}",
+                        text(step, "expect")
+                    ));
+                }
+            }
+            "advance_epoch" => {
+                // The issuer moves the group to a newer epoch. The channel keeps the lease it had.
+                issuer_token = membership
+                    .advance_epoch(
+                        &mut session,
+                        &issuer_token,
+                        number(step, "epoch"),
+                        GroupTime {
+                            ns: step["at_ms"].as_u64().unwrap_or(0) * MS,
+                            frame: 0,
+                        },
+                    )
+                    .expect("the issuer's epoch advance is accepted");
+            }
             "restart" => {
                 // A new incarnation: no queue, no outcome, no limiter, no revision floor. The group
                 // state, the session's record and the peer directory carry on.
@@ -358,6 +416,30 @@ fn replay(doc: &Value, scenario: &Value) -> Vec<String> {
         problems.push(format!("{scenario_id} ledger record failures: {stats:?}"));
     }
     problems
+}
+
+fn merged_config(doc: &Value, scenario: &Value) -> Value {
+    let mut merged = doc["base_config"].as_object().expect("base_config").clone();
+    if let Some(overrides) = scenario["config"].as_object() {
+        merged.extend(overrides.clone());
+    }
+    Value::Object(merged)
+}
+
+fn lease_ms(doc: &Value, scenario: &Value) -> u64 {
+    number(&merged_config(doc, scenario), "lease_ms")
+}
+
+fn starts_without_lease(doc: &Value, scenario: &Value) -> bool {
+    merged_config(doc, scenario)["lease"].as_str() == Some("none")
+}
+
+/// What `install_lease` said, in the file's words.
+fn show_install(result: Result<(), franken_session::MembershipError>) -> String {
+    match result {
+        Ok(()) => "installed".to_string(),
+        Err(error) => error.code().to_string(),
+    }
 }
 
 fn doc() -> Value {
@@ -456,7 +538,10 @@ fn scenario_ids_are_unique_and_every_operation_is_known() {
                     "rebind",
                     "revoke",
                     "restart",
-                    "external_command"
+                    "external_command",
+                    "lease",
+                    "foreign_lease",
+                    "advance_epoch"
                 ]
                 .contains(&text(step, "op")),
                 "unknown op in {}",

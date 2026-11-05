@@ -13,7 +13,8 @@
       "scenarios": [
         "N02-S011",
         "N02-S014",
-        "N02-S019"
+        "N02-S019",
+        "N02-S033"
       ],
       "rust_tests": [
         "a_forged_or_unknown_or_revoked_peer_changes_nothing",
@@ -26,7 +27,8 @@
         "the_proof_is_sensitive_to_every_input",
         "a_key_shorter_than_the_minimum_is_refused_without_echoing_it",
         "the_proofs_match_the_python_hmac_vectors_and_the_directory_accepts_them",
-        "every_tampered_field_is_refused_under_the_original_tag"
+        "every_tampered_field_is_refused_under_the_original_tag",
+        "a_forged_request_fails_authentication_before_the_lease_is_consulted"
       ]
     },
     {
@@ -308,7 +310,8 @@
       "id": "INV-CANCEL",
       "claim": "Cancel withdraws a waiting ordinary command of the same peer before it commits, and changes nothing after, for another peer, or against a stop.",
       "scenarios": [
-        "N02-S017"
+        "N02-S017",
+        "N02-S034"
       ],
       "rust_tests": [
         "a_cancel_withdraws_a_waiting_command_and_the_retry_is_told_so",
@@ -399,6 +402,85 @@
       "rust_tests": [
         "a_revision_the_session_has_not_reached_is_refused",
         "a_wrong_expected_revision_is_refused_without_effect"
+      ]
+    },
+    {
+      "id": "INV-LEASE-REQUIRED",
+      "claim": "A command that changes the group is applied only under a live group lease (a G01 AuthorityToken the session still accepts at the time of the step); with none, a superseded one or an expired one it is refused before the session is touched.",
+      "scenarios": [
+        "N02-S029",
+        "N02-S030",
+        "N02-S031"
+      ],
+      "rust_tests": [
+        "without_a_lease_group_changes_are_refused_but_a_local_stop_and_mute_on_are_not",
+        "a_deposed_leaders_late_command_is_refused_and_the_same_command_under_the_new_lease_applies",
+        "an_expired_lease_is_refused_and_renewal_plus_resubmit_applies"
+      ]
+    },
+    {
+      "id": "INV-DEPOSED-LEADER",
+      "claim": "After the issuer advances the epoch, a late command under the old lease is refused, and the same command is applied once the new epoch's lease is installed.",
+      "scenarios": [
+        "N02-S030"
+      ],
+      "rust_tests": [
+        "a_deposed_leaders_late_command_is_refused_and_the_same_command_under_the_new_lease_applies"
+      ]
+    },
+    {
+      "id": "INV-LEASE-EXPIRY",
+      "claim": "A lease is live up to the instant before its expiry and refused from that instant; renewal plus resubmit is applied.",
+      "scenarios": [
+        "N02-S031"
+      ],
+      "rust_tests": [
+        "an_expired_lease_is_refused_and_renewal_plus_resubmit_applies"
+      ]
+    },
+    {
+      "id": "INV-LEASE-INSTALL-CHECKED",
+      "claim": "A lease the session does not accept (foreign issuer or group, stale, future, already expired) cannot be installed, and the lease already held keeps working.",
+      "scenarios": [
+        "N02-S032"
+      ],
+      "rust_tests": [
+        "a_lease_the_session_does_not_accept_cannot_be_installed_and_leaves_the_held_one_alone"
+      ]
+    },
+    {
+      "id": "INV-LEASE-REFUSAL-TRANSIENT",
+      "claim": "A refusal for want of a live lease is reported but not recorded, so the same request sent again after the lease is installed or renewed is judged afresh.",
+      "scenarios": [
+        "N02-S029",
+        "N02-S030",
+        "N02-S031"
+      ],
+      "rust_tests": [
+        "without_a_lease_group_changes_are_refused_but_a_local_stop_and_mute_on_are_not",
+        "a_deposed_leaders_late_command_is_refused_and_the_same_command_under_the_new_lease_applies"
+      ]
+    },
+    {
+      "id": "INV-SILENCE-NEEDS-NO-LEASE",
+      "claim": "A local stop and a local mute-on only silence and need no lease; a cancel only withdraws its sender's waiting work and needs none.",
+      "scenarios": [
+        "N02-S029",
+        "N02-S034"
+      ],
+      "rust_tests": [
+        "without_a_lease_group_changes_are_refused_but_a_local_stop_and_mute_on_are_not",
+        "a_cancel_needs_no_lease"
+      ]
+    },
+    {
+      "id": "INV-AUTH-BEFORE-LEASE",
+      "claim": "A forged request fails authentication before the lease is consulted.",
+      "scenarios": [
+        "N02-S033"
+      ],
+      "rust_tests": [
+        "a_forged_request_fails_authentication_before_the_lease_is_consulted"
       ]
     }
   ],
