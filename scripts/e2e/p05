@@ -7,6 +7,7 @@
 #   scripts/e2e/p05 --tier smoke|full                explicit tier
 #   scripts/e2e/p05 --central-log FILE               judge each Rust test BY NAME from a central cargo test log
 #   scripts/e2e/p05 --upstream-clone DIR             also re-run the read-only Asupersync scan (git objects only)
+#   scripts/e2e/p05 --guest-elf FILE                 also re-judge the guest ELF's header (a prefix of its sha256 is pinned in the case)
 #   scripts/e2e/p05 --tier full --case P05-DIR-002 [--receipts DIR]     replay one case
 #   scripts/e2e/p05 --list                           list the selected cases
 #   scripts/e2e/p05 --workspace-suite [ARGS]         the earlier workspace suite for this bead, unchanged
@@ -20,8 +21,10 @@
 #   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-atomic          # then pass the log with --central-log
 #
 # Each Rust test is judged by name from that log: ok passes, FAILED fails, absent is BLOCKED. Totals are
-# never used. Without a log the run is NOT QUALIFIED and exits 3. Target builds, guest receipts, the
-# Asupersync adaptation and the per-site audit are listed as blocked cases and counted, never passed.
+# never used. Without a log the run is NOT QUALIFIED and exits 3. P05-EXT-GUEST re-judges the committed serial log
+# of the big-endian MIPS32 QEMU guest (toolchain/results/p05/guest-*/) with toolchain/src/measure-p05-target.py; it is
+# BLOCKED when the log is absent and never trusts the receipt JSON. Target builds, the Asupersync adaptation and the
+# per-site audit are listed as blocked cases and counted, never passed.
 #
 # Exit 0 only when every case passed and none is blocked; 1 on a failed case; 3 when the only non-passes are
 # blocked cases; 2 on usage or a malformed case file.

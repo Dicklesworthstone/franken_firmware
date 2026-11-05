@@ -2,7 +2,7 @@
 """P05 (ffw-ipz) slice 1 case runner: the semantic 64-bit replacement in crates/franken-atomic.
 
     run_cases.py --tier smoke|full [--case ID] [--list] [--receipts DIR]
-                 [--central-log FILE] [--upstream-clone DIR]
+                 [--central-log FILE] [--upstream-clone DIR] [--guest-elf FILE]
 
 What this runner is, so a pass is not over-read:
 * The offline half re-derives the checker corpus, the directed scripts and the seeded sweeps with an
@@ -13,8 +13,15 @@ What this runner is, so a pass is not over-read:
   log passed with --central-log: `ok` passes, `FAILED` fails, absent is BLOCKED. Totals are never used, and
   a test missing from the log can not be hidden by a green total. Without a log every Rust case is blocked
   and the run is NOT QUALIFIED.
-* Evidence label: model, host simulation. Nothing here ran on a big-endian MIPS or PowerPC target or a
-  guest; those are blocked cases (P05-EXT-*), counted and never passed.
+* Evidence label: model, host simulation, plus ONE QEMU guest receipt. This runner ran nothing on a target.
+  P05-EXT-GUEST re-judges the COMMITTED serial log of a big-endian MIPS32 guest with the judge in
+  toolchain/src/measure-p05-target.py, from the committed seed; it never trusts the receipt JSON (a receipt that
+  disagrees with the log, the seed, the pins or the re-judged gates can only make it fail). With no committed log it is
+  BLOCKED, never passed. P05-EXT-GUEST-PLANT changes one byte of that log nine ways and one byte of the receipt twelve
+  ways and requires each to be refused by exactly its own gate or check, with the unplanted log and receipt as the
+  controls. The ELF is not in the repository (only a 128-bit prefix of its sha256 is pinned), so
+  the ELF-header gate is re-judged only with --guest-elf. Target builds, PowerPC, the Asupersync adaptation and the
+  per-site audit stay blocked cases (P05-EXT-*), counted and never passed.
 
 Exit codes: 0 qualified, 1 a case failed, 3 only blocked cases stand in the way, 2 usage or a malformed
 case file.
@@ -25,11 +32,14 @@ import argparse
 import copy
 import datetime
 import hashlib
+import importlib.util
 import json
 import os
+import pathlib
 import re
 import sys
-from typing import Any, Callable, Dict, List, Optional, Tuple
+import tempfile
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Set, Tuple
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
@@ -47,14 +57,17 @@ DOC_FILE = os.path.join(REPO, "docs", "contracts", "p05.md")
 E06_README = os.path.join(REPO, "toolchain", "results", "e06", "upstream", "README.md")
 E06_INVENTORY = os.path.join(REPO, "toolchain", "results", "e06", "upstream", "asupersync-8940119023c0",
                              "default.inventory.json")
+GUEST_JUDGE = os.path.join(REPO, "toolchain", "src", "measure-p05-target.py")
+GUEST_TESTS = os.path.join(REPO, "toolchain", "tests", "test_measure_p05_target.py")
 SCHEMA = "ffw.p05.cases.v1"
 TIERS = ("smoke", "full")
 KINDS = ("meta_files", "meta_crate", "meta_shared", "meta_invariants", "meta_doc", "meta_render_guard",
          "meta_hygiene", "runner_selftest", "upstream_facts", "checker_history", "planted_checker", "directed",
-         "planted_cell", "vectors_match", "central_log", "upstream_rescan", "rust_test", "blocked", "gate_facts")
+         "planted_cell", "vectors_match", "central_log", "upstream_rescan", "rust_test", "blocked", "gate_facts",
+         "guest_receipt", "guest_plant")
 PASS, FAIL, BLOCKED = "pass", "fail", "blocked"
 Result = Tuple[str, str]
-OPTIONS: Dict[str, Optional[str]] = {"central_log": None, "upstream_clone": None}
+OPTIONS: Dict[str, Optional[str]] = {"central_log": None, "upstream_clone": None, "guest_elf": None}
 
 # What the documentation must contain (checked by P05-META-005).
 DOC_HEADINGS = ("## No-claim line", "## Inputs", "## Replacement map: 64-bit atomics", "## Module areas",
@@ -247,7 +260,8 @@ def run_planted_cell(c) -> Result:
 def run_meta_files(c) -> Result:
     needed = [CASES_FILE, VECTORS_FILE, SCAN_FILE, DOC_FILE, os.path.join(HERE, "reference.py"),
               os.path.join(HERE, "scan_upstream.py"), os.path.join(CRATE, "Cargo.toml"),
-              os.path.join(REPO, "scripts", "e2e", "p05")] + [os.path.join(SRC, m) for m in PRODUCTION_MODULES] \
+              os.path.join(REPO, "scripts", "e2e", "p05"), GUEST_JUDGE, GUEST_TESTS] \
+        + [os.path.join(SRC, m) for m in PRODUCTION_MODULES] \
         + [os.path.join(SRC, m) for m in ("model.rs", "planted.rs", "tests.rs")]
     gone = [os.path.relpath(p, REPO) for p in needed if not os.path.isfile(p)]
     return (PASS, "") if not gone else (FAIL, f"missing: {gone}")
@@ -600,6 +614,469 @@ def run_upstream_rescan(c) -> Result:
         else (FAIL, "re-scan differs from upstream_scan.json")
 
 
+# ------------------------------------------------------------------------------------------- guest receipt
+
+GUEST_LOG, GUEST_SEED, GUEST_RECEIPT, GUEST_CONSOLE = "p05-target.serial.log", "seed.txt", "receipt.json", "console.txt"
+ELF_GATE = "P05T-ELF"
+FORBIDDEN_IN_EVIDENCE = (
+    (re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])"), "an IPv4 address"),
+    (re.compile(r"\b[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}\b"), "a MAC address"),
+    # Built from parts so this file does not contain what it forbids.
+    (re.compile("/" + "Users/|/" + "home/|/" + "private/|/" + "Volumes/"), "a local absolute path"),
+)
+_MODULES: Dict[str, Any] = {}
+
+
+def load_module(path: str, name: str) -> Any:
+    if name not in _MODULES:
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        _MODULES[name] = module
+    return _MODULES[name]
+
+
+def guest_judge_module() -> Any:
+    return load_module(GUEST_JUDGE, "p05_guest_judge_for_runner")
+
+
+RECEIPT_CHECKS = ("json", "schema", "revision", "hash", "seed", "elf", "kernel", "qemu", "result", "gates", "scope")
+
+
+class Judged(NamedTuple):
+    failed: Dict[str, Any]                # gate id -> Gate, for the gates that failed (the ELF gate only when the ELF was supplied)
+    problem: Optional[str]                # something wrong with --guest-elf itself
+    gate_ids: List[str]                   # the gates this verdict covers
+    receipt_gates: List[Dict[str, Any]]   # what the receipt of a passing run records for every gate (the ELF entry is the judge's own for a MIPS ELF)
+    elf_file: Optional[Tuple[str, int]]   # (sha256, size) of --guest-elf when it was supplied and accepted
+
+
+def guest_case(c) -> Dict[str, Any]:
+    """The P05-EXT-GUEST case. The plant case names it in `of`, so the evidence directory and every pin live in one place."""
+    if c["kind"] == "guest_receipt":
+        return c
+    return next(x for x in load_json(CASES_FILE)["cases"] if x["id"] == c["of"])
+
+
+def guest_folder(c, root: Optional[str]) -> str:
+    return os.path.join(root or REPO, guest_case(c)["dir"])
+
+
+def guest_evidence(c, root: Optional[str] = None) -> Tuple[Optional[str], Optional[int], List[str]]:
+    """The committed serial log and seed, and what is wrong with the set. `(None, None, [])` when the log is absent."""
+    folder = guest_folder(c, root)
+    log_path = os.path.join(folder, GUEST_LOG)
+    if not os.path.isfile(log_path):
+        return None, None, []
+    problems: List[str] = []
+    seed: Optional[int] = None
+    seed_path = os.path.join(folder, GUEST_SEED)
+    if not os.path.isfile(seed_path):
+        problems.append(f"{GUEST_SEED} is missing: a log without its seed cannot be re-judged")
+    else:
+        try:
+            seed = int(read(seed_path).strip())
+        except ValueError:
+            problems.append(f"{GUEST_SEED} is not a number")
+    for name in (GUEST_LOG, GUEST_SEED, GUEST_RECEIPT, GUEST_CONSOLE):
+        file_path = os.path.join(folder, name)
+        if os.path.isfile(file_path):
+            for rx, what in FORBIDDEN_IN_EVIDENCE:
+                hit = rx.search(read(file_path))
+                if hit:
+                    problems.append(f"{name}: {what} {hit.group(0)!r}")
+    return read(log_path), seed, problems
+
+
+def receipt_problems(pins, receipt_text: str, log_sha: str, seed: int, judged: Judged) -> List[Tuple[str, str]]:
+    """(check, message) for everything in the receipt that disagrees with what the runner re-derived or with the case's pins.
+    The receipt is NEVER what passes the case: it only adds failures. What it can be held to is the log's hash, the seed, the
+    pinned ELF, kernel, QEMU and revision, the judge's own schema and no-claim text, and the verdict of every gate, which is
+    compared with the re-judged gates (the ELF gate with the judge's entry for a MIPS ELF unless --guest-elf supplied the file).
+    Not re-judgeable from the repository, so a changed byte there is not caught: the second half of the ELF's and the
+    kernel's sha256 (only their 128-bit prefixes are pinned; with --guest-elf the whole ELF hash and size are compared),
+    the ELF size without --guest-elf, and JSON whitespace."""
+    try:
+        receipt = json.loads(receipt_text)
+    except ValueError:
+        return [("json", f"{GUEST_RECEIPT} is not JSON")]
+    if not isinstance(receipt, dict):
+        return [("json", f"{GUEST_RECEIPT} is not a JSON object")]
+    mod = guest_judge_module()
+    elf = receipt.get("elf") if isinstance(receipt.get("elf"), dict) else {}
+    elf_ok = str(elf.get("sha256")).startswith(pins["elf_sha256_prefix"]) and (
+        judged.elf_file is None or (elf.get("sha256"), elf.get("bytes")) == judged.elf_file)
+    checks = (
+        ("schema", receipt.get("schema") == mod.SCHEMA, f"schema is {receipt.get('schema')!r}, the judge writes {mod.SCHEMA!r}"),
+        ("revision", receipt.get("revision") == pins["revision"], f"revision is {receipt.get('revision')!r}, the case pins {pins['revision']!r}"),
+        ("hash", receipt.get("transcript_sha256") == log_sha, "records a transcript hash that is not this log's"),
+        ("seed", receipt.get("seed") == seed, f"records seed {receipt.get('seed')}, {GUEST_SEED} says {seed}"),
+        ("elf", elf_ok, f"records an ELF other than the pinned one (sha256 prefix {pins['elf_sha256_prefix'][:16]}...; with --guest-elf, the file's own hash and size)"),
+        ("kernel", str(receipt.get("kernel_sha256")).startswith(pins["kernel_sha256_prefix"]),
+         f"records a kernel other than the pinned one (sha256 prefix {pins['kernel_sha256_prefix'][:16]}...)"),
+        ("qemu", receipt.get("qemu") == pins["qemu"], f"records QEMU {receipt.get('qemu')!r}, the case pins {pins['qemu']!r}"),
+        ("result", receipt.get("result") == "passed", f"result is {receipt.get('result')!r}"),
+        ("gates", receipt.get("gates") == judged.receipt_gates, "records gate verdicts that are not the re-judged ones"),
+        ("scope", receipt.get("scope") == mod.HONEST_FOOTER, "its no-claim text is not the judge's"),
+    )
+    return [(name, f"{GUEST_RECEIPT}: {what}") for name, ok, what in checks if not ok]
+
+
+def record_problems(c, seed: int, judged: Judged, root: Optional[str]) -> List[str]:
+    """The committed receipt's disagreements with the re-judged log; nothing when there is no receipt (it never passes a case)."""
+    folder = guest_folder(c, root)
+    receipt_path = os.path.join(folder, GUEST_RECEIPT)
+    if not os.path.isfile(receipt_path):
+        return []
+    found = receipt_problems(guest_case(c), read(receipt_path), sha256_file(os.path.join(folder, GUEST_LOG)), seed, judged)
+    return [message for _, message in found]
+
+
+def guest_judge(c, text: str, seed: int) -> Judged:
+    """Re-judge `text` with the judge. The ELF header gate can only be judged with the ELF, which is not in the repository (only a
+    128-bit prefix of its sha256 is pinned): without --guest-elf it is left out of the verdict and the case says so; with it,
+    the file must be the pinned one and the header must be 32-bit big-endian MIPS."""
+    pins = guest_case(c)
+    mod = guest_judge_module()
+    elf, elf_file = None, None
+    if OPTIONS["guest_elf"]:
+        try:
+            data = open(OPTIONS["guest_elf"], "rb").read()
+        except OSError as e:
+            return Judged({}, f"cannot read --guest-elf: {e}", [], [], None)
+        digest = hashlib.sha256(data).hexdigest()
+        if not digest.startswith(pins["elf_sha256_prefix"]):
+            return Judged({}, f"--guest-elf has sha256 {digest[:16]}..., the case pins {pins['elf_sha256_prefix'][:16]}...", [], [], None)
+        try:
+            elf = mod.read_elf(pathlib.Path(OPTIONS["guest_elf"]))
+        except mod.MeasurementError as e:
+            return Judged({}, str(e), [], [], None)
+        elf_file = (digest, len(data))
+    report = mod.judge(text, elf, seed, pathlib.Path(REPO))
+    failed = {g.gate_id: g for g in report["gates"] if g.status == "failed"}
+    gate_ids = [g.gate_id for g in report["gates"]]
+    receipt_gates = [vars(g) for g in report["gates"]]
+    if elf is None:
+        failed.pop(ELF_GATE, None)
+        if ELF_GATE in gate_ids:   # a transcript that does not parse is judged by one gate alone
+            gate_ids.remove(ELF_GATE)
+            receipt_gates = [vars(mod.gate_elf({"machine": 8})) if g["gate_id"] == ELF_GATE else g for g in receipt_gates]
+    return Judged(failed, None, gate_ids, receipt_gates, elf_file)
+
+
+def run_guest_receipt(c, root: Optional[str] = None) -> Result:
+    text, seed, problems = guest_evidence(c, root)
+    if text is None:
+        return BLOCKED, f"{c['blocker']} (owner: {c['owner']}): {c['needs']}"
+    judged_gates = 0
+    if seed is not None:
+        judged = guest_judge(c, text, seed)
+        judged_gates = len(judged.gate_ids)
+        problems += [judged.problem] if judged.problem else []
+        problems += [f"{gid}: {g.detail or g.title}" for gid, g in sorted(judged.failed.items())]
+        problems += record_problems(c, seed, judged, root)
+    if problems:
+        return FAIL, "; ".join(problems)
+    elf_note = "the ELF header was re-judged" if OPTIONS["guest_elf"] else \
+        f"the ELF header is not re-judged (the ELF is not in the repository; pinned sha256 prefix {c['elf_sha256_prefix'][:16]}..., pass --guest-elf to check it)"
+    receipt_note = "receipt.json agrees with it and decided nothing" if os.path.isfile(os.path.join(guest_folder(c, root), GUEST_RECEIPT)) \
+        else "there is no receipt.json to cross-check"
+    return PASS, f"re-judged from the committed log with seed {seed}: {judged_gates} gate(s) passed; {receipt_note}; {elf_note}"
+
+
+def apply_plant(text: str, plant: Dict[str, str]) -> str:
+    """Change exactly ONE byte: the character in the pattern's single capture group becomes `0` (or `1` if it was `0`)."""
+    hits = list(re.finditer(plant["pattern"], text))
+    if len(hits) != 1:
+        raise ValueError(f"plant {plant['name']}: its pattern matches {len(hits)} place(s), not one")
+    start, end = hits[0].span(1)
+    if end - start != 1:
+        raise ValueError(f"plant {plant['name']}: its capture group is not a single character")
+    new = "0" if text[start] != "0" else "1"
+    planted = text[:start] + new + text[end:]
+    if len(planted) != len(text) or sum(1 for a, b in zip(text, planted) if a != b) != 1:
+        raise ValueError(f"plant {plant['name']}: it did not change exactly one byte")
+    return planted
+
+
+def plant_outcome(what: str, name: str, got: Set[str], want: str) -> Optional[str]:
+    """A plant is credited only when it trips EXACTLY the one gate or check meant to refuse it."""
+    if got != {want}:
+        return f"{what} plant {name} tripped {sorted(got) or 'nothing'}, wanted exactly [{want!r}]"
+    return None
+
+
+def run_guest_plant(c, root: Optional[str] = None) -> Result:
+    pins = guest_case(c)
+    text, seed, problems = guest_evidence(c, root)
+    if text is None:
+        return BLOCKED, "no committed guest log: there is nothing to plant a negative in (see P05-EXT-GUEST)"
+    if problems or seed is None:
+        return FAIL, "; ".join(problems or ["no seed"])
+    base = guest_judge(c, text, seed)
+    if base.problem or base.failed:
+        return FAIL, "the unplanted log does not pass, so no catch can be credited: " + \
+            "; ".join(([base.problem] if base.problem else []) + sorted(base.failed))
+    uncovered = sorted(set(base.gate_ids) - {ELF_GATE} - {plant["gate"] for plant in c["plants"]})
+    if uncovered:
+        return FAIL, f"no one-byte plant for gate(s) {uncovered}: a gate that was never shown to refuse proves nothing"
+    for plant in c["plants"]:
+        try:
+            planted = apply_plant(text, plant)
+        except ValueError as e:
+            return FAIL, str(e)
+        bad = plant_outcome("log", plant["name"], set(guest_judge(c, planted, seed).failed), plant["gate"])
+        if bad:
+            return FAIL, bad
+    # the receipt: the same discipline, one changed byte per check, against an unplanted receipt that passes
+    folder = guest_folder(c, root)
+    receipt_path = os.path.join(folder, GUEST_RECEIPT)
+    if not os.path.isfile(receipt_path):
+        return FAIL, f"{GUEST_RECEIPT} is missing, so its plants cannot run (the case passes without a receipt; this one credits only what it exercised)"
+    receipt, log_sha = read(receipt_path), sha256_file(os.path.join(folder, GUEST_LOG))
+    unplanted = receipt_problems(pins, receipt, log_sha, seed, base)
+    if unplanted:
+        return FAIL, "the unplanted receipt does not pass, so no catch can be credited: " + "; ".join(m for _, m in unplanted)
+    uncovered_checks = sorted(set(RECEIPT_CHECKS) - {plant["check"] for plant in c["receipt_plants"]})
+    if uncovered_checks:
+        return FAIL, f"no one-byte receipt plant for check(s) {uncovered_checks}: a check that was never shown to refuse proves nothing"
+    for plant in c["receipt_plants"]:
+        try:
+            planted = apply_plant(receipt, plant)
+        except ValueError as e:
+            return FAIL, str(e)
+        got = {check for check, _ in receipt_problems(pins, planted, log_sha, seed, base)}
+        bad = plant_outcome("receipt", plant["name"], got, plant["check"])
+        if bad:
+            return FAIL, bad
+    return PASS, (f"{len(c['plants'])} one-byte plants in the log, each caught by exactly its own gate, and {len(c['receipt_plants'])} in the receipt, "
+                  "each caught by exactly its own check; the unplanted log and receipt are the controls and pass")
+
+
+def guest_selftest() -> Optional[str]:
+    """The wiring is not vacuous. It runs on a SYNTHETIC evidence directory, so it works with no committed evidence, and with
+    --guest-elf cleared: that option belongs to the real evidence, not to this fixture."""
+    saved = OPTIONS["guest_elf"]
+    OPTIONS["guest_elf"] = None
+    try:
+        return guest_selftest_body()
+    finally:
+        OPTIONS["guest_elf"] = saved
+
+
+def guest_selftest_body() -> Optional[str]:
+    doc = load_json(CASES_FILE)
+    case = next(x for x in doc["cases"] if x["kind"] == "guest_receipt")
+    plant_case = next(x for x in doc["cases"] if x["kind"] == "guest_plant")
+    mod = guest_judge_module()
+    seed_n = 987654321
+    try:
+        text = load_module(GUEST_TESTS, "p05_guest_tests_for_runner").baseline_text(seed_n)
+    except Exception as e:  # noqa: BLE001
+        return f"cannot build a synthetic transcript from the judge's tests: {e}"
+    elf_sha = case["elf_sha256_prefix"] + "0" * 32
+
+    def receipt_json(log_text, **changes) -> str:
+        """A receipt exactly as the judge writes one for a GOOD run, with the hash of `log_text` and any field changed."""
+        report = mod.judge(text, {"machine": 8, "sha256": elf_sha, "bytes": 1234}, seed_n, pathlib.Path(REPO))
+        meta = {"kernel_sha256": case["kernel_sha256_prefix"] + "0" * 32, "qemu": case["qemu"]}
+        with tempfile.TemporaryDirectory() as scratch_dir:
+            path = pathlib.Path(scratch_dir) / "receipt.json"
+            mod.write_receipt(path, report, {"sha256": elf_sha, "bytes": 1234}, meta, seed_n, case["revision"], log_text)
+            body = json.loads(path.read_text(encoding="utf-8"))
+        body.update(changes)
+        return json.dumps(body, indent=1, sort_keys=True) + "\n"
+
+    def lay(root, log=text, seed=f"{seed_n}\n", receipt="auto", console="the console output\n"):
+        folder = os.path.join(root, case["dir"])
+        os.makedirs(folder, exist_ok=True)
+        if log is not None:
+            open(os.path.join(folder, GUEST_LOG), "w", encoding="utf-8").write(log)
+        if seed is not None:
+            open(os.path.join(folder, GUEST_SEED), "w", encoding="utf-8").write(seed)
+        if receipt == "auto":
+            receipt = receipt_json(log or "")
+        if receipt is not None:
+            open(os.path.join(folder, GUEST_RECEIPT), "w", encoding="utf-8").write(receipt)
+        open(os.path.join(folder, GUEST_CONSOLE), "w", encoding="utf-8").write(console)
+
+    def status(root, c=case, runner=run_guest_receipt):
+        return runner(c, root)[0]
+
+    with tempfile.TemporaryDirectory() as scratch:
+        def fresh(name):
+            root = os.path.join(scratch, name)
+            os.makedirs(root)
+            return root
+
+        # no log: BLOCKED, for both cases
+        root = fresh("empty")
+        if status(root) != BLOCKED or status(root, plant_case, run_guest_plant) != BLOCKED:
+            return "an absent log did not leave the guest cases BLOCKED"
+        # a good synthetic record passes both
+        root = fresh("good")
+        lay(root)
+        if status(root) != PASS or status(root, plant_case, run_guest_plant) != PASS:
+            return "a good synthetic guest record did not pass"
+        # a log without its seed is a failure, not a block
+        root = fresh("noseed")
+        lay(root, seed=None)
+        if status(root) != FAIL:
+            return "a log without its seed did not fail"
+        # a log the judge cannot use is a failure, not a crash: one with no markers, and one the parser rejects (a key twice in a line),
+        # which the judge answers with a single gate
+        for name, bad_log in (("no-markers", "this is not a transcript\n"), ("parser-rejects", "FFW_P05T_ALIVE a=1 a=2\n")):
+            root = fresh("garbage-" + name)
+            lay(root, log=bad_log)
+            if status(root) != FAIL or status(root, plant_case, run_guest_plant) != FAIL:
+                return f"a log that {name} did not fail both cases"
+        # the receipt can never pass a bad log: a one-byte change with a receipt that records the NEW hash and says "passed"
+        root = fresh("tampered")
+        tampered = apply_plant(text, plant_case["plants"][0])
+        lay(root, log=tampered)
+        if status(root) != FAIL:
+            return "a tampered log passed because its receipt said it passed"
+        if status(root, plant_case, run_guest_plant) != FAIL:
+            return "a plant was credited against a baseline that does not pass"
+        # no receipt: the case still passes (a receipt only ever adds failures), but the receipt plants cannot run
+        root = fresh("noreceipt")
+        lay(root, receipt=None)
+        if status(root) != PASS:
+            return "a good log without a receipt did not pass"
+        if status(root, plant_case, run_guest_plant) != FAIL:
+            return "the plant case was credited with no receipt to plant in"
+        # the receipt can only make a good log fail, one disagreement at a time: each change trips exactly its own check
+        good_judged = guest_judge(case, text, seed_n)
+        log_sha = hashlib.sha256(text.encode()).hexdigest()
+        good = json.loads(receipt_json(text))
+        if receipt_problems(case, receipt_json(text), log_sha, seed_n, good_judged):
+            return "the unchanged synthetic receipt was refused"
+        for name, changes in (("schema", {"schema": "ffw.p05.guest_receipt.v0"}), ("revision", {"revision": "0000000"}),
+                              ("hash", {"transcript_sha256": "0" * 64}), ("seed", {"seed": 1}),
+                              ("elf", {"elf": {"sha256": "1" * 64, "bytes": 1234}}),
+                              ("kernel", {"kernel_sha256": "1" * 64}), ("qemu", {"qemu": "QEMU emulator version 0.0.1"}),
+                              ("result", {"result": "not_passed"}), ("scope", {"scope": "everything works"}),
+                              ("gates", {"gates": good["gates"][:-1]})):
+            root = fresh("receipt-" + name)
+            lay(root, receipt=receipt_json(text, **changes))
+            if status(root) != FAIL:
+                return f"a receipt with the wrong {name} did not fail the case"
+            got = {check for check, _ in receipt_problems(case, receipt_json(text, **changes), log_sha, seed_n, good_judged)}
+            if got != {name}:
+                return f"a receipt with the wrong {name} tripped {sorted(got)}, wanted exactly ['{name}']"
+        for name, body in (("not-json", "{not json"), ("a-list", "[]"), ("a-number", "42")):
+            root = fresh("receipt-" + name)
+            lay(root, receipt=body)
+            if status(root) != FAIL:
+                return f"a receipt that is {name} did not fail the case"
+        # a gate the receipt calls passed that the judge now fails: the case fails on the judge, whatever the receipt says
+        forged = copy.deepcopy(good)
+        forged["gates"][4]["status"] = "failed"
+        if {check for check, _ in receipt_problems(case, json.dumps(forged), log_sha, seed_n, good_judged)} != {"gates"}:
+            return "a receipt gate verdict that disagrees with the judge was not refused"
+        # site data in the committed evidence
+        root = fresh("hygiene")
+        lay(root, console="served from " + "10.1.2." + "3\n")
+        if status(root) != FAIL:
+            return "an IPv4 address in the committed evidence did not fail the case"
+        # the plant machinery: a pattern that matches nothing, and a plant credited to the wrong gate or check
+        try:
+            apply_plant(text, {"name": "none", "pattern": "NO_SUCH_LINE(x)"})
+            return "a plant whose pattern matches nothing was accepted"
+        except ValueError:
+            pass
+        root = fresh("wronggate")
+        lay(root)
+        wrong = copy.deepcopy(plant_case)
+        wrong["plants"].append(copy.deepcopy(wrong["plants"][0]))   # the real end_tag plant stays, so every gate is still covered
+        wrong["plants"][0]["gate"] = "P05T-VECTORS"                  # ...and this copy is credited to the wrong gate
+        if status(root, wrong, run_guest_plant) != FAIL:
+            return "a plant credited to the wrong gate was accepted"
+        wrong = copy.deepcopy(plant_case)
+        wrong["receipt_plants"].append(copy.deepcopy(wrong["receipt_plants"][0]))
+        wrong["receipt_plants"][0]["check"] = "scope"
+        if status(root, wrong, run_guest_plant) != FAIL:
+            return "a receipt plant credited to the wrong check was accepted"
+        # every judged gate and every receipt check needs a plant: a case file with one removed must fail
+        thinned = copy.deepcopy(plant_case)
+        thinned["plants"] = [x for x in thinned["plants"] if x["gate"] != "P05T-VECTORS"]
+        if status(root, thinned, run_guest_plant) != FAIL:
+            return "a plant case with a gate left uncovered was accepted"
+        thinned = copy.deepcopy(plant_case)
+        thinned["receipt_plants"] = [x for x in thinned["receipt_plants"] if x["check"] != "kernel"]
+        if status(root, thinned, run_guest_plant) != FAIL:
+            return "a plant case with a receipt check left uncovered was accepted"
+        # a red unplanted receipt credits nothing
+        root = fresh("redreceipt")
+        lay(root, receipt=receipt_json(text, result="not_passed"))
+        if status(root, plant_case, run_guest_plant) != FAIL:
+            return "receipt plants were credited against a receipt that does not pass"
+        # a plant must trip EXACTLY its own gate: this one-byte change breaks the SEED line's tag, which trips the transcript gate too
+        root = fresh("extra")
+        lay(root)
+        extra = copy.deepcopy(plant_case)
+        extra["plants"].append({"name": "extra", "gate": "P05T-SEED", "pattern": r"FFW_P05T_SEE(D) value="})
+        if status(root, extra, run_guest_plant) != FAIL:
+            return "a plant that trips a second gate was credited"
+        # a plant changes ONE byte and is found ONCE
+        for name, pattern in (("two-character capture", r"FFW_P05T_(EN)D"), ("pattern found twice", r"kind=(s)plit")):
+            try:
+                apply_plant(text, {"name": name, "pattern": pattern})
+                return f"a plant with a {name} was accepted"
+            except ValueError:
+                pass
+        # --guest-elf: the pinned file is re-judged, another file is refused, a non-MIPS file is refused, and the receipt's whole ELF hash
+        # and size are compared with the file
+        with tempfile.TemporaryDirectory() as elf_dir:
+            def fake_elf(machine, tweak=0):
+                header = (b"\x7fELF" + bytes([1, 2, 1]) + bytes(9) + (2).to_bytes(2, "big") + machine.to_bytes(2, "big")
+                          + bytes([tweak]) + bytes(35))
+                file_path = os.path.join(elf_dir, f"elf{machine}-{tweak}")
+                with open(file_path, "wb") as f:
+                    f.write(header)
+                return file_path, hashlib.sha256(header).hexdigest(), len(header)
+
+            mips, mips_hash, mips_size = fake_elf(8)
+            other_mips, _, _ = fake_elf(8, 1)        # also big-endian MIPS, different bytes: only the hash can refuse it
+            nonmips, nonmips_hash, _ = fake_elf(20)
+            root = fresh("elf")
+            lay(root, receipt=None)
+            pinned = copy.deepcopy(case)
+            saved = OPTIONS["guest_elf"]
+            try:
+                pinned["elf_sha256_prefix"] = mips_hash[:32]
+                OPTIONS["guest_elf"] = mips
+                if run_guest_receipt(pinned, root)[0] != PASS:
+                    return "the pinned ELF was not accepted by --guest-elf"
+                OPTIONS["guest_elf"] = other_mips
+                if run_guest_receipt(pinned, root)[0] != FAIL:
+                    return "an ELF other than the pinned one was accepted"
+                OPTIONS["guest_elf"] = nonmips
+                pinned["elf_sha256_prefix"] = nonmips_hash[:32]
+                if run_guest_receipt(pinned, root)[0] != FAIL:
+                    return "a non-MIPS ELF was accepted"
+                # the receipt's ELF entry against the real file: right, wrong size, and a hash that differs only after the pinned prefix
+                pinned["elf_sha256_prefix"] = mips_hash[:32]
+                OPTIONS["guest_elf"] = mips
+                for label, elf_entry, want in (("matching", {"sha256": mips_hash, "bytes": mips_size}, PASS),
+                                               ("wrong-size", {"sha256": mips_hash, "bytes": mips_size + 1}, FAIL),
+                                               ("tail-differs", {"sha256": mips_hash[:32] + "f" * 32, "bytes": mips_size}, FAIL)):
+                    root = fresh("elf-receipt-" + label)
+                    lay(root, receipt=receipt_json(text, elf=elf_entry))
+                    if run_guest_receipt(pinned, root)[0] != want:
+                        return f"with --guest-elf, a receipt with a {label} ELF entry was not {want}"
+                # and without the file only the prefix can be held, which the report says
+                OPTIONS["guest_elf"] = None
+                root = fresh("elf-receipt-nofile")
+                lay(root, receipt=receipt_json(text, elf={"sha256": mips_hash[:32] + "f" * 32, "bytes": mips_size}))
+                if run_guest_receipt(pinned, root)[0] != PASS:
+                    return "without --guest-elf the receipt's ELF hash was held to more than the pinned prefix"
+            finally:
+                OPTIONS["guest_elf"] = saved
+    return None
+
+
 def run_blocked(c) -> Result:
     return BLOCKED, f"{c['blocker']} (owner: {c['owner']}): {c['needs']}"
 
@@ -655,6 +1132,10 @@ def run_runner_selftest(c) -> Result:
         return FAIL, "an ignored test passed"
     if log_sanity("running 1 test\ntest result: ok.\n", rust_test_names())[0] != FAIL:
         return FAIL, "a log from another crate was accepted"
+    # the guest receipt wiring, on a synthetic evidence directory
+    problem = guest_selftest()
+    if problem:
+        return FAIL, problem
     # the documentation
     if not doc_problems("# nothing"):
         return FAIL, "an empty document passed the documentation check"
@@ -668,7 +1149,7 @@ RUNNERS: Dict[str, Callable[[Dict[str, Any]], Result]] = {
     "checker_history": run_checker_history, "planted_checker": run_planted_checker, "directed": run_directed,
     "planted_cell": run_planted_cell, "vectors_match": run_vectors_match, "central_log": run_central_log,
     "upstream_rescan": run_upstream_rescan, "rust_test": run_rust_test, "blocked": run_blocked,
-    "gate_facts": run_gate_facts,
+    "gate_facts": run_gate_facts, "guest_receipt": run_guest_receipt, "guest_plant": run_guest_plant,
 }
 
 
@@ -708,8 +1189,10 @@ def main(argv: List[str]) -> int:
     ap.add_argument("--receipts", metavar="DIR")
     ap.add_argument("--central-log", metavar="FILE", help="cargo test output from the central franken-atomic run")
     ap.add_argument("--upstream-clone", metavar="DIR", help="local Asupersync clone, read as git objects only")
+    ap.add_argument("--guest-elf", metavar="FILE", help="the guest ELF, to re-judge its header (a prefix of its sha256 is pinned in the case)")
     args = ap.parse_args(argv)
     OPTIONS["central_log"], OPTIONS["upstream_clone"] = args.central_log, args.upstream_clone
+    OPTIONS["guest_elf"] = args.guest_elf
     try:
         chosen = select(all_cases(), args.tier, args.case)
         if args.list:
