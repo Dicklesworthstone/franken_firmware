@@ -13,6 +13,11 @@
 //! * **Authority.** Commands carry `(epoch, revision)`. A member accepts only the epoch it was told
 //!   about (it never adopts an epoch from a command), refuses stale ones with nothing changed, and
 //!   treats a replay of the last command as a duplicate that is not applied again.
+//! * **Results by command id.** A member remembers the result of its last [`RESULT_RETENTION`] applied
+//!   commands, so a client that timed out on revision N can ask what became of it
+//!   ([`MemberVolume::command_outcome`], [`GroupVolume::command_outcome`]): applied (with the receipt it
+//!   produced then), never applied, or too old to say. Asking changes nothing, and `apply` answers exactly
+//!   as before: an older replay is still `stale_revision`.
 //! * **Reconnect.** A (re)joining member starts muted and takes the group's *current* snapshot, so a
 //!   stored high volume is never audible and the first ramp starts from silence.
 //! * **Roles.** `Stereo`/`Left`/`Right`/`Sub` map onto the admitted channel layout as an input remap;
@@ -26,8 +31,12 @@ use franken_board_profile::{BoardProfile, TransducerRole};
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
+mod outcome_tests;
+#[cfg(test)]
 mod tests;
 
+/// How many applied commands a member remembers the result of. Older ones are reported as forgotten.
+pub const RESULT_RETENTION: usize = 32;
 /// Highest group master volume (percent).
 pub const MAX_VOLUME: u8 = 100;
 /// Per-room trim in thousandths: 1000 is unity.
@@ -203,6 +212,38 @@ pub struct CommandReceipt {
     pub target_gain: f32,
 }
 
+/// What became of the command with one `(epoch, revision)` id, as a member can truthfully say it.
+///
+/// A refused command changes nothing and consumes no revision, so a refusal is never recorded: it is
+/// reported as [`NotApplied`](Self::NotApplied) or [`Skipped`](Self::Skipped), which is what is true of it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CommandOutcome {
+    /// Applied once, here, with the receipt it produced at that moment (`duplicate` is false). A later
+    /// replay of the last command reports the state *then*; this reports the result of the command itself.
+    Applied {
+        command: VolumeCommand,
+        receipt: CommandReceipt,
+    },
+    /// Nothing carries this revision and nothing newer was applied: the command was lost, refused, or has
+    /// not arrived. A valid command sent now with this revision is accepted.
+    NotApplied,
+    /// A newer revision was applied and this one never was (it was lost or refused). Sending it again is
+    /// refused as `stale_revision`; send a new revision.
+    Skipped,
+    /// Older than the member can say: its record was evicted, or the member joined from a snapshot at or
+    /// after this revision. The command MAY have been applied; the member's current state, not a
+    /// per-command result, is authoritative. `remembered_from` is the oldest revision still reported.
+    Forgotten { remembered_from: u64 },
+}
+
+/// One applied command and the receipt it produced, kept so its result can be reported later.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct AppliedRecord {
+    revision: u64,
+    command: VolumeCommand,
+    receipt: CommandReceipt,
+}
+
 /// The group's current state, as the authority reports it to a (re)joining member.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GroupSnapshot {
@@ -256,6 +297,13 @@ pub struct MemberVolume {
     epoch: Option<u64>,
     last_revision: u64,
     last_command: Option<(u64, VolumeCommand)>,
+    /// The last [`RESULT_RETENTION`] applied commands, oldest overwritten first; revisions only ever increase.
+    history: [Option<AppliedRecord>; RESULT_RETENTION],
+    /// Where the next record goes.
+    history_next: usize,
+    /// The lowest revision whose fate this member can state individually. Revisions at or above it that have
+    /// no record were never applied here; revisions below it are forgotten (evicted, or covered by a snapshot).
+    history_floor: u64,
     volume: u8,
     trim_permille: u16,
     group_mute: bool,
@@ -275,6 +323,9 @@ impl MemberVolume {
             epoch: None,
             last_revision: 0,
             last_command: None,
+            history: [None; RESULT_RETENTION],
+            history_next: 0,
+            history_floor: 1,
             volume: 0,
             trim_permille: TRIM_UNITY_PERMILLE,
             group_mute: false,
@@ -319,6 +370,7 @@ impl MemberVolume {
                 self.epoch = Some(epoch);
                 self.last_revision = 0;
                 self.last_command = None;
+                self.forget_results(1);
                 Ok(())
             }
         }
@@ -373,7 +425,75 @@ impl MemberVolume {
         }
         self.last_revision = stamp.revision;
         self.last_command = Some((stamp.revision, command));
-        Ok(self.receipt(false))
+        let receipt = self.receipt(false);
+        self.remember(stamp.revision, command, receipt);
+        Ok(receipt)
+    }
+
+    /// Keep an applied command's result, overwriting the oldest once [`RESULT_RETENTION`] are held. The
+    /// overwritten revision moves the floor above itself: it can no longer be reported individually.
+    fn remember(&mut self, revision: u64, command: VolumeCommand, receipt: CommandReceipt) {
+        let record = AppliedRecord {
+            revision,
+            command,
+            receipt,
+        };
+        if let Some(slot) = self.history.get_mut(self.history_next)
+            && let Some(evicted) = slot.replace(record)
+        {
+            self.history_floor = self.history_floor.max(evicted.revision.saturating_add(1));
+        }
+        self.history_next = (self.history_next + 1) % RESULT_RETENTION;
+    }
+
+    /// Drop every retained result: nothing below `floor` can be reported, and nothing from `floor` up has been
+    /// applied here yet.
+    fn forget_results(&mut self, floor: u64) {
+        self.history = [None; RESULT_RETENTION];
+        self.history_next = 0;
+        self.history_floor = floor;
+    }
+
+    /// What became of the command with this id, so a client that timed out can reconcile. Asking changes
+    /// nothing. The epoch rules are those of [`apply`](Self::apply): no declared epoch, an older epoch or an
+    /// undeclared newer one is an error, because a result is only reportable under the authority that issued it.
+    pub fn command_outcome(&self, stamp: Stamp) -> Result<CommandOutcome, VolumeError> {
+        let current = self.epoch.ok_or(VolumeError::NoAuthority)?;
+        if stamp.epoch < current {
+            return Err(VolumeError::StaleEpoch {
+                command: stamp.epoch,
+                current,
+            });
+        }
+        if stamp.epoch > current {
+            return Err(VolumeError::UndeclaredEpoch {
+                command: stamp.epoch,
+                current,
+            });
+        }
+        let revision = stamp.revision;
+        if let Some(record) = self
+            .history
+            .iter()
+            .flatten()
+            .find(|r| r.revision == revision)
+        {
+            return Ok(CommandOutcome::Applied {
+                command: record.command,
+                receipt: record.receipt,
+            });
+        }
+        Ok(if revision > self.last_revision {
+            CommandOutcome::NotApplied
+        } else if revision == 0 || revision >= self.history_floor {
+            // Revision 0 is never valid (revisions start at 1). Otherwise the revision is inside the window in
+            // which every applied command has a record, and this one has none: it was never applied here.
+            CommandOutcome::Skipped
+        } else {
+            CommandOutcome::Forgotten {
+                remembered_from: self.history_floor,
+            }
+        })
     }
 
     fn checked_volume(&self, command: VolumeCommand) -> Result<Option<u8>, VolumeError> {
@@ -476,6 +596,8 @@ impl MemberVolume {
         self.epoch = Some(snapshot.epoch);
         self.last_revision = snapshot.revision;
         self.last_command = None;
+        // The snapshot covers every revision up to its own; none of them was applied here, so none can be reported.
+        self.forget_results(snapshot.revision.saturating_add(1));
         self.volume = snapshot.master_volume;
         self.group_mute = snapshot.group_mute;
         self.join_mute = true;
@@ -674,6 +796,27 @@ pub enum MemberResult {
     Missing,
 }
 
+/// One member's answer about a group command, as that member remembers it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MemberOutcome {
+    pub id: u32,
+    /// Whether the member is present now. An absent member was sent nothing, so its answer is `NotApplied`,
+    /// `Skipped` or `Forgotten`, never `Applied`, unless it applied the command before it left.
+    pub present: bool,
+    /// An error only if the member is at a different epoch from the one asked about.
+    pub outcome: Result<CommandOutcome, VolumeError>,
+}
+
+/// What became of a group command: the authority's own outcome, and each member's.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupOutcome {
+    /// The authority replica's outcome. This is the group's answer: `Applied` means the group accepted the
+    /// command and fanned it out.
+    pub authority: CommandOutcome,
+    /// Every member, in the order they were added, so a client can see who has it and who missed it.
+    pub members: Vec<MemberOutcome>,
+}
+
 #[derive(Debug)]
 struct GroupMember {
     id: u32,
@@ -784,6 +927,22 @@ impl GroupVolume {
                 (m.id, result)
             })
             .collect())
+    }
+
+    /// What became of group command `stamp`, so a client that timed out can reconcile. Asking changes
+    /// nothing. Refused for the epoch reasons [`MemberVolume::command_outcome`] refuses.
+    pub fn command_outcome(&self, stamp: Stamp) -> Result<GroupOutcome, VolumeError> {
+        let authority = self.authority.command_outcome(stamp)?;
+        let members = self
+            .members
+            .iter()
+            .map(|m| MemberOutcome {
+                id: m.id,
+                present: m.present,
+                outcome: m.volume.command_outcome(stamp),
+            })
+            .collect();
+        Ok(GroupOutcome { authority, members })
     }
 
     /// A member comes back: present again, join-muted, with the group's current snapshot.

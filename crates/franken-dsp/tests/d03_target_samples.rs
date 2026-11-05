@@ -49,7 +49,7 @@ fn d03_target_cases_are_the_declared_quality_cases() {
         assert_eq!(v["n_out"].as_u64(), Some(N_OUT as u64), "{}", case.id);
         assert_eq!(v["skip"].as_u64(), Some(SKIP as u64), "{}", case.id);
         assert_eq!(v["n_meas"].as_u64(), Some(N_MEAS as u64), "{}", case.id);
-        assert_eq!(v["must_pass"], true, "{}", case.id);
+        assert_eq!(v["must_pass"].as_bool(), Some(true), "{}", case.id);
     }
     let q = vectors()["quality"].clone();
     assert_eq!(q["n_meas"].as_u64(), Some(N_MEAS as u64));
@@ -190,7 +190,7 @@ fn d03_target_canonical_samples_are_well_formed_and_digested() {
         assert!(
             lines
                 .iter()
-                .all(|l| l.len() % 8 == 0 && l.len() <= 8 * cases::SAMPLES_PER_LINE)
+                .all(|l| l.len().is_multiple_of(8) && l.len() <= 8 * cases::SAMPLES_PER_LINE)
         );
         let head: Vec<String> = samples
             .iter()
