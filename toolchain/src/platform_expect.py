@@ -1,0 +1,434 @@
+"""Judge for `franken-speaker --platform-startup` as a QEMU guest's console shows it (P02 / `ffw-jub`).
+
+Used by `run-qemu-verification.py` for the platform step of the franken-speaker smoke. Nothing here is a guest
+measurement: it states what the guest must print and checks what it did print.
+
+What is judged
+--------------
+After the `--catalog` step, PID 1 runs `/franken-speaker --platform-startup` as a second child and prints
+
+    FFW_PLATFORM_STEP_BEGIN path=/franken-speaker argv=--platform-startup
+    <the child's stdout, forwarded verbatim: six FFW_PLATFORM:* lines>
+    FFW_PLATFORM_STEP_EXIT status=<0|3> stdout_bytes=<N> stdout_fnv1a64=<16 hex>
+
+The wrapper lines have their own names so the catalog step's lines, and its committed digests, are untouched. The six child
+lines are `BEGIN`, `KERNEL`, `CLOCK`, `ENTROPY`, `WAKE`, `END`, each exactly once, in that order, newline-terminated, with
+nothing after `END` (docs/contracts/p02.md, "Markers"). The guest measures the child's bytes before forwarding them; the
+runner recomputes the count and the FNV-1a-64 from the console, so a transcript that was corrupted, truncated or interleaved
+with other output does not verify.
+
+Where the grammar comes from
+----------------------------
+The closed value sets (statuses, provenances, mechanisms, ABIs, evidence names, reason codes per capability) are read from
+`crates/franken-speaker/tests/vectors/p02_platform_markers.json`, the file the speaker's own unit test holds the code to. The
+structural rules (six lines, the order, which keys each line carries, which combinations are contradictory) and the verdict
+policy are restated here from the contract text and do not read the speaker's code. `tests/p02/test_platform_markers.py`
+holds a second, independently written judge over the same file; `toolchain/tests/test_platform_smoke.py` requires the two to
+agree on every committed example and on every planted fault.
+
+Verdicts
+--------
+`green`: every capability `PASS` with `provenance=kernel`, `backend=kernel`, the ABI and evidence of the guest, `END
+started=1`, exit status 0. `degraded` (E03's own verdict for an unseeded pool: neither green nor red): on MIPS only,
+`ENTROPY` `REFUSED` with `provenance=kernel reason=not_seeded`, `END started=0 refused=entropy:not_seeded`, exit status 3,
+everything else `PASS`. `red`: everything else, each with a named problem. The table of what is degraded is `DEGRADED`; a
+cell is one line to change and the contract's text is the authority for it.
+
+What this does not establish
+----------------------------
+That the real backend runs on a board, what a board's `kernel=` string is, or anything about a stock kernel. A transcript
+that passes shows what the harness guest's kernel answered to one start of the device speaker, once.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import pathlib
+import re
+from typing import Any
+
+import speaker_expect
+
+VECTORS = "crates/franken-speaker/tests/vectors/p02_platform_markers.json"
+SCHEMA = "ffw.p02.platform-markers.v2"
+
+STEP_PATH = "/franken-speaker"
+STEP_ARG = "--platform-startup"
+STEP_BEGIN_KEY = "FFW_PLATFORM_STEP_BEGIN"
+STEP_EXIT_KEY = "FFW_PLATFORM_STEP_EXIT"
+STEP_BEGIN_LINE = f"{STEP_BEGIN_KEY} path={STEP_PATH} argv={STEP_ARG}"
+LINE_PREFIX = "FFW_PLATFORM:"
+
+# The guest accepts these exit statuses as "the step ran"; the judge decides what they mean (0 started, 3 refused).
+STEP_RAN_STATUSES = (0, 3)
+
+_PAIR = r"stdout_bytes=[0-9]+ stdout_fnv1a64=[0-9a-f]{16}"
+STEP_EXIT_OK = re.compile(
+    rf"{STEP_EXIT_KEY} status=(0|3) stdout_bytes=([1-9][0-9]*) stdout_fnv1a64=([0-9a-f]{{16}})")
+STEP_EXIT_FAILURE = re.compile(
+    rf"{STEP_EXIT_KEY} (?:"
+    r"spawn=(?:pipe|fork|exec) errno=[0-9]+"
+    rf"|(?:status=(?:[1-24-9]|[1-9][0-9]+)|signal=[0-9]+|read_error=[0-9]+|wait_error=[0-9]+|wait_status=[0-9]+"
+    rf"|exec_probe_error=[0-9]+) {_PAIR}"
+    rf"|status=[03] stdout_bytes=0 stdout_fnv1a64=[0-9a-f]{{16}}"          # started or refused, and printed nothing
+    r")"
+)
+
+ORDER = ("BEGIN", "KERNEL", "CLOCK", "ENTROPY", "WAKE", "END")
+CAPABILITIES = ("kernel", "clock", "entropy", "wake")
+CAPABILITY_LINE = {"kernel": "KERNEL", "clock": "CLOCK", "entropy": "ENTROPY", "wake": "WAKE"}
+BACKENDS = ("kernel", "simulated")
+KERNEL_RELEASE = re.compile(r"[A-Za-z0-9._+-]{1,64}")
+
+# The ABI and evidence a harness guest's speaker must report. The ABI is fixed by the target at compile time, so a speaker
+# that names the other one is the wrong binary in the guest.
+GUEST_ABI = {"mips": ("mips32", "harness-mips-4.19"), "ppc": ("powerpc32", "harness-ppc-4.9")}
+
+# (guest, capability, reason) combinations the contract reports as degraded and not red: getrandom was UNSEEDED at PID-1 boot
+# on the MIPS guest in the E03 run, and one run per guest does not say the pool stays unseeded. PowerPC's was seeded.
+DEGRADED = frozenset({("mips", "entropy", "not_seeded")})
+
+
+class PlatformGrammarError(Exception):
+    """The grammar file is missing, unreadable or not the schema this judge understands. Fail closed."""
+
+
+def load_grammar(repo_root: pathlib.Path) -> dict[str, Any]:
+    path = repo_root / VECTORS
+    try:
+        data = path.read_bytes()
+        doc = json.loads(data.decode("utf-8"))
+    except (OSError, ValueError) as error:
+        raise PlatformGrammarError(f"cannot read {VECTORS}: {error}") from error
+    if not isinstance(doc, dict) or doc.get("schema") != SCHEMA:
+        raise PlatformGrammarError(f"{VECTORS} is not schema {SCHEMA}")
+    grammar, reasons = doc.get("grammar"), doc.get("reason_codes")
+    if not isinstance(grammar, dict) or not isinstance(reasons, dict):
+        raise PlatformGrammarError(f"{VECTORS} has no grammar or reason_codes")
+    for key in ("status", "provenance", "mechanism", "abi", "evidence", "lines"):
+        value = grammar.get(key)
+        if not isinstance(value, list) or not value or not all(isinstance(item, str) for item in value):
+            raise PlatformGrammarError(f"{VECTORS} grammar.{key} is not a non-empty list of strings")
+    if tuple(grammar["lines"]) != ORDER:
+        raise PlatformGrammarError(f"{VECTORS} grammar.lines is not {list(ORDER)}")
+    for capability in CAPABILITIES:
+        value = reasons.get(capability)
+        if not isinstance(value, list) or not value or not all(isinstance(item, str) for item in value):
+            raise PlatformGrammarError(f"{VECTORS} reason_codes.{capability} is not a non-empty list of strings")
+    return {
+        "source": VECTORS,
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "schema": SCHEMA,
+        "grammar": grammar,
+        "reasons": reasons,
+        "examples": doc.get("examples", {}),
+    }
+
+
+# ---- the console region ------------------------------------------------------------------------------------
+
+
+def step_region(raw_log: str) -> tuple[bytes | None, str | None]:
+    """The bytes the child wrote, reconstructed from the console transcript: every line between the single BEGIN and the
+    single EXIT line, with the console's CRLF mapped back to LF. Returns (bytes, None) or (None, reason)."""
+    lines = [line[:-1] if line.endswith("\r") else line for line in raw_log.split("\n")]
+    begins = [i for i, line in enumerate(lines) if line.strip().startswith(STEP_BEGIN_KEY + " ")]
+    exits = [i for i, line in enumerate(lines) if line.strip().startswith(STEP_EXIT_KEY + " ")]
+    if len(begins) != 1 or len(exits) != 1:
+        return None, "begin_or_exit_not_exactly_once"
+    if begins[0] >= exits[0]:
+        return None, "exit_before_begin"
+    text = "".join(line + "\n" for line in lines[begins[0] + 1:exits[0]])
+    if "�" in text:
+        return None, "not_utf8"
+    return text.encode("utf-8"), None
+
+
+# ---- the six lines -----------------------------------------------------------------------------------------
+
+
+def _shown(value: str) -> str:
+    """A value as it appears in a problem name: bounded, and never a long attacker-shaped string."""
+    return value if len(value) <= 40 else value[:37] + "..."
+
+
+def _split(line: str) -> tuple[str, list[tuple[str, str]] | None]:
+    """(NAME, [(key, value), ...]) for `FFW_PLATFORM:NAME k=v k=v`; the pairs are None for a line that is not a clean run of
+    single-space-separated `key=value` tokens (empty token, trailing space, missing or empty key or value)."""
+    head, _, rest = line[len(LINE_PREFIX):].partition(" ")
+    pairs: list[tuple[str, str]] = []
+    for token in (rest.split(" ") if rest != "" else []):
+        key, equals, value = token.partition("=")
+        if not equals or not re.fullmatch(r"[a-z_]+", key) or value == "":
+            return head, None
+        pairs.append((key, value))
+    return head, pairs
+
+
+def _structure(lines: list[str]) -> list[str]:
+    """Problems with which lines are there and in what order: foreign or blank lines, unknown names, duplicates, order,
+    output after END, and a missing END (a truncated run) or a missing line before it."""
+    problems: list[str] = []
+    names: list[str | None] = []
+    for index, line in enumerate(lines):
+        if line == "":
+            problems.append(f"platform_blank_line:{index}")
+            names.append(None)
+        elif not line.startswith(LINE_PREFIX):
+            problems.append(f"platform_foreign_line:{index}")
+            names.append(None)
+        else:
+            name = line[len(LINE_PREFIX):].split(" ", 1)[0]
+            if name not in ORDER:
+                problems.append(f"platform_unknown_line:{_shown(name)}")
+                names.append(None)
+            else:
+                names.append(name)
+    known = [name for name in names if name is not None]
+    if "END" in known:
+        after = len(names) - 1 - max(i for i, name in enumerate(names) if name == "END")
+        if after > 0:
+            problems.append("platform_after_end")
+    for name in ORDER:
+        if known.count(name) > 1:
+            problems.append(f"platform_duplicate:{name}")
+    highest = -1
+    for name in known:
+        rank = ORDER.index(name)
+        if rank < highest:
+            problems.append(f"platform_order:{name}")
+        highest = max(highest, rank)
+    if "END" not in known:
+        if known:
+            problems.append(f"platform_truncated:after:{known[-1]}")
+    else:
+        problems.extend(f"platform_missing:{name}" for name in ORDER if name not in known)
+    return problems
+
+
+def _expected_keys(name: str, pairs: list[tuple[str, str]]) -> list[str]:
+    """The keys a line must carry, in order, given its own status or started value."""
+    values = dict(pairs)
+    if name == "BEGIN":
+        return ["abi", "evidence", "backend", "kernel"]
+    if name == "END":
+        return ["started", "refused"] if values.get("started") == "0" else ["started"]
+    keys = {"KERNEL": ["status"], "CLOCK": ["status", "provenance"], "ENTROPY": ["status", "provenance"],
+            "WAKE": ["status", "provenance", "mechanism"]}[name]
+    return keys + ["reason"] if values.get("status") == "REFUSED" else keys
+
+
+def _values(name: str, pairs: list[tuple[str, str]], ctx: dict[str, Any]) -> list[str]:
+    """Problems with the values of a line whose keys are right: each must be in its closed set."""
+    grammar, reasons = ctx["grammar"], ctx["reasons"]
+    capability = name.lower()
+    allowed = {
+        "status": grammar["status"], "provenance": grammar["provenance"], "mechanism": grammar["mechanism"],
+        "abi": grammar["abi"], "evidence": grammar["evidence"], "backend": list(BACKENDS), "started": ["0", "1"],
+    }
+    problems = []
+    for key, value in pairs:
+        if key in allowed:
+            if value not in allowed[key]:
+                problems.append(f"platform_value:{name}:{key}={_shown(value)}")
+        elif key == "reason":
+            if value not in reasons.get(capability, []):
+                problems.append(f"platform_value:{name}:reason={_shown(value)}")
+        elif key == "kernel":
+            if not KERNEL_RELEASE.fullmatch(value):
+                problems.append(f"platform_value:{name}:kernel={_shown(value)}")
+        elif key == "refused":
+            cap, _, reason = value.partition(":")
+            if cap not in CAPABILITIES or reason not in reasons.get(cap, []):
+                problems.append(f"platform_value:{name}:refused={_shown(value)}")
+    return problems
+
+
+def judge_output(data: bytes, arch: str, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Judge the child's stdout for the `arch` guest ("mips" or "ppc"). Returns the record that goes in the receipt:
+    `verdict` ("green", "degraded" or "red"), `problems` (named; empty unless red), the six lines, what each capability
+    reported, whether it started, and the `kernel=` value, which is recorded and never compared."""
+    if arch not in GUEST_ABI:
+        raise ValueError(f"unknown guest {arch!r}")
+    problems: list[str] = []
+    record: dict[str, Any] = {
+        "verdict": "red", "problems": problems, "lines": [], "outcomes": {}, "started": None, "kernel_release": None,
+    }
+    if not data:
+        problems.append("platform_empty_output")
+        return record
+    try:
+        text = data.decode("ascii")
+    except UnicodeDecodeError:
+        problems.append("platform_not_ascii")
+        return record
+    lines = text.split("\n")
+    if text.endswith("\n"):
+        lines = lines[:-1]
+    else:
+        problems.append("platform_not_newline_terminated")
+    record["lines"] = list(lines)
+    problems.extend(_structure(lines))
+    if problems:
+        return record
+
+    parsed: dict[str, list[tuple[str, str]]] = {}
+    for name, line in zip(ORDER, lines):
+        _, pairs = _split(line)
+        if pairs is None:
+            problems.append(f"platform_malformed:{name}")
+            continue
+        keys = [key for key, _ in pairs]
+        if keys != _expected_keys(name, pairs):
+            problems.append(f"platform_fields:{name}:{','.join(keys) if keys else 'none'}")
+            continue
+        value_problems = _values(name, pairs, ctx)
+        problems.extend(value_problems)
+        parsed[name] = pairs
+    if problems:
+        return record
+
+    begin = dict(parsed["BEGIN"])
+    record["kernel_release"] = begin["kernel"]
+    outcome = {cap: dict(parsed[CAPABILITY_LINE[cap]]) for cap in CAPABILITIES}
+    record["outcomes"] = {cap: fields["status"] for cap, fields in outcome.items()}
+    end = dict(parsed["END"])
+    record["started"] = end["started"] == "1"
+
+    if begin["backend"] != "kernel":
+        problems.append("platform_backend_simulated")
+    else:
+        expected_abi, expected_evidence = GUEST_ABI[arch]
+        if (begin["abi"], begin["evidence"]) != (expected_abi, expected_evidence):
+            problems.append(f"platform_abi:{begin['abi']}_{begin['evidence']}_for_{arch}")
+    for cap in CAPABILITIES[1:]:
+        name, fields = CAPABILITY_LINE[cap], outcome[cap]
+        status, provenance = fields["status"], fields["provenance"]
+        if provenance == "simulated":
+            problems.append(f"platform_simulated:{name}")
+        elif (status == "NOT_RUN") != (provenance == "none"):
+            problems.append(f"platform_provenance:{name}:{status}_with_{provenance}")
+    refused_before = outcome["kernel"]["status"] == "REFUSED"
+    for cap in CAPABILITIES[1:]:
+        name, status = CAPABILITY_LINE[cap], outcome[cap]["status"]
+        if status == "NOT_RUN" and not refused_before:
+            problems.append(f"platform_not_run_unexplained:{name}")
+        if outcome["kernel"]["status"] != "PASS" and status != "NOT_RUN":
+            problems.append(f"platform_ran_after_kernel_refusal:{name}")
+        refused_before = refused_before or status == "REFUSED"
+    first = next(((cap, outcome[cap]["reason"]) for cap in CAPABILITIES if outcome[cap]["status"] == "REFUSED"), None)
+    every_pass = all(outcome[cap]["status"] == "PASS" for cap in CAPABILITIES)
+    if end["started"] == "1":
+        if not every_pass:
+            problems.append("platform_end_disagrees:started_but_a_capability_did_not_pass")
+    elif every_pass:
+        problems.append("platform_end_disagrees:refused_but_every_capability_passed")
+    elif first is None:
+        problems.append("platform_end_disagrees:refusal_not_shown")
+    elif end["refused"] != f"{first[0]}:{first[1]}":
+        problems.append(f"platform_end_disagrees:names_{_shown(end['refused'])}_but_the_first_refusal_is_{first[0]}:{first[1]}")
+    if problems:
+        return record
+
+    # Well formed and self-consistent. Whether it shows the positive path is the policy.
+    if every_pass and record["started"]:
+        record["verdict"] = "green"
+    elif first is not None and (arch, first[0], first[1]) in DEGRADED and sum(
+            1 for cap in CAPABILITIES if outcome[cap]["status"] != "PASS") == 1:
+        record["verdict"] = "degraded"
+        record["degraded_because"] = f"{first[0]}:{first[1]}"
+    else:
+        problems.extend(f"platform_not_started:{cap}:{outcome[cap]['reason']}" for cap in CAPABILITIES
+                        if outcome[cap]["status"] == "REFUSED")
+    return record
+
+
+def judge_exit_status(record: dict[str, Any], status: int) -> list[str]:
+    """The guest's exit status must agree with the child's own `END`: 0 started, 3 refused. Only meaningful for output that
+    parsed; a transcript with problems is already red."""
+    if record["started"] is None:
+        return []
+    expected = 0 if record["started"] else 3
+    if status != expected:
+        return [f"platform_exit_status_disagrees:status={status}_started={int(record['started'])}"]
+    return []
+
+
+# ---- planted faults ----------------------------------------------------------------------------------------
+
+# Each plant changes a REAL transcript the same guest produced, in one way, and is re-sealed (the guest's byte count and
+# FNV are recomputed over the changed region), so the only thing wrong with it is the plant. It counts only against an
+# unplanted run of the same guest that was not red, and only if the verifier reports exactly the named problem and no other.
+PLANTS: dict[str, dict[str, Any]] = {
+    "provenance_double": {
+        "plant": "the CLOCK line claims provenance=double (not kernel, simulated or none)",
+        "expected": ["platform_value:CLOCK:provenance=double"],
+    },
+    "provenance_simulated": {
+        "plant": "the CLOCK line says provenance=simulated, the value a test double really prints",
+        "expected": ["platform_simulated:CLOCK"],
+    },
+    "backend_simulated": {
+        "plant": "the BEGIN line says backend=simulated while every capability still passes",
+        "expected": ["platform_backend_simulated"],
+    },
+    "missing_capability": {
+        "plant": "the ENTROPY line is missing from the run",
+        "expected": ["platform_missing:ENTROPY"],
+    },
+    "truncated": {
+        "plant": "the run stops after the CLOCK line (no ENTROPY, WAKE or END)",
+        "expected": ["platform_truncated:after:CLOCK"],
+    },
+}
+
+
+# The plants that change one value on one line: (line, what it says now, what the plant makes it say).
+REPLACEMENTS = {
+    "provenance_double": ("CLOCK", "provenance=kernel", "provenance=double"),
+    "provenance_simulated": ("CLOCK", "provenance=kernel", "provenance=simulated"),
+    "backend_simulated": ("BEGIN", "backend=kernel", "backend=simulated"),
+}
+
+
+def plant_transcript(raw_log: str, plant: str) -> str:
+    """`raw_log` with the platform step's child lines changed as `PLANTS[plant]` says, and the step's EXIT line re-sealed to
+    the changed bytes (the status the guest reported is kept). Raises ValueError if the log has no clean platform step or
+    the line to change is not there: a plant that cannot be applied is not a caught control."""
+    if plant not in PLANTS:
+        raise ValueError(f"unknown plant {plant!r}")
+    lines = raw_log.split("\n")
+    begins = [i for i, line in enumerate(lines) if line.strip().startswith(STEP_BEGIN_KEY + " ")]
+    exits = [i for i, line in enumerate(lines) if line.strip().startswith(STEP_EXIT_KEY + " ")]
+    if len(begins) != 1 or len(exits) != 1 or begins[0] >= exits[0]:
+        raise ValueError("no single platform step to plant in")
+    begin, exit_at = begins[0], exits[0]
+    crlf = lines[begin + 1].endswith("\r") if begin + 1 < exit_at else False
+    child = [line[:-1] if line.endswith("\r") else line for line in lines[begin + 1:exit_at]]
+    exit_ok = STEP_EXIT_OK.fullmatch(lines[exit_at].strip())
+    if exit_ok is None:
+        raise ValueError("the platform step did not end in a success form")
+
+    def index_of(name: str) -> int:
+        for i, line in enumerate(child):
+            if line.startswith(f"{LINE_PREFIX}{name} "):
+                return i
+        raise ValueError(f"no {name} line to plant in")
+
+    if plant in REPLACEMENTS:
+        name, old, new = REPLACEMENTS[plant]
+        i = index_of(name)
+        if old not in child[i]:
+            raise ValueError(f"the {name} line does not say {old}")
+        child[i] = child[i].replace(old, new, 1)
+    elif plant == "missing_capability":
+        del child[index_of("ENTROPY")]
+    else:
+        child = child[: index_of("CLOCK") + 1]
+    region = "".join(line + "\n" for line in child).encode("utf-8")
+    sealed = (f"{STEP_EXIT_KEY} status={exit_ok.group(1)} stdout_bytes={len(region)} "
+              f"stdout_fnv1a64={speaker_expect.fnv1a64(region):016x}")
+    exit_line = sealed + ("\r" if lines[exit_at].endswith("\r") else "")
+    body = [line + ("\r" if crlf else "") for line in child]
+    return "\n".join(lines[: begin + 1] + body + [exit_line] + lines[exit_at + 1:])

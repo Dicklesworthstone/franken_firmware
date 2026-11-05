@@ -160,10 +160,25 @@ impl Outcome {
     /// shown anything: `--catalog` is defined to print the board catalog.
     #[must_use]
     pub fn is_success(&self) -> bool {
-        matches!(
-            self,
-            Self::Exited { code: 0, output } if output.bytes > 0
-        )
+        self.is_success_for(Step::Catalog)
+    }
+
+    /// Whether `step` ran and printed something. The catalog step must exit 0. The platform step exits 0 (started) or 3
+    /// (refused), and either is "the step ran": the host judge reads the speaker's own lines and decides what they mean.
+    /// A clean exit that printed nothing shows nothing in either step.
+    #[must_use]
+    pub fn is_success_for(&self, step: Step) -> bool {
+        match (step, self) {
+            (Step::Catalog, Self::Exited { code: 0, output }) => output.bytes > 0,
+            (
+                Step::Platform,
+                Self::Exited {
+                    code: 0 | 3,
+                    output,
+                },
+            ) => output.bytes > 0,
+            _ => false,
+        }
     }
 }
 
@@ -246,11 +261,37 @@ impl Default for Line {
     }
 }
 
+/// Which child a smoke step runs. The catalog step is the original one. The platform step (P02, cargo feature
+/// `speaker-platform`) runs `--platform-startup` as a second child and has its own line names, so the catalog step's lines
+/// stay exactly what they were.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    Catalog,
+    Platform,
+}
+
+impl Step {
+    /// The prefix of the step's exit line, space included.
+    #[must_use]
+    pub const fn exit_prefix(self) -> &'static [u8] {
+        match self {
+            Self::Catalog => b"FFW_SPEAKER_EXIT ",
+            Self::Platform => b"FFW_PLATFORM_STEP_EXIT ",
+        }
+    }
+}
+
 /// The `FFW_SPEAKER_EXIT` line for an outcome, newline included.
 #[must_use]
 pub fn exit_line(outcome: &Outcome) -> Line {
+    exit_line_for(Step::Catalog, outcome)
+}
+
+/// The exit line of `step` for an outcome, newline included: the same forms, the step's own prefix.
+#[must_use]
+pub fn exit_line_for(step: Step, outcome: &Outcome) -> Line {
     let mut line = Line::new();
-    line.push(b"FFW_SPEAKER_EXIT ");
+    line.push(step.exit_prefix());
     match *outcome {
         Outcome::Spawn { stage, errno } => {
             line.push(b"spawn=");
@@ -557,5 +598,148 @@ mod tests {
         assert_eq!(decode_exec_probe(1, [0; 4]), ExecProbe::Unreadable(1));
         assert_eq!(decode_exec_probe(3, [0; 4]), ExecProbe::Unreadable(3));
         assert_eq!(decode_exec_probe(-9, [0; 4]), ExecProbe::Unreadable(-9));
+    }
+
+    /// The platform step's wire lines. The same example strings are asserted by toolchain/tests/test_platform_smoke.py
+    /// against the Python grammar that judges them.
+    fn wire_for(step: Step, outcome: &Outcome) -> Line {
+        exit_line_for(step, outcome)
+    }
+
+    #[test]
+    fn the_platform_step_has_its_own_prefix_and_the_same_forms() {
+        let exited = |code| Outcome::Exited { code, output: OUT };
+        assert_eq!(
+            wire_for(Step::Platform, &exited(0)).as_bytes(),
+            b"FFW_PLATFORM_STEP_EXIT status=0 stdout_bytes=17812 stdout_fnv1a64=0123456789abcdef\n"
+        );
+        assert_eq!(
+            wire_for(Step::Platform, &exited(3)).as_bytes(),
+            b"FFW_PLATFORM_STEP_EXIT status=3 stdout_bytes=17812 stdout_fnv1a64=0123456789abcdef\n"
+        );
+        assert_eq!(
+            wire_for(
+                Step::Platform,
+                &Outcome::Spawn {
+                    stage: SpawnStage::Exec,
+                    errno: 2
+                }
+            )
+            .as_bytes(),
+            b"FFW_PLATFORM_STEP_EXIT spawn=exec errno=2\n"
+        );
+        assert_eq!(
+            wire_for(
+                Step::Platform,
+                &Outcome::Signaled {
+                    signal: 11,
+                    output: OUT
+                }
+            )
+            .as_bytes(),
+            b"FFW_PLATFORM_STEP_EXIT signal=11 stdout_bytes=17812 stdout_fnv1a64=0123456789abcdef\n"
+        );
+        // The catalog step's line is what it was.
+        assert_eq!(
+            wire_for(Step::Catalog, &exited(0)).as_bytes(),
+            wire(&exited(0)).as_bytes()
+        );
+    }
+
+    #[test]
+    fn the_platform_step_ran_on_exit_zero_or_three_with_output_and_on_nothing_else() {
+        let empty = Output {
+            bytes: 0,
+            fnv1a64: Fnv1a64::OFFSET,
+        };
+        for code in [0u8, 3] {
+            assert!(
+                Outcome::Exited { code, output: OUT }.is_success_for(Step::Platform),
+                "{code}"
+            );
+            // Nothing printed shows nothing, whatever the status.
+            assert!(
+                !Outcome::Exited {
+                    code,
+                    output: empty
+                }
+                .is_success_for(Step::Platform),
+                "{code}: nothing printed"
+            );
+        }
+        for code in [1u8, 2, 4, 127, 255] {
+            assert!(
+                !Outcome::Exited { code, output: OUT }.is_success_for(Step::Platform),
+                "{code}"
+            );
+        }
+        assert!(!Outcome::Signaled {
+            signal: 11,
+            output: OUT
+        }
+        .is_success_for(Step::Platform));
+        assert!(!Outcome::Spawn {
+            stage: SpawnStage::Exec,
+            errno: 2
+        }
+        .is_success_for(Step::Platform));
+        // The catalog step is unchanged: only exit 0 is success there, and 3 is not.
+        assert!(Outcome::Exited {
+            code: 0,
+            output: OUT
+        }
+        .is_success_for(Step::Catalog));
+        assert!(!Outcome::Exited {
+            code: 3,
+            output: OUT
+        }
+        .is_success_for(Step::Catalog));
+        assert!(!Outcome::Exited {
+            code: 3,
+            output: OUT
+        }
+        .is_success());
+    }
+
+    #[test]
+    fn the_longest_platform_line_fits_with_its_newline() {
+        let widest = Output {
+            bytes: u32::MAX,
+            fnv1a64: u64::MAX,
+        };
+        for outcome in [
+            Outcome::Exited {
+                code: 255,
+                output: widest,
+            },
+            Outcome::Signaled {
+                signal: 255,
+                output: widest,
+            },
+            Outcome::ReadError {
+                errno: u32::MAX,
+                output: widest,
+            },
+            Outcome::WaitError {
+                errno: u32::MAX,
+                output: widest,
+            },
+            Outcome::UnrecognizedStatus {
+                raw: u32::MAX,
+                output: widest,
+            },
+            Outcome::ExecProbeError {
+                rc_magnitude: u32::MAX,
+                output: widest,
+            },
+            Outcome::Spawn {
+                stage: SpawnStage::Exec,
+                errno: u32::MAX,
+            },
+        ] {
+            let line = wire_for(Step::Platform, &outcome);
+            assert!(line.as_bytes().len() < LINE_CAP, "{outcome:?}");
+            assert_eq!(line.as_bytes().last(), Some(&b'\n'), "{outcome:?}");
+        }
     }
 }

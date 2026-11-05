@@ -32,6 +32,7 @@ REPO_ROOT = SCRIPT_DIR.parents[1]
 sys.path.insert(0, str(SCRIPT_DIR))
 import mkinitramfs  # noqa: E402
 import speaker_expect  # noqa: E402
+import platform_expect  # noqa: E402
 
 
 FORBIDDEN_SUBSTRINGS: tuple[str, ...] = (
@@ -581,10 +582,139 @@ def run_speaker_controls(arch: str, cfg: dict[str, Any], bin_path: pathlib.Path,
     return controls
 
 
+# ---- franken-speaker platform step (P02 `ffw-jub`; BeigeMaple mail 4778) --------------------------------------
+#
+# With `--speaker-platform` the guests are also built with the `speaker-platform` cargo feature (which needs
+# `speaker-smoke`): after the `--catalog` step, PID 1 runs `/franken-speaker --platform-startup` as a second child and prints
+#
+#     FFW_PLATFORM_STEP_BEGIN path=/franken-speaker argv=--platform-startup
+#     <the child's stdout, forwarded verbatim: six FFW_PLATFORM:* lines>
+#     FFW_PLATFORM_STEP_EXIT status=<0|3> stdout_bytes=<N> stdout_fnv1a64=<16 hex>
+#
+# The wrapper lines have their own names, so the catalog step's lines and digests are untouched. The expected form is fixed
+# here, before any run, and judged by `platform_expect` (grammar: docs/contracts/p02.md and
+# crates/franken-speaker/tests/vectors/p02_platform_markers.json):
+#   * the BEGIN line exactly once, after the catalog step's EXIT, and the EXIT line exactly once after it;
+#   * the EXIT line in a "ran" form (status 0 or 3, at least one byte); every other form is `platform_step_failed:<words>`;
+#   * the console transcript between BEGIN and EXIT must be byte-for-byte what the guest measured (count and FNV-1a-64);
+#   * the child's six lines are judged as a whole: green (every capability PASS with provenance=kernel), degraded (MIPS
+#     entropy not_seeded, the contract's one allowed refusal) or red, every red with a named problem;
+#   * the guest's exit status must agree with the child's own END (0 started, 3 refused).
+# Without `--speaker-platform` any FFW_PLATFORM* line is an unknown marker and fails the guest, as the FFW_SPEAKER_* lines do.
+
+PLATFORM_FEATURE = "speaker-platform"
+PLATFORM_BOUNDARY = (
+    "the device franken-speaker's startup, run once as a userspace process under a harness guest, reported what that guest's "
+    "kernel answered to the platform layer's clock, entropy and wake probes; says nothing about Sonos silicon, a stock "
+    "kernel, a board's kernel= string, or whether an unseeded pool later seeds"
+)
+
+
+def judge_platform_step(raw_log: str, lines: list[str], positions: dict[str, int], errors: list[str],
+                        platform: dict[str, Any], arch: str) -> dict[str, Any]:
+    """The platform half of a transcript. Appends named errors to `errors`; returns the record for the receipt."""
+    record: dict[str, Any] = {
+        "argv": [platform_expect.STEP_PATH, platform_expect.STEP_ARG],
+        "grammar": {"source": platform["grammar"]["source"], "sha256": platform["grammar"]["sha256"]},
+        "outcome": "not_run",
+        "exit_line": None,
+        "verdict": "not_run",
+    }
+    begin, exit_at = positions.get(platform_expect.STEP_BEGIN_KEY), positions.get(platform_expect.STEP_EXIT_KEY)
+    # The generic marker loop skips FFW_PLATFORM: lines (they are the child's, judged as a whole). So a line of that family
+    # that is not between the step's own BEGIN and EXIT would be judged by nothing: it is an error of its own.
+    if any(line.startswith(platform_expect.LINE_PREFIX)
+           and not (begin is not None and exit_at is not None and begin < index < exit_at)
+           for index, line in enumerate(lines)):
+        errors.append("platform_outside_step")
+    if exit_at is None:
+        return record
+    record["exit_line"] = lines[exit_at]
+    record["verdict"] = "red"
+    if begin is not None and begin > exit_at:
+        errors.append("platform_order:exit_before_begin")
+    catalog_exit = positions.get("FFW_SPEAKER_EXIT")
+    if begin is not None and catalog_exit is not None and begin < catalog_exit:
+        errors.append("platform_order:before_catalog")
+    ok = platform_expect.STEP_EXIT_OK.fullmatch(lines[exit_at])
+    if ok is None:
+        record["outcome"] = "failed" if platform_expect.STEP_EXIT_FAILURE.fullmatch(lines[exit_at]) else "invalid"
+        return record
+    status = int(ok.group(1))
+    record["outcome"] = f"exited_{status}"
+    reported = {"stdout_bytes": int(ok.group(2)), "stdout_fnv1a64": ok.group(3)}
+    record["reported"] = reported
+    region, reason = platform_expect.step_region(raw_log)
+    if region is None:
+        errors.append(f"platform_region:{reason}")
+        return record
+    measured = {"stdout_bytes": len(region), "stdout_fnv1a64": f"{speaker_expect.fnv1a64(region):016x}"}
+    record["console_region"] = measured
+    if measured["stdout_bytes"] != reported["stdout_bytes"]:
+        errors.append("platform_stdout_mismatch:bytes")
+    if measured["stdout_fnv1a64"] != reported["stdout_fnv1a64"]:
+        errors.append("platform_stdout_mismatch:fnv1a64")
+    judged = platform_expect.judge_output(region, arch, platform["grammar"])
+    problems = list(judged["problems"])
+    if not problems:
+        problems.extend(platform_expect.judge_exit_status(judged, status))
+    errors.extend(problems)
+    record.update({
+        "verdict": "red" if problems else judged["verdict"],
+        "problems": problems,
+        "lines": judged["lines"],
+        "outcomes": judged["outcomes"],
+        "started": judged["started"],
+        # Recorded as evidence of which kernel answered; never compared, never a reason to refuse (docs/contracts/p02.md).
+        "kernel_release": judged["kernel_release"],
+    })
+    if "degraded_because" in judged and not problems:
+        record["degraded_because"] = judged["degraded_because"]
+    return record
+
+
+def judge_platform_control(verification: dict[str, Any], plant: str) -> dict[str, Any]:
+    """Was a planted transcript caught, and for exactly the planted reason? Every check must hold: the guest failed, the
+    verifier's only validation error is the plant's named one, no marker is missing or forbidden (the plant changed the
+    speaker's lines and nothing else), and the platform verdict is red."""
+    checks = {
+        "guest_failed": verification["status"] == "FAIL",
+        "only_the_planted_error": verification["validation_errors"] == platform_expect.PLANTS[plant]["expected"],
+        "no_missing_marker": verification["missing_markers"] == [],
+        "no_forbidden_marker": verification["forbidden_hits"] == [],
+        "platform_verdict_red": verification.get("platform", {}).get("verdict") == "red",
+    }
+    return {"checks": checks, "caught": all(checks.values())}
+
+
+def run_platform_controls(raw_log: str, arch: str, cfg: dict[str, Any], speaker: dict[str, Any],
+                          platform: dict[str, Any]) -> dict[str, Any]:
+    """Each plant is the guest's own transcript changed in one way and re-sealed (see `platform_expect.PLANTS`), judged by the
+    same verifier. Credited only against an unplanted run of the same guest that was not red (the caller checks)."""
+    controls: dict[str, Any] = {}
+    for plant, spec in platform_expect.PLANTS.items():
+        try:
+            planted = platform_expect.plant_transcript(raw_log, plant)
+        except ValueError as error:
+            controls[plant] = {"plant": spec["plant"], "not_applied": str(error), "caught": False}
+            continue
+        verification = verify_serial_output(arch, cfg["hello"], cfg["enosys"], planted, cfg["triple"],
+                                            speaker=speaker, platform=platform)
+        controls[plant] = {
+            "plant": spec["plant"],
+            "expected": spec["expected"],
+            "observed": verification["validation_errors"],
+            **judge_platform_control(verification, plant),
+        }
+    return controls
+
+
 def verify_serial_output(
     arch: str, expected_hello: str, expected_enosys: str, raw_log: str, expected_triple: str,
-    speaker: dict[str, Any] | None = None,
+    speaker: dict[str, Any] | None = None, platform: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if platform is not None and speaker is None:
+        raise ValueError("the platform step is the speaker smoke's second child: it needs the speaker step")
     lines = [line.strip() for line in raw_log.splitlines()]
     forbidden_hits = [bad for bad in FORBIDDEN_SUBSTRINGS if bad in raw_log]
     # Parse the exact v1 transcript. Substring matching accepts errno=890 as
@@ -619,12 +749,17 @@ def verify_serial_output(
     if speaker is not None:
         patterns["FFW_SPEAKER_BEGIN"] = re.escape(speaker_expect.BEGIN_LINE)
         patterns["FFW_SPEAKER_EXIT"] = speaker_expect.EXIT_OK.pattern
+    if platform is not None:
+        patterns[platform_expect.STEP_BEGIN_KEY] = re.escape(platform_expect.STEP_BEGIN_LINE)
+        patterns[platform_expect.STEP_EXIT_KEY] = platform_expect.STEP_EXIT_OK.pattern
     positions: dict[str, int] = {}
     errors = []
     probes = {}
     for idx, line in enumerate(lines):
         if not line.startswith("FFW_"):
             continue
+        if platform is not None and line.startswith(platform_expect.LINE_PREFIX):
+            continue  # the child's own six lines are judged as a whole by judge_platform_step, not marker by marker
         key = line.split()[0]
         if key in positions:
             errors.append(f"duplicate:{key}")
@@ -635,6 +770,10 @@ def verify_serial_output(
             if speaker is not None and key == "FFW_SPEAKER_EXIT" and speaker_expect.EXIT_FAILURE.fullmatch(line):
                 # The guest said exactly how the speaker failed; name that, do not call it a malformed line.
                 errors.append("speaker_failed:" + line[len("FFW_SPEAKER_EXIT "):])
+            elif (platform is not None and key == platform_expect.STEP_EXIT_KEY
+                  and platform_expect.STEP_EXIT_FAILURE.fullmatch(line)):
+                # The guest said exactly how the platform step failed; name that.
+                errors.append("platform_step_failed:" + line[len(platform_expect.STEP_EXIT_KEY) + 1:])
             elif key == "FFW_GUEST:CONSOLE_LEVEL" and CONSOLE_LEVEL_FAILURE.fullmatch(line):
                 # The guest said exactly what the kernel answered; name that.
                 errors.append("console_level_refused:" + line[len("FFW_GUEST:CONSOLE_LEVEL "):])
@@ -691,6 +830,8 @@ def verify_serial_output(
             errors.append("inconsistent:FFW_BUILD_vs_FFW_RUSTC")
 
     speaker_record = judge_speaker(raw_log, lines, positions, errors, speaker) if speaker is not None else None
+    platform_record = (judge_platform_step(raw_log, lines, positions, errors, platform, arch)
+                       if platform is not None else None)
 
     passed = (not forbidden_hits) and (not missing) and (not errors) and order_ok
     result = {
@@ -716,6 +857,8 @@ def verify_serial_output(
     }
     if speaker_record is not None:
         result["speaker"] = speaker_record
+    if platform_record is not None:
+        result["platform"] = platform_record
     return result
 
 
@@ -733,8 +876,12 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
         speaker_ctx = {"expected": speaker_expect.load_expected(REPO_ROOT)}
         if getattr(args, "speaker_host", None) is not None:
             speaker_ctx["host"] = args.speaker_host           # already checked in main(), before anything ran
+    platform_ctx: dict[str, Any] | None = None
+    if getattr(args, "speaker_platform", False):
+        platform_ctx = {"grammar": platform_expect.load_grammar(REPO_ROOT)}   # already checked in main()
     target_dir = args.target_dir or build_dir / (
-        "hello-init-speaker-target" if speaker_bins is not None else "hello-init-target")
+        "hello-init-platform-target" if platform_ctx is not None
+        else "hello-init-speaker-target" if speaker_bins is not None else "hello-init-target")
 
     targets = {
         "mips": {
@@ -775,7 +922,7 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
                 "build-std=core,panic_abort",
             ]
             if speaker_bins is not None:
-                cmd += ["--features", SPEAKER_FEATURE]
+                cmd += ["--features", ",".join([SPEAKER_FEATURE] + ([PLATFORM_FEATURE] if platform_ctx is not None else []))]
             # RCH admits a build against a worker's slot count using ITS OWN core estimate, which ignores
             # CARGO_BUILD_JOBS, so the job count has to be in the command itself ("-j 3 (or fewer)" on a
             # 3-slot worker). Recorded verbatim in build_manifest.command like every other argument.
@@ -823,7 +970,7 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
             output.write(raw_combined)
 
         verification = verify_serial_output(arch, cfg["hello"], cfg["enosys"], combined, cfg["triple"],
-                                            speaker=speaker_ctx)
+                                            speaker=speaker_ctx, platform=platform_ctx)
         elf = inspect_static_elf(bin_path, arch)
         linker = configured_linker(hello_crate, cfg["triple"])
         identity = verification["build_identity"]
@@ -860,7 +1007,8 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
                 "linker_configured": linker,
                 "build_manifest": build_manifest(
                     hello_crate, cfg["triple"], build_commands.get(arch), sources, target_dir,
-                    [SPEAKER_FEATURE] if speaker_bins is not None else None),
+                    ([SPEAKER_FEATURE] + ([PLATFORM_FEATURE] if platform_ctx is not None else []))
+                    if speaker_bins is not None else None),
                 "qemu_exit_code": returncode,
                 "timed_out": timed_out,
                 "capture_stop_reason": capture["stop_reason"],
@@ -903,6 +1051,27 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
                     elif not record["caught"]:
                         verification["validation_errors"].append(f"speaker_control_not_caught:{name}")
                         verification["status"] = "FAIL"
+            if platform_ctx is not None:
+                platform_record = verification["platform"]
+                platform_record["qualification_boundary"] = PLATFORM_BOUNDARY
+                if getattr(args, "platform_controls", False):
+                    # Credited only against a baseline that was not red: a plant proves nothing if the unplanted run
+                    # of the same guest already failed. A PASS guest has no platform error, so its verdict is green or
+                    # degraded (E03's own neither-green-nor-red), which is a baseline.
+                    baseline_ok = (not capture["stop_reason"] and returncode == 0
+                                   and verification["status"] == "PASS")
+                    if baseline_ok:
+                        platform_controls = run_platform_controls(combined, arch, cfg, speaker_ctx, platform_ctx)
+                    else:
+                        platform_controls = {name: {"skipped": "baseline_failed"} for name in platform_expect.PLANTS}
+                    platform_record["controls"] = platform_controls
+                    for name, record in platform_controls.items():
+                        if "skipped" in record or "not_applied" in record:
+                            verification["validation_errors"].append(f"platform_control_not_run:{name}")
+                            verification["status"] = "FAIL"
+                        elif not record["caught"]:
+                            verification["validation_errors"].append(f"platform_control_not_caught:{name}")
+                            verification["status"] = "FAIL"
         if capture["stop_reason"] or returncode != 0 or verification["status"] != "PASS":
             verification["status"] = "FAIL"
             overall_pass = False
@@ -953,6 +1122,16 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
             "expected_source": {"path": expected["source"], "sha256": expected["source_sha256"],
                                 "schema_version": expected["schema_version"], "rows": len(expected["rows"])},
             "host_catalog": speaker_ctx.get("host"),
+        }
+    if platform_ctx is not None:
+        receipt["platform_step"] = {
+            "feature": PLATFORM_FEATURE,
+            "argv": [platform_expect.STEP_PATH, platform_expect.STEP_ARG],
+            "controls_requested": bool(getattr(args, "platform_controls", False)),
+            "grammar": {"source": platform_ctx["grammar"]["source"], "sha256": platform_ctx["grammar"]["sha256"]},
+            # green, degraded or red per guest: degraded (MIPS entropy not_seeded) does not fail the run, and is not green.
+            "verdicts": {arch: guest["platform"]["verdict"] for arch, guest in guest_results.items()
+                         if "platform" in guest},
         }
 
     receipt_path = results_dir / "e07-e03-verification-receipt.json"
@@ -1006,6 +1185,13 @@ def main(argv: list[str] | None = None) -> int:
     speaker.add_argument("--speaker-host-catalog", type=pathlib.Path, metavar="FILE",
                          help="stdout of the HOST build's `franken-speaker --catalog`; it must pass the catalog "
                               "check itself (positive control) and each guest's stdout must equal it exactly")
+    speaker.add_argument("--speaker-platform", action="store_true",
+                         help="also run `/franken-speaker --platform-startup` as a second child in each guest (the guests "
+                              "are built with the `speaker-platform` feature) and judge its six FFW_PLATFORM:* lines")
+    speaker.add_argument("--platform-controls", action="store_true",
+                         help="also judge planted transcripts of the platform step (provenance=double, "
+                              "provenance=simulated, backend=simulated, a missing capability, a truncated run); each "
+                              "must fail for exactly the planted reason")
     parser.add_argument("--check-catalog", type=pathlib.Path, metavar="FILE",
                         help="only judge FILE (a `franken-speaker --catalog` stdout) against the catalog the Rust "
                              "source defines, print the verdict and exit; runs no guest")
@@ -1021,7 +1207,8 @@ def main(argv: list[str] | None = None) -> int:
     args.speaker_host = None
     if args.check_catalog is not None:
         if (args.speaker_mips is not None or args.speaker_ppc is not None
-                or args.speaker_host_catalog is not None or args.speaker_controls):
+                or args.speaker_host_catalog is not None or args.speaker_controls
+                or args.speaker_platform or args.platform_controls):
             parser.error("--check-catalog stands alone; it runs no guest")
         return check_catalog_file(args.check_catalog, parser)
     if args.speaker_mips is not None or args.speaker_ppc is not None:
@@ -1046,8 +1233,15 @@ def main(argv: list[str] | None = None) -> int:
             args.speaker_host = {"stdout_bytes": len(host_bytes),
                                  "stdout_fnv1a64": f"{speaker_expect.fnv1a64(host_bytes):016x}",
                                  "sha256": hashlib.sha256(host_bytes).hexdigest()}
-    elif args.speaker_controls or args.speaker_host_catalog is not None:
-        parser.error("--speaker-controls and --speaker-host-catalog need --speaker-mips and --speaker-ppc")
+    elif args.speaker_controls or args.speaker_host_catalog is not None or args.speaker_platform:
+        parser.error("--speaker-controls, --speaker-host-catalog and --speaker-platform need --speaker-mips and --speaker-ppc")
+    if args.platform_controls and not args.speaker_platform:
+        parser.error("--platform-controls needs --speaker-platform")
+    if args.speaker_platform:
+        try:
+            platform_expect.load_grammar(REPO_ROOT)     # fail closed before any guest: a missing grammar judges nothing
+        except platform_expect.PlatformGrammarError as error:
+            parser.error(f"--speaker-platform: {error}")
     run_id = args.run_id = uuid.uuid4().hex
     results_dir = args.results_dir or REPO_ROOT / "toolchain" / "results" / "runs" / run_id
     results_dir.mkdir(parents=True, exist_ok=False)

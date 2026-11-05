@@ -61,8 +61,91 @@ unplanted run of that guest passed.
 | mode 0644 | `FFW_SPEAKER_EXIT spawn=exec errno=13` | EACCES |
 | the other ISA's speaker | `FFW_SPEAKER_EXIT spawn=exec errno=8` | ENOEXEC |
 
+## Platform step (P02 `ffw-jub`): `--speaker-platform`
+
+**Status.** Written and tested on the host against synthetic transcripts and the committed marker examples; **no guest has run
+it.** It needs the device `franken-speaker` that carries the platform layer (built centrally from the P01 plan after
+`device.patch` lands): a host build has no kernel backend, exits 2 and prints no markers. A pass would show what the harness
+guest's kernel answered to the platform layer's clock, entropy and wake probes in one start of the device speaker. It would not
+show anything about Sonos silicon, a stock kernel, what a board's `kernel=` string is, or whether an unseeded pool later seeds.
+
+### Command
+
+The command under Command above, plus the two flags. The guests are then built with the `speaker-platform` feature (which
+implies `speaker-smoke`) into their own default target directory, `hello-init-platform-target`:
+
+```sh
+RCH_WORKER=ts1,hz3,hz4 python3 toolchain/src/run-qemu-verification.py --timeout 60 --jobs 2 \
+  --speaker-mips <MIPS device speaker with the platform layer> \
+  --speaker-ppc  <PowerPC device speaker with the platform layer> \
+  --speaker-host-catalog host-catalog.json --speaker-platform --platform-controls
+```
+
+### Markers (fixed before any run)
+
+```
+...the catalog step above, unchanged...
+FFW_PLATFORM_STEP_BEGIN path=/franken-speaker argv=--platform-startup
+FFW_PLATFORM:BEGIN abi=<mips32|powerpc32> evidence=<harness-mips-4.19|harness-ppc-4.9> backend=kernel kernel=<release>
+FFW_PLATFORM:KERNEL status=PASS
+FFW_PLATFORM:CLOCK status=PASS provenance=kernel
+FFW_PLATFORM:ENTROPY status=PASS provenance=kernel
+FFW_PLATFORM:WAKE status=PASS provenance=kernel mechanism=eventfd
+FFW_PLATFORM:END started=1
+FFW_PLATFORM_STEP_EXIT status=0 stdout_bytes=<N> stdout_fnv1a64=<16 hex>
+FFW_MARKER:TEST_SUCCESS failures=0
+```
+
+The six `FFW_PLATFORM:*` lines are the speaker's. Their grammar is in `docs/contracts/p02.md` and
+`crates/franken-speaker/tests/vectors/p02_platform_markers.json`, which the judge reads (the receipt records its SHA-256). The two
+`FFW_PLATFORM_STEP_*` lines are the guest's, with their own names so the catalog step's lines and digests are untouched. The
+guest accepts exit status 0 (started) and 3 (refused) as "the step ran"; every other form is `platform_step_failed:<the guest's
+words>`. The console text between the two wrapper lines must match the guest's own byte count and FNV-1a-64. Without
+`--speaker-platform`, any `FFW_PLATFORM*` line is an unknown marker and fails the guest.
+
+### Verdicts (`toolchain/src/platform_expect.py`)
+
+| verdict | what it is | the run |
+|---|---|---|
+| green | KERNEL, CLOCK, ENTROPY and WAKE all `PASS` with `provenance=kernel`; `backend=kernel`; the guest's own ABI and evidence names; `END started=1`; exit 0 | passes |
+| degraded | MIPS only: `ENTROPY` `REFUSED provenance=kernel reason=not_seeded`, `END started=0 refused=entropy:not_seeded`, exit 3, the other three `PASS`. E03's own verdict for an unseeded pool: neither green nor red | passes; the receipt says `degraded` in `platform_step.verdicts` and it is not green |
+| red | everything else, each with a named problem (below) | fails the guest |
+
+Red problems are named, never a bare failure: `platform_value:<LINE>:<key>=<value>` (a value outside the closed set, for example
+`provenance=double`), `platform_fields:`, `platform_malformed:`, `platform_missing:<LINE>`, `platform_duplicate:<LINE>`,
+`platform_order:<LINE>`, `platform_truncated:after:<LINE>`, `platform_after_end`, `platform_simulated:<LINE>`,
+`platform_backend_simulated`, `platform_abi:`, `platform_not_run_unexplained:<LINE>`, `platform_ran_after_kernel_refusal:<LINE>`,
+`platform_end_disagrees:`, `platform_exit_status_disagrees:`, `platform_stdout_mismatch:`, `platform_outside_step`, and
+`platform_not_started:<capability>:<reason>` for a well-formed refusal that does not show the positive path. The `kernel=` value is
+recorded and never compared. The degraded cell is exactly one cell (`DEGRADED` in `platform_expect.py`): `not_seeded` on PowerPC,
+or any other refusal on either guest, is red.
+
+### Controls (`--platform-controls`)
+
+No extra boot. Each plant is the guest's OWN transcript changed in one way and re-sealed (the step's byte count and FNV are
+recomputed over the changed bytes), so the only fault is the plant. It counts only against an unplanted run of the same guest that
+was not red, and only if the verifier reports exactly the named problem and nothing else.
+
+| plant | the verifier must report exactly |
+|---|---|
+| the CLOCK line says `provenance=double` (not a value of the grammar) | `platform_value:CLOCK:provenance=double` |
+| the CLOCK line says `provenance=simulated` (the value a test double prints) | `platform_simulated:CLOCK` |
+| the BEGIN line says `backend=simulated` with every capability still passing | `platform_backend_simulated` |
+| the ENTROPY line is missing | `platform_missing:ENTROPY` |
+| the run stops after the CLOCK line | `platform_truncated:after:CLOCK` |
+
+### Tests
+
+`python3 -B -m unittest discover -s toolchain/tests -p 'test_platform_smoke.py'` (stdlib only; it needs the P02 marker vectors and
+`tests/p02/test_platform_markers.py`, so it runs only once `device.patch` has landed). It checks the committed examples per
+guest, the drop/duplicate/swap of every line and the other planted faults, the verifier on full transcripts, the controls
+(including that a judge that accepts everything is not credited), the runner end to end with patched guests, and the guest source
+against the grammar. It cross-checks this judge against the reference judge in `tests/p02`; they disagree on two cases, both named
+in the test: the reference judge accepts a `REFUSED` line whose provenance is `simulated` or `none`.
+
 ## Where the spec is
 
 The runner (`toolchain/src/run-qemu-verification.py`), `toolchain/src/speaker_expect.py`, the guest step
-(`toolchain/src/ffw-hello-init/src/speaker_smoke.rs`, cargo feature `speaker-smoke`, off by default) and
-`toolchain/tests/test_speaker_smoke.py`.
+(`toolchain/src/ffw-hello-init/src/speaker_smoke.rs`, cargo feature `speaker-smoke`, off by default; its platform step is
+`run_platform`, cargo feature `speaker-platform`, off by default) and `toolchain/tests/test_speaker_smoke.py`. The platform step's
+judge is `toolchain/src/platform_expect.py` and its tests are `toolchain/tests/test_platform_smoke.py`.

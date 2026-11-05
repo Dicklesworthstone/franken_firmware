@@ -15,6 +15,10 @@ edition = "2021"
 # Off by default, so the E07/E03 bootstrap probe is exactly what it was. On, PID 1 also runs the franken-speaker
 # smoke step after the probes: `/franken-speaker --catalog` as a child process (src/speaker_smoke.rs).
 speaker-smoke = []
+# Off by default, and needs `speaker-smoke`. On, PID 1 also runs `/franken-speaker --platform-startup` as a second child after
+# the catalog step (P02, src/speaker_smoke.rs `run_platform`), with its own wrapper lines; the host runner judges the
+# speaker's six FFW_PLATFORM:* lines (toolchain/src/platform_expect.py). Without it the guest is exactly the speaker-smoke one.
+speaker-platform = ["speaker-smoke"]
 
 [profile.release]
 opt-level = "z"

@@ -21,6 +21,8 @@ use ffw_hello_init::speaker_judge::{
     decode_exec_probe, decode_wait_status, exit_line, ExecProbe, Fnv1a64, Outcome, Output,
     SpawnStage, WaitStatus,
 };
+#[cfg(feature = "speaker-platform")]
+use ffw_hello_init::speaker_judge::{exit_line_for, Step};
 
 use super::{emit_console, sys, sys_close, sys_exit, sys_raw, sys_read, sys_write, LineWriter};
 
@@ -43,6 +45,8 @@ mod nr {
 /// What is executed, and what the BEGIN line reports: the line is built from these same constants.
 const PATH: &CStr = c"/franken-speaker";
 const ARG_CATALOG: &CStr = c"--catalog";
+#[cfg(feature = "speaker-platform")]
+const ARG_PLATFORM: &CStr = c"--platform-startup";
 
 /// Bounds on retries (EINTR) so no loop here is unbounded; the external guest watchdog bounds wall-clock time.
 const READ_ATTEMPTS: usize = 1 << 20;
@@ -84,7 +88,7 @@ fn close_all(fds: &[usize]) {
 
 /// Runs in the forked child and never returns: either `execve` replaces the process, or the errno is written
 /// to the error pipe and the child exits.
-fn run_child(out_write: usize, err_write: usize) -> ! {
+fn run_child(out_write: usize, err_write: usize, arg: &CStr) -> ! {
     // Standard output becomes the pipe; stdin and stderr remain the console.
     let dup_rc = sys_dup2(out_write, 1);
     let errno = if dup_rc < 0 {
@@ -93,11 +97,7 @@ fn run_child(out_write: usize, err_write: usize) -> ! {
         if out_write != 1 {
             let _ = sys_close(out_write);
         }
-        let argv = [
-            PATH.as_ptr() as usize,
-            ARG_CATALOG.as_ptr() as usize,
-            0usize,
-        ];
+        let argv = [PATH.as_ptr() as usize, arg.as_ptr() as usize, 0usize];
         let envp = [0usize];
         // `execve` only returns on failure, with -errno.
         sys_execve(&argv, &envp).unsigned_abs() as u32
@@ -194,7 +194,7 @@ fn run_parent(console_fd: usize, pid: usize, out_read: usize, err_read: usize) -
     }
 }
 
-fn spawn_and_collect(console_fd: usize) -> Outcome {
+fn spawn_and_collect(console_fd: usize, arg: &CStr) -> Outcome {
     let mut out_fds = [-1i32; 2];
     let mut err_fds = [-1i32; 2];
     let rc = sys_pipe2(&mut out_fds, 0);
@@ -228,7 +228,7 @@ fn spawn_and_collect(console_fd: usize) -> Outcome {
     }
     if pid == 0 {
         close_all(&[out_read, err_read]);
-        run_child(out_write, err_write);
+        run_child(out_write, err_write, arg);
     }
     close_all(&[out_write, err_write]);
     run_parent(console_fd, pid as usize, out_read, err_read)
@@ -244,7 +244,29 @@ pub fn run(console_fd: usize) -> usize {
     begin.push(b"\n");
     emit_console(console_fd, begin.as_slice());
 
-    let outcome = spawn_and_collect(console_fd);
+    let outcome = spawn_and_collect(console_fd, ARG_CATALOG);
     emit_console(console_fd, exit_line(&outcome).as_bytes());
     usize::from(!outcome.is_success())
+}
+
+/// The platform step (cargo feature `speaker-platform`): `/franken-speaker --platform-startup` as a second child, after the
+/// catalog step, with its own line names (`FFW_PLATFORM_STEP_BEGIN` / `FFW_PLATFORM_STEP_EXIT`) so the catalog step's lines are
+/// untouched. Exit 0 (started) and exit 3 (refused) both count as "the step ran"; the host judge reads the speaker's own six
+/// `FFW_PLATFORM:*` lines and decides what they mean. Returns its failure count (0 or 1) for `_start`'s total.
+#[cfg(feature = "speaker-platform")]
+pub fn run_platform(console_fd: usize) -> usize {
+    let mut begin = LineWriter::new();
+    begin.push(b"FFW_PLATFORM_STEP_BEGIN path=");
+    begin.push(PATH.to_bytes());
+    begin.push(b" argv=");
+    begin.push(ARG_PLATFORM.to_bytes());
+    begin.push(b"\n");
+    emit_console(console_fd, begin.as_slice());
+
+    let outcome = spawn_and_collect(console_fd, ARG_PLATFORM);
+    emit_console(
+        console_fd,
+        exit_line_for(Step::Platform, &outcome).as_bytes(),
+    );
+    usize::from(!outcome.is_success_for(Step::Platform))
 }

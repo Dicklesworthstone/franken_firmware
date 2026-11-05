@@ -799,6 +799,11 @@ pub extern "C" fn _start() -> ! {
     #[cfg(feature = "speaker-smoke")]
     {
         failures += speaker_smoke::run(console_fd);
+        // The platform step (P02): a second child, after the catalog step, only in a build with `speaker-platform`.
+        #[cfg(feature = "speaker-platform")]
+        {
+            failures += speaker_smoke::run_platform(console_fd);
+        }
     }
 
     if failures == 0 {
