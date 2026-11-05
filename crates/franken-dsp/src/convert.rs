@@ -600,7 +600,9 @@ mod tests {
         assert_eq!(int_to_f32(0, 16), 0.0);
         assert_eq!(int_to_f32(16384, 16), 0.5);
         assert_eq!(int_to_f32(-32768, 16), -1.0);
-        assert_eq!(int_to_f32(32767, 16), 0.999_969_482_421_875);
+        // 32767 / 32768 = 0.999969482421875 exactly (15 significant bits), written as the exact
+        // quotient so the f32 value is spelled out without a literal longer than f32 carries.
+        assert_eq!(int_to_f32(32767, 16), 32_767.0 / 32_768.0);
         assert_eq!(int_to_f32(1, 16), 1.0 / 32768.0);
         assert_eq!(int_to_f32(0x7F_FFFF, 24), 1.0 - 1.0 / 8_388_608.0);
         assert_eq!(int_to_f32(-0x80_0000, 24), -1.0);
@@ -874,8 +876,14 @@ mod tests {
         let mut dst = vec![0u8; 8 * 4];
         let (frames, _) = convert_packed(&src, &wide, &mut dst, &out).unwrap();
         assert_eq!(frames, 1);
-        for (c, chunk) in dst.chunks_exact(4).enumerate() {
-            let got = f32::from_bits(u32::from_be_bytes(chunk.try_into().unwrap()));
+        let (samples, remainder) = dst.as_chunks::<4>();
+        assert!(
+            remainder.is_empty(),
+            "8 channels of f32 are whole 4-byte samples"
+        );
+        assert_eq!(samples.len(), 8);
+        for (c, sample) in samples.iter().enumerate() {
+            let got = f32::from_bits(u32::from_be_bytes(*sample));
             assert_eq!(got, (c as f32 * 4096.0) / 32768.0, "channel {c}");
         }
     }

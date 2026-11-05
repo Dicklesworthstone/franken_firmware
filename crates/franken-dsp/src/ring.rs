@@ -651,8 +651,10 @@ mod tests {
                 let mut out = vec![0u8; n * 2];
                 match c.pop(&mut out) {
                     Ok(_) => {
-                        for (i, pair) in out.chunks_exact(2).enumerate() {
-                            let got = u16::from_be_bytes([pair[0], pair[1]]);
+                        let (pairs, remainder) = out.as_chunks::<2>();
+                        assert!(remainder.is_empty(), "whole s16 frames only");
+                        for (i, pair) in pairs.iter().enumerate() {
+                            let got = u16::from_be_bytes(*pair);
                             let want = ((seen + i as u32) & 0xFFFF) as u16;
                             assert_eq!(got, want, "frame {}", seen + i as u32);
                         }
