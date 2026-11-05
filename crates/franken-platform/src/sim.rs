@@ -12,13 +12,15 @@
 //! * [`SeededSim`] (the `sim` feature) is a deterministic stand-in for a host harness that needs a platform layer to
 //!   run against: a seeded byte stream for `getrandom`, a virtual monotonic clock, and in-memory wake descriptors.
 //!   Its bytes are reproducible, so they are **not secret** and must not be used as a key. It uses only the errno
-//!   numbers that are the same on both legacy ABIs (`EBADF`, `EAGAIN`, `EINVAL`).
+//!   numbers that are the same on both legacy ABIs (`ENOENT`, `EBADF`, `EAGAIN`, `EINVAL`). It has no legacy `/dev/random`: that
+//!   call answers `ENOENT`, so a legacy-provider layer over it fails closed instead of serving reproducible bytes.
 
 use crate::ops::{KernelOps, Provenance, Timespec};
 use std::collections::{BTreeMap, VecDeque};
 
 /// Longest a [`SeededSim`] pipe holds before a write answers `EAGAIN` (the Linux default pipe size).
 const SIM_PIPE_CAPACITY: usize = 65_536;
+const ENOENT: isize = 2;
 const EBADF: isize = 9;
 const EAGAIN: isize = 11;
 const EINVAL: isize = 22;
@@ -140,6 +142,13 @@ impl KernelOps for SeededSim {
         isize::try_from(buf.len()).unwrap_or(isize::MAX)
     }
 
+    /// `SeededSim` does not model a legacy `/dev/random`: its bytes are reproducible, so serving them as the legacy provider would be
+    /// the "entropy from an injected test backend" the contract forbids. A layer that selected the legacy provider over a `SeededSim`
+    /// therefore fails closed, with the kernel's own "no such file" (`ENOENT`, 2 on both ABIs).
+    fn open_dev_random(&mut self, _flags: u32) -> isize {
+        -ENOENT
+    }
+
     fn eventfd2(&mut self, initval: u32, _flags: u32) -> isize {
         self.allocate(Slot::Event(u64::from(initval))) as isize
     }
@@ -238,6 +247,7 @@ mod scripted {
     pub(crate) enum Call {
         Clock,
         GetRandom { len: usize, flags: u32 },
+        OpenDevRandom { flags: u32 },
         Eventfd2 { initval: u32, flags: u32 },
         Pipe2 { flags: u32 },
         Write { fd: i32, bytes: Vec<u8> },
@@ -250,6 +260,7 @@ mod scripted {
         abi: Option<Abi>,
         clock: VecDeque<(isize, Timespec)>,
         random: VecDeque<(isize, Vec<u8>)>,
+        open_random: VecDeque<isize>,
         eventfd: VecDeque<isize>,
         pipe: VecDeque<(isize, [i32; 2])>,
         write: VecDeque<isize>,
@@ -289,6 +300,13 @@ mod scripted {
             self
         }
 
+        /// Reply to `open_dev_random` with `ret` (a descriptor, or `-errno`). The legacy provider's reads are scripted with
+        /// [`ScriptedOps::read`] and its close with [`ScriptedOps::close`].
+        pub(crate) fn open_random(mut self, ret: isize) -> Self {
+            self.open_random.push_back(ret);
+            self
+        }
+
         pub(crate) fn eventfd(mut self, ret: isize) -> Self {
             self.eventfd.push_back(ret);
             self
@@ -321,6 +339,10 @@ mod scripted {
 
         pub(crate) fn pending_read(&self) -> usize {
             self.read.len()
+        }
+
+        pub(crate) fn pending_open(&self) -> usize {
+            self.open_random.len()
         }
 
         fn record(&self, call: Call) {
@@ -358,6 +380,13 @@ mod scripted {
             let n = bytes.len().min(buf.len());
             buf[..n].copy_from_slice(&bytes[..n]);
             ret
+        }
+
+        fn open_dev_random(&mut self, flags: u32) -> isize {
+            self.record(Call::OpenDevRandom { flags });
+            self.open_random
+                .pop_front()
+                .expect("sim: unscripted open_dev_random")
         }
 
         fn eventfd2(&mut self, initval: u32, flags: u32) -> isize {

@@ -1,9 +1,12 @@
-//! Linux syscall numbers for the six calls the leaf issues raw, per legacy ABI. (The clock is not among them: it is `std::time::Instant`.)
+//! Linux syscall numbers for the seven calls the leaf issues raw, per legacy ABI. (The clock is not among them: it is `std::time::Instant`.)
+//!
+//! `open` is the legacy entropy provider's one addition (the plain `open`, not `openat`: `openat` arrived in 2.6.16, after the stock
+//! PowerPC kernel's 2.6.14). The leaf only ever opens one constant path, `/dev/random`.
 //!
 //! Plain data, compiled on every target so that a host test can hold it to its sources. Two independent sources agree on every
 //! number below:
 //! * the audited E03 guest probes (`toolchain/src/ffw-hello-init`), which issued these exact calls in full-system QEMU guests
-//!   (pipe2, read, write and close in `main.rs`, getrandom and eventfd2 in `e03_probes.rs`);
+//!   (open, pipe2, read, write and close in `main.rs`, getrandom and eventfd2 in `e03_probes.rs`);
 //! * the `libc` crate's tables for the musl targets (`tests/p02/test_syscall_numbers.py` reads them from the cargo registry).
 //!
 //! MIPS o32 numbers are 4000-based; PowerPC32 uses the generic numbering.
@@ -16,6 +19,7 @@ pub struct Numbers {
     pub getrandom: usize,
     pub eventfd2: usize,
     pub pipe2: usize,
+    pub open: usize,
     pub read: usize,
     pub write: usize,
     pub close: usize,
@@ -26,6 +30,7 @@ pub const POWERPC32: Numbers = Numbers {
     getrandom: 359,
     eventfd2: 314,
     pipe2: 317,
+    open: 5,
     read: 3,
     write: 4,
     close: 6,
@@ -36,6 +41,7 @@ pub const MIPS32_O32: Numbers = Numbers {
     getrandom: 4000 + 353,
     eventfd2: 4000 + 325,
     pipe2: 4000 + 328,
+    open: 4000 + 5,
     read: 4000 + 3,
     write: 4000 + 4,
     close: 4000 + 6,
@@ -63,6 +69,7 @@ mod tests {
             ("getrandom", p.getrandom, m.getrandom),
             ("eventfd2", p.eventfd2, m.eventfd2),
             ("pipe2", p.pipe2, m.pipe2),
+            ("open", p.open, m.open),
             ("read", p.read, m.read),
             ("write", p.write, m.write),
             ("close", p.close, m.close),
@@ -90,6 +97,8 @@ mod tests {
             (POWERPC32.read, POWERPC32.write, POWERPC32.close),
             (3, 4, 6)
         );
+        // `open`: `NR_OPEN` in the probes' `main.rs`, which opened `/dev/urandom` and `/dev/null` in the same guests.
+        assert_eq!((MIPS32_O32.open, POWERPC32.open), (4005, 5));
     }
 
     #[test]
@@ -98,6 +107,7 @@ mod tests {
             MIPS32_O32.getrandom,
             MIPS32_O32.eventfd2,
             MIPS32_O32.pipe2,
+            MIPS32_O32.open,
             MIPS32_O32.read,
             MIPS32_O32.write,
             MIPS32_O32.close,
@@ -108,6 +118,7 @@ mod tests {
             POWERPC32.getrandom,
             POWERPC32.eventfd2,
             POWERPC32.pipe2,
+            POWERPC32.open,
             POWERPC32.read,
             POWERPC32.write,
             POWERPC32.close,

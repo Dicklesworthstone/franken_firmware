@@ -9,9 +9,11 @@
 //! single `#[allow(unsafe_code)]` module (`sys`), every `unsafe` block of which states the invariants it relies on.
 //!
 //! ## What the backend does and does not do
-//! * Five of its six calls are raw syscalls, one per [`KernelOps`] method, returning what the kernel returned as `-errno`: it
+//! * Six of its seven calls are raw syscalls, one per [`KernelOps`] method, returning what the kernel returned as `-errno`: it
 //!   never retries, never converts, never substitutes, and a call the kernel lacks comes back as the kernel's own `-ENOSYS`. It is
-//!   not built on libc for them, so no wrapper (`eventfd`, `pipe2`, `close`) can quietly turn one call into another.
+//!   not built on libc for them, so no wrapper (`eventfd`, `pipe2`, `close`) can quietly turn one call into another. The seventh
+//!   raw call, `open`, exists for the explicitly selected legacy entropy provider and can open exactly one file, the constant
+//!   `/dev/random`: the method takes no path, so `/dev/urandom` cannot be reached through this backend.
 //! * **The clock is not one of them.** The monotonic reading is `std::time::Instant` (`CLOCK_MONOTONIC` underneath), anchored when
 //!   the backend is created, so a reading is the time since then and only differences are meaningful. Nothing in this slice
 //!   consumes an absolute `CLOCK_MONOTONIC` value (no `timerfd` `TFD_TIMER_ABSTIME`, no kernel timestamp to compare with), so the
@@ -105,6 +107,12 @@ mod backend {
 
         fn getrandom(&mut self, buf: &mut [u8], flags: u32) -> isize {
             sys::getrandom(buf, flags)
+        }
+
+        /// One `open` of the constant path `/dev/random` with the policy's flags, answered as the kernel answered it. It opens no
+        /// other file and substitutes nothing: a kernel without the device returns its own `-ENOENT`.
+        fn open_dev_random(&mut self, flags: u32) -> isize {
+            sys::open_dev_random(flags)
         }
 
         fn eventfd2(&mut self, initval: u32, flags: u32) -> isize {

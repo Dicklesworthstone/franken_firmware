@@ -3,7 +3,7 @@
 
 `crates/franken-platform-linux/src/numbers.rs` is held to:
 * the E03 guest probes (`toolchain/src/ffw-hello-init`), which issued these exact calls in full-system QEMU guests: `NR_*` in
-  `main.rs` (pipe2, read, write, close) and `nr::*` in `e03_probes.rs` (getrandom, eventfd2). Always required;
+  `main.rs` (open, pipe2, read, write, close) and `nr::*` in `e03_probes.rs` (getrandom, eventfd2). Always required;
 * the `libc` crate's musl tables (`SYS_*`), when the registry has the version Cargo.lock names. If it does not, that test is
   SKIPPED and says so; the E03 witness still runs.
 
@@ -20,11 +20,11 @@ NUMBERS_RS = os.path.join(ROOT, "crates", "franken-platform-linux", "src", "numb
 HELLO = os.path.join(ROOT, "toolchain", "src", "ffw-hello-init", "src")
 CARGO_LOCK = os.path.join(ROOT, "Cargo.lock")
 
-CALLS = ("getrandom", "eventfd2", "pipe2", "read", "write", "close")      # the clock is std's Instant, not a raw call
+CALLS = ("getrandom", "eventfd2", "pipe2", "open", "read", "write", "close")      # the clock is std's Instant, not a raw call
 TABLES = {"powerpc": "POWERPC32", "mips": "MIPS32_O32"}
 # call -> (file, constant name in the E03 probes)
 E03 = {
-    "pipe2": ("main.rs", "NR_PIPE2"), "read": ("main.rs", "NR_READ"),
+    "pipe2": ("main.rs", "NR_PIPE2"), "open": ("main.rs", "NR_OPEN"), "read": ("main.rs", "NR_READ"),
     "write": ("main.rs", "NR_WRITE"), "close": ("main.rs", "NR_CLOSE"),
     "getrandom": ("e03_probes.rs", "GETRANDOM"), "eventfd2": ("e03_probes.rs", "EVENTFD2"),
 }
@@ -113,7 +113,7 @@ class TableShapeTests(unittest.TestCase):
     def setUp(self):
         self.source = read(NUMBERS_RS)
 
-    def test_both_tables_have_the_six_calls_and_differ_in_every_one(self):
+    def test_both_tables_have_the_seven_calls_and_differ_in_every_one(self):
         ppc, mips = (rust_numbers(self.source, TABLES[a]) for a in ("powerpc", "mips"))
         self.assertEqual(sorted(ppc), sorted(CALLS))
         for call in CALLS:
@@ -137,7 +137,7 @@ class E03WitnessTests(unittest.TestCase):
     def test_a_planted_wrong_number_is_reported(self):
         source = read(NUMBERS_RS)
         for old, new in (("getrandom: 359,", "getrandom: 358,"), ("eventfd2: 4000 + 325,", "eventfd2: 4000 + 326,"),
-                         ("pipe2: 317,", "pipe2: 4000 + 328,")):
+                         ("pipe2: 317,", "pipe2: 4000 + 328,"), ("open: 4000 + 5,", "open: 4000 + 6,"), ("open: 5,", "open: 6,")):
             bad = source.replace(old, new, 1)
             self.assertNotEqual(bad, source, old)
             problems = []

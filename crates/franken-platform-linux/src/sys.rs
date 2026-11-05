@@ -11,7 +11,8 @@
 //! 2. Every pointer passed is derived from a live Rust reference (`&mut [i32; 2]`, `&mut [u8]`, `&[u8]`) that stays borrowed for the
 //!    whole call, and every length passed is that reference's length, so a kernel that honors its contract writes or reads
 //!    inside the referenced bytes. The kernel is trusted to honor `count`/`len`; a kernel that does not is outside what Rust can
-//!    defend.
+//!    defend. The one pointer that is not a buffer is `open`'s path: the address of a `'static` NUL-terminated constant
+//!    (`DEV_RANDOM`), valid for the whole program, which the kernel reads up to its NUL.
 //! 3. The return value is normalized to the convention `franken_platform::ops::KernelOps` documents: a non-negative result, or
 //!    `-errno`. MIPS reports errors in `$7` with a positive errno in `$2`; PowerPC in `cr0.SO` with a positive errno in `r3`.
 //! 4. No call here blocks on its own: the callers pass nonblocking flags or descriptors, and `EINTR` is handled above.
@@ -150,6 +151,27 @@ pub(crate) fn getrandom(buf: &mut [u8], flags: u32) -> isize {
             buf.as_mut_ptr() as usize,
             buf.len(),
             flags as usize,
+            0,
+            0,
+        )
+    }
+}
+
+/// The one path the leaf opens, NUL-terminated for the kernel. It is a constant of this crate: nothing a caller passes can name another
+/// file, so `/dev/urandom` (which never says whether the pool is seeded) cannot be opened through this backend.
+pub(crate) const DEV_RANDOM: &[u8; 12] = b"/dev/random\0";
+
+/// `open("/dev/random", flags)`: `O_RDONLY` is 0 on both ABIs, so `flags` (the policy's `O_NONBLOCK | O_CLOEXEC`) is the whole
+/// flags argument, and the mode argument is unused without `O_CREAT`. A kernel without the device answers its own `-ENOENT`.
+pub(crate) fn open_dev_random(flags: u32) -> isize {
+    // SAFETY: invariants 1 to 3: the pointer is the address of the `'static` NUL-terminated constant `DEV_RANDOM`, valid for the
+    // whole call and read by the kernel only up to its NUL; `flags` is a plain integer; no other pointer is passed.
+    unsafe {
+        raw5(
+            NR.open,
+            DEV_RANDOM.as_ptr() as usize,
+            flags as usize,
+            0,
             0,
             0,
         )

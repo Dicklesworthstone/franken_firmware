@@ -1,0 +1,62 @@
+{
+ "schema": "ffw.p02.legacy-entropy-markers.v1",
+ "note": "The FFW_PLATFORM:* lines `franken-speaker --platform-startup --entropy-provider <legacy>` prints, as pinned examples (P02 / ffw-jub, root decision 5126). The default provider prints no `provider=` token, so every line in p02_platform_markers.json (which DarkPeak's smoke judge reads) is unchanged and this file is NOT part of it: the legacy provider is explicit, and its lines are judged here and by tests/p02/test_legacy_entropy.py. `provider=` appears on the ENTROPY line only, between `provenance=` and `reason=`, with one of the two values below, on PASS, REFUSED and NOT_RUN alike, so a transcript always shows which provider produced or refused its entropy. `legacy_dev_random_test_environment` means a caller named an admitted TEST ENVIRONMENT: a PASS is not an observation about any kernel and is not device evidence. `legacy_dev_random` (no test environment) is qualified by the committed guest evidence, which has no observation of the legacy device, so it is refused `unavailable` without a kernel call. Scenarios use test doubles: they prove the logic and the grammar, not the real backend and not any kernel. The reason codes are the closed set of p02_platform_markers.json; no code was added.",
+ "provider_values": ["legacy_dev_random", "legacy_dev_random_test_environment"],
+ "examples": {
+  "legacy_test_environment_all_pass_powerpc": {
+   "exit": 0,
+   "lines": [
+    "FFW_PLATFORM:BEGIN abi=powerpc32 evidence=harness-ppc-4.9 backend=kernel kernel=4.9.0-0.bpo.6-powerpc",
+    "FFW_PLATFORM:KERNEL status=PASS",
+    "FFW_PLATFORM:CLOCK status=PASS provenance=kernel",
+    "FFW_PLATFORM:ENTROPY status=PASS provenance=kernel provider=legacy_dev_random_test_environment",
+    "FFW_PLATFORM:WAKE status=PASS provenance=kernel mechanism=eventfd",
+    "FFW_PLATFORM:END started=1"
+   ]
+  },
+  "legacy_test_environment_not_seeded_mips": {
+   "exit": 3,
+   "lines": [
+    "FFW_PLATFORM:BEGIN abi=mips32 evidence=harness-mips-4.19 backend=kernel kernel=4.19.0-21-4kc-malta",
+    "FFW_PLATFORM:KERNEL status=PASS",
+    "FFW_PLATFORM:CLOCK status=PASS provenance=kernel",
+    "FFW_PLATFORM:ENTROPY status=REFUSED provenance=kernel provider=legacy_dev_random_test_environment reason=not_seeded",
+    "FFW_PLATFORM:WAKE status=PASS provenance=kernel mechanism=eventfd",
+    "FFW_PLATFORM:END started=0 refused=entropy:not_seeded"
+   ]
+  },
+  "legacy_evidence_qualified_unavailable_powerpc": {
+   "exit": 3,
+   "lines": [
+    "FFW_PLATFORM:BEGIN abi=powerpc32 evidence=harness-ppc-4.9 backend=kernel kernel=4.9.0-0.bpo.6-powerpc",
+    "FFW_PLATFORM:KERNEL status=PASS",
+    "FFW_PLATFORM:CLOCK status=PASS provenance=kernel",
+    "FFW_PLATFORM:ENTROPY status=REFUSED provenance=kernel provider=legacy_dev_random reason=unavailable",
+    "FFW_PLATFORM:WAKE status=PASS provenance=kernel mechanism=eventfd",
+    "FFW_PLATFORM:END started=0 refused=entropy:unavailable"
+   ]
+  },
+  "legacy_device_absent_mips": {
+   "exit": 3,
+   "lines": [
+    "FFW_PLATFORM:BEGIN abi=mips32 evidence=harness-mips-4.19 backend=kernel kernel=4.19.0-21-4kc-malta",
+    "FFW_PLATFORM:KERNEL status=PASS",
+    "FFW_PLATFORM:CLOCK status=PASS provenance=kernel",
+    "FFW_PLATFORM:ENTROPY status=REFUSED provenance=kernel provider=legacy_dev_random_test_environment reason=absent",
+    "FFW_PLATFORM:WAKE status=PASS provenance=kernel mechanism=eventfd",
+    "FFW_PLATFORM:END started=0 refused=entropy:absent"
+   ]
+  },
+  "legacy_selected_with_a_simulated_backend_refused": {
+   "exit": 3,
+   "lines": [
+    "FFW_PLATFORM:BEGIN abi=none evidence=none backend=simulated kernel=4.9.0-0.bpo.6-powerpc",
+    "FFW_PLATFORM:KERNEL status=REFUSED reason=simulated_backend",
+    "FFW_PLATFORM:CLOCK status=NOT_RUN provenance=none",
+    "FFW_PLATFORM:ENTROPY status=NOT_RUN provenance=none provider=legacy_dev_random_test_environment",
+    "FFW_PLATFORM:WAKE status=NOT_RUN provenance=none mechanism=none",
+    "FFW_PLATFORM:END started=0 refused=kernel:simulated_backend"
+   ]
+  }
+ }
+}

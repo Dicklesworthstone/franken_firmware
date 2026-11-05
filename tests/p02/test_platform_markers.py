@@ -27,11 +27,14 @@ SPEAKER_RS = os.path.join(ROOT, "crates", "franken-speaker", "src", "platform_st
 STATUS = r"(PASS|REFUSED|NOT_RUN)"
 REASON = r"(?: reason=([a-z_]+))?"
 PROV = r"(kernel|simulated|none)"
+# The ENTROPY line alone may carry `provider=`, between provenance and reason, and only for the explicitly selected legacy provider
+# (P02, root decision 5126): the default provider prints no token, so every default transcript is byte-identical to before.
+PROVIDER = r"(?: provider=(legacy_dev_random|legacy_dev_random_test_environment))?"
 LINE_RES = {
     "BEGIN": re.compile(r"^FFW_PLATFORM:BEGIN abi=(mips32|powerpc32|none) evidence=(harness-mips-4\.19|harness-ppc-4\.9|none) backend=(kernel|simulated) kernel=([A-Za-z0-9._+-]{1,64})$"),
     "KERNEL": re.compile(r"^FFW_PLATFORM:KERNEL status=%s%s$" % (STATUS, REASON)),
     "CLOCK": re.compile(r"^FFW_PLATFORM:CLOCK status=%s provenance=%s%s$" % (STATUS, PROV, REASON)),
-    "ENTROPY": re.compile(r"^FFW_PLATFORM:ENTROPY status=%s provenance=%s%s$" % (STATUS, PROV, REASON)),
+    "ENTROPY": re.compile(r"^FFW_PLATFORM:ENTROPY status=%s provenance=%s%s%s$" % (STATUS, PROV, PROVIDER, REASON)),
     "WAKE": re.compile(r"^FFW_PLATFORM:WAKE status=%s provenance=%s mechanism=(eventfd|self_pipe|none)%s$" % (STATUS, PROV, REASON)),
     "END": re.compile(r"^FFW_PLATFORM:END started=(1|0)(?: refused=(kernel|clock|entropy|wake):([a-z_]+))?$"),
 }
@@ -68,7 +71,7 @@ def judge(lines, reasons):
     outcomes = {
         "kernel": (parsed["KERNEL"][0], parsed["KERNEL"][1], None),
         "clock": (parsed["CLOCK"][0], parsed["CLOCK"][2], parsed["CLOCK"][1]),
-        "entropy": (parsed["ENTROPY"][0], parsed["ENTROPY"][2], parsed["ENTROPY"][1]),
+        "entropy": (parsed["ENTROPY"][0], parsed["ENTROPY"][3], parsed["ENTROPY"][1]),       # (status, reason, provenance); [2] is provider
         "wake": (parsed["WAKE"][0], parsed["WAKE"][3], parsed["WAKE"][1]),
     }
     for name, (status, reason, provenance) in outcomes.items():
@@ -126,11 +129,14 @@ def judge_for_guest(lines, guest, reasons):
     for name in ("KERNEL", "CLOCK", "WAKE"):
         if parsed[name][0] != "PASS":
             problems.append("%s must PASS on a healthy %s guest, got %s" % (name, guest, parsed[name][0]))
-    entropy = parsed["ENTROPY"]
+    entropy = parsed["ENTROPY"]                                                                         # (status, provenance, provider, reason)
+    if entropy[2] is not None:
+        # The default smoke never selects a legacy provider, so a provider token here is a transcript of some other run (or a silent switch).
+        problems.append("ENTROPY carries provider=%s: the default smoke never selects another provider" % entropy[2])
     if guest == "ppc":
         if entropy[0] != "PASS":
             problems.append("ENTROPY must PASS on the ppc guest (getrandom was seeded in run 1412ac47)")
-    elif not (entropy[0] == "PASS" or (entropy[0] == "REFUSED" and entropy[2] == "not_seeded")):       # (status, provenance, reason)
+    elif not (entropy[0] == "PASS" or (entropy[0] == "REFUSED" and entropy[3] == "not_seeded")):
         problems.append("ENTROPY on the mips guest must PASS or be REFUSED with reason=not_seeded")
     return problems
 
@@ -378,9 +384,11 @@ class OneConstructionSiteTests(unittest.TestCase):
             self.assertNotIn("ScriptedOps", code, path)
 
     def test_main_reaches_the_layer_only_through_check_device(self):
+        # `check_device()` (the default provider) and `check_device_with(selection)` (an explicitly named one) are the two entry
+        # points of the same single path: both go through bring_up_device_with, the one place the backend is built.
         with open(os.path.join(SPEAKER_SRC, "main.rs"), encoding="utf-8") as fh:
             code = code_outside_comments(fh.read())
-        self.assertIn("platform_start::check_device()", code)
+        self.assertRegex(code, r"platform_start::check_device(?:_with)?\(")
         self.assertNotIn("bring_up", code)       # it does not assemble a start itself
         self.assertNotIn("PlatformLayer", code)
 

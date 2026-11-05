@@ -26,20 +26,22 @@ fn virtual_house_passes(report: &franken_speaker::VirtualHouseReport) -> bool {
         && report.evidence_complete
 }
 
-/// `--platform-startup`: bring the platform layer up over the kernel backend and print one `FFW_PLATFORM:*` line per capability
-/// (`P02` / `ffw-jub`; contract `docs/contracts/p02.md`). Only a big-endian 32-bit MIPS or PowerPC build has a kernel backend, the
-/// Linux leaf `franken-platform-linux`. This function constructs nothing: it calls `platform_start::check_device`, which goes
-/// through `bring_up_device`, the one place the device speaker builds a layer or the backend (a source test pins that), so the
-/// clock, wakeup and entropy the device runs on come from the platform layer and not from a stand-in. Exit 0 when every capability
-/// passed, 3 when startup was refused (a typed refusal, printed), 2 on a target that has no kernel backend.
+/// `--platform-startup [--entropy-provider NAME]`: bring the platform layer up over the kernel backend and print one `FFW_PLATFORM:*`
+/// line per capability (`P02` / `ffw-jub`; contract `docs/contracts/p02.md`). Only a big-endian 32-bit MIPS or PowerPC build has a
+/// kernel backend, the Linux leaf `franken-platform-linux`. This function constructs nothing: it calls
+/// `platform_start::check_device_with`, which goes through `bring_up_device_with`, the one place the device speaker builds a layer or
+/// the backend (a source test pins that), so the clock, wakeup and entropy the device runs on come from the platform layer and not
+/// from a stand-in. The entropy provider is the default (`getrandom`) unless the command line names another: the selection is
+/// explicit and no failure of one provider ever picks the other. Exit 0 when every capability passed, 3 when startup was refused (a
+/// typed refusal, printed), 2 on a target that has no kernel backend or on a malformed `--platform-startup` argument.
 #[cfg(all(
     target_os = "linux",
     target_endian = "big",
     target_pointer_width = "32",
     any(target_arch = "mips", target_arch = "powerpc")
 ))]
-fn platform_startup() -> ExitCode {
-    let report = franken_speaker::platform_start::check_device();
+fn platform_startup(selection: franken_speaker::platform_start::EntropySelection) -> ExitCode {
+    let report = franken_speaker::platform_start::check_device_with(selection);
     print!("{}", report.markers());
     ExitCode::from(report.exit_status())
 }
@@ -50,7 +52,7 @@ fn platform_startup() -> ExitCode {
     target_pointer_width = "32",
     any(target_arch = "mips", target_arch = "powerpc")
 )))]
-fn platform_startup() -> ExitCode {
+fn platform_startup(_selection: franken_speaker::platform_start::EntropySelection) -> ExitCode {
     eprintln!(
         "this build has no kernel backend: franken-platform-linux exists for big-endian 32-bit MIPS and PowerPC only, \
          so --platform-startup runs on a device build"
@@ -82,7 +84,15 @@ fn main() -> ExitCode {
                 }
             }
         }
-        "--platform-startup" => platform_startup(),
+        "--platform-startup" => {
+            match franken_speaker::platform_start::parse_startup_args(&args[2..]) {
+                Ok(selection) => platform_startup(selection),
+                Err(message) => {
+                    eprintln!("--platform-startup: {message}");
+                    ExitCode::from(franken_speaker::platform_start::EXIT_USAGE)
+                }
+            }
+        }
         #[cfg(feature = "harness")]
         "--virtual-house" | "--self-test" => match run_virtual_house_campaign(SEED, BLOCKS) {
             Ok(report) => {
@@ -110,8 +120,8 @@ fn main() -> ExitCode {
         }
         other => {
             eprintln!(
-                "Usage: franken-speaker [--catalog|--platform-startup|--virtual-house|--self-test] (got {other}); \
-                 --virtual-house and --self-test need a build with `--features harness`, \
+                "Usage: franken-speaker [--catalog|--platform-startup [--entropy-provider NAME]|--virtual-house|--self-test] \
+                 (got {other}); --virtual-house and --self-test need a build with `--features harness`, \
                  --platform-startup needs a big-endian MIPS or PowerPC device build"
             );
             ExitCode::from(2)

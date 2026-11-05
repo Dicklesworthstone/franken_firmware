@@ -65,6 +65,15 @@ pub trait KernelOps {
     /// `getrandom(buf, buf.len(), flags)`: the number of bytes written, which may be fewer than requested.
     fn getrandom(&mut self, buf: &mut [u8], flags: u32) -> isize;
 
+    /// `open("/dev/random", O_RDONLY | flags)`: the new descriptor, or `-errno`.
+    ///
+    /// **The path is a constant of this method, not a parameter**: the seam has no way to open any other file, so `/dev/urandom` (which
+    /// never says whether the pool is seeded) or a regular file cannot stand in for the device. It is called only by the explicitly
+    /// selected legacy entropy provider ([`crate::entropy::EntropyProvider::LegacyDevRandom`]), which passes the ABI's `O_NONBLOCK`
+    /// (and `O_CLOEXEC`) in `flags`: a backend passes `flags` through unchanged and never adds or drops one. A kernel without the device
+    /// answers its own `-ENOENT`; the backend does not substitute another source. The descriptor is closed with [`KernelOps::close`].
+    fn open_dev_random(&mut self, flags: u32) -> isize;
+
     /// `eventfd2(initval, flags)`: the new descriptor.
     fn eventfd2(&mut self, initval: u32, flags: u32) -> isize;
 

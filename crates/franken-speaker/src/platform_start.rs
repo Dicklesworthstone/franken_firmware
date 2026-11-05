@@ -13,10 +13,12 @@
 //!    the running kernel's release (a real board's kernel is the vendor's and never equals a harness kernel): the release is read
 //!    and *recorded* in the `BEGIN` line, bounded and sanitised, and never compared. If a kernel lacks a call the probe says so
 //!    and startup refuses with that call's typed code (for example `wake_open_failed` for a missing `eventfd2`).
-//! 3. **The layer is admitted, then each capability is exercised once:** two monotonic readings, `getrandom(GRND_NONBLOCK)` for
-//!    16 bytes, and one wake signalled and drained. An error is the refusal; nothing falls back. In particular an unseeded entropy
-//!    pool is [`StartupError::Entropy`] (`not_seeded`), retryable by the caller, and **never** answered with a seeded or
-//!    time-derived value.
+//! 3. **The layer is admitted, then each capability is exercised once:** two monotonic readings, 16 bytes from the **selected**
+//!    entropy provider, and one wake signalled and drained. The provider is [`EntropySelection::Getrandom`]
+//!    (`getrandom(GRND_NONBLOCK)`) unless the caller names the legacy `/dev/random` provider ([`EntropySelection`],
+//!    `--entropy-provider`); no failure of one ever selects the other. An error is the refusal; nothing falls back. In particular an
+//!    unseeded entropy pool is [`StartupError::Entropy`] (`not_seeded`), retryable by the caller, and **never** answered with a
+//!    seeded or time-derived value.
 //!
 //! Every capability is reported on its own line whether or not an earlier one failed ([`StartupReport`]), with the provenance the
 //! layer declared and `NOT_RUN` when it could not be tried (always after an earlier `REFUSED`), so a transcript carries the failure
@@ -27,7 +29,7 @@ use crate::guest_evidence;
 use franken_platform::ReactorWakeMechanism;
 use franken_platform::abi::Abi;
 use franken_platform::clock::ClockError;
-use franken_platform::entropy::EntropyError;
+use franken_platform::entropy::{EntropyError, EntropyProfile, ProviderQualification};
 use franken_platform::layer::{LayerError, PlatformLayer};
 use franken_platform::ops::{KernelOps, Provenance};
 use franken_platform::wake::{WakeError, WakeOutcome};
@@ -44,6 +46,119 @@ pub const INVALID_KERNEL: &str = "invalid";
 pub const EXIT_STARTED: u8 = 0;
 /// Exit status when startup was refused with a typed [`StartupError`].
 pub const EXIT_REFUSED: u8 = 3;
+/// Exit status for a command line that names a provider this build does not know, or any other malformed `--platform-startup`
+/// argument: nothing is started and nothing is guessed.
+pub const EXIT_USAGE: u8 = 2;
+
+/// What the committed guest evidence says about a nonblocking `/dev/random` read: **nothing**. E03's probes opened `/dev/urandom`
+/// (liveness) and called `getrandom`; no run has observed the legacy device, so the evidence for it is [`Unqualified`]
+/// ([`ProviderQualification::Unqualified`]) and the explicitly selected legacy provider is refused with `unavailable`, without a kernel
+/// call, wherever the caller has not named a test environment. Replace this constant only when a matching guest transcript carries a
+/// line for it and the evidence generator reads it: a number typed here is a claim, not an observation.
+pub const LEGACY_DEV_RANDOM_QUALIFICATION: ProviderQualification =
+    ProviderQualification::Unqualified;
+
+/// The entropy provider startup uses. **The default is `Getrandom`, the provider every committed transcript was made with, and a
+/// failure of either provider never selects the other**: the legacy provider is selected only by naming it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EntropySelection {
+    /// `getrandom(GRND_NONBLOCK)`: the default. Its marker line is unchanged (no `provider=` token).
+    #[default]
+    Getrandom,
+    /// The legacy `/dev/random` provider, qualified by the committed evidence ([`LEGACY_DEV_RANDOM_QUALIFICATION`]): refused
+    /// `unavailable` today. Marker token `provider=legacy_dev_random`.
+    LegacyDevRandom,
+    /// The legacy `/dev/random` provider in an explicitly admitted **test environment** (a harness guest, not a device): it may be
+    /// tried although no observation exists. A start it reports says nothing about a device or a stock kernel. Marker token
+    /// `provider=legacy_dev_random_test_environment`.
+    LegacyDevRandomTestEnvironment,
+}
+
+/// The command-line spellings, in the order [`EntropySelection::ALL`] lists the variants.
+const PROVIDER_ARGUMENTS: [&str; 3] = [
+    "getrandom",
+    "legacy-dev-random",
+    "legacy-dev-random-test-environment",
+];
+
+impl EntropySelection {
+    /// Every selection, in the order of [`PROVIDER_ARGUMENTS`].
+    pub const ALL: [Self; 3] = [
+        Self::Getrandom,
+        Self::LegacyDevRandom,
+        Self::LegacyDevRandomTestEnvironment,
+    ];
+
+    /// The profile this selection hands the platform layer.
+    #[must_use]
+    pub const fn profile(self) -> EntropyProfile {
+        match self {
+            Self::Getrandom => EntropyProfile::Getrandom,
+            Self::LegacyDevRandom => {
+                EntropyProfile::LegacyDevRandom(LEGACY_DEV_RANDOM_QUALIFICATION)
+            }
+            Self::LegacyDevRandomTestEnvironment => {
+                EntropyProfile::LegacyDevRandom(ProviderQualification::TestEnvironment)
+            }
+        }
+    }
+
+    /// The `provider=` value the `ENTROPY` marker line carries, or `None` for the default (whose line has no such token, so every
+    /// committed transcript stays byte-identical).
+    #[must_use]
+    pub const fn marker_provider(self) -> Option<&'static str> {
+        match self {
+            Self::Getrandom => None,
+            Self::LegacyDevRandom => Some("legacy_dev_random"),
+            Self::LegacyDevRandomTestEnvironment => Some("legacy_dev_random_test_environment"),
+        }
+    }
+
+    /// The selection a `--entropy-provider` value names, or `None` for any other text (there is no default for an unknown name).
+    #[must_use]
+    pub fn from_argument(value: &str) -> Option<Self> {
+        PROVIDER_ARGUMENTS
+            .iter()
+            .position(|name| *name == value)
+            .map(|index| Self::ALL[index])
+    }
+}
+
+/// The arguments after `--platform-startup`: none (the default provider), or exactly one `--entropy-provider <name>` /
+/// `--entropy-provider=<name>`. Anything else is an error, never a default: an unknown provider name, a missing value, a repeated
+/// flag and any other argument all refuse to start, so a typo cannot silently select (or silently keep) a provider.
+///
+/// # Errors
+/// A message for the usage line.
+pub fn parse_startup_args(args: &[String]) -> Result<EntropySelection, String> {
+    let mut selection = None;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        let value = if arg == "--entropy-provider" {
+            index += 1;
+            args.get(index).map(String::as_str)
+        } else if let Some(value) = arg.strip_prefix("--entropy-provider=") {
+            Some(value)
+        } else {
+            return Err(format!("unexpected argument {arg:?}"));
+        };
+        let Some(value) = value else {
+            return Err("--entropy-provider needs a value".to_string());
+        };
+        if selection.is_some() {
+            return Err("--entropy-provider was given twice".to_string());
+        }
+        selection = Some(EntropySelection::from_argument(value).ok_or_else(|| {
+            format!(
+                "unknown entropy provider {value:?} (known: {})",
+                PROVIDER_ARGUMENTS.join(", ")
+            )
+        })?);
+        index += 1;
+    }
+    Ok(selection.unwrap_or_default())
+}
 
 /// The closed set of `reason=` codes, per capability. The marker grammar test pins this against the committed examples.
 pub const REASON_CODES: [(&str, &[&str]); 4] = [
@@ -189,6 +304,12 @@ const fn entropy_code(error: &EntropyError) -> &'static str {
         EntropyError::Degenerate => "degenerate",
         EntropyError::Failed(_) => "failed",
         EntropyError::Malformed(_) => "malformed",
+        // The legacy provider's own errors reuse the closed set, so no reason code and no judge changes: a request over its per-call
+        // limit is a caller's invalid request (startup asks for 16 bytes and cannot produce it), a trickling device made no
+        // progress within its read budget, and a missing device is an absent one.
+        EntropyError::RequestTooLarge { .. } => "invalid",
+        EntropyError::ReadBudget { .. } => "no_progress",
+        EntropyError::DeviceAbsent => "absent",
     }
 }
 
@@ -284,6 +405,9 @@ pub struct StartupReport {
     pub layer_provenance: Option<Provenance>,
     /// The wake mechanism the matrix selects, when the matrix was admissible.
     pub mechanism: Option<ReactorWakeMechanism>,
+    /// The entropy provider the caller selected. Anything but the default is printed on the `ENTROPY` line (`provider=`), so a
+    /// transcript always shows which provider produced (or refused) its entropy.
+    pub entropy_selection: EntropySelection,
     pub kernel: Outcome,
     pub clock: Outcome,
     pub entropy: Outcome,
@@ -338,7 +462,11 @@ pub fn read_running_release() -> Option<String> {
 }
 
 impl StartupReport {
-    fn new(backend: Provenance, kernel_release: String) -> Self {
+    fn new(
+        backend: Provenance,
+        kernel_release: String,
+        entropy_selection: EntropySelection,
+    ) -> Self {
         Self {
             abi: None,
             evidence: None,
@@ -346,6 +474,7 @@ impl StartupReport {
             kernel_release,
             layer_provenance: None,
             mechanism: None,
+            entropy_selection,
             kernel: Outcome::NotRun,
             clock: Outcome::NotRun,
             entropy: Outcome::NotRun,
@@ -421,8 +550,12 @@ impl StartupReport {
                 self.clock.reason()
             ),
             format!(
-                "FFW_PLATFORM:ENTROPY status={} provenance={layer}{}",
+                "FFW_PLATFORM:ENTROPY status={} provenance={layer}{}{}",
                 self.entropy.status(),
+                self.entropy_selection
+                    .marker_provider()
+                    .map(|name| format!(" provider={name}"))
+                    .unwrap_or_default(),
                 self.entropy.reason()
             ),
             format!(
@@ -500,12 +633,8 @@ fn settle(result: Result<(), StartupError>, first: &mut Option<StartupError>) ->
     }
 }
 
-/// Build the platform layer over `ops`. **The one place a layer is built**: the device speaker's every start calls this (through
-/// [`bring_up_device`]), and so does the generic check the unit tests drive.
-///
-/// `running_release` is the kernel's release as read, if it could be read; it is only recorded (see [`sanitize_kernel`]).
-/// Returns the live layer when every capability passed, or the first typed refusal; the report always says what happened to each
-/// capability. A refused backend is never called.
+/// Build the platform layer over `ops` with the default entropy provider ([`EntropySelection::Getrandom`]): [`bring_up_with`] with the
+/// default selection, so every start that does not name another provider is exactly what it was before the legacy provider existed.
 ///
 /// # Errors
 /// A [`StartupError`], whose [`StartupError::code`] is the `reason=` of the refusing line.
@@ -513,8 +642,26 @@ pub fn bring_up<O: KernelOps>(
     ops: O,
     running_release: Option<&str>,
 ) -> (Result<PlatformLayer<O>, StartupError>, StartupReport) {
+    bring_up_with(ops, running_release, EntropySelection::Getrandom)
+}
+
+/// Build the platform layer over `ops`, with the entropy provider the caller **named**. **The one place a layer is built**: the device
+/// speaker's every start calls this (through [`bring_up_device_with`]), and so does the generic check the unit tests drive.
+///
+/// `running_release` is the kernel's release as read, if it could be read; it is only recorded (see [`sanitize_kernel`]).
+/// `selection` is applied after admission and makes no kernel call; a layer whose selection the profile does not qualify refuses its
+/// entropy capability (`unavailable`) without one. Returns the live layer when every capability passed, or the first typed refusal;
+/// the report always says what happened to each capability. A refused backend is never called.
+///
+/// # Errors
+/// A [`StartupError`], whose [`StartupError::code`] is the `reason=` of the refusing line.
+pub fn bring_up_with<O: KernelOps>(
+    ops: O,
+    running_release: Option<&str>,
+    selection: EntropySelection,
+) -> (Result<PlatformLayer<O>, StartupError>, StartupReport) {
     let backend = ops.provenance();
-    let mut report = StartupReport::new(backend, sanitize_kernel(running_release));
+    let mut report = StartupReport::new(backend, sanitize_kernel(running_release), selection);
     if backend != Provenance::Kernel {
         return refuse_kernel(
             report,
@@ -532,7 +679,7 @@ pub fn bring_up<O: KernelOps>(
     let matrix = evidence.matrix();
     report.mechanism = matrix.check_admission().ok();
     let mut layer = match PlatformLayer::admit(&matrix, ops) {
-        Ok(layer) => layer,
+        Ok(layer) => layer.with_entropy_profile(selection.profile()),
         Err(error) => return refuse_kernel(report, StartupError::Admission(error)),
     };
     report.kernel = Outcome::Pass;
@@ -561,9 +708,27 @@ pub fn bring_up_device() -> (
     Result<PlatformLayer<franken_platform_linux::LinuxKernel>, StartupError>,
     StartupReport,
 ) {
-    bring_up(
+    bring_up_device_with(EntropySelection::Getrandom)
+}
+
+/// [`bring_up_device`] with the entropy provider the caller **named** (`--entropy-provider`): **the one place `LinuxKernel` is
+/// constructed**. The default call above is this one with [`EntropySelection::Getrandom`].
+#[cfg(all(
+    target_os = "linux",
+    target_endian = "big",
+    target_pointer_width = "32",
+    any(target_arch = "mips", target_arch = "powerpc")
+))]
+pub fn bring_up_device_with(
+    selection: EntropySelection,
+) -> (
+    Result<PlatformLayer<franken_platform_linux::LinuxKernel>, StartupError>,
+    StartupReport,
+) {
+    bring_up_with(
         franken_platform_linux::LinuxKernel::new(),
         read_running_release().as_deref(),
+        selection,
     )
 }
 
@@ -591,7 +756,19 @@ pub fn finish_check<O: KernelOps>(
 ))]
 #[must_use]
 pub fn check_device() -> StartupReport {
-    finish_check(bring_up_device())
+    check_device_with(EntropySelection::Getrandom)
+}
+
+/// `--platform-startup --entropy-provider <name>` on a device build: [`bring_up_device_with`], released, as a report.
+#[cfg(all(
+    target_os = "linux",
+    target_endian = "big",
+    target_pointer_width = "32",
+    any(target_arch = "mips", target_arch = "powerpc")
+))]
+#[must_use]
+pub fn check_device_with(selection: EntropySelection) -> StartupReport {
+    finish_check(bring_up_device_with(selection))
 }
 
 #[cfg(test)]
@@ -603,6 +780,7 @@ mod tests {
     use franken_platform::wake::WakeCall;
     use franken_platform::{CapabilityStatus, PlatformAdmissionError};
     use std::cell::{Cell, RefCell};
+    use std::collections::VecDeque;
     use std::rc::Rc;
 
     const PPC_RELEASE: &str = "4.9.0-0.bpo.6-powerpc";
@@ -612,6 +790,8 @@ mod tests {
     struct Calls {
         clock: Cell<u32>,
         random: Cell<u32>,
+        open: Cell<u32>,
+        open_flags: RefCell<Vec<u32>>,
         eventfd: Cell<u32>,
         pipe: Cell<u32>,
         write: Cell<u32>,
@@ -625,6 +805,7 @@ mod tests {
         fn total(&self) -> u32 {
             self.clock.get()
                 + self.random.get()
+                + self.open.get()
                 + self.eventfd.get()
                 + self.pipe.get()
                 + self.write.get()
@@ -653,8 +834,15 @@ mod tests {
         swallow_wake: bool,
         ticks: i64,
         pending: u64,
+        /// What `open_dev_random` answers: a descriptor (a number no wake descriptor uses) or `-errno`.
+        legacy_open: isize,
+        /// The scripted replies of reads on the legacy descriptor, one per call; an empty script answers `-EAGAIN`, an empty pool.
+        legacy_reads: VecDeque<(isize, Vec<u8>)>,
         calls: Rc<Calls>,
     }
+
+    /// The descriptor the double's legacy device opens as: distinct from the wake descriptors it hands out (7, 8, 9).
+    const LEGACY_FD: isize = 20;
 
     impl Fake {
         fn new(provenance: Provenance, abi: Option<Abi>) -> (Self, Rc<Calls>) {
@@ -670,6 +858,8 @@ mod tests {
                 swallow_wake: false,
                 ticks: 0,
                 pending: 0,
+                legacy_open: LEGACY_FD,
+                legacy_reads: VecDeque::new(),
                 calls: Rc::clone(&calls),
             };
             (fake, calls)
@@ -677,6 +867,16 @@ mod tests {
 
         fn kernel(abi: Abi) -> (Self, Rc<Calls>) {
             Self::new(Provenance::Kernel, Some(abi))
+        }
+
+        /// A kernel double whose legacy `/dev/random` answers `replies` in order, then `-EAGAIN` (an empty pool).
+        fn with_legacy_reads(abi: Abi, replies: &[(isize, &[u8])]) -> (Self, Rc<Calls>) {
+            let (mut fake, calls) = Self::kernel(abi);
+            fake.legacy_reads = replies
+                .iter()
+                .map(|(ret, bytes)| (*ret, bytes.to_vec()))
+                .collect();
+            (fake, calls)
         }
     }
 
@@ -718,6 +918,12 @@ mod tests {
             }
         }
 
+        fn open_dev_random(&mut self, flags: u32) -> isize {
+            self.calls.open.set(self.calls.open.get() + 1);
+            self.calls.open_flags.borrow_mut().push(flags);
+            self.legacy_open
+        }
+
         fn eventfd2(&mut self, _initval: u32, _flags: u32) -> isize {
             self.calls.eventfd.set(self.calls.eventfd.get() + 1);
             self.eventfd_error.unwrap_or(7)
@@ -740,8 +946,17 @@ mod tests {
             isize::try_from(buf.len()).unwrap_or(-1)
         }
 
-        fn read(&mut self, _fd: i32, buf: &mut [u8]) -> isize {
+        fn read(&mut self, fd: i32, buf: &mut [u8]) -> isize {
             self.calls.read.set(self.calls.read.get() + 1);
+            if self.legacy_open >= 0 && isize::try_from(fd).is_ok_and(|fd| fd == self.legacy_open) {
+                // A read on the legacy descriptor: a scripted reply, or an empty pool.
+                let Some((ret, bytes)) = self.legacy_reads.pop_front() else {
+                    return -11;
+                };
+                let n = bytes.len().min(buf.len());
+                buf[..n].copy_from_slice(&bytes[..n]);
+                return ret;
+            }
             if self.pending == 0 {
                 return -11;
             }
@@ -758,6 +973,253 @@ mod tests {
 
     fn lines(report: &StartupReport) -> Vec<String> {
         report.markers().lines().map(str::to_string).collect()
+    }
+
+    // ---- the explicitly selected legacy entropy provider at startup (root decision 5126, `ffw-jub` comment 205) ----
+    //
+    // Logic only: the double's replies are inputs, and a double that declares `Kernel` is not a kernel. The real adapter is the Linux
+    // leaf and the proof that it reads `/dev/random` is a QEMU guest run centrally, a different proof class from every test below.
+
+    const LEGACY_TEST_ENV: EntropySelection = EntropySelection::LegacyDevRandomTestEnvironment;
+
+    fn entropy_line(report: &StartupReport) -> String {
+        lines(report)[3].clone()
+    }
+
+    #[test]
+    fn the_default_selection_prints_no_provider_token_and_never_opens_the_legacy_device() {
+        for (abi, release) in [(Abi::PowerPc32, PPC_RELEASE), (Abi::Mips32, MIPS_RELEASE)] {
+            let (fake, calls) = Fake::kernel(abi);
+            let (result, report) = bring_up(fake, Some(release));
+            assert!(result.is_ok(), "{abi:?}");
+            assert_eq!(report.entropy_selection, EntropySelection::Getrandom);
+            assert_eq!(
+                entropy_line(&report),
+                "FFW_PLATFORM:ENTROPY status=PASS provenance=kernel",
+                "{abi:?}: the default line is byte-identical to every committed transcript"
+            );
+            assert_eq!(calls.random.get(), 1, "{abi:?}");
+            assert_eq!(
+                calls.open.get(),
+                0,
+                "{abi:?}: the legacy device is not opened"
+            );
+        }
+    }
+
+    #[test]
+    fn a_selected_legacy_provider_in_a_test_environment_starts_through_open_and_never_calls_getrandom()
+     {
+        for (abi, release, nonblock) in [
+            (Abi::PowerPc32, PPC_RELEASE, 0x800u32),
+            (Abi::Mips32, MIPS_RELEASE, 0x80u32),
+        ] {
+            let bytes: Vec<u8> = (1..=16u8).collect();
+            let (fake, calls) = Fake::with_legacy_reads(abi, &[(16, bytes.as_slice())]);
+            let report = finish_check(bring_up_with(fake, Some(release), LEGACY_TEST_ENV));
+            assert!(report.started(), "{abi:?}");
+            assert_eq!(
+                entropy_line(&report),
+                "FFW_PLATFORM:ENTROPY status=PASS provenance=kernel provider=legacy_dev_random_test_environment",
+                "{abi:?}"
+            );
+            assert_eq!(calls.random.get(), 0, "{abi:?}: getrandom was called");
+            assert_eq!(calls.open.get(), 1, "{abi:?}");
+            assert_eq!(
+                *calls.open_flags.borrow(),
+                vec![nonblock | franken_platform::abi::O_CLOEXEC],
+                "{abi:?}: opened nonblocking"
+            );
+        }
+    }
+
+    #[test]
+    fn the_evidence_qualified_legacy_provider_is_refused_unavailable_without_any_entropy_call() {
+        // The committed guest evidence has no observation of the legacy device, so naming the provider without a test environment is
+        // refused: no downgrade, no attempt, and the other capabilities still run and pass.
+        for (abi, release) in [(Abi::PowerPc32, PPC_RELEASE), (Abi::Mips32, MIPS_RELEASE)] {
+            let (fake, calls) = Fake::kernel(abi);
+            let (result, report) =
+                bring_up_with(fake, Some(release), EntropySelection::LegacyDevRandom);
+            let unavailable = StartupError::Entropy(EntropyError::Unavailable {
+                status: CapabilityStatus::UnqualifiedPendingStockGuest,
+            });
+            let Err(error) = result else {
+                panic!("{abi:?}: an unqualified provider must be refused");
+            };
+            assert_eq!(error, unavailable, "{abi:?}");
+            assert!(
+                !error.is_retryable(),
+                "{abi:?}: waiting does not qualify a provider"
+            );
+            assert_eq!(report.entropy, Outcome::Refused("unavailable"));
+            assert_eq!((report.clock, report.wake), (Outcome::Pass, Outcome::Pass));
+            assert_eq!(
+                entropy_line(&report),
+                "FFW_PLATFORM:ENTROPY status=REFUSED provenance=kernel provider=legacy_dev_random reason=unavailable"
+            );
+            assert_eq!(
+                report.first_refusal(),
+                Some((Capability::Entropy, "unavailable"))
+            );
+            assert_eq!(
+                (calls.open.get(), calls.random.get()),
+                (0, 0),
+                "{abi:?}: neither /dev/random nor getrandom was called"
+            );
+        }
+    }
+
+    #[test]
+    fn an_empty_legacy_pool_is_waiting_and_retryable_with_the_provider_shown_and_no_getrandom() {
+        // No scripted reads: the double's legacy device answers EAGAIN, an empty pool.
+        let (fake, calls) = Fake::kernel(Abi::Mips32);
+        let (result, report) = bring_up_with(fake, Some(MIPS_RELEASE), LEGACY_TEST_ENV);
+        let Err(error) = result else {
+            panic!("an empty pool must refuse");
+        };
+        assert_eq!(error, StartupError::Entropy(EntropyError::NotSeeded));
+        assert!(error.is_retryable());
+        assert_eq!(
+            entropy_line(&report),
+            "FFW_PLATFORM:ENTROPY status=REFUSED provenance=kernel provider=legacy_dev_random_test_environment reason=not_seeded"
+        );
+        assert_eq!(
+            report.markers().lines().last(),
+            Some("FFW_PLATFORM:END started=0 refused=entropy:not_seeded")
+        );
+        assert_eq!(report.exit_status(), EXIT_REFUSED);
+        assert_eq!((calls.open.get(), calls.random.get()), (1, 0));
+    }
+
+    #[test]
+    fn a_missing_legacy_device_and_a_failed_read_keep_their_own_typed_refusals() {
+        let (mut fake, calls) = Fake::kernel(Abi::Mips32);
+        fake.legacy_open = -2;
+        let (result, report) = bring_up_with(fake, Some(MIPS_RELEASE), LEGACY_TEST_ENV);
+        assert_eq!(
+            result.err(),
+            Some(StartupError::Entropy(EntropyError::DeviceAbsent))
+        );
+        assert_eq!(report.entropy, Outcome::Refused("absent"));
+        assert_eq!(
+            calls.random.get(),
+            0,
+            "a missing device is not a reason to call getrandom"
+        );
+
+        let no_bytes: &[u8] = &[];
+        let (fake, calls) = Fake::with_legacy_reads(Abi::PowerPc32, &[(-5, no_bytes)]);
+        let (result, report) = bring_up_with(fake, Some(PPC_RELEASE), LEGACY_TEST_ENV);
+        assert_eq!(
+            result.err(),
+            Some(StartupError::Entropy(EntropyError::Failed(5)))
+        );
+        assert_eq!(report.entropy, Outcome::Refused("failed"));
+        assert_eq!(calls.random.get(), 0);
+    }
+
+    #[test]
+    fn a_getrandom_failure_at_startup_never_opens_the_legacy_device() {
+        for (abi, release, errno) in [
+            (Abi::PowerPc32, PPC_RELEASE, -11isize),
+            (Abi::PowerPc32, PPC_RELEASE, -22),
+            (Abi::Mips32, MIPS_RELEASE, -89),
+        ] {
+            let (mut fake, calls) = Fake::kernel(abi);
+            fake.random = Random::Errno(errno);
+            let (_result, report) = bring_up(fake, Some(release));
+            assert!(
+                matches!(report.entropy, Outcome::Refused(_)),
+                "{abi:?} {errno}"
+            );
+            assert_eq!(calls.random.get(), 1, "{abi:?} {errno}");
+            assert_eq!(
+                calls.open.get(),
+                0,
+                "{abi:?} {errno}: getrandom failing must not select /dev/random"
+            );
+            assert!(
+                !entropy_line(&report).contains("provider="),
+                "{abi:?} {errno}: nothing selected another provider"
+            );
+        }
+    }
+
+    #[test]
+    fn the_command_line_selects_a_provider_only_by_naming_it_and_refuses_everything_else() {
+        let args =
+            |list: &[&str]| -> Vec<String> { list.iter().map(|s| (*s).to_string()).collect() };
+        assert_eq!(
+            parse_startup_args(&args(&[])),
+            Ok(EntropySelection::Getrandom)
+        );
+        assert_eq!(
+            parse_startup_args(&args(&["--entropy-provider", "getrandom"])),
+            Ok(EntropySelection::Getrandom)
+        );
+        assert_eq!(
+            parse_startup_args(&args(&["--entropy-provider", "legacy-dev-random"])),
+            Ok(EntropySelection::LegacyDevRandom)
+        );
+        assert_eq!(
+            parse_startup_args(&args(&[
+                "--entropy-provider=legacy-dev-random-test-environment"
+            ])),
+            Ok(EntropySelection::LegacyDevRandomTestEnvironment)
+        );
+        for bad in [
+            vec!["--entropy-provider"],
+            vec!["--entropy-provider", ""],
+            vec!["--entropy-provider", "legacy"],
+            vec!["--entropy-provider", "LEGACY-DEV-RANDOM"],
+            vec!["--entropy-provider=nope"],
+            vec![
+                "--entropy-provider",
+                "getrandom",
+                "--entropy-provider",
+                "getrandom",
+            ],
+            vec!["--entropy-provider", "getrandom", "extra"],
+            vec!["--legacy"],
+            vec!["legacy-dev-random"],
+            vec!["--entropy-provider", "--entropy-provider"],
+        ] {
+            assert!(
+                parse_startup_args(&args(&bad)).is_err(),
+                "{bad:?} must be refused, not defaulted"
+            );
+        }
+    }
+
+    #[test]
+    fn every_selection_has_one_spelling_and_the_default_alone_has_no_marker_token() {
+        for (selection, name) in EntropySelection::ALL.iter().zip(PROVIDER_ARGUMENTS) {
+            assert_eq!(EntropySelection::from_argument(name), Some(*selection));
+        }
+        assert_eq!(EntropySelection::default(), EntropySelection::Getrandom);
+        assert_eq!(EntropySelection::Getrandom.marker_provider(), None);
+        assert_eq!(
+            EntropySelection::LegacyDevRandom.marker_provider(),
+            Some("legacy_dev_random")
+        );
+        assert_eq!(
+            LEGACY_TEST_ENV.marker_provider(),
+            Some("legacy_dev_random_test_environment")
+        );
+        assert_eq!(
+            EntropySelection::Getrandom.profile(),
+            EntropyProfile::Getrandom
+        );
+        // The evidence-qualified legacy provider is unqualified today: no observation of the device exists.
+        assert_eq!(
+            EntropySelection::LegacyDevRandom.profile(),
+            EntropyProfile::LegacyDevRandom(ProviderQualification::Unqualified)
+        );
+        assert_eq!(
+            LEGACY_TEST_ENV.profile(),
+            EntropyProfile::LegacyDevRandom(ProviderQualification::TestEnvironment)
+        );
     }
 
     // ---- the paired positive (logic only) and the planted negative ----
@@ -1243,6 +1705,12 @@ mod tests {
             StartupError::Entropy(EntropyError::Degenerate),
             StartupError::Entropy(EntropyError::Failed(5)),
             StartupError::Entropy(EntropyError::Malformed(-5000)),
+            StartupError::Entropy(EntropyError::RequestTooLarge {
+                requested: 65,
+                max: 64,
+            }),
+            StartupError::Entropy(EntropyError::ReadBudget { reads: 16 }),
+            StartupError::Entropy(EntropyError::DeviceAbsent),
             StartupError::Wake(WakeError::Absent {
                 call: WakeCall::Pipe2,
             }),
@@ -1420,5 +1888,93 @@ mod tests {
                 "{name} has no committed example"
             );
         }
+    }
+
+    /// The scenarios of `p02_legacy_entropy_markers.json`: each is one explicit selection.
+    fn legacy_scenario(name: &str) -> StartupReport {
+        match name {
+            "legacy_test_environment_all_pass_powerpc" => {
+                let bytes: Vec<u8> = (1..=16u8).collect();
+                let (fake, _) = Fake::with_legacy_reads(Abi::PowerPc32, &[(16, bytes.as_slice())]);
+                finish_check(bring_up_with(fake, Some(PPC_RELEASE), LEGACY_TEST_ENV))
+            }
+            "legacy_test_environment_not_seeded_mips" => {
+                let (fake, _) = Fake::kernel(Abi::Mips32);
+                finish_check(bring_up_with(fake, Some(MIPS_RELEASE), LEGACY_TEST_ENV))
+            }
+            "legacy_evidence_qualified_unavailable_powerpc" => {
+                let (fake, _) = Fake::kernel(Abi::PowerPc32);
+                finish_check(bring_up_with(
+                    fake,
+                    Some(PPC_RELEASE),
+                    EntropySelection::LegacyDevRandom,
+                ))
+            }
+            "legacy_device_absent_mips" => {
+                let (mut fake, _) = Fake::kernel(Abi::Mips32);
+                fake.legacy_open = -2;
+                finish_check(bring_up_with(fake, Some(MIPS_RELEASE), LEGACY_TEST_ENV))
+            }
+            "legacy_selected_with_a_simulated_backend_refused" => finish_check(bring_up_with(
+                Fake::new(Provenance::Simulated, None).0,
+                Some(PPC_RELEASE),
+                LEGACY_TEST_ENV,
+            )),
+            other => panic!("no legacy scenario named {other}"),
+        }
+    }
+
+    #[test]
+    fn the_committed_legacy_marker_examples_are_exactly_what_each_scenario_prints() {
+        let vectors: serde_json::Value = serde_json::from_str(include_str!(
+            "../tests/vectors/p02_legacy_entropy_markers.json"
+        ))
+        .expect("the vector file is JSON");
+        assert_eq!(vectors["schema"], "ffw.p02.legacy-entropy-markers.v1");
+        // The provider values in the file are exactly the markers the code can print for a non-default selection.
+        let committed: Vec<&str> = vectors["provider_values"]
+            .as_array()
+            .expect("a list of provider values")
+            .iter()
+            .map(|value| value.as_str().expect("a string"))
+            .collect();
+        let printable: Vec<&str> = EntropySelection::ALL
+            .iter()
+            .filter_map(|selection| selection.marker_provider())
+            .collect();
+        assert_eq!(committed, printable);
+        let examples = vectors["examples"].as_object().expect("an examples object");
+        for (name, example) in examples {
+            let report = legacy_scenario(name);
+            let expected: Vec<&str> = example["lines"]
+                .as_array()
+                .expect("a list of lines")
+                .iter()
+                .map(|line| line.as_str().expect("a string"))
+                .collect();
+            let printed = report.markers();
+            assert_eq!(printed.lines().collect::<Vec<_>>(), expected, "{name}");
+            assert!(printed.ends_with('\n'), "{name}: newline-terminated");
+            assert_eq!(
+                u64::from(report.exit_status()),
+                example["exit"].as_u64().expect("an exit status"),
+                "{name}"
+            );
+        }
+        // Every scenario has a committed example, and the file has no example without a scenario.
+        let names = [
+            "legacy_test_environment_all_pass_powerpc",
+            "legacy_test_environment_not_seeded_mips",
+            "legacy_evidence_qualified_unavailable_powerpc",
+            "legacy_device_absent_mips",
+            "legacy_selected_with_a_simulated_backend_refused",
+        ];
+        for name in names {
+            assert!(
+                examples.contains_key(name),
+                "{name} has no committed example"
+            );
+        }
+        assert_eq!(examples.len(), names.len());
     }
 }
