@@ -202,17 +202,19 @@ class Model:
         self.revision += 1
 
     def install_lease(self, token, at_ms):
-        """Whether the session accepts `token` at `at_ms`, checked in G01's order: group, issuer,
-        stale epoch, future epoch, expiry. An accepted token replaces the lease; a refused one does not.
-        Returns "installed" or the refusal's code."""
+        """Whether the session accepts `token` at `at_ms`, checked in G01's order (G01 slice 2): group,
+        stale epoch, future epoch, issuer, expiry. A replaced coordinator names the old issuer and the old
+        epoch; it is refused as stale, not as a foreign issuer, so the epoch is judged before the issuer.
+        An accepted token replaces the lease; a refused one does not. Returns "installed" or the
+        refusal's code."""
         if not token["group_ok"]:
             return "WRONG_GROUP"
-        if not token["issuer_ok"]:
-            return "NOT_CONFIGURED_ISSUER"
         if token["epoch"] < self.epoch:
             return "STALE_AUTHORITY"
         if token["epoch"] > self.epoch:
             return "FUTURE_AUTHORITY"
+        if not token["issuer_ok"]:
+            return "NOT_CONFIGURED_ISSUER"
         if at_ms >= token["expires_ms"]:
             return "AUTHORITY_EXPIRED"
         self.lease = {"epoch": token["epoch"], "expires_ms": token["expires_ms"]}
@@ -508,20 +510,23 @@ def config_for(doc, scenario):
 
 
 def foreign_token(model, flaw, at_ms):
-    """A token G01 must not accept, built from the lease the issuer would mint now."""
+    """A token G01 must not accept, built from the lease the issuer would mint now. `flaw` names one
+    flaw, or several joined by "+" (for example "issuer+stale"): a token flawed in two ways is how the
+    order in which G01 judges them is pinned. "stale" and "future" exclude each other."""
     token = {"group_ok": True, "issuer_ok": True, "epoch": model.epoch, "expires_ms": model.cfg["lease_ms"]}
-    if flaw == "issuer":
-        token["issuer_ok"] = False
-    elif flaw == "group":
-        token["group_ok"] = False
-    elif flaw == "stale":
-        token["epoch"] -= 1
-    elif flaw == "future":
-        token["epoch"] += 1
-    elif flaw == "expired":
-        token["expires_ms"] = at_ms
-    else:
-        raise ValueError(flaw)
+    for one in flaw.split("+"):
+        if one == "issuer":
+            token["issuer_ok"] = False
+        elif one == "group":
+            token["group_ok"] = False
+        elif one == "stale":
+            token["epoch"] = model.epoch - 1
+        elif one == "future":
+            token["epoch"] = model.epoch + 1
+        elif one == "expired":
+            token["expires_ms"] = at_ms
+        else:
+            raise ValueError(flaw)
     return token
 
 

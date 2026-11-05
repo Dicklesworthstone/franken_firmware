@@ -343,13 +343,17 @@ fn replay(doc: &Value, scenario: &Value) -> Vec<String> {
                 // A token the session must not accept: the owner tries to install it.
                 let at = number(step, "at_ms") * MS;
                 let mut token = AuthorityToken::issue(&session, lease_ms * MS);
-                match text(step, "flaw") {
-                    "issuer" => token.issuer_id = "intruder".to_string(),
-                    "group" => token.group_id = "elsewhere".to_string(),
-                    "stale" => token.epoch -= 1,
-                    "future" => token.epoch += 1,
-                    "expired" => token.expires_at_ns = at,
-                    other => panic!("unknown flaw `{other}`"),
+                // One flaw, or several joined by `+`: a token flawed in two ways pins the order in which
+                // the session judges them.
+                for flaw in text(step, "flaw").split('+') {
+                    match flaw {
+                        "issuer" => token.issuer_id = "intruder".to_string(),
+                        "group" => token.group_id = "elsewhere".to_string(),
+                        "stale" => token.epoch = session.current_epoch - 1,
+                        "future" => token.epoch = session.current_epoch + 1,
+                        "expired" => token.expires_at_ns = at,
+                        other => panic!("unknown flaw `{other}`"),
+                    }
                 }
                 let got = show_install(channel.install_lease(&session, token, at));
                 if got != text(step, "expect") {

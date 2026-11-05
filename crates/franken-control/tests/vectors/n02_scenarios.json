@@ -551,7 +551,7 @@
     },
     {
       "id": "N02-S032",
-      "title": "a lease the session does not accept (foreign issuer, foreign group, stale, future, already expired) cannot be installed, and the lease already held keeps working",
+      "title": "a lease the session does not accept (foreign issuer, foreign group, stale, future, already expired) cannot be installed, a token with two flaws is refused for the first in G01's order (group, stale, future, issuer, expiry), and the lease already held keeps working",
       "invariants": ["INV-LEASE-INSTALL-CHECKED"],
       "config": {},
       "steps": [
@@ -560,6 +560,13 @@
         {"op": "foreign_lease", "at_ms": 5, "flaw": "stale", "expect": "STALE_AUTHORITY"},
         {"op": "foreign_lease", "at_ms": 5, "flaw": "future", "expect": "FUTURE_AUTHORITY"},
         {"op": "foreign_lease", "at_ms": 5, "flaw": "expired", "expect": "AUTHORITY_EXPIRED"},
+        {"op": "foreign_lease", "at_ms": 5, "flaw": "issuer+stale", "expect": "STALE_AUTHORITY"},
+        {"op": "foreign_lease", "at_ms": 5, "flaw": "issuer+future", "expect": "FUTURE_AUTHORITY"},
+        {"op": "foreign_lease", "at_ms": 5, "flaw": "group+stale", "expect": "WRONG_GROUP"},
+        {"op": "foreign_lease", "at_ms": 5, "flaw": "group+issuer", "expect": "WRONG_GROUP"},
+        {"op": "foreign_lease", "at_ms": 5, "flaw": "issuer+expired", "expect": "NOT_CONFIGURED_ISSUER"},
+        {"op": "foreign_lease", "at_ms": 5, "flaw": "stale+expired", "expect": "STALE_AUTHORITY"},
+        {"op": "foreign_lease", "at_ms": 5, "flaw": "future+expired", "expect": "FUTURE_AUTHORITY"},
         {"op": "submit", "at_ms": 5, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 60}, "expect": "queued:ordinary"},
         {"op": "step", "at_ms": 5, "expect": ["ctl-a#1=committed:3"]}
       ],
