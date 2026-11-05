@@ -23,8 +23,8 @@ use franken_session::{
     ChannelRole, FencedControlCommand, GroupCommandPayload, SessionError, UnifiedGroupSession,
 };
 use franken_stream::{
-    BoundedJitterBuffer, OutboundFrame, PlayoutMode, PlayoutPullDecision, StreamId, StreamKey,
-    StreamReceiver, StreamSender,
+    BoundedJitterBuffer, Capabilities, Initiator, NegotiationError, OutboundFrame, PlayoutMode,
+    PlayoutPullDecision, StreamId, StreamKey, StreamReceiver, StreamSender, respond,
 };
 use franken_test_support::{
     AmplifierObservation, BoardObservation, BoundedDiagnosticSink, ClockObservation,
@@ -34,14 +34,236 @@ use franken_test_support::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Synthetic stream key and identity for the simulated house (public test values, not secrets).
-/// Every simulated sender and receiver shares them, as a real group shares one stream key and one
-/// per-start stream identity.
+/// Synthetic group key and stream identity for the simulated house (public test values, not secrets).
+/// The key is the group's pre-shared key: it authenticates the negotiation, and each member's media
+/// key is derived from it and from that member's own negotiation transcript (`N01`), so no two
+/// members share a media key.
 const CAMPAIGN_STREAM_KEY: [u8; 32] = [0xA5; 32];
 const CAMPAIGN_STREAM_ID: u64 = 0x5EED_5EED_0000_0001;
 
 fn campaign_stream_id() -> Result<StreamId, String> {
     StreamId::new(CAMPAIGN_STREAM_ID).map_err(|e| e.to_string())
+}
+
+// ------------------------------------------------------------------------------------------------
+// Stream creation through negotiation (`N01` / `ffw-ey5`).
+//
+// Before a block flows, the coordinator and each member run the N01 exchange: the coordinator's Offer,
+// the member's Answer, and a selection both ends compute from the two capability sets. Each end then
+// builds its media endpoint from its own copy of the session, so the wire version, the format and the
+// features are the negotiated ones and the media key is bound to that member's transcript. A member
+// the coordinator cannot negotiate with gets no stream at all: it is muted, with N01's bounded
+// diagnostic on record, and is never put on a quietly degraded stream.
+// ------------------------------------------------------------------------------------------------
+
+/// Byte offset of the negotiation message version in an Offer or an Answer (N01 contract, section 9).
+/// The decoder checks it before it computes the tag, so a message carrying another version is refused
+/// as an unsupported version and not as a forgery. A test pins that the offset is the right one.
+const HELLO_VERSION_BYTE: usize = 4;
+
+/// What a simulated member's firmware does in the negotiation. [`PeerFirmware::CURRENT`] is this
+/// build's own. Tests plant a different member to show that one the coordinator cannot negotiate
+/// with ends up refused, not degraded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PeerFirmware {
+    /// The largest media payload the member's firmware accepts, in bytes.
+    max_payload_bytes: u16,
+    /// A negotiation message version the member's Answer carries instead of this build's (newer
+    /// firmware). `None` leaves the Answer as this build made it.
+    answer_message_version: Option<u8>,
+}
+
+impl PeerFirmware {
+    const CURRENT: Self = Self {
+        max_payload_bytes: Capabilities::baseline().max_payload_bytes,
+        answer_message_version: None,
+    };
+
+    fn capabilities(self) -> Capabilities {
+        Capabilities {
+            max_payload_bytes: self.max_payload_bytes,
+            ..Capabilities::baseline()
+        }
+    }
+}
+
+/// What negotiation agreed for one member's stream, copied out of the session for the report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamAgreement {
+    pub wire_version: u8,
+    /// A single N01 format bit.
+    pub format: u8,
+    pub max_payload_bytes: u16,
+    /// Features both ends support and the stream may therefore use.
+    pub features: u32,
+}
+
+/// Which end of the exchange refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RefusedBy {
+    /// The member, while answering the coordinator's Offer.
+    Member,
+    /// The coordinator, while checking the member's Answer.
+    Coordinator,
+}
+
+/// Why a member has no stream: N01's stable code and its bounded text (numbers only, never a key,
+/// tag, nonce or digest).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamRefusal {
+    pub refused_by: RefusedBy,
+    pub code: String,
+    pub detail: String,
+}
+
+/// What negotiation produced for one member.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamOutcome {
+    Negotiated(StreamAgreement),
+    Refused(StreamRefusal),
+}
+
+/// The two media endpoints a negotiation produced for one member, or none if it was refused.
+struct MemberStream {
+    outcome: StreamOutcome,
+    receiver: Option<StreamReceiver>,
+    sender: Option<StreamSender>,
+}
+
+fn refused(by: RefusedBy, error: &NegotiationError) -> MemberStream {
+    MemberStream {
+        outcome: StreamOutcome::Refused(StreamRefusal {
+            refused_by: by,
+            code: error.code().to_string(),
+            detail: error.to_string(),
+        }),
+        receiver: None,
+        sender: None,
+    }
+}
+
+/// A member's peer identity in the negotiation: nonzero, and never the coordinator's.
+fn member_peer_id(member_id: &str) -> u64 {
+    let id = fnv1a(member_id.as_bytes()) | 1;
+    if id == COORDINATOR_ID { id ^ 2 } else { id }
+}
+
+/// SIMULATED stand-in for the nonce an endpoint draws from admitted entropy for each negotiation
+/// message (`N01` requires a fresh nonce per message). It is deterministic and **not entropy**: it is
+/// nonzero and differs by role, member, epoch and boot, which is all the simulation needs. The
+/// production source is `franken_platform` `PlatformLayer::fill_random` (`P02`); swapping it in
+/// changes this one function.
+fn simulated_nonce(role: &[u8], member_id: &str, epoch: u64, boot_index: u32) -> [u8; 16] {
+    let high = simulated_boot_entropy(member_id, epoch, boot_index) ^ fnv1a(role);
+    let low = high.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0x5A5A_5A5A_A5A5_A5A5;
+    let mut nonce = [0u8; 16];
+    nonce[..8].copy_from_slice(&high.to_be_bytes());
+    nonce[8..].copy_from_slice(&low.to_be_bytes());
+    nonce[15] |= 1;
+    nonce
+}
+
+/// Run the N01 exchange between the coordinator and one member and build both media endpoints from it.
+/// A refusal at either end is an outcome, not an error: the member simply has no stream. `Err` is for
+/// a defect (the ends disagree, or this build cannot speak what was agreed).
+fn negotiate_member_stream(
+    member_id: &str,
+    epoch: u64,
+    boot_index: u32,
+    firmware: PeerFirmware,
+) -> Result<MemberStream, String> {
+    let psk = StreamKey::from_bytes(CAMPAIGN_STREAM_KEY);
+    let (initiator, offer) = Initiator::offer(
+        &psk,
+        Capabilities::baseline(),
+        COORDINATOR_ID,
+        campaign_stream_id()?,
+        epoch,
+        simulated_nonce(b"offer", member_id, epoch, boot_index),
+    )
+    .map_err(|e| {
+        format!(
+            "coordinator could not build its offer for {member_id}: {}",
+            e.code()
+        )
+    })?;
+    let (member_session, mut answer) = match respond(
+        &psk,
+        firmware.capabilities(),
+        member_peer_id(member_id),
+        epoch,
+        simulated_nonce(b"answer", member_id, epoch, boot_index),
+        &offer,
+    ) {
+        Ok(pair) => pair,
+        Err(error) => return Ok(refused(RefusedBy::Member, &error)),
+    };
+    if let Some(version) = firmware.answer_message_version {
+        // Planted: the member's firmware speaks a newer negotiation message than this build.
+        answer[HELLO_VERSION_BYTE] = version;
+    }
+    let coordinator_session = match initiator.finish(&answer) {
+        Ok(session) => session,
+        Err(error) => return Ok(refused(RefusedBy::Coordinator, &error)),
+    };
+    if coordinator_session.selection() != member_session.selection()
+        || coordinator_session.transcript_digest() != member_session.transcript_digest()
+    {
+        return Err(format!(
+            "member {member_id}: the two ends of the negotiation disagree"
+        ));
+    }
+    let selection = *coordinator_session.selection();
+    let sender = StreamSender::from_negotiated(&coordinator_session).map_err(|e| {
+        format!(
+            "member {member_id}: coordinator cannot speak what was agreed: {}",
+            e.code()
+        )
+    })?;
+    let receiver = StreamReceiver::from_negotiated(&member_session).map_err(|e| {
+        format!(
+            "member {member_id}: member cannot speak what was agreed: {}",
+            e.code()
+        )
+    })?;
+    Ok(MemberStream {
+        outcome: StreamOutcome::Negotiated(StreamAgreement {
+            wire_version: selection.wire_version,
+            format: selection.format,
+            max_payload_bytes: selection.max_payload_bytes,
+            features: selection.features,
+        }),
+        receiver: Some(receiver),
+        sender: Some(sender),
+    })
+}
+
+/// Critical record that a member has no stream, with N01's bounded diagnostic as its cause.
+fn stream_refused_event(
+    seed: u64,
+    member_id: &str,
+    session: &UnifiedGroupSession,
+    refusal: &StreamRefusal,
+) -> DiagnosticEvent {
+    DiagnosticEvent {
+        schema_version: String::new(),
+        timestamp_mono_ns: 0,
+        run_id: format!("vh-seed-{seed}"),
+        case_id: "Q01-virtual-house".to_string(),
+        correlation_id: format!("negotiation-{member_id}"),
+        member_id: member_id.to_string(),
+        group_id: session.group_id.clone(),
+        source_epoch: session.current_epoch,
+        state_revision: session.state_revision,
+        event_kind: "stream_refused".to_string(),
+        message: format!("negotiation refused; {member_id} is muted"),
+        queue_depth: 0,
+        latency_us: 0,
+        fault: None,
+        cause: Some(format!("{}: {}", refusal.code, refusal.detail)),
+    }
 }
 
 /// Per-speaker node in the Virtual House simulator (`Q01` / `ffw-gmq`).
@@ -61,8 +283,18 @@ pub struct VirtualSpeakerNode {
     /// Whether the controller re-admits a start by itself once the clock is locked again after a reset or expiry.
     pub auto_admit: bool,
     /// The only path from datagram bytes to the jitter buffer: structure, MAC, field validation,
-    /// stream identity, epoch and replay window, in that order (`N01`).
-    pub receiver: StreamReceiver,
+    /// stream identity, epoch and replay window, in that order (`N01`). It is built from the
+    /// member's own negotiated session, so it is keyed for this member alone and limited to the
+    /// negotiated version, format and features. `None` only when negotiation was refused.
+    pub receiver: Option<StreamReceiver>,
+    /// The coordinator's end of the same session. The simulation owns both ends, so it lives with
+    /// the member it sends to. `None` exactly when `receiver` is.
+    pub coordinator_sender: Option<StreamSender>,
+    /// What negotiation produced for this member's stream: the agreement, or the refusal that left it
+    /// without one.
+    pub stream: StreamOutcome,
+    /// Blocks that sounded nothing because there was no stream to play (counted in `muted_blocks` too).
+    pub stream_refused_blocks: u64,
     pub jitter_buffer: BoundedJitterBuffer,
     pub resampler: BoundedDriftResampler,
     pub dsp: BoardProtectionDsp,
@@ -123,6 +355,8 @@ struct BringUpPlan {
     first_start_block: Option<u64>,
     /// Whether the controller re-admits a start by itself after a reset or expiry.
     auto_admit: bool,
+    /// What the member's firmware does when the coordinator negotiates its stream (`N01`).
+    firmware: PeerFirmware,
 }
 
 impl BringUpPlan {
@@ -135,6 +369,7 @@ impl BringUpPlan {
         boot_index: 0,
         first_start_block: Some(0),
         auto_admit: true,
+        firmware: PeerFirmware::CURRENT,
     };
 }
 
@@ -494,6 +729,10 @@ impl VirtualSpeakerNode {
             None => None,
         };
 
+        // The member's stream exists only through negotiation; a refusal leaves it with none.
+        let link =
+            negotiate_member_stream(member_id, initial_epoch, plan.boot_index, plan.firmware)?;
+
         let dsp = BoardProtectionDsp::new(board.clone()).map_err(|e| e.to_string())?;
         let shadow_dsp = dsp.clone();
         let continuity_oracles: Vec<SampleContinuityOracle> =
@@ -511,11 +750,10 @@ impl VirtualSpeakerNode {
             sim_clock,
             admitted_plan,
             auto_admit: plan.auto_admit,
-            receiver: StreamReceiver::new(
-                StreamKey::from_bytes(CAMPAIGN_STREAM_KEY),
-                campaign_stream_id()?,
-                initial_epoch,
-            ),
+            receiver: link.receiver,
+            coordinator_sender: link.sender,
+            stream: link.outcome,
+            stream_refused_blocks: 0,
             jitter_buffer: BoundedJitterBuffer::new(PlayoutMode::Music500ms, 128),
             resampler: BoundedDriftResampler::new(),
             dsp,
@@ -793,6 +1031,11 @@ pub struct MemberSimulationStats {
     /// Blocks the N03 audible gate let sound, and blocks it muted (replaced with silence at the same position).
     pub audible_blocks: u64,
     pub muted_blocks: u64,
+    /// What negotiation produced for this member's stream (`N01`): the agreed version and format, or
+    /// the refusal that left it without one.
+    pub stream: StreamOutcome,
+    /// Blocks muted because there was no stream to play, a subset of `muted_blocks`.
+    pub stream_refused_blocks: u64,
     /// Frames verified continuous on every channel (the minimum across channels).
     pub verified_continuous_frames: u64,
     /// Samples compared with the shadow render, summed over every channel. This is a handoff
@@ -840,7 +1083,7 @@ fn run_campaign_with_sink(
     fault: Option<OutputFault>,
     sink: &mut BoundedDiagnosticSink,
 ) -> Result<VirtualHouseReport, String> {
-    let result = run_campaign_inner(seed, total_blocks, fault, sink);
+    let result = run_campaign_inner(seed, total_blocks, fault, sink, &[]);
     if let Err(cause) = &result {
         sink.emit_critical(DiagnosticEvent {
             schema_version: String::new(),
@@ -863,11 +1106,14 @@ fn run_campaign_with_sink(
     result
 }
 
+/// `firmware` plants members whose negotiation differs from this build's own (see [`PeerFirmware`]);
+/// a member not named runs [`PeerFirmware::CURRENT`].
 fn run_campaign_inner(
     seed: u64,
     total_blocks: u64,
     fault: Option<OutputFault>,
     sink: &mut BoundedDiagnosticSink,
+    firmware: &[(&str, PeerFirmware)],
 ) -> Result<VirtualHouseReport, String> {
     let catalog = synthetic_test_fixture_catalog();
     let find_board = |model: &str| -> BoardProfile {
@@ -910,7 +1156,7 @@ fn run_campaign_inner(
             .map_err(|e| e.to_string())?;
         cmd_seq += 1;
 
-        let plan = match fault {
+        let mut plan = match fault {
             Some(OutputFault::UnadmittedExcept { member_id: kept }) if kept != member_id => {
                 BringUpPlan {
                     first_start_block: None,
@@ -920,6 +1166,10 @@ fn run_campaign_inner(
             }
             _ => BringUpPlan::NOMINAL,
         };
+        plan.firmware = firmware
+            .iter()
+            .find(|(id, _)| *id == member_id)
+            .map_or(PeerFirmware::CURRENT, |(_, planted)| *planted);
         let node = VirtualSpeakerNode::bring_up_with_plan(member_id, board, epoch, plan)?;
         audit
             .deliver_new(
@@ -955,12 +1205,14 @@ fn run_campaign_inner(
     )
     .map_err(|e| e.to_string())?;
 
-    // The sender owns stream identity, epoch and sequence; sequence 0 is the first block.
-    let mut sender = StreamSender::new(
-        StreamKey::from_bytes(CAMPAIGN_STREAM_KEY),
-        campaign_stream_id()?,
-        epoch,
-    );
+    // Each member's stream came out of its own negotiation, so each has its own sender; a sender owns
+    // stream identity, epoch and sequence, and sequence 0 is the first block. A member whose
+    // negotiation was refused has none and is on record as muted with N01's diagnostic.
+    for (member_id, node) in &nodes {
+        if let StreamOutcome::Refused(refusal) = &node.stream {
+            sink.emit_critical(stream_refused_event(seed, member_id, &session, refusal));
+        }
+    }
     let block_period_ns: u64 = BLOCK_PERIOD_NS; // 256 / 48_000 s
     let playout_horizon_ns: u64 = PLAYOUT_HORIZON_NS; // 500 ms
 
@@ -1004,20 +1256,29 @@ fn run_campaign_inner(
                 src_block.to_be_i16_bytes(),
             )
         };
-        let wire = sender.send(frame).map_err(|e| e.to_string())?;
-
         let mut presented_true = Vec::with_capacity(nodes.len());
         for (member_id, node) in &mut nodes {
+            // Each member is sent the block on its own negotiated session, so the datagram is keyed for
+            // that member alone. The sender advances whether or not the network delivers the block, as
+            // a real sender does. A member with no stream is sent nothing.
+            let wire = match node.coordinator_sender.as_mut() {
+                Some(link) => Some(link.send(frame.clone()).map_err(|e| {
+                    format!("member {member_id}: block {blk_idx} could not be encoded: {e}")
+                })?),
+                None => None,
+            };
+            let streaming = wire.is_some();
             let sched = schedules.get_mut(member_id).unwrap();
             let decision = sched.evaluate_packet(blk_idx, send_time_ns);
             if !decision.dropped
                 && let Some(deliver_ns) = decision.deliver_time_ns
+                && let (Some(wire), Some(receiver)) = (wire.as_ref(), node.receiver.as_mut())
             {
                 // Each block is delivered to each member at most once, in order, on the member's
                 // own stream, so a refusal here is a defect in the framing or the harness, never
                 // ordinary loss. Fail the campaign rather than skip it silently. A packet that is
                 // merely late is a different matter: `push_packet` counts it and play-out conceals.
-                let verified = node.receiver.accept(&wire).map_err(|e| {
+                let verified = receiver.accept(wire).map_err(|e| {
                     format!("member {member_id}: block {blk_idx} refused by the receiver: {e}")
                 })?;
                 let _ = node.jitter_buffer.push_packet(&verified, deliver_ns);
@@ -1031,25 +1292,33 @@ fn run_campaign_inner(
 
             // The audible gate: N03's answer for this block's presentation instant.
             let gate = node.gate_block(blk_idx);
-            let pull = node.jitter_buffer.pull_for_frame(start_frame);
+            // A member with no stream has nothing to play and nothing to conceal.
+            let pull = streaming.then(|| node.jitter_buffer.pull_for_frame(start_frame));
             let stereo_in = match pull {
-                PlayoutPullDecision::AuthenticBlock(b)
-                | PlayoutPullDecision::FecRecoveredBlock(b) => {
+                None => StereoAudioBlock::silence(start_frame),
+                Some(
+                    PlayoutPullDecision::AuthenticBlock(b)
+                    | PlayoutPullDecision::FecRecoveredBlock(b),
+                ) => {
                     node.authentic_blocks += 1;
                     b
                 }
-                PlayoutPullDecision::PlcConcealedBlock { block, .. } => {
+                Some(PlayoutPullDecision::PlcConcealedBlock { block, .. }) => {
                     node.concealed_blocks += 1;
                     block
                 }
             };
             // A block the gate does not let sound is replaced by silence at the same stream position, so the
-            // continuity and shadow oracles still judge contiguous frames.
-            let stereo_in = if gate.audible() {
+            // continuity and shadow oracles still judge contiguous frames. So is every block of a member
+            // whose negotiation was refused.
+            let stereo_in = if gate.audible() && streaming {
                 node.audible_blocks += 1;
                 stereo_in
             } else {
                 node.muted_blocks += 1;
+                if !streaming {
+                    node.stream_refused_blocks += 1;
+                }
                 StereoAudioBlock::silence(start_frame)
             };
 
@@ -1138,7 +1407,7 @@ fn run_campaign_inner(
             node.rendered_blocks += 1;
 
             // Where this node really presents the block: its own transform's local instant, mapped back to true time.
-            if let Some(true_ns) = node.presented_true_ns(&gate) {
+            if streaming && let Some(true_ns) = node.presented_true_ns(&gate) {
                 presented_true.push(true_ns);
             }
         }
@@ -1265,6 +1534,8 @@ fn run_campaign_inner(
                 concealed_blocks: node.concealed_blocks,
                 audible_blocks: node.audible_blocks,
                 muted_blocks: node.muted_blocks,
+                stream: node.stream.clone(),
+                stream_refused_blocks: node.stream_refused_blocks,
                 verified_continuous_frames: node
                     .continuity_oracles
                     .iter()
@@ -1299,6 +1570,7 @@ fn run_campaign_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use franken_stream::StreamError;
 
     #[test]
     fn virtual_house_streams_mixed_s1_s2_fleet_with_zero_output_discontinuities() {
@@ -2189,5 +2461,326 @@ mod tests {
                 "{id}"
             );
         }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Streams are created through negotiation (`N01` / `ffw-ey5`).
+    // ---------------------------------------------------------------------------------------------
+
+    const FLEET: [&str; 5] = [
+        "spk-office-s5",
+        "spk-bedroom-s1",
+        "spk-kitchen-s12",
+        "spk-den-s3",
+        "spk-living-sub",
+    ];
+
+    /// One full media block, as the campaign sends it.
+    fn media_frame(blk: u64) -> OutboundFrame {
+        let start_frame = blk * (FRAMES_PER_BLOCK as u64);
+        let pts_ns = 500_000_000 + blk * BLOCK_PERIOD_NS;
+        OutboundFrame::media(
+            start_frame,
+            pts_ns,
+            pts_ns - BLOCK_PERIOD_NS,
+            StereoAudioBlock::silence(start_frame).to_be_i16_bytes(),
+        )
+    }
+
+    #[test]
+    fn every_member_stream_is_created_through_negotiation_with_the_agreed_version_and_format() {
+        let report = run_campaign(SEED, 20, None).expect("campaign");
+        assert_eq!(report.members.len(), 5);
+        // Stated here, not read back from the stream crate: wire version 1; the one format bit (16-bit
+        // big-endian stereo PCM at 48 kHz); one full 256-frame stereo block of payload; and both
+        // optional features, because every member's firmware here supports both.
+        let agreed = StreamAgreement {
+            wire_version: 1,
+            format: 0b01,
+            max_payload_bytes: u16::try_from(FRAMES_PER_BLOCK * 4).expect("a block fits"),
+            features: 0b11,
+        };
+        for id in FLEET {
+            let stats = &report.members[id];
+            assert_eq!(
+                stats.stream,
+                StreamOutcome::Negotiated(agreed),
+                "member {id}"
+            );
+            assert_eq!(stats.stream_refused_blocks, 0, "member {id}");
+        }
+        // A node brought up on its own is the same, and holds both ends of its session.
+        let node = bring_up(BringUpPlan::NOMINAL).expect("nominal bring-up");
+        assert_eq!(node.stream, StreamOutcome::Negotiated(agreed));
+        assert!(node.receiver.is_some() && node.coordinator_sender.is_some());
+    }
+
+    #[test]
+    fn a_datagram_made_for_one_member_is_refused_by_another_because_each_session_has_its_own_key() {
+        let mut office =
+            negotiate_member_stream("spk-office-s5", 1, 0, PeerFirmware::CURRENT).expect("office");
+        let mut den =
+            negotiate_member_stream("spk-den-s3", 1, 0, PeerFirmware::CURRENT).expect("den");
+        let wire = office
+            .sender
+            .as_mut()
+            .expect("office sender")
+            .send(media_frame(0))
+            .expect("encode");
+        assert!(
+            office
+                .receiver
+                .as_mut()
+                .expect("office receiver")
+                .accept(&wire)
+                .is_ok(),
+            "the member it was made for accepts it"
+        );
+        assert_eq!(
+            den.receiver
+                .as_mut()
+                .expect("den receiver")
+                .accept(&wire)
+                .err(),
+            Some(StreamError::AuthenticationFailed),
+            "another member's media key is a different key"
+        );
+
+        // The contrast, and the reason this matters: the baseline constructors keyed every member
+        // alike, so any member accepted any member's stream.
+        let key = || StreamKey::from_bytes(CAMPAIGN_STREAM_KEY);
+        let id = campaign_stream_id().expect("stream id");
+        let shared = StreamSender::new(key(), id, 1)
+            .send(media_frame(0))
+            .expect("encode");
+        assert!(StreamReceiver::new(key(), id, 1).accept(&shared).is_ok());
+        assert!(StreamReceiver::new(key(), id, 1).accept(&shared).is_ok());
+    }
+
+    #[test]
+    fn a_member_whose_answer_carries_an_unsupported_message_version_is_refused_and_muted_with_its_cause()
+     {
+        let newer = PeerFirmware {
+            answer_message_version: Some(2),
+            ..PeerFirmware::CURRENT
+        };
+        let mut sink = default_diagnostic_sink();
+        let report = run_campaign_inner(SEED, 200, None, &mut sink, &[("spk-den-s3", newer)])
+            .expect("a member without a stream is an outcome, not a failed campaign");
+
+        // The planted member: refused by the coordinator with N01's bounded diagnostic, and muted for
+        // every block with nothing played and nothing concealed.
+        let den = &report.members["spk-den-s3"];
+        assert_eq!(
+            den.stream,
+            StreamOutcome::Refused(StreamRefusal {
+                refused_by: RefusedBy::Coordinator,
+                code: "HELLO_UNSUPPORTED_VERSION".to_string(),
+                detail: "unsupported negotiation message version 2 (this build speaks 1)"
+                    .to_string(),
+            })
+        );
+        assert_eq!(
+            (
+                den.audible_blocks,
+                den.muted_blocks,
+                den.stream_refused_blocks
+            ),
+            (0, 200, 200)
+        );
+        assert_eq!((den.authentic_blocks, den.concealed_blocks), (0, 0));
+        assert_eq!(den.rendered_blocks, 200);
+        assert_eq!(
+            den.verified_continuous_frames,
+            200 * (FRAMES_PER_BLOCK as u64),
+            "silence at the right stream positions, so the oracles still judge contiguous frames"
+        );
+        // Paired positive: the four members that negotiated are exactly as in a normal campaign.
+        for id in FLEET.into_iter().filter(|id| *id != "spk-den-s3") {
+            let stats = &report.members[id];
+            assert!(
+                matches!(stats.stream, StreamOutcome::Negotiated(_)),
+                "member {id}"
+            );
+            assert_eq!(
+                (
+                    stats.audible_blocks,
+                    stats.muted_blocks,
+                    stats.stream_refused_blocks
+                ),
+                (200, 0, 0),
+                "member {id}"
+            );
+        }
+        assert!(report.within_2ms_skew_target && report.unified_mixed_s1_s2);
+
+        // The cause is on record exactly once, for that member, and nowhere else.
+        let refusals: Vec<_> = sink
+            .events()
+            .iter()
+            .filter(|e| e.event_kind == "stream_refused")
+            .collect();
+        assert_eq!(refusals.len(), 1);
+        assert_eq!(refusals[0].member_id, "spk-den-s3");
+        assert!(
+            refusals[0]
+                .cause
+                .as_deref()
+                .is_some_and(|c| c.starts_with("HELLO_UNSUPPORTED_VERSION: "))
+        );
+        assert!(sink.is_evidence_complete());
+
+        // Not degraded: the member holds neither end of any stream, so there was nothing for the
+        // baseline path to serve it with.
+        let link =
+            negotiate_member_stream("spk-den-s3", 1, 0, newer).expect("a refusal is an outcome");
+        assert!(link.receiver.is_none() && link.sender.is_none());
+        // And the diagnostic is bounded: numbers and words only, no key material.
+        if let StreamOutcome::Refused(r) = &link.outcome {
+            assert!(r.detail.len() <= 120, "{}", r.detail);
+            assert!(!r.detail.to_lowercase().contains("a5a5"), "{}", r.detail);
+        } else {
+            panic!("the planted member was not refused");
+        }
+    }
+
+    #[test]
+    fn a_member_that_cannot_take_a_full_block_is_refused_by_the_member_and_both_refusals_are_independent()
+     {
+        let newer = PeerFirmware {
+            answer_message_version: Some(2),
+            ..PeerFirmware::CURRENT
+        };
+        let small = PeerFirmware {
+            max_payload_bytes: 4,
+            ..PeerFirmware::CURRENT
+        };
+        let mut sink = default_diagnostic_sink();
+        let report = run_campaign_inner(
+            SEED,
+            40,
+            None,
+            &mut sink,
+            &[("spk-living-sub", small), ("spk-den-s3", newer)],
+        )
+        .expect("campaign");
+
+        assert_eq!(
+            report.members["spk-living-sub"].stream,
+            StreamOutcome::Refused(StreamRefusal {
+                refused_by: RefusedBy::Member,
+                code: "LIMITS_INCOMPATIBLE".to_string(),
+                detail: "common payload limit 4 is below one full block (1024)".to_string(),
+            })
+        );
+        assert!(matches!(
+            report.members["spk-den-s3"].stream,
+            StreamOutcome::Refused(StreamRefusal {
+                refused_by: RefusedBy::Coordinator,
+                ..
+            })
+        ));
+        for id in ["spk-living-sub", "spk-den-s3"] {
+            let stats = &report.members[id];
+            assert_eq!(
+                (
+                    stats.audible_blocks,
+                    stats.muted_blocks,
+                    stats.stream_refused_blocks
+                ),
+                (0, 40, 40),
+                "member {id}"
+            );
+        }
+        for id in ["spk-office-s5", "spk-bedroom-s1", "spk-kitchen-s12"] {
+            let stats = &report.members[id];
+            assert_eq!(
+                (
+                    stats.audible_blocks,
+                    stats.muted_blocks,
+                    stats.stream_refused_blocks
+                ),
+                (40, 0, 0),
+                "member {id}"
+            );
+        }
+        let recorded: Vec<&str> = sink
+            .events()
+            .iter()
+            .filter(|e| e.event_kind == "stream_refused")
+            .map(|e| e.member_id.as_str())
+            .collect();
+        assert_eq!(recorded, ["spk-den-s3", "spk-living-sub"]);
+    }
+
+    #[test]
+    fn simulated_peer_identities_and_nonces_are_valid_distinct_and_deterministic() {
+        let ids: Vec<u64> = FLEET.into_iter().map(member_peer_id).collect();
+        assert!(ids.iter().all(|id| *id != 0 && *id != COORDINATOR_ID));
+        let mut distinct_ids = ids.clone();
+        distinct_ids.sort_unstable();
+        distinct_ids.dedup();
+        assert_eq!(distinct_ids.len(), FLEET.len());
+
+        let mut nonces = Vec::new();
+        for member in FLEET {
+            for role in [&b"offer"[..], &b"answer"[..]] {
+                nonces.push(simulated_nonce(role, member, 1, 0));
+            }
+        }
+        assert!(nonces.iter().all(|n| *n != [0u8; 16]));
+        let mut distinct = nonces.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), nonces.len(), "a nonce repeats");
+
+        let base = simulated_nonce(b"offer", FLEET[0], 1, 0);
+        assert_eq!(base, simulated_nonce(b"offer", FLEET[0], 1, 0));
+        assert_ne!(base, simulated_nonce(b"offer", FLEET[0], 2, 0));
+        assert_ne!(base, simulated_nonce(b"offer", FLEET[0], 1, 1));
+    }
+
+    #[test]
+    fn the_planted_version_refusal_is_about_the_version_and_not_a_broken_tag() {
+        let psk = StreamKey::from_bytes(CAMPAIGN_STREAM_KEY);
+        let exchange = || {
+            let (initiator, offer) = Initiator::offer(
+                &psk,
+                Capabilities::baseline(),
+                COORDINATOR_ID,
+                campaign_stream_id().expect("stream id"),
+                1,
+                simulated_nonce(b"offer", "spk-test", 1, 0),
+            )
+            .expect("offer");
+            let (_, answer) = respond(
+                &psk,
+                Capabilities::baseline(),
+                member_peer_id("spk-test"),
+                1,
+                simulated_nonce(b"answer", "spk-test", 1, 0),
+                &offer,
+            )
+            .expect("answer");
+            (initiator, answer)
+        };
+        // Unaltered, the exchange completes.
+        let (initiator, answer) = exchange();
+        assert!(initiator.finish(&answer).is_ok());
+        // The byte the harness patches is the message version, and the refusal says so.
+        let (initiator, mut answer) = exchange();
+        answer[HELLO_VERSION_BYTE] = 2;
+        assert_eq!(
+            initiator.finish(&answer).err(),
+            Some(NegotiationError::HelloUnsupportedVersion { version: 2 })
+        );
+        // Any other byte of the same message is a forgery, refused as one: the version refusal above
+        // is not a tag failure in disguise.
+        let (initiator, mut answer) = exchange();
+        answer[20] ^= 0xFF;
+        assert_eq!(
+            initiator.finish(&answer).err(),
+            Some(NegotiationError::HelloAuthenticationFailed)
+        );
     }
 }

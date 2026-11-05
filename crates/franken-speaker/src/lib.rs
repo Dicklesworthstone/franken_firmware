@@ -25,6 +25,6 @@ mod harness;
 
 #[cfg(any(test, feature = "harness"))]
 pub use harness::{
-    FencingProbeStats, MemberSimulationStats, VirtualHouseReport, VirtualSpeakerNode,
-    run_virtual_house_campaign,
+    FencingProbeStats, MemberSimulationStats, RefusedBy, StreamAgreement, StreamOutcome,
+    StreamRefusal, VirtualHouseReport, VirtualSpeakerNode, run_virtual_house_campaign,
 };
