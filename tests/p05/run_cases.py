@@ -45,11 +45,13 @@ VECTORS_FILE = os.path.join(HERE, "vectors.txt")
 SCAN_FILE = os.path.join(HERE, "upstream_scan.json")
 DOC_FILE = os.path.join(REPO, "docs", "contracts", "p05.md")
 E06_README = os.path.join(REPO, "toolchain", "results", "e06", "upstream", "README.md")
+E06_INVENTORY = os.path.join(REPO, "toolchain", "results", "e06", "upstream", "asupersync-8940119023c0",
+                             "default.inventory.json")
 SCHEMA = "ffw.p05.cases.v1"
 TIERS = ("smoke", "full")
 KINDS = ("meta_files", "meta_crate", "meta_shared", "meta_invariants", "meta_doc", "meta_render_guard",
          "meta_hygiene", "runner_selftest", "upstream_facts", "checker_history", "planted_checker", "directed",
-         "planted_cell", "vectors_match", "central_log", "upstream_rescan", "rust_test", "blocked")
+         "planted_cell", "vectors_match", "central_log", "upstream_rescan", "rust_test", "blocked", "gate_facts")
 PASS, FAIL, BLOCKED = "pass", "fail", "blocked"
 Result = Tuple[str, str]
 OPTIONS: Dict[str, Optional[str]] = {"central_log": None, "upstream_clone": None}
@@ -375,9 +377,15 @@ def fixture_numbers() -> List[Tuple[str, int]]:
             ("statics", d["statics"]["total"]), ("fence calls", d["fence_calls_in_those_files"]),
             ("fetch_add", m["fetch_add"]), ("load", m["load"]), ("store", m["store"]),
             ("fetch_update", m["fetch_update"]), ("fetch_max", m["fetch_max"]), ("fetch_min", m["fetch_min"]),
-            ("fetch_or", m["fetch_or"]), ("fetch_and", m["fetch_and"]),
+            ("fetch_or", m["fetch_or"]), ("fetch_and", m["fetch_and"]), ("get_mut", m["get_mut"]),
+            ("into_inner", m["into_inner"]),
             ("compare_exchange_weak", m["compare_exchange_weak"]), ("compare_exchange", m["compare_exchange"]),
-            ("test-only area mentions", d["test_only_areas"]["mentions"])]
+            ("test-only area mentions", d["test_only_areas"]["mentions"]),
+            ("statics identifier or counter", d["statics"]["by_class"]["identifier_or_counter"]),
+            ("statics clock", d["statics"]["by_class"]["clock"]),
+            ("statics statistic", d["statics"]["by_class"]["statistic"]),
+            ("statics test only", d["statics"]["by_class"]["test_only"]),
+            ("direct std imports outside src", sum(v["direct_std_import_files"] for v in d["outside_src"].values()))]
 
 
 def doc_problems(doc_text: str) -> List[str]:
@@ -391,9 +399,12 @@ def doc_problems(doc_text: str) -> List[str]:
         row = r"^\|\s*" + re.escape(label) + r"\s*\|\s*" + re.escape(f"{value:,}") + r"\s*\|"
         if not re.search(row, doc_text, re.M):
             problems.append(f"no `| {label} | {value:,} |` row: the pinned scan's number is not cited")
-    for area in load_json(SCAN_FILE)["areas_top"][:12]:
-        if area["area"] not in doc_text:
-            problems.append(f"module area {area['area']} is not in the table")
+    # The twelve largest module areas: a row `| `src/x` | mentions | files | test-named files | ...`.
+    for a in load_json(SCAN_FILE)["areas_top"][:12]:
+        row = (r"^\|\s*`" + re.escape(a["area"]) + r"`\s*\|\s*" + re.escape(f"{a['mentions']:,}") + r"\s*\|\s*"
+               + str(a["files"]) + r"\s*\|\s*" + str(a["test_named_files"]) + r"\s*\|")
+        if not re.search(row, doc_text, re.M):
+            problems.append(f"no row for module area {a['area']} with {a['mentions']:,}/{a['files']}/{a['test_named_files']}")
     return problems
 
 
@@ -432,7 +443,8 @@ def run_meta_hygiene(c) -> Result:
             hit = rx.search(text)
             if hit:
                 problems.append(f"{os.path.relpath(path, REPO)}: {what} {hit.group(0)!r}")
-        if "/Users/" in text or "/home/" in text:
+        # Built from parts so this file does not contain what it forbids.
+        if any(root in text for root in ("/" + "Users/", "/" + "home/")):
             problems.append(f"{os.path.relpath(path, REPO)}: a local absolute path")
     return (PASS, "") if not problems else (FAIL, "; ".join(problems))
 
@@ -508,6 +520,74 @@ def run_upstream_facts(c) -> Result:
         if text not in e06:
             problems.append(f"E06's inventory README does not state this scan's {label} ({text}): the two tools disagree")
     return (PASS, "the scan agrees with E06 on files and mentions") if not problems else (FAIL, "; ".join(problems))
+
+
+GATE_ROWS = ("wasm", "windows", "apple", "cpu-feature probe", "other operating system", "linux io-uring",
+             "never-active marker", "dev-dependency")
+
+
+def gate_group(detail: str, pred: str) -> str:
+    """The group of a platform-gated dependency edge that cargo did not take on either big-endian target."""
+    if detail.startswith("dev dependency"):
+        return "dev-dependency"
+    if "wasm" in pred:
+        return "wasm"
+    if "windows" in pred:
+        return "windows"
+    if "apple" in pred or "macos" in pred or "ios" in pred:
+        return "apple"
+    if "x86" in pred or "aarch64" in pred or "loongarch64" in pred:
+        return "cpu-feature probe"
+    if "io-uring" in detail:
+        return "linux io-uring"
+    if any(w in pred for w in ("hermit", "redox", "wasi", "freebsd", "netbsd", "uefi")):
+        return "other operating system"
+    if pred == "cfg(any())" or "loom" in pred or "fiat" in pred:
+        return "never-active marker"
+    return "unclassified"
+
+
+def gate_counts() -> Dict[str, int]:
+    """Counts from E06's committed inventory: every gated edge, those inactive on both big-endian targets by
+    group, and those whose predicate the inventory truncated (their activity is not recorded)."""
+    findings = [f for f in load_json(E06_INVENTORY)["findings"] if f["kind"] == "gated-dependency"]
+    out = {"gated edges in the inventory": len(findings), "predicate truncated in the inventory": 0,
+           "inactive on both big-endian targets": 0, "active on both big-endian targets": 0,
+           "activity cut off for one target": 0}
+    for g in GATE_ROWS + ("unclassified",):
+        out[g] = 0
+    for f in findings:
+        detail = f["detail"]
+        m = re.search(r"gated by (.*?); active on", detail)
+        if not m:
+            out["predicate truncated in the inventory"] += 1
+            continue
+        if "mips=no" in detail and "powerpc=no" in detail:
+            out["inactive on both big-endian targets"] += 1
+            out[gate_group(detail, m.group(1))] += 1
+        elif "mips=yes" in detail and "powerpc=yes" in detail:
+            out["active on both big-endian targets"] += 1
+        else:
+            out["activity cut off for one target"] += 1
+    return out
+
+
+def run_gate_facts(c) -> Result:
+    counts = gate_counts()
+    doc = read(DOC_FILE)
+    problems = []
+    if counts["unclassified"]:
+        problems.append(f"{counts['unclassified']} inactive edge(s) fall in no group; extend gate_group")
+    if sum(counts[g] for g in GATE_ROWS) != counts["inactive on both big-endian targets"]:
+        problems.append("the groups do not add up to the inactive total")
+    for label, value in counts.items():
+        if label == "unclassified":
+            continue
+        row = r"^\|\s*" + re.escape(label) + r"\s*\|\s*" + str(value) + r"\s*\|"
+        if not re.search(row, doc, re.M):
+            problems.append(f"no `| {label} | {value} |` row in p05.md")
+    return (PASS, f"{counts['inactive on both big-endian targets']} inactive edges, all grouped and cited") \
+        if not problems else (FAIL, "; ".join(problems))
 
 
 def run_upstream_rescan(c) -> Result:
@@ -588,6 +668,7 @@ RUNNERS: Dict[str, Callable[[Dict[str, Any]], Result]] = {
     "checker_history": run_checker_history, "planted_checker": run_planted_checker, "directed": run_directed,
     "planted_cell": run_planted_cell, "vectors_match": run_vectors_match, "central_log": run_central_log,
     "upstream_rescan": run_upstream_rescan, "rust_test": run_rust_test, "blocked": run_blocked,
+    "gate_facts": run_gate_facts,
 }
 
 
