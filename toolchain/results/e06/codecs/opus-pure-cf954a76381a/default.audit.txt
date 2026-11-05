@@ -1,0 +1,12 @@
+E06 dependency audit  schema=ffw.e06.audit.v1  Cargo.lock sha256=ddd8830fa13b605b (2 entries, generated-offline)
+  host     aarch64-apple-darwin               resolved  [no soft-float feature in the compiler's target spec]
+  mips     mips-unknown-linux-musl            resolved  [soft-float]
+  powerpc  powerpc-unknown-linux-musl         resolved  [no soft-float feature in the compiler's target spec]
+findings: 0 blocker, 5 review, 12 info
+  REVIEW   float-on-soft-float        -                            mips-unknown-linux-musl is soft-float, so every f32/f64 operation below is software; the crates that use floats are workspace: opus-pure@0.2.2; depend
+  REVIEW   license-missing            probe@0.0.0                  no license expression or license file declared
+  REVIEW   lock-generated-not-an-upstream-pin -                            this revision has no Cargo.lock: the 2 package versions below were generated offline from this machine's registry cache (lock sha256 ddd8830fa13b605b)
+  REVIEW   upstream-crate-no-unsafe-declaration probe@0.0.0                  no forbid/deny of unsafe_code by crate attribute or manifest lint
+  REVIEW   upstream-crate-unsafe      opus-pure@0.2.2              132 unsafe token(s) in src/celt/bands.rs, src/celt/kiss_fft.rs, src/celt/lpc.rs, src/celt/mdct.rs, src/celt/mod.rs, src/celt/pitch.rs ... (declared: n
+minimal-graph build checks: planned=2 pass=0 fail=0 not-run=2 conflicting=0
+not admitted by this tool: it reports facts; a human decides each review item.

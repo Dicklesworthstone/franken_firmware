@@ -284,7 +284,9 @@ class UpstreamEvidenceTests(unittest.TestCase):
                      "not an upstream pin", "`runtime-core = []` and `native-runtime = []`", "toolchain/results/e06/upstream/"):
             self.assertIn(text, contract, text)
         self.assertEqual((len(bare["packages"]), len(members), len(members) - 2), (145, 115, 113))
-        self.assertIn("**A dependency cycle sits here.**", contract)          # S02 needs E06's codec inventory; E06 needs S02's selection
+        # S02 needs E06's codec inventory and E06 needs S02's selection: the contract records that cycle and how it was resolved (named candidates)
+        self.assertIn("That looked like a dependency cycle", contract)
+        self.assertIn("toolchain/results/e06/codecs/", contract)
 
     def test_no_upstream_evidence_file_carries_a_path_an_address_or_a_user_name(self):
         checked = 0

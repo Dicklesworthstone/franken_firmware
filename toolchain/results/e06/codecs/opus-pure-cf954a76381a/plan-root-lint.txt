@@ -1,0 +1,7 @@
+# Root-only lint: forbid unsafe_code for opus-pure ITSELF on each big-endian target. Run in opus-lint (expected PASS) and opus-lint-planted (the control, expected FAIL).
+# `cargo rustc ... -- -F unsafe_code` passes the flag to the one package named by -p; the build-std crates (core, alloc, std) are separate units and do not get it.
+# These are NOT cargo-check lines, so audit.py ingest cannot verify them: they are judged by reading the raw logs (README.md, "How each line is judged").
+cwd=opus-lint            RCH_REQUIRE_REMOTE=1 rch exec -- cargo +nightly rustc --locked --release --lib -p opus-pure --target mips-unknown-linux-musl -Z build-std=std,panic_abort -j 2 -- -F unsafe_code
+cwd=opus-lint            RCH_REQUIRE_REMOTE=1 rch exec -- cargo +nightly rustc --locked --release --lib -p opus-pure --target powerpc-unknown-linux-musl -Z build-std=std,panic_abort -j 2 -- -F unsafe_code
+cwd=opus-lint-planted    RCH_REQUIRE_REMOTE=1 rch exec -- cargo +nightly rustc --locked --release --lib -p opus-pure --target mips-unknown-linux-musl -Z build-std=std,panic_abort -j 2 -- -F unsafe_code
+cwd=opus-lint-planted    RCH_REQUIRE_REMOTE=1 rch exec -- cargo +nightly rustc --locked --release --lib -p opus-pure --target powerpc-unknown-linux-musl -Z build-std=std,panic_abort -j 2 -- -F unsafe_code

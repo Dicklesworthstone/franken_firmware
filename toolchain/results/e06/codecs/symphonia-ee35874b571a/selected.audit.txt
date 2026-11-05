@@ -1,0 +1,21 @@
+E06 dependency audit  schema=ffw.e06.audit.v1  Cargo.lock sha256=99e4fff573a1b36e (20 entries, generated-offline)
+  host     aarch64-apple-darwin               resolved  [no soft-float feature in the compiler's target spec]
+  mips     mips-unknown-linux-musl            resolved  [soft-float]
+  powerpc  powerpc-unknown-linux-musl         resolved  [no soft-float feature in the compiler's target spec]
+findings: 0 blocker, 14 review, 21 info
+  REVIEW   float-on-soft-float        -                            mips-unknown-linux-musl is soft-float, so every f32/f64 operation below is software; the crates that use floats are workspace: symphonia-codec-aac@0.6
+  REVIEW   license-missing            probe@0.0.0                  no license expression or license file declared
+  REVIEW   lock-generated-not-an-upstream-pin -                            this revision has no Cargo.lock: the 20 package versions below were generated offline from this machine's registry cache (lock sha256 99e4fff573a1b36e
+  REVIEW   native-build-signal        num-traits@0.2.19            build script uses autocfg
+  REVIEW   unsafe-in-dependency       bitflags@2.13.2              2 unsafe token(s) in its own source (src/external.rs); pulled in by symphonia-core@0.6.1; the forbid(unsafe_code) of symphonia-core@0.6.1 does not cov
+  REVIEW   unsafe-in-dependency       bytemuck@1.25.2              332 unsafe token(s) in its own source (src/allocation.rs, src/anybitpattern.rs, src/checked.rs, src/contiguous.rs, src/internal.rs, src/lib.rs, src/mu
+  REVIEW   unsafe-in-dependency       lazy_static@1.5.1            2 unsafe token(s) in its own source (src/inline_lazy.rs); pulled in by symphonia-codec-aac@0.6.1, symphonia-core@0.6.1, symphonia-metadata@0.6.1, symp
+  REVIEW   unsafe-in-dependency       log@0.4.35                   6 unsafe token(s) in its own source (src/lib.rs); pulled in by symphonia-codec-aac@0.6.1, symphonia-codec-alac@0.6.1, symphonia-codec-pcm@0.6.1, symph
+  REVIEW   unsafe-in-dependency       num-complex@0.4.6            2 unsafe token(s) in its own source (src/lib.rs); pulled in by symphonia-core@0.6.1; the forbid(unsafe_code) of symphonia-core@0.6.1 does not cover th
+  REVIEW   unsafe-in-dependency       num-traits@0.2.19            1 unsafe token(s) in its own source (src/cast.rs); pulled in by num-complex@0.4.6
+  REVIEW   unsafe-in-dependency       smallvec@1.16.4              80 unsafe token(s) in its own source (src/lib.rs, src/tests.rs); pulled in by symphonia-core@0.6.1, symphonia-metadata@0.6.1; the forbid(unsafe_code) 
+  REVIEW   upstream-crate-no-unsafe-declaration probe@0.0.0                  no forbid/deny of unsafe_code by crate attribute or manifest lint
+  REVIEW   upstream-crate-no-unsafe-declaration symphonia-common@0.6.1       no forbid/deny of unsafe_code by crate attribute or manifest lint
+  REVIEW   upstream-crate-no-unsafe-declaration symphonia-format-isomp4@0.6.1 no forbid/deny of unsafe_code by crate attribute or manifest lint
+minimal-graph build checks: planned=2 pass=0 fail=0 not-run=2 conflicting=0
+not admitted by this tool: it reports facts; a human decides each review item.

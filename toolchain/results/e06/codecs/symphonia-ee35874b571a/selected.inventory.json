@@ -1,0 +1,1548 @@
+{
+ "build_checks": {
+  "counts": {
+   "conflicting": 0,
+   "fail": 0,
+   "not-run": 2,
+   "pass": 0
+  },
+  "planned": 2
+ },
+ "candidates": [
+  {
+   "in_graph": [],
+   "name": "asupersync",
+   "status": "not in graph; unevaluated"
+  },
+  {
+   "in_graph": [],
+   "name": "franken_kernel",
+   "status": "not in graph; unevaluated"
+  },
+  {
+   "in_graph": [],
+   "name": "libc candidates",
+   "status": "not in graph; unevaluated"
+  },
+  {
+   "in_graph": [],
+   "name": "libc crate (Rust FFI binding table)",
+   "status": "not in graph; unevaluated"
+  },
+  {
+   "in_graph": [],
+   "name": "codecs",
+   "status": "not in graph; unevaluated"
+  }
+ ],
+ "findings": [
+  {
+   "detail": "mips-unknown-linux-musl is soft-float, so every f32/f64 operation below is software; the crates that use floats are workspace: symphonia-codec-aac@0.6.1, symphonia-codec-vorbis@0.6.1, symphonia-core@0.6.1, symphonia-format-isomp4@0.6.1, sym",
+   "kind": "float-on-soft-float",
+   "package": null,
+   "platforms": [
+    "mips"
+   ],
+   "severity": "review"
+  },
+  {
+   "detail": "no license expression or license file declared",
+   "kind": "license-missing",
+   "package": "probe@0.0.0",
+   "platforms": [
+    "mips",
+    "powerpc"
+   ],
+   "severity": "review"
+  },
+  {
+   "detail": "this revision has no Cargo.lock: the 20 package versions below were generated offline from this machine's registry cache (lock sha256 99e4fff573a1b36e), not pinned by the repository, so a different machine or date can resolve them different",
+   "kind": "lock-generated-not-an-upstream-pin",
+   "package": null,
+   "platforms": [],
+   "severity": "review"
+  },
+  {
+   "detail": "build script uses autocfg",
+   "kind": "native-build-signal",
+   "package": "num-traits@0.2.19",
+   "platforms": [
+    "mips",
+    "powerpc"
+   ],
+   "severity": "review"
+  },
+  {
+   "detail": "2 unsafe token(s) in its own source (src/external.rs); pulled in by symphonia-core@0.6.1; the forbid(unsafe_code) of symphonia-core@0.6.1 does not cover this crate",
+   "kind": "unsafe-in-dependency",
+   "package": "bitflags@2.13.2",
+   "platforms": [
+    "mips",
+    "powerpc"
+   ],
+   "severity": "review"
+  },
+  {
+   "detail": "332 unsafe token(s) in its own source (src/allocation.rs, src/anybitpattern.rs, src/checked.rs, src/contiguous.rs, src/internal.rs, src/lib.rs, src/must.rs, src/no_uninit.rs, src/pod.rs, src/pod_in_option.rs, src/transparent.rs, src/zeroabl",
+   "kind": "unsafe-in-dependency",
+   "package": "bytemuck@1.25.2",
+   "platforms": [
+    "mips",
+    "powerpc"
+   ],
+   "severity": "review"
+  },
+  {
+   "detail": "2 unsafe token(s) in its own source (src/inline_lazy.rs); pulled in by symphonia-codec-aac@0.6.1, symphonia-core@0.6.1, symphonia-metadata@0.6.1, symphonia@0.6.1; the forbid(unsafe_code) of symphonia-codec-aac@0.6.1, symphonia-core@0.6.1, s",
+   "kind": "unsafe-in-dependency",
+   "package": "lazy_static@1.5.1",
+   "platforms": [
+    "mips",
+    "powerpc"
+   ],
+   "severity": "review"
+  },
+  {
+   "detail": "6 unsafe token(s) in its own source (src/lib.rs); pulled in by symphonia-codec-aac@0.6.1, symphonia-codec-alac@0.6.1, symphonia-codec-pcm@0.6.1, symphonia-codec-vorbis@0.6.1, symphonia-common@0.6.1, symphonia-core@0.6.1, symphonia-format-is",
+   "kind": "unsafe-in-dependency",
+   "package": "log@0.4.35",
+   "platforms": [
+    "mips",
+    "powerpc"
+   ],
+   "severity": "review"
+  },
+  {
+   "detail": "2 unsafe token(s) in its own source (src/lib.rs); pulled in by symphonia-core@0.6.1; the forbid(unsafe_code) of symphonia-core@0.6.1 does not cover this crate",
+   "kind": "unsafe-in-dependency",
+   "package": "num-complex@0.4.6",
+   "platforms": [
+    "mips",
+    "powerpc"
+   ],
+   "severity": "review"
+  },
+  {
+   "detail": "1 unsafe token(s) in its own source (src/cast.rs); pulled in by num-complex@0.4.6",
+   "kind": "unsafe-in-dependency",
+   "package": "num-traits@0.2.19",
+   "platforms": [
+    "mips",
+    "powerpc"
+   ],
+   "severity": "review"
+  },
+  {
+   "detail": "80 unsafe token(s) in its own source (src/lib.rs, src/tests.rs); pulled in by symphonia-core@0.6.1, symphonia-metadata@0.6.1; the forbid(unsafe_code) of symphonia-core@0.6.1, symphonia-metadata@0.6.1 does not cover this crate",
+   "kind": "unsafe-in-dependency",
+   "package": "smallvec@1.16.4",
+   "platforms": [
+    "mips",
+    "powerpc"
+   ],
+   "severity": "review"
+  },
+  {
+   "detail": "no forbid/deny of unsafe_code by crate attribute or manifest lint",
+   "kind": "upstream-crate-no-unsafe-declaration",
+   "package": "probe@0.0.0",
+   "platforms": [
+    "mips",
+    "powerpc"
+   ],
+   "severity": "review"
+  },
+  {
+   "detail": "no forbid/deny of unsafe_code by crate attribute or manifest lint",
+   "kind": "upstream-crate-no-unsafe-declaration",
+   "package": "symphonia-common@0.6.1",
+   "platforms": [
+    "mips",
+    "powerpc"
+   ],
+   "severity": "review"
+  },
+  {
+   "detail": "no forbid/deny of unsafe_code by crate attribute or manifest lint",
+   "kind": "upstream-crate-no-unsafe-declaration",
+   "package": "symphonia-format-isomp4@0.6.1",
+   "platforms": [
+    "mips",
+    "powerpc"
+   ],
+   "severity": "review"
+  },
+  {
+   "detail": "2 of 2 planned minimal-graph checks have no result",
+   "kind": "build-check-not-run",
+   "package": null,
+   "platforms": [],
+   "severity": "info"
+  },
+  {
+   "detail": "not in graph; unevaluated",
+   "kind": "candidate-not-in-graph",
+   "package": "asupersync",
+   "platforms": [],
+   "severity": "info"
+  },
+  {
+   "detail": "not in graph; unevaluated",
+   "kind": "candidate-not-in-graph",
+   "package": "codecs",
+   "platforms": [],
+   "severity": "info"
+  },
+  {
+   "detail": "not in graph; unevaluated",
+   "kind": "candidate-not-in-graph",
+   "package": "franken_kernel",
+   "platforms": [],
+   "severity": "info"
+  },
+  {
+   "detail": "not in graph; unevaluated",
+   "kind": "candidate-not-in-graph",
+   "package": "libc candidates",
+   "platforms": [],
+   "severity": "info"
+  },
+  {
+   "detail": "powerpc-unknown-linux-musl: no soft-float feature in the compiler's target spec; crates using f32/f64: workspace: symphonia-codec-aac@0.6.1, symphonia-codec-vorbis@0.6.1, symphonia-core@0.6.1, symphonia-format-isomp4@0.6.1, symphonia-format",
+   "kind": "float-usage",
+   "package": null,
+   "platforms": [
+    "powerpc"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "powerpc-unknown-linux-musl: no soft-float feature in the compiler's target spec; whether the board's CPU has an FPU is not established by this repository",
+   "kind": "fp-isa-hardware-unknown",
+   "package": null,
+   "platforms": [
+    "powerpc"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "no license expression or license file declared",
+   "kind": "license-missing",
+   "package": "probe@0.0.0",
+   "platforms": [
+    "host"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "build script uses autocfg",
+   "kind": "native-build-signal",
+   "package": "num-traits@0.2.19",
+   "platforms": [
+    "host"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "mips-unknown-linux-musl has max-atomic-width 32: classify each shared u64 by semantics (contract E03 section 4)",
+   "kind": "no-native-atomic64",
+   "package": null,
+   "platforms": [
+    "mips"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "powerpc-unknown-linux-musl has max-atomic-width 32: classify each shared u64 by semantics (contract E03 section 4)",
+   "kind": "no-native-atomic64",
+   "package": null,
+   "platforms": [
+    "powerpc"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "2 unsafe token(s) in its own source (src/external.rs); pulled in by symphonia-core@0.6.1; the forbid(unsafe_code) of symphonia-core@0.6.1 does not cover this crate",
+   "kind": "unsafe-in-dependency",
+   "package": "bitflags@2.13.2",
+   "platforms": [
+    "host"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "332 unsafe token(s) in its own source (src/allocation.rs, src/anybitpattern.rs, src/checked.rs, src/contiguous.rs, src/internal.rs, src/lib.rs, src/must.rs, src/no_uninit.rs, src/pod.rs, src/pod_in_option.rs, src/transparent.rs, src/zeroabl",
+   "kind": "unsafe-in-dependency",
+   "package": "bytemuck@1.25.2",
+   "platforms": [
+    "host"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "2 unsafe token(s) in its own source (src/inline_lazy.rs); pulled in by symphonia-codec-aac@0.6.1, symphonia-core@0.6.1, symphonia-metadata@0.6.1, symphonia@0.6.1; the forbid(unsafe_code) of symphonia-codec-aac@0.6.1, symphonia-core@0.6.1, s",
+   "kind": "unsafe-in-dependency",
+   "package": "lazy_static@1.5.1",
+   "platforms": [
+    "host"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "6 unsafe token(s) in its own source (src/lib.rs); pulled in by symphonia-codec-aac@0.6.1, symphonia-codec-alac@0.6.1, symphonia-codec-pcm@0.6.1, symphonia-codec-vorbis@0.6.1, symphonia-common@0.6.1, symphonia-core@0.6.1, symphonia-format-is",
+   "kind": "unsafe-in-dependency",
+   "package": "log@0.4.35",
+   "platforms": [
+    "host"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "2 unsafe token(s) in its own source (src/lib.rs); pulled in by symphonia-core@0.6.1; the forbid(unsafe_code) of symphonia-core@0.6.1 does not cover this crate",
+   "kind": "unsafe-in-dependency",
+   "package": "num-complex@0.4.6",
+   "platforms": [
+    "host"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "1 unsafe token(s) in its own source (src/cast.rs); pulled in by num-complex@0.4.6",
+   "kind": "unsafe-in-dependency",
+   "package": "num-traits@0.2.19",
+   "platforms": [
+    "host"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "80 unsafe token(s) in its own source (src/lib.rs, src/tests.rs); pulled in by symphonia-core@0.6.1, symphonia-metadata@0.6.1; the forbid(unsafe_code) of symphonia-core@0.6.1, symphonia-metadata@0.6.1 does not cover this crate",
+   "kind": "unsafe-in-dependency",
+   "package": "smallvec@1.16.4",
+   "platforms": [
+    "host"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "no forbid/deny of unsafe_code by crate attribute or manifest lint",
+   "kind": "upstream-crate-no-unsafe-declaration",
+   "package": "probe@0.0.0",
+   "platforms": [
+    "host"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "no forbid/deny of unsafe_code by crate attribute or manifest lint",
+   "kind": "upstream-crate-no-unsafe-declaration",
+   "package": "symphonia-common@0.6.1",
+   "platforms": [
+    "host"
+   ],
+   "severity": "info"
+  },
+  {
+   "detail": "no forbid/deny of unsafe_code by crate attribute or manifest lint",
+   "kind": "upstream-crate-no-unsafe-declaration",
+   "package": "symphonia-format-isomp4@0.6.1",
+   "platforms": [
+    "host"
+   ],
+   "severity": "info"
+  }
+ ],
+ "host_only": {
+  "host": [
+   "autocfg@1.5.1"
+  ],
+  "mips": [
+   "autocfg@1.5.1"
+  ],
+  "powerpc": [
+   "autocfg@1.5.1"
+  ]
+ },
+ "linked": {
+  "host": [
+   "bitflags@2.13.2",
+   "bytemuck@1.25.2",
+   "lazy_static@1.5.1",
+   "log@0.4.35",
+   "num-complex@0.4.6",
+   "num-traits@0.2.19",
+   "probe@0.0.0",
+   "regex-lite@0.1.9",
+   "smallvec@1.16.4",
+   "symphonia-codec-aac@0.6.1",
+   "symphonia-codec-alac@0.6.1",
+   "symphonia-codec-pcm@0.6.1",
+   "symphonia-codec-vorbis@0.6.1",
+   "symphonia-common@0.6.1",
+   "symphonia-core@0.6.1",
+   "symphonia-format-isomp4@0.6.1",
+   "symphonia-format-ogg@0.6.1",
+   "symphonia-metadata@0.6.1",
+   "symphonia@0.6.1"
+  ],
+  "mips": [
+   "bitflags@2.13.2",
+   "bytemuck@1.25.2",
+   "lazy_static@1.5.1",
+   "log@0.4.35",
+   "num-complex@0.4.6",
+   "num-traits@0.2.19",
+   "probe@0.0.0",
+   "regex-lite@0.1.9",
+   "smallvec@1.16.4",
+   "symphonia-codec-aac@0.6.1",
+   "symphonia-codec-alac@0.6.1",
+   "symphonia-codec-pcm@0.6.1",
+   "symphonia-codec-vorbis@0.6.1",
+   "symphonia-common@0.6.1",
+   "symphonia-core@0.6.1",
+   "symphonia-format-isomp4@0.6.1",
+   "symphonia-format-ogg@0.6.1",
+   "symphonia-metadata@0.6.1",
+   "symphonia@0.6.1"
+  ],
+  "powerpc": [
+   "bitflags@2.13.2",
+   "bytemuck@1.25.2",
+   "lazy_static@1.5.1",
+   "log@0.4.35",
+   "num-complex@0.4.6",
+   "num-traits@0.2.19",
+   "probe@0.0.0",
+   "regex-lite@0.1.9",
+   "smallvec@1.16.4",
+   "symphonia-codec-aac@0.6.1",
+   "symphonia-codec-alac@0.6.1",
+   "symphonia-codec-pcm@0.6.1",
+   "symphonia-codec-vorbis@0.6.1",
+   "symphonia-common@0.6.1",
+   "symphonia-core@0.6.1",
+   "symphonia-format-isomp4@0.6.1",
+   "symphonia-format-ogg@0.6.1",
+   "symphonia-metadata@0.6.1",
+   "symphonia@0.6.1"
+  ]
+ },
+ "lock": {
+  "entries": 20,
+  "origin": "generated-offline",
+  "sha256": "99e4fff573a1b36e678959d3101ab0909033028fb9c24ccdb1b8203906fbd69e"
+ },
+ "packages": [
+  {
+   "build_script": false,
+   "checksum": "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53",
+   "declared_features": null,
+   "in_lock": true,
+   "key": "autocfg@1.5.1",
+   "license": "Apache-2.0 OR MIT",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "autocfg",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": null,
+     "features": [],
+     "role": "host-only",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": null,
+     "features": [],
+     "role": "host-only",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": null,
+     "features": [],
+     "role": "host-only",
+     "std": "std"
+    }
+   },
+   "references_alloc": false,
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "source_kind": "registry",
+   "unsafe_declared": [],
+   "unsafe_status": "none",
+   "unsafe_tokens": 0,
+   "uses_float": false,
+   "version": "1.5.1"
+  },
+  {
+   "build_script": false,
+   "checksum": "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06",
+   "declared_features": null,
+   "in_lock": true,
+   "key": "bitflags@2.13.2",
+   "license": "MIT OR Apache-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "bitflags",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "no_std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    },
+    "mips": {
+     "effective_std": "no_std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    },
+    "powerpc": {
+     "effective_std": "no_std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    }
+   },
+   "references_alloc": false,
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "source_kind": "registry",
+   "unsafe_declared": [
+    "forbid via crate-attribute (conditional)"
+   ],
+   "unsafe_status": "present",
+   "unsafe_tokens": 2,
+   "uses_float": false,
+   "version": "2.13.2"
+  },
+  {
+   "build_script": false,
+   "checksum": "95832e849adfb21180ccb6826a99da14e5d266ae5c2e668e1602cf234f153797",
+   "declared_features": null,
+   "in_lock": true,
+   "key": "bytemuck@1.25.2",
+   "license": "Zlib OR Apache-2.0 OR MIT",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "bytemuck",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "no_std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    },
+    "mips": {
+     "effective_std": "no_std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    },
+    "powerpc": {
+     "effective_std": "no_std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    }
+   },
+   "references_alloc": true,
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "source_kind": "registry",
+   "unsafe_declared": [],
+   "unsafe_status": "present",
+   "unsafe_tokens": 332,
+   "uses_float": true,
+   "version": "1.25.2"
+  },
+  {
+   "build_script": false,
+   "checksum": "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb",
+   "declared_features": null,
+   "in_lock": true,
+   "key": "lazy_static@1.5.1",
+   "license": "MIT OR Apache-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "lazy_static",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "no_std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    },
+    "mips": {
+     "effective_std": "no_std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    },
+    "powerpc": {
+     "effective_std": "no_std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    }
+   },
+   "references_alloc": false,
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "source_kind": "registry",
+   "unsafe_declared": [],
+   "unsafe_status": "present",
+   "unsafe_tokens": 2,
+   "uses_float": false,
+   "version": "1.5.1"
+  },
+  {
+   "build_script": false,
+   "checksum": "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c",
+   "declared_features": null,
+   "in_lock": true,
+   "key": "log@0.4.35",
+   "license": "MIT OR Apache-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "log",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "no_std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    },
+    "mips": {
+     "effective_std": "no_std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    },
+    "powerpc": {
+     "effective_std": "no_std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    }
+   },
+   "references_alloc": true,
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "source_kind": "registry",
+   "unsafe_declared": [],
+   "unsafe_status": "present",
+   "unsafe_tokens": 6,
+   "uses_float": true,
+   "version": "0.4.35"
+  },
+  {
+   "build_script": false,
+   "checksum": "73f88a1307638156682bada9d7604135552957b7818057dcef22705b4d509495",
+   "declared_features": null,
+   "in_lock": true,
+   "key": "num-complex@0.4.6",
+   "license": "MIT OR Apache-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "num-complex",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "std",
+     "features": [
+      "default",
+      "std"
+     ],
+     "role": "linked",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": "std",
+     "features": [
+      "default",
+      "std"
+     ],
+     "role": "linked",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": "std",
+     "features": [
+      "default",
+      "std"
+     ],
+     "role": "linked",
+     "std": "std"
+    }
+   },
+   "references_alloc": false,
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "source_kind": "registry",
+   "unsafe_declared": [],
+   "unsafe_status": "present",
+   "unsafe_tokens": 2,
+   "uses_float": true,
+   "version": "0.4.6"
+  },
+  {
+   "build_script": true,
+   "checksum": "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841",
+   "declared_features": null,
+   "in_lock": true,
+   "key": "num-traits@0.2.19",
+   "license": "MIT OR Apache-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "num-traits",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "std",
+     "features": [
+      "i128",
+      "std"
+     ],
+     "role": "linked",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": "std",
+     "features": [
+      "i128",
+      "std"
+     ],
+     "role": "linked",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": "std",
+     "features": [
+      "i128",
+      "std"
+     ],
+     "role": "linked",
+     "std": "std"
+    }
+   },
+   "references_alloc": false,
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "source_kind": "registry",
+   "unsafe_declared": [],
+   "unsafe_status": "present",
+   "unsafe_tokens": 1,
+   "uses_float": true,
+   "version": "0.2.19"
+  },
+  {
+   "build_script": false,
+   "checksum": null,
+   "declared_features": {},
+   "in_lock": true,
+   "key": "probe@0.0.0",
+   "license": null,
+   "license_status": "missing",
+   "link_directives": 0,
+   "links": null,
+   "name": "probe",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "std",
+     "features": [],
+     "role": "member",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": "std",
+     "features": [],
+     "role": "member",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": "std",
+     "features": [],
+     "role": "member",
+     "std": "std"
+    }
+   },
+   "references_alloc": false,
+   "source": null,
+   "source_kind": "workspace",
+   "unsafe_declared": [],
+   "unsafe_status": "none",
+   "unsafe_tokens": 0,
+   "uses_float": false,
+   "version": "0.0.0"
+  },
+  {
+   "build_script": false,
+   "checksum": "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973",
+   "declared_features": null,
+   "in_lock": true,
+   "key": "regex-lite@0.1.9",
+   "license": "MIT OR Apache-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "regex-lite",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "std",
+     "features": [
+      "default",
+      "std",
+      "string"
+     ],
+     "role": "linked",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": "std",
+     "features": [
+      "default",
+      "std",
+      "string"
+     ],
+     "role": "linked",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": "std",
+     "features": [
+      "default",
+      "std",
+      "string"
+     ],
+     "role": "linked",
+     "std": "std"
+    }
+   },
+   "references_alloc": true,
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "source_kind": "registry",
+   "unsafe_declared": [
+    "forbid via crate-attribute"
+   ],
+   "unsafe_status": "none",
+   "unsafe_tokens": 0,
+   "uses_float": false,
+   "version": "0.1.9"
+  },
+  {
+   "build_script": false,
+   "checksum": "d0d5d4b1981b8bbbb7aed204cae5726d683d5d6ac7e74ec54122ea28f315e7c8",
+   "declared_features": null,
+   "in_lock": true,
+   "key": "smallvec@1.16.4",
+   "license": "MIT OR Apache-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "smallvec",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "no_std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    },
+    "mips": {
+     "effective_std": "no_std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    },
+    "powerpc": {
+     "effective_std": "no_std",
+     "features": [],
+     "role": "linked",
+     "std": "no_std"
+    }
+   },
+   "references_alloc": true,
+   "source": "registry+https://github.com/rust-lang/crates.io-index",
+   "source_kind": "registry",
+   "unsafe_declared": [],
+   "unsafe_status": "present",
+   "unsafe_tokens": 80,
+   "uses_float": false,
+   "version": "1.16.4"
+  },
+  {
+   "build_script": false,
+   "checksum": null,
+   "declared_features": {},
+   "in_lock": true,
+   "key": "symphonia-codec-aac@0.6.1",
+   "license": "MPL-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "symphonia-codec-aac",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    }
+   },
+   "references_alloc": false,
+   "source": null,
+   "source_kind": "workspace",
+   "unsafe_declared": [
+    "forbid via crate-attribute"
+   ],
+   "unsafe_status": "none",
+   "unsafe_tokens": 0,
+   "uses_float": true,
+   "version": "0.6.1"
+  },
+  {
+   "build_script": false,
+   "checksum": null,
+   "declared_features": {},
+   "in_lock": true,
+   "key": "symphonia-codec-alac@0.6.1",
+   "license": "MPL-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "symphonia-codec-alac",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    }
+   },
+   "references_alloc": false,
+   "source": null,
+   "source_kind": "workspace",
+   "unsafe_declared": [
+    "forbid via crate-attribute"
+   ],
+   "unsafe_status": "none",
+   "unsafe_tokens": 0,
+   "uses_float": false,
+   "version": "0.6.1"
+  },
+  {
+   "build_script": false,
+   "checksum": null,
+   "declared_features": {},
+   "in_lock": true,
+   "key": "symphonia-codec-pcm@0.6.1",
+   "license": "MPL-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "symphonia-codec-pcm",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    }
+   },
+   "references_alloc": false,
+   "source": null,
+   "source_kind": "workspace",
+   "unsafe_declared": [
+    "forbid via crate-attribute"
+   ],
+   "unsafe_status": "none",
+   "unsafe_tokens": 0,
+   "uses_float": false,
+   "version": "0.6.1"
+  },
+  {
+   "build_script": false,
+   "checksum": null,
+   "declared_features": {},
+   "in_lock": true,
+   "key": "symphonia-codec-vorbis@0.6.1",
+   "license": "MPL-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "symphonia-codec-vorbis",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    }
+   },
+   "references_alloc": false,
+   "source": null,
+   "source_kind": "workspace",
+   "unsafe_declared": [
+    "forbid via crate-attribute"
+   ],
+   "unsafe_status": "none",
+   "unsafe_tokens": 0,
+   "uses_float": true,
+   "version": "0.6.1"
+  },
+  {
+   "build_script": false,
+   "checksum": null,
+   "declared_features": {},
+   "in_lock": true,
+   "key": "symphonia-common@0.6.1",
+   "license": "MPL-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "symphonia-common",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    }
+   },
+   "references_alloc": false,
+   "source": null,
+   "source_kind": "workspace",
+   "unsafe_declared": [],
+   "unsafe_status": "none",
+   "unsafe_tokens": 0,
+   "uses_float": false,
+   "version": "0.6.1"
+  },
+  {
+   "build_script": false,
+   "checksum": null,
+   "declared_features": {
+    "default": [],
+    "exp-subtitle-codecs": [],
+    "exp-video-codecs": [],
+    "opt-simd": [
+     "opt-simd-sse",
+     "opt-simd-avx",
+     "opt-simd-neon"
+    ],
+    "opt-simd-avx": [
+     "rustfft/avx"
+    ],
+    "opt-simd-neon": [
+     "rustfft/neon"
+    ],
+    "opt-simd-sse": [
+     "rustfft/sse"
+    ],
+    "rustfft": [
+     "dep:rustfft"
+    ]
+   },
+   "in_lock": true,
+   "key": "symphonia-core@0.6.1",
+   "license": "MPL-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "symphonia-core",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "std",
+     "features": [
+      "default"
+     ],
+     "role": "linked",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": "std",
+     "features": [
+      "default"
+     ],
+     "role": "linked",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": "std",
+     "features": [
+      "default"
+     ],
+     "role": "linked",
+     "std": "std"
+    }
+   },
+   "references_alloc": false,
+   "source": null,
+   "source_kind": "workspace",
+   "unsafe_declared": [
+    "forbid via crate-attribute"
+   ],
+   "unsafe_status": "none",
+   "unsafe_tokens": 0,
+   "uses_float": true,
+   "version": "0.6.1"
+  },
+  {
+   "build_script": false,
+   "checksum": null,
+   "declared_features": {},
+   "in_lock": true,
+   "key": "symphonia-format-isomp4@0.6.1",
+   "license": "MPL-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "symphonia-format-isomp4",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    }
+   },
+   "references_alloc": false,
+   "source": null,
+   "source_kind": "workspace",
+   "unsafe_declared": [],
+   "unsafe_status": "none",
+   "unsafe_tokens": 0,
+   "uses_float": true,
+   "version": "0.6.1"
+  },
+  {
+   "build_script": false,
+   "checksum": null,
+   "declared_features": {},
+   "in_lock": true,
+   "key": "symphonia-format-ogg@0.6.1",
+   "license": "MPL-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "symphonia-format-ogg",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": "std",
+     "features": [],
+     "role": "linked",
+     "std": "std"
+    }
+   },
+   "references_alloc": false,
+   "source": null,
+   "source_kind": "workspace",
+   "unsafe_declared": [
+    "forbid via crate-attribute"
+   ],
+   "unsafe_status": "none",
+   "unsafe_tokens": 0,
+   "uses_float": true,
+   "version": "0.6.1"
+  },
+  {
+   "build_script": false,
+   "checksum": null,
+   "declared_features": {
+    "ape": [],
+    "default": [
+     "ape",
+     "id3v1",
+     "id3v2"
+    ],
+    "flac": [
+     "vorbis"
+    ],
+    "id3v1": [],
+    "id3v2": [],
+    "riff": [
+     "riff-id3",
+     "riff-info"
+    ],
+    "riff-id3": [
+     "id3v2"
+    ],
+    "riff-info": [],
+    "vorbis": [
+     "flac"
+    ]
+   },
+   "in_lock": true,
+   "key": "symphonia-metadata@0.6.1",
+   "license": "MPL-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "symphonia-metadata",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "std",
+     "features": [
+      "flac",
+      "vorbis"
+     ],
+     "role": "linked",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": "std",
+     "features": [
+      "flac",
+      "vorbis"
+     ],
+     "role": "linked",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": "std",
+     "features": [
+      "flac",
+      "vorbis"
+     ],
+     "role": "linked",
+     "std": "std"
+    }
+   },
+   "references_alloc": false,
+   "source": null,
+   "source_kind": "workspace",
+   "unsafe_declared": [
+    "forbid via crate-attribute"
+   ],
+   "unsafe_status": "none",
+   "unsafe_tokens": 0,
+   "uses_float": false,
+   "version": "0.6.1"
+  },
+  {
+   "build_script": false,
+   "checksum": null,
+   "declared_features": {
+    "aac": [
+     "dep:symphonia-codec-aac"
+    ],
+    "adpcm": [
+     "dep:symphonia-codec-adpcm"
+    ],
+    "aiff": [
+     "dep:symphonia-format-riff",
+     "symphonia-format-riff/aiff"
+    ],
+    "alac": [
+     "dep:symphonia-codec-alac"
+    ],
+    "all": [
+     "all-codecs",
+     "all-formats",
+     "all-meta"
+    ],
+    "all-codecs": [
+     "aac",
+     "adpcm",
+     "alac",
+     "flac",
+     "mp1",
+     "mp2",
+     "mp3",
+     "pcm",
+     "vorbis"
+    ],
+    "all-formats": [
+     "caf",
+     "isomp4",
+     "mkv",
+     "ogg",
+     "aiff",
+     "wav"
+    ],
+    "all-meta": [
+     "ape",
+     "id3v1",
+     "id3v2"
+    ],
+    "ape": [
+     "symphonia-metadata/ape"
+    ],
+    "caf": [
+     "dep:symphonia-format-caf"
+    ],
+    "default": [
+     "opt-simd",
+     "all-meta",
+     "adpcm",
+     "flac",
+     "mkv",
+     "ogg",
+     "pcm",
+     "vorbis",
+     "wav"
+    ],
+    "exp-subtitle-codecs": [
+     "symphonia-core/exp-subtitle-codecs"
+    ],
+    "exp-video-codecs": [
+     "symphonia-core/exp-video-codecs"
+    ],
+    "flac": [
+     "dep:symphonia-bundle-flac"
+    ],
+    "id3v1": [
+     "symphonia-metadata/id3v1"
+    ],
+    "id3v2": [
+     "symphonia-metadata/id3v2"
+    ],
+    "isomp4": [
+     "dep:symphonia-format-isomp4"
+    ],
+    "mkv": [
+     "dep:symphonia-format-mkv"
+    ],
+    "mp1": [
+     "dep:symphonia-bundle-mp3",
+     "symphonia-bundle-mp3/mp1"
+    ],
+    "mp2": [
+     "dep:symphonia-bundle-mp3",
+     "symphonia-bundle-mp3/mp2"
+    ],
+    "mp3": [
+     "dep:symphonia-bundle-mp3",
+     "symphonia-bundle-mp3/mp3"
+    ],
+    "mpa": [
+     "mp1",
+     "mp2",
+     "mp3"
+    ],
+    "ogg": [
+     "dep:symphonia-format-ogg"
+    ],
+    "opt-simd": [
+     "opt-simd-sse",
+     "opt-simd-avx",
+     "opt-simd-neon"
+    ],
+    "opt-simd-avx": [
+     "symphonia-core/opt-simd-avx"
+    ],
+    "opt-simd-neon": [
+     "symphonia-core/opt-simd-neon"
+    ],
+    "opt-simd-sse": [
+     "symphonia-core/opt-simd-sse"
+    ],
+    "pcm": [
+     "dep:symphonia-codec-pcm"
+    ],
+    "vorbis": [
+     "dep:symphonia-codec-vorbis"
+    ],
+    "wav": [
+     "dep:symphonia-format-riff",
+     "symphonia-format-riff/wav"
+    ]
+   },
+   "in_lock": true,
+   "key": "symphonia@0.6.1",
+   "license": "MPL-2.0",
+   "license_status": "declared",
+   "link_directives": 0,
+   "links": null,
+   "name": "symphonia",
+   "native_tooling": [],
+   "platforms": {
+    "host": {
+     "effective_std": "std",
+     "features": [
+      "aac",
+      "alac",
+      "isomp4",
+      "ogg",
+      "pcm",
+      "vorbis"
+     ],
+     "role": "linked",
+     "std": "std"
+    },
+    "mips": {
+     "effective_std": "std",
+     "features": [
+      "aac",
+      "alac",
+      "isomp4",
+      "ogg",
+      "pcm",
+      "vorbis"
+     ],
+     "role": "linked",
+     "std": "std"
+    },
+    "powerpc": {
+     "effective_std": "std",
+     "features": [
+      "aac",
+      "alac",
+      "isomp4",
+      "ogg",
+      "pcm",
+      "vorbis"
+     ],
+     "role": "linked",
+     "std": "std"
+    }
+   },
+   "references_alloc": false,
+   "source": null,
+   "source_kind": "workspace",
+   "unsafe_declared": [
+    "forbid via crate-attribute"
+   ],
+   "unsafe_status": "none",
+   "unsafe_tokens": 0,
+   "uses_float": false,
+   "version": "0.6.1"
+  }
+ ],
+ "platforms": {
+  "host": {
+   "float": "no soft-float feature in the compiler's target spec",
+   "outcome": "resolved",
+   "triple": "aarch64-apple-darwin"
+  },
+  "mips": {
+   "float": "soft-float",
+   "outcome": "resolved",
+   "triple": "mips-unknown-linux-musl"
+  },
+  "powerpc": {
+   "float": "no soft-float feature in the compiler's target spec",
+   "outcome": "resolved",
+   "triple": "powerpc-unknown-linux-musl"
+  }
+ },
+ "policy_inputs": {
+  "cargo_args": [],
+  "scope_crates": null,
+  "subject": "upstream",
+  "unsafe_allowed": [
+   "franken-platform"
+  ]
+ },
+ "schema": "ffw.e06.inventory.v1",
+ "subject": {
+  "name": "Symphonia",
+  "rev": "ee35874b571a35a9a6e15d3bc9a3aaf8f11fbeee"
+ },
+ "summary": {
+  "blocker": 0,
+  "info": 21,
+  "review": 14
+ }
+}

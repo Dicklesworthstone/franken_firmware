@@ -1,0 +1,39 @@
+{
+ "schema": "ffw.e06.codec-consumers.v1",
+ "note": "Inputs of the codec audit, bound by digest. The sources are public exact-commit exports (GitHub codeload), extracted into the ignored build/e06-candidates/. The consumer workspaces are what scripts/e06/audit.py read and what prepare_candidates.py rebuilds byte for byte. Locks are generated offline from the auditing machine's registry cache: neither project commits one for these configurations, so they are NOT upstream pins.",
+ "candidates": {
+  "symphonia": {
+   "repository": "https://github.com/pdeljanov/Symphonia",
+   "tag": "v0.6.1 (annotated tag object c9e115f3ef34bec65f46251461c7a9300827427d)",
+   "source_commit": "ee35874b571a35a9a6e15d3bc9a3aaf8f11fbeee",
+   "archive_sha256": "3c1d84c8789b86e950ee045edbac2ce74c7ac0525fe31c1b4b08233f2ec3cd33",
+   "archive_bytes": 677057,
+   "export_tree_sha256": "1afc271d08241abf90555947c70f9df981cd85fb52a285c6c4dc058f7b5d7966",
+   "export_files": 303,
+   "license": "MPL-2.0",
+   "probe_dependency": "symphonia = { path = \"../upstream/symphonia\", default-features = false, features = [\"aac\", \"alac\", \"vorbis\", \"pcm\", \"ogg\", \"isomp4\"] }",
+   "not_selected": ["opt-simd (and opt-simd-sse/avx/neon)", "all-codecs", "all-meta", "default", "flac", "mp1", "mp2", "mp3", "adpcm", "wav", "aiff", "caf", "mkv"],
+   "consumer_lock_sha256": "99e4fff573a1b36e678959d3101ab0909033028fb9c24ccdb1b8203906fbd69e",
+   "consumer_tree_sha256": "1500bad66cb24508b30a87eb9d7c1740126be5c7843c75bf224aeb9cf3c4d770",
+   "consumer_files": 307
+  },
+  "opus-pure": {
+   "repository": "https://github.com/stephenberry/opus-pure",
+   "version": "0.2.2",
+   "source_commit": "cf954a76381ae8968b2bc35bb5d578b3a2311d53",
+   "archive_sha256": "65ef43dab77204db7e1809fab5ed2eba23f92ab00e4c10094931d3bd52367d32",
+   "archive_bytes": 634314,
+   "export_tree_sha256": "98a6625dfc5842f567bb60e750a5289b0e0ae1a3310772814bb9366ef0be4a39",
+   "export_files": 259,
+   "license": "BSD-3-Clause",
+   "probe_dependency": "opus-pure = { path = \"../upstream\" }",
+   "features": "default (the optional `probe` feature is OFF)",
+   "consumer_lock_sha256": "ddd8830fa13b605bd1bf4612c72bbb857aaf297e4e0f043b56e47ef2a5b06547",
+   "consumer_tree_sha256": "c4263ff139e29817f8152a7a14aabc93f1c1b0ee9452490a17345fb15ef1346b",
+   "consumer_files": 263,
+   "standalone_lock_sha256": "3220752619f2645c19be5eb64e49e5ce116a771fd22df37c0b4b2aa7aaaa06ff",
+   "lint_tree_sha256": "97b7cdc0a6be27e50b038c51d59f64a6d0fd98238a095d57abd05779fdc76f64",
+   "lint_planted_tree_sha256": "796c96a1ab7cab8d6a494939707dd32ba49963f652e4fe7c8abe269108e809f2"
+  }
+ }
+}
