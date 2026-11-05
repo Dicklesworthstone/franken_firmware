@@ -16,7 +16,11 @@
 pub mod abi;
 pub mod backend;
 pub mod contract;
+#[cfg(test)]
+mod diag;
 pub mod dma_sim;
+pub mod events;
+pub mod logged;
 pub mod session;
 pub mod slots;
 

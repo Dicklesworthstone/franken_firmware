@@ -1,0 +1,40 @@
+{
+ "schema": "ffw.p04.event_vectors.v1",
+ "note": "Hand-computed bytes for the local-event record: [0xA5 sync, kind, id, flags (must be 0), device ticks as 4 big-endian bytes], and hand-traced debounce runs. A harness MODEL; no retained driver is known to emit this record. Read by the Rust tests in crates/franken-hal/src/events.rs and by the independent Python model in events_ref.py.",
+ "vectors": [
+  {"id": "P04-EVT-001", "hex": "a501020001020304",
+   "expect": {"kind": "button_down", "id": 2, "device_ticks": 16909060}},
+  {"id": "P04-EVT-002", "hex": "a502000000000000",
+   "expect": {"kind": "button_up", "id": 0, "device_ticks": 0}},
+  {"id": "P04-EVT-003", "hex": "a5030100ffffffff",
+   "expect": {"kind": "led_fault", "id": 1, "device_ticks": 4294967295}},
+  {"id": "P04-EVT-004", "hex": "a504070000000005",
+   "expect": {"kind": "device_fault", "id": 7, "device_ticks": 5}},
+  {"id": "P04-EVT-005", "hex": "a601020000000000", "expect": {"error": "bad_sync"}},
+  {"id": "P04-EVT-006", "hex": "a509020000000000", "expect": {"error": "unknown_kind"}},
+  {"id": "P04-EVT-007", "hex": "a501020100000000", "expect": {"error": "flags_non_zero"}},
+  {"id": "P04-EVT-008", "hex": "a5010200000000", "expect": {"error": "length"}}
+ ],
+ "debounce_traces": [
+  {"id": "P04-DEB-001", "window": 3,
+   "what": "a clean press and release: each is reported when it has been steady for the whole window, not before",
+   "steps": [[10, "down"], [12, null], [13, null], [20, "up"], [23, null]],
+   "expect": {"reported": [[13, "down"], [23, "up"]], "bounces": 0, "duplicates": 0, "final": "up"}},
+  {"id": "P04-DEB-002", "window": 3,
+   "what": "down, up, down within the window: one press, reported 3 ticks after the last edge, with two bounces counted",
+   "steps": [[10, "down"], [11, "up"], [12, "down"], [14, null], [15, null]],
+   "expect": {"reported": [[15, "down"]], "bounces": 2, "duplicates": 0, "final": "down"}},
+  {"id": "P04-DEB-003", "window": 3,
+   "what": "after DEB-002, a glitch that returns to the reported state is silent",
+   "steps": [[10, "down"], [11, "up"], [12, "down"], [14, null], [15, null], [30, "up"], [31, "down"], [40, null]],
+   "expect": {"reported": [[15, "down"]], "bounces": 3, "duplicates": 0, "final": "down"}},
+  {"id": "P04-DEB-004", "window": 3,
+   "what": "a repeat of the state already pending is counted and does not restart the wait",
+   "steps": [[10, "down"], [12, "down"], [13, null]],
+   "expect": {"reported": [[13, "down"]], "bounces": 0, "duplicates": 1, "final": "down"}},
+  {"id": "P04-DEB-005", "window": 3,
+   "what": "a first edge from the unknown state settles like any other, even a release",
+   "steps": [[5, "up"], [7, null], [8, null]],
+   "expect": {"reported": [[8, "up"]], "bounces": 0, "duplicates": 0, "final": "up"}}
+ ]
+}

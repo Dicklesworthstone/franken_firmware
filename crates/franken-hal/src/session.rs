@@ -32,7 +32,7 @@ use crate::slots::{
 use franken_board_profile::{AmplifierPolicy, BoardProfile, UnsupportedReasonCode};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Schema string of a [`SessionReceipt`].
 pub const RECEIPT_SCHEMA: &str = "ffw.p04.session_receipt.v1";
@@ -44,7 +44,29 @@ pub const MAX_FAULT_RECORDS: usize = 16;
 pub const DEFAULT_QUARANTINE_CAP: usize = 4;
 const MAX_CHANNELS: usize = 8;
 
-static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
+/// Session ids come from a 32-bit counter because big-endian MIPS32 and PowerPC32 have no 64-bit
+/// atomics. The counter never wraps: a wrapped id could let a token from an old session match a new
+/// one and return storage the kernel may still hold. Once it is exhausted no session is created.
+static NEXT_SESSION_ID: AtomicU32 = AtomicU32::new(1);
+
+/// The next session id, or `None` once the counter is exhausted. Ids run from 1 to `u32::MAX - 1`:
+/// the update that would carry the counter past `u32::MAX` is refused, so it stays put and every
+/// later call also answers `None`.
+///
+/// An explicit compare-and-swap loop rather than `fetch_update`, which newer toolchains deprecate
+/// in favour of `try_update`; the loop is valid on every toolchain. A concurrent taker makes the
+/// swap fail with the value it saw, and the loop retries from there, so two takers never get the
+/// same id.
+fn take_session_id(counter: &AtomicU32) -> Option<u32> {
+    let mut current = counter.load(Ordering::Relaxed);
+    loop {
+        let next = current.checked_add(1)?;
+        match counter.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return Some(current),
+            Err(seen) => current = seen,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -291,6 +313,8 @@ pub enum SessionError {
     CopyEvidenceMissing,
     #[error("quarantine cap must be at least 1")]
     BadConfig,
+    #[error("the session id space is exhausted, so no new session can be created")]
+    SessionIdsExhausted,
     #[error("not allowed in phase {phase:?}")]
     WrongPhase { phase: SessionPhase },
     #[error("the mute was not acknowledged")]
@@ -406,6 +430,16 @@ impl<B: DeviceBackend> HalSession<B> {
         backend: B,
         config: SessionConfig,
     ) -> Result<Self, SessionError> {
+        Self::open_with_ids(profile, backend, config, &NEXT_SESSION_ID)
+    }
+
+    /// `open_checked` with the id counter passed in, so a test can start it near its limit.
+    fn open_with_ids(
+        profile: BoardProfile,
+        backend: B,
+        config: SessionConfig,
+        ids: &AtomicU32,
+    ) -> Result<Self, SessionError> {
         profile
             .verify_integrity()
             .map_err(SessionError::ProfileRejected)?;
@@ -421,11 +455,13 @@ impl<B: DeviceBackend> HalSession<B> {
         if config.quarantine_cap == 0 {
             return Err(SessionError::BadConfig);
         }
+        // Last, so a refused open does not use up an id. Nothing has touched the device yet.
+        let session_id = take_session_id(ids).ok_or(SessionError::SessionIdsExhausted)?;
         let provenance = backend.provenance();
         Ok(Self {
             slots: None,
             backend,
-            session_id: NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed),
+            session_id: u64::from(session_id),
             phase: SessionPhase::Closed,
             // The session has not touched the device, so it has not unmuted it.
             amp: Amp::Muted,
@@ -2006,6 +2042,56 @@ mod tests {
         let r = s.submit(&BLOCK).unwrap();
         assert_eq!((r.accepted_frames, r.remainder_bytes), (2, 8));
         assert_eq!(s.slot_states()[0], SlotState::KernelOwned);
+    }
+
+    #[test]
+    fn session_ids_never_wrap_and_the_counter_refuses_once_it_runs_out() {
+        // Ordinary use: ids come out in order, each once.
+        let counter = AtomicU32::new(1);
+        assert_eq!(take_session_id(&counter), Some(1));
+        assert_eq!(take_session_id(&counter), Some(2));
+        // Near the top: the last two ids go out, then the counter refuses and stays refused.
+        let counter = AtomicU32::new(u32::MAX - 2);
+        assert_eq!(take_session_id(&counter), Some(u32::MAX - 2));
+        assert_eq!(take_session_id(&counter), Some(u32::MAX - 1));
+        assert_eq!(take_session_id(&counter), None);
+        assert_eq!(
+            take_session_id(&counter),
+            None,
+            "it must not wrap to an id that was already used"
+        );
+        assert_eq!(counter.load(Ordering::Relaxed), u32::MAX);
+    }
+
+    #[test]
+    fn opening_is_refused_with_the_device_untouched_once_the_id_space_is_exhausted() {
+        let config = || SessionConfig::with_ledger(Arc::new(LeakLedger::new(64)), 2);
+        // The last available id still opens a working session.
+        let counter = AtomicU32::new(u32::MAX - 1);
+        let (backend, _probe) = FakeBackend::new(FakeConfig::retained());
+        let mut last = HalSession::open_with_ids(profile(), backend, config(), &counter).unwrap();
+        assert_eq!(last.session_id, u64::from(u32::MAX - 1));
+        last.prepare().unwrap();
+        assert_eq!(last.phase(), SessionPhase::Prepared);
+        // The counter is now exhausted: the next open is refused, and its device was never touched.
+        let (backend, probe) = FakeBackend::new(FakeConfig::retained());
+        let refused = HalSession::open_with_ids(profile(), backend, config(), &counter);
+        assert_eq!(refused.err().unwrap(), SessionError::SessionIdsExhausted);
+        assert!(probe.calls().is_empty());
+        // A refused open for another reason does not use up an id.
+        let fresh = AtomicU32::new(5);
+        let (backend, _probe) = FakeBackend::new(FakeConfig::retained());
+        let bad = SessionConfig::with_ledger(Arc::new(LeakLedger::new(64)), 0);
+        assert_eq!(
+            HalSession::open_with_ids(profile(), backend, bad, &fresh)
+                .err()
+                .unwrap(),
+            SessionError::BadConfig
+        );
+        assert_eq!(fresh.load(Ordering::Relaxed), 5);
+        // The process-wide counter is unaffected: an ordinary open still succeeds.
+        let (ordinary, _probe, _ledger) = session(FakeConfig::retained());
+        assert_eq!(ordinary.phase(), SessionPhase::Closed);
     }
 
     #[test]

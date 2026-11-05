@@ -4,9 +4,9 @@
     run_cases.py --tier smoke|full [--case ID] [--list] [--receipts DIR]
 
 What this runner is, so a pass is not over-read:
-* It checks the wire-record vectors with an independent Python codec, proves the case set is not
-  vacuous (a planted host-endian defect must be caught), and checks that every required invariant
-  maps to Rust tests that EXIST in the source. It does not run those tests: there is no local cargo,
+* It checks the wire-record vectors and the local-event record vectors and debounce traces with
+  independent Python models, proves the case set is not vacuous (planted defects must be caught), and
+  checks that every required invariant maps to Rust tests that EXIST in the source. It does not run those tests: there is no local cargo,
   and the behavior (ownership, quarantine, fail-muted, owner destruction) lives in
   crates/franken-hal and is verified only by the central `cargo test -p franken-hal`.
 * So the behavioral half is the BLOCKED case P04-RUST-CENTRAL, counted and never passed, and the run
@@ -34,17 +34,21 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 
 import abi_ref  # noqa: E402
+import events_ref  # noqa: E402
 
 CASES_FILE = os.path.join(HERE, "cases.json")
 VECTORS_FILE = os.path.join(HERE, "abi_vectors.json")
+EVENTS_FILE = os.path.join(HERE, "event_vectors.json")
 DOC_FILE = os.path.join(REPO, "docs", "contracts", "p04.md")
 RUST_DIR = os.path.join(REPO, "crates", "franken-hal", "src")
 SCHEMA = "ffw.p04.cases.v1"
 VECTORS_SCHEMA = "ffw.p04.abi_vectors.v1"
+EVENTS_SCHEMA = "ffw.p04.event_vectors.v1"
 TIERS = ("smoke", "full")
-KINDS = ("abi_vector", "planted_defect", "meta_files", "meta_shared_vectors", "meta_invariants",
-         "meta_hygiene", "meta_no_unsafe", "runner_selftest", "blocked")
-RUST_FILES = ("lib", "abi", "backend", "contract", "dma_sim", "session", "slots")
+KINDS = ("abi_vector", "event_vector", "debounce_trace", "planted_defect", "event_defect", "meta_files",
+         "meta_shared_vectors", "meta_events", "meta_invariants", "meta_hygiene", "meta_no_unsafe",
+         "runner_selftest", "blocked")
+RUST_FILES = ("lib", "abi", "backend", "contract", "diag", "dma_sim", "events", "logged", "session", "slots")
 PASS, FAIL, BLOCKED = "pass", "fail", "blocked"
 Result = Tuple[str, str]
 
@@ -127,11 +131,96 @@ def run_planted_defect(c) -> Result:
     return PASS, f"caught by {len(caught)} vector(s)"
 
 
+# ---------------------------------------------------------------------------------- local events
+
+def event_doc() -> Dict[str, Any]:
+    doc = load_json(EVENTS_FILE)
+    if doc.get("schema") != EVENTS_SCHEMA:
+        raise CaseError(f"event_vectors.json schema is {doc.get('schema')!r}, expected {EVENTS_SCHEMA!r}")
+    return doc
+
+
+def check_event_vector(v: Dict[str, Any], endian: str = "big") -> Result:
+    data = bytes.fromhex(v["hex"])
+    expect = v["expect"]
+    try:
+        got = events_ref.decode_record(data, endian)
+    except events_ref.RecordError as e:
+        return (PASS, "") if expect.get("error") == e.name else (FAIL, f"rejected as {e.name}, expected {expect}")
+    if "error" in expect:
+        return FAIL, f"decoded {got}, expected the error {expect['error']}"
+    if got != expect:
+        return FAIL, f"decoded {got}, expected {expect}"
+    if events_ref.encode_record(got, endian) != data:
+        return FAIL, "re-encoding does not give the original bytes"
+    return PASS, ""
+
+
+def check_trace(t: Dict[str, Any], model=events_ref.Debounce) -> Result:
+    got = events_ref.replay_debounce(t["window"], [(s[0], s[1]) for s in t["steps"]], model)
+    want = dict(t["expect"])
+    want["reported"] = [(a, b) for a, b in want["reported"]]
+    return (PASS, "") if got == want else (FAIL, f"replayed {got}, expected {want}")
+
+
+def run_event_vector(c) -> Result:
+    return check_event_vector(c["vector"])
+
+
+def run_debounce_trace(c) -> Result:
+    return check_trace(c["trace"])
+
+
+class OffByOne(events_ref.Debounce):
+    """Planted defect: reports one tick late (the window is exclusive instead of inclusive)."""
+
+    def settle(self, now: int):
+        if self.raw != "unknown" and self.raw != self.reported and now - self.raw_since > self.window:
+            self.reported = self.raw
+            return self.reported
+        return None
+
+
+class KeepsOldClock(events_ref.Debounce):
+    """Planted defect: an edge in the middle of a pending change does not restart the wait."""
+
+    def edge(self, state: str, now: int) -> str:
+        if state == self.raw:
+            return "ignored"
+        bounce = self.raw != self.reported
+        self.raw = state
+        if not bounce:
+            self.raw_since = now
+        return "bounce" if bounce else "pending"
+
+
+def run_event_defect(c) -> Result:
+    doc = event_doc()
+    vs, traces = doc["vectors"], doc["debounce_traces"]
+    baseline = [v["id"] for v in vs if check_event_vector(v)[0] != PASS]
+    baseline += [t["id"] for t in traces if check_trace(t)[0] != PASS]
+    if baseline:
+        return FAIL, f"baseline is not green, so no catch can be credited: {baseline}"
+    defect = c["defect"]
+    if defect == "host_endian_ticks":
+        caught = sorted(v["id"] for v in vs if check_event_vector(v, "little")[0] != PASS)
+    elif defect == "settle_off_by_one":
+        caught = sorted(t["id"] for t in traces if check_trace(t, OffByOne)[0] != PASS)
+    elif defect == "bounce_keeps_old_clock":
+        caught = sorted(t["id"] for t in traces if check_trace(t, KeepsOldClock)[0] != PASS)
+    else:
+        return FAIL, f"unknown planted defect {defect!r}"
+    missing = [i for i in c["caught_by"] if i not in caught]
+    if missing:
+        return FAIL, f"defect {defect!r} was not caught by {missing}; caught by {caught}"
+    return PASS, f"caught by {len(caught)} case(s)"
+
+
 # ------------------------------------------------------------------------------------------- meta
 
 def run_meta_files(c) -> Result:
-    needed = [CASES_FILE, VECTORS_FILE, DOC_FILE, os.path.join(HERE, "abi_ref.py"),
-              os.path.join(REPO, "scripts", "e2e", "p04")]
+    needed = [CASES_FILE, VECTORS_FILE, EVENTS_FILE, DOC_FILE, os.path.join(HERE, "abi_ref.py"),
+              os.path.join(HERE, "events_ref.py"), os.path.join(REPO, "scripts", "e2e", "p04")]
     needed += [os.path.join(RUST_DIR, f"{m}.rs") for m in RUST_FILES]
     gone = [os.path.relpath(p, REPO) for p in needed if not os.path.isfile(p)]
     return (PASS, "") if not gone else (FAIL, f"missing: {gone}")
@@ -146,6 +235,27 @@ def run_meta_shared_vectors(c) -> Result:
     if not m or int(m.group(1)) != len(vectors()):
         problems.append(f"the Rust test expects {m.group(1) if m else 'no'} vectors, the file has {len(vectors())}")
     for module in ("session", "slots"):
+        if not rust_test_names(module):
+            problems.append(f"{module}.rs has no #[test] functions")
+    return (PASS, "") if not problems else (FAIL, "; ".join(problems))
+
+
+def run_meta_events(c) -> Result:
+    """The local-event and logging modules are declared, read the shared file, and agree on counts."""
+    problems = []
+    lib_rs = rust_source("lib")
+    for decl in ("pub mod events;", "pub mod logged;", "#[cfg(test)]\nmod diag;"):
+        if decl not in lib_rs:
+            problems.append(f"lib.rs does not declare {decl!r}")
+    events_rs = rust_source("events")
+    if 'include_str!("../../../tests/p04/event_vectors.json")' not in events_rs:
+        problems.append("events.rs does not include tests/p04/event_vectors.json")
+    doc = event_doc()
+    for key, field in (("vectors", "vectors"), ("traces", "debounce_traces")):
+        m = re.search(key + r"\.len\(\),\s*(\d+)", events_rs)
+        if not m or int(m.group(1)) != len(doc[field]):
+            problems.append(f"events.rs expects {m.group(1) if m else 'no'} {field}, the file has {len(doc[field])}")
+    for module in ("events", "logged", "diag"):
         if not rust_test_names(module):
             problems.append(f"{module}.rs has no #[test] functions")
     return (PASS, "") if not problems else (FAIL, "; ".join(problems))
@@ -184,15 +294,23 @@ def all_test_names() -> Dict[str, List[str]]:
     return {m: rust_test_names(m) for m in RUST_FILES}
 
 
+def case_ids(doc: Dict[str, Any]) -> List[str]:
+    """Every case id: the listed cases, the ABI vectors, the event vectors and the debounce traces."""
+    ev = event_doc()
+    return ([x["id"] for x in doc["cases"]] + [v["id"] for v in vectors()]
+            + [v["id"] for v in ev["vectors"]] + [t["id"] for t in ev["debounce_traces"]])
+
+
 def run_meta_invariants(c) -> Result:
     doc = load_json(CASES_FILE)
-    ids = [x["id"] for x in doc["cases"]] + [v["id"] for v in vectors()]
+    ids = case_ids(doc)
     problems = check_invariants(doc, ids, all_test_names())
     named = sum(len(i["rust_tests"]) for i in doc["invariants"])
     return (PASS, f"{len(doc['invariants'])} invariants, {named} named Rust tests") if not problems else (FAIL, "; ".join(problems))
 
 
-HYGIENE_FILES = ("cases.json", "abi_vectors.json", "abi_ref.py", "run_cases.py")
+HYGIENE_FILES = ("cases.json", "abi_vectors.json", "abi_ref.py", "event_vectors.json", "events_ref.py",
+                 "run_cases.py")
 
 
 def run_meta_hygiene(c) -> Result:
@@ -210,7 +328,7 @@ def run_meta_hygiene(c) -> Result:
 
 
 def run_meta_no_unsafe(c) -> Result:
-    """The HAL crate stays #![forbid(unsafe_code)]; this slice adds no unsafe block, fn or impl."""
+    """The HAL crate stays #![forbid(unsafe_code)]; no slice adds an unsafe block, fn or impl."""
     problems = []
     if "#![forbid(unsafe_code)]" not in rust_source("lib"):
         problems.append("lib.rs no longer forbids unsafe_code")
@@ -234,13 +352,26 @@ def run_runner_selftest(c) -> Result:
         return FAIL, "a corrupted vector was accepted"
     bad = copy.deepcopy(load_json(CASES_FILE))
     bad["invariants"][0]["rust_tests"].append("session::a_test_that_does_not_exist")
-    ids = [x["id"] for x in bad["cases"]] + [v["id"] for v in vs]
-    if not any("a_test_that_does_not_exist" in p for p in check_invariants(bad, ids, all_test_names())):
+    if not any("a_test_that_does_not_exist" in p for p in check_invariants(bad, case_ids(bad), all_test_names())):
         return FAIL, "a missing Rust test name was not detected"
     orphan_doc = copy.deepcopy(load_json(CASES_FILE))
     orphan_doc["cases"].append({"id": "P04-ORPHAN", "kind": "meta_files", "tier": "smoke"})
-    if not any("P04-ORPHAN" in p for p in check_invariants(orphan_doc, [x["id"] for x in orphan_doc["cases"]] + [v["id"] for v in vs], all_test_names())):
+    if not any("P04-ORPHAN" in p for p in check_invariants(orphan_doc, case_ids(orphan_doc), all_test_names())):
         return FAIL, "a case covering no invariant was not detected"
+    # The event checks are not vacuous either: a corrupted record and a corrupted trace must each be seen.
+    ev = event_doc()
+    record = copy.deepcopy(next(v for v in ev["vectors"] if "error" not in v["expect"]))
+    if check_event_vector(record)[0] != PASS:
+        return FAIL, "a baseline event vector does not pass"
+    record["hex"] = record["hex"][:-2] + "ff"
+    if check_event_vector(record)[0] == PASS:
+        return FAIL, "a corrupted event vector was accepted"
+    trace = copy.deepcopy(ev["debounce_traces"][0])
+    if check_trace(trace)[0] != PASS:
+        return FAIL, "a baseline debounce trace does not pass"
+    trace["expect"]["reported"][0][0] += 1
+    if check_trace(trace)[0] == PASS:
+        return FAIL, "a corrupted debounce trace was accepted"
     return PASS, ""
 
 
@@ -250,10 +381,11 @@ def run_blocked(c) -> Result:
 
 
 RUNNERS: Dict[str, Callable[[Dict[str, Any]], Result]] = {
-    "abi_vector": run_abi_vector, "planted_defect": run_planted_defect, "meta_files": run_meta_files,
-    "meta_shared_vectors": run_meta_shared_vectors, "meta_invariants": run_meta_invariants,
-    "meta_hygiene": run_meta_hygiene, "meta_no_unsafe": run_meta_no_unsafe,
-    "runner_selftest": run_runner_selftest, "blocked": run_blocked,
+    "abi_vector": run_abi_vector, "event_vector": run_event_vector, "debounce_trace": run_debounce_trace,
+    "planted_defect": run_planted_defect, "event_defect": run_event_defect, "meta_files": run_meta_files,
+    "meta_shared_vectors": run_meta_shared_vectors, "meta_events": run_meta_events,
+    "meta_invariants": run_meta_invariants, "meta_hygiene": run_meta_hygiene,
+    "meta_no_unsafe": run_meta_no_unsafe, "runner_selftest": run_runner_selftest, "blocked": run_blocked,
 }
 
 
@@ -266,6 +398,11 @@ def all_cases() -> List[Dict[str, Any]]:
     cases = list(doc["cases"])
     for v in vectors():
         cases.append({"id": v["id"], "kind": "abi_vector", "tier": "smoke", "vector": v})
+    ev = event_doc()
+    for v in ev["vectors"]:
+        cases.append({"id": v["id"], "kind": "event_vector", "tier": "smoke", "vector": v})
+    for t in ev["debounce_traces"]:
+        cases.append({"id": t["id"], "kind": "debounce_trace", "tier": "smoke", "trace": t})
     seen = set()
     for c in cases:
         if c["kind"] not in KINDS:
@@ -327,7 +464,7 @@ def main(argv: List[str]) -> int:
             "utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "python": sys.version.split()[0], "tier": args.tier, "denominator": len(results), "counts": counts,
             "qualified": qualified, "rust_test_functions_expected": rust_test_total(),
-            "inputs": {os.path.relpath(p, REPO): sha256_file(p) for p in (CASES_FILE, VECTORS_FILE)},
+            "inputs": {os.path.relpath(p, REPO): sha256_file(p) for p in (CASES_FILE, VECTORS_FILE, EVENTS_FILE)},
             "cases": [{"id": c["id"], "status": st} for c, st, _ in results],
         }
         path = os.path.join(args.receipts, f"p04-{args.tier}.json")
