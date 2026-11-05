@@ -1,0 +1,25 @@
+{
+  "status": "pass",
+  "tasks": 51,
+  "blocking_edges": 114,
+  "expected_blocking_edges": 114,
+  "cycles": 0,
+  "description_matches": 51,
+  "title_matches": 51,
+  "dependency_set_matches": 51,
+  "snapshot_dependency_count_matches": 51,
+  "manifest_matches": 51,
+  "mapped_design_packages": 33,
+  "root_open_tasks": [
+    {
+      "id": "ffw-xdi",
+      "title": "E01: Reconcile device and firmware identity evidence"
+    }
+  ],
+  "plan_sha256": "6ef0fcf812aa4dc0ea4663f95a904dc75352fe1fc0b4119b110d1f5c83b78d77",
+  "audit_scope": "Offline canonical catalog/manifest/map/body versus saved snapshot and local issue export; exact edges from export, dependency counts from snapshot. No live br query or mutation; root_open_tasks is not a full readiness computation.",
+  "implementation_executed": false,
+  "hardware_accessed": false,
+  "provider_accessed": false,
+  "errors": []
+}

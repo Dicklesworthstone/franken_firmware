@@ -1,0 +1,217 @@
+{
+  "guests": {
+    "mips": {
+      "arch": "mips",
+      "binary_bytes": 6980,
+      "binary_sha256": "49aae0a455580e70c03d7809680e7649fb6791d4902eca084f33c5d0cb70bebf",
+      "capture_byte_limit": 8388608,
+      "capture_layout": "stdout-then-stderr; separate raw streams retained",
+      "capture_stop_reason": null,
+      "elapsed_seconds": 4.445,
+      "forbidden_hits": [],
+      "initramfs_sha256": "39a7434194f22ea74d42f7ab280cd43e2e47fa71cb5670a3f70bf4a590054b3a",
+      "kernel_sha256": "3803357ef7821dbf691c901105fb9b2b00382abf67fce8a4be2a0d592267dc61",
+      "kernel_version": "Linux version 4.19.0-21-4kc-malta (debian-kernel@lists.debian.org) (gcc version 8.3.0 (Debian 8.3.0-6)) #1 SMP Debian 4.19.249-2 (2022-06-30)",
+      "marker_order_ok": true,
+      "missing_markers": [],
+      "probes": {
+        "FFW_PROBE:ATOMICS_32": {
+          "raw": "FFW_PROBE:ATOMICS_32 status=PASS ok=1",
+          "status": "PASS"
+        },
+        "FFW_PROBE:CLOCK_MONOTONIC": {
+          "raw": "FFW_PROBE:CLOCK_MONOTONIC status=PASS res_ns=1",
+          "status": "PASS"
+        },
+        "FFW_PROBE:ENTROPY": {
+          "raw": "FFW_PROBE:ENTROPY status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:EPOLL": {
+          "raw": "FFW_PROBE:EPOLL status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:NONBLOCK_PIPE": {
+          "raw": "FFW_PROBE:NONBLOCK_PIPE status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:POLL": {
+          "raw": "FFW_PROBE:POLL status=PASS rc=1",
+          "status": "PASS"
+        },
+        "FFW_PROBE:SOCKET_UDP": {
+          "raw": "FFW_PROBE:SOCKET_UDP status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_TEST:ERR_EBADF": {
+          "raw": "FFW_TEST:ERR_EBADF status=PASS errno=9",
+          "status": "PASS"
+        },
+        "FFW_TEST:ERR_ENOENT": {
+          "raw": "FFW_TEST:ERR_ENOENT status=PASS errno=2",
+          "status": "PASS"
+        },
+        "FFW_TEST:ERR_ENOSYS": {
+          "raw": "FFW_TEST:ERR_ENOSYS status=PASS errno=89",
+          "status": "PASS"
+        },
+        "FFW_TEST:POS_FD_SHORT_WRITE": {
+          "raw": "FFW_TEST:POS_FD_SHORT_WRITE status=PASS fd=4",
+          "status": "PASS"
+        }
+      },
+      "qemu_exit_code": 0,
+      "qualification_boundary": "Full-system Debian QEMU guest (Linux 4.19 Malta / Linux 4.9 g3beige); proves ISA, endianness, static ELF startup, initramfs device nodes, and syscall ABI probes; does not substitute for stock Sonos 2.4/2.6 kernel or proprietary audio driver qualification.",
+      "serial_log_path": "boot-mips-serial.log",
+      "serial_log_sha256": "74bf381fa1b77d956829e7f6b20d11bfd98892194c5085374e692ef39b3c6a3a",
+      "status": "PASS",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "74bf381fa1b77d956829e7f6b20d11bfd98892194c5085374e692ef39b3c6a3a",
+      "timed_out": false,
+      "validation_errors": []
+    },
+    "ppc": {
+      "arch": "ppc",
+      "binary_bytes": 6212,
+      "binary_sha256": "5698125e271f799b3a7fcb0a3aeb901a7ab5acd47c06951086d4286563d0be8d",
+      "capture_byte_limit": 8388608,
+      "capture_layout": "stdout-then-stderr; separate raw streams retained",
+      "capture_stop_reason": null,
+      "elapsed_seconds": 3.898,
+      "forbidden_hits": [],
+      "initramfs_sha256": "7aaf1018d088380b303d4052dfd62b03f380516601aad6cfc2642f6cb9c11a30",
+      "kernel_sha256": "289f40b63ea9aa82743f568ddeaba669a16a859970497dccf7135596da538f98",
+      "kernel_version": "Linux version 4.9.0-0.bpo.6-powerpc (debian-kernel@lists.debian.org) (gcc version 4.9.2 (Debian 4.9.2-10) ) #1 Debian 4.9.88-1+deb9u1~bpo8+1 (2018-05-13)",
+      "marker_order_ok": true,
+      "missing_markers": [],
+      "probes": {
+        "FFW_PROBE:ATOMICS_32": {
+          "raw": "FFW_PROBE:ATOMICS_32 status=PASS ok=1",
+          "status": "PASS"
+        },
+        "FFW_PROBE:CLOCK_MONOTONIC": {
+          "raw": "FFW_PROBE:CLOCK_MONOTONIC status=PASS res_ns=1",
+          "status": "PASS"
+        },
+        "FFW_PROBE:ENTROPY": {
+          "raw": "FFW_PROBE:ENTROPY status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:EPOLL": {
+          "raw": "FFW_PROBE:EPOLL status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:NONBLOCK_PIPE": {
+          "raw": "FFW_PROBE:NONBLOCK_PIPE status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:POLL": {
+          "raw": "FFW_PROBE:POLL status=PASS rc=1",
+          "status": "PASS"
+        },
+        "FFW_PROBE:SOCKET_UDP": {
+          "raw": "FFW_PROBE:SOCKET_UDP status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_TEST:ERR_EBADF": {
+          "raw": "FFW_TEST:ERR_EBADF status=PASS errno=9",
+          "status": "PASS"
+        },
+        "FFW_TEST:ERR_ENOENT": {
+          "raw": "FFW_TEST:ERR_ENOENT status=PASS errno=2",
+          "status": "PASS"
+        },
+        "FFW_TEST:ERR_ENOSYS": {
+          "raw": "FFW_TEST:ERR_ENOSYS status=PASS errno=38",
+          "status": "PASS"
+        },
+        "FFW_TEST:POS_FD_SHORT_WRITE": {
+          "raw": "FFW_TEST:POS_FD_SHORT_WRITE status=PASS fd=4",
+          "status": "PASS"
+        }
+      },
+      "qemu_exit_code": 0,
+      "qualification_boundary": "Full-system Debian QEMU guest (Linux 4.19 Malta / Linux 4.9 g3beige); proves ISA, endianness, static ELF startup, initramfs device nodes, and syscall ABI probes; does not substitute for stock Sonos 2.4/2.6 kernel or proprietary audio driver qualification.",
+      "serial_log_path": "boot-ppc-serial.log",
+      "serial_log_sha256": "c6fa8afb5ec31d6a4248d913f20ff33b865c5d5b0a9866feacd9b6cc2a661df0",
+      "status": "PASS",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "c6fa8afb5ec31d6a4248d913f20ff33b865c5d5b0a9866feacd9b6cc2a661df0",
+      "timed_out": false,
+      "validation_errors": []
+    }
+  },
+  "mkinitramfs_self_test": {
+    "deterministic_gzip": true,
+    "modulo_4x4_cases": 16,
+    "negative_oracles": [
+      "bad_device_tuple_0_5",
+      "missing_trailer",
+      "init_sha256_mismatch"
+    ],
+    "receipt": {
+      "archive_sha256": "19eaef0179d4ad435dd63c567516f0c41672c149201fd4fe2a699ee8c25a244f",
+      "compressed_bytes": 757,
+      "devices": {
+        "dev/console": {
+          "mode": "0o20600",
+          "rdev": [
+            5,
+            1
+          ]
+        },
+        "dev/null": {
+          "mode": "0o20666",
+          "rdev": [
+            1,
+            3
+          ]
+        },
+        "dev/ttyPZ0": {
+          "mode": "0o20600",
+          "rdev": [
+            204,
+            192
+          ]
+        },
+        "dev/ttyS0": {
+          "mode": "0o20600",
+          "rdev": [
+            4,
+            64
+          ]
+        },
+        "dev/urandom": {
+          "mode": "0o20666",
+          "rdev": [
+            1,
+            9
+          ]
+        },
+        "dev/zero": {
+          "mode": "0o20666",
+          "rdev": [
+            1,
+            5
+          ]
+        }
+      },
+      "entry_count": 29,
+      "init_sha256": "8df5d4573ff2f9285b410b491094c1a593603b307b1a35fddba11c7accdba606",
+      "init_size": 34,
+      "raw_cpio_sha256": "14f83f3d39597ec64836c83b0ccb192d249f66473856c27ccfa852df447aa8c2",
+      "uncompressed_bytes": 4096
+    },
+    "status": "PASS"
+  },
+  "run_id": "ddf2f6b15990428ebc4bd93fc11f4baa",
+  "schema_version": "ffw.e07_e03.receipt.v1",
+  "status": "PASS",
+  "toolchain": {
+    "bootstrap_policy_note": "Nightly -Z build-std=core,panic_abort and asm_experimental_arch are scoped strictly to the freestanding PID-1 bootstrap probe; production application, protocol, and DSP crates target stable Rust with #![forbid(unsafe_code)].",
+    "lld": "Homebrew LLD 21.1.8 (compatible with GNU linkers)",
+    "qemu_mips": "QEMU emulator version 11.1.2",
+    "qemu_ppc": "QEMU emulator version 11.1.2",
+    "rustc_nightly": "rustc 1.101.0-nightly (48f4b0553 2026-10-23)"
+  }
+}

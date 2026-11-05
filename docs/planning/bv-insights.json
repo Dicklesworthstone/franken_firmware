@@ -1,0 +1,2274 @@
+{
+  "generated_at": "2026-11-04T18:55:14Z",
+  "data_hash": "16b6fba449ec99bb",
+  "analysis_config": {
+    "ComputeBetweenness": true,
+    "BetweennessTimeout": 2000000000,
+    "BetweennessSkipReason": "",
+    "BetweennessMode": "exact",
+    "BetweennessSampleSize": 0,
+    "BetweennessIsApproximate": false,
+    "ComputePageRank": true,
+    "PageRankTimeout": 2000000000,
+    "PageRankSkipReason": "",
+    "ComputeHITS": true,
+    "HITSTimeout": 2000000000,
+    "HITSSkipReason": "",
+    "ComputeCycles": true,
+    "CyclesTimeout": 2000000000,
+    "MaxCyclesToStore": 1000,
+    "CyclesSkipReason": "",
+    "ComputeEigenvector": true,
+    "ComputeCriticalPath": true
+  },
+  "status": {
+    "PageRank": {
+      "state": "computed",
+      "ms": 272958
+    },
+    "Betweenness": {
+      "state": "computed",
+      "ms": 1925042
+    },
+    "Eigenvector": {
+      "state": "computed",
+      "ms": 32584
+    },
+    "HITS": {
+      "state": "computed",
+      "ms": 46125
+    },
+    "Critical": {
+      "state": "computed",
+      "ms": 49917
+    },
+    "Cycles": {
+      "state": "computed",
+      "ms": 15375
+    },
+    "KCore": {
+      "state": "computed",
+      "ms": 250250
+    },
+    "Articulation": {
+      "state": "computed"
+    },
+    "Slack": {
+      "state": "computed",
+      "ms": 44750
+    }
+  },
+  "Bottlenecks": [
+    {
+      "ID": "ffw-jub",
+      "Value": 58.69761904761905
+    },
+    {
+      "ID": "ffw-kh0",
+      "Value": 57.76190476190476
+    },
+    {
+      "ID": "ffw-u07",
+      "Value": 56.64404761904762
+    },
+    {
+      "ID": "ffw-ugf",
+      "Value": 53.86904761904763
+    },
+    {
+      "ID": "ffw-5h5",
+      "Value": 48.0654761904762
+    },
+    {
+      "ID": "ffw-mgb",
+      "Value": 46.11071428571428
+    },
+    {
+      "ID": "ffw-mxt",
+      "Value": 38.59523809523809
+    },
+    {
+      "ID": "ffw-h3g",
+      "Value": 33
+    },
+    {
+      "ID": "ffw-nx0",
+      "Value": 32.84285714285715
+    },
+    {
+      "ID": "ffw-t9c",
+      "Value": 30.083333333333332
+    },
+    {
+      "ID": "ffw-caw",
+      "Value": 28.174999999999997
+    },
+    {
+      "ID": "ffw-f3b",
+      "Value": 27.21547619047619
+    },
+    {
+      "ID": "ffw-7s0",
+      "Value": 26.45238095238095
+    },
+    {
+      "ID": "ffw-gmq",
+      "Value": 26
+    },
+    {
+      "ID": "ffw-ld0",
+      "Value": 22.333333333333332
+    },
+    {
+      "ID": "ffw-u14",
+      "Value": 19.761904761904763
+    },
+    {
+      "ID": "ffw-bdr",
+      "Value": 18.82142857142857
+    },
+    {
+      "ID": "ffw-0bh",
+      "Value": 18.494047619047617
+    },
+    {
+      "ID": "ffw-xvv",
+      "Value": 17
+    },
+    {
+      "ID": "ffw-s3l",
+      "Value": 16.333333333333332
+    },
+    {
+      "ID": "ffw-unk",
+      "Value": 15.750000000000002
+    },
+    {
+      "ID": "ffw-6dh",
+      "Value": 15.509523809523808
+    },
+    {
+      "ID": "ffw-q2p",
+      "Value": 15.5
+    },
+    {
+      "ID": "ffw-err",
+      "Value": 14.866666666666665
+    },
+    {
+      "ID": "ffw-ey5",
+      "Value": 12.836904761904764
+    },
+    {
+      "ID": "ffw-xcz",
+      "Value": 10.833333333333334
+    },
+    {
+      "ID": "ffw-q5r",
+      "Value": 10.666666666666666
+    },
+    {
+      "ID": "ffw-25l",
+      "Value": 10.166666666666666
+    },
+    {
+      "ID": "ffw-kp9",
+      "Value": 10.166666666666666
+    },
+    {
+      "ID": "ffw-8cy",
+      "Value": 10
+    },
+    {
+      "ID": "ffw-32a",
+      "Value": 9.708333333333332
+    },
+    {
+      "ID": "ffw-rjy",
+      "Value": 8.833333333333334
+    },
+    {
+      "ID": "ffw-myi",
+      "Value": 8.833333333333332
+    },
+    {
+      "ID": "ffw-75n",
+      "Value": 8.083333333333334
+    },
+    {
+      "ID": "ffw-j9r",
+      "Value": 7.619047619047619
+    },
+    {
+      "ID": "ffw-k9k",
+      "Value": 7.017857142857142
+    },
+    {
+      "ID": "ffw-76j",
+      "Value": 6.017857142857142
+    },
+    {
+      "ID": "ffw-9ra",
+      "Value": 5.833333333333333
+    },
+    {
+      "ID": "ffw-6yi",
+      "Value": 4.666666666666666
+    },
+    {
+      "ID": "ffw-8mr",
+      "Value": 2.333333333333333
+    },
+    {
+      "ID": "ffw-za4",
+      "Value": 1.5
+    }
+  ],
+  "Keystones": [
+    {
+      "ID": "ffw-xdi",
+      "Value": 15
+    },
+    {
+      "ID": "ffw-q2p",
+      "Value": 14
+    },
+    {
+      "ID": "ffw-unk",
+      "Value": 13
+    },
+    {
+      "ID": "ffw-h3g",
+      "Value": 12
+    },
+    {
+      "ID": "ffw-f3b",
+      "Value": 11
+    },
+    {
+      "ID": "ffw-jub",
+      "Value": 11
+    },
+    {
+      "ID": "ffw-xcz",
+      "Value": 11
+    },
+    {
+      "ID": "ffw-ey5",
+      "Value": 10
+    },
+    {
+      "ID": "ffw-j9r",
+      "Value": 10
+    },
+    {
+      "ID": "ffw-mgb",
+      "Value": 10
+    },
+    {
+      "ID": "ffw-q5r",
+      "Value": 10
+    },
+    {
+      "ID": "ffw-25l",
+      "Value": 9
+    },
+    {
+      "ID": "ffw-u07",
+      "Value": 9
+    },
+    {
+      "ID": "ffw-ugf",
+      "Value": 9
+    },
+    {
+      "ID": "ffw-7s0",
+      "Value": 8
+    },
+    {
+      "ID": "ffw-kh0",
+      "Value": 8
+    },
+    {
+      "ID": "ffw-0bh",
+      "Value": 7
+    },
+    {
+      "ID": "ffw-6dh",
+      "Value": 7
+    },
+    {
+      "ID": "ffw-75n",
+      "Value": 7
+    },
+    {
+      "ID": "ffw-ld0",
+      "Value": 7
+    },
+    {
+      "ID": "ffw-nx0",
+      "Value": 7
+    },
+    {
+      "ID": "ffw-5h5",
+      "Value": 6
+    },
+    {
+      "ID": "ffw-mxt",
+      "Value": 6
+    },
+    {
+      "ID": "ffw-xvv",
+      "Value": 6
+    },
+    {
+      "ID": "ffw-6yi",
+      "Value": 5
+    },
+    {
+      "ID": "ffw-76j",
+      "Value": 5
+    },
+    {
+      "ID": "ffw-gmq",
+      "Value": 5
+    },
+    {
+      "ID": "ffw-s3l",
+      "Value": 5
+    },
+    {
+      "ID": "ffw-32a",
+      "Value": 4
+    },
+    {
+      "ID": "ffw-bdr",
+      "Value": 4
+    },
+    {
+      "ID": "ffw-caw",
+      "Value": 4
+    },
+    {
+      "ID": "ffw-err",
+      "Value": 4
+    },
+    {
+      "ID": "ffw-k9k",
+      "Value": 4
+    },
+    {
+      "ID": "ffw-u14",
+      "Value": 4
+    },
+    {
+      "ID": "ffw-za4",
+      "Value": 4
+    },
+    {
+      "ID": "ffw-8mr",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-9ra",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-kp9",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-myi",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-rjy",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-8cy",
+      "Value": 2
+    },
+    {
+      "ID": "ffw-t9c",
+      "Value": 2
+    },
+    {
+      "ID": "ffw-5lj",
+      "Value": 1
+    },
+    {
+      "ID": "ffw-elw",
+      "Value": 1
+    },
+    {
+      "ID": "ffw-re8",
+      "Value": 1
+    },
+    {
+      "ID": "ffw-wh3",
+      "Value": 1
+    }
+  ],
+  "Influencers": [
+    {
+      "ID": "ffw-xdi",
+      "Value": 1
+    },
+    {
+      "ID": "ffw-0bh",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-25l",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-32a",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-5h5",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-5lj",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-6dh",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-6yi",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-75n",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-76j",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-7s0",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-8cy",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-8mr",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-9ra",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-bdr",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-caw",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-elw",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-err",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-ey5",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-f3b",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-gmq",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-h3g",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-j9r",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-jub",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-k9k",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-kh0",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-kp9",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-ld0",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-mgb",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-mxt",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-myi",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-nx0",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-q2p",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-q5r",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-re8",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-rjy",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-s3l",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-t9c",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-u07",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-u14",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-ugf",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-unk",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-wh3",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-xcz",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-xvv",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-za4",
+      "Value": 0
+    }
+  ],
+  "Hubs": [
+    {
+      "ID": "ffw-5lj",
+      "Value": 0.48340128360065077
+    },
+    {
+      "ID": "ffw-rjy",
+      "Value": 0.3531152199548092
+    },
+    {
+      "ID": "ffw-6yi",
+      "Value": 0.31809610622243234
+    },
+    {
+      "ID": "ffw-75n",
+      "Value": 0.31809610622243234
+    },
+    {
+      "ID": "ffw-ugf",
+      "Value": 0.3008336802841435
+    },
+    {
+      "ID": "ffw-caw",
+      "Value": 0.2536822396105397
+    },
+    {
+      "ID": "ffw-76j",
+      "Value": 0.2432259039876944
+    },
+    {
+      "ID": "ffw-kh0",
+      "Value": 0.23519095788665492
+    },
+    {
+      "ID": "ffw-mxt",
+      "Value": 0.22585720775840085
+    },
+    {
+      "ID": "ffw-k9k",
+      "Value": 0.2081339426770141
+    },
+    {
+      "ID": "ffw-25l",
+      "Value": 0.11196645759685335
+    },
+    {
+      "ID": "ffw-q2p",
+      "Value": 0.11196645759685335
+    },
+    {
+      "ID": "ffw-xcz",
+      "Value": 0.11196645759685335
+    },
+    {
+      "ID": "ffw-za4",
+      "Value": 0.11196645759685335
+    },
+    {
+      "ID": "ffw-5h5",
+      "Value": 0.0760468811958444
+    },
+    {
+      "ID": "ffw-nx0",
+      "Value": 0.061899573583720426
+    },
+    {
+      "ID": "ffw-myi",
+      "Value": 0.05849472982577736
+    },
+    {
+      "ID": "ffw-elw",
+      "Value": 0.05764792774746513
+    },
+    {
+      "ID": "ffw-u07",
+      "Value": 0.05735598267550586
+    },
+    {
+      "ID": "ffw-err",
+      "Value": 0.03351932222742148
+    },
+    {
+      "ID": "ffw-ld0",
+      "Value": 0.028449993744628782
+    },
+    {
+      "ID": "ffw-8cy",
+      "Value": 0.027341311361601006
+    },
+    {
+      "ID": "ffw-9ra",
+      "Value": 0.027221490562944473
+    },
+    {
+      "ID": "ffw-xvv",
+      "Value": 0.02088772527018702
+    },
+    {
+      "ID": "ffw-t9c",
+      "Value": 0.019464570751794013
+    },
+    {
+      "ID": "ffw-0bh",
+      "Value": 0.01606335244907573
+    },
+    {
+      "ID": "ffw-gmq",
+      "Value": 0.01509797654042145
+    },
+    {
+      "ID": "ffw-7s0",
+      "Value": 0.014975491120708555
+    },
+    {
+      "ID": "ffw-32a",
+      "Value": 0.013137403373993729
+    },
+    {
+      "ID": "ffw-mgb",
+      "Value": 0.012549618768794948
+    },
+    {
+      "ID": "ffw-6dh",
+      "Value": 0.012049542045626556
+    },
+    {
+      "ID": "ffw-q5r",
+      "Value": 0.010473495734051227
+    },
+    {
+      "ID": "ffw-j9r",
+      "Value": 0.009385634405684053
+    },
+    {
+      "ID": "ffw-bdr",
+      "Value": 0.009129063948456046
+    },
+    {
+      "ID": "ffw-u14",
+      "Value": 0.006832571657814146
+    },
+    {
+      "ID": "ffw-8mr",
+      "Value": 0.00560993862543022
+    },
+    {
+      "ID": "ffw-s3l",
+      "Value": 0.004280211723789555
+    },
+    {
+      "ID": "ffw-h3g",
+      "Value": 0.0026639076399425036
+    },
+    {
+      "ID": "ffw-jub",
+      "Value": 1.9604768063923565e-10
+    },
+    {
+      "ID": "ffw-kp9",
+      "Value": 1.6744470939032346e-10
+    },
+    {
+      "ID": "ffw-ey5",
+      "Value": 1.21164130009853e-10
+    },
+    {
+      "ID": "ffw-f3b",
+      "Value": 1.21164130009853e-10
+    },
+    {
+      "ID": "ffw-wh3",
+      "Value": 1.0348652187829488e-10
+    },
+    {
+      "ID": "ffw-unk",
+      "Value": 7.488355062938262e-11
+    },
+    {
+      "ID": "ffw-re8",
+      "Value": 9.681180193986296e-22
+    },
+    {
+      "ID": "ffw-xdi",
+      "Value": 0
+    }
+  ],
+  "Authorities": [
+    {
+      "ID": "ffw-ugf",
+      "Value": 0.5916061683028059
+    },
+    {
+      "ID": "ffw-q5r",
+      "Value": 0.43855963955103694
+    },
+    {
+      "ID": "ffw-mgb",
+      "Value": 0.42508849050517916
+    },
+    {
+      "ID": "ffw-xdi",
+      "Value": 0.3626074446888697
+    },
+    {
+      "ID": "ffw-0bh",
+      "Value": 0.1727393837227194
+    },
+    {
+      "ID": "ffw-u07",
+      "Value": 0.1700683017449472
+    },
+    {
+      "ID": "ffw-6dh",
+      "Value": 0.1480716084328383
+    },
+    {
+      "ID": "ffw-32a",
+      "Value": 0.126881822369892
+    },
+    {
+      "ID": "ffw-ey5",
+      "Value": 0.11061268363275178
+    },
+    {
+      "ID": "ffw-nx0",
+      "Value": 0.08854583113605198
+    },
+    {
+      "ID": "ffw-s3l",
+      "Value": 0.08244317403570497
+    },
+    {
+      "ID": "ffw-6yi",
+      "Value": 0.07833075767976747
+    },
+    {
+      "ID": "ffw-75n",
+      "Value": 0.06974085075307082
+    },
+    {
+      "ID": "ffw-kh0",
+      "Value": 0.059813088059286215
+    },
+    {
+      "ID": "ffw-j9r",
+      "Value": 0.041217955251173444
+    },
+    {
+      "ID": "ffw-jub",
+      "Value": 0.03391879681286642
+    },
+    {
+      "ID": "ffw-7s0",
+      "Value": 0.03232325129243844
+    },
+    {
+      "ID": "ffw-f3b",
+      "Value": 0.03039571833988858
+    },
+    {
+      "ID": "ffw-k9k",
+      "Value": 0.024322465931745727
+    },
+    {
+      "ID": "ffw-mxt",
+      "Value": 0.022858581727778663
+    },
+    {
+      "ID": "ffw-5h5",
+      "Value": 0.020007712857910323
+    },
+    {
+      "ID": "ffw-25l",
+      "Value": 0.018102954251800116
+    },
+    {
+      "ID": "ffw-err",
+      "Value": 0.010241744811124784
+    },
+    {
+      "ID": "ffw-unk",
+      "Value": 0.00862716176736358
+    },
+    {
+      "ID": "ffw-caw",
+      "Value": 0.007926245437821078
+    },
+    {
+      "ID": "ffw-ld0",
+      "Value": 0.007832569829228623
+    },
+    {
+      "ID": "ffw-xcz",
+      "Value": 0.006723599948108735
+    },
+    {
+      "ID": "ffw-8mr",
+      "Value": 0.006157601771366308
+    },
+    {
+      "ID": "ffw-9ra",
+      "Value": 0.006157601771366308
+    },
+    {
+      "ID": "ffw-kp9",
+      "Value": 0.006157601771366308
+    },
+    {
+      "ID": "ffw-myi",
+      "Value": 0.006157601771366308
+    },
+    {
+      "ID": "ffw-rjy",
+      "Value": 0.006157601771366308
+    },
+    {
+      "ID": "ffw-xvv",
+      "Value": 0.006029051492032953
+    },
+    {
+      "ID": "ffw-76j",
+      "Value": 0.0028334927777199795
+    },
+    {
+      "ID": "ffw-gmq",
+      "Value": 0.0021198189285664987
+    },
+    {
+      "ID": "ffw-h3g",
+      "Value": 3.9239444128004205e-10
+    },
+    {
+      "ID": "ffw-bdr",
+      "Value": 2.4251310192127703e-10
+    },
+    {
+      "ID": "ffw-q2p",
+      "Value": 2.42513101921277e-10
+    },
+    {
+      "ID": "ffw-u14",
+      "Value": 1.4988133935876514e-10
+    },
+    {
+      "ID": "ffw-za4",
+      "Value": 1.4988133935876514e-10
+    },
+    {
+      "ID": "ffw-t9c",
+      "Value": 9.263176256251187e-11
+    },
+    {
+      "ID": "ffw-8cy",
+      "Value": 3.135285412309519e-21
+    },
+    {
+      "ID": "ffw-5lj",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-elw",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-re8",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-wh3",
+      "Value": 0
+    }
+  ],
+  "Cores": [
+    {
+      "ID": "ffw-0bh",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-25l",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-32a",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-5h5",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-5lj",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-6dh",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-6yi",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-75n",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-76j",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-7s0",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-8mr",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-9ra",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-bdr",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-caw",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-err",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-ey5",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-f3b",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-gmq",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-h3g",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-j9r",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-jub",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-k9k",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-kh0",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-kp9",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-ld0",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-mgb",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-mxt",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-myi",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-nx0",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-q2p",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-q5r",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-rjy",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-s3l",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-t9c",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-u07",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-u14",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-ugf",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-unk",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-xcz",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-xdi",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-xvv",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-elw",
+      "Value": 2
+    },
+    {
+      "ID": "ffw-wh3",
+      "Value": 2
+    },
+    {
+      "ID": "ffw-za4",
+      "Value": 2
+    },
+    {
+      "ID": "ffw-8cy",
+      "Value": 1
+    },
+    {
+      "ID": "ffw-re8",
+      "Value": 1
+    }
+  ],
+  "Articulation": [
+    "ffw-8cy",
+    "ffw-nx0"
+  ],
+  "Slack": [
+    {
+      "ID": "ffw-za4",
+      "Value": 10
+    },
+    {
+      "ID": "ffw-5lj",
+      "Value": 7
+    },
+    {
+      "ID": "ffw-32a",
+      "Value": 6
+    },
+    {
+      "ID": "ffw-elw",
+      "Value": 6
+    },
+    {
+      "ID": "ffw-25l",
+      "Value": 5
+    },
+    {
+      "ID": "ffw-8cy",
+      "Value": 5
+    },
+    {
+      "ID": "ffw-re8",
+      "Value": 5
+    },
+    {
+      "ID": "ffw-rjy",
+      "Value": 5
+    },
+    {
+      "ID": "ffw-76j",
+      "Value": 4
+    },
+    {
+      "ID": "ffw-bdr",
+      "Value": 4
+    },
+    {
+      "ID": "ffw-0bh",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-5h5",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-6dh",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-6yi",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-8mr",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-9ra",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-caw",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-err",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-xcz",
+      "Value": 3
+    },
+    {
+      "ID": "ffw-7s0",
+      "Value": 2
+    },
+    {
+      "ID": "ffw-75n",
+      "Value": 1
+    },
+    {
+      "ID": "ffw-ey5",
+      "Value": 1
+    },
+    {
+      "ID": "ffw-mxt",
+      "Value": 1
+    },
+    {
+      "ID": "ffw-nx0",
+      "Value": 1
+    },
+    {
+      "ID": "ffw-f3b",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-gmq",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-h3g",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-j9r",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-jub",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-k9k",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-kh0",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-kp9",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-ld0",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-mgb",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-myi",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-q2p",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-q5r",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-s3l",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-t9c",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-u07",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-u14",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-ugf",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-unk",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-wh3",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-xdi",
+      "Value": 0
+    },
+    {
+      "ID": "ffw-xvv",
+      "Value": 0
+    }
+  ],
+  "Orphans": null,
+  "Cycles": null,
+  "ClusterDensity": 0.04782608695652174,
+  "Velocity": {
+    "closed_last_7_days": 0,
+    "closed_last_30_days": 0,
+    "avg_days_to_close": 0,
+    "weekly": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "Stats": {
+    "OutDegree": {
+      "ffw-0bh": 2,
+      "ffw-25l": 1,
+      "ffw-32a": 2,
+      "ffw-5h5": 3,
+      "ffw-5lj": 4,
+      "ffw-6dh": 2,
+      "ffw-6yi": 2,
+      "ffw-75n": 2,
+      "ffw-76j": 2,
+      "ffw-7s0": 2,
+      "ffw-8cy": 1,
+      "ffw-8mr": 2,
+      "ffw-9ra": 3,
+      "ffw-bdr": 3,
+      "ffw-caw": 4,
+      "ffw-elw": 2,
+      "ffw-err": 2,
+      "ffw-ey5": 1,
+      "ffw-f3b": 1,
+      "ffw-gmq": 3,
+      "ffw-h3g": 1,
+      "ffw-j9r": 1,
+      "ffw-jub": 2,
+      "ffw-k9k": 2,
+      "ffw-kh0": 2,
+      "ffw-kp9": 3,
+      "ffw-ld0": 2,
+      "ffw-mgb": 2,
+      "ffw-mxt": 4,
+      "ffw-myi": 4,
+      "ffw-nx0": 2,
+      "ffw-q2p": 1,
+      "ffw-q5r": 1,
+      "ffw-re8": 1,
+      "ffw-rjy": 3,
+      "ffw-s3l": 2,
+      "ffw-t9c": 7,
+      "ffw-u07": 3,
+      "ffw-u14": 2,
+      "ffw-ugf": 3,
+      "ffw-unk": 1,
+      "ffw-wh3": 2,
+      "ffw-xcz": 1,
+      "ffw-xdi": 0,
+      "ffw-xvv": 2,
+      "ffw-za4": 1
+    },
+    "InDegree": {
+      "ffw-0bh": 2,
+      "ffw-25l": 3,
+      "ffw-32a": 2,
+      "ffw-5h5": 4,
+      "ffw-5lj": 0,
+      "ffw-6dh": 2,
+      "ffw-6yi": 1,
+      "ffw-75n": 1,
+      "ffw-76j": 1,
+      "ffw-7s0": 2,
+      "ffw-8cy": 1,
+      "ffw-8mr": 1,
+      "ffw-9ra": 1,
+      "ffw-bdr": 2,
+      "ffw-caw": 2,
+      "ffw-elw": 0,
+      "ffw-err": 2,
+      "ffw-ey5": 2,
+      "ffw-f3b": 4,
+      "ffw-gmq": 1,
+      "ffw-h3g": 3,
+      "ffw-j9r": 2,
+      "ffw-jub": 5,
+      "ffw-k9k": 2,
+      "ffw-kh0": 5,
+      "ffw-kp9": 1,
+      "ffw-ld0": 2,
+      "ffw-mgb": 5,
+      "ffw-mxt": 2,
+      "ffw-myi": 1,
+      "ffw-nx0": 3,
+      "ffw-q2p": 2,
+      "ffw-q5r": 4,
+      "ffw-re8": 0,
+      "ffw-rjy": 1,
+      "ffw-s3l": 2,
+      "ffw-t9c": 1,
+      "ffw-u07": 3,
+      "ffw-u14": 1,
+      "ffw-ugf": 6,
+      "ffw-unk": 3,
+      "ffw-wh3": 0,
+      "ffw-xcz": 2,
+      "ffw-xdi": 6,
+      "ffw-xvv": 2,
+      "ffw-za4": 1
+    },
+    "TopologicalOrder": [
+      "ffw-xdi",
+      "ffw-q2p",
+      "ffw-unk",
+      "ffw-h3g",
+      "ffw-f3b",
+      "ffw-6dh",
+      "ffw-ey5",
+      "ffw-25l",
+      "ffw-7s0",
+      "ffw-j9r",
+      "ffw-jub",
+      "ffw-u07",
+      "ffw-xcz",
+      "ffw-mgb",
+      "ffw-q5r",
+      "ffw-ugf",
+      "ffw-kh0",
+      "ffw-ld0",
+      "ffw-xvv",
+      "ffw-s3l",
+      "ffw-k9k",
+      "ffw-75n",
+      "ffw-nx0",
+      "ffw-mxt",
+      "ffw-0bh",
+      "ffw-5h5",
+      "ffw-76j",
+      "ffw-8cy",
+      "ffw-re8",
+      "ffw-5lj",
+      "ffw-gmq",
+      "ffw-6yi",
+      "ffw-caw",
+      "ffw-32a",
+      "ffw-err",
+      "ffw-8mr",
+      "ffw-elw",
+      "ffw-bdr",
+      "ffw-u14",
+      "ffw-za4",
+      "ffw-kp9",
+      "ffw-9ra",
+      "ffw-myi",
+      "ffw-rjy",
+      "ffw-t9c",
+      "ffw-wh3"
+    ],
+    "Density": 0.04782608695652174,
+    "NodeCount": 46,
+    "EdgeCount": 99,
+    "Config": {
+      "ComputeBetweenness": true,
+      "BetweennessTimeout": 2000000000,
+      "BetweennessSkipReason": "",
+      "BetweennessMode": "exact",
+      "BetweennessSampleSize": 0,
+      "BetweennessIsApproximate": false,
+      "ComputePageRank": true,
+      "PageRankTimeout": 2000000000,
+      "PageRankSkipReason": "",
+      "ComputeHITS": true,
+      "HITSTimeout": 2000000000,
+      "HITSSkipReason": "",
+      "ComputeCycles": true,
+      "CyclesTimeout": 2000000000,
+      "MaxCyclesToStore": 1000,
+      "CyclesSkipReason": "",
+      "ComputeEigenvector": true,
+      "ComputeCriticalPath": true
+    }
+  },
+  "full_stats": {
+    "pagerank": {
+      "ffw-0bh": 0.012320649430749609,
+      "ffw-25l": 0.020452315754943797,
+      "ffw-32a": 0.010100912467062824,
+      "ffw-5h5": 0.018887590171527125,
+      "ffw-5lj": 0.0057477845845997615,
+      "ffw-6dh": 0.009857320944682807,
+      "ffw-6yi": 0.007789443590614907,
+      "ffw-75n": 0.007815661938667659,
+      "ffw-76j": 0.008609698790907873,
+      "ffw-7s0": 0.01778341540573336,
+      "ffw-8cy": 0.01063338669492872,
+      "ffw-8mr": 0.006742352049954207,
+      "ffw-9ra": 0.006742352049954207,
+      "ffw-bdr": 0.010100912467062826,
+      "ffw-caw": 0.009607842290902082,
+      "ffw-elw": 0.0057477845845997615,
+      "ffw-err": 0.010523601652846219,
+      "ffw-ey5": 0.021602532071917195,
+      "ffw-f3b": 0.04247461269777047,
+      "ffw-gmq": 0.009002470820485851,
+      "ffw-h3g": 0.08210612984644965,
+      "ffw-j9r": 0.018724469048475058,
+      "ffw-jub": 0.051512241210135354,
+      "ffw-k9k": 0.008175097170428143,
+      "ffw-kh0": 0.023669199412240327,
+      "ffw-kp9": 0.006742352049954207,
+      "ffw-ld0": 0.015727490551955256,
+      "ffw-mgb": 0.02365628465458782,
+      "ffw-mxt": 0.00973122084283835,
+      "ffw-myi": 0.006742352049954207,
+      "ffw-nx0": 0.021326518350269445,
+      "ffw-q2p": 0.09905837978303633,
+      "ffw-q5r": 0.021830861475591948,
+      "ffw-re8": 0.0057477845845997615,
+      "ffw-rjy": 0.006742352049954207,
+      "ffw-s3l": 0.010654933831562782,
+      "ffw-t9c": 0.008190585639764242,
+      "ffw-u07": 0.02691256694609765,
+      "ffw-u14": 0.007658111411898345,
+      "ffw-ugf": 0.029045452323430417,
+      "ffw-unk": 0.08402053930748388,
+      "ffw-wh3": 0.0057477845845997615,
+      "ffw-xcz": 0.018663601229251835,
+      "ffw-xdi": 0.13458613340604914,
+      "ffw-xvv": 0.012826806367582332,
+      "ffw-za4": 0.007658111411898345
+    },
+    "betweenness": {
+      "ffw-0bh": 18.494047619047617,
+      "ffw-25l": 10.166666666666666,
+      "ffw-32a": 9.708333333333332,
+      "ffw-5h5": 48.0654761904762,
+      "ffw-6dh": 15.509523809523808,
+      "ffw-6yi": 4.666666666666666,
+      "ffw-75n": 8.083333333333334,
+      "ffw-76j": 6.017857142857142,
+      "ffw-7s0": 26.45238095238095,
+      "ffw-8cy": 10,
+      "ffw-8mr": 2.333333333333333,
+      "ffw-9ra": 5.833333333333333,
+      "ffw-bdr": 18.82142857142857,
+      "ffw-caw": 28.174999999999997,
+      "ffw-err": 14.866666666666665,
+      "ffw-ey5": 12.836904761904764,
+      "ffw-f3b": 27.21547619047619,
+      "ffw-gmq": 26,
+      "ffw-h3g": 33,
+      "ffw-j9r": 7.619047619047619,
+      "ffw-jub": 58.69761904761905,
+      "ffw-k9k": 7.017857142857142,
+      "ffw-kh0": 57.76190476190476,
+      "ffw-kp9": 10.166666666666666,
+      "ffw-ld0": 22.333333333333332,
+      "ffw-mgb": 46.11071428571428,
+      "ffw-mxt": 38.59523809523809,
+      "ffw-myi": 8.833333333333332,
+      "ffw-nx0": 32.84285714285715,
+      "ffw-q2p": 15.5,
+      "ffw-q5r": 10.666666666666666,
+      "ffw-rjy": 8.833333333333334,
+      "ffw-s3l": 16.333333333333332,
+      "ffw-t9c": 30.083333333333332,
+      "ffw-u07": 56.64404761904762,
+      "ffw-u14": 19.761904761904763,
+      "ffw-ugf": 53.86904761904763,
+      "ffw-unk": 15.750000000000002,
+      "ffw-xcz": 10.833333333333334,
+      "ffw-xvv": 17,
+      "ffw-za4": 1.5
+    },
+    "eigenvector": {
+      "ffw-0bh": 0,
+      "ffw-25l": 0,
+      "ffw-32a": 0,
+      "ffw-5h5": 0,
+      "ffw-5lj": 0,
+      "ffw-6dh": 0,
+      "ffw-6yi": 0,
+      "ffw-75n": 0,
+      "ffw-76j": 0,
+      "ffw-7s0": 0,
+      "ffw-8cy": 0,
+      "ffw-8mr": 0,
+      "ffw-9ra": 0,
+      "ffw-bdr": 0,
+      "ffw-caw": 0,
+      "ffw-elw": 0,
+      "ffw-err": 0,
+      "ffw-ey5": 0,
+      "ffw-f3b": 0,
+      "ffw-gmq": 0,
+      "ffw-h3g": 0,
+      "ffw-j9r": 0,
+      "ffw-jub": 0,
+      "ffw-k9k": 0,
+      "ffw-kh0": 0,
+      "ffw-kp9": 0,
+      "ffw-ld0": 0,
+      "ffw-mgb": 0,
+      "ffw-mxt": 0,
+      "ffw-myi": 0,
+      "ffw-nx0": 0,
+      "ffw-q2p": 0,
+      "ffw-q5r": 0,
+      "ffw-re8": 0,
+      "ffw-rjy": 0,
+      "ffw-s3l": 0,
+      "ffw-t9c": 0,
+      "ffw-u07": 0,
+      "ffw-u14": 0,
+      "ffw-ugf": 0,
+      "ffw-unk": 0,
+      "ffw-wh3": 0,
+      "ffw-xcz": 0,
+      "ffw-xdi": 1,
+      "ffw-xvv": 0,
+      "ffw-za4": 0
+    },
+    "hubs": {
+      "ffw-0bh": 0.01606335244907573,
+      "ffw-25l": 0.11196645759685335,
+      "ffw-32a": 0.013137403373993729,
+      "ffw-5h5": 0.0760468811958444,
+      "ffw-5lj": 0.48340128360065077,
+      "ffw-6dh": 0.012049542045626556,
+      "ffw-6yi": 0.31809610622243234,
+      "ffw-75n": 0.31809610622243234,
+      "ffw-76j": 0.2432259039876944,
+      "ffw-7s0": 0.014975491120708555,
+      "ffw-8cy": 0.027341311361601006,
+      "ffw-8mr": 0.00560993862543022,
+      "ffw-9ra": 0.027221490562944473,
+      "ffw-bdr": 0.009129063948456046,
+      "ffw-caw": 0.2536822396105397,
+      "ffw-elw": 0.05764792774746513,
+      "ffw-err": 0.03351932222742148,
+      "ffw-ey5": 1.21164130009853e-10,
+      "ffw-f3b": 1.21164130009853e-10,
+      "ffw-gmq": 0.01509797654042145,
+      "ffw-h3g": 0.0026639076399425036,
+      "ffw-j9r": 0.009385634405684053,
+      "ffw-jub": 1.9604768063923565e-10,
+      "ffw-k9k": 0.2081339426770141,
+      "ffw-kh0": 0.23519095788665492,
+      "ffw-kp9": 1.6744470939032346e-10,
+      "ffw-ld0": 0.028449993744628782,
+      "ffw-mgb": 0.012549618768794948,
+      "ffw-mxt": 0.22585720775840085,
+      "ffw-myi": 0.05849472982577736,
+      "ffw-nx0": 0.061899573583720426,
+      "ffw-q2p": 0.11196645759685335,
+      "ffw-q5r": 0.010473495734051227,
+      "ffw-re8": 9.681180193986296e-22,
+      "ffw-rjy": 0.3531152199548092,
+      "ffw-s3l": 0.004280211723789555,
+      "ffw-t9c": 0.019464570751794013,
+      "ffw-u07": 0.05735598267550586,
+      "ffw-u14": 0.006832571657814146,
+      "ffw-ugf": 0.3008336802841435,
+      "ffw-unk": 7.488355062938262e-11,
+      "ffw-wh3": 1.0348652187829488e-10,
+      "ffw-xcz": 0.11196645759685335,
+      "ffw-xdi": 0,
+      "ffw-xvv": 0.02088772527018702,
+      "ffw-za4": 0.11196645759685335
+    },
+    "authorities": {
+      "ffw-0bh": 0.1727393837227194,
+      "ffw-25l": 0.018102954251800116,
+      "ffw-32a": 0.126881822369892,
+      "ffw-5h5": 0.020007712857910323,
+      "ffw-5lj": 0,
+      "ffw-6dh": 0.1480716084328383,
+      "ffw-6yi": 0.07833075767976747,
+      "ffw-75n": 0.06974085075307082,
+      "ffw-76j": 0.0028334927777199795,
+      "ffw-7s0": 0.03232325129243844,
+      "ffw-8cy": 3.135285412309519e-21,
+      "ffw-8mr": 0.006157601771366308,
+      "ffw-9ra": 0.006157601771366308,
+      "ffw-bdr": 2.4251310192127703e-10,
+      "ffw-caw": 0.007926245437821078,
+      "ffw-elw": 0,
+      "ffw-err": 0.010241744811124784,
+      "ffw-ey5": 0.11061268363275178,
+      "ffw-f3b": 0.03039571833988858,
+      "ffw-gmq": 0.0021198189285664987,
+      "ffw-h3g": 3.9239444128004205e-10,
+      "ffw-j9r": 0.041217955251173444,
+      "ffw-jub": 0.03391879681286642,
+      "ffw-k9k": 0.024322465931745727,
+      "ffw-kh0": 0.059813088059286215,
+      "ffw-kp9": 0.006157601771366308,
+      "ffw-ld0": 0.007832569829228623,
+      "ffw-mgb": 0.42508849050517916,
+      "ffw-mxt": 0.022858581727778663,
+      "ffw-myi": 0.006157601771366308,
+      "ffw-nx0": 0.08854583113605198,
+      "ffw-q2p": 2.42513101921277e-10,
+      "ffw-q5r": 0.43855963955103694,
+      "ffw-re8": 0,
+      "ffw-rjy": 0.006157601771366308,
+      "ffw-s3l": 0.08244317403570497,
+      "ffw-t9c": 9.263176256251187e-11,
+      "ffw-u07": 0.1700683017449472,
+      "ffw-u14": 1.4988133935876514e-10,
+      "ffw-ugf": 0.5916061683028059,
+      "ffw-unk": 0.00862716176736358,
+      "ffw-wh3": 0,
+      "ffw-xcz": 0.006723599948108735,
+      "ffw-xdi": 0.3626074446888697,
+      "ffw-xvv": 0.006029051492032953,
+      "ffw-za4": 1.4988133935876514e-10
+    },
+    "critical_path_score": {
+      "ffw-0bh": 7,
+      "ffw-25l": 9,
+      "ffw-32a": 4,
+      "ffw-5h5": 6,
+      "ffw-5lj": 1,
+      "ffw-6dh": 7,
+      "ffw-6yi": 5,
+      "ffw-75n": 7,
+      "ffw-76j": 5,
+      "ffw-7s0": 8,
+      "ffw-8cy": 2,
+      "ffw-8mr": 3,
+      "ffw-9ra": 3,
+      "ffw-bdr": 4,
+      "ffw-caw": 4,
+      "ffw-elw": 1,
+      "ffw-err": 4,
+      "ffw-ey5": 10,
+      "ffw-f3b": 11,
+      "ffw-gmq": 5,
+      "ffw-h3g": 12,
+      "ffw-j9r": 10,
+      "ffw-jub": 11,
+      "ffw-k9k": 4,
+      "ffw-kh0": 8,
+      "ffw-kp9": 3,
+      "ffw-ld0": 7,
+      "ffw-mgb": 10,
+      "ffw-mxt": 6,
+      "ffw-myi": 3,
+      "ffw-nx0": 7,
+      "ffw-q2p": 14,
+      "ffw-q5r": 10,
+      "ffw-re8": 1,
+      "ffw-rjy": 3,
+      "ffw-s3l": 5,
+      "ffw-t9c": 2,
+      "ffw-u07": 9,
+      "ffw-u14": 4,
+      "ffw-ugf": 9,
+      "ffw-unk": 13,
+      "ffw-wh3": 1,
+      "ffw-xcz": 11,
+      "ffw-xdi": 15,
+      "ffw-xvv": 6,
+      "ffw-za4": 4
+    },
+    "core_number": {
+      "ffw-0bh": 3,
+      "ffw-25l": 3,
+      "ffw-32a": 3,
+      "ffw-5h5": 3,
+      "ffw-5lj": 3,
+      "ffw-6dh": 3,
+      "ffw-6yi": 3,
+      "ffw-75n": 3,
+      "ffw-76j": 3,
+      "ffw-7s0": 3,
+      "ffw-8cy": 1,
+      "ffw-8mr": 3,
+      "ffw-9ra": 3,
+      "ffw-bdr": 3,
+      "ffw-caw": 3,
+      "ffw-elw": 2,
+      "ffw-err": 3,
+      "ffw-ey5": 3,
+      "ffw-f3b": 3,
+      "ffw-gmq": 3,
+      "ffw-h3g": 3,
+      "ffw-j9r": 3,
+      "ffw-jub": 3,
+      "ffw-k9k": 3,
+      "ffw-kh0": 3,
+      "ffw-kp9": 3,
+      "ffw-ld0": 3,
+      "ffw-mgb": 3,
+      "ffw-mxt": 3,
+      "ffw-myi": 3,
+      "ffw-nx0": 3,
+      "ffw-q2p": 3,
+      "ffw-q5r": 3,
+      "ffw-re8": 1,
+      "ffw-rjy": 3,
+      "ffw-s3l": 3,
+      "ffw-t9c": 3,
+      "ffw-u07": 3,
+      "ffw-u14": 3,
+      "ffw-ugf": 3,
+      "ffw-unk": 3,
+      "ffw-wh3": 2,
+      "ffw-xcz": 3,
+      "ffw-xdi": 3,
+      "ffw-xvv": 3,
+      "ffw-za4": 2
+    },
+    "slack": {
+      "ffw-0bh": 3,
+      "ffw-25l": 5,
+      "ffw-32a": 6,
+      "ffw-5h5": 3,
+      "ffw-5lj": 7,
+      "ffw-6dh": 3,
+      "ffw-6yi": 3,
+      "ffw-75n": 1,
+      "ffw-76j": 4,
+      "ffw-7s0": 2,
+      "ffw-8cy": 5,
+      "ffw-8mr": 3,
+      "ffw-9ra": 3,
+      "ffw-bdr": 4,
+      "ffw-caw": 3,
+      "ffw-elw": 6,
+      "ffw-err": 3,
+      "ffw-ey5": 1,
+      "ffw-f3b": 0,
+      "ffw-gmq": 0,
+      "ffw-h3g": 0,
+      "ffw-j9r": 0,
+      "ffw-jub": 0,
+      "ffw-k9k": 0,
+      "ffw-kh0": 0,
+      "ffw-kp9": 0,
+      "ffw-ld0": 0,
+      "ffw-mgb": 0,
+      "ffw-mxt": 1,
+      "ffw-myi": 0,
+      "ffw-nx0": 1,
+      "ffw-q2p": 0,
+      "ffw-q5r": 0,
+      "ffw-re8": 5,
+      "ffw-rjy": 5,
+      "ffw-s3l": 0,
+      "ffw-t9c": 0,
+      "ffw-u07": 0,
+      "ffw-u14": 0,
+      "ffw-ugf": 0,
+      "ffw-unk": 0,
+      "ffw-wh3": 0,
+      "ffw-xcz": 3,
+      "ffw-xdi": 0,
+      "ffw-xvv": 0,
+      "ffw-za4": 10
+    },
+    "articulation_points": [
+      "ffw-8cy",
+      "ffw-nx0"
+    ]
+  },
+  "top_what_ifs": [
+    {
+      "issue_id": "ffw-xdi",
+      "title": "E01: Reconcile device and firmware identity evidence",
+      "delta": {
+        "direct_unblocks": 4,
+        "transitive_unblocks": 45,
+        "blocked_reduction": 0,
+        "depth_reduction": 1,
+        "estimated_days_saved": 0.5,
+        "unblocked_issue_ids": [
+          "ffw-25l",
+          "ffw-q2p",
+          "ffw-xcz",
+          "ffw-za4"
+        ],
+        "parallelization_gain": 3,
+        "explanation": "Completing this directly unblocks 4 items (45 total including cascades), enabling ~0.5 days of work"
+      }
+    },
+    {
+      "issue_id": "ffw-q2p",
+      "title": "E03: Map legacy kernel ABI capability matrix",
+      "delta": {
+        "direct_unblocks": 1,
+        "transitive_unblocks": 13,
+        "blocked_reduction": 0,
+        "depth_reduction": 1,
+        "estimated_days_saved": 0.125,
+        "unblocked_issue_ids": [
+          "ffw-unk"
+        ],
+        "parallelization_gain": 0,
+        "explanation": "Completing this directly unblocks 1 item (13 total including cascades)"
+      }
+    },
+    {
+      "issue_id": "ffw-unk",
+      "title": "E06: Audit dependency features and target availability",
+      "delta": {
+        "direct_unblocks": 1,
+        "transitive_unblocks": 5,
+        "blocked_reduction": 0,
+        "depth_reduction": 1,
+        "estimated_days_saved": 0.125,
+        "unblocked_issue_ids": [
+          "ffw-h3g"
+        ],
+        "parallelization_gain": 0,
+        "explanation": "Completing this directly unblocks 1 item (5 total including cascades)"
+      }
+    },
+    {
+      "issue_id": "ffw-h3g",
+      "title": "P01: Define Rust workspace and build profiles",
+      "delta": {
+        "direct_unblocks": 2,
+        "transitive_unblocks": 3,
+        "blocked_reduction": 0,
+        "depth_reduction": 1,
+        "estimated_days_saved": 0.25,
+        "unblocked_issue_ids": [
+          "ffw-ey5",
+          "ffw-f3b"
+        ],
+        "parallelization_gain": 1,
+        "explanation": "Completing this directly unblocks 2 items (3 total including cascades)"
+      }
+    },
+    {
+      "issue_id": "ffw-nx0",
+      "title": "N04: Implement adaptive bounded jitter and concealment",
+      "delta": {
+        "direct_unblocks": 1,
+        "transitive_unblocks": 2,
+        "blocked_reduction": 0,
+        "depth_reduction": 0.7,
+        "estimated_days_saved": 0.125,
+        "unblocked_issue_ids": [
+          "ffw-8cy"
+        ],
+        "parallelization_gain": 0,
+        "explanation": "Completing this directly unblocks 1 item (2 total including cascades)"
+      }
+    },
+    {
+      "issue_id": "ffw-8cy",
+      "title": "N05: Evaluate RaptorQ against simpler repair strategies",
+      "delta": {
+        "direct_unblocks": 1,
+        "transitive_unblocks": 1,
+        "blocked_reduction": 0,
+        "depth_reduction": 0.2,
+        "estimated_days_saved": 0.125,
+        "unblocked_issue_ids": [
+          "ffw-re8"
+        ],
+        "parallelization_gain": 0,
+        "explanation": "Completing this directly unblocks 1 item"
+      }
+    },
+    {
+      "issue_id": "ffw-f3b",
+      "title": "D01: Implement fixed-size audio blocks and conversion",
+      "delta": {
+        "direct_unblocks": 1,
+        "transitive_unblocks": 1,
+        "blocked_reduction": 0,
+        "depth_reduction": 1,
+        "estimated_days_saved": 0.125,
+        "unblocked_issue_ids": [
+          "ffw-j9r"
+        ],
+        "parallelization_gain": 0,
+        "explanation": "Completing this directly unblocks 1 item"
+      }
+    },
+    {
+      "issue_id": "ffw-jub",
+      "title": "P02: Implement minimal legacy platform capability layer",
+      "delta": {
+        "direct_unblocks": 1,
+        "transitive_unblocks": 1,
+        "blocked_reduction": 0,
+        "depth_reduction": 1,
+        "estimated_days_saved": 0.125,
+        "unblocked_issue_ids": [
+          "ffw-q5r"
+        ],
+        "parallelization_gain": 0,
+        "explanation": "Completing this directly unblocks 1 item"
+      }
+    }
+  ],
+  "advanced_insights": {
+    "topk_set": {
+      "status": {
+        "state": "available",
+        "capped": true,
+        "count": 5,
+        "limited": 46
+      },
+      "items": [
+        {
+          "id": "ffw-xdi",
+          "title": "E01: Reconcile device and firmware identity evidence",
+          "marginal_gain": 4,
+          "unblocks": [
+            "ffw-25l",
+            "ffw-q2p",
+            "ffw-xcz",
+            "ffw-za4"
+          ]
+        },
+        {
+          "id": "ffw-h3g",
+          "title": "P01: Define Rust workspace and build profiles",
+          "marginal_gain": 2,
+          "unblocks": [
+            "ffw-ey5",
+            "ffw-f3b"
+          ]
+        },
+        {
+          "id": "ffw-q2p",
+          "title": "E03: Map legacy kernel ABI capability matrix",
+          "marginal_gain": 2,
+          "unblocks": [
+            "ffw-jub",
+            "ffw-unk"
+          ]
+        },
+        {
+          "id": "ffw-8cy",
+          "title": "N05: Evaluate RaptorQ against simpler repair strategies",
+          "marginal_gain": 1,
+          "unblocks": [
+            "ffw-re8"
+          ]
+        },
+        {
+          "id": "ffw-f3b",
+          "title": "D01: Implement fixed-size audio blocks and conversion",
+          "marginal_gain": 1,
+          "unblocks": [
+            "ffw-j9r"
+          ]
+        }
+      ],
+      "total_gain": 10,
+      "marginal_gain": [
+        4,
+        2,
+        2,
+        1,
+        1
+      ],
+      "how_to_use": "Best k issues to complete for max downstream unlock. Work these in order."
+    },
+    "coverage_set": {
+      "status": {
+        "state": "available",
+        "capped": true,
+        "count": 5,
+        "limited": 99
+      },
+      "items": [
+        {
+          "id": "ffw-ugf",
+          "title": "N02: Implement reliable bounded control channel",
+          "edges_added": 9,
+          "total_degree": 9,
+          "selection_seq": 1
+        },
+        {
+          "id": "ffw-t9c",
+          "title": "Q04: Qualify complete requested integration matrix",
+          "edges_added": 8,
+          "total_degree": 8,
+          "selection_seq": 2
+        },
+        {
+          "id": "ffw-5h5",
+          "title": "D04: Integrate render scheduling with retained HAL",
+          "edges_added": 7,
+          "total_degree": 7,
+          "selection_seq": 3
+        },
+        {
+          "id": "ffw-jub",
+          "title": "P02: Implement minimal legacy platform capability layer",
+          "edges_added": 7,
+          "total_degree": 7,
+          "selection_seq": 4
+        },
+        {
+          "id": "ffw-kh0",
+          "title": "G01: Implement unified group membership state machine",
+          "edges_added": 6,
+          "total_degree": 6,
+          "selection_seq": 5
+        }
+      ],
+      "edges_covered": 37,
+      "total_edges": 99,
+      "coverage_ratio": 0.37373737373737376,
+      "rationale": "Greedy vertex cover (2-approx): iteratively pick highest uncovered degree until edges are covered or cap is reached.",
+      "how_to_use": "Small vertex cover touching all dependency edges. Use for breadth coverage."
+    },
+    "k_paths": {
+      "status": {
+        "state": "available",
+        "count": 1,
+        "limited": 45
+      },
+      "paths": [
+        {
+          "rank": 1,
+          "length": 15,
+          "issue_ids": [
+            "ffw-xdi",
+            "ffw-q2p",
+            "ffw-unk",
+            "ffw-h3g",
+            "ffw-f3b",
+            "ffw-j9r",
+            "ffw-u07",
+            "ffw-kh0",
+            "ffw-ld0",
+            "ffw-xvv",
+            "ffw-gmq",
+            "ffw-u14",
+            "ffw-kp9",
+            "ffw-t9c",
+            "ffw-wh3"
+          ]
+        }
+      ],
+      "how_to_use": "K-shortest critical paths. Focus on issues appearing in multiple paths."
+    },
+    "parallel_cut": {
+      "status": {
+        "state": "available",
+        "count": 2,
+        "limited": 2
+      },
+      "suggestions": [
+        {
+          "id": "ffw-xdi",
+          "title": "E01: Reconcile device and firmware identity evidence",
+          "parallel_gain": 3,
+          "enabled_tracks": [
+            "ffw-25l",
+            "ffw-q2p",
+            "ffw-xcz",
+            "ffw-za4"
+          ]
+        },
+        {
+          "id": "ffw-h3g",
+          "title": "P01: Define Rust workspace and build profiles",
+          "parallel_gain": 1,
+          "enabled_tracks": [
+            "ffw-ey5",
+            "ffw-f3b"
+          ]
+        }
+      ],
+      "max_parallel": 5,
+      "how_to_use": "Issues that enable parallel work. Complete to maximize team throughput."
+    },
+    "parallel_gain": {
+      "status": {
+        "state": "pending",
+        "reason": "Awaiting implementation (bv-129)"
+      },
+      "how_to_use": "Parallelization improvement from completing each issue."
+    },
+    "cycle_break": {
+      "status": {
+        "state": "available"
+      },
+      "cycle_count": 0,
+      "how_to_use": "Structural fix suggestions. Apply BEFORE working on cycle members.",
+      "advisory": "No cycles detected - dependency graph is a proper DAG."
+    },
+    "config": {
+      "topk_set_limit": 5,
+      "coverage_set_limit": 5,
+      "k_paths_limit": 5,
+      "path_length_cap": 50,
+      "cycle_break_limit": 5,
+      "parallel_cut_limit": 5
+    },
+    "usage_hints": {
+      "coverage_set": "Small vertex cover touching all dependency edges. Use for breadth coverage.",
+      "cycle_break": "Structural fix suggestions. Apply BEFORE working on cycle members.",
+      "k_paths": "K-shortest critical paths. Focus on issues appearing in multiple paths.",
+      "parallel_cut": "Issues that enable parallel work. Complete to maximize team throughput.",
+      "parallel_gain": "Parallelization improvement from completing each issue.",
+      "topk_set": "Best k issues to complete for max downstream unlock. Work these in order."
+    }
+  },
+  "usage_hints": [
+    "jq '.Bottlenecks[:5] | map(.ID)' - Top 5 bottleneck IDs",
+    "jq '.CriticalPath[:3]' - Top 3 critical path items",
+    "jq '.top_what_ifs[] | select(.delta.direct_unblocks \u003e 2)' - High-impact items",
+    "jq '.full_stats.pagerank | to_entries | sort_by(-.value)[:5]' - Top PageRank",
+    "jq '.full_stats.core_number | to_entries | sort_by(-.value)[:5]' - Strongly embedded nodes (k-core)",
+    "jq '.full_stats.articulation_points' - Structural cut points",
+    "jq '.Slack[:5]' - Nodes with slack (good parallel work candidates)",
+    "jq '.Cycles | length' - Count of detected cycles",
+    "jq '.advanced_insights.cycle_break' - Cycle break suggestions (bv-181)",
+    "BV_INSIGHTS_MAP_LIMIT=50 bv --robot-insights - Reduce map sizes"
+  ]
+}

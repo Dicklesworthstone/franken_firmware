@@ -1,0 +1,2 @@
+/Users/jemanuel/projects/franken_firmware/build/kernels/xm/boot/vmlinux-4.19.0-21-4kc-malta: No such file or directory
+qemu-system-mips: could not load kernel '/Users/jemanuel/projects/franken_firmware/build/kernels/xm/boot/vmlinux-4.19.0-21-4kc-malta': Failed to load ELF
