@@ -405,6 +405,6 @@
   "The real driver: its submission lead, underrun signal and byte order are not mapped (E04 is all unknown), so the lead is the fake's and the byte order is a stated harness model.",
   "Board CPU: render cost is injected, so no CPU, p99.99 or 24-hour claim is made.",
   "The P03 control runtime and process-death mute: see D04-OPEN-P03 and D04-EXT-PROCDEATH.",
-  "Driver counter reset (section 14): the loop does not yet invalidate its presentation mapping when the driver's consumed counter goes backwards. The HAL has no such anomaly kind, so this is a P04/E04 change first; the diagnostics log would carry it as one more critical line."
+  "Driver counter reset (section 14): the loop does not yet invalidate its presentation mapping when the driver's consumed counter goes backwards. The HAL already faults a backwards counter as CounterOverclaim, muted and crediting nothing (a session test pins a regress of 1), but it cannot tell a regress from a forward overclaim and the loop does not react to the fault yet; the diagnostics log would carry the reaction as one more critical line."
  ]
 }

@@ -35,17 +35,21 @@ sys.path.insert(0, HERE)
 
 import abi_ref  # noqa: E402
 import events_ref  # noqa: E402
+import priming_ref  # noqa: E402
 
 CASES_FILE = os.path.join(HERE, "cases.json")
 VECTORS_FILE = os.path.join(HERE, "abi_vectors.json")
 EVENTS_FILE = os.path.join(HERE, "event_vectors.json")
+PRIMING_FILE = os.path.join(HERE, "priming_vectors.json")
 DOC_FILE = os.path.join(REPO, "docs", "contracts", "p04.md")
 RUST_DIR = os.path.join(REPO, "crates", "franken-hal", "src")
 SCHEMA = "ffw.p04.cases.v1"
 VECTORS_SCHEMA = "ffw.p04.abi_vectors.v1"
 EVENTS_SCHEMA = "ffw.p04.event_vectors.v1"
+PRIMING_SCHEMA = "ffw.p04.priming_vectors.v1"
 TIERS = ("smoke", "full")
-KINDS = ("abi_vector", "event_vector", "debounce_trace", "planted_defect", "event_defect", "meta_files",
+KINDS = ("abi_vector", "event_vector", "debounce_trace", "planted_defect", "event_defect", "priming_trace",
+         "priming_defect", "meta_files",
          "meta_shared_vectors", "meta_events", "meta_invariants", "meta_hygiene", "meta_no_unsafe",
          "runner_selftest", "blocked")
 RUST_FILES = ("lib", "abi", "backend", "contract", "diag", "dma_sim", "emit", "events", "logged", "session",
@@ -217,11 +221,52 @@ def run_event_defect(c) -> Result:
     return PASS, f"caught by {len(caught)} case(s)"
 
 
+# ------------------------------------------------------------------------------------- silence priming
+
+def priming_doc() -> Dict[str, Any]:
+    doc = load_json(PRIMING_FILE)
+    if doc.get("schema") != PRIMING_SCHEMA:
+        raise CaseError(f"priming_vectors.json schema is {doc.get('schema')!r}, expected {PRIMING_SCHEMA!r}")
+    return doc
+
+
+def check_priming_trace(t: Dict[str, Any], model=priming_ref.Gate) -> Result:
+    got = priming_ref.replay(t["required"], t["steps"], model)
+    return (PASS, "") if got == t["expect"] else (FAIL, f"replayed {got}, expected {t['expect']}")
+
+
+def run_priming_trace(c) -> Result:
+    t = c["trace"]
+    status, detail = check_priming_trace(t)
+    if status != PASS:
+        return status, detail
+    module, _, name = t["rust_test"].partition("::")
+    if name not in rust_test_names(module):
+        return FAIL, f"the Rust test {t['rust_test']} that drives HalSession through this scenario does not exist"
+    return PASS, ""
+
+
+def run_priming_defect(c) -> Result:
+    traces = priming_doc()["traces"]
+    baseline = [t["id"] for t in traces if check_priming_trace(t)[0] != PASS]
+    if baseline:
+        return FAIL, f"baseline is not green, so no catch can be credited: {baseline}"
+    model = priming_ref.DEFECTS.get(c["defect"])
+    if model is None:
+        return FAIL, f"unknown planted defect {c['defect']!r}"
+    caught = sorted(t["id"] for t in traces if check_priming_trace(t, model)[0] != PASS)
+    missing = [i for i in c["caught_by"] if i not in caught]
+    if missing:
+        return FAIL, f"defect {c['defect']!r} was not caught by {missing}; caught by {caught}"
+    return PASS, f"caught by {', '.join(caught)}"
+
+
 # ------------------------------------------------------------------------------------------- meta
 
 def run_meta_files(c) -> Result:
-    needed = [CASES_FILE, VECTORS_FILE, EVENTS_FILE, DOC_FILE, os.path.join(HERE, "abi_ref.py"),
-              os.path.join(HERE, "events_ref.py"), os.path.join(REPO, "scripts", "e2e", "p04")]
+    needed = [CASES_FILE, VECTORS_FILE, EVENTS_FILE, PRIMING_FILE, DOC_FILE, os.path.join(HERE, "abi_ref.py"),
+              os.path.join(HERE, "events_ref.py"), os.path.join(HERE, "priming_ref.py"),
+              os.path.join(REPO, "scripts", "e2e", "p04")]
     needed += [os.path.join(RUST_DIR, f"{m}.rs") for m in RUST_FILES]
     gone = [os.path.relpath(p, REPO) for p in needed if not os.path.isfile(p)]
     return (PASS, "") if not gone else (FAIL, f"missing: {gone}")
@@ -296,10 +341,12 @@ def all_test_names() -> Dict[str, List[str]]:
 
 
 def case_ids(doc: Dict[str, Any]) -> List[str]:
-    """Every case id: the listed cases, the ABI vectors, the event vectors and the debounce traces."""
+    """Every case id: the listed cases, the ABI vectors, the event vectors, the debounce traces and the
+    priming scenarios."""
     ev = event_doc()
     return ([x["id"] for x in doc["cases"]] + [v["id"] for v in vectors()]
-            + [v["id"] for v in ev["vectors"]] + [t["id"] for t in ev["debounce_traces"]])
+            + [v["id"] for v in ev["vectors"]] + [t["id"] for t in ev["debounce_traces"]]
+            + [t["id"] for t in priming_doc()["traces"]])
 
 
 def run_meta_invariants(c) -> Result:
@@ -311,7 +358,7 @@ def run_meta_invariants(c) -> Result:
 
 
 HYGIENE_FILES = ("cases.json", "abi_vectors.json", "abi_ref.py", "event_vectors.json", "events_ref.py",
-                 "run_cases.py")
+                 "priming_vectors.json", "priming_ref.py", "run_cases.py")
 
 
 def run_meta_hygiene(c) -> Result:
@@ -373,6 +420,21 @@ def run_runner_selftest(c) -> Result:
     trace["expect"]["reported"][0][0] += 1
     if check_trace(trace)[0] == PASS:
         return FAIL, "a corrupted debounce trace was accepted"
+    # The priming checks are not vacuous either: a corrupted expectation, a missing Rust mirror and a model
+    # defect with no case must each be seen.
+    scenario = copy.deepcopy(priming_doc()["traces"][1])
+    if check_priming_trace(scenario)[0] != PASS:
+        return FAIL, "a baseline priming scenario does not pass"
+    scenario["expect"]["outputs"][0] = "started"
+    if check_priming_trace(scenario)[0] == PASS:
+        return FAIL, "a corrupted priming scenario was accepted"
+    mirrored = copy.deepcopy(priming_doc()["traces"][1])
+    mirrored["rust_test"] = "session::a_test_that_does_not_exist"
+    if run_priming_trace({"trace": mirrored})[0] == PASS:
+        return FAIL, "a missing Rust mirror of a priming scenario was not detected"
+    planted = {x["defect"] for x in load_json(CASES_FILE)["cases"] if x["kind"] == "priming_defect"}
+    if planted != set(priming_ref.DEFECTS):
+        return FAIL, f"priming defects without a case, or cases without a defect: {planted ^ set(priming_ref.DEFECTS)}"
     return PASS, ""
 
 
@@ -387,6 +449,7 @@ RUNNERS: Dict[str, Callable[[Dict[str, Any]], Result]] = {
     "meta_shared_vectors": run_meta_shared_vectors, "meta_events": run_meta_events,
     "meta_invariants": run_meta_invariants, "meta_hygiene": run_meta_hygiene,
     "meta_no_unsafe": run_meta_no_unsafe, "runner_selftest": run_runner_selftest, "blocked": run_blocked,
+    "priming_trace": run_priming_trace, "priming_defect": run_priming_defect,
 }
 
 
@@ -404,6 +467,8 @@ def all_cases() -> List[Dict[str, Any]]:
         cases.append({"id": v["id"], "kind": "event_vector", "tier": "smoke", "vector": v})
     for t in ev["debounce_traces"]:
         cases.append({"id": t["id"], "kind": "debounce_trace", "tier": "smoke", "trace": t})
+    for t in priming_doc()["traces"]:
+        cases.append({"id": t["id"], "kind": "priming_trace", "tier": "smoke", "trace": t})
     seen = set()
     for c in cases:
         if c["kind"] not in KINDS:
@@ -465,7 +530,7 @@ def main(argv: List[str]) -> int:
             "utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "python": sys.version.split()[0], "tier": args.tier, "denominator": len(results), "counts": counts,
             "qualified": qualified, "rust_test_functions_expected": rust_test_total(),
-            "inputs": {os.path.relpath(p, REPO): sha256_file(p) for p in (CASES_FILE, VECTORS_FILE, EVENTS_FILE)},
+            "inputs": {os.path.relpath(p, REPO): sha256_file(p) for p in (CASES_FILE, VECTORS_FILE, EVENTS_FILE, PRIMING_FILE)},
             "cases": [{"id": c["id"], "status": st} for c, st, _ in results],
         }
         path = os.path.join(args.receipts, f"p04-{args.tier}.json")

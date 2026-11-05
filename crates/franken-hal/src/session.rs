@@ -18,6 +18,10 @@
 //!   reports success it did not observe.
 //! * **No audible transition without a stop deadline.** If the device cannot state how long a stop
 //!   takes, [`HalSession::start`] is refused.
+//! * **Optional silence priming.** [`SessionConfig::with_required_silence_blocks`] asks for `n` whole
+//!   all-zero blocks to be taken by the device, while muted, before the first unmute; until it has them
+//!   [`HalSession::start`] is refused with `UnmuteBeforeSilencePrime` before the backend is touched.
+//!   The default is 0, which changes nothing.
 //!
 //! * **Transitions are emitted.** Prepare, start, an acknowledged stop or reset, every recorded
 //!   fault and a device lost while faulted go into a bounded, critical-first queue the owner reads
@@ -286,6 +290,9 @@ pub struct SessionConfig {
     pub quarantine_cap: usize,
     /// Capacity of the session's event queue (at least 1).
     pub event_queue_cap: usize,
+    /// Whole all-zero blocks the device must have taken, while muted, before `start` may unmute.
+    /// 0 (the default) demands none, which is how every session behaved before this field existed.
+    pub required_silence_blocks: u32,
 }
 
 impl SessionConfig {
@@ -296,6 +303,7 @@ impl SessionConfig {
             ledger: LeakLedger::process(),
             quarantine_cap: DEFAULT_QUARANTINE_CAP,
             event_queue_cap: DEFAULT_EVENT_QUEUE_CAP,
+            required_silence_blocks: 0,
         }
     }
 
@@ -305,6 +313,7 @@ impl SessionConfig {
             ledger,
             quarantine_cap,
             event_queue_cap: DEFAULT_EVENT_QUEUE_CAP,
+            required_silence_blocks: 0,
         }
     }
 
@@ -312,6 +321,13 @@ impl SessionConfig {
     #[must_use]
     pub const fn with_event_queue_cap(mut self, event_queue_cap: usize) -> Self {
         self.event_queue_cap = event_queue_cap;
+        self
+    }
+
+    /// The same configuration requiring `blocks` whole blocks of silence before the first unmute.
+    #[must_use]
+    pub const fn with_required_silence_blocks(mut self, blocks: u32) -> Self {
+        self.required_silence_blocks = blocks;
         self
     }
 }
@@ -342,6 +358,10 @@ pub enum SessionError {
     SafeGainMissing,
     #[error("the device cannot state a stop deadline, so no audible transition is admitted")]
     StopDeadlineUnknown,
+    #[error(
+        "silence priming incomplete: {primed} of {required} whole block(s) taken, so the amplifier stays muted"
+    )]
+    UnmuteBeforeSilencePrime { primed: u32, required: u32 },
     #[error("a submit must carry at least one frame")]
     EmptySubmit,
     #[error("{len} byte(s) is not a whole number of {frame_bytes}-byte frames")]
@@ -411,6 +431,8 @@ pub struct HalSession<B: DeviceBackend> {
     ledger: Arc<LeakLedger>,
     quarantine_cap: usize,
     events: EventQueue,
+    required_silence_blocks: u32,
+    primed_silence_blocks: u32,
 }
 
 impl<B: DeviceBackend> HalSession<B> {
@@ -506,6 +528,8 @@ impl<B: DeviceBackend> HalSession<B> {
             ledger: config.ledger,
             quarantine_cap: config.quarantine_cap,
             events: EventQueue::new(config.event_queue_cap),
+            required_silence_blocks: config.required_silence_blocks,
+            primed_silence_blocks: 0,
         })
     }
 
@@ -545,6 +569,19 @@ impl<B: DeviceBackend> HalSession<B> {
     #[must_use]
     pub const fn amp(&self) -> Amp {
         self.amp
+    }
+
+    /// Whole all-zero blocks the device has taken while the session was `Prepared`. It returns to 0 on
+    /// a stop, a reset, a fault, a lost device and on the unmute that spends it.
+    #[must_use]
+    pub const fn primed_silence_blocks(&self) -> u32 {
+        self.primed_silence_blocks
+    }
+
+    /// How many such blocks `start` demands (0: none).
+    #[must_use]
+    pub const fn required_silence_blocks(&self) -> u32 {
+        self.required_silence_blocks
     }
 
     #[must_use]
@@ -733,6 +770,7 @@ impl<B: DeviceBackend> HalSession<B> {
             self.saturated_reported = true;
             self.record_fault(FaultCode::QuarantineSaturated);
         }
+        self.primed_silence_blocks = 0;
         self.phase = SessionPhase::Faulted;
         self.stop_requested = true;
         let acknowledged = self.try_mute();
@@ -801,7 +839,9 @@ impl<B: DeviceBackend> HalSession<B> {
     }
 
     /// `Prepared -> Running`. Refused unless the amplifier is known muted, a presentation mapping and
-    /// a safe gain are installed, and the device can state how long a stop takes.
+    /// a safe gain are installed, and the device can state how long a stop takes. If the session was
+    /// configured to require silence priming it is also refused, with `UnmuteBeforeSilencePrime`, until
+    /// that many whole blocks of silence have been taken; that refusal makes no call on the backend.
     pub fn start(&mut self, pre: StartPreconditions) -> Result<(), SessionError> {
         self.require_phase(&[SessionPhase::Prepared])?;
         if self.amp != Amp::Muted {
@@ -816,6 +856,14 @@ impl<B: DeviceBackend> HalSession<B> {
         if self.stop_deadline_ticks.is_none() {
             return Err(SessionError::StopDeadlineUnknown);
         }
+        // Last of the checks and before the backend is touched: a refusal here leaves the device
+        // exactly as it was, muted and not started, and is a caller error rather than a fault.
+        if self.primed_silence_blocks < self.required_silence_blocks {
+            return Err(SessionError::UnmuteBeforeSilencePrime {
+                primed: self.primed_silence_blocks,
+                required: self.required_silence_blocks,
+            });
+        }
         if let Err(error) = self.backend.start() {
             return Err(self.driver_failed(Op::Start, error));
         }
@@ -823,6 +871,8 @@ impl<B: DeviceBackend> HalSession<B> {
             Ok(true) => {
                 self.amp = Amp::Unmuted;
                 self.phase = SessionPhase::Running;
+                // The priming is spent by this unmute.
+                self.primed_silence_blocks = 0;
                 self.emit(SessionEventKind::Started);
                 Ok(())
             }
@@ -853,11 +903,40 @@ impl<B: DeviceBackend> HalSession<B> {
                 block_bytes: geometry.block_bytes,
             });
         }
-        if self.abi == AbiKind::RetainedBuffer {
+        // Only a prepared session is priming. `Prepared` is never unmuted (the one place the amplifier
+        // becomes `Unmuted` also makes the phase `Running`), so the amplifier needs no check of its own.
+        // This is a comparison, so a running session's submit pays nothing for it.
+        let priming = self.phase == SessionPhase::Prepared;
+        let result = if self.abi == AbiKind::RetainedBuffer {
             self.submit_retained(bytes, geometry)
         } else {
             self.submit_copying(bytes, geometry)
+        };
+        // A block counts only if the device took all of it (a longer submit was refused above, so that
+        // makes it a whole block) and every byte is zero. All-zero bytes are silence for signed PCM; the
+        // geometry record carries no sample format, so that is an assumption of this layer.
+        if priming
+            && result
+                .as_ref()
+                .is_ok_and(|receipt| receipt.accepted_bytes == geometry.block_bytes)
+            && bytes.iter().all(|&byte| byte == 0)
+        {
+            self.primed_silence_blocks = self.primed_silence_blocks.saturating_add(1);
         }
+        result
+    }
+
+    /// Submit one whole block of silence, as the priming that
+    /// [`SessionConfig::with_required_silence_blocks`] asks for. It is a convenience over
+    /// [`Self::submit`]: whether the block counted is [`Self::primed_silence_blocks`] going up, which
+    /// happens only if the device took all of it. Allowed only while `Prepared`.
+    pub fn prime_silence(&mut self) -> Result<SubmitReceipt, SessionError> {
+        self.require_phase(&[SessionPhase::Prepared])?;
+        let Some(geometry) = self.geometry else {
+            return Err(SessionError::WrongPhase { phase: self.phase });
+        };
+        let block = vec![0u8; geometry.block_bytes];
+        self.submit(&block)
     }
 
     fn credit(&mut self, accepted_bytes: usize, geometry: Geometry) -> u64 {
@@ -1013,6 +1092,7 @@ impl<B: DeviceBackend> HalSession<B> {
                         .saturating_add(self.in_flight_frames());
                     self.phase = SessionPhase::Prepared;
                     self.stop_requested = false;
+                    self.primed_silence_blocks = 0;
                     self.emit(SessionEventKind::StopAcknowledged);
                 } else {
                     self.note_anomaly(report);
@@ -1025,6 +1105,7 @@ impl<B: DeviceBackend> HalSession<B> {
                     table.quarantine_all_in_flight();
                 }
                 self.amp = Amp::Unknown;
+                self.primed_silence_blocks = 0;
                 self.phase = SessionPhase::Faulted;
                 self.stop_requested = true;
             }
@@ -1196,6 +1277,7 @@ impl<B: DeviceBackend> HalSession<B> {
                 self.rebaseline = true;
                 self.stop_requested = false;
                 self.saturated_reported = false;
+                self.primed_silence_blocks = 0;
                 self.phase = SessionPhase::Prepared;
                 self.emit(SessionEventKind::ResetAcknowledged);
                 Ok(())
@@ -1292,6 +1374,248 @@ mod tests {
 
     fn first_fault(s: &HalSession<FakeBackend>) -> FaultCode {
         s.receipt().faults[0].code.clone()
+    }
+
+    /// One block of silence: 4 frames of 2 channels of 2 bytes, all zero.
+    const SILENCE: [u8; 16] = [0; 16];
+
+    /// A prepared, muted session that wants `required` blocks of silence before its first unmute.
+    fn priming_session(cfg: FakeConfig, required: u32) -> (HalSession<FakeBackend>, FakeProbe) {
+        let (backend, probe) = FakeBackend::new(cfg);
+        let config = SessionConfig::with_ledger(Arc::new(LeakLedger::new(64)), 2)
+            .with_required_silence_blocks(required);
+        let mut s = HalSession::open(profile(), backend, config).unwrap();
+        s.prepare().unwrap();
+        (s, probe)
+    }
+
+    /// How many times the device was told to unmute.
+    fn unmute_calls(probe: &FakeProbe) -> usize {
+        probe
+            .calls()
+            .iter()
+            .filter(|call| **call == FakeCall::SetMute(false))
+            .count()
+    }
+
+    /// How many times the device was told to start.
+    fn start_calls(probe: &FakeProbe) -> usize {
+        probe
+            .calls()
+            .iter()
+            .filter(|call| **call == FakeCall::Start)
+            .count()
+    }
+
+    fn refused(primed: u32, required: u32) -> Result<(), SessionError> {
+        Err(SessionError::UnmuteBeforeSilencePrime { primed, required })
+    }
+
+    #[test]
+    fn silence_priming_is_off_by_default_so_start_is_unchanged() {
+        let config = SessionConfig::with_ledger(Arc::new(LeakLedger::new(64)), 2);
+        assert_eq!(config.required_silence_blocks, 0);
+        let (mut s, probe, _) = session(FakeConfig::retained());
+        s.prepare().unwrap();
+        assert_eq!(s.required_silence_blocks(), 0);
+        assert_eq!(s.start(READY), Ok(()));
+        assert_eq!((s.phase(), s.amp()), (SessionPhase::Running, Amp::Unmuted));
+        assert_eq!(s.primed_silence_blocks(), 0);
+        // Exactly the calls a session made before the gate existed: nothing was submitted first.
+        assert_eq!(
+            probe.calls(),
+            vec![
+                FakeCall::Capabilities,
+                FakeCall::SetMute(true),
+                FakeCall::Start,
+                FakeCall::SetMute(false)
+            ]
+        );
+    }
+
+    #[test]
+    fn start_refuses_an_unprimed_unmute_by_name_and_the_backend_never_sees_an_unmute() {
+        let (mut s, probe) = priming_session(FakeConfig::retained(), 2);
+        assert_eq!(s.required_silence_blocks(), 2);
+        assert_eq!(s.start(READY), refused(0, 2));
+        assert_eq!((s.phase(), s.amp()), (SessionPhase::Prepared, Amp::Muted));
+        // A refusal is a caller error, not a device fault, and it touched nothing.
+        assert!(s.receipt().faults.is_empty());
+        assert_eq!(
+            probe.calls(),
+            vec![FakeCall::Capabilities, FakeCall::SetMute(true)]
+        );
+    }
+
+    #[test]
+    fn only_a_whole_all_zero_block_counts_as_priming() {
+        let (mut s, probe) = priming_session(FakeConfig::retained(), 2);
+        // Not silence: a tone.
+        s.submit(&BLOCK).unwrap();
+        assert_eq!(s.primed_silence_blocks(), 0);
+        // Silence, but half a block.
+        s.submit(&SILENCE[..8]).unwrap();
+        assert_eq!(s.primed_silence_blocks(), 0);
+        // Silence except for the low byte of the last sample.
+        let mut almost = SILENCE;
+        almost[15] = 1;
+        s.submit(&almost).unwrap();
+        assert_eq!(s.primed_silence_blocks(), 0);
+        assert_eq!(s.start(READY), refused(0, 2));
+        assert_eq!((start_calls(&probe), unmute_calls(&probe)), (0, 0));
+    }
+
+    #[test]
+    fn a_block_the_device_took_only_part_of_or_none_of_does_not_count_as_priming() {
+        let (mut s, probe) = priming_session(FakeConfig::retained(), 2);
+        probe.set_accept_limit(Some(8));
+        let receipt = s.submit(&SILENCE).unwrap();
+        assert_eq!((receipt.accepted_bytes, receipt.remainder_bytes), (8, 8));
+        assert_eq!(s.primed_silence_blocks(), 0);
+        probe.set_accept_limit(Some(0));
+        let receipt = s.submit(&SILENCE).unwrap();
+        assert_eq!((receipt.accepted_bytes, receipt.remainder_bytes), (0, 16));
+        assert_eq!(s.primed_silence_blocks(), 0);
+        assert_eq!(s.start(READY), refused(0, 2));
+        assert_eq!((start_calls(&probe), unmute_calls(&probe)), (0, 0));
+    }
+
+    #[test]
+    fn enough_whole_silent_blocks_open_the_gate_and_the_amp_unmutes_once() {
+        let (mut s, probe) = priming_session(FakeConfig::retained(), 2);
+        probe.capture_submissions(4);
+        s.submit(&SILENCE).unwrap();
+        assert_eq!(s.primed_silence_blocks(), 1);
+        assert_eq!(s.start(READY), refused(1, 2));
+        assert_eq!((start_calls(&probe), unmute_calls(&probe)), (0, 0));
+        s.submit(&SILENCE).unwrap();
+        assert_eq!(s.primed_silence_blocks(), 2);
+        assert_eq!(s.start(READY), Ok(()));
+        assert_eq!((s.phase(), s.amp()), (SessionPhase::Running, Amp::Unmuted));
+        assert_eq!((start_calls(&probe), unmute_calls(&probe)), (1, 1));
+        // The priming is spent by the unmute.
+        assert_eq!(s.primed_silence_blocks(), 0);
+        // The unmute came after the last priming block was handed over...
+        let calls = probe.calls();
+        let unmute_at = calls
+            .iter()
+            .position(|call| *call == FakeCall::SetMute(false))
+            .unwrap();
+        let last_submit_at = calls
+            .iter()
+            .rposition(|call| matches!(call, FakeCall::SubmitRetained { .. }))
+            .unwrap();
+        assert!(last_submit_at < unmute_at);
+        // ...and what the device was handed was silence, two whole blocks of it.
+        let seen = probe.captured_submissions();
+        assert_eq!(seen.len(), 2);
+        assert!(
+            seen.iter()
+                .all(|block| block.len() == 16 && block.iter().all(|&byte| byte == 0))
+        );
+    }
+
+    #[test]
+    fn silence_submitted_while_unmuted_is_not_priming() {
+        let (mut s, _probe) = priming_session(FakeConfig::retained(), 1);
+        s.submit(&SILENCE).unwrap();
+        assert_eq!(s.start(READY), Ok(()));
+        assert_eq!(s.primed_silence_blocks(), 0);
+        s.submit(&SILENCE).unwrap();
+        assert_eq!((s.phase(), s.amp()), (SessionPhase::Running, Amp::Unmuted));
+        assert_eq!(s.primed_silence_blocks(), 0);
+    }
+
+    #[test]
+    fn a_flush_acknowledgment_discards_the_priming() {
+        let (mut s, probe) = priming_session(FakeConfig::retained(), 1);
+        s.submit(&SILENCE).unwrap();
+        assert_eq!(s.primed_silence_blocks(), 1);
+        assert!(matches!(s.drain(10), Ok(DrainOutcome::Acknowledged { .. })));
+        assert_eq!((s.phase(), s.amp()), (SessionPhase::Prepared, Amp::Muted));
+        assert_eq!(s.primed_silence_blocks(), 0);
+        assert_eq!(s.start(READY), refused(0, 1));
+        assert_eq!(unmute_calls(&probe), 0);
+    }
+
+    #[test]
+    fn a_fault_discards_the_priming_and_a_reset_does_not_bring_it_back() {
+        let (mut s, probe) = priming_session(FakeConfig::retained(), 1);
+        s.submit(&SILENCE).unwrap();
+        assert_eq!(s.primed_silence_blocks(), 1);
+        // A completion for a slot nothing was handed to: the session faults muted.
+        probe.queue_event(DeviceEvent::Completed {
+            slot: 3,
+            generation: 1,
+        });
+        s.poll();
+        assert_eq!(s.phase(), SessionPhase::Faulted);
+        assert_eq!(s.primed_silence_blocks(), 0);
+        s.reset_device().unwrap();
+        assert_eq!(s.phase(), SessionPhase::Prepared);
+        assert_eq!(s.primed_silence_blocks(), 0);
+        assert_eq!(s.start(READY), refused(0, 1));
+        assert_eq!(unmute_calls(&probe), 0);
+    }
+
+    #[test]
+    fn a_reset_acknowledgment_discards_the_priming() {
+        let mut cfg = FakeConfig::retained();
+        cfg.flush_ack_delay_ticks = None; // the flush is never acknowledged, so only a reset ends it
+        let (mut s, probe) = priming_session(cfg, 1);
+        s.submit(&SILENCE).unwrap();
+        assert_eq!(s.primed_silence_blocks(), 1);
+        assert!(s.abort_mute().unwrap().mute_acknowledged);
+        assert_eq!(s.phase(), SessionPhase::Draining);
+        s.reset_device().unwrap();
+        assert_eq!(s.phase(), SessionPhase::Prepared);
+        assert_eq!(s.primed_silence_blocks(), 0);
+        assert_eq!(s.start(READY), refused(0, 1));
+        assert_eq!(unmute_calls(&probe), 0);
+    }
+
+    #[test]
+    fn a_lost_device_discards_the_priming() {
+        let (mut s, probe) = priming_session(FakeConfig::retained(), 1);
+        s.submit(&SILENCE).unwrap();
+        assert_eq!(s.primed_silence_blocks(), 1);
+        probe.lose_device();
+        s.poll();
+        assert_eq!(s.phase(), SessionPhase::Faulted);
+        assert_eq!(s.primed_silence_blocks(), 0);
+    }
+
+    #[test]
+    fn a_copying_abi_counts_priming_the_same_way() {
+        let (mut s, probe) = priming_session(FakeConfig::copying(), 2);
+        s.submit(&BLOCK).unwrap();
+        assert_eq!(s.primed_silence_blocks(), 0);
+        s.submit(&SILENCE).unwrap();
+        assert_eq!(s.primed_silence_blocks(), 1);
+        s.submit(&SILENCE).unwrap();
+        assert_eq!(s.primed_silence_blocks(), 2);
+        assert_eq!(s.start(READY), Ok(()));
+        assert_eq!((start_calls(&probe), unmute_calls(&probe)), (1, 1));
+    }
+
+    #[test]
+    fn prime_silence_submits_one_whole_silent_block_and_only_while_prepared() {
+        let (mut s, probe) = priming_session(FakeConfig::retained(), 2);
+        probe.capture_submissions(4);
+        let receipt = s.prime_silence().unwrap();
+        assert_eq!((receipt.accepted_bytes, receipt.remainder_bytes), (16, 0));
+        assert_eq!(s.primed_silence_blocks(), 1);
+        s.prime_silence().unwrap();
+        assert_eq!(s.start(READY), Ok(()));
+        assert_eq!(
+            s.prime_silence().err(),
+            Some(SessionError::WrongPhase {
+                phase: SessionPhase::Running
+            })
+        );
+        let seen = probe.captured_submissions();
+        assert_eq!(seen.len(), 2);
+        assert!(seen.iter().all(|block| block.iter().all(|&byte| byte == 0)));
     }
 
     #[test]
@@ -1923,6 +2247,29 @@ mod tests {
         s.poll();
         assert_eq!(first_fault(&s), FaultCode::CounterOverclaim);
         assert_eq!(s.position().consumed_frames, 0);
+    }
+
+    #[test]
+    fn a_consumed_counter_that_goes_backwards_by_one_faults_muted_and_credits_nothing() {
+        let (mut s, probe, _) = running(FakeConfig::retained());
+        let _a = token(&mut s);
+        let _b = token(&mut s); // 8 frames in flight
+        let report = |s: &mut HalSession<FakeBackend>, counter| {
+            probe.queue_event(DeviceEvent::Position { counter });
+            s.poll()
+        };
+        report(&mut s, 100); // the first report only sets the baseline
+        let r = report(&mut s, 104);
+        assert_eq!(r.anomalies, 0);
+        assert_eq!(s.position().consumed_frames, 4);
+        assert_eq!(s.phase(), SessionPhase::Running);
+        // 103 is one behind 104. The wrapping delta reads that as 0xFFFF_FFFF frames, far more than
+        // the 4 still in flight, so it is an overclaim and not a quiet step back.
+        let r = report(&mut s, 103);
+        assert_eq!(r.anomalies, 1);
+        assert_eq!(first_fault(&s), FaultCode::CounterOverclaim);
+        assert_eq!((s.phase(), s.amp()), (SessionPhase::Faulted, Amp::Muted));
+        assert_eq!(s.position().consumed_frames, 4, "a regress credits nothing");
     }
 
     #[test]
