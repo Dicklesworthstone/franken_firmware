@@ -133,6 +133,7 @@ fn violations(source: &str) -> Vec<(usize, &'static str)> {
 const SOURCES: &[(&str, &str)] = &[
     ("limiter.rs", include_str!("../limiter.rs")),
     ("peer.rs", include_str!("../peer.rs")),
+    ("custody.rs", include_str!("../custody.rs")),
     ("request.rs", include_str!("../request.rs")),
     ("reply.rs", include_str!("../reply.rs")),
     ("ledger.rs", include_str!("../ledger.rs")),

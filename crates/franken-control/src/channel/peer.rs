@@ -18,9 +18,10 @@
 //! nowhere else, and the proof is **HMAC-SHA256** under the peer's key over a fixed context label and
 //! the request's signed bytes, compared in constant time. The full 32-byte tag is carried.
 //!
-//! **What this does not decide.** How a peer obtains its key (pairing and provisioning), where keys
-//! persist (the only store in this crate is a volatile one, compiled for tests), and key rotation
-//! policy belong to P03, U01 and N01. A key is only required to be at least [`MIN_KEY_LEN`] bytes; its
+//! **What this does not decide.** How a peer obtains its key (pairing and provisioning) and key
+//! rotation policy belong to P03, U01 and N01. Where keys persist is [`crate::channel::custody`]'s: it writes
+//! each admission, revocation and rebinding to U01's journal before it takes effect and rebuilds the directory
+//! from the journal at boot (the only [`SecretStore`] in this crate is a volatile one, compiled for tests). A key is only required to be at least [`MIN_KEY_LEN`] bytes; its
 //! entropy cannot be checked here. **Authentication is not freshness:** a valid request that was held
 //! back and delivered later is still a valid request. What bounds it is the epoch it names, the
 //! revision it expects, and the one-outcome-per-`(peer, seq)` ledger, not a timestamp.
@@ -325,13 +326,20 @@ impl<S: SecretStore> PeerDirectory<S> {
         self.peers.len() + revoked_only
     }
 
-    /// Admit `peer` at `version` with `key`, optionally bound to a group epoch.
-    pub fn admit(
-        &mut self,
+    /// Whether [`PeerDirectory::admit`] would take `peer` at `version` with a key of `key_len` bytes, judged
+    /// on what the directory holds now: the identity is not already live, a tombstone is exceeded, there is
+    /// room for one more identity, and the key is long enough. Changes nothing.
+    ///
+    /// It cannot say whether the key store will take the key (that is `admit`'s own last step), so an owner
+    /// that must not act on a refusal it could have foreseen (the custody module stores the admission
+    /// before it takes effect) asks here first.
+    ///
+    /// # Errors
+    /// The first rule the admission would break, in the order `admit` checks them.
+    pub fn check_admit(
+        &self,
         peer: &PeerId,
-        role: PeerRole,
-        key: &[u8],
-        bound_epoch: Option<u64>,
+        key_len: usize,
         version: u64,
     ) -> Result<(), AdmitError> {
         if self.peers.contains_key(peer) {
@@ -347,12 +355,31 @@ impl<S: SecretStore> PeerDirectory<S> {
         } else if self.known_identities() >= MAX_PEERS {
             return Err(AdmitError::Full);
         }
-        if key.len() < MIN_KEY_LEN {
+        if key_len < MIN_KEY_LEN {
             return Err(AdmitError::KeyTooShort {
-                len: key.len(),
+                len: key_len,
                 min: MIN_KEY_LEN,
             });
         }
+        Ok(())
+    }
+
+    /// The version `peer` is admitted at, or `None` if it is not live (never admitted, or revoked).
+    #[must_use]
+    pub fn version_of(&self, peer: &PeerId) -> Option<u64> {
+        self.peers.get(peer).map(|record| record.version)
+    }
+
+    /// Admit `peer` at `version` with `key`, optionally bound to a group epoch.
+    pub fn admit(
+        &mut self,
+        peer: &PeerId,
+        role: PeerRole,
+        key: &[u8],
+        bound_epoch: Option<u64>,
+        version: u64,
+    ) -> Result<(), AdmitError> {
+        self.check_admit(peer, key.len(), version)?;
         let handle = key_handle(peer).map_err(AdmitError::Key)?;
         let value = SecretValue::new(key.to_vec()).map_err(AdmitError::Key)?;
         self.keys.insert(&handle, value).map_err(AdmitError::Key)?;

@@ -17,12 +17,14 @@
 //!
 //! The request format and the bytes the authentication proof covers are in [`request`]. The reply a client can
 //! check (an explicit encoding, bound to the command, its request and the epoch and revision it was made at)
-//! is in [`reply`].
+//! is in [`reply`]. The peers' keys, roles, epoch bindings and revocations are kept on U01's journal, and the
+//! peer directory is rebuilt from it at boot, by [`custody`].
 //!
 //! Nothing here opens a socket or reads a clock: transport is the caller's, and time is passed in as
 //! nanoseconds. See `docs/contracts/n02.md` for the guarantees and for what is deliberately not
 //! promised.
 
+pub mod custody;
 pub mod diag;
 pub mod ledger;
 pub mod limiter;

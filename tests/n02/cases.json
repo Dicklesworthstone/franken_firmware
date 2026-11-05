@@ -819,6 +819,60 @@
       "rust_tests": [
         "a_retrying_client_sees_one_transition_and_every_forgery_and_replay_is_refused_by_name"
       ]
+    },
+    {
+      "id": "INV-CUSTODY-ROUND-TRIP",
+      "claim": "Peers admitted, revoked and rebound through custody come back after a process death from the durable bytes of U01's journal alone: a controller still commits with its key, a revoked key is refused exactly as Revoked, a rebound key is turned away at its old epoch and accepted at the new, the roles came back, a re-admission at the tombstone's version is refused as Resurrection and one version up with a new key works while the old key is BadProof; an owner that stores nothing, one that revokes only in memory, one that rebinds only in memory and one that never restores each fail the judge by name. The credentials and the revision mark share one journal and both come back.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the peer directory over U01's journal on an in-memory medium with fault injection, judged by Rust tests through the channel; the Python scenario model has no journal and nothing to say about them. The independent evidence is the Python mirror of the judges over U01's independent Python journal (its expected cut counts are the ones the Rust asserts) and the hand-written record bytes.",
+      "rust_tests": [
+        "peers_admitted_revoked_and_rebound_through_custody_come_back_after_a_process_death",
+        "each_planted_custody_fault_fails_the_round_trip_judge_by_name",
+        "the_credentials_and_the_revision_mark_share_one_journal_and_both_come_back"
+      ]
+    },
+    {
+      "id": "INV-CUSTODY-WRITE-AHEAD",
+      "claim": "An admission and a rebinding are stored before the directory changes (a failed store leaves it unchanged; an owner that admits first is caught); with the power cut at every storage operation and byte budget of each of the three stores the recovered state is exactly the old or the new one, a call that returned Ok has left the new one and an earlier admission is untouched; a rebinding written as a revocation then an admission is caught by the sweep.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the peer directory over U01's journal on an in-memory medium with fault injection, judged by Rust tests through the channel; the Python scenario model has no journal and nothing to say about them. The independent evidence is the Python mirror of the judges over U01's independent Python journal (its expected cut counts are the ones the Rust asserts) and the hand-written record bytes.",
+      "rust_tests": [
+        "every_cut_of_an_admission_store_leaves_the_peer_unknown_or_admitted",
+        "every_cut_of_a_revocation_store_leaves_the_peer_live_or_revoked_and_never_unknown",
+        "every_cut_of_a_rebind_store_leaves_the_old_binding_or_the_new_one",
+        "a_rebind_written_as_two_commits_is_caught_by_the_cut_sweep",
+        "a_failed_admission_store_leaves_the_directory_unchanged_and_an_owner_that_admits_first_is_caught"
+      ]
+    },
+    {
+      "id": "INV-CUSTODY-REVOKE-NOW",
+      "claim": "A revocation takes effect in the directory first: if its store fails the key is dead for the run and the call reports NotDurable; after a restart the key is live again and a second call finishes the revocation, which then survives a third boot; an owner that stores before it revokes leaves the key live after the failure.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the peer directory over U01's journal on an in-memory medium with fault injection, judged by Rust tests through the channel; the Python scenario model has no journal and nothing to say about them. The independent evidence is the Python mirror of the judges over U01's independent Python journal (its expected cut counts are the ones the Rust asserts) and the hand-written record bytes.",
+      "rust_tests": [
+        "a_revocation_whose_store_failed_is_dead_now_returns_after_a_restart_and_the_retry_completes_it"
+      ]
+    },
+    {
+      "id": "INV-CUSTODY-FAIL-CLOSED",
+      "claim": "A journal that cannot be read restores nothing and says so, so no remote peer authenticates (not even a revoked one) until it is paired again, and the reformatted journal takes a new pairing that survives a restart; a record that is not a control peer's is left alone, and a control peer's record that cannot be read is not admitted and is counted.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the peer directory over U01's journal on an in-memory medium with fault injection, judged by Rust tests through the channel; the Python scenario model has no journal and nothing to say about them. The independent evidence is the Python mirror of the judges over U01's independent Python journal (its expected cut counts are the ones the Rust asserts) and the hand-written record bytes.",
+      "rust_tests": [
+        "an_unreadable_journal_restores_an_empty_directory_and_says_so",
+        "records_of_another_kind_and_records_that_cannot_be_read_are_skipped_and_counted"
+      ]
+    },
+    {
+      "id": "INV-CUSTODY-RECORD",
+      "claim": "The stored record is pinned byte for byte and its decoder is strict; the id is cp: and the label; on the device configuration a label of 29 bytes and a key of 117 fit and one byte more of either does not and nothing changes; the smallest configuration cannot hold a peer; the directory's refusals come first and write nothing; a rebinding or a revocation for an identity the journal does not hold at the directory's version is refused or reported and changes nothing.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the peer directory over U01's journal on an in-memory medium with fault injection, judged by Rust tests through the channel; the Python scenario model has no journal and nothing to say about them. The independent evidence is the Python mirror of the judges over U01's independent Python journal (its expected cut counts are the ones the Rust asserts) and the hand-written record bytes.",
+      "rust_tests": [
+        "the_record_bytes_are_the_ones_a_person_wrote_and_the_decoder_is_strict",
+        "the_smallest_journal_refuses_every_admission_and_a_label_that_does_not_fit_is_refused_and_nothing_changes",
+        "a_rebind_or_a_revocation_the_journal_has_not_seen_is_refused_or_reported_and_changes_nothing"
+      ]
     }
   ],
   "other_rust_checks": {
