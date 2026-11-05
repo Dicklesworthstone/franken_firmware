@@ -12,8 +12,16 @@ written: an instruction is reported as the numbers it decodes to, never as its e
 The artifact is a git-ignored capture in the owner's frankensonos checkout. Its location comes from
 the command line or the FFW_FRANKENSONOS_DIR environment variable; nothing here pins a path.
 
+For the other two handlers it reports: `i2c_device_ioctl` (what its two instructions do), and for
+`audioctl_device_ioctl` the same command-word facts as `dsp`, its dispatch table, and for every handled
+number the external functions its code reaches and the payload words it touches directly through the stack
+frame. Those last two come from a control-flow walk over decoded branch instructions; the function names are
+the object file's own symbol names. They are evidence about WHAT CODE a number reaches, never a statement of
+what it means.
+
 What the facts do NOT establish: which ioctl implements which HAL operation, any per-command
-payload layout, or any behavior on a real board. Those stay unknown in the contract matrix.
+payload layout (the stack-frame accesses are a lower bound: a payload reached through a pointer held in a
+register is not seen), or any behavior on a real board. Those stay unknown in the contract matrix.
 """
 from __future__ import annotations
 
@@ -123,6 +131,10 @@ def decode(word: int) -> Dict[str, int | str]:
         return dict(op="bc", bo=(word >> 21) & 31, bi=(word >> 16) & 31, disp=bd, aa=(word >> 1) & 1)
     if op == 31 and ((word >> 1) & 0x3FF) == 444:  # or / mr
         return dict(op="or", rs=(word >> 21) & 31, ra=(word >> 16) & 31, rb=(word >> 11) & 31)
+    if op == 31 and ((word >> 1) & 0x3FF) == 104:  # neg
+        return dict(op="neg", rt=(word >> 21) & 31, ra=(word >> 16) & 31)
+    if op == 19 and ((word >> 1) & 0x3FF) == 16:  # bclr / blr
+        return dict(op="bclr", bo=(word >> 21) & 31, bi=(word >> 16) & 31, lk=word & 1)
     return dict(op=f"opcode{op}")
 
 
@@ -148,6 +160,221 @@ DSP_CHECKPOINTS: List[Tuple[str, int, Dict[str, int | str]]] = [
 ]
 JUMP_TABLE_RELOC_OFFSET = 0xA2  # the R_PPC_ADDR16_LO that loads the table address, from the symbol
 JUMP_TABLE_ENTRIES = 42  # number_bound + 1
+
+# Checkpoints inside audioctl_device_ioctl, same rule as above: each is an instruction a fact rests on, and the
+# extractor refuses to emit facts if one differs. Offsets are from the symbol.
+AUDIOCTL_CHECKPOINTS: List[Tuple[str, int, Dict[str, int | str]]] = [
+    ("cmd_is_negative_test", 0x00, dict(op="cmpwi", crf=7, ra=5, imm=0)),
+    ("number_is_low_byte", 0x1C, dict(op="rlwinm", rs=5, ra=31, sh=0, mb=24, me=31)),
+    ("skip_copy_in_unless_negative", 0x24, dict(op="bc", bo=4, bi=28, disp=0x60, aa=0)),
+    ("copy_in_size_field", 0x28, dict(op="rlwinm", rs=5, ra=30, sh=16, mb=19, me=31)),
+    ("copy_in_size_clamp", 0x2C, dict(op="cmplwi", crf=7, ra=30, imm=32)),
+    ("number_base", 0x84, dict(op="addi", rt=0, ra=31, imm=-6)),
+    ("number_bound", 0x88, dict(op="cmplwi", crf=7, ra=0, imm=149)),
+    ("no_copy_in_size_default", 0x8C, dict(op="addi", rt=30, ra=0, imm=32)),
+    ("out_of_range_to_default", 0x90, dict(op="bc", bo=12, bi=29, disp=0x48, aa=0)),
+    ("common_tail_entry", 0x20C, dict(op="neg", rt=0, ra=30)),
+    ("read_bit_test", 0x214, dict(op="rlwinm", rs=26, ra=9, sh=2, mb=31, me=31)),
+    ("copy_out_size_field", 0x220, dict(op="rlwinm", rs=26, ra=4, sh=16, mb=19, me=31)),
+    ("copy_out_size_clamp", 0x224, dict(op="addi", rt=30, ra=0, imm=32)),
+]
+AUDIOCTL_TABLE_RELOC_OFFSET = 0x9A  # the R_PPC_ADDR16_LO that loads the table address, from the symbol
+AUDIOCTL_DEFAULT_CHECK = dict(op="addi", rt=3, ra=0, imm=-1)  # the block every unhandled number goes to: li 3, -1
+FRAME_PAYLOAD_LO, FRAME_PAYLOAD_HI = 16, 48  # r1 + 16 .. r1 + 48: the copied-in payload (clamp 32)
+I2C_EXPECTED = [dict(op="addi", rt=3, ra=0, imm=0), dict(op="bclr", bo=20, bi=0, lk=0)]  # li 3, 0 ; blr
+
+# D-form loads and stores: opcode -> (width in bytes, kind).
+FRAME_ACCESS_OPS = {32: (4, "load"), 33: (4, "load"), 34: (1, "load"), 35: (1, "load"), 40: (2, "load"),
+                    41: (2, "load"), 42: (2, "load"), 43: (2, "load"), 36: (4, "store"), 37: (4, "store"),
+                    38: (1, "store"), 39: (1, "store"), 44: (2, "store"), 45: (2, "store")}
+
+
+def flow(word: int) -> Dict[str, Any]:
+    """How an instruction moves control: only the branch forms; everything else falls through."""
+    op = word >> 26
+    if op == 18:  # b, bl, ba, bla
+        li = word & 0x03FFFFFC
+        if li & 0x02000000:
+            li -= 0x04000000
+        return dict(kind="call" if word & 1 else "jump", disp=li, absolute=bool((word >> 1) & 1))
+    if op == 16:  # bc, bcl
+        bd = word & 0xFFFC
+        if bd & 0x8000:
+            bd -= 0x10000
+        return dict(kind="cond", disp=bd, absolute=bool((word >> 1) & 1), link=bool(word & 1),
+                    always=((word >> 21) & 31) in (20, 21))
+    if op == 19:
+        xo, bo = (word >> 1) & 0x3FF, (word >> 21) & 31
+        if xo == 16:  # bclr
+            return dict(kind="return" if bo == 20 else "cond_return")
+        if xo == 528:  # bcctr
+            return dict(kind="indirect")
+    return dict(kind="seq")
+
+
+def containing_function(elf: Dict[str, Any], addr: int) -> str:
+    """The name of the .text function symbol that contains the .text offset `addr`."""
+    text = elf["by_name"][".text"]["index"]
+    best = None
+    for s in elf["symbols"]:
+        if s["name"] and s["shndx"] == text and (s["info"] & 0xF) == 2 and s["value"] <= addr < s["value"] + max(s["size"], 1):
+            best = s["name"]
+    if best is None:
+        raise AnchorError(f".text+{addr:#x} is inside no function symbol")
+    return best
+
+
+class Handler:
+    """One function in .text: its instruction words, its relocations, and a walk over its control flow."""
+
+    def __init__(self, data: bytes, elf: Dict[str, Any], sym: Dict[str, Any]):
+        self.elf, self.lo, self.hi = elf, sym["value"], sym["value"] + sym["size"]
+        self.words = {pc: word_at(data, elf, ".text", pc) for pc in range(self.lo, self.hi, 4)}
+        self.rel24 = {r[0]: r for r in elf["relocs"][".text"] if self.lo <= r[0] < self.hi and r[1] == R_PPC_REL24}
+
+    def callee(self, pc: int, disp: int, absolute: bool) -> str:
+        if pc in self.rel24:
+            _off, _typ, idx, addend = self.rel24[pc]
+            name = self.elf["symbols"][idx]["name"]
+            return name if name else containing_function(self.elf, addend)
+        return containing_function(self.elf, disp if absolute else pc + disp)
+
+    def walk(self, entry: int) -> Tuple[set, set]:
+        """(reached instruction offsets, names of the functions called on the way) from `entry`, within the function."""
+        seen, calls, todo = set(), set(), [entry]
+        while todo:
+            pc = todo.pop()
+            if pc in seen or not (self.lo <= pc < self.hi):
+                continue
+            seen.add(pc)
+            f = flow(self.words[pc])
+            kind = f["kind"]
+            if kind == "call":
+                calls.add(self.callee(pc, f["disp"], f["absolute"]))
+                todo.append(pc + 4)
+            elif kind == "jump":
+                if pc in self.rel24:  # a tail call to another function
+                    calls.add(self.callee(pc, f["disp"], f["absolute"]))
+                else:
+                    todo.append(f["disp"] if f["absolute"] else pc + f["disp"])
+            elif kind == "cond":
+                if f["link"]:
+                    raise AnchorError(f"a conditional call at .text+{pc:#x} is not modelled")
+                todo.append(f["disp"] if f["absolute"] else pc + f["disp"])
+                if not f["always"]:
+                    todo.append(pc + 4)
+            elif kind == "cond_return":
+                todo.append(pc + 4)
+            elif kind in ("return", "indirect"):
+                pass
+            else:
+                todo.append(pc + 4)
+        return seen, calls
+
+    def frame_accesses(self, pcs: set) -> Tuple[List[str], List[int]]:
+        """Direct loads and stores through r1 into the copied-in payload, and where its address is taken."""
+        acc, taken = set(), set()
+        for pc in pcs:
+            w = self.words[pc]
+            op, ra, d = w >> 26, (w >> 16) & 31, _s16(w)
+            if ra == 1 and FRAME_PAYLOAD_LO <= d < FRAME_PAYLOAD_HI:
+                if op in FRAME_ACCESS_OPS:
+                    width, kind = FRAME_ACCESS_OPS[op]
+                    acc.add((d - FRAME_PAYLOAD_LO, width, kind))
+                elif op == 14:  # addi rt, r1, d: the payload's address is passed on or kept
+                    taken.add(d - FRAME_PAYLOAD_LO)
+        return [f"{kind}{width}@{off}" for off, width, kind in sorted(acc)], sorted(taken)
+
+
+def extract_i2c(data: bytes, elf: Dict[str, Any], sym: Dict[str, Any]) -> Dict[str, Any]:
+    if sym["size"] != 8:
+        raise AnchorError(f"i2c_device_ioctl is {sym['size']} bytes, expected the 8-byte stub")
+    got = [decode(word_at(data, elf, ".text", sym["value"] + 4 * k)) for k in range(2)]
+    for k, (g, want) in enumerate(zip(got, I2C_EXPECTED)):
+        for field, value in want.items():
+            if g.get(field) != value:
+                raise AnchorError(f"i2c_device_ioctl+{4 * k:#x}: {field} is {g.get(field)!r}, expected {value!r}")
+    # Registers the two instructions read: `addi` reads its base register unless that is r0 (which means zero);
+    # `bclr` reads the link register, not a general register. Arguments arrive in r3..r6.
+    read = sorted({g["ra"] for g in got if g["op"] == "addi" and g["ra"] != 0})
+    relocs = [r for r in elf["relocs"][".text"] if sym["value"] <= r[0] < sym["value"] + sym["size"]]
+    return dict(
+        instructions=[dict(offset=sym["value"] + 4 * k, **g) for k, g in enumerate(got)],
+        derived=dict(returns_constant=got[0]["imm"], size_bytes=sym["size"], relocations_in_handler=len(relocs),
+                     general_registers_read=read, reads_argument_registers=any(3 <= r <= 6 for r in read)),
+    )
+
+
+def extract_audioctl(data: bytes, elf: Dict[str, Any], sym: Dict[str, Any]) -> Dict[str, Any]:
+    base = sym["value"]
+    checks = {}
+    for name, rel, expected in AUDIOCTL_CHECKPOINTS:
+        got = decode(word_at(data, elf, ".text", base + rel))
+        for field, want in expected.items():
+            if got.get(field) != want:
+                raise AnchorError(f"audioctl_device_ioctl+{rel:#x} ({name}): {field} is {got.get(field)!r}, expected {want!r}")
+        checks[name] = dict(offset=base + rel, **{k: v for k, v in got.items()})
+    number_base = -checks["number_base"]["imm"]
+    bound = checks["number_bound"]["imm"]
+    entries = bound + 1
+
+    lo = [r for r in elf["relocs"][".text"] if r[0] == base + AUDIOCTL_TABLE_RELOC_OFFSET]
+    if len(lo) != 1 or lo[0][1] != R_PPC_ADDR16_LO or elf["symbols"][lo[0][2]]["shndx"] != elf["by_name"][".rodata"]["index"]:
+        raise AnchorError("the audioctl jump-table address relocation is not where the layout expects")
+    table_off = lo[0][3]
+    rel32 = {r[0]: r[3] for r in elf["relocs"][".rodata"] if r[1] == R_PPC_REL32}
+    targets = []
+    for k in range(entries):
+        addend = rel32.get(table_off + 4 * k)
+        if addend is None:
+            raise AnchorError(f"audioctl jump-table entry {k} has no relocation")
+        targets.append(addend - 4 * k)
+    counts: Dict[int, int] = {}
+    for t in targets:
+        counts[t] = counts.get(t, 0) + 1
+    default = max(counts, key=lambda t: (counts[t], -t))
+    got = decode(word_at(data, elf, ".text", default))
+    for field, want in AUDIOCTL_DEFAULT_CHECK.items():
+        if got.get(field) != want:
+            raise AnchorError(f"the audioctl default target is not `li 3, -1`: {field} is {got.get(field)!r}")
+
+    handler = Handler(data, elf, sym)
+    tail_pcs, tail_calls = handler.walk(base + AUDIOCTL_CHECKPOINTS[9][1])
+    handled = []
+    for k, target in enumerate(targets):
+        if target == default:
+            continue
+        pcs, calls = handler.walk(target)
+        own = pcs - tail_pcs
+        accesses, taken = handler.frame_accesses(own)
+        handled.append(dict(nr=number_base + k, target=target, calls=sorted(calls - tail_calls),
+                            frame_accesses=accesses, payload_address_taken_at=taken))
+    default_nrs = [number_base + k for k, t in enumerate(targets) if t == default]
+    copy_calls = sorted(pc - base for pc, r in handler.rel24.items()
+                        if elf["symbols"][r[2]]["name"] == "__copy_tofrom_user")
+    return dict(
+        decoded_instructions=checks,
+        derived=dict(
+            cmd_register=5, arg_register=6,
+            size_field_shift=checks["copy_in_size_field"]["sh"],
+            size_field_width_bits=checks["copy_in_size_field"]["me"] - checks["copy_in_size_field"]["mb"] + 1,
+            copy_size_limit_bytes=checks["copy_in_size_clamp"]["imm"],
+            copy_out_size_limit_bytes=checks["copy_out_size_clamp"]["imm"],
+            write_bit_mask=0x80000000, read_bit_mask=0x40000000, number_mask=0xFF,
+            number_base=number_base, number_window_low=number_base, number_window_high=number_base + bound,
+            copy_to_from_user_call_offsets_from_symbol=copy_calls,
+        ),
+        dispatch=dict(
+            table_section=".rodata", table_offset=table_off, entries=entries,
+            entry_encoding="R_PPC_REL32 addend = target + 4 * index",
+            default_target=default, default_is="li 3, -1 (the block every unhandled number goes to)",
+            default_nrs=default_nrs, handled=handled,
+            distinct_handler_targets=len({h["target"] for h in handled}),
+        ),
+        common_tail=dict(entry_offset=base + AUDIOCTL_CHECKPOINTS[9][1], calls=sorted(tail_calls)),
+        method="control-flow walk over decoded branch instructions; calls are relocation or symbol names; frame_accesses "
+               "are direct r1-relative loads and stores into the payload (a lower bound)",
+    )
 
 
 def extract(path: str) -> Dict[str, Any]:
@@ -202,6 +429,8 @@ def extract(path: str) -> Dict[str, Any]:
                 if s["name"] in (".text", ".rodata", ".rodata.str1.4", ".rodata.cst4", ".modinfo", ".data", ".sdata")]
     return dict(
         schema=SCHEMA,
+        audioctl_ioctl=extract_audioctl(data, elf, syms["audioctl_device_ioctl"]),
+        i2c_ioctl=extract_i2c(data, elf, syms["i2c_device_ioctl"]),
         artifact=dict(sha256=digest, size_bytes=len(data), format="ELF32 MSB relocatable PowerPC", sections=sections),
         ioctl_handlers=handlers,
         dsp_ioctl=dict(
