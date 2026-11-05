@@ -10,6 +10,7 @@
 #
 # The Rust suites run only through the centralized RCH path; this script never invokes cargo:
 #   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-dsp resample -- --nocapture
+#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-dsp --test d03_quality -- --nocapture   (quality bands)
 #   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-clock -- --nocapture
 #   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-speaker --test d03_closed_loop -- --nocapture
 #   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-speaker --test d03_closed_loop -- --ignored --nocapture   (soak)

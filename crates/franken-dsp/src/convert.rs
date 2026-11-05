@@ -7,11 +7,16 @@
 //!   shifted, e.g. `s16 0x7FFF -> s32 0x7FFF_0000`; the conversion is exactly reversible.
 //! * **Integer to narrower integer**: round to nearest, ties toward `+infinity`
 //!   (`(v + half) >> shift`), then saturate. Saturation is counted, not logged per sample.
-//! * **Integer to `f32`**: `v / 2^(bits-1)`, computed in `f64` (exact) then rounded once to
-//!   `f32` (nearest-even). Result is in `[-1.0, 1.0]`.
-//! * **`f32` to integer**: non-finite -> `0`; otherwise `round_ties_even(x * 2^(bits-1))`
-//!   (exact in `f64`), saturated to the integer range. `+1.0` saturates to `max`; `-1.0` is exactly
-//!   `min`.
+//! * **Integer to `f32`**: `v / 2^(bits-1)` rounded once to `f32` (nearest-even). Result is in
+//!   `[-1.0, 1.0]`.
+//! * **`f32` to integer**: non-finite -> `0`; otherwise `round_ties_even(x * 2^(bits-1))`, saturated
+//!   to the integer range. `+1.0` saturates to `max`; `-1.0` is exactly `min`.
+//!
+//! The two float conversions and the `f32` clamp are computed with integer arithmetic on the IEEE-754
+//! fields. Their values are exactly those of the `f64` formulas they replaced (the original is kept as
+//! the oracle in `convert/soft_float_tests.rs`), but a soft-float target (`mips-unknown-linux-musl`)
+//! executes no floating-point helper call for them: the `f64` divide, multiply, round and compare ran on
+//! every sample of every channel.
 //! * **`f32` to `f32`**: non-finite -> `+0.0`; finite values clamp to `[-1.0, 1.0]`; everything
 //!   else (including `-0.0` and subnormals) passes through bit-for-bit.
 //!
@@ -50,32 +55,101 @@ impl ConvertStats {
     }
 }
 
-/// `2^(bits-1)` as an exact `f64`; `bits` is clamped to `1..=32`.
-fn full_scale(bits: u32) -> f64 {
-    f64::from(1u32 << (bits.clamp(1, 32) - 1))
+/// `bits` clamped to `1..=32`, minus one: the exponent of the full-scale code `2^(bits-1)`.
+fn scale_shift(bits: u32) -> u32 {
+    bits.clamp(1, 32) - 1
 }
 
-/// Signed `bits`-bit integer to `f32` in `[-1.0, 1.0]`.
+/// Signed `bits`-bit integer to `f32` in `[-1.0, 1.0]`: `value / 2^(bits-1)`, rounded once to nearest-even.
+///
+/// Integer arithmetic on the IEEE-754 fields only, so a soft-float target executes no floating-point helper
+/// call. Scaling by a power of two is exact, so the result is the integer rounded to a 24-bit significand
+/// with the exponent lowered by `bits - 1`; for every `i32` that exponent stays normal. Bit-identical to the
+/// `f64` division it replaced (`convert/soft_float_tests.rs` keeps that original as the oracle).
 #[must_use]
 pub fn int_to_f32(value: i32, bits: u32) -> f32 {
-    (f64::from(value) / full_scale(bits)) as f32
+    if value == 0 {
+        return 0.0;
+    }
+    let magnitude = value.unsigned_abs();
+    let top = 31 - magnitude.leading_zeros();
+    let (significand, carry) = if top <= 23 {
+        (magnitude << (23 - top), 0)
+    } else {
+        let dropped = top - 23;
+        let kept = magnitude >> dropped;
+        let rest = magnitude & ((1u32 << dropped) - 1);
+        let half = 1u32 << (dropped - 1);
+        let rounded = kept + u32::from(rest > half || (rest == half && kept & 1 == 1));
+        if rounded == 1 << 24 {
+            (rounded >> 1, 1)
+        } else {
+            (rounded, 0)
+        }
+    };
+    let exponent = 127 + top + carry - scale_shift(bits);
+    let sign = u32::from(value < 0) << 31;
+    f32::from_bits(sign | (exponent << 23) | (significand & 0x007F_FFFF))
+}
+
+/// `value / 2^dropped` rounded half to even, for a 24-bit `value` and `dropped >= 1`. Dropping 25 or more bits
+/// leaves less than half of one unit, so the result is 0.
+fn round_shift_right(value: u32, dropped: u32) -> u32 {
+    if dropped > 24 {
+        return 0;
+    }
+    let kept = value >> dropped;
+    let rest = value & ((1u32 << dropped) - 1);
+    let half = 1u32 << (dropped - 1);
+    kept + u32::from(rest > half || (rest == half && kept & 1 == 1))
+}
+
+/// The saturated code for the sign of the input, counted. `limit` is `2^(bits-1)`.
+fn saturated_code(negative: bool, limit: u32, stats: &mut ConvertStats) -> i32 {
+    stats.note_saturated();
+    if negative {
+        (limit as i32).wrapping_neg()
+    } else {
+        (limit - 1) as i32
+    }
 }
 
 /// `f32` to a signed `bits`-bit integer: non-finite -> 0, ties-to-even, saturating.
+///
+/// Integer arithmetic on the IEEE-754 fields only (see [`int_to_f32`]). With a 24-bit significand `s` and biased
+/// exponent `e`, `|x| * 2^(bits-1) = s * 2^(e - 150 + bits - 1)`: a left shift, or a right shift rounded half to
+/// even. Positive results saturate at `2^(bits-1)` and above, negative ones above `2^(bits-1)`, so `-1.0` is
+/// exactly the smallest code and `+1.0` saturates to the largest. Zero and subnormals are far below half a code.
 pub fn f32_to_int(x: f32, bits: u32, stats: &mut ConvertStats) -> i32 {
-    if !x.is_finite() {
+    let raw = x.to_bits();
+    let biased = (raw >> 23) & 0xFF;
+    if biased == 0xFF {
         stats.note_non_finite();
         return 0;
     }
-    let scale = full_scale(bits);
-    let scaled = (f64::from(x) * scale).round_ties_even();
-    if scaled > scale - 1.0 {
-        stats.note_saturated();
-        return (scale - 1.0) as i32;
+    if biased == 0 {
+        return 0;
     }
-    if scaled < -scale {
-        stats.note_saturated();
-        return (-scale) as i32;
+    let negative = raw >> 31 == 1;
+    let limit = 1u32 << scale_shift(bits);
+    let significand = (raw & 0x007F_FFFF) | 0x0080_0000;
+    let shift = biased as i32 - 150 + scale_shift(bits) as i32;
+    let scaled = if shift > 8 {
+        // At least 2^32: beyond every code, whatever the sign.
+        return saturated_code(negative, limit, stats);
+    } else if shift >= 0 {
+        significand << shift
+    } else {
+        round_shift_right(significand, shift.unsigned_abs())
+    };
+    if negative {
+        if scaled > limit {
+            return saturated_code(true, limit, stats);
+        }
+        return (scaled as i32).wrapping_neg();
+    }
+    if scaled >= limit {
+        return saturated_code(false, limit, stats);
     }
     scaled as i32
 }
@@ -104,17 +178,17 @@ pub fn int_to_int(value: i32, from_bits: u32, to_bits: u32, stats: &mut ConvertS
 
 /// `f32` to `f32`: non-finite -> `+0.0`, finite values clamp to `[-1.0, 1.0]`.
 pub fn f32_to_f32(x: f32, stats: &mut ConvertStats) -> f32 {
-    if !x.is_finite() {
+    // Integer compares on the magnitude bits: for finite values `|x| > 1.0` is `bits > 0x3F80_0000`, so no
+    // soft-float comparison helper runs. NaN and infinity have an all-ones exponent.
+    let raw = x.to_bits();
+    let magnitude = raw & 0x7FFF_FFFF;
+    if magnitude >= 0x7F80_0000 {
         stats.note_non_finite();
         return 0.0;
     }
-    if x > 1.0 {
+    if magnitude > 0x3F80_0000 {
         stats.note_saturated();
-        return 1.0;
-    }
-    if x < -1.0 {
-        stats.note_saturated();
-        return -1.0;
+        return if raw >> 31 == 1 { -1.0 } else { 1.0 };
     }
     x
 }
@@ -329,6 +403,9 @@ pub fn convert_packed(
     )?;
     Ok((frames, stats))
 }
+
+#[cfg(test)]
+mod soft_float_tests;
 
 #[cfg(test)]
 mod tests {

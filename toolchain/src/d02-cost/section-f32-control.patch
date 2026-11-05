@@ -1,0 +1,97 @@
+--- a/crates/franken-dsp/src/protection/runtime.rs
++++ b/crates/franken-dsp/src/protection/runtime.rs
+@@ -19,30 +19,25 @@
+ /// Run-time guard on every filter output: the admitted intermediate range, as an `f32`.
+ const INTERMEDIATE_LIMIT: f32 = MAX_INTERMEDIATE as f32;
+ 
+-/// One second-order section in the admitted realization: coefficients **stored as `f32`**, direct
+-/// form II transposed arithmetic and state in **`f64`**; the sample enters and leaves as `f32`.
++/// CONTROL BUILD, cost measurement only (`toolchain/src/d02-cost/`): the realization D02 had before commit 4e2c68c.
++/// Coefficients **and state** are `f32`, direct form II transposed. It drifts from an exact evaluation of the same
++/// stored filter by about 6.5e-5 (300 Hz low-pass) and 5.2e-4 (120 Hz), which is why shipped D02 keeps `f64` state;
++/// it exists only so the instruction cost of the `f64` state can be attributed by difference. Never ships.
+ ///
+ /// ```text
+ /// y  = b0*x + z1
+ /// z1 = b1*x - a1*y + z2
+ /// z2 = b2*x - a2*y
+ /// ```
+-///
+-/// Why `f64` state: measured, not assumed. With the same stored coefficients, an `f32` state drifts
+-/// from an exact evaluation of that very filter by about 6.5e-5 (300 Hz low-pass) and 5.2e-4 (120 Hz)
+-/// within 512 samples, because the poles sit at radius 0.973 and 0.989 and the roundoff is amplified
+-/// by roughly `1/(1-r)`. `f64` state removes it (difference below 1e-13). The coefficients stay
+-/// `f32` on purpose: they are what validation judges (finite, at most 8, stable, bounded), and the
+-/// reference uses the same stored values. CPU cost of `f64` on the target ISAs is not measured.
+ #[derive(Debug, Clone, Copy, PartialEq)]
+ pub struct Section {
+-    b0: f64,
+-    b1: f64,
+-    b2: f64,
+-    a1: f64,
+-    a2: f64,
+-    z1: f64,
+-    z2: f64,
++    b0: f32,
++    b1: f32,
++    b2: f32,
++    a1: f32,
++    a2: f32,
++    z1: f32,
++    z2: f32,
+ }
+ 
+ impl Section {
+@@ -52,14 +47,13 @@
+         quantize_section(spec, 0, 0).map(Self::from_stored)
+     }
+ 
+-    /// Widen the stored `f32` coefficients exactly (every `f32` is an `f64`).
+     pub(super) const fn from_stored(c: [f32; 5]) -> Self {
+         Self {
+-            b0: c[0] as f64,
+-            b1: c[1] as f64,
+-            b2: c[2] as f64,
+-            a1: c[3] as f64,
+-            a2: c[4] as f64,
++            b0: c[0],
++            b1: c[1],
++            b2: c[2],
++            a1: c[3],
++            a2: c[4],
+             z1: 0.0,
+             z2: 0.0,
+         }
+@@ -72,11 +66,10 @@
+ 
+     #[inline]
+     pub fn process(&mut self, x: f32) -> f32 {
+-        let x = f64::from(x);
+         let y = self.b0 * x + self.z1;
+         self.z1 = self.b1 * x - self.a1 * y + self.z2;
+         self.z2 = self.b2 * x - self.a2 * y;
+-        y as f32
++        y
+     }
+ 
+     pub fn reset(&mut self) {
+@@ -86,8 +79,8 @@
+ 
+     /// The two state variables `(z1, z2)`.
+     #[must_use]
+-    pub const fn state(&self) -> (f64, f64) {
+-        (self.z1, self.z2)
++    pub fn state(&self) -> (f64, f64) {
++        (f64::from(self.z1), f64::from(self.z2))
+     }
+ }
+ 
+@@ -577,7 +570,7 @@
+     #[cfg(test)]
+     pub(super) fn corrupt_section_state_for_test(&mut self, channel: usize, z1: f32) {
+         if let Some(runtime) = self.channels[..self.channel_count].get_mut(channel) {
+-            runtime.sections[0].z1 = f64::from(z1);
++            runtime.sections[0].z1 = z1;
+         }
+     }
+ 

@@ -1,0 +1,29 @@
+[package]
+name = "ffw-d02-cost"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Instruction-count measurement of D02's per-frame protection chain on the soft-float MIPS device target, run as
+# PID 1 under QEMU (ffw-7s0, "D02 f64 target CPU cost"). Consumer: toolchain/src/measure-d02-cost.py. It is built
+# only for that measurement and never ships; retire it when the f64-versus-f32 cost question is decided.
+#
+# Its own workspace root, like ffw-hello-init, so the application workspace, its lockfile and the P01 workspace
+# contract are not touched. It needs `unsafe` for exactly two things (reading the cycle counter and a calibration
+# loop, both in `main.rs`), which the workspace's `forbid(unsafe_code)` would refuse, so it does not inherit it.
+
+[workspace]
+
+[dependencies]
+franken-dsp = { path = "../../../crates/franken-dsp" }
+franken-board-profile = { path = "../../../crates/franken-board-profile" }
+
+# The device speaker's release profile, copied from the workspace root because a profile is read from the workspace
+# root and this package is its own. Instruction counts depend on opt-level (`z` favours size), so a measurement at
+# another level would not describe the shipped code. `strip` is left off so the ELF can be disassembled; it does not
+# change generated code.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"

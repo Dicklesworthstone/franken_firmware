@@ -46,16 +46,19 @@ MAX_PRINTED = 12
 RUST_SOURCES = [
     ("crates/franken-dsp/src/format.rs", "franken_dsp", "format::tests::"),
     ("crates/franken-dsp/src/convert.rs", "franken_dsp", "convert::tests::"),
+    ("crates/franken-dsp/src/convert/soft_float_tests.rs", "franken_dsp", "convert::soft_float_tests::"),
+    ("crates/franken-dsp/src/render_events/tests.rs", "franken_dsp", "render_events::tests::"),
     ("crates/franken-dsp/src/ring.rs", "franken_dsp", "ring::tests::"),
     ("crates/franken-dsp/src/lib.rs", "franken_dsp", "tests::"),
     ("crates/franken-dsp/tests/d01_vectors.rs", "d01_vectors", ""),
     ("crates/franken-alloc-probe/tests/render_path_no_alloc.rs", "render_path_no_alloc", ""),
+    ("crates/franken-alloc-probe/tests/render_events_no_alloc.rs", "render_events_no_alloc", ""),
 ]
 HARNESS_TEST = ("d01_vectors", "d01_vectors_match_the_independent_reference")
 # cargo package -> test binaries whose `Running ... (target/.../<stem>-<hash>)` lines it may produce
 PACKAGE_BINARIES = {
     "franken-dsp": ("franken_dsp", "d01_vectors"),
-    "franken-alloc-probe": ("render_path_no_alloc",),
+    "franken-alloc-probe": ("render_path_no_alloc", "render_events_no_alloc"),
 }
 TEST_FN = re.compile(r"#\[test\]\s*((?:#\[[^\]]*\]\s*)*)fn\s+([A-Za-z0-9_]+)")
 OBSERVED = re.compile(r"D01-OBSERVED (\{.*\})\s*$")

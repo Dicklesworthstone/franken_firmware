@@ -69,6 +69,31 @@ def good_records():
                  "underruns": 0, "final_ratio_ppb": 0, "drift_ppb": first["drift_ppb"], "wraps": 0,
                  "outputs": first["expect_total_outputs"], "inputs_pulled": 1, "estimator_discontinuities": 0, "resets": 0,
                  "virtual_seconds": first["virtual_seconds"]})
+    recs += quality_records()
+    return recs
+
+
+def quality_records():
+    """What a correct Rust run would print for the quality cases: the reference's own predictions."""
+    q = VEC["quality"]
+    recs = []
+    for c in q["cases"]:
+        qd = c["expect_q_db"] if c["expect_q_db"] <= q["q_cap_db"] else q["q_cap_db"] + 30.0
+        g = c["expect_gain_db"]
+        meets = qd >= c["band_q_db"] and (g is None or c["gain_lo_db"] <= g <= c["gain_hi_db"])
+        recs.append({"id": c["id"], "kind": "quality", "interp": c["interp"], "scenario": c["scenario"],
+                     "f0_hz": c["f0_hz"], "ppb": c["ppb"], "q_db": qd, "gain_db": g, "band_q_db": c["band_q_db"],
+                     "gain_lo_db": c["gain_lo_db"], "gain_hi_db": c["gain_hi_db"], "meets_band": meets})
+    by_id = {c["id"]: c for c in q["cases"]}
+    for c in q["cases"]:
+        if c["must_pass"]:
+            continue
+        real = next(r for r in q["cases"] if r["scenario"] == "steady" and r["interp"] == "catmull_rom"
+                    and r["f0_hz"] == c["f0_hz"] and r["ppb"] == c["ppb"])
+        recs.append({"id": c["id"] + "-pair", "kind": "quality_pair", "plant_id": c["id"], "real_id": real["id"],
+                     "plant_q_db": c["expect_q_db"], "real_q_db": real["expect_q_db"],
+                     "plant_gain_db": c["expect_gain_db"], "real_gain_db": real["expect_gain_db"]})
+    assert by_id
     return recs
 
 
@@ -170,7 +195,7 @@ class JudgeSelfTest(unittest.TestCase):
             return seen
 
         want = {(s, n) for case in rc.registry(VEC) for s, n in case["tests"]}
-        self.assertEqual(len(want), 43)
+        self.assertEqual(len(want), 50)
         self.assertEqual(want - nearest_preceding_header(build_log(good_records(), layout="classic")), set())
         self.assertEqual(want & nearest_preceding_header(build_log(good_records(), layout="rch")), set())
 
@@ -284,6 +309,86 @@ class JudgeSelfTest(unittest.TestCase):
                 by, results = judge(build_log(self.mutate(rid, **change), layout="rch"), tier="soak")
                 self.assertEqual(by[case].status, "failed", (label, by[case].detail))
                 self.assertEqual(rc.exit_code(results), 1)
+
+    def test_a_real_kernel_that_misses_a_declared_band_fails_and_the_band_does_not_move(self):
+        """D03-JUDGE-QUALITY-MISS: a figure under its band is reported as a failure; so is a record that lowers the
+        band it was judged against, or that claims a verdict its own figures do not support."""
+        q = VEC["quality"]
+        c1 = next(c for c in q["cases"] if c["id"] == "q-steady-1000-p500")
+        c10 = next(c for c in q["cases"] if c["id"] == "q-steady-10000-m100")
+        cases = [
+            ("1 kHz Q under the floor", c1["id"], dict(q_db=c1["band_q_db"] - 0.5, meets_band=False)),
+            ("10 kHz Q under the floor", c10["id"], dict(q_db=c10["band_q_db"] - 0.5, meets_band=False)),
+            ("10 kHz gain outside its band", c10["id"], dict(gain_db=c10["gain_lo_db"] - 0.2, meets_band=False)),
+            ("Q far from the first-principles prediction", c1["id"], dict(q_db=c1["expect_q_db"] + 2.0)),
+            ("the band lowered in the record", c1["id"], dict(band_q_db=c1["band_q_db"] - 10.0)),
+            ("a verdict the figures do not support", c1["id"], dict(meets_band=False)),
+            ("no Q figure", c1["id"], dict(q_db=None)),
+        ]
+        for label, rid, change in cases:
+            with self.subTest(label):
+                by, results = judge(build_log(self.mutate(rid, **change), layout="rch"), tier="full")
+                self.assertEqual(by["D03-QUALITY"].status, "failed", (label, by["D03-QUALITY"].detail))
+                self.assertEqual(rc.exit_code(results), 1)
+
+    def test_a_planted_interpolator_that_meets_the_band_is_caught_and_a_clear_miss_is_not(self):
+        """D03-JUDGE-QUALITY-PLANT: a plant must miss on Q by 3 dB or on gain by 0.1 dB. The 10 kHz linear plant
+        clears the Q floor by 0.3 dB and is rejected on gain: it must pass the judge as a plant, and fail it the moment
+        its gain also sits inside the band."""
+        q = VEC["quality"]
+        lin = next(c for c in q["cases"] if c["id"] == "q-linear-10000-p100")
+        self.assertGreaterEqual(lin["expect_q_db"], lin["band_q_db"], "the erratum: Q alone does not reject this plant")
+        self.assertLess(lin["expect_gain_db"], lin["gain_lo_db"] - q["plant_gain_margin_db"])
+        by, _ = judge(build_log(good_records(), layout="rch"), tier="full")
+        self.assertEqual(by["D03-QUALITY-NEGATIVE"].status, "passed", by["D03-QUALITY-NEGATIVE"].detail)
+        for label, rid, change in [
+            ("a plant that meets both figures", lin["id"], dict(gain_db=-0.1, meets_band=True)),
+            ("a plant that misses by less than the margin", "q-nearest-10000-p500",
+             dict(q_db=21.0, gain_db=-0.2, meets_band=False)),
+            ("a plant with no Q figure", "q-linear-1000-p100", dict(q_db=None)),
+        ]:
+            with self.subTest(label):
+                by, results = judge(build_log(self.mutate(rid, **change), layout="rch"), tier="full")
+                self.assertEqual(by["D03-QUALITY-NEGATIVE"].status, "failed", (label, by["D03-QUALITY-NEGATIVE"].detail))
+
+    def test_a_pair_whose_real_kernel_misses_is_caught(self):
+        """D03-JUDGE-QUALITY-PAIR: the plant's miss only counts if the real kernel meets the band beside it."""
+        recs = good_records()
+        pair = next(r for r in recs if r["kind"] == "quality_pair")
+        pair["real_q_db"] = 10.0
+        by, _ = judge(build_log(recs, layout="rch"), tier="full")
+        self.assertEqual(by["D03-QUALITY-NEGATIVE"].status, "failed")
+
+    def test_at_zero_ratio_a_plant_must_pass_because_every_interpolator_is_exact(self):
+        """D03-JUDGE-QUALITY-CONTROL: the 0 ppm rows are controls; one that does not read as exact fails."""
+        by, _ = judge(build_log(self.mutate("q-linear-10000-0", q_db=15.0, meets_band=False), layout="rch"), tier="full")
+        self.assertEqual(by["D03-QUALITY-NEGATIVE"].status, "failed")
+
+    def test_a_missing_quality_record_blocks(self):
+        recs = [r for r in good_records() if r["id"] != "q-slewed-1000"]
+        by, _ = judge(build_log(recs, layout="rch"), tier="full")
+        self.assertEqual(by["D03-QUALITY"].status, "blocked")
+
+    def test_a_band_edited_in_the_contract_without_a_new_row_fails_the_meta_check(self):
+        """D03-JUDGE-BANDS-FROZEN: the declared table, the reference and the vectors must agree; moving one of them
+        alone (the move the declaration forbids) is a META failure."""
+        with open(rc.CONTRACT, encoding="utf-8") as fh:
+            text = fh.read()
+        moved = text.replace("| 10000 | 22.0 | -0.60 | 0.05 |", "| 10000 | 18.0 | -0.60 | 0.05 |")
+        self.assertNotEqual(moved, text)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "d03.md")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(moved)
+            saved, rc.CONTRACT = rc.CONTRACT, path
+            try:
+                results, _ = rc.run("smoke", None)
+            finally:
+                rc.CONTRACT = saved
+        by = {r.case_id: r for r in results}
+        self.assertEqual(by["D03-META-BANDS-DECLARED"].status, "failed")
+        by_ok = {r.case_id: r for r in rc.run("smoke", None)[0]}
+        self.assertEqual(by_ok["D03-META-BANDS-DECLARED"].status, "passed")
 
     def test_a_missing_record_is_blocked_and_an_identical_repeat_is_harmless(self):
         """D03-JUDGE-RECORD-INTEGRITY: no record -> blocked; an identical repeated record -> ignored."""

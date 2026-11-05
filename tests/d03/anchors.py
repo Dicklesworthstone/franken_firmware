@@ -162,6 +162,83 @@ def check() -> List[Tuple[str, bool, str]]:
     ok("perfect +1000 ppm line", ratio == 1_000_000, str(ratio))
     ok("round half away from zero", ref.div_round_nearest(5, 2) == 3 and ref.div_round_nearest(-5, 2) == -3
        and ref.div_round_nearest(4, 2) == 2 and ref.div_round_nearest(-1, 3) == 0)
+    out.extend(quality_checks())
+    return out
+
+
+def quality_checks() -> List[Tuple[str, bool, str]]:
+    """The quality figures' measuring instrument and the facts the declared bands (section 4.1) rest on."""
+    out: List[Tuple[str, bool, str]] = []
+
+    def ok(name: str, cond: bool, detail: str = "") -> None:
+        out.append((name, bool(cond), detail))
+
+    # the instrument, on signals whose Q and gain are known exactly (whole cycles: the harmonic is orthogonal)
+    n, w = 48 * 682, 2 * math.pi / 48
+    y = [0.5 * math.sin(w * i + 0.3) + 0.0005 * math.sin(2 * w * i) for i in range(n)]
+    q, g = ref.fit_metrics(y, w, amp=0.5)
+    ok("a tone with a harmonic 60 dB down reads Q = 60 dB and gain 0", abs(q - 60.0) < 1e-6 and abs(g) < 1e-9, "%s %s" % (q, g))
+    y = [0.45 * math.sin(w * i + 1.0) for i in range(n)]
+    q, g = ref.fit_metrics(y, w, amp=0.5)
+    ok("a pure gain error is gain, not distortion", abs(g - 20 * math.log10(0.9)) < 1e-9 and q > 250, "%s %s" % (q, g))
+    q_off, _ = ref.fit_metrics(y, w * 1.01, amp=0.5)
+    ok("a tone read at the wrong frequency does not look clean", q_off < 30, str(q_off))
+
+    # the measuring floor is far below the bands: the ideal tone at the exact output positions reads as clean
+    pos = ref.quality_positions(ref.QUALITY_SKIP + ref.QUALITY_N_MEAS, 500_000)
+    w0 = 2 * math.pi * 10_000 / ref.SAMPLE_RATE_HZ
+    ideal = [ref.QUALITY_AMP * math.sin(w0 * (p / Q32) + ref.QUALITY_PHASE) for p in pos][ref.QUALITY_SKIP:]
+    q, g = ref.fit_metrics(ideal, w0 * ref.step_q32(500_000) / Q32)
+    ok("the ideal 10 kHz tone at the exact positions is clean to the fit's own floor", q > 200 and abs(g) < 1e-9, "%s %s" % (q, g))
+
+    # section 4's relation: Q is at least the worst-case guarantee, for every real case with a nonzero ratio
+    vec = {c: ref.quality_case(c) for c in ref.quality_case_ids() if c.startswith(("q-steady", "q-slewed", "q-epoch-steady"))}
+    low = [(c, v["expect_q_db"], ref.snr_floor_db(v["f0_hz"])) for c, v in vec.items()
+           if v["ppb"] != 0 and v["expect_q_db"] < ref.snr_floor_db(v["f0_hz"])]
+    ok("Q is at least the section 4 guarantee for every real case", not low, str(low))
+
+    # the declared bands sit under the guarantee by the stated slack and above the plants where the Q floor can
+    ok("the declared Q floors are the guarantees minus 2.8 and 1.5 dB",
+       round(ref.snr_floor_db(1000) - ref.QUALITY_BANDS[1000]["q_floor_db"], 2) == 2.84
+       and round(ref.snr_floor_db(10000) - ref.QUALITY_BANDS[10000]["q_floor_db"], 2) == 1.49,
+       "%s %s" % (ref.snr_floor_db(1000), ref.snr_floor_db(10000)))
+    for f, lo_mag, hi_mag in ((1000, 0.999993, 1.0), (10000, 0.940358, 1.0)):
+        w = 2 * math.pi * f / ref.SAMPLE_RATE_HZ
+        mags = []
+        for k in range(4096):
+            wt = ref.catmull_rom_weights(k / 4096)
+            mags.append(abs(sum(wt[j] * complex(math.cos(w * (j - 1)), math.sin(w * (j - 1))) for j in range(4))))
+        droop_db = 20 * math.log10(min(mags))
+        band = ref.QUALITY_BANDS[f]
+        ok("%d Hz: the kernel's magnitude range is as the contract states and sits inside the gain band" % f,
+           abs(min(mags) - lo_mag) < 2e-6 and abs(max(mags) - hi_mag) < 1e-6 and band["gain_lo_db"] < droop_db < band["gain_hi_db"],
+           "%s %s" % (min(mags), max(mags)))
+
+    # the erratum: the declared Q metric does not reject linear interpolation at 10 kHz, the gain band does
+    lin = ref.quality_case("q-linear-10000-p100")
+    ok("erratum: the 10 kHz linear plant clears the Q floor and is rejected by gain",
+       lin["expect_q_db"] >= lin["band_q_db"] and lin["expect_gain_db"] < lin["gain_lo_db"] - ref.QUALITY_PLANT_GAIN_MARGIN_DB,
+       "%s %s" % (lin["expect_q_db"], lin["expect_gain_db"]))
+    plants = [ref.quality_case(c) for c in ref.quality_case_ids() if not ref.quality_case(c)["must_pass"]]
+    unrejected = []
+    for c in plants:
+        qm = c["band_q_db"] - c["expect_q_db"]
+        gm = max(c["gain_lo_db"] - c["expect_gain_db"], c["expect_gain_db"] - c["gain_hi_db"])
+        if not (qm >= ref.QUALITY_PLANT_MARGIN_DB or gm >= ref.QUALITY_PLANT_GAIN_MARGIN_DB):
+            unrejected.append(c["id"])
+    ok("every planted interpolator misses its band on Q or on gain by the stated margin", len(plants) == 16 and not unrejected,
+       str(unrejected))
+
+    # the closed forms behind the first declaration (mean error against the ideal tone), kept for the erratum
+    def mean_err_db(fn, f):
+        w = 2 * math.pi * f / ref.SAMPLE_RATE_HZ
+        errs = [abs(fn(k / 4096, w) - complex(math.cos(w * k / 4096), math.sin(w * k / 4096))) for k in range(4096)]
+        return -20 * math.log10(math.sqrt(sum(e * e for e in errs) / len(errs)))
+    lin_fn = lambda t, w: (1 - t) + t * complex(math.cos(w), math.sin(w))
+    near_fn = lambda t, w: complex(math.cos(w * (1 if t >= 0.5 else 0)), math.sin(w * (1 if t >= 0.5 else 0)))
+    got = (mean_err_db(lin_fn, 1000), mean_err_db(lin_fn, 10000), mean_err_db(near_fn, 1000), mean_err_db(near_fn, 10000))
+    ok("the first declaration's plant figures were the mean error against the ideal tone, not Q",
+       all(abs(a - b) < 0.06 for a, b in zip(got, (56.1, 16.4, 28.5, 8.6))), str(got))
     return out
 
 

@@ -88,6 +88,24 @@ def discontinuity_cases() -> List[Dict[str, Any]]:
     return cases
 
 
+_QUALITY_CACHE: Dict[str, Any] = {}
+
+
+def quality_section() -> Dict[str, Any]:
+    """The resampler quality cases (docs/contracts/d03.md section 4.1): the declared bands and, for every case, the
+    figures the reference computes from first principles.  Computed once per process: it is a few seconds."""
+    if "q" not in _QUALITY_CACHE:
+        _QUALITY_CACHE["q"] = {
+            "bands": {str(f): dict(b) for f, b in sorted(ref.QUALITY_BANDS.items())},
+            "amp_dbfs": ref.QUALITY_AMP_DBFS, "phase": ref.QUALITY_PHASE,
+            "n_meas": ref.QUALITY_N_MEAS, "skip": ref.QUALITY_SKIP, "q_cap_db": ref.QUALITY_Q_CAP_DB,
+            "tol_q_db": ref.QUALITY_TOL_Q_DB, "tol_gain_db": ref.QUALITY_TOL_GAIN_DB,
+            "plant_q_margin_db": ref.QUALITY_PLANT_MARGIN_DB, "plant_gain_margin_db": ref.QUALITY_PLANT_GAIN_MARGIN_DB,
+            "cases": [ref.quality_case(cid) for cid in ref.quality_case_ids()],
+        }
+    return _QUALITY_CACHE["q"]
+
+
 def build() -> Dict[str, Any]:
     q = ref.step_q32
     slew = ref.slew_ppb_per_quantum(ref.DEFAULT_SLEW_PPM_PER_BLOCK)
@@ -183,6 +201,7 @@ def build() -> Dict[str, Any]:
         "tones": tones, "pulled": pulled, "outputs": outputs, "schedules": schedules, "slew_counts": slew_counts,
         "estimator": est, "estimator_warmup": warm_cases, "discontinuities": discontinuity_cases(),
         "closed_loop": closed, "closed_loop_jump": jump,
+        "quality": quality_section(),
     }
 
 

@@ -11,6 +11,7 @@
 pub mod convert;
 pub mod format;
 pub mod protection; // D02 (`ffw-7s0`): admitted, fail-muted board protection
+pub mod render_events; // D01/D02/G02 logging clause: bounded, nonblocking render-path events
 pub mod resample; // D03 (`ffw-j9r`), written by TealSeal
 pub mod ring;
 pub mod volume; // G02 (`ffw-ld0`): group volume, per-room trim, mute and channel roles
@@ -19,6 +20,9 @@ pub use convert::{ConvertStats, convert_block, convert_packed};
 pub use format::{
     BufferSpec, CANONICAL_WIRE_FORMAT, Endian, Layout, MAX_BLOCK_FRAMES, PcmError, SampleFormat,
     StreamFormat, frames_in_packed_bytes,
+};
+pub use render_events::{
+    EventConsumer, EventProducer, RenderEvent, RenderEventKind, event_channel,
 };
 pub use ring::{BlockSink, BoundedCaptureSink, RingConsumer, RingProducer, ring_channel};
 

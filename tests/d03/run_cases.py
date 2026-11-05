@@ -59,6 +59,7 @@ RUST_SOURCES = [
     ("crates/franken-clock/src/rate.rs", "franken_clock", "rate::tests::"),
     ("crates/franken-dsp/src/resample/tests.rs", "franken_dsp", "resample::tests::"),
     ("crates/franken-speaker/tests/d03_closed_loop.rs", "d03_closed_loop", ""),
+    ("crates/franken-dsp/tests/d03_quality.rs", "d03_quality", ""),
 ]
 # Files held outside any cargo target until the first green central compile: final path -> quarantine path.
 PENDING = {"crates/franken-speaker/tests/d03_closed_loop.rs": "tests/d03/pending/d03_closed_loop.rs"}
@@ -66,6 +67,8 @@ TEST_FN = re.compile(r"#\[test\]\s*((?:#\[[^\]]*\]\s*)*)fn\s+(d03_[A-Za-z0-9_]+)
 OBSERVED = re.compile(r"D03-OBSERVED (\{.*\})\s*$")
 
 R, C, L = "franken_dsp", "franken_clock", "d03_closed_loop"
+QL = "d03_quality"
+BANDS_BLOCK = re.compile(r"<!-- d03-quality-bands -->(.*?)<!-- /d03-quality-bands -->", re.S)
 RS, RT = "resample::tests::", "rate::tests::"
 
 
@@ -183,6 +186,23 @@ def registry(vec: dict) -> List[dict]:
         dict(id="D03-LOOP-SOAK", group="AC2", tier="soak",
              what="25.5 virtual hours crossing the 24.86 h u32 wrap",
              tests=T(L, "", "d03_closed_loop_soak_25_5_hours_crosses_the_counter_wrap"), observed=["d03-loop-25h-soak"]),
+        dict(id="D03-QUALITY", group="AC3", tier="smoke",
+             what="THD+N and carrier gain of 1 kHz and 10 kHz sines at -1 dBFS through the resampler (ratios 0, +/-100, "
+                  "+/-500 ppm; after an epoch reset; settled after a slew) meet the bands declared before the run and the "
+                  "reference's first-principles figures",
+             tests=T(QL, "", "d03_quality_bands_are_the_declared_ones",
+                     "d03_quality_metric_reads_a_known_tone_and_a_known_error",
+                     "d03_quality_steady_ratios_meet_the_declared_bands",
+                     "d03_quality_after_an_epoch_reset_meets_the_declared_bands",
+                     "d03_quality_settled_after_a_slew_meets_the_declared_bands"),
+             observed=[c["id"] for c in vec["quality"]["cases"] if c["must_pass"] and not c["control"]]),
+        dict(id="D03-QUALITY-NEGATIVE", group="AC3", tier="smoke",
+             what="planted nearest-neighbour and linear interpolators miss the bands (paired with the real kernel meeting "
+                  "them); at zero ratio every interpolator is exact, so that row is shown not to be an interpolation test",
+             tests=T(QL, "", "d03_quality_planted_nearest_and_linear_interpolators_miss_the_bands",
+                     "d03_quality_at_zero_ratio_every_interpolator_is_exact_so_that_row_is_not_an_interpolation_test"),
+             observed=[c["id"] for c in vec["quality"]["cases"] if not c["must_pass"] or c["control"]]
+             + [c["id"] + "-pair" for c in vec["quality"]["cases"] if not c["must_pass"]]),
     ]
 
 
@@ -264,8 +284,84 @@ def _by_id(items: List[dict]) -> Dict[str, dict]:
     return {i["id"]: i for i in items}
 
 
+def quality_verdict(case: dict, q: dict, qd: Any, g: Any) -> Optional[str]:
+    """None when ``(Q, gain)`` is what the case demands: a real case meets its declared band; a planted case misses
+    it by the stated margin on at least one figure. Always judged from the figures, never from the record's own verdict."""
+    if not isinstance(qd, (int, float)):
+        return "no Q figure"
+    meets = qd >= case["band_q_db"] and (g is None or case["gain_lo_db"] <= g <= case["gain_hi_db"])
+    if case["must_pass"]:
+        return None if meets else "MISSED its declared band: Q %.3f dB against %.1f, gain %s against %.2f..%.2f" % (
+            qd, case["band_q_db"], g, case["gain_lo_db"], case["gain_hi_db"])
+    q_miss = case["band_q_db"] - qd
+    g_miss = -math.inf if g is None else max(case["gain_lo_db"] - g, g - case["gain_hi_db"])
+    if q_miss >= q["plant_q_margin_db"] or g_miss >= q["plant_gain_margin_db"]:
+        return None
+    return "the planted interpolator does not clearly miss its band (Q short by %.3f dB, gain out by %.4f dB)" % (q_miss, g_miss)
+
+
+def quality_agrees(case: dict, q: dict, qd: float, g: Any) -> Optional[str]:
+    """The measured figures agree with the reference's first-principles prediction (above the f32 floor: at least it)."""
+    if case["expect_q_db"] > q["q_cap_db"]:
+        if qd < q["q_cap_db"]:
+            return "Q %.3f dB is below the f32 floor %.1f dB, reference %.3f" % (qd, q["q_cap_db"], case["expect_q_db"])
+    elif abs(qd - case["expect_q_db"]) > q["tol_q_db"]:
+        return "Q %.3f dB, reference %.3f dB (tolerance %.2f)" % (qd, case["expect_q_db"], q["tol_q_db"])
+    eg = case.get("expect_gain_db")
+    if eg is not None and (g is None or abs(g - eg) > q["tol_gain_db"]):
+        return "gain %s dB, reference %s dB (tolerance %s)" % (g, eg, q["tol_gain_db"])
+    return None
+
+
+def contract_bands(text: str) -> Dict[int, Dict[str, float]]:
+    """The declared band table from docs/contracts/d03.md section 4.1."""
+    m = BANDS_BLOCK.search(text)
+    rows: Dict[int, Dict[str, float]] = {}
+    if not m:
+        return rows
+    for line in m.group(1).splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) == 4 and cells[0].isdigit():
+            rows[int(cells[0])] = {"q_floor_db": float(cells[1]), "gain_lo_db": float(cells[2]),
+                                   "gain_hi_db": float(cells[3])}
+    return rows
+
+
 def judge_observed(rec: dict, vec: dict) -> Optional[str]:
     kind, rid = rec.get("kind"), rec.get("id")
+    if kind == "quality":
+        q = vec["quality"]
+        case = _by_id(q["cases"]).get(rid)
+        if case is None:
+            return "no such quality case"
+        for key in ("interp", "scenario", "f0_hz", "ppb", "band_q_db", "gain_lo_db", "gain_hi_db"):
+            if rec.get(key) != case[key]:
+                return "%s is %r in the record and %r in the vectors (the case or its declared band moved)" % (
+                    key, rec.get(key), case[key])
+        qd, g = rec.get("q_db"), rec.get("gain_db")
+        problem = None if not isinstance(qd, (int, float)) else quality_agrees(case, q, qd, g)
+        problem = problem or quality_verdict(case, q, qd, g)
+        if problem:
+            return problem
+        meets = qd >= case["band_q_db"] and (g is None or case["gain_lo_db"] <= g <= case["gain_hi_db"])
+        if rec.get("meets_band") != meets:
+            return "the record's meets_band disagrees with its own figures"
+        return None
+    if kind == "quality_pair":
+        q = vec["quality"]
+        cases = _by_id(q["cases"])
+        plant, real = cases.get(rec.get("plant_id")), cases.get(rec.get("real_id"))
+        if plant is None or real is None or plant["must_pass"] or not real["must_pass"] or real["interp"] != "catmull_rom":
+            return "a pair must be a planted case and a real steady case"
+        if (plant["f0_hz"], plant["ppb"]) != (real["f0_hz"], real["ppb"]):
+            return "the pair is not at the same tone and ratio"
+        for tag, case in (("plant", plant), ("real", real)):
+            qd, g = rec.get(tag + "_q_db"), rec.get(tag + "_gain_db")
+            problem = None if not isinstance(qd, (int, float)) else quality_agrees(case, q, qd, g)
+            problem = problem or quality_verdict(case, q, qd, g)
+            if problem:
+                return "%s: %s" % (tag, problem)
+        return None
     if kind == "tone":
         t = _by_id(vec["tones"]).get(rid)
         if t is None:
@@ -367,6 +463,18 @@ def meta_results(vec: Optional[dict]) -> List[Result]:
     failed = [name for name, ok, _ in _ANCHOR_CACHE[0] if not ok]
     out.append(Result("D03-META-ANCHORS", "failed" if failed else "passed",
                       ("failed: " + "; ".join(failed[:MAX_PRINTED])) if failed else "reference agrees with a naive simulation", "AC4"))
+    try:
+        with open(CONTRACT, encoding="utf-8") as handle:
+            declared = contract_bands(handle.read())
+    except OSError:
+        declared = {}
+    in_ref = {int(f): dict(b) for f, b in ref.QUALITY_BANDS.items()}
+    in_vec = {int(f): dict(b) for f, b in (vec or {}).get("quality", {}).get("bands", {}).items()} if vec else in_ref
+    bands_ok = bool(declared) and declared == in_ref == in_vec
+    out.append(Result("D03-META-BANDS-DECLARED", "passed" if bands_ok else "failed",
+                      "the band table in docs/contracts/d03.md equals the reference's and the vectors'" if bands_ok else
+                      "the declared bands differ: contract %s, reference %s, vectors %s (a band is moved by adding a dated "
+                      "row, not by editing one)" % (declared, in_ref, in_vec), "AC4"))
     fresh = gen.render()
     try:
         with open(VECTORS, encoding="utf-8") as handle:
