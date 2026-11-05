@@ -42,10 +42,20 @@ impl RingShared {
     }
 }
 
+/// Saturating increment: stops at `u32::MAX` instead of wrapping.
 fn bump(counter: &AtomicU32) {
-    let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-        Some(v.saturating_add(1))
-    });
+    let mut current = counter.load(Ordering::Relaxed);
+    while current != u32::MAX {
+        match counter.compare_exchange_weak(
+            current,
+            current + 1,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return,
+            Err(observed) => current = observed,
+        }
+    }
 }
 
 /// Write half of a ring. Not `Clone`: there is exactly one producer.
@@ -328,6 +338,26 @@ mod tests {
         (0..frames * 2)
             .map(|i| start.wrapping_add(i as u8))
             .collect()
+    }
+
+    #[test]
+    fn bump_increments_by_one_and_saturates_instead_of_wrapping() {
+        let counter = AtomicU32::new(0);
+        bump(&counter);
+        bump(&counter);
+        assert_eq!(counter.load(Ordering::Relaxed), 2);
+
+        let near_max = AtomicU32::new(u32::MAX - 2);
+        for _ in 0..5 {
+            bump(&near_max);
+        }
+        assert_eq!(near_max.load(Ordering::Relaxed), u32::MAX);
+        bump(&near_max);
+        assert_eq!(
+            near_max.load(Ordering::Relaxed),
+            u32::MAX,
+            "must not wrap to 0"
+        );
     }
 
     #[test]
