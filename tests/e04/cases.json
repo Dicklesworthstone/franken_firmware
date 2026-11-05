@@ -1068,6 +1068,53 @@
    "tier": "full"
   },
   {
+   "id": "E04-ANCHOR-002",
+   "kind": "anchor_hand_derived",
+   "tier": "smoke"
+  },
+  {
+   "id": "E04-ANCHOR-DEFECT-01",
+   "kind": "anchor_defect",
+   "tier": "full",
+   "defect": "clamp_like_dsp"
+  },
+  {
+   "id": "E04-ANCHOR-DEFECT-02",
+   "kind": "anchor_defect",
+   "tier": "full",
+   "defect": "base_off_by_one"
+  },
+  {
+   "id": "E04-ANCHOR-DEFECT-03",
+   "kind": "anchor_defect",
+   "tier": "full",
+   "defect": "call_on_wrong_number"
+  },
+  {
+   "id": "E04-ANCHOR-DEFECT-04",
+   "kind": "anchor_defect",
+   "tier": "full",
+   "defect": "payload_access_lost"
+  },
+  {
+   "id": "E04-ANCHOR-DEFECT-05",
+   "kind": "anchor_defect",
+   "tier": "full",
+   "defect": "get_set_confused"
+  },
+  {
+   "id": "E04-ANCHOR-DEFECT-06",
+   "kind": "anchor_defect",
+   "tier": "full",
+   "defect": "lower_bound_overclaimed"
+  },
+  {
+   "id": "E04-ANCHOR-DEFECT-07",
+   "kind": "anchor_defect",
+   "tier": "full",
+   "defect": "i2c_claimed_to_work"
+  },
+  {
    "id": "E04-LOG-001",
    "kind": "meta_log",
    "tier": "smoke"
@@ -1320,6 +1367,20 @@
    "text": "the committed anchor facts reproduce from the artifact",
    "cases": [
     "E04-ANCHOR-001"
+   ]
+  },
+  {
+   "id": "INV-HANDLER-FACTS",
+   "text": "the facts about the audioctl and i2c ioctl handlers (command-word constants, the number window, per-number reachable functions and payload accesses, the i2c stub) agree with an independent hand reading of the disassembly, and a wrong value in any fact the hand reading covers is caught; no HAL-operation mapping is claimed",
+   "cases": [
+    "E04-ANCHOR-002",
+    "E04-ANCHOR-DEFECT-01",
+    "E04-ANCHOR-DEFECT-02",
+    "E04-ANCHOR-DEFECT-03",
+    "E04-ANCHOR-DEFECT-04",
+    "E04-ANCHOR-DEFECT-05",
+    "E04-ANCHOR-DEFECT-06",
+    "E04-ANCHOR-DEFECT-07"
    ]
   },
   {

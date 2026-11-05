@@ -43,6 +43,7 @@ CASES_FILE = os.path.join(HERE, "cases.json")
 SIM_FILE = os.path.join(HERE, "sim_cases.json")
 MATRIX_FILE = os.path.join(HERE, "matrix_audiodev_m16.json")
 ANCHORS_FILE = os.path.join(HERE, "anchors", "audiodev_m16.json")
+HAND_FILE = os.path.join(HERE, "anchors", "audioctl_hand_derived.json")
 DOC_FILE = os.path.join(REPO, "docs", "contracts", "e04.md")
 RUST_DIR = os.path.join(REPO, "crates", "franken-hal", "src")
 SCHEMA = "ffw.e04.cases.v1"
@@ -51,7 +52,7 @@ TIERS = ("smoke", "full")
 KINDS = ("ioctl_decode", "ioctl_encode", "read_uint", "field_map", "matrix_real", "matrix_scenario",
          "matrix_size_independence", "sim_trace", "planted_defect", "anchor_facts", "meta_files",
          "meta_shared_vectors", "meta_invariants", "meta_matrix_vs_anchors", "meta_hygiene", "meta_log",
-         "runner_selftest", "blocked")
+         "anchor_hand_derived", "anchor_defect", "runner_selftest", "blocked")
 
 PASS, FAIL, BLOCKED = "pass", "fail", "blocked"
 Result = Tuple[str, str]
@@ -286,7 +287,8 @@ def run_meta_log(c) -> Result:
 
 
 def run_meta_files(c) -> Result:
-    needed = [CASES_FILE, SIM_FILE, MATRIX_FILE, ANCHORS_FILE, DOC_FILE,
+    needed = [CASES_FILE, SIM_FILE, MATRIX_FILE, ANCHORS_FILE, HAND_FILE, DOC_FILE,
+              os.path.join(HERE, "anchor_crosscheck.py"),
               os.path.join(RUST_DIR, "contract.rs"), os.path.join(RUST_DIR, "dma_sim.rs"),
               os.path.join(RUST_DIR, "contract_log.rs"),
               os.path.join(REPO, "scripts", "e2e", "e04")]
@@ -363,11 +365,100 @@ def run_meta_matrix_vs_anchors(c) -> Result:
     default_nrs = set(anchors["dsp_ioctl"]["dispatch"]["default_nrs"])
     if handled & default_nrs or handled | default_nrs != set(range(anchors["dsp_ioctl"]["dispatch"]["entries"])):
         problems.append("handled and default command numbers do not partition the table")
+    ac = anchors["audioctl_ioctl"]
+    low, count = ac["derived"]["number_window_low"], ac["dispatch"]["entries"]
+    a_handled = {h["nr"] for h in ac["dispatch"]["handled"]}
+    a_default = set(ac["dispatch"]["default_nrs"])
+    if a_handled & a_default or a_handled | a_default != set(range(low, low + count)):
+        problems.append("audioctl handled and default command numbers do not partition its number window")
+    if ac["derived"]["number_window_high"] != low + count - 1:
+        problems.append("audioctl number window and table size disagree")
     return (PASS, "") if not problems else (FAIL, "; ".join(problems))
 
 
+# ---------------------------------------------------------------- audioctl / i2c facts against a hand reading
+
+def hand_derived_problems(anchors: Dict[str, Any], hand: Dict[str, Any]) -> List[str]:
+    """Every difference between the committed handler facts and the hand reading of the disassembly."""
+    problems: List[str] = []
+    ac, h = anchors["audioctl_ioctl"], hand["audioctl"]
+    d = ac["derived"]
+    for key in ("copy_size_limit_bytes", "copy_out_size_limit_bytes", "number_base"):
+        if d[key] != h[key]:
+            problems.append(f"audioctl {key} is {d[key]}, the hand reading says {h[key]}")
+    if [d["number_window_low"], d["number_window_high"]] != h["number_window"]:
+        problems.append(f"audioctl number window is {[d['number_window_low'], d['number_window_high']]}, "
+                        f"the hand reading says {h['number_window']}")
+    if not ac["dispatch"]["default_is"].startswith(h["unhandled_numbers_go_to"]):
+        problems.append(f"unhandled numbers go to {ac['dispatch']['default_is']!r}, the hand reading says "
+                        f"{h['unhandled_numbers_go_to']!r}")
+    if ac["common_tail"]["calls"] != h["common_tail_calls"]:
+        problems.append(f"the common tail calls {ac['common_tail']['calls']}, the hand reading says {h['common_tail_calls']}")
+    by_nr = {x["nr"]: x for x in ac["dispatch"]["handled"]}
+    for nr_text, want in hand["cases"].items():
+        got = by_nr.get(int(nr_text))
+        if got is None:
+            problems.append(f"number {nr_text} is not handled in the facts; the hand reading says it is")
+            continue
+        for field in ("calls", "frame_accesses", "payload_address_taken_at"):
+            if got[field] != want[field]:
+                problems.append(f"number {nr_text} {field} is {got[field]}, the hand reading says {want[field]}")
+    i2c, hi = anchors["i2c_ioctl"], hand["i2c"]
+    if len(i2c["instructions"]) != hi["instruction_count"]:
+        problems.append(f"i2c has {len(i2c['instructions'])} instructions, the hand reading says {hi['instruction_count']}")
+    if i2c["derived"]["returns_constant"] != hi["returns_constant"]:
+        problems.append(f"i2c returns {i2c['derived']['returns_constant']}, the hand reading says {hi['returns_constant']}")
+    if i2c["derived"]["reads_argument_registers"] != hi["reads_argument_registers"]:
+        problems.append("i2c argument-register use differs from the hand reading")
+    return problems
+
+
+def run_anchor_hand_derived(c) -> Result:
+    anchors, hand = load_json(ANCHORS_FILE), load_json(HAND_FILE)
+    problems = hand_derived_problems(anchors, hand)
+    window = hand["audioctl"]["number_window"]
+    problems += [f"hand-derived number {n} is outside the window" for n in hand["cases"] if not window[0] <= int(n) <= window[1]]
+    return (PASS, f"{len(hand['cases'])} handled numbers, the command-word constants and the i2c stub agree with the hand reading") \
+        if not problems else (FAIL, "; ".join(problems))
+
+
+def _handled(a: Dict[str, Any], nr: int) -> Dict[str, Any]:
+    return next(x for x in a["audioctl_ioctl"]["dispatch"]["handled"] if x["nr"] == nr)
+
+
+def _swap_63_64(a: Dict[str, Any]) -> None:
+    x, y = _handled(a, 63), _handled(a, 64)
+    x["frame_accesses"], y["frame_accesses"] = y["frame_accesses"], x["frame_accesses"]
+
+
+# Each wrong fact is one the hand reading covers; the comparison must see it.
+ANCHOR_DEFECTS: Dict[str, Callable[[Dict[str, Any]], None]] = {
+    "clamp_like_dsp": lambda a: a["audioctl_ioctl"]["derived"].__setitem__("copy_size_limit_bytes", 16),
+    "base_off_by_one": lambda a: a["audioctl_ioctl"]["derived"].__setitem__("number_base", 5),
+    "call_on_wrong_number": lambda a: _handled(a, 62).__setitem__("calls", ["audioctl_set_leds"]),
+    "payload_access_lost": lambda a: _handled(a, 64).__setitem__("frame_accesses", []),
+    "get_set_confused": _swap_63_64,
+    "lower_bound_overclaimed": lambda a: _handled(a, 155).__setitem__("payload_address_taken_at", []),
+    "i2c_claimed_to_work": lambda a: a["i2c_ioctl"]["derived"].__setitem__("returns_constant", 1),
+}
+
+
+def run_anchor_defect(c) -> Result:
+    anchors, hand = load_json(ANCHORS_FILE), load_json(HAND_FILE)
+    base = hand_derived_problems(anchors, hand)
+    if base:
+        return FAIL, f"baseline is not green, so no catch can be credited: {base}"
+    if c["defect"] not in ANCHOR_DEFECTS:
+        return FAIL, f"unknown defect {c['defect']!r}"
+    bad = copy.deepcopy(anchors)
+    ANCHOR_DEFECTS[c["defect"]](bad)
+    seen = hand_derived_problems(bad, hand)
+    return (PASS, f"caught: {seen[0]}") if seen else (FAIL, f"defect {c['defect']!r} was not caught by the hand reading")
+
+
 HYGIENE_FILES = ("cases.json", "sim_cases.json", "matrix_audiodev_m16.json", "anchors/audiodev_m16.json",
-                 "anchor_extract.py", "sim_ref.py", "contract_ref.py", "run_cases.py")
+                 "anchors/audioctl_hand_derived.json", "anchor_extract.py", "anchor_crosscheck.py", "sim_ref.py",
+                 "contract_ref.py", "run_cases.py")
 ALLOWED_DIGESTS = {anchor_extract.EXPECTED_SHA256, contract_ref.FIXTURE_SHA}
 
 
@@ -421,6 +512,7 @@ RUNNERS: Dict[str, Callable[[Dict[str, Any]], Result]] = {
     "planted_defect": run_planted_defect, "anchor_facts": run_anchor_facts, "meta_files": run_meta_files,
     "meta_shared_vectors": run_meta_shared_vectors, "meta_log": run_meta_log, "meta_invariants": run_meta_invariants,
     "meta_matrix_vs_anchors": run_meta_matrix_vs_anchors, "meta_hygiene": run_meta_hygiene,
+    "anchor_hand_derived": run_anchor_hand_derived, "anchor_defect": run_anchor_defect,
     "runner_selftest": run_runner_selftest, "blocked": run_blocked,
 }
 
