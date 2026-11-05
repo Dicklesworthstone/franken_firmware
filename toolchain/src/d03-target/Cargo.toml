@@ -1,0 +1,31 @@
+[package]
+name = "ffw-d03-target"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# D03's drift resampler on the soft-float big-endian MIPS device target, run as PID 1 under QEMU (ffw-j9r, "Measure
+# quality and CPU on target ISA"): guest instructions per output frame, and the resampled f32 samples of the host
+# quality tones for the host to judge. Consumer: toolchain/src/measure-d03-target.py. It is built only for that
+# measurement and never ships.
+#
+# Its own workspace root, like ffw-hello-init and ffw-d02-cost, so the application workspace, its lockfile and the
+# P01 workspace contract are not touched. It needs `unsafe` for exactly three things (reading the cycle counter, the
+# calibration loops, and the reboot call, all in `main.rs`), which the workspace's `forbid(unsafe_code)` would
+# refuse, so it does not inherit it. `src/cases.rs` has no `unsafe` and is also compiled into the host test
+# `crates/franken-dsp/tests/d03_target_samples.rs`, so both builds run the same source text.
+
+[workspace]
+
+[dependencies]
+franken-dsp = { path = "../../../crates/franken-dsp" }
+
+# The device speaker's release profile, copied from the workspace root because a profile is read from the workspace
+# root and this package is its own. Instruction counts depend on opt-level (`z` favours size), so a measurement at
+# another level would not describe the shipped code. `strip` is left off so the ELF can be disassembled; it does not
+# change generated code.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"

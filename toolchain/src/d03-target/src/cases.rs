@@ -14,8 +14,8 @@
 //! `tests/d03`-style analytic comparison with a tolerance, never by byte equality, so a one-ulp `libm` difference
 //! cannot matter there.
 
-use franken_dsp::resample::{DriftResampler, ResamplerConfig, SliceSource};
 use franken_dsp::FRAMES_PER_BLOCK;
+use franken_dsp::resample::{DriftResampler, ResamplerConfig, SliceSource};
 
 /// -1 dBFS: 10^(-1/20), the shortest `f64` that round-trips.
 pub const AMP: f64 = 0.891_250_938_133_745_6;

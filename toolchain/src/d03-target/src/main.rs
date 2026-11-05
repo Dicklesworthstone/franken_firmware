@@ -234,10 +234,7 @@ fn run_cpu_case(case: &CpuCase, noise: (&[f32], &[f32]), silence: &[f32]) -> Vec
         let mut out_r = [0.0_f32; FRAMES_PER_BLOCK];
         for _ in 0..WARMUP_BLOCKS {
             let mut src = SliceSource::new(left_in, right_in).expect("equal channel lengths");
-            black_box(
-                rs.render(&mut src, &mut out_l, &mut out_r)
-                    .expect("render"),
-            );
+            black_box(rs.render(&mut src, &mut out_l, &mut out_r).expect("render"));
         }
         lines.push(format!(
             "FFW_D03T_WARM name={} input={} ramp_left={} ratio_ppb={} target_ppb={}",
@@ -255,10 +252,8 @@ fn run_cpu_case(case: &CpuCase, noise: (&[f32], &[f32]), silence: &[f32]) -> Vec
             let start = count();
             compiler_fence(Ordering::SeqCst);
             for _ in 0..BLOCKS_PER_REP {
-                let report = black_box(
-                    rs.render(&mut src, &mut out_l, &mut out_r)
-                        .expect("render"),
-                );
+                let report =
+                    black_box(rs.render(&mut src, &mut out_l, &mut out_r).expect("render"));
                 produced += report.produced;
             }
             compiler_fence(Ordering::SeqCst);
