@@ -1,0 +1,67 @@
+# Coverage-guided fuzz targets for the N01 parsers (docs/contracts/n01.md section 11).
+#
+# A HOST-ONLY TOOL, never part of a device image. It has its own [workspace] table, so it is not a member of the
+# repository workspace and no device build resolves it; it is the cargo-fuzz layout. It depends on franken-stream
+# by path, never the other way round. Its Cargo.lock is its own and is committed (section 11): regenerate it with
+# `cargo +nightly generate-lockfile --offline --manifest-path crates/franken-stream/fuzz/Cargo.toml` whenever this manifest or
+# a manifest under franken-stream changes; tests/n01/test_fuzz_lock.py fails when they disagree.
+[package]
+name = "franken-stream-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[features]
+# The CONTROL build only: the harness's call into the real decoder panics when an accepted packet carries a payload of
+# exactly plant::CONTROL_PAYLOAD_LEN bytes, so the control run can prove the fuzzer reaches an accepted packet of a
+# chosen shape and reports the crash. The planted bug lives here, never in franken-stream. Clean runs never enable it.
+control = []
+
+[dependencies]
+libfuzzer-sys = "0.4"
+franken-stream = { path = ".." }
+hmac = "0.13"
+sha2 = "0.11"
+serde_json = "1.0"
+
+# Not a member of the repository workspace.
+[workspace]
+
+[[bin]]
+name = "stream_decode"
+path = "fuzz_targets/stream_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stream_receiver"
+path = "fuzz_targets/stream_receiver.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "negotiation_respond"
+path = "fuzz_targets/negotiation_respond.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "negotiation_finish"
+path = "fuzz_targets/negotiation_finish.rs"
+test = false
+doc = false
+bench = false
+
+# Writes the seed corpus (the committed golden vectors) and prints how many files each target got.
+[[bin]]
+name = "seed_corpus"
+path = "src/bin/seed_corpus.rs"
+test = false
+doc = false
+bench = false

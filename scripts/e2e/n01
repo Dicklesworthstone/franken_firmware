@@ -7,6 +7,9 @@
 #   scripts/e2e/n01 --judge-guest LOG [--endian big|little]
 #                              judge the log of the `n01_wire_guest` binary (docs/contracts/n01.md section 7):
 #                              every vector, planted datagram and the byte-order probe. Exit 0 only if all hold.
+#   scripts/e2e/n01 --judge-fuzz seeds SEEDS_LOG
+#   scripts/e2e/n01 --judge-fuzz run LOG --target T --kind clean|control --budget SECONDS [...]
+#                              judge the logs of the central coverage-guided fuzz runs (docs/contracts/n01.md section 11).
 #
 # Exit 0 only when every check passes; any failure exits non-zero.
 #
@@ -31,8 +34,12 @@ if [ "${1:-}" = "--judge-guest" ]; then
   fi
   exec python3 -B -I "$ROOT/tests/n01/guest_transcript.py" "$@"
 fi
+if [ "${1:-}" = "--judge-fuzz" ]; then
+  shift
+  exec python3 -B -I "$ROOT/tests/n01/fuzz_judge.py" "$@"
+fi
 if [ "$#" -ne 0 ]; then
-  echo "usage: scripts/e2e/n01 [--write | --judge-guest LOG [--endian big|little]]" >&2
+  echo "usage: scripts/e2e/n01 [--write | --judge-guest LOG [--endian big|little] | --judge-fuzz seeds|run ...]" >&2
   exit 2
 fi
 
