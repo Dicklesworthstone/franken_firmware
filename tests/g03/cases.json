@@ -1,0 +1,463 @@
+{
+  "schema": "ffw.g03.cases.v1",
+  "bead": "ffw-xvv",
+  "notes": [
+    "Each invariant names the golden vectors (ids in crates/franken-control/tests/vectors/g03_vectors.json) and the Rust tests (file::function under crates/franken-control/src/fsonos/) that check it. tests/g03/test_reference_model.py fails if a name here does not exist.",
+    "A Rust test named here is a claim that it exists and is meant to check the invariant. Whether it passes is decided only by the centralized build; nothing offline runs it.",
+    "Invariants with no vector (the ingress policy and the mapping onto N02) are checked by Rust tests only and have no independent model; docs/contracts/g03.md section 10 says so."
+  ],
+  "invariants": [
+    {
+      "id": "G03-I01",
+      "statement": "A request over the size cap is refused before it is decoded or allocated, and a body at the cap is not.",
+      "vectors": [
+        "soap-over-the-size-cap",
+        "soap-at-the-size-cap-is-not-too-large",
+        "soap-oversize-is-refused-before-it-is-read"
+      ],
+      "rust_tests": [
+        "xml::the_size_is_checked_before_anything_is_read_or_allocated",
+        "xml::nesting_elements_attributes_names_and_values_are_each_capped",
+        "xml::an_expansion_that_grows_past_the_value_bound_stops_there",
+        "soap::xml_that_is_too_large_or_dangerous_maps_to_the_right_fault",
+        "server::malformed_oversize_and_hostile_bodies_are_refused_without_allocation_or_echo"
+      ]
+    },
+    {
+      "id": "G03-I02",
+      "statement": "DTDs, entity declarations, comments, CDATA, processing instructions, undefined entities and other encodings are refused, so XXE and billion-laughs cannot be expressed.",
+      "vectors": [
+        "soap-doctype-is-refused",
+        "soap-billion-laughs-is-refused-at-the-doctype",
+        "soap-external-entity-is-refused",
+        "soap-comment-is-refused",
+        "soap-cdata-is-refused",
+        "soap-processing-instruction-is-refused",
+        "soap-undefined-entity-is-refused",
+        "soap-other-encoding-is-refused",
+        "soap-whitespace-before-the-declaration-is-refused"
+      ],
+      "rust_tests": [
+        "xml::a_doctype_an_entity_declaration_a_comment_cdata_and_a_pi_are_refused",
+        "xml::a_billion_laughs_document_is_refused_before_any_expansion",
+        "xml::the_five_entities_and_numeric_references_decode_and_nothing_else_does",
+        "xml::declarations_other_than_plain_utf8_are_refused",
+        "xml::invalid_utf8_is_refused",
+        "soap::whitespace_before_the_xml_declaration_is_refused_as_xml_requires"
+      ]
+    },
+    {
+      "id": "G03-I03",
+      "statement": "Escaping is exact in both directions: the five predefined entities and numeric references decode, output escapes what must be escaped, and a character XML forbids is replaced, never written.",
+      "vectors": [
+        "esc-text-specials",
+        "esc-attr-specials",
+        "esc-control-character",
+        "esc-keeps-whitespace",
+        "esc-unicode-unchanged",
+        "esc-empty",
+        "esc-attribute-injection",
+        "esc-escapes-an-escape-again",
+        "soap-entities-are-decoded"
+      ],
+      "rust_tests": [
+        "xml::escaping_round_trips_through_the_reader",
+        "xml::escaping_text_leaves_quotes_alone_and_attributes_do_not",
+        "xml::a_character_xml_forbids_is_replaced_not_written",
+        "soap::a_response_envelope_names_the_action_response_and_escapes_its_values",
+        "soap::the_embedded_document_survives_a_round_trip_through_the_reader",
+        "state::a_hostile_member_name_is_escaped_in_the_document"
+      ]
+    },
+    {
+      "id": "G03-I04",
+      "statement": "The SOAPACTION header must be present, well formed and agree with the body about the service and the action; the request path must agree too.",
+      "vectors": [
+        "soap-no-soapaction",
+        "soap-soapaction-without-hash",
+        "soap-soapaction-unknown-service",
+        "soap-soapaction-bad-action-name",
+        "soap-header-and-body-name-different-actions",
+        "soap-header-and-body-name-different-services",
+        "soap-header-without-quotes"
+      ],
+      "rust_tests": [
+        "soap::the_header_must_be_present_well_formed_and_agree_with_the_body",
+        "soap::the_namespaces_must_be_the_ones_they_claim_to_be",
+        "server::the_path_and_the_soap_action_must_name_the_same_service"
+      ]
+    },
+    {
+      "id": "G03-I05",
+      "statement": "A call has exactly one action with flat text arguments: two actions, nested markup, a repeated argument, too many arguments, a wrong envelope namespace, an unterminated or empty document are all refused.",
+      "vectors": [
+        "soap-two-actions-in-one-body",
+        "soap-nested-markup-in-an-argument",
+        "soap-repeated-argument",
+        "soap-seventeen-arguments",
+        "soap-wrong-envelope-namespace",
+        "soap-unterminated-document",
+        "soap-text-before-the-root",
+        "soap-empty-body",
+        "soap-controller-style-call",
+        "soap-no-arguments",
+        "soap-empty-argument-element",
+        "soap-other-prefixes-are-fine",
+        "soap-default-namespaces-are-fine"
+      ],
+      "rust_tests": [
+        "soap::shape_errors_are_refused",
+        "soap::a_repeated_argument_is_invalid_args_and_too_many_arguments_are_refused",
+        "soap::a_controller_style_call_parses_with_its_arguments_in_order",
+        "soap::arguments_are_decoded_and_an_empty_argument_is_empty",
+        "soap::an_action_with_no_arguments_parses"
+      ]
+    },
+    {
+      "id": "G03-I06",
+      "statement": "No fault, header or body carries text the peer sent; reasons are fixed words.",
+      "vectors": [],
+      "rust_tests": [
+        "xml::an_error_never_echoes_the_input",
+        "soap::a_fault_never_carries_what_the_peer_sent",
+        "actions::a_peers_text_never_reaches_the_fault",
+        "server::a_peers_text_is_never_echoed_in_a_fault"
+      ]
+    },
+    {
+      "id": "G03-I07",
+      "statement": "Each fault has the HTTP status and, where UPnP defines one (or the vendor range does, for the typed outcome-unknown fault 801), the error code, in the envelope shape the controller side reads.",
+      "vectors": [],
+      "rust_tests": [
+        "soap::every_fault_has_a_status_and_the_standard_upnp_code_where_one_exists",
+        "soap::a_fault_envelope_has_the_shape_the_controller_side_reads",
+        "server::bad_arguments_are_402_and_change_nothing"
+      ]
+    },
+    {
+      "id": "G03-I08",
+      "statement": "An unknown action is fault 401 and a known but deferred action is fault 602; neither is ever a success and neither changes the group.",
+      "vectors": [
+        "plan-unknown-action",
+        "plan-action-of-another-service",
+        "plan-deferred-play",
+        "plan-deferred-pause",
+        "plan-deferred-set-av-transport-uri",
+        "plan-deferred-get-media-info",
+        "plan-deferred-get-position-info",
+        "plan-deferred-delegate-coordination",
+        "plan-deferred-get-bass",
+        "plan-deferred-ramp-to-volume"
+      ],
+      "rust_tests": [
+        "actions::an_unknown_action_is_invalid_action_and_a_known_deferred_one_is_not_implemented",
+        "actions::every_implemented_action_has_a_plan_for_valid_arguments_and_no_deferred_one_does",
+        "server::an_unknown_action_is_401_a_deferred_one_is_602_and_neither_is_a_success"
+      ]
+    },
+    {
+      "id": "G03-I09",
+      "statement": "The legacy content catalog is not reintroduced: every ContentDirectory action is 602, it has no matrix rows and no events.",
+      "vectors": [
+        "plan-retired-catalog-browse",
+        "plan-retired-catalog-anything",
+        "gena-callback-policy"
+      ],
+      "rust_tests": [
+        "actions::the_retired_content_catalog_is_not_implemented_whatever_the_action",
+        "actions::the_matrix_has_one_row_per_action_and_is_ordered_by_use",
+        "gena::the_legacy_content_catalog_has_no_events",
+        "server::duplicate_event_headers_and_the_retired_catalog_are_refused"
+      ]
+    },
+    {
+      "id": "G03-I10",
+      "statement": "Arguments are validated strictly before anything is read or built: whole numbers in range, no clamping, no guessing, every required argument present, none extra, the supported instance and channel only.",
+      "vectors": [
+        "plan-set-volume-30",
+        "plan-set-volume-0",
+        "plan-set-volume-100",
+        "plan-set-volume-plus-sign",
+        "plan-set-volume-leading-zeros",
+        "plan-set-volume-101",
+        "plan-set-volume-negative",
+        "plan-set-volume-fraction",
+        "plan-set-volume-exponent",
+        "plan-set-volume-empty",
+        "plan-set-volume-words",
+        "plan-set-volume-too-many-digits",
+        "plan-set-volume-non-ascii-digit",
+        "plan-set-volume-missing-argument",
+        "plan-set-volume-extra-argument",
+        "plan-argument-order-does-not-matter",
+        "plan-instance-1",
+        "plan-channel-lf",
+        "plan-whitespace-around-values-is-fine",
+        "plan-mute-1",
+        "plan-mute-true-any-case",
+        "plan-mute-0",
+        "plan-mute-false",
+        "plan-mute-2",
+        "plan-mute-yes",
+        "plan-relative-volume-up",
+        "plan-relative-volume-down",
+        "plan-relative-volume-zero",
+        "plan-relative-volume-negative-zero",
+        "plan-relative-volume-101"
+      ],
+      "rust_tests": [
+        "actions::volumes_are_whole_numbers_from_0_to_100_and_nothing_is_clamped_or_guessed",
+        "actions::adjustments_are_nonzero_whole_numbers_within_100",
+        "actions::mute_accepts_the_upnp_booleans_and_nothing_else",
+        "actions::the_instance_and_the_channel_must_be_the_supported_ones",
+        "actions::a_missing_or_extra_argument_is_refused_before_anything_else",
+        "actions::volume_and_mute_calls_plan_to_reads_and_commands"
+      ]
+    },
+    {
+      "id": "G03-I11",
+      "statement": "The action matrix is the measured one; exactly the in-scope actions are implemented; exactly the two relative actions are marked relative.",
+      "vectors": [
+        "plan-get-volume",
+        "plan-get-mute",
+        "plan-get-group-volume",
+        "plan-get-transport-info",
+        "plan-get-zone-group-state",
+        "plan-snapshot-group-volume-is-acknowledged",
+        "plan-set-group-volume",
+        "plan-relative-group-volume",
+        "plan-stop"
+      ],
+      "rust_tests": [
+        "actions::exactly_the_actions_in_scope_are_implemented",
+        "actions::a_command_is_relative_exactly_when_its_matrix_row_says_so",
+        "actions::group_volume_and_transport_calls_plan_correctly",
+        "actions::the_matrix_has_one_row_per_action_and_is_ordered_by_use"
+      ]
+    },
+    {
+      "id": "G03-I12",
+      "statement": "Reads are of the live session at the moment asked, so topology is never stale; an endpoint outside the group says so and reports no volume.",
+      "vectors": [],
+      "rust_tests": [
+        "state::the_event_state_reads_the_live_session",
+        "state::the_topology_document_lists_the_group_the_session_holds",
+        "state::the_group_id_follows_the_epoch_so_a_moved_group_is_a_new_group",
+        "state::an_endpoint_that_is_not_in_the_group_reports_no_volume_or_mute",
+        "state::an_empty_group_is_not_muted",
+        "server::local_reads_answer_from_the_live_session",
+        "server::the_topology_read_is_the_escaped_document_and_never_stale",
+        "server::an_endpoint_that_left_the_group_says_so_instead_of_a_stale_volume"
+      ]
+    },
+    {
+      "id": "G03-I13",
+      "statement": "The topology document is well formed and every member carries the attributes the controller side requires.",
+      "vectors": [],
+      "rust_tests": [
+        "state::the_topology_document_is_well_formed_and_every_member_has_the_required_attributes",
+        "gena::a_topology_event_carries_the_document_and_the_revision"
+      ]
+    },
+    {
+      "id": "G03-I14",
+      "statement": "A subscription is granted with a synthetic id, a clamped timeout and the full initial state; infinite and absent mean the default; a malformed timeout is refused.",
+      "vectors": [
+        "gena-timeouts-are-clamped",
+        "gena-subscribe-then-deltas"
+      ],
+      "rust_tests": [
+        "gena::timeouts_are_clamped_and_the_default_stands_in_for_infinite_or_none",
+        "gena::a_subscription_is_granted_with_an_id_a_timeout_and_the_full_initial_state",
+        "gena::each_service_sends_the_variables_the_controller_side_reads",
+        "server::a_local_subscribe_answers_with_sid_and_timeout_and_the_full_initial_state"
+      ]
+    },
+    {
+      "id": "G03-I15",
+      "statement": "A renewal runs from now and keeps the id; a renewal naming a callback or NT is refused; an unknown, expired or other-service id is 412.",
+      "vectors": [
+        "gena-expiry-and-renewal",
+        "gena-renewal-rules"
+      ],
+      "rust_tests": [
+        "gena::a_renewal_runs_from_now_and_keeps_the_id",
+        "gena::a_renewal_with_a_callback_or_nt_is_a_400_and_changes_nothing",
+        "gena::a_stale_or_unknown_or_other_service_id_is_a_412",
+        "server::renew_and_unsubscribe_follow_the_rules"
+      ]
+    },
+    {
+      "id": "G03-I16",
+      "statement": "Expiry is exact and lazy: live a nanosecond before, gone at the instant; a lapsed subscription is removed and not notified.",
+      "vectors": [
+        "gena-expiry-and-renewal",
+        "gena-a-lapsed-subscription-is-not-notified"
+      ],
+      "rust_tests": [
+        "gena::expiry_is_exact_live_a_nanosecond_before_gone_at_the_instant",
+        "gena::a_stale_subscription_is_not_notified_and_is_removed_by_the_publish",
+        "server::subscription_expiry_is_driven_by_the_clock_the_owner_passes"
+      ]
+    },
+    {
+      "id": "G03-I17",
+      "statement": "SEQ is 0 for the initial event, counts up, and after 4294967295 wraps to 1, never 0.",
+      "vectors": [
+        "gena-seq-wraps-to-one-never-zero"
+      ],
+      "rust_tests": [
+        "gena::the_sequence_counts_up_from_zero_and_wraps_to_one_never_zero"
+      ]
+    },
+    {
+      "id": "G03-I18",
+      "statement": "The subscription table is bounded; a full table is 503; expiry and unsubscribe free places.",
+      "vectors": [
+        "gena-the-table-is-bounded"
+      ],
+      "rust_tests": [
+        "gena::the_table_is_bounded_and_expiry_and_unsubscribe_free_places"
+      ]
+    },
+    {
+      "id": "G03-I19",
+      "statement": "A callback must be one http URL naming the requester's own IP literal, so the endpoint cannot be made to notify a third party.",
+      "vectors": [
+        "gena-callback-policy"
+      ],
+      "rust_tests": [
+        "gena::a_callback_must_be_one_http_url_naming_the_requester",
+        "gena::a_callback_for_another_host_is_refused_so_no_third_party_can_be_made_a_target",
+        "gena::a_subscribe_without_the_right_nt_or_a_callback_is_a_412",
+        "server::a_callback_for_someone_else_is_a_412_so_the_endpoint_is_no_relay"
+      ]
+    },
+    {
+      "id": "G03-I20",
+      "statement": "Events carry the state revision and only what changed for each subscriber; an unchanged state sends nothing; a late subscriber is told everything and an earlier one what it missed; nothing false is sent for an endpoint outside the group.",
+      "vectors": [
+        "gena-subscribe-then-deltas",
+        "gena-each-service-hears-only-its-own-changes",
+        "gena-a-late-subscriber-is-told-everything-an-early-one-is-told-what-it-missed",
+        "gena-an-endpoint-outside-the-group-says-nothing-false",
+        "gena-subscribing-outside-the-group-sends-only-what-is-true"
+      ],
+      "rust_tests": [
+        "gena::publishing_sends_only_what_changed_to_the_services_it_changed_for",
+        "gena::publishing_the_same_state_again_sends_nothing",
+        "gena::a_change_to_several_variables_arrives_as_one_event",
+        "gena::a_late_subscriber_gets_the_full_state_and_an_earlier_one_is_unaffected",
+        "gena::an_endpoint_that_leaves_the_group_stops_reporting_a_volume_it_no_longer_has",
+        "gena::every_body_is_well_formed_and_within_the_reader_bounds",
+        "server::a_command_publishes_a_delta_with_the_new_revision_to_each_affected_subscriber"
+      ]
+    },
+    {
+      "id": "G03-I21",
+      "statement": "Subscription ids are unique for a table's life and differ between incarnations, so an id from before a restart is a 412.",
+      "vectors": [],
+      "rust_tests": [
+        "gena::ids_are_unique_for_the_life_of_a_table_and_differ_between_tables",
+        "gena::after_a_restart_an_old_id_is_a_412_and_a_fresh_subscription_works"
+      ]
+    },
+    {
+      "id": "G03-I22",
+      "statement": "Unsubscribe removes the id; a second one, or one for another service, is 412.",
+      "vectors": [
+        "gena-unsubscribe"
+      ],
+      "rust_tests": [
+        "gena::an_unsubscribe_removes_the_id_and_a_second_one_is_a_412"
+      ]
+    },
+    {
+      "id": "G03-I23",
+      "statement": "Every command is an N02 command: it is rate-limited, lease-checked and ledgered; an unapplied command is a fault that says so; other peers' settlements are handed back, not lost.",
+      "vectors": [],
+      "rust_tests": [
+        "server::a_local_set_volume_goes_through_n02_and_changes_the_session",
+        "server::local_mute_group_volume_and_stop_work_and_each_is_one_n02_command",
+        "server::a_local_command_without_a_live_lease_is_refused_and_can_be_sent_again",
+        "server::a_local_flood_is_rate_limited_by_n02_and_cannot_starve_anything_else",
+        "server::another_peers_settled_commands_are_handed_back_not_lost",
+        "server::work_queued_behind_the_request_is_an_honest_fault_not_a_success"
+      ]
+    },
+    {
+      "id": "G03-I24",
+      "statement": "Tailnet ingress accepts only authenticated commands: the proof covers the SOAP arguments, every header problem is the same 401, and a tailnet peer learns nothing about the matrix or the events.",
+      "vectors": [],
+      "rust_tests": [
+        "server::a_tailnet_command_with_a_valid_authorization_is_applied_once",
+        "server::a_tailnet_proof_covers_the_soap_arguments_so_a_changed_value_fails",
+        "server::a_tailnet_proof_from_the_wrong_key_or_for_another_peer_fails",
+        "server::every_tailnet_header_problem_is_the_same_401_with_no_body",
+        "server::a_tailnet_peer_without_authorization_learns_nothing_about_the_matrix",
+        "server::a_tailnet_peer_cannot_subscribe_to_events",
+        "server::a_tailnet_stale_revision_epoch_and_reused_number_are_refused_by_n02",
+        "server::a_tailnet_set_without_a_revision_is_refused_and_a_relative_one_needs_the_exact_revision",
+        "server::a_tailnet_relative_group_change_reports_the_new_group_volume",
+        "server::a_tailnet_stop_names_its_time_and_both_are_signed"
+      ]
+    },
+    {
+      "id": "G03-I25",
+      "statement": "Local legacy policy: commands can be switched off, a revoked bridge fails closed without blaming the client, the bridge key is never printed, and each legacy command is a fresh command number.",
+      "vectors": [],
+      "rust_tests": [
+        "server::legacy_commands_can_be_switched_off_and_reads_and_events_still_work",
+        "server::a_revoked_bridge_fails_closed_with_the_owners_problem_not_the_clients",
+        "server::local_legacy_numbers_are_fresh_for_each_command",
+        "server::the_bridge_key_never_appears_in_debug_output",
+        "server::a_member_id_that_cannot_be_a_member_is_refused_at_construction"
+      ]
+    },
+    {
+      "id": "G03-I26",
+      "statement": "An unknown path is 404 and an unknown method is 405.",
+      "vectors": [],
+      "rust_tests": [
+        "server::an_unknown_path_is_404_and_an_unknown_method_is_405"
+      ]
+    },
+    {
+      "id": "G03-I27",
+      "statement": "The transport state is the owner's to supply and is evented; the owner can publish after its own change to the session.",
+      "vectors": [],
+      "rust_tests": [
+        "server::the_transport_state_is_the_owners_to_set_and_is_evented",
+        "server::the_owner_can_publish_after_its_own_change_to_the_session",
+        "state::the_transport_states_are_the_upnp_words"
+      ]
+    },
+    {
+      "id": "G03-I28",
+      "statement": "Relative changes are accepted over the local link, clamped to 0..=100, and report the resulting volume; a plain-SOAP retry applies twice (the stated hazard, pinned); the tailnet route with the same command id applies once.",
+      "vectors": [],
+      "rust_tests": [
+        "server::a_relative_change_over_the_local_link_applies_and_reports_the_resulting_volume",
+        "server::a_plain_soap_retry_of_a_relative_change_applies_twice_and_that_is_pinned",
+        "server::a_relative_change_is_clamped_to_the_volume_range",
+        "server::a_retried_relative_step_with_the_same_command_id_applies_once",
+        "server::a_tailnet_relative_group_change_reports_the_new_group_volume"
+      ]
+    },
+    {
+      "id": "G03-I29",
+      "statement": "Drop the ack after commit and retry through the adapter (N02 row 8): within retention the retry is answered with the committed result and the group shows one application; after retention it is the typed fault 801 and nothing is applied, for an absolute set and a relative step; after a channel restart the old copy is refused by the revision; an adapter that re-applies a retry, or answers success after retention, fails the judges while the real adapter passes them.",
+      "vectors": [],
+      "rust_tests": [
+        "server::a_dropped_ack_then_a_retry_through_the_adapter_is_one_effect",
+        "server::after_retention_a_retry_through_the_adapter_is_a_typed_out_of_window_fault",
+        "server::a_relative_step_retried_after_retention_is_unknown_and_never_applied_again",
+        "server::a_retry_that_outlives_a_channel_restart_is_refused_not_reapplied",
+        "server::the_planted_adapter_that_reapplies_on_retry_fails_the_one_effect_judge",
+        "server::the_planted_adapter_that_answers_success_after_retention_fails_the_retention_judge",
+        "server::a_plain_soap_retry_of_a_relative_change_applies_twice_and_that_is_pinned",
+        "server::a_retried_relative_step_with_the_same_command_id_applies_once"
+      ]
+    }
+  ]
+}

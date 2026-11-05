@@ -1,0 +1,92 @@
+{
+  "schema": "ffw.g01.cases.v1",
+  "bead": "ffw-kh0",
+  "notes": [
+    "Maps every G01 invariant to the golden scenarios that exercise it (crates/franken-session/tests/vectors/g01_scenarios.json) and to the Rust tests in crates/franken-session/src/membership.rs that check it.",
+    "tests/g01/test_reference_model.py verifies the mapping: each scenario names only declared invariants, each invariant's scenario list is exactly the scenarios that name it, every Rust test named here exists, and every Rust test is named here or listed under rust_only.",
+    "rule_matrix records, for every switch in the reference model's Rules, whether the scenarios notice it being removed and what the seeded partition schedule does about it. 'defends' means removing the rule trips the schedule (an overlap, a conflict, a failed assertion, or totals below the Rust floors). 'equivalent' means the contract (g01.md section 6.5) calls the rule redundant for the two-leader invariant when u bounds the skew, so the schedule is expected NOT to notice. 'out_of_scope' means the schedule never exercises it. The test pins this table, so a change in either direction has to be read and justified.",
+    "This file is evidence about the contract and the reference model. It says nothing about franken-session until the centralized build runs the Rust tests and, later, a Rust replay of the scenarios."
+  ],
+  "invariants": [
+    {"id": "INV-NOTHING-AUDIBLE-BEFORE-CUTOVER", "claim": "A proposal, its acknowledgements and its commit change neither the members nor the revision; the change shows only at the cutover frame.", "scenarios": ["G01-S001", "G01-S002", "G01-S006"], "rust_tests": ["a_join_changes_nothing_audible_until_its_cutover_frame_and_then_exactly_once", "a_leave_removes_the_member_only_at_its_cutover_frame"]},
+    {"id": "INV-ACTIVATE-ONCE-AT-FRAME", "claim": "A committed change activates at the first tick at or after its frame, once, and bumps the revision by exactly 1.", "scenarios": ["G01-S001", "G01-S002"], "rust_tests": ["a_join_changes_nothing_audible_until_its_cutover_frame_and_then_exactly_once", "a_leave_removes_the_member_only_at_its_cutover_frame", "membership_activation_is_independent_of_the_command_record_and_bumps_the_revision"]},
+    {"id": "INV-AUTHORITY-ON-EVERY-MUTATION", "claim": "A token for another group, another issuer, a future epoch or an expired lease is refused by propose and by advance_epoch, and the refusal changes nothing.", "scenarios": ["G01-S003", "G01-S124"], "rust_tests": ["every_mutation_refuses_a_token_that_is_not_current_and_changes_nothing"]},
+    {"id": "INV-STALE-EPOCH-FENCED", "claim": "After the epoch advances, the old token is refused as STALE_AUTHORITY by every mutation.", "scenarios": ["G01-S004"], "rust_tests": ["a_commit_under_a_stale_epoch_is_refused_and_the_epoch_advance_aborted_the_proposal", "every_mutation_refuses_a_token_that_is_not_current_and_changes_nothing"]},
+    {"id": "INV-EPOCH-ADVANCE-ABORTS-PROPOSAL", "claim": "A proposal in flight when a newer epoch begins is aborted with EPOCH_ADVANCED.", "scenarios": ["G01-S004", "G01-S114"], "rust_tests": ["a_commit_under_a_stale_epoch_is_refused_and_the_epoch_advance_aborted_the_proposal", "adopting_a_newer_epoch_aborts_the_proposal_in_flight_and_fences_an_unexpired_stale_token"]},
+    {"id": "INV-MISSING-ACK-NEVER-HOLDS-GROUP", "claim": "A missing acknowledgement blocks the commit and, at the deadline, aborts (or excludes) so the group is not held.", "scenarios": ["G01-S005", "G01-S007"], "rust_tests": ["a_missing_ack_blocks_the_commit_then_the_deadline_aborts_without_holding_the_group", "a_missing_joiner_always_aborts_even_when_unreachable_members_are_excluded"]},
+    {"id": "INV-JOINER-MISSING-ABORTS", "claim": "An unreachable joiner aborts the proposal under either policy.", "scenarios": ["G01-S007"], "rust_tests": ["a_missing_joiner_always_aborts_even_when_unreachable_members_are_excluded"]},
+    {"id": "INV-EXCLUSION-IS-NOT-OUTPUT-STOP", "claim": "An excluded member leaves an unresolved output grant with an unknown bound; a conflicting start is refused and the member cannot be re-admitted until resolved.", "scenarios": ["G01-S006"], "rust_tests": ["excluding_an_unreachable_member_continues_the_cutover_but_leaves_its_output_unresolved"]},
+    {"id": "INV-EVIDENCE-NEVER-SHORTENS", "claim": "Evidence about an excluded member's output can lengthen the bound it was given but never shorten it; a stop acknowledgement ends it.", "scenarios": ["G01-S006"], "rust_tests": ["excluding_an_unreachable_member_continues_the_cutover_but_leaves_its_output_unresolved"]},
+    {"id": "INV-ACK-RULES", "claim": "A repeat acknowledgement is idempotent, a different one conflicts, a stranger or an excluded member is refused, and none is accepted at or after the deadline.", "scenarios": ["G01-S008", "G01-S009"], "rust_tests": ["duplicate_commits_conflicting_acks_and_strangers_are_refused"]},
+    {"id": "INV-COMMIT-READINESS-AND-TAIL", "claim": "Commit refuses a member that is not ready, a cutover before any member's irrevocable output tail, and a cutover already reached.", "scenarios": ["G01-S010"], "rust_tests": ["the_cutover_may_not_precede_any_members_irrevocable_output_tail", "a_commit_at_or_after_the_cutover_frame_is_refused_and_an_uncommitted_proposal_lapses", "a_member_that_is_not_ready_blocks_the_commit_and_cancelling_leaves_playback_intact"]},
+    {"id": "INV-CANCEL-LEAVES-PLAYBACK-INTACT", "claim": "Cancelling a proposal, committed or not, leaves the session exactly as it was.", "scenarios": ["G01-S010", "G01-S011"], "rust_tests": ["cancelling_a_committed_join_before_its_frame_leaves_the_group_untouched", "a_member_that_is_not_ready_blocks_the_commit_and_cancelling_leaves_playback_intact"]},
+    {"id": "INV-UNCOMMITTED-LAPSES", "claim": "An uncommitted proposal whose cutover frame arrives lapses (CUTOVER_MISSED), so an authority that never commits cannot hold the group.", "scenarios": ["G01-S012"], "rust_tests": ["a_commit_at_or_after_the_cutover_frame_is_refused_and_an_uncommitted_proposal_lapses"]},
+    {"id": "INV-ONE-CHANGE-AT-A-TIME", "claim": "A second proposal while one is pending is refused.", "scenarios": ["G01-S013"], "rust_tests": ["one_change_at_a_time_and_every_precondition_is_checked_before_anything_is_recorded"]},
+    {"id": "INV-PRECONDITIONS-BEFORE-RECORDING", "claim": "Every precondition of a proposal is checked before anything is recorded; a refusal does not consume a proposal id.", "scenarios": ["G01-S013", "G01-S014"], "rust_tests": ["one_change_at_a_time_and_every_precondition_is_checked_before_anything_is_recorded"]},
+    {"id": "INV-RESTART-REDISCOVERS-AUTHORITY", "claim": "After a restart no mutation is accepted until authority is rediscovered (a token the live group accepts, or, in a quorum group, learning who holds the epoch).", "scenarios": ["G01-S015", "G01-S117"], "rust_tests": ["only_stable_intent_is_persisted_and_a_restart_must_rediscover_authority", "a_group_mints_epochs_by_one_rule_only_and_a_restarted_node_must_learn_the_holder_first"]},
+    {"id": "INV-HISTORY-BOUNDED", "claim": "Settled results stay queryable by proposal id for the last 64 proposals; older ids answer UNKNOWN_PROPOSAL.", "scenarios": ["G01-S016"], "rust_tests": ["terminal_results_are_kept_for_reconciliation_but_the_history_is_bounded"]},
+    {"id": "INV-QUORUM-IS-STRICT-MAJORITY", "claim": "A quorum is a strict majority of the electorate; an even electorate can split into a refusal, never a tie; an empty electorate is refused.", "scenarios": ["G01-S102", "G01-S103", "G01-S104", "G01-S123"], "rust_tests": ["a_quorum_is_a_strict_majority_and_only_voters_may_take_part", "two_candidates_cannot_both_win_an_epoch_and_a_split_vote_is_a_refusal_not_a_tie"]},
+    {"id": "INV-RENEWAL-NEEDS-QUORUM", "claim": "A holder extends its lease only with a quorum of acknowledgements; a minority, alone or partitioned, cannot.", "scenarios": ["G01-S101", "G01-S113"], "rust_tests": ["a_renewal_needs_a_majority_so_a_minority_cannot_extend_a_lease", "a_partitioned_holder_cannot_renew_the_majority_takes_over_and_the_old_holder_is_fenced"]},
+    {"id": "INV-HOLDER-MARGIN", "claim": "A holder treats its lease as over u before its expiry, and a lapsed holder cannot renew.", "scenarios": ["G01-S101", "G01-S108"], "rust_tests": ["a_holder_stops_u_before_its_lease_ends_and_a_taker_starts_u_after_so_they_never_overlap", "a_renewal_needs_a_majority_so_a_minority_cannot_extend_a_lease"]},
+    {"id": "INV-ACK-MATCHES-ROUND", "claim": "An acknowledgement that does not match the open request is refused, an outsider is refused, and a repeat counts once.", "scenarios": ["G01-S105"], "rust_tests": ["acknowledgements_must_match_the_open_request_and_a_repeat_counts_once"]},
+    {"id": "INV-ROUND-ENDS-BEFORE-LEASE", "claim": "A round is over once the lease it proposed is within u of ending; a late quorum is no quorum.", "scenarios": ["G01-S105"], "rust_tests": ["acknowledgements_must_match_the_open_request_and_a_repeat_counts_once"]},
+    {"id": "INV-TAKEOVER-WAITS-FOR-EXPIRY", "claim": "A voter grants a takeover only once its own clock reads the latest lease expiry it knows plus u; a voter that has seen no lease grants nothing.", "scenarios": ["G01-S106", "G01-S107", "G01-S108"], "rust_tests": ["a_takeover_waits_for_the_conservative_expiry_and_is_granted_to_one_candidate", "a_holder_stops_u_before_its_lease_ends_and_a_taker_starts_u_after_so_they_never_overlap"]},
+    {"id": "INV-ONE-CANDIDATE-PER-EPOCH", "claim": "A voter grants one candidate per epoch; a rival for a granted epoch is refused and cannot win.", "scenarios": ["G01-S102", "G01-S106", "G01-S111"], "rust_tests": ["a_takeover_waits_for_the_conservative_expiry_and_is_granted_to_one_candidate", "two_candidates_cannot_both_win_an_epoch_and_a_split_vote_is_a_refusal_not_a_tie", "a_voter_without_its_durable_record_refuses_everything_until_it_is_restored"]},
+    {"id": "INV-NEXT-EPOCH-ONLY", "claim": "A takeover is for the next epoch only (hygiene: bounds epoch growth; not needed for the two-leader invariant).", "scenarios": ["G01-S106"], "rust_tests": ["a_takeover_waits_for_the_conservative_expiry_and_is_granted_to_one_candidate"]},
+    {"id": "INV-VOTER-ORDERS-RENEWAL-AND-TAKEOVER", "claim": "A voter in both a renewal quorum and a takeover quorum orders them: a takeover granted first refuses the late renewal; a renewal acknowledged first delays the takeover.", "scenarios": ["G01-S109", "G01-S110"], "rust_tests": ["a_voter_in_both_quorums_orders_a_renewal_and_a_takeover_so_only_one_wins"]},
+    {"id": "INV-RENEW-ONLY-A-KNOWN-LEASE", "claim": "A voter acknowledges a renewal only of a lease it knows to be the requester's, never of an epoch it has not heard of.", "scenarios": ["G01-S112"], "rust_tests": ["a_voter_only_extends_a_lease_it_knows_to_be_the_requesters_and_learns_only_forward"]},
+    {"id": "INV-VOTER-LEARNS-FORWARD", "claim": "What a voter is told only moves forward; a second holder for a confirmed epoch is a conflict; a grant becomes the confirmed lease on its first renewal.", "scenarios": ["G01-S112"], "rust_tests": ["a_voter_only_extends_a_lease_it_knows_to_be_the_requesters_and_learns_only_forward"]},
+    {"id": "INV-NO-OVERLAP-OF-LEASES", "claim": "Two nodes never hold a live lease at the same time while the real clock skew is at most u.", "scenarios": ["G01-S108", "G01-S113", "G01-S119", "G01-S120", "G01-S121", "G01-S122"], "rust_tests": ["a_holder_stops_u_before_its_lease_ends_and_a_taker_starts_u_after_so_they_never_overlap", "a_partitioned_holder_cannot_renew_the_majority_takes_over_and_the_old_holder_is_fenced", "without_the_uncertainty_margin_clock_skew_gives_two_live_leaders_and_with_it_it_does_not"]},
+    {"id": "INV-SKEW-MARGIN", "claim": "With no margin and a slow holder clock two leaders overlap; with u at the skew (and slightly below it, thanks to both sides taking the margin) they do not.", "scenarios": ["G01-S119", "G01-S120", "G01-S121", "G01-S122"], "rust_tests": ["without_the_uncertainty_margin_clock_skew_gives_two_live_leaders_and_with_it_it_does_not"]},
+    {"id": "INV-STALE-COORDINATOR-FENCED", "claim": "A replaced coordinator, even with an unexpired token, is fenced by epoch once it hears of the newer one.", "scenarios": ["G01-S113", "G01-S114"], "rust_tests": ["a_partitioned_holder_cannot_renew_the_majority_takes_over_and_the_old_holder_is_fenced", "adopting_a_newer_epoch_aborts_the_proposal_in_flight_and_fences_an_unexpired_stale_token"]},
+    {"id": "INV-EPOCH-JUDGED-BEFORE-ISSUER", "claim": "A token is judged by epoch before issuer, so a replaced coordinator is refused as STALE_AUTHORITY, not NOT_CONFIGURED_ISSUER.", "scenarios": ["G01-S114", "G01-S124"], "rust_tests": ["adopting_a_newer_epoch_aborts_the_proposal_in_flight_and_fences_an_unexpired_stale_token"]},
+    {"id": "INV-TAKEOVER-GATES-CONFLICTING-PROGRAMS", "claim": "After a takeover a conflicting program is gated until the previous term's latest expiry plus the output horizon plus u.", "scenarios": ["G01-S113"], "rust_tests": ["a_partitioned_holder_cannot_renew_the_majority_takes_over_and_the_old_holder_is_fenced"]},
+    {"id": "INV-PLAYBACK-POLICY", "claim": "With no live lease no new output is granted; granted output plays out to its frame and then mutes; grants are horizon-bounded and only extend.", "scenarios": ["G01-S115"], "rust_tests": ["when_a_lease_lapses_granted_output_plays_out_and_nothing_new_is_issued"]},
+    {"id": "INV-DURABLE-VOTER-RECORD", "claim": "A restarted voter refuses everything until its own record is restored; a voter that forgot would grant the rival the same epoch.", "scenarios": ["G01-S116"], "rust_tests": ["a_voter_without_its_durable_record_refuses_everything_until_it_is_restored"]},
+    {"id": "INV-EPOCH-MINT-IS-EXCLUSIVE", "claim": "A group mints epochs by one rule: advance_epoch in a configured-issuer group, a quorum win in a quorum group; the other group's entry points refuse.", "scenarios": ["G01-S117"], "rust_tests": ["a_group_mints_epochs_by_one_rule_only_and_a_restarted_node_must_learn_the_holder_first"]},
+    {"id": "INV-WIN-IS-SCOPED", "claim": "A quorum result applies only to the token and session it was gathered for, while the lease still has u to run.", "scenarios": ["G01-S118"], "rust_tests": ["a_quorum_result_applies_only_to_what_it_was_gathered_for"]}
+  ],
+  "schedule_invariants": [
+    {"id": "INV-SCHEDULE-NO-TWO-LIVE-LEADERS", "claim": "Under partitions, lossy announcements, stale holders and rival candidates, and with u at least the real skew, no step has two live leaders, no epoch has two winners and no epoch has two announced holders.", "labels": ["declared bound covers random offsets", "declared bound covers the worst-case skew"], "rust_tests": ["seeded_partitions_never_produce_two_live_leaders_or_two_winners_of_an_epoch"]},
+    {"id": "INV-SCHEDULE-CONTROL", "claim": "The same schedules with no margin and a slow holder clock find two live leaders in every seed; with agreeing clocks and no margin they find none.", "labels": ["PLANTED: no margin, holder slow", "agreeing clocks, default configuration"], "rust_tests": ["the_same_schedules_without_the_margin_do_produce_two_live_leaders"]}
+  ],
+  "rust_only": [
+    "seeded_schedules_keep_every_membership_invariant"
+  ],
+  "replay": {
+    "file": "crates/franken-session/tests/g01_replay.rs",
+    "command": "RCH_REQUIRE_REMOTE=1 rch exec --source-content-receipt -- cargo test -p franken-session --test g01_replay --locked -- --nocapture --test-threads=1",
+    "tests": [
+      "every_golden_scenario_matches_the_engine",
+      "the_seeded_schedule_reproduces_the_models_counts_exactly",
+      "a_planted_fault_breaks_exactly_the_scenarios_the_model_predicts",
+      "the_vector_file_is_the_one_this_replay_understands"
+    ],
+    "why": "An integration test can only use the public API, so it carries its own driver of the seeded schedule (same SplitMix64 and draws as membership.rs) and runs it against the real engine. Faults are planted in the driver, not in production code. scripts/e2e/g01 --judge LOG re-checks the printed G01-OBSERVED records against the vector file and the model."
+  },
+  "rule_matrix": {
+    "majority": {"schedule": "defends"},
+    "expiry_wait": {"schedule": "defends"},
+    "one_candidate": {"schedule": "defends"},
+    "next_epoch_only": {"schedule": "equivalent"},
+    "renew_extends_view": {"schedule": "defends"},
+    "refuse_older_renewal": {"schedule": "equivalent"},
+    "refuse_unknown_renewal": {"schedule": "out_of_scope"},
+    "epoch_first": {"schedule": "defends"},
+    "holder_margin": {"schedule": "equivalent"},
+    "round_deadline": {"schedule": "out_of_scope"},
+    "needs_live_lease_for_grant": {"schedule": "out_of_scope"},
+    "assume_gate": {"schedule": "out_of_scope"},
+    "winner_observes": {"schedule": "defends"},
+    "durable_record": {"schedule": "out_of_scope"},
+    "mint_exclusive": {"schedule": "out_of_scope"},
+    "abort_on_epoch_change": {"schedule": "out_of_scope"},
+    "exclusion_unresolved": {"schedule": "out_of_scope"},
+    "commit_checks_tail": {"schedule": "out_of_scope"},
+    "evidence_never_shortens": {"schedule": "out_of_scope"}
+  },
+  "known_gaps": {
+    "codes_missing_from_the_contract": [],
+    "why": "Empty since docs/contracts/g01.md gained its section 2.1 refusal table. The test fails if a stable code in MembershipError::code is ever added without being named in the contract."
+  }
+}

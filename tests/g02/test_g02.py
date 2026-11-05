@@ -478,5 +478,88 @@ class HarnessAgreement(Base):
         self.assertEqual(sorted(seen - rust_codes - harness_words), [], "vectors name codes that volume.rs does not define")
 
 
+class AcceptanceMap(unittest.TestCase):
+    """The acceptance map in docs/contracts/g02.md cites only tests, identifiers and case ids that exist in the tree."""
+
+    DOC = "docs/contracts/g02.md"
+    VECTORS = ("tests/g02/vectors.json",)
+    PREFIXES = ("G02",)
+
+    def setUp(self) -> None:
+        import pathlib
+
+        self.repo = pathlib.Path(__file__).resolve().parents[2]
+        text = (self.repo / self.DOC).read_text(encoding="utf-8")
+        self.assertIn("## Acceptance map", text)
+        self.section = text.split("## Acceptance map", 1)[1]
+
+    def corpus(self) -> str:
+        import os
+        import pathlib
+
+        parts = []
+        for top in ("crates", "tests", "scripts"):
+            for root, dirs, files in os.walk(self.repo / top):
+                dirs[:] = [d for d in dirs if d not in ("target", "__pycache__", ".git", "build")]
+                for name in files:
+                    if name.endswith((".rs", ".py")) or "." not in name:
+                        parts.append((pathlib.Path(root) / name).read_text(encoding="utf-8", errors="replace"))
+        return "\n".join(parts)
+
+    def test_every_cited_identifier_exists_in_the_tree(self) -> None:
+        tokens = set(re.findall(r"`([A-Za-z0-9_:]+)`", self.section))
+        corpus = self.corpus()
+        missing = []
+        for token in sorted(tokens):
+            name = token.split("::")[-1]
+            if name.count("_") >= 2 and name.islower() and name not in corpus:
+                missing.append(token)
+        self.assertEqual(missing, [], "the map cites identifiers that are not in the tree")
+
+    def expand(self, prefix: str, family: str, numbers: str) -> List[str]:
+        ids = []
+        width = len(re.match(r"\d+", numbers).group(0))
+        for piece in numbers.split("/"):
+            if ".." in piece:
+                low, high = (int(p) for p in piece.split(".."))
+                ids += [f"{prefix}{family}-{n:0{width}d}" for n in range(low, high + 1)]
+            else:
+                ids.append(f"{prefix}{family}-{int(piece):0{width}d}")
+        return ids
+
+    def test_every_cited_case_and_invariant_exists(self) -> None:
+        ids, invariants = set(), set()
+        for path in self.VECTORS:
+            doc = json.loads((self.repo / path).read_text(encoding="utf-8"))
+            ids |= {case["id"] for case in doc["cases"]}
+            invariants |= set(doc["invariants"])
+        problems = []
+        for prefix in self.PREFIXES:
+            for family, numbers in re.findall(prefix + r"-([A-Z]+)-(\*|\d+(?:(?:\.\.|/)\d+)*)", self.section):
+                if numbers == "*":
+                    if not any(i.startswith(f"{prefix}-{family}-") for i in ids):
+                        problems.append(f"{prefix}-{family}-*")
+                else:
+                    problems += [i for i in self.expand(prefix + "-", family, numbers) if i not in ids]
+            for name in re.findall(prefix + r"-INV-[A-Z-]*[A-Z]", self.section):
+                if name not in invariants:
+                    problems.append(name)
+        pcm_ids = {c['id'] for c in json.loads((self.repo / 'tests/g02/pcm_vectors.json').read_text(encoding='utf-8'))['cases']}
+        for ids_cited in re.findall(r'G02PCM-(\d+(?:(?:\.\.|/)\d+)*)', self.section):
+            problems += [i for i in self.expand('G02PCM', '', ids_cited) if i not in pcm_ids]
+        self.assertEqual(problems, [], "the map cites case ids or invariants that do not exist")
+
+    def test_every_row_has_a_status_and_the_open_rows_say_what_they_need(self) -> None:
+        rows = [l for l in self.section.splitlines() if l.startswith("| ") and not l.startswith("| Clause") and not l.startswith("|---")]
+        self.assertGreater(len(rows), 10)
+        for row in rows:
+            cells = [c.strip() for c in row.strip("|").split("|")]
+            self.assertEqual(len(cells), 3, row)
+            status = cells[1].lower()
+            self.assertTrue(any(w in status for w in ("covered", "partly", "open", "not ")), row)
+            if "open" in status or "partly" in status:
+                self.assertTrue("code" in row.lower() or "waits" in row.lower() or "not a code" in row.lower(), "an open or partial row must say code or waits: " + row)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

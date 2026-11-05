@@ -19,7 +19,8 @@
     "ordinary_rate": [100000, 1],
     "priority_rate": [100000, 1],
     "session_seq_base": 1000,
-    "lease_ms": 1000000
+    "lease_ms": 1000000,
+    "lease_margin_ms": 0
   },
   "signing_vectors": [
     {
@@ -596,6 +597,26 @@
         {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=withdrawn", "ctl-a#2=cancel_applied:1"]}
       ],
       "final": {"revision": 2, "epoch": 10, "group_volume": 50, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S035",
+      "title": "with a clock-uncertainty margin the lease stops being usable a margin before its expiry, and a lease with less than the margin left cannot be installed",
+      "invariants": ["INV-LEASE-MARGIN", "INV-LEASE-REQUIRED"],
+      "config": {"lease_ms": 1000, "lease_margin_ms": 100},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 60}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 899, "expect": ["ctl-a#1=committed:3"]},
+        {"op": "submit", "at_ms": 899, "peer": "ctl-a", "seq": 2, "epoch": 10, "rev": 3, "cmd": {"kind": "set_group_volume", "volume": 61}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 900, "expect": ["ctl-a#2=refused:lease:authority_expired"]},
+        {"op": "lease", "at_ms": 900, "expires_ms": 950, "expect": "AUTHORITY_EXPIRED"},
+        {"op": "lease", "at_ms": 900, "expires_ms": 1000, "expect": "AUTHORITY_EXPIRED"},
+        {"op": "lease", "at_ms": 900, "expires_ms": 1001, "expect": "installed"},
+        {"op": "submit", "at_ms": 900, "peer": "ctl-a", "seq": 2, "epoch": 10, "rev": 3, "cmd": {"kind": "set_group_volume", "volume": 61}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 900, "expect": ["ctl-a#2=committed:4"]},
+        {"op": "submit", "at_ms": 901, "peer": "ctl-a", "seq": 3, "epoch": 10, "rev": 4, "cmd": {"kind": "set_group_volume", "volume": 62}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 901, "expect": ["ctl-a#3=refused:lease:authority_expired"]}
+      ],
+      "final": {"revision": 4, "epoch": 10, "group_volume": 61, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
     }
   ]
 }

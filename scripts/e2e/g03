@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# G03 end-to-end entry point (bead ffw-xvv): the fsonos compatibility adapter, offline reference side.
+#
+#   scripts/e2e/g03            replay the hand-written golden vectors against the independent
+#                              reference model, recheck the recorded action-usage matrix, and run the
+#                              model's own checks (every deliberately broken variant is caught after the
+#                              unbroken one passes, every invariant maps to vectors and Rust tests that
+#                              exist, the contract table equals the Rust action matrix and the measured
+#                              usage, nothing in the adapter opens a socket or reads a clock)
+#
+#   scripts/e2e/g03 --measure /path/to/frankensonos
+#                              additionally re-measure the usage matrix from a checkout, read only, and
+#                              fail if it differs from the recorded one
+#
+# Exit 0 only when every check passes; any failure exits non-zero.
+#
+# THIS SCRIPT DOES NOT RUN THE RUST IMPLEMENTATION, and it does not run an actual fsonos client. It
+# shows that the vectors are self-consistent and that an independently built model reaches them. The
+# Rust half replays the same vectors, and runs its unit tests, only under the centralized builds:
+#   RCH_REQUIRE_REMOTE=1 rch exec --source-content-receipt -- cargo test -p franken-control --locked
+# A green exit here is therefore not evidence about franken-control, and not evidence that a real
+# fsonos controller interoperates. docs/contracts/g03.md section 11 keeps that clause open.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+CHECKOUT=""
+if [ "$#" -eq 2 ] && [ "$1" = "--measure" ]; then
+  CHECKOUT="$2"
+elif [ "$#" -ne 0 ]; then
+  echo "usage: scripts/e2e/g03 [--measure /path/to/frankensonos]" >&2
+  exit 2
+fi
+
+python3 -B -I "$ROOT/tests/g03/measure_usage.py" --check-recorded
+if [ -n "$CHECKOUT" ]; then
+  SCRATCH="$(mktemp -d)"
+  trap 'rm -r -- "$SCRATCH"' EXIT
+  python3 -B -I "$ROOT/tests/g03/measure_usage.py" --fsonos "$CHECKOUT" > "$SCRATCH/measured.json"
+  python3 -B -I - "$ROOT/tests/g03/usage_matrix.json" "$SCRATCH/measured.json" <<'PY'
+import json, sys
+recorded, measured = (json.load(open(p)) for p in sys.argv[1:3])
+if recorded != measured:
+    print("the re-measured usage matrix differs from tests/g03/usage_matrix.json", file=sys.stderr)
+    sys.exit(1)
+print("re-measured usage matrix: identical to the recorded one")
+PY
+fi
+python3 -B -I "$ROOT/tests/g03/reference.py" --check
+python3 -B -m unittest discover -s "$ROOT/tests/g03" -p 'test_*.py' -v
+echo "G03 reference side: PASS (Rust half not run here; no actual fsonos client run; see the note in this script)"

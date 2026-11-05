@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# G01 end-to-end entry point (bead ffw-kh0): unified group membership. Judges both halves.
+#
+#   scripts/e2e/g01                    MODEL side only; the Rust half is BLOCKED (no log) and the exit is 3
+#   scripts/e2e/g01 --judge LOG [LOG ...]
+#                                      model side, then judge the centrally run cargo output of the Rust
+#                                      replay of the same scenarios
+#
+# MODEL side (stdlib Python; builds and boots nothing): replay the hand-written golden scenarios against
+# the independent reference model, check the model's predicted counts for the seeded partition schedule
+# and the scenarios each planted fault must break, and run the model's own checks (every rule of the
+# contract can be switched off and the scenarios or the schedule notice; the Rust's view-plus-grant
+# voter and the model's ledger voter reach identical counts on every recorded run; every invariant maps
+# to scenarios and to Rust tests that exist; the stable error codes, the constants, the schedule
+# parameters and the replay's op and plant lists agree with the Rust source and the contract text).
+#
+# RUST side (--judge): tests/g01/judge.py reads the log of
+#   RCH_REQUIRE_REMOTE=1 rch exec --source-content-receipt -- \
+#     cargo test -p franken-session --test g01_replay --locked -- --nocapture --test-threads=1
+# and re-checks every `G01-OBSERVED` record the real engine printed against the vector file and the
+# model, without trusting the Rust's own assertions: all scenarios replayed and none mismatching, all
+# 32 schedule runs reproduced exactly by the engine, each planted fault breaking at least one scenario
+# and exactly the ones the model predicts, a replay that reports a corrupted expectation, and cargo
+# itself reporting the replay's tests passing.
+#
+# This script never invokes cargo. The Rust suite runs only through the centralized RCH path:
+#   RCH_REQUIRE_REMOTE=1 rch exec --source-content-receipt -- cargo test -p franken-session --locked
+#   RCH_REQUIRE_REMOTE=1 rch exec --source-content-receipt -- cargo clippy -p franken-session --all-targets --locked -- -D warnings
+# A green MODEL side alone is not evidence about franken-session, which is why it exits 3, not 0.
+# The model and the Rust share an author: the model checks arithmetic and agreement with the contract
+# text, not the design.
+#
+# Exit 0 only when both halves pass; 1 on any failure; 3 when the model side passed and the Rust half
+# is blocked for lack of a log (reported, never counted as passed); 2 on usage errors.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+logs=()
+if [ "$#" -gt 0 ]; then
+  if [ "$1" != "--judge" ] || [ "$#" -lt 2 ]; then
+    echo "usage: scripts/e2e/g01 [--judge LOG [LOG ...]]" >&2
+    exit 2
+  fi
+  shift
+  logs=("$@")
+fi
+
+python3 -B -I "$ROOT/tests/g01/reference.py" --check
+python3 -B -m unittest discover -s "$ROOT/tests/g01" -p 'test_*.py' -v
+echo "G01 model side: PASS"
+
+if [ "${#logs[@]}" -eq 0 ]; then
+  echo "G01 Rust side: BLOCKED (no cargo log; pass --judge LOG after the centralized run)" >&2
+  exit 3
+fi
+python3 -B -I "$ROOT/tests/g01/judge.py" "${logs[@]}"
+echo "G01 Rust side: PASS (judged from the supplied log; this script did not run the Rust)"

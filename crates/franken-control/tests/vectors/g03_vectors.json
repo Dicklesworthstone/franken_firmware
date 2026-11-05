@@ -1,0 +1,334 @@
+{
+  "schema": "ffw.g03.vectors.v1",
+  "bead": "ffw-xvv",
+  "provenance": "Expectations are hand-written from docs/contracts/g03.md, not produced by either implementation. The wire shapes (the request envelope, the SOAPACTION header, service URNs, action and argument names, GENA headers) are transcribed from fsonos-proto rev 775b08dc by reading it; no fsonos code ran. Nothing here is a capture of a real device: every address is from the 192.0.2.0/24 documentation range and every id is synthetic.",
+  "envelope_template": "<?xml version=\"1.0\" encoding=\"utf-8\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><s:Body><u:{action} xmlns:u=\"{urn}\">{inner}</u:{action}></s:Body></s:Envelope>",
+  "limits": {"max_bytes": 8192, "max_depth": 8, "max_elements": 64, "max_attributes": 8, "max_name_len": 64, "max_value_len": 1024, "max_args": 16},
+  "services": {
+    "RenderingControl": "urn:schemas-upnp-org:service:RenderingControl:1",
+    "GroupRenderingControl": "urn:schemas-upnp-org:service:GroupRenderingControl:1",
+    "AVTransport": "urn:schemas-upnp-org:service:AVTransport:1",
+    "ZoneGroupTopology": "urn:schemas-upnp-org:service:ZoneGroupTopology:1",
+    "ContentDirectory": "urn:schemas-upnp-org:service:ContentDirectory:1"
+  },
+
+  "escape": [
+    {"id": "esc-text-specials", "mode": "text", "input": "a&b<c>d\"e'f", "output": "a&amp;b&lt;c&gt;d\"e'f"},
+    {"id": "esc-attr-specials", "mode": "attribute", "input": "a&b<c>d\"e'f", "output": "a&amp;b&lt;c&gt;d&quot;e&apos;f"},
+    {"id": "esc-control-character", "mode": "text", "input": "x\u0001y", "output": "x�y"},
+    {"id": "esc-keeps-whitespace", "mode": "text", "input": "a\tb\nc\rd", "output": "a\tb\nc\rd"},
+    {"id": "esc-unicode-unchanged", "mode": "text", "input": "café ☃ 😀", "output": "café ☃ 😀"},
+    {"id": "esc-empty", "mode": "text", "input": "", "output": ""},
+    {"id": "esc-attribute-injection", "mode": "attribute", "input": "\"/><Injected a=\"1", "output": "&quot;/&gt;&lt;Injected a=&quot;1"},
+    {"id": "esc-escapes-an-escape-again", "mode": "text", "input": "&amp;", "output": "&amp;amp;"}
+  ],
+
+  "soap": [
+    {"id": "soap-controller-style-call", "soap_action": "\"urn:schemas-upnp-org:service:RenderingControl:1#SetVolume\"",
+     "wrap": {"service": "RenderingControl", "action": "SetVolume", "inner": "<InstanceID>0</InstanceID><Channel>Master</Channel><DesiredVolume>30</DesiredVolume>"},
+     "expect": {"call": {"service": "RenderingControl", "action": "SetVolume", "args": [["InstanceID", "0"], ["Channel", "Master"], ["DesiredVolume", "30"]]}}},
+    {"id": "soap-header-without-quotes", "soap_action": "urn:schemas-upnp-org:service:AVTransport:1#Stop",
+     "wrap": {"service": "AVTransport", "action": "Stop", "inner": "<InstanceID>0</InstanceID>"},
+     "expect": {"call": {"service": "AVTransport", "action": "Stop", "args": [["InstanceID", "0"]]}}},
+    {"id": "soap-no-arguments", "soap_action": "\"urn:schemas-upnp-org:service:ZoneGroupTopology:1#GetZoneGroupState\"",
+     "wrap": {"service": "ZoneGroupTopology", "action": "GetZoneGroupState", "inner": ""},
+     "expect": {"call": {"service": "ZoneGroupTopology", "action": "GetZoneGroupState", "args": []}}},
+    {"id": "soap-entities-are-decoded", "soap_action": "\"urn:schemas-upnp-org:service:RenderingControl:1#SetVolume\"",
+     "wrap": {"service": "RenderingControl", "action": "SetVolume", "inner": "<DesiredVolume>3&amp;&lt;&#51;&#x34;</DesiredVolume>"},
+     "expect": {"call": {"service": "RenderingControl", "action": "SetVolume", "args": [["DesiredVolume", "3&<34"]]}}},
+    {"id": "soap-empty-argument-element", "soap_action": "\"urn:schemas-upnp-org:service:RenderingControl:1#GetVolume\"",
+     "wrap": {"service": "RenderingControl", "action": "GetVolume", "inner": "<InstanceID>0</InstanceID><Channel/>"},
+     "expect": {"call": {"service": "RenderingControl", "action": "GetVolume", "args": [["InstanceID", "0"], ["Channel", ""]]}}},
+    {"id": "soap-other-prefixes-are-fine", "soap_action": "\"urn:schemas-upnp-org:service:AVTransport:1#Stop\"",
+     "body": "<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\"><soap:Body><x:Stop xmlns:x=\"urn:schemas-upnp-org:service:AVTransport:1\"><InstanceID>0</InstanceID></x:Stop></soap:Body></soap:Envelope>",
+     "expect": {"call": {"service": "AVTransport", "action": "Stop", "args": [["InstanceID", "0"]]}}},
+    {"id": "soap-default-namespaces-are-fine", "soap_action": "\"urn:schemas-upnp-org:service:AVTransport:1#Stop\"",
+     "body": "<Envelope xmlns=\"http://schemas.xmlsoap.org/soap/envelope/\"><Body><Stop xmlns=\"urn:schemas-upnp-org:service:AVTransport:1\"><InstanceID>0</InstanceID></Stop></Body></Envelope>",
+     "expect": {"call": {"service": "AVTransport", "action": "Stop", "args": [["InstanceID", "0"]]}}},
+
+    {"id": "soap-no-soapaction", "soap_action": null,
+     "wrap": {"service": "RenderingControl", "action": "SetVolume", "inner": ""},
+     "expect": {"fault": "Malformed"}},
+    {"id": "soap-soapaction-without-hash", "soap_action": "\"urn:schemas-upnp-org:service:RenderingControl:1\"",
+     "wrap": {"service": "RenderingControl", "action": "SetVolume", "inner": ""},
+     "expect": {"fault": "Malformed"}},
+    {"id": "soap-soapaction-unknown-service", "soap_action": "\"urn:schemas-upnp-org:service:Bogus:1#SetVolume\"",
+     "wrap": {"service": "RenderingControl", "action": "SetVolume", "inner": ""},
+     "expect": {"fault": "InvalidAction"}},
+    {"id": "soap-soapaction-bad-action-name", "soap_action": "\"urn:schemas-upnp-org:service:RenderingControl:1#Set Volume\"",
+     "wrap": {"service": "RenderingControl", "action": "SetVolume", "inner": ""},
+     "expect": {"fault": "Malformed"}},
+    {"id": "soap-header-and-body-name-different-actions", "soap_action": "\"urn:schemas-upnp-org:service:RenderingControl:1#GetVolume\"",
+     "wrap": {"service": "RenderingControl", "action": "SetVolume", "inner": ""},
+     "expect": {"fault": "InvalidAction"}},
+    {"id": "soap-header-and-body-name-different-services", "soap_action": "\"urn:schemas-upnp-org:service:RenderingControl:1#SetVolume\"",
+     "wrap": {"service": "AVTransport", "action": "SetVolume", "inner": ""},
+     "expect": {"fault": "InvalidAction"}},
+    {"id": "soap-wrong-envelope-namespace", "soap_action": "\"urn:schemas-upnp-org:service:AVTransport:1#Stop\"",
+     "body": "<s:Envelope xmlns:s=\"http://example.invalid/not-soap\"><s:Body><u:Stop xmlns:u=\"urn:schemas-upnp-org:service:AVTransport:1\"/></s:Body></s:Envelope>",
+     "expect": {"fault": "Malformed"}},
+    {"id": "soap-two-actions-in-one-body", "soap_action": "\"urn:schemas-upnp-org:service:AVTransport:1#Stop\"",
+     "body": "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><u:Stop xmlns:u=\"urn:schemas-upnp-org:service:AVTransport:1\"/><u:Stop xmlns:u=\"urn:schemas-upnp-org:service:AVTransport:1\"/></s:Body></s:Envelope>",
+     "expect": {"fault": "Malformed"}},
+    {"id": "soap-unterminated-document", "soap_action": "\"urn:schemas-upnp-org:service:RenderingControl:1#SetVolume\"",
+     "body": "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><u:SetVolume xmlns:u=\"urn:schemas-upnp-org:service:RenderingControl:1\"><DesiredVolume>3",
+     "expect": {"fault": "Malformed"}},
+    {"id": "soap-text-before-the-root", "soap_action": "\"urn:schemas-upnp-org:service:AVTransport:1#Stop\"",
+     "body": "junk<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><u:Stop xmlns:u=\"urn:schemas-upnp-org:service:AVTransport:1\"/></s:Body></s:Envelope>",
+     "expect": {"fault": "Malformed"}},
+    {"id": "soap-empty-body", "soap_action": "\"urn:schemas-upnp-org:service:AVTransport:1#Stop\"",
+     "body": "",
+     "expect": {"fault": "Malformed"}},
+    {"id": "soap-repeated-argument", "soap_action": "\"urn:schemas-upnp-org:service:RenderingControl:1#SetVolume\"",
+     "wrap": {"service": "RenderingControl", "action": "SetVolume", "inner": "<DesiredVolume>1</DesiredVolume><DesiredVolume>2</DesiredVolume>"},
+     "expect": {"fault": "InvalidArgs"}},
+    {"id": "soap-seventeen-arguments", "soap_action": "\"urn:schemas-upnp-org:service:RenderingControl:1#SetVolume\"",
+     "wrap": {"service": "RenderingControl", "action": "SetVolume", "inner": "<A1>x</A1><A2>x</A2><A3>x</A3><A4>x</A4><A5>x</A5><A6>x</A6><A7>x</A7><A8>x</A8><A9>x</A9><A10>x</A10><A11>x</A11><A12>x</A12><A13>x</A13><A14>x</A14><A15>x</A15><A16>x</A16><A17>x</A17>"},
+     "expect": {"fault": "Malformed"}},
+    {"id": "soap-nested-markup-in-an-argument", "soap_action": "\"urn:schemas-upnp-org:service:RenderingControl:1#SetVolume\"",
+     "wrap": {"service": "RenderingControl", "action": "SetVolume", "inner": "<DesiredVolume><x>1</x></DesiredVolume>"},
+     "expect": {"fault": "Malformed"}},
+
+    {"id": "soap-over-the-size-cap", "soap_action": "\"urn:schemas-upnp-org:service:RenderingControl:1#SetVolume\"",
+     "wrap": {"service": "RenderingControl", "action": "SetVolume", "inner": "<DesiredVolume>1</DesiredVolume>"}, "pad_to": 9000,
+     "expect": {"fault": "TooLarge"}},
+    {"id": "soap-oversize-is-refused-before-it-is-read", "soap_action": "\"urn:schemas-upnp-org:service:AVTransport:1#Stop\"",
+     "body": "<?xml version=\"1.0\"?><!DOCTYPE x><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"/>", "pad_to": 9000,
+     "expect": {"fault": "TooLarge"}},
+    {"id": "soap-at-the-size-cap-is-not-too-large", "soap_action": "\"urn:schemas-upnp-org:service:RenderingControl:1#SetVolume\"",
+     "wrap": {"service": "RenderingControl", "action": "SetVolume", "inner": "<DesiredVolume>1</DesiredVolume>"}, "pad_to": 8192,
+     "expect": {"call": {"service": "RenderingControl", "action": "SetVolume", "args": [["DesiredVolume", "1"]]}}},
+
+    {"id": "soap-doctype-is-refused", "soap_action": "\"urn:schemas-upnp-org:service:AVTransport:1#Stop\"",
+     "body": "<?xml version=\"1.0\"?><!DOCTYPE foo><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><u:Stop xmlns:u=\"urn:schemas-upnp-org:service:AVTransport:1\"/></s:Body></s:Envelope>",
+     "expect": {"fault": "UnsupportedXml"}},
+    {"id": "soap-billion-laughs-is-refused-at-the-doctype", "soap_action": "\"urn:schemas-upnp-org:service:AVTransport:1#Stop\"",
+     "body": "<?xml version=\"1.0\"?><!DOCTYPE lolz [<!ENTITY lol \"lol\"><!ENTITY lol2 \"&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;\">]><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><u:Stop xmlns:u=\"urn:schemas-upnp-org:service:AVTransport:1\"><InstanceID>&lol2;</InstanceID></u:Stop></s:Body></s:Envelope>",
+     "expect": {"fault": "UnsupportedXml"}},
+    {"id": "soap-external-entity-is-refused", "soap_action": "\"urn:schemas-upnp-org:service:AVTransport:1#Stop\"",
+     "body": "<?xml version=\"1.0\"?><!DOCTYPE x [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><u:Stop xmlns:u=\"urn:schemas-upnp-org:service:AVTransport:1\"><InstanceID>&xxe;</InstanceID></u:Stop></s:Body></s:Envelope>",
+     "expect": {"fault": "UnsupportedXml"}},
+    {"id": "soap-comment-is-refused", "soap_action": "\"urn:schemas-upnp-org:service:AVTransport:1#Stop\"",
+     "body": "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><!-- hi --><u:Stop xmlns:u=\"urn:schemas-upnp-org:service:AVTransport:1\"/></s:Body></s:Envelope>",
+     "expect": {"fault": "UnsupportedXml"}},
+    {"id": "soap-cdata-is-refused", "soap_action": "\"urn:schemas-upnp-org:service:RenderingControl:1#SetVolume\"",
+     "wrap": {"service": "RenderingControl", "action": "SetVolume", "inner": "<DesiredVolume><![CDATA[30]]></DesiredVolume>"},
+     "expect": {"fault": "UnsupportedXml"}},
+    {"id": "soap-processing-instruction-is-refused", "soap_action": "\"urn:schemas-upnp-org:service:AVTransport:1#Stop\"",
+     "body": "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><?pi x?><u:Stop xmlns:u=\"urn:schemas-upnp-org:service:AVTransport:1\"/></s:Body></s:Envelope>",
+     "expect": {"fault": "UnsupportedXml"}},
+    {"id": "soap-undefined-entity-is-refused", "soap_action": "\"urn:schemas-upnp-org:service:RenderingControl:1#SetVolume\"",
+     "wrap": {"service": "RenderingControl", "action": "SetVolume", "inner": "<DesiredVolume>&foo;</DesiredVolume>"},
+     "expect": {"fault": "UnsupportedXml"}},
+    {"id": "soap-whitespace-before-the-declaration-is-refused", "soap_action": "\"urn:schemas-upnp-org:service:AVTransport:1#Stop\"",
+     "body": "\n<?xml version=\"1.0\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><u:Stop xmlns:u=\"urn:schemas-upnp-org:service:AVTransport:1\"/></s:Body></s:Envelope>",
+     "expect": {"fault": "UnsupportedXml"}},
+    {"id": "soap-other-encoding-is-refused", "soap_action": "\"urn:schemas-upnp-org:service:AVTransport:1#Stop\"",
+     "body": "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><u:Stop xmlns:u=\"urn:schemas-upnp-org:service:AVTransport:1\"/></s:Body></s:Envelope>",
+     "expect": {"fault": "UnsupportedXml"}}
+  ],
+
+  "plan": [
+    {"id": "plan-get-volume", "service": "RenderingControl", "action": "GetVolume", "args": [["InstanceID", "0"], ["Channel", "Master"]], "expect": {"read": "Volume"}},
+    {"id": "plan-get-mute", "service": "RenderingControl", "action": "GetMute", "args": [["InstanceID", "0"], ["Channel", "Master"]], "expect": {"read": "Mute"}},
+    {"id": "plan-whitespace-around-values-is-fine", "service": "RenderingControl", "action": "GetVolume", "args": [["InstanceID", " 0 "], ["Channel", " Master "]], "expect": {"read": "Volume"}},
+    {"id": "plan-get-group-volume", "service": "GroupRenderingControl", "action": "GetGroupVolume", "args": [["InstanceID", "0"]], "expect": {"read": "GroupVolume"}},
+    {"id": "plan-get-transport-info", "service": "AVTransport", "action": "GetTransportInfo", "args": [["InstanceID", "0"]], "expect": {"read": "TransportInfo"}},
+    {"id": "plan-get-zone-group-state", "service": "ZoneGroupTopology", "action": "GetZoneGroupState", "args": [], "expect": {"read": "ZoneGroupState"}},
+    {"id": "plan-snapshot-group-volume-is-acknowledged", "service": "GroupRenderingControl", "action": "SnapshotGroupVolume", "args": [["InstanceID", "0"]], "expect": {"ack": true}},
+
+    {"id": "plan-set-volume-30", "service": "RenderingControl", "action": "SetVolume", "args": [["InstanceID", "0"], ["Channel", "Master"], ["DesiredVolume", "30"]], "expect": {"command": "SetVolume", "value": 30}},
+    {"id": "plan-set-volume-0", "service": "RenderingControl", "action": "SetVolume", "args": [["InstanceID", "0"], ["Channel", "Master"], ["DesiredVolume", "0"]], "expect": {"command": "SetVolume", "value": 0}},
+    {"id": "plan-set-volume-100", "service": "RenderingControl", "action": "SetVolume", "args": [["InstanceID", "0"], ["Channel", "Master"], ["DesiredVolume", "100"]], "expect": {"command": "SetVolume", "value": 100}},
+    {"id": "plan-set-volume-plus-sign", "service": "RenderingControl", "action": "SetVolume", "args": [["InstanceID", "0"], ["Channel", "Master"], ["DesiredVolume", "+5"]], "expect": {"command": "SetVolume", "value": 5}},
+    {"id": "plan-set-volume-leading-zeros", "service": "RenderingControl", "action": "SetVolume", "args": [["InstanceID", "0"], ["Channel", "Master"], ["DesiredVolume", "007"]], "expect": {"command": "SetVolume", "value": 7}},
+    {"id": "plan-set-volume-101", "service": "RenderingControl", "action": "SetVolume", "args": [["InstanceID", "0"], ["Channel", "Master"], ["DesiredVolume", "101"]], "expect": {"fault": "InvalidArgs"}},
+    {"id": "plan-set-volume-negative", "service": "RenderingControl", "action": "SetVolume", "args": [["InstanceID", "0"], ["Channel", "Master"], ["DesiredVolume", "-1"]], "expect": {"fault": "InvalidArgs"}},
+    {"id": "plan-set-volume-fraction", "service": "RenderingControl", "action": "SetVolume", "args": [["InstanceID", "0"], ["Channel", "Master"], ["DesiredVolume", "5.5"]], "expect": {"fault": "InvalidArgs"}},
+    {"id": "plan-set-volume-exponent", "service": "RenderingControl", "action": "SetVolume", "args": [["InstanceID", "0"], ["Channel", "Master"], ["DesiredVolume", "1e2"]], "expect": {"fault": "InvalidArgs"}},
+    {"id": "plan-set-volume-empty", "service": "RenderingControl", "action": "SetVolume", "args": [["InstanceID", "0"], ["Channel", "Master"], ["DesiredVolume", ""]], "expect": {"fault": "InvalidArgs"}},
+    {"id": "plan-set-volume-words", "service": "RenderingControl", "action": "SetVolume", "args": [["InstanceID", "0"], ["Channel", "Master"], ["DesiredVolume", "loud"]], "expect": {"fault": "InvalidArgs"}},
+    {"id": "plan-set-volume-too-many-digits", "service": "RenderingControl", "action": "SetVolume", "args": [["InstanceID", "0"], ["Channel", "Master"], ["DesiredVolume", "99999999999"]], "expect": {"fault": "InvalidArgs"}},
+    {"id": "plan-set-volume-non-ascii-digit", "service": "RenderingControl", "action": "SetVolume", "args": [["InstanceID", "0"], ["Channel", "Master"], ["DesiredVolume", "٣"]], "expect": {"fault": "InvalidArgs"}},
+    {"id": "plan-set-volume-missing-argument", "service": "RenderingControl", "action": "SetVolume", "args": [["InstanceID", "0"], ["Channel", "Master"]], "expect": {"fault": "InvalidArgs"}},
+    {"id": "plan-set-volume-extra-argument", "service": "RenderingControl", "action": "SetVolume", "args": [["InstanceID", "0"], ["Channel", "Master"], ["DesiredVolume", "30"], ["Extra", "1"]], "expect": {"fault": "InvalidArgs"}},
+    {"id": "plan-argument-order-does-not-matter", "service": "RenderingControl", "action": "SetVolume", "args": [["DesiredVolume", "30"], ["Channel", "Master"], ["InstanceID", "0"]], "expect": {"command": "SetVolume", "value": 30}},
+    {"id": "plan-instance-1", "service": "RenderingControl", "action": "GetVolume", "args": [["InstanceID", "1"], ["Channel", "Master"]], "expect": {"fault": "InvalidArgs"}},
+    {"id": "plan-channel-lf", "service": "RenderingControl", "action": "GetVolume", "args": [["InstanceID", "0"], ["Channel", "LF"]], "expect": {"fault": "InvalidArgs"}},
+
+    {"id": "plan-mute-1", "service": "RenderingControl", "action": "SetMute", "args": [["InstanceID", "0"], ["Channel", "Master"], ["DesiredMute", "1"]], "expect": {"command": "SetMute", "value": true}},
+    {"id": "plan-mute-true-any-case", "service": "RenderingControl", "action": "SetMute", "args": [["InstanceID", "0"], ["Channel", "Master"], ["DesiredMute", "TRUE"]], "expect": {"command": "SetMute", "value": true}},
+    {"id": "plan-mute-0", "service": "RenderingControl", "action": "SetMute", "args": [["InstanceID", "0"], ["Channel", "Master"], ["DesiredMute", "0"]], "expect": {"command": "SetMute", "value": false}},
+    {"id": "plan-mute-false", "service": "RenderingControl", "action": "SetMute", "args": [["InstanceID", "0"], ["Channel", "Master"], ["DesiredMute", "false"]], "expect": {"command": "SetMute", "value": false}},
+    {"id": "plan-mute-2", "service": "RenderingControl", "action": "SetMute", "args": [["InstanceID", "0"], ["Channel", "Master"], ["DesiredMute", "2"]], "expect": {"fault": "InvalidArgs"}},
+    {"id": "plan-mute-yes", "service": "RenderingControl", "action": "SetMute", "args": [["InstanceID", "0"], ["Channel", "Master"], ["DesiredMute", "yes"]], "expect": {"fault": "InvalidArgs"}},
+
+    {"id": "plan-relative-volume-up", "service": "RenderingControl", "action": "SetRelativeVolume", "args": [["InstanceID", "0"], ["Channel", "Master"], ["Adjustment", "5"]], "expect": {"command": "RelativeVolume", "value": 5}},
+    {"id": "plan-relative-volume-down", "service": "RenderingControl", "action": "SetRelativeVolume", "args": [["InstanceID", "0"], ["Channel", "Master"], ["Adjustment", "-100"]], "expect": {"command": "RelativeVolume", "value": -100}},
+    {"id": "plan-relative-volume-zero", "service": "RenderingControl", "action": "SetRelativeVolume", "args": [["InstanceID", "0"], ["Channel", "Master"], ["Adjustment", "0"]], "expect": {"fault": "InvalidArgs"}},
+    {"id": "plan-relative-volume-negative-zero", "service": "RenderingControl", "action": "SetRelativeVolume", "args": [["InstanceID", "0"], ["Channel", "Master"], ["Adjustment", "-0"]], "expect": {"fault": "InvalidArgs"}},
+    {"id": "plan-relative-volume-101", "service": "RenderingControl", "action": "SetRelativeVolume", "args": [["InstanceID", "0"], ["Channel", "Master"], ["Adjustment", "101"]], "expect": {"fault": "InvalidArgs"}},
+
+    {"id": "plan-set-group-volume", "service": "GroupRenderingControl", "action": "SetGroupVolume", "args": [["InstanceID", "0"], ["DesiredVolume", "40"]], "expect": {"command": "SetGroupVolume", "value": 40}},
+    {"id": "plan-relative-group-volume", "service": "GroupRenderingControl", "action": "SetRelativeGroupVolume", "args": [["InstanceID", "0"], ["Adjustment", "-10"]], "expect": {"command": "RelativeGroupVolume", "value": -10}},
+    {"id": "plan-stop", "service": "AVTransport", "action": "Stop", "args": [["InstanceID", "0"]], "expect": {"command": "Stop"}},
+
+    {"id": "plan-deferred-play", "service": "AVTransport", "action": "Play", "args": [["InstanceID", "0"], ["Speed", "1"]], "expect": {"fault": "NotImplemented"}},
+    {"id": "plan-deferred-pause", "service": "AVTransport", "action": "Pause", "args": [["InstanceID", "0"]], "expect": {"fault": "NotImplemented"}},
+    {"id": "plan-deferred-set-av-transport-uri", "service": "AVTransport", "action": "SetAVTransportURI", "args": [["InstanceID", "0"], ["CurrentURI", "x-rincon:synthetic"], ["CurrentURIMetaData", ""]], "expect": {"fault": "NotImplemented"}},
+    {"id": "plan-deferred-get-media-info", "service": "AVTransport", "action": "GetMediaInfo", "args": [["InstanceID", "0"]], "expect": {"fault": "NotImplemented"}},
+    {"id": "plan-deferred-get-position-info", "service": "AVTransport", "action": "GetPositionInfo", "args": [["InstanceID", "0"]], "expect": {"fault": "NotImplemented"}},
+    {"id": "plan-deferred-delegate-coordination", "service": "AVTransport", "action": "DelegateGroupCoordinationTo", "args": [], "expect": {"fault": "NotImplemented"}},
+    {"id": "plan-deferred-get-bass", "service": "RenderingControl", "action": "GetBass", "args": [["InstanceID", "0"]], "expect": {"fault": "NotImplemented"}},
+    {"id": "plan-deferred-ramp-to-volume", "service": "RenderingControl", "action": "RampToVolume", "args": [], "expect": {"fault": "NotImplemented"}},
+    {"id": "plan-retired-catalog-browse", "service": "ContentDirectory", "action": "Browse", "args": [["ObjectID", "0"]], "expect": {"fault": "NotImplemented"}},
+    {"id": "plan-retired-catalog-anything", "service": "ContentDirectory", "action": "Anything", "args": [], "expect": {"fault": "NotImplemented"}},
+    {"id": "plan-unknown-action", "service": "RenderingControl", "action": "NoSuchAction", "args": [["InstanceID", "0"], ["Channel", "Master"]], "expect": {"fault": "InvalidAction"}},
+    {"id": "plan-action-of-another-service", "service": "RenderingControl", "action": "Play", "args": [], "expect": {"fault": "InvalidAction"}}
+  ],
+
+  "gena": {
+    "config": {"max_subscriptions": 16, "min_timeout_secs": 30, "default_timeout_secs": 300, "max_timeout_secs": 3600, "max_callback_len": 256},
+    "nonce": 1515847681,
+    "base_state": {"epoch": 10, "revision": 2, "volume": 50, "mute": false, "group_volume": 50, "group_mute": false, "transport": "NO_MEDIA_PRESENT", "zone_group_state": "<ZoneGroupState><ZoneGroups/></ZoneGroupState>"},
+    "scenarios": [
+      {"id": "gena-subscribe-then-deltas",
+       "steps": [
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/notify>", "nt": "upnp:event", "timeout": "Second-300", "state": {},
+          "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": 300, "initial": {"seq": 0, "vars": ["Volume=50", "Mute=0"], "revision": 2, "epoch": 10}}}},
+         {"op": "publish", "at_s": 1, "state": {"revision": 3, "volume": 60},
+          "expect": {"events": [{"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "seq": 1, "vars": ["Volume=60"], "revision": 3}]}},
+         {"op": "publish", "at_s": 2, "state": {"revision": 3, "volume": 60}, "expect": {"events": []}},
+         {"op": "publish", "at_s": 3, "state": {"revision": 9, "volume": 60}, "expect": {"events": []}},
+         {"op": "publish", "at_s": 4, "state": {"revision": 10, "volume": 61, "mute": true},
+          "expect": {"events": [{"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "seq": 2, "vars": ["Volume=61", "Mute=1"], "revision": 10}]}}
+       ]},
+
+      {"id": "gena-each-service-hears-only-its-own-changes",
+       "steps": [
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": null, "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": 300, "initial": {"seq": 0, "vars": ["Volume=50", "Mute=0"], "revision": 2, "epoch": 10}}}},
+         {"op": "subscribe", "at_s": 0, "service": "GroupRenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": null, "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000002", "timeout": 300, "initial": {"seq": 0, "vars": ["GroupVolume=50", "GroupMute=0"], "revision": 2, "epoch": 10}}}},
+         {"op": "subscribe", "at_s": 0, "service": "AVTransport", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": null, "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000003", "timeout": 300, "initial": {"seq": 0, "vars": ["TransportState=NO_MEDIA_PRESENT"], "revision": 2, "epoch": 10}}}},
+         {"op": "subscribe", "at_s": 0, "service": "ZoneGroupTopology", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": null, "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000004", "timeout": 300, "initial": {"seq": 0, "vars": ["ZoneGroupState=<ZoneGroupState><ZoneGroups/></ZoneGroupState>"], "revision": 2, "epoch": 10}}}},
+         {"op": "publish", "at_s": 1, "state": {"revision": 3, "volume": 60},
+          "expect": {"events": [{"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "seq": 1, "vars": ["Volume=60"], "revision": 3}]}},
+         {"op": "publish", "at_s": 2, "state": {"revision": 4, "volume": 60, "group_volume": 40},
+          "expect": {"events": [{"sid": "uuid:5a5a0001-0000-4000-8000-000000000002", "seq": 1, "vars": ["GroupVolume=40"], "revision": 4}]}},
+         {"op": "publish", "at_s": 3, "state": {"revision": 5, "volume": 60, "group_volume": 40, "transport": "PLAYING"},
+          "expect": {"events": [{"sid": "uuid:5a5a0001-0000-4000-8000-000000000003", "seq": 1, "vars": ["TransportState=PLAYING"], "revision": 5}]}},
+         {"op": "publish", "at_s": 4, "state": {"revision": 6, "volume": 60, "group_volume": 40, "transport": "PLAYING", "zone_group_state": "<ZoneGroupState><ZoneGroups a=\"1\"/></ZoneGroupState>"},
+          "expect": {"events": [{"sid": "uuid:5a5a0001-0000-4000-8000-000000000004", "seq": 1, "vars": ["ZoneGroupState=<ZoneGroupState><ZoneGroups a=\"1\"/></ZoneGroupState>"], "revision": 6}]}}
+       ]},
+
+      {"id": "gena-a-late-subscriber-is-told-everything-an-early-one-is-told-what-it-missed",
+       "steps": [
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": null, "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": 300, "initial": {"seq": 0, "vars": ["Volume=50", "Mute=0"], "revision": 2, "epoch": 10}}}},
+         {"op": "subscribe", "at_s": 1, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": null, "state": {"revision": 3, "volume": 70}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000002", "timeout": 300, "initial": {"seq": 0, "vars": ["Volume=70", "Mute=0"], "revision": 3, "epoch": 10}}}},
+         {"op": "publish", "at_s": 2, "state": {"revision": 4, "volume": 70, "mute": true},
+          "expect": {"events": [
+            {"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "seq": 1, "vars": ["Volume=70", "Mute=1"], "revision": 4},
+            {"sid": "uuid:5a5a0001-0000-4000-8000-000000000002", "seq": 1, "vars": ["Mute=1"], "revision": 4}]}}
+       ]},
+
+      {"id": "gena-seq-wraps-to-one-never-zero",
+       "steps": [
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": null, "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": 300, "initial": {"seq": 0, "vars": ["Volume=50", "Mute=0"], "revision": 2, "epoch": 10}}}},
+         {"op": "set_next_seq", "seq": 4294967294},
+         {"op": "publish", "at_s": 1, "state": {"revision": 3, "volume": 51}, "expect": {"events": [{"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "seq": 4294967294, "vars": ["Volume=51"], "revision": 3}]}},
+         {"op": "publish", "at_s": 2, "state": {"revision": 4, "volume": 52}, "expect": {"events": [{"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "seq": 4294967295, "vars": ["Volume=52"], "revision": 4}]}},
+         {"op": "publish", "at_s": 3, "state": {"revision": 5, "volume": 53}, "expect": {"events": [{"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "seq": 1, "vars": ["Volume=53"], "revision": 5}]}},
+         {"op": "publish", "at_s": 4, "state": {"revision": 6, "volume": 54}, "expect": {"events": [{"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "seq": 2, "vars": ["Volume=54"], "revision": 6}]}}
+       ]},
+
+      {"id": "gena-timeouts-are-clamped",
+       "steps": [
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": "Second-1", "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": 30, "initial": {"seq": 0, "vars": ["Volume=50", "Mute=0"], "revision": 2, "epoch": 10}}}},
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": "Second-99999", "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000002", "timeout": 3600, "initial": {"seq": 0, "vars": ["Volume=50", "Mute=0"], "revision": 2, "epoch": 10}}}},
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": "infinite", "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000003", "timeout": 300, "initial": {"seq": 0, "vars": ["Volume=50", "Mute=0"], "revision": 2, "epoch": 10}}}},
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": "Second-600", "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000004", "timeout": 600, "initial": {"seq": 0, "vars": ["Volume=50", "Mute=0"], "revision": 2, "epoch": 10}}}},
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": "Second-x", "state": {}, "expect": {"err": 400}},
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": "Second-4294967296", "state": {}, "expect": {"err": 400}},
+         {"op": "len", "expect": {"len": 4}}
+       ]},
+
+      {"id": "gena-expiry-and-renewal",
+       "steps": [
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": "Second-300", "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": 300, "initial": {"seq": 0, "vars": ["Volume=50", "Mute=0"], "revision": 2, "epoch": 10}}}},
+         {"op": "renew", "at_s": 200, "service": "RenderingControl", "sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": "Second-600", "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": 600}}},
+         {"op": "expire", "at_ns": 799999999999, "expect": {"removed": 0}},
+         {"op": "expire", "at_ns": 800000000000, "expect": {"removed": 1}},
+         {"op": "len", "expect": {"len": 0}},
+         {"op": "renew", "at_s": 801, "service": "RenderingControl", "sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": null, "expect": {"err": 412}}
+       ]},
+
+      {"id": "gena-a-lapsed-subscription-is-not-notified",
+       "steps": [
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": "Second-300", "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": 300, "initial": {"seq": 0, "vars": ["Volume=50", "Mute=0"], "revision": 2, "epoch": 10}}}},
+         {"op": "publish", "at_s": 301, "state": {"revision": 3, "volume": 5}, "expect": {"events": []}},
+         {"op": "len", "expect": {"len": 0}},
+         {"op": "renew", "at_s": 302, "service": "RenderingControl", "sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": null, "expect": {"err": 412}}
+       ]},
+
+      {"id": "gena-renewal-rules",
+       "steps": [
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": "Second-300", "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": 300, "initial": {"seq": 0, "vars": ["Volume=50", "Mute=0"], "revision": 2, "epoch": 10}}}},
+         {"op": "renew", "at_s": 10, "service": "RenderingControl", "sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": null, "callback": "<http://192.0.2.10:3400/n>", "expect": {"err": 400}},
+         {"op": "renew", "at_s": 10, "service": "RenderingControl", "sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": null, "nt": "upnp:event", "expect": {"err": 400}},
+         {"op": "renew", "at_s": 10, "service": "AVTransport", "sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": null, "expect": {"err": 412}},
+         {"op": "renew", "at_s": 10, "service": "RenderingControl", "sid": "uuid:5a5a0001-0000-4000-8000-0000000000ff", "timeout": null, "expect": {"err": 412}},
+         {"op": "expire", "at_ns": 299999999999, "expect": {"removed": 0}}
+       ]},
+
+      {"id": "gena-callback-policy",
+       "steps": [
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.99:3400/n>", "nt": "upnp:event", "timeout": null, "state": {}, "expect": {"err": 412}},
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://example.invalid:3400/n>", "nt": "upnp:event", "timeout": null, "state": {}, "expect": {"err": 412}},
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<https://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": null, "state": {}, "expect": {"err": 412}},
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://user@192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": null, "state": {}, "expect": {"err": 412}},
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:0/n>", "nt": "upnp:event", "timeout": null, "state": {}, "expect": {"err": 412}},
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/a><http://192.0.2.10:3400/b>", "nt": "upnp:event", "timeout": null, "state": {}, "expect": {"err": 412}},
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "http://192.0.2.10:3400/n", "nt": "upnp:event", "timeout": null, "state": {}, "expect": {"err": 412}},
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": null, "nt": "upnp:event", "timeout": null, "state": {}, "expect": {"err": 412}},
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": null, "timeout": null, "state": {}, "expect": {"err": 412}},
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:other", "timeout": null, "state": {}, "expect": {"err": 412}},
+         {"op": "subscribe", "at_s": 0, "service": "ContentDirectory", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": null, "state": {}, "expect": {"err": 501}},
+         {"op": "len", "expect": {"len": 0}},
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "2001:db8::1", "callback": "<http://[2001:db8::1]:3400/n>", "nt": "upnp:event", "timeout": null, "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": 300, "initial": {"seq": 0, "vars": ["Volume=50", "Mute=0"], "revision": 2, "epoch": 10}}}}
+       ]},
+
+      {"id": "gena-the-table-is-bounded",
+       "config": {"max_subscriptions": 2},
+       "steps": [
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": "Second-300", "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": 300, "initial": {"seq": 0, "vars": ["Volume=50", "Mute=0"], "revision": 2, "epoch": 10}}}},
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": "Second-300", "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000002", "timeout": 300, "initial": {"seq": 0, "vars": ["Volume=50", "Mute=0"], "revision": 2, "epoch": 10}}}},
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": "Second-300", "state": {}, "expect": {"err": 503}},
+         {"op": "unsubscribe", "at_s": 1, "service": "RenderingControl", "sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "expect": {"ok": true}},
+         {"op": "subscribe", "at_s": 1, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": "Second-300", "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000003", "timeout": 300, "initial": {"seq": 0, "vars": ["Volume=50", "Mute=0"], "revision": 2, "epoch": 10}}}},
+         {"op": "subscribe", "at_s": 301, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": "Second-300", "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000004", "timeout": 300, "initial": {"seq": 0, "vars": ["Volume=50", "Mute=0"], "revision": 2, "epoch": 10}}}},
+         {"op": "len", "expect": {"len": 1}}
+       ]},
+
+      {"id": "gena-unsubscribe",
+       "steps": [
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": null, "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": 300, "initial": {"seq": 0, "vars": ["Volume=50", "Mute=0"], "revision": 2, "epoch": 10}}}},
+         {"op": "unsubscribe", "at_s": 1, "service": "AVTransport", "sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "expect": {"err": 412}},
+         {"op": "unsubscribe", "at_s": 1, "service": "RenderingControl", "sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "expect": {"ok": true}},
+         {"op": "unsubscribe", "at_s": 2, "service": "RenderingControl", "sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "expect": {"err": 412}},
+         {"op": "publish", "at_s": 3, "state": {"revision": 3, "volume": 5}, "expect": {"events": []}}
+       ]},
+
+      {"id": "gena-an-endpoint-outside-the-group-says-nothing-false",
+       "steps": [
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": null, "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": 300, "initial": {"seq": 0, "vars": ["Volume=50", "Mute=0"], "revision": 2, "epoch": 10}}}},
+         {"op": "publish", "at_s": 1, "state": {"revision": 3, "volume": null, "mute": null}, "expect": {"events": []}},
+         {"op": "publish", "at_s": 2, "state": {"revision": 4, "volume": 55, "mute": false},
+          "expect": {"events": [{"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "seq": 1, "vars": ["Volume=55"], "revision": 4}]}}
+       ]},
+
+      {"id": "gena-subscribing-outside-the-group-sends-only-what-is-true",
+       "steps": [
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": null, "state": {"volume": null, "mute": null}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": 300, "initial": {"seq": 0, "vars": [], "revision": 2, "epoch": 10}}}}
+       ]}
+    ]
+  }
+}

@@ -1,0 +1,730 @@
+{
+  "schema": "ffw.g03.usage-matrix.v1",
+  "source": {
+    "repository": "frankensonos (a sibling checkout; read only)",
+    "git_rev": "741e2c11",
+    "crates": [
+      "fsonos-core",
+      "fsonos-api",
+      "fsonos-cli",
+      "fsonos-mcp",
+      "fsonos-sim"
+    ],
+    "files_scanned": 405,
+    "counted": "production call sites; everything from the first #[cfg(test)] of a file onwards is excluded",
+    "patterns": [
+      "soap::<fn>",
+      "fsonos_proto::control::<fn>",
+      "proto::control::<fn>",
+      "topology::get_zone_group_state / get_zone_group_state("
+    ],
+    "note": "a lower bound for other spellings, an upper bound for calls never reached; call sites, not executions"
+  },
+  "problems": [],
+  "functions": [
+    {
+      "function": "play",
+      "service": "AVTransport",
+      "action": "Play",
+      "indirect": false,
+      "sites": 21,
+      "crates": [
+        "fsonos-api",
+        "fsonos-cli",
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "pause",
+      "service": "AVTransport",
+      "action": "Pause",
+      "indirect": false,
+      "sites": 8,
+      "crates": [
+        "fsonos-api",
+        "fsonos-cli",
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "stop",
+      "service": "AVTransport",
+      "action": "Stop",
+      "indirect": false,
+      "sites": 8,
+      "crates": [
+        "fsonos-api",
+        "fsonos-cli",
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "next",
+      "service": "AVTransport",
+      "action": "Next",
+      "indirect": false,
+      "sites": 1,
+      "crates": [
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "previous",
+      "service": "AVTransport",
+      "action": "Previous",
+      "indirect": false,
+      "sites": 1,
+      "crates": [
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "seek_track",
+      "service": "AVTransport",
+      "action": "Seek",
+      "indirect": false,
+      "sites": 4,
+      "crates": [
+        "fsonos-api",
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "seek_position",
+      "service": "AVTransport",
+      "action": "Seek",
+      "indirect": false,
+      "sites": 7,
+      "crates": [
+        "fsonos-api",
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "set_av_transport_uri",
+      "service": "AVTransport",
+      "action": "SetAVTransportURI",
+      "indirect": false,
+      "sites": 18,
+      "crates": [
+        "fsonos-api",
+        "fsonos-cli",
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "set_normal_play_mode",
+      "service": "AVTransport",
+      "action": "SetPlayMode",
+      "indirect": false,
+      "sites": 1,
+      "crates": [
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "play_from_queue",
+      "service": "AVTransport",
+      "action": "SetAVTransportURI",
+      "indirect": true,
+      "sites": 4,
+      "crates": [
+        "fsonos-api",
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "add_uri_to_queue",
+      "service": "AVTransport",
+      "action": "AddURIToQueue",
+      "indirect": false,
+      "sites": 4,
+      "crates": [
+        "fsonos-api",
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "remove_all_tracks_from_queue",
+      "service": "AVTransport",
+      "action": "RemoveAllTracksFromQueue",
+      "indirect": false,
+      "sites": 0,
+      "crates": []
+    },
+    {
+      "function": "enqueue_uri",
+      "service": "AVTransport",
+      "action": "AddURIToQueue",
+      "indirect": false,
+      "sites": 12,
+      "crates": [
+        "fsonos-api",
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "remove_track_range_from_queue",
+      "service": "AVTransport",
+      "action": "RemoveTrackRangeFromQueue",
+      "indirect": false,
+      "sites": 5,
+      "crates": [
+        "fsonos-api",
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "join_group",
+      "service": "AVTransport",
+      "action": "SetAVTransportURI",
+      "indirect": true,
+      "sites": 14,
+      "crates": [
+        "fsonos-api",
+        "fsonos-cli",
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "leave_group",
+      "service": "AVTransport",
+      "action": "SetAVTransportURI",
+      "indirect": true,
+      "sites": 3,
+      "crates": [
+        "fsonos-api",
+        "fsonos-cli",
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "delegate_group",
+      "service": "AVTransport",
+      "action": "DelegateGroupCoordinationTo",
+      "indirect": false,
+      "sites": 2,
+      "crates": [
+        "fsonos-api",
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "delegate_group_and_rejoin",
+      "service": "AVTransport",
+      "action": "DelegateGroupCoordinationTo",
+      "indirect": false,
+      "sites": 1,
+      "crates": [
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "get_volume",
+      "service": "RenderingControl",
+      "action": "GetVolume",
+      "indirect": false,
+      "sites": 30,
+      "crates": [
+        "fsonos-api",
+        "fsonos-cli",
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "set_volume",
+      "service": "RenderingControl",
+      "action": "SetVolume",
+      "indirect": false,
+      "sites": 22,
+      "crates": [
+        "fsonos-api",
+        "fsonos-cli",
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "set_relative_volume",
+      "service": "RenderingControl",
+      "action": "SetRelativeVolume",
+      "indirect": false,
+      "sites": 1,
+      "crates": [
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "get_mute",
+      "service": "RenderingControl",
+      "action": "GetMute",
+      "indirect": false,
+      "sites": 7,
+      "crates": [
+        "fsonos-cli",
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "set_mute",
+      "service": "RenderingControl",
+      "action": "SetMute",
+      "indirect": false,
+      "sites": 3,
+      "crates": [
+        "fsonos-cli",
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "get_bass",
+      "service": "RenderingControl",
+      "action": "GetBass",
+      "indirect": false,
+      "sites": 2,
+      "crates": [
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "set_bass",
+      "service": "RenderingControl",
+      "action": "SetBass",
+      "indirect": false,
+      "sites": 1,
+      "crates": [
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "get_treble",
+      "service": "RenderingControl",
+      "action": "GetTreble",
+      "indirect": false,
+      "sites": 2,
+      "crates": [
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "set_treble",
+      "service": "RenderingControl",
+      "action": "SetTreble",
+      "indirect": false,
+      "sites": 1,
+      "crates": [
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "get_loudness",
+      "service": "RenderingControl",
+      "action": "GetLoudness",
+      "indirect": false,
+      "sites": 2,
+      "crates": [
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "set_loudness",
+      "service": "RenderingControl",
+      "action": "SetLoudness",
+      "indirect": false,
+      "sites": 1,
+      "crates": [
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "ramp_to_volume",
+      "service": "RenderingControl",
+      "action": "RampToVolume",
+      "indirect": false,
+      "sites": 1,
+      "crates": [
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "get_group_volume",
+      "service": "GroupRenderingControl",
+      "action": "GetGroupVolume",
+      "indirect": false,
+      "sites": 3,
+      "crates": [
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "set_group_volume",
+      "service": "GroupRenderingControl",
+      "action": "SetGroupVolume",
+      "indirect": false,
+      "sites": 1,
+      "crates": [
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "set_relative_group_volume",
+      "service": "GroupRenderingControl",
+      "action": "SetRelativeGroupVolume",
+      "indirect": false,
+      "sites": 1,
+      "crates": [
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "get_transport_info",
+      "service": "AVTransport",
+      "action": "GetTransportInfo",
+      "indirect": false,
+      "sites": 58,
+      "crates": [
+        "fsonos-api",
+        "fsonos-cli",
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "get_position_info",
+      "service": "AVTransport",
+      "action": "GetPositionInfo",
+      "indirect": false,
+      "sites": 26,
+      "crates": [
+        "fsonos-api",
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "get_media_info",
+      "service": "AVTransport",
+      "action": "GetMediaInfo",
+      "indirect": false,
+      "sites": 51,
+      "crates": [
+        "fsonos-api",
+        "fsonos-cli",
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "configure_sleep_timer",
+      "service": "AVTransport",
+      "action": "ConfigureSleepTimer",
+      "indirect": false,
+      "sites": 10,
+      "crates": [
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "get_remaining_sleep_timer",
+      "service": "AVTransport",
+      "action": "GetRemainingSleepTimerDuration",
+      "indirect": false,
+      "sites": 7,
+      "crates": [
+        "fsonos-api",
+        "fsonos-core"
+      ]
+    },
+    {
+      "function": "get_zone_group_state",
+      "service": "ZoneGroupTopology",
+      "action": "GetZoneGroupState",
+      "indirect": false,
+      "sites": 112,
+      "crates": [
+        "fsonos-api",
+        "fsonos-cli",
+        "fsonos-core",
+        "fsonos-mcp",
+        "fsonos-sim"
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "service": "ZoneGroupTopology",
+      "action": "GetZoneGroupState",
+      "sites": 112,
+      "functions": [
+        "get_zone_group_state"
+      ]
+    },
+    {
+      "service": "AVTransport",
+      "action": "GetTransportInfo",
+      "sites": 58,
+      "functions": [
+        "get_transport_info"
+      ]
+    },
+    {
+      "service": "AVTransport",
+      "action": "GetMediaInfo",
+      "sites": 51,
+      "functions": [
+        "get_media_info"
+      ]
+    },
+    {
+      "service": "AVTransport",
+      "action": "SetAVTransportURI",
+      "sites": 39,
+      "functions": [
+        "set_av_transport_uri",
+        "play_from_queue",
+        "join_group",
+        "leave_group"
+      ]
+    },
+    {
+      "service": "RenderingControl",
+      "action": "GetVolume",
+      "sites": 30,
+      "functions": [
+        "get_volume"
+      ]
+    },
+    {
+      "service": "AVTransport",
+      "action": "GetPositionInfo",
+      "sites": 26,
+      "functions": [
+        "get_position_info"
+      ]
+    },
+    {
+      "service": "RenderingControl",
+      "action": "SetVolume",
+      "sites": 22,
+      "functions": [
+        "set_volume"
+      ]
+    },
+    {
+      "service": "AVTransport",
+      "action": "Play",
+      "sites": 21,
+      "functions": [
+        "play"
+      ]
+    },
+    {
+      "service": "AVTransport",
+      "action": "AddURIToQueue",
+      "sites": 16,
+      "functions": [
+        "add_uri_to_queue",
+        "enqueue_uri"
+      ]
+    },
+    {
+      "service": "AVTransport",
+      "action": "Seek",
+      "sites": 11,
+      "functions": [
+        "seek_track",
+        "seek_position"
+      ]
+    },
+    {
+      "service": "AVTransport",
+      "action": "ConfigureSleepTimer",
+      "sites": 10,
+      "functions": [
+        "configure_sleep_timer"
+      ]
+    },
+    {
+      "service": "AVTransport",
+      "action": "Pause",
+      "sites": 8,
+      "functions": [
+        "pause"
+      ]
+    },
+    {
+      "service": "AVTransport",
+      "action": "Stop",
+      "sites": 8,
+      "functions": [
+        "stop"
+      ]
+    },
+    {
+      "service": "AVTransport",
+      "action": "GetRemainingSleepTimerDuration",
+      "sites": 7,
+      "functions": [
+        "get_remaining_sleep_timer"
+      ]
+    },
+    {
+      "service": "RenderingControl",
+      "action": "GetMute",
+      "sites": 7,
+      "functions": [
+        "get_mute"
+      ]
+    },
+    {
+      "service": "AVTransport",
+      "action": "RemoveTrackRangeFromQueue",
+      "sites": 5,
+      "functions": [
+        "remove_track_range_from_queue"
+      ]
+    },
+    {
+      "service": "AVTransport",
+      "action": "DelegateGroupCoordinationTo",
+      "sites": 3,
+      "functions": [
+        "delegate_group",
+        "delegate_group_and_rejoin"
+      ]
+    },
+    {
+      "service": "GroupRenderingControl",
+      "action": "GetGroupVolume",
+      "sites": 3,
+      "functions": [
+        "get_group_volume"
+      ]
+    },
+    {
+      "service": "RenderingControl",
+      "action": "SetMute",
+      "sites": 3,
+      "functions": [
+        "set_mute"
+      ]
+    },
+    {
+      "service": "GroupRenderingControl",
+      "action": "SnapshotGroupVolume",
+      "sites": 2,
+      "functions": [
+        "set_group_volume",
+        "set_relative_group_volume"
+      ]
+    },
+    {
+      "service": "RenderingControl",
+      "action": "GetBass",
+      "sites": 2,
+      "functions": [
+        "get_bass"
+      ]
+    },
+    {
+      "service": "RenderingControl",
+      "action": "GetLoudness",
+      "sites": 2,
+      "functions": [
+        "get_loudness"
+      ]
+    },
+    {
+      "service": "RenderingControl",
+      "action": "GetTreble",
+      "sites": 2,
+      "functions": [
+        "get_treble"
+      ]
+    },
+    {
+      "service": "AVTransport",
+      "action": "Next",
+      "sites": 1,
+      "functions": [
+        "next"
+      ]
+    },
+    {
+      "service": "AVTransport",
+      "action": "Previous",
+      "sites": 1,
+      "functions": [
+        "previous"
+      ]
+    },
+    {
+      "service": "AVTransport",
+      "action": "SetPlayMode",
+      "sites": 1,
+      "functions": [
+        "set_normal_play_mode"
+      ]
+    },
+    {
+      "service": "GroupRenderingControl",
+      "action": "SetGroupVolume",
+      "sites": 1,
+      "functions": [
+        "set_group_volume"
+      ]
+    },
+    {
+      "service": "GroupRenderingControl",
+      "action": "SetRelativeGroupVolume",
+      "sites": 1,
+      "functions": [
+        "set_relative_group_volume"
+      ]
+    },
+    {
+      "service": "RenderingControl",
+      "action": "RampToVolume",
+      "sites": 1,
+      "functions": [
+        "ramp_to_volume"
+      ]
+    },
+    {
+      "service": "RenderingControl",
+      "action": "SetBass",
+      "sites": 1,
+      "functions": [
+        "set_bass"
+      ]
+    },
+    {
+      "service": "RenderingControl",
+      "action": "SetLoudness",
+      "sites": 1,
+      "functions": [
+        "set_loudness"
+      ]
+    },
+    {
+      "service": "RenderingControl",
+      "action": "SetRelativeVolume",
+      "sites": 1,
+      "functions": [
+        "set_relative_volume"
+      ]
+    },
+    {
+      "service": "RenderingControl",
+      "action": "SetTreble",
+      "sites": 1,
+      "functions": [
+        "set_treble"
+      ]
+    },
+    {
+      "service": "AVTransport",
+      "action": "RemoveAllTracksFromQueue",
+      "sites": 0,
+      "functions": [
+        "remove_all_tracks_from_queue"
+      ]
+    }
+  ]
+}

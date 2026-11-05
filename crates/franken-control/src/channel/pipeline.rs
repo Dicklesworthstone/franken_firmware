@@ -63,8 +63,8 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use franken_session::{
-    AuthorityToken, FencedControlCommand, GroupCommandPayload, MembershipError, SessionError,
-    UnifiedGroupSession,
+    AuthorityToken, FencedControlCommand, GroupCommandPayload, GroupMembership, GroupTime,
+    LeaseTerms, LeaseWin, MembershipError, SessionError, UnifiedGroupSession,
 };
 
 use super::diag::{ChannelLog, Fact, session_error_kind};
@@ -199,6 +199,16 @@ pub struct Settlement {
     pub outcome: Outcome,
 }
 
+/// Why a lease could not be renewed.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RenewError {
+    #[error("the channel holds no lease to renew")]
+    NoLease,
+    /// The engine (or the session's check of the renewed token) refused. The held lease is unchanged.
+    #[error("the renewal was refused: {0}")]
+    Refused(#[from] MembershipError),
+}
+
 /// A configuration the channel cannot run with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ConfigError {
@@ -227,6 +237,13 @@ pub struct ChannelConfig {
     pub max_per_step: usize,
     pub ordinary_rate: RateLimit,
     pub priority_rate: RateLimit,
+    /// How far short of its expiry the held lease stops being usable, in nanoseconds: G01's clock
+    /// uncertainty `u` (`MembershipConfig::lease.clock_uncertainty_ns`). The holder stops `u` before its
+    /// lease ends and a taker waits `u` after, which is what keeps two leaders from sounding at once when
+    /// clocks disagree by up to `u`. Zero (the default) assumes perfectly agreeing clocks and makes the
+    /// gate identical to the plain expiry check. Set it from the engine's terms with
+    /// [`ChannelConfig::with_lease_terms`] so the channel and the engine refuse at the same instant.
+    pub lease_margin_ns: u64,
     /// The lowest command number the channel passes to the session. Each number is the larger of the
     /// previous one plus one and this base plus the session's `state_revision`, so a channel that
     /// restarts against a session that kept running is carried above every number it used before
@@ -250,8 +267,16 @@ impl ChannelConfig {
             max_per_step: 4,
             ordinary_rate: PROVISIONAL_ORDINARY_RATE,
             priority_rate: PROVISIONAL_PRIORITY_RATE,
+            lease_margin_ns: 0,
             session_seq_base: 1 << 32,
         }
+    }
+
+    /// Take the lease margin from G01's lease terms (the owner's `MembershipConfig::lease`).
+    #[must_use]
+    pub fn with_lease_terms(mut self, terms: &LeaseTerms) -> Self {
+        self.lease_margin_ns = terms.clock_uncertainty_ns;
+        self
     }
 
     fn validate(&self) -> Result<(), ConfigError> {
@@ -463,8 +488,34 @@ impl<A: PeerAuthority> ControlChannel<A> {
         token: AuthorityToken,
         now_ns: u64,
     ) -> Result<(), MembershipError> {
-        token.check(session, now_ns)?;
+        token.check_with_margin(session, now_ns, self.config.lease_margin_ns)?;
         self.lease = Some(token);
+        Ok(())
+    }
+
+    /// Extend the lease this channel holds to what a voter quorum acknowledged (G01 `renew_lease`), and
+    /// install the result. The renewal is judged by the engine under its own rule: the group must be in
+    /// quorum mode, the held lease must still be live at `now` (by the margin), the win must be a renewal
+    /// by this lease's holder for this lease's epoch, and it must extend the lease, and not past the
+    /// maximum. Any refusal is the engine's own error and leaves the held lease as it was.
+    ///
+    /// A holder whose lease has lapsed cannot be renewed (`AUTHORITY_EXPIRED`): the majority may already
+    /// be taking over. It has to win a new epoch instead, and the owner installs the token that
+    /// `GroupMembership::assume_authority` returns with [`ControlChannel::install_lease`]. A holder
+    /// that has learned of a newer holder (`adopt_authority`) is fenced with no extra code: its old lease
+    /// is a stale epoch to the session, so the gate refuses it.
+    pub fn renew_lease(
+        &mut self,
+        membership: &mut GroupMembership,
+        session: &UnifiedGroupSession,
+        win: &LeaseWin,
+        now: GroupTime,
+    ) -> Result<(), RenewError> {
+        let Some(held) = self.lease.clone() else {
+            return Err(RenewError::NoLease);
+        };
+        let renewed = membership.renew_lease(session, &held, win, now)?;
+        self.install_lease(session, renewed, now.ns)?;
         Ok(())
     }
 
@@ -982,7 +1033,10 @@ impl<A: PeerAuthority> ControlChannel<A> {
         }
         match &self.lease {
             None => Some(Refusal::NoLease),
-            Some(token) => token.check(session, now_ns).err().map(Refusal::Lease),
+            Some(token) => token
+                .check_with_margin(session, now_ns, self.config.lease_margin_ns)
+                .err()
+                .map(Refusal::Lease),
         }
     }
 
@@ -1028,7 +1082,9 @@ fn stepped(current: u8, delta: i8) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use franken_session::{GroupMembership, GroupTime, MembershipConfig};
+    use franken_session::{
+        EpochMint, LeaseRequest, LeaseView, LeaseVoter, MembershipConfig, QuorumConfig, QuorumRound,
+    };
     use franken_test_support::{
         CommandObservation, DiagnosticEvent, FencedCommandOracle, redact_sensitive_text,
     };
@@ -1133,6 +1189,14 @@ mod tests {
 
         fn pseudonym(&self, id: &str) -> String {
             self.channel.log().unwrap().pseudonym_of(id)
+        }
+
+        /// A fresh group-volume command from `ctl-a` at `ns`, stepped at once: how it settled.
+        fn volume_at(&mut self, seq: u64, epoch: u64, ns: u64) -> Outcome {
+            self.at(ns);
+            let r = self.req("ctl-a", seq, epoch, None, set_group(60 + (seq % 30) as u8));
+            self.submit(r);
+            self.step().remove(0).outcome
         }
 
         /// The owner installs a fresh lease for the session's current epoch.
@@ -3193,5 +3257,352 @@ mod tests {
             (seen, *rig.channel.stats(), rig.session.state_revision)
         };
         assert_eq!(run(false), run(true));
+    }
+
+    // ----------------------------------------------------------------- lease renewal and the margin (G01 slice 2)
+
+    /// A three-voter quorum group (`coord` holds epoch 10) and the engine that applies its wins.
+    struct Quorum {
+        config: QuorumConfig,
+        terms: LeaseTerms,
+        voters: Vec<LeaseVoter>,
+        membership: GroupMembership,
+    }
+
+    impl Quorum {
+        /// Every voter has seen `coord`'s lease for epoch 10 running to `first_lease_ends_ns`.
+        fn new(uncertainty_ns: u64, first_lease_ends_ns: u64) -> Self {
+            let config = QuorumConfig::new("grp", &["coord", "v2", "v3"]).unwrap();
+            let terms = LeaseTerms {
+                clock_uncertainty_ns: uncertainty_ns,
+                ..LeaseTerms::default()
+            };
+            let view = LeaseView {
+                group_id: "grp".to_string(),
+                epoch: EPOCH,
+                holder: "coord".to_string(),
+                expires_at_ns: first_lease_ends_ns,
+            };
+            let voters = ["coord", "v2", "v3"]
+                .iter()
+                .map(|id| {
+                    let mut voter = LeaseVoter::new(id, config.clone(), terms).unwrap();
+                    voter.observe(&view).unwrap();
+                    voter
+                })
+                .collect();
+            let membership = GroupMembership::new(MembershipConfig {
+                lease: terms,
+                epoch_mint: EpochMint::Quorum,
+                ..MembershipConfig::default()
+            });
+            Self {
+                config,
+                terms,
+                voters,
+                membership,
+            }
+        }
+
+        /// The round for `request`, answered by every voter at `now_ns`, and its outcome.
+        fn win(&mut self, request: &LeaseRequest, now_ns: u64) -> LeaseWin {
+            let mut round =
+                QuorumRound::start(&self.config, self.terms, request.clone(), now_ns).unwrap();
+            for voter in &mut self.voters {
+                let ack = voter.respond(request, now_ns).unwrap();
+                round.record(&ack, now_ns).unwrap();
+            }
+            round.outcome(now_ns).unwrap()
+        }
+
+        /// `coord` extends its own lease to `now_ns + lease_ns`.
+        fn renewal(&mut self, now_ns: u64, lease_ns: u64) -> LeaseWin {
+            let request = self.voters[0].renew_request(now_ns, lease_ns).unwrap();
+            self.win(&request, now_ns)
+        }
+
+        /// `coord` asks for the next epoch.
+        fn takeover(&mut self, now_ns: u64, lease_ns: u64) -> LeaseWin {
+            let request = self.voters[0].takeover_request(now_ns, lease_ns).unwrap();
+            self.win(&request, now_ns)
+        }
+    }
+
+    fn at_ns(ns: u64) -> GroupTime {
+        GroupTime { ns, frame: 0 }
+    }
+
+    #[test]
+    fn a_holder_that_renews_through_a_quorum_win_keeps_applying_commands_with_no_gap() {
+        let u = 10 * MS;
+        let mut config = roomy();
+        config.lease_margin_ns = u;
+
+        // Without a renewal the lease is usable up to the margin and refused from it: the control.
+        let mut control = Rig::new(config);
+        control.grant_until(1_000 * MS);
+        assert!(matches!(
+            control.volume_at(1, EPOCH, 990 * MS - 1),
+            Outcome::Committed { .. }
+        ));
+        assert_eq!(
+            control.volume_at(2, EPOCH, 990 * MS),
+            Outcome::Refused(Refusal::Lease(MembershipError::AuthorityExpired {
+                expires_at_ns: 1_000 * MS,
+                now_ns: 990 * MS
+            }))
+        );
+
+        // With a renewal won at 800 ms, the same instants are served, with no gap, and the new lease
+        // ends where the quorum said.
+        let mut quorum = Quorum::new(u, 1_000 * MS);
+        let mut rig = Rig::new(config);
+        rig.grant_until(1_000 * MS);
+        let win = quorum.renewal(800 * MS, 1_000 * MS);
+        rig.at(800 * MS);
+        rig.channel
+            .renew_lease(&mut quorum.membership, &rig.session, &win, at_ns(800 * MS))
+            .unwrap();
+        assert_eq!(rig.channel.lease().unwrap().expires_at_ns, 1_800 * MS);
+        assert!(matches!(
+            rig.volume_at(1, EPOCH, 990 * MS - 1),
+            Outcome::Committed { .. }
+        ));
+        assert!(
+            matches!(rig.volume_at(2, EPOCH, 990 * MS), Outcome::Committed { .. }),
+            "no gap at the old margin"
+        );
+        assert!(matches!(
+            rig.volume_at(3, EPOCH, 1_500 * MS),
+            Outcome::Committed { .. }
+        ));
+        assert_eq!(
+            rig.volume_at(4, EPOCH, 1_790 * MS),
+            Outcome::Refused(Refusal::Lease(MembershipError::AuthorityExpired {
+                expires_at_ns: 1_800 * MS,
+                now_ns: 1_790 * MS
+            })),
+            "the renewed lease also stops a margin early"
+        );
+        assert_eq!(rig.channel.stats().refused_for_lease, 1);
+
+        // The same win cannot be applied again to stretch the lease: it extends nothing.
+        assert_eq!(
+            rig.channel.renew_lease(
+                &mut quorum.membership,
+                &rig.session,
+                &win,
+                at_ns(1_000 * MS)
+            ),
+            Err(RenewError::Refused(MembershipError::LeaseNotExtended {
+                expires_at_ns: 1_800 * MS,
+                current_ns: 1_800 * MS
+            }))
+        );
+    }
+
+    #[test]
+    fn a_lapsed_holders_renewal_is_refused_and_its_commands_stay_refused_until_it_wins_a_new_epoch()
+    {
+        let u = 10 * MS;
+        let mut config = roomy();
+        config.lease_margin_ns = u;
+        let mut quorum = Quorum::new(u, 1_000 * MS);
+        let mut rig = Rig::new(config);
+        rig.grant_until(1_000 * MS);
+
+        // A renewal the holder won at 500 ms but sat on: the voters now believe the lease runs to 1500.
+        let stalled = quorum.renewal(500 * MS, 1_000 * MS);
+
+        // At 995 ms the holder is lapsed by its own conservative reading, so the engine refuses it.
+        rig.at(995 * MS);
+        let expired = MembershipError::AuthorityExpired {
+            expires_at_ns: 1_000 * MS,
+            now_ns: 995 * MS,
+        };
+        assert_eq!(
+            rig.channel.renew_lease(
+                &mut quorum.membership,
+                &rig.session,
+                &stalled,
+                at_ns(995 * MS)
+            ),
+            Err(RenewError::Refused(expired.clone()))
+        );
+        assert_eq!(
+            rig.channel.lease().unwrap().expires_at_ns,
+            1_000 * MS,
+            "the lease is as it was"
+        );
+        assert_eq!(
+            rig.volume_at(1, EPOCH, 995 * MS),
+            Outcome::Refused(Refusal::Lease(expired))
+        );
+
+        // The voters will not grant a takeover before the previous term has surely ended (their
+        // latest view is 1500 ms, plus the uncertainty).
+        let early = quorum.voters[0]
+            .takeover_request(1_000 * MS, 1_000 * MS)
+            .unwrap();
+        assert_eq!(
+            quorum.voters[1].respond(&early, 1_000 * MS),
+            Err(MembershipError::LeaseNotExpired {
+                conservative_expiry_ns: 1_510 * MS,
+                now_ns: 1_000 * MS
+            })
+        );
+
+        // At 1510 ms it wins epoch 11. Until the owner has the new token the channel stays refused.
+        let win = quorum.takeover(1_510 * MS, 1_000 * MS);
+        assert_eq!(win.epoch(), 11);
+        rig.channel.authority_mut().rebind(&id("ctl-a"), Some(11));
+        assert_eq!(
+            rig.volume_at(2, 11, 1_510 * MS),
+            Outcome::Refused(Refusal::Lease(MembershipError::AuthorityExpired {
+                expires_at_ns: 1_000 * MS,
+                now_ns: 1_510 * MS
+            }))
+        );
+
+        let token = quorum
+            .membership
+            .assume_authority(&mut rig.session, &win, at_ns(1_510 * MS))
+            .unwrap();
+        assert_eq!((token.epoch, rig.session.current_epoch), (11, 11));
+        rig.channel
+            .install_lease(&rig.session, token, 1_510 * MS)
+            .unwrap();
+        assert!(matches!(
+            rig.volume_at(3, 11, 1_510 * MS),
+            Outcome::Committed { .. }
+        ));
+    }
+
+    #[test]
+    fn adopting_a_newer_holders_lease_fences_a_channel_that_still_holds_the_old_one() {
+        let mut quorum = Quorum::new(0, 1_000 * MS);
+        let mut rig = Rig::roomy();
+        assert!(matches!(
+            rig.volume_at(1, EPOCH, 0),
+            Outcome::Committed { .. }
+        ));
+
+        // The group learns that `v2` holds epoch 11. No call on the channel is needed.
+        quorum
+            .membership
+            .adopt_authority(
+                &mut rig.session,
+                &LeaseView {
+                    group_id: "grp".to_string(),
+                    epoch: 11,
+                    holder: "v2".to_string(),
+                    expires_at_ns: 5_000 * MS,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            (
+                rig.session.current_epoch,
+                rig.session.coordinator_id.as_str()
+            ),
+            (11, "v2")
+        );
+        rig.channel.authority_mut().rebind(&id("ctl-a"), Some(11));
+        assert_eq!(
+            rig.volume_at(2, 11, 0),
+            Outcome::Refused(Refusal::Lease(MembershipError::StaleAuthority {
+                token_epoch: 10,
+                current_epoch: 11
+            }))
+        );
+        // Nor can the old token be put back.
+        let old = rig.channel.lease().unwrap().clone();
+        assert!(matches!(
+            rig.channel.install_lease(&rig.session, old, 0),
+            Err(MembershipError::StaleAuthority { .. })
+        ));
+    }
+
+    #[test]
+    fn a_renewal_needs_a_lease_to_renew_and_a_quorum_group_to_renew_in() {
+        let mut quorum = Quorum::new(0, 1_000 * MS);
+        let win = quorum.renewal(100 * MS, 1_000 * MS);
+
+        // No lease held: nothing to extend.
+        let mut bare = Rig::without_lease(roomy());
+        assert_eq!(
+            bare.channel
+                .renew_lease(&mut quorum.membership, &bare.session, &win, at_ns(100 * MS)),
+            Err(RenewError::NoLease)
+        );
+
+        // A group whose epochs are minted by its configured issuer has no quorum to renew through.
+        let mut issuer_mode = GroupMembership::new(MembershipConfig::default());
+        let mut rig = Rig::roomy();
+        rig.grant_until(1_000 * MS);
+        assert_eq!(
+            rig.channel
+                .renew_lease(&mut issuer_mode, &rig.session, &win, at_ns(100 * MS)),
+            Err(RenewError::Refused(MembershipError::NotAQuorumGroup))
+        );
+        assert_eq!(rig.channel.lease().unwrap().expires_at_ns, 1_000 * MS);
+    }
+
+    #[test]
+    fn the_channels_gate_and_install_agree_with_g1s_own_liveness_rule_at_every_boundary() {
+        let u = 10 * MS;
+        let quorum = Quorum::new(u, 1_000 * MS);
+        let mut config = roomy();
+        config.lease_margin_ns = u;
+        let mut rig = Rig::new(config);
+        let token = AuthorityToken::issue(&rig.session, 1_000 * MS);
+        let instants = [
+            0,
+            500 * MS,
+            990 * MS - 1,
+            990 * MS,
+            990 * MS + 1,
+            999 * MS,
+            1_000 * MS,
+            1_001 * MS,
+        ];
+        for ns in instants {
+            let live = quorum.membership.lease_is_live(&rig.session, &token, ns);
+            assert_eq!(
+                rig.channel
+                    .install_lease(&rig.session, token.clone(), ns)
+                    .is_ok(),
+                live,
+                "install at {ns} ns"
+            );
+        }
+        // The gate: install at the start, then judge a command at each instant.
+        rig.channel
+            .install_lease(&rig.session, token.clone(), 0)
+            .unwrap();
+        for (n, ns) in instants.into_iter().enumerate() {
+            let live = quorum.membership.lease_is_live(&rig.session, &token, ns);
+            let outcome = rig.volume_at(n as u64 + 1, EPOCH, ns);
+            assert_eq!(
+                matches!(outcome, Outcome::Committed { .. }),
+                live,
+                "gate at {ns} ns: {outcome:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_margin_is_taken_from_g1s_lease_terms() {
+        let terms = LeaseTerms {
+            clock_uncertainty_ns: 7,
+            ..LeaseTerms::default()
+        };
+        assert_eq!(ChannelConfig::provisional().lease_margin_ns, 0);
+        assert_eq!(
+            ChannelConfig::provisional()
+                .with_lease_terms(&terms)
+                .lease_margin_ns,
+            7
+        );
     }
 }
