@@ -52,6 +52,11 @@ RUST_SOURCES = [
     ("crates/franken-alloc-probe/tests/render_path_no_alloc.rs", "render_path_no_alloc", ""),
 ]
 HARNESS_TEST = ("d01_vectors", "d01_vectors_match_the_independent_reference")
+# cargo package -> test binaries whose `Running ... (target/.../<stem>-<hash>)` lines it may produce
+PACKAGE_BINARIES = {
+    "franken-dsp": ("franken_dsp", "d01_vectors"),
+    "franken-alloc-probe": ("render_path_no_alloc",),
+}
 TEST_FN = re.compile(r"#\[test\]\s*((?:#\[[^\]]*\]\s*)*)fn\s+([A-Za-z0-9_]+)")
 OBSERVED = re.compile(r"D01-OBSERVED (\{.*\})\s*$")
 TEST_LINE = re.compile(r"\btest (\S+) \.\.\. (ok|FAILED|ignored)\b")
@@ -284,12 +289,18 @@ def run(tier: str, logs: Optional[Logs]) -> Tuple[List[Result], dict]:
                           f"uncovered={uncovered} unknown={unknown}" if uncovered or unknown else "", "meta"))
 
     required = derive_rust_tests()
-    named = {tuple(entry.split("::", 1)) for names in external.values() for entry in names}
-    missing_named = sorted(f"{pkg}::{name}" for pkg, name in named
-                           if not any(name.endswith(n) or n.endswith(name) for _, n in required)
-                           and not any(name == n for _, n in required))
+    external_pairs: List[Tuple[str, str]] = []
+    missing_named: List[str] = []
+    for names in external.values():
+        for entry in names:
+            package, name = entry.split("::", 1)
+            matches = [(stem, name) for stem in PACKAGE_BINARIES.get(package, ()) if (stem, name) in required]
+            if matches:
+                external_pairs.extend(matches)
+            else:
+                missing_named.append(entry)
     results.append(Result("D01-META-EXTERNAL-TESTS-EXIST", "failed" if missing_named else "passed",
-                          f"named in the invariant map but not found in the sources: {missing_named}"
+                          f"named in the invariant map but not found in the Rust sources: {sorted(missing_named)}"
                           if missing_named else "", "meta"))
 
     selected = {c["id"] for c in cases} if tier == "full" else set(smoke_ids(cases))
@@ -309,12 +320,7 @@ def run(tier: str, logs: Optional[Logs]) -> Tuple[List[Result], dict]:
             results.append(Result(f"D01-OBS-DUP-{dup}", "failed", "observed more than once in the logs", "vector"))
 
     # Rust tests that must have reported ok
-    if tier == "full":
-        needed = required
-    else:
-        needed = [HARNESS_TEST] + [t for t in required if f"{t[0]}::{t[1]}" in
-                                   {e.replace("franken-dsp::", "franken_dsp::").replace("franken-alloc-probe::", "render_path_no_alloc::")
-                                    for names in external.values() for e in names}]
+    needed = required if tier == "full" else [HARNESS_TEST] + external_pairs
     for stem, name in needed:
         case_id = f"RUST:{stem}::{name}"
         status = logs.test_status(stem, name) if logs is not None else None
