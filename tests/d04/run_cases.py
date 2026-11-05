@@ -38,16 +38,21 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 
 import generate  # noqa: E402
+import log_reference  # noqa: E402
 import reference  # noqa: E402
 
 CASES_FILE = os.path.join(HERE, "cases.json")
 SCENARIOS_FILE = os.path.join(HERE, "scenarios.json")
 DOC_FILE = os.path.join(REPO, "docs", "contracts", "d04.md")
 RENDER_RS = os.path.join(REPO, "crates", "franken-speaker", "src", "render.rs")
+RENDER_LOG_RS = os.path.join(REPO, "crates", "franken-speaker", "src", "render_log.rs")
+SPEAKER_LIB = os.path.join(REPO, "crates", "franken-speaker", "src", "lib.rs")
+LOG_GOLDEN = os.path.join(HERE, "log_golden.json")
+TEST_SUPPORT_RS = os.path.join(REPO, "crates", "franken-test-support", "src", "lib.rs")
 SCHEMA = "ffw.d04.cases.v1"
 TIERS = ("smoke", "full")
 KINDS = ("scenario", "planted_defect", "meta_files", "meta_shared", "meta_generated", "meta_invariants",
-         "meta_hygiene", "meta_no_unsafe", "runner_selftest", "blocked")
+         "meta_hygiene", "meta_no_unsafe", "meta_log", "log_golden", "log_defect", "runner_selftest", "blocked")
 PASS, FAIL, BLOCKED = "pass", "fail", "blocked"
 Result = Tuple[str, str]
 
@@ -77,6 +82,13 @@ def sha256_file(path: str) -> str:
 def render_test_names() -> List[str]:
     """Functions directly annotated #[test] in crates/franken-speaker/src/render.rs."""
     return re.findall(r"#\[test\]\s*\n\s*fn\s+(\w+)\s*\(", read(RENDER_RS))
+
+
+def all_rust_tests() -> List[str]:
+    """`module::fn` for every #[test] in render.rs and render_log.rs."""
+    out = [f"render::{n}" for n in render_test_names()]
+    log_tests = re.findall(r"#\[test\]\s*\n\s*fn\s+(\w+)\s*\(", read(RENDER_LOG_RS))
+    return out + [f"render_log::{n}" for n in log_tests]
 
 
 # ------------------------------------------------------------------------------------- scenarios
@@ -132,7 +144,8 @@ def run_planted_defect(c) -> Result:
 # ------------------------------------------------------------------------------------------- meta
 
 def run_meta_files(c) -> Result:
-    needed = [CASES_FILE, SCENARIOS_FILE, DOC_FILE, RENDER_RS,
+    needed = [CASES_FILE, SCENARIOS_FILE, DOC_FILE, RENDER_RS, RENDER_LOG_RS, LOG_GOLDEN,
+              os.path.join(HERE, "log_reference.py"),
               os.path.join(HERE, "reference.py"), os.path.join(HERE, "generate.py"),
               os.path.join(REPO, "scripts", "e2e", "d04")]
     gone = [os.path.relpath(p, REPO) for p in needed if not os.path.isfile(p)]
@@ -183,9 +196,8 @@ def check_invariants(doc: Dict[str, Any], ids: List[str], tests: List[str]) -> L
         if not inv["rust_tests"] and not inv["cases"]:
             problems.append(f"{inv['id']} maps to nothing")
         for name in inv["rust_tests"]:
-            module, _, fn = name.partition("::")
-            if module != "render" or fn not in tests:
-                problems.append(f"{inv['id']}: no #[test] fn {fn} in render.rs")
+            if name not in tests:
+                problems.append(f"{inv['id']}: no #[test] fn {name} in render.rs or render_log.rs")
         for ref in expand(inv["cases"], ids):
             if ref not in ids:
                 problems.append(f"{inv['id']} names unknown case {ref}")
@@ -198,17 +210,20 @@ def check_invariants(doc: Dict[str, Any], ids: List[str], tests: List[str]) -> L
 
 def run_meta_invariants(c) -> Result:
     doc = load_json(CASES_FILE)
-    problems = check_invariants(doc, all_ids(doc), render_test_names())
+    tests = all_rust_tests()
+    problems = check_invariants(doc, all_ids(doc), tests)
     named = sum(len(i["rust_tests"]) for i in doc["invariants"])
-    listed = len(set(n.partition("::")[2] for i in doc["invariants"] for n in i["rust_tests"]))
-    total = len(render_test_names())
-    if listed != total:
-        problems.append(f"{total - listed} of the {total} Rust tests are in no invariant")
+    listed = {n for i in doc["invariants"] for n in i["rust_tests"]}
+    total = len(tests)
+    unmapped = sorted(set(tests) - listed)
+    if unmapped:
+        problems.append(f"{len(unmapped)} of the {total} Rust tests are in no invariant: {unmapped}")
     return (PASS, f"{len(doc['invariants'])} invariants, {named} named Rust tests, all {total} mapped") \
         if not problems else (FAIL, "; ".join(problems))
 
 
-HYGIENE_FILES = ("cases.json", "scenarios.json", "reference.py", "generate.py", "run_cases.py")
+HYGIENE_FILES = ("cases.json", "scenarios.json", "reference.py", "generate.py", "run_cases.py", "log_golden.json",
+                 "log_reference.py")
 
 
 def run_meta_hygiene(c) -> Result:
@@ -228,13 +243,84 @@ def run_meta_hygiene(c) -> Result:
 def run_meta_no_unsafe(c) -> Result:
     problems = []
     rx = re.compile(r"\bunsafe\s*(\{|fn\b|impl\b|trait\b)")
-    for n, line in enumerate(read(RENDER_RS).splitlines(), 1):
-        if rx.search(line.split("//")[0]):
-            problems.append(f"render.rs:{n}: {line.strip()}")
+    for label, path in (("render.rs", RENDER_RS), ("render_log.rs", RENDER_LOG_RS)):
+        for n, line in enumerate(read(path).splitlines(), 1):
+            if rx.search(line.split("//")[0]):
+                problems.append(f"{label}:{n}: {line.strip()}")
     lib = read(os.path.join(REPO, "crates", "franken-speaker", "src", "lib.rs"))
     if "#![forbid(unsafe_code)]" not in lib:
         problems.append("franken-speaker no longer forbids unsafe_code")
     return (PASS, "") if not problems else (FAIL, "; ".join(problems))
+
+
+def struct_fields(source: str, name: str) -> List[str]:
+    """Field names of a Rust struct, in order, read from its source text."""
+    m = re.search(r"(?:pub )?struct %s \{(.*?)\n\}" % re.escape(name), source, re.S)
+    if not m:
+        return []
+    return [f.group(1) for f in re.finditer(r"^\s*(?:pub )?(\w+):\s", m.group(1), re.M)]
+
+
+def run_meta_log(c) -> Result:
+    """The line the diagnostics log writes has exactly the fields of the ffw.log.v1 schema type, in its order,
+    reuses the HAL's schema string, keeps franken-test-support out of the production half, and states the
+    golden it must reproduce. The Rust tests go further (they round-trip every line through the schema type);
+    this catches a drift without compiling anything."""
+    support = read(TEST_SUPPORT_RS)
+    ours = read(RENDER_LOG_RS)
+    want = struct_fields(support, "DiagnosticEvent")
+    got = struct_fields(ours, "LogLine")
+    problems = []
+    if not want:
+        problems.append("could not read DiagnosticEvent from franken-test-support")
+    elif got != want:
+        problems.append(f"LogLine fields {got} differ from DiagnosticEvent fields {want}")
+    if list(log_reference.FIELD_ORDER) != want:
+        problems.append("log_reference.FIELD_ORDER differs from the schema type")
+    if "LOG_SCHEMA_VERSION" not in ours.split("#[cfg(test)]")[0] or "franken_hal::contract_log" not in ours:
+        problems.append("render_log.rs does not reuse the HAL's ffw.log.v1 schema string")
+    production = ours.split("#[cfg(test)]")[0]
+    if "franken_test_support" in production:
+        problems.append("the production half of render_log.rs names franken_test_support")
+    if 'include_str!("../../../tests/d04/log_golden.json")' not in ours:
+        problems.append("render_log.rs does not include tests/d04/log_golden.json")
+    if "pub mod render_log;" not in read(SPEAKER_LIB):
+        return BLOCKED, "render_log.rs is not declared in franken-speaker/src/lib.rs yet (the supervisor wires it)" \
+            + ("; " + "; ".join(problems) if problems else "")
+    return (PASS, f"{len(want)} fields in order") if not problems else (FAIL, "; ".join(problems))
+
+
+def check_log_golden(golden, defect=None) -> Result:
+    """The independent model reproduces the hand-typed lines and the hand-derived bounded scenario exactly."""
+    got = log_reference.run(golden, defect)
+    if got != golden["expected"]:
+        first = next((i for i, (a, b) in enumerate(zip(got, golden["expected"])) if a != b), min(len(got), len(golden["expected"])))
+        return FAIL, f"{len(got)} line(s) against {len(golden['expected'])} expected; first difference at line {first}"
+    b = golden["bounded"]
+    bounded = log_reference.run_bounded(golden, defect)
+    if bounded != {"kept": b["expect_kept"], "stats": b["expect_stats"]}:
+        return FAIL, f"bounded log kept {bounded['kept']} with {bounded['stats']}, expected {b['expect_kept']} with {b['expect_stats']}"
+    for line in golden["expected"]:
+        if list(json.loads(line).keys()) != [k for k in log_reference.FIELD_ORDER if k in json.loads(line)]:
+            return FAIL, "an expected line is out of the schema's field order"
+    return PASS, ""
+
+
+def run_log_golden(c) -> Result:
+    status, detail = check_log_golden(load_json(LOG_GOLDEN))
+    return (PASS, f"{len(load_json(LOG_GOLDEN)['expected'])} lines and the bounded log reproduced") \
+        if status == PASS else (status, detail)
+
+
+def run_log_defect(c) -> Result:
+    golden = load_json(LOG_GOLDEN)
+    base = check_log_golden(golden)
+    if base[0] != PASS:
+        return FAIL, f"baseline is not green, so no catch can be credited: {base[1]}"
+    if c["defect"] not in log_reference.DEFECTS:
+        return FAIL, f"unknown defect {c['defect']!r}"
+    status, detail = check_log_golden(golden, c["defect"])
+    return (PASS, f"caught: {detail}") if status != PASS else (FAIL, f"defect {c['defect']!r} was not caught")
 
 
 def run_runner_selftest(c) -> Result:
@@ -254,17 +340,28 @@ def run_runner_selftest(c) -> Result:
     bad = copy.deepcopy(load_json(CASES_FILE))
     bad["invariants"][0]["rust_tests"].append("render::a_test_that_does_not_exist")
     if not any("a_test_that_does_not_exist" in p
-               for p in check_invariants(bad, all_ids(bad), render_test_names())):
+               for p in check_invariants(bad, all_ids(bad), all_rust_tests())):
         return FAIL, "a missing Rust test name was not detected"
     orphan = copy.deepcopy(load_json(CASES_FILE))
     orphan["cases"].append({"id": "D04-ORPHAN", "kind": "meta_files", "tier": "smoke"})
-    if not any("D04-ORPHAN" in p for p in check_invariants(orphan, all_ids(orphan), render_test_names())):
+    if not any("D04-ORPHAN" in p for p in check_invariants(orphan, all_ids(orphan), all_rust_tests())):
         return FAIL, "a case covering no invariant was not detected"
+    golden = load_json(LOG_GOLDEN)
+    if check_log_golden(golden)[0] != PASS:
+        return FAIL, "the diagnostics log baseline does not pass"
+    corrupt = copy.deepcopy(golden)
+    corrupt["expected"][4] = corrupt["expected"][4].replace('"latency_us":3000', '"latency_us":3')
+    if check_log_golden(corrupt)[0] == PASS:
+        return FAIL, "a corrupted expected log line was accepted"
+    corrupt = copy.deepcopy(golden)
+    corrupt["bounded"]["expect_kept"] = ["block-0", "block-1", "tick-10"]
+    if check_log_golden(corrupt)[0] == PASS:
+        return FAIL, "a corrupted bounded-log expectation was accepted"
     return PASS, ""
 
 
 def run_blocked(c) -> Result:
-    extra = f" Expect {len(render_test_names())} #[test] functions in render.rs." \
+    extra = f" Expect {len(all_rust_tests())} #[test] functions in render.rs and render_log.rs." \
         if c["id"] == "D04-RUST-CENTRAL" else ""
     return BLOCKED, f"{c['blocker']} (owner: {c['owner']}): {c['needs']}{extra}"
 
@@ -274,6 +371,7 @@ RUNNERS: Dict[str, Callable[[Dict[str, Any]], Result]] = {
     "meta_shared": run_meta_shared, "meta_generated": run_meta_generated,
     "meta_invariants": run_meta_invariants, "meta_hygiene": run_meta_hygiene,
     "meta_no_unsafe": run_meta_no_unsafe, "runner_selftest": run_runner_selftest, "blocked": run_blocked,
+    "meta_log": run_meta_log, "log_golden": run_log_golden, "log_defect": run_log_defect,
 }
 
 
@@ -346,8 +444,8 @@ def main(argv: List[str]) -> int:
             "command": "tests/d04/run_cases.py " + " ".join(argv),
             "utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "python": sys.version.split()[0], "tier": args.tier, "denominator": len(results), "counts": counts,
-            "qualified": qualified, "rust_test_functions_expected": len(render_test_names()),
-            "inputs": {os.path.relpath(p, REPO): sha256_file(p) for p in (CASES_FILE, SCENARIOS_FILE)},
+            "qualified": qualified, "rust_test_functions_expected": len(all_rust_tests()),
+            "inputs": {os.path.relpath(p, REPO): sha256_file(p) for p in (CASES_FILE, SCENARIOS_FILE, LOG_GOLDEN)},
             "cases": [{"id": c["id"], "status": st} for c, st, _ in results],
         }
         path = os.path.join(args.receipts, f"d04-{args.tier}.json")
