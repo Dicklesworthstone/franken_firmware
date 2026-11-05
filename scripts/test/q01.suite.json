@@ -1,0 +1,791 @@
+{
+  "schema": "ffw.suite.v1",
+  "suite": "q01",
+  "description": "Q01 (ffw-gmq) offline Virtual House harness: every case of tests/q01/cases.json, judged by scripts/test/q00/q01_case.py from the log of the centrally run speaker lib tests (FFW_Q01_LOG). Without that log every case is blocked, never passed. The authoritative floor is derived separately by scripts/test/q00/q01_floor.py from the case table and the Rust sources.",
+  "requirements": {
+    "Q01.AC1": {
+      "text": "Check samples and state, not log strings alone.",
+      "tiers": [
+        "full"
+      ]
+    },
+    "Q01.AC2": {
+      "text": "Race two real adapter interfaces replacing sources and retrying relative volume; assert sample/state revisions.",
+      "tiers": [
+        "full"
+      ]
+    },
+    "Q01.AC3": {
+      "text": "Separate unit/mock simulation from full-system and hardware evidence.",
+      "tiers": [
+        "full"
+      ]
+    }
+  },
+  "required_cases": {
+    "full": [
+      "Q01-C01",
+      "Q01-C02",
+      "Q01-C03",
+      "Q01-C04",
+      "Q01-C05",
+      "Q01-C06",
+      "Q01-C07",
+      "Q01-C08",
+      "Q01-C09",
+      "Q01-C10",
+      "Q01-C11",
+      "Q01-C12",
+      "Q01-C13",
+      "Q01-C14",
+      "Q01-C15",
+      "Q01-C16",
+      "Q01-C17",
+      "Q01-C18",
+      "Q01-C19",
+      "Q01-C20",
+      "Q01-C21",
+      "Q01-C22",
+      "Q01-C23",
+      "Q01-C24",
+      "Q01-C25",
+      "Q01-C26",
+      "Q01-M01",
+      "Q01-M02"
+    ]
+  },
+  "cases": [
+    {
+      "id": "Q01-C01",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C01"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC1"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[bring-up, positive] a node is brought up through the real readiness sequence and reaches ready; the HAL itself still refuses an unmute before priming; the readiness spec for the clock is pinned to N03's configuration"
+    },
+    {
+      "id": "Q01-C02",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C02"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC1"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[bring-up, negative] a weakened driver threshold and a node that skips its own gate on an unlocked clock are each refused by name"
+    },
+    {
+      "id": "Q01-C03",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C03"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC1"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[timeline, positive] a block's start maps back to its scheduled frame however long the campaign runs; a locked node sounds at the admitted start and not before; the simulated member clocks are pinned"
+    },
+    {
+      "id": "Q01-C04",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C04"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC1"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[clock faults, negative] a suspend, a clock leap, an unadmitted node, and unsolicited, replayed, stale and wrong-leader probes each mute or change nothing, and never produce audio; request bases differ per member and boot"
+    },
+    {
+      "id": "Q01-C05",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C05"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC1"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[campaign, positive] the mixed S1/S2 fleet streams every block of every member, measures a skew from independent clocks, checks every channel against the shadow render, and is deterministic"
+    },
+    {
+      "id": "Q01-C06",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C06"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC1"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[campaign, negative] a corrupted sample in any channel and a missing final block are caught"
+    },
+    {
+      "id": "Q01-C07",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C07"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC1"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[campaign, negative] an unmeasured skew is not a pass: a mostly muted house, a refused member, a campaign that compared nothing and a house with one participant make no synchronisation claim they cannot support"
+    },
+    {
+      "id": "Q01-C08",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C08"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC1"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[fencing, positive] the fencing probe drives the real session and the independent oracle accepts it; a rejected command does not adopt its epoch"
+    },
+    {
+      "id": "Q01-C09",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C09"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC1",
+        "Q01.AC3"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[fencing, limit] KNOWN LIMIT, pinned: a valid command at an undeclared epoch is still applied"
+    },
+    {
+      "id": "Q01-C10",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C10"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC1"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[diagnostics, positive] a planted fault leaves itself and its causal chain in the log; the default sink bounds a burst but never limits a healthy stream; an unavailable, full, zero-capacity or tiny sink changes nothing else"
+    },
+    {
+      "id": "Q01-C11",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C11"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC1"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[playout, negative] the real N04 engine decides every block as the seeded schedule says; a late block, a reordered pair, a previous-epoch datagram and a clock leap each move exactly what they should and nothing else"
+    },
+    {
+      "id": "Q01-C12",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C12"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC1"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[negotiation, positive] every member's stream comes out of an N01 negotiation; each session has its own key; a member that answers with an unsupported version or cannot take a full block is refused and muted with its cause; peer identities and nonces are valid, distinct and deterministic"
+    },
+    {
+      "id": "Q01-C13",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C13"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC2"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[source replacement, positive] two real adapters racing to replace the source admit exactly one in either order and the house cuts over at one frame; the program each block carried is read from the bytes that sounded"
+    },
+    {
+      "id": "Q01-C14",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C14"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC2"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[source replacement, negative] a replaced adapter that keeps publishing is refused by the gate; a datagram of the replaced stream is refused by the rebound receiver; a planted source fault with no source change is an error"
+    },
+    {
+      "id": "Q01-C15",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C15"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC2"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[relative volume, positive] the real G03 endpoint and N02 channel: a plain-SOAP retry applies again, a tailnet retry with the same number applies once and reports the volume as it is now, a stale revision is refused and remembered, a bad proof changes nothing, clamps still move the revision, a group step moves the group"
+    },
+    {
+      "id": "Q01-C16",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C16"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC2"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[relative volume, positive] the volume plan the contract predicts: the race plan and the reference plan, an invalid plan is refused (with a valid control), an unfinished plan is not a clean run, the harness key store follows the secret-store contract"
+    },
+    {
+      "id": "Q01-C17",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C17"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC2"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[relative volume, negative] a tailnet retry sent as a new command and a stale revision a client refreshes are each named by the oracle (adapter level and whole campaign), each with its unplanted control; a planted volume fault with no plan is refused"
+    },
+    {
+      "id": "Q01-C18",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C18"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC2"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[relative volume, positive] the race around a source change does what the contract predicts and sounds exactly like a reference that sets the same volumes directly; a campaign with no plan reports none and sounds the same every time"
+    },
+    {
+      "id": "Q01-C19",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C19"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC1"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[sound evidence, control] the sample digest tells volume trajectories apart (a wrong reference differs in that member only); the digest of silence equals the independently computed value; the endpoint member renders and a mono-routed member does not"
+    },
+    {
+      "id": "Q01-C20",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C20"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC1"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[sound evidence, positive] under the Asymmetric source every member renders sound; the source keeps the left channel and its mono mix never cancels; a member the gate never let sound is not asked to have rendered anything"
+    },
+    {
+      "id": "Q01-C21",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C21"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC1",
+        "Q01.AC3"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[sound evidence, limit] LIMIT 1, pinned: under the original opposed source a mono-routed member renders only zeros and that is not a failure"
+    },
+    {
+      "id": "Q01-C22",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C22"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC1"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[sound evidence, negative] a member handed silence fails the campaign by name under Asymmetric, and passes every other oracle under the original source (which is why the question is asked)"
+    },
+    {
+      "id": "Q01-C23",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C23"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC1"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[diagnostics, positive] (added by the N03 redaction fix, 4611dd2) a campaign's diagnostic events name a member only in member_id and in no free-text field; a keyed sink holds no raw member or group label in any field or in the JSONL; a planted fault names its member as a field and never in its text; a failure that names no member is recorded as the house's with its whole text as the cause; redacting a failure replaces every member label and names the first member it mentions; the redacted labels are the members the campaign has"
+    },
+    {
+      "id": "Q01-C24",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C24"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC1"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[diagnostics, negative] (added by the N03 redaction fix, 4611dd2) the leak scan names the free-text field a raw member id is put back in"
+    },
+    {
+      "id": "Q01-C25",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C25"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC2"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[end of campaign, positive] the SOAP skeleton call is retired: every campaign ends with an absolute group volume set through the real endpoint over local legacy SOAP; it applies, a plain-SOAP repeat leaves the volume where it was (an absolute set is safe to repeat), only the group moves, and the report records it"
+    },
+    {
+      "id": "Q01-C26",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-C26"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC2"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[end of campaign, negative] an out-of-range group volume is refused (UPnP 402) with no effect and the boundary values are accepted; a set the endpoint refuses fails the end-of-campaign step by name, each against its control"
+    },
+    {
+      "id": "Q01-M01",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-M01"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC1",
+        "Q01.AC3"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[measurement, measurement] what every member renders under each source at the --virtual-house campaign: one Q01-MEMBER record per member and source, judged from the log"
+    },
+    {
+      "id": "Q01-M02",
+      "argv": [
+        "{python}",
+        "-I",
+        "{manifest_dir}/q00/q01_case.py",
+        "Q01-M02"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "timeout_s": 60,
+      "requirements": [
+        "Q01.AC1",
+        "Q01.AC3"
+      ],
+      "evidence_class": "host-simulation",
+      "requires": {
+        "env": [
+          "FFW_Q01_LOG"
+        ]
+      },
+      "env_inherit": [
+        "FFW_Q01_LOG"
+      ],
+      "description": "[measurement, measurement] the SilentInput plant is named for every one of the five members, with its remove-the-plant control: one Q01-PLANT record per run, judged from the log"
+    }
+  ]
+}
