@@ -38,6 +38,8 @@ sys.path.insert(0, HERE)
 import central  # noqa: E402
 import facts as facts_mod  # noqa: E402
 import fixtures  # noqa: E402
+import inventory  # noqa: E402
+import inventory_fixtures  # noqa: E402
 import metadata_check  # noqa: E402
 import plan as plan_mod  # noqa: E402
 import planning_fixtures  # noqa: E402
@@ -902,6 +904,54 @@ def run_planning_real(c) -> Result:
                      f"`python3 tests/p01/planning_reconcile.py --live {shown}` for the list" + owner)
 
 
+def run_inventory_plants(c) -> Result:
+    """P01-INV-001..004: the E06-inventory judgement on synthetic worlds: every permitted positive passes, and every planted
+    negative (a stale audit, an audit inconsistent with its lock, an audit edited to claim a lock it was not made from) gets
+    exactly its verdict and codes (see inventory_fixtures.py)."""
+    try:
+        if c["group"] == "permitted_positive":
+            return PASS, inventory_fixtures.judge_positive()
+        return PASS, inventory_fixtures.judge_group(c["group"])
+    except AssertionError as err:
+        raise CaseError(str(err)) from err
+
+
+def run_e06_inventory(c) -> Result:
+    """P01-BLK-005: the pinned per-target dependency / unsafe / licence inventory E06 committed
+    (`toolchain/results/e06/rev-*/audit.json` or `audit-*/audit.json`) judged against the CURRENT Cargo.lock (see inventory.py). No
+    audit: BLOCKED. An audit that binds another lock: BLOCKED, with the delta named (stale, not wrong). An audit that binds this
+    lock and disagrees with it: FAIL. Only an audit of this lock, consistent with it, passes. WHICH AUDIT WINS when several are
+    committed: one that binds the current lock beats any that does not (an older audit beside a current one never blocks it); among
+    those, a pass is the result, and a failing audit of the same lock beside it is named, not hidden; with none current, the
+    audit with the smallest delta is the one reported. It admits no dependency and says nothing about a build."""
+    owner = f" [owner: {c['owner']}]"
+    paths = inventory.find_audits(REPO)
+    if not paths:
+        return BLOCKED, f"no E06 audit is committed under toolchain/results/e06/{{rev,audit}}-*/audit.json. {c['reason']}{owner}"
+    try:
+        with open(os.path.join(REPO, "Cargo.lock"), "rb") as f:
+            lock = f.read()
+    except OSError as err:
+        raise CaseError(f"cannot read Cargo.lock: {err}") from err
+    judged = []
+    for path in paths:
+        try:
+            judged.append((path, *inventory.judge(load_json(path), lock)))
+        except inventory.InputError as err:
+            raise CaseError(str(err)) from err
+    named = lambda path: os.path.relpath(os.path.dirname(path), REPO)  # noqa: E731
+    current = [j for j in judged if "audit_lock_stale" not in inventory.codes(j[2])]
+    if current:
+        passing = [j for j in current if j[1] == "pass"]
+        if passing:
+            failing = [named(j[0]) for j in current if j[1] != "pass"]
+            also = f"; also binding this lock but failing: {', '.join(failing)}" if failing else ""
+            return PASS, f"{named(passing[0][0])}: {passing[0][3]}{also}"
+        raise CaseError(f"{named(current[0][0])}: {current[0][3]}")
+    best = min(judged, key=lambda j: (len(j[2]), j[0]))
+    return BLOCKED, f"{named(best[0])}: {best[3]}{owner}"
+
+
 def run_blocked(c) -> Result:
     return BLOCKED, f"{c['reason']} [owner: {c['owner']}]"
 
@@ -912,7 +962,7 @@ HANDLERS: Dict[str, Callable[[Dict[str, Any]], Result]] = {
     "resolve_planted": run_resolve_planted, "metadata": run_metadata, "metadata_real": run_metadata_real,
     "central_evidence": run_central_evidence, "plan_exact": run_plan_exact,
     "plan_rules": run_plan_rules, "plan_sharing": run_plan_sharing, "receipt": run_receipt,
-    "receipt_tamper": run_receipt_tamper, "meta_invariants": run_meta_invariants, "meta_codes": run_meta_codes,
+    "receipt_tamper": run_receipt_tamper, "inventory_plants": run_inventory_plants, "e06_inventory": run_e06_inventory, "meta_invariants": run_meta_invariants, "meta_codes": run_meta_codes,
     "meta_hygiene": run_meta_hygiene, "meta_vectors_current": run_meta_vectors_current,
     "mutation_canary": run_mutation_canary, "runner_selftest": run_runner_selftest, "blocked": run_blocked,
     "planning_plants": run_planning_plants, "planning_real": run_planning_real,

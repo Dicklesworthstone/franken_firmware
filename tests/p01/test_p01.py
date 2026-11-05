@@ -25,6 +25,8 @@ sys.path.insert(0, HERE)
 import central  # noqa: E402
 import facts  # noqa: E402
 import fixtures  # noqa: E402
+import inventory  # noqa: E402
+import inventory_fixtures  # noqa: E402
 import metadata_check  # noqa: E402
 import pipeline  # noqa: E402
 import plan  # noqa: E402
@@ -1596,6 +1598,211 @@ class PlanningReconcileTests(unittest.TestCase):
 def _file_sha256(path):
     with open(path, "rb") as f:
         return hashlib.sha256(f.read()).hexdigest()
+
+
+class InventoryTests(unittest.TestCase):
+    """P01-BLK-005 and P01-INV-001..004: E06's committed audit judged against the current Cargo.lock, on synthetic locks and audits and
+    through the runner's own handler on a scratch repository."""
+
+    def write_repo(self, tmp, lock, audits):
+        os.makedirs(os.path.join(tmp, "toolchain", "results", "e06"))
+        with open(os.path.join(tmp, "Cargo.lock"), "wb") as f:
+            f.write(lock)
+        for name, audit in audits.items():
+            folder = os.path.join(tmp, "toolchain", "results", "e06", name if name.startswith(("rev-", "audit-")) else "rev-" + name)
+            os.makedirs(folder)
+            with open(os.path.join(folder, "audit.json"), "w", encoding="utf-8") as f:
+                if isinstance(audit, str):
+                    f.write(audit)
+                else:
+                    json.dump(audit, f)
+
+    def handler(self, tmp):
+        with mock.patch.object(run_cases, "REPO", tmp):
+            return run_cases.run_e06_inventory({"reason": "r", "owner": "o"})
+
+    def test_every_case_group_passes_through_the_runner(self):
+        for group in ("permitted_positive", "stale", "inconsistent", "claims_current"):
+            with self.subTest(group):
+                self.assertEqual(run_cases.run_inventory_plants({"group": group})[0], run_cases.PASS)
+
+    def test_the_group_runner_reports_a_wrong_verdict_instead_of_passing_it(self):
+        original = inventory_fixtures.PLANTS
+        inventory_fixtures.PLANTS = [(g, label, make, "pass" if verdict == "blocked" else verdict, codes) for g, label, make, verdict, codes in original]
+        try:
+            with self.assertRaises(run_cases.CaseError):
+                run_cases.run_inventory_plants({"group": "stale"})
+        finally:
+            inventory_fixtures.PLANTS = original
+
+    def test_a_stale_audit_names_what_changed_since(self):
+        lock = inventory_fixtures.lock_text(extra_ws=("ws-new",), drop=("cfg-if",))
+        verdict, findings, detail = inventory.judge(inventory_fixtures.world()[1], lock)
+        self.assertEqual(verdict, "blocked")
+        self.assertIn("workspace crates added since: ws-new", detail)
+        self.assertIn("pinned but no longer in the lock: cfg-if@1.0.0", detail)
+
+    def test_the_command_line_exit_codes_are_pass_0_blocked_3_fail_1_unreadable_2(self):
+        lock, audit = inventory_fixtures.world()
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_path = os.path.join(tmp, "Cargo.lock")
+            with open(lock_path, "wb") as f:
+                f.write(lock)
+
+            def run(doc, lock_arg=lock_path):
+                path = os.path.join(tmp, "audit.json")
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(doc if isinstance(doc, str) else json.dumps(doc))
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    return inventory.main([path, "--lock", lock_arg])
+            broken = copy.deepcopy(audit)
+            broken["summary"]["counts"]["blocker"] = 1
+            stale = inventory_fixtures.make_audit(inventory_fixtures.lock_text(extra_ws=("ws-new",)))
+            self.assertEqual([run(audit), run(stale), run(broken), run("{not json"), run(audit, os.path.join(tmp, "absent"))], [0, 3, 1, 2, 2])
+
+    def test_a_pin_that_differs_on_only_one_platform_is_a_difference(self):
+        lock, audit = inventory_fixtures.world()
+        for row in audit["pins"]["powerpc"]["rows"]:
+            if row["package"] == "serde@1.0.0":
+                row["checksum"] = "f6" * 32
+        verdict, findings, _ = inventory.judge(audit, lock)
+        self.assertEqual((verdict, inventory.codes(findings)), ("fail", ["pin_differs"]))
+
+    def test_a_git_pin_needs_no_checksum_and_is_compared_as_it_is(self):
+        git = b'version = 4\n\n[[package]]\nname = "up"\nversion = "0.1.0"\nsource = "git+https://example.invalid/up?rev=abc#abc"\n\n[[package]]\nname = "ws"\nversion = "0.1.0"\n'
+        audit = inventory_fixtures.make_audit(git)
+        self.assertEqual(inventory.judge(audit, git)[0], "pass")
+        audit["pins"]["host"]["rows"][-1]["source"] = "git+https://example.invalid/up?rev=other#other"
+        self.assertEqual(inventory.judge(audit, git)[0], "fail")
+
+    def test_the_handler_is_blocked_with_no_audit_and_names_the_owner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "toolchain", "results", "e06"))
+            with open(os.path.join(tmp, "Cargo.lock"), "wb") as f:
+                f.write(inventory_fixtures.lock_text())
+            status, detail = self.handler(tmp)
+        self.assertEqual(status, run_cases.BLOCKED)
+        self.assertIn("no E06 audit is committed", detail)
+        self.assertIn("[owner: o]", detail)
+        for stray_name in ("upstream", "audit", "audits-08d5a00266d4", "run-audit-1", "REV-1"):   # only `rev-*` and `audit-*` hold an audit
+            with self.subTest(stray_name):
+                with tempfile.TemporaryDirectory() as tmp:
+                    self.write_repo(tmp, inventory_fixtures.lock_text(), {})
+                    stray = os.path.join(tmp, "toolchain", "results", "e06", stray_name)
+                    os.makedirs(stray)
+                    with open(os.path.join(stray, "audit.json"), "w", encoding="utf-8") as f:
+                        json.dump(inventory_fixtures.world()[1], f)
+                    self.assertIn("no E06 audit is committed", self.handler(tmp)[1])
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "Cargo.lock"), "wb") as f:
+                f.write(inventory_fixtures.lock_text())
+            self.assertEqual(self.handler(tmp)[0], run_cases.BLOCKED)
+
+    def test_the_handler_passes_an_audit_of_the_current_lock_and_names_it(self):
+        lock, audit = inventory_fixtures.world()
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_repo(tmp, lock, {"aaaaaaaaaaaa": audit})
+            status, detail = self.handler(tmp)
+        self.assertEqual(status, run_cases.PASS, detail)
+        self.assertIn("rev-aaaaaaaaaaaa", detail)
+        self.assertIn("2 external packages pinned", detail)
+
+    def test_the_handler_is_blocked_by_a_stale_audit_and_fails_an_inconsistent_one(self):
+        lock, audit = inventory_fixtures.world()
+        newer = inventory_fixtures.lock_text(extra_ws=("ws-new",))
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_repo(tmp, newer, {"aaaaaaaaaaaa": audit})
+            status, detail = self.handler(tmp)
+        self.assertEqual(status, run_cases.BLOCKED)
+        self.assertIn("workspace crates added since: ws-new", detail)
+        edited = inventory_fixtures._claims(newer, audit)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_repo(tmp, newer, {"aaaaaaaaaaaa": edited})
+            with self.assertRaises(run_cases.CaseError) as caught:
+                self.handler(tmp)
+        self.assertIn("crate_not_audited[ws-new]", str(caught.exception))
+
+    def test_with_two_audits_the_one_that_binds_the_current_lock_is_judged_and_a_stale_one_beside_it_does_not_matter(self):
+        lock, audit = inventory_fixtures.world()
+        older = inventory_fixtures.make_audit(inventory_fixtures.lock_text(drop=("cfg-if",)))
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_repo(tmp, lock, {"1" * 12: older, "2" * 12: audit})
+            status, detail = self.handler(tmp)
+        self.assertEqual(status, run_cases.PASS, detail)
+        self.assertIn("rev-" + "2" * 12, detail)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_repo(tmp, inventory_fixtures.lock_text(extra_ws=("ws-new",)), {"1" * 12: older, "2" * 12: audit})
+            status, detail = self.handler(tmp)
+        self.assertEqual(status, run_cases.BLOCKED)
+        self.assertIn("rev-" + "2" * 12, detail, "the audit with the smaller delta is the one named")
+
+    def test_a_re_audit_kept_in_an_audit_directory_is_read_like_one_in_a_rev_directory(self):
+        lock, audit = inventory_fixtures.world()
+        for folder in ("audit-08d5a00266d4", "rev-08d5a00266d4"):
+            with self.subTest(folder):
+                with tempfile.TemporaryDirectory() as tmp:
+                    self.write_repo(tmp, lock, {folder: audit})
+                    status, detail = self.handler(tmp)
+                self.assertEqual(status, run_cases.PASS, detail)
+                self.assertIn(folder, detail)
+
+    def test_a_stale_audit_in_one_directory_never_blocks_a_current_one_in_the_other_either_way_round(self):
+        lock, audit = inventory_fixtures.world()
+        stale = inventory_fixtures.make_audit(inventory_fixtures.lock_text(drop=("cfg-if",)))
+        for current_dir, stale_dir in (("audit-200000000000", "rev-5b8d56966da5"), ("rev-200000000000", "audit-100000000000")):
+            with self.subTest(current_dir):
+                with tempfile.TemporaryDirectory() as tmp:
+                    self.write_repo(tmp, lock, {stale_dir: stale, current_dir: audit})
+                    status, detail = self.handler(tmp)
+                self.assertEqual(status, run_cases.PASS, detail)
+                self.assertIn(current_dir, detail)
+                self.assertNotIn(stale_dir, detail)
+
+    def test_when_two_audits_bind_the_current_lock_a_pass_wins_and_the_failing_one_is_named_beside_it(self):
+        lock, audit = inventory_fixtures.world()
+        failing = copy.deepcopy(audit)
+        failing["summary"]["counts"]["blocker"] = 1
+        for passing_dir, failing_dir in (("audit-08d5a00266d4", "rev-5b8d56966da5"), ("rev-08d5a00266d4", "audit-5b8d56966da5")):
+            with self.subTest(passing_dir):
+                with tempfile.TemporaryDirectory() as tmp:
+                    self.write_repo(tmp, lock, {failing_dir: failing, passing_dir: audit})
+                    status, detail = self.handler(tmp)
+                self.assertEqual(status, run_cases.PASS, detail)
+                self.assertTrue(detail.startswith(f"toolchain/results/e06/{passing_dir}:"), detail)
+                self.assertIn(f"also binding this lock but failing: toolchain/results/e06/{failing_dir}", detail)
+        with tempfile.TemporaryDirectory() as tmp:        # two that pass: the first by directory name is the one named
+            self.write_repo(tmp, lock, {"rev-b": audit, "audit-a": copy.deepcopy(audit)})
+            self.assertTrue(self.handler(tmp)[1].startswith("toolchain/results/e06/audit-a"), "ties go to the first by name")
+        with tempfile.TemporaryDirectory() as tmp:        # only failing ones: a failure
+            self.write_repo(tmp, lock, {"rev-b": failing, "audit-a": copy.deepcopy(failing)})
+            with self.assertRaises(run_cases.CaseError):
+                self.handler(tmp)
+
+    def test_with_no_current_audit_the_one_with_the_smallest_delta_across_both_directories_is_named(self):
+        newer = inventory_fixtures.lock_text(extra_ws=("ws-new",), drop=("cfg-if",))
+        far = inventory_fixtures.make_audit(inventory_fixtures.lock_text(drop=("ws-lib", "itoa")))
+        near = inventory_fixtures.make_audit(inventory_fixtures.lock_text(extra_ws=("ws-new",)))
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_repo(tmp, newer, {"rev-far": far, "audit-near": near})
+            status, detail = self.handler(tmp)
+        self.assertEqual(status, run_cases.BLOCKED)
+        self.assertIn("audit-near", detail)
+
+    def test_an_unreadable_audit_or_lock_is_an_error_not_a_block(self):
+        lock, _audit = inventory_fixtures.world()
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_repo(tmp, lock, {"aaaaaaaaaaaa": "{not json"})
+            with self.assertRaises(run_cases.CaseError):
+                self.handler(tmp)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_repo(tmp, b"not = [toml", {"aaaaaaaaaaaa": inventory_fixtures.world()[1]})
+            with self.assertRaises(run_cases.CaseError):
+                self.handler(tmp)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write_repo(tmp, lock, {"aaaaaaaaaaaa": inventory_fixtures.world()[1]})
+            os.unlink(os.path.join(tmp, "Cargo.lock"))
+            with self.assertRaises(run_cases.CaseError):
+                self.handler(tmp)
 
 
 class ResolveTests(unittest.TestCase):

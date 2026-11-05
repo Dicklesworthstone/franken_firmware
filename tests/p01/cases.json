@@ -2654,14 +2654,14 @@
   },
   {
    "id": "P01-BLK-005",
-   "kind": "blocked",
-   "title": "the pinned per-target dependency, unsafe and license feature inventory",
+   "kind": "e06_inventory",
+   "title": "the pinned per-target dependency, unsafe and license feature inventory (E06) is of the current Cargo.lock and agrees with it",
    "tiers": [
     "smoke",
     "full"
    ],
-   "reason": "E06 (ffw-unk) is the declared input to P01 and is still being built; closure of P01 waits on it",
-   "owner": "YellowBrook: E06 / ffw-unk"
+   "reason": "E06's committed inventory binds a lock the workspace no longer has; E06 (ffw-unk) writes its `audit.json` with `scripts/e06/audit.py audit` and a fresh one for the current lock is what turns this case green",
+   "owner": "YellowBrook: E06 / ffw-unk: re-run `scripts/e06/audit.py audit` on a clean `git archive` of the revision to land (a local resolver read per E06, not a central build) and commit its `audit.json` under `toolchain/results/e06/` (`rev-<rev12>/` or `audit-<rev12>/`)"
   },
   {
    "id": "P01-BLK-006",
@@ -2684,6 +2684,46 @@
    ],
    "reason": "no metadata documents were supplied: cargo runs only on the central rch path, so produce `cargo metadata --format-version 1 --locked --offline` once with default features and once with `--features franken-speaker/harness`, then run `scripts/e2e/p01 --tier full --metadata-default D --metadata-harness H`; supplied, the case is judged pass or fail and is never skipped",
    "owner": "BeigeMaple: central `cargo metadata --locked --offline` for both feature sets"
+  },
+  {
+   "id": "P01-INV-001",
+   "kind": "inventory_plants",
+   "title": "inventory: an E06 audit made from the lock passes, in every permitted variation (permitted positive)",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "group": "permitted_positive"
+  },
+  {
+   "id": "P01-INV-002",
+   "kind": "inventory_plants",
+   "title": "inventory: an audit of another lock is blocked, with the added, removed and re-pinned packages named",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "group": "stale"
+  },
+  {
+   "id": "P01-INV-003",
+   "kind": "inventory_plants",
+   "title": "inventory: an audit that binds this lock and disagrees with it fails, one code per fault",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "group": "inconsistent"
+  },
+  {
+   "id": "P01-INV-004",
+   "kind": "inventory_plants",
+   "title": "inventory: an audit edited to claim a lock it was not made from fails",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "group": "claims_current"
   },
   {
    "id": "P01-REC-001",
@@ -3042,9 +3082,14 @@
    "id": "INV-P01-20",
    "statement": "Inputs from E06 (dependency, unsafe and license inventory per target)",
    "cases": [
-    "P01-BLK-005"
+    "P01-BLK-005",
+    "P01-INV-001",
+    "P01-INV-002",
+    "P01-INV-003",
+    "P01-INV-004"
    ],
-   "status": "blocked"
+   "status": "partial",
+   "note": "judged from E06's committed `audit.json` against the current Cargo.lock: only an audit of this lock, consistent with it, passes; the committed one is for an older lock, so P01-BLK-005 is BLOCKED until E06 re-audits. It admits no dependency and judges no unsafe or licence finding"
   },
   {
    "id": "INV-P01-21",
