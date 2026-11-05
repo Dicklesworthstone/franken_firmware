@@ -2649,8 +2649,8 @@
     "smoke",
     "full"
    ],
-   "reason": "the root nightly pin was declined (it would move the stable crates onto nightly, and the date it named is not what the workers run); a stable pin needs the release the central workspace builds actually use, which no committed receipt records; the plan's `toolchain-default` step (plain `rustc -vV`, what a bare `cargo` resolves to on the worker and what the workspace test uses) records it, and has not run centrally yet",
-   "owner": "BeigeMaple: read the stable release from a central receipt, then land the file between batches"
+   "reason": "the root nightly pin was declined (it would move the stable crates onto nightly, and the date it named is not what the workers run). The committed central receipt of e77f24d (`toolchain/results/p01/rev-e77f24d28777/receipt.json`, worker trj) answers which compiler the workspace builds use: its `toolchain_default` step, the plain `rustc -vV` a bare `cargo` resolves to, is `1.101.0-nightly` (commit 708c94ef093e), the same compiler as its `+nightly` step. The supervisor also reports that `rustc +stable -vV` through rch on trj prints that nightly although rustup lists `stable` (an operator observation, in no committed record). So there is no stable release for a pin to name: the compiler a bare `cargo` resolves to there is a nightly, and whether the stable crates may be built by it is a policy decision, not a file to land",
+   "owner": "the project owner (the nightly-vs-stable policy for the stable crates; no pin is landed until it is decided)"
   },
   {
    "id": "P01-BLK-005",
@@ -3000,7 +3000,7 @@
     "P01-BLK-004"
    ],
    "status": "partial",
-   "note": "the lockfile is checked here; the pin is proposed, not landed"
+   "note": "the lockfile is checked here; no pin is landed: the central receipt shows the workspace builds on nightly, and whether the stable crates may is the owner's decision (P01-BLK-004)"
   },
   {
    "id": "INV-P01-18",
