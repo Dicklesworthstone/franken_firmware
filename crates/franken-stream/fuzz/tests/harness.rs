@@ -21,6 +21,7 @@ use franken_stream_fuzz::stream::{
 };
 use franken_stream_fuzz::{hello, plant, wire};
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 /// The largest input any run is given (`-max_len` in the central lines).
 const MAX_LEN: usize = 32768;
@@ -157,7 +158,7 @@ fn the_seed_corpus_has_every_vector_in_the_format_each_target_reads() {
     let seeds = all();
     let count = |target: &str| seeds.iter().filter(|s| s.target == target).count();
     assert!(
-        count(STREAM_DECODE) >= vectors.len() + accepted,
+        count(STREAM_DECODE) >= vectors.len() + 2 * accepted,
         "{}",
         count(STREAM_DECODE)
     );
@@ -187,6 +188,30 @@ fn the_seed_corpus_has_every_vector_in_the_format_each_target_reads() {
     assert!(seeds
         .iter()
         .all(|s| s.bytes.len() <= MAX_LEN && !s.bytes.is_empty()));
+
+    // Every accepted vector is a seed three ways: as is (mode 0), re-signed (mode 1) and fitted (mode 2), and each of
+    // the three gives the vector's datagram back.
+    for vector in vectors.iter().filter(|v| v["expect"] == "ACCEPT") {
+        let id = text(vector, "id");
+        let datagram = unhex(text(vector, "wire_hex"));
+        for (suffix, mode) in [
+            ("raw", 0u8),
+            ("resign", wire::MODE_RESIGN),
+            ("fit", wire::MODE_RESIGN_FIT),
+        ] {
+            let name = format!("{id}-{suffix}");
+            let seed = seeds
+                .iter()
+                .find(|s| s.target == STREAM_DECODE && s.name == name)
+                .unwrap_or_else(|| panic!("no seed {name}"));
+            assert_eq!(seed.bytes[0], mode, "{name}");
+            assert_eq!(
+                wire::datagram_for(&fixture().wire_key, &seed.bytes),
+                datagram,
+                "{name}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -236,6 +261,12 @@ fn re_signing_an_accepted_vectors_header_and_payload_gives_back_the_vector() {
             "{}",
             text(vector, "id")
         );
+        assert_eq!(
+            wire::resign_fitted(&fixture().wire_key, body),
+            datagram,
+            "{}",
+            text(vector, "id")
+        );
         checked += 1;
     }
     assert!(checked >= 7);
@@ -270,6 +301,60 @@ fn re_signing_follows_the_declared_payload_length_and_stays_bounded() {
         wire::resign(&fixture().wire_key, &huge).len(),
         wire::HEADER + 2 * wire::MAX_PAYLOAD + wire::TAG
     );
+}
+
+#[test]
+fn fitting_makes_the_payload_length_follow_the_frame_count_and_changes_nothing_else() {
+    let golden = vector_wire("N01-GV-002");
+    let header = &golden[..wire::HEADER];
+    let wire_key = fixture().wire_key;
+    let last_frame_count = u16::try_from(wire::FRAMES_PER_BLOCK).expect("256 fits in 16 bits");
+
+    // Every frame count in range, with a payload length that is wrong on purpose (7 is no multiple of 4): re-signing it
+    // as it stands (mode 1) is refused as a mismatch, and fitting (mode 2) gives an accepted packet of four bytes per frame.
+    for frames in 1..=last_frame_count {
+        let body = edit(
+            &edit(header, 60, &frames.to_be_bytes()),
+            62,
+            &7u16.to_be_bytes(),
+        );
+        assert_real_code(&wire::resign(&wire_key, &body), "FRAME_COUNT_MISMATCH");
+        let fitted = wire::resign_fitted(&wire_key, &body);
+        assert_eq!(wire::expected_decode(&wire_key, &fitted), "OK", "{frames}");
+        let packet =
+            AuthenticatedStreamPacket::decode_and_verify(&fitted, &key()).expect("accepted");
+        assert_eq!(packet.payload.len(), 4 * usize::from(frames), "{frames}");
+        // nothing but the payload length field was touched
+        assert_eq!(fitted[..62], body[..62], "{frames}");
+        assert_eq!(fitted[62..64], (4 * frames).to_be_bytes(), "{frames}");
+    }
+
+    // A frame count outside the range is left alone, with the payload length as given (the golden's 12): the range check
+    // and everything behind it stay reachable in mode 2, and the datagram is the mode 1 one.
+    for frames in [0u16, 257, 1000, 0xFFFF] {
+        let body = edit(header, 60, &frames.to_be_bytes());
+        let fitted = wire::resign_fitted(&wire_key, &body);
+        assert_eq!(fitted, wire::resign(&wire_key, &body), "{frames}");
+        assert_real_code(&fitted, "FRAME_COUNT_OUT_OF_RANGE");
+    }
+
+    // The mode byte picks the rule, and any other value is "as is".
+    let mismatched = edit(header, 62, &7u16.to_be_bytes());
+    let with_mode = |mode: u8| [&[mode][..], &mismatched[..]].concat();
+    let resigned = wire::resign(&wire_key, &mismatched);
+    let fitted = wire::resign_fitted(&wire_key, &mismatched);
+    assert_ne!(resigned, fitted);
+    assert_eq!(
+        wire::datagram_for(&wire_key, &with_mode(wire::MODE_RESIGN)),
+        resigned
+    );
+    assert_eq!(
+        wire::datagram_for(&wire_key, &with_mode(wire::MODE_RESIGN_FIT)),
+        fitted
+    );
+    for mode in [0u8, 3, 255] {
+        assert_eq!(wire::datagram_for(&wire_key, &with_mode(mode)), mismatched);
+    }
 }
 
 // ---- the stateless oracle, pinned by hand -------------------------------------------------------------------
@@ -853,8 +938,12 @@ fn the_clean_build_carries_no_plant_and_every_length_passes_every_oracle() {
 
 #[cfg(feature = "control")]
 #[test]
-fn the_control_build_panics_for_exactly_the_planted_payload_length_and_no_other() {
+fn the_control_build_panics_for_exactly_the_planted_band_of_payload_lengths_and_no_other() {
     assert!(plant::control_enabled());
+    let band: Vec<usize> = (plant::CONTROL_PAYLOAD_MIN..=plant::CONTROL_PAYLOAD_MAX)
+        .step_by(4)
+        .collect();
+    assert_eq!(band.len(), 50);
     let mut fired = Vec::new();
     for len in (4..=wire::MAX_PAYLOAD).step_by(4) {
         let datagram = datagram_with_payload_len(len);
@@ -864,26 +953,53 @@ fn the_control_build_panics_for_exactly_the_planted_payload_length_and_no_other(
             Ok(verdict) => assert_eq!(verdict, Ok(()), "{len}"),
         }
     }
-    assert_eq!(fired, vec![plant::CONTROL_PAYLOAD_LEN]);
+    assert_eq!(fired, band);
 }
 
-#[cfg(feature = "control")]
 #[test]
-fn the_planted_length_is_not_in_any_seed() {
-    assert!(
-        plant::CONTROL_PAYLOAD_LEN.is_multiple_of(4)
-            && plant::CONTROL_PAYLOAD_LEN <= wire::MAX_PAYLOAD
-    );
+fn the_planted_band_is_no_seeds_and_no_bit_flip_or_small_step_from_one() {
+    for edge in [plant::CONTROL_PAYLOAD_MIN, plant::CONTROL_PAYLOAD_MAX] {
+        assert!(
+            edge.is_multiple_of(4) && edge <= wire::MAX_PAYLOAD,
+            "{edge}"
+        );
+        assert!(plant::in_band(edge), "{edge}");
+    }
+    assert!(!plant::in_band(plant::CONTROL_PAYLOAD_MIN - 4));
+    assert!(!plant::in_band(plant::CONTROL_PAYLOAD_MAX + 4));
+
+    // The frame counts the seeds accept: none is in the band.
+    let mut frame_counts = BTreeSet::new();
     for seed in all().iter().filter(|s| s.target == STREAM_DECODE) {
         let datagram = wire::datagram_for(&fixture().wire_key, &seed.bytes);
         if let Ok(packet) = AuthenticatedStreamPacket::decode_and_verify(&datagram, &key()) {
-            assert_ne!(
-                packet.payload.len(),
-                plant::CONTROL_PAYLOAD_LEN,
-                "{}",
-                seed.name
+            let len = packet.payload.len();
+            assert!(!plant::in_band(len), "seed {} is in the band", seed.name);
+            frame_counts.insert(len / 4);
+        }
+    }
+    assert!(frame_counts.len() >= 4, "{frame_counts:?}");
+
+    // One edit of a frame count (a flipped bit, a step of up to ten, a byte swap) from any of them stays out of it, so
+    // the control is not found by the cheapest mutation a run makes.
+    for &frames in &frame_counts {
+        for bit in 0..16 {
+            let flipped = frames ^ (1usize << bit);
+            assert!(
+                !plant::in_band(4 * flipped),
+                "{frames} with bit {bit} flipped"
             );
         }
+        for near in frames.saturating_sub(10)..=frames + 10 {
+            assert!(!plant::in_band(4 * near), "{frames} stepped to {near}");
+        }
+        let swapped = u16::try_from(frames)
+            .expect("a frame count fits in 16 bits")
+            .swap_bytes();
+        assert!(
+            !plant::in_band(4 * usize::from(swapped)),
+            "{frames} byte-swapped"
+        );
     }
 }
 

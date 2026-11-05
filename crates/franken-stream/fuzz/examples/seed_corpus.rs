@@ -1,6 +1,11 @@
 //! `seed_corpus OUT_DIR`: write the seed corpus (one directory per target) and print one line per target.
 //!
 //! The files are derived from the committed golden vectors and are not committed themselves.
+//!
+//! Run it with `cargo run --example seed_corpus -- OUT_DIR`. It is an example and not a `[[bin]]` on purpose: `cargo fuzz
+//! build` builds every bin of the package with the coverage instrumentation, and a bin that does not link libFuzzer's
+//! runtime fails at the link with undefined `__sanitizer_cov_*` symbols (the first central run, `docs/contracts/n01.md`
+//! section 11). Examples are not built by `--bins`.
 
 use franken_stream_fuzz::seed::{all, TARGETS};
 use std::collections::BTreeMap;

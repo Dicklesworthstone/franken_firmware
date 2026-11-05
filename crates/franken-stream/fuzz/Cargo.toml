@@ -16,8 +16,9 @@ cargo-fuzz = true
 
 [features]
 # The CONTROL build only: the harness's call into the real decoder panics when an accepted packet carries a payload of
-# exactly plant::CONTROL_PAYLOAD_LEN bytes, so the control run can prove the fuzzer reaches an accepted packet of a
-# chosen shape and reports the crash. The planted bug lives here, never in franken-stream. Clean runs never enable it.
+# plant::CONTROL_PAYLOAD_MIN to plant::CONTROL_PAYLOAD_MAX bytes, so the control run can prove the fuzzer reaches an
+# accepted packet of a chosen shape and reports the crash. The planted bug lives here, never in franken-stream. Clean runs
+# never enable it.
 control = []
 
 [dependencies]
@@ -58,10 +59,9 @@ test = false
 doc = false
 bench = false
 
-# Writes the seed corpus (the committed golden vectors) and prints how many files each target got.
-[[bin]]
+# Writes the seed corpus (the committed golden vectors) and prints how many files each target got. An example and not a
+# [[bin]] on purpose: `cargo fuzz build` builds every bin of this package with the coverage instrumentation, and a bin
+# that does not link libFuzzer's runtime fails at the link (undefined `__sanitizer_cov_*` symbols). `--bins` skips examples.
+[[example]]
 name = "seed_corpus"
-path = "src/bin/seed_corpus.rs"
-test = false
-doc = false
-bench = false
+path = "examples/seed_corpus.rs"

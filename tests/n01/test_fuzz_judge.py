@@ -32,14 +32,25 @@ def golden(vector_id):
 
 
 def with_payload_len(length):
-    """`1 || header` asking the target to re-sign a header that declares `length` payload bytes."""
+    """`1 || header` asking the target to re-sign (mode 1) a header whose frame count and payload length agree on `length`."""
     header = bytearray(golden("N01-GV-002")[: rf.HEADER_LEN])
     header[60:62] = (length // 4).to_bytes(2, "big")
     header[62:64] = length.to_bytes(2, "big")
     return bytes([fj.MODE_RESIGN]) + bytes(header)
 
 
-CRASH = with_payload_len(fj.CONTROL_PAYLOAD_LEN)
+def fit_input(frames, declared=4):
+    """`2 || header`: the header of the 1-frame seed GV-007 with `frames` frames and the payload length field a seed carries
+    (4, which a mutator that edited only the frame count leaves behind); the target re-signs it and fits the length (mode 2)."""
+    header = bytearray(golden("N01-GV-007")[: rf.HEADER_LEN])
+    header[60:62] = frames.to_bytes(2, "big")
+    header[62:64] = declared.to_bytes(2, "big")
+    return bytes([fj.MODE_RESIGN_FIT]) + bytes(header)
+
+
+CRASH_FRAMES = 160
+CRASH_LEN = 4 * CRASH_FRAMES
+CRASH = fit_input(CRASH_FRAMES)
 CRASH_NAME = "crash-" + hashlib.sha1(CRASH).hexdigest()
 
 SEEDS_LOG = "\n".join("N01-FUZZ-SEEDS %s files=%d max_bytes=%d" % (t, n, m) for t, n, m in (
@@ -61,7 +72,7 @@ stat::number_of_executed_units: %(execs)d
 """ % {"files": files, "files1": files + 1, "cov0": cov0, "cov": cov, "execs": execs, "seconds": seconds, "extra": extra}
 
 
-def control_log(artifact=CRASH_NAME, message="planted decoder bug: payload length 516", extra_tail="", printed=CRASH):
+def control_log(artifact=CRASH_NAME, message="planted decoder bug: payload length %d" % CRASH_LEN, extra_tail="", printed=CRASH):
     """`printed` is the input libFuzzer prints as 'Base64:' under the artifact line (it does so for inputs of at most 256 bytes);
     None leaves the line out."""
     base64_line = "" if printed is None else "Base64: %s\n" % base64.b64encode(printed).decode()
@@ -87,7 +98,9 @@ class Anchors(unittest.TestCase):
         self.assertGreaterEqual(len(accepted), 7)
         for datagram in accepted:
             self.assertEqual(fj.resign(KEY, datagram[: -rf.TAG_LEN]), datagram)
+            self.assertEqual(fj.resign(KEY, datagram[: -rf.TAG_LEN], fit=True), datagram)
             self.assertEqual(fj.datagram_for(KEY, bytes([1]) + datagram[: -rf.TAG_LEN]), datagram)
+            self.assertEqual(fj.datagram_for(KEY, bytes([2]) + datagram[: -rf.TAG_LEN]), datagram)
             self.assertEqual(fj.datagram_for(KEY, bytes([0]) + datagram), datagram)
 
     def test_the_re_sign_rule_follows_the_declared_length_and_caps_it(self):
@@ -99,29 +112,68 @@ class Anchors(unittest.TestCase):
         huge = body[:62] + b"\xff\xff" + body[64:]
         self.assertEqual(len(fj.resign(KEY, huge)), rf.HEADER_LEN + 2 * rf.MAX_PAYLOAD + rf.TAG_LEN)
 
-    def test_only_an_accepted_packet_of_the_planted_length_triggers_the_plant(self):
+    def test_only_an_accepted_packet_in_the_planted_band_triggers_the_plant(self):
         self.assertTrue(fj.triggers_the_plant(CRASH, KEY))
-        # the paired positives: a neighbouring length, and the same length with a forged tag
-        self.assertFalse(fj.triggers_the_plant(with_payload_len(512), KEY))
-        self.assertFalse(fj.triggers_the_plant(with_payload_len(520), KEY))
-        raw = bytearray(fj.resign(KEY, CRASH[1:]))
+        self.assertEqual(len(fj.datagram_for(KEY, CRASH)), rf.HEADER_LEN + CRASH_LEN + rf.TAG_LEN)
+        # the paired positives: both edges of the band, and the lengths just outside it
+        self.assertTrue(fj.triggers_the_plant(with_payload_len(fj.CONTROL_PAYLOAD_MIN), KEY))
+        self.assertTrue(fj.triggers_the_plant(with_payload_len(fj.CONTROL_PAYLOAD_MAX), KEY))
+        self.assertFalse(fj.triggers_the_plant(with_payload_len(fj.CONTROL_PAYLOAD_MIN - 4), KEY))
+        self.assertFalse(fj.triggers_the_plant(with_payload_len(fj.CONTROL_PAYLOAD_MAX + 4), KEY))
+        # the same header under mode 1 keeps the payload length it carries (4): a mismatch, refused behind a valid tag
+        as_mode_one = bytes([fj.MODE_RESIGN]) + CRASH[1:]
+        self.assertEqual(rf.decode(fj.datagram_for(KEY, as_mode_one), KEY)[0], "FRAME_COUNT_MISMATCH")
+        self.assertFalse(fj.triggers_the_plant(as_mode_one, KEY))
+        # the same datagram as is triggers, and with a forged tag does not
+        raw = bytearray(fj.datagram_for(KEY, CRASH))
         self.assertTrue(fj.triggers_the_plant(bytes([0]) + bytes(raw), KEY))
         raw[-1] ^= 1
         self.assertFalse(fj.triggers_the_plant(bytes([0]) + bytes(raw), KEY))
-        # the same length but a header the contract refuses (frame count that does not match)
-        bad = bytearray(CRASH)
-        bad[1 + 61] ^= 0x01
-        self.assertFalse(fj.triggers_the_plant(bytes(bad), KEY))
         self.assertFalse(fj.triggers_the_plant(b"", KEY))
         self.assertFalse(fj.triggers_the_plant(bytes([1]), KEY))
+        self.assertFalse(fj.triggers_the_plant(bytes([2]), KEY))
 
-    def test_the_planted_length_is_one_no_golden_vector_has(self):
+    def test_the_fit_rule_makes_the_payload_length_follow_the_frame_count(self):
+        header = golden("N01-GV-007")[: rf.HEADER_LEN]
+        for frames in range(1, rf.FRAMES_PER_BLOCK + 1):
+            edited = header[:60] + frames.to_bytes(2, "big") + (7).to_bytes(2, "big")
+            self.assertEqual(rf.decode(fj.resign(KEY, edited), KEY)[0], "FRAME_COUNT_MISMATCH", frames)
+            fitted = fj.resign(KEY, edited, fit=True)
+            self.assertEqual(rf.decode(fitted, KEY)[0], "ACCEPT", frames)
+            self.assertEqual(len(fitted), rf.HEADER_LEN + rf.BYTES_PER_FRAME * frames + rf.TAG_LEN, frames)
+            self.assertEqual(fitted[:62], edited[:62], frames)
+
+    def test_the_fit_rule_leaves_an_out_of_range_frame_count_alone(self):
+        header = golden("N01-GV-002")[: rf.HEADER_LEN]
+        for frames in (0, 257, 1000, 0xFFFF):
+            edited = header[:60] + frames.to_bytes(2, "big") + header[62:]
+            self.assertEqual(fj.resign(KEY, edited, fit=True), fj.resign(KEY, edited), frames)
+            self.assertEqual(rf.decode(fj.resign(KEY, edited, fit=True), KEY)[0], "FRAME_COUNT_OUT_OF_RANGE", frames)
+
+    def test_the_mode_byte_picks_the_rule(self):
+        edited = golden("N01-GV-002")[:62] + (7).to_bytes(2, "big")
+        self.assertNotEqual(fj.resign(KEY, edited), fj.resign(KEY, edited, fit=True))
+        for mode, want in ((1, fj.resign(KEY, edited)), (2, fj.resign(KEY, edited, fit=True)), (0, edited), (3, edited), (255, edited)):
+            self.assertEqual(fj.datagram_for(KEY, bytes([mode]) + edited), want, mode)
+
+    def test_the_planted_band_is_no_seeds_and_no_bit_flip_or_small_step_from_one(self):
         import json
         doc = json.loads(WIRE.read_text(encoding="utf-8"))
-        lengths = {len(bytes.fromhex(v["wire_hex"])) - 80 for v in doc["vectors"] if v["expect"] == "ACCEPT"}
-        self.assertNotIn(fj.CONTROL_PAYLOAD_LEN, lengths)
-        self.assertEqual(fj.CONTROL_PAYLOAD_LEN % 4, 0)
-        self.assertLessEqual(fj.CONTROL_PAYLOAD_LEN, rf.MAX_PAYLOAD)
+        accepted = {(len(bytes.fromhex(v["wire_hex"])) - rf.HEADER_LEN - rf.TAG_LEN) // 4
+                    for v in doc["vectors"] if v["expect"] == "ACCEPT"}
+        self.assertEqual(accepted, {1, 2, 3, 256}, "the seeds' frame counts changed: re-read the plant's band")
+        for edge in (fj.CONTROL_PAYLOAD_MIN, fj.CONTROL_PAYLOAD_MAX):
+            self.assertEqual(edge % 4, 0)
+            self.assertLessEqual(edge, rf.MAX_PAYLOAD)
+            self.assertTrue(fj.in_band(edge))
+        self.assertFalse(fj.in_band(fj.CONTROL_PAYLOAD_MIN - 4))
+        self.assertFalse(fj.in_band(fj.CONTROL_PAYLOAD_MAX + 4))
+        self.assertEqual(len([n for n in range(4, rf.MAX_PAYLOAD + 1, 4) if fj.in_band(n)]), 50)
+        for frames in accepted:
+            swapped = int.from_bytes(frames.to_bytes(2, "big")[::-1], "big")
+            neighbours = {frames ^ (1 << bit) for bit in range(16)} | set(range(max(0, frames - 10), frames + 11)) | {swapped}
+            for near in neighbours:
+                self.assertFalse(fj.in_band(rf.BYTES_PER_FRAME * near), (frames, near))
 
 
 class Positives(unittest.TestCase):
@@ -185,8 +237,10 @@ def run_control(m, text, crash=CRASH, target="stream_decode"):
 
 def negative_cases():
     """(label, runner(module) -> problems, required substring). Each is a good log with exactly one thing wrong."""
-    other_crash = with_payload_len(512)
-    raw_forged = bytearray(fj.resign(KEY, CRASH[1:]))
+    other_crash = with_payload_len(fj.CONTROL_PAYLOAD_MIN - 4)
+    above_band = with_payload_len(fj.CONTROL_PAYLOAD_MAX + 4)
+    mode_one = bytes([fj.MODE_RESIGN]) + CRASH[1:]
+    raw_forged = bytearray(fj.datagram_for(KEY, CRASH))
     raw_forged[-1] ^= 1
     forged = bytes([0]) + bytes(raw_forged)
     forged_name = "crash-" + hashlib.sha1(forged).hexdigest()
@@ -206,8 +260,9 @@ def negative_cases():
         ("control kind on a target without a plant", lambda m: run_control(m, control_log(), target="stream_receiver"), "has no control"),
         ("control run that found nothing", lambda m: run_control(m, clean_log()), "without a crash"),
         ("control run without the planted message", lambda m: run_control(m, control_log(message="boom")), "no planted-bug panic"),
-        ("control run with another payload length", lambda m: run_control(m, control_log(message="planted decoder bug: payload length 512")), "not 516"),
-        ("control run that crashed on something else", lambda m: run_control(m, control_log(extra_tail="thread 'x' panicked at a.rs:1:1:\nstream_decode: oracle violated\n").replace("planted decoder bug: payload length 516", "stream_decode: oracle violated")), "not on the planted bug"),
+        ("control run with a payload length below the band", lambda m: run_control(m, control_log(message="planted decoder bug: payload length %d" % (fj.CONTROL_PAYLOAD_MIN - 4))), "outside the planted band"),
+        ("control run with a payload length above the band", lambda m: run_control(m, control_log(message="planted decoder bug: payload length %d" % (fj.CONTROL_PAYLOAD_MAX + 4))), "outside the planted band"),
+        ("control run that crashed on something else", lambda m: run_control(m, control_log(extra_tail="thread 'x' panicked at a.rs:1:1:\nstream_decode: oracle violated\n").replace("planted decoder bug: payload length %d" % CRASH_LEN, "stream_decode: oracle violated")), "not on the planted bug"),
         ("control run libFuzzer never reported", lambda m: run_control(m, control_log().replace("ERROR: libFuzzer", "oops").replace("deathly signal", "dead")), "did not report"),
         ("control run that kept no artifact", lambda m: run_control(m, re.sub(r"^.*Test unit written.*\n", "", control_log(), flags=re.M)), "was not kept"),
         ("control run with no crash input anywhere", lambda m: run_control(m, control_log(printed=None), crash=None), "no crash input"),
@@ -217,6 +272,8 @@ def negative_cases():
         ("printed input that does not trigger the plant", lambda m: run_control(m, control_log(artifact="crash-" + hashlib.sha1(other_crash).hexdigest(), printed=other_crash), crash=None), "is not an accepted packet"),
         ("crash file that is not the named artifact", lambda m: run_control(m, control_log(), crash=other_crash), "SHA-1 differs"),
         ("crash input that does not trigger the plant", lambda m: run_control(m, control_log(artifact="crash-" + hashlib.sha1(other_crash).hexdigest()), crash=other_crash), "is not an accepted packet"),
+        ("crash input one step above the band", lambda m: run_control(m, control_log(artifact="crash-" + hashlib.sha1(above_band).hexdigest()), crash=above_band), "is not an accepted packet"),
+        ("crash input in re-sign mode 1, where its own payload length makes it a mismatch", lambda m: run_control(m, control_log(artifact="crash-" + hashlib.sha1(mode_one).hexdigest()), crash=mode_one), "is not an accepted packet"),
         ("crash input with a forged tag", lambda m: run_control(m, control_log(artifact=forged_name), crash=forged), "is not an accepted packet"),
         ("manifest without a target", lambda m: m.judge_seeds(SEEDS_LOG.replace("negotiation_finish", "negotiation_other"))[0], "no line for negotiation_finish"),
         ("manifest naming a target twice", lambda m: m.judge_seeds(SEEDS_LOG + "N01-FUZZ-SEEDS stream_decode files=1 max_bytes=1\n")[0], "twice"),
@@ -238,7 +295,7 @@ class Negatives(unittest.TestCase):
 
     def test_there_are_enough_planted_cases_and_each_has_a_distinct_reason(self):
         cases = negative_cases()
-        self.assertGreaterEqual(len(cases), 30)
+        self.assertGreaterEqual(len(cases), 34)
         self.assertEqual(len({label for label, _, _ in cases}), len(cases))
 
 
@@ -259,7 +316,7 @@ class Mutations(unittest.TestCase):
         ("control must crash", "        if done:\n            problems.append(\"the control run finished", "        if False:\n            problems.append(\"the control run finished"),
         ("other panic is not the plant", '        if "panicked at" in text and not planted:', "        if False:"),
         ("plant message required", "        if not planted:\n            problems.append(\"no planted-bug", "        if False:\n            problems.append(\"no planted-bug"),
-        ("plant length", "elif int(planted.group(1)) != CONTROL_PAYLOAD_LEN:", "elif False:"),
+        ("plant length", "elif not in_band(int(planted.group(1))):", "elif False:"),
         ("libFuzzer report", 'if "ERROR: libFuzzer" not in text and "deathly signal" not in text:', "if False:"),
         ("artifact kept", "        if not artifact:\n            problems.append(\"no 'Test unit", "        if False:\n            problems.append(\"no 'Test unit"),
         ("crash input supplied", "        if crash is None:\n            problems.append(\"no crash input", "        if False:\n            problems.append(\"no crash input"),
@@ -267,7 +324,10 @@ class Mutations(unittest.TestCase):
         ("a bad base64 line is no input", "    except ValueError:\n        return None", "    except ValueError:\n        raise"),
         ("crash file is the artifact", "if artifact and hashlib.sha1(crash)", "if False and hashlib.sha1(crash)"),
         ("crash input triggers the plant", "if not triggers_the_plant(crash):", "if False:"),
-        ("trigger needs an accepted packet", 'return verdict == "ACCEPT" and len(datagram)', "return len(datagram)"),
+        ("trigger needs an accepted packet", 'return verdict == "ACCEPT" and in_band(', "return in_band("),
+        ("band lower edge", "return CONTROL_PAYLOAD_MIN <= length <= CONTROL_PAYLOAD_MAX", "return length <= CONTROL_PAYLOAD_MAX"),
+        ("band upper edge", "return CONTROL_PAYLOAD_MIN <= length <= CONTROL_PAYLOAD_MAX", "return CONTROL_PAYLOAD_MIN <= length"),
+        ("mode 1 does not fit", "    if mode == MODE_RESIGN:\n        return resign(key, rest)\n", "    if mode == MODE_RESIGN:\n        return resign(key, rest, fit=True)\n"),
         ("target without a control", "if kind == \"control\" and target != CONTROL_TARGET:", "if False:"),
         ("unknown target", "    if target not in TARGETS:\n        problems.append(\"unknown target", "    if False:\n        problems.append(\"unknown target"),
         ("manifest duplicates", "        if target in files:", "        if False:"),
@@ -302,7 +362,7 @@ class Mutations(unittest.TestCase):
         self.assertEqual(self.undetected(fj), [])
 
     def test_each_rule_switched_off_lets_a_planted_log_through(self):
-        self.assertGreaterEqual(len(self.MUTANTS), 27)
+        self.assertGreaterEqual(len(self.MUTANTS), 31)
         for label, old, new in self.MUTANTS:
             with self.subTest(label):
                 self.assertNotEqual(self.undetected(self.mutated(old, new)), [], label)
@@ -329,15 +389,25 @@ class RustAgreement(unittest.TestCase):
 
     def test_the_planted_constant_and_message_are_the_judges(self):
         plant = source_of("src/plant.rs")
-        self.assertIn("pub const CONTROL_PAYLOAD_LEN: usize = %d;" % fj.CONTROL_PAYLOAD_LEN, plant)
-        self.assertIn(fj.PLANT_MESSAGE + " {CONTROL_PAYLOAD_LEN}", plant)
+        self.assertIn("pub const CONTROL_PAYLOAD_MIN: usize = %d;" % fj.CONTROL_PAYLOAD_MIN, plant)
+        self.assertIn("pub const CONTROL_PAYLOAD_MAX: usize = %d;" % fj.CONTROL_PAYLOAD_MAX, plant)
+        self.assertIn("(CONTROL_PAYLOAD_MIN..=CONTROL_PAYLOAD_MAX).contains(&payload_len)", plant)
+        self.assertIn(fj.PLANT_MESSAGE + " {payload_len}", plant)
         self.assertIn('cfg!(feature = "control")', plant)
 
-    def test_the_re_sign_mode_and_cap_are_the_judges(self):
+    def test_the_re_sign_modes_fit_rule_and_cap_are_the_judges(self):
         wire = source_of("src/wire.rs")
         self.assertIn("pub const MODE_RESIGN: u8 = %d;" % fj.MODE_RESIGN, wire)
+        self.assertIn("pub const MODE_RESIGN_FIT: u8 = %d;" % fj.MODE_RESIGN_FIT, wire)
+        self.assertIn("MODE_RESIGN_FIT => resign_fitted(key, rest),", wire)
         self.assertIn(".min(2 * MAX_PAYLOAD)", wire)
         self.assertEqual(fj.RESIGN_PAYLOAD_CAP, 2 * 1024)
+        # the judge's fit rule reads the same fields: frame count at 60, payload length at 62, range 1..=FRAMES_PER_BLOCK, 4 bytes a frame
+        self.assertIn("const OFF_FRAME_COUNT: usize = %d;" % 60, wire)
+        self.assertIn("const OFF_PAYLOAD_LEN: usize = %d;" % 62, wire)
+        self.assertIn("if fit && frames != 0 && u64::from(frames) <= FRAMES_PER_BLOCK {", wire)
+        self.assertIn("let fitted = frames * %d;" % rf.BYTES_PER_FRAME, wire)
+        self.assertIn("pub const FRAMES_PER_BLOCK: u64 = %d;" % rf.FRAMES_PER_BLOCK, wire)
 
     def test_the_target_names_are_the_judges_and_each_has_a_libfuzzer_binary(self):
         seed = source_of("src/seed.rs")
@@ -350,12 +420,30 @@ class RustAgreement(unittest.TestCase):
             self.assertIn("franken_stream_fuzz::" + calls[target] + "(data)", text)
             self.assertIn("#![no_main]", text)
 
+    def test_every_bin_links_libfuzzer_so_that_cargo_fuzz_build_can_link_them_all(self):
+        # `cargo fuzz build` builds every [[bin]] with the coverage instrumentation; a bin that does not link libFuzzer's
+        # runtime fails with undefined __sanitizer_cov_* symbols (the first central run: the seed writer was a bin).
+        sections = manifest_sections()
+        paths = [line.split("=", 1)[1].strip().strip('"') for line in sections["bin"] if line.startswith("path")]
+        self.assertEqual(len(paths), len(fj.TARGETS))
+        for path in paths:
+            self.assertTrue(path.startswith("fuzz_targets/"), path)
+            self.assertIn("fuzz_target!(", source_of(path), path)
+            self.assertIn("use libfuzzer_sys::fuzz_target;", source_of(path), path)
+        # and cargo must not find another bin by itself (src/bin/*.rs and src/bin/*/main.rs are bins without a manifest entry)
+        src_bin = FUZZ / "src" / "bin"
+        self.assertEqual(sorted(p.name for p in src_bin.iterdir()) if src_bin.is_dir() else [], [])
+        self.assertFalse((FUZZ / "src" / "main.rs").exists())
+
     def test_the_manifest_declares_the_targets_the_control_feature_and_its_own_workspace(self):
         sections = manifest_sections()
         self.assertIn("workspace", sections, "the fuzz crate must be its own workspace root")
         self.assertIn("control = []", sections["features"])
         bins = [line.split("=", 1)[1].strip().strip('"') for line in sections["bin"] if line.startswith("name")]
-        self.assertEqual(sorted(bins), sorted(list(fj.TARGETS) + ["seed_corpus"]))
+        self.assertEqual(sorted(bins), sorted(fj.TARGETS))
+        # the seed writer is an example: `cargo fuzz build --bins` does not build it, `cargo run --example seed_corpus` does
+        self.assertEqual(sections["example"], ['name = "seed_corpus"', 'path = "examples/seed_corpus.rs"'])
+        self.assertTrue((FUZZ / "examples" / "seed_corpus.rs").is_file())
         deps = sorted(line.split("=")[0].strip() for line in sections["dependencies"])
         self.assertEqual(deps, ["franken-stream", "hmac", "libfuzzer-sys", "serde_json", "sha2"])
         self.assertNotIn("dev-dependencies", sections)
@@ -367,7 +455,7 @@ class RustAgreement(unittest.TestCase):
         self.assertNotIn("franken-stream-fuzz", root)
 
     def test_the_seed_manifest_line_is_the_judges_format(self):
-        text = source_of("src/bin/seed_corpus.rs")
+        text = source_of("examples/seed_corpus.rs")
         self.assertIn('"N01-FUZZ-SEEDS {target} files={files} max_bytes={max_bytes}"', text)
         self.assertTrue(fj.SEEDS_RE.match("N01-FUZZ-SEEDS stream_decode files=3 max_bytes=9"))
 

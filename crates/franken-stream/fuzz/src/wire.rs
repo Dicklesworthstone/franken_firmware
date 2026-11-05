@@ -62,7 +62,8 @@ pub fn tag(key: &[u8; 32], header: &[u8], payload: &[u8]) -> [u8; TAG] {
 
 const NOTHING: &[u8] = &[];
 
-/// The first byte picks how the rest is used: 1 means "re-sign it", any other value means "as is".
+/// The first byte picks how the rest is used: 1 means "re-sign it", 2 means "re-sign it and make the declared payload
+/// length follow the declared frame count", any other value means "as is".
 pub fn split_mode(input: &[u8]) -> (u8, &[u8]) {
     match input.split_first() {
         Some((mode, rest)) => (*mode, rest),
@@ -71,15 +72,36 @@ pub fn split_mode(input: &[u8]) -> (u8, &[u8]) {
 }
 
 pub const MODE_RESIGN: u8 = 1;
+pub const MODE_RESIGN_FIT: u8 = 2;
 
 /// Turn `header || payload` bytes into a datagram that carries a valid tag, whatever the header says. The header is
 /// the first 64 bytes (zero-padded when short); the payload is the rest, cut or zero-padded to the length the header
 /// declares (capped at twice the maximum, so one run does bounded work). This is how a mutator reaches the
 /// field-validation code behind the MAC: it edits fields, and the tag follows.
 pub fn resign(key: &[u8; 32], data: &[u8]) -> Vec<u8> {
+    sign(key, data, false)
+}
+
+/// `resign`, except that a header whose frame count is in range (1 to `FRAMES_PER_BLOCK`) has its payload length set to
+/// four bytes per frame, whatever the input said. The contract couples the two fields (`FRAME_COUNT_MISMATCH`), so a
+/// mutator that edits one of them is refused on the other and never reaches an accepted packet of a new size; here
+/// the length follows, and the frame count is the one free choice. A frame count outside the range is left alone, with
+/// the payload length as given, so the range check and everything behind it stay reachable. Mode 1 keeps the fields
+/// independent, which is the only way to reach `FRAME_COUNT_MISMATCH` behind a valid tag.
+pub fn resign_fitted(key: &[u8; 32], data: &[u8]) -> Vec<u8> {
+    sign(key, data, true)
+}
+
+fn sign(key: &[u8; 32], data: &[u8], fit: bool) -> Vec<u8> {
     let mut header = [0u8; HEADER];
     let n = data.len().min(HEADER);
     header[..n].copy_from_slice(&data[..n]);
+    let frames = be16(&header, OFF_FRAME_COUNT);
+    if fit && frames != 0 && u64::from(frames) <= FRAMES_PER_BLOCK {
+        // At most FRAMES_PER_BLOCK * 4 = MAX_PAYLOAD, so this cannot overflow a u16.
+        let fitted = frames * 4;
+        header[OFF_PAYLOAD_LEN..OFF_PAYLOAD_LEN + 2].copy_from_slice(&fitted.to_be_bytes());
+    }
     let rest: &[u8] = if data.len() > HEADER {
         &data[HEADER..]
     } else {
@@ -98,10 +120,10 @@ pub fn resign(key: &[u8; 32], data: &[u8]) -> Vec<u8> {
 /// The datagram a target is really handed for `input`.
 pub fn datagram_for(key: &[u8; 32], input: &[u8]) -> Vec<u8> {
     let (mode, rest) = split_mode(input);
-    if mode == MODE_RESIGN {
-        resign(key, rest)
-    } else {
-        rest.to_vec()
+    match mode {
+        MODE_RESIGN => resign(key, rest),
+        MODE_RESIGN_FIT => resign_fitted(key, rest),
+        _ => rest.to_vec(),
     }
 }
 

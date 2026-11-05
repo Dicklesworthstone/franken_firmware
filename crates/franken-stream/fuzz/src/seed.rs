@@ -43,6 +43,12 @@ fn resigned(body: &[u8]) -> Vec<u8> {
     out
 }
 
+fn fitted(body: &[u8]) -> Vec<u8> {
+    let mut out = vec![wire::MODE_RESIGN_FIT];
+    out.extend_from_slice(body);
+    out
+}
+
 fn array<'a>(doc: &'a Value, key: &str) -> &'a [Value] {
     doc[key]
         .as_array()
@@ -82,8 +88,8 @@ pub fn all() -> Vec<Seed> {
     let negotiation_doc = parse_negotiation_vectors();
     let mut seeds = Vec::new();
 
-    // stream_decode: every vector as is, every accepted vector also as "re-sign this header and payload", and every
-    // distinct datagram the scenarios feed a receiver.
+    // stream_decode: every vector as is, every accepted vector also as "re-sign this header and payload" and as "re-sign
+    // it with the payload length fitted to the frame count", and every distinct datagram the scenarios feed a receiver.
     let mut known: BTreeSet<Vec<u8>> = BTreeSet::new();
     for vector in array(&wire_doc, "vectors") {
         let id = text(vector, "id");
@@ -99,6 +105,11 @@ pub fn all() -> Vec<Seed> {
                 target: STREAM_DECODE,
                 name: format!("{id}-resign"),
                 bytes: resigned(&datagram[..cut]),
+            });
+            seeds.push(Seed {
+                target: STREAM_DECODE,
+                name: format!("{id}-fit"),
+                bytes: fitted(&datagram[..cut]),
             });
         }
         known.insert(datagram);

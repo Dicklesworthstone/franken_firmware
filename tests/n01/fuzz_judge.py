@@ -16,9 +16,9 @@ file given with --crash or, without one, the `Base64:` line libFuzzer prints und
 at most 256 bytes); either way it is held to the same checks.
 
 Why a crash input is re-checked here: a panic in the control run could be an oracle failing for some other reason.
-The planted bug fires only for an ACCEPTED packet with a payload of exactly CONTROL_PAYLOAD_LEN bytes, so the judge
-rebuilds the datagram the target was handed (the target's own "re-sign" rule, re-derived here) and decodes it with the
-independent Python decoder; the crash input has to be exactly such a packet.
+The planted bug fires only for an ACCEPTED packet with a payload of CONTROL_PAYLOAD_MIN to CONTROL_PAYLOAD_MAX bytes, so
+the judge rebuilds the datagram the target was handed (the target's own "re-sign" and "re-sign and fit" rules, re-derived
+here) and decodes it with the independent Python decoder; the crash input has to be exactly such a packet.
 """
 
 import argparse
@@ -34,9 +34,11 @@ import reference_frames as rf  # noqa: E402
 
 TARGETS = ("stream_decode", "stream_receiver", "negotiation_respond", "negotiation_finish")
 CONTROL_TARGET = "stream_decode"
-CONTROL_PAYLOAD_LEN = 516
+CONTROL_PAYLOAD_MIN = 600
+CONTROL_PAYLOAD_MAX = 796
 PLANT_MESSAGE = "planted decoder bug: payload length"
 MODE_RESIGN = 1
+MODE_RESIGN_FIT = 2
 RESIGN_PAYLOAD_CAP = 2 * rf.MAX_PAYLOAD
 DEFAULT_MIN_EXECS = 50_000
 
@@ -55,10 +57,15 @@ def load_key():
     return bytes.fromhex(doc["key_hex"])
 
 
-def resign(key, data):
+def resign(key, data, fit=False):
     """The target's own re-sign rule: header = first 64 bytes (zero-padded), payload = the rest cut or zero-padded to
-    the declared length (capped), tag recomputed."""
-    header = bytes(data[: rf.HEADER_LEN]).ljust(rf.HEADER_LEN, b"\0")
+    the declared length (capped), tag recomputed. With `fit` (mode 2) a frame count in range (1 to FRAMES_PER_BLOCK)
+    first sets the declared payload length to four bytes per frame; any other frame count leaves it as given."""
+    header = bytearray(bytes(data[: rf.HEADER_LEN]).ljust(rf.HEADER_LEN, b"\0"))
+    frames = int.from_bytes(header[60:62], "big")
+    if fit and 1 <= frames <= rf.FRAMES_PER_BLOCK:
+        header[62:64] = (rf.BYTES_PER_FRAME * frames).to_bytes(2, "big")
+    header = bytes(header)
     declared = min(int.from_bytes(header[62:64], "big"), RESIGN_PAYLOAD_CAP)
     payload = bytes(data[rf.HEADER_LEN:])[:declared].ljust(declared, b"\0")
     return header + payload + rf.tag(key, header, payload)
@@ -66,15 +73,24 @@ def resign(key, data):
 
 def datagram_for(key, data):
     mode, rest = (data[0], data[1:]) if data else (0, b"")
-    return resign(key, rest) if mode == MODE_RESIGN else bytes(rest)
+    if mode == MODE_RESIGN:
+        return resign(key, rest)
+    if mode == MODE_RESIGN_FIT:
+        return resign(key, rest, fit=True)
+    return bytes(rest)
+
+
+def in_band(length):
+    """Whether a payload length is one the planted bug fires on."""
+    return CONTROL_PAYLOAD_MIN <= length <= CONTROL_PAYLOAD_MAX
 
 
 def triggers_the_plant(data, key=None):
-    """Whether this stream_decode input is an accepted packet with a payload of exactly CONTROL_PAYLOAD_LEN bytes."""
+    """Whether this stream_decode input is an accepted packet with a payload of CONTROL_PAYLOAD_MIN to _MAX bytes."""
     key = key or load_key()
     datagram = datagram_for(key, data)
     verdict = rf.decode(datagram, key)[0]
-    return verdict == "ACCEPT" and len(datagram) - rf.HEADER_LEN - rf.TAG_LEN == CONTROL_PAYLOAD_LEN
+    return verdict == "ACCEPT" and in_band(len(datagram) - rf.HEADER_LEN - rf.TAG_LEN)
 
 
 def judge_seeds(text):
@@ -167,8 +183,9 @@ def judge_run(text, target, kind, budget, min_execs=DEFAULT_MIN_EXECS, seed_file
             problems.append("the control run crashed, but not on the planted bug")
         if not planted:
             problems.append("no planted-bug panic message in the control log")
-        elif int(planted.group(1)) != CONTROL_PAYLOAD_LEN:
-            problems.append("the panic names payload length %s, not %d" % (planted.group(1), CONTROL_PAYLOAD_LEN))
+        elif not in_band(int(planted.group(1))):
+            problems.append("the panic names payload length %s, outside the planted band %d to %d"
+                            % (planted.group(1), CONTROL_PAYLOAD_MIN, CONTROL_PAYLOAD_MAX))
         if "ERROR: libFuzzer" not in text and "deathly signal" not in text:
             problems.append("libFuzzer did not report the crash")
         artifact = ARTIFACT_RE.search(text)
@@ -188,7 +205,8 @@ def judge_run(text, target, kind, budget, min_execs=DEFAULT_MIN_EXECS, seed_file
             if artifact and hashlib.sha1(crash).hexdigest() != Path(artifact.group(1)).name[len("crash-"):]:
                 problems.append("the crash file is not the artifact the log names (SHA-1 differs)")
             if not triggers_the_plant(crash):
-                problems.append("the crash input is not an accepted packet of %d payload bytes" % CONTROL_PAYLOAD_LEN)
+                problems.append("the crash input is not an accepted packet of %d to %d payload bytes"
+                                % (CONTROL_PAYLOAD_MIN, CONTROL_PAYLOAD_MAX))
         record["crashes"] = 1 if planted else 0
     return problems, record
 

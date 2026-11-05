@@ -3,7 +3,8 @@
 //!
 //! Host-only. It is not a member of the repository workspace and nothing in a device closure depends on it.
 //!
-//! Targets (each takes arbitrary bytes; the first byte of a datagram input says "use as is" or "re-sign"):
+//! Targets (each takes arbitrary bytes; the first byte of a datagram input says "use as is" or "re-sign", and for
+//! `stream_decode` also "re-sign and fit the payload length to the frame count", `wire::MODE_RESIGN_FIT`):
 //! - `stream_decode`: `AuthenticatedStreamPacket::decode_and_verify` against `wire::expected_decode`, plus re-encode and
 //!   bounds for every accepted packet.
 //! - `stream_receiver`: a real `StreamReceiver` driven by an operation stream against `model::Window`, plus counters.
