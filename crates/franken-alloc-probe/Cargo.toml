@@ -1,0 +1,19 @@
+[package]
+name = "franken-alloc-probe"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish = false
+description = "Test-only counting global allocator proving render paths do not allocate (ffw-f3b D01)."
+
+# This crate deliberately does NOT inherit the workspace lint table. The workspace forbids
+# `unsafe_code` in every target of every crate, and `GlobalAlloc` is an `unsafe` trait, so the
+# counting allocator cannot live in (or be a test target of) a firmware crate. Policy:
+#   * `unsafe_code = "deny"` here, with exactly one scoped `#[allow(unsafe_code)]` in src/lib.rs;
+#   * no firmware crate depends on this crate, not even as a dev-dependency: the dependency points
+#     the other way (this crate's tests depend on the crates they probe).
+[lints.rust]
+unsafe_code = "deny"
+
+[dev-dependencies]
+franken-dsp.workspace = true

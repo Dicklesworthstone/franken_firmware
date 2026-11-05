@@ -18,7 +18,8 @@ use franken_session::{
     ChannelRole, FencedControlCommand, GroupCommandPayload, SessionError, UnifiedGroupSession,
 };
 use franken_stream::{
-    AuthenticatedStreamPacket, BoundedJitterBuffer, PlayoutMode, PlayoutPullDecision, ReplayWindow,
+    BoundedJitterBuffer, OutboundFrame, PlayoutMode, PlayoutPullDecision, StreamId, StreamKey,
+    StreamReceiver, StreamSender,
 };
 use franken_test_support::{
     AmplifierObservation, BoardObservation, BoundedDiagnosticSink, ClockObservation,
@@ -27,6 +28,16 @@ use franken_test_support::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+
+/// Synthetic stream key and identity for the simulated house (public test values, not secrets).
+/// Every simulated sender and receiver shares them, as a real group shares one stream key and one
+/// per-start stream identity.
+const CAMPAIGN_STREAM_KEY: [u8; 32] = [0xA5; 32];
+const CAMPAIGN_STREAM_ID: u64 = 0x5EED_5EED_0000_0001;
+
+fn campaign_stream_id() -> Result<StreamId, String> {
+    StreamId::new(CAMPAIGN_STREAM_ID).map_err(|e| e.to_string())
+}
 
 /// User-observable readiness and recovery state (`UX01` / `ffw-389`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,7 +59,9 @@ pub struct VirtualSpeakerNode {
     /// One continuity/content oracle per hardware channel, so no channel is judged on another's evidence.
     pub continuity_oracles: Vec<SampleContinuityOracle>,
     pub clock: GroupClockEstimator,
-    pub replay_window: ReplayWindow,
+    /// The only path from datagram bytes to the jitter buffer: structure, MAC, field validation,
+    /// stream identity, epoch and replay window, in that order (`N01`).
+    pub receiver: StreamReceiver,
     pub jitter_buffer: BoundedJitterBuffer,
     pub resampler: BoundedDriftResampler,
     pub dsp: BoardProtectionDsp,
@@ -442,7 +455,11 @@ impl VirtualSpeakerNode {
             readiness_oracle,
             continuity_oracles,
             clock,
-            replay_window: ReplayWindow::new(initial_epoch),
+            receiver: StreamReceiver::new(
+                StreamKey::from_bytes(CAMPAIGN_STREAM_KEY),
+                campaign_stream_id()?,
+                initial_epoch,
+            ),
             jitter_buffer: BoundedJitterBuffer::new(PlayoutMode::Music500ms, 128),
             resampler: BoundedDriftResampler::new(),
             dsp,
@@ -639,7 +656,12 @@ fn run_campaign_inner(
     )
     .map_err(|e| e.to_string())?;
 
-    let stream_key = [0xA5u8; 32];
+    // The sender owns stream identity, epoch and sequence; sequence 0 is the first block.
+    let mut sender = StreamSender::new(
+        StreamKey::from_bytes(CAMPAIGN_STREAM_KEY),
+        campaign_stream_id()?,
+        epoch,
+    );
     let block_period_ns: u64 = BLOCK_PERIOD_NS; // 256 / 48_000 s
     let playout_horizon_ns: u64 = 500_000_000; // 500 ms
 
@@ -669,17 +691,19 @@ fn run_campaign_inner(
         src_block.left = [amp; FRAMES_PER_BLOCK];
         src_block.right = [-amp; FRAMES_PER_BLOCK];
 
-        let pkt = AuthenticatedStreamPacket {
-            session_epoch: epoch,
-            seq: blk_idx,
-            start_frame,
-            presentation_time_ns: pts_ns,
-            consume_by_ns,
+        // Blocks are coded in groups of four; the sender assigns `seq == blk_idx`.
+        let frame = OutboundFrame {
             fec_group_id: (blk_idx / 4) as u16,
             fec_index: (blk_idx % 4) as u8,
-            payload: src_block.to_be_i16_bytes(),
+            fec_group_size: 4,
+            ..OutboundFrame::media(
+                start_frame,
+                pts_ns,
+                consume_by_ns,
+                src_block.to_be_i16_bytes(),
+            )
         };
-        let wire = pkt.encode_signed(&stream_key).map_err(|e| e.to_string())?;
+        let wire = sender.send(frame).map_err(|e| e.to_string())?;
 
         let mut member_dac_cursor_ns = Vec::with_capacity(nodes.len());
         for (member_id, node) in &mut nodes {
@@ -688,15 +712,14 @@ fn run_campaign_inner(
             if !decision.dropped
                 && let Some(deliver_ns) = decision.deliver_time_ns
             {
-                let verified = AuthenticatedStreamPacket::decode_and_verify(&wire, &stream_key)
-                    .map_err(|e| e.to_string())?;
-                if node
-                    .replay_window
-                    .check_and_record(verified.session_epoch, verified.seq)
-                    .is_ok()
-                {
-                    let _ = node.jitter_buffer.push_packet(&verified, deliver_ns);
-                }
+                // Each block is delivered to each member at most once, in order, on the member's
+                // own stream, so a refusal here is a defect in the framing or the harness, never
+                // ordinary loss. Fail the campaign rather than skip it silently. A packet that is
+                // merely late is a different matter: `push_packet` counts it and play-out conceals.
+                let verified = node.receiver.accept(&wire).map_err(|e| {
+                    format!("member {member_id}: block {blk_idx} refused by the receiver: {e}")
+                })?;
+                let _ = node.jitter_buffer.push_packet(&verified, deliver_ns);
             }
 
             let gain = session

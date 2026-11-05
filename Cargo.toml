@@ -11,6 +11,7 @@ members = [
     "crates/franken-session",
     "crates/franken-control",
     "crates/franken-speaker",
+    "crates/franken-alloc-probe",
 ]
 exclude = [
     "toolchain/src/ffw-hello-init",

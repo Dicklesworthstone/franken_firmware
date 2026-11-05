@@ -23,13 +23,35 @@ pub const fn has_native_64bit_atomics() -> bool {
     cfg!(target_has_atomic = "64")
 }
 
+/// Whether a guest's reported kernel release is the release a profile names.
+///
+/// Equal, or `observed` extends `nominal` at a release boundary (`.`, `-`, `+`, `_`): `2.6.14` matches
+/// `2.6.14.7` and `2.6.14-sonos`, but not `2.6.145`, `2.6.1` or `4.9.0-0.bpo.6-powerpc`. An empty
+/// release never matches. The host classifier (`tests/e03/abi.py::kernel_matches`) applies the same rule.
+#[must_use]
+pub fn guest_kernel_matches(nominal: &str, observed: &str) -> bool {
+    if nominal.is_empty() || observed.is_empty() {
+        return false;
+    }
+    observed == nominal
+        || (observed.starts_with(nominal)
+            && matches!(
+                observed.as_bytes().get(nominal.len()),
+                Some(b'.' | b'-' | b'+' | b'_')
+            ))
+}
+
 /// Classification of how a kernel ABI capability was probed or qualified.
+///
+/// Every status is a statement about the profile's own kernel and holds only for a guest that matches it
+/// (see [`guest_kernel_matches`]); `check_admission` refuses any profile without one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CapabilityStatus {
-    /// Verified in a matching kernel or full-system guest.
+    /// Observed working in a full-system guest whose kernel matches the profile.
     Supported,
-    /// Verified absent on this kernel ABI (e.g. `epoll_create1` or `eventfd` on Linux 2.6.14).
+    /// Observed absent (an exact `-ENOSYS` in the guest's own ABI numbering) in a guest whose kernel
+    /// matches the profile, with a declared fallback admitted.
     AbsentFallbackAdmitted,
     /// Required capability is missing or broken; blocks runtime admission.
     MissingRequired,
@@ -42,7 +64,10 @@ pub enum CapabilityStatus {
 pub struct KernelCapabilityMatrix {
     pub profile_id: String,
     pub target_triple: String,
+    /// The kernel release the profile is about (for example the stock `2.6.14.7`).
     pub nominal_kernel_version: String,
+    /// The kernel release of the full-system guest every status below was observed on; `None` when no
+    /// guest was exercised. It must match `nominal_kernel_version` or admission is refused.
     pub guest_kernel_observed: Option<String>,
     pub static_elf_startup: CapabilityStatus,
     pub clock_monotonic: CapabilityStatus,
@@ -59,7 +84,22 @@ pub struct KernelCapabilityMatrix {
 
 impl KernelCapabilityMatrix {
     /// Verify whether all mandatory capabilities for the single-threaded reactor + DSP loop are present.
+    ///
+    /// Refuses with [`PlatformAdmissionError::NoMatchingGuest`] before looking at any capability status
+    /// unless `guest_kernel_observed` matches `nominal_kernel_version`: a status observed on a different
+    /// kernel (a Debian 4.x harness guest for a 2.6.x profile) is not evidence about this one, so
+    /// compatibility stays unqualified rather than inherited.
     pub fn check_admission(&self) -> Result<ReactorWakeMechanism, PlatformAdmissionError> {
+        let guest_matches = self
+            .guest_kernel_observed
+            .as_deref()
+            .is_some_and(|observed| guest_kernel_matches(&self.nominal_kernel_version, observed));
+        if !guest_matches {
+            return Err(PlatformAdmissionError::NoMatchingGuest {
+                nominal_kernel_version: self.nominal_kernel_version.clone(),
+                guest_kernel_observed: self.guest_kernel_observed.clone(),
+            });
+        }
         let required = [
             ("static_elf_startup", self.static_elf_startup),
             ("clock_monotonic", self.clock_monotonic),
@@ -91,7 +131,7 @@ impl KernelCapabilityMatrix {
                 observed: self.poll_syscall,
             });
         }
-        // Wakeup mechanism: use eventfd when supported, or self-pipe when absent on older 2.6.14 kernels
+        // Wakeup mechanism: eventfd when observed supported, the self-pipe when observed absent.
         match self.eventfd_syscall {
             CapabilityStatus::Supported => Ok(ReactorWakeMechanism::EventFd),
             CapabilityStatus::AbsentFallbackAdmitted => Ok(ReactorWakeMechanism::SelfPipe),
@@ -172,6 +212,13 @@ impl MemoryBudgetLedger {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 pub enum PlatformAdmissionError {
+    #[error(
+        "no matching full-system guest: profile kernel `{nominal_kernel_version}`, observed {guest_kernel_observed:?}; compatibility is unqualified"
+    )]
+    NoMatchingGuest {
+        nominal_kernel_version: String,
+        guest_kernel_observed: Option<String>,
+    },
     #[error("missing or unqualified kernel capability `{capability}`: {observed:?}")]
     MissingRequiredCapability {
         capability: String,
@@ -220,13 +267,17 @@ mod tests {
         assert_eq!(atom.load(Ordering::Acquire), 0xDEAD_BEEF_CAFE_BABE);
     }
 
-    #[test]
-    fn capability_matrix_admits_self_pipe_when_eventfd_absent_on_2_6_14() {
-        let matrix = KernelCapabilityMatrix {
-            profile_id: "sonos-s5-ppc-rev-1.16.3.1-2".to_string(),
+    const HARNESS_PPC_KERNEL: &str = "4.9.0-0.bpo.6-powerpc";
+    const STOCK_PPC_KERNEL: &str = "2.6.14.7";
+
+    /// Gate-logic fixture: every capability reads `Supported`, so only the guest-kernel rule can object.
+    /// It describes no real kernel; the statuses are inputs, not observations.
+    fn all_supported_matrix(nominal: &str, observed: Option<&str>) -> KernelCapabilityMatrix {
+        KernelCapabilityMatrix {
+            profile_id: "gate-logic-fixture".to_string(),
             target_triple: "powerpc-unknown-linux-musl".to_string(),
-            nominal_kernel_version: "2.6.14.7".to_string(),
-            guest_kernel_observed: Some("4.9.0-0.bpo.6-powerpc".to_string()),
+            nominal_kernel_version: nominal.to_string(),
+            guest_kernel_observed: observed.map(str::to_string),
             static_elf_startup: CapabilityStatus::Supported,
             clock_monotonic: CapabilityStatus::Supported,
             clock_monotonic_res_ns: 1,
@@ -237,11 +288,30 @@ mod tests {
             urandom_entropy: CapabilityStatus::Supported,
             atomics_32bit: CapabilityStatus::Supported,
             atomics_64bit_fallback: CapabilityStatus::Supported,
-            eventfd_syscall: CapabilityStatus::AbsentFallbackAdmitted,
-        };
+            eventfd_syscall: CapabilityStatus::Supported,
+        }
+    }
+
+    #[test]
+    fn matching_guest_admits_eventfd_or_self_pipe_by_the_observed_eventfd_status() {
+        let mut matrix = all_supported_matrix(HARNESS_PPC_KERNEL, Some(HARNESS_PPC_KERNEL));
+        assert_eq!(matrix.check_admission(), Ok(ReactorWakeMechanism::EventFd));
+
+        matrix.eventfd_syscall = CapabilityStatus::AbsentFallbackAdmitted;
         assert_eq!(matrix.check_admission(), Ok(ReactorWakeMechanism::SelfPipe));
 
-        let mut broken = matrix;
+        // An eventfd that was never qualified is neither of the two: the gate does not pick one.
+        matrix.eventfd_syscall = CapabilityStatus::UnqualifiedPendingStockGuest;
+        assert_eq!(
+            matrix.check_admission(),
+            Err(PlatformAdmissionError::MissingRequiredCapability {
+                capability: "eventfd_or_self_pipe".to_string(),
+                observed: CapabilityStatus::UnqualifiedPendingStockGuest,
+            })
+        );
+
+        // The mandatory-capability checks still run for a matching guest.
+        let mut broken = all_supported_matrix(HARNESS_PPC_KERNEL, Some(HARNESS_PPC_KERNEL));
         broken.urandom_entropy = CapabilityStatus::MissingRequired;
         assert_eq!(
             broken.check_admission(),
@@ -250,6 +320,85 @@ mod tests {
                 observed: CapabilityStatus::MissingRequired,
             })
         );
+    }
+
+    #[test]
+    fn stock_profile_is_refused_when_the_observed_guest_is_a_different_kernel() {
+        // Every capability says `Supported`, as they would if a 4.9 harness result were copied onto the
+        // 2.6.14 profile. That is the claim this gate must not honor.
+        let matrix = all_supported_matrix(STOCK_PPC_KERNEL, Some(HARNESS_PPC_KERNEL));
+        assert_eq!(
+            matrix.check_admission(),
+            Err(PlatformAdmissionError::NoMatchingGuest {
+                nominal_kernel_version: STOCK_PPC_KERNEL.to_string(),
+                guest_kernel_observed: Some(HARNESS_PPC_KERNEL.to_string()),
+            })
+        );
+
+        // Neither does an eventfd fallback or any other status rescue it.
+        let mut absent = matrix;
+        absent.eventfd_syscall = CapabilityStatus::AbsentFallbackAdmitted;
+        assert!(matches!(
+            absent.check_admission(),
+            Err(PlatformAdmissionError::NoMatchingGuest { .. })
+        ));
+    }
+
+    #[test]
+    fn stock_profile_without_any_observed_guest_is_unqualified() {
+        let matrix = all_supported_matrix(STOCK_PPC_KERNEL, None);
+        assert_eq!(
+            matrix.check_admission(),
+            Err(PlatformAdmissionError::NoMatchingGuest {
+                nominal_kernel_version: STOCK_PPC_KERNEL.to_string(),
+                guest_kernel_observed: None,
+            })
+        );
+    }
+
+    #[test]
+    fn the_gate_admits_only_on_matching_evidence_and_the_two_cases_stay_distinct() {
+        // Gate logic only: no 2.6.14 guest exists, so this builds the *evidence class* a future matching
+        // guest would have and shows the gate then admits, while the non-matching class above is refused.
+        let matching = all_supported_matrix(STOCK_PPC_KERNEL, Some("2.6.14.7-fixture"));
+        assert_eq!(
+            matching.check_admission(),
+            Ok(ReactorWakeMechanism::EventFd)
+        );
+        let non_matching = all_supported_matrix(STOCK_PPC_KERNEL, Some(HARNESS_PPC_KERNEL));
+        assert_ne!(matching.check_admission(), non_matching.check_admission());
+    }
+
+    #[test]
+    fn guest_kernel_match_is_a_release_boundary_not_a_string_prefix() {
+        for (nominal, observed) in [
+            ("2.6.14.7", "2.6.14.7"),
+            ("2.6.14", "2.6.14.7"),
+            ("2.6.14", "2.6.14-sonos"),
+            ("2.6.14", "2.6.14+local"),
+            ("2.6.14", "2.6.14_x"),
+            (HARNESS_PPC_KERNEL, HARNESS_PPC_KERNEL),
+        ] {
+            assert!(
+                guest_kernel_matches(nominal, observed),
+                "{nominal} vs {observed}"
+            );
+        }
+        for (nominal, observed) in [
+            ("2.6.14", "2.6.145"),
+            ("2.6.14", "2.6.14x"),
+            ("2.6.14", "2.6.1"),
+            ("2.6.14.7", "2.6.14"),
+            ("2.6.14", HARNESS_PPC_KERNEL),
+            ("", "2.6.14"),
+            ("2.6.14", ""),
+            ("", ""),
+        ] {
+            assert!(
+                !guest_kernel_matches(nominal, observed),
+                "{nominal} vs {observed}"
+            );
+        }
     }
 
     #[test]

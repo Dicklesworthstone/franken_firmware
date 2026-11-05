@@ -69,6 +69,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "franken-alloc-probe"
+version = "0.1.0"
+dependencies = [
+ "franken-dsp",
+]
+
+[[package]]
 name = "franken-board-profile"
 version = "0.1.0"
 dependencies = [
