@@ -136,6 +136,34 @@ class ParseLogTests(unittest.TestCase):
         self.assertNotEqual(other["argv"], CK.plan_argv(planned("alpha", MIPS)))
         self.assertEqual(other["argv"][-2:], ["--config", "build.jobs=1"])
 
+    def test_rchs_fixed_debug_env_prefix_preserves_the_exact_cargo_command(self):
+        prefix = "env 'CARGO_PROFILE_DEV_DEBUG=line-tables-only' 'CARGO_PROFILE_TEST_DEBUG=line-tables-only' "
+        for observed in (prefix, prefix.removeprefix("env ")):
+            raw = log("alpha", MIPS).replace("Executing command remotely: cargo ", "Executing command remotely: " + observed + "cargo ")
+            facts = CK.parse_log(raw)
+            self.assertEqual(facts["problems"], [])
+            self.assertEqual(facts["argv"], CK.plan_argv(planned("alpha", MIPS)))
+
+    def test_remote_env_changes_cannot_disguise_a_different_build(self):
+        for prefix in ("env RUSTFLAGS=-Awarnings ", "env CARGO_PROFILE_RELEASE_DEBUG=0 ", "RUSTFLAGS=-Awarnings ", "CARGO_PROFILE_DEV_DEBUG=0 ",
+                       "env CARGO_PROFILE_DEV_DEBUG=0 ", "env -i ",
+                       "env CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_PROFILE_DEV_DEBUG=line-tables-only "):
+            raw = log("alpha", MIPS).replace("Executing command remotely: cargo ", "Executing command remotely: " + prefix + "cargo ")
+            facts = CK.parse_log(raw)
+            self.assertIsNone(facts["argv"], prefix)
+            self.assertTrue(any("cannot be read" in p for p in facts["problems"]), prefix)
+        for command in ("env cargo check", "env CARGO_PROFILE_DEV_DEBUG=line-tables-only"):
+            with self.assertRaises(ValueError):
+                CK.remote_argv(command)
+
+    def test_env_prefix_does_not_hide_a_second_command_or_extra_cargo_configuration(self):
+        prefix = "env CARGO_PROFILE_DEV_DEBUG=line-tables-only "
+        raw = log("alpha", MIPS, second_command=True).replace("Executing command remotely: cargo ", "Executing command remotely: " + prefix + "cargo ")
+        self.assertTrue(any("2 command lines" in p for p in CK.parse_log(raw)["problems"]))
+        raw = log("alpha", MIPS, extra_config=("build.rustflags=['-Awarnings']",)).replace(
+            "Executing command remotely: cargo ", "Executing command remotely: " + prefix + "cargo ")
+        self.assertNotEqual(CK.parse_log(raw)["argv"], CK.plan_argv(planned("alpha", MIPS)))
+
     def test_cargo_prints_long_builds_in_minutes_and_hours(self):
         for text, seconds in (("in 1m 02s", 62.0), ("in 1h 02m 03s", 3723.0), ("in 0.31s", 0.31), ("in 12m 59s", 779.0)):
             facts = CK.parse_log(log("a", MIPS, finished="Finished `release` profile [optimized] target(s) " + text))

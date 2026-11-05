@@ -38,7 +38,7 @@ PLAN_LINE = re.compile(r"^RCH_REQUIRE_REMOTE=1 rch exec -- cargo \+nightly check
                        r"--target (?P<target>\S+) -Z build-std=(?P<std>\S+)(?: -j (?P<jobs>\d+))?$")
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 WORKER = re.compile(r"Selected worker: (?P<alias>\S+) at ")
-EXECUTING = re.compile(r"Executing command remotely: (?P<command>cargo .*)$")
+EXECUTING = re.compile(r"Executing command remotely: (?P<command>.+)$")
 FINISHED_REMOTE = re.compile(r"Remote command finished: exit=(?P<rc>-?\d+) in (?P<ms>\d+)ms")
 # cargo prints "in 7.22s" and, past a minute, "in 1m 02s" (and "in 1h 02m 03s" past an hour).
 FINISHED_CARGO = re.compile(r"^\s*Finished `(?P<profile>[^`]+)` profile .* in "
@@ -114,6 +114,21 @@ def remote_argv(command: str) -> List[str]:
     """The cargo argv RCH ran, with RCH's own trailing ``--config env.RCH_...`` pairs removed.  Any other
     ``--config`` stays, so a build that quietly changed cargo's configuration does not match the plan."""
     argv = shlex.split(command)
+    # RCH's debug-pressure defaults are logged as an env prefix. Only the
+    # observed fixed values are equivalent to the planned release command;
+    # compiler flags, config overrides and other env variables are not.
+    if argv and (argv[0] == "env" or "=" in argv[0]):
+        allowed = {"CARGO_PROFILE_DEV_DEBUG=line-tables-only", "CARGO_PROFILE_TEST_DEBUG=line-tables-only"}
+        seen = set()
+        i = 1 if argv[0] == "env" else 0
+        while i < len(argv) and argv[i] != "cargo":
+            if argv[i] not in allowed or argv[i] in seen:
+                raise ValueError("unrecognized or repeated remote environment override")
+            seen.add(argv[i])
+            i += 1
+        if not seen or i == len(argv):
+            raise ValueError("remote environment prefix has no cargo command")
+        argv = argv[i:]
     while len(argv) >= 2 and argv[-2] == "--config" and argv[-1].startswith("env.RCH_"):
         argv = argv[:-2]
     return argv

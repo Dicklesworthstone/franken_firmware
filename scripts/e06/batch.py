@@ -647,6 +647,10 @@ def printable(line: Dict[str, Any], root: str, manifest: Dict[str, Any], canonic
 
 
 def run_batch(args: argparse.Namespace) -> int:
+    set_bypass = [k for k in BYPASS_ENV if k in os.environ]
+    if set_bypass:
+        print("batch.py run: refusing to run with %s set (a bypass would manufacture a pass)" % ", ".join(set_bypass), file=sys.stderr)
+        return 2
     manifest_bytes = read_bytes(args.manifest)
     manifest = json.loads(manifest_bytes.decode("utf-8"))
     problems = validate_manifest(manifest)
@@ -669,10 +673,6 @@ def run_batch(args: argparse.Namespace) -> int:
         return 2
     if args.worker is not None and args.worker not in manifest["workers"].split(","):
         print("batch.py run: --worker %s is not in the manifest's worker set %s" % (args.worker, manifest["workers"]), file=sys.stderr)
-        return 2
-    set_bypass = [k for k in BYPASS_ENV if k in os.environ]
-    if set_bypass:
-        print("batch.py run: refusing to run with %s set (a bypass would manufacture a pass)" % ", ".join(set_bypass), file=sys.stderr)
         return 2
     selected = [l for l in manifest["lines"] if not args.only or l["id"] in args.only]
     if args.only and len(selected) != len(set(args.only)):
