@@ -50,7 +50,7 @@ SIM_SCHEMA = "ffw.e04.sim_cases.v1"
 TIERS = ("smoke", "full")
 KINDS = ("ioctl_decode", "ioctl_encode", "read_uint", "field_map", "matrix_real", "matrix_scenario",
          "matrix_size_independence", "sim_trace", "planted_defect", "anchor_facts", "meta_files",
-         "meta_shared_vectors", "meta_invariants", "meta_matrix_vs_anchors", "meta_hygiene",
+         "meta_shared_vectors", "meta_invariants", "meta_matrix_vs_anchors", "meta_hygiene", "meta_log",
          "runner_selftest", "blocked")
 
 PASS, FAIL, BLOCKED = "pass", "fail", "blocked"
@@ -169,6 +169,24 @@ def scenario(name: str) -> Dict[str, Any]:
     elif name == "non_ioctl_with_selector":
         sub = contract_ref.record(m, "submit_block")
         sub["interface"] = contract_ref._known("write", art())
+    elif name == "topology_route_count_mismatch":
+        m["topology"][0]["routing"] = contract_ref._known(
+            [{"index": 0, "role": "woofer_mono"}, {"index": 1, "role": "tweeter_mono"},
+             {"index": 2, "role": "subwoofer_lfe"}], art())
+    elif name == "topology_rates_not_increasing":
+        m["topology"][0]["sample_rates_hz"] = contract_ref._known([48000, 44100], art())
+    elif name == "startup_unmutes_early":
+        contract_ref.sequence(m, "startup")["steps"] = contract_ref._known(
+            [{"action": a, "min_delay_us": 0} for a in ("assert_mute", "deassert_mute", "configure_codec")], art())
+    elif name == "shutdown_unmutes":
+        contract_ref.sequence(m, "shutdown")["steps"] = contract_ref._known(
+            [{"action": a, "min_delay_us": 0} for a in ("assert_mute", "deassert_mute")], art())
+    elif name == "mute_ack_not_required":
+        contract_ref.sequence(m, "fault")["mute_acknowledgment_required"] = contract_ref._known(False, art())
+    elif name == "no_fault_sequence":
+        m["amp_sequences"] = [r for r in m["amp_sequences"] if r["kind"] != "fault"]
+    elif name == "no_topology":
+        m["topology"] = []
     else:
         raise CaseError(f"unknown scenario {name!r}")
     return m
@@ -235,9 +253,42 @@ def run_anchor_facts(c) -> Result:
     return PASS, f"re-derived from the artifact, digest {facts['artifact']['sha256'][:16]}"
 
 
+def struct_fields(source: str, name: str) -> List[str]:
+    """Field names of a Rust struct, in order, read from its source text."""
+    m = re.search(r"(?:pub )?struct %s \{(.*?)\n\}" % re.escape(name), source, re.S)
+    if not m:
+        return []
+    return [f.group(1) for f in re.finditer(r"^\s*(?:pub )?(\w+):\s", m.group(1), re.M)]
+
+
+def run_meta_log(c) -> Result:
+    """The JSONL line the contract log writes has exactly the fields of the ffw.log.v1 schema type, in
+    its order. The Rust tests go further (they round-trip every line through that type); this catches a
+    drift in the field list without compiling anything."""
+    support = open(os.path.join(REPO, "crates", "franken-test-support", "src", "lib.rs"), encoding="utf-8").read()
+    ours = open(os.path.join(RUST_DIR, "contract_log.rs"), encoding="utf-8").read()
+    want = struct_fields(support, "DiagnosticEvent")
+    got = struct_fields(ours, "LogLine")
+    problems = []
+    if not want:
+        problems.append("could not read DiagnosticEvent from franken-test-support")
+    elif got != want:
+        problems.append(f"LogLine fields {got} differ from DiagnosticEvent fields {want}")
+    if 'pub const LOG_SCHEMA_VERSION: &str = "ffw.log.v1";' not in ours:
+        problems.append("contract_log.rs does not state the ffw.log.v1 schema string")
+    production = ours.split("#[cfg(test)]")[0]
+    if "franken_test_support" in production:
+        problems.append("the production half of contract_log.rs names franken_test_support")
+    cargo = open(os.path.join(REPO, "crates", "franken-hal", "Cargo.toml"), encoding="utf-8").read()
+    if "franken-test-support" in cargo.split("[dev-dependencies]")[0]:
+        problems.append("franken-test-support is a normal dependency of franken-hal, not a dev-dependency")
+    return (PASS, f"{len(want)} fields in order") if not problems else (FAIL, "; ".join(problems))
+
+
 def run_meta_files(c) -> Result:
     needed = [CASES_FILE, SIM_FILE, MATRIX_FILE, ANCHORS_FILE, DOC_FILE,
               os.path.join(RUST_DIR, "contract.rs"), os.path.join(RUST_DIR, "dma_sim.rs"),
+              os.path.join(RUST_DIR, "contract_log.rs"),
               os.path.join(REPO, "scripts", "e2e", "e04")]
     gone = [os.path.relpath(p, REPO) for p in needed if not os.path.isfile(p)]
     if gone:
@@ -368,7 +419,7 @@ RUNNERS: Dict[str, Callable[[Dict[str, Any]], Result]] = {
     "field_map": run_field_map, "matrix_real": run_matrix_real, "matrix_scenario": run_matrix_scenario,
     "matrix_size_independence": run_size_independence, "sim_trace": run_sim_trace,
     "planted_defect": run_planted_defect, "anchor_facts": run_anchor_facts, "meta_files": run_meta_files,
-    "meta_shared_vectors": run_meta_shared_vectors, "meta_invariants": run_meta_invariants,
+    "meta_shared_vectors": run_meta_shared_vectors, "meta_log": run_meta_log, "meta_invariants": run_meta_invariants,
     "meta_matrix_vs_anchors": run_meta_matrix_vs_anchors, "meta_hygiene": run_meta_hygiene,
     "runner_selftest": run_runner_selftest, "blocked": run_blocked,
 }

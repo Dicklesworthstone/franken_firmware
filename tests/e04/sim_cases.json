@@ -1445,6 +1445,811 @@
     "submitted": 0,
     "consumed": 0
    }
+  },
+  {
+   "id": "E04-SIM-015",
+   "title": "startup sequence: order and minimum delays are enforced, and the rate gates start",
+   "model": {
+    "channels": 2,
+    "bytes_per_sample": 2,
+    "rates_hz": [
+     44100,
+     48000
+    ],
+    "startup": [
+     {
+      "action": "assert_mute",
+      "min_delay_ticks": 0
+     },
+     {
+      "action": "enable_clocks",
+      "min_delay_ticks": 100
+     },
+     {
+      "action": "configure_codec",
+      "min_delay_ticks": 50
+     },
+     {
+      "action": "prime_silence",
+      "min_delay_ticks": 0
+     },
+     {
+      "action": "deassert_mute",
+      "min_delay_ticks": 200
+     }
+    ]
+   },
+   "steps": [
+    {
+     "ev": {
+      "type": "acquire",
+      "owner": "a"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "prepare",
+      "slots": 2
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "set_rate",
+      "hz": 32000
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "rate_not_supported"
+     }
+    },
+    {
+     "ev": {
+      "type": "set_rate",
+      "hz": 48000
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "start"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "amp_sequence_incomplete"
+     }
+    },
+    {
+     "ev": {
+      "type": "amp_step",
+      "action": "enable_clocks"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "amp_step_out_of_order"
+     }
+    },
+    {
+     "ev": {
+      "type": "amp_step",
+      "action": "assert_mute"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "amp_step",
+      "action": "enable_clocks"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "amp_step_too_early"
+     }
+    },
+    {
+     "ev": {
+      "type": "tick",
+      "ticks": 100
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "amp_step",
+      "action": "enable_clocks"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "amp_step",
+      "action": "configure_codec"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "amp_step_too_early"
+     }
+    },
+    {
+     "ev": {
+      "type": "tick",
+      "ticks": 50
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "amp_step",
+      "action": "configure_codec"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "amp_step",
+      "action": "prime_silence"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "amp_step",
+      "action": "prime_silence"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "amp_step_out_of_order"
+     }
+    },
+    {
+     "ev": {
+      "type": "start"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "amp_step_too_early"
+     }
+    },
+    {
+     "ev": {
+      "type": "tick",
+      "ticks": 200
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "start"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    }
+   ],
+   "final": {
+    "phase": "running",
+    "amp": "unmuted",
+    "owner": "a",
+    "slots": [
+     "free",
+     "free"
+    ],
+    "submitted": 0,
+    "consumed": 0,
+    "rate_hz": 48000,
+    "amp_progress": 0,
+    "clocks_on": true
+   }
+  },
+  {
+   "id": "E04-SIM-016",
+   "title": "byte-level submits use the channel map: a frame is channels times bytes per sample",
+   "model": {
+    "channels": 2,
+    "bytes_per_sample": 2,
+    "rates_hz": [
+     44100,
+     48000
+    ],
+    "startup": [
+     {
+      "action": "assert_mute",
+      "min_delay_ticks": 0
+     },
+     {
+      "action": "enable_clocks",
+      "min_delay_ticks": 100
+     },
+     {
+      "action": "configure_codec",
+      "min_delay_ticks": 50
+     },
+     {
+      "action": "prime_silence",
+      "min_delay_ticks": 0
+     },
+     {
+      "action": "deassert_mute",
+      "min_delay_ticks": 200
+     }
+    ]
+   },
+   "steps": [
+    {
+     "ev": {
+      "type": "acquire",
+      "owner": "a"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "prepare",
+      "slots": 2
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "submit_bytes",
+      "slot": 0,
+      "bytes": 6,
+      "accepted_bytes": 6
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "partial_frame"
+     }
+    },
+    {
+     "ev": {
+      "type": "submit_bytes",
+      "slot": 0,
+      "bytes": 8,
+      "accepted_bytes": 6
+     },
+     "expect": {
+      "result": "anomaly",
+      "kind": "accepted_partial_frame"
+     }
+    },
+    {
+     "ev": {
+      "type": "submit_bytes",
+      "slot": 0,
+      "bytes": 8,
+      "accepted_bytes": 12
+     },
+     "expect": {
+      "result": "anomaly",
+      "kind": "accepted_more_than_offered"
+     }
+    },
+    {
+     "ev": {
+      "type": "submit_bytes",
+      "slot": 0,
+      "bytes": 0,
+      "accepted_bytes": 0
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "empty_submit"
+     }
+    },
+    {
+     "ev": {
+      "type": "submit_bytes",
+      "slot": 0,
+      "bytes": 8,
+      "accepted_bytes": 4
+     },
+     "expect": {
+      "result": "partial",
+      "remainder": 1
+     }
+    },
+    {
+     "ev": {
+      "type": "submit_bytes",
+      "slot": 0,
+      "bytes": 8,
+      "accepted_bytes": 8
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "slot_not_free"
+     }
+    },
+    {
+     "ev": {
+      "type": "submit_bytes",
+      "slot": 1,
+      "bytes": 8,
+      "accepted_bytes": 8
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "submit_bytes",
+      "slot": 2,
+      "bytes": 4,
+      "accepted_bytes": 4
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "bad_slot"
+     }
+    }
+   ],
+   "final": {
+    "phase": "prepared",
+    "amp": "muted",
+    "owner": "a",
+    "slots": [
+     "dma_owned",
+     "dma_owned"
+    ],
+    "submitted": 3,
+    "consumed": 0
+   }
+  },
+  {
+   "id": "E04-SIM-017",
+   "title": "events that need a contract model are refused when there is none",
+   "steps": [
+    {
+     "ev": {
+      "type": "acquire",
+      "owner": "a"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "prepare",
+      "slots": 2
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "set_rate",
+      "hz": 48000
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "no_model"
+     }
+    },
+    {
+     "ev": {
+      "type": "amp_step",
+      "action": "assert_mute"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "no_model"
+     }
+    },
+    {
+     "ev": {
+      "type": "submit_bytes",
+      "slot": 0,
+      "bytes": 8,
+      "accepted_bytes": 8
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "no_model"
+     }
+    },
+    {
+     "ev": {
+      "type": "start"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    }
+   ],
+   "final": {
+    "phase": "running",
+    "amp": "unmuted",
+    "owner": "a",
+    "slots": [
+     "free",
+     "free"
+    ],
+    "submitted": 0,
+    "consumed": 0
+   }
+  },
+  {
+   "id": "E04-SIM-018",
+   "title": "mute comes before the clocks go off",
+   "model": {
+    "channels": 1,
+    "bytes_per_sample": 2,
+    "rates_hz": [
+     48000
+    ],
+    "startup": [
+     {
+      "action": "assert_mute",
+      "min_delay_ticks": 0
+     },
+     {
+      "action": "enable_clocks",
+      "min_delay_ticks": 0
+     },
+     {
+      "action": "deassert_mute",
+      "min_delay_ticks": 0
+     }
+    ]
+   },
+   "steps": [
+    {
+     "ev": {
+      "type": "acquire",
+      "owner": "a"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "prepare",
+      "slots": 1
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "set_rate",
+      "hz": 48000
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "amp_step",
+      "action": "assert_mute"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "amp_step",
+      "action": "enable_clocks"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "start"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "amp_step",
+      "action": "disable_clocks"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "clocks_off_while_unmuted"
+     }
+    },
+    {
+     "ev": {
+      "type": "drain",
+      "max_wait_ticks": 5
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "amp_step",
+      "action": "disable_clocks"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "flush_ack"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    }
+   ],
+   "final": {
+    "phase": "prepared",
+    "amp": "muted",
+    "owner": "a",
+    "slots": [
+     "free"
+    ],
+    "submitted": 0,
+    "consumed": 0,
+    "rate_hz": 48000,
+    "amp_progress": 0,
+    "clocks_on": false
+   }
+  },
+  {
+   "id": "E04-SIM-019",
+   "title": "an unset rate blocks start, and a fault starts the startup sequence over",
+   "model": {
+    "channels": 1,
+    "bytes_per_sample": 2,
+    "rates_hz": [
+     48000
+    ],
+    "startup": [
+     {
+      "action": "assert_mute",
+      "min_delay_ticks": 0
+     },
+     {
+      "action": "enable_clocks",
+      "min_delay_ticks": 0
+     },
+     {
+      "action": "deassert_mute",
+      "min_delay_ticks": 0
+     }
+    ]
+   },
+   "steps": [
+    {
+     "ev": {
+      "type": "acquire",
+      "owner": "a"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "prepare",
+      "slots": 1
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "start"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "rate_not_set"
+     }
+    },
+    {
+     "ev": {
+      "type": "set_rate",
+      "hz": 48000
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "amp_step",
+      "action": "assert_mute"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "abort_mute",
+      "ack": true
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "device_reset",
+      "ack": true
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "start"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "amp_sequence_incomplete"
+     }
+    }
+   ],
+   "final": {
+    "phase": "prepared",
+    "amp": "muted",
+    "owner": "a",
+    "slots": [
+     "free"
+    ],
+    "submitted": 0,
+    "consumed": 0,
+    "rate_hz": 48000,
+    "amp_progress": 0,
+    "clocks_on": false
+   }
+  },
+  {
+   "id": "E04-SIM-020",
+   "title": "a step is accepted exactly at its minimum delay and refused one tick before",
+   "model": {
+    "channels": 1,
+    "bytes_per_sample": 2,
+    "rates_hz": [
+     48000
+    ],
+    "startup": [
+     {
+      "action": "assert_mute",
+      "min_delay_ticks": 0
+     },
+     {
+      "action": "enable_clocks",
+      "min_delay_ticks": 10
+     },
+     {
+      "action": "deassert_mute",
+      "min_delay_ticks": 0
+     }
+    ]
+   },
+   "steps": [
+    {
+     "ev": {
+      "type": "acquire",
+      "owner": "a"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "prepare",
+      "slots": 1
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "set_rate",
+      "hz": 48000
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "amp_step",
+      "action": "assert_mute"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "tick",
+      "ticks": 9
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "amp_step",
+      "action": "enable_clocks"
+     },
+     "expect": {
+      "result": "refused",
+      "reason": "amp_step_too_early"
+     }
+    },
+    {
+     "ev": {
+      "type": "tick",
+      "ticks": 1
+     },
+     "expect": {
+      "result": "ok"
+     }
+    },
+    {
+     "ev": {
+      "type": "amp_step",
+      "action": "enable_clocks"
+     },
+     "expect": {
+      "result": "ok"
+     }
+    }
+   ],
+   "final": {
+    "phase": "prepared",
+    "amp": "muted",
+    "owner": "a",
+    "slots": [
+     "free"
+    ],
+    "submitted": 0,
+    "consumed": 0,
+    "rate_hz": 48000,
+    "amp_progress": 2,
+    "clocks_on": true
+   }
   }
  ]
 }

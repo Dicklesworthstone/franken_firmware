@@ -825,5 +825,94 @@
         }
       }
     }
+  ],
+  "topology": [
+    {
+      "id": "topology.audio_output",
+      "channel_count": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-CHANNEL-TOPOLOGY",
+          "needs": "how many channels the retained audio path drives and which transducer each feeds is not established; needs the audio-control handler decode reconciled with the board profile"
+        }
+      },
+      "routing": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-CHANNEL-TOPOLOGY",
+          "needs": "how many channels the retained audio path drives and which transducer each feeds is not established; needs the audio-control handler decode reconciled with the board profile"
+        }
+      },
+      "sample_rates_hz": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-RATES",
+          "needs": "which sample rates and sample encoding the retained driver accepts is not established; needs the prepare-format handler decode or the userspace caller's call sites"
+        }
+      },
+      "sample_encoding": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-RATES",
+          "needs": "which sample rates and sample encoding the retained driver accepts is not established; needs the prepare-format handler decode or the userspace caller's call sites"
+        }
+      }
+    }
+  ],
+  "amp_sequences": [
+    {
+      "id": "amp.startup",
+      "kind": "startup",
+      "steps": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-AMP-SEQUENCE",
+          "needs": "the order and minimum delays of the mute pin, clock, codec and unmute steps are not established; needs the audio-control and I2C handler analysis and the human-lane measurement"
+        }
+      },
+      "mute_acknowledgment_required": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-MUTE-ACK",
+          "needs": "whether the retained driver acknowledges the startup mute, and how, is not established; needs the audio-control handler decode"
+        }
+      }
+    },
+    {
+      "id": "amp.shutdown",
+      "kind": "shutdown",
+      "steps": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-AMP-SEQUENCE",
+          "needs": "the order of mute and clock-off on a stop is not established; needs the audio-control and I2C handler analysis and the human-lane measurement"
+        }
+      },
+      "mute_acknowledgment_required": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-MUTE-ACK",
+          "needs": "whether the retained driver acknowledges the shutdown mute, and how, is not established; needs the audio-control handler decode"
+        }
+      }
+    },
+    {
+      "id": "amp.fault",
+      "kind": "fault",
+      "steps": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-AMP-SEQUENCE",
+          "needs": "what a fault does to the mute pin and the clocks is not established; needs the audio-control and I2C handler analysis and the human-lane measurement"
+        }
+      },
+      "mute_acknowledgment_required": {
+        "status": "unknown",
+        "blocker": {
+          "id": "EXT-E04-MUTE-ACK",
+          "needs": "whether the retained driver acknowledges the fault mute, and how, is not established; needs the audio-control handler decode"
+        }
+      }
+    }
   ]
 }

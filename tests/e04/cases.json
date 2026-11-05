@@ -587,15 +587,19 @@
    "expect": {
     "hardware_eligible": false,
     "offline_model_ok": false,
-    "missing_count": 101,
+    "missing_count": 111,
     "by_kind": {
-     "unknown": 101
+     "unknown": 111
     },
     "by_blocker": {
+     "EXT-E04-AMP-SEQUENCE": 3,
+     "EXT-E04-CHANNEL-TOPOLOGY": 2,
      "EXT-E04-IOCTL-LAYOUT": 50,
      "EXT-E04-LIVE-QUAL": 7,
+     "EXT-E04-MUTE-ACK": 3,
      "EXT-E04-OP-MAPPING": 30,
-     "EXT-E04-RADIO-OWNERSHIP": 14
+     "EXT-E04-RADIO-OWNERSHIP": 14,
+     "EXT-E04-RATES": 2
     },
     "first": {
      "scope": "audio_output",
@@ -625,9 +629,9 @@
    "expect": {
     "hardware_eligible": false,
     "offline_model_ok": true,
-    "missing_count": 101,
+    "missing_count": 111,
     "by_kind": {
-     "synthetic_anchor": 101
+     "synthetic_anchor": 111
     }
    }
   },
@@ -783,6 +787,137 @@
    }
   },
   {
+   "id": "E04-ELIG-011",
+   "kind": "matrix_scenario",
+   "tier": "smoke",
+   "scenario": "topology_route_count_mismatch",
+   "expect": {
+    "hardware_eligible": false,
+    "missing": [
+     {
+      "scope": "topology",
+      "record": "fixture.topology",
+      "field": "routing",
+      "kind": "inconsistent"
+     }
+    ]
+   }
+  },
+  {
+   "id": "E04-ELIG-012",
+   "kind": "matrix_scenario",
+   "tier": "smoke",
+   "scenario": "topology_rates_not_increasing",
+   "expect": {
+    "hardware_eligible": false,
+    "missing": [
+     {
+      "scope": "topology",
+      "record": "fixture.topology",
+      "field": "sample_rates",
+      "kind": "inconsistent"
+     }
+    ]
+   }
+  },
+  {
+   "id": "E04-ELIG-013",
+   "kind": "matrix_scenario",
+   "tier": "smoke",
+   "scenario": "startup_unmutes_early",
+   "expect": {
+    "hardware_eligible": false,
+    "missing": [
+     {
+      "scope": "amp_sequencing",
+      "record": "fixture.amp.startup",
+      "field": "steps",
+      "kind": "inconsistent"
+     },
+     {
+      "scope": "amp_sequencing",
+      "record": "fixture.amp.startup",
+      "field": "steps",
+      "kind": "inconsistent"
+     }
+    ]
+   }
+  },
+  {
+   "id": "E04-ELIG-014",
+   "kind": "matrix_scenario",
+   "tier": "smoke",
+   "scenario": "shutdown_unmutes",
+   "expect": {
+    "hardware_eligible": false,
+    "missing": [
+     {
+      "scope": "amp_sequencing",
+      "record": "fixture.amp.shutdown",
+      "field": "steps",
+      "kind": "inconsistent"
+     },
+     {
+      "scope": "amp_sequencing",
+      "record": "fixture.amp.shutdown",
+      "field": "steps",
+      "kind": "inconsistent"
+     }
+    ]
+   }
+  },
+  {
+   "id": "E04-ELIG-015",
+   "kind": "matrix_scenario",
+   "tier": "smoke",
+   "scenario": "mute_ack_not_required",
+   "expect": {
+    "hardware_eligible": false,
+    "missing": [
+     {
+      "scope": "amp_sequencing",
+      "record": "fixture.amp.fault",
+      "field": "mute_acknowledgment",
+      "kind": "inconsistent"
+     }
+    ]
+   }
+  },
+  {
+   "id": "E04-ELIG-016",
+   "kind": "matrix_scenario",
+   "tier": "smoke",
+   "scenario": "no_fault_sequence",
+   "expect": {
+    "hardware_eligible": false,
+    "missing": [
+     {
+      "scope": "amp_sequencing",
+      "record": "amp_sequence:fault",
+      "field": "record",
+      "kind": "no_record"
+     }
+    ]
+   }
+  },
+  {
+   "id": "E04-ELIG-017",
+   "kind": "matrix_scenario",
+   "tier": "smoke",
+   "scenario": "no_topology",
+   "expect": {
+    "hardware_eligible": false,
+    "missing": [
+     {
+      "scope": "topology",
+      "record": "topology:audio_output",
+      "field": "record",
+      "kind": "no_record"
+     }
+    ]
+   }
+  },
+  {
    "id": "E04-DEFECT-01",
    "kind": "planted_defect",
    "tier": "full",
@@ -873,9 +1008,69 @@
    ]
   },
   {
+   "id": "E04-DEFECT-11",
+   "kind": "planted_defect",
+   "tier": "full",
+   "defect": "skip_amp_order",
+   "caught_by": [
+    "E04-SIM-015"
+   ]
+  },
+  {
+   "id": "E04-DEFECT-12",
+   "kind": "planted_defect",
+   "tier": "full",
+   "defect": "ignore_min_delay",
+   "caught_by": [
+    "E04-SIM-015"
+   ]
+  },
+  {
+   "id": "E04-DEFECT-13",
+   "kind": "planted_defect",
+   "tier": "full",
+   "defect": "start_without_sequence",
+   "caught_by": [
+    "E04-SIM-015",
+    "E04-SIM-019"
+   ]
+  },
+  {
+   "id": "E04-DEFECT-14",
+   "kind": "planted_defect",
+   "tier": "full",
+   "defect": "unsupported_rate_accepted",
+   "caught_by": [
+    "E04-SIM-015"
+   ]
+  },
+  {
+   "id": "E04-DEFECT-15",
+   "kind": "planted_defect",
+   "tier": "full",
+   "defect": "partial_frame_accepted",
+   "caught_by": [
+    "E04-SIM-016"
+   ]
+  },
+  {
+   "id": "E04-DEFECT-16",
+   "kind": "planted_defect",
+   "tier": "full",
+   "defect": "clocks_off_unmuted_allowed",
+   "caught_by": [
+    "E04-SIM-018"
+   ]
+  },
+  {
    "id": "E04-ANCHOR-001",
    "kind": "anchor_facts",
    "tier": "full"
+  },
+  {
+   "id": "E04-LOG-001",
+   "kind": "meta_log",
+   "tier": "smoke"
   },
   {
    "id": "E04-META-001",
@@ -1073,6 +1268,47 @@
    ]
   },
   {
+   "id": "INV-TOPOLOGY-RECORDS",
+   "text": "the channel map and sample rates are contract records: a missing, unknown, contradictory or out-of-range one blocks hardware eligibility",
+   "cases": [
+    "E04-ELIG-011",
+    "E04-ELIG-012",
+    "E04-ELIG-017"
+   ],
+   "rust_tests": []
+  },
+  {
+   "id": "INV-AMP-SEQUENCE-RECORDS",
+   "text": "amplifier sequencing is a contract record per startup, shutdown and fault: mute first, unmute only at the end of a startup, a stop never unmutes, and a mute must be acknowledged",
+   "cases": [
+    "E04-ELIG-013",
+    "E04-ELIG-014",
+    "E04-ELIG-015",
+    "E04-ELIG-016"
+   ],
+   "rust_tests": []
+  },
+  {
+   "id": "INV-AMP-SEQUENCE-REPLAY",
+   "text": "replayed traces enforce the startup order and minimum delays, gate start on the rate and the whole sequence, restart the sequence after a fault, and cut the clocks only when muted",
+   "cases": [
+    "E04-SIM-015",
+    "E04-SIM-018",
+    "E04-SIM-019",
+    "E04-SIM-020"
+   ],
+   "rust_tests": []
+  },
+  {
+   "id": "INV-CHANNEL-MAP-REPLAY",
+   "text": "replayed byte-level submits use the channel map (a frame is channels times bytes per sample), and events that need a model are refused without one",
+   "cases": [
+    "E04-SIM-016",
+    "E04-SIM-017"
+   ],
+   "rust_tests": []
+  },
+  {
    "id": "INV-POSITIVE-PATH",
    "text": "a complete, artifact-anchored matrix is eligible (gate unit test only)",
    "cases": [
@@ -1085,6 +1321,14 @@
    "cases": [
     "E04-ANCHOR-001"
    ]
+  },
+  {
+   "id": "INV-JSONL-DIAGNOSTICS",
+   "text": "the contract and simulator write bounded, redacted ffw.log.v1 JSONL themselves; a lost critical line marks the evidence incomplete; test-support only checks the shape",
+   "cases": [
+    "E04-LOG-001"
+   ],
+   "rust_tests": []
   },
   {
    "id": "INV-CASES-DETECT-DEFECTS",

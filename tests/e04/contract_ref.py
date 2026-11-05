@@ -21,6 +21,16 @@ INTERFACE_FIELDS = ["interface", "selector", "full_command", "direction", "paylo
                     "alignment", "field_map"]
 RADIO_FIELDS = [("owner", "owner"), ("survives_daemon_replacement", "survives_daemon_replacement"),
                 ("audio_interference_bound_us", "audio_interference_bound")]
+# Channel map, rates and amplifier sequencing (the second half of the bead's scope).
+TOPOLOGY_FIELDS = [("channel_count", "channel_count"), ("routing", "routing"),
+                   ("sample_rates_hz", "sample_rates"), ("sample_encoding", "sample_encoding")]
+SEQUENCE_KINDS = ["startup", "shutdown", "fault"]
+SEQUENCE_FIELDS = [("steps", "steps"), ("mute_acknowledgment_required", "mute_acknowledgment")]
+#: The order a startup sequence must follow (the board-profile contract: assert the mute pin, bring up
+#: clocks and the codec, prime silence, and only then unmute). Each action appears at most once.
+AMP_STARTUP_ORDER = ["assert_mute", "enable_clocks", "configure_codec", "prime_silence", "deassert_mute"]
+STOP_ACTIONS = ["assert_mute", "disable_clocks"]
+MIN_RATE_HZ, MAX_RATE_HZ = 8_000, 384_000
 FIXTURE_SHA = "0123456789abcdef" * 4
 
 # ---- PowerPC ioctl layout: nr 0..7, type 8..15, size 16..28, direction 29..31 ----
@@ -183,6 +193,58 @@ def _consistency(rec: Dict[str, Any]) -> List[Tuple[str, str]]:
     return out
 
 
+def _topology_consistency(rec: Dict[str, Any]) -> List[Tuple[str, str]]:
+    out: List[Tuple[str, str]] = []
+    count, routing, rates = _value(rec["channel_count"]), _value(rec["routing"]), _value(rec["sample_rates_hz"])
+    if count is not None and count == 0:
+        out.append(("channel_count", "a driver with no channel"))
+    if routing is not None:
+        if count is not None and len(routing) != count:
+            out.append(("routing", "the route count differs from the channel count"))
+        if sorted(r["index"] for r in routing) != list(range(len(routing))):
+            out.append(("routing", "the channel indices are not 0..n-1, once each"))
+        if any(not r["role"].strip() for r in routing):
+            out.append(("routing", "a channel feeds no named role"))
+    if rates is not None:
+        if not rates:
+            out.append(("sample_rates", "no sample rate"))
+        elif any(r < MIN_RATE_HZ or r > MAX_RATE_HZ for r in rates):
+            out.append(("sample_rates", "a rate is outside 8 kHz to 384 kHz"))
+        elif any(b <= a for a, b in zip(rates, rates[1:])):
+            out.append(("sample_rates", "the rates are not strictly increasing"))
+    return out
+
+
+def _sequence_consistency(rec: Dict[str, Any]) -> List[Tuple[str, str]]:
+    out: List[Tuple[str, str]] = []
+    steps = _value(rec["steps"])
+    if steps is not None:
+        actions = [st["action"] for st in steps]
+        if not actions:
+            out.append(("steps", "a sequence with no step"))
+        else:
+            if actions[0] != "assert_mute":
+                out.append(("steps", "mute must be asserted first"))
+            if len(set(actions)) != len(actions):
+                out.append(("steps", "an action is repeated"))
+            if rec["kind"] == "startup":
+                if actions[-1] != "deassert_mute":
+                    out.append(("steps", "a startup must end by deasserting mute"))
+                if "disable_clocks" in actions:
+                    out.append(("steps", "a startup cannot disable the clocks"))
+                ranks = [AMP_STARTUP_ORDER.index(a) for a in actions if a in AMP_STARTUP_ORDER]
+                if ranks != sorted(ranks):
+                    out.append(("steps", "the startup steps are out of order"))
+            else:
+                if "deassert_mute" in actions:
+                    out.append(("steps", "only a startup unmutes"))
+                if any(a not in STOP_ACTIONS for a in actions):
+                    out.append(("steps", "a stop sequence may only mute and cut the clocks"))
+    if _value(rec["mute_acknowledgment_required"]) is False:
+        out.append(("mute_acknowledgment", "mute-requested is not mute-acknowledged"))
+    return out
+
+
 def evaluate(matrix: Dict[str, Any]) -> Dict[str, Any]:
     missing: List[Dict[str, Any]] = []
 
@@ -209,6 +271,27 @@ def evaluate(matrix: Dict[str, Any]) -> Dict[str, Any]:
             reason = _field_reason(matrix, rec[key])
             if reason:
                 add("radio_coexistence", rec["id"], field, reason)
+    topology = matrix.get("topology", [])
+    if not topology:
+        add("topology", "topology:audio_output", "record", {"kind": "no_record"})
+    for rec in topology:
+        for key, field in TOPOLOGY_FIELDS:
+            reason = _field_reason(matrix, rec[key])
+            if reason:
+                add("topology", rec["id"], field, reason)
+        for field, detail in _topology_consistency(rec):
+            add("topology", rec["id"], field, {"kind": "inconsistent", "detail": detail})
+    sequences = matrix.get("amp_sequences", [])
+    for kind in SEQUENCE_KINDS:
+        if not any(r["kind"] == kind for r in sequences):
+            add("amp_sequencing", f"amp_sequence:{kind}", "record", {"kind": "no_record"})
+    for rec in sequences:
+        for key, field in SEQUENCE_FIELDS:
+            reason = _field_reason(matrix, rec[key])
+            if reason:
+                add("amp_sequencing", rec["id"], field, reason)
+        for field, detail in _sequence_consistency(rec):
+            add("amp_sequencing", rec["id"], field, {"kind": "inconsistent", "detail": detail})
     return {
         "offline_model_ok": all(m["reason"]["kind"] == "synthetic_anchor" for m in missing),
         "hardware_eligible": not missing,
@@ -247,10 +330,23 @@ def complete_matrix(anchor: Dict[str, Any]) -> Dict[str, Any]:
     radio = [{"id": f"fixture.radio.{d}", "duty": d, "owner": _known("kernel_driver", anchor),
               "survives_daemon_replacement": _known(True, anchor),
               "audio_interference_bound_us": _known(250, anchor)} for d in DUTIES]
+    topology = [{
+        "id": "fixture.topology",
+        "channel_count": _known(2, anchor),
+        "routing": _known([{"index": 0, "role": "woofer_mono"}, {"index": 1, "role": "tweeter_mono"}], anchor),
+        "sample_rates_hz": _known([44100, 48000], anchor),
+        "sample_encoding": _known("signed16", anchor),
+    }]
+    sequences = [{
+        "id": f"fixture.amp.{kind}", "kind": kind,
+        "steps": _known([{"action": a, "min_delay_us": 0} for a in steps], anchor),
+        "mute_acknowledgment_required": _known(True, anchor),
+    } for kind, steps in (("startup", AMP_STARTUP_ORDER), ("shutdown", ["assert_mute", "disable_clocks"]),
+                          ("fault", ["assert_mute"]))]
     return {"schema": SCHEMA, "artifacts": [{
         "sha256": FIXTURE_SHA, "size_bytes": 4096, "description": "unit-test double, not a real driver",
         "sections": [{"name": ".text", "size": 0x1000}, {"name": ".rodata", "size": 0x400}]}],
-        "interfaces": interfaces, "radio": radio}
+        "interfaces": interfaces, "radio": radio, "topology": topology, "amp_sequences": sequences}
 
 
 def unknown(blocker_id: str, needs: str) -> Dict[str, Any]:
@@ -259,3 +355,7 @@ def unknown(blocker_id: str, needs: str) -> Dict[str, Any]:
 
 def record(matrix: Dict[str, Any], op: str) -> Dict[str, Any]:
     return next(r for r in matrix["interfaces"] if r["operation"] == op)
+
+
+def sequence(matrix: Dict[str, Any], kind: str) -> Dict[str, Any]:
+    return next(r for r in matrix["amp_sequences"] if r["kind"] == kind)

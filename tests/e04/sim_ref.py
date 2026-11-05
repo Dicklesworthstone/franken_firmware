@@ -26,6 +26,12 @@ DEFECTS = {
     "trust_counter": "the consumed-frame counter may claim more than is in flight",
     "forgive_overclaim": "a driver that accepts more than offered is clamped instead of flagged",
     "daemon_not_orphaned": "replacing the daemon leaves its radio duties held",
+    "skip_amp_order": "an amplifier step is accepted out of the contract's order",
+    "ignore_min_delay": "an amplifier step is accepted before its minimum delay has passed",
+    "start_without_sequence": "start is allowed before the startup sequence and the rate are done",
+    "unsupported_rate_accepted": "a sample rate the contract does not list is accepted",
+    "partial_frame_accepted": "a byte count that is not a whole number of frames is accepted",
+    "clocks_off_unmuted_allowed": "the clocks can be cut while the amplifier is not known muted",
 }
 
 OK = {"result": "ok"}
@@ -40,7 +46,8 @@ def anomaly(kind: str) -> Dict[str, Any]:
 
 
 class Sim:
-    def __init__(self, start_counter: int = 0, defects: Iterable[str] = ()) -> None:
+    def __init__(self, start_counter: int = 0, defects: Iterable[str] = (),
+                 model: Optional[Dict[str, Any]] = None) -> None:
         unknown = set(defects) - set(DEFECTS)
         if unknown:
             raise ValueError(f"unknown defects {sorted(unknown)}")
@@ -57,6 +64,12 @@ class Sim:
         self.last_counter = start_counter
         self.replaced = False
         self.duties: Dict[str, List[Any]] = {}  # duty -> [owner or None, state]
+        # the channel map, rates and amplifier sequence the trace runs against (None: no model)
+        self.model = model
+        self.rate_hz: Optional[int] = None
+        self.amp_progress = 0           # startup steps done before the final unmute
+        self.last_amp_at = 0
+        self.clocks_on = False
 
     # ---- public
     def apply(self, ev: Dict[str, Any]) -> Dict[str, Any]:
@@ -67,6 +80,7 @@ class Sim:
             "phase": self.phase, "amp": self.amp, "owner": self.owner, "slots": list(self.slots),
             "submitted": self.submitted, "consumed": self.consumed,
             "radio": {d: v[1] for d, v in self.duties.items()},
+            "rate_hz": self.rate_hz, "amp_progress": self.amp_progress, "clocks_on": self.clocks_on,
         }
 
     # ---- helpers
@@ -90,6 +104,7 @@ class Sim:
             return refused("bad_slot_count")
         self.slots = ["free"] * n
         self.phase, self.amp, self.deadline = "prepared", "muted", None
+        self.rate_hz, self.amp_progress, self.clocks_on = None, 0, False
         return OK
 
     def _start(self, ev):
@@ -97,18 +112,95 @@ class Sim:
             return refused("wrong_phase")
         if self.amp == "mute_failed" and "start_after_mute_failure" not in self.defects:
             return refused("mute_not_acknowledged")
+        if self.model is not None and "start_without_sequence" not in self.defects:
+            if self.rate_hz is None:
+                return refused("rate_not_set")
+            startup = self.model["startup"]
+            last = len(startup) - 1
+            if self.amp_progress < last:
+                return refused("amp_sequence_incomplete")
+            if (self.amp_progress > 0 and "ignore_min_delay" not in self.defects
+                    and self.now - self.last_amp_at < startup[last]["min_delay_ticks"]):
+                return refused("amp_step_too_early")
         self.amp, self.phase = "unmuted", "running"
+        self.amp_progress = 0
         return OK
 
-    def _submit(self, ev):
+    def _submit_preflight(self, i):
         if self.phase not in ("prepared", "running"):
             return refused("wrong_phase")
-        i = ev["slot"]
         if i >= len(self.slots):
             return refused("bad_slot")
         if self.slots[i] != "free":
             return refused("slot_not_free")
-        frames, accepted = ev["frames"], ev["accepted"]
+        return None
+
+    def _submit(self, ev):
+        early = self._submit_preflight(ev["slot"])
+        if early is not None:
+            return early
+        return self._submit_frames(ev["slot"], ev["frames"], ev["accepted"])
+
+    def _submit_bytes(self, ev):
+        if self.model is None:
+            return refused("no_model")
+        early = self._submit_preflight(ev["slot"])
+        if early is not None:
+            return early
+        frame_bytes = self.model["channels"] * self.model["bytes_per_sample"] or 1
+        offered, taken = ev["bytes"], ev["accepted_bytes"]
+        if offered == 0:
+            return refused("empty_submit")
+        lenient = "partial_frame_accepted" in self.defects
+        if offered % frame_bytes and not lenient:
+            return refused("partial_frame")
+        if taken > offered:
+            return anomaly("accepted_more_than_offered")
+        if taken % frame_bytes and not lenient:
+            return anomaly("accepted_partial_frame")
+        return self._submit_frames(ev["slot"], offered // frame_bytes, taken // frame_bytes)
+
+    def _set_rate(self, ev):
+        if self.model is None:
+            return refused("no_model")
+        if self.owner is None:
+            return refused("not_owner")
+        if self.phase != "prepared":
+            return refused("wrong_phase")
+        if ev["hz"] not in self.model["rates_hz"] and "unsupported_rate_accepted" not in self.defects:
+            return refused("rate_not_supported")
+        self.rate_hz = ev["hz"]
+        return OK
+
+    def _amp_step(self, ev):
+        if self.model is None:
+            return refused("no_model")
+        if self.owner is None:
+            return refused("not_owner")
+        action = ev["action"]
+        if action == "disable_clocks":
+            if self.amp != "muted" and "clocks_off_unmuted_allowed" not in self.defects:
+                return refused("clocks_off_while_unmuted")
+            self.clocks_on, self.amp_progress = False, 0
+            return OK
+        if self.phase != "prepared":
+            return refused("wrong_phase")
+        startup = self.model["startup"]
+        if self.amp_progress >= len(startup) - 1:
+            return refused("amp_step_out_of_order")
+        expected = startup[self.amp_progress]
+        if action != expected["action"] and "skip_amp_order" not in self.defects:
+            return refused("amp_step_out_of_order")
+        if (self.amp_progress > 0 and "ignore_min_delay" not in self.defects
+                and self.now - self.last_amp_at < expected["min_delay_ticks"]):
+            return refused("amp_step_too_early")
+        self.amp_progress += 1
+        self.last_amp_at = self.now
+        if action == "enable_clocks":
+            self.clocks_on = True
+        return OK
+
+    def _submit_frames(self, i, frames, accepted):
         if frames == 0:
             return refused("empty_submit")
         if accepted > frames:
@@ -152,6 +244,7 @@ class Sim:
             return refused("wrong_phase")
         self.phase, self.amp = "draining", "muted"
         self.deadline = self.now + ev["max_wait_ticks"]
+        self.amp_progress = 0
         return OK
 
     def _tick(self, ev):
@@ -172,6 +265,7 @@ class Sim:
     def _abort_mute(self, ev):
         if self.phase == "closed":
             return refused("wrong_phase")
+        self.amp_progress = 0
         if ev["ack"] or "mute_failure_ignored" in self.defects:
             self.amp = "muted"
             if self.phase != "faulted":
@@ -189,11 +283,13 @@ class Sim:
         if self.phase in ("faulted", "draining"):
             self.phase = "prepared"
         self.deadline = None
+        self.amp_progress = 0
         return OK
 
     def _device_loss(self, ev):
         self.slots = ["quarantined" if s == "dma_owned" else s for s in self.slots]
         self.amp, self.phase, self.deadline = "mute_failed", "faulted", None
+        self.amp_progress = 0
         return OK
 
     def _power_save(self, ev):
@@ -238,6 +334,7 @@ class Sim:
             return refused("wrong_phase")
         self.owner, self.phase, self.amp = None, "closed", "muted"
         self.slots, self.deadline = [], None
+        self.rate_hz, self.amp_progress, self.clocks_on = None, 0, False
         self.submitted = self.consumed = 0
         self.last_counter = self.start_counter
         return OK
@@ -278,7 +375,7 @@ class Sim:
 def replay(case: Dict[str, Any], defects: Iterable[str] = ()) -> Optional[Dict[str, Any]]:
     """Replay one case. Returns None when every step and the final state match the hand-written
     expectation, otherwise a description of the first disagreement."""
-    sim = Sim(case.get("start_counter", 0), defects)
+    sim = Sim(case.get("start_counter", 0), defects, case.get("model"))
     for index, step in enumerate(case["steps"]):
         observed = sim.apply(step["ev"])
         if observed != step["expect"]:
@@ -286,6 +383,9 @@ def replay(case: Dict[str, Any], defects: Iterable[str] = ()) -> Optional[Dict[s
                     "expected": step["expect"], "observed": observed}
     final = dict(case["final"])
     final.setdefault("radio", {})
+    final.setdefault("rate_hz", None)
+    final.setdefault("amp_progress", 0)
+    final.setdefault("clocks_on", False)
     snap = sim.snapshot()
     if snap != final:
         return {"case": case["id"], "step": None, "expected": final, "observed": snap}
