@@ -12,6 +12,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod rate; // D03 (`ffw-j9r`)
+
 use franken_board_profile::BoardProfile;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;

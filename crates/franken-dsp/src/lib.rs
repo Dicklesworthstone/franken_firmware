@@ -10,6 +10,7 @@
 // Contract: `docs/contracts/d01.md`.
 pub mod convert;
 pub mod format;
+pub mod resample; // D03 (`ffw-j9r`), written by TealSeal
 pub mod ring;
 
 pub use convert::{ConvertStats, convert_block, convert_packed};
