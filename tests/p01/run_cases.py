@@ -45,6 +45,8 @@ import plan as plan_mod  # noqa: E402
 import planning_fixtures  # noqa: E402
 import planning_reconcile  # noqa: E402
 import reference as ref  # noqa: E402
+import toolchain  # noqa: E402
+import toolchain_fixtures  # noqa: E402
 
 VEC_DIR = os.path.join(REPO, "crates", "franken-board-profile", "tests", "vectors")
 CONTRACT_FILE = os.path.join(VEC_DIR, "p01_workspace_contract.json")
@@ -487,8 +489,6 @@ def make_executor(target_dir: str, doc: Dict[str, Any], scenario: str, steps: Li
         calls.append(step["id"])
         if scenario == "cancel" and len(calls) == 4:
             raise KeyboardInterrupt
-        if step["kind"] == "toolchain":
-            return 0, RUSTC_VV
         if step["kind"] == "toolchain_default":
             return 0, RUSTC_VV_DEFAULT
         if step["kind"] == "test":
@@ -566,10 +566,9 @@ def _check_identity(doc, receipt, target_dir, path) -> None:
         raise CaseError("the receipt on disk differs from the one returned")
     if receipt["contract_digest"] != sha256_bytes(ref.canonical_json(doc).encode("utf-8")):
         raise CaseError("receipt contract_digest is not the canonical digest of the contract")
-    if (receipt["toolchain"].get("release"), receipt["toolchain_default"].get("release")) != \
-            ("1.101.0-nightly", "1.90.0"):
-        raise CaseError("the nightly and the default toolchain must be recorded separately: "
-                        f"{receipt['toolchain']} / {receipt['toolchain_default']}")
+    if receipt["toolchain_default"].get("release") != "1.90.0" or "toolchain" in receipt:
+        raise CaseError("the bare compiler is recorded from plain `rustc -vV`, and no step claims to record a nightly: "
+                        f"{receipt.get('toolchain')} / {receipt['toolchain_default']}")
     by_id = {a["id"]: a for a in doc["artifacts"]}
     seen = set()
     for row in receipt["artifacts"]:
@@ -599,8 +598,8 @@ def _check_identity(doc, receipt, target_dir, path) -> None:
         shas.setdefault(row["sha256"], set()).add(row["target"])
     if any(len(t) > 1 for t in shas.values()):
         raise CaseError("one digest is reported for more than one target")
-    if receipt["toolchain"].get("release") != "1.101.0-nightly" or "host" not in receipt["toolchain"]:
-        raise CaseError(f"toolchain not recorded from the executor's rustc -vV: {receipt['toolchain']}")
+    if "host" not in receipt["toolchain_default"]:
+        raise CaseError(f"toolchain not recorded from the executor's rustc -vV: {receipt['toolchain_default']}")
     if receipt["unbacked_disabled_features"]["speaker-mips-min"] != [] or \
             receipt["unbacked_disabled_features"]["hello-init-mips"] != \
             ["airplay2", "alexa_bridge", "protected_render", "spotify_connect", "synchronized_groups", "tailnet_native"]:
@@ -611,7 +610,7 @@ def _check_restart(receipts_dir, target_dir, first_path, first_receipt) -> None:
     """After a cancelled run, a restart writes a new receipt and leaves the cancelled one exactly as it was."""
     before = _read_bytes(first_path)
     if first_receipt["status"] != "incomplete" or [s["id"] for s in first_receipt["steps"]] != \
-            ["toolchain", "toolchain-default", "workspace-test"]:
+            ["toolchain-default", "workspace-test", "build-franken-speaker-host"]:
         raise CaseError(f"the cancelled receipt is not an honest partial: {first_receipt['status']}")
     doc, steps, code, path2, receipt2, _ = _run_scenario("ok", receipts_dir, target_dir)
     if path2 == first_path or code != 0 or receipt2["status"] != "complete":
@@ -976,8 +975,9 @@ def run_e06_inventory(c) -> Result:
 def run_feature_selection(c) -> Result:
     """BLK-006: the Cargo flags for the native services are real from the contract down to the command line, and the
     speaker selects on exactly those flags. Judged from the tree. What the speaker then reports (selected, unimplemented,
-    never ready; absent when the flag is off; admission unchanged) is judged by the Rust tests named in the case, which run
-    centrally with no service feature and with all five; their results are not read here."""
+    never ready; absent when the flag is off; admission unchanged) and what the real binary prints are judged by the Rust tests
+    named in the case, which run centrally with no service feature (inside the workspace test) and with all five (their own
+    plan step): their results are read BY NAME from the newest central record (see `_judge_service_tests`)."""
     doc = contract()
     services, core = c["services"], c["core_without_flag"]
     problems: List[str] = []
@@ -1024,7 +1024,9 @@ def run_feature_selection(c) -> Result:
             'format!("FFW_SERVICE:{feature} selected {implemented} {qualified}")' not in src:
         problems.append(f"{c['source']}: the marker text is not what the binary tests expect")
     cli = _read_text(os.path.join(REPO, *c["cli_tests"]["file"].split("/")))
-    for name in c["cli_tests"]["any_build"]:
+    # `host_only` are the tests that keep the old behaviour (no harness, no kernel backend): they exist on the host builds the central
+    # test steps make, in both service configurations, and are held to the same by-name reading as the rest.
+    for name in c["cli_tests"]["any_build"] + c["cli_tests"]["host_only"]:
         if not re.search(rf"#\[test\]\s*fn {name}\(", cli):
             problems.append(f"{c['cli_tests']['file']}: no test {name}")
     for index, name in enumerate(services):
@@ -1061,13 +1063,101 @@ def run_feature_selection(c) -> Result:
     if problems:
         raise CaseError("; ".join(problems))
     # 6. observed: the built device speakers of the newest central run, judged against the CURRENT plan and contract; the full
-    # and minimal speakers must be different files (central.judge). The expected output of the binary is judged by the real-binary
-    # tests above, which run centrally in the default and the all-on configuration; their results are not read here.
+    # and minimal speakers must be different files (central.judge).
     static = f"{len(services)} flags: contract, manifest, source, the --services option and its tests, plan and admission agree"
     status, detail = run_central_evidence({"judge": "device_artifacts", "reason": c["observed_reason"], "owner": c["observed_owner"]})
-    if status == PASS:
-        return PASS, f"{static}; observed: {detail}"
-    return status, f"{static}; the observed full and minimal device speakers are not yet shown to differ: {detail}"
+    # 7. observed, by name: the same record's log of the speaker's tests, with no service flag and with all of them on (the
+    # real-binary tests included), judged against the CURRENT names and source files. A failed named test is a FAIL; a step that
+    # never ran, a name the log does not show, or a run of other source files is BLOCKED.
+    tests_status, tests_detail = _judge_service_tests(c, doc)
+    if status == PASS and tests_status == PASS:
+        return PASS, f"{static}; observed: {detail}; {tests_detail}"
+    parts = []
+    if status != PASS:
+        parts.append(f"the observed full and minimal device speakers are not yet shown to differ: {detail}")
+    if tests_status != PASS:
+        parts.append(f"the named services tests are not yet shown to pass in both configurations: {tests_detail}")
+    return BLOCKED, f"{static}; " + "; ".join(parts)
+
+
+def _judge_service_tests(c, doc) -> Result:
+    """BLK-006's by-name judgement of the newest central record (`central.judge_services`): every name `central.service_test_names`
+    lists passed in its configuration's log, in a run of the CURRENT two source files, and the two steps ran the CURRENT plan and
+    exited 0. FAIL is raised; BLOCKED is returned."""
+    newest = _newest_record()
+    if newest is None:
+        return BLOCKED, "no central-run record is committed under toolchain/results/p01"
+    evidence, _path = newest
+    root, _target_dir, steps = _plan()
+    try:
+        now = {path: metadata_check.sha256_file(os.path.join(REPO, *path.split("/"))) for path in central.SERVICE_TEST_FILES}
+    except OSError as err:
+        raise CaseError(f"cannot read the services test files: {err}")
+    verdict, detail = central.judge_services(evidence, doc, steps, central.roots_for(root), central.service_test_names(c), now)
+    if verdict == "fail":
+        raise CaseError(detail)
+    return (PASS if verdict == "pass" else BLOCKED), detail
+
+
+def run_toolchain_plants(c) -> Result:
+    """P01-TC-001..005: the toolchain judgement (pin file, plan, record) on synthetic worlds: the unaltered world and its allowed
+    variations pass, and every planted negative gets exactly its verdict and codes (see toolchain_fixtures.py)."""
+    try:
+        if c["group"] == "permitted_positive":
+            return PASS, toolchain_fixtures.judge_positive(contract())
+        return PASS, toolchain_fixtures.judge_group(contract(), c["group"])
+    except AssertionError as err:
+        raise CaseError(str(err)) from err
+
+
+def _newest_record():
+    """(evidence, path) of the newest committed central-run record, or None."""
+    records = []
+    for path in central.find_evidence(REPO):
+        try:
+            records.append((load_json(path), path))
+        except CaseError as err:
+            raise CaseError(f"unreadable evidence record: {err}")
+    if not records:
+        return None
+    records.sort(key=lambda r: str(r[0].get("ran_at_utc", "")))
+    return records[-1]
+
+
+def run_toolchain_pin(c) -> Result:
+    """P01-BLK-004: the repository pins ONE exact compiler (`rust-toolchain.toml`), the plan asks for one dated nightly for the device
+    and nothing for the host, and a committed central record shows that compiler was the one used: the bare-cargo release equals the
+    pin and every artifact names its compiler in its own bytes (see toolchain.py). A pin file or plan that breaks the rules: FAIL.
+    No record, or one made before the pin or before artifacts' compilers were recorded, or a stale one: BLOCKED, 'no receipt for this
+    compiler', never a pass. A record whose compiler is not the pinned one: FAIL."""
+    owner = f" [owner: {c['owner']}]"
+    pin_path = os.path.join(REPO, toolchain.PIN_FILE)
+    text = _read_text(pin_path) if os.path.isfile(pin_path) else None
+    channel, findings = toolchain.judge_pin(text, os.path.exists(os.path.join(REPO, "rust-toolchain")))
+    root, _target_dir, steps = _plan()
+    findings = findings + toolchain.judge_plan(steps, plan_mod.DEVICE_TOOLCHAIN, plan_mod.DEVICE_RUSTC_VERSION)
+    if findings:
+        raise CaseError("the pin file or the plan breaks a toolchain rule: " + ", ".join(f"{code}[{subject}]" for code, subject in findings))
+    newest = _newest_record()
+    if newest is None:
+        return BLOCKED, f"no receipt for this compiler: no central-run record is committed under toolchain/results/p01. {c['reason']}{owner}"
+    evidence, _path = newest
+    doc = contract()
+    scope = tuple(s["id"] for s in steps if s["kind"] in ("toolchain_default", "build"))
+    verdict, detail = central.judge(evidence, doc, steps, central.roots_for(root), scope=scope)
+    if verdict == "fail":
+        raise CaseError(detail)
+    if verdict == "blocked":
+        return BLOCKED, f"no receipt for this compiler: {detail}{owner}"
+    here = _revision_is_here(str(evidence.get("revision", "")))
+    if here is False:
+        raise CaseError(f"the evidence names revision {str(evidence.get('revision'))[:12]}, which is not a commit of this repository")
+    verdict, found, detail = toolchain.judge_identity(evidence, doc, channel, plan_mod.DEVICE_RUSTC_VERSION)
+    if verdict == "fail":
+        raise CaseError(detail)
+    if verdict == "blocked":
+        return BLOCKED, detail + owner
+    return PASS, detail
 
 
 def run_blocked(c) -> Result:
@@ -1080,7 +1170,8 @@ HANDLERS: Dict[str, Callable[[Dict[str, Any]], Result]] = {
     "resolve_planted": run_resolve_planted, "metadata": run_metadata, "metadata_real": run_metadata_real,
     "central_evidence": run_central_evidence, "plan_exact": run_plan_exact,
     "plan_rules": run_plan_rules, "plan_sharing": run_plan_sharing, "receipt": run_receipt,
-    "receipt_tamper": run_receipt_tamper, "inventory_plants": run_inventory_plants, "e06_inventory": run_e06_inventory, "meta_invariants": run_meta_invariants, "meta_codes": run_meta_codes,
+    "receipt_tamper": run_receipt_tamper, "inventory_plants": run_inventory_plants, "e06_inventory": run_e06_inventory,
+    "toolchain_plants": run_toolchain_plants, "toolchain_pin": run_toolchain_pin, "meta_invariants": run_meta_invariants, "meta_codes": run_meta_codes,
     "meta_hygiene": run_meta_hygiene, "meta_vectors_current": run_meta_vectors_current,
     "mutation_canary": run_mutation_canary, "runner_selftest": run_runner_selftest, "blocked": run_blocked,
     "feature_selection": run_feature_selection,

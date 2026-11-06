@@ -12,6 +12,7 @@ reads an earlier generated file, so a stale generated value cannot reach the out
   bead-map.json         key -> issue id
   bead-manifest.json    key, title, deps, body path, priority (live)
   beads-snapshot.json   the live fields `check_planning.py` and `tests/p01/planning_reconcile.py` read, including acceptance_criteria
+                        (no account handle: `created_by` is not copied)
   bead-bodies/KEY.md    the live description, byte for byte
 
 The key is the part of the live title before the first `: `. A body that follows the generated template (`# KEY: title`, Goal, Scope,
@@ -19,7 +20,7 @@ Why, Inputs, Owned outputs, Acceptance, Evidence, Authority, Failure/closure, Ma
 validation contract) is parsed into `"form": "template"`; a body with no `# KEY: ` heading and none of the lines only the template has
 (`Goal:`, `Scope:`, `Why:`, `Owned outputs:`, `Mapped design packages:`, the contract marker) is `"form": "freeform"` and carries no
 parsed fields. A body that starts like the template but does not parse, or that has the template's own lines without the heading, is
-refused, naming the issue: nothing is guessed and nothing quietly becomes freeform. Not written: comments, notes, the assignee, `source_repo_path` (an absolute local path), close
+refused, naming the issue: nothing is guessed and nothing quietly becomes freeform. Not written: comments, notes, the assignee, `created_by` (an account handle), `source_repo_path` (an absolute local path), close
 reasons. Not compared by the reconcile either: status, priority, labels, comments and timestamps (see planning_reconcile.py), so a
 later comment or status change on a bead cannot fail it; a changed title, description, acceptance_criteria, a new bead or a changed
 edge can, until this is run again. Edges of a type other than `blocks` are listed on stderr and are not in the catalog.
@@ -58,7 +59,7 @@ _TEMPLATE = re.compile(
     r"Mapped design packages: (?P<packages>[^\n]+?)\.\n\n"
     + re.escape(CONTRACT_MARKER) + r"\n\n(?P<detailed_contract>.*)\Z", re.S)
 OUTPUTS = ("task-catalog.json", "bead-map.json", "bead-manifest.json", "beads-snapshot.json")
-SNAPSHOT_FIELDS = ("id", "title", "description", "acceptance_criteria", "status", "priority", "issue_type", "created_at", "created_by",
+SNAPSHOT_FIELDS = ("id", "title", "description", "acceptance_criteria", "status", "priority", "issue_type", "created_at",
                    "updated_at", "external_ref", "source_repo", "compaction_level", "original_size", "labels")
 
 

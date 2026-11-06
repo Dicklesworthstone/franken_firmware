@@ -49,9 +49,11 @@ import facts as facts_mod  # noqa: E402
 import metadata_check  # noqa: E402
 import plan as plan_mod  # noqa: E402
 import reference as ref  # noqa: E402
+import toolchain  # noqa: E402
 
 CONTRACT_REL = "crates/franken-board-profile/tests/vectors/p01_workspace_contract.json"
 CONTRACT_FILE = os.path.join(REPO, *CONTRACT_REL.split("/"))
+CASES_REL = "tests/p01/cases.json"
 DEFAULT_TARGET_DIR = os.path.join(REPO, "build", "p01-target")
 DEFAULT_RECEIPTS = os.path.join(REPO, "build", "p01-receipts")
 
@@ -121,7 +123,7 @@ def cmd_collect(args) -> int:
     receipt = {
         "schema": plan_mod.RECEIPT_SCHEMA, "kind": "build_identity", "run_id": "", "status": status,
         "contract_digest": ref.digest(doc), "lock_sha256": lock_sha(REPO), "plan": [], "steps": [],
-        "toolchain": {}, "artifacts": rows, "unbacked_disabled_features": unbacked, "missing": missing,
+        "artifacts": rows, "unbacked_disabled_features": unbacked, "missing": missing,
         "verification": {"codes": ref.codes(pairs), "pairs": [list(p) for p in pairs]},
         "boundary": "Collected from existing files; no build was run by this command. Not an attestation of how or "
                     "where they were built, and not a guest-execution or physical result.",
@@ -193,9 +195,29 @@ def cmd_ingest(args) -> int:
         replay_sources = {"names": central.rust_test_names(test_source.decode("utf-8")),
                           "test_file_sha256": hashlib.sha256(test_source).hexdigest(),
                           "vectors_sha256": hashlib.sha256(_git_show(revision, central.REPLAY_VECTORS_FILE)).hexdigest()}
-    except (OSError, ValueError, ref.ParseError) as err:
+        # The speaker's service tests are recorded BY NAME from the workspace-test log (no service flag) and from the all-on step's log, with
+        # the names the revision's own P01-BLK-006 case lists and the two source files hashed as the revision holds them. A revision whose
+        # case lists none records nothing, and P01-BLK-006 then reads the record as made before this capture.
+        service_sources = None
+        cases = json.loads(_git_show(revision, CASES_REL).decode("utf-8"))
+        case = next((c for c in cases["cases"] if c.get("id") == "P01-BLK-006"), None)
+        if case is not None and "cli_tests" in case:
+            service_sources = {"names": central.service_test_names(case),
+                               "files": {path: hashlib.sha256(_git_show(revision, path)).hexdigest()
+                                         for path in central.SERVICE_TEST_FILES}}
+    except (OSError, ValueError, KeyError, ref.ParseError) as err:
         print(f"cannot bind the evidence to {args.revision}: {err}", file=sys.stderr)
         return 2
+    # The pin file as the revision holds it (None when it has none): a record is a receipt for the compiler only if the tree it was
+    # built from named one.
+    try:
+        pin_bytes = _git_show(revision, plan_mod.PIN_FILE)
+    except OSError:
+        pin_bytes = None
+    pin = None
+    if pin_bytes is not None:
+        channel, _findings = toolchain.read_pin(pin_bytes.decode("utf-8", "replace"))
+        pin = {"file": plan_mod.PIN_FILE, "sha256": hashlib.sha256(pin_bytes).hexdigest(), "channel": channel}
     export_root = os.path.realpath(args.export_root)
     target_dir = os.path.realpath(args.target_dir)
     steps = plan_mod.plan_steps(export_root, os.path.join(export_root, "crates", "franken-board-profile"),
@@ -224,7 +246,7 @@ def cmd_ingest(args) -> int:
             print(f"--attest-env {spec!r}: expected STEP=KEY=VALUE", file=sys.stderr)
             return 2
         attested.setdefault(sid, {})[key] = value
-    rows, missing, sizes = [], [], {}
+    rows, missing, sizes, compilers = [], [], {}, {}
     for art in doc["artifacts"]:
         if not art["bin"]:
             continue
@@ -235,8 +257,10 @@ def cmd_ingest(args) -> int:
         ident = plan_mod.elf_identity(built)
         rows.append(plan_mod.observed_row(doc, art, ident))
         sizes[art["id"]] = ident["size"]
+        compilers[art["id"]] = ident["rustc_versions"]
     evidence = central.build_evidence(doc, steps, logs, revision, lock_sha256, export_root, rows, missing, sizes,
-                                      attested, replay_sources=replay_sources)
+                                      attested, replay_sources=replay_sources, compilers=compilers, pin=pin, pin_recorded=True,
+                                      service_sources=service_sources)
     out_dir = os.path.join(args.out or os.path.join(REPO, central.EVIDENCE_GLOB_DIR), f"rev-{revision[:12]}")
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, "receipt.json")

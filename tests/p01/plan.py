@@ -9,13 +9,14 @@ artifact, the exact target, triple, profile, SHA-256 and ELF identity read from 
 re-verifies a receipt against the contract with the independent reference.
 
 What a receipt proves, so it is not over-read: it records what was built and what the files contain. It is not
-an attestation of the remote compiler; the toolchain block is whatever `rustc -vV` printed on the build host.
+an attestation of the remote compiler; the toolchain block is whatever plain `rustc -vV` printed on the build host.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import re
 import secrets
 import time
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -33,6 +34,22 @@ DEFAULT_JOBS = 2
 # A host-target build runs on a Linux worker; rch refuses to fetch that executable to a different-OS operator unless
 # told to. It is fetched to be identified (hashed, header read), never run, so only host-target builds may carry it.
 FOREIGN_ARTIFACTS_ENV = "RCH_ALLOW_FOREIGN_ARTIFACTS"
+# The compilers the plan asks for, each named in ONE place. A bare `cargo` (the workspace test, the host build) resolves the
+# repository's own pin, `PIN_FILE`; the device builds ask for one DATED nightly, because a floating `+nightly` is whatever each worker
+# happened to have that day. `rustc +X -vV` through rch drops `+X` and prints the default compiler, so no plan step asks it.
+PIN_FILE = "rust-toolchain.toml"
+DEVICE_TOOLCHAIN = "nightly-2026-08-31"
+# What a device artifact built by DEVICE_TOOLCHAIN carries in its bytes (`rustc version ` is stripped). A dated nightly is immutable, so this
+# is a fact of the date, MEASURED with `rustc +nightly-2026-08-31 -V` on a host that has it (2026-11-05), and its commit prefix agrees with
+# the commit `90850177249e` the supervisor saw on a worker (mail 5443). It has NOT yet been seen in a central receipt: the first receipt
+# either shows exactly this or BLK-004 fails with both strings. Change it only together with DEVICE_TOOLCHAIN (toolchain.judge_plan
+# refuses a string whose commit date is not within three days before the toolchain date).
+DEVICE_RUSTC_VERSION = "1.100.0-nightly (908501772 2026-08-30)"
+# P01-BLK-006 judges the speaker's service tests BY NAME in two configurations: no service flag (the `workspace-test` log) and all of the
+# services' flags on (this step, which also runs the real-binary tests of `tests/cli_services.rs`). It is a test step of its own kind so
+# the workspace totals stay the workspace-test's, and it is listed after the builds so the order the builds ran in does not move.
+SERVICE_TEST_STEP = "test-franken-speaker-services"
+SERVICE_TEST_BIN = "cli_services"
 # rustc's default for these musl targets is a dynamic PIE that needs ld-musl-*.so.1, which the initramfs does not have, and
 # `-lgcc_s`, which zig does not ship. A device std artifact is linked static, by the contract's zig wrapper. The tokens are
 # inline `--config` arguments (absolute paths, nothing discovered from a working directory, all of it in the recorded argv).
@@ -72,6 +89,16 @@ def _cargo_features(contract: Dict[str, Any], artifact: Dict[str, Any]) -> List[
         if spec and sel["state"] == "enabled" and spec["cargo_feature"]:
             flags.append(f"{spec['owner_crate']}/{spec['cargo_feature']}")
     return sorted(set(flags))
+
+
+def service_test_features(contract: Dict[str, Any]) -> List[str]:
+    """The `franken-speaker` flags the device speakers' full profile builds with (bare names), sorted: the services' flags that the
+    all-on test configuration turns on. Derived from the same contract rows as the builds, so the two cannot name different flags."""
+    flags = set()
+    for art in contract["artifacts"]:
+        if art["bin"] and art["crate"] == "franken-speaker" and art["target"] != "host":
+            flags.update(f.split("/", 1)[1] for f in _cargo_features(contract, art) if f.startswith("franken-speaker/"))
+    return sorted(flags)
 
 
 def build_variant(contract: Dict[str, Any], artifact: Dict[str, Any]) -> str:
@@ -135,9 +162,10 @@ def plan_steps(root: str, cwd: str, target_dir: str, contract: Dict[str, Any],
                jobs: int = DEFAULT_JOBS) -> List[Step]:
     """The central command plan. Builds are shared by artifacts that need the identical cargo invocation.
 
-    Two toolchain steps record what the build host runs: `rustc +nightly -vV` (the compiler the device builds ask for)
-    and plain `rustc -vV`, the compiler a bare `cargo` resolves to there, which is what the workspace test uses and
-    which nothing recorded before. Every cargo step ends with `-j <jobs>`.
+    One toolchain step records what the build host runs: plain `rustc -vV`, the compiler a bare `cargo` resolves to there (the
+    repository's pin, `PIN_FILE`), which is what the workspace test and the host build use. There is no `rustc +nightly -vV` step:
+    rch drops the `+nightly` and prints the default compiler, so it would label one compiler as another. The compiler a device
+    artifact was built by is read from the artifact itself (`rustc_versions`). Every cargo step ends with `-j <jobs>`.
 
     Artifacts share a build only when they need the identical cargo invocation, Cargo features included. The first build of
     a crate for a target is `build-<crate>-<target>` in the plan's target directory; a later build of the same crate and
@@ -147,9 +175,6 @@ def plan_steps(root: str, cwd: str, target_dir: str, contract: Dict[str, Any],
     env = {"RCH_REQUIRE_REMOTE": "1", "CARGO_TARGET_DIR": target_dir}
     jobs_args = ["-j", str(jobs)]
     steps: List[Step] = [{
-        "id": "toolchain", "kind": "toolchain", "artifacts": [], "cwd": cwd, "env": dict(env),
-        "argv": [RCH, "exec", "--", "rustc", "+nightly", "-vV"],
-    }, {
         "id": "toolchain-default", "kind": "toolchain_default", "artifacts": [], "cwd": cwd, "env": dict(env),
         "argv": [RCH, "exec", "--", "rustc", "-vV"],
     }]
@@ -173,7 +198,7 @@ def plan_steps(root: str, cwd: str, target_dir: str, contract: Dict[str, Any],
             continue
         argv = [RCH, "exec", "--", "cargo"]
         if is_device:
-            argv.append("+nightly")
+            argv.append("+" + DEVICE_TOOLCHAIN)
         argv += ["build", "--locked", "--offline", "--manifest-path", manifest, "--release"]
         if not is_hello:
             argv += ["-p", art["crate"]]
@@ -204,6 +229,14 @@ def plan_steps(root: str, cwd: str, target_dir: str, contract: Dict[str, Any],
                 "cwd": root if uses_linker else cwd, "env": step_env, "argv": argv}
         builds[key] = step
         steps.append(step)
+    services = service_test_features(contract)
+    if services:
+        steps.append({
+            "id": SERVICE_TEST_STEP, "kind": "service_test", "artifacts": [], "cwd": cwd, "env": dict(env),
+            "argv": [RCH, "exec", "--", "cargo", "test", "--locked", "--offline", "--manifest-path", workspace_manifest,
+                     "-p", "franken-speaker", "--lib", "--test", SERVICE_TEST_BIN, "--features", ",".join(services),
+                     "--config", "build.incremental=false", *jobs_args],
+        })
     return steps
 
 
@@ -345,14 +378,24 @@ def elf_program_facts(data: bytes) -> Tuple[bool, str, str]:
         return True, "", ""
 
 
+# rustc leaves `rustc version <release> (<short hash> <commit date>)` in the `.comment` section of what it links, and it survives
+# `strip = "symbols"`. It is the one place a built file names the compiler that built it.
+_RUSTC_VERSION = re.compile(rb"rustc version ([0-9]+\.[0-9]+\.[0-9]+[^\x00\r\n]{0,80})")
+
+
+def rustc_versions(data: bytes) -> List[str]:
+    """The distinct `rustc version` strings in a file's bytes (the part after `rustc version `), sorted; at most eight."""
+    return sorted({m.group(1).decode("ascii", "replace").strip() for m in _RUSTC_VERSION.finditer(data)})[:8]
+
+
 def elf_identity(path: str) -> Dict[str, Any]:
     """SHA-256 of the file and, if it is an ELF, its class, byte order, e_machine, whether it is dynamic, and the ISA
-    revision and float ABI its MIPS ABI flags state, read from the bytes."""
+    revision and float ABI its MIPS ABI flags state, read from the bytes, plus the compiler strings the file carries."""
     with open(path, "rb") as f:
         data = f.read()
     out: Dict[str, Any] = {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data),
                            "elf_machine": 0, "elf_class": 0, "elf_big_endian": False,
-                           "elf_dynamic": False, "isa_revision": "", "fp_abi": ""}
+                           "elf_dynamic": False, "isa_revision": "", "fp_abi": "", "rustc_versions": rustc_versions(data)}
     if len(data) >= 20 and data[:4] == b"\x7fELF":
         big = data[5] == 2
         out["elf_class"] = data[4]
@@ -417,7 +460,7 @@ def execute(steps: Sequence[Step], contract: Dict[str, Any], root: str, target_d
         "contract_digest": ref.digest(contract), "lock_sha256": lock_sha256,
         "plan": [{"id": s["id"], "kind": s["kind"], "argv": list(s["argv"]), "artifacts": list(s["artifacts"])}
                  for s in steps],
-        "steps": [], "toolchain": {}, "toolchain_default": {}, "artifacts": [], "unbacked_disabled_features": {},
+        "steps": [], "toolchain_default": {}, "artifacts": [], "unbacked_disabled_features": {},
         "verification": {"codes": [], "pairs": []},
         "boundary": ("Records what a build host built and what the files contain. Not an attestation of the "
                      "remote compiler; evidence kind is a build, not a guest execution or a physical result."),
@@ -432,8 +475,6 @@ def execute(steps: Sequence[Step], contract: Dict[str, Any], root: str, target_d
                       "output_sha256": hashlib.sha256(output.encode("utf-8", "replace")).hexdigest(),
                       "status": "ok" if rc == 0 else "failed"}
             receipt["steps"].append(record)
-            if step["kind"] == "toolchain" and rc == 0:
-                receipt["toolchain"] = parse_rustc_vv(output)
             if step["kind"] == "toolchain_default" and rc == 0:
                 receipt["toolchain_default"] = parse_rustc_vv(output)
             if step["kind"] == "build" and rc == 0:

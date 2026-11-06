@@ -32,13 +32,20 @@ import reference as ref
 EVIDENCE_SCHEMA = "ffw.p01.central_evidence.v1"
 # P01-BLK-001: build and test from another directory, offline, locked, on the central path. The two device speaker
 # builds are BLK-002's.
-BLK001_STEPS = ("toolchain", "toolchain-default", "workspace-test", "build-franken-speaker-host",
+BLK001_STEPS = ("toolchain-default", "workspace-test", "build-franken-speaker-host",
                 "build-ffw-hello-init-mips_be", "build-ffw-hello-init-powerpc_be")
 # P01-BLK-002: the device speaker builds (full, and the minimal profile's own builds) and the artifact rows they produced.
 BLK002_STEPS = ("build-franken-speaker-mips_be", "build-franken-speaker-powerpc_be",
                 "build-franken-speaker-mips_be-minimal_renderer", "build-franken-speaker-powerpc_be-minimal_renderer")
 # P01-BLK-003: the workspace test, and in its log the replay of the shared vectors by the typed contract.
 BLK003_STEPS = ("workspace-test",)
+# P01-BLK-006: the speaker's service tests, by name, in two configurations. `default` is the speaker's tests inside the workspace test
+# (no service flag); `all_on` is the step that runs the lib tests and the real-binary tests with every service flag. The two source
+# files the tests live in are hashed in the record, as the replay's test file is.
+SERVICE_TEST_STEPS = {"default": "workspace-test", "all_on": plan_mod.SERVICE_TEST_STEP}
+SERVICE_TEST_SCOPE = ("workspace-test", plan_mod.SERVICE_TEST_STEP)
+SERVICE_TEST_FILES = ("crates/franken-speaker/src/services.rs", "crates/franken-speaker/tests/cli_services.rs")
+SERVICE_LIB_PREFIX = "services::tests::"
 REPLAY_TEST_FILE = "crates/franken-board-profile/tests/p01_contract.rs"
 REPLAY_VECTORS_FILE = "crates/franken-board-profile/tests/vectors/p01_contract_vectors.json"
 EVIDENCE_GLOB_DIR = os.path.join("toolchain", "results", "p01")
@@ -190,6 +197,86 @@ def replay_record(log_text: str, names: Sequence[str], test_file_sha256: str, ve
     return record
 
 
+def service_test_names(case: Dict[str, Any]) -> Dict[str, List[str]]:
+    """The tests P01-BLK-006 holds a central run to, per configuration, spelled as libtest prints them: a library test is
+    `services::tests::NAME`, a real-binary test (its own test binary, no module) is bare. From the case's hand-written lists, so the
+    judgement, the static check and the record all read one list. `default` has each service's off test, `all_on` its on test."""
+    services = list(case["services"])
+    lib_any = [SERVICE_LIB_PREFIX + n for n in case["rust_tests"]["any_build"]]
+    cli_any = list(case["cli_tests"]["any_build"]) + list(case["cli_tests"]["host_only"])
+    per = case["rust_tests"]["per_service"]
+    return {
+        "default": lib_any + cli_any + [SERVICE_LIB_PREFIX + per[s]["off"] for s in services]
+        + [f"cli_{s}_not_selected_prints_absent" for s in services],
+        "all_on": lib_any + cli_any + [SERVICE_LIB_PREFIX + per[s]["on"] for s in services]
+        + [f"cli_{s}_selected_prints_selected_unimplemented_unqualified" for s in services],
+    }
+
+
+_WORST = {"ok": 0, "ignored": 1, "FAILED": 2}
+
+
+def service_test_record(logs: Dict[str, str], names: Dict[str, List[str]], file_hashes: Dict[str, str]) -> Dict[str, Any]:
+    """What the logs show about the named service tests: for each configuration, the status libtest printed for each wanted name
+    (a name the log does not show is left out, so its absence is visible), and the SHA-256 of the two source files as the revision
+    holds them. A name printed more than once (two blocks) keeps its worst status. Cargo's own `Running` lines do not matter: a
+    test is read from its `test NAME ... STATUS` line in a block that ended with a `test result:` line."""
+    configs: Dict[str, Any] = {}
+    for config, step in SERVICE_TEST_STEPS.items():
+        seen: Dict[str, str] = {}
+        for block in parse_test_blocks(logs.get(step, "")):
+            for name, status in block["tests"].items():
+                if name in names[config] and _WORST.get(status, 2) >= _WORST.get(seen.get(name, "ok"), 0):
+                    seen[name] = status
+        configs[config] = {"step": step, "tests": dict(sorted(seen.items()))}
+    return {"files": dict(sorted(file_hashes.items())), "configs": configs}
+
+
+def judge_service_tests(evidence: Dict[str, Any], names: Dict[str, List[str]], files_now: Dict[str, str]) -> Tuple[str, str]:
+    """('pass' | 'blocked' | 'fail', detail): did every named service test pass in both configurations, in a run of the CURRENT
+    two source files? A named test that printed anything but `ok` is a FAIL (a failed test; an ignored one never ran). A named test the
+    log does not show, a record made before this was captured, or a run of other source files is BLOCKED and named. Whether the steps
+    themselves ran the current plan and exited 0 is `judge`'s (scope `SERVICE_TEST_SCOPE`), not decided here."""
+    rec = evidence.get("service_tests")
+    if not isinstance(rec, dict) or not isinstance(rec.get("configs"), dict):
+        return "blocked", "the newest central record predates the by-name capture of the services tests"
+    configs = rec["configs"]
+    bad: List[str] = []
+    for config in SERVICE_TEST_STEPS:
+        tests = (configs.get(config) or {}).get("tests") or {}
+        bad += [f"{config}: {name} ({tests[name]})" for name in names[config] if name in tests and tests[name] != "ok"]
+    if bad:
+        return "fail", "a named services test did not pass centrally: " + "; ".join(bad[:4]) + (" ..." if len(bad) > 4 else "")
+    stale = [f"{path.rsplit('/', 1)[-1]} has changed since the run"
+             for path in SERVICE_TEST_FILES if (rec.get("files") or {}).get(path) != files_now.get(path)]
+    missing: List[str] = []
+    for config in SERVICE_TEST_STEPS:
+        tests = (configs.get(config) or {}).get("tests") or {}
+        absent = [name for name in names[config] if name not in tests]
+        if absent:
+            missing.append(f"{config}: {len(absent)} of {len(names[config])} named tests are not in the {SERVICE_TEST_STEPS[config]} log "
+                           f"(first: {absent[0]})")
+    if stale or missing:
+        return "blocked", "; ".join(stale + missing)
+    return "pass", (f"{len(names['default'])} named services tests passed with no service flag and {len(names['all_on'])} with all "
+                    f"of them on, by name")
+
+
+def judge_services(evidence: Dict[str, Any], contract_now: Dict[str, Any], planned_now: Sequence[Dict[str, Any]],
+                   roots_now: Sequence[str], names: Dict[str, List[str]], files_now: Dict[str, str]) -> Tuple[str, str]:
+    """The whole by-name reading of one record: a named test that did not pass is a FAIL first, and names the test (before the steps are
+    judged, because a failed test also fails its step and `judge` would only count it); then the two steps must have run the CURRENT plan
+    and exited 0 (`judge` over `SERVICE_TEST_SCOPE`: not run or a different command is BLOCKED, a failed step a FAIL); then the names and
+    source files (`judge_service_tests`)."""
+    named, named_detail = judge_service_tests(evidence, names, files_now)
+    if named == "fail":
+        return named, named_detail
+    verdict, detail = judge(evidence, contract_now, planned_now, roots_now, scope=SERVICE_TEST_SCOPE)
+    if verdict != "pass":
+        return verdict, detail
+    return named, named_detail
+
+
 def device_std_artifacts(contract: Dict[str, Any]) -> List[str]:
     """Ids of the device artifacts that are linked through a declared linker (the speakers): BLK-002's subject."""
     return [a["id"] for a in contract["artifacts"]
@@ -212,11 +299,16 @@ def build_evidence(contract: Dict[str, Any], planned: Sequence[Dict[str, Any]], 
                    lock_sha256: str, export_root: str, rows: List[Dict[str, Any]], missing: List[str],
                    sizes: Dict[str, int], attested_env: Dict[str, Dict[str, str]],
                    tree: str = "clean git archive export of the revision",
-                   replay_sources: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """The sanitized, revision-bound receipt of a central run. Pure: the caller reads the logs and the built files."""
+                   replay_sources: Optional[Dict[str, Any]] = None, compilers: Optional[Dict[str, List[str]]] = None,
+                   pin: Optional[Dict[str, Any]] = None, pin_recorded: bool = False,
+                   service_sources: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The sanitized, revision-bound receipt of a central run. Pure: the caller reads the logs and the built files.
+
+    `compilers` maps each built artifact to the `rustc version` strings found in its own bytes, and `pin` is the pin file as the
+    revision holds it (`{"file", "sha256", "channel"}`, or None when the revision has none; `pin_recorded` says the caller looked).
+    Both are written only when given, so a record made without them reads as made before they existed."""
     roots = roots_for(export_root)
     steps: List[Dict[str, Any]] = []
-    toolchain: Dict[str, str] = {}
     toolchain_default: Dict[str, str] = {}
     tests: Dict[str, int] = {}
     stamps: List[str] = []
@@ -242,8 +334,6 @@ def build_evidence(contract: Dict[str, Any], planned: Sequence[Dict[str, Any]], 
         if parsed["worker"]:
             workers.append(parsed["worker"])
         clean = strip_ansi(logs[sid])
-        if step["kind"] == "toolchain":
-            toolchain = plan_mod.parse_rustc_vv(clean)
         if step["kind"] == "toolchain_default":
             toolchain_default = plan_mod.parse_rustc_vv(clean)
         if step["kind"] == "test":
@@ -259,7 +349,7 @@ def build_evidence(contract: Dict[str, Any], planned: Sequence[Dict[str, Any]], 
         "schema": EVIDENCE_SCHEMA, "kind": "central_run", "revision": revision, "tree": tree,
         "ran_at_utc": (min(stamps) + "Z") if stamps else "", "workers": sorted(set(workers)),
         "contract_digest": ref.digest(contract), "lock_sha256": lock_sha256,
-        "steps": steps, "toolchain": toolchain, "toolchain_default": toolchain_default, "tests": tests,
+        "steps": steps, "toolchain_default": toolchain_default, "tests": tests,
         "artifacts": rows, "artifact_sizes": dict(sorted(sizes.items())), "missing": sorted(missing),
         "verification": {"codes": ref.codes(pairs), "pairs": [list(p) for p in pairs]},
         "attested_env": attested_env,
@@ -269,6 +359,12 @@ def build_evidence(contract: Dict[str, Any], planned: Sequence[Dict[str, Any]], 
     }
     if replay is not None:
         doc["replay"] = replay
+    if compilers is not None:
+        doc["artifact_compilers"] = {k: list(v) for k, v in sorted(compilers.items())}
+    if pin_recorded:
+        doc["toolchain_pin"] = pin
+    if service_sources is not None:
+        doc["service_tests"] = service_test_record(logs, service_sources["names"], service_sources["files"])
     return doc
 
 

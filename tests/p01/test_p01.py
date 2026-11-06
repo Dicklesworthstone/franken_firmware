@@ -36,6 +36,8 @@ import planning_fixtures  # noqa: E402
 import planning_reconcile  # noqa: E402
 import reference as ref  # noqa: E402
 import run_cases  # noqa: E402
+import toolchain  # noqa: E402
+import toolchain_fixtures  # noqa: E402
 
 
 def small_contract():
@@ -628,15 +630,15 @@ class PlanJobsTests(unittest.TestCase):
 
     def test_every_cargo_step_ends_with_the_job_count_and_the_default_is_two(self):
         for jobs, steps in ((2, self.steps()), (3, self.steps(jobs=3))):
-            self.assertEqual(len(self.cargo_steps(steps)), 8)
+            self.assertEqual(len(self.cargo_steps(steps)), 9)
             for step in self.cargo_steps(steps):
                 self.assertEqual(step["argv"][-2:], ["-j", str(jobs)], step["id"])
             self.assertEqual(plan.check_plan(steps, self.root, self.doc), [])
 
-    def test_toolchain_queries_are_not_cargo_steps_and_carry_no_job_count(self):
+    def test_the_one_toolchain_query_is_plain_rustc_and_no_step_asks_rustc_for_another_compiler(self):
         queries = {s["id"]: s["argv"] for s in self.steps() if plan.inner_command(s["argv"])[0] == "rustc"}
-        self.assertEqual(queries, {"toolchain": ["rch", "exec", "--", "rustc", "+nightly", "-vV"],
-                                   "toolchain-default": ["rch", "exec", "--", "rustc", "-vV"]})
+        self.assertEqual(queries, {"toolchain-default": ["rch", "exec", "--", "rustc", "-vV"]},
+                         "rch drops `+X` from `rustc +X -vV`, so such a step would label the default compiler as X")
 
     def test_a_missing_or_malformed_job_count_is_refused_and_both_spellings_are_accepted(self):
         for label, edit, want in (
@@ -658,17 +660,16 @@ class PlanJobsTests(unittest.TestCase):
         carrying = [s["id"] for s in steps if plan.FOREIGN_ARTIFACTS_ENV in s["env"]]
         self.assertEqual(carrying, ["build-franken-speaker-host"])
         self.assertEqual(plan.check_plan(steps, self.root, self.doc), [])
-        for sid in ("build-franken-speaker-mips_be", "toolchain", "workspace-test"):
+        for sid in ("build-franken-speaker-mips_be", "toolchain-default", "workspace-test"):
             with self.subTest(sid):
                 bad = self.steps()
                 next(s for s in bad if s["id"] == sid)["env"][plan.FOREIGN_ARTIFACTS_ENV] = "1"
                 self.assertEqual([c for c, s in plan.check_plan(bad, self.root, self.doc) if s == sid],
                                  ["plan_foreign_artifacts_misplaced"])
 
-    def test_a_receipt_keeps_the_nightly_and_the_default_compiler_apart(self):
-        text_nightly, text_default = run_cases.RUSTC_VV, run_cases.RUSTC_VV_DEFAULT
-        self.assertEqual(plan.parse_rustc_vv(text_nightly)["release"], "1.101.0-nightly")
-        self.assertEqual(plan.parse_rustc_vv(text_default)["release"], "1.90.0")
+    def test_rustc_vv_is_parsed_into_release_commit_host_and_llvm(self):
+        parsed = plan.parse_rustc_vv(run_cases.RUSTC_VV_DEFAULT)
+        self.assertEqual((parsed["release"], sorted(parsed)), ("1.90.0", ["LLVM version", "commit-hash", "host", "release"]))
 
 
 def fake_rch_log(command, exit_code=0, worker="ts1", trailer=True, local=False, extra="", duplicate=False):
@@ -704,8 +705,6 @@ class CentralEvidenceTests(unittest.TestCase):
                 continue
             inner = plan.inner_command(step["argv"])
             extra = ""
-            if step["kind"] == "toolchain":
-                extra = run_cases.RUSTC_VV
             if step["kind"] == "toolchain_default":
                 extra = run_cases.RUSTC_VV_DEFAULT
             if step["kind"] == "test":
@@ -728,10 +727,10 @@ class CentralEvidenceTests(unittest.TestCase):
         evidence = self.build()
         verdict, detail = self.judge(evidence)
         self.assertEqual(verdict, "pass", detail)
-        self.assertIn("6 steps ran the current plan", detail)
+        self.assertIn("5 steps ran the current plan", detail)
         self.assertEqual(evidence["tests"], {"result_blocks": 2, "passed": 533, "failed": 0, "ignored": 1})
-        self.assertEqual((evidence["toolchain"]["release"], evidence["toolchain_default"]["release"]),
-                         ("1.101.0-nightly", "1.90.0"))
+        self.assertEqual(evidence["toolchain_default"]["release"], "1.90.0")
+        self.assertNotIn("toolchain", evidence, "no step records a nightly: rch would print the default compiler under that label")
         self.assertEqual(evidence["workers"], ["ts1"])
         self.assertEqual(evidence["ran_at_utc"], "2026-11-05T03:31:30Z")
 
@@ -838,7 +837,7 @@ class CentralEvidenceTests(unittest.TestCase):
         logs = {k: v for k, v in self.logs.items() if k != "toolchain-default"}
         verdict, detail = self.judge(self.build(logs))
         self.assertEqual(verdict, "blocked")
-        self.assertIn("5 of 6 steps ran the current plan", detail)
+        self.assertIn("4 of 5 steps ran the current plan", detail)
         self.assertIn("step toolchain-default has not run", detail)
 
     def test_evidence_for_another_plan_is_stale_and_names_the_step(self):
@@ -948,7 +947,7 @@ class CentralEvidenceTests(unittest.TestCase):
             with open(os.path.join(tmp, "out", name, "receipt.json")) as f:
                 record = json.load(f)
             self.assertEqual(record["revision"], head.stdout.strip())
-            self.assertEqual([s["status"] for s in record["steps"] if s["id"] in central.BLK001_STEPS], ["ok"] * 6)
+            self.assertEqual([s["status"] for s in record["steps"] if s["id"] in central.BLK001_STEPS], ["ok"] * 5)
             with contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(pipeline.main(["ingest", "--revision", "HEAD", "--export-root", self.export,
                                                 "--target-dir", tmp, "--out", os.path.join(tmp, "o2"),
@@ -1094,7 +1093,7 @@ class LinkerPlanTests(unittest.TestCase):
         at_root = sorted(sid for sid, s in self.steps.items() if os.path.realpath(s["cwd"]) == self.root)
         self.assertEqual(at_root, ["build-franken-speaker-mips_be", "build-franken-speaker-mips_be-minimal_renderer",
                                    "build-franken-speaker-powerpc_be", "build-franken-speaker-powerpc_be-minimal_renderer"])
-        for sid in ("toolchain", "toolchain-default", "workspace-test", "build-franken-speaker-host",
+        for sid in ("toolchain-default", "workspace-test", "build-franken-speaker-host",
                     "build-ffw-hello-init-mips_be", "build-ffw-hello-init-powerpc_be"):
             self.assertEqual(os.path.basename(self.steps[sid]["cwd"]), "franken-board-profile", sid)
 
@@ -1216,7 +1215,7 @@ class CentralJudgementTests(unittest.TestCase):
         self.logs = {}
         for step in self.planned:
             inner = plan.inner_command(step["argv"])
-            extra = {"toolchain": run_cases.RUSTC_VV, "toolchain_default": run_cases.RUSTC_VV_DEFAULT}.get(step["kind"], "")
+            extra = {"toolchain_default": run_cases.RUSTC_VV_DEFAULT}.get(step["kind"], "")
             if step["kind"] == "test":
                 extra = (libtest_block({"group::tests::a": "ok"}) + libtest_block({n: "ok" for n in self.NAMES}, header_lines=[
                     "     Running tests/p01_contract.rs (target/debug/deps/p01_contract-aa)"]))
@@ -2039,7 +2038,8 @@ class PlanningGenerateTests(unittest.TestCase):
             self.repo(tmp, self.issues())
             self.run_generator(tmp)
             blob = b"".join(v for k, v in self.snapshot_of(tmp).items() if k != "check_planning.py")
-            for needle in (b"private note", b"a private comment", b"secret-checkout", b"source_repo_path", b"/home/", b"Agent"):
+            for needle in (b"private note", b"a private comment", b"secret-checkout", b"source_repo_path", b"/home/", b"Agent",
+                           b"created_by", b"someone"):
                 self.assertNotIn(needle, blob)
             self.assertIn(b"acceptance_criteria", blob)
 
@@ -2117,6 +2117,470 @@ class PlanningGenerateTests(unittest.TestCase):
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 self.assertEqual(self.gen.main(["--root", tmp, "--live", inside]), 2)
             self.assertIn("must not be inside docs/planning", err.getvalue())
+
+
+class ToolchainTests(unittest.TestCase):
+    """P01-BLK-004 and P01-TC-001..005: the pin file, the plan's dated device nightly and the compiler a central record names, on
+    synthetic worlds, on the real pin file and plan, and through the runner's own handler with records built by `build_evidence`."""
+
+    def setUp(self):
+        self.doc = run_cases.contract()
+
+    def test_every_toolchain_case_group_passes_through_the_runner(self):
+        for group in ("permitted_positive", "pin_file", "plan", "receipt_fail", "receipt_blocked"):
+            with self.subTest(group):
+                self.assertEqual(run_cases.run_toolchain_plants({"group": group})[0], run_cases.PASS)
+
+    def test_the_group_runner_reports_a_wrong_verdict_instead_of_passing_it(self):
+        original = toolchain_fixtures.PLANTS
+        toolchain_fixtures.PLANTS = [(g, label, edit, "pass" if verdict == "blocked" else verdict, codes) for g, label, edit, verdict, codes in original]
+        try:
+            with self.assertRaises(run_cases.CaseError):
+                run_cases.run_toolchain_plants({"group": "receipt_blocked"})
+        finally:
+            toolchain_fixtures.PLANTS = original
+
+    def test_the_repositorys_own_pin_file_passes_the_pin_rules_and_is_the_whole_file(self):
+        with open(os.path.join(run_cases.REPO, toolchain.PIN_FILE), encoding="utf-8") as f:
+            text = f.read()
+        channel, findings = toolchain.judge_pin(text, os.path.exists(os.path.join(run_cases.REPO, "rust-toolchain")))
+        self.assertEqual(findings, [])
+        self.assertRegex(channel, r"^[0-9]+\.[0-9]+\.[0-9]+$")
+        self.assertEqual(text, f'[toolchain]\nchannel = "{channel}"\n', "nothing but the bare channel has been shown to work on the workers")
+
+    def test_the_real_plan_names_the_dated_nightly_from_one_constant_and_the_host_nothing(self):
+        steps = plan.plan_steps("/srv/x/ffw", "/srv/x/ffw/crates/franken-board-profile", "/srv/x/target", self.doc)
+        self.assertEqual(toolchain.judge_plan(steps, plan.DEVICE_TOOLCHAIN, plan.DEVICE_RUSTC_VERSION), [])
+        device = [s for s in steps if "--target" in plan.inner_command(s["argv"])]
+        host = [s for s in steps if plan.inner_command(s["argv"])[0] == "cargo" and "--target" not in plan.inner_command(s["argv"])]
+        self.assertEqual(len(device), 6)
+        self.assertTrue(all(plan.inner_command(s["argv"])[1] == "+" + plan.DEVICE_TOOLCHAIN for s in device))
+        self.assertTrue(all(not plan.inner_command(s["argv"])[1].startswith("+") for s in host))
+        self.assertRegex(plan.DEVICE_TOOLCHAIN, r"^nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+        for floating in ("nightly", "stable", "beta"):
+            self.assertFalse(any(("+" + floating) in s["argv"] for s in steps), floating)
+
+    def test_a_plan_built_from_a_floating_constant_is_refused_by_name(self):
+        with mock.patch.object(plan, "DEVICE_TOOLCHAIN", "nightly"):
+            steps = plan.plan_steps("/srv/x/ffw", "/srv/x/ffw/crates/franken-board-profile", "/srv/x/target", self.doc)
+        self.assertEqual(toolchain.codes(toolchain.judge_plan(steps, "nightly", plan.DEVICE_RUSTC_VERSION)), ["plan_device_toolchain_not_dated"])
+
+    def test_the_plans_device_compiler_string_is_the_one_measured_and_hand_written_in_the_fixtures(self):
+        # `rustc +nightly-2026-08-31 -V` prints it; changing the toolchain date or the string means changing both places on purpose
+        self.assertEqual(plan.DEVICE_RUSTC_VERSION, toolchain_fixtures.DEVICE_STRING)
+        self.assertEqual(plan.DEVICE_TOOLCHAIN, toolchain_fixtures.DEVICE)
+
+    def test_the_compiler_strings_a_file_carries_are_read_from_its_bytes(self):
+        data = (b"\x00junk\x00rustc version 1.98.0-nightly (90850177 2026-08-30)\x00more\x00"
+                b"rustc version 1.99.0 (b940084d7 2026-08-12)\nrustc version 1.98.0-nightly (90850177 2026-08-30)\x00")
+        self.assertEqual(plan.rustc_versions(data), ["1.98.0-nightly (90850177 2026-08-30)", "1.99.0 (b940084d7 2026-08-12)"])
+        self.assertEqual(plan.rustc_versions(b"no compiler here, rustc version unknown, rustc version 1.x"), [])
+        self.assertEqual(len(plan.rustc_versions(b"".join(b"rustc version 1.9.%d (aaaaaaaaa 2026-01-01)\x00" % i for i in range(20)))), 8)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "speaker")
+            with open(path, "wb") as f:
+                f.write(run_cases.fake_elf(8, b"payload rustc version 1.98.0-nightly (90850177 2026-08-30)\x00", mips_abi=(32, 2, 3)))
+            ident = plan.elf_identity(path)
+            self.assertEqual(ident["rustc_versions"], ["1.98.0-nightly (90850177 2026-08-30)"])
+            art = next(a for a in self.doc["artifacts"] if a["id"] == "speaker-mips-full")
+            self.assertNotIn("rustc_versions", plan.observed_row(self.doc, art, ident), "the contract's observed rows are unchanged")
+
+    def test_a_record_carries_the_pin_and_the_artifact_compilers_only_when_the_caller_read_them(self):
+        base = dict(contract=self.doc, planned=[], logs={}, revision="a" * 40, lock_sha256="b" * 64, export_root="/srv/x", rows=[],
+                    missing=[], sizes={}, attested_env={})
+        plain = central.build_evidence(**base)
+        self.assertNotIn("artifact_compilers", plain)
+        self.assertNotIn("toolchain_pin", plain)
+        withs = central.build_evidence(**base, compilers={"b": ["2"], "a": ["1"]}, pin={"file": "rust-toolchain.toml", "sha256": "c" * 64,
+                                                                                         "channel": "1.99.0"}, pin_recorded=True)
+        self.assertEqual(list(withs["artifact_compilers"]), ["a", "b"])
+        self.assertEqual(withs["toolchain_pin"]["channel"], "1.99.0")
+        none = central.build_evidence(**base, compilers={}, pin=None, pin_recorded=True)
+        self.assertIsNone(none["toolchain_pin"], "a revision with no pin file says so: null, not absent")
+
+    # ---- through the handler, with records built by build_evidence from rch-shaped logs
+    def device_ids(self):
+        return {a["id"] for a in self.doc["artifacts"] if a["bin"] and ref.TARGETS[a["target"]][3]}
+
+    def record(self, **changes):
+        """A passing central record for the CURRENT plan with the pin and the artifact compilers, optionally changed."""
+        helper = CentralJudgementTests("test_the_four_device_speakers_pass_when_static_and_carrying_the_declared_abi")
+        helper.setUp()
+        with open(os.path.join(run_cases.REPO, toolchain.PIN_FILE), encoding="utf-8") as f:
+            text = f.read()
+        channel = toolchain.read_pin(text)[0]
+        logs = dict(helper.logs)
+        inner = plan.inner_command(next(s for s in helper.planned if s["id"] == "toolchain-default")["argv"])
+        logs["toolchain-default"] = fake_rch_log(inner, extra=run_cases.RUSTC_VV_DEFAULT.replace("1.90.0", changes.get("release", channel)))
+        compilers = {a["id"]: ([toolchain_fixtures.DEVICE_STRING] if a["id"] in self.device_ids() else [toolchain_fixtures.HOST_STRING.replace("1.99.0", channel)])
+                     for a in self.doc["artifacts"] if a["bin"]}
+        compilers.update(changes.get("compilers", {}))
+        extra = {} if changes.get("no_compilers") else {"compilers": compilers}
+        pin = {"file": toolchain.PIN_FILE, "sha256": "d" * 64, "channel": changes.get("pin_channel", channel)}
+        return helper.build(logs=logs, **extra, **({} if changes.get("no_pin") else {"pin": pin, "pin_recorded": True}))
+
+    def judge_record(self, evidence):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "rev-" + "a" * 12, "receipt.json")
+            os.makedirs(os.path.dirname(path))
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(evidence, f)
+            with mock.patch.object(central, "find_evidence", lambda repo: [path]), \
+                    mock.patch.object(run_cases, "_revision_is_here", lambda revision: None):
+                return run_cases.run_toolchain_pin({"reason": "r", "owner": "o"})
+
+    def test_a_record_built_under_the_pin_with_the_pinned_compilers_passes_the_real_case(self):
+        status, detail = self.judge_record(self.record())
+        self.assertEqual(status, run_cases.PASS, detail)
+        self.assertIn("the pin", detail)
+        self.assertIn("device artifacts carry exactly `rustc version " + plan.DEVICE_RUSTC_VERSION + "`", detail)
+
+    def test_the_real_case_is_blocked_with_the_honest_reason_before_any_receipt_for_the_compiler_exists(self):
+        with mock.patch.object(central, "find_evidence", lambda repo: []):
+            status, detail = run_cases.run_toolchain_pin({"reason": "r", "owner": "o"})
+        self.assertEqual(status, run_cases.BLOCKED)
+        self.assertIn("no receipt for this compiler", detail)
+        for label, evidence in (("no artifact compilers", self.record(no_compilers=True)), ("no pin recorded", self.record(no_pin=True))):
+            with self.subTest(label):
+                status, detail = self.judge_record(evidence)
+                self.assertEqual(status, run_cases.BLOCKED, detail)
+                self.assertIn("no receipt for this compiler", detail)
+
+    def test_a_record_whose_compiler_is_not_the_pinned_one_fails_the_real_case(self):
+        floating = toolchain_fixtures.FLOATING_STRING
+        host = next(a["id"] for a in self.doc["artifacts"] if a["bin"] and a["id"] not in self.device_ids())
+        device = sorted(self.device_ids())[0]
+        for label, changes in (("bare cargo resolved a nightly", {"release": "1.101.0-nightly"}),
+                               ("a host artifact built by the floating nightly", {"compilers": {host: [floating]}}),
+                               ("a device artifact built by the floating nightly", {"compilers": {device: [floating]}})):
+            with self.subTest(label):
+                with self.assertRaises(run_cases.CaseError) as caught:
+                    self.judge_record(self.record(**changes))
+                self.assertTrue(any(code in str(caught.exception) for code in
+                                    ("receipt_bare_cargo_not_pin", "host_artifact_not_built_by_the_pin", "device_artifact_not_built_by_the_pinned_nightly")))
+
+    def test_a_pin_file_or_a_plan_that_breaks_a_rule_fails_the_real_case_before_any_record_is_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for label, text in (("a floating channel", '[toolchain]\nchannel = "nightly"\n'), ("no pin file", None)):
+                with self.subTest(label):
+                    if text is not None:
+                        with open(os.path.join(tmp, toolchain.PIN_FILE), "w", encoding="utf-8") as f:
+                            f.write(text)
+                    with mock.patch.object(run_cases, "REPO", tmp), mock.patch.object(central, "find_evidence", lambda repo: []):
+                        with self.assertRaises(run_cases.CaseError) as caught:
+                            run_cases.run_toolchain_pin({"reason": "r", "owner": "o"})
+                    self.assertIn("breaks a toolchain rule", str(caught.exception))
+        with mock.patch.object(plan, "DEVICE_TOOLCHAIN", "nightly"), mock.patch.object(central, "find_evidence", lambda repo: []):
+            with self.assertRaises(run_cases.CaseError) as caught:
+                run_cases.run_toolchain_pin({"reason": "r", "owner": "o"})
+        self.assertIn("plan_device_toolchain_not_dated", str(caught.exception))
+
+    def test_a_record_made_under_another_pin_is_blocked_and_a_failed_step_still_fails(self):
+        status, detail = self.judge_record(self.record(pin_channel="1.0.1"))
+        self.assertEqual(status, run_cases.BLOCKED, detail)
+        self.assertIn("under pin 1.0.1", detail)
+        evidence = self.record()
+        next(s for s in evidence["steps"] if s["id"] == "workspace-test").update(status="failed")
+        # workspace-test is not in the compiler case's scope (the toolchain query and the builds are): a failed TEST does not fail it
+        self.assertEqual(self.judge_record(evidence)[0], run_cases.PASS)
+        failed_build = self.record()
+        next(s for s in failed_build["steps"] if s["id"] == "build-franken-speaker-host").update(status="failed", exit=101)
+        with self.assertRaises(run_cases.CaseError):
+            self.judge_record(failed_build)
+
+    def test_ingest_reads_the_pin_at_the_revision_and_each_artifacts_compiler_from_its_bytes(self):
+        helper = CentralJudgementTests("test_the_four_device_speakers_pass_when_static_and_carrying_the_declared_abi")
+        helper.setUp()
+        with open(os.path.join(run_cases.REPO, toolchain.PIN_FILE), "rb") as f:
+            pin_bytes = f.read()
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "t")
+            for art in self.doc["artifacts"]:
+                if not art["bin"]:
+                    continue
+                path = plan.artifact_path(target, art, self.doc)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                device = ref.TARGETS[art["target"]][3]
+                with open(path, "wb") as f:
+                    f.write(run_cases.fake_elf({"mips_be": 8, "powerpc_be": 20}.get(art["target"], 62), art["id"].encode() + b"\x00rustc version "
+                                               + (b"1.98.0-nightly (90850177 2026-08-30)" if device else b"1.99.0 (b940084d7 2026-08-12)") + b"\x00",
+                                               mips_abi=(32, 2, 3) if art["target"] == "mips_be" else None))
+            logs = {}
+            for sid, text in helper.logs.items():
+                logs[sid] = os.path.join(tmp, sid + ".log")
+                with open(logs[sid], "w", encoding="utf-8") as f:
+                    f.write(text)
+            args = ["ingest", "--revision", "HEAD", "--export-root", helper.export, "--target-dir", target, "--out", os.path.join(tmp, "out")]
+            args += [a for sid, p in logs.items() for a in ("--step", f"{sid}={p}")]
+
+            def fake_run(argv, **kw):
+                return subprocess.CompletedProcess(argv, 0, stdout="a" * 40 + "\n", stderr="")
+
+            def show(revision, path):
+                with open(os.path.join(run_cases.REPO, *path.split("/")), "rb") as handle:
+                    return handle.read()
+            with mock.patch.object(pipeline.subprocess, "run", fake_run), mock.patch.object(pipeline, "_git_show", show), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                code = pipeline.main(args)
+            self.assertIn(code, (0, 1), "the ingest ran")
+            (name,) = os.listdir(os.path.join(tmp, "out"))
+            with open(os.path.join(tmp, "out", name, "receipt.json"), encoding="utf-8") as f:
+                record = json.load(f)
+        self.assertEqual(record["toolchain_pin"], {"file": toolchain.PIN_FILE, "sha256": hashlib.sha256(pin_bytes).hexdigest(),
+                                                   "channel": toolchain.read_pin(pin_bytes.decode())[0]})
+        by_id = record["artifact_compilers"]
+        self.assertEqual(set(by_id), {a["id"] for a in self.doc["artifacts"] if a["bin"]})
+        self.assertTrue(all(by_id[i] == ["1.98.0-nightly (90850177 2026-08-30)"] for i in self.device_ids()))
+        self.assertTrue(all(v == ["1.99.0 (b940084d7 2026-08-12)"] for i, v in by_id.items() if i not in self.device_ids()))
+
+
+class ServiceTestsByNameTests(unittest.TestCase):
+    """P01-BLK-006's reading of the speaker's tests BY NAME: records built by `central.build_evidence` from synthetic logs of the CURRENT
+    plan, judged by `central.judge` (the two steps ran the plan and exited 0) and `central.judge_service_tests` (every name passed in its
+    configuration's log, in a run of the current source files). Each verdict has a plant and a control: the plant gets exactly its
+    verdict, and the baseline it was made from passes."""
+
+    def setUp(self):
+        self.doc = run_cases.contract()
+        self.case = next(c for c in run_cases.load_json(run_cases.CASES_FILE)["cases"] if c["id"] == "P01-BLK-006")
+        self.names = central.service_test_names(self.case)
+        self.root = os.path.realpath(run_cases.REPO)
+        self.export = "/srv/export-a1b2c3/ffw"
+        self.planned = plan.plan_steps(self.export, self.export + "/crates/franken-board-profile", self.export + "/build/p01-target", self.doc)
+        self.now = plan.plan_steps(self.root, os.path.join(self.root, "crates", "franken-board-profile"), "/nonexistent/target", self.doc)
+        self.roots_now = central.roots_for(self.root)
+        self.files = {path: hashlib_sha(path) for path in central.SERVICE_TEST_FILES}
+
+    def step(self, sid):
+        return next(s for s in self.planned if s["id"] == sid)
+
+    def log(self, config, overrides=None, drop=(), exit_code=0):
+        """The rch log of the step that carries `config`: libtest blocks for another crate, the speaker's lib tests and its binary tests."""
+        statuses = {n: "ok" for n in self.names[config] if n not in drop}
+        statuses.update(overrides or {})
+        lib = {n: s for n, s in statuses.items() if n.startswith(central.SERVICE_LIB_PREFIX)}
+        cli = {n: s for n, s in statuses.items() if not n.startswith(central.SERVICE_LIB_PREFIX)}
+        extra = libtest_block({"other::tests::a": "ok"}) + libtest_block({**lib, "services::tests::unrelated": "ok"}) + libtest_block(cli)
+        return fake_rch_log(plan.inner_command(self.step(central.SERVICE_TEST_STEPS[config])["argv"]), exit_code=exit_code, extra=extra)
+
+    def logs(self, **kw):
+        out = {central.SERVICE_TEST_STEPS[c]: self.log(c) for c in central.SERVICE_TEST_STEPS}
+        out.update(kw)
+        return out
+
+    def evidence(self, logs=None, files=None, sources=True):
+        sources = {"names": self.names, "files": files or self.files} if sources else None
+        return central.build_evidence(self.doc, self.planned, logs if logs is not None else self.logs(), "a" * 40, "b" * 64, self.export,
+                                      [], [], {}, {}, service_sources=sources)
+
+    def judge(self, evidence, files_now=None):
+        return central.judge_services(evidence, self.doc, self.now, self.roots_now, self.names, files_now or self.files)
+
+    def test_the_names_are_32_per_configuration_written_as_libtest_prints_them_and_never_mixed(self):
+        self.assertEqual((len(self.names["default"]), len(self.names["all_on"])), (32, 32))
+        for config in self.names:
+            self.assertEqual(len(set(self.names[config])), 32)
+            self.assertEqual(sum(n.startswith("services::tests::") for n in self.names[config]), 18)
+        self.assertIn("services::tests::artwork_not_selected_reports_absent", self.names["default"])
+        self.assertIn("cli_artwork_not_selected_prints_absent", self.names["default"])
+        self.assertIn("services::tests::artwork_selected_reports_selected_unimplemented_unqualified", self.names["all_on"])
+        self.assertIn("cli_artwork_selected_prints_selected_unimplemented_unqualified", self.names["all_on"])
+        self.assertIn("services_option_is_the_same_on_every_run", self.names["default"])
+        self.assertIn("services::tests::no_build_selection_reports_a_service_implemented_qualified_or_ready", self.names["all_on"])
+        self.assertFalse(any("reports_selected" in n or "prints_selected" in n for n in self.names["default"]))
+        self.assertFalse(any("reports_absent" in n or "prints_absent" in n for n in self.names["all_on"]))
+
+    def test_the_plan_step_runs_the_lib_and_the_real_binary_tests_with_all_five_flags_on_bare_cargo(self):
+        inner = plan.inner_command(self.step(plan.SERVICE_TEST_STEP)["argv"])
+        self.assertEqual(inner[:2], ["cargo", "test"])
+        self.assertEqual(inner[inner.index("-p") + 1], "franken-speaker")
+        self.assertIn("--lib", inner)
+        self.assertEqual(inner[inner.index("--test") + 1], "cli_services")
+        self.assertEqual(inner[inner.index("--features") + 1].split(","), ["airplay2", "alexa_bridge", "artwork", "spotify_connect", "tailnet_native"])
+        self.assertNotIn("--workspace", inner)
+        self.assertFalse([t for t in inner if t.startswith("+")], "no selector: bare cargo resolves the repository's pin")
+        self.assertEqual(self.step(plan.SERVICE_TEST_STEP)["kind"], "service_test")
+        self.assertEqual(plan.check_plan(self.now, self.root, self.doc), [])
+
+    def test_the_baseline_passes_by_name_in_both_configurations(self):
+        evidence = self.evidence()
+        verdict, detail = self.judge(evidence)
+        self.assertEqual(verdict, "pass", detail)
+        self.assertIn("32 named services tests passed with no service flag and 32 with all of them on", detail)
+        # each configuration's tests came from its own step's log
+        self.assertEqual(set(evidence["service_tests"]["configs"]["default"]["tests"]), set(self.names["default"]))
+        self.assertEqual(evidence["service_tests"]["configs"]["all_on"]["step"], plan.SERVICE_TEST_STEP)
+        self.assertEqual(evidence["service_tests"]["files"], self.files)
+        # the workspace totals stay the workspace test's: the new step is its own kind and does not overwrite them
+        self.assertNotEqual(evidence["steps"][-1]["kind"], "test")
+
+    def test_a_failed_named_test_is_a_fail_in_either_configuration_and_the_baseline_without_it_passes(self):
+        for config, name in (("default", "services::tests::the_wire_names_are_the_contract_names"),
+                             ("default", "cli_airplay2_not_selected_prints_absent"),
+                             ("all_on", "services::tests::no_build_selection_reports_a_service_implemented_qualified_or_ready"),
+                             ("all_on", "cli_artwork_selected_prints_selected_unimplemented_unqualified")):
+            with self.subTest(config=config, name=name):
+                step = central.SERVICE_TEST_STEPS[config]
+                # the step itself exited 0 in the plant, so it is the NAME that fails, not the exit status
+                planted = self.evidence(self.logs(**{step: self.log(config, overrides={name: "FAILED"})}))
+                verdict, detail = self.judge(planted)
+                self.assertEqual(verdict, "fail", detail)
+                self.assertIn(name, detail)
+                self.assertIn(config, detail)
+                self.assertEqual(self.judge(self.evidence())[0], "pass", "removing the plant gives the baseline")
+
+    def test_a_named_test_that_was_ignored_never_ran_and_fails(self):
+        name = "cli_artwork_selected_prints_selected_unimplemented_unqualified"
+        planted = self.evidence(self.logs(**{plan.SERVICE_TEST_STEP: self.log("all_on", overrides={name: "ignored"})}))
+        verdict, detail = self.judge(planted)
+        self.assertEqual((verdict, name in detail, "ignored" in detail), ("fail", True, True))
+
+    def test_a_named_test_the_log_does_not_show_is_blocked_in_either_configuration_and_named(self):
+        for config, name in (("default", "cli_services_option_is_not_here"), ("all_on", "services::tests::the_wire_names_are_the_contract_names"),
+                             ("default", "services::tests::spotify_connect_not_selected_reports_absent")):
+            with self.subTest(config=config, name=name):
+                step = central.SERVICE_TEST_STEPS[config]
+                drop = [name] if name in self.names[config] else [self.names[config][0]]
+                planted = self.evidence(self.logs(**{step: self.log(config, drop=drop)}))
+                verdict, detail = self.judge(planted)
+                self.assertEqual(verdict, "blocked", detail)
+                self.assertIn(f"{config}: 1 of 32 named tests are not in the {step} log", detail)
+                self.assertIn(drop[0], detail)
+                self.assertEqual(self.judge(self.evidence())[0], "pass")
+
+    def test_the_default_names_are_read_from_the_workspace_log_and_never_from_the_all_on_step(self):
+        # Planted: the workspace-test log has no speaker blocks, but the all-on step's log has every name the default configuration needs
+        # (and more). Names do not cross logs: the default configuration is BLOCKED.
+        both = self.names["default"] + self.names["all_on"]
+        mixed = {n: "ok" for n in both}
+        lib = {n: s for n, s in mixed.items() if n.startswith(central.SERVICE_LIB_PREFIX)}
+        cli = {n: s for n, s in mixed.items() if not n.startswith(central.SERVICE_LIB_PREFIX)}
+        all_on = fake_rch_log(plan.inner_command(self.step(plan.SERVICE_TEST_STEP)["argv"]), extra=libtest_block(lib) + libtest_block(cli))
+        workspace = fake_rch_log(plan.inner_command(self.step("workspace-test")["argv"]), extra=libtest_block({"other::tests::a": "ok"}))
+        verdict, detail = self.judge(self.evidence(self.logs(**{"workspace-test": workspace, plan.SERVICE_TEST_STEP: all_on})))
+        self.assertEqual(verdict, "blocked", detail)
+        self.assertIn("default: 32 of 32 named tests are not in the workspace-test log", detail)
+        self.assertNotIn("all_on:", detail)
+
+    def test_a_step_that_never_ran_is_blocked_and_named(self):
+        for sid in central.SERVICE_TEST_SCOPE:
+            with self.subTest(sid):
+                logs = self.logs()
+                del logs[sid]
+                verdict, detail = self.judge(self.evidence(logs))
+                self.assertEqual(verdict, "blocked", detail)
+                self.assertIn(f"step {sid} has not run", detail)
+                self.assertEqual(self.judge(self.evidence())[0], "pass")
+
+    def test_a_step_that_exited_nonzero_is_a_fail_even_when_every_named_test_passed(self):
+        planted = self.evidence(self.logs(**{plan.SERVICE_TEST_STEP: self.log("all_on", exit_code=101)}))
+        verdict, detail = self.judge(planted)
+        self.assertEqual(verdict, "fail", detail)
+        self.assertIn(plan.SERVICE_TEST_STEP, detail)
+
+    def test_other_source_files_than_the_run_saw_are_blocked_and_named(self):
+        for path in central.SERVICE_TEST_FILES:
+            with self.subTest(path):
+                verdict, detail = self.judge(self.evidence(), files_now={**self.files, path: "c" * 64})
+                self.assertEqual(verdict, "blocked", detail)
+                self.assertIn(f"{path.rsplit('/', 1)[-1]} has changed since the run", detail)
+                self.assertEqual(self.judge(self.evidence())[0], "pass")
+
+    def test_a_record_made_before_the_capture_is_blocked_not_passed(self):
+        verdict, detail = self.judge(self.evidence(sources=False))
+        self.assertEqual(verdict, "blocked")
+        self.assertIn("predates the by-name capture", detail)
+
+    def test_a_failed_name_beats_a_missing_one_and_a_stale_file(self):
+        step = central.SERVICE_TEST_STEPS["default"]
+        planted = self.evidence(self.logs(**{step: self.log("default", overrides={self.names["default"][0]: "FAILED"}, drop=[self.names["default"][1]])}))
+        verdict, detail = self.judge(planted, files_now={**self.files, central.SERVICE_TEST_FILES[0]: "c" * 64})
+        self.assertEqual(verdict, "fail", detail)
+
+    def test_a_name_printed_twice_keeps_its_worst_status(self):
+        name = "services::tests::the_wire_names_are_the_contract_names"
+        extra = libtest_block({name: "ok"}) + libtest_block({name: "FAILED"})
+        log = fake_rch_log(plan.inner_command(self.step("workspace-test")["argv"]), extra=extra)
+        record = central.service_test_record({"workspace-test": log}, self.names, self.files)
+        self.assertEqual(record["configs"]["default"]["tests"], {name: "FAILED"})
+
+    def test_the_record_keeps_only_names_statuses_and_hashes(self):
+        text = json.dumps(self.evidence()["service_tests"])
+        for needle in ("198.51.100.7", "builder@", "/srv/export", "a1b2c3", "\x1b", "other::tests::a", "services::tests::unrelated"):
+            self.assertNotIn(needle, text)
+
+    def test_the_case_passes_only_when_the_device_speakers_and_the_names_both_pass(self):
+        for devices, names, want, needle in ((run_cases.PASS, run_cases.PASS, run_cases.PASS, "32 named services tests passed"),
+                                             (run_cases.PASS, run_cases.BLOCKED, run_cases.BLOCKED, "named services tests are not yet shown"),
+                                             (run_cases.BLOCKED, run_cases.PASS, run_cases.BLOCKED, "device speakers are not yet shown"),
+                                             (run_cases.BLOCKED, run_cases.BLOCKED, run_cases.BLOCKED, "named services tests are not yet shown")):
+            with self.subTest(devices=devices, names=names):
+                with mock.patch.object(run_cases, "run_central_evidence", return_value=(devices, "devices detail")), \
+                        mock.patch.object(run_cases, "_judge_service_tests", return_value=(names, "32 named services tests passed" if names == run_cases.PASS else "names detail")):
+                    status, detail = run_cases.run_feature_selection(self.case)
+                self.assertEqual(status, want, detail)
+                self.assertIn(needle, detail)
+
+    def test_ingest_records_the_names_and_the_source_hashes_from_the_revision(self):
+        # No git is needed: the revision is resolved by a stand-in and every file is read from the working tree, so this test runs in a
+        # git-archive export too (it is not one of EXPORT_SKIPS).
+        real_run = subprocess.run
+
+        def resolve_only(argv, *args, **kwargs):
+            if list(argv[:2]) == ["git", "rev-parse"]:
+                return subprocess.CompletedProcess(argv, 0, "a" * 40 + "\n", "")
+            return real_run(argv, *args, **kwargs)
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = {}
+            for sid in central.SERVICE_TEST_SCOPE:
+                paths[sid] = os.path.join(tmp, sid + ".log")
+                with open(paths[sid], "w") as f:
+                    f.write(self.logs()[sid])
+            real = pipeline._git_show
+
+            def working_tree_show(revision, path):
+                with open(os.path.join(run_cases.REPO, *path.split("/")), "rb") as handle:
+                    return handle.read()
+            pipeline._git_show = working_tree_show
+            try:
+                args = ["ingest", "--revision", "HEAD", "--export-root", self.export, "--target-dir", os.path.join(tmp, "t"),
+                        "--out", os.path.join(tmp, "out")] + [a for sid, p in paths.items() for a in ("--step", f"{sid}={p}")]
+                with mock.patch.object(pipeline.subprocess, "run", side_effect=resolve_only), \
+                        contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(pipeline.main(args), 0)
+            finally:
+                pipeline._git_show = real
+            (name,) = os.listdir(os.path.join(tmp, "out"))
+            self.assertEqual(name, "rev-" + "a" * 12)
+            with open(os.path.join(tmp, "out", name, "receipt.json")) as f:
+                record = json.load(f)
+        recorded = record["service_tests"]
+        self.assertEqual({c: sorted(v["tests"]) for c, v in recorded["configs"].items()}, {c: sorted(n) for c, n in self.names.items()})
+        self.assertEqual(recorded["files"], {p: metadata_check.sha256_file(os.path.join(run_cases.REPO, *p.split("/"))) for p in central.SERVICE_TEST_FILES})
+        self.assertEqual({c: v["step"] for c, v in recorded["configs"].items()}, central.SERVICE_TEST_STEPS)
+
+    def test_the_runners_handler_passes_a_record_of_the_current_files_blocks_other_ones_and_raises_a_failed_name(self):
+        real = {p: metadata_check.sha256_file(os.path.join(run_cases.REPO, *p.split("/"))) for p in central.SERVICE_TEST_FILES}
+
+        def handler(evidence):
+            with mock.patch.object(run_cases, "_newest_record", return_value=(evidence, "x")):
+                return run_cases._judge_service_tests(self.case, self.doc)
+
+        with mock.patch.object(run_cases, "_newest_record", return_value=None):
+            self.assertEqual(run_cases._judge_service_tests(self.case, self.doc)[0], run_cases.BLOCKED)
+        status, detail = handler(self.evidence(files=real))
+        self.assertEqual(status, run_cases.PASS, detail)
+        status, detail = handler(self.evidence(files={**real, central.SERVICE_TEST_FILES[1]: "c" * 64}))
+        self.assertEqual((status, "cli_services.rs has changed" in detail), (run_cases.BLOCKED, True))
+        failed = self.logs(**{plan.SERVICE_TEST_STEP: self.log("all_on", overrides={self.names["all_on"][-1]: "FAILED"})})
+        with self.assertRaises(run_cases.CaseError) as raised:
+            handler(self.evidence(failed, files=real))
+        self.assertIn(self.names["all_on"][-1], str(raised.exception))
+        missing = self.logs(**{plan.SERVICE_TEST_STEP: self.log("all_on", drop=[self.names["all_on"][0]])})
+        self.assertEqual(handler(self.evidence(missing, files=real))[0], run_cases.BLOCKED)
+        no_step = self.logs()
+        del no_step[plan.SERVICE_TEST_STEP]
+        self.assertEqual(handler(self.evidence(no_step, files=real))[0], run_cases.BLOCKED)
 
 
 class ResolveTests(unittest.TestCase):
