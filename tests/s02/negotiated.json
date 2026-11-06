@@ -1,0 +1,286 @@
+{
+ "schema": "ffw.s02.negotiated.v1",
+ "note": "The mandatory decoder set, derived from the PINNED clients' own source. Every row cites a file and line at an exact commit. 'status' is never 'passed' here: nothing in this file is a decode result. A row that cannot be satisfied is BLOCKED with its reason, never removed. Re-read the pins with tests/s02/ledger_check.py --pins DIR.",
+ "pins": {
+  "spotify": {
+   "project": "librespot",
+   "tag": "v0.8.0",
+   "commit": "d36f9f1907e8cc9d68a93f8ebc6b627b1bf7267d",
+   "archive_sha256": "fc1b26c1388ef8594fa615032516d972f58009d7ddfda8a601060c39f0edf67c",
+   "export": "https://codeload.github.com/librespot-org/librespot/tar.gz/d36f9f1907e8cc9d68a93f8ebc6b627b1bf7267d"
+  },
+  "airplay": {
+   "project": "shairport-sync",
+   "tag": "5.6.2",
+   "commit": "0a34fbda83724cc06266aadcf7c88acc8fef4e7d",
+   "archive_sha256": "3e5a58aba5a751ed8c33ebd73228218105f0afe26da382cd76fd93fbf21f83f4",
+   "export": "https://codeload.github.com/mikebrady/shairport-sync/tar.gz/0a34fbda83724cc06266aadcf7c88acc8fef4e7d"
+  },
+  "decoder_library": {
+   "project": "Symphonia",
+   "tag": "v0.6.1",
+   "commit": "ee35874b571a35a9a6e15d3bc9a3aaf8f11fbeee",
+   "note": "E06 audited features aac alac vorbis pcm ogg isomp4. The pinned Spotify client requests MP3, so `mp3` is added and audited by S02; librespot itself uses Symphonia 0.5 (mp3, ogg, vorbis, flac), a different major version than E06's pin."
+  }
+ },
+ "client_constraints": {
+  "spotify_decoder_accepts": {
+   "rate_hz": [
+    44100
+   ],
+   "channels": [
+    2
+   ],
+   "cite": "playback/src/decoder/symphonia_decoder.rs:73,82 (a TODO says other rates are unhandled)"
+  },
+  "spotify_seek": {
+   "mode": "SeekMode::Accurate",
+   "position_saturated_to_duration": true,
+   "decoder_reset_after_seek": true,
+   "cite": "symphonia_decoder.rs:206,215"
+  },
+  "spotify_gapless": {
+   "enable_gapless": true,
+   "cite": "symphonia_decoder.rs:45"
+  }
+ },
+ "rows": [
+  {
+   "id": "spotify.ogg_vorbis",
+   "provider": "spotify",
+   "formats": [
+    "OGG_VORBIS_96",
+    "OGG_VORBIS_160",
+    "OGG_VORBIS_320"
+   ],
+   "codec": "vorbis",
+   "rate_hz": [
+    44100
+   ],
+   "channels": [
+    2
+   ],
+   "mandatory": true,
+   "cite": "playback/src/player.rs:1010-1037 (every preference list requests all three)",
+   "status": "decode_path_unproven",
+   "vectors": [
+    "vorbis_44100"
+   ],
+   "detail": "Implemented in this slice, not yet run: the first central cargo test is the first evidence.",
+   "extra_vectors": [
+    "vorbis_48000"
+   ],
+   "negative_vectors": [
+    "chain_vorbis_44100_48000"
+   ],
+   "extra_note": "The pinned client decodes 44.1 kHz stereo only. The 48 kHz track is not negotiated by Spotify; it proves the decoder reports the stream's own rate (the direct 48 kHz path) instead of assuming 44.1 kHz. The chained track proves a rate change is reported, not swallowed."
+  },
+  {
+   "id": "spotify.mp3",
+   "provider": "spotify",
+   "formats": [
+    "MP3_96",
+    "MP3_160",
+    "MP3_256",
+    "MP3_320"
+   ],
+   "codec": "mp3",
+   "rate_hz": [
+    44100
+   ],
+   "channels": [
+    2
+   ],
+   "mandatory": true,
+   "cite": "playback/src/player.rs:1010-1037 (all four requested as fallbacks in every list); playback/Cargo.toml:85 feature mp3",
+   "status": "decode_path_unproven",
+   "vectors": [
+    "mp3_44100"
+   ],
+   "detail": "E06's Symphonia feature selection omitted `mp3`; this slice adds it and audits the closure. Not skipped to avoid an E06 or P01 refresh.",
+   "extra_vectors": [
+    "mp3_48000"
+   ],
+   "negative_vectors": [
+    "chain_mp3_44100_48000"
+   ],
+   "extra_note": "As for Ogg Vorbis: 48 kHz is not negotiated by the pinned client; the track and the chained stream prove native-rate reporting and explicit rate changes."
+  },
+  {
+   "id": "spotify.mp3_160_enc",
+   "provider": "spotify",
+   "formats": [
+    "MP3_160_ENC"
+   ],
+   "codec": "mp3",
+   "mandatory": false,
+   "cite": "playback/src/player.rs:940 (data-rate table only; absent from every preference list)",
+   "status": "not_requested_by_pin",
+   "detail": "Enumerated by the client but never requested; no decode claim."
+  },
+  {
+   "id": "spotify.aac",
+   "provider": "spotify",
+   "formats": [
+    "AAC_24",
+    "AAC_48",
+    "AAC_160",
+    "AAC_320",
+    "MP4_128",
+    "XHE_AAC_12",
+    "XHE_AAC_16",
+    "XHE_AAC_24"
+   ],
+   "codec": "aac",
+   "mandatory": false,
+   "cite": "playback/src/player.rs:931-951 (data-rate table only); metadata/src/audio/file.rs:18-35",
+   "status": "not_requested_by_pin",
+   "detail": "Enumerated by the client but absent from every preference list. If a later pin requests one, this row becomes mandatory and blocked until a decode test exists."
+  },
+  {
+   "id": "spotify.flac",
+   "provider": "spotify",
+   "formats": [
+    "FLAC_FLAC",
+    "FLAC_FLAC_24BIT"
+   ],
+   "codec": "flac",
+   "mandatory": false,
+   "cite": "playback/src/player.rs:947,951; playback/Cargo.toml:88 (feature flac, for local files)",
+   "status": "not_requested_by_pin",
+   "detail": "Used for local files only; not a negotiated CDN format at this pin."
+  },
+  {
+   "id": "airplay.alac_44100_s16",
+   "provider": "airplay",
+   "formats": [
+    "ALAC_44100_S16_2"
+   ],
+   "codec": "alac",
+   "rate_hz": [
+    44100
+   ],
+   "channels": [
+    2
+   ],
+   "bits": 16,
+   "mandatory": true,
+   "cite": "player.h:154; player.c:1099,1144 (cookie frameLength 352)",
+   "status": "decode_path_unproven",
+   "vectors": [
+    "alac_44100_16"
+   ],
+   "detail": "Raw ALAC packets plus the 24-byte cookie; the vector's cookie comes from Apple's encoder (frame length 4096), the pin's from shairport (352); the decoder reads the length from the cookie."
+  },
+  {
+   "id": "airplay.alac_48000_s24",
+   "provider": "airplay",
+   "formats": [
+    "ALAC_48000_S24_2"
+   ],
+   "codec": "alac",
+   "rate_hz": [
+    48000
+   ],
+   "channels": [
+    2
+   ],
+   "bits": 24,
+   "mandatory": true,
+   "cite": "player.h:155; player.c:1146-1147",
+   "status": "decode_path_unproven",
+   "vectors": [
+    "alac_48000_24"
+   ],
+   "detail": "24-bit values compared exactly to the source signal."
+  },
+  {
+   "id": "airplay.aac_lc_stereo",
+   "provider": "airplay",
+   "formats": [
+    "AAC_44100_F24_2",
+    "AAC_48000_F24_2"
+   ],
+   "codec": "aac",
+   "rate_hz": [
+    44100,
+    48000
+   ],
+   "channels": [
+    2
+   ],
+   "mandatory": true,
+   "cite": "player.h:156-157; player.c:1105; ap2_buffered_audio_processor.c:58 (ADTS profile 2 = AAC-LC)",
+   "status": "decode_path_unproven",
+   "vectors": [
+    "aac_lc_44100",
+    "aac_lc_48000"
+   ],
+   "detail": "Raw frames with an AudioSpecificConfig; priming and padding belong to the sender's RTP timestamps, not the decoder."
+  },
+  {
+   "id": "airplay.aac_lc_multichannel",
+   "provider": "airplay",
+   "formats": [
+    "AAC_48000_F24_5P1",
+    "AAC_48000_F24_7P1"
+   ],
+   "codec": "aac",
+   "rate_hz": [
+    48000
+   ],
+   "channels": [
+    6,
+    8
+   ],
+   "mandatory": true,
+   "cite": "player.h:158-159",
+   "status": "blocked",
+   "vectors": [
+    "aac_lc_48000_6ch"
+   ],
+   "blocked_by": "no admitted multichannel render path and no admitted downmix: the speaker renders stereo, and A01 must not advertise a capability the build does not implement; independently, the pinned Symphonia AAC decoder refuses more than two channels (symphonia-codec-aac aac/mod.rs:91-96, \"aac too complex\")",
+   "detail": "Kept as a named requirement. The adapter refuses it with an explicit error BEFORE decoding (negative vector); it becomes supported only through an admission test, never by silent downmix."
+  },
+  {
+   "id": "airplay.pcm_s16be",
+   "provider": "airplay",
+   "formats": [
+    "PCM_S16BE"
+   ],
+   "codec": "pcm",
+   "rate_hz": [
+    44100
+   ],
+   "channels": [
+    2
+   ],
+   "bits": 16,
+   "mandatory": true,
+   "cite": "player.c:1099 (uncompressed_pcm selects AV_CODEC_ID_PCM_S16BE)",
+   "status": "decode_path_unproven",
+   "vectors": [
+    "pcm_s16be_44100"
+   ],
+   "detail": "No codec: big-endian bytes to samples; held to the source signal bit for bit."
+  }
+ ],
+ "rate_boundary": {
+  "baseline_rate_hz": 48000,
+  "native_rates_hz": [
+   44100,
+   48000
+  ],
+  "rule": "A decoder output keeps its native rate. 48 kHz is direct; 44.1 kHz reaches the renderer only through the exact 160/147 rate bridge; any other rate is an explicit refusal. D03's drift resampler (+-500 ppm, hard cap 10000 ppm) is NOT a rate converter.",
+  "status": "bridge_unproven"
+ },
+ "known_gaps": [
+  {
+   "id": "aac.inband_sbr_dropped",
+   "what": "The pinned Symphonia AAC decoder sets asc.sbr_present when an ID_FIL element carries SBR data (aac/mod.rs:194) and nothing acts on it afterwards, so an HE-AAC stream signalled only in-band decodes as its LC core with the SBR payload ignored.",
+   "covered": "Explicit signalling (an ASC with object type 5, 29, 23 or the ELD escape) is refused by name by admission and by parse_aac_asc.",
+   "not_covered": "In-band-only signalling cannot be seen without parsing raw data blocks; no test claims it is caught. The pinned AirPlay sender negotiates AAC-LC (ADTS profile 2) with an explicit ASC.",
+   "status": "open"
+  }
+ ]
+}

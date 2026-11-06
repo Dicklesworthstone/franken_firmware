@@ -1,0 +1,666 @@
+{
+ "schema": "ffw.s02.cases.v1",
+ "note": "Rust-backed S02 cases: a case passes only when every listed cargo test reports ok in a judged log. `rows` links a case to the ledger rows it is evidence for (host decode evidence only; never a board, provider or performance claim). Python-only META cases are defined in run_cases.py.",
+ "cases": [
+  {
+   "id": "S02-DEC-VORBIS-44100",
+   "group": "decode",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_vorbis_44100_decodes_within_tolerance_with_the_gapless_length"
+   ],
+   "rows": [
+    "spotify.ogg_vorbis"
+   ],
+   "description": "Ogg Vorbis 44.1 kHz stereo through Symphonia: peak/rms error against the independent ffmpeg decode, gapless length from the last Ogg granule, native rate, contiguous positions from 0."
+  },
+  {
+   "id": "S02-DEC-VORBIS-48000",
+   "group": "decode",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_vorbis_48000_decodes_within_tolerance_with_the_gapless_length"
+   ],
+   "rows": [],
+   "description": "Ogg Vorbis 48 kHz: the decoder reports the stream's own rate (not negotiated by the pinned Spotify client)."
+  },
+  {
+   "id": "S02-DEC-MP3-44100",
+   "group": "decode",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_mp3_44100_decodes_within_tolerance_with_the_gapless_length"
+   ],
+   "rows": [
+    "spotify.mp3"
+   ],
+   "description": "MP3 44.1 kHz through Symphonia (the `mp3` feature E06 did not audit): error against ffmpeg and Apple decodes, gapless length from the file's own LAME/Info tag."
+  },
+  {
+   "id": "S02-DEC-MP3-48000",
+   "group": "decode",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_mp3_48000_decodes_within_tolerance_with_the_gapless_length"
+   ],
+   "rows": [],
+   "description": "MP3 48 kHz: native rate reported, gapless length from the tag."
+  },
+  {
+   "id": "S02-DEC-ALAC-44100-16",
+   "group": "decode",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_alac_44100_16_is_bit_exact"
+   ],
+   "rows": [
+    "airplay.alac_44100_s16"
+   ],
+   "description": "ALAC 44.1/16 from raw packets plus the 24-byte cookie: bit exact against the integer source signal."
+  },
+  {
+   "id": "S02-DEC-ALAC-48000-24",
+   "group": "decode",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_alac_48000_24_is_bit_exact"
+   ],
+   "rows": [
+    "airplay.alac_48000_s24"
+   ],
+   "description": "ALAC 48/24 from raw packets plus the cookie: all 24 bits exact against the integer source signal."
+  },
+  {
+   "id": "S02-DEC-AAC-44100",
+   "group": "decode",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_aac_lc_44100_decodes_within_tolerance"
+   ],
+   "rows": [
+    "airplay.aac_lc_stereo"
+   ],
+   "description": "AAC-LC 44.1 kHz stereo from raw frames plus the AudioSpecificConfig: error against ffmpeg and Apple decodes, packets x 1024 frames."
+  },
+  {
+   "id": "S02-DEC-AAC-48000",
+   "group": "decode",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_aac_lc_48000_decodes_within_tolerance"
+   ],
+   "rows": [
+    "airplay.aac_lc_stereo"
+   ],
+   "description": "AAC-LC 48 kHz stereo, same checks."
+  },
+  {
+   "id": "S02-DEC-PCM-44100",
+   "group": "decode",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_pcm_s16be_44100_is_bit_exact"
+   ],
+   "rows": [
+    "airplay.pcm_s16be"
+   ],
+   "description": "PCM S16BE: bit exact against the source; a byte count ending inside a frame and unsupported channel counts are refused."
+  },
+  {
+   "id": "S02-RATE-NATIVE",
+   "group": "rate",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_native_rate_is_carried_from_every_decoder_to_the_rate_stage"
+   ],
+   "rows": [
+    "spotify.ogg_vorbis",
+    "spotify.mp3",
+    "airplay.alac_44100_s16",
+    "airplay.aac_lc_stereo",
+    "airplay.pcm_s16be"
+   ],
+   "description": "Every decoder reports its native rate; 44.1 kHz selects the bridge and 48 kHz the direct path in the rate stage; the 48 kHz frame count is exact."
+  },
+  {
+   "id": "S02-SEEK-VORBIS",
+   "group": "seek",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_vorbis_seek_equals_continuous_decoding_from_every_target"
+   ],
+   "rows": [
+    "spotify.ogg_vorbis"
+   ],
+   "description": "Seek (accurate, decoder reset, preroll, discard) to six targets: the output equals continuous decoding from the target, bit for bit."
+  },
+  {
+   "id": "S02-SEEK-MP3",
+   "group": "seek",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_mp3_seek_equals_continuous_decoding_from_every_target"
+   ],
+   "rows": [
+    "spotify.mp3"
+   ],
+   "description": "The same for MP3, whose bit reservoir and filterbank state need the preroll."
+  },
+  {
+   "id": "S02-SEEK-END",
+   "group": "seek",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_seek_past_the_end_saturates_to_the_duration_and_yields_nothing"
+   ],
+   "rows": [
+    "spotify.ogg_vorbis",
+    "spotify.mp3"
+   ],
+   "description": "A position past the end saturates to the duration and yields no audio (librespot saturates the same way)."
+  },
+  {
+   "id": "S02-SEEK-PACKET",
+   "group": "seek",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_packet_decoders_restart_after_a_reset_with_the_documented_preroll"
+   ],
+   "rows": [
+    "airplay.alac_44100_s16",
+    "airplay.aac_lc_stereo"
+   ],
+   "description": "ALAC (preroll 0) and AAC-LC (preroll 1 packet) restart after a reset and then equal continuous decoding."
+  },
+  {
+   "id": "S02-CHAIN-VORBIS",
+   "group": "rate_change",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_chained_vorbis_reports_the_rate_change_explicitly"
+   ],
+   "rows": [
+    "spotify.ogg_vorbis"
+   ],
+   "description": "A chained Ogg stream 44.1 then 48 kHz: one explicit format change at the exact first-stream length, nothing lost from either part."
+  },
+  {
+   "id": "S02-CHAIN-MP3",
+   "group": "rate_change",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_chained_mp3_reports_the_rate_change_explicitly"
+   ],
+   "rows": [
+    "spotify.mp3"
+   ],
+   "description": "A concatenated MP3 stream 44.1 then 48 kHz: one explicit format change, no frames swallowed by the first stream's tag-derived trimming."
+  },
+  {
+   "id": "S02-MP3-ID3",
+   "group": "robustness",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_mp3_with_a_leading_id3v2_tag_decodes_identically"
+   ],
+   "rows": [
+    "spotify.mp3"
+   ],
+   "description": "A leading ID3v2 tag is skipped and the audio decodes identically."
+  },
+  {
+   "id": "S02-WRONG-CODEC",
+   "group": "robustness",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_a_container_of_another_codec_is_refused_by_name"
+   ],
+   "rows": [
+    "spotify.ogg_vorbis",
+    "spotify.mp3"
+   ],
+   "description": "A container of another codec is refused by name, not decoded as the negotiated one."
+  },
+  {
+   "id": "S02-TRUNCATED",
+   "group": "robustness",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_truncated_containers_never_invent_audio"
+   ],
+   "rows": [
+    "spotify.ogg_vorbis",
+    "spotify.mp3"
+   ],
+   "description": "Truncation at fifteen points: refused, ended or failed, and every sample decoded is a prefix of the full decode."
+  },
+  {
+   "id": "S02-FLIPPED-BITS",
+   "group": "robustness",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_flipped_bits_never_panic_and_stay_inside_the_caps"
+   ],
+   "rows": [
+    "spotify.ogg_vorbis",
+    "spotify.mp3"
+   ],
+   "description": "96 single-bit corruptions per format: no panic, caps respected, and the damage is visible somewhere."
+  },
+  {
+   "id": "S02-GARBAGE",
+   "group": "robustness",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_garbage_and_header_only_inputs_are_refused_or_end_without_panic"
+   ],
+   "rows": [
+    "spotify.ogg_vorbis",
+    "spotify.mp3"
+   ],
+   "description": "Empty, zero, noise, header-only and MP3-looking garbage: refused or ended, no panic, no runaway output."
+  },
+  {
+   "id": "S02-CAPS",
+   "group": "caps",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_caps_stop_oversize_input_blocks_and_channels"
+   ],
+   "rows": [
+    "spotify.ogg_vorbis",
+    "airplay.alac_44100_s16"
+   ],
+   "description": "Allocation caps: input bytes, block frames, channels and packet bytes are refused before use."
+  },
+  {
+   "id": "S02-ALAC-COOKIE",
+   "group": "caps",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_alac_cookie_is_validated_before_any_decoding"
+   ],
+   "rows": [
+    "airplay.alac_44100_s16",
+    "airplay.alac_48000_s24"
+   ],
+   "description": "The ALAC cookie is validated (length, version, depth 16/24, channels, frameLength cap, rate) before a decoder exists."
+  },
+  {
+   "id": "S02-AAC-CONFIG",
+   "group": "blocked",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_aac_config_accepts_only_lc_and_refuses_the_rest_by_name"
+   ],
+   "rows": [
+    "airplay.aac_lc_stereo",
+    "airplay.aac_lc_multichannel"
+   ],
+   "description": "AAC accepts only LC with 1024-sample frames and 1-2 channels; 5.1/7.1 is refused before decoding as BLOCKED airplay.aac_lc_multichannel (never downmixed); HE-AAC, LD, ELD, PCE, 960 frames and bad indexes are named."
+  },
+  {
+   "id": "S02-PACKET-DAMAGE",
+   "group": "robustness",
+   "stem": "s02_decode",
+   "tests": [
+    "s02_damaged_raw_packets_fail_or_decode_but_never_panic"
+   ],
+   "rows": [
+    "airplay.alac_44100_s16",
+    "airplay.aac_lc_stereo"
+   ],
+   "description": "Half, bit-flipped and noise packets through ALAC and AAC: errors are values, never panics."
+  },
+  {
+   "id": "S02-BRG-VEC-NOISE-TRI",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_vector_noise_tri"
+   ],
+   "rows": [],
+   "description": "160/147 bridge, vector noise_tri: output count, clamp count, head, tail and FNV-1a 64 of the whole output equal the independent closed-form reference."
+  },
+  {
+   "id": "S02-BRG-VEC-NOISE-TRI-FLUSHED",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_vector_noise_tri_flushed"
+   ],
+   "rows": [],
+   "description": "160/147 bridge, vector noise_tri_flushed: output count, clamp count, head, tail and FNV-1a 64 of the whole output equal the independent closed-form reference."
+  },
+  {
+   "id": "S02-BRG-VEC-MONO-NOISE-TRI",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_vector_mono_noise_tri"
+   ],
+   "rows": [],
+   "description": "160/147 bridge, vector mono_noise_tri: output count, clamp count, head, tail and FNV-1a 64 of the whole output equal the independent closed-form reference."
+  },
+  {
+   "id": "S02-BRG-VEC-DC",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_vector_dc"
+   ],
+   "rows": [],
+   "description": "160/147 bridge, vector dc: output count, clamp count, head, tail and FNV-1a 64 of the whole output equal the independent closed-form reference."
+  },
+  {
+   "id": "S02-BRG-VEC-DC-NEGATIVE",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_vector_dc_negative"
+   ],
+   "rows": [],
+   "description": "160/147 bridge, vector dc_negative: output count, clamp count, head, tail and FNV-1a 64 of the whole output equal the independent closed-form reference."
+  },
+  {
+   "id": "S02-BRG-VEC-IMPULSE",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_vector_impulse"
+   ],
+   "rows": [],
+   "description": "160/147 bridge, vector impulse: output count, clamp count, head, tail and FNV-1a 64 of the whole output equal the independent closed-form reference."
+  },
+  {
+   "id": "S02-BRG-VEC-SQUARE-FULL-SCALE",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_vector_square_full_scale"
+   ],
+   "rows": [],
+   "description": "160/147 bridge, vector square_full_scale: output count, clamp count, head, tail and FNV-1a 64 of the whole output equal the independent closed-form reference."
+  },
+  {
+   "id": "S02-BRG-VEC-SILENCE",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_vector_silence"
+   ],
+   "rows": [],
+   "description": "160/147 bridge, vector silence: output count, clamp count, head, tail and FNV-1a 64 of the whole output equal the independent closed-form reference."
+  },
+  {
+   "id": "S02-BRG-VEC-ONE-FRAME",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_vector_one_frame"
+   ],
+   "rows": [],
+   "description": "160/147 bridge, vector one_frame: output count, clamp count, head, tail and FNV-1a 64 of the whole output equal the independent closed-form reference."
+  },
+  {
+   "id": "S02-BRG-VEC-TONE-1000",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_vector_tone_1000"
+   ],
+   "rows": [],
+   "description": "160/147 bridge, vector tone_1000: output count, clamp count, head, tail and FNV-1a 64 of the whole output equal the independent closed-form reference."
+  },
+  {
+   "id": "S02-BRG-VEC-TONE-5000",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_vector_tone_5000"
+   ],
+   "rows": [],
+   "description": "160/147 bridge, vector tone_5000: output count, clamp count, head, tail and FNV-1a 64 of the whole output equal the independent closed-form reference."
+  },
+  {
+   "id": "S02-BRG-VEC-TONE-10000",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_vector_tone_10000"
+   ],
+   "rows": [],
+   "description": "160/147 bridge, vector tone_10000: output count, clamp count, head, tail and FNV-1a 64 of the whole output equal the independent closed-form reference."
+  },
+  {
+   "id": "S02-BRG-VEC-TONE-15000",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_vector_tone_15000"
+   ],
+   "rows": [],
+   "description": "160/147 bridge, vector tone_15000: output count, clamp count, head, tail and FNV-1a 64 of the whole output equal the independent closed-form reference."
+  },
+  {
+   "id": "S02-BRG-VEC-TONE-18000",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_vector_tone_18000"
+   ],
+   "rows": [],
+   "description": "160/147 bridge, vector tone_18000: output count, clamp count, head, tail and FNV-1a 64 of the whole output equal the independent closed-form reference."
+  },
+  {
+   "id": "S02-BRG-VEC-COVERAGE",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_vector_file_has_no_case_that_is_not_tested"
+   ],
+   "rows": [],
+   "description": "The bridge vector file holds no case the Rust test list does not test."
+  },
+  {
+   "id": "S02-BRG-CHUNK",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_output_is_independent_of_how_the_input_is_chunked"
+   ],
+   "rows": [],
+   "description": "The output stream is identical for twelve input chunkings, counters included."
+  },
+  {
+   "id": "S02-BRG-COUNT",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_output_count_is_ceil_160_over_147_for_every_length"
+   ],
+   "rows": [],
+   "description": "After n input frames the bridge has produced exactly ceil(160 n / 147) frames, for n = 0..400, mono and stereo."
+  },
+  {
+   "id": "S02-BRG-DC",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_dc_is_exact_once_the_history_is_full"
+   ],
+   "rows": [],
+   "description": "A constant input comes out exactly constant once the history is full (every phase sums to exactly 1)."
+  },
+  {
+   "id": "S02-BRG-DELAY",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_group_delay_is_32_input_frames"
+   ],
+   "rows": [],
+   "description": "An impulse peaks at the output frame the stated 32-input-frame delay predicts."
+  },
+  {
+   "id": "S02-BRG-CLIP",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_clamps_and_counts_overshoot"
+   ],
+   "rows": [],
+   "description": "Overshoot is clamped to the Q23 range and counted, never wrapped."
+  },
+  {
+   "id": "S02-BRG-PLAN",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_plan_admits_exactly_44100_and_48000"
+   ],
+   "rows": [],
+   "description": "Only 44 100 (bridged) and 48 000 (direct) are admitted; every other rate, including 88 200 and 96 000, is an explicit refusal."
+  },
+  {
+   "id": "S02-BRG-CHANNELS",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_refuses_zero_and_too_many_channels"
+   ],
+   "rows": [],
+   "description": "Zero and more than two channels are refused by the bridge and by the adapter."
+  },
+  {
+   "id": "S02-BRG-ARGS",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_rejects_ragged_input_and_a_small_output_without_consuming"
+   ],
+   "rows": [],
+   "description": "Ragged input and a too-small output buffer are errors that consume nothing."
+  },
+  {
+   "id": "S02-BRG-RESET",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_bridge_reset_restores_a_fresh_start"
+   ],
+   "rows": [],
+   "description": "Reset gives zero history and zero counters."
+  },
+  {
+   "id": "S02-ADP-48K",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_adapter_at_48k_is_the_f32_to_q23_conversion_and_nothing_else"
+   ],
+   "rows": [],
+   "description": "At 48 kHz the adapter is the f32 to Q23 conversion and nothing else."
+  },
+  {
+   "id": "S02-ADP-44K",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_adapter_at_44k_is_exactly_the_integer_bridge"
+   ],
+   "rows": [],
+   "description": "At 44.1 kHz the f32 adapter equals the integer bridge, whole or split."
+  },
+  {
+   "id": "S02-CONV",
+   "group": "bridge",
+   "stem": "s02_bridge",
+   "tests": [
+    "s02_sample_conversions_are_exact_and_clamp"
+   ],
+   "rows": [],
+   "description": "f32/Q23/s16 conversions are exact where exactness is possible and clamp elsewhere; NaN is 0."
+  },
+  {
+   "id": "S02-ADM-VERDICTS",
+   "group": "admission",
+   "stem": "s02_admission",
+   "tests": [
+    "every_case_gets_its_hand_written_verdict"
+   ],
+   "rows": [],
+   "description": "All 107 hand-written offers (15 admitted, 92 refused) get exactly the verdict and refusal code in tests/s02/admission.json: every mandatory ledger row admitted at its ledger rate, channels and width; every not-requested name, the blocked multichannel names, ELD/LD/HE, Opus, 88.2/96 kHz, wrong channel counts, missing or oversize config refused."
+  },
+  {
+   "id": "S02-ADM-CODES",
+   "group": "admission",
+   "stem": "s02_admission",
+   "tests": [
+    "every_refusal_code_is_exercised_and_the_file_names_exactly_the_codes_the_code_has"
+   ],
+   "rows": [],
+   "description": "Every one of the 14 refusal codes is produced by some case, and the file names exactly the codes the code has."
+  },
+  {
+   "id": "S02-ADM-LIMITS",
+   "group": "admission",
+   "stem": "s02_admission",
+   "tests": [
+    "the_limits_in_the_file_are_the_limits_in_the_code"
+   ],
+   "rows": [],
+   "description": "The name and config limits stated in the file are the constants in the code."
+  },
+  {
+   "id": "S02-ADM-BOUNDARY",
+   "group": "admission",
+   "stem": "s02_admission",
+   "tests": [
+    "a_name_at_the_limit_is_a_name_and_one_past_it_is_a_length"
+   ],
+   "rows": [],
+   "description": "A 32-byte format name is a name; one byte more is a length refusal."
+  },
+  {
+   "id": "S02-ADM-BOUNDED",
+   "group": "admission",
+   "stem": "s02_admission",
+   "tests": [
+    "every_refusal_is_bounded_and_redacted_whatever_it_is_given"
+   ],
+   "rows": [],
+   "description": "A refusal's text and echo stay bounded and never contain config bytes, whatever the offer holds."
+  },
+  {
+   "id": "S02-ADM-FAMILY",
+   "group": "admission",
+   "stem": "s02_admission",
+   "tests": [
+    "a_name_is_never_admitted_as_a_codec_its_family_is_not"
+   ],
+   "rows": [],
+   "description": "A name is never admitted as a codec of another family; nothing falls through to a default codec."
+  },
+  {
+   "id": "S02-ADM-NO-DOWNGRADE",
+   "group": "admission",
+   "stem": "s02_admission",
+   "tests": [
+    "a_downgrade_is_a_refusal_the_lc_twin_is_admitted"
+   ],
+   "rows": [],
+   "description": "Twenty twins of the admitted AAC-LC offer differ only in the config (ELD, HE-AAC, PS, LD, Main, 960 frames, PCE, flags, bad indexes) and are all refused, not downgraded to LC."
+  },
+  {
+   "id": "S02-ADM-INDEPENDENT",
+   "group": "admission",
+   "stem": "s02_admission",
+   "tests": [
+    "removing_vorbis_from_the_input_changes_no_other_verdict"
+   ],
+   "rows": [],
+   "description": "Removing Vorbis from the input changes no other verdict (the requirement set is not coupled)."
+  }
+ ]
+}

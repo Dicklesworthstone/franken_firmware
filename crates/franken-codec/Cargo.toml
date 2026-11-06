@@ -1,0 +1,21 @@
+[package]
+name = "franken-codec"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish = false
+description = "Negotiated source-codec decoders (Ogg Vorbis, MP3, ALAC, AAC-LC, PCM) and the exact 160/147 rate bridge (S02 / ffw-6dh)."
+
+[lints]
+workspace = true
+
+[dependencies]
+# Symphonia is the pure-Rust decoder library E06 pinned (v0.6.1, ee35874b571a). Features: the containers and codecs the pinned clients
+# negotiate. `mp3` is NOT in E06's audited set; the pinned Spotify client requests MP3, so this slice adds it (and `id3v2`, which only skips a
+# leading tag) and the closure is audited with scripts/e06/audit.py. Default features are off: no flac/wav/mkv/caf/isomp4/adpcm/pcm, no SIMD
+# (`opt-simd` would pull rustfft), no metadata readers other than id3v2.
+symphonia = { version = "=0.6.1", default-features = false, features = ["ogg", "vorbis", "mp3", "id3v2", "aac", "alac"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

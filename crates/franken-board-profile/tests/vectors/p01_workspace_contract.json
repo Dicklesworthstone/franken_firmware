@@ -125,6 +125,17 @@
       ]
     },
     {
+      "name": "franken-codec",
+      "path": "crates/franken-codec",
+      "owner": "S02",
+      "role": "library",
+      "layer": 8,
+      "unsafe_policy": "forbid",
+      "deps": [],
+      "optional_deps": [],
+      "dev_deps": []
+    },
+    {
       "name": "franken-clock",
       "path": "crates/franken-clock",
       "owner": "N03",
@@ -527,6 +538,16 @@
     {
       "path": "crates/franken-stream/fuzz",
       "owner": "N01",
+      "kind": "fixture"
+    },
+    {
+      "path": "crates/franken-codec",
+      "owner": "S02",
+      "kind": "crate"
+    },
+    {
+      "path": "tests/s02",
+      "owner": "S02",
       "kind": "fixture"
     }
   ],

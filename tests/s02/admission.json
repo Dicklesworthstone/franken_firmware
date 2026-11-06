@@ -1,0 +1,1795 @@
+{
+ "schema": "ffw.s02.admission.v1",
+ "note": "Hand-written verdicts of the S02 admission function (crates/franken-codec/src/admission.rs), independent of the Rust. Each refusal case has every other input satisfied, so it tests one check; each check also has an admitted twin or a boundary pair. The ledger is tests/s02/negotiated.json (pins: librespot v0.8.0, shairport-sync 5.6.2, Symphonia v0.6.1). Nothing here is a decode result.",
+ "limits": {
+  "format_name_max": 32,
+  "config_max": 64,
+  "echo_alphabet": "A-Z a-z 0-9 _ . - ; every other byte is echoed as ?"
+ },
+ "check_order": [
+  "format_name_length",
+  "format_lookup",
+  "rate",
+  "channels",
+  "bits",
+  "config_size",
+  "config_shape"
+ ],
+ "codes": [
+  "BITS_MISMATCH",
+  "BLOCKED_MULTICHANNEL",
+  "CHANNELS_NOT_NEGOTIATED",
+  "CONFIG_INVALID",
+  "CONFIG_MISMATCH",
+  "CONFIG_MISSING",
+  "CONFIG_TOO_LARGE",
+  "CONFIG_UNEXPECTED",
+  "FORMAT_NAME_TOO_LONG",
+  "NOT_A_SOURCE_FORMAT",
+  "NOT_REQUESTED_BY_PIN",
+  "RATE_NOT_NEGOTIATED",
+  "UNKNOWN_FORMAT",
+  "UNSUPPORTED_PROFILE"
+ ],
+ "cases": [
+  {
+   "id": "ADM-P-OGG_VORBIS_96",
+   "covers": [
+    "row:spotify.ogg_vorbis"
+   ],
+   "format": "OGG_VORBIS_96",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "admit",
+    "codec": "Vorbis",
+    "rate_hz": 44100,
+    "channels": 2,
+    "bits": 0,
+    "needs_bridge": true
+   }
+  },
+  {
+   "id": "ADM-P-OGG_VORBIS_160",
+   "covers": [
+    "row:spotify.ogg_vorbis"
+   ],
+   "format": "OGG_VORBIS_160",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "admit",
+    "codec": "Vorbis",
+    "rate_hz": 44100,
+    "channels": 2,
+    "bits": 0,
+    "needs_bridge": true
+   }
+  },
+  {
+   "id": "ADM-P-OGG_VORBIS_320",
+   "covers": [
+    "row:spotify.ogg_vorbis"
+   ],
+   "format": "OGG_VORBIS_320",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "admit",
+    "codec": "Vorbis",
+    "rate_hz": 44100,
+    "channels": 2,
+    "bits": 0,
+    "needs_bridge": true
+   }
+  },
+  {
+   "id": "ADM-P-MP3_96",
+   "covers": [
+    "row:spotify.mp3"
+   ],
+   "format": "MP3_96",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "admit",
+    "codec": "Mp3",
+    "rate_hz": 44100,
+    "channels": 2,
+    "bits": 0,
+    "needs_bridge": true
+   }
+  },
+  {
+   "id": "ADM-P-MP3_160",
+   "covers": [
+    "row:spotify.mp3"
+   ],
+   "format": "MP3_160",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "admit",
+    "codec": "Mp3",
+    "rate_hz": 44100,
+    "channels": 2,
+    "bits": 0,
+    "needs_bridge": true
+   }
+  },
+  {
+   "id": "ADM-P-MP3_256",
+   "covers": [
+    "row:spotify.mp3"
+   ],
+   "format": "MP3_256",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "admit",
+    "codec": "Mp3",
+    "rate_hz": 44100,
+    "channels": 2,
+    "bits": 0,
+    "needs_bridge": true
+   }
+  },
+  {
+   "id": "ADM-P-MP3_320",
+   "covers": [
+    "row:spotify.mp3"
+   ],
+   "format": "MP3_320",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "admit",
+    "codec": "Mp3",
+    "rate_hz": 44100,
+    "channels": 2,
+    "bits": 0,
+    "needs_bridge": true
+   }
+  },
+  {
+   "id": "ADM-P-ALAC_44100_S16_2",
+   "covers": [
+    "row:airplay.alac_44100_s16"
+   ],
+   "format": "ALAC_44100_S16_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 16,
+   "config_hex": "000010000010280a0e0200ff00000e810000dac00000ac44",
+   "expect": {
+    "verdict": "admit",
+    "codec": "Alac",
+    "rate_hz": 44100,
+    "channels": 2,
+    "bits": 16,
+    "needs_bridge": true
+   }
+  },
+  {
+   "id": "ADM-P-ALAC_44100_S16_2-pin-frame-length",
+   "covers": [
+    "row:airplay.alac_44100_s16",
+    "boundary:cookie-frame-length"
+   ],
+   "format": "ALAC_44100_S16_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 16,
+   "config_hex": "000001600010280a0e0200ff00000e810000dac00000ac44",
+   "expect": {
+    "verdict": "admit",
+    "codec": "Alac",
+    "rate_hz": 44100,
+    "channels": 2,
+    "bits": 16,
+    "needs_bridge": true
+   },
+   "note": "352 is the frame length shairport-sync 5.6.2 writes (player.c:1144)"
+  },
+  {
+   "id": "ADM-P-ALAC_44100_S16_2-max-frame-length",
+   "covers": [
+    "row:airplay.alac_44100_s16",
+    "boundary:cookie-frame-length"
+   ],
+   "format": "ALAC_44100_S16_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 16,
+   "config_hex": "000100000010280a0e0200ff00000e810000dac00000ac44",
+   "expect": {
+    "verdict": "admit",
+    "codec": "Alac",
+    "rate_hz": 44100,
+    "channels": 2,
+    "bits": 16,
+    "needs_bridge": true
+   },
+   "note": "65536 = 16 x 4096 is the largest frame length the pinned decoder accepts"
+  },
+  {
+   "id": "ADM-P-ALAC_48000_S24_2",
+   "covers": [
+    "row:airplay.alac_48000_s24"
+   ],
+   "format": "ALAC_48000_S24_2",
+   "rate_hz": 48000,
+   "channels": 2,
+   "bits": 24,
+   "config_hex": "000010000018280a0e0200ff00000e810000dac00000bb80",
+   "expect": {
+    "verdict": "admit",
+    "codec": "Alac",
+    "rate_hz": 48000,
+    "channels": 2,
+    "bits": 24,
+    "needs_bridge": false
+   }
+  },
+  {
+   "id": "ADM-P-AAC_44100_F24_2",
+   "covers": [
+    "row:airplay.aac_lc_stereo"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "1210",
+   "expect": {
+    "verdict": "admit",
+    "codec": "AacLc",
+    "rate_hz": 44100,
+    "channels": 2,
+    "bits": 0,
+    "needs_bridge": true
+   }
+  },
+  {
+   "id": "ADM-P-AAC_48000_F24_2",
+   "covers": [
+    "row:airplay.aac_lc_stereo"
+   ],
+   "format": "AAC_48000_F24_2",
+   "rate_hz": 48000,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "1190",
+   "expect": {
+    "verdict": "admit",
+    "codec": "AacLc",
+    "rate_hz": 48000,
+    "channels": 2,
+    "bits": 0,
+    "needs_bridge": false
+   }
+  },
+  {
+   "id": "ADM-P-PCM_S16BE",
+   "covers": [
+    "row:airplay.pcm_s16be"
+   ],
+   "format": "PCM_S16BE",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 16,
+   "config_hex": "",
+   "expect": {
+    "verdict": "admit",
+    "codec": "PcmS16Be",
+    "rate_hz": 44100,
+    "channels": 2,
+    "bits": 16,
+    "needs_bridge": true
+   }
+  },
+  {
+   "id": "ADM-N-name-33-bytes",
+   "covers": [
+    "name:too-long",
+    "boundary:name-length"
+   ],
+   "format": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "FORMAT_NAME_TOO_LONG"
+   },
+   "expect_echo_format": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+  },
+  {
+   "id": "ADM-N-name-32-bytes-unknown",
+   "covers": [
+    "name:unknown",
+    "boundary:name-length"
+   ],
+   "format": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "UNKNOWN_FORMAT"
+   },
+   "expect_echo_format": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+   "note": "the paired side of the length boundary: 32 bytes is a name, not a length error"
+  },
+  {
+   "id": "ADM-N-name-42-bytes-truncated-echo",
+   "covers": [
+    "name:too-long"
+   ],
+   "format": "OGG_VORBIS_320_PAD_PAD_PAD_PAD_PAD_PAD_PAD",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "FORMAT_NAME_TOO_LONG"
+   },
+   "expect_echo_format": "OGG_VORBIS_320_PAD_PAD_PAD_PAD_P"
+  },
+  {
+   "id": "ADM-N-name-empty",
+   "covers": [
+    "name:unknown"
+   ],
+   "format": "",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "UNKNOWN_FORMAT"
+   },
+   "expect_echo_format": ""
+  },
+  {
+   "id": "ADM-N-name-lowercase",
+   "covers": [
+    "name:unknown"
+   ],
+   "format": "ogg_vorbis_320",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "UNKNOWN_FORMAT"
+   },
+   "expect_echo_format": "ogg_vorbis_320"
+  },
+  {
+   "id": "ADM-N-name-control-and-equals",
+   "covers": [
+    "name:unknown",
+    "echo:redacted"
+   ],
+   "format": "BAD\u0001NAME=secret",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "UNKNOWN_FORMAT"
+   },
+   "expect_echo_format": "BAD?NAME?secret"
+  },
+  {
+   "id": "ADM-N-name-non-ascii",
+   "covers": [
+    "name:unknown",
+    "echo:redacted"
+   ],
+   "format": "OGG_VORBIS_320\u00e9",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "UNKNOWN_FORMAT"
+   },
+   "expect_echo_format": "OGG_VORBIS_320??",
+   "note": "a two-byte character is two bytes of echo, each replaced"
+  },
+  {
+   "id": "ADM-N-MP3_160_ENC",
+   "covers": [
+    "row:spotify.mp3_160_enc"
+   ],
+   "format": "MP3_160_ENC",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "NOT_REQUESTED_BY_PIN"
+   }
+  },
+  {
+   "id": "ADM-N-AAC_24",
+   "covers": [
+    "row:spotify.aac"
+   ],
+   "format": "AAC_24",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "NOT_REQUESTED_BY_PIN"
+   }
+  },
+  {
+   "id": "ADM-N-AAC_48",
+   "covers": [
+    "row:spotify.aac"
+   ],
+   "format": "AAC_48",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "NOT_REQUESTED_BY_PIN"
+   }
+  },
+  {
+   "id": "ADM-N-AAC_160",
+   "covers": [
+    "row:spotify.aac"
+   ],
+   "format": "AAC_160",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "NOT_REQUESTED_BY_PIN"
+   }
+  },
+  {
+   "id": "ADM-N-AAC_320",
+   "covers": [
+    "row:spotify.aac"
+   ],
+   "format": "AAC_320",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "NOT_REQUESTED_BY_PIN"
+   }
+  },
+  {
+   "id": "ADM-N-MP4_128",
+   "covers": [
+    "row:spotify.aac"
+   ],
+   "format": "MP4_128",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "NOT_REQUESTED_BY_PIN"
+   }
+  },
+  {
+   "id": "ADM-N-XHE_AAC_12",
+   "covers": [
+    "row:spotify.aac"
+   ],
+   "format": "XHE_AAC_12",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "NOT_REQUESTED_BY_PIN"
+   }
+  },
+  {
+   "id": "ADM-N-XHE_AAC_16",
+   "covers": [
+    "row:spotify.aac"
+   ],
+   "format": "XHE_AAC_16",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "NOT_REQUESTED_BY_PIN"
+   }
+  },
+  {
+   "id": "ADM-N-XHE_AAC_24",
+   "covers": [
+    "row:spotify.aac"
+   ],
+   "format": "XHE_AAC_24",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "NOT_REQUESTED_BY_PIN"
+   }
+  },
+  {
+   "id": "ADM-N-FLAC_FLAC",
+   "covers": [
+    "row:spotify.flac"
+   ],
+   "format": "FLAC_FLAC",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 16,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "NOT_REQUESTED_BY_PIN"
+   }
+  },
+  {
+   "id": "ADM-N-FLAC_FLAC_24BIT",
+   "covers": [
+    "row:spotify.flac"
+   ],
+   "format": "FLAC_FLAC_24BIT",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 24,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "NOT_REQUESTED_BY_PIN"
+   }
+  },
+  {
+   "id": "ADM-N-AAC_48000_F24_5P1",
+   "covers": [
+    "row:airplay.aac_lc_multichannel",
+    "no-downmix"
+   ],
+   "format": "AAC_48000_F24_5P1",
+   "rate_hz": 48000,
+   "channels": 6,
+   "bits": 0,
+   "config_hex": "11b0",
+   "expect": {
+    "verdict": "refuse",
+    "code": "BLOCKED_MULTICHANNEL"
+   }
+  },
+  {
+   "id": "ADM-N-AAC_48000_F24_7P1",
+   "covers": [
+    "row:airplay.aac_lc_multichannel",
+    "no-downmix"
+   ],
+   "format": "AAC_48000_F24_7P1",
+   "rate_hz": 48000,
+   "channels": 8,
+   "bits": 0,
+   "config_hex": "11b8",
+   "expect": {
+    "verdict": "refuse",
+    "code": "BLOCKED_MULTICHANNEL"
+   }
+  },
+  {
+   "id": "ADM-N-stereo-name-with-6-channels",
+   "covers": [
+    "no-downmix",
+    "channels"
+   ],
+   "format": "AAC_48000_F24_2",
+   "rate_hz": 48000,
+   "channels": 6,
+   "bits": 0,
+   "config_hex": "11b0",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CHANNELS_NOT_NEGOTIATED"
+   },
+   "note": "a stereo format name does not admit 5.1 channels"
+  },
+  {
+   "id": "ADM-N-stereo-offer-with-5.1-ASC",
+   "covers": [
+    "no-downmix",
+    "config:mismatch"
+   ],
+   "format": "AAC_48000_F24_2",
+   "rate_hz": 48000,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "11b0",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_MISMATCH"
+   },
+   "note": "the stereo offer is fine; the config says 6 channels: refused, never downmixed"
+  },
+  {
+   "id": "ADM-N-AAC_ELD_44100_F24_2",
+   "covers": [
+    "profile:by-name"
+   ],
+   "format": "AAC_ELD_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "UNSUPPORTED_PROFILE"
+   }
+  },
+  {
+   "id": "ADM-N-AAC_ELD_48000_F24_2",
+   "covers": [
+    "profile:by-name"
+   ],
+   "format": "AAC_ELD_48000_F24_2",
+   "rate_hz": 48000,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "UNSUPPORTED_PROFILE"
+   }
+  },
+  {
+   "id": "ADM-N-AAC_LD_48000_F24_2",
+   "covers": [
+    "profile:by-name"
+   ],
+   "format": "AAC_LD_48000_F24_2",
+   "rate_hz": 48000,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "UNSUPPORTED_PROFILE"
+   }
+  },
+  {
+   "id": "ADM-N-HE_AAC_44100_F24_2",
+   "covers": [
+    "profile:by-name"
+   ],
+   "format": "HE_AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "UNSUPPORTED_PROFILE"
+   }
+  },
+  {
+   "id": "ADM-N-HE_AAC_V2_44100_F24_2",
+   "covers": [
+    "profile:by-name"
+   ],
+   "format": "HE_AAC_V2_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "UNSUPPORTED_PROFILE"
+   }
+  },
+  {
+   "id": "ADM-N-OPUS",
+   "covers": [
+    "family:not-a-source-format"
+   ],
+   "format": "OPUS",
+   "rate_hz": 48000,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "NOT_A_SOURCE_FORMAT"
+   }
+  },
+  {
+   "id": "ADM-N-OPUS_48000_2",
+   "covers": [
+    "family:not-a-source-format"
+   ],
+   "format": "OPUS_48000_2",
+   "rate_hz": 48000,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "NOT_A_SOURCE_FORMAT"
+   }
+  },
+  {
+   "id": "ADM-N-vorbis-48000",
+   "covers": [
+    "rate",
+    "ledger-row-rate"
+   ],
+   "format": "OGG_VORBIS_320",
+   "rate_hz": 48000,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "RATE_NOT_NEGOTIATED"
+   },
+   "note": "the ledger row says 44100 and the pinned client's decoder accepts only 44100 (symphonia_decoder.rs:73); the decode vectors at 48000 are a decoder capability, not a negotiated format"
+  },
+  {
+   "id": "ADM-N-vorbis-0",
+   "covers": [
+    "rate"
+   ],
+   "format": "OGG_VORBIS_320",
+   "rate_hz": 0,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "RATE_NOT_NEGOTIATED"
+   }
+  },
+  {
+   "id": "ADM-N-vorbis-22050",
+   "covers": [
+    "rate"
+   ],
+   "format": "OGG_VORBIS_320",
+   "rate_hz": 22050,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "RATE_NOT_NEGOTIATED"
+   }
+  },
+  {
+   "id": "ADM-N-vorbis-88200",
+   "covers": [
+    "rate"
+   ],
+   "format": "OGG_VORBIS_320",
+   "rate_hz": 88200,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "RATE_NOT_NEGOTIATED"
+   }
+  },
+  {
+   "id": "ADM-N-vorbis-96000",
+   "covers": [
+    "rate"
+   ],
+   "format": "OGG_VORBIS_320",
+   "rate_hz": 96000,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "RATE_NOT_NEGOTIATED"
+   }
+  },
+  {
+   "id": "ADM-N-mp3-48000",
+   "covers": [
+    "rate",
+    "ledger-row-rate"
+   ],
+   "format": "MP3_320",
+   "rate_hz": 48000,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "RATE_NOT_NEGOTIATED"
+   }
+  },
+  {
+   "id": "ADM-N-alac-44100-offered-at-48000",
+   "covers": [
+    "rate"
+   ],
+   "format": "ALAC_44100_S16_2",
+   "rate_hz": 48000,
+   "channels": 2,
+   "bits": 16,
+   "config_hex": "000010000010280a0e0200ff00000e810000dac00000bb80",
+   "expect": {
+    "verdict": "refuse",
+    "code": "RATE_NOT_NEGOTIATED"
+   }
+  },
+  {
+   "id": "ADM-N-aac-44100-offered-at-48000",
+   "covers": [
+    "rate"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 48000,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "1190",
+   "expect": {
+    "verdict": "refuse",
+    "code": "RATE_NOT_NEGOTIATED"
+   }
+  },
+  {
+   "id": "ADM-N-aac-48000-offered-at-44100",
+   "covers": [
+    "rate"
+   ],
+   "format": "AAC_48000_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "1210",
+   "expect": {
+    "verdict": "refuse",
+    "code": "RATE_NOT_NEGOTIATED"
+   }
+  },
+  {
+   "id": "ADM-N-aac-48000-offered-at-96000",
+   "covers": [
+    "rate"
+   ],
+   "format": "AAC_48000_F24_2",
+   "rate_hz": 96000,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "1010",
+   "expect": {
+    "verdict": "refuse",
+    "code": "RATE_NOT_NEGOTIATED"
+   }
+  },
+  {
+   "id": "ADM-N-pcm-48000",
+   "covers": [
+    "rate"
+   ],
+   "format": "PCM_S16BE",
+   "rate_hz": 48000,
+   "channels": 2,
+   "bits": 16,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "RATE_NOT_NEGOTIATED"
+   }
+  },
+  {
+   "id": "ADM-N-vorbis-0ch",
+   "covers": [
+    "channels"
+   ],
+   "format": "OGG_VORBIS_320",
+   "rate_hz": 44100,
+   "channels": 0,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CHANNELS_NOT_NEGOTIATED"
+   }
+  },
+  {
+   "id": "ADM-N-vorbis-1ch",
+   "covers": [
+    "channels"
+   ],
+   "format": "OGG_VORBIS_320",
+   "rate_hz": 44100,
+   "channels": 1,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CHANNELS_NOT_NEGOTIATED"
+   }
+  },
+  {
+   "id": "ADM-N-vorbis-3ch",
+   "covers": [
+    "channels"
+   ],
+   "format": "OGG_VORBIS_320",
+   "rate_hz": 44100,
+   "channels": 3,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CHANNELS_NOT_NEGOTIATED"
+   }
+  },
+  {
+   "id": "ADM-N-vorbis-6ch",
+   "covers": [
+    "channels"
+   ],
+   "format": "OGG_VORBIS_320",
+   "rate_hz": 44100,
+   "channels": 6,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CHANNELS_NOT_NEGOTIATED"
+   }
+  },
+  {
+   "id": "ADM-N-mp3-1ch",
+   "covers": [
+    "channels"
+   ],
+   "format": "MP3_320",
+   "rate_hz": 44100,
+   "channels": 1,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CHANNELS_NOT_NEGOTIATED"
+   }
+  },
+  {
+   "id": "ADM-N-alac-1ch",
+   "covers": [
+    "channels"
+   ],
+   "format": "ALAC_44100_S16_2",
+   "rate_hz": 44100,
+   "channels": 1,
+   "bits": 16,
+   "config_hex": "000010000010280a0e0100ff00000e810000dac00000ac44",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CHANNELS_NOT_NEGOTIATED"
+   }
+  },
+  {
+   "id": "ADM-N-aac-1ch",
+   "covers": [
+    "channels"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 1,
+   "bits": 0,
+   "config_hex": "1208",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CHANNELS_NOT_NEGOTIATED"
+   }
+  },
+  {
+   "id": "ADM-N-pcm-1ch",
+   "covers": [
+    "channels"
+   ],
+   "format": "PCM_S16BE",
+   "rate_hz": 44100,
+   "channels": 1,
+   "bits": 16,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CHANNELS_NOT_NEGOTIATED"
+   }
+  },
+  {
+   "id": "ADM-N-vorbis-declares-16-bits",
+   "covers": [
+    "bits"
+   ],
+   "format": "OGG_VORBIS_320",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 16,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "BITS_MISMATCH"
+   },
+   "note": "lossy rows declare 0; the output width is not a negotiated property"
+  },
+  {
+   "id": "ADM-N-aac-declares-24-bits",
+   "covers": [
+    "bits"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 24,
+   "config_hex": "1210",
+   "expect": {
+    "verdict": "refuse",
+    "code": "BITS_MISMATCH"
+   }
+  },
+  {
+   "id": "ADM-N-alac-44100-with-24-bits",
+   "covers": [
+    "bits"
+   ],
+   "format": "ALAC_44100_S16_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 24,
+   "config_hex": "000010000018280a0e0200ff00000e810000dac00000ac44",
+   "expect": {
+    "verdict": "refuse",
+    "code": "BITS_MISMATCH"
+   }
+  },
+  {
+   "id": "ADM-N-alac-48000-with-16-bits",
+   "covers": [
+    "bits"
+   ],
+   "format": "ALAC_48000_S24_2",
+   "rate_hz": 48000,
+   "channels": 2,
+   "bits": 16,
+   "config_hex": "000010000010280a0e0200ff00000e810000dac00000bb80",
+   "expect": {
+    "verdict": "refuse",
+    "code": "BITS_MISMATCH"
+   }
+  },
+  {
+   "id": "ADM-N-pcm-24-bits",
+   "covers": [
+    "bits"
+   ],
+   "format": "PCM_S16BE",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 24,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "BITS_MISMATCH"
+   }
+  },
+  {
+   "id": "ADM-N-pcm-bits-undeclared",
+   "covers": [
+    "bits"
+   ],
+   "format": "PCM_S16BE",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "BITS_MISMATCH"
+   }
+  },
+  {
+   "id": "ADM-N-alac-no-cookie",
+   "covers": [
+    "config:missing"
+   ],
+   "format": "ALAC_44100_S16_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 16,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_MISSING"
+   }
+  },
+  {
+   "id": "ADM-N-aac-no-asc",
+   "covers": [
+    "config:missing"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_MISSING"
+   }
+  },
+  {
+   "id": "ADM-N-vorbis-with-config",
+   "covers": [
+    "config:unexpected"
+   ],
+   "format": "OGG_VORBIS_320",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "01",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_UNEXPECTED"
+   }
+  },
+  {
+   "id": "ADM-N-mp3-with-config",
+   "covers": [
+    "config:unexpected"
+   ],
+   "format": "MP3_320",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "01",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_UNEXPECTED"
+   }
+  },
+  {
+   "id": "ADM-N-pcm-with-config",
+   "covers": [
+    "config:unexpected"
+   ],
+   "format": "PCM_S16BE",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 16,
+   "config_hex": "01",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_UNEXPECTED"
+   }
+  },
+  {
+   "id": "ADM-N-config-64-bytes-is-not-too-large",
+   "covers": [
+    "config:too-large",
+    "boundary:config-length"
+   ],
+   "format": "OGG_VORBIS_320",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_UNEXPECTED"
+   },
+   "note": "the paired side of the size cap: 64 bytes passes the cap and is refused for being unexpected"
+  },
+  {
+   "id": "ADM-N-config-65-bytes",
+   "covers": [
+    "config:too-large",
+    "boundary:config-length"
+   ],
+   "format": "OGG_VORBIS_320",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_TOO_LARGE"
+   }
+  },
+  {
+   "id": "ADM-N-alac-config-65-bytes",
+   "covers": [
+    "config:too-large"
+   ],
+   "format": "ALAC_44100_S16_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 16,
+   "config_hex": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_TOO_LARGE"
+   }
+  },
+  {
+   "id": "ADM-N-alac-cookie-23-bytes",
+   "covers": [
+    "config:alac"
+   ],
+   "format": "ALAC_44100_S16_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 16,
+   "config_hex": "000010000010280a0e0200ff00000e810000dac00000ac",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_INVALID"
+   }
+  },
+  {
+   "id": "ADM-N-alac-cookie-25-bytes",
+   "covers": [
+    "config:alac"
+   ],
+   "format": "ALAC_44100_S16_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 16,
+   "config_hex": "000010000010280a0e0200ff00000e810000dac00000ac4400",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_INVALID"
+   }
+  },
+  {
+   "id": "ADM-N-alac-cookie-48-bytes",
+   "covers": [
+    "config:alac"
+   ],
+   "format": "ALAC_44100_S16_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 16,
+   "config_hex": "000010000010280a0e0200ff00000e810000dac00000ac44000000000000000000000000000000000000000000000000",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_INVALID"
+   },
+   "note": "the 48-byte form with channel-layout info is not in the pin (shairport writes 24) and is refused here"
+  },
+  {
+   "id": "ADM-N-alac-cookie-version-1",
+   "covers": [
+    "config:alac",
+    "profile:config"
+   ],
+   "format": "ALAC_44100_S16_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 16,
+   "config_hex": "000010000110280a0e0200ff00000e810000dac00000ac44",
+   "expect": {
+    "verdict": "refuse",
+    "code": "UNSUPPORTED_PROFILE"
+   }
+  },
+  {
+   "id": "ADM-N-alac-cookie-frame-length-0",
+   "covers": [
+    "config:alac",
+    "boundary:cookie-frame-length"
+   ],
+   "format": "ALAC_44100_S16_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 16,
+   "config_hex": "000000000010280a0e0200ff00000e810000dac00000ac44",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_INVALID"
+   }
+  },
+  {
+   "id": "ADM-N-alac-cookie-frame-length-65537",
+   "covers": [
+    "config:alac",
+    "boundary:cookie-frame-length"
+   ],
+   "format": "ALAC_44100_S16_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 16,
+   "config_hex": "000100010010280a0e0200ff00000e810000dac00000ac44",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_INVALID"
+   }
+  },
+  {
+   "id": "ADM-N-alac-cookie-says-24-bits",
+   "covers": [
+    "config:mismatch"
+   ],
+   "format": "ALAC_44100_S16_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 16,
+   "config_hex": "000010000018280a0e0200ff00000e810000dac00000ac44",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_MISMATCH"
+   }
+  },
+  {
+   "id": "ADM-N-alac-cookie-says-1-channel",
+   "covers": [
+    "config:mismatch"
+   ],
+   "format": "ALAC_44100_S16_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 16,
+   "config_hex": "000010000010280a0e0100ff00000e810000dac00000ac44",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_MISMATCH"
+   }
+  },
+  {
+   "id": "ADM-N-alac-cookie-says-48000",
+   "covers": [
+    "config:mismatch"
+   ],
+   "format": "ALAC_44100_S16_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 16,
+   "config_hex": "000010000010280a0e0200ff00000e810000dac00000bb80",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_MISMATCH"
+   }
+  },
+  {
+   "id": "ADM-P-AAC_44100_F24_2-twin-of-refusals",
+   "covers": [
+    "row:airplay.aac_lc_stereo"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "1210",
+   "expect": {
+    "verdict": "admit",
+    "codec": "AacLc",
+    "rate_hz": 44100,
+    "channels": 2,
+    "bits": 0,
+    "needs_bridge": true
+   },
+   "note": "the admitted twin of the downgrade refusals below: same offer, only the config differs"
+  },
+  {
+   "id": "ADM-N-asc-eld",
+   "covers": [
+    "config:aac",
+    "no-downgrade",
+    "profile:eld"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "f8e840",
+   "expect": {
+    "verdict": "refuse",
+    "code": "UNSUPPORTED_PROFILE"
+   },
+   "twin_of": "ADM-P-AAC_44100_F24_2-twin-of-refusals",
+   "differs_in": "config_hex"
+  },
+  {
+   "id": "ADM-N-asc-he-aac-explicit",
+   "covers": [
+    "config:aac",
+    "no-downgrade",
+    "profile:he-aac"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "2b920800",
+   "expect": {
+    "verdict": "refuse",
+    "code": "UNSUPPORTED_PROFILE"
+   },
+   "twin_of": "ADM-P-AAC_44100_F24_2-twin-of-refusals",
+   "differs_in": "config_hex"
+  },
+  {
+   "id": "ADM-N-asc-ps-explicit",
+   "covers": [
+    "config:aac",
+    "no-downgrade",
+    "profile:he-aac"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "eb8a0800",
+   "expect": {
+    "verdict": "refuse",
+    "code": "UNSUPPORTED_PROFILE"
+   },
+   "twin_of": "ADM-P-AAC_44100_F24_2-twin-of-refusals",
+   "differs_in": "config_hex"
+  },
+  {
+   "id": "ADM-N-asc-implicit-sbr",
+   "covers": [
+    "config:aac",
+    "no-downgrade",
+    "profile:he-aac"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "121056e580",
+   "expect": {
+    "verdict": "refuse",
+    "code": "UNSUPPORTED_PROFILE"
+   },
+   "twin_of": "ADM-P-AAC_44100_F24_2-twin-of-refusals",
+   "differs_in": "config_hex",
+   "note": "backward-compatible signalling: the pinned ASC reader does not look for it, so only this check stops a silent core-only decode"
+  },
+  {
+   "id": "ADM-N-asc-aac-ld",
+   "covers": [
+    "config:aac",
+    "no-downgrade",
+    "profile:ld"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "ba10",
+   "expect": {
+    "verdict": "refuse",
+    "code": "UNSUPPORTED_PROFILE"
+   },
+   "twin_of": "ADM-P-AAC_44100_F24_2-twin-of-refusals",
+   "differs_in": "config_hex"
+  },
+  {
+   "id": "ADM-N-asc-aac-main",
+   "covers": [
+    "config:aac",
+    "profile:main"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "0a10",
+   "expect": {
+    "verdict": "refuse",
+    "code": "UNSUPPORTED_PROFILE"
+   },
+   "twin_of": "ADM-P-AAC_44100_F24_2-twin-of-refusals",
+   "differs_in": "config_hex"
+  },
+  {
+   "id": "ADM-N-asc-frame-length-960",
+   "covers": [
+    "config:aac",
+    "profile:960"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "1214",
+   "expect": {
+    "verdict": "refuse",
+    "code": "UNSUPPORTED_PROFILE"
+   },
+   "twin_of": "ADM-P-AAC_44100_F24_2-twin-of-refusals",
+   "differs_in": "config_hex",
+   "note": "the pinned decoder refuses any frame length but 1024 as 'too complex'"
+  },
+  {
+   "id": "ADM-N-asc-program-config",
+   "covers": [
+    "config:aac",
+    "profile:pce"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "1200",
+   "expect": {
+    "verdict": "refuse",
+    "code": "UNSUPPORTED_PROFILE"
+   },
+   "twin_of": "ADM-P-AAC_44100_F24_2-twin-of-refusals",
+   "differs_in": "config_hex"
+  },
+  {
+   "id": "ADM-N-asc-1-byte",
+   "covers": [
+    "config:aac"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "12",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_INVALID"
+   }
+  },
+  {
+   "id": "ADM-N-asc-core-coder-flag",
+   "covers": [
+    "config:aac"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "1212",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_INVALID"
+   },
+   "twin_of": "ADM-P-AAC_44100_F24_2-twin-of-refusals",
+   "differs_in": "config_hex"
+  },
+  {
+   "id": "ADM-N-asc-extension-flag",
+   "covers": [
+    "config:aac"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "1211",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_INVALID"
+   },
+   "twin_of": "ADM-P-AAC_44100_F24_2-twin-of-refusals",
+   "differs_in": "config_hex"
+  },
+  {
+   "id": "ADM-N-asc-reserved-rate-index-13",
+   "covers": [
+    "config:aac"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "1690",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_INVALID"
+   },
+   "twin_of": "ADM-P-AAC_44100_F24_2-twin-of-refusals",
+   "differs_in": "config_hex"
+  },
+  {
+   "id": "ADM-N-asc-explicit-rate-index-15",
+   "covers": [
+    "config:aac"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "179000ac44",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_INVALID"
+   },
+   "twin_of": "ADM-P-AAC_44100_F24_2-twin-of-refusals",
+   "differs_in": "config_hex",
+   "note": "the explicit 24-bit rate form is not admitted"
+  },
+  {
+   "id": "ADM-N-asc-reserved-channel-config-8",
+   "covers": [
+    "config:aac"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "1240",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_INVALID"
+   },
+   "twin_of": "ADM-P-AAC_44100_F24_2-twin-of-refusals",
+   "differs_in": "config_hex"
+  },
+  {
+   "id": "ADM-N-asc-3-bytes",
+   "covers": [
+    "config:aac"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "121000",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_INVALID"
+   },
+   "twin_of": "ADM-P-AAC_44100_F24_2-twin-of-refusals",
+   "differs_in": "config_hex"
+  },
+  {
+   "id": "ADM-N-asc-4-bytes-without-sync",
+   "covers": [
+    "config:aac"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "12100000",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_INVALID"
+   },
+   "twin_of": "ADM-P-AAC_44100_F24_2-twin-of-refusals",
+   "differs_in": "config_hex"
+  },
+  {
+   "id": "ADM-N-asc-sync-needs-all-eleven-bits",
+   "covers": [
+    "config:aac"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "121056c0",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_INVALID"
+   },
+   "twin_of": "ADM-P-AAC_44100_F24_2-twin-of-refusals",
+   "differs_in": "config_hex",
+   "note": "0x56 then 110...: ten of the eleven sync bits, so not the 0x2b7 sync; the paired side of the implicit-SBR refusal"
+  },
+  {
+   "id": "ADM-N-asc-sync-needs-the-first-byte",
+   "covers": [
+    "config:aac"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "121000e0",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_INVALID"
+   },
+   "twin_of": "ADM-P-AAC_44100_F24_2-twin-of-refusals",
+   "differs_in": "config_hex",
+   "note": "the low three sync bits are present but the first eight are not"
+  },
+  {
+   "id": "ADM-N-asc-says-48000",
+   "covers": [
+    "config:mismatch"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "1190",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_MISMATCH"
+   },
+   "twin_of": "ADM-P-AAC_44100_F24_2-twin-of-refusals",
+   "differs_in": "config_hex"
+  },
+  {
+   "id": "ADM-N-asc-says-mono",
+   "covers": [
+    "config:mismatch"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "1208",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_MISMATCH"
+   },
+   "twin_of": "ADM-P-AAC_44100_F24_2-twin-of-refusals",
+   "differs_in": "config_hex"
+  },
+  {
+   "id": "ADM-N-asc-says-6-channels",
+   "covers": [
+    "config:mismatch",
+    "no-downmix"
+   ],
+   "format": "AAC_44100_F24_2",
+   "rate_hz": 44100,
+   "channels": 2,
+   "bits": 0,
+   "config_hex": "1230",
+   "expect": {
+    "verdict": "refuse",
+    "code": "CONFIG_MISMATCH"
+   },
+   "twin_of": "ADM-P-AAC_44100_F24_2-twin-of-refusals",
+   "differs_in": "config_hex"
+  }
+ ]
+}
