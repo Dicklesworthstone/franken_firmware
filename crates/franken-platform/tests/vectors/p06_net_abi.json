@@ -1,0 +1,275 @@
+{
+  "schema": "ffw.p06.net_abi.v1",
+  "provenance": "Written by hand. The per-ABI numbers are the values of the libc crate's per-architecture files (0.2.190, musl b32 MIPS and PowerPC, and linux_uapi asm/socket.rs) and of the E03 guest probe source (toolchain/src/ffw-hello-init/src/main.rs); the byte strings are laid out by hand from the structure definitions. Nothing in this file was produced by the Rust under test. tests/p06/test_net_abi.py re-derives every byte string with struct.pack and holds every number to those sources.",
+  "abi": {
+    "powerpc32": {
+      "sock_stream": 1,
+      "sock_dgram": 2,
+      "sock_nonblock": 2048,
+      "sock_cloexec": 524288,
+      "sol_socket": 1,
+      "so": {
+        "reuseaddr": 2,
+        "broadcast": 6,
+        "sndbuf": 7,
+        "rcvbuf": 8,
+        "rcvtimeo": 18,
+        "sndtimeo": 19,
+        "error": 4,
+        "type": 3
+      },
+      "pollwrnorm": 256,
+      "pollwrband": 512,
+      "errno": {
+        "EMSGSIZE": 90,
+        "EADDRINUSE": 98,
+        "EADDRNOTAVAIL": 99,
+        "ENETUNREACH": 101,
+        "ECONNRESET": 104,
+        "ENOBUFS": 105,
+        "ENOTCONN": 107,
+        "ETIMEDOUT": 110,
+        "ECONNREFUSED": 111,
+        "EINPROGRESS": 115
+      }
+    },
+    "mips32": {
+      "sock_stream": 2,
+      "sock_dgram": 1,
+      "sock_nonblock": 128,
+      "sock_cloexec": 524288,
+      "sol_socket": 65535,
+      "so": {
+        "reuseaddr": 4,
+        "broadcast": 32,
+        "sndbuf": 4097,
+        "rcvbuf": 4098,
+        "rcvtimeo": 4102,
+        "sndtimeo": 4101,
+        "error": 4103,
+        "type": 4104
+      },
+      "pollwrnorm": 4,
+      "pollwrband": 256,
+      "errno": {
+        "EMSGSIZE": 97,
+        "EADDRINUSE": 125,
+        "EADDRNOTAVAIL": 126,
+        "ENETUNREACH": 128,
+        "ECONNRESET": 131,
+        "ENOBUFS": 132,
+        "ENOTCONN": 134,
+        "ETIMEDOUT": 145,
+        "ECONNREFUSED": 146,
+        "EINPROGRESS": 150
+      }
+    }
+  },
+  "legacy_forever": {
+    "comment": "Where the oldest admitted kernel (stock 2.6.14, read with 2.6.35) turns a long finite wait into forever. long_max is MAX_SCHEDULE_TIMEOUT on a 32-bit ABI; hz_max is the largest HZ these platforms offer; the two ceilings are derived from them by the kernel's own tests (poll: timeout < long_max / hz; sock_set_timeout: tv_sec < long_max / hz - 1). max_datagram is the 16-bit IPv6 payload length minus the 8-byte UDP header.",
+    "long_max": 2147483647,
+    "hz_max": 1000,
+    "poll_max_ms": 2147482,
+    "timeval_max_sec": 2147481,
+    "max_datagram": 65527
+  },
+  "common": {
+    "af_inet": 2,
+    "af_inet6": 10,
+    "msg_peek": 2,
+    "msg_trunc": 32,
+    "msg_dontwait": 64,
+    "pollin": 1,
+    "pollpri": 2,
+    "pollout": 4,
+    "pollerr": 8,
+    "pollhup": 16,
+    "pollnval": 32,
+    "pollrdnorm": 64,
+    "pollrdband": 128
+  },
+  "never_used_sockopts": {
+    "so_rcvtimeo_new": 66,
+    "so_sndtimeo_new": 67
+  },
+  "net_errno": [
+    {"abi": "powerpc32", "errno": 98, "expect": "EADDRINUSE"},
+    {"abi": "mips32", "errno": 98, "expect": null},
+    {"abi": "mips32", "errno": 125, "expect": "EADDRINUSE"},
+    {"abi": "powerpc32", "errno": 125, "expect": null},
+    {"abi": "powerpc32", "errno": 111, "expect": "ECONNREFUSED"},
+    {"abi": "mips32", "errno": 111, "expect": null},
+    {"abi": "mips32", "errno": 146, "expect": "ECONNREFUSED"},
+    {"abi": "powerpc32", "errno": 146, "expect": null},
+    {"abi": "powerpc32", "errno": 90, "expect": "EMSGSIZE"},
+    {"abi": "mips32", "errno": 97, "expect": "EMSGSIZE"},
+    {"abi": "powerpc32", "errno": 97, "expect": null},
+    {"abi": "mips32", "errno": 11, "expect": null},
+    {"abi": "powerpc32", "errno": 11, "expect": null}
+  ],
+  "socket_type_arg": [
+    {"abi": "mips32", "kind": "dgram", "nonblock": true, "cloexec": true, "value": 524417},
+    {"abi": "powerpc32", "kind": "dgram", "nonblock": true, "cloexec": true, "value": 526338},
+    {"abi": "mips32", "kind": "stream", "nonblock": false, "cloexec": false, "value": 2},
+    {"abi": "powerpc32", "kind": "stream", "nonblock": false, "cloexec": false, "value": 1},
+    {"abi": "powerpc32", "kind": "stream", "nonblock": true, "cloexec": false, "value": 2049},
+    {"abi": "mips32", "kind": "stream", "nonblock": false, "cloexec": true, "value": 524290},
+    {"abi": "mips32", "kind": "dgram", "nonblock": true, "cloexec": false, "value": 129},
+    {"abi": "powerpc32", "kind": "dgram", "nonblock": false, "cloexec": true, "value": 524290}
+  ],
+  "pollfd": [
+    {"fd": 5, "events": 1, "revents": 0, "bytes": "0000000500010000"},
+    {"fd": 7, "events": 5, "revents": 4, "bytes": "0000000700050004"},
+    {"fd": 16909060, "events": 4, "revents": 0, "bytes": "0102030400040000"},
+    {"fd": 9, "events": 1, "revents": 17, "bytes": "0000000900010011"}
+  ],
+  "pollfd_request": [
+    {"abi": "mips32", "fd": 5, "events": 1, "expect": {"ok": 1}},
+    {"abi": "powerpc32", "fd": 5, "events": 5, "expect": {"ok": 1}},
+    {"abi": "mips32", "fd": -1, "events": 1, "expect": {"err": "negative_descriptor"}},
+    {"abi": "powerpc32", "fd": 3, "events": 16, "expect": {"err": "output_only_event"}},
+    {"abi": "mips32", "fd": 3, "events": 32768, "expect": {"err": "unknown_event_bits"}},
+    {"abi": "powerpc32", "fd": 3, "events": 512, "expect": {"ok": 1}},
+    {"abi": "mips32", "fd": 3, "events": 512, "expect": {"err": "unknown_event_bits"}},
+    {"abi": "powerpc32", "fd": 3, "events": 256, "expect": {"ok": 1}},
+    {"abi": "mips32", "fd": 3, "events": 256, "expect": {"ok": 1}}
+  ],
+  "poll_ready_bits": [
+    {"abi": "powerpc32", "revents": 256, "expect": {"ok": 256}},
+    {"abi": "mips32", "revents": 256, "expect": {"ok": 256}},
+    {"abi": "powerpc32", "revents": 512, "expect": {"ok": 512}},
+    {"abi": "mips32", "revents": 512, "expect": {"err": "unknown_ready_bits"}},
+    {"abi": "powerpc32", "revents": 4, "expect": {"ok": 4}},
+    {"abi": "mips32", "revents": 4, "expect": {"ok": 4}},
+    {"abi": "powerpc32", "revents": 56, "expect": {"ok": 56}},
+    {"abi": "mips32", "revents": 56, "expect": {"ok": 56}},
+    {"abi": "powerpc32", "revents": 32768, "expect": {"err": "unknown_ready_bits"}},
+    {"abi": "mips32", "revents": 1024, "expect": {"err": "unknown_ready_bits"}}
+  ],
+  "poll_timeout": [
+    {"nanos": 0, "expect": {"ok": 0}},
+    {"nanos": 1, "expect": {"ok": 1}},
+    {"nanos": 1000000, "expect": {"ok": 1}},
+    {"nanos": 1000001, "expect": {"ok": 2}},
+    {"nanos": 100000000, "expect": {"ok": 100}},
+    {"nanos": 2147482000000, "expect": {"ok": 2147482}},
+    {"nanos": 2147482000001, "expect": {"err": "time_width"}},
+    {"nanos": 2147483000000, "expect": {"err": "time_width"}},
+    {"nanos": 2147483647000000, "expect": {"err": "time_width"}},
+    {"nanos": 2147483648000000, "expect": {"err": "time_width"}},
+    {"nanos": 9000000000000000000, "expect": {"err": "time_width"}}
+  ],
+  "poll_decode": [
+    {"abi": "mips32", "raw": 2, "requested": 3, "expect": {"ok": 2}},
+    {"abi": "powerpc32", "raw": 0, "requested": 3, "expect": {"ok": 0}},
+    {"abi": "powerpc32", "raw": 3, "requested": 3, "expect": {"ok": 3}},
+    {"abi": "mips32", "raw": 4, "requested": 3, "expect": {"err": "ready_above_requested"}},
+    {"abi": "mips32", "raw": -4, "requested": 3, "expect": {"err": "interrupted"}},
+    {"abi": "mips32", "raw": -89, "requested": 1, "expect": {"err": "absent"}},
+    {"abi": "powerpc32", "raw": -89, "requested": 1, "expect": {"err": "errno:89"}},
+    {"abi": "powerpc32", "raw": -38, "requested": 1, "expect": {"err": "absent"}},
+    {"abi": "mips32", "raw": -22, "requested": 1, "expect": {"err": "invalid"}},
+    {"abi": "mips32", "raw": -12, "requested": 1, "expect": {"err": "errno:12"}},
+    {"abi": "mips32", "raw": -14, "requested": 1, "expect": {"err": "errno:14"}},
+    {"abi": "mips32", "raw": -4096, "requested": 1, "expect": {"err": "malformed"}}
+  ],
+  "poll_retry": [
+    {
+      "name": "interrupted_once_then_ready",
+      "abi": "mips32", "requested": 1, "timeout_ms": 100,
+      "script": [{"raw": -4, "elapsed_ms": 60}, {"raw": 1, "elapsed_ms": 70}],
+      "expect": {"ok": 1}, "calls_ms": [100, 40]
+    },
+    {
+      "name": "deadline_passed_between_calls",
+      "abi": "powerpc32", "requested": 1, "timeout_ms": 100,
+      "script": [{"raw": -4, "elapsed_ms": 100}, {"raw": 0, "elapsed_ms": 100}],
+      "expect": {"ok": 0}, "calls_ms": [100, 0]
+    },
+    {
+      "name": "infinite_stays_infinite",
+      "abi": "powerpc32", "requested": 2, "timeout_ms": -1,
+      "script": [{"raw": -4, "elapsed_ms": 5000}, {"raw": -4, "elapsed_ms": 9000}, {"raw": 2, "elapsed_ms": 9000}],
+      "expect": {"ok": 2}, "calls_ms": [-1, -1, -1]
+    },
+    {
+      "name": "immediate_never_stretches",
+      "abi": "mips32", "requested": 1, "timeout_ms": 0,
+      "script": [{"raw": -4, "elapsed_ms": 0}, {"raw": 1, "elapsed_ms": 0}],
+      "expect": {"ok": 1}, "calls_ms": [0, 0]
+    },
+    {
+      "name": "always_interrupted",
+      "abi": "mips32", "requested": 1, "timeout_ms": 100,
+      "script": [
+        {"raw": -4, "elapsed_ms": 10}, {"raw": -4, "elapsed_ms": 20}, {"raw": -4, "elapsed_ms": 30}, {"raw": -4, "elapsed_ms": 40},
+        {"raw": -4, "elapsed_ms": 50}, {"raw": -4, "elapsed_ms": 60}, {"raw": -4, "elapsed_ms": 70}, {"raw": -4, "elapsed_ms": 80}
+      ],
+      "expect": {"err": "interrupted"}, "calls_ms": [100, 90, 80, 70, 60, 50, 40, 30]
+    },
+    {
+      "name": "an_error_stops_the_retry",
+      "abi": "mips32", "requested": 1, "timeout_ms": 100,
+      "script": [{"raw": -4, "elapsed_ms": 20}, {"raw": -9, "elapsed_ms": 30}],
+      "expect": {"err": "errno:9"}, "calls_ms": [100, 80]
+    }
+  ],
+  "recv_decode": [
+    {"abi": "powerpc32", "raw": 16, "buf": 16, "expect": {"complete": 16}},
+    {"abi": "mips32", "raw": 24, "buf": 16, "expect": {"truncated": {"stored": 16, "real": 24}}},
+    {"abi": "mips32", "raw": 0, "buf": 16, "expect": {"complete": 0}},
+    {"abi": "powerpc32", "raw": 65527, "buf": 0, "expect": {"truncated": {"stored": 0, "real": 65527}}},
+    {"abi": "powerpc32", "raw": 65528, "buf": 16, "expect": {"err": "datagram_length"}},
+    {"abi": "powerpc32", "raw": 65535, "buf": 16, "expect": {"err": "datagram_length"}},
+    {"abi": "powerpc32", "raw": 65536, "buf": 16, "expect": {"err": "datagram_length"}},
+    {"abi": "mips32", "raw": 17, "buf": 16, "expect": {"truncated": {"stored": 16, "real": 17}}},
+    {"abi": "mips32", "raw": -11, "buf": 16, "expect": {"err": "would_block"}},
+    {"abi": "mips32", "raw": -4, "buf": 16, "expect": {"err": "interrupted"}},
+    {"abi": "powerpc32", "raw": -111, "buf": 16, "expect": {"err": "errno:111"}},
+    {"abi": "mips32", "raw": -111, "buf": 16, "expect": {"err": "errno:111"}}
+  ],
+  "sockaddr_in": [
+    {"addr": [192, 0, 2, 10], "port": 3400, "bytes": "00020d48c000020a0000000000000000"},
+    {"addr": [0, 0, 0, 0], "port": 0, "bytes": "00020000000000000000000000000000"},
+    {"addr": [198, 51, 100, 7], "port": 65535, "bytes": "0002ffffc63364070000000000000000"},
+    {"addr": [255, 255, 255, 255], "port": 1, "bytes": "00020001ffffffff0000000000000000"}
+  ],
+  "sockaddr_in_reject": [
+    {"name": "fifteen bytes", "bytes": "00020d48c000020a00000000000000", "expect": {"err": "bad_length"}},
+    {"name": "seventeen bytes", "bytes": "00020d48c000020a000000000000000000", "expect": {"err": "bad_length"}},
+    {"name": "an IPv6 family", "bytes": "000a0d48c000020a0000000000000000", "expect": {"err": "bad_family"}},
+    {"name": "a host-little-endian family", "bytes": "02000d48c000020a0000000000000000", "expect": {"err": "bad_family"}},
+    {"name": "padding that is not zero", "bytes": "00020d48c000020a0000000000000001", "expect": {"err": "non_zero_padding"}}
+  ],
+  "sockaddr_in6": [
+    {"addr": "20010db8000000000000000000000001", "port": 3400, "flowinfo": 0, "scope_id": 0,
+     "bytes": "000a0d480000000020010db800000000000000000000000100000000"},
+    {"addr": "fe800000000000000000000000000001", "port": 65535, "flowinfo": 703710, "scope_id": 2,
+     "bytes": "000affff000abcdefe80000000000000000000000000000100000002"}
+  ],
+  "sockaddr_in6_reject": [
+    {"name": "twenty-seven bytes", "bytes": "000a0d480000000020010db8000000000000000000000001000000", "expect": {"err": "bad_length"}},
+    {"name": "an IPv4 family", "bytes": "00020d480000000020010db800000000000000000000000100000000", "expect": {"err": "bad_family"}}
+  ],
+  "timeval32": [
+    {"nanos": 1500000000, "bytes": "000000010007a120"},
+    {"nanos": 250000000, "bytes": "000000000003d090"},
+    {"nanos": 1, "bytes": "0000000000000001"},
+    {"nanos": 1000, "bytes": "0000000000000001"},
+    {"nanos": 1001, "bytes": "0000000000000002"},
+    {"nanos": 1999999999, "bytes": "0000000200000000"},
+    {"nanos": 2147481000000000, "bytes": "0020c49900000000"},
+    {"nanos": 2147481999999000, "bytes": "0020c499000f423f"},
+    {"nanos": 2147482000000000, "err": "time_width"},
+    {"nanos": 2147483647000000000, "err": "time_width"},
+    {"nanos": 2147483648000000000, "err": "time_width"},
+    {"nanos": 0, "err": "zero_timeout"}
+  ],
+  "timeval32_read": [
+    {"bytes": "000000010007a120", "sec": 1, "usec": 500000},
+    {"bytes": "0000000000000000", "sec": 0, "usec": 0},
+    {"bytes": "ffffffff00000000", "err": "bad_timeval"},
+    {"bytes": "00000000000f4240", "err": "bad_timeval"},
+    {"bytes": "0000000080000000", "err": "bad_timeval"}
+  ]
+}

@@ -1,0 +1,126 @@
+{
+  "schema": "ffw.p06.ledger.v1",
+  "about": "Which upstream Franken libraries this workspace reuses, adapts or only references, at which exact revisions, and the machine-checked reason. Each row names the test that holds it (tests/p06/test_ledger.py) and the condition under which the row should be deleted. A row is not a report: when its pin does not resolve, its ancestry claim is false, or its recorded upstream bytes change, a test fails.",
+  "sibling_root_env": "FFW_UPSTREAM_ROOT",
+  "sibling_root_default": "the parent directory of this repository",
+  "upstreams": [
+    {
+      "id": "asupersync",
+      "sibling": "asupersync",
+      "pins": [
+        {
+          "rev": "8940119023c0e01b4d6d3e2c1399f41417c2ad24",
+          "role": "the workspace's one Asupersync pin: E06's inventory (toolchain/results/e06/upstream/) and P05's source scan (tests/p05/upstream_scan.json) were both taken at it"
+        },
+        {
+          "rev": "ddda2bf82cc8b3f3946c63f2ffc44177a4e34824",
+          "role": "the revision FIRMWARE_ASSESSMENT.md (2026-11-04) read; an ancestor of the pin above, so it is superseded by it, not a second pin",
+          "ancestor_of": "8940119023c0e01b4d6d3e2c1399f41417c2ad24"
+        }
+      ],
+      "disposition": "referenced",
+      "consumed_by": "nothing in this slice",
+      "reason": "The legacy-runtime route (64-bit atomics and the runtime-core gates) is P05's (docs/contracts/p05.md). P06 adds no Asupersync dependency.",
+      "gate": "P06-PIN-001 (both revisions resolve, the older is an ancestor of the newer), P06-ISO-001 (no workspace manifest or lock entry names asupersync)",
+      "delete_when": "P05's production adapter consumes Asupersync at the pin; the row then moves to P05's contract"
+    },
+    {
+      "id": "franken_kernel",
+      "sibling": "asupersync",
+      "pins": [
+        {
+          "rev": "8940119023c0e01b4d6d3e2c1399f41417c2ad24",
+          "role": "franken_kernel/ is a directory of the Asupersync repository, so it is pinned by the same revision"
+        }
+      ],
+      "disposition": "not consumed",
+      "consumed_by": "nothing",
+      "reason": "At the pin the crate is the suite's identifier substrate (TraceId, DecisionId, PolicyId, SchemaVersion), not a task or budget type, and the renderer's own run, case and correlation identifiers are already defined and tested in franken-control. Its manifest also leaves serde's default `std` feature on (`serde = { version = \"1.0\", features = [\"derive\"] }`), so it is not effectively `no_std` until upstream changes that.",
+      "upstream_bytes": {
+        "path": "franken_kernel/Cargo.toml",
+        "contains": "serde = { version = \"1.0\", features = [\"derive\"] }",
+        "absent": "default-features = false"
+      },
+      "gate": "P06-PIN-002 (the recorded manifest line is at the pin; if upstream changes it the row must be re-judged)",
+      "delete_when": "a workspace crate needs one of its identifiers and the serde line is fixed upstream, or the owner decides not to reuse it"
+    },
+    {
+      "id": "frankenlibc",
+      "sibling": "frankenlibc",
+      "pins": [
+        {
+          "rev": "76d7f3469f5f5251661b3662926d3d6a2b36d494",
+          "role": "the revision E06 inventoried (toolchain/results/e06/upstream/frankenlibc-76d7f3469f5f/)"
+        },
+        {
+          "rev": "a77173e433d675f25d5240f9dc4f0e05cc748ffa",
+          "role": "the revision FIRMWARE_ASSESSMENT.md read; an ancestor of the pin above",
+          "ancestor_of": "76d7f3469f5f5251661b3662926d3d6a2b36d494"
+        }
+      ],
+      "disposition": "semantic reference, rejected as a source of ABI numbers",
+      "consumed_by": "nothing; tests/p06 reads its errno table at the pin as the oracle that a generic table is wrong on MIPS",
+      "reason": "Its errno module is the generic (x86_64/PowerPC) numbering with a thread-local cell. Of the ten network errnos in franken-platform's net module it defines nine (EMSGSIZE is absent), all nine equal PowerPC's number and all nine differ from MIPS's. Dropping its x86_64/aarch64 compile_error gates would therefore build and misread MIPS on every one of them. The numbers in franken-platform come from the libc crate's per-architecture files, the E03 probe and the E03 guest transcripts instead.",
+      "upstream_bytes": {
+        "path": "crates/frankenlibc-core/src/errno/mod.rs",
+        "table": "errno"
+      },
+      "gate": "P06-ORACLE-001 (every upstream network errno equals PowerPC's number and differs from MIPS's)",
+      "delete_when": "FrankenLibC carries per-architecture errno tables for the two big-endian ABIs, at which point this oracle becomes a witness and the row becomes 'adapted'"
+    },
+    {
+      "id": "frankenfs",
+      "sibling": "frankenfs",
+      "pins": [
+        {
+          "rev": "da7bbffaabcc4690d9cc0f8f74a6a825e41b96cb",
+          "role": "the revision FIRMWARE_ASSESSMENT.md read"
+        }
+      ],
+      "disposition": "not selected",
+      "consumed_by": "nothing",
+      "reason": "U01's journal (crates/franken-journal) was written from scratch; docs/contracts/u01.md says no upstream frankenfs code is adopted. No raw-flash or filesystem support is claimed anywhere.",
+      "gate": "P06-PIN-001 (the revision resolves), P06-ISO-001 (no manifest or lock entry names an ffs crate)",
+      "delete_when": "a storage algorithm is adopted from it, with its own tests and revision in that contract"
+    },
+    {
+      "id": "franken_remote",
+      "sibling": "franken_remote",
+      "pins": [
+        {
+          "rev": "873f4827355dc571df50b04a486be3d5764c6e1d",
+          "role": "the revision FIRMWARE_ASSESSMENT.md read"
+        }
+      ],
+      "disposition": "not selected",
+      "consumed_by": "nothing",
+      "reason": "Control leases, epochs and fencing are implemented natively in franken-session (G01) and franken-control (N02). LocalAPI delegation is not native Tailscale and nothing here claims it.",
+      "gate": "P06-PIN-001 (the revision resolves), P06-ISO-001 (no manifest or lock entry names an fr-* crate)",
+      "delete_when": "a lease or media-queue algorithm is adopted from it, with its own tests and revision in that contract"
+    }
+  ],
+  "crates_that_must_not_appear_in_the_lock": [
+    "asupersync",
+    "franken-kernel",
+    "franken-evidence",
+    "franken-decision",
+    "frankenlibc-core",
+    "frankenlibc-abi",
+    "frankenlibc-membrane",
+    "ffs-core",
+    "ffs-types",
+    "ffs-journal",
+    "fr-core",
+    "fr-wire",
+    "fr-media"
+  ],
+  "crates_that_must_not_be_direct_dependencies": {
+    "franken-platform": [
+      "libc"
+    ],
+    "franken-platform-linux": [
+      "libc"
+    ],
+    "_why": "libc is an FFI table the lock carries for other reasons; the platform layer and its leaf issue raw calls themselves (the one counted unsafe edge) and must not grow a dependency that would make a build look portable by importing someone else's constants."
+  }
+}

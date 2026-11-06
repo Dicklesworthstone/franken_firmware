@@ -1,0 +1,2006 @@
+{
+  "schema": "ffw.p06.durable_abi.v1",
+  "provenance": "Written by hand. The numbers are the values in the Linux headers at v2.6.14, v2.6.23, v2.6.33 and v2.6.35 (asm-generic and the asm-mips / asm-powerpc fcntl.h and errno.h; the files and their sha256 are under 'witnesses') and in the libc crate's musl b32 MIPS and PowerPC files (0.2.191). The sums in 'open_request' are typed as literals; the first three were added up by hand, the rest by tests/p06/test_durable.py's independent model and then compared. Nothing in this file was produced by the Rust under test; tests/p06/test_durable.py re-derives every decoded answer and holds every number to the libc files. The facts about kernel behavior (O_CLOEXEC ignored before 2.6.23, fsync reporting an error once, EXDEV on a cross-mount rename, pread64 taking six argument slots) are read from the sources under 'witnesses', not observed on a running kernel.",
+  "common": {
+    "O_RDONLY": 0,
+    "O_WRONLY": 1,
+    "O_RDWR": 2,
+    "O_TRUNC": 512,
+    "O_CLOEXEC": 524288
+  },
+  "abi": {
+    "powerpc32": {
+      "O_NONBLOCK": 2048,
+      "open": {
+        "O_CREAT": 64,
+        "O_EXCL": 128,
+        "O_APPEND": 1024,
+        "O_DSYNC": 4096,
+        "O_SYNC": 1052672,
+        "O_DIRECTORY": 16384,
+        "O_NOFOLLOW": 32768,
+        "O_LARGEFILE": 65536
+      },
+      "errno": {
+        "EPERM": 1,
+        "ENOENT": 2,
+        "EIO": 5,
+        "EBADF": 9,
+        "ENOMEM": 12,
+        "EACCES": 13,
+        "EBUSY": 16,
+        "EEXIST": 17,
+        "EXDEV": 18,
+        "ENOTDIR": 20,
+        "EISDIR": 21,
+        "ENFILE": 23,
+        "EMFILE": 24,
+        "EFBIG": 27,
+        "ENOSPC": 28,
+        "EROFS": 30,
+        "EDEADLK": 35,
+        "ENAMETOOLONG": 36,
+        "ENOLCK": 37,
+        "ENOTEMPTY": 39,
+        "ELOOP": 40,
+        "EOVERFLOW": 75,
+        "ESTALE": 116,
+        "EDQUOT": 122
+      }
+    },
+    "mips32": {
+      "O_NONBLOCK": 128,
+      "open": {
+        "O_CREAT": 256,
+        "O_EXCL": 1024,
+        "O_APPEND": 8,
+        "O_DSYNC": 16,
+        "O_SYNC": 16400,
+        "O_DIRECTORY": 65536,
+        "O_NOFOLLOW": 131072,
+        "O_LARGEFILE": 8192
+      },
+      "errno": {
+        "EPERM": 1,
+        "ENOENT": 2,
+        "EIO": 5,
+        "EBADF": 9,
+        "ENOMEM": 12,
+        "EACCES": 13,
+        "EBUSY": 16,
+        "EEXIST": 17,
+        "EXDEV": 18,
+        "ENOTDIR": 20,
+        "EISDIR": 21,
+        "ENFILE": 23,
+        "EMFILE": 24,
+        "EFBIG": 27,
+        "ENOSPC": 28,
+        "EROFS": 30,
+        "EDEADLK": 45,
+        "ENAMETOOLONG": 78,
+        "ENOLCK": 46,
+        "ENOTEMPTY": 93,
+        "ELOOP": 90,
+        "EOVERFLOW": 79,
+        "ESTALE": 151,
+        "EDQUOT": 1133
+      }
+    }
+  },
+  "cross_abi_collisions": [
+    {
+      "value": 1024,
+      "powerpc32": "O_APPEND",
+      "mips32": "O_EXCL"
+    },
+    {
+      "value": 65536,
+      "powerpc32": "O_LARGEFILE",
+      "mips32": "O_DIRECTORY"
+    }
+  ],
+  "differing_errnos": [
+    "EDEADLK",
+    "ENAMETOOLONG",
+    "ENOLCK",
+    "ENOTEMPTY",
+    "ELOOP",
+    "EOVERFLOW",
+    "ESTALE",
+    "EDQUOT"
+  ],
+  "kernel_boundaries": {
+    "cloexec_honored_since": [
+      2,
+      6,
+      23
+    ],
+    "dsync_native_since": [
+      2,
+      6,
+      33
+    ],
+    "old_sync_value": {
+      "powerpc32": 4096,
+      "mips32": 16
+    },
+    "note": "Before 2.6.23 fs/open.c does not validate open flags, so O_CLOEXEC is ignored without an error. Before 2.6.33 O_SYNC is the single old bit; the 2.6.33 O_SYNC adds a bit that is unassigned earlier, and the 2.6.33 O_DSYNC is that old bit."
+  },
+  "release_checks": [
+    {
+      "release": [
+        1,
+        99,
+        99
+      ],
+      "cloexec_honored": false,
+      "dsync_native": false
+    },
+    {
+      "release": [
+        2,
+        5,
+        99
+      ],
+      "cloexec_honored": false,
+      "dsync_native": false
+    },
+    {
+      "release": [
+        2,
+        6,
+        14
+      ],
+      "cloexec_honored": false,
+      "dsync_native": false
+    },
+    {
+      "release": [
+        2,
+        6,
+        22
+      ],
+      "cloexec_honored": false,
+      "dsync_native": false
+    },
+    {
+      "release": [
+        2,
+        6,
+        23
+      ],
+      "cloexec_honored": true,
+      "dsync_native": false
+    },
+    {
+      "release": [
+        2,
+        6,
+        32
+      ],
+      "cloexec_honored": true,
+      "dsync_native": false
+    },
+    {
+      "release": [
+        2,
+        6,
+        33
+      ],
+      "cloexec_honored": true,
+      "dsync_native": true
+    },
+    {
+      "release": [
+        2,
+        6,
+        35
+      ],
+      "cloexec_honored": true,
+      "dsync_native": true
+    },
+    {
+      "release": [
+        3,
+        0,
+        0
+      ],
+      "cloexec_honored": true,
+      "dsync_native": true
+    },
+    {
+      "release": [
+        4,
+        9,
+        0
+      ],
+      "cloexec_honored": true,
+      "dsync_native": true
+    }
+  ],
+  "open_request": [
+    {
+      "name": "read-only, nothing else",
+      "abi": "powerpc32",
+      "access": "read_only",
+      "create": "never",
+      "truncate": false,
+      "append": false,
+      "sync": "none",
+      "directory": false,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "ok": 0
+      }
+    },
+    {
+      "name": "read-only, nothing else",
+      "abi": "mips32",
+      "access": "read_only",
+      "create": "never",
+      "truncate": false,
+      "append": false,
+      "sync": "none",
+      "directory": false,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "ok": 0
+      }
+    },
+    {
+      "name": "write-only, create if missing, truncate",
+      "abi": "powerpc32",
+      "access": "write_only",
+      "create": "if_missing",
+      "truncate": true,
+      "append": false,
+      "sync": "none",
+      "directory": false,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "ok": 577
+      }
+    },
+    {
+      "name": "write-only, create if missing, truncate",
+      "abi": "mips32",
+      "access": "write_only",
+      "create": "if_missing",
+      "truncate": true,
+      "append": false,
+      "sync": "none",
+      "directory": false,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "ok": 769
+      }
+    },
+    {
+      "name": "read-write, must be new, data sync",
+      "abi": "powerpc32",
+      "access": "read_write",
+      "create": "must_be_new",
+      "truncate": false,
+      "append": false,
+      "sync": "data",
+      "directory": false,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "ok": 4290
+      }
+    },
+    {
+      "name": "read-write, must be new, data sync",
+      "abi": "mips32",
+      "access": "read_write",
+      "create": "must_be_new",
+      "truncate": false,
+      "append": false,
+      "sync": "data",
+      "directory": false,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "ok": 1298
+      }
+    },
+    {
+      "name": "read-write, full sync",
+      "abi": "powerpc32",
+      "access": "read_write",
+      "create": "never",
+      "truncate": false,
+      "append": false,
+      "sync": "full",
+      "directory": false,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "ok": 1052674
+      }
+    },
+    {
+      "name": "read-write, full sync",
+      "abi": "mips32",
+      "access": "read_write",
+      "create": "never",
+      "truncate": false,
+      "append": false,
+      "sync": "full",
+      "directory": false,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "ok": 16402
+      }
+    },
+    {
+      "name": "write-only, append",
+      "abi": "powerpc32",
+      "access": "write_only",
+      "create": "never",
+      "truncate": false,
+      "append": true,
+      "sync": "none",
+      "directory": false,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "ok": 1025
+      }
+    },
+    {
+      "name": "write-only, append",
+      "abi": "mips32",
+      "access": "write_only",
+      "create": "never",
+      "truncate": false,
+      "append": true,
+      "sync": "none",
+      "directory": false,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "ok": 9
+      }
+    },
+    {
+      "name": "a directory opened read-only to be synced",
+      "abi": "powerpc32",
+      "access": "read_only",
+      "create": "never",
+      "truncate": false,
+      "append": false,
+      "sync": "none",
+      "directory": true,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": true,
+      "large_file": false,
+      "expect": {
+        "ok": 540672
+      }
+    },
+    {
+      "name": "a directory opened read-only to be synced",
+      "abi": "mips32",
+      "access": "read_only",
+      "create": "never",
+      "truncate": false,
+      "append": false,
+      "sync": "none",
+      "directory": true,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": true,
+      "large_file": false,
+      "expect": {
+        "ok": 589824
+      }
+    },
+    {
+      "name": "read-write, no-follow, large-file, nonblock, cloexec",
+      "abi": "powerpc32",
+      "access": "read_write",
+      "create": "never",
+      "truncate": false,
+      "append": false,
+      "sync": "none",
+      "directory": false,
+      "no_follow": true,
+      "nonblock": true,
+      "cloexec": true,
+      "large_file": true,
+      "expect": {
+        "ok": 624642
+      }
+    },
+    {
+      "name": "read-write, no-follow, large-file, nonblock, cloexec",
+      "abi": "mips32",
+      "access": "read_write",
+      "create": "never",
+      "truncate": false,
+      "append": false,
+      "sync": "none",
+      "directory": false,
+      "no_follow": true,
+      "nonblock": true,
+      "cloexec": true,
+      "large_file": true,
+      "expect": {
+        "ok": 663682
+      }
+    },
+    {
+      "name": "read-only may create (an empty file)",
+      "abi": "powerpc32",
+      "access": "read_only",
+      "create": "if_missing",
+      "truncate": false,
+      "append": false,
+      "sync": "none",
+      "directory": false,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "ok": 64
+      }
+    },
+    {
+      "name": "read-only may create (an empty file)",
+      "abi": "mips32",
+      "access": "read_only",
+      "create": "if_missing",
+      "truncate": false,
+      "append": false,
+      "sync": "none",
+      "directory": false,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "ok": 256
+      }
+    },
+    {
+      "name": "read-only with truncate is refused",
+      "abi": "powerpc32",
+      "access": "read_only",
+      "create": "never",
+      "truncate": true,
+      "append": false,
+      "sync": "none",
+      "directory": false,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "err": "flags:write_flag_on_read_only"
+      }
+    },
+    {
+      "name": "read-only with truncate is refused",
+      "abi": "mips32",
+      "access": "read_only",
+      "create": "never",
+      "truncate": true,
+      "append": false,
+      "sync": "none",
+      "directory": false,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "err": "flags:write_flag_on_read_only"
+      }
+    },
+    {
+      "name": "read-only with append is refused",
+      "abi": "powerpc32",
+      "access": "read_only",
+      "create": "never",
+      "truncate": false,
+      "append": true,
+      "sync": "none",
+      "directory": false,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "err": "flags:write_flag_on_read_only"
+      }
+    },
+    {
+      "name": "read-only with append is refused",
+      "abi": "mips32",
+      "access": "read_only",
+      "create": "never",
+      "truncate": false,
+      "append": true,
+      "sync": "none",
+      "directory": false,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "err": "flags:write_flag_on_read_only"
+      }
+    },
+    {
+      "name": "read-only with a sync flag is refused",
+      "abi": "powerpc32",
+      "access": "read_only",
+      "create": "never",
+      "truncate": false,
+      "append": false,
+      "sync": "data",
+      "directory": false,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "err": "flags:write_flag_on_read_only"
+      }
+    },
+    {
+      "name": "read-only with a sync flag is refused",
+      "abi": "mips32",
+      "access": "read_only",
+      "create": "never",
+      "truncate": false,
+      "append": false,
+      "sync": "data",
+      "directory": false,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "err": "flags:write_flag_on_read_only"
+      }
+    },
+    {
+      "name": "a directory opened for writing is refused",
+      "abi": "powerpc32",
+      "access": "write_only",
+      "create": "never",
+      "truncate": false,
+      "append": false,
+      "sync": "none",
+      "directory": true,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "err": "flags:directory_with_file_flag"
+      }
+    },
+    {
+      "name": "a directory opened for writing is refused",
+      "abi": "mips32",
+      "access": "write_only",
+      "create": "never",
+      "truncate": false,
+      "append": false,
+      "sync": "none",
+      "directory": true,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "err": "flags:directory_with_file_flag"
+      }
+    },
+    {
+      "name": "a directory with create is refused",
+      "abi": "powerpc32",
+      "access": "read_only",
+      "create": "if_missing",
+      "truncate": false,
+      "append": false,
+      "sync": "none",
+      "directory": true,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "err": "flags:directory_with_file_flag"
+      }
+    },
+    {
+      "name": "a directory with create is refused",
+      "abi": "mips32",
+      "access": "read_only",
+      "create": "if_missing",
+      "truncate": false,
+      "append": false,
+      "sync": "none",
+      "directory": true,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "err": "flags:directory_with_file_flag"
+      }
+    },
+    {
+      "name": "a directory with truncate is refused",
+      "abi": "powerpc32",
+      "access": "read_only",
+      "create": "never",
+      "truncate": true,
+      "append": false,
+      "sync": "none",
+      "directory": true,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "err": "flags:write_flag_on_read_only"
+      }
+    },
+    {
+      "name": "a directory with truncate is refused",
+      "abi": "mips32",
+      "access": "read_only",
+      "create": "never",
+      "truncate": true,
+      "append": false,
+      "sync": "none",
+      "directory": true,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "err": "flags:write_flag_on_read_only"
+      }
+    },
+    {
+      "name": "a directory with a full sync is refused",
+      "abi": "powerpc32",
+      "access": "read_only",
+      "create": "never",
+      "truncate": false,
+      "append": false,
+      "sync": "full",
+      "directory": true,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "err": "flags:write_flag_on_read_only"
+      }
+    },
+    {
+      "name": "a directory with a full sync is refused",
+      "abi": "mips32",
+      "access": "read_only",
+      "create": "never",
+      "truncate": false,
+      "append": false,
+      "sync": "full",
+      "directory": true,
+      "no_follow": false,
+      "nonblock": false,
+      "cloexec": false,
+      "large_file": false,
+      "expect": {
+        "err": "flags:write_flag_on_read_only"
+      }
+    }
+  ],
+  "classify": [
+    {
+      "abi": "powerpc32",
+      "errno": 28,
+      "expect": "ENOSPC"
+    },
+    {
+      "abi": "mips32",
+      "errno": 28,
+      "expect": "ENOSPC"
+    },
+    {
+      "abi": "powerpc32",
+      "errno": 122,
+      "expect": "EDQUOT"
+    },
+    {
+      "abi": "mips32",
+      "errno": 1133,
+      "expect": "EDQUOT"
+    },
+    {
+      "abi": "powerpc32",
+      "errno": 1133,
+      "expect": "unknown:1133"
+    },
+    {
+      "abi": "mips32",
+      "errno": 122,
+      "expect": "unknown:122"
+    },
+    {
+      "abi": "powerpc32",
+      "errno": 39,
+      "expect": "ENOTEMPTY"
+    },
+    {
+      "abi": "mips32",
+      "errno": 93,
+      "expect": "ENOTEMPTY"
+    },
+    {
+      "abi": "powerpc32",
+      "errno": 93,
+      "expect": "unknown:93"
+    },
+    {
+      "abi": "mips32",
+      "errno": 39,
+      "expect": "unknown:39"
+    },
+    {
+      "abi": "powerpc32",
+      "errno": 40,
+      "expect": "ELOOP"
+    },
+    {
+      "abi": "mips32",
+      "errno": 90,
+      "expect": "ELOOP"
+    },
+    {
+      "abi": "powerpc32",
+      "errno": 90,
+      "expect": "unknown:90"
+    },
+    {
+      "abi": "mips32",
+      "errno": 40,
+      "expect": "unknown:40"
+    },
+    {
+      "abi": "powerpc32",
+      "errno": 36,
+      "expect": "ENAMETOOLONG"
+    },
+    {
+      "abi": "mips32",
+      "errno": 78,
+      "expect": "ENAMETOOLONG"
+    },
+    {
+      "abi": "mips32",
+      "errno": 36,
+      "expect": "unknown:36"
+    },
+    {
+      "abi": "powerpc32",
+      "errno": 78,
+      "expect": "unknown:78"
+    },
+    {
+      "abi": "powerpc32",
+      "errno": 18,
+      "expect": "EXDEV"
+    },
+    {
+      "abi": "mips32",
+      "errno": 18,
+      "expect": "EXDEV"
+    },
+    {
+      "abi": "powerpc32",
+      "errno": 5,
+      "expect": "EIO"
+    },
+    {
+      "abi": "mips32",
+      "errno": 2,
+      "expect": "ENOENT"
+    },
+    {
+      "abi": "powerpc32",
+      "errno": 38,
+      "expect": "absent"
+    },
+    {
+      "abi": "mips32",
+      "errno": 89,
+      "expect": "absent"
+    },
+    {
+      "abi": "mips32",
+      "errno": 38,
+      "expect": "unknown:38"
+    },
+    {
+      "abi": "powerpc32",
+      "errno": 4,
+      "expect": "interrupted"
+    },
+    {
+      "abi": "mips32",
+      "errno": 11,
+      "expect": "would_block"
+    },
+    {
+      "abi": "powerpc32",
+      "errno": 22,
+      "expect": "invalid"
+    }
+  ],
+  "open_decode": [
+    {
+      "abi": "powerpc32",
+      "raw": 3,
+      "expect": {
+        "fd": 3
+      }
+    },
+    {
+      "abi": "mips32",
+      "raw": 7,
+      "expect": {
+        "fd": 7
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": 0,
+      "expect": {
+        "fd": 0
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": -2,
+      "expect": {
+        "err": "ENOENT"
+      }
+    },
+    {
+      "abi": "mips32",
+      "raw": -2,
+      "expect": {
+        "err": "ENOENT"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": -17,
+      "expect": {
+        "err": "EEXIST"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": -24,
+      "expect": {
+        "err": "EMFILE"
+      }
+    },
+    {
+      "abi": "mips32",
+      "raw": -23,
+      "expect": {
+        "err": "ENFILE"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": -122,
+      "expect": {
+        "err": "EDQUOT"
+      }
+    },
+    {
+      "abi": "mips32",
+      "raw": -1133,
+      "expect": {
+        "err": "EDQUOT"
+      }
+    },
+    {
+      "abi": "mips32",
+      "raw": -122,
+      "expect": {
+        "err": "unknown:122"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": -38,
+      "expect": {
+        "err": "absent"
+      }
+    },
+    {
+      "abi": "mips32",
+      "raw": -89,
+      "expect": {
+        "err": "absent"
+      }
+    },
+    {
+      "abi": "mips32",
+      "raw": -38,
+      "expect": {
+        "err": "unknown:38"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": -4,
+      "expect": {
+        "err": "interrupted"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": -5000,
+      "expect": {
+        "err": "malformed"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": 2147483648,
+      "expect": {
+        "err": "descriptor_range"
+      },
+      "host_64bit_only": true
+    }
+  ],
+  "write_decode": [
+    {
+      "abi": "powerpc32",
+      "requested": 100,
+      "raw": 100,
+      "expect": {
+        "progress": "full"
+      }
+    },
+    {
+      "abi": "mips32",
+      "requested": 100,
+      "raw": 100,
+      "expect": {
+        "progress": "full"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "requested": 100,
+      "raw": 40,
+      "expect": {
+        "progress": "partial",
+        "written": 40
+      }
+    },
+    {
+      "abi": "mips32",
+      "requested": 100,
+      "raw": 1,
+      "expect": {
+        "progress": "partial",
+        "written": 1
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "requested": 100,
+      "raw": 0,
+      "expect": {
+        "err": "no_progress"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "requested": 100,
+      "raw": 101,
+      "expect": {
+        "err": "over_reported"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "requested": 0,
+      "raw": 0,
+      "expect": {
+        "progress": "full"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "requested": 0,
+      "raw": 1,
+      "expect": {
+        "err": "over_reported"
+      }
+    },
+    {
+      "abi": "mips32",
+      "requested": 100,
+      "raw": -28,
+      "expect": {
+        "err": "ENOSPC"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "requested": 100,
+      "raw": -122,
+      "expect": {
+        "err": "EDQUOT"
+      }
+    },
+    {
+      "abi": "mips32",
+      "requested": 100,
+      "raw": -1133,
+      "expect": {
+        "err": "EDQUOT"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "requested": 100,
+      "raw": -27,
+      "expect": {
+        "err": "EFBIG"
+      }
+    },
+    {
+      "abi": "mips32",
+      "requested": 100,
+      "raw": -5,
+      "expect": {
+        "err": "EIO"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "requested": 100,
+      "raw": -9,
+      "expect": {
+        "err": "EBADF"
+      }
+    },
+    {
+      "abi": "mips32",
+      "requested": 100,
+      "raw": -30,
+      "expect": {
+        "err": "EROFS"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "requested": 100,
+      "raw": -4,
+      "expect": {
+        "err": "interrupted"
+      }
+    },
+    {
+      "abi": "mips32",
+      "requested": 100,
+      "raw": -11,
+      "expect": {
+        "err": "would_block"
+      }
+    }
+  ],
+  "fsync_decode": [
+    {
+      "abi": "powerpc32",
+      "raw": 0,
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "abi": "mips32",
+      "raw": 0,
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": -5,
+      "expect": {
+        "err": "sync_failed:EIO"
+      }
+    },
+    {
+      "abi": "mips32",
+      "raw": -5,
+      "expect": {
+        "err": "sync_failed:EIO"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": -28,
+      "expect": {
+        "err": "sync_failed:ENOSPC"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": -122,
+      "expect": {
+        "err": "sync_failed:EDQUOT"
+      }
+    },
+    {
+      "abi": "mips32",
+      "raw": -1133,
+      "expect": {
+        "err": "sync_failed:EDQUOT"
+      }
+    },
+    {
+      "abi": "mips32",
+      "raw": -122,
+      "expect": {
+        "err": "unknown:122"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": -22,
+      "expect": {
+        "err": "not_syncable"
+      }
+    },
+    {
+      "abi": "mips32",
+      "raw": -22,
+      "expect": {
+        "err": "not_syncable"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": -4,
+      "expect": {
+        "err": "interrupted"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": -9,
+      "expect": {
+        "err": "EBADF"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": 1,
+      "expect": {
+        "err": "unexpected_result"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": -38,
+      "expect": {
+        "err": "absent"
+      }
+    },
+    {
+      "abi": "mips32",
+      "raw": -89,
+      "expect": {
+        "err": "absent"
+      }
+    }
+  ],
+  "unit_decode": [
+    {
+      "abi": "powerpc32",
+      "raw": 0,
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "abi": "mips32",
+      "raw": 0,
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": -18,
+      "expect": {
+        "err": "EXDEV"
+      }
+    },
+    {
+      "abi": "mips32",
+      "raw": -18,
+      "expect": {
+        "err": "EXDEV"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": -39,
+      "expect": {
+        "err": "ENOTEMPTY"
+      }
+    },
+    {
+      "abi": "mips32",
+      "raw": -93,
+      "expect": {
+        "err": "ENOTEMPTY"
+      }
+    },
+    {
+      "abi": "mips32",
+      "raw": -39,
+      "expect": {
+        "err": "unknown:39"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": -21,
+      "expect": {
+        "err": "EISDIR"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": -20,
+      "expect": {
+        "err": "ENOTDIR"
+      }
+    },
+    {
+      "abi": "mips32",
+      "raw": -16,
+      "expect": {
+        "err": "EBUSY"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": -30,
+      "expect": {
+        "err": "EROFS"
+      }
+    },
+    {
+      "abi": "mips32",
+      "raw": -2,
+      "expect": {
+        "err": "ENOENT"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": -36,
+      "expect": {
+        "err": "ENAMETOOLONG"
+      }
+    },
+    {
+      "abi": "mips32",
+      "raw": -78,
+      "expect": {
+        "err": "ENAMETOOLONG"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": -40,
+      "expect": {
+        "err": "ELOOP"
+      }
+    },
+    {
+      "abi": "mips32",
+      "raw": -90,
+      "expect": {
+        "err": "ELOOP"
+      }
+    },
+    {
+      "abi": "powerpc32",
+      "raw": 3,
+      "expect": {
+        "err": "unexpected_result"
+      }
+    }
+  ],
+  "offset": [
+    {
+      "offset": 0,
+      "expect": {
+        "hi": 0,
+        "lo": 0,
+        "i32": 0
+      }
+    },
+    {
+      "offset": 1,
+      "expect": {
+        "hi": 0,
+        "lo": 1,
+        "i32": 1
+      }
+    },
+    {
+      "offset": 2147483647,
+      "expect": {
+        "hi": 0,
+        "lo": 2147483647,
+        "i32": 2147483647
+      }
+    },
+    {
+      "offset": 2147483648,
+      "expect": {
+        "hi": 0,
+        "lo": 2147483648
+      }
+    },
+    {
+      "offset": 4294967295,
+      "expect": {
+        "hi": 0,
+        "lo": 4294967295
+      }
+    },
+    {
+      "offset": 4294967296,
+      "expect": {
+        "hi": 1,
+        "lo": 0
+      }
+    },
+    {
+      "offset": 4294967298,
+      "expect": {
+        "hi": 1,
+        "lo": 2
+      }
+    },
+    {
+      "offset": 9223372036854775807,
+      "expect": {
+        "hi": 2147483647,
+        "lo": 4294967295
+      }
+    },
+    {
+      "offset": -1,
+      "expect": {
+        "err": "offset_negative"
+      }
+    },
+    {
+      "offset": -9223372036854775808,
+      "expect": {
+        "err": "offset_negative"
+      }
+    }
+  ],
+  "llseek_result": [
+    {
+      "bytes": "0000000000000000",
+      "expect": {
+        "offset": 0
+      }
+    },
+    {
+      "bytes": "0000000000000001",
+      "expect": {
+        "offset": 1
+      }
+    },
+    {
+      "bytes": "000000007fffffff",
+      "expect": {
+        "offset": 2147483647
+      }
+    },
+    {
+      "bytes": "0000000100000002",
+      "expect": {
+        "offset": 4294967298
+      }
+    },
+    {
+      "bytes": "7fffffffffffffff",
+      "expect": {
+        "offset": 9223372036854775807
+      }
+    },
+    {
+      "bytes": "8000000000000000",
+      "expect": {
+        "err": "offset_negative"
+      }
+    },
+    {
+      "bytes": "ffffffffffffffff",
+      "expect": {
+        "err": "offset_negative"
+      }
+    }
+  ],
+  "replace_sequence": [
+    {
+      "name": "the E03 sequence in order",
+      "abi": "powerpc32",
+      "steps": [
+        {
+          "step": "write",
+          "requested": 512,
+          "written": 512
+        },
+        {
+          "step": "fsync",
+          "raw": 0
+        },
+        {
+          "step": "rename",
+          "raw": 0
+        },
+        {
+          "step": "read_back",
+          "matches": true
+        },
+        {
+          "step": "old_name_gone",
+          "raw": -2
+        }
+      ],
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "name": "the E03 sequence in order",
+      "abi": "mips32",
+      "steps": [
+        {
+          "step": "write",
+          "requested": 512,
+          "written": 512
+        },
+        {
+          "step": "fsync",
+          "raw": 0
+        },
+        {
+          "step": "rename",
+          "raw": 0
+        },
+        {
+          "step": "read_back",
+          "matches": true
+        },
+        {
+          "step": "old_name_gone",
+          "raw": -2
+        }
+      ],
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "name": "a short write",
+      "abi": "powerpc32",
+      "steps": [
+        {
+          "step": "write",
+          "requested": 512,
+          "written": 100
+        },
+        {
+          "step": "fsync",
+          "raw": 0
+        },
+        {
+          "step": "rename",
+          "raw": 0
+        },
+        {
+          "step": "read_back",
+          "matches": true
+        },
+        {
+          "step": "old_name_gone",
+          "raw": -2
+        }
+      ],
+      "expect": {
+        "err": "short_write"
+      }
+    },
+    {
+      "name": "a write that over-reports",
+      "abi": "powerpc32",
+      "steps": [
+        {
+          "step": "write",
+          "requested": 10,
+          "written": 11
+        },
+        {
+          "step": "fsync",
+          "raw": 0
+        },
+        {
+          "step": "rename",
+          "raw": 0
+        },
+        {
+          "step": "read_back",
+          "matches": true
+        },
+        {
+          "step": "old_name_gone",
+          "raw": -2
+        }
+      ],
+      "expect": {
+        "err": "failed:0:write:over_reported"
+      }
+    },
+    {
+      "name": "rename before fsync",
+      "abi": "powerpc32",
+      "steps": [
+        {
+          "step": "write",
+          "requested": 512,
+          "written": 512
+        },
+        {
+          "step": "rename",
+          "raw": 0
+        },
+        {
+          "step": "fsync",
+          "raw": 0
+        },
+        {
+          "step": "read_back",
+          "matches": true
+        },
+        {
+          "step": "old_name_gone",
+          "raw": -2
+        }
+      ],
+      "expect": {
+        "err": "out_of_order:1:fsync"
+      }
+    },
+    {
+      "name": "fsync fails with EIO",
+      "abi": "powerpc32",
+      "steps": [
+        {
+          "step": "write",
+          "requested": 512,
+          "written": 512
+        },
+        {
+          "step": "fsync",
+          "raw": -5
+        },
+        {
+          "step": "rename",
+          "raw": 0
+        },
+        {
+          "step": "read_back",
+          "matches": true
+        },
+        {
+          "step": "old_name_gone",
+          "raw": -2
+        }
+      ],
+      "expect": {
+        "err": "failed:1:fsync:sync_failed:EIO"
+      }
+    },
+    {
+      "name": "fsync on a file with no sync operation",
+      "abi": "mips32",
+      "steps": [
+        {
+          "step": "write",
+          "requested": 512,
+          "written": 512
+        },
+        {
+          "step": "fsync",
+          "raw": -22
+        },
+        {
+          "step": "rename",
+          "raw": 0
+        },
+        {
+          "step": "read_back",
+          "matches": true
+        },
+        {
+          "step": "old_name_gone",
+          "raw": -2
+        }
+      ],
+      "expect": {
+        "err": "failed:1:fsync:not_syncable"
+      }
+    },
+    {
+      "name": "rename across devices",
+      "abi": "powerpc32",
+      "steps": [
+        {
+          "step": "write",
+          "requested": 512,
+          "written": 512
+        },
+        {
+          "step": "fsync",
+          "raw": 0
+        },
+        {
+          "step": "rename",
+          "raw": -18
+        },
+        {
+          "step": "read_back",
+          "matches": true
+        },
+        {
+          "step": "old_name_gone",
+          "raw": -2
+        }
+      ],
+      "expect": {
+        "err": "failed:2:rename:EXDEV"
+      }
+    },
+    {
+      "name": "rename onto a non-empty directory, MIPS numbering",
+      "abi": "mips32",
+      "steps": [
+        {
+          "step": "write",
+          "requested": 512,
+          "written": 512
+        },
+        {
+          "step": "fsync",
+          "raw": 0
+        },
+        {
+          "step": "rename",
+          "raw": -93
+        },
+        {
+          "step": "read_back",
+          "matches": true
+        },
+        {
+          "step": "old_name_gone",
+          "raw": -2
+        }
+      ],
+      "expect": {
+        "err": "failed:2:rename:ENOTEMPTY"
+      }
+    },
+    {
+      "name": "the same number on PowerPC is not ENOTEMPTY",
+      "abi": "powerpc32",
+      "steps": [
+        {
+          "step": "write",
+          "requested": 512,
+          "written": 512
+        },
+        {
+          "step": "fsync",
+          "raw": 0
+        },
+        {
+          "step": "rename",
+          "raw": -93
+        },
+        {
+          "step": "read_back",
+          "matches": true
+        },
+        {
+          "step": "old_name_gone",
+          "raw": -2
+        }
+      ],
+      "expect": {
+        "err": "failed:2:rename:unknown:93"
+      }
+    },
+    {
+      "name": "the target reads back different bytes",
+      "abi": "powerpc32",
+      "steps": [
+        {
+          "step": "write",
+          "requested": 512,
+          "written": 512
+        },
+        {
+          "step": "fsync",
+          "raw": 0
+        },
+        {
+          "step": "rename",
+          "raw": 0
+        },
+        {
+          "step": "read_back",
+          "matches": false
+        },
+        {
+          "step": "old_name_gone",
+          "raw": -2
+        }
+      ],
+      "expect": {
+        "err": "read_back_differs"
+      }
+    },
+    {
+      "name": "the old name still opens",
+      "abi": "mips32",
+      "steps": [
+        {
+          "step": "write",
+          "requested": 512,
+          "written": 512
+        },
+        {
+          "step": "fsync",
+          "raw": 0
+        },
+        {
+          "step": "rename",
+          "raw": 0
+        },
+        {
+          "step": "read_back",
+          "matches": true
+        },
+        {
+          "step": "old_name_gone",
+          "raw": 5
+        }
+      ],
+      "expect": {
+        "err": "old_name_still_there"
+      }
+    },
+    {
+      "name": "the old name answers EACCES, not ENOENT",
+      "abi": "powerpc32",
+      "steps": [
+        {
+          "step": "write",
+          "requested": 512,
+          "written": 512
+        },
+        {
+          "step": "fsync",
+          "raw": 0
+        },
+        {
+          "step": "rename",
+          "raw": 0
+        },
+        {
+          "step": "read_back",
+          "matches": true
+        },
+        {
+          "step": "old_name_gone",
+          "raw": -13
+        }
+      ],
+      "expect": {
+        "err": "failed:4:old_name_gone:EACCES"
+      }
+    },
+    {
+      "name": "only the write and the fsync happened",
+      "abi": "powerpc32",
+      "steps": [
+        {
+          "step": "write",
+          "requested": 512,
+          "written": 512
+        },
+        {
+          "step": "fsync",
+          "raw": 0
+        }
+      ],
+      "expect": {
+        "err": "missing:rename"
+      }
+    },
+    {
+      "name": "no steps at all",
+      "abi": "mips32",
+      "steps": [],
+      "expect": {
+        "err": "missing:write"
+      }
+    },
+    {
+      "name": "a sixth step",
+      "abi": "powerpc32",
+      "steps": [
+        {
+          "step": "write",
+          "requested": 512,
+          "written": 512
+        },
+        {
+          "step": "fsync",
+          "raw": 0
+        },
+        {
+          "step": "rename",
+          "raw": 0
+        },
+        {
+          "step": "read_back",
+          "matches": true
+        },
+        {
+          "step": "old_name_gone",
+          "raw": -2
+        },
+        {
+          "step": "old_name_gone",
+          "raw": -2
+        }
+      ],
+      "expect": {
+        "err": "extra:5"
+      }
+    }
+  ],
+  "witnesses": [
+    {
+      "fact": "open flag numbers, 2.6.33 and later",
+      "tag": "v2.6.35",
+      "files": {
+        "include/asm-generic/fcntl.h": "0105234cbc12e6b7",
+        "arch/mips/include/asm/fcntl.h": "fae5795beb63c249",
+        "arch/powerpc/include/asm/fcntl.h": "d1022e93ba47cd5f"
+      }
+    },
+    {
+      "fact": "O_CLOEXEC absent at 2.6.22, present at 2.6.23",
+      "tag": "v2.6.22/v2.6.23",
+      "files": {
+        "include/asm-generic/fcntl.h@v2.6.22": "4ce77b541966d454",
+        "include/asm-generic/fcntl.h@v2.6.23": "58e654ff31b52d73"
+      }
+    },
+    {
+      "fact": "O_DSYNC absent at 2.6.32, present at 2.6.33, and O_SYNC changes value",
+      "tag": "v2.6.32/v2.6.33",
+      "files": {
+        "include/asm-generic/fcntl.h@v2.6.32": "a4722a8a9976cbaa",
+        "include/asm-generic/fcntl.h@v2.6.33": "0105234cbc12e6b7",
+        "arch/mips/include/asm/fcntl.h@v2.6.33": "fae5795beb63c249"
+      }
+    },
+    {
+      "fact": "errno numbers",
+      "tag": "v2.6.14/v2.6.35",
+      "files": {
+        "include/asm-generic/errno-base.h": "889fe661e86321cf",
+        "include/asm-generic/errno.h@v2.6.35": "fe595906921dec1d",
+        "arch/mips/include/asm/errno.h@v2.6.35": "16f6a76295a5f582",
+        "include/asm-mips/errno.h@v2.6.14": "a236f3de2ba8d722",
+        "arch/powerpc/include/asm/errno.h": "6c0e4c4438799903"
+      }
+    },
+    {
+      "fact": "open() does not validate flag bits (unknown bits are ignored)",
+      "tag": "v2.6.14",
+      "files": {
+        "fs/open.c": "b64146f685b35106"
+      }
+    },
+    {
+      "fact": "fsync: EINVAL when the file has no fsync operation; the writeback error is reported once",
+      "tag": "v2.6.14/v2.6.35",
+      "files": {
+        "fs/buffer.c@v2.6.14": "f8f299659b694477",
+        "mm/filemap.c@v2.6.14": "ef381021aa9d947e",
+        "mm/filemap.c@v2.6.35": "21b78b8da6a96109"
+      }
+    },
+    {
+      "fact": "rename returns EXDEV when the two paths are on different mounts",
+      "tag": "v2.6.14/v2.6.35",
+      "files": {
+        "fs/namei.c@v2.6.14": "707fd700e6fa6af4",
+        "fs/namei.c@v2.6.35": "3f9f3fb292443762"
+      }
+    },
+    {
+      "fact": "pread64/pwrite64 take (fd, buf, count, pad, hi, lo): six argument slots on 32-bit PowerPC and MIPS o32",
+      "tag": "v2.6.35",
+      "files": {
+        "arch/powerpc/kernel/sys_ppc32.c": "5734d443075c276a",
+        "arch/mips/kernel/scall32-o32.S": "79fc62045b7b1b1e"
+      }
+    }
+  ]
+}

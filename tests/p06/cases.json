@@ -1,0 +1,287 @@
+{
+  "schema": "ffw.p06.cases.v1",
+  "about": "Each invariant of the P06 slice-1 contract (docs/contracts/p06.md) maps to the Rust tests (crates/franken-platform/src/net.rs) and Python tests (tests/p06/test_net_abi.py, tests/p06/test_ledger.py) that check it. A test named here must exist, and every Rust test in net.rs must be named here. `inapplicable` gives, per facet the bead lists (layout, errno, time_width, syscall, tls, target), the reason a facet does not apply to the invariant, or null when it does.",
+  "invariants": [
+    {
+      "id": "P06-NET-001",
+      "statement": "Every socket, option and poll number a kernel call takes is the number of the ABI it is issued on: the socket types, SOCK_NONBLOCK, SOL_SOCKET, the options, POLLWRNORM and POLLWRBAND, and the 'common' block, equal the hand-written vectors; the two ABIs differ exactly where the vectors say; the 32-bit timeout options are used and the 64-bit ones never are.",
+      "rust_tests": [
+        "the_per_abi_numbers_are_the_vectors",
+        "the_numbers_that_are_the_same_on_both_abis_are_the_vectors_common_block",
+        "the_two_abis_differ_exactly_where_the_vectors_say",
+        "the_socket_type_argument_carries_the_flags_the_call_itself_sets",
+        "the_timeout_options_are_the_32_bit_ones_and_never_the_64_bit_new_ones"
+      ],
+      "python_tests": [
+        "test_net_abi.test_the_socket_type_argument_vectors",
+        "test_net_abi.test_the_known_poll_bits_differ_where_the_abis_do"
+      ],
+      "inapplicable": {
+        "syscall": "S1 (argument and return conventions) is what this invariant's vectors test; S2 is the E03 guest transcript; S3 (call numbers and slot counts) is a P02 'Numbers' row set; S4 (the leaf's wrapper) is P02's acceptance and not a selected primitive (docs/contracts/p06.md, 'Applicability')",
+        "tls": "no thread-local storage is used (errno arrives in-band as -errno on both ABIs); network TLS authentication is not a P06 primitive (docs/contracts/p06.md, 'Applicability')",
+        "time_width": null,
+        "layout": null,
+        "errno": null,
+        "target": "a unit test on the host; the BE targets are type-checked and linted centrally; execution on a BE target is pending and not claimed (docs/contracts/p06.md, 'Applicability')"
+      }
+    },
+    {
+      "id": "P06-NET-002",
+      "statement": "The ten network errnos are classified in the ABI that issued the call: a number names a network error on at most one ABI, only a decoded errno can be one, and the generic (PowerPC) numbering read on MIPS is wrong for every one of the ten.",
+      "rust_tests": [
+        "a_number_never_names_a_network_error_on_both_abis_so_the_generic_table_is_wrong_on_mips",
+        "errno_classification_follows_the_vectors_and_only_a_decoded_errno_can_be_a_network_error"
+      ],
+      "python_tests": [
+        "test_net_abi.test_the_errno_classification_vectors"
+      ],
+      "inapplicable": {
+        "syscall": "S1 (argument and return conventions) is what this invariant's vectors test; S2 is the E03 guest transcript; S3 (call numbers and slot counts) is a P02 'Numbers' row set; S4 (the leaf's wrapper) is P02's acceptance and not a selected primitive (docs/contracts/p06.md, 'Applicability')",
+        "tls": "no thread-local storage is used (errno arrives in-band as -errno on both ABIs); network TLS authentication is not a P06 primitive (docs/contracts/p06.md, 'Applicability')",
+        "time_width": "no time value is involved",
+        "layout": "a number, not a layout",
+        "errno": null,
+        "target": "a unit test on the host; the BE targets are type-checked and linted centrally; execution on a BE target is pending and not claimed (docs/contracts/p06.md, 'Applicability')"
+      }
+    },
+    {
+      "id": "P06-NET-003",
+      "statement": "The byte layouts the kernel reads and writes are big-endian whatever the host is: pollfd, sockaddr_in and sockaddr_in6 equal the vectors (re-derived by struct.pack), a host-order codec is not the layout, and a read-back of the wrong length, family or padding is refused.",
+      "rust_tests": [
+        "pollfd_bytes_are_big_endian_and_round_trip",
+        "a_host_endian_pollfd_is_not_the_layout",
+        "sockaddr_in_bytes_are_the_vectors_and_round_trip",
+        "a_sockaddr_in_that_is_the_wrong_length_family_or_padding_is_refused",
+        "sockaddr_in6_bytes_are_the_vectors_and_round_trip"
+      ],
+      "python_tests": [
+        "test_net_abi.test_pollfd_bytes",
+        "test_net_abi.test_sockaddr_in_bytes_and_rejections",
+        "test_net_abi.test_sockaddr_in6_bytes_and_rejections",
+        "test_net_abi.test_the_e03_probe_source_agrees"
+      ],
+      "inapplicable": {
+        "syscall": "S1 (argument and return conventions) is what this invariant's vectors test; S2 is the E03 guest transcript; S3 (call numbers and slot counts) is a P02 'Numbers' row set; S4 (the leaf's wrapper) is P02's acceptance and not a selected primitive (docs/contracts/p06.md, 'Applicability')",
+        "tls": "no thread-local storage is used (errno arrives in-band as -errno on both ABIs); network TLS authentication is not a P06 primitive (docs/contracts/p06.md, 'Applicability')",
+        "time_width": "no time value is involved",
+        "errno": "no call is made, so there is no return to decode",
+        "layout": null,
+        "target": "a unit test on the host; the BE targets are type-checked and linted centrally; execution on a BE target is pending and not claimed (docs/contracts/p06.md, 'Applicability')"
+      }
+    },
+    {
+      "id": "P06-NET-004",
+      "statement": "Time values keep the legacy widths: a socket timeout is 32-bit seconds and microseconds, rounded up; zero is refused because the kernel reads it as forever; seconds past 32 bits are refused and not truncated, and so are seconds at the old kernel's own no-timeout threshold (above 2,147,481 s); a poll timeout is an int of milliseconds that rounds up, can be none of 0 or -1 by accident, refuses what does not fit, and refuses a finite value above the old kernel's forever threshold (above 2,147,482 ms) instead of letting it silently become forever.",
+      "rust_tests": [
+        "poll_timeouts_round_up_never_become_forever_and_refuse_what_does_not_fit_an_int",
+        "the_time_left_after_an_interruption_is_rounded_up_and_an_expired_wait_is_one_last_look",
+        "a_socket_timeout_is_32_bit_microseconds_rounded_up_and_refuses_zero_and_overflow",
+        "a_timeval_read_back_must_be_a_time_and_forever_is_only_ever_asked_for_by_name"
+      ],
+      "python_tests": [
+        "test_net_abi.test_timeval32",
+        "test_net_abi.test_poll_timeout",
+        "test_net_abi.test_the_kernels_forever_thresholds_are_the_vectors",
+        "test_net_abi.test_the_forever_thresholds_and_the_datagram_bound_in_the_rust_text_are_the_derived_ones"
+      ],
+      "inapplicable": {
+        "syscall": "S1 (argument and return conventions) is what this invariant's vectors test; S2 is the E03 guest transcript; S3 (call numbers and slot counts) is a P02 'Numbers' row set; S4 (the leaf's wrapper) is P02's acceptance and not a selected primitive (docs/contracts/p06.md, 'Applicability')",
+        "tls": "no thread-local storage is used (errno arrives in-band as -errno on both ABIs); network TLS authentication is not a P06 primitive (docs/contracts/p06.md, 'Applicability')",
+        "errno": "refusals are typed errors of this layer, before any call",
+        "layout": null,
+        "time_width": null,
+        "target": "a unit test on the host; the BE targets are type-checked and linted centrally; execution on a BE target is pending and not claimed (docs/contracts/p06.md, 'Applicability')"
+      }
+    },
+    {
+      "id": "P06-NET-005",
+      "statement": "A poll request is built only for a real descriptor and events the ABI knows; a returned count above the request, or a ready bit outside the ABI's known set, is not believed; an interrupted poll is retried with the time left and not with the whole timeout, a naive repeat of the call is told apart from it by a judge, and the retry is bounded and reports the interruption.",
+      "rust_tests": [
+        "a_poll_request_is_built_only_for_a_real_descriptor_and_events_the_abi_knows",
+        "ready_bits_are_believed_only_inside_the_abis_known_set",
+        "poll_results_decode_with_the_abis_own_errno_and_an_impossible_count_is_not_believed",
+        "an_interrupted_poll_is_retried_with_the_time_left_and_never_the_whole_timeout",
+        "the_naive_retry_stretches_the_wait_and_the_judge_tells_it_from_the_real_one",
+        "a_poll_that_is_interrupted_every_time_is_reported_after_the_bound_and_not_swallowed"
+      ],
+      "python_tests": [
+        "test_net_abi.test_poll_decode",
+        "test_net_abi.test_poll_retry"
+      ],
+      "inapplicable": {
+        "syscall": "S1 (argument and return conventions) is what this invariant's vectors test; S2 is the E03 guest transcript; S3 (call numbers and slot counts) is a P02 'Numbers' row set; S4 (the leaf's wrapper) is P02's acceptance and not a selected primitive (docs/contracts/p06.md, 'Applicability')",
+        "tls": "no thread-local storage is used (errno arrives in-band as -errno on both ABIs); network TLS authentication is not a P06 primitive (docs/contracts/p06.md, 'Applicability')",
+        "layout": null,
+        "errno": null,
+        "time_width": null,
+        "target": "a unit test on the host; the BE targets are type-checked and linted centrally; execution on a BE target is pending and not claimed (docs/contracts/p06.md, 'Applicability')"
+      }
+    },
+    {
+      "id": "P06-NET-006",
+      "statement": "A datagram read is issued with MSG_TRUNC and decoded as complete or truncated with the real length: the E03 loopback fact (24 bytes into a 16-byte buffer returns 24) is a truncation, an exactly-full buffer is complete, a length above the largest UDP payload (65,527) is refused, and EAGAIN on a nonblocking socket is a typed would-block.",
+      "rust_tests": [
+        "a_datagram_read_says_complete_or_truncated_with_the_real_length",
+        "the_e03_loopback_fact_is_a_truncated_read_of_24_bytes_into_a_16_byte_buffer"
+      ],
+      "python_tests": [
+        "test_net_abi.test_recv_decode",
+        "test_net_abi.test_the_e03_loopback_fact_is_in_the_vectors"
+      ],
+      "inapplicable": {
+        "syscall": "S1 (argument and return conventions) is what this invariant's vectors test; S2 is the E03 guest transcript; S3 (call numbers and slot counts) is a P02 'Numbers' row set; S4 (the leaf's wrapper) is P02's acceptance and not a selected primitive (docs/contracts/p06.md, 'Applicability')",
+        "tls": "no thread-local storage is used (errno arrives in-band as -errno on both ABIs); network TLS authentication is not a P06 primitive (docs/contracts/p06.md, 'Applicability')",
+        "layout": "the datagram's bytes are the caller's; only the length is decoded",
+        "time_width": "no time value is involved",
+        "errno": null,
+        "target": "a unit test on the host; the BE targets are type-checked and linted centrally; execution on a BE target is pending and not claimed (docs/contracts/p06.md, 'Applicability')"
+      }
+    },
+    {
+      "id": "P06-NET-007",
+      "statement": "The module is safe, has no thread-local errno, uses no other library's network code and no fallback call, and is declared once.",
+      "rust_tests": [
+        "the_source_has_no_thread_local_errno_no_unsafe_and_no_other_libraries_net_code"
+      ],
+      "python_tests": [
+        "test_net_abi.test_the_code_has_no_thread_local_no_unsafe_and_nobody_elses_net_code",
+        "test_net_abi.test_the_module_is_declared_once_in_lib_rs"
+      ],
+      "inapplicable": {
+        "syscall": "S1 (argument and return conventions) is what this invariant's vectors test; S2 is the E03 guest transcript; S3 (call numbers and slot counts) is a P02 'Numbers' row set; S4 (the leaf's wrapper) is P02's acceptance and not a selected primitive (docs/contracts/p06.md, 'Applicability')",
+        "tls": "this is the invariant that there is none",
+        "layout": "a source property",
+        "time_width": "a source property",
+        "errno": "a source property",
+        "target": "a unit test on the host; the BE targets are type-checked and linted centrally; execution on a BE target is pending and not claimed (docs/contracts/p06.md, 'Applicability')"
+      }
+    },
+    {
+      "id": "P06-TEXT-001",
+      "statement": "The per-ABI tables in the Rust text equal the vectors and the retry bound is the one abi.rs defines, so a Rust edit that the unit tests were edited around is still seen without cargo.",
+      "rust_tests": [],
+      "python_tests": [
+        "test_net_abi.test_the_tables_in_the_rust_text_are_the_vectors",
+        "test_net_abi.test_the_retry_bound_is_the_one_abi_rs_defines"
+      ],
+      "inapplicable": {
+        "syscall": "S1 (argument and return conventions) is what this invariant's vectors test; S2 is the E03 guest transcript; S3 (call numbers and slot counts) is a P02 'Numbers' row set; S4 (the leaf's wrapper) is P02's acceptance and not a selected primitive (docs/contracts/p06.md, 'Applicability')",
+        "tls": "no thread-local storage is used (errno arrives in-band as -errno on both ABIs); network TLS authentication is not a P06 primitive (docs/contracts/p06.md, 'Applicability')",
+        "layout": "a text property",
+        "time_width": "a text property",
+        "errno": "a text property",
+        "target": "a Python check of the source text"
+      }
+    },
+    {
+      "id": "P06-SRC-001",
+      "statement": "The numbers and shapes have witnesses that are not the Rust or the vector file's author: the E03 guest probe source and the libc crate's per-architecture files (a missing source is BLOCKED, not passed), and a planted wrong number in each is reported.",
+      "rust_tests": [],
+      "python_tests": [
+        "test_net_abi.test_the_e03_probe_source_agrees",
+        "test_net_abi.test_the_probe_check_is_sensitive",
+        "test_net_abi.test_the_libc_crate_agrees",
+        "test_net_abi.test_the_libc_check_is_sensitive",
+        "test_net_abi.test_the_rust_check_is_sensitive"
+      ],
+      "inapplicable": {
+        "syscall": "S1 (argument and return conventions) is what this invariant's vectors test; S2 is the E03 guest transcript; S3 (call numbers and slot counts) is a P02 'Numbers' row set; S4 (the leaf's wrapper) is P02's acceptance and not a selected primitive (docs/contracts/p06.md, 'Applicability')",
+        "tls": "no thread-local storage is used (errno arrives in-band as -errno on both ABIs); network TLS authentication is not a P06 primitive (docs/contracts/p06.md, 'Applicability')",
+        "layout": null,
+        "time_width": null,
+        "errno": null,
+        "target": "a Python check of other sources"
+      }
+    },
+    {
+      "id": "P06-PIN-001",
+      "statement": "Every upstream revision the ledger records resolves to a commit in its clone, every ancestry claim is true (the differing Asupersync and FrankenLibC revisions are resolved explicitly: the older is an ancestor of the one this workspace pins), and a revision that does not exist is found out.",
+      "rust_tests": [],
+      "python_tests": [
+        "test_ledger.test_every_recorded_revision_resolves_and_every_ancestry_claim_is_true",
+        "test_ledger.test_a_pin_that_does_not_exist_is_found_out",
+        "test_ledger.test_every_row_names_its_gate_and_when_it_goes_away",
+        "test_ledger.test_the_recorded_pins_are_the_ones_the_earlier_tasks_used"
+      ],
+      "inapplicable": {
+        "syscall": "S1 (argument and return conventions) is what this invariant's vectors test; S2 is the E03 guest transcript; S3 (call numbers and slot counts) is a P02 'Numbers' row set; S4 (the leaf's wrapper) is P02's acceptance and not a selected primitive (docs/contracts/p06.md, 'Applicability')",
+        "tls": "no thread-local storage is used (errno arrives in-band as -errno on both ABIs); network TLS authentication is not a P06 primitive (docs/contracts/p06.md, 'Applicability')",
+        "layout": "a revision check",
+        "time_width": "a revision check",
+        "errno": "a revision check",
+        "target": "a git object check"
+      }
+    },
+    {
+      "id": "P06-PIN-002",
+      "statement": "The recorded reason franken_kernel is not consumed (its manifest keeps serde's default std feature on) is still true at the pin.",
+      "rust_tests": [],
+      "python_tests": [
+        "test_ledger.test_the_reason_franken_kernel_is_not_consumed_is_still_true_at_the_pin"
+      ],
+      "inapplicable": {
+        "syscall": "S1 (argument and return conventions) is what this invariant's vectors test; S2 is the E03 guest transcript; S3 (call numbers and slot counts) is a P02 'Numbers' row set; S4 (the leaf's wrapper) is P02's acceptance and not a selected primitive (docs/contracts/p06.md, 'Applicability')",
+        "tls": "no thread-local storage is used (errno arrives in-band as -errno on both ABIs); network TLS authentication is not a P06 primitive (docs/contracts/p06.md, 'Applicability')",
+        "layout": "a manifest check",
+        "time_width": "a manifest check",
+        "errno": "a manifest check",
+        "target": "a git object check"
+      }
+    },
+    {
+      "id": "P06-ORACLE-001",
+      "statement": "FrankenLibC's errno module at the E06 pin is the generic numbering: for every network errno it defines (nine of the ten) the number equals PowerPC's and differs from MIPS's, and ENOSYS is 38 against MIPS's 89; so removing its architecture compile_error alone would be a build that misreads MIPS, not a port.",
+      "rust_tests": [],
+      "python_tests": [
+        "test_ledger.test_every_network_errno_upstream_is_powerpcs_number_and_not_mipss",
+        "test_ledger.test_enosys_upstream_is_the_generic_38_and_mips_is_89",
+        "test_ledger.test_the_oracle_is_the_only_upstream_file_read_for_numbers",
+        "test_ledger.test_the_oracle_check_is_sensitive"
+      ],
+      "inapplicable": {
+        "syscall": "S1 (argument and return conventions) is what this invariant's vectors test; S2 is the E03 guest transcript; S3 (call numbers and slot counts) is a P02 'Numbers' row set; S4 (the leaf's wrapper) is P02's acceptance and not a selected primitive (docs/contracts/p06.md, 'Applicability')",
+        "tls": "upstream's errno is thread-local; the in-band return here has no TLS, which is why it is not consumed",
+        "layout": "a number check",
+        "time_width": "no time value is involved",
+        "errno": null,
+        "target": "a git object check"
+      }
+    },
+    {
+      "id": "P06-ISO-001",
+      "statement": "No lock entry names a crate the ledger says is not selected, and the platform crates do not depend directly on libc: an accidental host-only or unselected upstream dependency is rejected.",
+      "rust_tests": [],
+      "python_tests": [
+        "test_ledger.test_the_lock_names_none_of_the_crates_the_ledger_says_are_not_selected",
+        "test_ledger.test_the_platform_crates_do_not_depend_directly_on_libc",
+        "test_ledger.test_the_isolation_check_is_sensitive"
+      ],
+      "inapplicable": {
+        "syscall": "S1 (argument and return conventions) is what this invariant's vectors test; S2 is the E03 guest transcript; S3 (call numbers and slot counts) is a P02 'Numbers' row set; S4 (the leaf's wrapper) is P02's acceptance and not a selected primitive (docs/contracts/p06.md, 'Applicability')",
+        "tls": "no thread-local storage is used (errno arrives in-band as -errno on both ABIs); network TLS authentication is not a P06 primitive (docs/contracts/p06.md, 'Applicability')",
+        "layout": "a dependency check",
+        "time_width": "a dependency check",
+        "errno": "a dependency check",
+        "target": "a manifest and lock check"
+      }
+    },
+    {
+      "id": "P06-MAP-001",
+      "statement": "Every invariant names tests that exist, every Rust test in net.rs is named by an invariant, and ids are unique and stated.",
+      "rust_tests": [],
+      "python_tests": [
+        "test_net_abi.test_every_named_test_exists",
+        "test_net_abi.test_every_rust_test_is_claimed_by_an_invariant",
+        "test_net_abi.test_every_invariant_id_is_unique_and_stated"
+      ],
+      "inapplicable": {
+        "syscall": "S1 (argument and return conventions) is what this invariant's vectors test; S2 is the E03 guest transcript; S3 (call numbers and slot counts) is a P02 'Numbers' row set; S4 (the leaf's wrapper) is P02's acceptance and not a selected primitive (docs/contracts/p06.md, 'Applicability')",
+        "tls": "no thread-local storage is used (errno arrives in-band as -errno on both ABIs); network TLS authentication is not a P06 primitive (docs/contracts/p06.md, 'Applicability')",
+        "layout": "a mapping check",
+        "time_width": "a mapping check",
+        "errno": "a mapping check",
+        "target": "a mapping check"
+      }
+    }
+  ]
+}

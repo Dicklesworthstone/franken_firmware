@@ -5,8 +5,10 @@
 
 pub mod abi;
 pub mod clock;
+pub mod durable;
 pub mod entropy;
 pub mod layer;
+pub mod net;
 pub mod ops;
 pub mod wake;
 

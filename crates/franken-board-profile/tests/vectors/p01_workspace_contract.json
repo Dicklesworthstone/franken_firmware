@@ -520,6 +520,11 @@
       "kind": "fixture"
     },
     {
+      "path": "tests/p06",
+      "owner": "P06",
+      "kind": "fixture"
+    },
+    {
       "path": "crates/franken-stream/fuzz",
       "owner": "N01",
       "kind": "fixture"

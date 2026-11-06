@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# P06 end-to-end entry point (bead ffw-2nw), slice 1: the readiness and datagram ABI core, offline.
+# Stdlib Python only, no cargo, no QEMU, no device. Contract: docs/contracts/p06.md.
+#
+#   scripts/e2e/p06                     run the full tier of the P06 cases (tests/p06): the vector files against independent models, the
+#                                       E03 probe source, the libc crate and the Rust text; the upstream ledger against the pinned upstream git
+#                                       objects; the dependency isolation check; then print the central cargo plan
+#   scripts/e2e/p06 --tier smoke        only the cases that read this repository (no upstream clone, no libc crate)
+#   scripts/e2e/p06 --tier full         smoke plus the cases that need a source outside the repository (the default)
+#   scripts/e2e/p06 --tier soak         NOT SUPPORTED: the P06 acceptance names no soak requirement; one blocked case, exit 3
+#   scripts/e2e/p06 --list              print the case ids the tier plans (the denominator)
+#   scripts/e2e/p06 --only CASE_ID      run one case: the replay line of a failure prints the exact id
+#   scripts/e2e/p06 --receipts DIR      also write the Q00 diagnostic log (ff.diag.v1 JSONL) and a JSON receipt under DIR
+#   scripts/e2e/p06 --plan              only print the central plan
+#
+# Every run writes a bounded, redacted diagnostic log through the shared Q00 sink. A run whose log lost critical evidence is not
+# qualified; a run that is not a pass prints its first failing case, the replay command, the versions and the artifact digests.
+#
+# FFW_UPSTREAM_ROOT names the directory that holds the upstream clones (default: the parent of this repository). A clone or the libc
+# crate that is not on this machine makes its cases BLOCKED, and any blocked case makes the exit code 3: it is never a pass.
+# The Rust unit tests, clippy and the device-target type checks are central work (`rch exec`), not run here; the plan below is
+# exactly what they are. Nothing in this entry point has run against a kernel.
+#
+# Exit codes: 0 every case passed and the log is complete; 1 a case failed or the log lost critical evidence; 2 usage; 3 nothing failed
+# but a case did not run, or the tier is unsupported (not qualified).
+set -uo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+MANIFEST="$ROOT/Cargo.toml"
+WORKERS="hz4,hz3,ts1,vmi1227854,vmi1153651,vmi1152480,vmi1156319,vmi1293453,vmi1149989,ovh-a"
+
+plan() {
+  DEVICE_TC="$(python3 -B -I -c 'import re, sys; print(re.search(r"^DEVICE_TOOLCHAIN = \"([^\"]+)\"", open(sys.argv[1]).read(), re.M).group(1))' "$ROOT/tests/p01/plan.py")"
+  cat <<PLAN
+# Central plan for P06, the net and durable ABI cores (run from $ROOT/crates/franken-platform so rch syncs only the crate's Cargo closure; every cargo step
+# names its job count because rch ignores CARGO_BUILD_JOBS). fmt is not an rch command (RCH-E301): run locally. The worker set is the
+# supervisor's choice; bare cargo needs the pinned 1.99.0, the device lines need $DEVICE_TC with rust-src.
+rustfmt --edition 2024 --check $ROOT/crates/franken-platform/src/net.rs $ROOT/crates/franken-platform/src/durable.rs $ROOT/crates/franken-platform/src/lib.rs
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=$WORKERS rch exec -- cargo test   --locked --offline --manifest-path $MANIFEST -p franken-platform --lib --config build.incremental=false -j 2 -- net:: durable::
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=$WORKERS rch exec -- cargo test   --locked --offline --manifest-path $MANIFEST -p franken-platform --config build.incremental=false -j 2
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=$WORKERS rch exec -- cargo clippy --locked --offline --manifest-path $MANIFEST -p franken-platform --all-targets --config build.incremental=false -j 2 -- -D warnings
+# Device targets (type check and lint only: nothing is linked or run). The net and durable modules need no feature.
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=ts1,hz3 rch exec -- cargo +$DEVICE_TC check  --locked --offline --manifest-path $MANIFEST -p franken-platform --target mips-unknown-linux-musl    -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=ts1,hz3 rch exec -- cargo +$DEVICE_TC check  --locked --offline --manifest-path $MANIFEST -p franken-platform --target powerpc-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=ts1,hz3 rch exec -- cargo +$DEVICE_TC clippy --locked --offline --manifest-path $MANIFEST -p franken-platform --target mips-unknown-linux-musl    -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2 -- -D warnings
+RCH_REQUIRE_REMOTE=1 RCH_WORKER=ts1,hz3 rch exec -- cargo +$DEVICE_TC clippy --locked --offline --manifest-path $MANIFEST -p franken-platform --target powerpc-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2 -- -D warnings
+# Expected: the 39 net:: and durable:: tests (25 + 14) pass on the first test line, nothing else in franken-platform changes, clippy is clean on the host and both targets.
+PLAN
+}
+
+for arg in "$@"; do
+  if [ "$arg" = "--plan" ]; then plan; exit 0; fi
+done
+python3 -B -I "$ROOT/tests/p06/run_cases.py" "$@"
+code=$?
+for arg in "$@"; do
+  if [ "$arg" = "--list" ]; then exit "$code"; fi
+done
+if [ "$code" -eq 2 ]; then exit 2; fi
+echo
+plan
+exit "$code"
