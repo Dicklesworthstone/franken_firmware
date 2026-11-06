@@ -52,6 +52,13 @@ impl ClockViewBridge {
         self.clamped
     }
 
+    /// An explicitly admitted new playout timeline also discards the old engine's reading.
+    /// Keep the lifetime diagnostic count; only the time latch belongs to the old timeline.
+    pub(crate) fn rebind(&mut self, clock: &GroupClock) {
+        self.epoch = Some(clock.epoch());
+        self.last_group_ns = 0;
+    }
+
     fn bounded_view(
         &mut self,
         group_ns: Option<u64>,

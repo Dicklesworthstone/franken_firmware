@@ -846,6 +846,14 @@ pub fn check_device_with(selection: EntropySelection) -> StartupReport {
 }
 
 #[cfg(test)]
+pub(crate) fn admit_test_layer<O: KernelOps>(
+    matrix: &franken_platform::KernelCapabilityMatrix,
+    ops: O,
+) -> Result<PlatformLayer<O>, LayerError> {
+    PlatformLayer::admit(matrix, ops)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use franken_platform::abi::SysError;

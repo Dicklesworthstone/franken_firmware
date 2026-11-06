@@ -4,7 +4,7 @@
 //! Nothing here is new protocol. It composes, in this order, the pieces that already exist:
 //!
 //! * ingress: [`StreamReceiver::accept`] (MAC, stream, epoch, replay window) -> [`MediaPacket::from_authenticated`] ->
-//!   [`PlayoutEngine::on_packet`], with the engine's [`ClockView`] built by [`ClockViewBridge::at_local`] from the group
+//!   [`PlayoutEngine::on_packet`], with its [`franken_stream::playout::ClockView`] built by [`ClockViewBridge::at_local`] from the group
 //!   clock and the admitted platform's monotonic reading ([`PlatformLayer::now_ns`]). The sender's timestamps reach the
 //!   engine exactly as N01 carried them: they are covered by the MAC, so a changed one is an authentication failure and
 //!   never an engine input, and one that is authentic but off the agreed timeline is the engine's own `TimelineMismatch`.
@@ -19,8 +19,11 @@
 //!   admitted start, an expired authority or clock, a reset, a fault) the buffer is zero and the engine is not asked,
 //!   even while the clock's status is Locked.
 //!
-//! A prepared block is a reservation and never a promise: if a later call returns an error or
-//! [`Preparation::invalidates_prepared`] is true, the caller must discard its outstanding scheduled blocks.
+//! A prepared block is a reservation and never a promise: if `prepare` returns a clock error or
+//! [`Preparation::invalidates_prepared`] is true, discard outstanding scheduled blocks. Clock or
+//! resolution failures from ingress or start admission likewise invalidate them. Authentication,
+//! replay and stale-packet refusals do not: hostile datagrams cannot revoke admitted audio. A
+//! rejected replacement schedule also leaves the existing admitted stream intact.
 //! The clock must be admitted through [`MediaPlayout::admit_start`], which
 //! anchors the engine's timeline at the clock's start; admitting the clock behind its back breaks that agreement.
 //!
@@ -338,9 +341,11 @@ impl MediaPlayout {
         self.engine
             .begin_stream(sched.epoch, anchor_frame, sched.start_group_ns)
             .map_err(StartRefusal::Stream)?;
-        clock
+        let plan = clock
             .admit(sched, local_ns)
-            .map_err(StartRefusal::Admission)
+            .map_err(StartRefusal::Admission)?;
+        self.bridge.rebind(clock);
+        Ok(plan)
     }
 
     /// Adopt a newer epoch and leader announced by the caller's control path: the clock drops its fit, authority and
@@ -493,7 +498,8 @@ mod tests {
             if let Some(resolution_ns) = resolution_ns {
                 matrix.clock_monotonic_res_ns = resolution_ns;
             }
-            let platform = PlatformLayer::admit(&matrix, kernel).expect("admitted platform");
+            let platform = crate::platform_start::admit_test_layer(&matrix, kernel)
+                .expect("admitted test platform");
             // The standard configuration, unmodified: its output delay is zero, so the output turns audible exactly at the
             // start and every block's engine cutoff falls before that.
             let cfg = GroupClockConfig::standard().expect("config");
@@ -649,14 +655,18 @@ mod tests {
 
     #[test]
     fn an_over_budget_refit_invalidates_prepared_blocks_but_a_small_clamp_remains_permitted() {
-        for (step_ns, refused) in [(3_000_000_u64, true), (1_000_000, false)] {
+        for (step_ns, refused) in [
+            (3_000_000_u64, true),
+            (1_000_000, false),
+            (1_000_000_000, true),
+        ] {
             let mut rig = Rig::new();
             let mut cfg = rig.clock.config().clone();
             cfg.window = 1;
             cfg.min_probes_for_lock = 1;
             // Admit this explicit fit correction so the consumer, rather than the probe's
             // discontinuity gate, must handle the backwards reading conservatively.
-            cfg.prediction_slack_ns = 10_000_000;
+            cfg.prediction_slack_ns = 2_000_000_000;
             rig.clock = GroupClock::new(cfg, 1, 7, 100).expect("clock");
             rig.lock(0, OLD_TIMELINE_NS);
             rig.at(50_000_000);
@@ -712,7 +722,42 @@ mod tests {
                 assert_eq!(rig.media.clamped_readings(), 1);
             }
             assert_eq!(rig.media.engine_stats().decided_real, 1);
+            if refused {
+                let new_start = rig.group_at(now) + 200_000_000;
+                rig.admit(new_start, BLOCK_FRAMES)
+                    .expect("explicit fresh timeline");
+                let wire = rig.packet(1, 1, new_start, 2);
+                assert_eq!(rig.ingest(&wire), Ok(Admission::Admitted));
+                let new_start_local = rig.local_of(new_start, now);
+                let next = cutoff_local(&rig, new_start, new_start_local);
+                rig.at(next);
+                let result = rig.prepare(&mut out).expect("platform time");
+                assert!(
+                    matches!(result, Preparation::Prepared(_)),
+                    "a fresh admission does not inherit the previous stream's time latch"
+                );
+                assert!(!result.invalidates_prepared());
+                assert_eq!(out.as_slice(), pcm(1, 2).as_slice());
+            }
         }
+    }
+
+    #[test]
+    fn preparation_at_the_submission_deadline_is_reported_as_late_not_timely_delivery() {
+        let (mut rig, start_group, start_local) = admitted_rig(1_000_000_000);
+        let wire = rig.packet(0, 0, start_group, 1);
+        assert_eq!(rig.ingest(&wire), Ok(Admission::Admitted));
+        let late_local = start_local - 1_000_000;
+        rig.at(late_local);
+        let mut out = [0; BLOCK_PAYLOAD_BYTES];
+        let Preparation::Prepared(block) = rig.prepare(&mut out).expect("platform time") else {
+            panic!("engine decision");
+        };
+        assert!(block.decision.late_by_ns > 0);
+        assert!(
+            rig.group_at(late_local) + 2_000_000 > block.decision.submit_deadline_ns,
+            "the downstream sink cannot assume its declared work budget still fits"
+        );
     }
 
     #[test]
@@ -1100,7 +1145,7 @@ mod tests {
         );
         // A misaligned anchor is the engine's refusal, before the clock is armed again.
         assert_eq!(
-            rig.admit(start_group, 100),
+            rig.admit(start_group + 1_000_000_000, 100),
             Err(StartRefusal::Stream(EngineStartReject::Misaligned))
         );
         rig.at(start_local - 1_000_000);
