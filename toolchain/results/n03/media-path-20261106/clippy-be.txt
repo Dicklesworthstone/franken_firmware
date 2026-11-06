@@ -1,0 +1,144 @@
+[RCH] Cargo target sync active; forcing worker CARGO_TARGET_DIR to an isolated remote target and syncing back to <path>
+  2026-11-06T18:58:32.226087Z  INFO rch::hook: Selected worker: <worker> at ubuntu@<address> (4 slots remaining after reservation, speed 23.4)
+    at rch/src/hook.rs:5690 on ThreadId(1)
+
+[RCH] project path normalized: received_input=<path>
+[RCH] project path normalized: verified_absolute_input=<path>
+[RCH] project path normalized: canonical_root_resolved=<path>
+[RCH] project path normalized: canonical_input_resolved=<path>
+[RCH] project path normalized: verified_within_root=<path> root=<path>
+[RCH] dependency root <path> (WorkspaceMember)
+[RCH] dependency root <path> (WorkspaceMember)
+[RCH] dependency root <path> (WorkspaceMember)
+[RCH] dependency root <path> (WorkspaceMember)
+[RCH] dependency root <path> (WorkspaceMember)
+[RCH] dependency root <path> (WorkspaceMember)
+[RCH] dependency root <path> (WorkspaceMember)
+[RCH] dependency root <path> (WorkspaceMember)
+[RCH] dependency root <path> (WorkspaceMember)
+[RCH] dependency root <path> (WorkspaceMember)
+[RCH] dependency root <path> (WorkspaceMember)
+[RCH] dependency root <path> (WorkspaceMember)
+[RCH] dependency root <path> (WorkspaceMember)
+[RCH] dependency root <path> (WorkspaceMember)
+[RCH] dependency root <path> (WorkspaceMember)
+[RCH] dependency root <path> (WorkspaceMember)
+  2026-11-06T18:58:32.854737Z  INFO rch::hook::transfer_orchestration: Starting remote compilation pipeline for ffw-n03-root-0tukntvx (hash: b686d16d5dbbc52c)
+    at rch/src/hook/transfer_orchestration.rs:1571 on ThreadId(1)
+
+[RCH] dependency sync roots planned: 1
+[RCH] dependency sync root 1/1: <path>
+[RCH] dependency sync manifest: {"schema_version":"rch.sync_closure_manifest.v2","generated_at_unix_ms":1793991512729,"project_root":"<path>","entries":[{"order":1,"local_root":"<path>","remote_root":"<path>","project_id":"ffw-n03-root-0tukntvx","root_hash":"b686d16d5dbbc52c","is_primary":true,"mode":"full"}]}
+  2026-11-06T18:58:32.854852Z  INFO rch::hook::transfer_orchestration: Prepared dependency sync manifest for 1 roots
+    at rch/src/hook/transfer_orchestration.rs:1593 on ThreadId(1)
+
+[RCH] sync start (project ffw-n03-root-0tukntvx on <worker>)
+[RCH] remote target-dir reuse active; pooled dir .rch-target-<worker>-pool-85e6ceffde559fb249d45f78bead8823
+[RCH] waiting for 2 remote source-authority lock(s) on <worker>
+[RCH] acquired remote source-authority locks on <worker>
+[RCH] topology preflight ok on <worker> (<path> -> <path> enforced)
+[RCH] isolated sources selected; canonical repository convergence skipped
+  2026-11-06T18:58:48.991360Z  INFO rch::hook::transfer_orchestration: Syncing project to worker <worker>...
+    at rch/src/hook/transfer_orchestration.rs:1887 on ThreadId(1)
+
+[RCH] exact source sync required; bypassing transfer estimator for <path>
+[RCH] syncing dependency root <path> to remote <path>
+  2026-11-06T18:58:49.002907Z  INFO rch::transfer: Syncing <path> -> <path> on <worker> (streaming)
+    at rch/src/transfer.rs:7842 on ThreadId(1)
+
+  2026-11-06T18:58:50.541007Z  INFO rch::hook::transfer_orchestration: Sync complete: 0 files, 45832 bytes in 1466ms
+    at rch/src/hook/transfer_orchestration.rs:2486 on ThreadId(1)
+
+[RCH] sync done: 0 files, 45832 bytes in 1466ms
+[RCH] dependency preflight report: {"schema_version":"rch.dependency_preflight.v1","worker":"<worker>","verified":true,"reason_code":null,"remediation":null,"evidence":[{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"manifest","status":"present","reason_code":"RCH-I410","detail":"required manifest present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true},{"root":"<path>","manifest":"<path>","required_path":"<path>","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <path>","is_primary":true}]}
+[RCH] remote dependency preflight verified 66 roots on <worker>
+  2026-11-06T18:58:52.597410Z  INFO rch::hook::transfer_orchestration: Executing command remotely: env 'CARGO_PROFILE_DEV_DEBUG=line-tables-only' 'CARGO_PROFILE_TEST_DEBUG=line-tables-only' cargo +nightly-2026-08-31 clippy --locked --no-default-features -p franken-speaker --lib --bins --target mips-unknown-linux-musl --target powerpc-unknown-linux-musl -Z 'build-std=core,alloc,std,panic_abort' -j 1 --config 'env.RCH_BUILD_SOURCE.value="unknown"' --config 'env.RCH_BUILD_SOURCE.force=true' -- -D warnings
+    at rch/src/hook/transfer_orchestration.rs:2643 on ThreadId(1)
+
+[RCH] exec start: env 'CARGO_PROFILE_DEV_DEBUG=line-tables-only' 'CARGO_PROFILE_TEST_DEBUG=line-tables-only' cargo +nightly-2026-08-31 clippy --locked --no-default-features -p franken-speaker --lib --bins --target mips-unknown-linux-musl --target powerpc-unknown-linux-musl -Z 'build-std=core,alloc,std,panic_abort' -j 1 --config 'env.RCH_BUILD_SOURCE.value="unknown"' --config 'env.RCH_BUILD_SOURCE.force=true' -- -D warnings
+  2026-11-06T18:58:52.612475Z  INFO rch::transfer: Rewriting CARGO_TARGET_DIR for remote execution (worker-scoped path): <path> -> <path>
+    at rch/src/transfer.rs:4911 on ThreadId(1)
+
+   Compiling compiler_builtins v0.1.160 (<path>
+   Compiling libc v0.2.189
+   Compiling object v0.39.1
+   Compiling std v0.0.0 (<path>
+   Compiling core v0.0.0 (<path>
+   Compiling rustc-std-workspace-core v1.99.0 (<path>
+   Compiling alloc v0.0.0 (<path>
+   Compiling rustc-std-workspace-alloc v1.99.0 (<path>
+   Compiling unwind v0.0.0 (<path>
+   Compiling gimli v0.34.0
+   Compiling adler2 v2.0.1
+   Compiling memchr v2.8.3
+   Compiling miniz_oxide v0.9.1
+   Compiling addr2line v0.27.1
+   Compiling panic_unwind v0.0.0 (<path>
+   Compiling std_detect v0.1.5 (<path>
+   Compiling hashbrown v0.17.1
+   Compiling panic_abort v0.0.0 (<path>
+   Compiling cfg-if v1.0.4
+   Compiling rustc-demangle v0.1.28
+   Compiling rustc-literal-escaper v0.0.8
+   Compiling proc_macro v0.0.0 (<path>
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.27
+   Compiling serde_core v1.0.229
+   Compiling syn v3.0.9
+   Compiling zmij v1.0.23
+   Compiling serde_json v1.0.154
+   Compiling serde v1.0.229
+   Compiling serde_derive v1.0.229
+   Compiling thiserror v2.0.21
+   Compiling thiserror-impl v2.0.21
+    Checking typenum v1.20.1
+    Checking hybrid-array v0.4.15
+    Checking cmov v0.5.4
+    Checking ctutils v0.4.8
+    Checking crypto-common v0.2.2
+    Checking block-buffer v0.12.1
+    Checking const-oid v0.10.2
+    Checking digest v0.11.3
+    Checking cfg-if v1.0.5
+    Checking itoa v1.0.18
+    Checking sha2 v0.11.1
+    Checking hex v0.4.3
+    Checking franken-board-profile v0.1.0 (<path>
+    Checking hmac v0.13.0
+    Checking franken-atomic v0.1.0 (<path>
+    Checking franken-platform v0.1.0 (<path>
+    Checking franken-session v0.1.0 (<path>
+    Checking franken-clock v0.1.0 (<path>
+    Checking franken-dsp v0.1.0 (<path>
+    Checking franken-journal v0.1.0 (<path>
+    Checking franken-control v0.1.0 (<path>
+    Checking franken-stream v0.1.0 (<path>
+    Checking franken-platform-linux v0.1.0 (<path>
+    Checking franken-hal v0.1.0 (<path>
+    Checking franken-speaker v0.1.0 (<path>
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 32m 19s
+
+  2026-11-06T19:31:26.609967Z  INFO rch::hook::transfer_orchestration: Remote command finished: exit=0 in 1952913ms
+    at rch/src/hook/transfer_orchestration.rs:2985 on ThreadId(1)
+
+[RCH] exec done: exit=0 in 1952913ms
+  2026-11-06T19:31:26.871970Z  INFO rch::hook::transfer_orchestration: Retrieving build artifacts...
+    at rch/src/hook/transfer_orchestration.rs:3207 on ThreadId(1)
+
+[RCH] artifacts: retrieving...
+  2026-11-06T19:31:26.872060Z  INFO rch::transfer: Retrieving artifacts from <path> on <worker>
+    at rch/src/transfer.rs:8905 on ThreadId(1)
+
+  2026-11-06T19:31:27.882543Z  INFO rch::transfer: Artifact retrieval budget from selected remote files, selected_bytes: 0, total_timeout_ms: 30000
+    at rch/src/transfer.rs:4389 on ThreadId(1)
+
+  2026-11-06T19:31:27.882612Z  INFO rch::transfer: Artifact selection is verified empty; skipping payload connection
+    at rch/src/transfer.rs:8918 on ThreadId(1)
+
+  2026-11-06T19:31:27.904443Z  INFO rch::hook::transfer_orchestration: Artifacts retrieved: 0 files, 44 bytes in 1010ms
+    at rch/src/hook/transfer_orchestration.rs:3272 on ThreadId(1)
+
+[RCH] artifacts done: 0 files, 44 bytes in 1010ms
+[RCH] custom target dir sync skipped for <path> after command with no target artifacts
+[RCH] remote <worker> (1977.5s)
