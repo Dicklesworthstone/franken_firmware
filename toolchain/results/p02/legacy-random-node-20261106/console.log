@@ -1,0 +1,279 @@
+
+>> =============================================================
+>> OpenBIOS 1.1 [Jun 29 2026 21:11]
+>> Configuration device id QEMU version 1 machine id 2
+>> CPUs: 1
+>> Memory: 64M
+>> UUID: 00000000-0000-0000-0000-000000000000
+>> CPU type PowerPC,750
+milliseconds isn't unique.
+Welcome to OpenBIOS v1.1 built on Jun 29 2026 21:11
+>> [ppc] Kernel already loaded (0x01000000 + 0x009c1488) (initrd 0x01ac2000 + 0x0003206a)
+>> [ppc] Kernel command line: console=ttyPZ0,38400 rdinit=/init panic=-1 -- --platform-startup --entropy-provider legacy-dev-random-test-environment
+>> switching to new context:
+OF stdout device is: /pci@80000000/mac-io@10/escc@13000/ch-a@13020
+
+Preparing to boot Linux version 4.9.0-0.bpo.6-powerpc (debian-kernel@lists.debian.org) (gcc version 4.9.2 (Debian 4.9.2-10) ) #1 Debian 4.9.88-1+deb9u1~bpo8+1 (2018-05-13)
+
+Detected machine type: 00000400
+
+command line: console=ttyS0,9600 console=tty0
+
+memory layout at init:
+
+  memory_limit : 00000000 (16 MB aligned)
+
+  alloc_bottom : 01af5000
+
+  alloc_top    : 04000000
+
+  alloc_top_hi : 04000000
+
+  rmo_top      : 04000000
+
+  ram_top      : 04000000
+
+found display   : /pci@80000000/QEMU,VGA@1, opening... done
+
+copying OF device tree...
+
+Building dt strings...
+
+Building dt structure...
+
+Device tree strings 0x01af6000 -> 0x01af6556
+
+Device tree struct  0x01af7000 -> 0x01afe000
+
+Quiescing Open Firmware ...
+
+Booting Linux via __start() @ 0x01000000 ...
+
+Hello World !
+
+[    0.000000] Total memory = 64MB; using 128kB for hash table (at c3fe0000)
+
+[    0.000000] Linux version 4.9.0-0.bpo.6-powerpc (debian-kernel@lists.debian.org) (gcc version 4.9.2 (Debian 4.9.2-10) ) #1 Debian 4.9.88-1+deb9u1~bpo8+1 (2018-05-13)
+
+[    0.000000] Found initrd at 0xc1ac2000:0xc1af406a
+
+[    0.000000] Found a Heathrow mac-io controller, rev: 0, mapped at 0xff780000
+
+[    0.000000] PowerMac motherboard: PowerMac G3 (Silk)
+
+[    0.000000] boot stdout isn't a display !
+
+[    0.000000] Using PowerMac machine description
+
+[    0.000000] bootconsole [udbg0] enabled
+
+[    0.000000] -----------------------------------------------------
+
+[    0.000000] Hash_size         = 0x20000
+
+[    0.000000] phys_mem_size     = 0x4000000
+
+[    0.000000] dcache_bsize      = 0x20
+
+[    0.000000] icache_bsize      = 0x20
+
+[    0.000000] cpu_features      = 0x0000000000220472
+
+[    0.000000]   possible        = 0x0000000005a6fd7f
+
+[    0.000000]   always          = 0x0000000000020000
+
+[    0.000000] cpu_user_features = 0x8c000001 0x00000000
+
+[    0.000000] mmu_features      = 0x00000001
+
+[    0.000000] Hash              = 0xc3fe0000
+
+[    0.000000] Hash_mask         = 0x7ff
+
+[    0.000000] -----------------------------------------------------
+
+[    0.000000] Found Grackle (MPC106) PCI host bridge at 0x0000000080000000. Firmware bus number: 0->0
+
+[    0.000000] PCI host bridge /pci@80000000 (primary) ranges:
+
+[    0.000000]   IO 0x00000000fe000000..0x00000000fe7fffff -> 0x0000000000000000
+
+[    0.000000]  MEM 0x00000000fd000000..0x00000000fdffffff -> 0x0000000000000000
+
+[    0.000000]  MEM 0x0000000080000000..0x000000008fffffff -> 0x0000000080000000
+
+[    0.000000] nvram: OF partition at 0x1800
+
+[    0.000000] nvram: XP partition at 0x1300
+
+[    0.000000] nvram: NR partition at 0x1400
+
+[    0.000000] Zone ranges:
+
+[    0.000000]   DMA      [mem 0x0000000000000000-0x0000000003ffffff]
+
+[    0.000000]   Normal   empty
+
+[    0.000000]   HighMem  empty
+
+[    0.000000] Movable zone start for each node
+
+[    0.000000] Early memory node ranges
+
+[    0.000000]   node   0: [mem 0x0000000000000000-0x0000000003ffffff]
+
+[    0.000000] Initmem setup node 0 [mem 0x0000000000000000-0x0000000003ffffff]
+
+[    0.000000] Built 1 zonelists in Zone order, mobility grouping on.  Total pages: 16240
+
+[    0.000000] Kernel command line: console=ttyPZ0,38400 rdinit=/init panic=-1 -- --platform-startup --entropy-provider legacy-dev-random-test-environment
+
+[    0.000000] PID hash table entries: 256 (order: -2, 1024 bytes)
+
+[    0.000000] Dentry cache hash table entries: 8192 (order: 3, 32768 bytes)
+
+[    0.000000] Inode-cache hash table entries: 4096 (order: 2, 16384 bytes)
+
+[    0.000000] Sorting __ex_table...
+
+[    0.000000] Memory: 54452K/65536K available (5992K kernel code, 556K rwdata, 1592K rodata, 424K init, 1409K bss, 11084K reserved, 0K cma-reserved, 0K highmem)
+
+[    0.000000] Kernel virtual memory layout:
+
+[    0.000000]   * 0xfffcf000..0xfffff000  : fixmap
+
+[    0.000000]   * 0xff800000..0xffc00000  : highmem PTEs
+
+[    0.000000]   * 0xfef5a000..0xff800000  : early ioremap
+
+[    0.000000]   * 0xc5000000..0xfef5a000  : vmalloc & ioremap
+
+[    0.000000] NR_IRQS:512 nr_irqs:512 16
+
+[    0.000000] irq: Found primary Apple PIC /pci@80000000/mac-io@10 for 64 irqs
+
+[    0.000000] irq: System has 64 possible interrupts
+
+[    0.000000] GMT Delta read from XPRAM: 0 minutes, DST: off
+
+[    0.000777] clocksource: timebase: mask: 0xffffffffffffffff max_cycles: 0x3d4efe735, max_idle_ns: 440795202782 ns
+
+[    0.001981] clocksource: timebase mult[3c305615] shift[24] registered
+
+[    0.006941] Console: colour dummy device 80x25
+
+[    0.011447] console [ttyPZ0] enabled
+[    0.011447] console [ttyPZ0] enabled
+
+[    0.012021] bootconsole [udbg0] disabled
+[    0.012021] bootconsole [udbg0] disabled
+
+[    0.013296] pid_max: default: 32768 minimum: 301
+[    0.014617] Security Framework initialized
+[    0.015025] Yama: disabled by default; enable with sysctl kernel.yama.*
+[    0.016067] AppArmor: AppArmor disabled by boot time parameter
+[    0.016535] Mount-cache hash table entries: 1024 (order: 0, 4096 bytes)
+[    0.016823] Mountpoint-cache hash table entries: 1024 (order: 0, 4096 bytes)
+[    0.027193] ftrace: allocating 20204 entries in 60 pages
+[    0.073285] devtmpfs: initialized
+[    0.080608] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[    0.081897] futex hash table entries: 256 (order: -1, 3072 bytes)
+[    0.086611] NET: Registered protocol family 16
+
+
+[    0.096685] PCI: Probing PCI hardware
+[    0.098954] PCI host bridge to bus 0000:00
+[    0.103150] pci_bus 0000:00: root bus resource [io  0x0000-0x7fffff]
+[    0.106682] pci_bus 0000:00: root bus resource [mem 0xfd000000-0xfdffffff] (bus address [0x00000000-0x00ffffff])
+[    0.107798] pci_bus 0000:00: root bus resource [mem 0x80000000-0x8fffffff]
+[    0.108481] pci_bus 0000:00: root bus resource [bus 00-ff]
+[    0.132340] vgaarb: setting as boot device: PCI:0000:00:01.0
+[    0.132720] vgaarb: device added: PCI:0000:00:01.0,decodes=io+mem,owns=io+mem,locks=none
+[    0.133220] vgaarb: loaded
+[    0.133596] vgaarb: bridge control possible 0000:00:01.0
+[    0.135218] SCSI subsystem initialized
+[    0.144342] clocksource: Switched to clocksource timebase
+[    0.186019] VFS: Disk quotas dquot_6.6.0
+[    0.186688] VFS: Dquot-cache hash table entries: 1024 (order 0, 4096 bytes)
+[    0.202555] NET: Registered protocol family 2
+[    0.207948] TCP established hash table entries: 1024 (order: 0, 4096 bytes)
+[    0.208352] TCP bind hash table entries: 1024 (order: 0, 4096 bytes)
+[    0.208777] TCP: Hash tables configured (established 1024 bind 1024)
+[    0.210294] UDP hash table entries: 256 (order: 0, 4096 bytes)
+[    0.210724] UDP-Lite hash table entries: 256 (order: 0, 4096 bytes)
+[    0.212948] NET: Registered protocol family 1
+[    0.218278] Unpacking initramfs...
+[    0.234317] Freeing initrd memory: 200K
+[    0.236064] Thermal assist unit [    0.236494] using timers,
+[    0.236697] shrink_timer: 500 jiffies
+[    0.239447] audit: initializing netlink subsys (disabled)
+[    0.240190] audit: type=2000 audit(1793946467.196:1): initialized
+[    0.242671] workingset: timestamp_bits=14 max_order=14 bucket_order=0
+[    0.243216] zbud: loaded
+[    0.259023] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 251)
+[    0.260413] io scheduler noop registered
+[    0.260727] io scheduler deadline registered
+[    0.261312] io scheduler cfq registered (default)
+[    0.265828] Using unsupported 800x600 QEMU,VGA at 80000000, depth=32, pitch=3200
+[    0.274186] Console: switching to colour frame buffer device 100x37
+[    0.276551] fb0: Open Firmware frame buffer device on /pci@80000000/QEMU,VGA@1
+[    0.277718] Serial: 8250/16550 driver, 4 ports, IRQ sharing disabled
+[    0.281742] pmac_zilog: 0.6 (Benjamin Herrenschmidt <benh@kernel.crashing.org>)
+[    0.282157] Serial: MPC52xx PSC UART driver
+[    0.282420] Generic non-volatile memory driver v1.1
+[    0.282803] Linux agpgart interface v0.103
+[    0.283627] MacIO PCI driver attached to Heathrow chipset
+[    0.286304] 0.00013020:ch-a: ttyPZ0 at MMIO 0x81093020 (irq = 16, base_baud = 230400) is a Z85c30 ESCC - Serial port
+[    0.287329] 0.00013000:ch-b: ttyPZ1 at MMIO 0x81093000 (irq = 17, base_baud = 230400) is a Z85c30 ESCC - Serial port
+[    0.289172] Macintosh CUDA driver v0.5 for Unified ADB.
+[    0.291711] adb: starting probe task...
+[    0.493022]  [2]: 2 2
+ [3]: 3 3[    0.497544]
+[    0.530761] ADB keyboard at 2, handler 1
+[    0.531430] Detected ADB keyboard, type [    0.531627] ANSI.
+[    0.532551] input: ADB keyboard as /devices/virtual/input/input0
+[    0.542999] random: fast init done
+[    0.606669] ADB mouse at 3, handler set to 3[    0.606978]  (Mouse Systems A3 Mouse, or compatible)
+[    0.622117]
+[    0.622688] input: ADB mouse as /devices/virtual/input/input1
+[    0.623327] adb: finished probe task...
+[    1.324635] pata-macio 0.00020000:ata-3: Activating pata-macio chipset Heathrow ATA, Apple bus ID 0
+[    1.329521] scsi host0: pata_macio
+[    1.331543] ata1: PATA max MWDMA2 irq 19
+[    2.379950] pata-macio 0.00021000:ata-3: Activating pata-macio chipset Heathrow ATA, Apple bus ID 1
+[    2.383472] scsi host1: pata_macio
+[    2.384973] ata2: PATA max MWDMA2 irq 22
+[    2.388467] mousedev: PS/2 mouse device common for all mice
+[    2.400496] rtc-generic rtc-generic: rtc core: registered rtc-generic as rtc0
+[    2.402831] ledtrig-cpu: registered to indicate activity on CPUs
+[    2.405123] NET: Registered protocol family 10
+[    2.410754] mip6: Mobile IPv6
+[    2.412394] NET: Registered protocol family 17
+[    2.414332] mpls_gso: MPLS GSO support
+[    2.417447] registered taskstats version 1
+[    2.418875] zswap: loaded using pool lzo/zbud
+[    2.422047] ima: No TPM chip found, activating TPM-bypass!
+[    2.431739] rtc-generic rtc-generic: setting system clock to 2026-11-06 06:27:50 UTC (1793946470)
+[    2.548671] ata2.00: ATAPI: QEMU DVD-ROM, 2.5+, max UDMA/100
+[    2.550699] ata2.00: configured for MWDMA2
+[    2.561211] scsi 1:0:0:0: CD-ROM            QEMU     QEMU DVD-ROM     2.5+ PQ: 0 ANSI: 5
+[    2.600786] Freeing unused kernel memory: 424K
+[    2.602926] This architecture does not have kernel memory protection.
+FFW_PLATFORM:BEGIN abi=powerpc32 evidence=harness-ppc-4.9 backend=kernel kernel=invalid
+FFW_PLATFORM:KERNEL status=PASS
+FFW_PLATFORM:CLOCK status=PASS provenance=kernel
+FFW_PLATFORM:ENTROPY status=REFUSED provenance=kernel provider=legacy_dev_random_test_environment reason=not_seeded
+FFW_PLATFORM:WAKE status=PASS provenance=kernel mechanism=eventfd
+FFW_PLATFORM:END started=0 refused=entropy:not_seeded
+[    2.653439] Kernel panic - not syncing: Attempted to kill init! exitcode=0x00000300
+[    2.653439]
+[    2.654091] CPU: 0 PID: 1 Comm: init Not tainted 4.9.0-0.bpo.6-powerpc #1 Debian 4.9.88-1+deb9u1~bpo8+1
+[    2.654658] Call Trace:
+[    2.655215] [c38d1e80] [c05d4974] panic+0x124/0x290 (unreliable)
+[    2.655698] [c38d1ee0] [c004cfc4] do_exit+0x910/0x92c
+[    2.656300] [c38d1f20] [c004d088] do_group_exit+0x54/0xb0
+[    2.656694] [c38d1f30] [c004d104] __wake_up_parent+0x0/0x3c
+[    2.656994] [c38d1f40] [c0016558] ret_from_syscall+0x0/0x40
+[    2.657455] --- interrupt: c01 at 0x737e0
+[    2.657455]     LR = 0x737cc

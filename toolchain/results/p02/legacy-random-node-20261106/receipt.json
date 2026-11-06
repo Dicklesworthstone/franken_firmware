@@ -1,0 +1,57 @@
+{
+  "archive_sha256": "2725c1b32e3ea9c37887e9e8b60246fdce3d56c3e29ead5779e543ca07ea76b4",
+  "console_public_sha256": "1b5d8a699ba8e7395aec981643e8f4f70f05b6ce8eb29ec73cd4279603556d37",
+  "console_raw_sha256": "3006329f6c781b2b30fc8c22cde75ac076336d23d1f006959af3dce93f4ce98b",
+  "console_transformation": "trailing line whitespace removed; final newline normalized; no marker edits",
+  "consumer": "P02 explicit legacy entropy provider guest qualification",
+  "elf_file_output": "ELF 32-bit MSB executable, PowerPC or cisco 4500, version 1 (SYSV), statically linked, stripped",
+  "elf_sha256": "572352947936cece167356e1b211519e5840517814732efa76e86281f353dd8b",
+  "elf_source_revision": "342975861657",
+  "environment": {
+    "QEMU_AUDIO_DRV": "none"
+  },
+  "guest_init_exit": 3,
+  "guest_kernel_identity_marker": "invalid",
+  "kernel_sha256": "289f40b63ea9aa82743f568ddeaba669a16a859970497dccf7135596da538f98",
+  "limits": [
+    "No credited-pool or positive entropy fill observed",
+    "Invalid guest kernel identity marker makes this non-qualifying",
+    "Not a normal PID1 harness or clean boot",
+    "Generic 64MiB QEMU guest, not retained Sonos hardware",
+    "No network, physical audio or device qualification"
+  ],
+  "modified_source_sha256": {
+    "toolchain/src/mkinitramfs.py": "7462021e1b00dc374283bb791094557ae52357412c5da53df40a977a0585518f",
+    "toolchain/tests/test_initramfs_archive.py": "ecd6fbe497d13c440f36980bde408f7f38b0b4f43484c78817517873b5924b0d"
+  },
+  "observed_clock": "PASS provenance=kernel",
+  "observed_entropy": "REFUSED provenance=kernel provider=legacy_dev_random_test_environment reason=not_seeded",
+  "observed_wake": "PASS provenance=kernel mechanism=eventfd",
+  "qemu_argv_with_path_parameters": [
+    "qemu-system-ppc",
+    "-M",
+    "g3beige",
+    "-cpu",
+    "G3",
+    "-m",
+    "64M",
+    "-nographic",
+    "-no-reboot",
+    "-nic",
+    "none",
+    "-kernel",
+    "$PPC_GUEST_KERNEL",
+    "-initrd",
+    "$EVIDENCE_DIR/legacy-ppc.cpio.gz",
+    "-append",
+    "console=ttyPZ0,38400 rdinit=/init panic=-1 -- --platform-startup --entropy-provider legacy-dev-random-test-environment"
+  ],
+  "qemu_exit": 0,
+  "qemu_version": "QEMU emulator version 11.1.2\nCopyright (c) 2003-2026 Fabrice Bellard and the QEMU Project developers",
+  "qualification": false,
+  "schema": "ffw.p02.legacy_random_node_diagnostic.v1",
+  "source_git_head": "13783654f12a9e1d0d0b78a298370b61ca4794db",
+  "status": "REFUSED_NOT_SEEDED",
+  "termination": "kernel panic after one-shot PID1 exit; QEMU exit 0 is not success",
+  "timed_out": false
+}

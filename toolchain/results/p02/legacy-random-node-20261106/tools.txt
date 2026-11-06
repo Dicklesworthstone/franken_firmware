@@ -1,0 +1,6 @@
+qemu-system-ppc --version
+QEMU emulator version 11.1.2
+Copyright (c) 2003-2026 Fabrice Bellard and the QEMU Project developers
+
+file -b "$P01_PPC_SPEAKER_ELF"
+ELF 32-bit MSB executable, PowerPC or cisco 4500, version 1 (SYSV), statically linked, stripped

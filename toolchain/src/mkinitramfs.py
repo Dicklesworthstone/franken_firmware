@@ -40,6 +40,9 @@ DEFAULT_DEVICE_NODES: tuple[tuple[str, int, tuple[int, int]], ...] = (
     ("dev/ttyPZ0", S_IFCHR | 0o600, (204, 192)),
     ("dev/null", S_IFCHR | 0o666, (1, 3)),
     ("dev/zero", S_IFCHR | 0o666, (1, 5)),
+    # P02's explicit legacy entropy provider opens this device, never urandom.
+    # Making the node available neither seeds the pool nor changes that policy.
+    ("dev/random", S_IFCHR | 0o600, (1, 8)),
     ("dev/urandom", S_IFCHR | 0o666, (1, 9)),
 )
 
@@ -254,8 +257,14 @@ def parse_cpio_bytes(raw: bytes) -> list[dict[str, Any]]:
 def verify_initramfs_bytes(
     archive_bytes: bytes,
     expected_init_sha256: str | None = None,
+    *,
+    require_legacy_random: bool = False,
 ) -> dict[str, Any]:
-    """Decompress (if gzip) and verify required initramfs structure, device tuples, and init digest."""
+    """Verify the archive, optionally requiring the selected legacy entropy device.
+
+    Historical archives without that provider remain verifiable. When present,
+    its node is always checked; new builds require it explicitly.
+    """
     if archive_bytes[:2] == b"\x1f\x8b":
         raw = gzip.decompress(archive_bytes)
     else:
@@ -263,6 +272,9 @@ def verify_initramfs_bytes(
 
     entries = parse_cpio_bytes(raw)
     by_name = {e["name"]: e for e in entries}
+
+    if require_legacy_random and "dev/random" not in by_name:
+        raise ValueError("missing required device node 'dev/random'")
 
     for required_dir in DEFAULT_DIRS:
         if required_dir not in by_name:
@@ -272,6 +284,8 @@ def verify_initramfs_bytes(
 
     for dev_name, dev_mode, expected_rdev in DEFAULT_DEVICE_NODES:
         if dev_name not in by_name:
+            if dev_name == "dev/random" and not require_legacy_random:
+                continue
             raise ValueError(f"missing required device node {dev_name!r}")
         ent = by_name[dev_name]
         if ent["mode"] != dev_mode:
@@ -304,6 +318,7 @@ def verify_initramfs_bytes(
         "devices": {
             dev_name: {"mode": oct(by_name[dev_name]["mode"]), "rdev": list(by_name[dev_name]["rdev"])}
             for dev_name, _, _ in DEFAULT_DEVICE_NODES
+            if dev_name in by_name
         },
     }
 
@@ -356,8 +371,8 @@ def build(
 ) -> dict[str, Any]:
     """Build a deterministic `.cpio.gz` initramfs from `init_path` and verify it independently.
 
-    `extra_files` are `(name, mode, bytes)` regular files packed after `init`. With none, the archive is exactly
-    what it was before this parameter existed."""
+    `extra_files` are `(name, mode, bytes)` regular files packed after `init`.
+    New archives always provide the legacy entropy device, including with no extra files."""
     init_p = pathlib.Path(init_path)
     out_p = pathlib.Path(out_path)
     if not init_p.is_file():
@@ -368,7 +383,8 @@ def build(
 
     raw_cpio = build_cpio_bytes(init_bytes, extra_entries=[(name, mode, data, None) for name, mode, data in extras])
     gz_bytes = compress_deterministic_gzip(raw_cpio)
-    receipt = verify_initramfs_bytes(gz_bytes, expected_init_sha256=init_sha256)
+    receipt = verify_initramfs_bytes(gz_bytes, expected_init_sha256=init_sha256,
+                                     require_legacy_random=True)
     if extras:
         receipt["extra_files"] = verify_extra_files(gz_bytes, extras)
 
@@ -457,6 +473,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--init", type=str, help="Path to init ELF binary to package")
     parser.add_argument("--out", type=str, help="Output .cpio.gz path")
     parser.add_argument("--verify", type=str, help="Verify an existing .cpio or .cpio.gz archive")
+    parser.add_argument("--require-legacy-random", action="store_true",
+                        help="Require /dev/random when verifying a legacy-entropy archive")
     parser.add_argument("--expected-init-sha256", type=str, default=None, help="Expected SHA-256 of /init")
     parser.add_argument("--build-dir", type=str, default=None, help="Build root containing hello-init-target and initramfs/")
     args = parser.parse_args(argv)
@@ -468,7 +486,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.verify:
         data = pathlib.Path(args.verify).read_bytes()
-        res = verify_initramfs_bytes(data, expected_init_sha256=args.expected_init_sha256)
+        res = verify_initramfs_bytes(data, expected_init_sha256=args.expected_init_sha256,
+                                    require_legacy_random=args.require_legacy_random)
         print(json.dumps(res, indent=2, sort_keys=True))
         return 0
 
