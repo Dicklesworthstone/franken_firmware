@@ -5,9 +5,11 @@ They say nothing about the Rust, which has not been run.
 
     python3 -B -I -m unittest discover -s tests/d03 -p 'test_judge.py'
 """
+import contextlib
 import copy
 import hashlib
 import importlib.util
+import io
 import json
 import math
 import os
@@ -427,6 +429,253 @@ class JudgeSelfTest(unittest.TestCase):
                 doc = json.load(fh)
         self.assertEqual(doc["not_measured"][0]["status"], "not measured: needs hardware")
         self.assertEqual(doc["evidence_class"], "host-simulation")
+
+
+class Retention(unittest.TestCase):
+    """The original acceptance clauses about structured diagnostics and about what a failure keeps. Each plant is paired with its control
+    (the same run without the plant), and every digest is recomputed here with hashlib from the files themselves."""
+
+    # Written out by hand, so that a file silently dropped from the judge's own list is noticed: the verdict rests on these bytes.
+    MUST_BIND = (
+        "tests/d03/vectors.json", "tests/d03/reference.py", "tests/d03/generate.py", "tests/d03/anchors.py", "tests/d03/run_cases.py",
+        "tests/d03/case_log.py", "tests/d01/run_cases.py", "scripts/test/test_support/diagnostics.py", "docs/contracts/d03.md",
+        "toolchain/src/measure-d03-target.py", "Cargo.lock", "rust-toolchain.toml", "crates/franken-clock/Cargo.toml",
+        "crates/franken-dsp/Cargo.toml", "crates/franken-speaker/Cargo.toml", "crates/franken-clock/src/rate.rs",
+        "crates/franken-dsp/src/resample.rs", "crates/franken-dsp/src/resample/tests.rs", "crates/franken-dsp/tests/d03_quality.rs",
+        "crates/franken-dsp/tests/d03_target_samples.rs", "crates/franken-speaker/tests/d03_closed_loop.rs",
+    )
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.dir = self._tmp.name
+
+    def write(self, name, text):
+        path = os.path.join(self.dir, name)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return path
+
+    def run_main(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = rc.main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    @staticmethod
+    def sha(path):
+        with open(path, "rb") as fh:
+            return hashlib.sha256(fh.read()).hexdigest()
+
+    def diag(self):
+        return rc.case_log.load(rc.REPO)
+
+    def a_case_test(self):
+        """(case id, stem, full test name, bare name) of one Rust test the judge requires."""
+        case = next(c for c in rc.registry(VEC) if c["tests"])
+        stem, name = case["tests"][0]
+        return case["id"], stem, name, name.rsplit("::", 1)[-1]
+
+    def receipts_of(self, directory):
+        names = sorted(os.listdir(directory))
+        return ([n for n in names if n.endswith(".json")], [n for n in names if n.endswith(".jsonl")])
+
+    # ---- the structured diagnostic log
+
+    def test_every_run_writes_a_complete_jsonl_log_next_to_its_receipt_and_the_header_binds_the_artifacts(self):
+        good = self.write("good.log", build_log(good_records()))
+        receipts = os.path.join(self.dir, "receipts")
+        code, out, _ = self.run_main(["--tier", "full", "--judge", good, "--receipts", receipts])
+        self.assertEqual(code, 0, out)
+        (name,), (diag_name,) = self.receipts_of(receipts)
+        with open(os.path.join(receipts, name), encoding="utf-8") as fh:
+            receipt = json.load(fh)
+        run_id = receipt["run_id"]
+        self.assertEqual(diag_name, "d03-diag-full-%s.jsonl" % run_id)
+        path = os.path.join(receipts, diag_name)
+        audit = self.diag().audit_log(path)  # the shared module's own re-read of the file
+        cases = len(receipt["results"])
+        self.assertTrue(audit.complete, audit.reasons)
+        self.assertEqual(audit.critical_events, 2 * cases + 1)
+        self.assertEqual(receipt["diagnostics"]["complete"], True)
+        self.assertEqual(receipt["diagnostics"]["file"], diag_name)
+        self.assertEqual(receipt["diagnostics"]["log"]["critical_lost"], False)
+        self.assertEqual(receipt["diagnostics"]["log"]["sha256"], self.sha(path))
+        self.assertEqual(receipt["exit_code"], 0)
+        with open(path, encoding="utf-8") as fh:
+            records = [json.loads(line) for line in fh]
+        header = records[0]
+        self.assertEqual(header["schema"], "ff.diag.v1")
+        self.assertEqual(header["timebase"]["clock"], "monotonic_ns")
+        want_set = hashlib.sha256("".join("%s %s\n" % (rel, self.sha(os.path.join(rc.REPO, rel)))
+                                          for rel in sorted(receipt["artifacts"])).encode()).hexdigest()
+        self.assertEqual(header["extra"]["artifact_set_sha256"], want_set)
+        self.assertEqual(header["extra"]["vectors_sha256"], self.sha(rc.VECTORS))
+        begins = {r["case"]: r for r in records if r.get("kind") == "case.begin"}
+        ends = {r["case"]: r for r in records if r.get("kind") == "case.end"}
+        self.assertEqual(len(begins), cases)
+        self.assertEqual(set(begins), set(ends))
+        by_id = {r["id"]: r for r in receipt["results"]}
+        for case_id, end in ends.items():
+            self.assertEqual(end["corr"], begins[case_id]["corr"])
+            self.assertEqual(end["fields"]["status"], by_id[case_id]["status"], case_id)  # D03 ids are short: the sink cuts none
+        self.assertEqual(sum(1 for r in records if r.get("kind") == "run.summary"), 1)
+        # a rerun never overwrites the first run's evidence
+        self.assertEqual(self.run_main(["--tier", "full", "--judge", good, "--receipts", receipts])[0], 0)
+        self.assertEqual(len(self.receipts_of(receipts)[1]), 2)
+
+    def test_lost_critical_evidence_makes_a_run_that_would_pass_not_qualified(self):
+        _, results = judge(build_log(good_records()), tier="full")
+        self.assertEqual(rc.exit_code(results), 0)
+        _, meta = rc.run("full", None)
+        diag = self.diag()
+
+        def evidence(target):
+            log = rc.case_log.CaseLog.open(rc.REPO, "t1", "full", target=target)
+            for r in results:
+                log.record(r.case_id, r.group, r.status, r.detail)
+            return log.finish(rc.summarize(results))
+
+        whole = evidence(diag.FaultableSink())
+        self.assertTrue(whole.complete, whole.reasons)  # control: a sink that takes every write
+        self.assertEqual(rc.final_exit(results, whole), 0)
+        full = evidence(diag.FaultableSink(capacity_bytes=6000))  # the plant: a disk that fills long before the run ends
+        self.assertFalse(full.complete)
+        self.assertTrue(any("critical" in reason for reason in full.reasons), full.reasons)
+        self.assertEqual(rc.final_exit(results, full), 1)
+        out = io.StringIO()
+        meta["versions"], meta["artifacts"] = rc.versions(), rc.artifact_digests()
+        with contextlib.redirect_stdout(out):
+            rc.report(results, "full", None, meta, full)
+        self.assertIn("RESULT: NOT QUALIFIED: diagnostic evidence INCOMPLETE", out.getvalue())
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc.report(results, "full", None, meta, whole)
+        self.assertIn("RESULT: QUALIFIED", out.getvalue())
+        # a failure is still a failure whatever the log says
+        failing = [rc.Result("D03-X", "failed", "x", "AC1")] + results
+        self.assertEqual(rc.final_exit(failing, full), 1)
+        self.assertEqual(rc.final_exit(failing, whole), 1)
+
+    def test_a_case_that_wrote_no_events_is_caught_by_the_independent_count_not_only_by_the_sinks_own_loss_accounting(self):
+        diag = self.diag()
+
+        def evidence(extra_case):
+            log = rc.case_log.CaseLog.open(rc.REPO, "t3", "full", target=diag.FaultableSink())
+            for n in range(3):
+                log.record("D03-X-%d" % n, "AC1", "passed", "")
+            if extra_case:
+                log.cases += 1  # a case the judge decided and that never reached the log
+            return log.finish({"passed": 4, "failed": 0, "blocked": 0})
+
+        self.assertTrue(evidence(False).complete)  # control
+        missing = evidence(True)
+        self.assertFalse(missing.complete)
+        self.assertEqual(missing.reasons, ["critical_event_count:7_of_9"])
+
+    def test_an_unavailable_diagnostics_module_is_an_incomplete_log_not_a_crash(self):
+        empty_repo = tempfile.mkdtemp(dir=self.dir)  # a tree with no scripts/test/test_support/diagnostics.py
+        log = rc.case_log.CaseLog.open(empty_repo, "t2", "full")
+        log.record("D03-X", "AC1", "passed", "")
+        evidence = log.finish({"passed": 1, "failed": 0, "blocked": 0})
+        self.assertFalse(evidence.complete)
+        self.assertTrue(evidence.reasons[0].startswith("diagnostics_unavailable"), evidence.reasons)
+        _, results = judge(build_log(good_records()), tier="full")
+        self.assertEqual(rc.final_exit(results, evidence), 1)
+
+    def test_an_unwritable_receipts_directory_is_a_verdict_not_a_traceback(self):
+        good = self.write("good.log", build_log(good_records()))
+        blocker = self.write("blocker", "a regular file, so nothing can be created under it")
+        code, out, err = self.run_main(["--tier", "full", "--judge", good, "--receipts", os.path.join(blocker, "sub")])
+        self.assertEqual(code, 1)
+        self.assertIn("RESULT: NOT QUALIFIED: diagnostic evidence INCOMPLETE (receipts_unavailable:", out)
+        self.assertIn("the receipt could not be written", err)
+        # the control: a directory that can be made gives a qualified run and a receipt
+        code, out, err = self.run_main(["--tier", "full", "--judge", good, "--receipts", os.path.join(self.dir, "fine")])
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("RESULT: QUALIFIED", out)
+
+    # ---- a failure keeps what a replay needs
+
+    def test_a_failing_run_prints_the_replay_command_the_versions_and_digests_that_equal_the_files(self):
+        case_id, _, _, bare = self.a_case_test()
+        bad = self.write("corrupt.log", build_log(good_records(), failed_tests=(bare,)))
+        code, out, _ = self.run_main(["--tier", "full", "--judge", bad])
+        self.assertEqual(code, 1)
+        lines = out.splitlines()
+        (first,) = [l for l in lines if l.startswith("RETAINED FOR REPLAY.")]
+        self.assertTrue(first.startswith("RETAINED FOR REPLAY. First failed case: %s: " % case_id), first)
+        self.assertIn("FAILED", first)
+        self.assertIn("  replay: scripts/e2e/d03 --tier full --judge corrupt.log", lines)
+        self.assertIn("  judged log corrupt.log sha256 %s" % self.sha(bad), lines)
+        self.assertIn("  versions: python %s; receipt ffw.d03.receipt.v1; vectors %s" % (sys.version.split()[0], VEC["schema"]), lines)
+        shown = {l.split()[1]: l.split()[3] for l in lines if l.startswith("  artifact ")}
+        self.assertEqual(set(shown), set(rc.artifact_digests()))
+        self.assertTrue(set(self.MUST_BIND) <= set(shown), sorted(set(self.MUST_BIND) - set(shown)))
+        self.assertTrue(any(rel.endswith("d03-target-receipt.json") for rel in shown), "the committed target receipt is bound too")
+        for rel, digest in shown.items():
+            self.assertEqual(digest, self.sha(rc.source_path(rel) or os.path.join(rc.REPO, rel)), rel)  # recomputed here
+        self.assertNotIn(rc.REPO, out, "a retained path is relative to the repository root")
+        # control: the same run without the plant keeps nothing and says nothing of the kind
+        good = self.write("good.log", build_log(good_records()))
+        code, out, _ = self.run_main(["--tier", "full", "--judge", good])
+        self.assertEqual(code, 0)
+        self.assertNotIn("RETAINED", out)
+
+    def test_a_blocked_run_keeps_the_same_replay_context(self):
+        code, out, _ = self.run_main(["--tier", "full"])
+        self.assertEqual(code, 3)
+        self.assertIn("RETAINED FOR REPLAY. First blocked case: ", out)
+        self.assertIn("  replay: scripts/e2e/d03 --tier full\n", out)
+
+    def test_the_receipt_carries_digests_versions_and_the_exact_replay_command(self):
+        good = self.write("good.log", build_log(good_records()))
+        receipts = os.path.join(self.dir, "receipts")
+        self.assertEqual(self.run_main(["--tier", "full", "--judge", good, "--receipts", receipts])[0], 0)
+        (name,), _ = self.receipts_of(receipts)
+        with open(os.path.join(receipts, name), encoding="utf-8") as fh:
+            receipt = json.load(fh)
+        self.assertEqual(receipt["replay"], "scripts/e2e/d03 --tier full --judge good.log")
+        self.assertEqual(receipt["versions"], {"python": sys.version.split()[0], "receipt_schema": "ffw.d03.receipt.v1",
+                                               "vectors_schema": VEC["schema"]})
+        self.assertEqual(set(receipt["artifacts"]), set(rc.artifact_digests()))
+        self.assertTrue(set(self.MUST_BIND) <= set(receipt["artifacts"]), sorted(set(self.MUST_BIND) - set(receipt["artifacts"])))
+        for rel, digest in receipt["artifacts"].items():
+            self.assertEqual(digest, self.sha(rc.source_path(rel) or os.path.join(rc.REPO, rel)), rel)
+        self.assertEqual(receipt["logs"], [{"path": "good.log", "sha256": self.sha(good)}])
+
+    def test_a_failed_rust_test_names_its_first_causal_event_in_both_log_shapes(self):
+        case_id, _, name, bare = self.a_case_test()
+        other = next(n for c in rc.registry(VEC) for _, n in c["tests"] if n != name)
+        base = build_log(good_records(), failed_tests=(bare,))
+        loc = "crates/franken-clock/src/rate.rs:9:9:"
+        want_at = "thread '%s' panicked at %s" % (name, loc)
+        block = ["", "failures:", "", "---- %s stdout ----" % name, "thread '%s' panicked at %s" % (name, loc),
+                 "assertion `left == right` failed", "  left: 1", " right: 2", "", "failures:", "    %s" % name, ""]
+        live = ["thread '%s' (4242) panicked at %s" % (name, loc), "assertion `left == right` failed", "  left: 1", " right: 2",
+                "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace"]
+        lines = base.split("\n")
+
+        def detail(text):
+            by, _ = judge(text, tier="full")
+            self.assertEqual(by[case_id].status, "failed")
+            return by[case_id].detail
+
+        shapes = (("failure block", base + "\n".join(block) + "\n"),                                   # cargo's report, no --nocapture
+                  ("live, between lines", "\n".join(lines[:3] + live + lines[3:])),                    # --nocapture, stderr as it happens
+                  ("live, separate stream", base + "\n".join(live) + "\n"),                            # RCH delivers stderr apart
+                  ("live, older rustc", "\n".join(lines[:3] + [live[0].replace(" (4242)", "")] + live[1:] + lines[3:])))
+        for label, text in shapes:
+            got = detail(text)
+            self.assertIn("first causal event ", got, label)
+            self.assertIn(want_at, got, label)
+            self.assertIn("assertion `left == right` failed", got, label)
+            self.assertNotIn("RUST_BACKTRACE", got, label)  # the message is the line under the panic, not the note after it
+        # keyed by the thread's test name: another test's panic is not this test's cause
+        wrong = "\n".join(lines[:3] + [l.replace(name, other) for l in live] + lines[3:])
+        self.assertNotIn("first causal event", detail(wrong))
+        # the control: the same FAILED test with no panic in the log claims no cause
+        self.assertNotIn("first causal event", detail(base))
 
 
 class TargetReceiptTest(unittest.TestCase):

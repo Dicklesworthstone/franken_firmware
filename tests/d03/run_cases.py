@@ -31,10 +31,17 @@ The Rust suites run only through the centralized RCH path:
     # soak tier (25.5 virtual hours, ignored by default):
     RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-speaker --test d03_closed_loop -- --ignored --nocapture
 
-The franken-clock estimator and the franken-speaker closed-loop test are held out of the build until the first
-green compile (docs/contracts/d03.md section 8); until they are wired their cases stay blocked.
+The franken-clock estimator and the franken-speaker closed-loop test are wired into the workspace (they ran green centrally in
+b6d); a case whose binary is not in the supplied logs stays blocked, never passed.
 
-Exit codes: 0 qualified, 1 a case failed, 3 only blocked cases stand in the way, 2 usage/malformed.
+Every run also writes its own diagnostic log through the shared Q00 sink (``tests/d03/case_log.py``: ``ff.diag.v1`` JSONL, a CRITICAL
+begin and end per decided case and a run summary, with counted drops). A run whose log lost critical evidence is NOT QUALIFIED
+whatever the cases say. A run that is not a pass prints how to replay it, which versions it ran under and the sha256 of every
+artifact it judged; the receipt carries the same. A FAILED Rust test carries cargo's ``panicked at`` line and message as its first
+causal event, from the failure block or, under ``--nocapture``, from the live stderr line (D01's parser reads both).
+
+Exit codes: 0 qualified, 1 a case failed or the diagnostic log lost critical evidence, 3 only blocked cases stand in the way,
+2 usage/malformed.
 """
 from __future__ import annotations
 
@@ -45,8 +52,10 @@ import importlib.util
 import json
 import math
 import os
+import platform
 import re
 import secrets
+import shlex
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -67,6 +76,16 @@ TARGET_RECEIPT_SCHEMA = "ffw.d03-target-receipt.v1"
 TARGET_RECEIPT_ID = "D03-TARGET-RECEIPT"
 # The gates the judge can re-derive from a stored transcript. D03T-ELF needs the ELF, which is not committed.
 TARGET_REDERIVABLE = ("D03T-TRANSCRIPT", "D03T-CPU", "D03T-QUALITY", "D03T-SEEDED", "D03T-HOST-BYTES")
+# Files whose bytes decide a verdict besides the Rust test sources in RUST_SOURCES: the judge and the D01 parser it reuses, the
+# independent reference and its vectors, the shared diagnostics sink, the contract, the target judge, the lock and the toolchain pin, and
+# the implementation the judged logs belong to. Their sha256 goes into every receipt and every non-pass report.
+JUDGED_ARTIFACTS = (
+    "tests/d03/vectors.json", "tests/d03/reference.py", "tests/d03/generate.py", "tests/d03/anchors.py", "tests/d03/run_cases.py",
+    "tests/d03/case_log.py", "tests/d01/run_cases.py", "scripts/test/test_support/diagnostics.py", "docs/contracts/d03.md",
+    "toolchain/src/measure-d03-target.py", "Cargo.lock", "rust-toolchain.toml",
+    "crates/franken-clock/Cargo.toml", "crates/franken-dsp/Cargo.toml", "crates/franken-speaker/Cargo.toml",
+    "crates/franken-dsp/src/resample.rs", "crates/franken-dsp/tests/d03_target_samples.rs",
+)
 
 # (path, binary stem, module prefix in cargo's test names)
 RUST_SOURCES = [
@@ -95,6 +114,7 @@ def _load(name: str) -> Any:
 
 
 ref, gen, anchors = _load("reference"), _load("generate"), _load("anchors")
+case_log = _load("case_log")
 
 
 def _load_d01_parser() -> Any:
@@ -683,7 +703,8 @@ def run(tier: str, logs: Optional[Logs]) -> Tuple[List[Result], dict]:
                 continue
             where = "%s %s" % (stem, name)
             if status in ("FAILED", "CONFLICT"):
-                failed_why.append("%s: %s" % (where, status))
+                cause = logs.failure_context.get(name) if status == "FAILED" else None
+                failed_why.append("%s: %s%s" % (where, status, "; first causal event " + cause if cause else ""))
             elif status == "AMBIGUOUS":
                 blocked_why.append("%s: in more than one test section and the log cannot say which binary ran it" % where)
             elif status == "ignored":
@@ -739,7 +760,73 @@ def exit_code(results: List[Result]) -> int:
     return 3 if s["blocked"] else 0
 
 
-def report(results: List[Result], tier: str) -> None:
+def target_receipt_files() -> List[str]:
+    """The committed target-ISA receipts, relative to the repository root: the judge's verdict on D03-TARGET-RECEIPT rests on them."""
+    out: List[str] = []
+    if os.path.isdir(TARGET_RECEIPT_ROOT):
+        for name in sorted(os.listdir(TARGET_RECEIPT_ROOT)):
+            candidate = os.path.join(TARGET_RECEIPT_ROOT, name, "d03-target-receipt.json")
+            if os.path.isfile(candidate):
+                out.append(os.path.relpath(candidate, REPO))
+    return out
+
+
+def artifact_digests() -> Dict[str, str]:
+    """sha256 of every file whose bytes decide a verdict. A file that cannot be read says so; it is never left out."""
+    out: Dict[str, str] = {}
+    for rel in list(JUDGED_ARTIFACTS) + [rel for rel, _, _ in RUST_SOURCES] + target_receipt_files():
+        path = source_path(rel) or os.path.join(REPO, rel)
+        out[rel] = sha256_file(path) if os.path.isfile(path) else "missing"
+    return out
+
+
+def artifact_set_digest(digests: Dict[str, str]) -> str:
+    """One digest over the sorted `path digest` lines, small enough for the log header."""
+    return hashlib.sha256("".join("%s %s\n" % (rel, digest) for rel, digest in sorted(digests.items())).encode("utf-8")).hexdigest()
+
+
+def versions() -> Dict[str, Any]:
+    try:
+        with open(VECTORS, encoding="utf-8") as handle:
+            vectors_schema = json.load(handle).get("schema")
+    except (OSError, ValueError, AttributeError):
+        vectors_schema = None
+    return {"python": platform.python_version(), "receipt_schema": RECEIPT_SCHEMA, "vectors_schema": vectors_schema}
+
+
+def replay_command(tier: str, logs: Optional[Logs]) -> str:
+    names = [os.path.basename(path) for path, _ in logs.files] if logs else []
+    return "scripts/e2e/d03 --tier %s" % tier + (" --judge " + " ".join(shlex.quote(n) for n in names) if names else "")
+
+
+def final_exit(results: List[Result], evidence: Optional[Any]) -> int:
+    """The cases' exit code, except that a pass cannot rest on a diagnostic log that lost critical evidence."""
+    code = exit_code(results)
+    if code == 0 and evidence is not None and not evidence.complete:
+        return 1
+    return code
+
+
+def retained_lines(results: List[Result], tier: str, logs: Optional[Logs], meta: dict) -> List[str]:
+    """What a run that is not a pass keeps: the first failure (or block) with its expected-versus-observed text, the exact replay
+    command, the versions and the digest of every artifact judged. Paths are relative to the repository root."""
+    bad = [r for r in results if r.status == "failed"] or [r for r in results if r.status == "blocked"]
+    if not bad:
+        return []
+    first = bad[0]
+    lines = ["RETAINED FOR REPLAY. First %s case: %s: %s" % (first.status, first.case_id, first.detail),
+             "  replay: " + replay_command(tier, logs)]
+    for path, digest in (logs.files if logs else []):
+        lines.append("  judged log %s sha256 %s" % (os.path.basename(path), digest))
+    v = meta["versions"]
+    lines.append("  versions: python %s; receipt %s; vectors %s" % (v["python"], v["receipt_schema"], v["vectors_schema"]))
+    for rel, digest in meta["artifacts"].items():
+        lines.append("  artifact %s sha256 %s" % (rel, digest))
+    return lines
+
+
+def report(results: List[Result], tier: str, logs: Optional[Logs] = None, meta: Optional[dict] = None,
+           evidence: Optional[Any] = None) -> None:
     print("D03 tier=%s" % tier)
     for r in results:
         label = {"passed": "PASS", "failed": "FAIL", "blocked": "BLOCKED"}.get(r.status, r.status)
@@ -748,22 +835,37 @@ def report(results: List[Result], tier: str) -> None:
     print("planned=%d passed=%d failed=%d blocked=%d" % (s["planned"], s["passed"], s["failed"], s["blocked"]))
     for item in NOT_MEASURED:
         print("NOT MEASURED  %s: %s (recorded instead: %s)" % (item["item"], item["status"], item["recorded_instead"]))
+    if meta is not None:
+        for line in retained_lines(results, tier, logs, meta):
+            print(line)
+    if evidence is not None:
+        print(evidence.summary)
     code = exit_code(results)
+    if code == 0 and evidence is not None and not evidence.complete:
+        print("RESULT: NOT QUALIFIED: diagnostic evidence INCOMPLETE (%s)" % ", ".join(evidence.reasons))
+        return
     print("RESULT: " + ("QUALIFIED (host simulation; no device claim)" if code == 0 else
                         "NOT QUALIFIED: blocked cases are not passes" if code == 3 else "FAILED"))
 
 
-def write_receipt(directory: str, tier: str, results: List[Result], meta: dict, logs: Optional[Logs]) -> str:
+def write_receipt(directory: str, tier: str, results: List[Result], meta: dict, logs: Optional[Logs],
+                  run_id: Optional[str] = None, evidence: Optional[Any] = None) -> str:
     os.makedirs(directory, exist_ok=True)
     doc = {
         "schema": RECEIPT_SCHEMA, "tier": tier, "created_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "run_id": secrets.token_hex(6), "summary": summarize(results), "results": [r.as_dict() for r in results],
+        "run_id": run_id or secrets.token_hex(6), "summary": summarize(results), "results": [r.as_dict() for r in results],
         "not_measured": NOT_MEASURED, "evidence_class": "host-simulation", "meta": meta,
+        "exit_code": final_exit(results, evidence),
         "logs": [{"path": os.path.basename(p), "sha256": d} for p, d in (logs.files if logs else [])],
         "sources": {rel: sha256_file(path) for rel, _, _ in RUST_SOURCES
                     for path in [source_path(rel)] if path},
-        "replay": "scripts/e2e/d03 --tier " + tier + (" --judge <cargo-test-log>..." if logs else ""),
+        "replay": replay_command(tier, logs),
     }
+    if "versions" in meta:
+        doc["versions"], doc["artifacts"] = meta["versions"], meta["artifacts"]
+    if evidence is not None:
+        doc["diagnostics"] = {"complete": evidence.complete, "reasons": list(evidence.reasons), "log": evidence.log,
+                              "file": os.path.basename(evidence.path) if evidence.path else None}
     path = os.path.join(directory, "d03-receipt-%s.json" % doc["run_id"])
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(doc, handle, indent=1, sort_keys=True)
@@ -803,10 +905,23 @@ def main(argv: Optional[List[str]] = None) -> int:
                 return 2
             logs.add(path)
     results, meta = run(args.tier, logs)
-    report(results, args.tier)
+    meta["versions"], meta["artifacts"] = versions(), artifact_digests()
+    run_id = secrets.token_hex(6)
+    log = case_log.CaseLog.open(REPO, run_id, args.tier, args.receipts, header_extra={
+        "python": meta["versions"]["python"], "tier": args.tier, "artifact_count": len(meta["artifacts"]),
+        "artifact_set_sha256": artifact_set_digest(meta["artifacts"]), "vectors_sha256": meta.get("vectors_sha256")})
+    for r in results:
+        log.record(r.case_id, r.group, r.status, r.detail)
+    evidence = log.finish(summarize(results))
+    report(results, args.tier, logs, meta, evidence)
+    code = final_exit(results, evidence)
     if args.receipts:
-        print("receipt: " + write_receipt(args.receipts, args.tier, results, meta, logs))
-    return exit_code(results)
+        try:
+            print("receipt: " + write_receipt(args.receipts, args.tier, results, meta, logs, run_id, evidence))
+        except OSError as err:
+            sys.stderr.write("error: the receipt could not be written under %s: %s\n" % (args.receipts, type(err).__name__))
+            return code or 1
+    return code
 
 
 if __name__ == "__main__":

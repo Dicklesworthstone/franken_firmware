@@ -14,11 +14,14 @@
 #   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-clock -- --nocapture
 #   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-speaker --test d03_closed_loop -- --nocapture
 #   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-speaker --test d03_closed_loop -- --ignored --nocapture   (soak)
-# (the estimator and the closed-loop test are wired in only after the first green compile: docs/contracts/d03.md section 8)
 #   RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p franken-dsp -p franken-clock -p franken-speaker --all-targets -- -D warnings
 #
-# Exit 0 only when every case passed and none is blocked; 1 on a failed case; 3 when the only
-# non-passes are blocked cases (reported, never counted as passed); 2 on usage errors.
+# Every run writes a JSONL diagnostic log through the shared Q00 sink (next to the receipt with --receipts); a run whose log lost
+# critical evidence is NOT QUALIFIED. A run that is not a pass prints how to replay it, its versions and artifact digests
+# (docs/contracts/d03.md section 7.1).
+#
+# Exit 0 only when every case passed, none is blocked and the diagnostic log is complete; 1 on a failed case or a log that lost
+# critical evidence; 3 when the only non-passes are blocked cases (reported, never counted as passed); 2 on usage errors.
 # Cycles on a real core are reported as "not measured: needs hardware"; D03-TARGET-RECEIPT re-judges the committed QEMU run of
 # the big-endian MIPS guest (guest instructions per frame and the target-ISA samples; toolchain/results/runs/*/d03-target-receipt.json).
 set -euo pipefail
