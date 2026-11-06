@@ -263,10 +263,20 @@ pub fn check_receiver(input: &[u8]) -> Result<u64, String> {
                     continue;
                 };
                 rx.bind_stream(id, new);
-                stream = stream_id;
-                epoch = new;
-                window = Window::default();
-                generation += 1;
+                if stream_id == stream {
+                    // The identity already bound: a repeated bind changes nothing and a newer epoch is an
+                    // epoch announcement (`StreamReceiver::bind_stream`); it never re-opens a sequence space.
+                    if new > epoch {
+                        epoch = new;
+                        window = Window::default();
+                        generation += 1;
+                    }
+                } else {
+                    stream = stream_id;
+                    epoch = new;
+                    window = Window::default();
+                    generation += 1;
+                }
                 if rx.active_epoch() != epoch {
                     return Err(format!(
                         "active epoch is {} after bind_stream(_, {new}); the model says {epoch}",

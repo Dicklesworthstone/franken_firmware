@@ -121,6 +121,38 @@ class ReplayModel(unittest.TestCase):
         self.assertEqual(model.epoch, 6)
 
 
+    def test_rebinding_the_bound_stream_does_not_reopen_its_replay_window(self):
+        # The Rust test of the same name in crates/franken-stream/src/lib.rs pins the same behavior (contract section 4).
+        model = rf.ReceiverModel(rf.KEY, rf.S1, 7)
+        wires = [self.frame(n, epoch=7, stream=rf.S1) for n in range(3)]
+        self.assertEqual([model.accept(w) for w in wires], ["OK"] * 3)
+        model.bind(rf.S1, 7)  # a retried bind: same identity, same epoch
+        self.assertEqual([model.accept(w) for w in wires], ["REPLAY_OR_DUPLICATE"] * 3)
+        self.assertEqual(model.accept(self.frame(3, epoch=7, stream=rf.S1)), "OK")  # the permitted positive
+        self.assertEqual(model.epoch, 7)
+
+    def test_binding_the_bound_stream_to_another_epoch_is_only_an_epoch_announcement(self):
+        model = rf.ReceiverModel(rf.KEY, rf.S1, 7)
+        old = self.frame(0, epoch=7, stream=rf.S1)
+        self.assertEqual(model.accept(old), "OK")
+        model.bind(rf.S1, 3)  # a late, older announcement: ignored, nothing moves
+        self.assertEqual(model.epoch, 7)
+        self.assertEqual(model.accept(old), "REPLAY_OR_DUPLICATE")
+        model.bind(rf.S1, 8)  # a newer one is adopted with a fresh sequence space
+        first = self.frame(0, epoch=8, stream=rf.S1)
+        self.assertEqual((model.epoch, model.accept(first), model.accept(old)), (8, "OK", "STALE_EPOCH"))
+        model.bind(rf.S1, 8)  # and repeated, it reopens nothing
+        self.assertEqual(model.accept(first), "REPLAY_OR_DUPLICATE")
+
+    def test_binding_a_different_identity_does_open_a_new_sequence_space(self):
+        model = rf.ReceiverModel(rf.KEY, rf.S1, 7)
+        old = self.frame(0, epoch=7, stream=rf.S1)
+        self.assertEqual(model.accept(old), "OK")
+        model.bind(rf.S2, 7)
+        self.assertEqual(model.accept(old), "WRONG_STREAM")
+        self.assertEqual(model.accept(self.frame(0, epoch=7, stream=rf.S2)), "OK")  # seq 0 is reusable under a fresh identity
+
+
 class GeneratedDocument(unittest.TestCase):
     def test_ordering_scenario_matches_hand_written_expectations(self):
         sc = next(s for s in load_document()["scenarios"] if s["id"] == "N01-SC-001")

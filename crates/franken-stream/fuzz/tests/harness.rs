@@ -6,6 +6,7 @@
 
 use franken_stream::{
     respond, AuthenticatedStreamPacket, Initiator, ReplayWindow, StreamId, StreamKey,
+    StreamReceiver,
 };
 use franken_stream_fuzz::fixture::{
     fixture, number, parse_negotiation_vectors, parse_wire_vectors, text, unhex,
@@ -575,6 +576,135 @@ fn a_replay_is_refused_and_a_stale_epoch_is_refused_and_the_first_delivery_is_ac
     let mut resigned = vec![wire::MODE_RESIGN];
     resigned.extend_from_slice(body);
     assert_eq!(wire::datagram_for(&key, &resigned), d);
+}
+
+#[test]
+fn a_repeated_bind_of_the_bound_stream_does_not_reopen_its_sequence_space() {
+    let d = first_scenario_datagram();
+    let stream = fixture().receiver_stream;
+    let epoch = fixture().receiver_epoch;
+    // The datagram, a bind that names the stream it already is bound to, the datagram again: the second delivery is
+    // a replay, whether the bind repeats the epoch or names an older one.
+    for (what, bind_epoch) in [
+        ("the same epoch", epoch),
+        ("an older epoch", epoch.saturating_sub(1)),
+    ] {
+        let mut ops = Vec::new();
+        encode_raw(&mut ops, &d);
+        encode_bind(&mut ops, stream, bind_epoch);
+        encode_raw(&mut ops, &d);
+        assert_eq!(
+            check_receiver(&ops),
+            Ok(1),
+            "a bind of the bound stream with {what} made a replay acceptable"
+        );
+    }
+    // Paired positives: the first delivery is accepted, and a bind to a different identity does start a new sequence
+    // space (the datagram is then of the wrong stream, as in the test above, and nothing is accepted).
+    let mut once = Vec::new();
+    encode_raw(&mut once, &d);
+    assert_eq!(check_receiver(&once), Ok(1));
+    let mut other = Vec::new();
+    encode_bind(&mut other, stream ^ 1, epoch);
+    encode_raw(&mut other, &d);
+    assert_eq!(check_receiver(&other), Ok(0));
+}
+
+/// The first datagram of a scenario that the vector file says is answered `expect`.
+fn first_datagram_expecting(scenario: &Value, expect: &str) -> Vec<u8> {
+    let step = scenario["steps"]
+        .as_array()
+        .expect("steps")
+        .iter()
+        .find(|s| text(s, "op") == "datagram" && text(s, "expect") == expect)
+        .unwrap_or_else(|| panic!("the scenario has no datagram expecting {expect}"));
+    unhex(text(step, "wire_hex"))
+}
+
+#[test]
+fn a_scenario_starts_from_a_fresh_receiver_and_a_lower_epoch_rebind_of_the_bound_stream_is_no_way_there(
+) {
+    // N01-SC-002 names the fixture's own stream at epoch 3, and every run begins with that stream at epoch 7. A bind of the
+    // stream a receiver already holds is not a restart: it must never rewind the epoch, or a captured epoch-3 datagram
+    // would be accepted again. So a scenario cannot be initialized by one bind; its seed restarts through another identity.
+    let doc = parse_wire_vectors();
+    let low = doc["scenarios"]
+        .as_array()
+        .expect("scenarios")
+        .iter()
+        .find(|s| {
+            number(s, "stream_id") == fixture().receiver_stream
+                && number(s, "epoch") < fixture().receiver_epoch
+        })
+        .expect("a scenario on the fixture's stream at an older epoch");
+    let raw_stream = number(low, "stream_id");
+    let low_epoch = number(low, "epoch");
+    let stream = StreamId::new(raw_stream).expect("the scenario's stream id");
+    // Hand-derived from the contract (section 3): a packet of an older epoch than the active one is STALE_EPOCH, one of a
+    // newer epoch is FUTURE_EPOCH, and the same epoch is judged by the window. The vector file says the scenario's first
+    // datagram is from epoch 4 (FUTURE_EPOCH) and its next from epoch 3 (OK), on a receiver at epoch 3.
+    let newer = first_datagram_expecting(low, "FUTURE_EPOCH");
+    let current = first_datagram_expecting(low, "OK");
+
+    // The permitted case: a receiver created for the scenario's own state, as the wire replay and the Python reference do.
+    let mut fresh = StreamReceiver::new(key(), stream, low_epoch);
+    assert_eq!(
+        fresh.accept(&newer).map_err(|e| e.code()),
+        Err("FUTURE_EPOCH")
+    );
+    assert!(fresh.accept(&current).is_ok());
+
+    // The attack: the receiver every run begins with, then a lower-epoch bind of the stream it holds. The bind changes
+    // nothing, so the same traffic is stale; it is not accepted again, and the epoch is not rewound.
+    let mut attacked = StreamReceiver::new(key(), stream, fixture().receiver_epoch);
+    attacked.bind_stream(stream, low_epoch);
+    assert_eq!(
+        attacked.active_epoch(),
+        fixture().receiver_epoch,
+        "a lower-epoch bind of the bound stream rewound the epoch"
+    );
+    assert_eq!(
+        attacked.accept(&current).map_err(|e| e.code()),
+        Err("STALE_EPOCH")
+    );
+    assert_eq!(
+        attacked.accept(&newer).map_err(|e| e.code()),
+        Err("STALE_EPOCH")
+    );
+
+    // The same pair through the oracle that runs every seed. The corpus's seed reaches the scenario's state by two binds
+    // (another identity, then its own) and is accepted as often as the vector file says; the old initializer, one bind
+    // of the bound stream, gets nothing.
+    let seed = scenario_ops(low);
+    let mut one = Vec::new();
+    encode_bind(&mut one, raw_stream, low_epoch);
+    let bind_len = one.len();
+    assert_eq!(
+        parse_ops(&fixture().wire_key, &seed[..2 * bind_len]),
+        vec![
+            Op::Bind {
+                stream_id: raw_stream ^ 1,
+                epoch: low_epoch
+            },
+            Op::Bind {
+                stream_id: raw_stream,
+                epoch: low_epoch
+            }
+        ]
+    );
+    let want = scenario_expected_accepted(low);
+    assert!(
+        want >= 5,
+        "the scenario accepts only {want} in its seed prefix"
+    );
+    assert_eq!(check_receiver(&seed), Ok(want));
+    let mut old_style = one;
+    old_style.extend_from_slice(&seed[2 * bind_len..]);
+    assert_eq!(
+        check_receiver(&old_style),
+        Ok(0),
+        "the old initializer must get nothing: its datagrams are of an older epoch than the receiver holds"
+    );
 }
 
 #[test]

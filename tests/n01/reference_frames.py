@@ -234,6 +234,11 @@ class ReceiverModel:
         self.bind(stream_id, epoch)
 
     def bind(self, stream_id: int, epoch: int) -> None:
+        """Only a different identity opens a new sequence space (contract section 4). Binding the identity already held is not a
+        restart: a repeated bind changes nothing, a bind naming a newer epoch is an epoch announcement, an older one is ignored."""
+        if getattr(self, "stream_id", None) == stream_id:
+            self.advance_epoch(epoch)
+            return
         self.stream_id = stream_id
         self.epoch = epoch
         self._reset()

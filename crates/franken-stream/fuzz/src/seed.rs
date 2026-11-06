@@ -55,14 +55,24 @@ fn array<'a>(doc: &'a Value, key: &str) -> &'a [Value] {
         .unwrap_or_else(|| panic!("vector document has no array {key}"))
 }
 
-/// The receiver operations of the first `SCENARIO_SEED_STEPS` steps of a scenario, starting from its own binding.
+/// The receiver operations of the first `SCENARIO_SEED_STEPS` steps of a scenario, starting from the scenario's own state: a
+/// receiver freshly created for its stream and epoch, as the wire replay and the Python reference create it.
+///
+/// A run begins with the fixture receiver (scenario 0's stream and epoch), and binding the stream a receiver already holds is
+/// not a restart: it never rewinds an epoch and never reopens a sequence space, so one bind of the scenario's stream cannot
+/// reach an older epoch on that stream (N01-SC-002 starts at epoch 3 on the fixture's stream, which starts at 7). The seed
+/// therefore binds another identity first, which does start a new sequence space, and then the scenario's own stream and
+/// epoch, which is another identity again: two restarts, ending in the scenario's starting state whatever the run began with.
 pub fn scenario_ops(scenario: &Value) -> Vec<u8> {
-    let mut out = Vec::new();
-    encode_bind(
-        &mut out,
-        number(scenario, "stream_id"),
-        number(scenario, "epoch"),
+    let stream = number(scenario, "stream_id");
+    let epoch = number(scenario, "epoch");
+    assert!(
+        stream > 1,
+        "a scenario stream id whose neighbour is a valid identity"
     );
+    let mut out = Vec::new();
+    encode_bind(&mut out, stream ^ 1, epoch);
+    encode_bind(&mut out, stream, epoch);
     for step in array(scenario, "steps").iter().take(SCENARIO_SEED_STEPS) {
         match text(step, "op") {
             "datagram" => encode_raw(&mut out, &unhex(text(step, "wire_hex"))),

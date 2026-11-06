@@ -817,9 +817,19 @@ impl StreamReceiver {
         })
     }
 
-    /// Bind to a restarted or rekeyed stream (announced over the control channel). Resets the
-    /// replay window; packets of the previous stream are rejected as [`StreamError::WrongStream`].
+    /// Bind to a restarted or rekeyed stream (announced over the control channel). A different
+    /// identity resets the replay window; packets of the previous stream are rejected as
+    /// [`StreamError::WrongStream`].
+    ///
+    /// The identity currently bound never resets anything: the control channel retries
+    /// idempotently, so a repeated bind is a no-op, and a bind that only names a newer epoch is
+    /// [`Self::advance_epoch`]. Resetting here would re-open every `(epoch, seq)` already
+    /// admitted for that identity, and a replayed datagram would be admitted a second time.
     pub fn bind_stream(&mut self, stream_id: StreamId, epoch: u64) {
+        if stream_id == self.stream_id {
+            self.window.advance_epoch(epoch);
+            return;
+        }
         self.stream_id = stream_id;
         self.window = ReplayWindow::new(epoch);
     }
@@ -2033,6 +2043,65 @@ mod tests {
         assert_eq!(
             rx.accept(&wrong_key.send(frame(1)).unwrap()),
             Err(StreamError::AuthenticationFailed)
+        );
+    }
+
+    #[test]
+    fn rebinding_the_current_stream_does_not_reopen_its_replay_window() {
+        let (mut rx, mut tx) = receiver_and_sender();
+        let id = sid(0xFEED_0000_0000_0042);
+        let wires: Vec<Vec<u8>> = (0..3).map(|n| tx.send(frame(n)).unwrap()).collect();
+        for w in &wires {
+            assert!(rx.accept(w).is_ok());
+        }
+        // The control channel retries a bind it already delivered: same identity, same epoch.
+        rx.bind_stream(id, 7);
+        for (n, w) in wires.iter().enumerate() {
+            assert_eq!(
+                rx.accept(w),
+                Err(StreamError::ReplayOrDuplicatePacket { seq: n as u64 })
+            );
+        }
+        let c = rx.counters();
+        assert_eq!((c.accepted, c.rejected_replay), (3, 3));
+        // The paired positive: the genuine stream goes on at its next sequence number.
+        assert!(rx.accept(&tx.send(frame(3)).unwrap()).is_ok());
+        assert_eq!(rx.active_epoch(), 7);
+    }
+
+    #[test]
+    fn binding_the_current_stream_to_another_epoch_is_only_an_epoch_announcement() {
+        let (mut rx, mut tx) = receiver_and_sender();
+        let id = sid(0xFEED_0000_0000_0042);
+        let old = tx.send(frame(0)).unwrap();
+        assert!(rx.accept(&old).is_ok());
+        // An older epoch is ignored exactly as `advance_epoch` ignores it: nothing moves.
+        rx.bind_stream(id, 3);
+        assert_eq!(rx.active_epoch(), 7);
+        assert_eq!(
+            rx.accept(&old),
+            Err(StreamError::ReplayOrDuplicatePacket { seq: 0 })
+        );
+        assert!(rx.accept(&tx.send(frame(1)).unwrap()).is_ok());
+        // A newer epoch is adopted with a fresh sequence space: the epoch-8 sender starts at 0
+        // and the epoch-7 datagram is now stale.
+        rx.bind_stream(id, 8);
+        assert_eq!(rx.active_epoch(), 8);
+        let mut next = StreamSender::new(key(), id, 8);
+        let first = next.send(frame(2)).unwrap();
+        assert!(rx.accept(&first).is_ok());
+        assert_eq!(
+            rx.accept(&old),
+            Err(StreamError::StaleSessionEpoch {
+                packet_epoch: 7,
+                active_epoch: 8
+            })
+        );
+        // The same announcement repeated does not reopen epoch 8 either.
+        rx.bind_stream(id, 8);
+        assert_eq!(
+            rx.accept(&first),
+            Err(StreamError::ReplayOrDuplicatePacket { seq: 0 })
         );
     }
 

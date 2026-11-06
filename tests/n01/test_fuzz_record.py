@@ -185,7 +185,12 @@ class Positives(unittest.TestCase):
             stale = Path(tmp) / RECORD_DIR.name
             shutil.copytree(RECORD_DIR, stale)
             record = json.loads((stale / "record.json").read_text(encoding="utf-8"))
-            files = sorted(record["inputs"])[:2]
+            # the tree may already differ from the record in places (that is what a warning is for), so alter two bindings that
+            # still match and count only what those two add
+            baseline = expected_warnings(REC)
+            already = {w.split(" ")[0] for w in baseline}
+            files = [rel for rel in sorted(record["inputs"]) if rel not in already][:2]
+            self.assertEqual(len(files), 2)
             for rel in files:
                 record["inputs"][rel] = "0" * 64
             (stale / "record.json").write_text(json.dumps(record), encoding="utf-8")
@@ -194,7 +199,8 @@ class Positives(unittest.TestCase):
                 code = fr.main([str(stale)])
             line = json.loads(out.getvalue().splitlines()[0])
             self.assertEqual((code, line["problems"]), (0, []), "a stale record is not a failed record")
-            self.assertEqual(len(line["warnings"]), 2)
+            self.assertEqual(line["warnings"], expected_warnings(record))
+            self.assertEqual(len(line["warnings"]), len(baseline) + 2)
             for rel in files:
                 self.assertTrue(any(w.startswith(rel + " differs from the bytes the run saw") for w in line["warnings"]), rel)
                 self.assertIn("WARNING: %s differs from the bytes the run saw" % rel, err.getvalue())
@@ -206,7 +212,7 @@ class Positives(unittest.TestCase):
             with redirect_stdout(out), redirect_stderr(err):
                 code = fr.main([str(stale)])
             self.assertEqual(code, 1)
-            self.assertEqual(len(json.loads(out.getvalue().splitlines()[0])["warnings"]), 2)
+            self.assertEqual(len(json.loads(out.getvalue().splitlines()[0])["warnings"]), len(baseline) + 2)
 
     def test_the_seed_counts_are_rederived_from_the_committed_vectors(self):
         self.assertEqual(fr.seed_counts(ROOT), {"stream_decode": 420, "stream_receiver": 2, "negotiation_respond": 30, "negotiation_finish": 17})
@@ -407,8 +413,13 @@ class TheContractAndTheRecord(unittest.TestCase):
         control_only = len(re.findall(r'#\[cfg\(feature = "control"\)\]\n#\[test\]', harness))
         clean_only = len(re.findall(r'#\[cfg\(not\(feature = "control"\)\)\]\n#\[test\]', harness))
         counts = {row["name"]: row["passed"] for row in REC["central_lines"] if "passed" in row}
-        self.assertEqual(counts, {"test": total - control_only, "test-control": total - clean_only})
         self.assertIn("%d tests in a clean build, %d with `--features control`" % (counts["test"], counts["test-control"]), DOC)
+        now = {"test": total - control_only, "test-control": total - clean_only}
+        if now != counts:
+            # the record's counts are what the recorded run saw. A harness that has gained or lost a test since is a source that
+            # moved, which the verifier must say by name (a warning, never a failing entry point: BeigeMaple 5175)
+            self.assertTrue(any(w.startswith("crates/franken-stream/fuzz/tests/harness.rs differs from the bytes the run saw")
+                                for w in expected_warnings(REC)), "the harness has %r tests, the record %r, and no warning names the file" % (now, counts))
 
     def test_the_record_holds_no_raw_log_and_no_local_path(self):
         self.assertEqual(sorted(p.name for p in RECORD_DIR.iterdir()), ["record.json"])
