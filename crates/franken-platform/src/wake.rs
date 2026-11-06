@@ -700,4 +700,286 @@ mod tests {
             })
         );
     }
+
+    // ---- an interrupted call, for every call the wake leaf issues (ffw-jub: "test absent syscalls and interrupted calls") ----
+    //
+    // `Waker` sends each call through `Abi::call_retrying`: the same call again while the kernel answers EINTR, at most
+    // `MAX_INTERRUPTED_ATTEMPTS` times, then the error as `SysError::Interrupted`. The tests above reach that for a pipe write and for
+    // `close` (which is never repeated). These cover the other five: `eventfd2` and `pipe2` at open, the eventfd write, and the eventfd
+    // and self-pipe reads of a drain. Each runs on both ABIs and has the two halves: EINTR then the real answer (the repeated call is
+    // identical), and an unending EINTR that stops after exactly the bound with nothing else tried (no other mechanism, no close).
+
+    /// More interruptions than the bound, so a loop that did not stop would be seen asking for the next one.
+    const STORM: usize = MAX_INTERRUPTED_ATTEMPTS as usize + 2;
+
+    fn calls_of(ops: &ScriptedOps, kind: fn(&Call) -> bool) -> Vec<Call> {
+        ops.calls().into_iter().filter(kind).collect()
+    }
+
+    fn is_write(call: &Call) -> bool {
+        matches!(call, Call::Write { .. })
+    }
+
+    fn is_read(call: &Call) -> bool {
+        matches!(call, Call::Read { .. })
+    }
+
+    #[test]
+    fn an_interrupted_eventfd2_is_repeated_unchanged_then_reported_after_the_bound() {
+        for (abi, nonblock) in [(PPC, 0x800u32), (MIPS, 0x80)] {
+            let again = Call::Eventfd2 {
+                initval: 0,
+                flags: nonblock | O_CLOEXEC,
+            };
+            let mut ops = ScriptedOps::new().eventfd(-4).eventfd(-4).eventfd(7);
+            let waker = eventfd_waker(&mut ops, abi);
+            assert_eq!(waker.read_fd(), 7, "{abi:?}");
+            assert_eq!(ops.calls(), vec![again.clone(); 3], "{abi:?}");
+
+            let mut storm = ScriptedOps::new();
+            for _ in 0..STORM {
+                storm = storm.eventfd(-4);
+            }
+            assert_eq!(
+                Waker::open(&mut storm, abi, ReactorWakeMechanism::EventFd),
+                Err(WakeError::Sys {
+                    call: WakeCall::Eventfd2,
+                    error: SysError::Interrupted
+                }),
+                "{abi:?}"
+            );
+            // Bounded, and nothing else was tried: no pipe2 in its place, no close of a descriptor that was never handed over.
+            assert_eq!(
+                storm.calls(),
+                vec![again; MAX_INTERRUPTED_ATTEMPTS as usize],
+                "{abi:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_interrupted_pipe2_is_repeated_unchanged_then_reported_after_the_bound() {
+        for (abi, nonblock) in [(PPC, 0x800u32), (MIPS, 0x80)] {
+            let again = Call::Pipe2 {
+                flags: nonblock | O_CLOEXEC,
+            };
+            let mut ops = ScriptedOps::new()
+                .pipe(-4, [0, 0])
+                .pipe(-4, [0, 0])
+                .pipe(0, [5, 6]);
+            let waker = pipe_waker(&mut ops, abi);
+            assert_eq!(
+                (waker.read_fd(), waker.mechanism()),
+                (5, ReactorWakeMechanism::SelfPipe),
+                "{abi:?}"
+            );
+            assert_eq!(ops.calls(), vec![again.clone(); 3], "{abi:?}");
+
+            let mut storm = ScriptedOps::new();
+            for _ in 0..STORM {
+                storm = storm.pipe(-4, [0, 0]);
+            }
+            assert_eq!(
+                Waker::open(&mut storm, abi, ReactorWakeMechanism::SelfPipe),
+                Err(WakeError::Sys {
+                    call: WakeCall::Pipe2,
+                    error: SysError::Interrupted
+                }),
+                "{abi:?}"
+            );
+            assert_eq!(
+                storm.calls(),
+                vec![again; MAX_INTERRUPTED_ATTEMPTS as usize],
+                "{abi:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_absence_that_follows_an_interruption_is_still_absence() {
+        // The retry loop hands back the answer of the LAST attempt: an ENOSYS after an EINTR is absence in the guest's own
+        // number, and no other mechanism is tried for it.
+        let mut ops = ScriptedOps::new().eventfd(-4).eventfd(-38);
+        assert_eq!(
+            Waker::open(&mut ops, PPC, ReactorWakeMechanism::EventFd),
+            Err(WakeError::Absent {
+                call: WakeCall::Eventfd2
+            })
+        );
+        assert_eq!(ops.calls().len(), 2, "no pipe2 after an absent eventfd2");
+
+        let mut ops = ScriptedOps::new().pipe(-4, [0, 0]).pipe(-89, [0, 0]);
+        assert_eq!(
+            Waker::open(&mut ops, MIPS, ReactorWakeMechanism::SelfPipe),
+            Err(WakeError::Absent {
+                call: WakeCall::Pipe2
+            })
+        );
+        assert_eq!(ops.calls().len(), 2, "no plain pipe after an absent pipe2");
+    }
+
+    #[test]
+    fn an_interrupted_eventfd_write_is_repeated_with_the_same_counter_then_reported_after_the_bound()
+     {
+        for abi in [PPC, MIPS] {
+            let one = Call::Write {
+                fd: 7,
+                bytes: 1u64.to_ne_bytes().to_vec(),
+            };
+            let mut ops = ScriptedOps::new().eventfd(7).write(-4).write(8);
+            let waker = eventfd_waker(&mut ops, abi);
+            assert_eq!(
+                waker.signal(&mut ops, abi),
+                Ok(WakeOutcome::Signalled),
+                "{abi:?}"
+            );
+            assert_eq!(calls_of(&ops, is_write), vec![one.clone(); 2], "{abi:?}");
+
+            let mut storm = ScriptedOps::new().eventfd(7);
+            for _ in 0..STORM {
+                storm = storm.write(-4);
+            }
+            let waker = eventfd_waker(&mut storm, abi);
+            // An unending interruption is an error, not "a wake is already pending" (that is EAGAIN) and not a signal.
+            assert_eq!(
+                waker.signal(&mut storm, abi),
+                Err(WakeError::Sys {
+                    call: WakeCall::Write,
+                    error: SysError::Interrupted
+                }),
+                "{abi:?}"
+            );
+            assert_eq!(
+                calls_of(&storm, is_write),
+                vec![one; MAX_INTERRUPTED_ATTEMPTS as usize],
+                "{abi:?}"
+            );
+            // The filter above cannot see a stray `close` (the double answers one with 0): the opening call and the bound are every call.
+            assert_eq!(
+                storm.calls().len(),
+                1 + MAX_INTERRUPTED_ATTEMPTS as usize,
+                "{abi:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_interrupted_eventfd_read_is_repeated_then_reported_after_the_bound_and_is_not_nothing_pending()
+     {
+        for abi in [PPC, MIPS] {
+            let read = Call::Read {
+                fd: 7,
+                cap: EVENTFD_COUNTER_BYTES,
+            };
+            let mut ops = ScriptedOps::new()
+                .eventfd(7)
+                .read(-4, &[])
+                .read(8, &2u64.to_ne_bytes());
+            let waker = eventfd_waker(&mut ops, abi);
+            assert_eq!(
+                waker.drain(&mut ops, abi),
+                Ok(Drained {
+                    wakes: 2,
+                    more_pending: false
+                }),
+                "{abi:?}"
+            );
+            assert_eq!(calls_of(&ops, is_read), vec![read.clone(); 2], "{abi:?}");
+
+            let mut storm = ScriptedOps::new().eventfd(7);
+            for _ in 0..STORM {
+                storm = storm.read(-4, &[]);
+            }
+            let waker = eventfd_waker(&mut storm, abi);
+            // EAGAIN means nothing is pending and is a success; EINTR that never ends is not that, and is an error.
+            assert_eq!(
+                waker.drain(&mut storm, abi),
+                Err(WakeError::Sys {
+                    call: WakeCall::Read,
+                    error: SysError::Interrupted
+                }),
+                "{abi:?}"
+            );
+            assert_eq!(
+                calls_of(&storm, is_read),
+                vec![read; MAX_INTERRUPTED_ATTEMPTS as usize],
+                "{abi:?}"
+            );
+            assert_eq!(
+                storm.calls().len(),
+                1 + MAX_INTERRUPTED_ATTEMPTS as usize,
+                "{abi:?}"
+            );
+            assert_eq!(
+                storm.pending_read(),
+                2,
+                "{abi:?}: the rest was never asked for"
+            );
+        }
+    }
+
+    #[test]
+    fn an_interrupted_self_pipe_read_is_repeated_then_reported_after_the_bound() {
+        for abi in [PPC, MIPS] {
+            let read = Call::Read {
+                fd: 5,
+                cap: PIPE_DRAIN_CHUNK,
+            };
+            // An interruption before the data and another before the EAGAIN that ends the drain: each is repeated, and the
+            // bytes already read still count.
+            let mut ops = ScriptedOps::new()
+                .pipe(0, [5, 6])
+                .read(-4, &[])
+                .read(2, &[1, 1])
+                .read(-4, &[])
+                .read(-11, &[]);
+            let waker = pipe_waker(&mut ops, abi);
+            assert_eq!(
+                waker.drain(&mut ops, abi),
+                Ok(Drained {
+                    wakes: 2,
+                    more_pending: false
+                }),
+                "{abi:?}"
+            );
+            assert_eq!(calls_of(&ops, is_read), vec![read.clone(); 4], "{abi:?}");
+            assert_eq!(ops.pending_read(), 0, "{abi:?}");
+
+            let mut storm = ScriptedOps::new().pipe(0, [5, 6]);
+            for _ in 0..STORM {
+                storm = storm.read(-4, &[]);
+            }
+            let waker = pipe_waker(&mut storm, abi);
+            assert_eq!(
+                waker.drain(&mut storm, abi),
+                Err(WakeError::Sys {
+                    call: WakeCall::Read,
+                    error: SysError::Interrupted
+                }),
+                "{abi:?}"
+            );
+            assert_eq!(
+                calls_of(&storm, is_read),
+                vec![read; MAX_INTERRUPTED_ATTEMPTS as usize],
+                "{abi:?}"
+            );
+            assert_eq!(
+                storm.calls().len(),
+                1 + MAX_INTERRUPTED_ATTEMPTS as usize,
+                "{abi:?}"
+            );
+            assert_eq!(
+                storm.pending_read(),
+                2,
+                "{abi:?}: the rest was never asked for"
+            );
+        }
+    }
+
+    #[test]
+    fn the_bound_every_count_above_is_relative_to_is_the_contracts_eight() {
+        // Each count above is relative to the constant, so moving it would leave them green. The contract says 8 in two places
+        // (docs/contracts/p02.md: "repeated at most `MAX_INTERRUPTED_ATTEMPTS` (8) times"; the `-EINTR` row): move the constant, move that text.
+        assert_eq!(MAX_INTERRUPTED_ATTEMPTS, 8);
+    }
 }
