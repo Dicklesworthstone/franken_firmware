@@ -1,6 +1,6 @@
 # Media path: host tests and big-endian compilation
 
-The candidate at `f33febf6cc83e52f7de70a9bfbf8853f2b47313d` passed **264/264** speaker library tests and strict Clippy for big-endian MIPS and PowerPC. All 242 recorded compiler input hashes match that Git revision.
+The candidate at `f33febf6cc83e52f7de70a9bfbf8853f2b47313d` passed **264/264** speaker library tests and strict Clippy for big-endian MIPS and PowerPC. The242 recorded Rust/build-file hashes match that Git revision. Auxiliary compile-time fixtures were inherited from the declared base archive and were not independently hashed in this historical receipt; the hash list is not a complete compiler dependency manifest.
 
 `receipt.json` gives commands, environment, source hashes, original/published log hashes and native completion custody. The two text logs retain observed output with machine paths, addresses and worker identities redacted. Both jobs exited 0, were acknowledged, and released source/tree/pair/staging custody with dead wrappers and absent owners.
 

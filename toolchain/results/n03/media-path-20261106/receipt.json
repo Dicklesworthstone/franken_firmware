@@ -107,7 +107,8 @@
   "qualification": "Historical f33 media host execution and BE compilation only. Does not qualify later clock revisions, a guest binary, a physical board, DAC timing or provider integrations. N03 remains open.",
   "runner": "RCH_REQUIRE_REMOTE=1 rch exec -- <argv>",
   "schema": "ffw.media-path.checks.v1",
-  "source_binding": "All 242 frozen compiler inputs match git archive of this revision. Current working-tree hashes were not substituted.",
+  "source_binding": "The242 recorded Rust/build-file hashes match git archive of this revision. Auxiliary compile-time fixtures were inherited from the declared base archive, but were not independently hashed in this historical receipt; this is not a complete compiler dependency manifest.",
+  "source_hash_scope": "Rust source, Cargo.toml, Cargo.lock and rust-toolchain.toml files captured in the frozen candidate.",
   "source_revision": "f33febf6cc83e52f7de70a9bfbf8853f2b47313d",
   "source_sha256": {
     "Cargo.lock": "e2469ade4d83492a899bf8438ad240174f7ee41044ef5f9105d56d1e9c46f837",
