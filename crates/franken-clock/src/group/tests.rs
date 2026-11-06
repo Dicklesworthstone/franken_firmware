@@ -2612,6 +2612,7 @@ fn n03_a_step_of_two_roundings_between_physical_samples_is_noise_and_a_real_grou
             anchor.ratio_unc_ppb, 100_000,
             "no fit is in force after four samples"
         );
+        let predicted_group_ns = gc.group_ns(6_000_000).expect("anchor prediction");
         let (t1, t4, outcome) = coarse_probe(&stepped, &mut gc, 8_000_000, (5_000, 0, 5_000));
         assert_eq!((t1, t4), (6_000_000, 6_000_000));
         assert_eq!(
@@ -2621,11 +2622,13 @@ fn n03_a_step_of_two_roundings_between_physical_samples_is_noise_and_a_real_grou
         let allowed = 2 * 4_000_000 + 400 + 300 + 500_000;
         assert_eq!(allowed, 8_500_700);
         if step == 0 {
+            let observed_step_ns = stepped.group_read(8_005_000).abs_diff(predicted_group_ns);
+            assert_eq!(observed_step_ns, 5_000_000);
             assert!(
-                5_000_000 > 4_000_000 + 300 + 500_000,
+                observed_step_ns > cfg.timer_resolution_ns + 300 + 500_000,
                 "the single charge would have refused this"
             );
-            assert!(5_000_000 < allowed);
+            assert!(observed_step_ns < allowed);
             outcome.expect("two roundings are noise");
             assert_eq!(gc.stats().resets, 0);
         } else {

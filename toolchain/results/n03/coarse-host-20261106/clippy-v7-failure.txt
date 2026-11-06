@@ -1,0 +1,51 @@
+    Checking typenum v1.20.1
+    Checking hybrid-array v0.4.15
+   Compiling syn v3.0.9
+   Compiling serde_core v1.0.229
+    Checking cmov v0.5.4
+    Checking ctutils v0.4.8
+    Checking block-buffer v0.12.1
+    Checking crypto-common v0.2.2
+    Checking const-oid v0.10.2
+   Compiling zmij v1.0.23
+    Checking digest v0.11.3
+   Compiling serde_json v1.0.154
+   Compiling serde v1.0.229
+   Compiling serde_derive v1.0.229
+    Checking memchr v2.8.3
+    Checking itoa v1.0.18
+    Checking cpufeatures v0.3.1
+   Compiling thiserror v2.0.21
+    Checking cfg-if v1.0.5
+    Checking sha2 v0.11.1
+   Compiling thiserror-impl v2.0.21
+    Checking hex v0.4.3
+    Checking franken-board-profile v0.1.0 (<source>/crates/franken-board-profile)
+    Checking franken-clock v0.1.0 (<source>/crates/franken-clock)
+    Checking franken-test-support v0.1.0 (<source>/crates/franken-test-support)
+    Checking hmac v0.13.0
+    Checking franken-atomic v0.1.0 (<source>/crates/franken-atomic)
+    Checking franken-platform v0.1.0 (<source>/crates/franken-platform)
+    Checking franken-dsp v0.1.0 (<source>/crates/franken-dsp)
+    Checking franken-session v0.1.0 (<source>/crates/franken-session)
+    Checking franken-journal v0.1.0 (<source>/crates/franken-journal)
+    Checking franken-control v0.1.0 (<source>/crates/franken-control)
+    Checking franken-stream v0.1.0 (<source>/crates/franken-stream)
+    Checking franken-platform-linux v0.1.0 (<source>/crates/franken-platform-linux)
+    Checking franken-hal v0.1.0 (<source>/crates/franken-hal)
+    Checking franken-speaker v0.1.0 (<source>/crates/franken-speaker)
+error: this assertion is always `true`
+    --> crates/franken-clock/src/group/tests.rs:2624:13
+     |
+2624 | /             assert!(
+2625 | |                 5_000_000 > 4_000_000 + 300 + 500_000,
+2626 | |                 "the single charge would have refused this"
+2627 | |             );
+     | |_____________^
+     |
+     = help: remove the assertion
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/main/index.html#assertions_on_constants
+     = note: `-D clippy::assertions-on-constants` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::assertions_on_constants)]`
+
+error: could not compile `franken-clock` (lib test) due to 1 previous error

@@ -1,0 +1,2 @@
+    Checking franken-clock v0.1.0 (<source>/crates/franken-clock)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.24s

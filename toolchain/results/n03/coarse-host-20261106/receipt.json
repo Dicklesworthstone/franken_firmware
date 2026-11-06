@@ -1,0 +1,72 @@
+{
+  "date_utc": "2026-11-06",
+  "external_inputs": "Runtime and guest-format invocations used unversioned cargo; compiler version was not captured. Clippy and workspace fmt explicitly used nightly-2026-08-31. No external dependency-source inventory or target execution is established here.",
+  "formatting_exit_codes": [
+    0,
+    0
+  ],
+  "guest_fmt_native_id": "30098049032257752",
+  "guest_refresh": "NOT RUN; prior guest receipt remains stale and failing",
+  "inputs_sha256": "6a56864789a0cc9164fa00e288c481a461c41ddf2d339c0c441b39b546c74c9c",
+  "proof_class": "native-host-only",
+  "records": [
+    {
+      "custody_retired": true,
+      "exit_code": 0,
+      "file": "tests-v7.txt",
+      "native_id": "30098049032257754",
+      "owner_presence": "absent",
+      "public_sha256": "3c09476f16a45538e41a7c856479d920037bdbadc7d7382fc35a53162105912e",
+      "raw_sha256": "c28ca1b580b0311fb35f532044aa49a66ea6ab750587703b6c9ffec3ffd4e878",
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "wrapper_id": "rchw-1264a98b-c91d-4aae-b138-edb6e14cc87b"
+    },
+    {
+      "custody_retired": true,
+      "exit_code": 101,
+      "file": "tests-v5-failure.txt",
+      "native_id": "30098049032257702",
+      "owner_presence": "absent",
+      "public_sha256": "80d328f4b8d7c034cf0a4e0c0da5a2a0bc5c7cd7d4a0a61079b9f0ef02b55d2b",
+      "raw_sha256": "766f4835f623ca43ed179e1b24b1980338b8fab03d6bf6b683e4ee48fff5add9",
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "wrapper_id": "rchw-2f29daea-1339-4531-a940-783d90232e46"
+    },
+    {
+      "custody_retired": true,
+      "exit_code": 101,
+      "file": "clippy-v7-failure.txt",
+      "native_id": "30098049032257772",
+      "owner_presence": "absent",
+      "public_sha256": "d871d6e30afe7bb3231e8ed10c9563431016f308eb4e0fe90b39b1a9b47fb333",
+      "raw_sha256": "da1b392a307e14df543cbaf6932601ad1e824d6aa8e1c42c5f7d51a4ca751ec7",
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "wrapper_id": "rchw-06e50ca1-cfd5-42df-8ea3-22ca3493e0ce"
+    },
+    {
+      "custody_retired": true,
+      "exit_code": 0,
+      "file": "clippy-v8.txt",
+      "native_id": "30098049032257775",
+      "owner_presence": "absent",
+      "public_sha256": "af54073632c4655100a7a5259c743537f7fd70fd9fbfffbcb0f64a666bb2a76a",
+      "raw_sha256": "82ee21f9965ebd6247aa8d825e9e54e3e516dc5e2329373db1bf8774acb6cda5",
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "wrapper_id": "rchw-11c0af2b-cf98-417b-bcdf-9e491b498982"
+    }
+  ],
+  "schema": "ffw.n03.host-receipt.v1",
+  "v7_tests": {
+    "binaries": 10,
+    "failed": 0,
+    "host_world_records": 34,
+    "ignored": 1,
+    "passed": 411
+  },
+  "v8_runtime": "NOT RUN; only a strengthened test differs from v7; strict Clippy and formatting completed",
+  "workspace_fmt_native_id": "30098049032257777"
+}

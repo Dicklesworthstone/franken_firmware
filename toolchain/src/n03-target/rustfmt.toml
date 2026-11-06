@@ -1,0 +1,3 @@
+# cases.rs is shared with the edition-2024 franken-clock host tests.
+# Use one formatting style while retaining the guest's compilation edition.
+style_edition = "2024"

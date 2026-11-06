@@ -2757,14 +2757,18 @@ mod tests {
      {
         let mut node = bring_up(exact_plan()).expect("bring-up");
         // Reference values: tests/n03/reference.py `run_script` on this exact script (board S5: output delay 1.85 ms,
-        // calibration uncertainty 150 us; four 800 us exchanges at true 10, 20, 30 and 40 ms on a clock that reads
-        // true time + 7 s; an admit at local 7.042 s of a start at group 750 ms).
+        // calibration uncertainty 150 us; four symmetric 400 us paths plus 50 us peer dwell (850 us RTT,
+        // 800 us network delay) at true 10, 20, 30 and 40 ms on a clock that reads true time + 7 s;
+        // an admit at local 7.042 s of a start at group 750 ms). Charging both the exchange and query
+        // resolution adds 1,001 ns of uncertainty and reduces uncertainty-bound holdover by 10,010,000 ns.
+        // The independent pre-correction model reproduces the old pins (621,773 and 21,530,425,001);
+        // only those uncertainty-dependent pins change, not presentation time or the frame assertions below.
         let plan = node.admitted_plan.expect("admitted at bring-up");
         assert_eq!(plan.start_group_ns, 750_000_000);
         assert_eq!(plan.start_local_ns, 7_748_150_000);
         assert_eq!(plan.deadline_local_ns, 7_648_150_000);
-        assert_eq!(plan.uncertainty_at_start_ns, 621_773);
-        assert_eq!(plan.valid_until_local_ns, 21_530_425_001);
+        assert_eq!(plan.uncertainty_at_start_ns, 622_774);
+        assert_eq!(plan.valid_until_local_ns, 21_520_415_001);
         assert_eq!(plan.binding.code(), "Uncertainty");
 
         let first_pts = VirtualSpeakerNode::block_pts_group_ns(0);

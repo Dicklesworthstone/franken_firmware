@@ -31,7 +31,7 @@ mod cases;
 
 use std::hint::black_box;
 use std::io::Write as _;
-use std::sync::atomic::{compiler_fence, Ordering};
+use std::sync::atomic::{Ordering, compiler_fence};
 use std::time::Duration;
 
 use franken_clock::group::ProbeResponse;
