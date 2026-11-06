@@ -42,6 +42,8 @@ fn cfg_with(over: &Value) -> GroupClockConfig {
                 "catchup_ns" => cfg.catchup_ns = n,
                 "max_future_ns" => cfg.max_future_ns = n,
                 "timer_resolution_ns" => cfg.timer_resolution_ns = n,
+                "oscillator_bound_ppb" => cfg.oscillator_bound_ppb = n,
+                "prediction_slack_ns" => cfg.prediction_slack_ns = n,
                 other => panic!("unknown config override {other}"),
             }
         }
@@ -900,6 +902,16 @@ world_test!(
 );
 world_test!(n03_world_s18_start_uncertainty, "S18-START-UNCERTAINTY");
 world_test!(n03_world_s19_output_delay, "S19-OUTPUT-DELAY");
+world_test!(n03_world_s20_coarse_equal_lock, "S20-COARSE-EQUAL-LOCK");
+world_test!(
+    n03_world_s21_coarse_negative_delay,
+    "S21-COARSE-NEGATIVE-DELAY"
+);
+world_test!(
+    n03_world_s22_coarse_rounding_pair,
+    "S22-COARSE-ROUNDING-PAIR"
+);
+world_test!(n03_world_s23_coarse_fitted_rate, "S23-COARSE-FITTED-RATE");
 
 #[test]
 fn n03_every_world_in_the_vectors_has_a_test_above() {
@@ -933,6 +945,10 @@ fn n03_every_world_in_the_vectors_has_a_test_above() {
         "S17-UNLOCKED-CANNOT-OUTPUT",
         "S18-START-UNCERTAINTY",
         "S19-OUTPUT-DELAY",
+        "S20-COARSE-EQUAL-LOCK",
+        "S21-COARSE-NEGATIVE-DELAY",
+        "S22-COARSE-ROUNDING-PAIR",
+        "S23-COARSE-FITTED-RATE",
     ];
     let ids: Vec<&str> = v["worlds"]
         .as_array()

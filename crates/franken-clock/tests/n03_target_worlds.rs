@@ -1,6 +1,6 @@
 //! The HOST half of N03's target-ISA check (bead ffw-u07). The same source file the big-endian MIPS guest runs
-//! (`toolchain/src/n03-target/src/cases.rs`, included below) runs here: the 30 scripted worlds of `tests/n03/vectors.json`
-//! (the 28 worlds and the two members of the mixed-generation join) and the seeded simulated worlds. Each world prints one
+//! (`toolchain/src/n03-target/src/cases.rs`, included below) runs here: the 34 scripted worlds of `tests/n03/vectors.json`
+//! (the 32 worlds and the two members of the mixed-generation join) and the seeded simulated worlds. Each world prints one
 //! `N03-TARGET-HOST {json}` record with a digest of all its records, which `toolchain/src/measure-n03-target.py`
 //! byte-compares with the guest's. Equal is the expected result; a difference is a finding about the target ISA.
 //!
@@ -64,8 +64,8 @@ fn n03_target_worlds_are_the_vectors_worlds_and_the_mixed_members() {
     );
     assert_eq!(
         worlds.len(),
-        30,
-        "28 worlds and the two members of the mixed join"
+        34,
+        "32 worlds and the two members of the mixed join"
     );
     let mut ids: Vec<&str> = worlds
         .iter()
@@ -148,14 +148,16 @@ fn n03_target_seed_derivation_matches_known_answers() {
 type Pin = (u64, usize, u64, u64, u64, u64, u64, u64);
 
 /// The seeded worlds, pinned to what the independent Python model produced for the same seeds (its `Sim` and `Model`
-/// in `tests/n03/reference.py`, counted instead of asserted).
+/// in `tests/n03/reference.py`, counted instead of asserted). The uncertainty charges the timer resolution twice (the exchange and
+/// the reading asked at, `docs/contracts/n03.md` section 4), so `max unc` is 1 001 ns and the minimum margin 1 000 or 1 001 ns above
+/// what the single charge gave; the counts, the lost probes and the errors are unchanged.
 #[test]
 fn n03_target_seeded_worlds_match_the_independent_models_figures() {
     let pins: [Pin; 6] = [
-        (1, 0, 300, 22, 278, 104_668, 341_687, 101_166),
-        (1, 1, 600, 107, 493, 597_500, 1_026_255, 202_232),
-        (2, 0, 300, 30, 270, 157_000, 317_684, 101_856),
-        (2, 1, 600, 118, 482, 489_446, 1_082_261, 202_072),
+        (1, 0, 300, 22, 278, 104_668, 342_688, 102_166),
+        (1, 1, 600, 107, 493, 597_500, 1_027_256, 203_233),
+        (2, 0, 300, 30, 270, 157_000, 318_685, 102_856),
+        (2, 1, 600, 118, 482, 489_446, 1_083_262, 203_072),
         (
             0x0123_4567_89AB_CDEF,
             0,
@@ -163,8 +165,8 @@ fn n03_target_seeded_worlds_match_the_independent_models_figures() {
             33,
             267,
             148_317,
-            312_684,
-            100_866,
+            313_685,
+            101_866,
         ),
         (
             0x0123_4567_89AB_CDEF,
@@ -173,8 +175,8 @@ fn n03_target_seeded_worlds_match_the_independent_models_figures() {
             124,
             476,
             572_500,
-            1_083_194,
-            205_074,
+            1_084_195,
+            206_074,
         ),
     ];
     for (run_seed, index, probes, lost, checks, max_err, max_unc, min_margin) in pins {
