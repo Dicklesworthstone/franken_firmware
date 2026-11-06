@@ -131,6 +131,170 @@
    "defect": "critical_not_priority"
   },
   {
+   "id": "D04-REGRESS-001",
+   "kind": "regress_scenario",
+   "tier": "smoke",
+   "scenario": "regress_by_one"
+  },
+  {
+   "id": "D04-REGRESS-002",
+   "kind": "regress_scenario",
+   "tier": "smoke",
+   "scenario": "regress_across_wrap"
+  },
+  {
+   "id": "D04-REGRESS-003",
+   "kind": "regress_scenario",
+   "tier": "smoke",
+   "scenario": "forward_overclaim"
+  },
+  {
+   "id": "D04-REGRESS-004",
+   "kind": "regress_scenario",
+   "tier": "smoke",
+   "scenario": "half_range_is_ahead"
+  },
+  {
+   "id": "D04-REGRESS-005",
+   "kind": "regress_scenario",
+   "tier": "smoke",
+   "scenario": "one_past_half_is_behind"
+  },
+  {
+   "id": "D04-REGRESS-006",
+   "kind": "regress_scenario",
+   "tier": "smoke",
+   "scenario": "regress_during_drain"
+  },
+  {
+   "id": "D04-REGRESS-007",
+   "kind": "regress_scenario",
+   "tier": "smoke",
+   "scenario": "regress_while_muted"
+  },
+  {
+   "id": "D04-REGRESS-008",
+   "kind": "regress_scenario",
+   "tier": "smoke",
+   "scenario": "recover_reinstall_rebaseline"
+  },
+  {
+   "id": "D04-REGRESS-LOG",
+   "kind": "regress_log",
+   "tier": "smoke"
+  },
+  {
+   "id": "D04-REGRESS-DEFECT-01",
+   "kind": "regress_defect",
+   "tier": "full",
+   "defect": "regress_as_session_fault",
+   "caught_by": [
+    "regress_by_one",
+    "regress_across_wrap",
+    "one_past_half_is_behind",
+    "regress_during_drain",
+    "regress_while_muted",
+    "recover_reinstall_rebaseline"
+   ]
+  },
+  {
+   "id": "D04-REGRESS-DEFECT-02",
+   "kind": "regress_defect",
+   "tier": "full",
+   "defect": "mapping_kept_valid",
+   "caught_by": [
+    "regress_by_one",
+    "regress_across_wrap",
+    "one_past_half_is_behind",
+    "regress_during_drain",
+    "regress_while_muted",
+    "recover_reinstall_rebaseline"
+   ]
+  },
+  {
+   "id": "D04-REGRESS-DEFECT-03",
+   "kind": "regress_defect",
+   "tier": "full",
+   "defect": "baseline_kept",
+   "caught_by": [
+    "recover_reinstall_rebaseline"
+   ]
+  },
+  {
+   "id": "D04-REGRESS-DEFECT-04",
+   "kind": "regress_defect",
+   "tier": "full",
+   "defect": "released_on_timeout",
+   "caught_by": [
+    "regress_by_one",
+    "regress_during_drain"
+   ]
+  },
+  {
+   "id": "D04-REGRESS-DEFECT-05",
+   "kind": "regress_defect",
+   "tier": "full",
+   "defect": "half_is_regress",
+   "caught_by": [
+    "half_range_is_ahead"
+   ]
+  },
+  {
+   "id": "D04-REGRESS-DEFECT-06",
+   "kind": "regress_defect",
+   "tier": "full",
+   "defect": "double_reaction",
+   "caught_by": [
+    "regress_by_one",
+    "regress_across_wrap",
+    "one_past_half_is_behind",
+    "regress_during_drain",
+    "regress_while_muted",
+    "recover_reinstall_rebaseline"
+   ]
+  },
+  {
+   "id": "D04-REGRESS-DEFECT-07",
+   "kind": "regress_defect",
+   "tier": "full",
+   "defect": "regress_credits_the_step",
+   "caught_by": [
+    "regress_by_one",
+    "regress_across_wrap",
+    "one_past_half_is_behind",
+    "regress_during_drain",
+    "regress_while_muted",
+    "recover_reinstall_rebaseline"
+   ]
+  },
+  {
+   "id": "D04-REGRESS-DEFECT-08",
+   "kind": "regress_defect",
+   "tier": "full",
+   "defect": "regress_cause_generic",
+   "caught_by": [
+    "log_runs"
+   ]
+  },
+  {
+   "id": "D04-REGRESS-DEFECT-09",
+   "kind": "regress_defect",
+   "tier": "full",
+   "defect": "reaction_note_dropped",
+   "caught_by": [
+    "log_runs"
+   ]
+  },
+  {
+   "id": "D04-REGRESS-DEFECT-10",
+   "kind": "regress_defect",
+   "tier": "full",
+   "defect": "reaction_note_everywhere",
+   "caught_by": [
+    "log_runs"
+   ]
+  },
+  {
    "id": "D04-SELFTEST-001",
    "kind": "runner_selftest",
    "tier": "full"
@@ -333,13 +497,52 @@
    "cases": []
   },
   {
+   "id": "INV-COUNTER-REGRESS",
+   "text": "a consumed counter that goes backwards (more than half the 32-bit range behind, across the wrap too) is told apart from one that ran ahead by its own HAL code, recorded after the overclaim it qualifies and never after a forward claim, with the same safety response (mute, quarantine, credit nothing); the loop faults with its own reason, invalidates the presentation mapping, holds every buffer for as long as it takes (a timeout frees nothing), stays Faulted until an acknowledged reset takes a new baseline, and then refuses to start until the owner reinstalls its mapping; a forward overclaim leaves the mapping valid; a regress during a drain, and while muted, behave the same",
+   "rust_tests": [
+    "session::a_backwards_counter_records_the_regress_code_after_the_overclaim_and_changes_nothing_else",
+    "session::a_forward_overclaim_never_records_the_regress_code",
+    "session::the_regress_boundary_is_half_the_counter_range_and_a_regress_across_the_wrap_is_still_one",
+    "session::an_acknowledged_reset_clears_the_regress_mark_and_the_next_report_is_only_a_baseline",
+    "render::a_counter_that_goes_back_by_one_faults_the_loop_with_its_own_reason_and_holds_every_buffer",
+    "render::a_counter_that_goes_back_across_its_wrap_is_a_regress_and_the_wrap_itself_is_not",
+    "render::a_forward_overclaim_faults_the_loop_as_a_session_fault_and_leaves_the_mapping_valid",
+    "render::a_regress_during_a_drain_faults_it_instead_of_timing_out_and_the_stop_tail_is_not_trusted",
+    "render::a_regress_while_muted_faults_the_same_way_and_leaves_the_muted_state_for_faulted",
+    "render::after_a_regress_the_loop_refuses_the_old_mapping_until_it_is_reinstalled_and_then_takes_a_new_baseline"
+   ],
+   "cases": [
+    "D04-REGRESS-001",
+    "D04-REGRESS-002",
+    "D04-REGRESS-003",
+    "D04-REGRESS-004",
+    "D04-REGRESS-005",
+    "D04-REGRESS-006",
+    "D04-REGRESS-007",
+    "D04-REGRESS-008"
+   ]
+  },
+  {
+   "id": "INV-COUNTER-REGRESS-LOG",
+   "text": "exactly one critical ffw.log.v1 line carries the regress reaction (cause driver_counter_regress, message ending mapping_invalidated); the faulted state line after it names none; a forward overclaim writes no such line; an independent model and the Rust reproduce the same hand-written lines",
+   "rust_tests": [
+    "render_log::the_regress_runs_produce_exactly_the_hand_written_lines",
+    "render_log::a_driver_counter_regress_leaves_exactly_one_critical_line_that_carries_the_reaction",
+    "render_log::a_forward_overclaim_leaves_no_line_that_carries_the_reaction"
+   ],
+   "cases": [
+    "D04-REGRESS-LOG"
+   ]
+  },
+  {
    "id": "INV-CASES-DETECT-DEFECTS",
    "text": "the runner's comparison is not vacuous",
    "rust_tests": [],
    "cases": [
     "D04-DEFECT-*",
     "D04-SELFTEST-001",
-    "D04-LOG-DEFECT-*"
+    "D04-LOG-DEFECT-*",
+    "D04-REGRESS-DEFECT-*"
    ]
   },
   {
@@ -405,6 +608,6 @@
   "The real driver: its submission lead, underrun signal and byte order are not mapped (E04 is all unknown), so the lead is the fake's and the byte order is a stated harness model.",
   "Board CPU: render cost is injected, so no CPU, p99.99 or 24-hour claim is made.",
   "The P03 control runtime and process-death mute: see D04-OPEN-P03 and D04-EXT-PROCDEATH.",
-  "Driver counter reset (section 14): the loop does not yet invalidate its presentation mapping when the driver's consumed counter goes backwards. The HAL already faults a backwards counter as CounterOverclaim, muted and crediting nothing (a session test pins a regress of 1), but it cannot tell a regress from a forward overclaim and the loop does not react to the fault yet; the diagnostics log would carry the reaction as one more critical line."
+  "The real driver's counter: the regress reaction is shown against the fake device's counter only. What a real driver does when its counter is reset (rewind to zero, a pause, a jump, a restart that keeps counting) is not mapped (E04 is all unknown), so whether the right reaction is to fault and wait for the owner, as here, or to resynchronize on its own is open. The loop does not re-derive the presentation mapping: that lives with the owner, who must say so (reinstall_presentation_mapping) before the loop will run again."
  ]
 }

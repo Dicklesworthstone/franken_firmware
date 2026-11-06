@@ -53,6 +53,12 @@ pub const MAX_FAULT_RECORDS: usize = 16;
 /// Slots that may be quarantined before the session records saturation.
 pub const DEFAULT_QUARANTINE_CAP: usize = 4;
 const MAX_CHANNELS: usize = 8;
+/// The furthest a consumed-position report may move ahead of the last one and still be read as a
+/// claim about the future. The driver's counter is 32 bits and wraps, so a report cannot say which way
+/// it moved: it is read as ahead when the wrapping step is at most half the range, and as **behind**
+/// when it is more. A step of exactly this value is ambiguous and is read as ahead (the forward
+/// overclaim), never as a regress.
+pub const COUNTER_FORWARD_LIMIT: u32 = 0x8000_0000;
 
 /// Session ids come from a 32-bit counter because big-endian MIPS32 and PowerPC32 have no 64-bit
 /// atomics. The counter never wraps: a wrapped id could let a token from an old session match a new
@@ -124,7 +130,16 @@ pub enum FaultCode {
     },
     /// A completion arrived on an ABI that has no completions.
     UnexpectedCompletion,
+    /// A consumed-position report claimed more than the session had in flight. Any such report is
+    /// recorded as this, forward or backward, first, so a reader that only knows this code still sees
+    /// every impossible counter.
     CounterOverclaim,
+    /// The consumed counter went **backwards** (see [`COUNTER_FORWARD_LIMIT`]). It is recorded right
+    /// after the [`FaultCode::CounterOverclaim`] it qualifies, and never after a forward overclaim, so
+    /// its presence is what tells a regress (a driver whose counter was reset or rewound) from a
+    /// counter that merely ran ahead. The safety response is the same for both: mute, quarantine,
+    /// credit nothing.
+    CounterRegress,
     DeviceLost,
     DrainTimedOut,
     DrainCancelled,
@@ -422,6 +437,9 @@ pub struct HalSession<B: DeviceBackend> {
     discarded_frames: u64,
     last_counter: u32,
     rebaseline: bool,
+    /// Set when the consumed counter went backwards; cleared only by an acknowledged reset, which also
+    /// takes a new baseline. While it is set the counter's old baseline is not trusted for anything.
+    counter_regressed: bool,
     stop_requested: bool,
     device_lost: bool,
     saturated_reported: bool,
@@ -519,6 +537,7 @@ impl<B: DeviceBackend> HalSession<B> {
             discarded_frames: 0,
             last_counter: 0,
             rebaseline: true,
+            counter_regressed: false,
             stop_requested: false,
             device_lost: false,
             saturated_reported: false,
@@ -625,6 +644,13 @@ impl<B: DeviceBackend> HalSession<B> {
             consumed_frames: self.consumed_frames,
             class,
         }
+    }
+
+    /// Whether the session is faulted because the device's consumed counter went backwards. It holds
+    /// from that fault until an acknowledged [`Self::reset_device`], which takes a new baseline.
+    #[must_use]
+    pub const fn counter_regressed(&self) -> bool {
+        self.counter_regressed
     }
 
     fn in_flight_frames(&self) -> u64 {
@@ -760,7 +786,20 @@ impl<B: DeviceBackend> HalSession<B> {
 
     /// The one failure path: record, quarantine what the kernel may hold, fault, mute.
     fn fail_muted(&mut self, code: FaultCode) -> SessionError {
+        self.fail_muted_qualified(code, None)
+    }
+
+    /// [`Self::fail_muted`] with a second code recorded straight after the first, before anything the
+    /// failure itself causes (saturation, an unacknowledged mute), so the pair reads as one cause.
+    fn fail_muted_qualified(
+        &mut self,
+        code: FaultCode,
+        qualifier: Option<FaultCode>,
+    ) -> SessionError {
         self.record_fault(code.clone());
+        if let Some(qualifier) = qualifier {
+            self.record_fault(qualifier);
+        }
         let mut saturated = false;
         if let Some(table) = self.slots.as_mut() {
             table.quarantine_all_in_flight();
@@ -1073,10 +1112,21 @@ impl<B: DeviceBackend> HalSession<B> {
                     self.rebaseline = false;
                     return;
                 }
-                let delta = u64::from(counter.wrapping_sub(self.last_counter));
+                let step = counter.wrapping_sub(self.last_counter);
+                let delta = u64::from(step);
                 if delta > self.in_flight_frames() {
                     self.note_anomaly(report);
-                    let _ = self.fail_muted(FaultCode::CounterOverclaim);
+                    // More than half the range is a step back: the counter was reset or rewound.
+                    // Either way nothing is credited and the old baseline is no longer used.
+                    if step > COUNTER_FORWARD_LIMIT {
+                        self.counter_regressed = true;
+                        let _ = self.fail_muted_qualified(
+                            FaultCode::CounterOverclaim,
+                            Some(FaultCode::CounterRegress),
+                        );
+                    } else {
+                        let _ = self.fail_muted(FaultCode::CounterOverclaim);
+                    }
                 } else {
                     self.consumed_frames += delta;
                     self.last_counter = counter;
@@ -1275,6 +1325,7 @@ impl<B: DeviceBackend> HalSession<B> {
                     .discarded_frames
                     .saturating_add(self.in_flight_frames());
                 self.rebaseline = true;
+                self.counter_regressed = false;
                 self.stop_requested = false;
                 self.saturated_reported = false;
                 self.primed_silence_blocks = 0;
@@ -2270,6 +2321,179 @@ mod tests {
         assert_eq!(first_fault(&s), FaultCode::CounterOverclaim);
         assert_eq!((s.phase(), s.amp()), (SessionPhase::Faulted, Amp::Muted));
         assert_eq!(s.position().consumed_frames, 4, "a regress credits nothing");
+    }
+
+    fn fault_codes(s: &HalSession<FakeBackend>) -> Vec<FaultCode> {
+        s.receipt().faults.into_iter().map(|f| f.code).collect()
+    }
+
+    fn slots_in(s: &HalSession<FakeBackend>, want: SlotState) -> usize {
+        s.slot_states().into_iter().filter(|st| *st == want).count()
+    }
+
+    #[test]
+    fn a_backwards_counter_records_the_regress_code_after_the_overclaim_and_changes_nothing_else() {
+        let (mut s, probe, _) = running(FakeConfig::retained());
+        let _a = token(&mut s);
+        let _b = token(&mut s); // 8 frames in flight
+        let report = |s: &mut HalSession<FakeBackend>, counter| {
+            probe.queue_event(DeviceEvent::Position { counter });
+            s.poll()
+        };
+        report(&mut s, 100); // the first report only sets the baseline
+        report(&mut s, 104);
+        assert!(!s.counter_regressed(), "a clean step is not a regress");
+        assert!(fault_codes(&s).is_empty());
+        let r = report(&mut s, 103); // one behind
+        assert_eq!(r.anomalies, 1);
+        // The overclaim stays first, so a reader that only knows it still sees the fault; the regress
+        // code follows it and nothing else is recorded: the mute was acknowledged, two slots fit the cap.
+        assert_eq!(
+            fault_codes(&s),
+            vec![FaultCode::CounterOverclaim, FaultCode::CounterRegress]
+        );
+        assert!(s.counter_regressed());
+        // The safety response is exactly what a forward overclaim gets.
+        assert_eq!((s.phase(), s.amp()), (SessionPhase::Faulted, Amp::Muted));
+        assert_eq!(s.position().consumed_frames, 4, "a regress credits nothing");
+        assert_eq!(slots_in(&s, SlotState::Quarantined), 2);
+        assert_eq!(slots_in(&s, SlotState::Free), 2);
+        // Later reports are drained and change nothing.
+        let r = report(&mut s, 50);
+        assert_eq!((r.anomalies, r.ignored_in_fault), (0, 1));
+        assert_eq!(fault_codes(&s).len(), 2);
+    }
+
+    #[test]
+    fn a_forward_overclaim_never_records_the_regress_code() {
+        let (mut s, probe, _) = running(FakeConfig::retained());
+        let _a = token(&mut s);
+        let _b = token(&mut s); // 8 frames in flight
+        let report = |s: &mut HalSession<FakeBackend>, counter| {
+            probe.queue_event(DeviceEvent::Position { counter });
+            s.poll()
+        };
+        report(&mut s, 100);
+        report(&mut s, 104); // 4 consumed, 4 still in flight
+        let r = report(&mut s, 113); // 9 ahead: more than the 4 in flight
+        assert_eq!(r.anomalies, 1);
+        assert_eq!(fault_codes(&s), vec![FaultCode::CounterOverclaim]);
+        assert!(!s.counter_regressed());
+        // The same safety response as a regress.
+        assert_eq!((s.phase(), s.amp()), (SessionPhase::Faulted, Amp::Muted));
+        assert_eq!(
+            s.position().consumed_frames,
+            4,
+            "an overclaim credits nothing"
+        );
+        assert_eq!(slots_in(&s, SlotState::Quarantined), 2);
+    }
+
+    #[test]
+    fn the_regress_boundary_is_half_the_counter_range_and_a_regress_across_the_wrap_is_still_one() {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        enum Want {
+            Clean,
+            Overclaim,
+            Regress,
+        }
+        // One block of 4 frames is in flight in every case. After the baseline report, `first` and then
+        // `second` (if any) are reported.
+        let cases = [
+            (
+                "exactly half ahead is the forward claim",
+                0_u32,
+                0x8000_0000_u32,
+                None,
+                Want::Overclaim,
+            ),
+            (
+                "one past half is a step back",
+                0,
+                0x8000_0001,
+                None,
+                Want::Regress,
+            ),
+            (
+                "zero back to the top of the range",
+                0,
+                u32::MAX,
+                None,
+                Want::Regress,
+            ),
+            (
+                "a legitimate wrap forward is no fault",
+                0xFFFF_FFFE,
+                2,
+                None,
+                Want::Clean,
+            ),
+            (
+                "a step back across the wrap after a legitimate wrap",
+                0xFFFF_FFFE,
+                2,
+                Some(u32::MAX),
+                Want::Regress,
+            ),
+            ("a stalled counter is no fault", 7, 7, Some(7), Want::Clean),
+        ];
+        for (name, baseline, first, second, want) in cases {
+            let (mut s, probe, _) = running(FakeConfig::retained());
+            let _held = token(&mut s);
+            probe.queue_event(DeviceEvent::Position { counter: baseline });
+            probe.queue_event(DeviceEvent::Position { counter: first });
+            if let Some(counter) = second {
+                probe.queue_event(DeviceEvent::Position { counter });
+            }
+            s.poll();
+            let codes = fault_codes(&s);
+            let got = match codes.as_slice() {
+                [] => Want::Clean,
+                [FaultCode::CounterOverclaim] => Want::Overclaim,
+                [FaultCode::CounterOverclaim, FaultCode::CounterRegress] => Want::Regress,
+                other => panic!("{name}: unexpected fault records {other:?}"),
+            };
+            assert_eq!(got, want, "{name}");
+            assert_eq!(s.counter_regressed(), want == Want::Regress, "{name}");
+            assert_eq!(
+                s.phase() == SessionPhase::Faulted,
+                want != Want::Clean,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_acknowledged_reset_clears_the_regress_mark_and_the_next_report_is_only_a_baseline() {
+        let (mut s, probe, _) = running(FakeConfig::retained());
+        let _a = token(&mut s);
+        let _b = token(&mut s);
+        for counter in [100, 104, 103] {
+            probe.queue_event(DeviceEvent::Position { counter });
+        }
+        s.poll();
+        assert!(s.counter_regressed());
+        assert_eq!(s.position().consumed_frames, 4);
+        // Nothing frees the quarantined slots or clears the mark until the device acknowledges a reset.
+        assert_eq!(slots_in(&s, SlotState::Quarantined), 2);
+        s.reset_device().unwrap();
+        assert!(!s.counter_regressed());
+        assert_eq!(s.phase(), SessionPhase::Prepared);
+        assert_eq!(slots_in(&s, SlotState::Free), 4);
+        // The device now counts from somewhere else entirely. The old baseline (104) is not used: the
+        // first report only sets the new one, and the next is judged against it.
+        s.start(READY).unwrap();
+        let _c = token(&mut s); // 4 frames in flight; 4 were discarded by the reset
+        let anomalies_before = s.receipt().anomalies;
+        probe.queue_event(DeviceEvent::Position { counter: 5 });
+        let r = s.poll();
+        assert_eq!((r.anomalies, s.position().consumed_frames), (0, 4));
+        probe.queue_event(DeviceEvent::Position { counter: 9 });
+        let r = s.poll();
+        assert_eq!(r.anomalies, 0);
+        assert_eq!(s.position().consumed_frames, 8);
+        assert_eq!(s.phase(), SessionPhase::Running);
+        assert_eq!(s.receipt().anomalies, anomalies_before);
     }
 
     #[test]

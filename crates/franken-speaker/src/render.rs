@@ -38,6 +38,17 @@
 //! ever lets the session free storage on a device acknowledgment (a completion, a flush or a
 //! reset). A drain that is not acknowledged faults and quarantines. The cleanup reserve keeps
 //! `reserve_slots` ring slots out of ordinary submission, so the stop path always has room.
+//!
+//! # The driver's counter going backwards
+//!
+//! The HAL treats a consumed-position report that moves backwards as a fault (muted, quarantined,
+//! nothing credited) and marks it apart from a counter that ran ahead. The loop gives it its own
+//! [`FaultReason::CounterRegress`] and **invalidates the presentation mapping**: nothing derived from
+//! the old counter is used again. The loop stays `Faulted` (muted, every buffer held) until the owner
+//! recovers it through an acknowledged HAL reset, which takes a new baseline; after that it returns
+//! to `Ready`, and refuses to start until the owner says it has re-derived its mapping from the
+//! device's new counter ([`RenderLoop::reinstall_presentation_mapping`]). A timeout alone frees
+//! nothing. This is the fake device's counter; the real driver's semantics are not known.
 
 use franken_dsp::format::Endian;
 use franken_dsp::protection::{BoardStatus, ProtectedBoardDsp, ProtectedOutput, SourceEvent};
@@ -199,6 +210,10 @@ pub enum RenderError {
     NoOrdinaryCapacity,
     #[error("admission failed at {0:?}")]
     AdmissionFailed(AdmitPoint),
+    #[error(
+        "the driver's counter went backwards, so the presentation mapping is invalid until it is reinstalled"
+    )]
+    PresentationMappingInvalidated,
     #[error("not allowed in state {0:?}")]
     WrongState(RenderState),
     #[error("session: {0}")]
@@ -242,6 +257,9 @@ pub enum FaultReason {
     ProtectionFault,
     /// The resampler refused a block (an internal contract violation).
     RenderInternal,
+    /// The driver's consumed counter went backwards. The presentation mapping is invalid until the
+    /// owner reinstalls it after an acknowledged reset; see [`RenderLoop::recover`].
+    CounterRegress,
 }
 
 // ------------------------------------------------------------------------------------ control
@@ -435,6 +453,9 @@ pub struct StopReport {
     /// Frames the device had accepted and not yet consumed when the stop began: they are
     /// irrevocable, and the stop could only flush them.
     pub irrevocable_tail_frames: u64,
+    /// False once the driver's counter went backwards: `irrevocable_tail_frames` was read from a
+    /// counter that has since been shown untrustworthy, and must not be used.
+    pub tail_trusted: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -491,6 +512,9 @@ pub struct RenderLoop<B: DeviceBackend> {
     cancel_mode: bool,
     stop_began: u64,
     stop_tail_frames: u64,
+    stop_tail_trusted: bool,
+    /// False after the driver's counter went backwards, until the owner reinstalls its mapping.
+    mapping_valid: bool,
     last_mute_ack: Option<bool>,
 
     control: ControlPort,
@@ -602,6 +626,8 @@ impl<B: DeviceBackend> RenderLoop<B> {
             cancel_mode: false,
             stop_began: 0,
             stop_tail_frames: 0,
+            stop_tail_trusted: true,
+            mapping_valid: true,
             last_mute_ack: None,
             control: ControlPort::default(),
             clear_control_pending: false,
@@ -637,6 +663,13 @@ impl<B: DeviceBackend> RenderLoop<B> {
     #[must_use]
     pub const fn last_mute_acknowledged(&self) -> Option<bool> {
         self.last_mute_ack
+    }
+
+    /// Whether the presentation mapping can be used. It is invalid from a driver counter regress until
+    /// [`reinstall_presentation_mapping`](Self::reinstall_presentation_mapping).
+    #[must_use]
+    pub const fn presentation_mapping_valid(&self) -> bool {
+        self.mapping_valid
     }
 
     /// Blocks handed to the device and not yet reported complete.
@@ -741,6 +774,17 @@ impl<B: DeviceBackend> RenderLoop<B> {
         if self.state == RenderState::Faulted {
             return;
         }
+        // The session reports a backwards counter as one of its own faults. Wherever the loop first
+        // learns of that fault (a tick, a submit or a drain), it is this loop's own reason, and the
+        // mapping built on the old counter goes with it.
+        let reason = if reason == FaultReason::SessionFaulted && self.session.counter_regressed() {
+            FaultReason::CounterRegress
+        } else {
+            reason
+        };
+        if reason == FaultReason::CounterRegress {
+            self.invalidate_presentation_mapping();
+        }
         self.last_mute_ack = match self.session.abort_mute() {
             Ok(report) => Some(report.mute_acknowledged),
             Err(_) => Some(false),
@@ -752,6 +796,15 @@ impl<B: DeviceBackend> RenderLoop<B> {
         self.set_state(RenderState::Faulted);
     }
 
+    /// The driver's counter went backwards: every figure derived from it is dropped. The dry latch and
+    /// the stop's tail were read from the old counter, and the owner's mapping was anchored on it.
+    /// Buffers are not touched: they stay held until a reset is acknowledged.
+    fn invalidate_presentation_mapping(&mut self) {
+        self.mapping_valid = false;
+        self.dry_latched = false;
+        self.stop_tail_trusted = false;
+    }
+
     // ---- lifecycle
 
     /// `Ready` or `Stopped` -> `Running`. Refused, with nothing touched, unless the protection DSP is
@@ -759,6 +812,9 @@ impl<B: DeviceBackend> RenderLoop<B> {
     pub fn start(&mut self, pre: StartPreconditions) -> Result<(), RenderError> {
         if !matches!(self.state, RenderState::Ready | RenderState::Stopped) {
             return Err(RenderError::WrongState(self.state));
+        }
+        if !self.mapping_valid {
+            return Err(RenderError::PresentationMappingInvalidated);
         }
         if self.admit_faults.start {
             return Err(RenderError::AdmissionFailed(AdmitPoint::Start));
@@ -892,6 +948,7 @@ impl<B: DeviceBackend> RenderLoop<B> {
 
     fn begin_stop(&mut self) {
         self.stop_began = self.now;
+        self.stop_tail_trusted = true;
         self.stop_tail_frames = self
             .session
             .irrevocable_until_frames()
@@ -916,6 +973,18 @@ impl<B: DeviceBackend> RenderLoop<B> {
             }
             Err(error) => Err(RenderError::Session(error)),
         }
+    }
+
+    /// The owner has re-derived its presentation mapping from the device's new counter, so the loop
+    /// may start again. Allowed only in `Ready`, which is where an acknowledged reset leaves a loop
+    /// that was `Faulted`: a mapping cannot be reinstalled while the old counter is still the only one
+    /// there is. The loop cannot do this itself, because the mapping lives with its owner.
+    pub fn reinstall_presentation_mapping(&mut self) -> Result<(), RenderError> {
+        if self.state != RenderState::Ready {
+            return Err(RenderError::WrongState(self.state));
+        }
+        self.mapping_valid = true;
+        Ok(())
     }
 
     // ---- the tick
@@ -1390,6 +1459,7 @@ impl<B: DeviceBackend> RenderLoop<B> {
             acknowledged: self.state == RenderState::Stopped,
             ticks: self.now.saturating_sub(self.stop_began),
             irrevocable_tail_frames: self.stop_tail_frames,
+            tail_trusted: self.stop_tail_trusted,
         }
     }
 }
@@ -2353,6 +2423,227 @@ mod tests {
         let done = finished(&reports);
         assert_eq!(done.len(), 2);
         assert!(done.iter().all(|(_, _, o)| *o == BlockOutcome::OnTime));
+    }
+
+    // ------------------------------------------------------------------------ the driver's counter regresses
+
+    /// A started loop whose device never completes anything, so three blocks stay held (the ordinary
+    /// share of the four-slot ring) and 192 frames are in flight for the counter to be judged against.
+    fn holding_three_blocks() -> (
+        RenderLoop<FakeBackend>,
+        FakeProbe,
+        ToneSource,
+        ScriptedTiming,
+    ) {
+        let (mut l, probe, _) = started();
+        probe.set_lose_completions(true);
+        let (mut src, mut t) = (ToneSource::new(), timing(1, &[], &[]));
+        run(&mut l, &mut src, &mut t, 12);
+        assert_eq!(count_slots(&l, SlotState::KernelOwned), 3);
+        assert_eq!(l.session().irrevocable_until_frames(), 192);
+        (l, probe, src, t)
+    }
+
+    /// The device reports the consumed counter at each of these values, in order, and the loop gets one tick.
+    fn report_counter(
+        l: &mut RenderLoop<FakeBackend>,
+        probe: &FakeProbe,
+        src: &mut ToneSource,
+        t: &mut ScriptedTiming,
+        counters: &[u32],
+    ) {
+        for counter in counters {
+            probe.queue_event(DeviceEvent::Position { counter: *counter });
+        }
+        l.tick(src, t);
+    }
+
+    #[test]
+    fn a_counter_that_goes_back_by_one_faults_the_loop_with_its_own_reason_and_holds_every_buffer()
+    {
+        let (mut l, probe, mut src, mut t) = holding_three_blocks();
+        // A baseline, then 64 of the 192 frames consumed: a clean step, which the loop accepts.
+        report_counter(&mut l, &probe, &mut src, &mut t, &[1000, 1064]);
+        assert_eq!(l.state(), RenderState::Running);
+        assert_eq!(l.session().position().consumed_frames, 64);
+        assert!(l.presentation_mapping_valid());
+        // One behind 1064.
+        report_counter(&mut l, &probe, &mut src, &mut t, &[1063]);
+        assert_eq!(l.state(), RenderState::Faulted);
+        assert_eq!(l.fault(), Some(FaultReason::CounterRegress));
+        assert!(!l.presentation_mapping_valid());
+        assert!(l.session().counter_regressed());
+        assert_eq!(
+            l.session().position().consumed_frames,
+            64,
+            "a regress credits nothing"
+        );
+        assert_eq!(l.last_mute_acknowledged(), Some(true));
+        // Held, not freed: the three blocks the device may still read are quarantined.
+        assert_eq!(count_slots(&l, SlotState::Quarantined), 3);
+        assert_eq!(count_slots(&l, SlotState::KernelOwned), 0);
+        assert_eq!(count_slots(&l, SlotState::Free), 1);
+        // Waiting frees nothing: forty ticks are five stop deadlines.
+        for _ in 0..40 {
+            l.tick(&mut src, &mut t);
+        }
+        assert_eq!(l.state(), RenderState::Faulted);
+        assert_eq!(l.fault(), Some(FaultReason::CounterRegress));
+        assert_eq!(count_slots(&l, SlotState::Quarantined), 3);
+        assert_eq!(count_slots(&l, SlotState::Free), 1);
+        assert_eq!(probe.use_after_free(), 0);
+        // Only an acknowledged reset frees them, and the mapping is still invalid afterwards.
+        l.recover().unwrap();
+        assert_eq!(l.state(), RenderState::Ready);
+        assert_eq!(count_slots(&l, SlotState::Free), 4);
+        assert_eq!(count_slots(&l, SlotState::Quarantined), 0);
+        assert!(!l.presentation_mapping_valid());
+    }
+
+    #[test]
+    fn a_counter_that_goes_back_across_its_wrap_is_a_regress_and_the_wrap_itself_is_not() {
+        let (mut l, probe, mut src, mut t) = holding_three_blocks();
+        // Forward over the wrap: 0xFFFF_FFE0 to 0x20 is 64 frames, a clean step.
+        report_counter(&mut l, &probe, &mut src, &mut t, &[0xFFFF_FFE0, 0x20]);
+        assert_eq!(l.state(), RenderState::Running);
+        assert_eq!(l.fault(), None);
+        assert_eq!(l.session().position().consumed_frames, 64);
+        assert!(l.presentation_mapping_valid());
+        // Back over it: 0xFFFF_FFFF is 33 behind 0x20, not four billion ahead.
+        report_counter(&mut l, &probe, &mut src, &mut t, &[0xFFFF_FFFF]);
+        assert_eq!(l.state(), RenderState::Faulted);
+        assert_eq!(l.fault(), Some(FaultReason::CounterRegress));
+        assert!(!l.presentation_mapping_valid());
+        assert_eq!(l.session().position().consumed_frames, 64);
+        assert_eq!(count_slots(&l, SlotState::Quarantined), 3);
+    }
+
+    #[test]
+    fn a_forward_overclaim_faults_the_loop_as_a_session_fault_and_leaves_the_mapping_valid() {
+        let (mut l, probe, mut src, mut t) = holding_three_blocks();
+        report_counter(&mut l, &probe, &mut src, &mut t, &[1000, 1064]);
+        // 4096 frames ahead of 1064 when only 128 are in flight: impossible, but not backwards.
+        report_counter(&mut l, &probe, &mut src, &mut t, &[1064 + 4096]);
+        assert_eq!(l.state(), RenderState::Faulted);
+        assert_eq!(l.fault(), Some(FaultReason::SessionFaulted));
+        assert!(!l.session().counter_regressed());
+        assert!(l.presentation_mapping_valid());
+        assert_eq!(l.session().position().consumed_frames, 64);
+        assert_eq!(l.last_mute_acknowledged(), Some(true));
+        assert_eq!(count_slots(&l, SlotState::Quarantined), 3);
+        // The mapping was never in doubt, so the loop restarts as soon as the device is reset.
+        l.recover().unwrap();
+        assert_eq!(l.state(), RenderState::Ready);
+        l.start(READY).unwrap();
+        assert_eq!(l.state(), RenderState::Running);
+    }
+
+    #[test]
+    fn a_regress_during_a_drain_faults_it_instead_of_timing_out_and_the_stop_tail_is_not_trusted() {
+        let (mut l, probe, mut src, mut t) = holding_three_blocks();
+        report_counter(&mut l, &probe, &mut src, &mut t, &[1000, 1064]);
+        l.stop().unwrap();
+        assert_eq!(l.state(), RenderState::Draining);
+        // Read from a counter that was still believed: 192 accepted, 64 consumed.
+        assert!(l.stop_report().tail_trusted);
+        assert_eq!(l.stop_report().irrevocable_tail_frames, 128);
+        report_counter(&mut l, &probe, &mut src, &mut t, &[1063]);
+        assert_eq!(l.state(), RenderState::Faulted);
+        assert_eq!(l.fault(), Some(FaultReason::CounterRegress));
+        let report = l.stop_report();
+        assert!(!report.acknowledged);
+        assert!(!report.tail_trusted);
+        assert!(!l.presentation_mapping_valid());
+        // Long past the stop deadline the drain has not "timed out" into anything else, and nothing is freed.
+        for _ in 0..40 {
+            l.tick(&mut src, &mut t);
+        }
+        assert_eq!(l.fault(), Some(FaultReason::CounterRegress));
+        assert_eq!(count_slots(&l, SlotState::Quarantined), 3);
+        assert_eq!(count_slots(&l, SlotState::Free), 1);
+    }
+
+    #[test]
+    fn a_regress_while_muted_faults_the_same_way_and_leaves_the_muted_state_for_faulted() {
+        let (mut l, probe, mut src, mut t) = holding_three_blocks();
+        l.mute().unwrap();
+        assert_eq!(l.state(), RenderState::Muted);
+        report_counter(&mut l, &probe, &mut src, &mut t, &[1000, 1064]);
+        assert_eq!(l.state(), RenderState::Muted);
+        report_counter(&mut l, &probe, &mut src, &mut t, &[1063]);
+        assert_eq!(l.state(), RenderState::Faulted);
+        assert_eq!(l.fault(), Some(FaultReason::CounterRegress));
+        assert!(!l.presentation_mapping_valid());
+        assert_eq!(l.last_mute_acknowledged(), Some(true));
+        assert_eq!(count_slots(&l, SlotState::Quarantined), 3);
+        let events: Vec<RenderEventKind> = std::iter::from_fn(|| l.take_event())
+            .map(|e| e.kind)
+            .collect();
+        assert!(events.contains(&RenderEventKind::Fault {
+            reason: FaultReason::CounterRegress
+        }));
+        assert!(events.contains(&RenderEventKind::State {
+            from: RenderState::Muted,
+            to: RenderState::Faulted
+        }));
+        // Exactly one fault event: the reaction is reported once.
+        let faults = events
+            .iter()
+            .filter(|k| matches!(k, RenderEventKind::Fault { .. }))
+            .count();
+        assert_eq!(faults, 1);
+    }
+
+    #[test]
+    fn after_a_regress_the_loop_refuses_the_old_mapping_until_it_is_reinstalled_and_then_takes_a_new_baseline()
+     {
+        let (mut l, probe, mut src, mut t) = holding_three_blocks();
+        report_counter(&mut l, &probe, &mut src, &mut t, &[1000, 1064]);
+        report_counter(&mut l, &probe, &mut src, &mut t, &[1063]);
+        assert_eq!(l.fault(), Some(FaultReason::CounterRegress));
+        // Nothing can be reinstalled or restarted while the old counter is the only one there is.
+        assert_eq!(
+            l.reinstall_presentation_mapping(),
+            Err(RenderError::WrongState(RenderState::Faulted))
+        );
+        assert_eq!(
+            l.start(READY),
+            Err(RenderError::WrongState(RenderState::Faulted))
+        );
+        // The acknowledged reset returns the loop to a safe Ready, still without a mapping.
+        l.recover().unwrap();
+        assert_eq!(l.state(), RenderState::Ready);
+        assert_eq!(l.fault(), None);
+        assert!(!l.presentation_mapping_valid());
+        // The caller says its mapping is installed; the loop knows that mapping was built on the old counter.
+        let calls = probe.calls();
+        assert_eq!(
+            l.start(READY),
+            Err(RenderError::PresentationMappingInvalidated)
+        );
+        assert_eq!(l.state(), RenderState::Ready);
+        assert_eq!(probe.calls(), calls, "a refused start touches nothing");
+        // Reinstalled, it starts.
+        l.reinstall_presentation_mapping().unwrap();
+        assert!(l.presentation_mapping_valid());
+        l.start(READY).unwrap();
+        assert_eq!(l.state(), RenderState::Running);
+        run(&mut l, &mut src, &mut t, 12); // three new blocks held: 192 frames in flight
+        assert_eq!(l.state(), RenderState::Running);
+        // The device now counts from somewhere else entirely. The old baseline (1064) is not used: the
+        // first report only sets the new one, and a step of 64 from it is credited.
+        let consumed_before = l.session().position().consumed_frames;
+        report_counter(&mut l, &probe, &mut src, &mut t, &[5, 69]);
+        assert_eq!(
+            l.state(),
+            RenderState::Running,
+            "a stale baseline faults here"
+        );
+        assert_eq!(l.fault(), None);
+        assert_eq!(l.session().position().consumed_frames, consumed_before + 64);
+        // A stop that meets no regress reports a tail it can stand behind.
+        l.stop().unwrap();
+        assert!(l.stop_report().tail_trusted);
     }
 
     // ------------------------------------------------------------------------ samples

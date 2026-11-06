@@ -1,0 +1,593 @@
+{
+ "schema": "ffw.d04.regress_golden.v1",
+ "about": "D04's reaction to a driver counter that goes backwards, typed by hand from docs/contracts/d04.md. 'scenarios' are what the HAL session and the render loop do with a run of consumed-position reports (a block is 64 frames, the ring holds 4 and the ordinary share is 3; the device never completes anything, so held blocks stay held); tests/d04/regress_reference.py must reproduce them, and each names the Rust test that pins the same boundary. 'log_runs' are what the diagnostics log must write for the loop's events, byte for byte, in the Rust (render_log.rs) and in tests/d04/log_reference.py. Evidence: model, host simulation; the fake device's counter, not the real driver's.",
+ "scenarios": [
+  {
+   "id": "regress_by_one",
+   "rust_test": "render::a_counter_that_goes_back_by_one_faults_the_loop_with_its_own_reason_and_holds_every_buffer",
+   "about": "Three blocks held, a baseline, a clean 64-frame step, then one behind. Held, not freed, even after waiting 40 ticks (five stop deadlines).",
+   "steps": [
+    {
+     "start": true
+    },
+    {
+     "hold": 3
+    },
+    {
+     "position": 1000
+    },
+    {
+     "position": 1064
+    },
+    {
+     "position": 1063
+    },
+    {
+     "wait": 40
+    }
+   ],
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "baseline",
+     "clean",
+     "regress",
+     "ok"
+    ],
+    "final": {
+     "phase": "faulted",
+     "fault": "counter_regress",
+     "mapping_valid": false,
+     "consumed": 64,
+     "quarantined": 3,
+     "free": 1,
+     "tail": 0,
+     "tail_trusted": false,
+     "events": [
+      "state ready->running",
+      "fault counter_regress",
+      "state running->faulted"
+     ]
+    }
+   }
+  },
+  {
+   "id": "regress_across_wrap",
+   "rust_test": "render::a_counter_that_goes_back_across_its_wrap_is_a_regress_and_the_wrap_itself_is_not",
+   "about": "0xFFFFFFE0 to 0x20 is a clean 64 frames over the wrap; 0xFFFFFFFF is 33 behind 0x20, not four billion ahead.",
+   "steps": [
+    {
+     "start": true
+    },
+    {
+     "hold": 3
+    },
+    {
+     "position": 4294967264
+    },
+    {
+     "position": 32
+    },
+    {
+     "position": 4294967295
+    }
+   ],
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "baseline",
+     "clean",
+     "regress"
+    ],
+    "final": {
+     "phase": "faulted",
+     "fault": "counter_regress",
+     "mapping_valid": false,
+     "consumed": 64,
+     "quarantined": 3,
+     "free": 1,
+     "tail": 0,
+     "tail_trusted": false,
+     "events": [
+      "state ready->running",
+      "fault counter_regress",
+      "state running->faulted"
+     ]
+    }
+   }
+  },
+  {
+   "id": "forward_overclaim",
+   "rust_test": "render::a_forward_overclaim_faults_the_loop_as_a_session_fault_and_leaves_the_mapping_valid",
+   "about": "4096 frames ahead when 128 are in flight: a session fault with the mapping untouched, so the loop restarts after the reset.",
+   "steps": [
+    {
+     "start": true
+    },
+    {
+     "hold": 3
+    },
+    {
+     "position": 1000
+    },
+    {
+     "position": 1064
+    },
+    {
+     "position": 5160
+    },
+    {
+     "recover": true
+    },
+    {
+     "start": true
+    }
+   ],
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "baseline",
+     "clean",
+     "overclaim",
+     "ok",
+     "ok"
+    ],
+    "final": {
+     "phase": "running",
+     "fault": null,
+     "mapping_valid": true,
+     "consumed": 64,
+     "quarantined": 0,
+     "free": 4,
+     "tail": 0,
+     "tail_trusted": true,
+     "events": [
+      "state ready->running",
+      "fault session_faulted",
+      "state running->faulted",
+      "state faulted->ready",
+      "state ready->running"
+     ]
+    }
+   }
+  },
+  {
+   "id": "half_range_is_ahead",
+   "rust_test": "session::the_regress_boundary_is_half_the_counter_range_and_a_regress_across_the_wrap_is_still_one",
+   "about": "A step of exactly half the counter range is ambiguous and is read as ahead: the forward claim, never a regress.",
+   "steps": [
+    {
+     "start": true
+    },
+    {
+     "hold": 1
+    },
+    {
+     "position": 0
+    },
+    {
+     "position": 2147483648
+    }
+   ],
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "baseline",
+     "overclaim"
+    ],
+    "final": {
+     "phase": "faulted",
+     "fault": "session_faulted",
+     "mapping_valid": true,
+     "consumed": 0,
+     "quarantined": 1,
+     "free": 3,
+     "tail": 0,
+     "tail_trusted": true,
+     "events": [
+      "state ready->running",
+      "fault session_faulted",
+      "state running->faulted"
+     ]
+    }
+   }
+  },
+  {
+   "id": "one_past_half_is_behind",
+   "rust_test": "session::the_regress_boundary_is_half_the_counter_range_and_a_regress_across_the_wrap_is_still_one",
+   "about": "One past half the range is a step back.",
+   "steps": [
+    {
+     "start": true
+    },
+    {
+     "hold": 1
+    },
+    {
+     "position": 0
+    },
+    {
+     "position": 2147483649
+    }
+   ],
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "baseline",
+     "regress"
+    ],
+    "final": {
+     "phase": "faulted",
+     "fault": "counter_regress",
+     "mapping_valid": false,
+     "consumed": 0,
+     "quarantined": 1,
+     "free": 3,
+     "tail": 0,
+     "tail_trusted": false,
+     "events": [
+      "state ready->running",
+      "fault counter_regress",
+      "state running->faulted"
+     ]
+    }
+   }
+  },
+  {
+   "id": "regress_during_drain",
+   "rust_test": "render::a_regress_during_a_drain_faults_it_instead_of_timing_out_and_the_stop_tail_is_not_trusted",
+   "about": "A graceful stop is ramping when the counter goes back: it faults instead of timing out into something else, the 128-frame tail it had read is no longer trusted, and nothing is freed.",
+   "steps": [
+    {
+     "start": true
+    },
+    {
+     "hold": 3
+    },
+    {
+     "position": 1000
+    },
+    {
+     "position": 1064
+    },
+    {
+     "stop": true
+    },
+    {
+     "position": 1063
+    },
+    {
+     "wait": 40
+    }
+   ],
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "baseline",
+     "clean",
+     "ok",
+     "regress",
+     "ok"
+    ],
+    "final": {
+     "phase": "faulted",
+     "fault": "counter_regress",
+     "mapping_valid": false,
+     "consumed": 64,
+     "quarantined": 3,
+     "free": 1,
+     "tail": 128,
+     "tail_trusted": false,
+     "events": [
+      "state ready->running",
+      "state running->draining",
+      "fault counter_regress",
+      "state draining->faulted"
+     ]
+    }
+   }
+  },
+  {
+   "id": "regress_while_muted",
+   "rust_test": "render::a_regress_while_muted_faults_the_same_way_and_leaves_the_muted_state_for_faulted",
+   "about": "A software-muted loop faults the same way; the fault event is reported once.",
+   "steps": [
+    {
+     "start": true
+    },
+    {
+     "hold": 3
+    },
+    {
+     "mute": true
+    },
+    {
+     "position": 1000
+    },
+    {
+     "position": 1064
+    },
+    {
+     "position": 1063
+    }
+   ],
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "ok",
+     "baseline",
+     "clean",
+     "regress"
+    ],
+    "final": {
+     "phase": "faulted",
+     "fault": "counter_regress",
+     "mapping_valid": false,
+     "consumed": 64,
+     "quarantined": 3,
+     "free": 1,
+     "tail": 0,
+     "tail_trusted": false,
+     "events": [
+      "state ready->running",
+      "state running->muted",
+      "fault counter_regress",
+      "state muted->faulted"
+     ]
+    }
+   }
+  },
+  {
+   "id": "recover_reinstall_rebaseline",
+   "rust_test": "render::after_a_regress_the_loop_refuses_the_old_mapping_until_it_is_reinstalled_and_then_takes_a_new_baseline",
+   "about": "Nothing is reinstalled or restarted while Faulted; the acknowledged reset returns to Ready without a mapping; a start on the old mapping is refused and touches nothing; reinstalled, it starts, and the device's new counter (5, then 69) is a new baseline and a clean 64-frame step.",
+   "steps": [
+    {
+     "start": true
+    },
+    {
+     "hold": 3
+    },
+    {
+     "position": 1000
+    },
+    {
+     "position": 1064
+    },
+    {
+     "position": 1063
+    },
+    {
+     "reinstall": true
+    },
+    {
+     "start": true
+    },
+    {
+     "recover": true
+    },
+    {
+     "start": true
+    },
+    {
+     "reinstall": true
+    },
+    {
+     "start": true
+    },
+    {
+     "hold": 3
+    },
+    {
+     "position": 5
+    },
+    {
+     "position": 69
+    },
+    {
+     "stop": true
+    }
+   ],
+   "expect": {
+    "results": [
+     "ok",
+     "ok",
+     "baseline",
+     "clean",
+     "regress",
+     "wrong_state:faulted",
+     "wrong_state:faulted",
+     "ok",
+     "presentation_mapping_invalidated",
+     "ok",
+     "ok",
+     "ok",
+     "baseline",
+     "clean",
+     "ok"
+    ],
+    "final": {
+     "phase": "draining",
+     "fault": null,
+     "mapping_valid": true,
+     "consumed": 128,
+     "quarantined": 0,
+     "free": 1,
+     "tail": 256,
+     "tail_trusted": true,
+     "events": [
+      "state ready->running",
+      "fault counter_regress",
+      "state running->faulted",
+      "state faulted->ready",
+      "state ready->running",
+      "state running->draining"
+     ]
+    }
+   }
+  }
+ ],
+ "log_runs": [
+  {
+   "name": "regress",
+   "identity": {
+    "run_id": "d04-run-3",
+    "case_id": "d04-regress-golden",
+    "member_id": "m-1",
+    "group_id": "g-1",
+    "tick_us": 1000,
+    "capacity": 64
+   },
+   "steps": [
+    {
+     "event": {
+      "tick": 1,
+      "kind": {
+       "kind": "state",
+       "from": "ready",
+       "to": "running"
+      }
+     },
+     "in_flight": 0,
+     "counters": {}
+    },
+    {
+     "event": {
+      "tick": 14,
+      "kind": {
+       "kind": "fault",
+       "reason": "counter_regress"
+      }
+     },
+     "in_flight": 3,
+     "counters": {}
+    },
+    {
+     "event": {
+      "tick": 14,
+      "kind": {
+       "kind": "state",
+       "from": "running",
+       "to": "faulted"
+      }
+     },
+     "in_flight": 3,
+     "counters": {}
+    },
+    {
+     "event": {
+      "tick": 20,
+      "kind": {
+       "kind": "state",
+       "from": "faulted",
+       "to": "ready"
+      }
+     },
+     "in_flight": 0,
+     "counters": {}
+    },
+    {
+     "summary": {
+      "tick": 21
+     },
+     "in_flight": 0,
+     "counters": {
+      "blocks_started": 3,
+      "blocks_on_time": 3
+     }
+    }
+   ],
+   "expected": [
+    "{\"schema_version\":\"ffw.log.v1\",\"timestamp_mono_ns\":1000000,\"run_id\":\"d04-run-3\",\"case_id\":\"d04-regress-golden\",\"correlation_id\":\"tick-1\",\"member_id\":\"m-1\",\"group_id\":\"g-1\",\"source_epoch\":0,\"state_revision\":1,\"event_kind\":\"d04_state\",\"message\":\"state ready to running\",\"queue_depth\":0,\"latency_us\":0}",
+    "{\"schema_version\":\"ffw.log.v1\",\"timestamp_mono_ns\":14000000,\"run_id\":\"d04-run-3\",\"case_id\":\"d04-regress-golden\",\"correlation_id\":\"tick-14\",\"member_id\":\"m-1\",\"group_id\":\"g-1\",\"source_epoch\":0,\"state_revision\":1,\"event_kind\":\"d04_fault\",\"message\":\"fault counter_regress mapping_invalidated\",\"queue_depth\":3,\"latency_us\":0,\"fault\":\"counter_regress\",\"cause\":\"driver_counter_regress\"}",
+    "{\"schema_version\":\"ffw.log.v1\",\"timestamp_mono_ns\":14000000,\"run_id\":\"d04-run-3\",\"case_id\":\"d04-regress-golden\",\"correlation_id\":\"tick-14\",\"member_id\":\"m-1\",\"group_id\":\"g-1\",\"source_epoch\":0,\"state_revision\":2,\"event_kind\":\"d04_state\",\"message\":\"state running to faulted\",\"queue_depth\":3,\"latency_us\":0}",
+    "{\"schema_version\":\"ffw.log.v1\",\"timestamp_mono_ns\":20000000,\"run_id\":\"d04-run-3\",\"case_id\":\"d04-regress-golden\",\"correlation_id\":\"tick-20\",\"member_id\":\"m-1\",\"group_id\":\"g-1\",\"source_epoch\":0,\"state_revision\":3,\"event_kind\":\"d04_state\",\"message\":\"state faulted to ready\",\"queue_depth\":0,\"latency_us\":0}",
+    "{\"schema_version\":\"ffw.log.v1\",\"timestamp_mono_ns\":21000000,\"run_id\":\"d04-run-3\",\"case_id\":\"d04-regress-golden\",\"correlation_id\":\"tick-21\",\"member_id\":\"m-1\",\"group_id\":\"g-1\",\"source_epoch\":0,\"state_revision\":3,\"event_kind\":\"d04_summary\",\"message\":\"n=3 ok=3 ing=0 dec=0 cpu=0 cap=0 sw=0 ur=0 evd=0 eve=0 evc=0 ld=0 lc=0 admit=none\",\"queue_depth\":0,\"latency_us\":0}"
+   ]
+  },
+  {
+   "name": "forward_overclaim",
+   "identity": {
+    "run_id": "d04-run-3",
+    "case_id": "d04-overclaim-golden",
+    "member_id": "m-1",
+    "group_id": "g-1",
+    "tick_us": 1000,
+    "capacity": 64
+   },
+   "steps": [
+    {
+     "event": {
+      "tick": 1,
+      "kind": {
+       "kind": "state",
+       "from": "ready",
+       "to": "running"
+      }
+     },
+     "in_flight": 0,
+     "counters": {}
+    },
+    {
+     "event": {
+      "tick": 14,
+      "kind": {
+       "kind": "fault",
+       "reason": "session_faulted"
+      }
+     },
+     "in_flight": 3,
+     "counters": {}
+    },
+    {
+     "event": {
+      "tick": 14,
+      "kind": {
+       "kind": "state",
+       "from": "running",
+       "to": "faulted"
+      }
+     },
+     "in_flight": 3,
+     "counters": {}
+    },
+    {
+     "event": {
+      "tick": 20,
+      "kind": {
+       "kind": "state",
+       "from": "faulted",
+       "to": "ready"
+      }
+     },
+     "in_flight": 0,
+     "counters": {}
+    },
+    {
+     "summary": {
+      "tick": 21
+     },
+     "in_flight": 0,
+     "counters": {
+      "blocks_started": 3,
+      "blocks_on_time": 3
+     }
+    }
+   ],
+   "expected": [
+    "{\"schema_version\":\"ffw.log.v1\",\"timestamp_mono_ns\":1000000,\"run_id\":\"d04-run-3\",\"case_id\":\"d04-overclaim-golden\",\"correlation_id\":\"tick-1\",\"member_id\":\"m-1\",\"group_id\":\"g-1\",\"source_epoch\":0,\"state_revision\":1,\"event_kind\":\"d04_state\",\"message\":\"state ready to running\",\"queue_depth\":0,\"latency_us\":0}",
+    "{\"schema_version\":\"ffw.log.v1\",\"timestamp_mono_ns\":14000000,\"run_id\":\"d04-run-3\",\"case_id\":\"d04-overclaim-golden\",\"correlation_id\":\"tick-14\",\"member_id\":\"m-1\",\"group_id\":\"g-1\",\"source_epoch\":0,\"state_revision\":1,\"event_kind\":\"d04_fault\",\"message\":\"fault session_faulted\",\"queue_depth\":3,\"latency_us\":0,\"fault\":\"session_faulted\",\"cause\":\"hal_session_fault\"}",
+    "{\"schema_version\":\"ffw.log.v1\",\"timestamp_mono_ns\":14000000,\"run_id\":\"d04-run-3\",\"case_id\":\"d04-overclaim-golden\",\"correlation_id\":\"tick-14\",\"member_id\":\"m-1\",\"group_id\":\"g-1\",\"source_epoch\":0,\"state_revision\":2,\"event_kind\":\"d04_state\",\"message\":\"state running to faulted\",\"queue_depth\":3,\"latency_us\":0}",
+    "{\"schema_version\":\"ffw.log.v1\",\"timestamp_mono_ns\":20000000,\"run_id\":\"d04-run-3\",\"case_id\":\"d04-overclaim-golden\",\"correlation_id\":\"tick-20\",\"member_id\":\"m-1\",\"group_id\":\"g-1\",\"source_epoch\":0,\"state_revision\":3,\"event_kind\":\"d04_state\",\"message\":\"state faulted to ready\",\"queue_depth\":0,\"latency_us\":0}",
+    "{\"schema_version\":\"ffw.log.v1\",\"timestamp_mono_ns\":21000000,\"run_id\":\"d04-run-3\",\"case_id\":\"d04-overclaim-golden\",\"correlation_id\":\"tick-21\",\"member_id\":\"m-1\",\"group_id\":\"g-1\",\"source_epoch\":0,\"state_revision\":3,\"event_kind\":\"d04_summary\",\"message\":\"n=3 ok=3 ing=0 dec=0 cpu=0 cap=0 sw=0 ur=0 evd=0 eve=0 evc=0 ld=0 lc=0 admit=none\",\"queue_depth\":0,\"latency_us\":0}"
+   ]
+  }
+ ]
+}

@@ -17,7 +17,10 @@
 //!   `decode_delay`, `cpu_miss`, plus `capacity_rejected` and `short_write`); a CPU miss carries its
 //!   lateness in `latency_us` when the owner says how long a tick is;
 //! * a driver underrun and a rejected control command: ordinary lines;
-//! * a fault: a **critical** line naming the reason in `fault` and its root in `cause`;
+//! * a fault: a **critical** line naming the reason in `fault` and its root in `cause`. A driver counter
+//!   regress is the one reason whose line also carries the loop's reaction: its `cause` is
+//!   `driver_counter_regress` and its message ends `mapping_invalidated`. That line is the only one that
+//!   does; the `faulted` state line that follows it is critical like every fault's and names no reaction;
 //! * a summary: a **critical** line with the counters that matter, including how many events the
 //!   loop's own queue dropped and how many lines this log dropped.
 //!
@@ -69,6 +72,21 @@ const fn root_cause(reason: FaultReason) -> &'static str {
         FaultReason::WatchdogTripped => "consecutive_cpu_misses",
         FaultReason::ProtectionFault => "protection_dsp_inactive",
         FaultReason::RenderInternal => "resampler_refused_block",
+        FaultReason::CounterRegress => "driver_counter_regress",
+    }
+}
+
+/// What the loop did about a fault, when that is part of the reason itself: appended to the message of
+/// the one critical line that reports it.
+const fn reaction_note(reason: FaultReason) -> &'static str {
+    match reason {
+        FaultReason::CounterRegress => " mapping_invalidated",
+        FaultReason::SessionFaulted
+        | FaultReason::DeviceLost
+        | FaultReason::DrainTimedOut
+        | FaultReason::WatchdogTripped
+        | FaultReason::ProtectionFault
+        | FaultReason::RenderInternal => "",
     }
 }
 
@@ -329,7 +347,7 @@ impl RenderLog {
             RenderEventKind::Fault { reason } => {
                 draft.kind = "d04_fault";
                 let name = serde_name(&reason);
-                draft.message = format!("fault {name}");
+                draft.message = format!("fault {name}{}", reaction_note(reason));
                 draft.fault = Some(name);
                 draft.cause = Some(root_cause(reason).to_string());
             }
@@ -383,7 +401,7 @@ mod tests {
     };
     use franken_dsp::protection::{Admission, ProtectedBoardDsp, synthetic_calibration_for};
     use franken_dsp::resample::{DriftResampler, FrameSource, ResamplerConfig};
-    use franken_hal::abi::RawGeometry;
+    use franken_hal::abi::{DeviceEvent, RawGeometry};
     use franken_hal::backend::{FakeBackend, FakeConfig, FakeProbe};
     use franken_hal::session::{HalSession, SessionConfig, StartPreconditions};
     use franken_hal::slots::LeakLedger;
@@ -441,6 +459,7 @@ mod tests {
             FaultReason::WatchdogTripped,
             FaultReason::ProtectionFault,
             FaultReason::RenderInternal,
+            FaultReason::CounterRegress,
         ];
         let faults = reasons.into_iter().enumerate().map(|(i, reason)| {
             ev(
@@ -1007,5 +1026,183 @@ mod tests {
         let mut unread = RenderLog::new("r", "c", 4);
         let (with_unread, _, _, _) = watchdog_run(Some(&mut unread));
         assert_eq!(without, with_unread);
+    }
+
+    // ------------------------------------------------------------------ a driver counter regress
+
+    /// The hand-written regress runs and the exact lines they must produce. `tests/d04/log_reference.py`
+    /// derives the same lines independently from the same events.
+    const REGRESS_GOLDEN: &str = include_str!("../../../tests/d04/regress_golden.json");
+
+    #[test]
+    fn the_regress_runs_produce_exactly_the_hand_written_lines() {
+        let golden: serde_json::Value = serde_json::from_str(REGRESS_GOLDEN).unwrap();
+        let runs = golden["log_runs"].as_array().unwrap();
+        assert_eq!(runs.len(), 2);
+        for run in runs {
+            let name = run["name"].as_str().unwrap();
+            let id = &run["identity"];
+            let mut log = RenderLog::new(
+                id["run_id"].as_str().unwrap(),
+                id["case_id"].as_str().unwrap(),
+                usize::try_from(id["capacity"].as_u64().unwrap()).unwrap(),
+            )
+            .with_pseudonyms(
+                id["member_id"].as_str().unwrap(),
+                id["group_id"].as_str().unwrap(),
+            )
+            .with_tick_micros(id["tick_us"].as_u64().unwrap());
+            for step in run["steps"].as_array().unwrap() {
+                let counters = counters_from(&step["counters"]);
+                let in_flight = usize::try_from(step["in_flight"].as_u64().unwrap()).unwrap();
+                if let Some(summary) = step.get("summary") {
+                    log.log_summary(summary["tick"].as_u64().unwrap(), &counters, in_flight);
+                } else {
+                    let event: RenderEvent = serde_json::from_value(step["event"].clone()).unwrap();
+                    log.log_event(&event, &counters, in_flight);
+                }
+            }
+            assert!(log.evidence_complete(), "{name}");
+            let got = log.drain_jsonl();
+            let want: Vec<&str> = run["expected"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|l| l.as_str().unwrap())
+                .collect();
+            let got_lines: Vec<&str> = got.lines().collect();
+            assert_eq!(got_lines.len(), want.len(), "{name}");
+            for (i, (g, w)) in got_lines.iter().zip(want.iter()).enumerate() {
+                assert_eq!(g, w, "{name}: line {i}");
+            }
+        }
+    }
+
+    /// One tick of the real loop, with the events it produced handed to `log`. Returns the critical ones.
+    fn tick_and_log(
+        l: &mut RenderLoop<FakeBackend>,
+        src: &mut ToneSource,
+        t: &mut ScriptedTiming,
+        log: &mut RenderLog,
+    ) -> Vec<RenderEvent> {
+        l.tick(src, t);
+        let mut critical = Vec::new();
+        while let Some(event) = l.take_event() {
+            if event.critical() {
+                critical.push(event);
+            }
+            log.log_event(&event, &l.counters(), l.in_flight());
+        }
+        critical
+    }
+
+    /// The real loop with 192 frames in flight, a counter baseline and a clean 64-frame step, then one
+    /// more report. Returns the loop, the critical events it produced, and the log lines.
+    fn counter_fault_run(
+        report: u32,
+    ) -> (
+        RenderLoop<FakeBackend>,
+        Vec<RenderEvent>,
+        Vec<serde_json::Value>,
+    ) {
+        let (mut l, probe) = started_loop();
+        let mut src = ToneSource { pos: 0 };
+        let mut t = ScriptedTiming {
+            default_cost: 1,
+            ..ScriptedTiming::default()
+        };
+        let mut log = RenderLog::new("d04-run-3", "d04-regress", 128).with_tick_micros(1000);
+        let mut critical = Vec::new();
+        for _ in 0..12 {
+            critical.extend(tick_and_log(&mut l, &mut src, &mut t, &mut log));
+        }
+        assert!(critical.is_empty(), "nothing critical has happened yet");
+        assert_eq!(l.session().irrevocable_until_frames(), 192);
+        for counter in [1000_u32, 1064] {
+            probe.queue_event(DeviceEvent::Position { counter });
+        }
+        critical.extend(tick_and_log(&mut l, &mut src, &mut t, &mut log));
+        assert!(critical.is_empty(), "a clean step is not news");
+        assert_eq!(l.state(), RenderState::Running);
+        probe.queue_event(DeviceEvent::Position { counter: report });
+        critical.extend(tick_and_log(&mut l, &mut src, &mut t, &mut log));
+        assert!(log.evidence_complete());
+        let lines = lines_of(&mut log);
+        (l, critical, lines)
+    }
+
+    #[test]
+    fn a_driver_counter_regress_leaves_exactly_one_critical_line_that_carries_the_reaction() {
+        let (l, critical, lines) = counter_fault_run(1063);
+        assert_eq!(l.state(), RenderState::Faulted);
+        assert_eq!(l.fault(), Some(FaultReason::CounterRegress));
+        // Two critical events, as for every fault: the fault, then the state change it caused.
+        let kinds: Vec<RenderEventKind> = critical.iter().map(|e| e.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                RenderEventKind::Fault {
+                    reason: FaultReason::CounterRegress
+                },
+                RenderEventKind::State {
+                    from: RenderState::Running,
+                    to: RenderState::Faulted
+                }
+            ]
+        );
+        // Exactly one line carries the reaction, and it is the fault line.
+        let carrying: Vec<&serde_json::Value> = lines
+            .iter()
+            .filter(|l| {
+                l["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("mapping_invalidated")
+            })
+            .collect();
+        assert_eq!(carrying.len(), 1);
+        assert_eq!(carrying[0]["event_kind"], "d04_fault");
+        assert_eq!(carrying[0]["fault"], "counter_regress");
+        assert_eq!(carrying[0]["cause"], "driver_counter_regress");
+        assert_eq!(
+            carrying[0]["message"],
+            "fault counter_regress mapping_invalidated"
+        );
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|l| l["cause"] == "driver_counter_regress")
+                .count(),
+            1
+        );
+        // The faulted state line after it is critical too and names no reaction.
+        let state = lines.last().unwrap();
+        assert_eq!(state["event_kind"], "d04_state");
+        assert_eq!(state["message"], "state running to faulted");
+        assert!(state.get("cause").is_none());
+    }
+
+    #[test]
+    fn a_forward_overclaim_leaves_no_line_that_carries_the_reaction() {
+        let (l, critical, lines) = counter_fault_run(1064 + 4096);
+        assert_eq!(l.state(), RenderState::Faulted);
+        assert_eq!(l.fault(), Some(FaultReason::SessionFaulted));
+        assert!(l.presentation_mapping_valid());
+        assert_eq!(critical.len(), 2);
+        let fault_lines: Vec<&serde_json::Value> = lines
+            .iter()
+            .filter(|l| l["event_kind"] == "d04_fault")
+            .collect();
+        assert_eq!(fault_lines.len(), 1);
+        assert_eq!(fault_lines[0]["fault"], "session_faulted");
+        assert_eq!(fault_lines[0]["cause"], "hal_session_fault");
+        assert_eq!(fault_lines[0]["message"], "fault session_faulted");
+        assert!(lines.iter().all(|l| {
+            !l["message"]
+                .as_str()
+                .unwrap()
+                .contains("mapping_invalidated")
+                && l["cause"] != "driver_counter_regress"
+        }));
     }
 }

@@ -24,7 +24,11 @@ ROOT_CAUSE = {
     "watchdog_tripped": "consecutive_cpu_misses",
     "protection_fault": "protection_dsp_inactive",
     "render_internal": "resampler_refused_block",
+    "counter_regress": "driver_counter_regress",
 }
+
+# What the loop did about a fault when that is part of the reason itself: appended to the one line that reports it.
+REACTION_NOTE = {"counter_regress": " mapping_invalidated"}
 
 
 def safe_id(raw: str) -> str:
@@ -44,7 +48,8 @@ def is_critical(kind: Dict[str, Any]) -> bool:
     return kind["kind"] == "fault" or (kind["kind"] == "state" and kind["to"] == "faulted")
 
 
-DEFECTS = ("revision_frozen", "latency_not_scaled", "epoch_ignored", "schedule_dropped", "critical_not_priority")
+DEFECTS = ("revision_frozen", "latency_not_scaled", "epoch_ignored", "schedule_dropped", "critical_not_priority",
+           "regress_cause_generic", "reaction_note_dropped", "reaction_note_everywhere")
 
 
 class Log:
@@ -143,10 +148,17 @@ class Log:
             d["message"] = "control queue full"
             d["cause"] = "queue_full"
         elif which == "fault":
+            reason = kind["reason"]
+            note = REACTION_NOTE.get(reason, "")
+            if self.defect == "reaction_note_dropped":
+                note = ""
+            elif self.defect == "reaction_note_everywhere":
+                note = " mapping_invalidated"
             d["kind"] = "d04_fault"
-            d["message"] = f"fault {kind['reason']}"
-            d["fault"] = kind["reason"]
-            d["cause"] = ROOT_CAUSE[kind["reason"]]
+            d["message"] = f"fault {reason}{note}"
+            d["fault"] = reason
+            generic = self.defect == "regress_cause_generic" and reason == "counter_regress"
+            d["cause"] = ROOT_CAUSE["session_faulted"] if generic else ROOT_CAUSE[reason]
         else:
             raise ValueError(which)
         self._enqueue(tick, correlation, d)

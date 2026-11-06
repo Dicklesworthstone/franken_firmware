@@ -40,6 +40,7 @@ sys.path.insert(0, HERE)
 import generate  # noqa: E402
 import log_reference  # noqa: E402
 import reference  # noqa: E402
+import regress_reference  # noqa: E402
 
 CASES_FILE = os.path.join(HERE, "cases.json")
 SCENARIOS_FILE = os.path.join(HERE, "scenarios.json")
@@ -47,12 +48,15 @@ DOC_FILE = os.path.join(REPO, "docs", "contracts", "d04.md")
 RENDER_RS = os.path.join(REPO, "crates", "franken-speaker", "src", "render.rs")
 RENDER_LOG_RS = os.path.join(REPO, "crates", "franken-speaker", "src", "render_log.rs")
 SPEAKER_LIB = os.path.join(REPO, "crates", "franken-speaker", "src", "lib.rs")
+SESSION_RS = os.path.join(REPO, "crates", "franken-hal", "src", "session.rs")
 LOG_GOLDEN = os.path.join(HERE, "log_golden.json")
+REGRESS_GOLDEN = os.path.join(HERE, "regress_golden.json")
 TEST_SUPPORT_RS = os.path.join(REPO, "crates", "franken-test-support", "src", "lib.rs")
 SCHEMA = "ffw.d04.cases.v1"
 TIERS = ("smoke", "full")
 KINDS = ("scenario", "planted_defect", "meta_files", "meta_shared", "meta_generated", "meta_invariants",
-         "meta_hygiene", "meta_no_unsafe", "meta_log", "log_golden", "log_defect", "runner_selftest", "blocked")
+         "meta_hygiene", "meta_no_unsafe", "meta_log", "log_golden", "log_defect", "regress_scenario", "regress_log",
+         "regress_defect", "runner_selftest", "blocked")
 PASS, FAIL, BLOCKED = "pass", "fail", "blocked"
 Result = Tuple[str, str]
 
@@ -82,6 +86,12 @@ def sha256_file(path: str) -> str:
 def render_test_names() -> List[str]:
     """Functions directly annotated #[test] in crates/franken-speaker/src/render.rs."""
     return re.findall(r"#\[test\]\s*\n\s*fn\s+(\w+)\s*\(", read(RENDER_RS))
+
+
+def hal_test_names() -> List[str]:
+    """`session::fn` for every #[test] in crates/franken-hal/src/session.rs. An invariant may name one; they are not
+    all required to be mapped, because the session has its own contract and tests."""
+    return [f"session::{n}" for n in re.findall(r"#\[test\]\s*\n\s*fn\s+(\w+)\s*\(", read(SESSION_RS))]
 
 
 def all_rust_tests() -> List[str]:
@@ -145,7 +155,8 @@ def run_planted_defect(c) -> Result:
 
 def run_meta_files(c) -> Result:
     needed = [CASES_FILE, SCENARIOS_FILE, DOC_FILE, RENDER_RS, RENDER_LOG_RS, LOG_GOLDEN,
-              os.path.join(HERE, "log_reference.py"),
+              os.path.join(HERE, "log_reference.py"), REGRESS_GOLDEN, SESSION_RS,
+              os.path.join(HERE, "regress_reference.py"),
               os.path.join(HERE, "reference.py"), os.path.join(HERE, "generate.py"),
               os.path.join(REPO, "scripts", "e2e", "d04")]
     gone = [os.path.relpath(p, REPO) for p in needed if not os.path.isfile(p)]
@@ -192,12 +203,13 @@ def all_ids(doc: Dict[str, Any]) -> List[str]:
 
 def check_invariants(doc: Dict[str, Any], ids: List[str], tests: List[str]) -> List[str]:
     problems, mapped = [], set()
+    known = set(tests) | set(hal_test_names())
     for inv in doc["invariants"]:
         if not inv["rust_tests"] and not inv["cases"]:
             problems.append(f"{inv['id']} maps to nothing")
         for name in inv["rust_tests"]:
-            if name not in tests:
-                problems.append(f"{inv['id']}: no #[test] fn {name} in render.rs or render_log.rs")
+            if name not in known:
+                problems.append(f"{inv['id']}: no #[test] fn {name} in render.rs, render_log.rs or session.rs")
         for ref in expand(inv["cases"], ids):
             if ref not in ids:
                 problems.append(f"{inv['id']} names unknown case {ref}")
@@ -223,7 +235,7 @@ def run_meta_invariants(c) -> Result:
 
 
 HYGIENE_FILES = ("cases.json", "scenarios.json", "reference.py", "generate.py", "run_cases.py", "log_golden.json",
-                 "log_reference.py")
+                 "log_reference.py", "regress_golden.json", "regress_reference.py")
 
 
 def run_meta_hygiene(c) -> Result:
@@ -323,6 +335,80 @@ def run_log_defect(c) -> Result:
     return (PASS, f"caught: {detail}") if status != PASS else (FAIL, f"defect {c['defect']!r} was not caught")
 
 
+# --------------------------------------------------------------------------------- driver counter regress
+
+def regress_doc() -> Dict[str, Any]:
+    doc = load_json(REGRESS_GOLDEN)
+    if doc.get("schema") != regress_reference.SCHEMA:
+        raise CaseError(f"regress_golden.json schema is {doc.get('schema')!r}, expected {regress_reference.SCHEMA!r}")
+    return doc
+
+
+def check_regress_scenario(sc: Dict[str, Any], defect: Optional[str] = None) -> Result:
+    """The independent model reproduces the hand-typed results and final state exactly."""
+    want = sc["expect"]
+    if set(want["final"]) != set(regress_reference.FINAL_KEYS):
+        return FAIL, f"{sc['id']}: the expected final state names {sorted(want['final'])}, not {sorted(regress_reference.FINAL_KEYS)}"
+    got = regress_reference.simulate(sc, defect)
+    if got["results"] != want["results"]:
+        step = next((i for i, (a, b) in enumerate(zip(got["results"], want["results"])) if a != b), 0)
+        return FAIL, f"step {step} gave {got['results'][step:step + 1]}, expected {want['results'][step:step + 1]}"
+    bad = {k: (got["final"][k], want["final"][k]) for k in regress_reference.FINAL_KEYS if got["final"][k] != want["final"][k]}
+    if bad:
+        return FAIL, f"final state differs (got, expected): {bad}"
+    return PASS, ""
+
+
+def check_regress_log(doc: Dict[str, Any], defect: Optional[str] = None) -> Result:
+    """The log model reproduces the hand-typed lines of both runs (a regress, and the forward overclaim)."""
+    for run in doc["log_runs"]:
+        got = log_reference.run(run, defect)
+        if got != run["expected"]:
+            first = next((i for i, (a, b) in enumerate(zip(got, run["expected"])) if a != b), min(len(got), len(run["expected"])))
+            return FAIL, f"run {run['name']}: {len(got)} line(s) against {len(run['expected'])}; first difference at line {first}"
+    return PASS, ""
+
+
+def regress_test_names_exist(doc: Dict[str, Any]) -> List[str]:
+    known = set(all_rust_tests()) | set(hal_test_names())
+    return [f"{sc['id']} names {sc['rust_test']}" for sc in doc["scenarios"] if sc["rust_test"] not in known]
+
+
+def run_regress_scenario(c) -> Result:
+    doc = regress_doc()
+    sc = next((s for s in doc["scenarios"] if s["id"] == c["scenario"]), None)
+    if sc is None:
+        return FAIL, f"no regress scenario {c['scenario']}"
+    missing = [m for m in regress_test_names_exist(doc) if m.startswith(sc["id"] + " ")]
+    if missing:
+        return FAIL, f"no such Rust test: {missing}"
+    return check_regress_scenario(sc)
+
+
+def run_regress_log(c) -> Result:
+    doc = regress_doc()
+    status, detail = check_regress_log(doc)
+    return (PASS, f"{len(doc['log_runs'])} runs reproduced") if status == PASS else (status, detail)
+
+
+def run_regress_defect(c) -> Result:
+    doc = regress_doc()
+    broken = [s["id"] for s in doc["scenarios"] if check_regress_scenario(s)[0] != PASS]
+    base_log = check_regress_log(doc)
+    if broken or base_log[0] != PASS:
+        return FAIL, f"baseline is not green, so no catch can be credited: {broken} {base_log[1]}"
+    if c["defect"] in regress_reference.DEFECTS:
+        caught = sorted(s["id"] for s in doc["scenarios"] if check_regress_scenario(s, c["defect"])[0] != PASS)
+    elif c["defect"] in log_reference.DEFECTS:
+        caught = ["log_runs"] if check_regress_log(doc, c["defect"])[0] != PASS else []
+    else:
+        return FAIL, f"unknown defect {c['defect']!r}"
+    missing = [i for i in c["caught_by"] if i not in caught]
+    if missing:
+        return FAIL, f"defect {c['defect']!r} was not caught by {missing}; caught by {caught}"
+    return PASS, f"caught by {', '.join(caught)}"
+
+
 def run_runner_selftest(c) -> Result:
     """The comparisons are not vacuous: a corrupted scenario, a missing Rust test name and an orphan
     case must each be seen."""
@@ -357,6 +443,25 @@ def run_runner_selftest(c) -> Result:
     corrupt["bounded"]["expect_kept"] = ["block-0", "block-1", "tick-10"]
     if check_log_golden(corrupt)[0] == PASS:
         return FAIL, "a corrupted bounded-log expectation was accepted"
+    regress = regress_doc()
+    if any(check_regress_scenario(s)[0] != PASS for s in regress["scenarios"]) or check_regress_log(regress)[0] != PASS:
+        return FAIL, "the regress baseline does not pass"
+    bad = copy.deepcopy(regress)
+    bad["scenarios"][0]["expect"]["final"]["consumed"] += 1
+    if check_regress_scenario(bad["scenarios"][0])[0] == PASS:
+        return FAIL, "a corrupted regress final state was accepted"
+    bad = copy.deepcopy(regress)
+    bad["scenarios"][-1]["expect"]["results"][8] = "ok"
+    if check_regress_scenario(bad["scenarios"][-1])[0] == PASS:
+        return FAIL, "a corrupted regress step result was accepted"
+    bad = copy.deepcopy(regress)
+    bad["log_runs"][0]["expected"][1] = bad["log_runs"][0]["expected"][1].replace(" mapping_invalidated", "")
+    if check_regress_log(bad)[0] == PASS:
+        return FAIL, "a regress log line without its reaction was accepted"
+    bad = copy.deepcopy(regress)
+    bad["scenarios"][0]["rust_test"] = "render::a_test_that_does_not_exist"
+    if not regress_test_names_exist(bad):
+        return FAIL, "a regress scenario naming a missing Rust test was not detected"
     return PASS, ""
 
 
@@ -372,6 +477,7 @@ RUNNERS: Dict[str, Callable[[Dict[str, Any]], Result]] = {
     "meta_invariants": run_meta_invariants, "meta_hygiene": run_meta_hygiene,
     "meta_no_unsafe": run_meta_no_unsafe, "runner_selftest": run_runner_selftest, "blocked": run_blocked,
     "meta_log": run_meta_log, "log_golden": run_log_golden, "log_defect": run_log_defect,
+    "regress_scenario": run_regress_scenario, "regress_log": run_regress_log, "regress_defect": run_regress_defect,
 }
 
 
@@ -445,7 +551,7 @@ def main(argv: List[str]) -> int:
             "utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "python": sys.version.split()[0], "tier": args.tier, "denominator": len(results), "counts": counts,
             "qualified": qualified, "rust_test_functions_expected": len(all_rust_tests()),
-            "inputs": {os.path.relpath(p, REPO): sha256_file(p) for p in (CASES_FILE, SCENARIOS_FILE, LOG_GOLDEN)},
+            "inputs": {os.path.relpath(p, REPO): sha256_file(p) for p in (CASES_FILE, SCENARIOS_FILE, LOG_GOLDEN, REGRESS_GOLDEN)},
             "cases": [{"id": c["id"], "status": st} for c, st, _ in results],
         }
         path = os.path.join(args.receipts, f"d04-{args.tier}.json")
