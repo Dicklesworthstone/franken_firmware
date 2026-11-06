@@ -1,0 +1,598 @@
+{
+ "artifact_compilers": {
+  "hello-init-mips": [
+   "1.100.0-nightly (908501772 2026-08-30)"
+  ],
+  "hello-init-ppc": [
+   "1.100.0-nightly (908501772 2026-08-30)"
+  ],
+  "speaker-host-full": [
+   "1.99.0 (b940084d7 2026-09-28)"
+  ],
+  "speaker-mips-full": [
+   "1.100.0-nightly (908501772 2026-08-30)"
+  ],
+  "speaker-mips-min": [
+   "1.100.0-nightly (908501772 2026-08-30)"
+  ],
+  "speaker-ppc-full": [
+   "1.100.0-nightly (908501772 2026-08-30)"
+  ],
+  "speaker-ppc-min": [
+   "1.100.0-nightly (908501772 2026-08-30)"
+  ]
+ },
+ "artifact_sizes": {
+  "hello-init-mips": 27556,
+  "hello-init-ppc": 24512,
+  "speaker-host-full": 823072,
+  "speaker-mips-full": 564464,
+  "speaker-mips-min": 564448,
+  "speaker-ppc-full": 411528,
+  "speaker-ppc-min": 411528
+ },
+ "artifacts": [
+  {
+   "contract_digest": "f6ccf4628785e732c07b3737aa2d0a64542e1dd2a9b1caa61f4386bbb6ae5b8e",
+   "elf_big_endian": false,
+   "elf_class": 2,
+   "elf_dynamic": true,
+   "elf_machine": 62,
+   "fp_abi": "",
+   "id": "speaker-host-full",
+   "isa_revision": "",
+   "profile": "host_full",
+   "sha256": "6fb2a63b3429380c643ce44cd50689c22e627cad57369812c5286ecee482014d",
+   "target": "host",
+   "triple": "host"
+  },
+  {
+   "contract_digest": "f6ccf4628785e732c07b3737aa2d0a64542e1dd2a9b1caa61f4386bbb6ae5b8e",
+   "elf_big_endian": true,
+   "elf_class": 1,
+   "elf_dynamic": false,
+   "elf_machine": 8,
+   "fp_abi": "soft",
+   "id": "speaker-mips-full",
+   "isa_revision": "mips32r2",
+   "profile": "full_native",
+   "sha256": "93755bbf2ee1bdb14306828e0028dfbd4f0a587dd55a4856b7ebf6e0a1f679e3",
+   "target": "mips_be",
+   "triple": "mips-unknown-linux-musl"
+  },
+  {
+   "contract_digest": "f6ccf4628785e732c07b3737aa2d0a64542e1dd2a9b1caa61f4386bbb6ae5b8e",
+   "elf_big_endian": true,
+   "elf_class": 1,
+   "elf_dynamic": false,
+   "elf_machine": 20,
+   "fp_abi": "",
+   "id": "speaker-ppc-full",
+   "isa_revision": "",
+   "profile": "full_native",
+   "sha256": "572352947936cece167356e1b211519e5840517814732efa76e86281f353dd8b",
+   "target": "powerpc_be",
+   "triple": "powerpc-unknown-linux-musl"
+  },
+  {
+   "contract_digest": "f6ccf4628785e732c07b3737aa2d0a64542e1dd2a9b1caa61f4386bbb6ae5b8e",
+   "elf_big_endian": true,
+   "elf_class": 1,
+   "elf_dynamic": false,
+   "elf_machine": 8,
+   "fp_abi": "soft",
+   "id": "speaker-mips-min",
+   "isa_revision": "mips32r2",
+   "profile": "minimal_renderer",
+   "sha256": "c21b31e1bd0cbacf2b35611b52c519ccaae6fb21966ef86f7d294d8c842a600c",
+   "target": "mips_be",
+   "triple": "mips-unknown-linux-musl"
+  },
+  {
+   "contract_digest": "f6ccf4628785e732c07b3737aa2d0a64542e1dd2a9b1caa61f4386bbb6ae5b8e",
+   "elf_big_endian": true,
+   "elf_class": 1,
+   "elf_dynamic": false,
+   "elf_machine": 20,
+   "fp_abi": "",
+   "id": "speaker-ppc-min",
+   "isa_revision": "",
+   "profile": "minimal_renderer",
+   "sha256": "e3a3918ebb5e919cedf981d91e4e5cb46e6880eb91c31868196be2e201a2a231",
+   "target": "powerpc_be",
+   "triple": "powerpc-unknown-linux-musl"
+  },
+  {
+   "contract_digest": "f6ccf4628785e732c07b3737aa2d0a64542e1dd2a9b1caa61f4386bbb6ae5b8e",
+   "elf_big_endian": true,
+   "elf_class": 1,
+   "elf_dynamic": false,
+   "elf_machine": 8,
+   "fp_abi": "soft",
+   "id": "hello-init-mips",
+   "isa_revision": "mips32r2",
+   "profile": "bootstrap_probe",
+   "sha256": "f54dc6641e8208a00cd59039b6dcc9bb653b5abc603776340b249bf8151b6eea",
+   "target": "mips_be",
+   "triple": "mips-unknown-linux-musl"
+  },
+  {
+   "contract_digest": "f6ccf4628785e732c07b3737aa2d0a64542e1dd2a9b1caa61f4386bbb6ae5b8e",
+   "elf_big_endian": true,
+   "elf_class": 1,
+   "elf_dynamic": false,
+   "elf_machine": 20,
+   "fp_abi": "",
+   "id": "hello-init-ppc",
+   "isa_revision": "",
+   "profile": "bootstrap_probe",
+   "sha256": "f554dbd29906ad9b2ecc18648c265c73bf4fde1604eb43561c63831b953e2423",
+   "target": "powerpc_be",
+   "triple": "powerpc-unknown-linux-musl"
+  }
+ ],
+ "attested_env": {
+  "build-ffw-hello-init-mips_be": {
+   "RCH_REQUIRE_REMOTE": "1"
+  },
+  "build-ffw-hello-init-powerpc_be": {
+   "RCH_REQUIRE_REMOTE": "1"
+  },
+  "build-franken-speaker-host": {
+   "RCH_ALLOW_FOREIGN_ARTIFACTS": "1",
+   "RCH_REQUIRE_REMOTE": "1"
+  },
+  "build-franken-speaker-mips_be": {
+   "RCH_REQUIRE_REMOTE": "1"
+  },
+  "build-franken-speaker-mips_be-minimal_renderer": {
+   "RCH_REQUIRE_REMOTE": "1"
+  },
+  "build-franken-speaker-powerpc_be": {
+   "RCH_REQUIRE_REMOTE": "1"
+  },
+  "build-franken-speaker-powerpc_be-minimal_renderer": {
+   "RCH_REQUIRE_REMOTE": "1"
+  },
+  "test-franken-speaker-services": {
+   "RCH_REQUIRE_REMOTE": "1"
+  },
+  "toolchain-default": {
+   "RCH_REQUIRE_REMOTE": "1"
+  },
+  "workspace-test": {
+   "RCH_REQUIRE_REMOTE": "1"
+  }
+ },
+ "boundary": "A supervisor ran these commands on a worker at this revision; each step was checked against the plan from its raw log, which is not committed (it names the worker's address and local paths). Not an attestation of the compiler. Says nothing about a guest, a boot or a device.",
+ "contract_digest": "f6ccf4628785e732c07b3737aa2d0a64542e1dd2a9b1caa61f4386bbb6ae5b8e",
+ "kind": "central_run",
+ "lock_sha256": "8e3ea0d826c2eceaea978d7c64cbfb5c45e30c7eff6359617071c4d2e5364f82",
+ "missing": [],
+ "ran_at_utc": "2026-11-06T01:31:09Z",
+ "replay": {
+  "failed": 0,
+  "found": true,
+  "ignored": 0,
+  "names": [
+   "every_vector_id_is_unique_and_every_kind_is_known",
+   "the_contract_digest_is_the_pinned_value_and_independent_of_the_file_layout",
+   "the_declared_contract_is_valid_before_any_defect_is_planted",
+   "the_shared_vectors_replay_exactly"
+  ],
+  "passed": 4,
+  "result": "ok",
+  "test_file": "crates/franken-board-profile/tests/p01_contract.rs",
+  "test_file_sha256": "dfa0147af46aa8eeda28326a9a740adb46d367a65a0b2034bce8434680e9cfeb",
+  "tests": {
+   "every_vector_id_is_unique_and_every_kind_is_known": "ok",
+   "the_contract_digest_is_the_pinned_value_and_independent_of_the_file_layout": "ok",
+   "the_declared_contract_is_valid_before_any_defect_is_planted": "ok",
+   "the_shared_vectors_replay_exactly": "ok"
+  },
+  "vectors_sha256": "00c4e831fcf6583636eda6e28f3c3385fcdf07867c5524e532cc61de07096436"
+ },
+ "revision": "34297586165752050914568fa692c5c7bdda07bb",
+ "schema": "ffw.p01.central_evidence.v1",
+ "service_tests": {
+  "configs": {
+   "all_on": {
+    "step": "test-franken-speaker-services",
+    "tests": {
+     "an_unknown_option_is_still_refused_and_the_usage_lists_the_services_option": "ok",
+     "cli_airplay2_selected_prints_selected_unimplemented_unqualified": "ok",
+     "cli_alexa_bridge_selected_prints_selected_unimplemented_unqualified": "ok",
+     "cli_artwork_selected_prints_selected_unimplemented_unqualified": "ok",
+     "cli_spotify_connect_selected_prints_selected_unimplemented_unqualified": "ok",
+     "cli_tailnet_native_selected_prints_selected_unimplemented_unqualified": "ok",
+     "every_printed_line_parses_back_to_the_report_this_build_gives_for_that_service": "ok",
+     "no_service_line_says_ready_and_each_is_absent_or_selected_unimplemented_unqualified": "ok",
+     "platform_startup_is_still_refused_on_a_build_with_no_kernel_backend": "ok",
+     "services::tests::a_marker_parses_back_to_the_report_it_came_from_and_nothing_else_parses": "ok",
+     "services::tests::a_marker_says_absent_or_selected_unimplemented_unqualified_in_words_and_never_ready": "ok",
+     "services::tests::a_printed_line_claiming_qualification_parses_and_check_refuses_it": "ok",
+     "services::tests::a_report_that_disagrees_with_this_build_is_refused": "ok",
+     "services::tests::a_selected_service_claiming_ready_is_refused_and_the_same_report_without_the_claim_passes": "ok",
+     "services::tests::airplay2_selected_reports_selected_unimplemented_unqualified": "ok",
+     "services::tests::alexa_bridge_selected_reports_selected_unimplemented_unqualified": "ok",
+     "services::tests::artwork_selected_reports_selected_unimplemented_unqualified": "ok",
+     "services::tests::enabling_a_flag_does_not_change_admissions_blocks": "ok",
+     "services::tests::every_service_has_a_cargo_feature_of_its_name_and_no_other_flag_is_a_service": "ok",
+     "services::tests::no_build_selection_reports_a_service_implemented_qualified_or_ready": "ok",
+     "services::tests::spotify_connect_selected_reports_selected_unimplemented_unqualified": "ok",
+     "services::tests::tailnet_native_selected_reports_selected_unimplemented_unqualified": "ok",
+     "services::tests::the_contract_names_the_same_flags_on_this_crate_and_none_for_the_render_path": "ok",
+     "services::tests::the_markers_are_the_reports_markers_one_per_line_in_order": "ok",
+     "services::tests::the_report_lists_every_service_once_in_a_fixed_order": "ok",
+     "services::tests::the_report_round_trips_as_json_and_refuses_a_field_it_does_not_know": "ok",
+     "services::tests::the_wire_names_are_the_contract_names": "ok",
+     "services_option_exits_zero_with_one_line_per_service_in_order_and_nothing_on_stderr": "ok",
+     "services_option_is_the_same_on_every_run": "ok",
+     "the_catalog_option_still_prints_the_catalog_as_json_and_not_the_services": "ok",
+     "the_harness_options_are_still_refused_without_the_harness": "ok",
+     "with_no_option_a_build_without_the_harness_still_prints_the_catalog": "ok"
+    }
+   },
+   "default": {
+    "step": "workspace-test",
+    "tests": {
+     "an_unknown_option_is_still_refused_and_the_usage_lists_the_services_option": "ok",
+     "cli_airplay2_not_selected_prints_absent": "ok",
+     "cli_alexa_bridge_not_selected_prints_absent": "ok",
+     "cli_artwork_not_selected_prints_absent": "ok",
+     "cli_spotify_connect_not_selected_prints_absent": "ok",
+     "cli_tailnet_native_not_selected_prints_absent": "ok",
+     "every_printed_line_parses_back_to_the_report_this_build_gives_for_that_service": "ok",
+     "no_service_line_says_ready_and_each_is_absent_or_selected_unimplemented_unqualified": "ok",
+     "platform_startup_is_still_refused_on_a_build_with_no_kernel_backend": "ok",
+     "services::tests::a_marker_parses_back_to_the_report_it_came_from_and_nothing_else_parses": "ok",
+     "services::tests::a_marker_says_absent_or_selected_unimplemented_unqualified_in_words_and_never_ready": "ok",
+     "services::tests::a_printed_line_claiming_qualification_parses_and_check_refuses_it": "ok",
+     "services::tests::a_report_that_disagrees_with_this_build_is_refused": "ok",
+     "services::tests::a_selected_service_claiming_ready_is_refused_and_the_same_report_without_the_claim_passes": "ok",
+     "services::tests::airplay2_not_selected_reports_absent": "ok",
+     "services::tests::alexa_bridge_not_selected_reports_absent": "ok",
+     "services::tests::artwork_not_selected_reports_absent": "ok",
+     "services::tests::enabling_a_flag_does_not_change_admissions_blocks": "ok",
+     "services::tests::every_service_has_a_cargo_feature_of_its_name_and_no_other_flag_is_a_service": "ok",
+     "services::tests::no_build_selection_reports_a_service_implemented_qualified_or_ready": "ok",
+     "services::tests::spotify_connect_not_selected_reports_absent": "ok",
+     "services::tests::tailnet_native_not_selected_reports_absent": "ok",
+     "services::tests::the_contract_names_the_same_flags_on_this_crate_and_none_for_the_render_path": "ok",
+     "services::tests::the_markers_are_the_reports_markers_one_per_line_in_order": "ok",
+     "services::tests::the_report_lists_every_service_once_in_a_fixed_order": "ok",
+     "services::tests::the_report_round_trips_as_json_and_refuses_a_field_it_does_not_know": "ok",
+     "services::tests::the_wire_names_are_the_contract_names": "ok",
+     "services_option_exits_zero_with_one_line_per_service_in_order_and_nothing_on_stderr": "ok",
+     "services_option_is_the_same_on_every_run": "ok",
+     "the_catalog_option_still_prints_the_catalog_as_json_and_not_the_services": "ok",
+     "the_harness_options_are_still_refused_without_the_harness": "ok",
+     "with_no_option_a_build_without_the_harness_still_prints_the_catalog": "ok"
+    }
+   }
+  },
+  "files": {
+   "crates/franken-speaker/src/services.rs": "f8f062b47cd8ddd95aa690c9eff1c7c64cd5a9b11115590faf83e04a551c3afd",
+   "crates/franken-speaker/tests/cli_services.rs": "788061fd14a519628a310f49cf7c03275b0c3a1140134d86549d0856094f17a0"
+  }
+ },
+ "steps": [
+  {
+   "command": [
+    "rustc",
+    "-vV"
+   ],
+   "exit": 0,
+   "id": "toolchain-default",
+   "kind": "toolchain_default",
+   "log_sha256": "fb037a63fde6d34cb547a380d550e3c51dbae8b79aba0ad183b5ed1b5c2b01e3",
+   "matches_plan": true,
+   "millis": 19935,
+   "problems": [],
+   "status": "ok",
+   "worker": "trj"
+  },
+  {
+   "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "--manifest-path",
+    "<repo>/Cargo.toml",
+    "--workspace",
+    "--config",
+    "build.incremental=false",
+    "-j",
+    "1"
+   ],
+   "exit": 0,
+   "id": "workspace-test",
+   "kind": "test",
+   "log_sha256": "75537a75a2e3cd8b54fe903f43b93eee6b4c84670f163a9900aac47437a8419f",
+   "matches_plan": true,
+   "millis": 1145364,
+   "problems": [],
+   "status": "ok",
+   "worker": "ts1"
+  },
+  {
+   "command": [
+    "cargo",
+    "build",
+    "--locked",
+    "--offline",
+    "--manifest-path",
+    "<repo>/crates/franken-speaker/Cargo.toml",
+    "--release",
+    "-p",
+    "franken-speaker",
+    "--features",
+    "franken-speaker/airplay2,franken-speaker/alexa_bridge,franken-speaker/artwork,franken-speaker/harness,franken-speaker/spotify_connect,franken-speaker/tailnet_native",
+    "-j",
+    "1"
+   ],
+   "exit": 0,
+   "id": "build-franken-speaker-host",
+   "kind": "build",
+   "log_sha256": "3579b4fbc35d575327351065f11b9d0db93fb949c7450749362318260689ddd7",
+   "matches_plan": true,
+   "millis": 53663,
+   "problems": [],
+   "status": "ok",
+   "worker": "vmi1264463"
+  },
+  {
+   "command": [
+    "cargo",
+    "+nightly-2026-08-31",
+    "build",
+    "--locked",
+    "--offline",
+    "--manifest-path",
+    "<repo>/crates/franken-speaker/Cargo.toml",
+    "--release",
+    "-p",
+    "franken-speaker",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=core,alloc,std,panic_abort",
+    "--config",
+    "target.mips-unknown-linux-musl.linker=\"<repo>/toolchain/linker/zig-cc-mips-be\"",
+    "--config",
+    "target.mips-unknown-linux-musl.rustflags=[\"-C\",\"target-feature=+crt-static\",\"-C\",\"link-self-contained=no\"]",
+    "--features",
+    "franken-speaker/airplay2,franken-speaker/alexa_bridge,franken-speaker/artwork,franken-speaker/spotify_connect,franken-speaker/tailnet_native",
+    "-j",
+    "1"
+   ],
+   "exit": 0,
+   "id": "build-franken-speaker-mips_be",
+   "kind": "build",
+   "log_sha256": "d75bf72e6639e0beecbdf5171ccc9d39f389eda24d1e7cbf114e5b7d5a194cd0",
+   "matches_plan": true,
+   "millis": 99784,
+   "problems": [],
+   "status": "ok",
+   "worker": "ts1"
+  },
+  {
+   "command": [
+    "cargo",
+    "+nightly-2026-08-31",
+    "build",
+    "--locked",
+    "--offline",
+    "--manifest-path",
+    "<repo>/crates/franken-speaker/Cargo.toml",
+    "--release",
+    "-p",
+    "franken-speaker",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=core,alloc,std,panic_abort",
+    "--config",
+    "target.powerpc-unknown-linux-musl.linker=\"<repo>/toolchain/linker/zig-cc-powerpc-be\"",
+    "--config",
+    "target.powerpc-unknown-linux-musl.rustflags=[\"-C\",\"target-feature=+crt-static\",\"-C\",\"link-self-contained=no\"]",
+    "--features",
+    "franken-speaker/airplay2,franken-speaker/alexa_bridge,franken-speaker/artwork,franken-speaker/spotify_connect,franken-speaker/tailnet_native",
+    "-j",
+    "1"
+   ],
+   "exit": 0,
+   "id": "build-franken-speaker-powerpc_be",
+   "kind": "build",
+   "log_sha256": "616cae42573246ea4a55e653a629e1d1ed7e9794e8bd8d7289fe90a8d751d53f",
+   "matches_plan": true,
+   "millis": 95562,
+   "problems": [],
+   "status": "ok",
+   "worker": "ts1"
+  },
+  {
+   "command": [
+    "cargo",
+    "+nightly-2026-08-31",
+    "build",
+    "--locked",
+    "--offline",
+    "--manifest-path",
+    "<repo>/crates/franken-speaker/Cargo.toml",
+    "--release",
+    "-p",
+    "franken-speaker",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=core,alloc,std,panic_abort",
+    "--config",
+    "target.mips-unknown-linux-musl.linker=\"<repo>/toolchain/linker/zig-cc-mips-be\"",
+    "--config",
+    "target.mips-unknown-linux-musl.rustflags=[\"-C\",\"target-feature=+crt-static\",\"-C\",\"link-self-contained=no\"]",
+    "-j",
+    "1"
+   ],
+   "exit": 0,
+   "id": "build-franken-speaker-mips_be-minimal_renderer",
+   "kind": "build",
+   "log_sha256": "253a2c93bad93a1464506c985ad644d4133c7d31419526b5cf5c888424590137",
+   "matches_plan": true,
+   "millis": 94284,
+   "problems": [],
+   "status": "ok",
+   "worker": "ts1"
+  },
+  {
+   "command": [
+    "cargo",
+    "+nightly-2026-08-31",
+    "build",
+    "--locked",
+    "--offline",
+    "--manifest-path",
+    "<repo>/crates/franken-speaker/Cargo.toml",
+    "--release",
+    "-p",
+    "franken-speaker",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=core,alloc,std,panic_abort",
+    "--config",
+    "target.powerpc-unknown-linux-musl.linker=\"<repo>/toolchain/linker/zig-cc-powerpc-be\"",
+    "--config",
+    "target.powerpc-unknown-linux-musl.rustflags=[\"-C\",\"target-feature=+crt-static\",\"-C\",\"link-self-contained=no\"]",
+    "-j",
+    "1"
+   ],
+   "exit": 0,
+   "id": "build-franken-speaker-powerpc_be-minimal_renderer",
+   "kind": "build",
+   "log_sha256": "32aa6ed4b4fe728888646a8bdba50d098fa626d0719d76b460017f0ab05ed126",
+   "matches_plan": true,
+   "millis": 94496,
+   "problems": [],
+   "status": "ok",
+   "worker": "ts1"
+  },
+  {
+   "command": [
+    "cargo",
+    "+nightly-2026-08-31",
+    "build",
+    "--locked",
+    "--offline",
+    "--manifest-path",
+    "<repo>/toolchain/src/ffw-hello-init/Cargo.toml",
+    "--release",
+    "--config",
+    "<repo>/toolchain/src/ffw-hello-init/.cargo/config.toml",
+    "--target",
+    "mips-unknown-linux-musl",
+    "-Z",
+    "build-std=core,panic_abort",
+    "-j",
+    "1"
+   ],
+   "exit": 0,
+   "id": "build-ffw-hello-init-mips_be",
+   "kind": "build",
+   "log_sha256": "a1112149dbd0c84feeedd553b86177230d8fd0a3fa62ce12a8a12285be607e98",
+   "matches_plan": true,
+   "millis": 20464,
+   "problems": [],
+   "status": "ok",
+   "worker": "ts1"
+  },
+  {
+   "command": [
+    "cargo",
+    "+nightly-2026-08-31",
+    "build",
+    "--locked",
+    "--offline",
+    "--manifest-path",
+    "<repo>/toolchain/src/ffw-hello-init/Cargo.toml",
+    "--release",
+    "--config",
+    "<repo>/toolchain/src/ffw-hello-init/.cargo/config.toml",
+    "--target",
+    "powerpc-unknown-linux-musl",
+    "-Z",
+    "build-std=core,panic_abort",
+    "-j",
+    "1"
+   ],
+   "exit": 0,
+   "id": "build-ffw-hello-init-powerpc_be",
+   "kind": "build",
+   "log_sha256": "1a006f7a795cbd65c58b8be643591b1b7d27b44162adb3f2ec35e5dc82b0618f",
+   "matches_plan": true,
+   "millis": 24825,
+   "problems": [],
+   "status": "ok",
+   "worker": "ts1"
+  },
+  {
+   "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "--manifest-path",
+    "<repo>/Cargo.toml",
+    "-p",
+    "franken-speaker",
+    "--lib",
+    "--test",
+    "cli_services",
+    "--features",
+    "airplay2,alexa_bridge,artwork,spotify_connect,tailnet_native",
+    "--config",
+    "build.incremental=false",
+    "-j",
+    "1"
+   ],
+   "exit": 0,
+   "id": "test-franken-speaker-services",
+   "kind": "service_test",
+   "log_sha256": "adef5d6ce82c28ea2e6186e1a4acbc29f6570589c21fc297fb3a2b2916532b7f",
+   "matches_plan": true,
+   "millis": 6667,
+   "problems": [],
+   "status": "ok",
+   "worker": "ovh-a"
+  }
+ ],
+ "tests": {
+  "failed": 0,
+  "ignored": 2,
+  "passed": 1736,
+  "result_blocks": 59
+ },
+ "toolchain_default": {
+  "LLVM version": "23.1.1",
+  "commit-hash": "b940084d7eb6a299eb4bfeb8e34901bc051e7ac4",
+  "host": "x86_64-unknown-linux-gnu",
+  "release": "1.99.0"
+ },
+ "toolchain_pin": {
+  "channel": "1.99.0",
+  "file": "rust-toolchain.toml",
+  "sha256": "ff13c9224217a4ccd63320d8b89cc82d7fa64da14a627e499f9f18db4c6602d0"
+ },
+ "tree": "clean git archive export of the revision",
+ "verification": {
+  "codes": [],
+  "pairs": []
+ },
+ "workers": [
+  "ovh-a",
+  "trj",
+  "ts1",
+  "vmi1264463"
+ ]
+}
