@@ -21,6 +21,7 @@ pub enum SpeakerReadinessState {
 }
 
 pub mod button_adapter;
+pub mod clock_view;
 pub mod guest_evidence;
 pub mod platform_start;
 pub mod render;

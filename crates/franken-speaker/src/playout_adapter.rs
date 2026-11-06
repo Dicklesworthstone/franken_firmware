@@ -18,7 +18,8 @@
 //!   `report().uncertainty_ns`, usable while Locked or Holdover) read at the node's own simulated local time, never from
 //!   the simulation's true time. The engine refuses a view that goes backwards, and a refreshed clock fit can step a
 //!   reading back by a few microseconds; [`MonotoneReading`] never lets the reading fall and **counts** every time it had
-//!   to ([`PlayoutMemberReport::clamped_readings`]).
+//!   to ([`PlayoutMemberReport::clamped_readings`]). Each clamp increases the reported uncertainty by the
+//!   distance held; exceeding the group clock policy makes the view unusable.
 //! * **Oracles that do not trust the engine.** A block the engine plays as `Real` must carry exactly the bytes the sender
 //!   sent for that block (an FNV-1a digest taken at send time); a different byte is a campaign error. After the run
 //!   every block must have been decided exactly once ([`NodePlayout::finish`]).
@@ -40,10 +41,10 @@
 
 use std::collections::BTreeMap;
 
-use franken_clock::group::{ClockStatus, GroupClock};
+use franken_clock::group::GroupClock;
 use franken_dsp::{FRAMES_PER_BLOCK, StereoAudioBlock};
 use franken_stream::playout::{
-    BLOCK_PAYLOAD_BYTES, ClockView, Decision, MediaPacket, Outcome, PlayoutConfig, PlayoutEngine,
+    BLOCK_PAYLOAD_BYTES, Decision, MediaPacket, Outcome, PlayoutConfig, PlayoutEngine,
     PlayoutProfile, Poll, frames_to_ns,
 };
 use franken_stream::{
@@ -52,6 +53,7 @@ use franken_stream::{
 use franken_test_support::NetworkSchedule;
 use serde::{Deserialize, Serialize};
 
+use crate::clock_view::ClockViewBridge as MonotoneReading;
 use crate::harness::SimNodeClock;
 
 /// Time the render path spends between the engine's decision and the DMA submission, and the lead it needs to submit
@@ -96,55 +98,6 @@ impl CampaignTimeline {
     pub(crate) fn decision_true_ns(&self, blk: u64) -> u64 {
         self.pts_group_ns(blk)
             .saturating_sub(RENDER_WORK_NS + RENDER_LEAD_NS)
-    }
-}
-
-/// The node's reading of the group clock, never allowed to fall.
-#[derive(Debug, Default)]
-pub(crate) struct MonotoneReading {
-    last_group_ns: u64,
-    clamped: u64,
-}
-
-impl MonotoneReading {
-    /// A group time that is never earlier than the last one handed out; counts the times it had to be raised.
-    pub(crate) fn stamp(&mut self, group_ns: u64) -> u64 {
-        if group_ns < self.last_group_ns {
-            self.clamped += 1;
-            return self.last_group_ns;
-        }
-        self.last_group_ns = group_ns;
-        group_ns
-    }
-
-    /// The view at true time `true_ns`, from the node's own clock: its local reading of that instant, its group time,
-    /// its stated uncertainty, and whether its status lets it be used. With no reading the view is unusable.
-    pub(crate) fn view(
-        &mut self,
-        clock: &GroupClock,
-        sim: &SimNodeClock,
-        true_ns: u64,
-    ) -> ClockView {
-        let local = sim.local(true_ns);
-        let usable = matches!(
-            clock.status(local),
-            ClockStatus::Locked | ClockStatus::Holdover
-        );
-        match (clock.group_ns(local), clock.report(local).uncertainty_ns) {
-            // Only a reading the clock stands behind moves the latch. An expired or unlocked clock still extrapolates its
-            // old fit to whatever local time it is asked about, so after a leap of the node's own clock that reading is
-            // far ahead of the group's; latching it would hold every view after the relock in the future.
-            (Some(group), Some(uncertainty_ns)) if usable => ClockView {
-                group_ns: self.stamp(group),
-                uncertainty_ns,
-                usable,
-            },
-            (_, uncertainty_ns) => ClockView {
-                group_ns: self.last_group_ns,
-                uncertainty_ns: uncertainty_ns.unwrap_or(0),
-                usable: false,
-            },
-        }
     }
 }
 
@@ -708,7 +661,7 @@ impl NodePlayout {
                 self.retired_stream_refused += 1;
                 continue;
             }
-            let view = self.mono.view(clock, sim, arrival);
+            let view = self.mono.at_local(clock, sim.local(arrival));
             let media = MediaPacket::from_authenticated(&packet)
                 .ok_or_else(|| "a repair packet reached the playout path".to_string())?;
             let _ = self.engines[at].engine.on_packet(view, &media);
@@ -753,7 +706,7 @@ impl NodePlayout {
         }
         let mut bytes = [0u8; BLOCK_PAYLOAD_BYTES];
         loop {
-            let view = self.mono.view(clock, sim, at);
+            let view = self.mono.at_local(clock, sim.local(at));
             match self.engines[idx].engine.decide(view, &mut bytes) {
                 Poll::Decision(d) if d.block < blk => {
                     // A block already rendered as silence because the clock was unusable when it was due.
@@ -833,7 +786,7 @@ impl NodePlayout {
         let mut r = PlayoutMemberReport {
             catch_up_decisions: self.catch_up_decisions,
             blocks_without_a_decision: self.blocks_without_a_decision,
-            clamped_readings: self.mono.clamped,
+            clamped_readings: self.mono.clamped_readings(),
             out_of_order_arrivals: self.out_of_order,
             stale_refused_at_receiver: self.stale_refused_at_receiver,
             streams_opened: u64::try_from(self.engines.len()).unwrap_or(u64::MAX),
@@ -1394,13 +1347,13 @@ mod tests {
         let mut m = MonotoneReading::default();
         assert_eq!(m.stamp(100), 100);
         assert_eq!(m.stamp(100), 100);
-        assert_eq!(m.clamped, 0);
+        assert_eq!(m.clamped_readings(), 0);
         assert_eq!(m.stamp(90), 100, "a reading that stepped back is raised");
         assert_eq!(m.stamp(99), 100);
-        assert_eq!(m.clamped, 2);
+        assert_eq!(m.clamped_readings(), 2);
         assert_eq!(m.stamp(101), 101);
         assert_eq!(m.stamp(100), 101);
-        assert_eq!(m.clamped, 3);
+        assert_eq!(m.clamped_readings(), 3);
     }
 
     #[test]
@@ -1685,7 +1638,7 @@ mod tests {
         let clock = locked_clock(&sim);
         let mut latch = MonotoneReading::default();
         let t0 = 700_000_000;
-        let before = latch.view(&clock, &sim, t0);
+        let before = latch.at_local(&clock, sim.local(t0));
         assert!(before.usable);
         // The node's clock reads 10 000 s more from here on. Its fit is hopelessly stale, but it still extrapolates it, so
         // `group_ns` answers with a time far in the future.
@@ -1695,7 +1648,7 @@ mod tests {
         };
         let extrapolated = clock.group_ns(leaped.local(t0 + 5_000_000));
         assert!(extrapolated.is_some_and(|g| g > before.group_ns + 9_000_000_000_000));
-        let stale = latch.view(&clock, &leaped, t0 + 5_000_000);
+        let stale = latch.at_local(&clock, leaped.local(t0 + 5_000_000));
         assert!(!stale.usable);
         assert_eq!(
             stale.group_ns, before.group_ns,
@@ -1703,10 +1656,10 @@ mod tests {
         );
         // The clock is whole again: the next view is the clock's own reading, and nothing was clamped.
         let t1 = t0 + 10_000_000;
-        let after = latch.view(&clock, &sim, t1);
+        let after = latch.at_local(&clock, sim.local(t1));
         assert!(after.usable);
         assert_eq!(Some(after.group_ns), clock.group_ns(sim.local(t1)));
-        assert_eq!(latch.clamped, 0);
+        assert_eq!(latch.clamped_readings(), 0);
     }
 
     impl Wire {
@@ -1840,7 +1793,7 @@ mod tests {
         let mut mono = MonotoneReading::default();
         for blk in 20..40 {
             let packet = wire.packet(&tl, blk, other_bytes(blk));
-            let view = mono.view(&clock, &sim, tl.send_true_ns(blk) + 5_000_000);
+            let view = mono.at_local(&clock, sim.local(tl.send_true_ns(blk) + 5_000_000));
             let media = MediaPacket::from_authenticated(&packet).expect("media");
             let _ = engine.on_packet(view, &media);
         }
