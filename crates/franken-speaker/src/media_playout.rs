@@ -19,8 +19,9 @@
 //!   admitted start, an expired authority or clock, a reset, a fault) the buffer is zero and the engine is not asked,
 //!   even while the clock's status is Locked.
 //!
-//! A prepared block is a reservation and never a promise: if a later call is [`Preparation::Refused`], the caller must
-//! drop whatever it scheduled from earlier calls. The clock must be admitted through [`MediaPlayout::admit_start`], which
+//! A prepared block is a reservation and never a promise: if a later call returns an error or
+//! [`Preparation::invalidates_prepared`] is true, the caller must discard its outstanding scheduled blocks.
+//! The clock must be admitted through [`MediaPlayout::admit_start`], which
 //! anchors the engine's timeline at the clock's start; admitting the clock behind its back breaks that agreement.
 //!
 //! The platform's reported clock resolution is checked at the same boundary, before any call that needs a local time. The
@@ -148,8 +149,8 @@ pub enum Preparation {
     /// engine's attenuated concealment) and the rest of the buffer is zero.
     Prepared(PreparedBlock),
     /// The group clock allows preparation but this call produced no block: the next block is not due yet, or the engine
-    /// decided silence for it (a gap, an overdue block, a skip) or refused the view. The buffer is zero. Call again
-    /// until `Poll::Pending`.
+    /// decided silence for it (a gap, an overdue block, a skip). The buffer is zero. Drain decisions
+    /// until `Poll::Pending`; other non-decision results end this drain attempt.
     Quiet {
         /// Armed or audible, as for a prepared block.
         release: Release,
@@ -159,9 +160,25 @@ pub enum Preparation {
     /// The group clock is muted (no admitted start, an expired authority, clock or buffer, a reset, an epoch change, a
     /// fault) and the reason is the clock's own. The engine was not asked and the buffer is zero.
     Refused(MuteReason),
+    /// The clock's fit may still be locked, but its monotonic playout view cannot meet the
+    /// uncertainty policy (or the engine refused that view). Invalidate outstanding prepared
+    /// reservations and stop this drain attempt. The buffer is zero.
+    TimingUnavailable,
     /// The platform's reported resolution is coarser than the group clock is configured for: a configuration refusal,
     /// not a clock failure and not one of the clock's mute reasons. The engine was not asked and the buffer is zero.
     Misconfigured(ResolutionMismatch),
+}
+
+impl Preparation {
+    /// Whether all previously prepared reservations must be discarded. A returned clock error
+    /// has the same invalidating meaning. Quiet or prepared PCM is never proof of presentation.
+    #[must_use]
+    pub const fn invalidates_prepared(&self) -> bool {
+        matches!(
+            self,
+            Self::Refused(_) | Self::TimingUnavailable | Self::Misconfigured(_)
+        )
+    }
 }
 
 /// One speaker's media path for one stream: the receiver, the playout engine and the clock view that joins them.
@@ -277,11 +294,18 @@ impl MediaPlayout {
             Output::Audible => Release::Audible,
         };
         let view = self.bridge.at_local(clock, local_ns);
+        if !view.usable {
+            return Ok(Preparation::TimingUnavailable);
+        }
         match self.engine.decide(view, out) {
             Poll::Decision(decision)
                 if matches!(decision.outcome, Outcome::Real | Outcome::Concealed { .. }) =>
             {
                 Ok(Preparation::Prepared(PreparedBlock { decision, release }))
+            }
+            Poll::ClockUnusable | Poll::ClockRegression => {
+                out.fill(0);
+                Ok(Preparation::TimingUnavailable)
             }
             poll => {
                 out.fill(0);
@@ -595,6 +619,102 @@ mod tests {
         (rig, start_group, start_local)
     }
 
+    // This fixture has zero oscillator skew. Find the first clock reading that reaches the
+    // engine's uncertainty-adjusted cutoff, rather than preparing at the submission deadline.
+    fn cutoff_local(rig: &Rig, presentation_ns: u64, presentation_local_ns: u64) -> u64 {
+        let uncertainty = rig
+            .clock
+            .report(presentation_local_ns)
+            .uncertainty_ns
+            .expect("fit");
+        let group =
+            franken_stream::playout::consume_by(presentation_ns, 2_000_000, 1_000_000, uncertainty);
+        let mut local = rig.local_of(group, presentation_local_ns);
+        for _ in 0..8 {
+            let uncertainty = rig.clock.report(local).uncertainty_ns.expect("fit");
+            let cutoff = franken_stream::playout::consume_by(
+                presentation_ns,
+                2_000_000,
+                1_000_000,
+                uncertainty,
+            );
+            let now = rig.group_at(local);
+            if now >= cutoff {
+                return local;
+            }
+            local += cutoff - now;
+        }
+        panic!("zero-skew fixture cutoff did not converge");
+    }
+
+    #[test]
+    fn an_over_budget_refit_invalidates_prepared_blocks_but_a_small_clamp_remains_permitted() {
+        for (step_ns, refused) in [(3_000_000_u64, true), (1_000_000, false)] {
+            let mut rig = Rig::new();
+            let mut cfg = rig.clock.config().clone();
+            cfg.window = 1;
+            cfg.min_probes_for_lock = 1;
+            // Admit this explicit fit correction so the consumer, rather than the probe's
+            // discontinuity gate, must handle the backwards reading conservatively.
+            cfg.prediction_slack_ns = 10_000_000;
+            rig.clock = GroupClock::new(cfg, 1, 7, 100).expect("clock");
+            rig.lock(0, OLD_TIMELINE_NS);
+            rig.at(50_000_000);
+            let start_group = rig.group_at(50_000_000) + 1_000_000_000;
+            rig.admit(start_group, 0).expect("start");
+            let start_local = rig.local_of(start_group, 50_000_000);
+            let wire = rig.packet(0, 0, start_group, 1);
+            assert_eq!(rig.ingest(&wire), Ok(Admission::Admitted));
+            let prepared_local = cutoff_local(&rig, start_group, start_local);
+            rig.at(prepared_local);
+            let mut out = [0u8; BLOCK_PAYLOAD_BYTES];
+            let prior = rig.prepare(&mut out).expect("platform time");
+            assert!(matches!(prior, Preparation::Prepared(_)));
+            assert!(!prior.invalidates_prepared());
+
+            let t1 = prepared_local + 1_000;
+            let req = rig.clock.next_probe(t1);
+            rig.clock
+                .on_response(
+                    ProbeResponse {
+                        epoch: 1,
+                        leader: 7,
+                        seq: req.seq,
+                        t1_echo_ns: t1,
+                        t2_group_ns: OLD_TIMELINE_NS + t1 + 400_000 - step_ns,
+                        t3_group_ns: OLD_TIMELINE_NS + t1 + 450_000 - step_ns,
+                    },
+                    t1 + 850_000,
+                )
+                .expect("admitted actual refit");
+            let now = t1 + 850_000;
+            rig.at(now);
+            assert_eq!(rig.clock.status(now), ClockStatus::Locked);
+            assert!(matches!(rig.clock.output(now), Output::Armed { .. }));
+            out.fill(0xFF);
+            let result = rig.prepare(&mut out).expect("platform time");
+            assert!(silent(&out));
+            if refused {
+                assert_eq!(result, Preparation::TimingUnavailable);
+                assert!(
+                    result.invalidates_prepared(),
+                    "cancel the earlier prepared reservation"
+                );
+            } else {
+                assert!(matches!(
+                    result,
+                    Preparation::Quiet {
+                        poll: Poll::Pending,
+                        ..
+                    }
+                ));
+                assert!(!result.invalidates_prepared());
+                assert_eq!(rig.media.clamped_readings(), 1);
+            }
+            assert_eq!(rig.media.engine_stats().decided_real, 1);
+        }
+    }
+
     #[test]
     fn with_the_standard_zero_output_delay_the_first_block_is_prepared_while_armed_and_is_not_lost()
     {
@@ -633,10 +753,11 @@ mod tests {
                 poll: Poll::Pending
             })
         ));
-        // The first block's cutoff has passed and the start has not: it is prepared now, as Armed, with its future
-        // presentation time, and not as sound. This is the block a zero output delay would otherwise lose.
-        rig.at(start_local - 1_000_000);
-        assert!(rig.group_at(start_local - 1_000_000) < start_group);
+        // Prepare at the uncertainty-adjusted cutoff, leaving the declared work and submission
+        // lead before presentation. Preparing at start minus lead alone would already be late.
+        let first_local = cutoff_local(&rig, start_group, start_local);
+        rig.at(first_local);
+        assert!(rig.group_at(first_local) < start_group);
         let Ok(Preparation::Prepared(first)) = rig.prepare(&mut out) else {
             panic!("the first block is prepared while armed");
         };
@@ -650,9 +771,14 @@ mod tests {
             (0, Outcome::Real, 256)
         );
         assert_eq!(first.decision.presentation_ns, start_group);
+        assert!(rig.group_at(first_local) + 2_000_000 <= first.decision.submit_deadline_ns);
+        assert!(first.decision.late_by_ns <= 1);
         assert_eq!(out.as_slice(), pcm(0, 1).as_slice());
         // The start is reached: the next block is prepared as audible.
-        rig.at(start_local + 4_000_000);
+        let second_group = start_group + frames_to_ns(BLOCK_FRAMES);
+        let second_local =
+            cutoff_local(&rig, second_group, start_local + frames_to_ns(BLOCK_FRAMES));
+        rig.at(second_local);
         let Ok(Preparation::Prepared(second)) = rig.prepare(&mut out) else {
             panic!("the second block is prepared");
         };
@@ -661,6 +787,8 @@ mod tests {
             (second.decision.block, second.decision.outcome),
             (1, Outcome::Real)
         );
+        assert!(rig.group_at(second_local) + 2_000_000 <= second.decision.submit_deadline_ns);
+        assert!(second.decision.late_by_ns <= 1);
         assert_eq!(out.as_slice(), pcm(1, 1).as_slice());
         let stats = rig.media.engine_stats();
         assert_eq!((stats.decided_real, stats.decided_muted_overdue), (2, 0));
