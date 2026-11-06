@@ -1,0 +1,229 @@
+{
+  "commands": {
+    "check-mips": [
+      "cargo",
+      "+nightly-2026-08-31",
+      "check",
+      "--locked",
+      "--offline",
+      "--manifest-path",
+      "<workspace>/Cargo.toml",
+      "-p",
+      "franken-platform",
+      "--lib",
+      "--no-default-features",
+      "--target",
+      "mips-unknown-linux-musl",
+      "-Z",
+      "build-std=core,alloc,std,panic_abort",
+      "--config",
+      "build.incremental=false",
+      "-j",
+      "2"
+    ],
+    "check-powerpc": [
+      "cargo",
+      "+nightly-2026-08-31",
+      "check",
+      "--locked",
+      "--offline",
+      "--manifest-path",
+      "<workspace>/Cargo.toml",
+      "-p",
+      "franken-platform",
+      "--lib",
+      "--no-default-features",
+      "--target",
+      "powerpc-unknown-linux-musl",
+      "-Z",
+      "build-std=core,alloc,std,panic_abort",
+      "--config",
+      "build.incremental=false",
+      "-j",
+      "2"
+    ],
+    "host-clippy": [
+      "cargo",
+      "clippy",
+      "--locked",
+      "--offline",
+      "-p",
+      "franken-platform",
+      "--all-targets",
+      "--config",
+      "build.incremental=false",
+      "-j",
+      "1",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "host-tests": [
+      "cargo",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "franken-platform",
+      "--config",
+      "build.incremental=false",
+      "-j",
+      "1",
+      "--",
+      "--nocapture"
+    ]
+  },
+  "compiled_lock_sha256": "9605c4c954150a551aeb40264b6df18e9a3bd065adf961dd3aa794cfc4497f97",
+  "custody": [
+    {
+      "ack": true,
+      "exit": 0,
+      "pair_released": true,
+      "pid": 28634,
+      "remote_id": "30096834294711617",
+      "retired": true,
+      "sources_released": true,
+      "state": "finished",
+      "tree_retired": true,
+      "worker": "hz3",
+      "wrapper_absent": true,
+      "wrapper_id": "rchw-a60e9ce3-6b32-42b0-8857-a513ea6d3c16"
+    },
+    {
+      "ack": true,
+      "exit": 0,
+      "pair_released": true,
+      "pid": 75481,
+      "remote_id": "30096834294711621",
+      "retired": true,
+      "sources_released": true,
+      "state": "finished",
+      "tree_retired": true,
+      "worker": "hz3",
+      "wrapper_absent": true,
+      "wrapper_id": "rchw-ccd4d52e-0ceb-4a91-9d5e-49b63e77d889"
+    },
+    {
+      "ack": true,
+      "exit": 0,
+      "pair_released": true,
+      "pid": 96594,
+      "remote_id": "30096834294711645",
+      "retired": true,
+      "sources_released": true,
+      "state": "finished",
+      "tree_retired": true,
+      "worker": "trj",
+      "wrapper_absent": true,
+      "wrapper_id": "rchw-2acf009d-1e7b-4b8c-ac75-59471d3cb34c"
+    },
+    {
+      "ack": true,
+      "exit": 0,
+      "pair_released": true,
+      "pid": 16507,
+      "remote_id": "30096834294711652",
+      "retired": true,
+      "sources_released": true,
+      "state": "finished",
+      "tree_retired": true,
+      "worker": "trj",
+      "wrapper_absent": true,
+      "wrapper_id": "rchw-9bcaf1a0-eed1-4489-8d5d-c02c40be5f58"
+    }
+  ],
+  "dependency_audit": {
+    "blocker": 0,
+    "path": "toolchain/results/e06/audit-walltime-e1ce2c5a78e7/audit.json",
+    "planned_build_checks_not_run": 30,
+    "review": 12,
+    "sha256": "55927606a576474e10a6d21ffd602c13eabdb4aa19d6183ad1151c2ac41018b7"
+  },
+  "device_checks": {
+    "executed": false,
+    "mips": "check only, exit0",
+    "powerpc": "check only, exit0"
+  },
+  "host_clippy": {
+    "deny_warnings": true,
+    "exit": 0
+  },
+  "host_test": {
+    "failed": 0,
+    "filtered": 0,
+    "ignored": 0,
+    "passed": 166,
+    "wall_time_names": [
+      "a_regression_already_caught_by_the_platform_layer_is_also_sticky",
+      "authenticated_but_late_or_excessively_uncertain_responses_are_consumed_and_refused",
+      "authenticated_time_advances_by_monotonic_age_with_outward_drift_rounding",
+      "both_large_wall_corrections_withdraw_trust_without_stepping_monotonic_time",
+      "credential_check_requires_the_entire_interval_and_expiration_is_exclusive",
+      "epoch_binding_survives_moves_and_drop_and_never_silently_rebinds",
+      "every_public_entrypoint_rejects_simulated_provenance_before_reading_clock_or_entropy",
+      "every_response_byte_is_authenticated_and_bad_network_input_preserves_confidence",
+      "holdover_expiry_is_exact_and_rebootstrap_is_required",
+      "inverse_frequency_bounds_refuse_credentials_expired_on_a_slow_oscillator",
+      "missing_challenge_replay_and_superseded_nonce_never_authenticate",
+      "monotonic_regression_is_sticky_and_clears_authentication_state",
+      "overflow_and_reversed_intervals_cannot_authorize_a_time",
+      "quantized_same_tick_reads_never_imply_zero_elapsed_uncertainty",
+      "resume_invalidation_withdraws_wall_trust_without_modifying_audio_time",
+      "transit_and_holdover_limits_use_worst_case_real_elapsed_time",
+      "unknown_resolution_cannot_bind_a_trusted_clock",
+      "wall_time_starts_unknown_and_policy_has_no_guessed_defaults",
+      "wire_tag_matches_independent_python_hmac_sha256_golden"
+    ]
+  },
+  "landing_base": "e1ce2c5a78e79aedfb6d2af9cc8e8748d9b23ff4",
+  "logs": {
+    "check-mips": {
+      "cargo_output_sha256": "b73cc5cfc77d2c35c9f2a439ab23dee907150ed839d51e6cef12209d55936c92",
+      "raw_sha256": "70f33876355349c9b670330d2cd4f14358bdeb7d78c228fae5559301da5ae6a5",
+      "transformation": "ANSI removed; Cargo lines retained; worker source prefix parameterized; results unchanged"
+    },
+    "check-powerpc": {
+      "cargo_output_sha256": "f8964b7e78585357b2171aecdec841614114e885841845ca277168c2a89436d2",
+      "raw_sha256": "7214917c703aa443001639aa5fc94db1c1418b60d4f3458abb3bc853c17d8654",
+      "transformation": "ANSI removed; Cargo lines retained; worker source prefix parameterized; results unchanged"
+    },
+    "host-clippy": {
+      "cargo_output_sha256": "fa0f87570038fbc0163362ed0c1ef2beefcb6111bf7ec0686e80625624d39b23",
+      "raw_sha256": "85ab41a2e6a345f2bbfa15658d8ba2613cba010b75211fb7987d0ecf9502196c",
+      "transformation": "ANSI removed; Cargo lines retained; worker source prefix parameterized; results unchanged"
+    },
+    "host-tests": {
+      "cargo_output_sha256": "8e1fa18454678674330993370b775acd44c8ea218ba4bb8d52b65527f36bcec1",
+      "raw_sha256": "bac361d7422aaed76112ff2c32eb0672dbcdfa16f1ad8dedb683a72084922a2b",
+      "transformation": "ANSI removed; Cargo lines retained; worker source prefix parameterized; results unchanged"
+    }
+  },
+  "p01_smoke": {
+    "baseline_unchanged": true,
+    "blocked": 7,
+    "critical_events": 503,
+    "critical_lost": 0,
+    "diagnostics_complete": true,
+    "failed": 0,
+    "passed": 244,
+    "qualification": false,
+    "total": 251
+  },
+  "qualification_limits": [
+    "No native-service credential consumer",
+    "No authority transport or provisioning",
+    "Public kernel bootstrap not exercised",
+    "Suspend lifecycle not integrated",
+    "No BE guest, retained driver, physical clock, speaker memory or fleet qualification"
+  ],
+  "review_mail": 6665,
+  "reviewer": "TanGate",
+  "schema": "ffw.p02.wall_time_verification.v1",
+  "source_base": "40877afe21658a682f9773a0b90eed2de8b7b47b",
+  "source_binding_sha256": "c2d2bead26be30a717b147b407cb805658e760bb9f9b1eefbb672b69ccedea3a",
+  "strict_remote": true,
+  "toolchain_pins": {
+    "device": "nightly-2026-08-31",
+    "host": "1.99.0"
+  }
+}
