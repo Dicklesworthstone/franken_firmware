@@ -20,6 +20,11 @@
 //!   leaf has no clock `unsafe` site. A later slice that does consume absolute values must add libc's `clock_gettime` (not a raw
 //!   syscall number: on 32-bit musl 1.2 `time_t` is 64-bit and the raw `__NR_clock_gettime` is the y2038 ABI) and count that
 //!   site in the leaf's unsafe inventory.
+//! * **Sockets are a separate, admitted step.** [`LinuxKernel::admit_sockets`] returns a [`SocketKernel`], the only value that implements
+//!   `franken_platform::socket::SocketOps`, and only after [`socket_route::admit`] has accepted the running kernel's release: on PowerPC the route
+//!   is `socketcall`, whose sub-call 18 is `paccept` (a different call) on a v2.6.27 kernel, so that release is refused **by name, before any socket
+//!   call**; MIPS o32 uses the direct calls and is admitted on any release. The five socket calls are written, never compiled, never run, and no
+//!   guest has issued a `socketcall`. Which words each call is issued as is [`socket_route::issue_for`], host-tested; `sys.rs` only executes them.
 //! * It declares [`Provenance::Kernel`] and the ABI it was compiled for, which [`PlatformLayer::admit`] checks against the
 //!   profile's.
 //! * It is **not run in this repository's tests**: the host cannot execute BE MIPS/PowerPC, and no guest has run it. The
@@ -31,6 +36,7 @@
 #![deny(unsafe_code)]
 
 pub mod numbers;
+pub mod socket_route;
 
 /// Whether this build can issue kernel calls (Linux, 32-bit big-endian, MIPS or PowerPC).
 pub const SUPPORTED_TARGET: bool = cfg!(all(
@@ -57,8 +63,10 @@ mod sys;
 ))]
 mod backend {
     use super::sys;
+    use crate::socket_route::{self, SocketRefusal};
     use franken_platform::abi::Abi;
     use franken_platform::ops::{KernelOps, Provenance, Timespec};
+    use franken_platform::socket::SocketOps;
     use std::time::Instant;
 
     /// The kernel as a [`KernelOps`] backend. Its only state is the clock's anchor; every other method is one syscall.
@@ -83,6 +91,90 @@ mod backend {
     impl Default for LinuxKernel {
         fn default() -> Self {
             Self::new()
+        }
+    }
+
+    impl LinuxKernel {
+        /// Admit this backend for sockets on a kernel whose release is `release` (for example what `/proc/sys/kernel/osrelease` says), or refuse
+        /// by name before any socket call is possible. See [`socket_route::admit`]: on PowerPC a v2.6.27 release, an unknown release and a
+        /// v2.6.28 release candidate are refused; MIPS o32 is admitted on any release.
+        ///
+        /// # Errors
+        /// [`SocketRefusal`], whose text names the release and the reason.
+        pub fn admit_sockets(self, release: Option<&str>) -> Result<SocketKernel, SocketRefusal> {
+            socket_route::admit(sys::COMPILED_ABI, release)?;
+            Ok(SocketKernel { kernel: self })
+        }
+    }
+
+    /// A [`LinuxKernel`] that [`LinuxKernel::admit_sockets`] accepted: every [`KernelOps`] method is the backend's own, and the five
+    /// `SocketOps` methods are the socket calls. There is no other way to build one, so no socket call exists on a refused kernel.
+    #[derive(Debug, Clone, Copy)]
+    pub struct SocketKernel {
+        kernel: LinuxKernel,
+    }
+
+    impl KernelOps for SocketKernel {
+        fn provenance(&self) -> Provenance {
+            self.kernel.provenance()
+        }
+
+        fn backend_abi(&self) -> Option<Abi> {
+            self.kernel.backend_abi()
+        }
+
+        fn clock_gettime_monotonic(&mut self, out: &mut Timespec) -> isize {
+            self.kernel.clock_gettime_monotonic(out)
+        }
+
+        fn getrandom(&mut self, buf: &mut [u8], flags: u32) -> isize {
+            self.kernel.getrandom(buf, flags)
+        }
+
+        fn open_dev_random(&mut self, flags: u32) -> isize {
+            self.kernel.open_dev_random(flags)
+        }
+
+        fn eventfd2(&mut self, initval: u32, flags: u32) -> isize {
+            self.kernel.eventfd2(initval, flags)
+        }
+
+        fn pipe2(&mut self, fds: &mut [i32; 2], flags: u32) -> isize {
+            self.kernel.pipe2(fds, flags)
+        }
+
+        fn write(&mut self, fd: i32, buf: &[u8]) -> isize {
+            self.kernel.write(fd, buf)
+        }
+
+        fn read(&mut self, fd: i32, buf: &mut [u8]) -> isize {
+            self.kernel.read(fd, buf)
+        }
+
+        fn close(&mut self, fd: i32) -> isize {
+            self.kernel.close(fd)
+        }
+    }
+
+    impl SocketOps for SocketKernel {
+        fn socket(&mut self, domain: u32, kind: u32, protocol: u32) -> isize {
+            sys::socket(domain, kind, protocol)
+        }
+
+        fn bind(&mut self, fd: i32, addr: &[u8]) -> isize {
+            sys::bind(fd, addr)
+        }
+
+        fn listen(&mut self, fd: i32, backlog: i32) -> isize {
+            sys::listen(fd, backlog)
+        }
+
+        fn accept4(&mut self, fd: i32, flags: u32) -> isize {
+            sys::accept4(fd, flags)
+        }
+
+        fn recv(&mut self, fd: i32, buf: &mut [u8], flags: u32) -> isize {
+            sys::recv(fd, buf, flags)
         }
     }
 
@@ -143,7 +235,7 @@ mod backend {
     target_pointer_width = "32",
     any(target_arch = "mips", target_arch = "powerpc")
 ))]
-pub use backend::LinuxKernel;
+pub use backend::{LinuxKernel, SocketKernel};
 
 #[cfg(test)]
 mod tests {

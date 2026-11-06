@@ -393,6 +393,174 @@ pub const fn p06_for_abi(abi: Abi) -> P06Calls {
     }
 }
 
+// ------------------------------------------------------------------------------------------ the socket capability
+
+/// The highest `socketcall` sub-call the stock 2.6.14 kernel accepts: `SYS_RECVMSG`, 17, in `linux/net.h`. Its `sys_socketcall` answers anything above
+/// that with `-EINVAL`, not `-ENOSYS` (`net/socket.c`, v2.6.14: `if (call < 1 || call > SYS_RECVMSG) return -EINVAL;`); `accept4` is sub-call 18 (absent from
+/// the v2.6.14 `net.h`). **Sub-call 18 is not `accept4` on every kernel above that bound:** at v2.6.27 it is `paccept` (`SYS_PACCEPT`, six words in the block,
+/// not four), and `accept4` replaced it at v2.6.28; so the `socketcall` route for `accept4` must not be used on a v2.6.27 kernel (the verbatim lines are in
+/// `tests/p02/socket_kernel_evidence.json`).
+pub const STOCK_SOCKETCALL_MAX_SUB: usize = 17;
+
+/// `listen` and `accept4`: the two socket-family calls the socket capability (`franken-platform`'s `socket` module, `docs/contracts/p02.md`) needs that
+/// [`P06Calls`] does not hold. A row means what a `P06Calls` row means ([`SocketCall`]).
+///
+/// **`accept4` is on neither stock kernel, by either route:** MIPS o32 has no entry 4334 in its v2.6.14 call table (the direct number came later) and the
+/// stock `socketcall` has no sub-call 18. So `direct_on_stock` is `false` for `accept4` on both ABIs, where `listen` is a stock call on MIPS (direct) and,
+/// on PowerPC, a stock `socketcall` sub-call (the direct number is a newer kernel's).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServerCalls {
+    pub listen: SocketCall,
+    pub accept4: SocketCall,
+}
+
+/// PowerPC32: the direct numbers (329, 344) are those the E03 guests' newer kernels have; the stock kernel has neither.
+pub const SERVER_POWERPC32: ServerCalls = ServerCalls {
+    listen: SocketCall {
+        sub: 4,
+        direct: Call {
+            number: 329,
+            slots: 2,
+        },
+        direct_on_stock: false,
+    },
+    accept4: SocketCall {
+        sub: 18,
+        direct: Call {
+            number: 344,
+            slots: 4,
+        },
+        direct_on_stock: false,
+    },
+};
+
+/// MIPS o32 (base 4000): `listen` is a stock direct call; `accept4` (4334) is not.
+pub const SERVER_MIPS32_O32: ServerCalls = ServerCalls {
+    listen: SocketCall {
+        sub: 4,
+        direct: Call {
+            number: 4000 + 174,
+            slots: 2,
+        },
+        direct_on_stock: true,
+    },
+    accept4: SocketCall {
+        sub: 18,
+        direct: Call {
+            number: 4000 + 334,
+            slots: 4,
+        },
+        direct_on_stock: false,
+    },
+};
+
+/// The `listen` and `accept4` rows for `abi`.
+#[must_use]
+pub const fn server_for_abi(abi: Abi) -> ServerCalls {
+    match abi {
+        Abi::PowerPc32 => SERVER_POWERPC32,
+        Abi::Mips32 => SERVER_MIPS32_O32,
+    }
+}
+
+/// How the leaf reaches one socket-family call on one ABI. Plain data: nothing here issues a call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Route {
+    /// The direct syscall, its arguments in registers.
+    Direct {
+        call: Call,
+        /// Whether the stock 2.6.14 kernel has this syscall.
+        on_stock: bool,
+    },
+    /// `socketcall(sub, &block)`: two slots, the call's own arguments in a block of `block_words` machine words in memory (the kernel's `nargs[sub]`,
+    /// which equals the direct entry's slot count). Passing the address of that block is the leaf's one new `unsafe` obligation.
+    ViaSocketCall {
+        socketcall: Call,
+        sub: usize,
+        block_words: usize,
+        /// Whether the stock 2.6.14 `socketcall` accepts `sub` (`sub <= STOCK_SOCKETCALL_MAX_SUB`).
+        on_stock: bool,
+    },
+}
+
+impl Route {
+    /// Whether the leaf's trampoline can carry every register argument of this route.
+    #[must_use]
+    pub const fn fits_the_leaf(self) -> bool {
+        match self {
+            Self::Direct { call, .. } => call.fits_the_leaf(),
+            Self::ViaSocketCall { socketcall, .. } => socketcall.fits_the_leaf(),
+        }
+    }
+
+    /// Whether the stock 2.6.14 kernel has this route. (Not a statement about the flags in `socket`'s `type`, which that kernel refuses: see
+    /// `Abi::socket_type_arg`.)
+    #[must_use]
+    pub const fn on_stock(self) -> bool {
+        match self {
+            Self::Direct { on_stock, .. } | Self::ViaSocketCall { on_stock, .. } => on_stock,
+        }
+    }
+}
+
+/// The route of each call of the socket capability on one ABI.
+///
+/// **`socketcall` on PowerPC, direct on MIPS o32** (BeigeMaple 6790): the stock PowerPC kernel has no direct socket syscall at all, and `socketcall` exists
+/// on every kernel in scope, so the PowerPC leaf uses it throughout, newer kernels included. MIPS o32 has the direct calls on the stock kernel, and every
+/// call here fits the leaf's five slots direct. `recvfrom` (six slots) is not in the plan: see [`P06Calls::recvfrom`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SocketPlan {
+    pub socket: Route,
+    pub bind: Route,
+    pub listen: Route,
+    pub accept4: Route,
+    pub recv: Route,
+}
+
+impl SocketPlan {
+    /// Every route by syscall name, in the order a server issues them.
+    #[must_use]
+    pub const fn routes(&self) -> [(&'static str, Route); 5] {
+        [
+            ("socket", self.socket),
+            ("bind", self.bind),
+            ("listen", self.listen),
+            ("accept4", self.accept4),
+            ("recv", self.recv),
+        ]
+    }
+}
+
+const fn route(abi: Abi, socketcall: Call, row: SocketCall) -> Route {
+    match abi {
+        Abi::PowerPc32 => Route::ViaSocketCall {
+            socketcall,
+            sub: row.sub,
+            block_words: row.direct.slots,
+            on_stock: row.sub <= STOCK_SOCKETCALL_MAX_SUB,
+        },
+        Abi::Mips32 => Route::Direct {
+            call: row.direct,
+            on_stock: row.direct_on_stock,
+        },
+    }
+}
+
+/// The socket capability's routes for `abi`, built from the `P06Calls` rows (`socket`, `bind`, `recv`) and the [`ServerCalls`] rows (`listen`, `accept4`),
+/// so no number is stated twice.
+#[must_use]
+pub const fn socket_plan_for(abi: Abi) -> SocketPlan {
+    let p06 = p06_for_abi(abi);
+    let server = server_for_abi(abi);
+    SocketPlan {
+        socket: route(abi, p06.socketcall, p06.socket),
+        bind: route(abi, p06.socketcall, p06.bind),
+        listen: route(abi, p06.socketcall, server.listen),
+        accept4: route(abi, p06.socketcall, server.accept4),
+        recv: route(abi, p06.socketcall, p06.recv),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -595,6 +763,191 @@ mod tests {
             numbers.sort_unstable();
             numbers.dedup();
             assert_eq!(numbers.len(), 17, "two calls share a number");
+        }
+    }
+
+    // ---- the socket capability's plan (`franken-platform`'s `socket` module is the policy; this is the route each call takes)
+
+    const BOTH_ABIS: [Abi; 2] = [Abi::PowerPc32, Abi::Mips32];
+
+    /// What a route is made of, in the unit that matters for its kind: (syscall number, slots) direct, or (sub-call, words in the block) by `socketcall`.
+    fn shape(route: Route) -> (usize, usize) {
+        match route {
+            Route::Direct { call, .. } => (call.number, call.slots),
+            Route::ViaSocketCall {
+                sub, block_words, ..
+            } => (sub, block_words),
+        }
+    }
+
+    #[test]
+    fn the_socket_plan_is_socketcall_on_powerpc_and_direct_on_mips_for_every_call() {
+        for (name, route) in socket_plan_for(Abi::PowerPc32).routes() {
+            let Route::ViaSocketCall { socketcall, .. } = route else {
+                panic!("{name}: the PowerPC plan is socketcall throughout, got {route:?}");
+            };
+            assert_eq!(
+                socketcall,
+                Call {
+                    number: 102,
+                    slots: 2
+                },
+                "{name}: socketcall(sub, args) is syscall 102 with two slots"
+            );
+        }
+        for (name, route) in socket_plan_for(Abi::Mips32).routes() {
+            assert!(
+                matches!(route, Route::Direct { .. }),
+                "{name}: the MIPS o32 plan is direct throughout, got {route:?}"
+            );
+        }
+        // The MIPS plan does not name socketcall's number, so a swapped plan cannot hide behind equal shapes.
+        assert_eq!(P06_MIPS32_O32.socketcall.number, 4102);
+    }
+
+    #[test]
+    fn the_socket_plan_numbers_sub_calls_and_block_sizes_are_the_ones_typed_from_the_kernel_files_and_for_mips_the_probes()
+     {
+        // PowerPC: (sub-call, words in the socketcall block). KERNEL FILES ONLY: no guest has ever issued a `socketcall` (the E03 probes issue direct calls), so
+        // nothing but these typed numbers witnesses this route. `linux/net.h`: SYS_SOCKET 1, SYS_BIND 2, SYS_LISTEN 4, SYS_RECV 10, SYS_ACCEPT4 18 (v2.6.28 on; v2.6.27
+        // had `paccept` there); the kernel's `nargs` table: AL(3), AL(3), AL(2), AL(4), AL(4) at those indices.
+        let ppc = socket_plan_for(Abi::PowerPc32)
+            .routes()
+            .map(|(name, route)| (name, shape(route)));
+        assert_eq!(
+            ppc,
+            [
+                ("socket", (1, 3)),
+                ("bind", (2, 3)),
+                ("listen", (4, 2)),
+                ("accept4", (18, 4)),
+                ("recv", (10, 4)),
+            ]
+        );
+        // MIPS o32: (syscall number, slots). `unistd.h`: __NR_Linux + 183, 169, 174, 334, 175; the o32 call table: `sys sys_listen 2`, `sys sys_accept4 4`.
+        let mips = socket_plan_for(Abi::Mips32)
+            .routes()
+            .map(|(name, route)| (name, shape(route)));
+        assert_eq!(
+            mips,
+            [
+                ("socket", (4183, 3)),
+                ("bind", (4169, 3)),
+                ("listen", (4174, 2)),
+                ("accept4", (4334, 4)),
+                ("recv", (4175, 4)),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_socket_plan_reuses_the_s3_rows_and_adds_only_listen_and_accept4() {
+        for abi in BOTH_ABIS {
+            let p06 = p06_for_abi(abi);
+            let server = server_for_abi(abi);
+            let plan = socket_plan_for(abi);
+            let expected_route = |row: SocketCall| match abi {
+                Abi::PowerPc32 => Route::ViaSocketCall {
+                    socketcall: p06.socketcall,
+                    sub: row.sub,
+                    block_words: row.direct.slots,
+                    on_stock: row.sub <= 17,
+                },
+                Abi::Mips32 => Route::Direct {
+                    call: row.direct,
+                    on_stock: row.direct_on_stock,
+                },
+            };
+            assert_eq!(plan.socket, expected_route(p06.socket), "{abi:?}");
+            assert_eq!(plan.bind, expected_route(p06.bind), "{abi:?}");
+            assert_eq!(plan.recv, expected_route(p06.recv), "{abi:?}");
+            assert_eq!(plan.listen, expected_route(server.listen), "{abi:?}");
+            assert_eq!(plan.accept4, expected_route(server.accept4), "{abi:?}");
+        }
+    }
+
+    #[test]
+    fn every_route_of_the_plan_fits_the_leaf_and_recvfrom_direct_is_the_call_that_does_not() {
+        for abi in BOTH_ABIS {
+            for (name, route) in socket_plan_for(abi).routes() {
+                assert!(route.fits_the_leaf(), "{abi:?} {name}");
+            }
+        }
+        // The known gap: the sender-returning read is six slots direct, so it is not in the plan; its socketcall form is two slots.
+        let mips = p06_for_abi(Abi::Mips32);
+        assert!(!mips.recvfrom.direct.fits_the_leaf());
+        assert!(mips.socketcall.fits_the_leaf());
+    }
+
+    #[test]
+    fn accept4_is_on_neither_stock_route_and_every_other_call_of_the_plan_is() {
+        assert_eq!(STOCK_SOCKETCALL_MAX_SUB, 17);
+        for abi in BOTH_ABIS {
+            for (name, route) in socket_plan_for(abi).routes() {
+                assert_eq!(route.on_stock(), name != "accept4", "{abi:?} {name}");
+            }
+        }
+        // On PowerPC the answer is the sub-call bound, not a label.
+        for (name, route) in socket_plan_for(Abi::PowerPc32).routes() {
+            let Route::ViaSocketCall { sub, on_stock, .. } = route else {
+                panic!("{name}: not a socketcall route");
+            };
+            assert_eq!(on_stock, sub <= STOCK_SOCKETCALL_MAX_SUB, "{name}");
+        }
+    }
+
+    #[test]
+    fn the_server_rows_differ_per_abi_share_sub_calls_and_repeat_no_p06_number() {
+        let (p, m) = (SERVER_POWERPC32, SERVER_MIPS32_O32);
+        assert_eq!(server_for_abi(Abi::PowerPc32), p);
+        assert_eq!(server_for_abi(Abi::Mips32), m);
+        assert_ne!(p.listen.direct.number, m.listen.direct.number);
+        assert_ne!(p.accept4.direct.number, m.accept4.direct.number);
+        assert_eq!((p.listen.sub, p.accept4.sub), (4, 18));
+        assert_eq!((m.listen.sub, m.accept4.sub), (4, 18));
+        assert!(p.listen.direct.number < 1000 && p.accept4.direct.number < 1000);
+        assert!(
+            (4000..5000).contains(&m.listen.direct.number)
+                && (4000..5000).contains(&m.accept4.direct.number)
+        );
+        for (rows, table) in [(p, P06_POWERPC32), (m, P06_MIPS32_O32)] {
+            let taken: Vec<usize> = table
+                .calls()
+                .into_iter()
+                .map(|(_, call)| call.number)
+                .collect();
+            for number in [rows.listen.direct.number, rows.accept4.direct.number] {
+                assert!(
+                    !taken.contains(&number),
+                    "{number} is already another call's"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_server_rows_are_the_numbers_the_audited_guest_probes_issued() {
+        // `nr::LISTEN` and `nr::ACCEPT4` in toolchain/src/ffw-hello-init/src/e03_probes/net.rs, which issued them in full-system guests.
+        assert_eq!(
+            (
+                SERVER_MIPS32_O32.listen.direct.number,
+                SERVER_MIPS32_O32.accept4.direct.number
+            ),
+            (4174, 4334)
+        );
+        assert_eq!(
+            (
+                SERVER_POWERPC32.listen.direct.number,
+                SERVER_POWERPC32.accept4.direct.number
+            ),
+            (329, 344)
+        );
+        // The slots: listen(fd, backlog) is two, accept4(fd, addr, addrlen, flags) is four.
+        for rows in [SERVER_POWERPC32, SERVER_MIPS32_O32] {
+            assert_eq!(
+                (rows.listen.direct.slots, rows.accept4.direct.slots),
+                (2, 4)
+            );
         }
     }
 }

@@ -10,6 +10,7 @@ pub mod entropy;
 pub mod layer;
 pub mod net;
 pub mod ops;
+pub mod socket;
 pub mod wake;
 pub mod wall_clock;
 
@@ -228,9 +229,21 @@ impl MemoryBudgetLedger {
             .saturating_add(self.native_integrations_bytes)
     }
 
+    /// What is left of the RAM after every commitment, negative when over-committed. Both sides are clamped to `i64::MAX` first: the
+    /// fields are public and deserializable, and a value above `i64::MAX` used to wrap through `as i64` (a saturated commitment read
+    /// as -1 byte, i.e. headroom), or overflow the subtraction. Two values in `0..=i64::MAX` cannot overflow when subtracted.
     #[must_use]
     pub const fn remaining_headroom_bytes(&self) -> i64 {
-        (self.nominal_ram_bytes as i64) - (self.total_committed_bytes() as i64)
+        Self::clamp_to_i64(self.nominal_ram_bytes)
+            - Self::clamp_to_i64(self.total_committed_bytes())
+    }
+
+    const fn clamp_to_i64(value: u64) -> i64 {
+        if value > i64::MAX as u64 {
+            i64::MAX
+        } else {
+            value as i64
+        }
     }
 
     pub fn verify_budget(&self) -> Result<u64, PlatformAdmissionError> {
@@ -637,5 +650,166 @@ mod tests {
             tight.verify_budget(),
             Err(PlatformAdmissionError::MemoryBudgetExceeded { .. })
         ));
+    }
+
+    // ---- the memory budget is P02's one typed memory refusal: its edge, its numbers and its arithmetic (docs/contracts/p02.md,
+    // "Memory budget and allocation failure") ----
+
+    const MIB: u64 = 1024 * 1024;
+    const FLOOR: u64 = MemoryBudgetLedger::MIN_SAFETY_FLOOR_BYTES;
+
+    /// A ledger whose whole commitment is `committed` bytes (all of it in the kernel reservation) against `nominal` bytes of RAM.
+    fn ledger(nominal: u64, committed: u64, floor: u64) -> MemoryBudgetLedger {
+        MemoryBudgetLedger {
+            nominal_ram_bytes: nominal,
+            kernel_and_driver_reserved_bytes: committed,
+            dma_ring_reserved_bytes: 0,
+            core_runtime_peak_bytes: 0,
+            stream_and_jitter_bytes: 0,
+            native_integrations_bytes: 0,
+            required_safety_floor_bytes: floor,
+        }
+    }
+
+    #[test]
+    fn the_budget_edge_is_inclusive_and_the_refusal_carries_the_numbers_it_was_decided_on() {
+        let committed = 20 * MIB;
+        // Exactly the commitments plus the floor: admitted, and the headroom is the floor.
+        assert_eq!(
+            ledger(committed + FLOOR, committed, FLOOR).verify_budget(),
+            Ok(FLOOR)
+        );
+        // One byte less: refused, with the three numbers the decision used, in the right fields and in the message.
+        let nominal = committed + FLOOR - 1;
+        let refused = ledger(nominal, committed, FLOOR).verify_budget();
+        assert_eq!(
+            refused,
+            Err(PlatformAdmissionError::MemoryBudgetExceeded {
+                nominal_ram_bytes: nominal,
+                committed_bytes: committed,
+                required_floor_bytes: FLOOR,
+            })
+        );
+        assert_eq!(
+            refused.map_err(|error| error.to_string()),
+            Err(format!(
+                "memory budget exceeded: committed {committed} + floor {FLOOR} > nominal {nominal}"
+            ))
+        );
+    }
+
+    #[test]
+    fn a_ledger_cannot_ask_for_a_floor_below_four_mib() {
+        let committed = 20 * MIB;
+        for asked in [0, 1, FLOOR - 1] {
+            // Each of these would fit if the asked floor were believed: committed + asked <= nominal < committed + FLOOR.
+            let nominal = committed + FLOOR - 1;
+            assert_eq!(
+                ledger(nominal, committed, asked).verify_budget(),
+                Err(PlatformAdmissionError::MemoryBudgetExceeded {
+                    nominal_ram_bytes: nominal,
+                    committed_bytes: committed,
+                    required_floor_bytes: FLOOR,
+                }),
+                "asked floor {asked}"
+            );
+            assert_eq!(
+                ledger(nominal + 1, committed, asked).verify_budget(),
+                Ok(FLOOR),
+                "asked floor {asked}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_ledger_that_asks_for_a_higher_floor_is_held_to_it() {
+        let committed = 20 * MIB;
+        let asked = 8 * MIB;
+        // Room for the default floor and not for the asked one.
+        let nominal = committed + asked - 1;
+        assert_eq!(
+            ledger(nominal, committed, FLOOR).verify_budget(),
+            Ok(asked - 1)
+        );
+        assert_eq!(
+            ledger(nominal, committed, asked).verify_budget(),
+            Err(PlatformAdmissionError::MemoryBudgetExceeded {
+                nominal_ram_bytes: nominal,
+                committed_bytes: committed,
+                required_floor_bytes: asked,
+            })
+        );
+        assert_eq!(
+            ledger(nominal + 1, committed, asked).verify_budget(),
+            Ok(asked)
+        );
+    }
+
+    #[test]
+    fn commitments_that_overflow_saturate_into_a_refusal_and_never_into_an_admission() {
+        // Wrapping arithmetic turns u64::MAX + 5 MiB into 5 MiB - 1, which fits in 64 MiB.
+        let mut huge = ledger(64 * MIB, u64::MAX, FLOOR);
+        huge.dma_ring_reserved_bytes = 5 * MIB;
+        assert_eq!(huge.total_committed_bytes(), u64::MAX);
+        assert_eq!(
+            huge.verify_budget(),
+            Err(PlatformAdmissionError::MemoryBudgetExceeded {
+                nominal_ram_bytes: 64 * MIB,
+                committed_bytes: u64::MAX,
+                required_floor_bytes: FLOOR,
+            })
+        );
+        // The floor term saturates too: a floor that makes the sum overflow is a refusal (wrapped, 1 + u64::MAX would be 0).
+        assert!(matches!(
+            ledger(64 * MIB, 1, u64::MAX).verify_budget(),
+            Err(PlatformAdmissionError::MemoryBudgetExceeded {
+                required_floor_bytes: u64::MAX,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_headroom_that_does_not_fit_an_i64_saturates_instead_of_wrapping_or_overflowing() {
+        // Commitments that saturate at u64::MAX against 64 MiB: hugely over-committed, so hugely negative. Through `as i64` the
+        // commitment read as -1 and the headroom as 64 MiB + 1.
+        let mut huge = ledger(64 * MIB, u64::MAX, FLOOR);
+        huge.dma_ring_reserved_bytes = 5 * MIB;
+        assert_eq!(
+            huge.remaining_headroom_bytes(),
+            i64::try_from(64 * MIB).expect("fits") - i64::MAX
+        );
+        // One field above i64::MAX (reachable: the fields are public and deserializable) overflowed the subtraction.
+        let big = ledger(64 * MIB, (1_u64 << 63) + 5, FLOOR);
+        assert!(big.remaining_headroom_bytes() < 0);
+        // A nominal size above i64::MAX with nothing committed saturates at the top.
+        assert_eq!(
+            ledger(u64::MAX, 0, FLOOR).remaining_headroom_bytes(),
+            i64::MAX
+        );
+    }
+
+    #[test]
+    fn a_nominal_size_below_the_commitments_is_a_refusal_and_a_negative_headroom() {
+        let under = ledger(10 * MIB, 14 * MIB, FLOOR);
+        assert_eq!(
+            under.verify_budget(),
+            Err(PlatformAdmissionError::MemoryBudgetExceeded {
+                nominal_ram_bytes: 10 * MIB,
+                committed_bytes: 14 * MIB,
+                required_floor_bytes: FLOOR,
+            })
+        );
+        assert_eq!(
+            under.remaining_headroom_bytes(),
+            -4 * i64::try_from(MIB).expect("fits")
+        );
+        // At the edge the two views agree: the admitted headroom is the unsigned remainder, and the signed one is the same number.
+        let edge = ledger(14 * MIB + FLOOR, 14 * MIB, FLOOR);
+        assert_eq!(
+            edge.verify_budget()
+                .map(|bytes| i64::try_from(bytes).expect("fits")),
+            Ok(edge.remaining_headroom_bytes())
+        );
     }
 }

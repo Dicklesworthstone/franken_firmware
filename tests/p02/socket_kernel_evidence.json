@@ -1,0 +1,1051 @@
+{
+ "schema": "ffw.p02.socket-kernel-evidence.v1",
+ "files": [
+  {
+   "tag": "v2.6.14",
+   "path": "include/asm-mips/unistd.h",
+   "sha256_16": "3ff07ed28ecdec3b",
+   "entries": [
+    {
+     "label": "mips_o32",
+     "line": 191,
+     "text": "#define __NR_accept\t\t\t(__NR_Linux + 168)"
+    },
+    {
+     "label": "mips_o32",
+     "line": 197,
+     "text": "#define __NR_listen\t\t\t(__NR_Linux + 174)"
+    },
+    {
+     "label": "mips_o32",
+     "line": 198,
+     "text": "#define __NR_recv\t\t\t(__NR_Linux + 175)"
+    }
+   ],
+   "absent": [
+    {
+     "label": "accept4",
+     "pattern": "__NR_accept4"
+    }
+   ]
+  },
+  {
+   "tag": "v2.6.14",
+   "path": "include/asm-ppc/unistd.h",
+   "sha256_16": "39296e1df4a93582",
+   "entries": [
+    {
+     "label": "socketcall",
+     "line": 109,
+     "text": "#define __NR_socketcall\t\t102"
+    }
+   ],
+   "absent": [
+    {
+     "label": "listen",
+     "pattern": "__NR_listen"
+    },
+    {
+     "label": "accept4",
+     "pattern": "__NR_accept4"
+    }
+   ]
+  },
+  {
+   "tag": "v2.6.14",
+   "path": "include/linux/net.h",
+   "sha256_16": "8b25308d60e393e6",
+   "entries": [
+    {
+     "label": "subcalls",
+     "line": 31,
+     "text": "#define SYS_SOCKET\t1\t\t/* sys_socket(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 32,
+     "text": "#define SYS_BIND\t2\t\t/* sys_bind(2)\t\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 33,
+     "text": "#define SYS_CONNECT\t3\t\t/* sys_connect(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 34,
+     "text": "#define SYS_LISTEN\t4\t\t/* sys_listen(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 35,
+     "text": "#define SYS_ACCEPT\t5\t\t/* sys_accept(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 36,
+     "text": "#define SYS_GETSOCKNAME\t6\t\t/* sys_getsockname(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 37,
+     "text": "#define SYS_GETPEERNAME\t7\t\t/* sys_getpeername(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 38,
+     "text": "#define SYS_SOCKETPAIR\t8\t\t/* sys_socketpair(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 39,
+     "text": "#define SYS_SEND\t9\t\t/* sys_send(2)\t\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 40,
+     "text": "#define SYS_RECV\t10\t\t/* sys_recv(2)\t\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 41,
+     "text": "#define SYS_SENDTO\t11\t\t/* sys_sendto(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 42,
+     "text": "#define SYS_RECVFROM\t12\t\t/* sys_recvfrom(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 43,
+     "text": "#define SYS_SHUTDOWN\t13\t\t/* sys_shutdown(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 44,
+     "text": "#define SYS_SETSOCKOPT\t14\t\t/* sys_setsockopt(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 45,
+     "text": "#define SYS_GETSOCKOPT\t15\t\t/* sys_getsockopt(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 46,
+     "text": "#define SYS_SENDMSG\t16\t\t/* sys_sendmsg(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 47,
+     "text": "#define SYS_RECVMSG\t17\t\t/* sys_recvmsg(2)\t\t*/"
+    }
+   ],
+   "absent": [
+    {
+     "label": "accept4",
+     "pattern": "\\bSYS_ACCEPT4\\b"
+    },
+    {
+     "label": "paccept",
+     "pattern": "\\bSYS_PACCEPT\\b"
+    }
+   ]
+  },
+  {
+   "tag": "v2.6.14",
+   "path": "net/socket.c",
+   "sha256_16": "d4db341c5fae8bcb",
+   "entries": [
+    {
+     "label": "bound",
+     "line": 1916,
+     "text": "\tif(call<1||call>SYS_RECVMSG)"
+    },
+    {
+     "label": "nargs",
+     "line": 1897,
+     "text": "static unsigned char nargs[18]={AL(0),AL(3),AL(3),AL(3),AL(2),AL(3),"
+    },
+    {
+     "label": "nargs",
+     "line": 1898,
+     "text": "\t\t\t\tAL(3),AL(3),AL(4),AL(4),AL(4),AL(6),"
+    },
+    {
+     "label": "nargs",
+     "line": 1899,
+     "text": "\t\t\t\tAL(6),AL(2),AL(5),AL(5),AL(3),AL(3)};"
+    },
+    {
+     "label": "socket_flags",
+     "line": 1085,
+     "text": "\tif (type < 0 || type >= SOCK_MAX)"
+    },
+    {
+     "label": "listen",
+     "line": 1315,
+     "text": "asmlinkage long sys_listen(int fd, int backlog)"
+    }
+   ],
+   "absent": [
+    {
+     "label": "accept4",
+     "pattern": "sys_accept4|SYSCALL_DEFINE4\\(accept4"
+    },
+    {
+     "label": "paccept",
+     "pattern": "sys_paccept"
+    }
+   ]
+  },
+  {
+   "tag": "v2.6.26",
+   "path": "include/linux/net.h",
+   "sha256_16": "f32a2451f7d52004",
+   "entries": [
+    {
+     "label": "subcalls",
+     "line": 32,
+     "text": "#define SYS_SOCKET\t1\t\t/* sys_socket(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 33,
+     "text": "#define SYS_BIND\t2\t\t/* sys_bind(2)\t\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 34,
+     "text": "#define SYS_CONNECT\t3\t\t/* sys_connect(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 35,
+     "text": "#define SYS_LISTEN\t4\t\t/* sys_listen(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 36,
+     "text": "#define SYS_ACCEPT\t5\t\t/* sys_accept(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 37,
+     "text": "#define SYS_GETSOCKNAME\t6\t\t/* sys_getsockname(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 38,
+     "text": "#define SYS_GETPEERNAME\t7\t\t/* sys_getpeername(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 39,
+     "text": "#define SYS_SOCKETPAIR\t8\t\t/* sys_socketpair(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 40,
+     "text": "#define SYS_SEND\t9\t\t/* sys_send(2)\t\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 41,
+     "text": "#define SYS_RECV\t10\t\t/* sys_recv(2)\t\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 42,
+     "text": "#define SYS_SENDTO\t11\t\t/* sys_sendto(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 43,
+     "text": "#define SYS_RECVFROM\t12\t\t/* sys_recvfrom(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 44,
+     "text": "#define SYS_SHUTDOWN\t13\t\t/* sys_shutdown(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 45,
+     "text": "#define SYS_SETSOCKOPT\t14\t\t/* sys_setsockopt(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 46,
+     "text": "#define SYS_GETSOCKOPT\t15\t\t/* sys_getsockopt(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 47,
+     "text": "#define SYS_SENDMSG\t16\t\t/* sys_sendmsg(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 48,
+     "text": "#define SYS_RECVMSG\t17\t\t/* sys_recvmsg(2)\t\t*/"
+    }
+   ],
+   "absent": [
+    {
+     "label": "accept4",
+     "pattern": "\\bSYS_ACCEPT4\\b"
+    },
+    {
+     "label": "paccept",
+     "pattern": "\\bSYS_PACCEPT\\b"
+    }
+   ]
+  },
+  {
+   "tag": "v2.6.26",
+   "path": "net/socket.c",
+   "sha256_16": "55b33c40fa172a86",
+   "entries": [
+    {
+     "label": "bound",
+     "line": 2013,
+     "text": "\tif (call < 1 || call > SYS_RECVMSG)"
+    },
+    {
+     "label": "nargs",
+     "line": 1991,
+     "text": "static const unsigned char nargs[18]={"
+    },
+    {
+     "label": "nargs",
+     "line": 1992,
+     "text": "\tAL(0),AL(3),AL(3),AL(3),AL(2),AL(3),"
+    },
+    {
+     "label": "nargs",
+     "line": 1993,
+     "text": "\tAL(3),AL(3),AL(4),AL(4),AL(4),AL(6),"
+    },
+    {
+     "label": "nargs",
+     "line": 1994,
+     "text": "\tAL(6),AL(2),AL(5),AL(5),AL(3),AL(3)"
+    },
+    {
+     "label": "nargs",
+     "line": 1995,
+     "text": "};"
+    },
+    {
+     "label": "socket_flags",
+     "line": 1105,
+     "text": "\tif (type < 0 || type >= SOCK_MAX)"
+    },
+    {
+     "label": "listen",
+     "line": 1370,
+     "text": "asmlinkage long sys_listen(int fd, int backlog)"
+    }
+   ],
+   "absent": [
+    {
+     "label": "accept4",
+     "pattern": "sys_accept4|SYSCALL_DEFINE4\\(accept4"
+    },
+    {
+     "label": "paccept",
+     "pattern": "sys_paccept"
+    }
+   ]
+  },
+  {
+   "tag": "v2.6.27",
+   "path": "include/linux/net.h",
+   "sha256_16": "9c9ecc01a8b321c1",
+   "entries": [
+    {
+     "label": "subcalls",
+     "line": 26,
+     "text": "#define SYS_SOCKET\t1\t\t/* sys_socket(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 27,
+     "text": "#define SYS_BIND\t2\t\t/* sys_bind(2)\t\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 28,
+     "text": "#define SYS_CONNECT\t3\t\t/* sys_connect(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 29,
+     "text": "#define SYS_LISTEN\t4\t\t/* sys_listen(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 30,
+     "text": "#define SYS_ACCEPT\t5\t\t/* sys_accept(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 31,
+     "text": "#define SYS_GETSOCKNAME\t6\t\t/* sys_getsockname(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 32,
+     "text": "#define SYS_GETPEERNAME\t7\t\t/* sys_getpeername(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 33,
+     "text": "#define SYS_SOCKETPAIR\t8\t\t/* sys_socketpair(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 34,
+     "text": "#define SYS_SEND\t9\t\t/* sys_send(2)\t\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 35,
+     "text": "#define SYS_RECV\t10\t\t/* sys_recv(2)\t\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 36,
+     "text": "#define SYS_SENDTO\t11\t\t/* sys_sendto(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 37,
+     "text": "#define SYS_RECVFROM\t12\t\t/* sys_recvfrom(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 38,
+     "text": "#define SYS_SHUTDOWN\t13\t\t/* sys_shutdown(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 39,
+     "text": "#define SYS_SETSOCKOPT\t14\t\t/* sys_setsockopt(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 40,
+     "text": "#define SYS_GETSOCKOPT\t15\t\t/* sys_getsockopt(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 41,
+     "text": "#define SYS_SENDMSG\t16\t\t/* sys_sendmsg(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 42,
+     "text": "#define SYS_RECVMSG\t17\t\t/* sys_recvmsg(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 43,
+     "text": "#define SYS_PACCEPT\t18\t\t/* sys_paccept(2)\t\t*/"
+    }
+   ],
+   "absent": [
+    {
+     "label": "accept4",
+     "pattern": "\\bSYS_ACCEPT4\\b"
+    }
+   ]
+  },
+  {
+   "tag": "v2.6.27",
+   "path": "net/socket.c",
+   "sha256_16": "25b5b1da5146c26e",
+   "entries": [
+    {
+     "label": "bound",
+     "line": 2119,
+     "text": "\tif (call < 1 || call > SYS_PACCEPT)"
+    },
+    {
+     "label": "nargs",
+     "line": 2096,
+     "text": "static const unsigned char nargs[19]={"
+    },
+    {
+     "label": "nargs",
+     "line": 2097,
+     "text": "\tAL(0),AL(3),AL(3),AL(3),AL(2),AL(3),"
+    },
+    {
+     "label": "nargs",
+     "line": 2098,
+     "text": "\tAL(3),AL(3),AL(4),AL(4),AL(4),AL(6),"
+    },
+    {
+     "label": "nargs",
+     "line": 2099,
+     "text": "\tAL(6),AL(2),AL(5),AL(5),AL(3),AL(3),"
+    },
+    {
+     "label": "nargs",
+     "line": 2100,
+     "text": "\tAL(6)"
+    },
+    {
+     "label": "nargs",
+     "line": 2101,
+     "text": "};"
+    },
+    {
+     "label": "accept",
+     "line": 1516,
+     "text": "asmlinkage long sys_paccept(int fd, struct sockaddr __user *upeer_sockaddr,"
+    },
+    {
+     "label": "accept",
+     "line": 1554,
+     "text": "asmlinkage long sys_paccept(int fd, struct sockaddr __user *upeer_sockaddr,"
+    },
+    {
+     "label": "accept",
+     "line": 2196,
+     "text": "\tcase SYS_PACCEPT:"
+    },
+    {
+     "label": "accept",
+     "line": 2198,
+     "text": "\t\t    sys_paccept(a0, (struct sockaddr __user *)a1,"
+    },
+    {
+     "label": "socket_flags",
+     "line": 1108,
+     "text": "\tif (type < 0 || type >= SOCK_MAX)"
+    },
+    {
+     "label": "socket_flags",
+     "line": 1231,
+     "text": "\tflags = type & ~SOCK_TYPE_MASK;"
+    },
+    {
+     "label": "socket_flags",
+     "line": 1268,
+     "text": "\tflags = type & ~SOCK_TYPE_MASK;"
+    },
+    {
+     "label": "listen",
+     "line": 1397,
+     "text": "asmlinkage long sys_listen(int fd, int backlog)"
+    }
+   ],
+   "absent": [
+    {
+     "label": "accept4",
+     "pattern": "sys_accept4|SYSCALL_DEFINE4\\(accept4"
+    }
+   ]
+  },
+  {
+   "tag": "v2.6.28",
+   "path": "include/linux/net.h",
+   "sha256_16": "41737f2e837be47d",
+   "entries": [
+    {
+     "label": "subcalls",
+     "line": 26,
+     "text": "#define SYS_SOCKET\t1\t\t/* sys_socket(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 27,
+     "text": "#define SYS_BIND\t2\t\t/* sys_bind(2)\t\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 28,
+     "text": "#define SYS_CONNECT\t3\t\t/* sys_connect(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 29,
+     "text": "#define SYS_LISTEN\t4\t\t/* sys_listen(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 30,
+     "text": "#define SYS_ACCEPT\t5\t\t/* sys_accept(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 31,
+     "text": "#define SYS_GETSOCKNAME\t6\t\t/* sys_getsockname(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 32,
+     "text": "#define SYS_GETPEERNAME\t7\t\t/* sys_getpeername(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 33,
+     "text": "#define SYS_SOCKETPAIR\t8\t\t/* sys_socketpair(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 34,
+     "text": "#define SYS_SEND\t9\t\t/* sys_send(2)\t\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 35,
+     "text": "#define SYS_RECV\t10\t\t/* sys_recv(2)\t\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 36,
+     "text": "#define SYS_SENDTO\t11\t\t/* sys_sendto(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 37,
+     "text": "#define SYS_RECVFROM\t12\t\t/* sys_recvfrom(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 38,
+     "text": "#define SYS_SHUTDOWN\t13\t\t/* sys_shutdown(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 39,
+     "text": "#define SYS_SETSOCKOPT\t14\t\t/* sys_setsockopt(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 40,
+     "text": "#define SYS_GETSOCKOPT\t15\t\t/* sys_getsockopt(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 41,
+     "text": "#define SYS_SENDMSG\t16\t\t/* sys_sendmsg(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 42,
+     "text": "#define SYS_RECVMSG\t17\t\t/* sys_recvmsg(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 43,
+     "text": "#define SYS_ACCEPT4\t18\t\t/* sys_accept4(2)\t\t*/"
+    }
+   ],
+   "absent": [
+    {
+     "label": "paccept",
+     "pattern": "\\bSYS_PACCEPT\\b"
+    }
+   ]
+  },
+  {
+   "tag": "v2.6.28",
+   "path": "net/socket.c",
+   "sha256_16": "806e32d1949e2239",
+   "entries": [
+    {
+     "label": "bound",
+     "line": 2062,
+     "text": "\tif (call < 1 || call > SYS_ACCEPT4)"
+    },
+    {
+     "label": "nargs",
+     "line": 2039,
+     "text": "static const unsigned char nargs[19]={"
+    },
+    {
+     "label": "nargs",
+     "line": 2040,
+     "text": "\tAL(0),AL(3),AL(3),AL(3),AL(2),AL(3),"
+    },
+    {
+     "label": "nargs",
+     "line": 2041,
+     "text": "\tAL(3),AL(3),AL(4),AL(4),AL(4),AL(6),"
+    },
+    {
+     "label": "nargs",
+     "line": 2042,
+     "text": "\tAL(6),AL(2),AL(5),AL(5),AL(3),AL(3),"
+    },
+    {
+     "label": "nargs",
+     "line": 2043,
+     "text": "\tAL(4)"
+    },
+    {
+     "label": "nargs",
+     "line": 2044,
+     "text": "};"
+    },
+    {
+     "label": "accept",
+     "line": 1429,
+     "text": "asmlinkage long sys_accept4(int fd, struct sockaddr __user *upeer_sockaddr,"
+    },
+    {
+     "label": "accept",
+     "line": 2090,
+     "text": "\t\terr = sys_accept4(a0, (struct sockaddr __user *)a1,"
+    },
+    {
+     "label": "accept",
+     "line": 2138,
+     "text": "\tcase SYS_ACCEPT4:"
+    },
+    {
+     "label": "accept",
+     "line": 2139,
+     "text": "\t\terr = sys_accept4(a0, (struct sockaddr __user *)a1,"
+    },
+    {
+     "label": "socket_flags",
+     "line": 1107,
+     "text": "\tif (type < 0 || type >= SOCK_MAX)"
+    },
+    {
+     "label": "socket_flags",
+     "line": 1230,
+     "text": "\tflags = type & ~SOCK_TYPE_MASK;"
+    },
+    {
+     "label": "socket_flags",
+     "line": 1267,
+     "text": "\tflags = type & ~SOCK_TYPE_MASK;"
+    },
+    {
+     "label": "listen",
+     "line": 1396,
+     "text": "asmlinkage long sys_listen(int fd, int backlog)"
+    }
+   ],
+   "absent": [
+    {
+     "label": "paccept",
+     "pattern": "sys_paccept"
+    }
+   ]
+  },
+  {
+   "tag": "v2.6.35",
+   "path": "arch/mips/include/asm/unistd.h",
+   "sha256_16": "b83cf740c2db5a78",
+   "entries": [
+    {
+     "label": "mips_o32",
+     "line": 191,
+     "text": "#define __NR_accept\t\t\t(__NR_Linux + 168)"
+    },
+    {
+     "label": "mips_o32",
+     "line": 197,
+     "text": "#define __NR_listen\t\t\t(__NR_Linux + 174)"
+    },
+    {
+     "label": "mips_o32",
+     "line": 198,
+     "text": "#define __NR_recv\t\t\t(__NR_Linux + 175)"
+    },
+    {
+     "label": "mips_o32",
+     "line": 357,
+     "text": "#define __NR_accept4\t\t\t(__NR_Linux + 334)"
+    }
+   ],
+   "absent": []
+  },
+  {
+   "tag": "v2.6.35",
+   "path": "arch/mips/kernel/scall32-o32.S",
+   "sha256_16": "79fc62045b7b1b1e",
+   "entries": [
+    {
+     "label": "o32_table",
+     "line": 342,
+     "text": "\tsys\tsys_socketcall\t\t2"
+    },
+    {
+     "label": "o32_table",
+     "line": 409,
+     "text": "\tsys\tsys_bind\t\t3"
+    },
+    {
+     "label": "o32_table",
+     "line": 414,
+     "text": "\tsys\tsys_listen\t\t2"
+    },
+    {
+     "label": "o32_table",
+     "line": 415,
+     "text": "\tsys\tsys_recv\t\t4\t/* 4175 */"
+    },
+    {
+     "label": "o32_table",
+     "line": 423,
+     "text": "\tsys\tsys_socket\t\t3"
+    },
+    {
+     "label": "o32_table",
+     "line": 585,
+     "text": "\tsys\tsys_accept4\t\t4"
+    }
+   ],
+   "absent": []
+  },
+  {
+   "tag": "v2.6.35",
+   "path": "arch/powerpc/include/asm/systbl.h",
+   "sha256_16": "8d6c6d801ebd6ed3",
+   "entries": [
+    {
+     "label": "socketcall",
+     "line": 108,
+     "text": "COMPAT_SYS_SPU(socketcall)"
+    }
+   ],
+   "absent": [
+    {
+     "label": "listen",
+     "pattern": "\\blisten\\b"
+    },
+    {
+     "label": "accept4",
+     "pattern": "\\baccept4\\b"
+    }
+   ]
+  },
+  {
+   "tag": "v2.6.35",
+   "path": "arch/powerpc/include/asm/unistd.h",
+   "sha256_16": "d30759ec412043b9",
+   "entries": [
+    {
+     "label": "socketcall",
+     "line": 115,
+     "text": "#define __NR_socketcall\t\t102"
+    }
+   ],
+   "absent": [
+    {
+     "label": "listen",
+     "pattern": "__NR_listen"
+    },
+    {
+     "label": "accept4",
+     "pattern": "__NR_accept4"
+    }
+   ]
+  },
+  {
+   "tag": "v2.6.35",
+   "path": "include/linux/net.h",
+   "sha256_16": "551d97264aa8361d",
+   "entries": [
+    {
+     "label": "subcalls",
+     "line": 26,
+     "text": "#define SYS_SOCKET\t1\t\t/* sys_socket(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 27,
+     "text": "#define SYS_BIND\t2\t\t/* sys_bind(2)\t\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 28,
+     "text": "#define SYS_CONNECT\t3\t\t/* sys_connect(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 29,
+     "text": "#define SYS_LISTEN\t4\t\t/* sys_listen(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 30,
+     "text": "#define SYS_ACCEPT\t5\t\t/* sys_accept(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 31,
+     "text": "#define SYS_GETSOCKNAME\t6\t\t/* sys_getsockname(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 32,
+     "text": "#define SYS_GETPEERNAME\t7\t\t/* sys_getpeername(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 33,
+     "text": "#define SYS_SOCKETPAIR\t8\t\t/* sys_socketpair(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 34,
+     "text": "#define SYS_SEND\t9\t\t/* sys_send(2)\t\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 35,
+     "text": "#define SYS_RECV\t10\t\t/* sys_recv(2)\t\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 36,
+     "text": "#define SYS_SENDTO\t11\t\t/* sys_sendto(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 37,
+     "text": "#define SYS_RECVFROM\t12\t\t/* sys_recvfrom(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 38,
+     "text": "#define SYS_SHUTDOWN\t13\t\t/* sys_shutdown(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 39,
+     "text": "#define SYS_SETSOCKOPT\t14\t\t/* sys_setsockopt(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 40,
+     "text": "#define SYS_GETSOCKOPT\t15\t\t/* sys_getsockopt(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 41,
+     "text": "#define SYS_SENDMSG\t16\t\t/* sys_sendmsg(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 42,
+     "text": "#define SYS_RECVMSG\t17\t\t/* sys_recvmsg(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 43,
+     "text": "#define SYS_ACCEPT4\t18\t\t/* sys_accept4(2)\t\t*/"
+    },
+    {
+     "label": "subcalls",
+     "line": 44,
+     "text": "#define SYS_RECVMMSG\t19\t\t/* sys_recvmmsg(2)\t\t*/"
+    }
+   ],
+   "absent": [
+    {
+     "label": "paccept",
+     "pattern": "\\bSYS_PACCEPT\\b"
+    }
+   ]
+  },
+  {
+   "tag": "v2.6.35",
+   "path": "net/socket.c",
+   "sha256_16": "b08745ba02781958",
+   "entries": [
+    {
+     "label": "bound",
+     "line": 2217,
+     "text": "\tif (call < 1 || call > SYS_RECVMMSG)"
+    },
+    {
+     "label": "nargs",
+     "line": 2193,
+     "text": "static const unsigned char nargs[20] = {"
+    },
+    {
+     "label": "nargs",
+     "line": 2194,
+     "text": "\tAL(0),AL(3),AL(3),AL(3),AL(2),AL(3),"
+    },
+    {
+     "label": "nargs",
+     "line": 2195,
+     "text": "\tAL(3),AL(3),AL(4),AL(4),AL(4),AL(6),"
+    },
+    {
+     "label": "nargs",
+     "line": 2196,
+     "text": "\tAL(6),AL(2),AL(5),AL(5),AL(3),AL(3),"
+    },
+    {
+     "label": "nargs",
+     "line": 2197,
+     "text": "\tAL(4),AL(5)"
+    },
+    {
+     "label": "nargs",
+     "line": 2198,
+     "text": "};"
+    },
+    {
+     "label": "accept",
+     "line": 1458,
+     "text": "SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,"
+    },
+    {
+     "label": "accept",
+     "line": 2247,
+     "text": "\t\terr = sys_accept4(a0, (struct sockaddr __user *)a1,"
+    },
+    {
+     "label": "accept",
+     "line": 2299,
+     "text": "\tcase SYS_ACCEPT4:"
+    },
+    {
+     "label": "accept",
+     "line": 2300,
+     "text": "\t\terr = sys_accept4(a0, (struct sockaddr __user *)a1,"
+    },
+    {
+     "label": "socket_flags",
+     "line": 1163,
+     "text": "\tif (type < 0 || type >= SOCK_MAX)"
+    },
+    {
+     "label": "socket_flags",
+     "line": 1286,
+     "text": "\tflags = type & ~SOCK_TYPE_MASK;"
+    },
+    {
+     "label": "socket_flags",
+     "line": 1323,
+     "text": "\tflags = type & ~SOCK_TYPE_MASK;"
+    },
+    {
+     "label": "listen",
+     "line": 1425,
+     "text": "SYSCALL_DEFINE2(listen, int, fd, int, backlog)"
+    }
+   ],
+   "absent": [
+    {
+     "label": "paccept",
+     "pattern": "sys_paccept"
+    }
+   ]
+  }
+ ]
+}
