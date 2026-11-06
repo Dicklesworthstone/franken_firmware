@@ -132,6 +132,46 @@ fn platform_startup_is_still_refused_on_a_build_with_no_kernel_backend() {
     assert!(!String::from_utf8_lossy(&out.stdout).contains("FFW_SERVICE:"));
 }
 
+#[cfg(not(any(target_arch = "mips", target_arch = "powerpc")))]
+#[test]
+fn platform_diagnose_is_a_real_command_with_a_safe_action_for_an_unavailable_backend() {
+    let out = speaker(&["--platform-diagnose"]);
+    assert_eq!(out.status.code(), Some(2));
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(text.contains("no kernel backend"), "{text}");
+    assert!(
+        text.contains("Use a Linux big-endian MIPS or PowerPC build matching the board"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("Usage:"),
+        "recognized command, not a usage refusal: {text}"
+    );
+    assert!(out.stdout.is_empty(), "no fabricated platform markers");
+}
+
+#[test]
+fn both_platform_commands_reject_malformed_provider_arguments_before_startup() {
+    for mode in ["--platform-startup", "--platform-diagnose"] {
+        for args in [
+            vec![mode, "--entropy-provider"],
+            vec![mode, "--entropy-provider=unknown"],
+            vec![mode, "--ignored-flag"],
+        ] {
+            let out = speaker(&args);
+            assert_eq!(out.status.code(), Some(2), "{args:?}");
+            assert!(
+                String::from_utf8_lossy(&out.stderr).starts_with(mode),
+                "{args:?}"
+            );
+            assert!(
+                out.stdout.is_empty(),
+                "{args:?}: no startup before parsing succeeds"
+            );
+        }
+    }
+}
+
 #[test]
 fn an_unknown_option_is_still_refused_and_the_usage_lists_the_services_option() {
     let out = speaker(&["--no-such-option"]);
@@ -139,6 +179,7 @@ fn an_unknown_option_is_still_refused_and_the_usage_lists_the_services_option() 
     let usage = String::from_utf8_lossy(&out.stderr);
     assert!(usage.contains("--no-such-option"), "{usage}");
     assert!(usage.contains("--services"), "{usage}");
+    assert!(usage.contains("--platform-diagnose"), "{usage}");
     assert!(out.stdout.is_empty());
 }
 

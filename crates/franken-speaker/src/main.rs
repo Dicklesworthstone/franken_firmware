@@ -40,9 +40,17 @@ fn virtual_house_passes(report: &franken_speaker::VirtualHouseReport) -> bool {
     target_pointer_width = "32",
     any(target_arch = "mips", target_arch = "powerpc")
 ))]
-fn platform_startup(selection: franken_speaker::platform_start::EntropySelection) -> ExitCode {
+fn platform_startup(
+    selection: franken_speaker::platform_start::EntropySelection,
+    diagnostic: bool,
+) -> ExitCode {
     let report = franken_speaker::platform_start::check_device_with(selection);
     print!("{}", report.markers());
+    // The existing startup command stays byte-exact for its QEMU receipt.
+    // The human diagnostic command also explains the safe next action.
+    if diagnostic && let Some(message) = report.diagnostic() {
+        eprintln!("{message}");
+    }
     ExitCode::from(report.exit_status())
 }
 
@@ -52,11 +60,21 @@ fn platform_startup(selection: franken_speaker::platform_start::EntropySelection
     target_pointer_width = "32",
     any(target_arch = "mips", target_arch = "powerpc")
 )))]
-fn platform_startup(_selection: franken_speaker::platform_start::EntropySelection) -> ExitCode {
-    eprintln!(
-        "this build has no kernel backend: franken-platform-linux exists for big-endian 32-bit MIPS and PowerPC only, \
-         so --platform-startup runs on a device build"
-    );
+fn platform_startup(
+    _selection: franken_speaker::platform_start::EntropySelection,
+    diagnostic: bool,
+) -> ExitCode {
+    if diagnostic {
+        eprintln!(
+            "this build has no kernel backend: franken-platform-linux exists for big-endian 32-bit MIPS and PowerPC only, \
+         so platform startup needs a device build. Use a Linux big-endian MIPS or PowerPC build matching the board; no simulated backend is substituted."
+        );
+    } else {
+        eprintln!(
+            "this build has no kernel backend: franken-platform-linux exists for big-endian 32-bit MIPS and PowerPC only, \
+             so --platform-startup runs on a device build"
+        );
+    }
     ExitCode::from(2)
 }
 
@@ -94,11 +112,11 @@ fn main() -> ExitCode {
                 }
             }
         }
-        "--platform-startup" => {
+        "--platform-startup" | "--platform-diagnose" => {
             match franken_speaker::platform_start::parse_startup_args(&args[2..]) {
-                Ok(selection) => platform_startup(selection),
+                Ok(selection) => platform_startup(selection, mode == "--platform-diagnose"),
                 Err(message) => {
-                    eprintln!("--platform-startup: {message}");
+                    eprintln!("{mode}: {message}");
                     ExitCode::from(franken_speaker::platform_start::EXIT_USAGE)
                 }
             }
@@ -130,10 +148,11 @@ fn main() -> ExitCode {
         }
         other => {
             eprintln!(
-                "Usage: franken-speaker [--catalog|--services|--platform-startup [--entropy-provider NAME]|--virtual-house|--self-test] \
+                "Usage: franken-speaker [--catalog|--services|--platform-startup [--entropy-provider NAME]|--platform-diagnose [--entropy-provider NAME]|--virtual-house|--self-test] \
                  (got {other}); --services prints which native services this build selected, \
                  --virtual-house and --self-test need a build with `--features harness`, \
-                 --platform-startup needs a big-endian MIPS or PowerPC device build"
+                 --platform-startup and --platform-diagnose need a big-endian MIPS or PowerPC device build; \
+                 --platform-diagnose also prints a safe next action for a startup refusal"
             );
             ExitCode::from(2)
         }

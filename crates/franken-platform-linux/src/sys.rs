@@ -20,7 +20,7 @@
 //!    at most `nargs[sub]` of them, which is six at most. Each word is an integer or an address derived under invariant 2. Which words, and
 //!    whether a call is direct or goes through `socketcall`, is decided by [`crate::socket_route::issue_for`] from the plan in
 //!    [`crate::numbers`]; this module executes the result and chooses nothing. **No guest has issued a `socketcall`**; the five socket wrappers
-//!    are written, never compiled, never run.
+//!    compile on both BE targets but have no socket guest-execution proof.
 
 use crate::numbers::{Numbers, socket_plan_for};
 use crate::socket_route::{

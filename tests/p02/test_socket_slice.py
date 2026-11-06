@@ -659,12 +659,12 @@ class ContractTests(unittest.TestCase):
     def setUp(self):
         self.doc = READ(tsn.P02_MD)
 
-    def test_the_contract_says_what_is_written_and_that_it_is_not_compiled(self):
+    def test_the_contract_separates_compilation_from_kernel_execution(self):
         self.assertIn("## The socket capability", self.doc)
         section = self.doc.split("## The socket capability", 1)[1].split("\n## ", 1)[0]
-        for phrase in ("not compiled", "SocketOps", "socket.rs", "SocketPlan", "accept4", "MSG_TRUNC", "no descriptor has ever been made"):
+        for phrase in ("Compilation is not kernel execution", "SocketOps", "socket.rs", "SocketPlan", "accept4", "MSG_TRUNC", "No real socket descriptor has been observed"):
             self.assertIn(phrase, section, phrase)
-        self.assertIn("**not compiled, not linted, not run against a kernel**", section)
+        self.assertIn("**socket kernel execution remains unqualified**", section)
         self.assertIn("a safety net, not an observed behaviour", section)
         self.assertIn("None of this is observed on any kernel.", self.doc.split("## Known limits", 1)[1])
         self.assertNotIn("no code exists", self.doc)
@@ -697,7 +697,7 @@ class ContractTests(unittest.TestCase):
 
     def test_the_contract_names_the_gaps_it_leaves(self):
         section = self.doc.split("## The socket capability", 1)[1].split("\n## ", 1)[0]
-        for header in ("* **The leaf backend is written, not compiled.**", "* **A kernel-version hazard for the `socketcall` route.**", "* **`recvfrom` and the peer address.**", "* **No admission.**",
+        for header in ("* **The leaf backend has no socket guest-execution proof.**", "* **A kernel-version hazard for the `socketcall` route.**", "* **`recvfrom` and the peer address.**", "* **No admission.**",
                        "* **No qualification.**"):
             self.assertIn(header, section, header)
         for phrase in ("recvfrom", "unsafe", "layer.rs", "peer address"):

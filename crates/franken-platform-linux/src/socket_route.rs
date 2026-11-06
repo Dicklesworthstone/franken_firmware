@@ -1,6 +1,6 @@
 //! The socket routes of the Linux leaf as plain data (`P02` / `ffw-jub`), compiled on every target so that a host test can hold them.
 //!
-//! **Status: written, never compiled, never run against a kernel, and no guest has issued a `socketcall`.** Two things live here, both
+//! The route policy has host unit tests and the leaf compiles on both BE targets; no guest has issued a `socketcall`. Two things live here, both
 //! decided before any `unsafe` code runs:
 //!
 //! * [`issue_for`]: what one socket call is issued as on one ABI, as the exact words. The route comes from [`crate::numbers::socket_plan_for`]

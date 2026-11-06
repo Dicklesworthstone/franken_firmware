@@ -23,11 +23,11 @@
 //! * **Sockets are a separate, admitted step.** [`LinuxKernel::admit_sockets`] returns a [`SocketKernel`], the only value that implements
 //!   `franken_platform::socket::SocketOps`, and only after [`socket_route::admit`] has accepted the running kernel's release: on PowerPC the route
 //!   is `socketcall`, whose sub-call 18 is `paccept` (a different call) on a v2.6.27 kernel, so that release is refused **by name, before any socket
-//!   call**; MIPS o32 uses the direct calls and is admitted on any release. The five socket calls are written, never compiled, never run, and no
+//!   call**; MIPS o32 uses the direct calls and is admitted on any release. The five socket calls compile on both BE targets, but no
 //!   guest has issued a `socketcall`. Which words each call is issued as is [`socket_route::issue_for`], host-tested; `sys.rs` only executes them.
 //! * It declares [`Provenance::Kernel`] and the ABI it was compiled for, which [`PlatformLayer::admit`] checks against the
 //!   profile's.
-//! * It is **not run in this repository's tests**: the host cannot execute BE MIPS/PowerPC, and no guest has run it. The
+//! * The socket wrappers have no guest execution proof. Other startup operations have run on the named QEMU harness kernels; the
 //!   trampolines are the ones the E03 guest probes ran; the wrappers and this impl have only been type-checked for both targets.
 //!
 //! [`PlatformLayer::admit`]: franken_platform::layer::PlatformLayer::admit

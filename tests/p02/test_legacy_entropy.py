@@ -160,7 +160,7 @@ def main_wiring_problems(srcs):
     problems = []
     if "parse_startup_args(&args[2..])" not in code:
         problems.append("main does not parse the arguments after --platform-startup")
-    if "Ok(selection) => platform_startup(selection)" not in code:
+    if 'Ok(selection) => platform_startup(selection, mode == "--platform-diagnose")' not in code:
         problems.append("main does not hand the parsed selection to platform_startup")
     if "ExitCode::from(franken_speaker::platform_start::EXIT_USAGE)" not in code:
         problems.append("a malformed --platform-startup argument does not exit with the usage status")
@@ -296,8 +296,8 @@ class NoInsecureFallbackSourceTests(unittest.TestCase):
 
     def test_main_hands_the_parsed_selection_to_startup_and_substitutes_nothing(self):
         self.assertEqual(main_wiring_problems(self.srcs), [])
-        planted = self.planted("main.rs", "Ok(selection) => platform_startup(selection),",
-                               "Ok(_) => platform_startup(franken_speaker::platform_start::EntropySelection::default()),")
+        planted = self.planted("main.rs", 'Ok(selection) => platform_startup(selection, mode == "--platform-diagnose"),',
+                               'Ok(_) => platform_startup(franken_speaker::platform_start::EntropySelection::default(), mode == "--platform-diagnose"),')
         problems = main_wiring_problems(planted)
         self.assertTrue(any("does not hand the parsed selection" in p for p in problems), problems)
         self.assertTrue(any("substitutes a provider" in p for p in problems), problems)

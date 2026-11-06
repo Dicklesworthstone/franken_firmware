@@ -222,27 +222,35 @@ impl MemoryBudgetLedger {
 
     #[must_use]
     pub const fn total_committed_bytes(&self) -> u64 {
-        self.kernel_and_driver_reserved_bytes
-            .saturating_add(self.dma_ring_reserved_bytes)
-            .saturating_add(self.core_runtime_peak_bytes)
-            .saturating_add(self.stream_and_jitter_bytes)
-            .saturating_add(self.native_integrations_bytes)
+        let committed = self.committed_wide();
+        if committed > u64::MAX as u128 {
+            u64::MAX
+        } else {
+            committed as u64
+        }
     }
 
-    /// What is left of the RAM after every commitment, negative when over-committed. Both sides are clamped to `i64::MAX` first: the
-    /// fields are public and deserializable, and a value above `i64::MAX` used to wrap through `as i64` (a saturated commitment read
-    /// as -1 byte, i.e. headroom), or overflow the subtraction. Two values in `0..=i64::MAX` cannot overflow when subtracted.
+    const fn committed_wide(&self) -> u128 {
+        self.kernel_and_driver_reserved_bytes as u128
+            + self.dma_ring_reserved_bytes as u128
+            + self.core_runtime_peak_bytes as u128
+            + self.stream_and_jitter_bytes as u128
+            + self.native_integrations_bytes as u128
+    }
+
+    /// Signed headroom, clamped only after computing the exact difference. The
+    /// deserializable fields can exceed `i64::MAX`; clamping each operand first
+    /// would lose small deficits between large values and hide overcommitment.
     #[must_use]
     pub const fn remaining_headroom_bytes(&self) -> i64 {
-        Self::clamp_to_i64(self.nominal_ram_bytes)
-            - Self::clamp_to_i64(self.total_committed_bytes())
-    }
-
-    const fn clamp_to_i64(value: u64) -> i64 {
-        if value > i64::MAX as u64 {
+        // Five u64 commitments fit in u128 and i128 without overflow.
+        let difference = self.nominal_ram_bytes as i128 - self.committed_wide() as i128;
+        if difference > i64::MAX as i128 {
             i64::MAX
+        } else if difference < i64::MIN as i128 {
+            i64::MIN
         } else {
-            value as i64
+            difference as i64
         }
     }
 
@@ -251,14 +259,23 @@ impl MemoryBudgetLedger {
             .required_safety_floor_bytes
             .max(Self::MIN_SAFETY_FLOOR_BYTES);
         let committed = self.total_committed_bytes();
-        if committed.saturating_add(floor) > self.nominal_ram_bytes {
+        // Subtract before comparing: saturating the addition can admit an
+        // overflowing commitment+floor when nominal itself is u64::MAX.
+        let Some(headroom) = self.nominal_ram_bytes.checked_sub(committed) else {
+            return Err(PlatformAdmissionError::MemoryBudgetExceeded {
+                nominal_ram_bytes: self.nominal_ram_bytes,
+                committed_bytes: committed,
+                required_floor_bytes: floor,
+            });
+        };
+        if headroom < floor {
             return Err(PlatformAdmissionError::MemoryBudgetExceeded {
                 nominal_ram_bytes: self.nominal_ram_bytes,
                 committed_bytes: committed,
                 required_floor_bytes: floor,
             });
         }
-        Ok(self.nominal_ram_bytes - committed)
+        Ok(headroom)
     }
 }
 
@@ -775,10 +792,7 @@ mod tests {
         // commitment read as -1 and the headroom as 64 MiB + 1.
         let mut huge = ledger(64 * MIB, u64::MAX, FLOOR);
         huge.dma_ring_reserved_bytes = 5 * MIB;
-        assert_eq!(
-            huge.remaining_headroom_bytes(),
-            i64::try_from(64 * MIB).expect("fits") - i64::MAX
-        );
+        assert_eq!(huge.remaining_headroom_bytes(), i64::MIN);
         // One field above i64::MAX (reachable: the fields are public and deserializable) overflowed the subtraction.
         let big = ledger(64 * MIB, (1_u64 << 63) + 5, FLOOR);
         assert!(big.remaining_headroom_bytes() < 0);
@@ -787,6 +801,30 @@ mod tests {
             ledger(u64::MAX, 0, FLOOR).remaining_headroom_bytes(),
             i64::MAX
         );
+    }
+
+    #[test]
+    fn extreme_nominal_ram_does_not_hide_overflow_or_a_small_deficit() {
+        let over = ledger(u64::MAX, u64::MAX, FLOOR);
+        assert!(matches!(
+            over.verify_budget(),
+            Err(PlatformAdmissionError::MemoryBudgetExceeded { .. })
+        ));
+        let mut excess = ledger(u64::MAX, u64::MAX, FLOOR);
+        excess.dma_ring_reserved_bytes = 1;
+        assert_eq!(excess.remaining_headroom_bytes(), -1);
+        assert!(excess.verify_budget().is_err());
+        assert_eq!(
+            ledger(u64::MAX, u64::MAX - 1, FLOOR).remaining_headroom_bytes(),
+            1
+        );
+        assert_eq!(
+            ledger(u64::MAX - 1, u64::MAX, FLOOR).remaining_headroom_bytes(),
+            -1
+        );
+        let edge = ledger(u64::MAX, u64::MAX - FLOOR, FLOOR);
+        assert_eq!(edge.verify_budget(), Ok(FLOOR));
+        assert_eq!(edge.remaining_headroom_bytes(), FLOOR as i64);
     }
 
     #[test]

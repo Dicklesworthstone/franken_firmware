@@ -391,10 +391,10 @@ class ContractTests(unittest.TestCase):
 
     def test_the_contract_describes_the_leaf_backend_and_what_it_does_not_show(self):
         for phrase in ("**The leaf backend", "`LinuxKernel::admit_sockets(release)`", "`SubCall18IsPaccept`", "`ReleaseNotVerified`", "socket_route::issue_for",
-                       "**No guest has issued a `socketcall`", "**The release is\nthe caller's input**", "written, **not compiled**"):
+                       "**No guest has issued a `socketcall`", "**The release is\nthe caller's input**", "host-tested; kernel socket execution unqualified"):
             self.assertIn(phrase, self.section, phrase)
         self.assertNotIn("No `unsafe`, no leaf implementation", self.doc)
-        self.assertIn("* **The leaf backend is written, not compiled.**", self.section)
+        self.assertIn("* **The leaf backend has no socket guest-execution proof.**", self.section)
 
     def test_the_contract_counts_equal_the_files_counts(self):
         route_tests = len(re.findall(r"#\[test\]", READ(ROUTE_RS)))

@@ -363,6 +363,60 @@ impl StartupError {
     pub const fn is_retryable(&self) -> bool {
         matches!(self, Self::Entropy(EntropyError::NotSeeded))
     }
+
+    /// What a person may safely do about this refusal, in words (see [`safe_next_action`]). `is_retryable` is a fact about the error;
+    /// this is the instruction, and it says to start again only where retrying can help.
+    #[must_use]
+    pub fn safe_next_action(&self) -> &'static str {
+        safe_next_action(self.capability(), self.code()).unwrap_or(ACTION_REPORT)
+    }
+}
+
+// ---- the safe next action of each refusal --------------------------------------------------------------------------------------
+// Bead acceptance: the diagnostics "name the unavailable capability and the safe next action, without leaking system secrets". The
+// `FFW_PLATFORM:*` marker lines name the capability and the typed reason; the words below say what to do about it. Each text is
+// plain ASCII with no digit, no `=` and no path, so it cannot carry an address, a value or a forged marker, and each says what the
+// speaker will NOT do in place of the missing capability (no wall time, no weaker entropy, no second wake mechanism).
+
+/// The one refusal that is a wait and not a stop (`not_seeded`): the caller decides how long to wait.
+const ACTION_RETRY: &str = "Start again later: the kernel has not seeded its random pool yet. The speaker neither waits nor substitutes another entropy source, so the caller decides how long to wait.";
+const ACTION_WRONG_BUILD: &str = "Do not start. This build is not wired to the device kernel backend for this board. Use the device build for big-endian MIPS or PowerPC that matches the board; a simulated or mismatched backend is never accepted.";
+const ACTION_NOT_ADMITTED: &str = "Do not start. This kernel has no qualified profile for the platform layer. Run a kernel image with a matching admitted profile; compatibility stays unqualified until one is recorded.";
+const ACTION_WAKE_ABSENT: &str = "Do not start. The kernel does not provide the wakeup call the profile selects. Use a kernel that provides it; the speaker never tries another mechanism in its place.";
+const ACTION_WAKE_OPEN_FAILED: &str = "Do not start. The selected wake source could not be opened. Keep this output and report the failure to the platform owner; the speaker never substitutes another mechanism.";
+const ACTION_CLOCK_ABSENT: &str = "Do not start. The kernel does not provide the monotonic clock call. Use a kernel that provides it; the speaker never falls back to wall time.";
+const ACTION_ENTROPY_ABSENT: &str = "Do not start. The kernel does not provide secure entropy through the selected provider. Use a kernel that does; the speaker never falls back to a weaker source.";
+const ACTION_ENTROPY_UNQUALIFIED: &str = "Do not start. The profile does not qualify the selected entropy provider on this kernel. A provider needs its own recorded evidence; the speaker never switches to another one.";
+/// Every other refusal means the platform answered something it should not: nothing a person can safely change, so stop and report.
+const ACTION_REPORT: &str = "Do not start and do not work around it. The platform gave an answer it should not give. Keep this output and give it to the platform owner.";
+
+/// Whether `code` is a member of [`REASON_CODES`] for `capability`.
+fn is_reason_code(capability: Capability, code: &str) -> bool {
+    REASON_CODES
+        .iter()
+        .any(|(name, codes)| *name == capability.name() && codes.contains(&code))
+}
+
+/// The safe next action for the refusal `capability:code`, or `None` when `code` is not a reason code of that capability. One text per
+/// reason code, and only `entropy:not_seeded` says to start again.
+#[must_use]
+pub fn safe_next_action(capability: Capability, code: &str) -> Option<&'static str> {
+    if !is_reason_code(capability, code) {
+        return None;
+    }
+    Some(match (capability, code) {
+        (Capability::Entropy, "not_seeded") => ACTION_RETRY,
+        (Capability::Kernel, "simulated_backend" | "no_abi" | "unknown_abi" | "abi_mismatch") => {
+            ACTION_WRONG_BUILD
+        }
+        (Capability::Kernel, "not_admitted") => ACTION_NOT_ADMITTED,
+        (Capability::Kernel, "wake_open_failed") => ACTION_WAKE_OPEN_FAILED,
+        (Capability::Wake, "absent") => ACTION_WAKE_ABSENT,
+        (Capability::Clock, "absent") => ACTION_CLOCK_ABSENT,
+        (Capability::Entropy, "absent") => ACTION_ENTROPY_ABSENT,
+        (Capability::Entropy, "unavailable") => ACTION_ENTROPY_UNQUALIFIED,
+        _ => ACTION_REPORT,
+    })
 }
 
 /// How one capability fared.
@@ -504,6 +558,26 @@ impl StartupReport {
             Outcome::Refused(code) => Some((capability, code)),
             Outcome::Pass | Outcome::NotRun => None,
         })
+    }
+
+    /// The safe next action for the first refusal ([`safe_next_action`]), or `None` when nothing was refused.
+    #[must_use]
+    pub fn next_action(&self) -> Option<&'static str> {
+        self.first_refusal()
+            .and_then(|(capability, code)| safe_next_action(capability, code))
+    }
+
+    /// One human line for the first refusal: the unavailable capability, its reason code and the safe next action; `None` when nothing
+    /// was refused. It is a diagnostic for a person and is **not** one of the [`Self::markers`]: the judged `--platform-startup` step is
+    /// compared byte for byte against what the guest measured, so nothing is added to its output.
+    #[must_use]
+    pub fn diagnostic(&self) -> Option<String> {
+        let (capability, code) = self.first_refusal()?;
+        let action = safe_next_action(capability, code)?;
+        Some(format!(
+            "platform startup refused: capability {} unavailable, reason {code}. {action}",
+            capability.name()
+        ))
     }
 
     /// The process exit status this report calls for.
@@ -1383,51 +1457,94 @@ mod tests {
 
     #[test]
     fn a_wake_source_the_kernel_cannot_open_refuses_the_platform_on_its_typed_code() {
-        // A kernel without eventfd2 answers -ENOSYS; the speaker refuses on that probe result, and does not look at a version string.
-        let (mut fake, calls) = Fake::kernel(Abi::PowerPc32);
-        fake.eventfd_error = Some(-38);
-        let (result, report) = bring_up(fake, Some("2.6.14.7"));
-        let error = result.err().expect("refused");
-        assert_eq!(error.capability(), Capability::Kernel);
-        assert_eq!(error.code(), "wake_open_failed");
-        assert_eq!(report.kernel, Outcome::Refused("wake_open_failed"));
-        // Nothing could be tried without a layer, and every NOT_RUN follows an earlier REFUSED.
-        assert_eq!(
-            (report.clock, report.entropy, report.wake),
-            (Outcome::NotRun, Outcome::NotRun, Outcome::NotRun)
-        );
-        assert_eq!(calls.eventfd.get(), 1, "no other wake mechanism was tried");
-        assert_eq!(calls.pipe.get(), 0);
-        assert_eq!(report.layer_provenance, None);
-        assert!(
-            report
-                .markers()
-                .ends_with("FFW_PLATFORM:END started=0 refused=kernel:wake_open_failed\n")
-        );
+        // A kernel without eventfd2 answers -ENOSYS in its own ABI's number (38 on PowerPC, 89 on MIPS o32); the speaker refuses on that
+        // probe result, the same typed refusal on both profiles, and does not look at a version string.
+        for (abi, enosys) in [(Abi::PowerPc32, -38_isize), (Abi::Mips32, -89)] {
+            let (mut fake, calls) = Fake::kernel(abi);
+            fake.eventfd_error = Some(enosys);
+            let (result, report) = bring_up(fake, Some("2.6.14.7"));
+            let error = result.err().expect("refused");
+            assert_eq!(error.capability(), Capability::Kernel, "{abi:?}");
+            assert_eq!(error.code(), "wake_open_failed", "{abi:?}");
+            assert_eq!(
+                report.kernel,
+                Outcome::Refused("wake_open_failed"),
+                "{abi:?}"
+            );
+            // Nothing could be tried without a layer, and every NOT_RUN follows an earlier REFUSED.
+            assert_eq!(
+                (report.clock, report.entropy, report.wake),
+                (Outcome::NotRun, Outcome::NotRun, Outcome::NotRun),
+                "{abi:?}"
+            );
+            assert_eq!(
+                calls.eventfd.get(),
+                1,
+                "{abi:?}: no other wake mechanism was tried"
+            );
+            assert_eq!(calls.pipe.get(), 0, "{abi:?}");
+            assert_eq!(report.layer_provenance, None, "{abi:?}");
+            assert!(
+                report
+                    .markers()
+                    .ends_with("FFW_PLATFORM:END started=0 refused=kernel:wake_open_failed\n"),
+                "{abi:?}"
+            );
+            // The same unavailable capability, named with the same safe next action, on both profiles.
+            assert_eq!(
+                report.next_action(),
+                Some(ACTION_WAKE_OPEN_FAILED),
+                "{abi:?}"
+            );
+            assert_eq!(error.safe_next_action(), ACTION_WAKE_OPEN_FAILED, "{abi:?}");
+        }
     }
 
     #[test]
     fn a_clock_that_is_absent_is_a_typed_refusal_and_the_other_capabilities_are_still_tried() {
-        let (mut fake, calls) = Fake::kernel(Abi::PowerPc32);
-        fake.clock_error = Some(-38); // PowerPC ENOSYS
-        let (result, report) = bring_up(fake, Some(PPC_RELEASE));
-        assert_eq!(result.err(), Some(StartupError::Clock(ClockError::Absent)));
-        assert_eq!(report.clock, Outcome::Refused("absent"));
-        assert_eq!(
-            (report.entropy, report.wake),
-            (Outcome::Pass, Outcome::Pass)
-        );
-        assert_eq!(report.first_refusal(), Some((Capability::Clock, "absent")));
-        assert!(
-            report
-                .markers()
-                .ends_with("FFW_PLATFORM:END started=0 refused=clock:absent\n")
-        );
-        assert_eq!(
-            calls.clock.get(),
-            1,
-            "a clock that is absent is asked once, not worked around"
-        );
+        // Each profile's own ENOSYS (PowerPC 38, MIPS o32 89): the same typed refusal, the same marker, the same next action.
+        for (abi, release, enosys) in [
+            (Abi::PowerPc32, PPC_RELEASE, -38_isize),
+            (Abi::Mips32, MIPS_RELEASE, -89),
+        ] {
+            let (mut fake, calls) = Fake::kernel(abi);
+            fake.clock_error = Some(enosys);
+            let (result, report) = bring_up(fake, Some(release));
+            assert_eq!(
+                result.err(),
+                Some(StartupError::Clock(ClockError::Absent)),
+                "{abi:?}"
+            );
+            assert_eq!(report.clock, Outcome::Refused("absent"), "{abi:?}");
+            assert_eq!(
+                (report.entropy, report.wake),
+                (Outcome::Pass, Outcome::Pass),
+                "{abi:?}"
+            );
+            assert_eq!(
+                report.first_refusal(),
+                Some((Capability::Clock, "absent")),
+                "{abi:?}"
+            );
+            assert!(
+                report
+                    .markers()
+                    .ends_with("FFW_PLATFORM:END started=0 refused=clock:absent\n"),
+                "{abi:?}"
+            );
+            assert_eq!(
+                calls.clock.get(),
+                1,
+                "{abi:?}: a clock that is absent is asked once, not worked around"
+            );
+            assert_eq!(report.next_action(), Some(ACTION_CLOCK_ABSENT), "{abi:?}");
+            let line = report.diagnostic().expect("a refusal has a diagnostic");
+            assert!(
+                line.contains("capability clock unavailable, reason absent."),
+                "{abi:?}: {line}"
+            );
+            assert!(line.ends_with(ACTION_CLOCK_ABSENT), "{abi:?}: {line}");
+        }
     }
 
     #[test]
@@ -1477,25 +1594,247 @@ mod tests {
         }
     }
 
+    // ---- every refusal has one safe next action in words, and only a wait says to start again ----
+
+    type ActionFn = fn(Capability, &str) -> Option<&'static str>;
+
+    fn capability_named(name: &str) -> Capability {
+        [
+            Capability::Kernel,
+            Capability::Clock,
+            Capability::Entropy,
+            Capability::Wake,
+        ]
+        .into_iter()
+        .find(|capability| capability.name() == name)
+        .expect("REASON_CODES names a known capability")
+    }
+
+    /// The verdict on a table of next actions: one for every reason code of every capability; exactly `entropy:not_seeded` says to start
+    /// again and every other one says to stop; and each is safe to log (ASCII, no digit, no `=`, no path, short, one sentence run).
+    fn judge_next_actions(action: ActionFn) -> Result<(), String> {
+        for (name, codes) in REASON_CODES {
+            let capability = capability_named(name);
+            for code in codes {
+                let Some(text) = action(capability, code) else {
+                    return Err(format!("ACTION-MISSING: {name}:{code} has no next action"));
+                };
+                let waits = (name, *code) == ("entropy", "not_seeded");
+                if text.starts_with("Start again later") != waits {
+                    return Err(format!(
+                        "ACTION-RETRY-MISMATCH: {name}:{code} says {text:?}, and only entropy:not_seeded may say to start again"
+                    ));
+                }
+                if !waits && !text.starts_with("Do not start") {
+                    return Err(format!("ACTION-NOT-A-STOP: {name}:{code} says {text:?}"));
+                }
+                let unsafe_text = !text.is_ascii()
+                    || text.len() > 260
+                    || !text.ends_with('.')
+                    || text.contains(['=', '/', '\\'])
+                    || text.bytes().any(|byte| byte.is_ascii_digit());
+                if unsafe_text {
+                    return Err(format!("ACTION-UNSAFE-TEXT: {name}:{code} says {text:?}"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// A plant: the entropy provider that the profile does not qualify has no action.
+    fn actions_without_the_unqualified_provider(
+        capability: Capability,
+        code: &str,
+    ) -> Option<&'static str> {
+        if (capability, code) == (Capability::Entropy, "unavailable") {
+            return None;
+        }
+        safe_next_action(capability, code)
+    }
+
+    /// A plant: every refusal says to start again (what a bare `is_retryable` read as an instruction would invite).
+    fn actions_that_always_retry(capability: Capability, code: &str) -> Option<&'static str> {
+        safe_next_action(capability, code).map(|_| ACTION_RETRY)
+    }
+
+    /// A plant: an action that tells a person to edit a setting.
+    fn actions_that_carry_a_setting(capability: Capability, code: &str) -> Option<&'static str> {
+        if (capability, code) == (Capability::Clock, "absent") {
+            return Some("Do not start. Set clock=realtime in the config file.");
+        }
+        safe_next_action(capability, code)
+    }
+
+    #[test]
+    fn every_refusal_code_has_one_safe_next_action_and_only_not_seeded_says_to_start_again() {
+        assert_eq!(judge_next_actions(safe_next_action), Ok(()));
+        let plants: [(&str, ActionFn, &str); 3] = [
+            (
+                "no action for an unqualified provider",
+                actions_without_the_unqualified_provider,
+                "ACTION-MISSING",
+            ),
+            (
+                "always start again",
+                actions_that_always_retry,
+                "ACTION-RETRY-MISMATCH",
+            ),
+            (
+                "an action that carries a setting",
+                actions_that_carry_a_setting,
+                "ACTION-UNSAFE-TEXT",
+            ),
+        ];
+        for (name, plant, prefix) in plants {
+            let verdict = judge_next_actions(plant);
+            assert!(
+                verdict.as_ref().is_err_and(|why| why.starts_with(prefix)),
+                "the plant `{name}` was not caught: {verdict:?}"
+            );
+        }
+        // A code that is not a reason code of that capability has no action: the table cannot answer for a refusal it does not know.
+        assert_eq!(safe_next_action(Capability::Clock, "no_such_code"), None);
+        assert_eq!(safe_next_action(Capability::Clock, "not_seeded"), None);
+        assert_eq!(safe_next_action(Capability::Wake, ""), None);
+    }
+
+    #[test]
+    fn a_startup_error_carries_the_action_of_its_code_and_says_to_start_again_exactly_when_it_is_retryable()
+     {
+        for error in one_of_each_error() {
+            let action = error.safe_next_action();
+            assert_eq!(
+                Some(action),
+                safe_next_action(error.capability(), error.code()),
+                "{error}"
+            );
+            assert_eq!(
+                action.starts_with("Start again later"),
+                error.is_retryable(),
+                "{error}: {action}"
+            );
+        }
+        // The plant for the pairing: a retry flag read as the instruction would tell a clock-less kernel to start again.
+        assert!(!StartupError::Clock(ClockError::Absent).is_retryable());
+        assert!(
+            !StartupError::Clock(ClockError::Absent)
+                .safe_next_action()
+                .starts_with("Start again")
+        );
+    }
+
+    #[test]
+    fn a_refused_report_names_the_capability_the_reason_and_the_next_action_and_the_markers_stay_as_they_were()
+     {
+        for (scenario_name, capability, code, action) in [
+            (
+                "clock_absent_powerpc",
+                "clock",
+                "absent",
+                ACTION_CLOCK_ABSENT,
+            ),
+            (
+                "wake_source_absent_powerpc",
+                "kernel",
+                "wake_open_failed",
+                ACTION_WAKE_OPEN_FAILED,
+            ),
+            (
+                "mips_entropy_not_seeded",
+                "entropy",
+                "not_seeded",
+                ACTION_RETRY,
+            ),
+            (
+                "simulated_backend_refused",
+                "kernel",
+                "simulated_backend",
+                ACTION_WRONG_BUILD,
+            ),
+        ] {
+            let report = scenario(scenario_name);
+            assert_eq!(report.next_action(), Some(action), "{scenario_name}");
+            let line = report.diagnostic().expect("a refusal has a diagnostic");
+            assert_eq!(
+                line,
+                format!(
+                    "platform startup refused: capability {capability} unavailable, reason {code}. {action}"
+                ),
+                "{scenario_name}"
+            );
+            assert!(!line.contains('\n'), "{scenario_name}: one line");
+            // The judged step's output is compared byte for byte: the action is never one of the marker lines.
+            assert!(!report.markers().contains(action), "{scenario_name}");
+        }
+        for started in ["powerpc_all_pass", "mips_all_pass"] {
+            let report = scenario(started);
+            assert_eq!(report.next_action(), None, "{started}");
+            assert_eq!(report.diagnostic(), None, "{started}");
+        }
+    }
+
     #[test]
     fn an_entropy_call_that_is_absent_or_degenerate_is_refused_not_papered_over() {
-        let (mut fake, _) = Fake::kernel(Abi::PowerPc32);
-        fake.random = Random::Errno(-38);
-        let (result, report) = bring_up(fake, Some(PPC_RELEASE));
-        assert_eq!(
-            result.err(),
-            Some(StartupError::Entropy(EntropyError::Absent))
-        );
-        assert_eq!(report.entropy, Outcome::Refused("absent"));
-        // The other ABI's number is not absence on this one.
-        let (mut fake, _) = Fake::kernel(Abi::PowerPc32);
-        fake.random = Random::Errno(-89);
-        let (result, report) = bring_up(fake, Some(PPC_RELEASE));
-        assert_eq!(
-            result.err(),
-            Some(StartupError::Entropy(EntropyError::Failed(89)))
-        );
-        assert_eq!(report.entropy, Outcome::Refused("failed"));
+        // (profile, its release, its own ENOSYS, the other profile's ENOSYS number)
+        for (abi, release, enosys, other) in [
+            (Abi::PowerPc32, PPC_RELEASE, 38_i32, 89_i32),
+            (Abi::Mips32, MIPS_RELEASE, 89, 38),
+        ] {
+            let (mut fake, _) = Fake::kernel(abi);
+            fake.random = Random::Errno(-(enosys as isize));
+            let (result, report) = bring_up(fake, Some(release));
+            assert_eq!(
+                result.err(),
+                Some(StartupError::Entropy(EntropyError::Absent)),
+                "{abi:?}"
+            );
+            assert_eq!(report.entropy, Outcome::Refused("absent"), "{abi:?}");
+            assert_eq!(report.next_action(), Some(ACTION_ENTROPY_ABSENT), "{abi:?}");
+            // The other ABI's number is not absence on this one.
+            let (mut fake, _) = Fake::kernel(abi);
+            fake.random = Random::Errno(-(other as isize));
+            let (result, report) = bring_up(fake, Some(release));
+            assert_eq!(
+                result.err(),
+                Some(StartupError::Entropy(EntropyError::Failed(other))),
+                "{abi:?}"
+            );
+            assert_eq!(report.entropy, Outcome::Refused("failed"), "{abi:?}");
+            // A failure that is not an absence is not told it can be fixed by a different kernel: stop and report.
+            assert_eq!(report.next_action(), Some(ACTION_REPORT), "{abi:?}");
+        }
+    }
+
+    #[test]
+    fn a_wake_open_resource_or_permission_failure_does_not_claim_the_call_is_absent() {
+        for abi in [Abi::PowerPc32, Abi::Mips32] {
+            // ENOMEM, EMFILE, EACCES have the same numbers on both admitted ABIs.
+            for errno in [12_isize, 24, 13] {
+                let (mut fake, calls) = Fake::kernel(abi);
+                fake.eventfd_error = Some(-errno);
+                let (result, report) = bring_up(fake, None);
+                let error = result.err().expect("wake open must fail");
+                assert_eq!(error.code(), "wake_open_failed");
+                assert_eq!(error.safe_next_action(), ACTION_WAKE_OPEN_FAILED);
+                assert_eq!(report.next_action(), Some(ACTION_WAKE_OPEN_FAILED));
+                let line = report.diagnostic().expect("a refusal has advice");
+                assert!(
+                    !line.contains("does not provide"),
+                    "{abi:?} errno{errno}: {line}"
+                );
+                assert!(
+                    !line.contains("Use a kernel"),
+                    "{abi:?} errno{errno}: {line}"
+                );
+                assert_eq!(calls.eventfd.get(), 1);
+                assert_eq!(calls.pipe.get(), 0);
+            }
+            let (fake, _) = Fake::kernel(abi);
+            assert!(
+                bring_up(fake, None).0.is_ok(),
+                "{abi:?}: permitted counterpart"
+            );
+        }
     }
 
     #[test]

@@ -1,9 +1,8 @@
 //! The socket capability through the seam (`P02` / `ffw-jub`): `socket`, `bind`, `listen`, `accept4`, and a datagram read that says when it
 //! was cut. Contract: `docs/contracts/p02.md`, "The socket capability".
 //!
-//! **Status: written, never compiled, never run against a kernel.** The host tests below drive the policy with a scripted double that
-//! answers `Provenance::Simulated`; nothing here is evidence about a kernel, and no leaf backend implements [`SocketOps`] yet (the unsafe
-//! half, `sys.rs`, is a later slice).
+//! The policy has host unit tests and a compiled Linux leaf implementation of [`SocketOps`]. The tests below drive a scripted double
+//! that answers `Provenance::Simulated`; no guest has executed these leaf socket calls. Compilation and unit tests do not qualify a kernel.
 //!
 //! What this module is. [`SocketOps`] is the seam for five more kernel calls, raw in the way [`KernelOps`] is: each method issues one call and
 //! returns what the kernel returned, a non-negative result or `-errno`. The functions below are the policy on top: they build the arguments
@@ -370,6 +369,7 @@ mod tests {
     const NEG_EAGAIN: isize = -11;
     const NEG_EINVAL: isize = -22;
     const NEG_EMFILE: isize = -24;
+    const NEG_ENOMEM: isize = -12;
 
     fn neg_enosys(abi: Abi) -> isize {
         match abi {
@@ -646,6 +646,66 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------------------------------ socket
+
+    #[test]
+    fn kernel_allocation_failure_is_typed_without_retry_or_invented_descriptor() {
+        for abi in BOTH {
+            for op in SocketOp::ALL {
+                let mut ops = Double::new(abi)
+                    .with_socket([NEG_ENOMEM, 7])
+                    .with_bind([NEG_ENOMEM, 0])
+                    .with_listen([NEG_ENOMEM, 0])
+                    .with_accept4([NEG_ENOMEM, 7])
+                    .with_recv([RecvStep::Raw(NEG_ENOMEM), RecvStep::Datagram(vec![1, 2, 3])]);
+                let listener = listening(abi, 6);
+                let datagram = datagram_socket(abi, 6);
+                let address = SockAddrIn {
+                    addr: [0, 0, 0, 0],
+                    port: 1400,
+                };
+                let mut buffer = [0_u8; 8];
+                let refused = match op {
+                    SocketOp::Socket => open_stream_socket(&mut ops, abi, Family::Inet).map(|_| ()),
+                    SocketOp::Bind => bind_v4(&mut ops, abi, 6, address),
+                    SocketOp::Listen => listen(&mut ops, abi, 6, 4).map(|_| ()),
+                    SocketOp::Accept4 => accept4(&mut ops, abi, &listener).map(|_| ()),
+                    SocketOp::Recv => {
+                        recv_datagram(&mut ops, abi, &datagram, &mut buffer).map(|_| ())
+                    }
+                };
+                assert_eq!(refused, Err(sys(op, SysError::Errno(12))), "{abi:?} {op}");
+                assert_eq!(ops.log.len(), 1, "ENOMEM must not spin or issue a fallback");
+                assert!(
+                    ops.status.is_empty(),
+                    "a failed allocation created no descriptor"
+                );
+
+                // Recovery is an explicit subsequent caller action. The same
+                // wrapper must still deliver its permitted positive behavior.
+                let fd_to_close = match op {
+                    SocketOp::Socket => {
+                        open_stream_socket(&mut ops, abi, Family::Inet).expect("socket")
+                    }
+                    SocketOp::Bind => {
+                        bind_v4(&mut ops, abi, 6, address).expect("bind");
+                        6
+                    }
+                    SocketOp::Listen => listen(&mut ops, abi, 6, 4).expect("listen").into_fd(),
+                    SocketOp::Accept4 => accept4(&mut ops, abi, &listener).expect("accept"),
+                    SocketOp::Recv => {
+                        let packet =
+                            recv_datagram(&mut ops, abi, &datagram, &mut buffer).expect("recv");
+                        assert_eq!(packet, Datagram::Complete { len: 3 });
+                        assert_eq!(&buffer[..3], &[1, 2, 3]);
+                        datagram.into_fd()
+                    }
+                };
+                assert_eq!(ops.log.len(), 2, "one call for each explicit attempt");
+                assert_eq!(ops.close(fd_to_close), 0);
+                assert_eq!(ops.log.last(), Some(&Call::Close { fd: fd_to_close }));
+            }
+        }
+    }
 
     #[test]
     fn open_socket_sets_nonblock_and_cloexec_in_the_call_itself_on_both_abis() {
