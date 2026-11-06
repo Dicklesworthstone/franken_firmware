@@ -522,7 +522,117 @@ def worlds() -> List[Dict[str, Any]]:
     out.append(world_def("S19-OUTPUT-DELAY", ops, cfg={"output_delay_ns": 1_850_000, "calibration_uncertainty_ns": 150_000},
                          tags=["join", "board-profile"],
                          note="a 1.85 ms calibrated output delay: the member begins that much earlier than the group start"))
+    out.extend(coarse_worlds())
     return out
+
+
+# ---- the coarse-clock worlds (S20-S23): a declared timer resolution far above the default 1 us ----------------
+
+
+def _floor_to(v: int, res: int) -> int:
+    return v - v % res
+
+
+def coarse_worlds() -> List[Dict[str, Any]]:
+    """Four worlds on clocks that tick coarsely (``timer_resolution_ns`` R is the one declared bound on how far
+    behind the true time any reading can lag, member or coordinator).  Each pairs what a coarse clock must accept
+    with what it must still refuse, so a rule loosened in either direction fails one of them."""
+    out: List[Dict[str, Any]] = []
+
+    # ---- S20 a 1.7 ms clock whose exchanges fit inside one tick: equal readings lock, a start joins, audio begins ------
+    r20 = 1_700_000
+    l0, g0 = 2_000 * r20, (9_000_000_000_000 // r20) * r20          # both on the tick grid, so the phases agree
+    goff = g0 - l0
+    w = ref.World(0, l0, g0, r20)
+    ops: List[Dict[str, Any]] = []
+    for k in range(6):
+        ts = (k * 600 + 1) * r20 + 100_000                          # 100 us into a tick; the whole exchange is 120 us
+        ops.append(probe(w, ts, 50 * US, 20 * US, 50 * US))
+        assert len({ops[-1]["t1"], ops[-1]["t4"]}) == 1 and ops[-1]["t2"] == ops[-1]["t3"], ops[-1]
+        if k in (1, 2, 5):
+            tc = ts + 300_000
+            ops.append(check(w.local(tc), w.group0 + tc))            # 2 probes: unlocked; 3 probes: unlocked; 6: locked
+    n = w.local(ts + 120_000) + 1 * MS
+    ops += [{"op": "authority", "epoch": 1, "expires": n + 10 * S, "now": n},
+            {"op": "plan", "now": n, "sched": {"epoch": 1, "start_group_ns": n + goff + 1 * S}},
+            {"op": "tick", "now": n},                                                       # not admitted: muted
+            {"op": "admit", "now": n, "sched": {"epoch": 1, "start_group_ns": n + goff + 1 * S}},
+            {"op": "tick", "now": n + 1 * S - 1},                                           # one ns before the start: muted
+            {"op": "tick", "now": n + 1 * S}]                                               # audible at the start
+    out.append(world_def("S20-COARSE-EQUAL-LOCK", ops, world=w, cfg={"timer_resolution_ns": r20, "lock_uncertainty_ns": 4_000_000},
+                         tags=["coarse", "positive:join", "boundary"],
+                         note="a 1.7 ms clock whose every exchange reads one tick (equal readings): it locks, the truth is within "
+                              "2R, a future start is admitted and audible exactly at the start"))
+
+    # ---- S21 local ticks of 3 ms, group ticks of 4 ms, R = 4 ms: a physical negative measured delay, and the refusals ----
+    r21 = 4_000_000
+    ms = MS
+    base = 12 * ms * 1_000                                          # a multiple of lcm(3 ms, 4 ms) = 12 ms
+    goff21 = 12 * ms * 750_000                                       # the coordinator's clock is far ahead; also on the grid
+
+    def raw(k: int, a: int, b: int, c: int, d: int, **extra: Any) -> Dict[str, Any]:
+        lb = base + k * 1_200_000_000                               # 100 ticks of 12 ms apart per exchange
+        op = {"op": "probe", "t1": lb + a, "t2": lb + goff21 + b, "t3": lb + goff21 + c, "t4": lb + d}
+        op.update(extra)
+        return op
+    ops = [
+        raw(0, 0, 0, 4 * ms, 3 * ms),            # send 2.5, arrive 2.6, leave 4.1, receive 4.2 ms: dwell 4 ms > round trip 3 ms
+        raw(1, 0, 0, 8 * ms, 0),                 # a 80 ppm slow local clock reads 0 across 4 ms: dwell 8 ms, round trip 0
+        raw(2, 0, 0, 12 * ms, 3 * ms),           # dwell 12 over rtt 3: 9 ms over, past 2R + rate allowance 8 000 700: refused
+        raw(3, 0, 0, 12 * ms, 0),                # equal readings, dwell 12 ms past 2R + 400: LocalClockRegression
+        raw(4, 3 * ms, 0, 0, 0),                 # the local clock ran backwards (t4 < t1): LocalClockRegression
+        raw(5, 0, 0, 0, 0),                      # ordinary: all readings equal, a sub-resolution exchange
+        raw(6, 0, 0, 4 * ms, 3 * ms),            # the physical witness again, now accepted as the fourth
+        raw(7, 0, 0, 0, 3 * ms),                 # ordinary
+    ]
+    ops.insert(7, {"op": "check", "now": base + 6 * 1_200_000_000 + 3 * ms})
+    ops.append({"op": "check", "now": base + 7 * 1_200_000_000 + 3 * ms})
+    out.append(world_def("S21-COARSE-NEGATIVE-DELAY", ops, cfg={"timer_resolution_ns": r21, "lock_uncertainty_ns": 9_000_000},
+                         tags=["coarse", "negative:excess-dwell", "boundary"],
+                         note="3 ms local / 4 ms group ticks, R = 4 ms: dwell above the round trip by less than 2R + rate is "
+                              "physical and admitted with delay 0; by more, or backwards, is refused"))
+
+    # ---- S22 rounding alone moves the offset 5 ms: noise; a 12 ms group step: a discontinuity, then muted ---------------
+    r22 = 4_000_000
+    goff22 = goff21
+
+    def raw22(k: int, a: int, b: int, c: int, d: int) -> Dict[str, Any]:
+        lb = base + k * 1_200_000_000
+        return {"op": "probe", "t1": lb + a, "t2": lb + goff22 + b, "t3": lb + goff22 + c, "t4": lb + d}
+    ops = [raw22(k, 3 * ms, 0, 0, 3 * ms) for k in range(4)]
+    ops.append(raw22(4, 6 * ms, 8 * ms, 8 * ms, 6 * ms))             # offset 5 ms from the others: within two roundings
+    n = base + 4 * 1_200_000_000 + 6 * ms + 1 * ms
+    start = n + goff22 + 2 * ms + 1 * S                              # the newest sample's offset is goff + 2 ms
+    ops += [{"op": "authority", "epoch": 1, "expires": n + 100 * S, "now": n},
+            {"op": "admit", "now": n, "sched": {"epoch": 1, "start_group_ns": start}},
+            {"op": "tick", "now": n + 1 * S - 1},
+            {"op": "tick", "now": n + 1 * S},
+            raw22(6, 6 * ms, 20 * ms, 20 * ms, 6 * ms),              # the group clock stepped 12 ms
+            {"op": "tick", "now": base + 6 * 1_200_000_000 + 7 * ms},
+            raw22(7, 6 * ms, 20 * ms, 20 * ms, 6 * ms)]              # the new offset is accepted as the first of a new fit
+    out.append(world_def("S22-COARSE-ROUNDING-PAIR", ops, cfg={"timer_resolution_ns": r22, "lock_uncertainty_ns": 9_000_000},
+                         tags=["coarse", "negative:discontinuity", "positive:join"],
+                         note="exchanges read (3,0,0,3) ms four times then (6,8,8,6) ms: a 5 ms offset step that two roundings "
+                              "explain is accepted; a 12 ms group step is a discontinuity: reset, muted"))
+    return out + coarse_fit_worlds()
+
+
+def coarse_fit_worlds() -> List[Dict[str, Any]]:
+    r23 = 200_000
+    l0, g0 = 4_000 * r23, (9_000_000_000_000 // r23) * r23
+    w = ref.World(-80_000, l0, g0, r23)
+    g = ref.lcg(23)
+    ops: List[Dict[str, Any]] = []
+    for k in range(40):
+        ts = 1 * S + k * 600 * MS + next(g) % (300 * US)
+        ops.append(probe(w, ts, 100 * US + next(g) % (100 * US), 20 * US, 100 * US + next(g) % (100 * US)))
+        if k % 4 == 3:
+            tc = ts + 5 * MS
+            ops.append(check(w.local(tc), w.group0 + tc))
+    return [world_def("S23-COARSE-FITTED-RATE", ops, world=w, cfg={"timer_resolution_ns": r23},
+                      tags=["coarse", "rate", "drift"],
+                      note="a 200 us clock 80 ppm slow probed every 0.6 s: the fit is refused while its rounding bound exceeds the "
+                           "oscillator bound, then comes into force; the query tick is read through the fitted ratio")]
 
 
 # ---- mixed profiles --------------------------------------------------------------------------------

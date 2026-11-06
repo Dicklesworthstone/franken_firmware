@@ -2516,6 +2516,18 @@
    "max_err_ns": 283500,
    "max_unc_ns": 760723,
    "min_margin_ns": 107273
+  },
+  "S20-COARSE-EQUAL-LOCK": {
+   "checks": 3,
+   "max_err_ns": 400000,
+   "max_unc_ns": 3400170,
+   "min_margin_ns": 3000170
+  },
+  "S23-COARSE-FITTED-RATE": {
+   "checks": 10,
+   "max_err_ns": 300205,
+   "max_unc_ns": 600447,
+   "min_margin_ns": 200285
   }
  },
  "units": "nanoseconds unless a name says otherwise",
@@ -37302,6 +37314,1834 @@
    "tags": [
     "join",
     "board-profile"
+   ]
+  },
+  {
+   "cfg": {
+    "lock_uncertainty_ns": 4000000,
+    "timer_resolution_ns": 1700000
+   },
+   "clocks": {
+    "group0": 8999998900000,
+    "local0": 3400000000,
+    "res_ns": 1700000,
+    "skew_ppb": 0
+   },
+   "epoch": 1,
+   "expect": [
+    {
+     "delay": 0,
+     "events": [
+      "n03.probe.accepted@1/4"
+     ],
+     "offset": 8996598900000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1000,
+     "status": "Unlocked"
+    },
+    {
+     "delay": 0,
+     "events": [
+      "n03.probe.accepted@2/4"
+     ],
+     "offset": 8996598900000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1001,
+     "status": "Unlocked"
+    },
+    {
+     "accepted": 2,
+     "anchor_local_mid": 4421700000,
+     "binding": "Uncertainty",
+     "events": [
+      "n03.truth.within"
+     ],
+     "group_ns": 9001020600000,
+     "holdover_until": 10420000001,
+     "mute": "NotLocked",
+     "op": "check",
+     "output": "Muted",
+     "rate_in_force": false,
+     "rate_restarts": 0,
+     "ratio_ppb": 0,
+     "ratio_unc_ppb": 100000,
+     "rejected_total": 0,
+     "resets": 0,
+     "samples": 2,
+     "status": "Unlocked",
+     "uncertainty_ns": 3400170
+    },
+    {
+     "delay": 0,
+     "events": [
+      "n03.probe.accepted@3/4"
+     ],
+     "offset": 8996598900000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1002,
+     "status": "Unlocked"
+    },
+    {
+     "accepted": 3,
+     "anchor_local_mid": 5441700000,
+     "binding": "Uncertainty",
+     "events": [
+      "n03.truth.within"
+     ],
+     "group_ns": 9002040600000,
+     "holdover_until": 11440000001,
+     "mute": "NotLocked",
+     "op": "check",
+     "output": "Muted",
+     "rate_in_force": false,
+     "rate_restarts": 0,
+     "ratio_ppb": 0,
+     "ratio_unc_ppb": 100000,
+     "rejected_total": 0,
+     "resets": 0,
+     "samples": 3,
+     "status": "Unlocked",
+     "uncertainty_ns": 3400170
+    },
+    {
+     "delay": 0,
+     "events": [
+      "n03.probe.accepted@4/4",
+      "n03.status.locked"
+     ],
+     "offset": 8996598900000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1003,
+     "status": "Locked"
+    },
+    {
+     "delay": 0,
+     "events": [
+      "n03.probe.accepted@5/4"
+     ],
+     "offset": 8996598900000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1004,
+     "status": "Locked"
+    },
+    {
+     "delay": 0,
+     "events": [
+      "n03.probe.accepted@6/4"
+     ],
+     "offset": 8996598900000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1005,
+     "status": "Locked"
+    },
+    {
+     "accepted": 6,
+     "anchor_local_mid": 8501700000,
+     "binding": "Uncertainty",
+     "events": [
+      "n03.truth.within"
+     ],
+     "group_ns": 9005100600000,
+     "holdover_until": 14500000001,
+     "mute": "NotAdmitted",
+     "op": "check",
+     "output": "Muted",
+     "rate_in_force": false,
+     "rate_restarts": 0,
+     "ratio_ppb": 0,
+     "ratio_unc_ppb": 100000,
+     "rejected_total": 0,
+     "resets": 0,
+     "samples": 6,
+     "status": "Locked",
+     "uncertainty_ns": 3400170
+    },
+    {
+     "events": [],
+     "op": "authority",
+     "rate_in_force": false,
+     "result": "ok"
+    },
+    {
+     "binding": "Uncertainty",
+     "deadline_local_ns": 9402700000,
+     "events": [],
+     "op": "plan",
+     "rate_in_force": false,
+     "result": "ok",
+     "start_local_ns": 9502700000,
+     "uncertainty_at_start_ns": 3500270,
+     "valid_until_local_ns": 14500000001
+    },
+    {
+     "events": [
+      "n03.output.muted:NotAdmitted"
+     ],
+     "mute": "NotAdmitted",
+     "op": "tick",
+     "output": "Muted",
+     "rate_in_force": false
+    },
+    {
+     "binding": "Uncertainty",
+     "deadline_local_ns": 9402700000,
+     "events": [
+      "n03.admit.accepted"
+     ],
+     "op": "admit",
+     "rate_in_force": false,
+     "result": "ok",
+     "start_local_ns": 9502700000,
+     "uncertainty_at_start_ns": 3500270,
+     "valid_until_local_ns": 14500000001
+    },
+    {
+     "events": [
+      "n03.output.armed"
+     ],
+     "op": "tick",
+     "output": "Armed",
+     "rate_in_force": false,
+     "starts_in_ns": 1
+    },
+    {
+     "events": [
+      "n03.output.audible"
+     ],
+     "op": "tick",
+     "output": "Audible",
+     "rate_in_force": false
+    }
+   ],
+   "id": "S20-COARSE-EQUAL-LOCK",
+   "leader": 7,
+   "note": "a 1.7 ms clock whose every exchange reads one tick (equal readings): it locks, the truth is within 2R, a future start is admitted and audible exactly at the start",
+   "ops": [
+    {
+     "op": "probe",
+     "t1": 3401700000,
+     "t2": 9000000600000,
+     "t3": 9000000600000,
+     "t4": 3401700000
+    },
+    {
+     "op": "probe",
+     "t1": 4421700000,
+     "t2": 9001020600000,
+     "t3": 9001020600000,
+     "t4": 4421700000
+    },
+    {
+     "now": 4421700000,
+     "op": "check",
+     "truth_group": 9001021000000
+    },
+    {
+     "op": "probe",
+     "t1": 5441700000,
+     "t2": 9002040600000,
+     "t3": 9002040600000,
+     "t4": 5441700000
+    },
+    {
+     "now": 5441700000,
+     "op": "check",
+     "truth_group": 9002041000000
+    },
+    {
+     "op": "probe",
+     "t1": 6461700000,
+     "t2": 9003060600000,
+     "t3": 9003060600000,
+     "t4": 6461700000
+    },
+    {
+     "op": "probe",
+     "t1": 7481700000,
+     "t2": 9004080600000,
+     "t3": 9004080600000,
+     "t4": 7481700000
+    },
+    {
+     "op": "probe",
+     "t1": 8501700000,
+     "t2": 9005100600000,
+     "t3": 9005100600000,
+     "t4": 8501700000
+    },
+    {
+     "now": 8501700000,
+     "op": "check",
+     "truth_group": 9005101000000
+    },
+    {
+     "epoch": 1,
+     "expires": 18502700000,
+     "now": 8502700000,
+     "op": "authority"
+    },
+    {
+     "now": 8502700000,
+     "op": "plan",
+     "sched": {
+      "epoch": 1,
+      "start_group_ns": 9006101600000
+     }
+    },
+    {
+     "now": 8502700000,
+     "op": "tick"
+    },
+    {
+     "now": 8502700000,
+     "op": "admit",
+     "sched": {
+      "epoch": 1,
+      "start_group_ns": 9006101600000
+     }
+    },
+    {
+     "now": 9502699999,
+     "op": "tick"
+    },
+    {
+     "now": 9502700000,
+     "op": "tick"
+    }
+   ],
+   "seq_base": 1000,
+   "tags": [
+    "coarse",
+    "positive:join",
+    "boundary"
+   ]
+  },
+  {
+   "cfg": {
+    "lock_uncertainty_ns": 9000000,
+    "timer_resolution_ns": 4000000
+   },
+   "epoch": 1,
+   "expect": [
+    {
+     "delay": 0,
+     "events": [
+      "n03.probe.accepted@1/4"
+     ],
+     "offset": 9000000500000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1000,
+     "status": "Unlocked"
+    },
+    {
+     "delay": 0,
+     "events": [
+      "n03.probe.accepted@2/4"
+     ],
+     "offset": 9000004000000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1001,
+     "status": "Unlocked"
+    },
+    {
+     "events": [
+      "n03.probe.rejected:Malformed"
+     ],
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "Malformed",
+     "seq": 1002,
+     "status": "Unlocked"
+    },
+    {
+     "events": [
+      "n03.probe.rejected:LocalClockRegression"
+     ],
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "LocalClockRegression",
+     "seq": 1003,
+     "status": "Unlocked"
+    },
+    {
+     "events": [
+      "n03.probe.rejected:LocalClockRegression"
+     ],
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "LocalClockRegression",
+     "seq": 1004,
+     "status": "Unlocked"
+    },
+    {
+     "delay": 0,
+     "events": [
+      "n03.probe.accepted@3/4"
+     ],
+     "offset": 9000000000000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1005,
+     "status": "Unlocked"
+    },
+    {
+     "delay": 0,
+     "events": [
+      "n03.probe.accepted@4/4",
+      "n03.status.locked"
+     ],
+     "offset": 9000000500000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1006,
+     "status": "Locked"
+    },
+    {
+     "accepted": 4,
+     "anchor_local_mid": 19201500000,
+     "binding": "Uncertainty",
+     "events": [],
+     "group_ns": 9019203500000,
+     "holdover_until": 29197500001,
+     "mute": "NotAdmitted",
+     "op": "check",
+     "output": "Muted",
+     "rate_in_force": false,
+     "rate_restarts": 0,
+     "ratio_ppb": 0,
+     "ratio_unc_ppb": 100000,
+     "rejected_total": 3,
+     "resets": 0,
+     "samples": 4,
+     "status": "Locked",
+     "uncertainty_ns": 8000550
+    },
+    {
+     "delay": 3000000,
+     "events": [
+      "n03.probe.accepted@5/4"
+     ],
+     "offset": 8999998500000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1007,
+     "status": "Locked"
+    },
+    {
+     "accepted": 5,
+     "anchor_local_mid": 19201500000,
+     "binding": "Uncertainty",
+     "events": [],
+     "group_ns": 9020403500000,
+     "holdover_until": 29197500001,
+     "mute": "NotAdmitted",
+     "op": "check",
+     "output": "Muted",
+     "rate_in_force": false,
+     "rate_restarts": 0,
+     "ratio_ppb": 0,
+     "ratio_unc_ppb": 100000,
+     "rejected_total": 3,
+     "resets": 0,
+     "samples": 5,
+     "status": "Locked",
+     "uncertainty_ns": 8120550
+    }
+   ],
+   "id": "S21-COARSE-NEGATIVE-DELAY",
+   "leader": 7,
+   "note": "3 ms local / 4 ms group ticks, R = 4 ms: dwell above the round trip by less than 2R + rate is physical and admitted with delay 0; by more, or backwards, is refused",
+   "ops": [
+    {
+     "op": "probe",
+     "t1": 12000000000,
+     "t2": 9012000000000,
+     "t3": 9012004000000,
+     "t4": 12003000000
+    },
+    {
+     "op": "probe",
+     "t1": 13200000000,
+     "t2": 9013200000000,
+     "t3": 9013208000000,
+     "t4": 13200000000
+    },
+    {
+     "op": "probe",
+     "t1": 14400000000,
+     "t2": 9014400000000,
+     "t3": 9014412000000,
+     "t4": 14403000000
+    },
+    {
+     "op": "probe",
+     "t1": 15600000000,
+     "t2": 9015600000000,
+     "t3": 9015612000000,
+     "t4": 15600000000
+    },
+    {
+     "op": "probe",
+     "t1": 16803000000,
+     "t2": 9016800000000,
+     "t3": 9016800000000,
+     "t4": 16800000000
+    },
+    {
+     "op": "probe",
+     "t1": 18000000000,
+     "t2": 9018000000000,
+     "t3": 9018000000000,
+     "t4": 18000000000
+    },
+    {
+     "op": "probe",
+     "t1": 19200000000,
+     "t2": 9019200000000,
+     "t3": 9019204000000,
+     "t4": 19203000000
+    },
+    {
+     "now": 19203000000,
+     "op": "check"
+    },
+    {
+     "op": "probe",
+     "t1": 20400000000,
+     "t2": 9020400000000,
+     "t3": 9020400000000,
+     "t4": 20403000000
+    },
+    {
+     "now": 20403000000,
+     "op": "check"
+    }
+   ],
+   "seq_base": 1000,
+   "tags": [
+    "coarse",
+    "negative:excess-dwell",
+    "boundary"
+   ]
+  },
+  {
+   "cfg": {
+    "lock_uncertainty_ns": 9000000,
+    "timer_resolution_ns": 4000000
+   },
+   "epoch": 1,
+   "expect": [
+    {
+     "delay": 0,
+     "events": [
+      "n03.probe.accepted@1/4"
+     ],
+     "offset": 8999997000000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1000,
+     "status": "Unlocked"
+    },
+    {
+     "delay": 0,
+     "events": [
+      "n03.probe.accepted@2/4"
+     ],
+     "offset": 8999997000000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1001,
+     "status": "Unlocked"
+    },
+    {
+     "delay": 0,
+     "events": [
+      "n03.probe.accepted@3/4"
+     ],
+     "offset": 8999997000000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1002,
+     "status": "Unlocked"
+    },
+    {
+     "delay": 0,
+     "events": [
+      "n03.probe.accepted@4/4",
+      "n03.status.locked"
+     ],
+     "offset": 8999997000000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1003,
+     "status": "Locked"
+    },
+    {
+     "delay": 0,
+     "events": [
+      "n03.probe.accepted@5/4"
+     ],
+     "offset": 9000002000000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1004,
+     "status": "Locked"
+    },
+    {
+     "events": [],
+     "op": "authority",
+     "rate_in_force": false,
+     "result": "ok"
+    },
+    {
+     "binding": "Uncertainty",
+     "deadline_local_ns": 17707000000,
+     "events": [
+      "n03.admit.accepted"
+     ],
+     "op": "admit",
+     "rate_in_force": false,
+     "result": "ok",
+     "start_local_ns": 17807000000,
+     "uncertainty_at_start_ns": 8100500,
+     "valid_until_local_ns": 26802000001
+    },
+    {
+     "events": [
+      "n03.output.armed"
+     ],
+     "op": "tick",
+     "output": "Armed",
+     "rate_in_force": false,
+     "starts_in_ns": 1
+    },
+    {
+     "events": [
+      "n03.output.audible"
+     ],
+     "op": "tick",
+     "output": "Audible",
+     "rate_in_force": false
+    },
+    {
+     "events": [
+      "n03.probe.rejected:Discontinuity",
+      "n03.reset:Discontinuity",
+      "n03.status.unlocked"
+     ],
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "Discontinuity",
+     "seq": 1005,
+     "status": "Unlocked"
+    },
+    {
+     "events": [
+      "n03.output.muted:Discontinuity"
+     ],
+     "mute": "Discontinuity",
+     "op": "tick",
+     "output": "Muted",
+     "rate_in_force": false
+    },
+    {
+     "delay": 0,
+     "events": [
+      "n03.probe.accepted@1/4"
+     ],
+     "offset": 9000014000000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1006,
+     "status": "Unlocked"
+    }
+   ],
+   "id": "S22-COARSE-ROUNDING-PAIR",
+   "leader": 7,
+   "note": "exchanges read (3,0,0,3) ms four times then (6,8,8,6) ms: a 5 ms offset step that two roundings explain is accepted; a 12 ms group step is a discontinuity: reset, muted",
+   "ops": [
+    {
+     "op": "probe",
+     "t1": 12003000000,
+     "t2": 9012000000000,
+     "t3": 9012000000000,
+     "t4": 12003000000
+    },
+    {
+     "op": "probe",
+     "t1": 13203000000,
+     "t2": 9013200000000,
+     "t3": 9013200000000,
+     "t4": 13203000000
+    },
+    {
+     "op": "probe",
+     "t1": 14403000000,
+     "t2": 9014400000000,
+     "t3": 9014400000000,
+     "t4": 14403000000
+    },
+    {
+     "op": "probe",
+     "t1": 15603000000,
+     "t2": 9015600000000,
+     "t3": 9015600000000,
+     "t4": 15603000000
+    },
+    {
+     "op": "probe",
+     "t1": 16806000000,
+     "t2": 9016808000000,
+     "t3": 9016808000000,
+     "t4": 16806000000
+    },
+    {
+     "epoch": 1,
+     "expires": 116807000000,
+     "now": 16807000000,
+     "op": "authority"
+    },
+    {
+     "now": 16807000000,
+     "op": "admit",
+     "sched": {
+      "epoch": 1,
+      "start_group_ns": 9017809000000
+     }
+    },
+    {
+     "now": 17806999999,
+     "op": "tick"
+    },
+    {
+     "now": 17807000000,
+     "op": "tick"
+    },
+    {
+     "op": "probe",
+     "t1": 19206000000,
+     "t2": 9019220000000,
+     "t3": 9019220000000,
+     "t4": 19206000000
+    },
+    {
+     "now": 19207000000,
+     "op": "tick"
+    },
+    {
+     "op": "probe",
+     "t1": 20406000000,
+     "t2": 9020420000000,
+     "t3": 9020420000000,
+     "t4": 20406000000
+    }
+   ],
+   "seq_base": 1000,
+   "tags": [
+    "coarse",
+    "negative:discontinuity",
+    "positive:join"
+   ]
+  },
+  {
+   "cfg": {
+    "timer_resolution_ns": 200000
+   },
+   "clocks": {
+    "group0": 9000000000000,
+    "local0": 800000000,
+    "res_ns": 200000,
+    "skew_ppb": -80000
+   },
+   "epoch": 1,
+   "expect": [
+    {
+     "delay": 0,
+     "events": [
+      "n03.probe.accepted@1/4"
+     ],
+     "offset": 8999200000000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1000,
+     "status": "Unlocked"
+    },
+    {
+     "delay": 200000,
+     "events": [
+      "n03.probe.accepted@2/4"
+     ],
+     "offset": 8999200100000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1001,
+     "status": "Unlocked"
+    },
+    {
+     "delay": 0,
+     "events": [
+      "n03.probe.accepted@3/4"
+     ],
+     "offset": 8999200200000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1002,
+     "status": "Unlocked"
+    },
+    {
+     "delay": 400000,
+     "events": [
+      "n03.probe.accepted@4/4",
+      "n03.status.locked"
+     ],
+     "offset": 8999200200000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1003,
+     "status": "Locked"
+    },
+    {
+     "accepted": 4,
+     "anchor_local_mid": 3000100000,
+     "binding": "Uncertainty",
+     "events": [
+      "n03.truth.within"
+     ],
+     "group_ns": 9002805000000,
+     "holdover_until": 18999900001,
+     "mute": "NotAdmitted",
+     "op": "check",
+     "output": "Muted",
+     "rate_in_force": false,
+     "rate_restarts": 0,
+     "ratio_ppb": 0,
+     "ratio_unc_ppb": 100000,
+     "rejected_total": 0,
+     "resets": 0,
+     "samples": 4,
+     "status": "Locked",
+     "uncertainty_ns": 460490
+    },
+    {
+     "delay": 200000,
+     "events": [
+      "n03.probe.accepted@5/4"
+     ],
+     "offset": 8999200300000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1004,
+     "status": "Locked"
+    },
+    {
+     "delay": 200000,
+     "events": [
+      "n03.probe.accepted@6/4"
+     ],
+     "offset": 8999200300000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1005,
+     "status": "Locked"
+    },
+    {
+     "delay": 400000,
+     "events": [
+      "n03.probe.accepted@7/4"
+     ],
+     "offset": 8999200400000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1006,
+     "status": "Locked"
+    },
+    {
+     "delay": 200000,
+     "events": [
+      "n03.probe.accepted@8/4"
+     ],
+     "offset": 8999200500000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1007,
+     "status": "Locked"
+    },
+    {
+     "accepted": 8,
+     "anchor_local_mid": 5999900000,
+     "binding": "Uncertainty",
+     "events": [
+      "n03.truth.within"
+     ],
+     "group_ns": 9005205300000,
+     "holdover_until": 20999700001,
+     "mute": "NotAdmitted",
+     "op": "check",
+     "output": "Muted",
+     "rate_in_force": false,
+     "rate_restarts": 0,
+     "ratio_ppb": 0,
+     "ratio_unc_ppb": 100000,
+     "rejected_total": 0,
+     "resets": 0,
+     "samples": 8,
+     "status": "Locked",
+     "uncertainty_ns": 500510
+    },
+    {
+     "delay": 400000,
+     "events": [
+      "n03.probe.accepted@9/4"
+     ],
+     "offset": 8999200400000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1008,
+     "status": "Locked"
+    },
+    {
+     "delay": 400000,
+     "events": [
+      "n03.probe.accepted@10/4"
+     ],
+     "offset": 8999200600000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1009,
+     "status": "Locked"
+    },
+    {
+     "delay": 400000,
+     "events": [
+      "n03.probe.accepted@11/4"
+     ],
+     "offset": 8999200600000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1010,
+     "status": "Locked"
+    },
+    {
+     "delay": 200000,
+     "events": [
+      "n03.probe.accepted@12/4"
+     ],
+     "offset": 8999200500000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1011,
+     "status": "Locked"
+    },
+    {
+     "accepted": 12,
+     "anchor_local_mid": 8399700000,
+     "binding": "Uncertainty",
+     "events": [
+      "n03.truth.within"
+     ],
+     "group_ns": 9007605100000,
+     "holdover_until": 23399500001,
+     "mute": "NotAdmitted",
+     "op": "check",
+     "output": "Muted",
+     "rate_in_force": false,
+     "rate_restarts": 0,
+     "ratio_ppb": 0,
+     "ratio_unc_ppb": 100000,
+     "rejected_total": 0,
+     "resets": 0,
+     "samples": 12,
+     "status": "Locked",
+     "uncertainty_ns": 500510
+    },
+    {
+     "delay": 200000,
+     "events": [
+      "n03.probe.accepted@13/4"
+     ],
+     "offset": 8999200700000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1012,
+     "status": "Locked"
+    },
+    {
+     "delay": 200000,
+     "events": [
+      "n03.probe.accepted@14/4"
+     ],
+     "offset": 8999200700000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1013,
+     "status": "Locked"
+    },
+    {
+     "delay": 400000,
+     "events": [
+      "n03.probe.accepted@15/4"
+     ],
+     "offset": 8999200800000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1014,
+     "status": "Locked"
+    },
+    {
+     "delay": 200000,
+     "events": [
+      "n03.probe.accepted@16/4"
+     ],
+     "offset": 8999200700000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1015,
+     "status": "Locked"
+    },
+    {
+     "accepted": 16,
+     "anchor_local_mid": 10799500000,
+     "binding": "Uncertainty",
+     "events": [
+      "n03.truth.within"
+     ],
+     "group_ns": 9010004900000,
+     "holdover_until": 25799300001,
+     "mute": "NotAdmitted",
+     "op": "check",
+     "output": "Muted",
+     "rate_in_force": false,
+     "rate_restarts": 0,
+     "ratio_ppb": 0,
+     "ratio_unc_ppb": 100000,
+     "rejected_total": 0,
+     "resets": 0,
+     "samples": 16,
+     "status": "Locked",
+     "uncertainty_ns": 500490
+    },
+    {
+     "delay": 200000,
+     "events": [
+      "n03.probe.accepted@17/4"
+     ],
+     "offset": 8999200900000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1016,
+     "status": "Locked"
+    },
+    {
+     "delay": 400000,
+     "events": [
+      "n03.probe.accepted@18/4"
+     ],
+     "offset": 8999201000000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1017,
+     "status": "Locked"
+    },
+    {
+     "delay": 400000,
+     "events": [
+      "n03.probe.accepted@19/4"
+     ],
+     "offset": 8999201000000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1018,
+     "status": "Locked"
+    },
+    {
+     "delay": 200000,
+     "events": [
+      "n03.probe.accepted@20/4"
+     ],
+     "offset": 8999200900000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1019,
+     "status": "Locked"
+    },
+    {
+     "accepted": 20,
+     "anchor_local_mid": 13199100000,
+     "binding": "Uncertainty",
+     "events": [
+      "n03.truth.within"
+     ],
+     "group_ns": 9012404900000,
+     "holdover_until": 28198900001,
+     "mute": "NotAdmitted",
+     "op": "check",
+     "output": "Muted",
+     "rate_in_force": false,
+     "rate_restarts": 0,
+     "ratio_ppb": 0,
+     "ratio_unc_ppb": 100000,
+     "rejected_total": 0,
+     "resets": 0,
+     "samples": 16,
+     "status": "Locked",
+     "uncertainty_ns": 500510
+    },
+    {
+     "delay": 400000,
+     "events": [
+      "n03.probe.accepted@21/4"
+     ],
+     "offset": 8999201200000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1020,
+     "status": "Locked"
+    },
+    {
+     "delay": 400000,
+     "events": [
+      "n03.probe.accepted@22/4"
+     ],
+     "offset": 8999201200000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1021,
+     "status": "Locked"
+    },
+    {
+     "delay": 400000,
+     "events": [
+      "n03.probe.accepted@23/4"
+     ],
+     "offset": 8999201200000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1022,
+     "status": "Locked"
+    },
+    {
+     "delay": 200000,
+     "events": [
+      "n03.probe.accepted@24/4"
+     ],
+     "offset": 8999201300000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1023,
+     "status": "Locked"
+    },
+    {
+     "accepted": 24,
+     "anchor_local_mid": 15599100000,
+     "binding": "Uncertainty",
+     "events": [
+      "n03.truth.within"
+     ],
+     "group_ns": 9014805300000,
+     "holdover_until": 30598900001,
+     "mute": "NotAdmitted",
+     "op": "check",
+     "output": "Muted",
+     "rate_in_force": false,
+     "rate_restarts": 0,
+     "ratio_ppb": 0,
+     "ratio_unc_ppb": 100000,
+     "rejected_total": 0,
+     "resets": 0,
+     "samples": 16,
+     "status": "Locked",
+     "uncertainty_ns": 500510
+    },
+    {
+     "delay": 400000,
+     "events": [
+      "n03.probe.accepted@25/4"
+     ],
+     "offset": 8999201200000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1024,
+     "status": "Locked"
+    },
+    {
+     "delay": 400000,
+     "events": [
+      "n03.probe.accepted@26/4"
+     ],
+     "offset": 8999201400000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1025,
+     "status": "Locked"
+    },
+    {
+     "delay": 200000,
+     "events": [
+      "n03.probe.accepted@27/4"
+     ],
+     "offset": 8999201300000,
+     "op": "probe",
+     "rate_in_force": false,
+     "result": "ok",
+     "seq": 1026,
+     "status": "Locked"
+    },
+    {
+     "delay": 200000,
+     "events": [
+      "n03.probe.accepted@28/4"
+     ],
+     "offset": 8999201500000,
+     "op": "probe",
+     "rate_in_force": true,
+     "result": "ok",
+     "seq": 1027,
+     "status": "Locked"
+    },
+    {
+     "accepted": 28,
+     "anchor_local_mid": 17998900000,
+     "binding": "Uncertainty",
+     "events": [
+      "n03.truth.within"
+     ],
+     "group_ns": 9017205300422,
+     "holdover_until": 33184861751,
+     "mute": "NotAdmitted",
+     "op": "check",
+     "output": "Muted",
+     "rate_in_force": true,
+     "rate_restarts": 0,
+     "ratio_ppb": 86153,
+     "ratio_unc_ppb": 98773,
+     "rejected_total": 0,
+     "resets": 0,
+     "samples": 16,
+     "status": "Locked",
+     "tol": {
+      "holdover_until": 614986,
+      "ratio_unc_ppb": 4,
+      "uncertainty_ns": 3
+     },
+     "uncertainty_ns": 500521
+    },
+    {
+     "delay": 200000,
+     "events": [
+      "n03.probe.accepted@29/4"
+     ],
+     "offset": 8999201500000,
+     "op": "probe",
+     "rate_in_force": true,
+     "result": "ok",
+     "seq": 1028,
+     "status": "Locked"
+    },
+    {
+     "delay": 200000,
+     "events": [
+      "n03.probe.accepted@30/4"
+     ],
+     "offset": 8999201500000,
+     "op": "probe",
+     "rate_in_force": true,
+     "result": "ok",
+     "seq": 1029,
+     "status": "Locked"
+    },
+    {
+     "delay": 400000,
+     "events": [
+      "n03.probe.accepted@31/4"
+     ],
+     "offset": 8999201400000,
+     "op": "probe",
+     "rate_in_force": true,
+     "result": "ok",
+     "seq": 1030,
+     "status": "Locked"
+    },
+    {
+     "delay": 400000,
+     "events": [
+      "n03.probe.accepted@32/4"
+     ],
+     "offset": 8999201600000,
+     "op": "probe",
+     "rate_in_force": true,
+     "result": "ok",
+     "seq": 1031,
+     "status": "Locked"
+    },
+    {
+     "accepted": 32,
+     "anchor_local_mid": 20398600000,
+     "binding": "Uncertainty",
+     "events": [
+      "n03.truth.within"
+     ],
+     "group_ns": 9019605000399,
+     "holdover_until": 36671786949,
+     "mute": "NotAdmitted",
+     "op": "check",
+     "output": "Muted",
+     "rate_in_force": true,
+     "rate_restarts": 0,
+     "ratio_ppb": 83251,
+     "ratio_unc_ppb": 86029,
+     "rejected_total": 0,
+     "resets": 0,
+     "samples": 16,
+     "status": "Locked",
+     "tol": {
+      "holdover_until": 756639,
+      "ratio_unc_ppb": 4,
+      "uncertainty_ns": 3
+     },
+     "uncertainty_ns": 600447
+    },
+    {
+     "delay": 200000,
+     "events": [
+      "n03.probe.accepted@33/4"
+     ],
+     "offset": 8999201500000,
+     "op": "probe",
+     "rate_in_force": true,
+     "result": "ok",
+     "seq": 1032,
+     "status": "Locked"
+    },
+    {
+     "delay": 400000,
+     "events": [
+      "n03.probe.accepted@34/4"
+     ],
+     "offset": 8999201600000,
+     "op": "probe",
+     "rate_in_force": true,
+     "result": "ok",
+     "seq": 1033,
+     "status": "Locked"
+    },
+    {
+     "delay": 200000,
+     "events": [
+      "n03.probe.accepted@35/4"
+     ],
+     "offset": 8999201700000,
+     "op": "probe",
+     "rate_in_force": true,
+     "result": "ok",
+     "seq": 1034,
+     "status": "Locked"
+    },
+    {
+     "delay": 400000,
+     "events": [
+      "n03.probe.accepted@36/4"
+     ],
+     "offset": 8999201800000,
+     "op": "probe",
+     "rate_in_force": true,
+     "result": "ok",
+     "seq": 1035,
+     "status": "Locked"
+    },
+    {
+     "accepted": 36,
+     "anchor_local_mid": 22198600000,
+     "binding": "Uncertainty",
+     "events": [
+      "n03.truth.within"
+     ],
+     "group_ns": 9022004948771,
+     "holdover_until": 39696628511,
+     "mute": "NotAdmitted",
+     "op": "check",
+     "output": "Muted",
+     "rate_in_force": true,
+     "rate_restarts": 0,
+     "ratio_ppb": 80668,
+     "ratio_unc_ppb": 85722,
+     "rejected_total": 0,
+     "resets": 0,
+     "samples": 16,
+     "status": "Locked",
+     "tol": {
+      "holdover_until": 816503,
+      "ratio_unc_ppb": 4,
+      "uncertainty_ns": 5
+     },
+     "uncertainty_ns": 551862
+    },
+    {
+     "delay": 0,
+     "events": [
+      "n03.probe.accepted@37/4"
+     ],
+     "offset": 8999201800000,
+     "op": "probe",
+     "rate_in_force": true,
+     "result": "ok",
+     "seq": 1036,
+     "status": "Locked"
+    },
+    {
+     "delay": 200000,
+     "events": [
+      "n03.probe.accepted@38/4"
+     ],
+     "offset": 8999201900000,
+     "op": "probe",
+     "rate_in_force": true,
+     "result": "ok",
+     "seq": 1037,
+     "status": "Locked"
+    },
+    {
+     "delay": 400000,
+     "events": [
+      "n03.probe.accepted@39/4"
+     ],
+     "offset": 8999202000000,
+     "op": "probe",
+     "rate_in_force": true,
+     "result": "ok",
+     "seq": 1038,
+     "status": "Locked"
+    },
+    {
+     "delay": 200000,
+     "events": [
+      "n03.probe.accepted@40/4"
+     ],
+     "offset": 8999201900000,
+     "op": "probe",
+     "rate_in_force": true,
+     "result": "ok",
+     "seq": 1039,
+     "status": "Locked"
+    },
+    {
+     "accepted": 40,
+     "anchor_local_mid": 25198300000,
+     "binding": "Uncertainty",
+     "events": [
+      "n03.truth.within"
+     ],
+     "group_ns": 9024405100394,
+     "holdover_until": 44696382648,
+     "mute": "NotAdmitted",
+     "op": "check",
+     "output": "Muted",
+     "rate_in_force": true,
+     "rate_restarts": 0,
+     "ratio_ppb": 80477,
+     "ratio_unc_ppb": 76929,
+     "rejected_total": 0,
+     "resets": 0,
+     "samples": 16,
+     "status": "Locked",
+     "tol": {
+      "holdover_until": 1013824,
+      "ratio_unc_ppb": 4,
+      "uncertainty_ns": 3
+     },
+     "uncertainty_ns": 500409
+    }
+   ],
+   "id": "S23-COARSE-FITTED-RATE",
+   "leader": 7,
+   "note": "a 200 us clock 80 ppm slow probed every 0.6 s: the fit is refused while its rounding bound exceeds the oscillator bound, then comes into force; the query tick is read through the fitted ratio",
+   "ops": [
+    {
+     "op": "probe",
+     "t1": 1800000000,
+     "t2": 9001000000000,
+     "t3": 9001000200000,
+     "t4": 1800200000
+    },
+    {
+     "op": "probe",
+     "t1": 2400000000,
+     "t2": 9001600200000,
+     "t3": 9001600400000,
+     "t4": 2400400000
+    },
+    {
+     "op": "probe",
+     "t1": 3000000000,
+     "t2": 9002200200000,
+     "t3": 9002200400000,
+     "t4": 3000200000
+    },
+    {
+     "op": "probe",
+     "t1": 3599800000,
+     "t2": 9002800200000,
+     "t3": 9002800200000,
+     "t4": 3600200000
+    },
+    {
+     "now": 3604800000,
+     "op": "check",
+     "truth_group": 9002805140361
+    },
+    {
+     "op": "probe",
+     "t1": 4199800000,
+     "t2": 9003400200000,
+     "t3": 9003400400000,
+     "t4": 4200200000
+    },
+    {
+     "op": "probe",
+     "t1": 4799800000,
+     "t2": 9004000200000,
+     "t3": 9004000200000,
+     "t4": 4800000000
+    },
+    {
+     "op": "probe",
+     "t1": 5399800000,
+     "t2": 9004600400000,
+     "t3": 9004600400000,
+     "t4": 5400200000
+    },
+    {
+     "op": "probe",
+     "t1": 5999800000,
+     "t2": 9005200400000,
+     "t3": 9005200400000,
+     "t4": 6000000000
+    },
+    {
+     "now": 6004800000,
+     "op": "check",
+     "truth_group": 9005205255413
+    },
+    {
+     "op": "probe",
+     "t1": 6599600000,
+     "t2": 9005800200000,
+     "t3": 9005800200000,
+     "t4": 6600000000
+    },
+    {
+     "op": "probe",
+     "t1": 7199400000,
+     "t2": 9006400200000,
+     "t3": 9006400200000,
+     "t4": 7199800000
+    },
+    {
+     "op": "probe",
+     "t1": 7799400000,
+     "t2": 9007000200000,
+     "t3": 9007000200000,
+     "t4": 7799800000
+    },
+    {
+     "op": "probe",
+     "t1": 8399600000,
+     "t2": 9007600200000,
+     "t3": 9007600200000,
+     "t4": 8399800000
+    },
+    {
+     "now": 8404600000,
+     "op": "check",
+     "truth_group": 9007605234753
+    },
+    {
+     "op": "probe",
+     "t1": 8999600000,
+     "t2": 9008200400000,
+     "t3": 9008200400000,
+     "t4": 8999800000
+    },
+    {
+     "op": "probe",
+     "t1": 9599400000,
+     "t2": 9008800200000,
+     "t3": 9008800400000,
+     "t4": 9599800000
+    },
+    {
+     "op": "probe",
+     "t1": 10199400000,
+     "t2": 9009400400000,
+     "t3": 9009400400000,
+     "t4": 10199800000
+    },
+    {
+     "op": "probe",
+     "t1": 10799400000,
+     "t2": 9010000200000,
+     "t3": 9010000200000,
+     "t4": 10799600000
+    },
+    {
+     "now": 10804200000,
+     "op": "check",
+     "truth_group": 9010005200205
+    },
+    {
+     "op": "probe",
+     "t1": 11399200000,
+     "t2": 9010600200000,
+     "t3": 9010600200000,
+     "t4": 11399400000
+    },
+    {
+     "op": "probe",
+     "t1": 11999000000,
+     "t2": 9011200200000,
+     "t3": 9011200200000,
+     "t4": 11999400000
+    },
+    {
+     "op": "probe",
+     "t1": 12599000000,
+     "t2": 9011800200000,
+     "t3": 9011800200000,
+     "t4": 12599400000
+    },
+    {
+     "op": "probe",
+     "t1": 13199000000,
+     "t2": 9012400000000,
+     "t3": 9012400000000,
+     "t4": 13199200000
+    },
+    {
+     "now": 13204000000,
+     "op": "check",
+     "truth_group": 9012405012985
+    },
+    {
+     "op": "probe",
+     "t1": 13798800000,
+     "t2": 9013000200000,
+     "t3": 9013000200000,
+     "t4": 13799200000
+    },
+    {
+     "op": "probe",
+     "t1": 14399000000,
+     "t2": 9013600400000,
+     "t3": 9013600400000,
+     "t4": 14399400000
+    },
+    {
+     "op": "probe",
+     "t1": 14999000000,
+     "t2": 9014200400000,
+     "t3": 9014200400000,
+     "t4": 14999400000
+    },
+    {
+     "op": "probe",
+     "t1": 15599000000,
+     "t2": 9014800400000,
+     "t3": 9014800400000,
+     "t4": 15599200000
+    },
+    {
+     "now": 15604000000,
+     "op": "check",
+     "truth_group": 9014805259077
+    },
+    {
+     "op": "probe",
+     "t1": 16198800000,
+     "t2": 9015400200000,
+     "t3": 9015400200000,
+     "t4": 16199200000
+    },
+    {
+     "op": "probe",
+     "t1": 16798600000,
+     "t2": 9016000200000,
+     "t3": 9016000200000,
+     "t4": 16799000000
+    },
+    {
+     "op": "probe",
+     "t1": 17398800000,
+     "t2": 9016600200000,
+     "t3": 9016600200000,
+     "t4": 17399000000
+    },
+    {
+     "op": "probe",
+     "t1": 17998800000,
+     "t2": 9017200400000,
+     "t3": 9017200400000,
+     "t4": 17999000000
+    },
+    {
+     "now": 18003800000,
+     "op": "check",
+     "truth_group": 9017205244913
+    },
+    {
+     "op": "probe",
+     "t1": 18598800000,
+     "t2": 9017800400000,
+     "t3": 9017800400000,
+     "t4": 18599000000
+    },
+    {
+     "op": "probe",
+     "t1": 19198600000,
+     "t2": 9018400200000,
+     "t3": 9018400200000,
+     "t4": 19198800000
+    },
+    {
+     "op": "probe",
+     "t1": 19798600000,
+     "t2": 9019000200000,
+     "t3": 9019000200000,
+     "t4": 19799000000
+    },
+    {
+     "op": "probe",
+     "t1": 20398400000,
+     "t2": 9019600200000,
+     "t3": 9019600200000,
+     "t4": 20398800000
+    },
+    {
+     "now": 20403400000,
+     "op": "check",
+     "truth_group": 9019605122557
+    },
+    {
+     "op": "probe",
+     "t1": 20998600000,
+     "t2": 9020200200000,
+     "t3": 9020200200000,
+     "t4": 20998800000
+    },
+    {
+     "op": "probe",
+     "t1": 21598400000,
+     "t2": 9020800200000,
+     "t3": 9020800200000,
+     "t4": 21598800000
+    },
+    {
+     "op": "probe",
+     "t1": 22198400000,
+     "t2": 9021400200000,
+     "t3": 9021400400000,
+     "t4": 22198800000
+    },
+    {
+     "op": "probe",
+     "t1": 22798200000,
+     "t2": 9022000200000,
+     "t3": 9022000200000,
+     "t4": 22798600000
+    },
+    {
+     "now": 22803200000,
+     "op": "check",
+     "truth_group": 9022005072713
+    },
+    {
+     "op": "probe",
+     "t1": 23398200000,
+     "t2": 9022600000000,
+     "t3": 9022600200000,
+     "t4": 23398400000
+    },
+    {
+     "op": "probe",
+     "t1": 23998200000,
+     "t2": 9023200200000,
+     "t3": 9023200200000,
+     "t4": 23998400000
+    },
+    {
+     "op": "probe",
+     "t1": 24598000000,
+     "t2": 9023800200000,
+     "t3": 9023800200000,
+     "t4": 24598400000
+    },
+    {
+     "op": "probe",
+     "t1": 25198200000,
+     "t2": 9024400200000,
+     "t3": 9024400200000,
+     "t4": 25198400000
+    },
+    {
+     "now": 25203200000,
+     "op": "check",
+     "truth_group": 9024405194325
+    }
+   ],
+   "seq_base": 1000,
+   "tags": [
+    "coarse",
+    "rate",
+    "drift"
    ]
   }
  ],

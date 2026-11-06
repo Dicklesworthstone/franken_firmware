@@ -217,6 +217,10 @@ def registry(vec: dict) -> List[dict]:
               "audible only on a locked/holdover clock within the threshold, a valid authority, an admitted start and the lock count; never right after a reset",
               T("n03_audible_output_always_rests_on_a_locked_clock_a_valid_authority_and_an_admitted_start"),
               ["n03-property"]),
+        _case("N03-COARSE-WORLDS", "AC-STALE", "smoke",
+              "four scripted coarse-clock worlds, host and guest: equal readings lock and join (1.7 ms); the physical negative measured delay beside the dwell past 2R + rate, equal-reading regression and t4 < t1 (3 ms / 4 ms ticks); a rounding-only 5 ms offset step beside a 12 ms group step (discontinuity, muted); a fit refused while its rounding bound exceeds the oscillator bound, then in force, the query tick read through the fitted positive ratio (200 us, 80 ppm slow)",
+              WT("S20-COARSE-EQUAL-LOCK", "S21-COARSE-NEGATIVE-DELAY", "S22-COARSE-ROUNDING-PAIR", "S23-COARSE-FITTED-RATE"),
+              ["S20-COARSE-EQUAL-LOCK", "S21-COARSE-NEGATIVE-DELAY", "S22-COARSE-ROUNDING-PAIR", "S23-COARSE-FITTED-RATE"]),
         _case("N03-COARSE-CLOCK", "AC-STALE", "full",
               "a coarse clock: equal readings are a sub-resolution exchange, backwards time is not; truth against an injected world; "
               "stuck, replayed, stale and too-coarse clocks are refused; the rounding bound on the fitted ratio",
