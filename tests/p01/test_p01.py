@@ -1536,7 +1536,7 @@ class PlanningReconcileTests(unittest.TestCase):
 
     def codes(self, name=None):
         live, generated = planning_fixtures.planted(name) if name else planning_fixtures.world()
-        return planning_reconcile.codes(planning_reconcile.reconcile(live, generated))
+        return planning_reconcile.codes(planning_reconcile.reconcile(live, generated, generated["workspace_contract"]))
 
     def test_a_catalog_that_matches_the_live_data_reports_nothing(self):
         self.assertEqual(self.codes(), [])
@@ -1632,6 +1632,50 @@ class PlanningReconcileTests(unittest.TestCase):
         for number in range(1, 7):
             self.assertEqual(ids[f"P01-REC-{number:03d}"], "planning_plants")
         self.assertEqual(ids["P01-REC-007"], "planning_real")
+        self.assertEqual(ids["P01-REC-008"], "planning_plants")
+
+    def test_required_feature_parser_rejects_ambiguous_or_malformed_authority(self):
+        block = planning_fixtures.registry_block
+        begin, end = planning_reconcile.FEATURES_BEGIN, planning_reconcile.FEATURES_END
+        expected = planning_fixtures.REQUIRED_FEATURES
+        self.assertEqual(planning_reconcile.parse_required_features("before\n" + block(list(reversed(expected))) + "\nafter"), expected)
+        for body in ("", block() + block(), end + block(), begin + '\n```json\n[]\n```\n' + end,
+                     begin + '\n```json\n{"required_features":[],"extra":1}\n```\n' + end,
+                     block([]), block(["tailnet_native", "tailnet_native"]), block(["tailnet_native", 7]),
+                     block("tailnet_native"), block(["TailnetNative"]), block([" tailnet_native"]),
+                     block().replace("```json", "```"), block().replace("{", "{broken", 1)):
+            with self.subTest(body=body):
+                with self.assertRaises(planning_reconcile.InputError):
+                    planning_reconcile.parse_required_features(body)
+
+    def test_actual_contract_demotion_and_optional_features_are_judged_through_the_read_only_cli(self):
+        live, generated = planning_fixtures.world()
+        with tempfile.TemporaryDirectory() as tmp:
+            live_path, planning = self.write_files(tmp, live, generated)
+            contract_path = os.path.join(tmp, "workspace-contract.json")
+            for demoted, want in ((False, 0), (True, 1)):
+                doc = planning_fixtures.workspace_contract()
+                if demoted:
+                    next(s for s in doc["features"] if s["name"] == "tailnet_native")["requirement"] = "optional"
+                with open(contract_path, "w", encoding="utf-8") as f:
+                    json.dump(doc, f)
+                before = (_file_sha256(contract_path), os.stat(contract_path).st_mtime_ns)
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    result = planning_reconcile.main(["--live", live_path, "--planning", planning, "--contract", contract_path])
+                self.assertEqual(result, want, out.getvalue())
+                if demoted:
+                    self.assertIn("required_feature_demoted", out.getvalue())
+                self.assertEqual((_file_sha256(contract_path), os.stat(contract_path).st_mtime_ns), before)
+
+    def test_generated_lists_cannot_hide_a_contract_feature_demotion(self):
+        live, generated = planning_fixtures.planted("native_feature_demoted")
+        self.assertEqual(planning_reconcile.codes(planning_reconcile.reconcile(live, generated, generated["workspace_contract"])),
+                         ["required_feature_demoted"])
+        for row in (planning_fixtures._task(generated, "P01"), planning_fixtures._row(generated, "P01")):
+            row["required_features"].remove("tailnet_native")
+        self.assertEqual(planning_reconcile.codes(planning_reconcile.reconcile(live, generated, generated["workspace_contract"])),
+                         ["required_feature_demoted", "required_feature_projection_differs"])
 
 
 def _file_sha256(path):
@@ -1883,7 +1927,8 @@ class PlanningGenerateTests(unittest.TestCase):
         return [issue("ffw-aa1", "A1", "the root", self.body("A1", "the root", [], inputs=("Owner scope, sanitized inventory and existing evidence registry.",))),
                 issue("ffw-bb2", "B1", "second", self.body("B1", "second", ["INT-001", "R01"], inputs=("one", "two")), ["ffw-aa1"]),
                 issue("ffw-ff3", "F1", "written by hand", "Own the hand-written thing.\n\nAcceptance:\n- it works\n\nTests:\n- a test\n", ["ffw-bb2"],
-                      priority=3)]
+                      priority=3),
+                issue("ffw-pp4", "P01", "required features", "Workspace authority.\n\n" + planning_fixtures.registry_block() + "\n")]
 
     @staticmethod
     def text(issues):
@@ -1945,10 +1990,10 @@ class PlanningGenerateTests(unittest.TestCase):
             self.repo(tmp, self.issues())
             code, out, err = self.run_generator(tmp)
             self.assertEqual(code, 0, err)
-            self.assertIn("forms {'freeform': 1, 'template': 2}", out)
+            self.assertIn("forms {'freeform': 2, 'template': 2}", out)
             self.assertEqual(self.reconcile(tmp), [])
             result = self.check(tmp)
-            self.assertEqual((result["status"], result["tasks"], result["blocking_edges"], result["expected_blocking_edges"]), ("pass", 3, 2, 2), result["errors"])
+            self.assertEqual((result["status"], result["tasks"], result["blocking_edges"], result["expected_blocking_edges"]), ("pass", 4, 2, 2), result["errors"])
             catalog = {t["key"]: t for t in self.load(tmp, "docs", "planning", "task-catalog.json")}
             self.assertEqual((catalog["B1"]["form"], catalog["B1"]["design_packages"], catalog["B1"]["inputs"], catalog["B1"]["deps"]),
                              ("template", ["INT-001", "R01"], ["one", "two"], ["A1"]))
@@ -1961,7 +2006,7 @@ class PlanningGenerateTests(unittest.TestCase):
             rows = {r["id"]: r for r in self.load(base, "beads-snapshot.json")["issues"]}
             self.assertEqual([(rows[i]["dependency_count"], rows[i]["dependent_count"]) for i in ("ffw-aa1", "ffw-bb2", "ffw-ff3")],
                              [(0, 1), (1, 1), (1, 0)])
-            self.assertEqual(self.load(base, "bead-map.json"), {"A1": "ffw-aa1", "B1": "ffw-bb2", "F1": "ffw-ff3"})
+            self.assertEqual(self.load(base, "bead-map.json"), {"A1": "ffw-aa1", "B1": "ffw-bb2", "F1": "ffw-ff3", "P01": "ffw-pp4"})
             body = self.read(tmp, "docs", "planning", "bead-bodies", "F1.md")
             self.assertEqual(body, self.issues()[2]["description"], "a body is the live description byte for byte")
 
@@ -2079,7 +2124,7 @@ class PlanningGenerateTests(unittest.TestCase):
             self.assertIn("0 changed", out)
             added = set(first) - before
             self.assertEqual(added, {"task-catalog.json", "bead-map.json", "bead-manifest.json", "beads-snapshot.json",
-                                     "bead-bodies/A1.md", "bead-bodies/B1.md", "bead-bodies/F1.md"})
+                                     "bead-bodies/A1.md", "bead-bodies/B1.md", "bead-bodies/F1.md", "bead-bodies/P01.md"})
             self.assertIn("bead-bodies/GONE.md", first, "a body whose bead is gone is left on disk, not deleted")
             self.assertFalse(os.path.exists(os.path.join(tmp, ".beads", "issues.jsonl.new")))
             self.assertEqual(self.read(tmp, ".beads", "issues.jsonl"), self.text(self.issues()), "the live export is not touched")
@@ -2140,6 +2185,36 @@ class PlanningGenerateTests(unittest.TestCase):
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 self.assertEqual(self.gen.main(["--root", tmp, "--live", inside]), 2)
             self.assertIn("must not be inside docs/planning", err.getvalue())
+
+    def test_required_features_are_projected_from_the_live_block_without_changing_the_body(self):
+        issues = self.issues()
+        row = issues[-1]
+        row["description"] = row["description"].replace(planning_fixtures.registry_block(),
+                                                       planning_fixtures.registry_block(list(reversed(planning_fixtures.REQUIRED_FEATURES))))
+        files, warnings = self.gen.build(self.text(issues))
+        self.assertEqual(warnings, [])
+        catalog = next(t for t in json.loads(files["task-catalog.json"]) if t["key"] == "P01")
+        snapshot = next(t for t in json.loads(files["beads-snapshot.json"])["issues"] if t["id"] == row["id"])
+        self.assertEqual(catalog["required_features"], planning_fixtures.REQUIRED_FEATURES)
+        self.assertEqual(snapshot["required_features"], planning_fixtures.REQUIRED_FEATURES)
+        self.assertEqual(files["bead-bodies/P01.md"].decode(), row["description"])
+        self.assertEqual(snapshot["description"], row["description"])
+        self.assertNotIn("artwork", catalog["required_features"])
+        self.assertNotIn("virtual_house_harness", catalog["required_features"])
+
+    def test_generator_refuses_missing_malformed_or_duplicate_live_required_feature_authority(self):
+        bodies = ["Authority absent.", planning_fixtures.registry_block([]),
+                  planning_fixtures.registry_block(["tailnet_native", "tailnet_native"]),
+                  planning_fixtures.registry_block() + planning_fixtures.registry_block(),
+                  planning_fixtures.registry_block().replace("{", "{broken", 1)]
+        for body in bodies:
+            with self.subTest(body=body):
+                issues = self.issues()
+                issues[-1]["description"] = body
+                with self.assertRaises(self.gen.GenerateError):
+                    self.gen.build(self.text(issues))
+        with self.assertRaisesRegex(self.gen.GenerateError, "P01"):
+            self.gen.build(self.text(self.issues()[:-1]))
 
 
 class ToolchainTests(unittest.TestCase):

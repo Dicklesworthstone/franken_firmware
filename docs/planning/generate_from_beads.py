@@ -15,6 +15,10 @@ reads an earlier generated file, so a stale generated value cannot reach the out
                         (no account handle: `created_by` is not copied)
   bead-bodies/KEY.md    the live description, byte for byte
 
+The single marked FFW_REQUIRED_FEATURES_V1 JSON block in P01 is authoritative. Its validated required_features list is
+projected onto the existing P01 catalog and snapshot rows. Missing, malformed or duplicate authority refuses the run before
+anything is written; optional workspace features are not inferred or promoted.
+
 The key is the part of the live title before the first `: `. A body that follows the generated template (`# KEY: title`, Goal, Scope,
 Why, Inputs, Owned outputs, Acceptance, Evidence, Authority, Failure/closure, Mapped design packages, Detailed implementation and
 validation contract) is parsed into `"form": "template"`; a body with no `# KEY: ` heading and none of the lines only the template has
@@ -42,6 +46,8 @@ DEFAULT_ROOT = os.path.dirname(os.path.dirname(HERE))
 STANDALONE = "canonical standalone task"
 DEFAULT_INPUT = "Owner scope, sanitized inventory and existing evidence registry."
 CONTRACT_MARKER = "Detailed implementation and validation contract:"
+sys.path.insert(0, os.path.join(DEFAULT_ROOT, "tests", "p01"))
+from planning_reconcile import InputError, parse_required_features  # noqa: E402
 TEMPLATE_LABELS = ("Goal: ", "Scope: ", "Why: ", "Inputs:", "Owned outputs: ", "Acceptance: ", "Evidence: ", "Authority: ",
                    "Failure/closure: ", "Mapped design packages: ", CONTRACT_MARKER)
 _TITLE = re.compile(r"^([A-Z]+[0-9]+): (.+)$", re.S)
@@ -134,6 +140,12 @@ def build(live_text: str) -> Tuple[Dict[str, bytes], List[str]]:
             raise GenerateError(f"{issue['id']} and {keyed[key]['issue']['id']} both claim the key {key}")
         keyed[key] = {"issue": issue, "title": title}
         key_of[issue["id"]] = key
+    if "P01" not in keyed:
+        raise GenerateError("P01: the live required-feature registry is missing")
+    try:
+        required_features = parse_required_features(keyed["P01"]["issue"].get("description") or "")
+    except InputError as err:
+        raise GenerateError(f"{keyed['P01']['issue']['id']} (P01): {err}") from err
     warnings: List[str] = []
     order = sorted(keyed, key=_key_order)
     catalog, manifest, alias, bodies = [], [], {}, {}
@@ -165,6 +177,8 @@ def build(live_text: str) -> Tuple[Dict[str, bytes], List[str]]:
             if field in parsed:
                 row[field] = parsed[field]
         row["form"] = parsed["form"]
+        if key == "P01":
+            row["required_features"] = required_features
         catalog.append(row)
         alias[key] = issue["id"]
         bodies[f"bead-bodies/{key}.md"] = body.encode("utf-8")
@@ -174,6 +188,8 @@ def build(live_text: str) -> Tuple[Dict[str, bytes], List[str]]:
     for key in order:
         issue = keyed[key]["issue"]
         row = {field: issue[field] for field in SNAPSHOT_FIELDS if field in issue}
+        if key == "P01":
+            row["required_features"] = required_features
         row["dependency_count"] = len(deps_of[key])
         row["dependent_count"] = dependents[issue["id"]]
         snapshot.append(row)

@@ -3093,6 +3093,16 @@
     "full"
    ],
    "owner": "NavyHollow (P01): regenerate with `python3 docs/planning/generate_from_beads.py` and commit the result when a bead's title, body, acceptance_criteria or edges change or a bead is added; a comment or a status change needs nothing"
+  },
+  {
+   "id": "P01-REC-008",
+   "kind": "planning_plants",
+   "title": "reconcile: the live required-feature authority, generated projections and actual contract agree; missing, malformed, duplicate, drifted or demoted features fail while optional features stay optional",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "group": "required_features"
   }
  ],
  "invariants": [
@@ -3372,7 +3382,7 @@
   },
   {
    "id": "INV-P01-27",
-   "statement": "Generated planning files are reconciled to the live Beads before generated validation is used as whole-project proof: complete ID sets, exact typed dependencies, titles, descriptions, acceptance_criteria and aliases are compared read-only, and a task absent from the catalog, a changed acceptance_criteria, a removed gate edge and a stale or paginated export each fail",
+   "statement": "Generated planning files are reconciled to the live Beads before generated validation is used as whole-project proof: complete ID sets, exact typed dependencies, titles, descriptions, acceptance_criteria and aliases are compared read-only, and a task absent from the catalog, a changed acceptance_criteria, a removed gate edge and a stale or paginated export each fail; the authoritative live P01 required-feature list also agrees with generated catalog/snapshot projections and actual workspace required flags",
    "cases": [
     "P01-REC-001",
     "P01-REC-002",
@@ -3380,10 +3390,11 @@
     "P01-REC-004",
     "P01-REC-005",
     "P01-REC-006",
-    "P01-REC-007"
+    "P01-REC-007",
+    "P01-REC-008"
    ],
    "status": "partial",
-   "note": "the checker and its planted negatives are covered; the real tree is judged by P01-REC-007: it passes while docs/planning (regenerated from the live export by docs/planning/generate_from_beads.py) agrees with the live Beads, is blocked while the files differ, and has no live export in a git-archive snapshot; a required-feature registry is not compared because no generated planning file or live field carries one"
+   "note": "the checker and its planted negatives are covered; P01-REC-007 judges the real generated files against the live Beads, including required features from the single marked P01 description block, projected into the existing catalog and snapshot rows and compared with actual workspace contract required flags. Missing, malformed or duplicate authority, generated list drift, missing native features and required-to-optional demotion block qualification. artwork and virtual_house_harness remain optional. Missing live exports and other existing planning differences remain BLOCKED, never passed."
   },
   {
    "id": "INV-P01-20",

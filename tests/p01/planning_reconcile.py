@@ -7,7 +7,7 @@ snapshot, and edges are added with br only. Generated validation is therefore no
 compared field by field. This module compares them and reports every difference as a stable code and a subject. It writes
 nothing, never invokes br, and never edits a generated or a live field.
 
-    planning_reconcile.py --live PATH [--planning DIR] [--json]
+    planning_reconcile.py --live PATH [--planning DIR] [--contract PATH] [--json]
 
 PATH is the live data: the local export `.beads/issues.jsonl` (one issue per line, with typed dependency edges), or a JSON
 document with an `issues` list and optional pagination keys (`total`, `limit`, `offset`, `has_more`) such as `br list --json`
@@ -30,10 +30,17 @@ What is compared, and the code of each difference:
   blocking_edge_missing_in_live   the catalog depends on a task through an edge live does not have (a gate edge removed)
   edge_type_differs               the live edge between the same two tasks has another type than `blocks`
   live_edge_not_in_generated      a live edge (any type) the catalog does not have
+  required_feature_registry_missing/invalid   the authoritative P01 description block is absent or malformed
+  required_feature_projection_missing/invalid/differs   the catalog or snapshot does not project that live list
+  workspace_feature_registry_invalid          the workspace contract's feature declarations are malformed
+  required_feature_missing_from_contract       a live required feature has no workspace declaration
+  required_feature_demoted                     a live required feature is optional in the workspace contract
+  required_feature_not_live                    the contract marks a feature required that the live list does not
 
 Not compared, by design: status, priority, labels, comments and timestamps other than the staleness test, because they move
-with ordinary tracker work. A required-feature registry is NOT compared: no generated planning file and no live field carries
-one (the only machine-readable registry is the `features` list of the P01 workspace contract, which has no mapping to tasks).
+with ordinary tracker work. Required features come from the marked JSON block in the live P01 description. Its catalog and
+snapshot projections and the workspace contract's required flags must agree; optional features remain optional. No mapping
+from individual features to tasks is inferred.
 """
 from __future__ import annotations
 
@@ -48,6 +55,9 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 PLANNING_DIR = os.path.join(REPO, "docs", "planning")
 STANDALONE = "canonical standalone task"
+WORKSPACE_CONTRACT = os.path.join(REPO, "crates", "franken-board-profile", "tests", "vectors", "p01_workspace_contract.json")
+FEATURES_BEGIN = "<!-- FFW_REQUIRED_FEATURES_V1 -->"
+FEATURES_END = "<!-- /FFW_REQUIRED_FEATURES_V1 -->"
 Finding = Tuple[str, str]
 
 
@@ -56,6 +66,44 @@ class InputError(Exception):
 
 
 # ------------------------------------------------------------------------------------------------------- input
+
+def feature_names(value: Any) -> List[str]:
+    """Validate a nonempty, duplicate-free feature list; comparison order is immaterial, spelling is exact."""
+    if not isinstance(value, list) or not value or any(
+            not isinstance(name, str) or re.fullmatch(r"[a-z][a-z0-9_]*", name) is None for name in value):
+        raise InputError("required_features must be a nonempty list of feature names")
+    if len(value) != len(set(value)):
+        raise InputError("required_features contains duplicate names")
+    return sorted(value)
+
+
+def parse_required_features(description: str) -> List[str]:
+    """The sole authoritative registry is one marked, fenced JSON object in the LIVE P01 description."""
+    if description.count(FEATURES_BEGIN) != 1 or description.count(FEATURES_END) != 1:
+        raise InputError("expected exactly one FFW_REQUIRED_FEATURES_V1 block")
+    before, rest = description.split(FEATURES_BEGIN)
+    if FEATURES_END in before:
+        raise InputError("required feature registry closes before it opens")
+    block, _after = rest.split(FEATURES_END)
+    match = re.fullmatch(r"\s*```json\n(.*?)\n```\s*", block, re.S)
+    if not match:
+        raise InputError("required feature registry must contain a fenced JSON object")
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise InputError(f"duplicate JSON key {key!r} in required feature registry")
+            result[key] = value
+        return result
+
+    try:
+        doc = json.loads(match.group(1), object_pairs_hook=unique_object)
+    except ValueError as err:
+        raise InputError(f"required feature registry is not JSON: {err}") from err
+    if not isinstance(doc, dict) or set(doc) != {"required_features"}:
+        raise InputError("required feature registry must contain only required_features")
+    return feature_names(doc["required_features"])
 
 def _read_text(path: str) -> str:
     try:
@@ -115,7 +163,7 @@ def _design_packages(description: str) -> Optional[List[str]]:
     return [] if text == STANDALONE else sorted(part.strip() for part in text.split(",") if part.strip())
 
 
-def reconcile(live: Dict[str, Any], generated: Dict[str, Any]) -> List[Finding]:
+def reconcile(live: Dict[str, Any], generated: Dict[str, Any], workspace_contract: Optional[Dict[str, Any]] = None) -> List[Finding]:
     """Every difference between the live data and the generated planning files, sorted, as (code, subject) pairs."""
     found: set = set()
 
@@ -139,6 +187,51 @@ def reconcile(live: Dict[str, Any], generated: Dict[str, Any]) -> List[Finding]:
 
     def label(issue_id: str) -> str:
         return key_of.get(issue_id, issue_id)
+
+    p01 = [issue for issue in issues if (issue.get("title") or "").startswith("P01: ")]
+    required = None
+    if len(p01) != 1:
+        add("required_feature_registry_missing" if not p01 else "required_feature_registry_invalid", "P01")
+    else:
+        body = p01[0].get("description") or ""
+        try:
+            required = parse_required_features(body)
+        except InputError as err:
+            missing = FEATURES_BEGIN not in body and FEATURES_END not in body
+            add("required_feature_registry_missing" if missing else "required_feature_registry_invalid", f"P01: {err}")
+    if required is not None:
+        for source, row in (("catalog", catalog.get("P01")), ("snapshot", snapshot.get(alias.get("P01")))):
+            if row is None or "required_features" not in row:
+                add("required_feature_projection_missing", f"P01:{source}")
+                continue
+            try:
+                projected = feature_names(row["required_features"])
+            except InputError as err:
+                add("required_feature_projection_invalid", f"P01:{source}: {err}")
+            else:
+                if required != projected:
+                    add("required_feature_projection_differs", f"P01:{source}")
+        if workspace_contract is None:
+            try:
+                workspace_contract = json.loads(_read_text(WORKSPACE_CONTRACT))
+            except ValueError as err:
+                raise InputError(f"workspace contract is not JSON: {err}") from err
+        specs = workspace_contract.get("features") if isinstance(workspace_contract, dict) else None
+        valid = isinstance(specs, list) and bool(specs) and all(
+            isinstance(spec, dict) and isinstance(spec.get("name"), str)
+            and re.fullmatch(r"[a-z][a-z0-9_]*", spec["name"]) and spec.get("requirement") in ("required", "optional") for spec in specs)
+        if not valid or len({spec["name"] for spec in specs}) != len(specs):
+            add("workspace_feature_registry_invalid", "P01")
+        else:
+            by_name = {spec["name"]: spec for spec in specs}
+            for name in required:
+                if name not in by_name:
+                    add("required_feature_missing_from_contract", name)
+                elif by_name[name]["requirement"] != "required":
+                    add("required_feature_demoted", name)
+            for name in sorted(set(by_name) - set(required)):
+                if by_name[name]["requirement"] == "required":
+                    add("required_feature_not_live", name)
 
     for key in catalog:
         if key not in alias:
@@ -220,12 +313,14 @@ def main(argv: List[str]) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
     ap.add_argument("--live", required=True, metavar="PATH", help="the local export .beads/issues.jsonl, or a JSON document with issues")
     ap.add_argument("--planning", default=PLANNING_DIR, metavar="DIR", help="the generated planning directory (default docs/planning)")
+    ap.add_argument("--contract", default=WORKSPACE_CONTRACT, metavar="PATH", help="the actual P01 workspace contract")
     ap.add_argument("--json", action="store_true", help="print the findings as JSON")
     args = ap.parse_args(argv)
     try:
         live, generated = load_live(args.live), load_generated(args.planning)
-        findings = reconcile(live, generated)
-    except (InputError, KeyError, TypeError) as err:
+        contract = json.loads(_read_text(args.contract))
+        findings = reconcile(live, generated, contract)
+    except (InputError, KeyError, TypeError, ValueError) as err:
         print(f"error: {type(err).__name__}: {err}", file=sys.stderr)
         return 2
     result = {"status": "pass" if not findings else "fail", "live_issues": len(live["issues"]),
