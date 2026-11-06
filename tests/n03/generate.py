@@ -536,7 +536,13 @@ def _floor_to(v: int, res: int) -> int:
 def coarse_worlds() -> List[Dict[str, Any]]:
     """Four worlds on clocks that tick coarsely (``timer_resolution_ns`` R is the one declared bound on how far
     behind the true time any reading can lag, member or coordinator).  Each pairs what a coarse clock must accept
-    with what it must still refuse, so a rule loosened in either direction fails one of them."""
+    with what it must still refuse, so a rule loosened in either direction fails one of them.
+
+    These are API-level ledgers. S21 combines individual exchange witness shapes, not one continuous physical
+    trajectory with fixed local/group tick grids. A future tick at a supplied boundary tests the Output state;
+    the supplied nanosecond arguments need not be reachable readings of the declared coarse clock, and no
+    physical audio start precision follows from its Armed-to-Audible transition.
+    """
     out: List[Dict[str, Any]] = []
 
     # ---- S20 a 1.7 ms clock whose exchanges fit inside one tick: equal readings lock, a start joins, audio begins ------
@@ -557,7 +563,7 @@ def coarse_worlds() -> List[Dict[str, Any]]:
             {"op": "plan", "now": n, "sched": {"epoch": 1, "start_group_ns": n + goff + 1 * S}},
             {"op": "tick", "now": n},                                                       # not admitted: muted
             {"op": "admit", "now": n, "sched": {"epoch": 1, "start_group_ns": n + goff + 1 * S}},
-            {"op": "tick", "now": n + 1 * S - 1},                                           # one ns before the start: muted
+            {"op": "tick", "now": n + 1 * S - 1},                                           # supplied boundary: armed
             {"op": "tick", "now": n + 1 * S}]                                               # audible at the start
     out.append(world_def("S20-COARSE-EQUAL-LOCK", ops, world=w, cfg={"timer_resolution_ns": r20, "lock_uncertainty_ns": 4_000_000},
                          tags=["coarse", "positive:join", "boundary"],
