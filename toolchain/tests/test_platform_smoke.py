@@ -1029,8 +1029,10 @@ class RunnerPlatformTests(unittest.TestCase):
             if event["ev"] == "admit":
                 self.assertEqual(event["args"], ["admit", "--json", "--"])
         self.assertEqual(receipt["build_admission"], {
-            "mips": {"attempts": 2, "recommendation": "offload", "observation": "observed", "worker": "trj", "reason": "fastest"},
-            "ppc": {"attempts": 1, "recommendation": "offload", "observation": "observed", "worker": "trj", "reason": "fastest"}})
+            "mips": {"attempts": 2, "refresh_exit_codes": [0, 0], "recommendation": "offload", "observation": "observed", "worker": "trj",
+                     "reason": "fastest"},
+            "ppc": {"attempts": 1, "refresh_exit_codes": [0], "recommendation": "offload", "observation": "observed", "worker": "trj",
+                    "reason": "fastest"}})
 
     def test_a_busy_pool_is_rchs_own_queued_wait_and_the_build_goes_ahead(self):
         result, receipt, events, _ = self.stub_run({"mips": [self.BUSY], "powerpc": [self.BUSY]})
@@ -1045,7 +1047,7 @@ class RunnerPlatformTests(unittest.TestCase):
         self.assertEqual(self.kinds(events), [("capabilities", None), ("admit", "mips")] * 3)
         self.assertFalse([event for event in events if event["ev"].startswith("exec")])
         self.assertEqual(receipt["build_admission"], {"mips": {
-            "attempts": 3, "recommendation": None, "observation": "unknown", "worker": None,
+            "attempts": 3, "refresh_exit_codes": [0, 0, 0], "recommendation": None, "observation": "unknown", "worker": None,
             "reason": "selection_error=admission_preview_timed_out", "refused": True}})
         self.assertNotIn("guests", receipt)                                    # nothing was booted
         # The host address is in rch's answer and in its stderr: the receipt never has it, the runner's stderr keeps rch's own text.
@@ -1106,7 +1108,8 @@ class RunnerPlatformTests(unittest.TestCase):
         result, receipt, events, _ = self.stub_run({"mips": [{"__raw__": "garbage, not json", "__rc__": 3}]}, tries=2)
         self.assertEqual((result, receipt["status"], receipt["error_type"]), (1, "FAIL", "AdmissionRefused"))
         self.assertEqual(receipt["build_admission"]["mips"],
-                         {"attempts": 2, "recommendation": "unparsed", "observation": "rc=3", "worker": None, "reason": None, "refused": True})
+                         {"attempts": 2, "refresh_exit_codes": [0, 0], "recommendation": "unparsed", "observation": "rc=3", "worker": None,
+                          "reason": None, "refused": True})
         self.assertFalse([event for event in events if event["ev"].startswith("exec")])
 
     def test_a_missing_rch_refuses_at_once_and_a_run_that_builds_nothing_asks_for_nothing(self):
@@ -1185,6 +1188,38 @@ class RunnerPlatformTests(unittest.TestCase):
         result, receipt, _, _ = self.stub_run({"mips": [benign]}, label="benign", tries=2)
         self.assertEqual(receipt["build_admission"]["mips"]["reason"], "preview_timed_out")
 
+    def test_the_exit_code_of_every_refresh_is_recorded_and_gates_nothing(self):
+        # V30: the gate takes a fresh sample before each admit and used to discard how that call ended. The code of every try is now in the
+        # receipt, one integer per try; it is only recorded. A refresh that fails or hangs does not stop the admit that follows.
+        # (a) Refreshes that fail (7, 0, 3 in call order) and a stale first answer: both guests are still admitted and built, and the codes are
+        # per guest and in order.
+        plan = {"mips": [self.STALE, self.OFFLOAD], "powerpc": [self.OFFLOAD], "__refresh_rc__": [7, 0, 3]}
+        result, receipt, events, stderr = self.stub_run(plan, label="rcs")
+        self.assertEqual((result, receipt["status"]), (0, "PASS"))
+        self.assertEqual(sum(1 for event in events if event["ev"] == "exec-begin"), 2)
+        self.assertEqual([receipt["build_admission"][arch]["refresh_exit_codes"] for arch in ("mips", "ppc")], [[7, 0], [3]])
+        self.assertEqual([receipt["build_admission"][arch]["attempts"] for arch in ("mips", "ppc")], [2, 1])
+        # The refresh's stderr is kept on the runner's stderr and is not in the receipt.
+        self.assertIn("stub capabilities stderr: worker ubuntu@host.invalid", stderr)
+        self.assertNotIn("host.invalid", json.dumps(receipt))
+        # (b) A refused guest records one code per try, in order, and builds nothing.
+        result, receipt, events, _ = self.stub_run({"mips": [self.TIMED_OUT], "__refresh_rc__": [1, 2, 3]}, label="rcs-refused", tries=3)
+        self.assertEqual((result, receipt["error_type"]), (1, "AdmissionRefused"))
+        self.assertEqual(receipt["build_admission"]["mips"]["refresh_exit_codes"], [1, 2, 3])
+        self.assertEqual(receipt["build_admission"]["mips"]["attempts"], 3)
+        self.assertFalse([event for event in events if event["ev"].startswith("exec")])
+        # (c) A refresh that outlives its timeout is killed and recorded as -1; the admit that follows still decides.
+        hang = {"mips": [self.OFFLOAD], "powerpc": [self.OFFLOAD], "__refresh_sleep__": 20}
+        result, receipt, _, stderr = self.stub_run(hang, label="rcs-hang", call_timeout=1.5)
+        self.assertEqual((result, receipt["status"]), (0, "PASS"))
+        self.assertEqual([receipt["build_admission"][arch]["refresh_exit_codes"] for arch in ("mips", "ppc")], [[-1], [-1]])
+        self.assertIn("timed out", stderr)
+        # (d) With no rch at all there is no refresh to record: an empty list, and the refusal still counts its one attempt.
+        env = {"PATH": str(self.root / "nowhere")}
+        with patch.dict(os.environ, env), patch.object(VERIFIER, "ADMISSION_SPACING_S", 0.0), contextlib.redirect_stderr(io.StringIO()):
+            result, receipt = self.run_main(self.captures(), self.argv("--speaker-platform"), build=True, real_rch=True)
+        self.assertEqual((receipt["build_admission"]["mips"]["refresh_exit_codes"], receipt["build_admission"]["mips"]["attempts"]), ([], 1))
+
 
 # The stub `rch` of the admission tests: answers `workers capabilities`, `admit` and `exec` and logs each call as one JSON line.
 # `admit` answers with the next verdict of plan[target] (the last repeats); `{"__raw__": text, "__rc__": n}` prints text and exits n.
@@ -1208,7 +1243,18 @@ def log(event, **fields):
 where = {"cwd": os.getcwd(), "target_dir": os.environ.get("CARGO_TARGET_DIR"), "remote": os.environ.get("RCH_REQUIRE_REMOTE")}
 if args[:2] == ["workers", "capabilities"]:
     log("capabilities", args=args)
+    everything = json.load(open(os.path.join(directory, f"plan-{run}.json"), encoding="utf-8"))
+    counter = os.path.join(directory, f"caps-{run}.txt")
+    seen = int(open(counter).read()) if os.path.exists(counter) else 0
+    open(counter, "w").write(str(seen + 1))
+    if "__refresh_sleep__" in everything:
+        time.sleep(everything["__refresh_sleep__"])
+    codes = everything.get("__refresh_rc__", [0])
+    code = codes[min(seen, len(codes) - 1)]
+    if code:
+        sys.stderr.write("stub capabilities stderr: worker ubuntu@host.invalid\n")
     print("{}")
+    sys.exit(code)
 elif args[:1] == ["admit"]:
     plan = json.load(open(os.path.join(directory, f"plan-{run}.json"), encoding="utf-8"))[target]
     counter = os.path.join(directory, f"count-{run}-{target}.txt")

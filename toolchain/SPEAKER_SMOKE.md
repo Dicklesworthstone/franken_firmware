@@ -32,7 +32,9 @@ Before **each** guest build the runner takes a fresh capacity sample (`rch worke
 `offload`/`observed` from a worker in the requested set (`RCH_WORKERS` or `RCH_WORKER`) or `queue`/`observed`/`all_workers_busy`
 (rch's own queued wait). After 8 tries, 15 s apart, it stops with `AdmissionRefused` naming the guest and the last answer, and builds
 nothing. Back-to-back builds used to meet `RCH-I001` on the second guest. The receipt's `build_admission` keeps the recommendation,
-observation, worker id and reason, never a host address; `--skip-build` asks for nothing.
+observation, worker id and reason, never a host address, and the exit code of each try's refresh call (`refresh_exit_codes`: one
+integer per try, `-1` for a call that timed out). That code is only recorded: a refresh that fails or hangs does not stop the `admit` that
+follows, which alone decides. `--skip-build` asks for nothing.
 
 ## Markers (fixed before any run)
 

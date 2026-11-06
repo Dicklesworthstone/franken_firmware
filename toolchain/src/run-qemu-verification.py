@@ -923,8 +923,10 @@ def verify_serial_output(
 #     named worker when neither is set), or
 #   * `recommendation=queue`, `observation=observed`, `reason=all_workers_busy` (rch's own queued wait).
 # Anything else is retried, spaced, and after ADMISSION_TRIES tries the run is refused by name (`AdmissionRefused`) with nothing built.
-# The receipt (`build_admission`) records the recommendation, observation, worker id and reason only, never a host address; the stderr
-# of the rch calls is passed through to the runner's own stderr, not into the receipt.
+# The receipt (`build_admission`) records the recommendation, observation, worker id and reason, never a host address, and, for every try,
+# the exit code of the refresh call (`refresh_exit_codes`: integers only, -1 for a call that timed out). The code is recorded and nothing
+# acts on it: a refresh that fails or hangs does not stop the `admit` that follows, which alone decides. The stderr of the rch calls is
+# passed through to the runner's own stderr, not into the receipt.
 
 ADMISSION_TRIES = 8
 ADMISSION_SPACING_S = 15.0
@@ -933,12 +935,14 @@ ADMISSION_CALL_TIMEOUT_S = 300.0
 
 class AdmissionRefused(RuntimeError):
     """No positive native admission for a guest build in ADMISSION_TRIES tries (or `rch` could not be run): nothing was built.
-    `verdict` is the last answer, reduced to recommendation, observation, worker and reason; `attempts` is how many tries were made."""
+    `verdict` is the last answer, reduced to recommendation, observation, worker and reason; `attempts` is how many tries were made;
+    `refresh_exit_codes` is the exit code of the refresh call of each try that got that far."""
 
-    def __init__(self, message: str, verdict: dict[str, Any], attempts: int) -> None:
+    def __init__(self, message: str, verdict: dict[str, Any], attempts: int, refresh_exit_codes: list[int]) -> None:
         super().__init__(message)
         self.verdict = verdict
         self.attempts = attempts
+        self.refresh_exit_codes = list(refresh_exit_codes)
 
 
 def requested_workers(env: dict[str, str]) -> list[str]:
@@ -1011,25 +1015,31 @@ def _rch_call(argv: list[str], env: dict[str, str], cwd: pathlib.Path) -> tuple[
 
 def admit_before_build(arch: str, cmd: list[str], env: dict[str, str], cwd: pathlib.Path) -> dict[str, Any]:
     """Wait for a positive admission of `cmd` (the `rch exec ... -- cargo ...` command line of one guest build). Returns the
-    receipt record {attempts, recommendation, observation, worker, reason}; raises AdmissionRefused after ADMISSION_TRIES."""
+    receipt record {attempts, refresh_exit_codes, recommendation, observation, worker, reason}; raises AdmissionRefused after
+    ADMISSION_TRIES."""
     argv = cmd[cmd.index("--") + 1:]
     requested = requested_workers(env)
     verdict: dict[str, Any] = {"recommendation": None, "observation": None, "worker": None, "reason": None}
+    refresh_exit_codes: list[int] = []
     for attempt in range(1, ADMISSION_TRIES + 1):
         if attempt > 1:
             time.sleep(ADMISSION_SPACING_S)
         try:
-            _rch_call(["rch", "workers", "capabilities", "--refresh", "--json"], env, cwd)       # a fresh sample; its answer is not used
+            # A fresh sample. Its output is not used and its exit code gates nothing: it is recorded, and the admit below decides.
+            _, refresh_exit_code = _rch_call(["rch", "workers", "capabilities", "--refresh", "--json"], env, cwd)
+            refresh_exit_codes.append(refresh_exit_code)
             stdout, returncode = _rch_call(["rch", "admit", "--json", "--", *argv], env, cwd)
         except OSError as error:
             verdict = {"recommendation": "unparsed", "observation": f"rch_not_runnable:{type(error).__name__}", "worker": None, "reason": None}
-            raise AdmissionRefused(f"{arch}: rch could not be run ({type(error).__name__}); nothing was built", verdict, attempt) from error
+            raise AdmissionRefused(
+                f"{arch}: rch could not be run ({type(error).__name__}); nothing was built", verdict, attempt, refresh_exit_codes) from error
         verdict = admission_verdict(stdout, returncode)
         if verdict_admits(verdict, requested):
-            return {"attempts": attempt, **verdict}
+            return {"attempts": attempt, "refresh_exit_codes": refresh_exit_codes, **verdict}
     raise AdmissionRefused(
         f"{arch}: no positive admission in {ADMISSION_TRIES} tries (last: recommendation={verdict['recommendation']} "
-        f"observation={verdict['observation']} worker={verdict['worker']} reason={verdict['reason']}); nothing was built", verdict, ADMISSION_TRIES)
+        f"observation={verdict['observation']} worker={verdict['worker']} reason={verdict['reason']}); nothing was built", verdict, ADMISSION_TRIES,
+        refresh_exit_codes)
 
 
 def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int:
@@ -1110,7 +1120,8 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
             try:
                 admissions[arch] = admit_before_build(arch, cmd, env, hello_crate)
             except AdmissionRefused as refusal:
-                admissions[arch] = {**refusal.verdict, "attempts": refusal.attempts, "refused": True}
+                admissions[arch] = {**refusal.verdict, "attempts": refusal.attempts, "refresh_exit_codes": refusal.refresh_exit_codes,
+                                    "refused": True}
                 raise
             subprocess.run(cmd, cwd=str(hello_crate), env=env, check=True, timeout=3600)
 
