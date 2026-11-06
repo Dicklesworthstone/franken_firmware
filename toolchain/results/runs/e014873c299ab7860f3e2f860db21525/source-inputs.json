@@ -1079,5 +1079,11 @@
     "toolchain/tests/test_speaker_smoke.py": "4439f471ab409ed0ef26dd6e08e7581b5db416ef0ed836280b2d03173fd72a9a"
   },
   "git_revision": "67dccb5567add2d976841c31b60a80644b989f6b",
-  "scope": "1072 recorded repository-export files; overapproximation, not a transitive compiler/external-input trace; target/build/cache outputs excluded"
+  "native_excluded_prepared_files": [
+    ".beads/.gitignore",
+    ".beads/config.yaml"
+  ],
+  "native_source_receipt_root": "e82c4145f9a7f573ea6ab9277467dc8dbced2a4583d44c8b934ae7f634484903",
+  "native_transmitted_files": 1070,
+  "scope": "1072 prepared repository-export hashes, of which1070 were independently observed in the native remote source-content manifest; two .beads files excluded by native transfer filter. This is an overapproximation, not a transitive compiler/external-input trace; target/build/cache outputs excluded."
 }

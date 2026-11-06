@@ -21,7 +21,8 @@
     "built_from": {
       "repository_head": "67dccb5567add2d976841c31b60a80644b989f6b",
       "repository_inputs": "source-inputs.json",
-      "repository_inputs_sha256": "fc9396a6f9a417e7164df4d4833d29b33334da0c6095b991e4afac8d431654b7",
+      "repository_inputs_sha256": "cf61cfaebd845d38e05a85a41ad9ca4da07216aac3ac408f621674f93c7b5792",
+      "scope": "1072 prepared export hashes;1070 native-transmitted files matched exactly; two .beads files excluded, not compiler inputs. External compiler/cache dependencies are outside this export manifest.",
       "sha256": {
         "crates/franken-clock/Cargo.toml": "20eebd81d9dc04143e803c96892b597982df9244e39127a56931103f621a22d4",
         "crates/franken-clock/src/events.rs": "d3493e6063d96e855759f469f8d6d02b7b2710725cebc00fa76b887ae92950ad",
