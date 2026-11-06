@@ -1,0 +1,691 @@
+[RCH] Cargo target sync active; forcing worker CARGO_TARGET_DIR to an isolated remote target and syncing back to <workspace>/target
+  2026-11-06T16:57:29.885252Z  INFO rch::hook: Selected worker: <worker> at <worker-login> (1 slots remaining after reservation, speed 57.7)
+    at rch/src/hook.rs:5690 on ThreadId(1)
+
+[RCH] project path normalized: received_input=<workspace>
+[RCH] project path normalized: verified_absolute_input=<workspace>
+[RCH] project path normalized: canonical_root_resolved=<workspace>
+[RCH] project path normalized: canonical_input_resolved=<workspace>
+[RCH] project path normalized: verified_within_root=<workspace> root=<workspace>
+[RCH] dependency root <workspace>/crates/franken-alloc-probe (WorkspaceMember)
+[RCH] dependency root <workspace>/crates/franken-atomic (WorkspaceMember)
+[RCH] dependency root <workspace>/crates/franken-baseline (WorkspaceMember)
+[RCH] dependency root <workspace>/crates/franken-board-profile (WorkspaceMember)
+[RCH] dependency root <workspace>/crates/franken-clock (WorkspaceMember)
+[RCH] dependency root <workspace>/crates/franken-codec (WorkspaceMember)
+[RCH] dependency root <workspace>/crates/franken-dsp (WorkspaceMember)
+[RCH] dependency root <workspace>/crates/franken-hal (WorkspaceMember)
+[RCH] dependency root <workspace>/crates/franken-journal (WorkspaceMember)
+[RCH] dependency root <workspace>/crates/franken-platform (WorkspaceMember)
+[RCH] dependency root <workspace>/crates/franken-platform-linux (WorkspaceMember)
+[RCH] dependency root <workspace>/crates/franken-session (WorkspaceMember)
+[RCH] dependency root <workspace>/crates/franken-control (WorkspaceMember)
+[RCH] dependency root <workspace>/crates/franken-stream (WorkspaceMember)
+[RCH] dependency root <workspace>/crates/franken-speaker (WorkspaceMember)
+[RCH] dependency root <workspace>/crates/franken-test-support (WorkspaceMember)
+  2026-11-06T16:57:30.357218Z  INFO rch::hook::transfer_orchestration: Starting remote compilation pipeline for ffw-p02-root-go6smj0g (hash: 2e0d5bc83323d1bb)
+    at rch/src/hook/transfer_orchestration.rs:1571 on ThreadId(1)
+
+[RCH] dependency sync roots planned: 1
+[RCH] dependency sync root 1/1: <workspace>
+[RCH] dependency sync manifest: {"schema_version":"rch.sync_closure_manifest.v2","generated_at_unix_ms":1793984250318,"project_root":"<workspace>","entries":[{"order":1,"local_root":"<workspace>","remote_root":"<worker-source>
+  2026-11-06T16:57:30.357308Z  INFO rch::hook::transfer_orchestration: Prepared dependency sync manifest for 1 roots
+    at rch/src/hook/transfer_orchestration.rs:1593 on ThreadId(1)
+
+[RCH] sync start (project ffw-p02-root-go6smj0g on <worker>)
+[RCH] remote target-dir reuse active; pooled dir .rch-target-<worker>-pool-dd72503f9400a9bc46c7f2a02f3cbbd7
+[RCH] waiting for 2 remote source-authority lock(s) on <worker>
+[RCH] acquired remote source-authority locks on <worker>
+[RCH] topology preflight ok on <worker> (/data/tmp/rch -> /data/tmp/rch enforced)
+[RCH] isolated sources selected; canonical repository convergence skipped
+  2026-11-06T16:57:32.844689Z  INFO rch::hook::transfer_orchestration: Syncing project to worker <worker>...
+    at rch/src/hook/transfer_orchestration.rs:1887 on ThreadId(1)
+
+[RCH] exact source sync required; bypassing transfer estimator for <workspace>
+[RCH] syncing dependency root <workspace> to remote <worker-source>
+  2026-11-06T16:57:32.856171Z  INFO rch::transfer: Syncing <workspace> -> <worker-source> on <worker> (streaming)
+    at rch/src/transfer.rs:7842 on ThreadId(1)
+
+  2026-11-06T16:57:33.871354Z  INFO rch::hook::transfer_orchestration: Sync complete: 992 files, 5507394 bytes in 951ms
+    at rch/src/hook/transfer_orchestration.rs:2486 on ThreadId(1)
+
+[RCH] sync done: 992 files, 5507394 bytes in 951ms
+[RCH] dependency preflight report: {"schema_version":"rch.dependency_preflight.v1","worker":"<worker>","verified":true,"reason_code":null,"remediation":null,"evidence":[{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/Cargo.toml","required_kind":"manifest","status":"present","reason_code":"RCH-I410","detail":"required manifest present after current sync: <worker-source>/Cargo.toml","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-alloc-probe/Cargo.toml","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-alloc-probe/Cargo.toml","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-alloc-probe/src/lib.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-alloc-probe/src/lib.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-alloc-probe/tests/latency_no_alloc.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-alloc-probe/tests/latency_no_alloc.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-alloc-probe/tests/playout_no_alloc.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-alloc-probe/tests/playout_no_alloc.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-alloc-probe/tests/protection_no_alloc.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-alloc-probe/tests/protection_no_alloc.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-alloc-probe/tests/render_events_no_alloc.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-alloc-probe/tests/render_events_no_alloc.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-alloc-probe/tests/render_path_no_alloc.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-alloc-probe/tests/render_path_no_alloc.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-atomic/Cargo.toml","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-atomic/Cargo.toml","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-atomic/src/lib.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-atomic/src/lib.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-baseline/Cargo.toml","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-baseline/Cargo.toml","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-baseline/src/bin/ffw-baseline.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-baseline/src/bin/ffw-baseline.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-baseline/src/lib.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-baseline/src/lib.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-baseline/tests/e02_cases.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-baseline/tests/e02_cases.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-board-profile/Cargo.toml","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-board-profile/Cargo.toml","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-board-profile/src/lib.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-board-profile/src/lib.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-board-profile/tests/p01_contract.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-board-profile/tests/p01_contract.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-clock/Cargo.toml","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-clock/Cargo.toml","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-clock/src/lib.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-clock/src/lib.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-clock/tests/latency_events.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-clock/tests/latency_events.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-clock/tests/latency_timeline.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-clock/tests/latency_timeline.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-clock/tests/legacy_video_input_bounds.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-clock/tests/legacy_video_input_bounds.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-clock/tests/n03_target_worlds.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-clock/tests/n03_target_worlds.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-codec/Cargo.toml","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-codec/Cargo.toml","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-codec/src/lib.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-codec/src/lib.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-codec/tests/s02_admission.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-codec/tests/s02_admission.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-codec/tests/s02_bridge.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-codec/tests/s02_bridge.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-codec/tests/s02_decode.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-codec/tests/s02_decode.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-control/Cargo.toml","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-control/Cargo.toml","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-control/src/lib.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-control/src/lib.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-dsp/Cargo.toml","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-dsp/Cargo.toml","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-dsp/src/lib.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-dsp/src/lib.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-dsp/tests/d01_vectors.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-dsp/tests/d01_vectors.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-dsp/tests/d02_vectors.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-dsp/tests/d02_vectors.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-dsp/tests/d03_quality.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-dsp/tests/d03_quality.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-dsp/tests/d03_target_samples.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-dsp/tests/d03_target_samples.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-dsp/tests/g02_pcm.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-dsp/tests/g02_pcm.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-dsp/tests/g02_vectors.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-dsp/tests/g02_vectors.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-hal/Cargo.toml","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-hal/Cargo.toml","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-hal/src/lib.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-hal/src/lib.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-journal/Cargo.toml","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-journal/Cargo.toml","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-journal/examples/journal_crash.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-journal/examples/journal_crash.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-journal/src/lib.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-journal/src/lib.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-journal/tests/u01_faults.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-journal/tests/u01_faults.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-journal/tests/u01_process.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-journal/tests/u01_process.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-journal/tests/u01_vectors.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-journal/tests/u01_vectors.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-platform-linux/Cargo.toml","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-platform-linux/Cargo.toml","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-platform-linux/src/lib.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-platform-linux/src/lib.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-platform/Cargo.toml","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-platform/Cargo.toml","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-platform/src/lib.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-platform/src/lib.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-session/Cargo.toml","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-session/Cargo.toml","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-session/src/lib.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-session/src/lib.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-session/tests/g01_replay.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-session/tests/g01_replay.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-speaker/Cargo.toml","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-speaker/Cargo.toml","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-speaker/src/lib.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-speaker/src/lib.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-speaker/src/main.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-speaker/src/main.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-speaker/tests/cli_services.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-speaker/tests/cli_services.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-speaker/tests/d02_protection_history.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-speaker/tests/d02_protection_history.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-speaker/tests/d03_closed_loop.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-speaker/tests/d03_closed_loop.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-stream/Cargo.toml","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-stream/Cargo.toml","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-stream/src/bin/n01_wire_guest/main.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-stream/src/bin/n01_wire_guest/main.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-stream/src/lib.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-stream/src/lib.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-stream/tests/n01_loopback.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-stream/tests/n01_loopback.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-stream/tests/n01_wire_replay.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-stream/tests/n01_wire_replay.rs","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-test-support/Cargo.toml","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-test-support/Cargo.toml","is_primary":true},{"root":"<worker-source><worker-source>/Cargo.toml","required_path":"<worker-source>/crates/franken-test-support/src/lib.rs","required_kind":"source_entrypoint","status":"present","reason_code":"RCH-I410","detail":"required source_entrypoint present after current sync: <worker-source>/crates/franken-test-support/src/lib.rs","is_primary":true}]}
+[RCH] remote dependency preflight verified 66 roots on <worker>
+  2026-11-06T16:57:34.490959Z  INFO rch::hook::transfer_orchestration: Executing command remotely: env 'CARGO_PROFILE_DEV_DEBUG=line-tables-only' 'CARGO_PROFILE_TEST_DEBUG=line-tables-only' cargo test --locked -p franken-platform -p franken-platform-linux -p franken-speaker -j 1 --config 'env.RCH_BUILD_SOURCE.value="unknown"' --config 'env.RCH_BUILD_SOURCE.force=true'
+    at rch/src/hook/transfer_orchestration.rs:2643 on ThreadId(1)
+
+[RCH] exec start: env 'CARGO_PROFILE_DEV_DEBUG=line-tables-only' 'CARGO_PROFILE_TEST_DEBUG=line-tables-only' cargo test --locked -p franken-platform -p franken-platform-linux -p franken-speaker -j 1 --config 'env.RCH_BUILD_SOURCE.value="unknown"' --config 'env.RCH_BUILD_SOURCE.force=true'
+  2026-11-06T16:57:34.510766Z  INFO rch::transfer: Rewriting CARGO_TARGET_DIR for remote execution (worker-scoped path): <workspace>/target -> <worker-source>/.rch-target-<worker>-pool-dd72503f9400a9bc46c7f2a02f3cbbd7
+    at rch/src/transfer.rs:4911 on ThreadId(1)
+
+    Updating crates.io index
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.27
+   Compiling typenum v1.20.1
+   Compiling hybrid-array v0.4.15
+   Compiling syn v3.0.9
+   Compiling cmov v0.5.4
+   Compiling serde_core v1.0.229
+   Compiling ctutils v0.4.8
+   Compiling crypto-common v0.2.2
+   Compiling block-buffer v0.12.1
+   Compiling const-oid v0.10.2
+   Compiling zmij v1.0.23
+   Compiling digest v0.11.3
+   Compiling serde_json v1.0.154
+   Compiling serde v1.0.229
+   Compiling serde_derive v1.0.229
+   Compiling itoa v1.0.18
+   Compiling cpufeatures v0.3.1
+   Compiling cfg-if v1.0.5
+   Compiling memchr v2.8.3
+   Compiling thiserror v2.0.21
+   Compiling sha2 v0.11.1
+   Compiling thiserror-impl v2.0.21
+   Compiling hex v0.4.3
+   Compiling franken-board-profile v0.1.0 (<worker-source>/crates/franken-board-profile)
+   Compiling hmac v0.13.0
+   Compiling franken-atomic v0.1.0 (<worker-source>/crates/franken-atomic)
+   Compiling franken-platform v0.1.0 (<worker-source>/crates/franken-platform)
+   Compiling franken-platform-linux v0.1.0 (<worker-source>/crates/franken-platform-linux)
+   Compiling franken-dsp v0.1.0 (<worker-source>/crates/franken-dsp)
+   Compiling franken-clock v0.1.0 (<worker-source>/crates/franken-clock)
+   Compiling franken-session v0.1.0 (<worker-source>/crates/franken-session)
+   Compiling franken-journal v0.1.0 (<worker-source>/crates/franken-journal)
+   Compiling franken-control v0.1.0 (<worker-source>/crates/franken-control)
+   Compiling franken-stream v0.1.0 (<worker-source>/crates/franken-stream)
+   Compiling franken-hal v0.1.0 (<worker-source>/crates/franken-hal)
+   Compiling franken-test-support v0.1.0 (<worker-source>/crates/franken-test-support)
+   Compiling franken-speaker v0.1.0 (<worker-source>/crates/franken-speaker)
+
+running 205 tests
+test abi::tests::a_negative_value_that_is_not_an_errno_is_malformed_and_never_coerced ... ok
+test abi::tests::each_table_has_unique_names_and_unique_numbers_and_the_two_abis_really_differ ... ok
+test abi::tests::the_generic_errno_constants_match_both_tables ... ok
+test abi::tests::the_nonblock_flag_is_each_abis_own_and_cloexec_is_shared ... ok
+test abi::tests::the_transient_and_argument_errnos_are_the_same_on_both_abis_and_einval_is_not_absence ... ok
+test abi::tests::the_tables_and_flags_equal_the_committed_vectors_generated_from_the_e03_oracle ... ok
+test clock::tests::a_valid_reading_is_seconds_times_a_billion_plus_nanos ... ok
+test abi::tests::enosys_is_absence_only_in_the_guests_own_numbering ... ok
+test clock::tests::success_is_exactly_zero_and_other_returns_are_not_a_time ... ok
+test clock::tests::an_interruption_storm_is_reported_after_the_bounded_attempts ... ok
+test durable::tests::an_append_open_is_not_a_target_for_positioned_writes ... ok
+test durable::tests::a_short_write_is_neither_success_nor_a_fault ... ok
+test durable::tests::a_flag_number_names_one_flag_per_abi_and_the_cross_abi_collisions_are_the_vectors ... ok
+test abi::tests::a_non_negative_return_is_a_result_and_zero_is_not_an_error ... ok
+test durable::tests::open_results_decode_as_descriptors_or_typed_errors ... ok
+test durable::tests::the_kernel_release_boundaries_are_the_vectors ... ok
+test entropy::tests::a_descriptor_that_does_not_fit_an_int_is_malformed_and_never_used ... ok
+test durable::tests::open_requests_build_the_flags_the_vectors_say_or_are_refused ... ok
+test entropy::tests::a_device_that_trickles_a_byte_at_a_time_ends_in_the_read_budget_not_a_loop ... ok
+test entropy::tests::a_failure_after_partial_bytes_still_zeroes_the_whole_buffer ... ok
+test entropy::tests::a_full_read_fills_the_buffer_and_asks_only_for_nonblock ... ok
+test entropy::tests::a_getrandom_failure_never_selects_the_legacy_provider ... ok
+test entropy::tests::a_kernel_that_reports_more_than_was_asked_or_nothing_at_all_is_an_error ... ok
+test entropy::tests::a_legacy_failure_never_falls_back_to_getrandom ... ok
+test entropy::tests::a_missing_device_is_reported_as_such_and_no_other_file_is_tried ... ok
+test entropy::tests::a_read_that_reports_more_than_was_asked_or_nothing_is_an_error_and_the_device_is_still_closed ... ok
+test entropy::tests::a_request_over_the_per_call_limit_is_refused_before_any_kernel_call_and_the_limit_itself_is_served ... ok
+test entropy::tests::a_return_that_is_not_an_errno_from_a_read_is_malformed_and_the_device_is_closed ... ok
+test entropy::tests::a_return_value_that_is_not_an_errno_is_malformed_never_success ... ok
+test entropy::tests::a_selected_legacy_provider_fills_exactly_the_buffer_through_open_read_close_on_both_abis ... ok
+test entropy::tests::a_short_read_is_continued_from_where_it_stopped ... ok
+test entropy::tests::a_success_that_produced_one_repeated_byte_is_degenerate_for_the_legacy_provider_too ... ok
+test entropy::tests::a_success_that_produced_one_repeated_byte_is_degenerate_not_entropy ... ok
+test entropy::tests::a_zero_length_request_is_an_error_and_makes_no_call ... ok
+test entropy::tests::a_zero_length_request_is_an_error_for_the_legacy_provider_and_makes_no_call ... ok
+test entropy::tests::absence_is_the_guest_abis_own_enosys_and_never_another_abis ... ok
+test entropy::tests::an_empty_pool_is_waiting_with_every_byte_zeroed_and_the_device_closed_once ... ok
+test entropy::tests::an_interrupted_call_is_retried_a_bounded_number_of_times ... ok
+test entropy::tests::an_interrupted_open_is_repeated_a_bounded_number_of_times_and_no_read_or_close_follows ... ok
+test durable::tests::the_source_has_no_unsafe_no_filesystem_no_syscall_number_and_no_other_libraries_code ... ok
+test entropy::tests::an_interrupted_read_is_repeated_a_bounded_number_of_times_and_then_reported ... ok
+test entropy::tests::an_unseeded_pool_is_an_error_with_no_bytes_and_no_other_source_tried ... ok
+test entropy::tests::bytes_received_before_a_failure_never_survive_it ... ok
+test entropy::tests::closing_is_part_of_the_call_a_failed_close_discards_the_bytes_and_an_eintr_close_does_not ... ok
+test entropy::tests::einval_is_not_absence_and_other_errnos_keep_their_number ... ok
+test clock::tests::an_absent_clock_is_an_error_in_the_guests_own_numbering_and_there_is_no_wall_clock_to_use ... ok
+test entropy::tests::matrix_status_maps_to_availability_and_absent_with_fallback_is_unavailable ... ok
+test entropy::tests::no_error_and_no_call_record_can_carry_the_bytes_a_call_received ... ok
+test clock::tests::a_reading_too_large_for_64_bits_is_overflow ... ok
+test abi::tests::only_the_two_big_endian_musl_triples_name_an_abi ... ok
+test entropy::tests::nothing_is_cached_between_calls_a_seeded_answer_is_asked_again ... ok
+test clock::tests::a_timespec_outside_the_valid_range_is_never_turned_into_a_time ... ok
+test entropy::tests::other_open_failures_keep_their_number_and_are_never_read_as_waiting_or_as_getrandom_absence ... ok
+test abi::tests::a_call_is_retried_only_while_it_is_interrupted_and_only_a_bounded_number_of_times ... ok
+test entropy::tests::short_reads_are_the_devices_normal_answer_and_are_continued_from_where_they_stopped ... ok
+test entropy::tests::the_profile_decides_availability_and_only_getrandom_reads_the_matrix ... ok
+test layer::tests::a_backend_compiled_for_the_other_abi_is_refused_before_any_kernel_call ... ok
+test layer::tests::a_double_reports_itself_as_simulated_through_the_layer ... ok
+test layer::tests::a_getrandom_layer_that_is_unavailable_never_opens_the_legacy_device ... ok
+test layer::tests::a_matching_guest_with_eventfd_opens_exactly_an_eventfd ... ok
+test layer::tests::a_profile_with_no_matching_guest_is_refused_before_any_kernel_call ... ok
+test durable::tests::the_open_flag_numbers_are_the_vectors ... ok
+test layer::tests::a_required_capability_that_was_not_observed_is_refused_before_any_kernel_call ... ok
+test durable::tests::the_replace_sequence_passes_in_order_and_names_the_first_causal_step_otherwise ... ok
+test layer::tests::a_signal_then_a_drain_round_trips_through_the_layer ... ok
+test layer::tests::a_triple_that_is_not_a_legacy_abi_is_refused_before_any_kernel_call ... ok
+test layer::tests::an_admitted_wake_mechanism_that_cannot_be_opened_is_an_error_not_a_different_mechanism ... ok
+test layer::tests::an_explicit_close_reports_a_failure_and_the_later_drop_does_not_close_again ... ok
+test layer::tests::an_explicitly_selected_legacy_provider_fills_through_open_read_close_and_never_asks_getrandom ... ok
+test layer::tests::an_observed_unseeded_legacy_provider_reports_waiting_every_time_and_is_not_remembered ... ok
+test layer::tests::an_unqualified_legacy_provider_is_refused_without_a_kernel_call_even_if_getrandom_would_work ... ok
+test layer::tests::an_unseeded_pool_is_asked_again_every_time_and_never_remembered_or_papered_over ... ok
+test layer::tests::dropping_the_layer_closes_what_it_opened_exactly_once ... ok
+test layer::tests::entropy_that_the_matrix_says_is_unavailable_is_refused_without_a_kernel_call_and_with_no_bytes ... ok
+test layer::tests::eventfd_observed_absent_with_the_fallback_admitted_opens_a_self_pipe_and_only_that ... ok
+test layer::tests::the_default_provider_is_getrandom_and_selecting_another_makes_no_kernel_call ... ok
+test layer::tests::the_layer_reads_the_mechanism_from_the_gate_and_never_swaps_it ... ok
+test layer::tests::the_monotonic_reading_never_goes_backwards_and_a_bad_reading_is_not_recorded ... ok
+test net::tests::a_host_endian_pollfd_is_not_the_layout ... ok
+test net::tests::a_number_never_names_a_network_error_on_both_abis_so_the_generic_table_is_wrong_on_mips ... ok
+test durable::tests::an_llseek_result_is_eight_big_endian_bytes_and_a_negative_one_is_refused ... ok
+test net::tests::a_datagram_read_says_complete_or_truncated_with_the_real_length ... ok
+test net::tests::a_poll_that_is_interrupted_every_time_is_reported_after_the_bound_and_not_swallowed ... ok
+test net::tests::a_poll_request_is_built_only_for_a_real_descriptor_and_events_the_abi_knows ... ok
+test net::tests::a_timeval_read_back_must_be_a_time_and_forever_is_only_ever_asked_for_by_name ... ok
+test net::tests::an_interrupted_poll_is_retried_with_the_time_left_and_never_the_whole_timeout ... ok
+test net::tests::a_socket_timeout_is_32_bit_microseconds_rounded_up_and_refuses_zero_and_overflow ... ok
+test net::tests::errno_classification_follows_the_vectors_and_only_a_decoded_errno_can_be_a_network_error ... ok
+test net::tests::a_sockaddr_in_that_is_the_wrong_length_family_or_padding_is_refused ... ok
+test net::tests::pollfd_bytes_are_big_endian_and_round_trip ... ok
+test net::tests::ready_bits_are_believed_only_inside_the_abis_known_set ... ok
+test net::tests::sockaddr_in6_bytes_are_the_vectors_and_round_trip ... ok
+test net::tests::poll_timeouts_round_up_never_become_forever_and_refuse_what_does_not_fit_an_int ... ok
+test net::tests::poll_results_decode_with_the_abis_own_errno_and_an_impossible_count_is_not_believed ... ok
+test net::tests::the_source_has_no_thread_local_errno_no_unsafe_and_no_other_libraries_net_code ... ok
+test net::tests::sockaddr_in_bytes_are_the_vectors_and_round_trip ... ok
+test net::tests::the_socket_type_argument_carries_the_flags_the_call_itself_sets ... ok
+test net::tests::the_e03_loopback_fact_is_a_truncated_read_of_24_bytes_into_a_16_byte_buffer ... ok
+test net::tests::the_time_left_after_an_interruption_is_rounded_up_and_an_expired_wait_is_one_last_look ... ok
+test net::tests::the_naive_retry_stretches_the_wait_and_the_judge_tells_it_from_the_real_one ... ok
+test durable::tests::errno_classification_follows_the_vectors_and_keeps_what_it_does_not_know ... ok
+test durable::tests::file_offsets_split_into_big_endian_words_and_are_never_truncated ... ok
+test durable::tests::fsync_results_are_durable_or_final_and_a_unit_call_never_returns_a_count ... ok
+test durable::tests::file_errno_numbers_are_the_vectors_and_name_at_most_one_error_per_abi ... ok
+test net::tests::the_numbers_that_are_the_same_on_both_abis_are_the_vectors_common_block ... ok
+test net::tests::the_two_abis_differ_exactly_where_the_vectors_say ... ok
+test sim::tests::a_flag_other_than_nonblock_is_refused_as_invalid_not_served ... ok
+test sim::tests::a_request_that_is_not_a_multiple_of_the_word_is_a_prefix_of_the_longer_stream ... ok
+test sim::tests::an_unseeded_pool_is_modelled_as_eagain_and_then_bytes_through_the_layer ... ok
+test sim::tests::splitmix_matches_the_published_reference_vector ... ok
+test sim::tests::successive_draws_continue_the_stream_and_do_not_repeat_it ... ok
+test sim::tests::the_double_follows_linux_for_a_bad_descriptor_a_short_buffer_and_a_full_counter ... ok
+test sim::tests::the_double_says_it_is_simulated_and_names_no_abi_so_it_cannot_be_taken_for_a_kernel ... ok
+test sim::tests::the_same_seed_gives_the_same_bytes_and_a_different_seed_gives_different_ones ... ok
+test sim::tests::the_virtual_clock_is_strictly_increasing_and_starts_where_it_was_told ... ok
+test sim::tests::the_wake_round_trips_through_an_in_memory_eventfd ... ok
+test sim::tests::the_wake_round_trips_through_an_in_memory_self_pipe_and_close_releases_it ... ok
+test socket::tests::a_datagram_token_comes_only_from_a_datagram_open_and_carries_its_descriptor ... ok
+test socket::tests::a_descriptor_above_i32_max_is_not_a_result ... ok
+test socket::tests::a_socket_call_the_kernel_does_not_have_is_absent_after_one_call ... ok
+test socket::tests::a_server_is_four_calls_in_order_and_nothing_else_issues_a_call ... ok
+test socket::tests::a_socket_refused_with_einval_is_reported_and_never_made_plainly_and_fixed_up ... ok
+test net::tests::the_per_abi_numbers_are_the_vectors ... ok
+test socket::tests::accept4_einval_is_absent_and_no_second_call_is_issued ... ok
+test socket::tests::accept4_enosys_is_absent_and_no_second_call_is_issued ... ok
+test net::tests::the_timeout_options_are_the_32_bit_ones_and_never_the_64_bit_new_ones ... ok
+test socket::tests::accept4_interruptions_are_bounded_and_the_last_attempt_still_counts ... ok
+test socket::tests::accept4_passes_other_errnos_through_and_refuses_what_is_not_a_result ... ok
+test socket::tests::accept4_sets_both_flags_in_the_call_and_returns_the_descriptor ... ok
+test socket::tests::accept4_with_nothing_pending_would_block_and_is_not_absence ... ok
+test socket::tests::bind_and_listen_interruptions_are_bounded_and_the_last_attempt_still_counts ... ok
+test socket::tests::bind_v4_passes_the_sixteen_big_endian_bytes_and_zero_is_the_only_success ... ok
+test socket::tests::bind_v6_passes_the_twenty_eight_big_endian_bytes ... ok
+test socket::tests::errors_name_the_call_and_the_ops_are_the_five_the_seam_has ... ok
+test socket::tests::listen_makes_a_listener_only_on_zero_and_passes_the_backlog ... ok
+test socket::tests::kernel_allocation_failure_is_typed_without_retry_or_invented_descriptor ... ok
+test socket::tests::only_accept4_reads_einval_as_absent ... ok
+test socket::tests::open_socket_sets_nonblock_and_cloexec_in_the_call_itself_on_both_abis ... ok
+test socket::tests::recv_datagram_asks_for_msg_trunc_and_reports_a_cut_datagram ... ok
+test socket::tests::recv_datagram_interruptions_are_bounded_and_the_last_attempt_still_counts ... ok
+test socket::tests::recv_datagram_reports_nothing_waiting_absence_and_impossible_lengths_as_what_they_are ... ok
+test socket::tests::socket_interruptions_are_bounded_and_the_last_attempt_still_counts ... ok
+test socket::tests::the_double_cuts_silently_without_msg_trunc_which_is_why_the_flag_is_asserted ... ok
+test socket::tests::the_tokens_are_closed_through_into_fd_which_consumes_them_and_fd_does_not ... ok
+test tests::a_headroom_that_does_not_fit_an_i64_saturates_instead_of_wrapping_or_overflowing ... ok
+test tests::a_ledger_cannot_ask_for_a_floor_below_four_mib ... ok
+test tests::a_ledger_that_asks_for_a_higher_floor_is_held_to_it ... ok
+test tests::a_nominal_size_below_the_commitments_is_a_refusal_and_a_negative_headroom ... ok
+test tests::an_unseeded_status_is_not_a_pass_for_any_capability_the_gate_requires ... ok
+test tests::commitments_that_overflow_saturate_into_a_refusal_and_never_into_an_admission ... ok
+test tests::extreme_nominal_ram_does_not_hide_overflow_or_a_small_deficit ... ok
+test tests::guest_kernel_match_is_a_release_boundary_not_a_string_prefix ... ok
+test tests::matching_guest_admits_eventfd_or_self_pipe_by_the_observed_eventfd_status ... ok
+test tests::planted_split_counter_fails_the_check_a_shared_cell_passes ... ok
+test tests::planted_truncating_counter_fails_the_check_a_shared_cell_passes ... ok
+test tests::secure_entropy_follows_getrandom_alone_and_never_the_urandom_liveness_status ... ok
+test tests::shared_u64_is_the_same_semantic_cell_on_every_target ... ok
+test tests::stock_profile_is_refused_when_the_observed_guest_is_a_different_kernel ... ok
+test tests::stock_profile_without_any_observed_guest_is_unqualified ... ok
+test tests::the_budget_edge_is_inclusive_and_the_refusal_carries_the_numbers_it_was_decided_on ... ok
+test tests::the_gate_admits_only_on_matching_evidence_and_the_two_cases_stay_distinct ... ok
+test wake::tests::a_close_is_issued_once_even_when_it_answers_eintr_and_a_nonzero_return_is_not_success ... ok
+test tests::shared_u64_crossing_the_32_bit_boundary_is_never_seen_torn ... ok
+test wake::tests::a_pipe_read_the_mechanism_cannot_produce_is_an_error ... ok
+test wake::tests::a_pipe_that_never_empties_cannot_hold_the_reactor ... ok
+test wake::tests::a_short_or_failed_write_is_an_error_not_a_wake ... ok
+test wake::tests::an_absence_that_follows_an_interruption_is_still_absence ... ok
+test wake::tests::an_absent_admitted_call_is_reported_and_no_other_mechanism_is_tried ... ok
+test wake::tests::an_eventfd_read_that_is_not_one_nonzero_counter_is_an_error ... ok
+test wake::tests::an_interrupted_eventfd2_is_repeated_unchanged_then_reported_after_the_bound ... ok
+test wake::tests::an_interrupted_eventfd_read_is_repeated_then_reported_after_the_bound_and_is_not_nothing_pending ... ok
+test wake::tests::an_interrupted_pipe2_is_repeated_unchanged_then_reported_after_the_bound ... ok
+test wake::tests::an_interrupted_eventfd_write_is_repeated_with_the_same_counter_then_reported_after_the_bound ... ok
+test wake::tests::an_interrupted_write_is_retried_then_reported_after_the_bound ... ok
+test wake::tests::an_interrupted_self_pipe_read_is_repeated_then_reported_after_the_bound ... ok
+test wake::tests::closing_attempts_every_descriptor_and_reports_the_first_failure ... ok
+test wake::tests::descriptors_the_kernel_hands_over_but_that_cannot_be_used_are_refused_and_not_leaked ... ok
+test wake::tests::draining_an_eventfd_returns_the_counter_and_eagain_means_nothing_pending ... ok
+test wake::tests::draining_the_self_pipe_reads_until_it_is_empty ... ok
+test wake::tests::eagain_on_a_write_is_backlogged_not_a_fresh_wake_and_is_not_retried ... ok
+test wake::tests::signalling_writes_one_unit_per_mechanism ... ok
+test wake::tests::the_bound_every_count_above_is_relative_to_is_the_contracts_eight ... ok
+test wake::tests::the_eventfd_is_opened_nonblocking_and_cloexec_in_each_abis_own_flags ... ok
+test wake::tests::the_eventfd_write_is_a_native_endian_counter_of_one ... ok
+test wake::tests::the_self_pipe_is_opened_with_pipe2_nonblocking_and_cloexec ... ok
+test wall_clock::tests::a_regression_already_caught_by_the_platform_layer_is_also_sticky ... ok
+test wall_clock::tests::authenticated_but_late_or_excessively_uncertain_responses_are_consumed_and_refused ... ok
+test wall_clock::tests::authenticated_time_advances_by_monotonic_age_with_outward_drift_rounding ... ok
+test wall_clock::tests::credential_check_requires_the_entire_interval_and_expiration_is_exclusive ... ok
+test wall_clock::tests::epoch_binding_survives_moves_and_drop_and_never_silently_rebinds ... ok
+test wall_clock::tests::every_public_entrypoint_rejects_simulated_provenance_before_reading_clock_or_entropy ... ok
+test wall_clock::tests::holdover_expiry_is_exact_and_rebootstrap_is_required ... ok
+test wall_clock::tests::inverse_frequency_bounds_refuse_credentials_expired_on_a_slow_oscillator ... ok
+test wall_clock::tests::both_large_wall_corrections_withdraw_trust_without_stepping_monotonic_time ... ok
+test tests::memory_budget_enforces_4mib_safety_floor_across_audio_boards ... ok
+test wall_clock::tests::monotonic_regression_is_sticky_and_clears_authentication_state ... ok
+test wall_clock::tests::missing_challenge_replay_and_superseded_nonce_never_authenticate ... ok
+test wall_clock::tests::quantized_same_tick_reads_never_imply_zero_elapsed_uncertainty ... ok
+test wall_clock::tests::overflow_and_reversed_intervals_cannot_authorize_a_time ... ok
+test wall_clock::tests::unknown_resolution_cannot_bind_a_trusted_clock ... ok
+test wall_clock::tests::resume_invalidation_withdraws_wall_trust_without_modifying_audio_time ... ok
+test wall_clock::tests::wall_time_starts_unknown_and_policy_has_no_guessed_defaults ... ok
+test wall_clock::tests::transit_and_holdover_limits_use_worst_case_real_elapsed_time ... ok
+test wall_clock::tests::wire_tag_matches_independent_python_hmac_sha256_golden ... ok
+test wall_clock::tests::every_response_byte_is_authenticated_and_bad_network_input_preserves_confidence ... ok
+
+test result: ok. 205 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 27 tests
+test numbers::tests::accept4_is_on_neither_stock_route_and_every_other_call_of_the_plan_is ... ok
+test numbers::tests::a_powerpc_socket_call_is_direct_only_off_the_stock_kernel ... ok
+test numbers::tests::each_abi_gets_its_own_table_and_the_tables_differ_in_every_call ... ok
+test numbers::tests::exactly_these_calls_need_more_slots_than_the_leaf_carries ... ok
+test numbers::tests::every_route_of_the_plan_fits_the_leaf_and_recvfrom_direct_is_the_call_that_does_not ... ok
+test numbers::tests::mips_numbers_are_four_thousand_based_and_powerpc_numbers_are_not ... ok
+test numbers::tests::p06_mips_numbers_are_four_thousand_based_powerpc_numbers_are_not_and_none_repeats ... ok
+test numbers::tests::the_numbers_are_the_ones_the_audited_guest_probes_issued ... ok
+test numbers::tests::the_p06_numbers_and_slots_are_the_ones_the_kernel_tables_and_the_guest_probes_give ... ok
+test numbers::tests::the_p06_tables_differ_per_abi_in_every_number_and_share_every_sub_call ... ok
+test numbers::tests::the_server_rows_differ_per_abi_share_sub_calls_and_repeat_no_p06_number ... ok
+test numbers::tests::the_server_rows_are_the_numbers_the_audited_guest_probes_issued ... ok
+test numbers::tests::the_socket_plan_is_socketcall_on_powerpc_and_direct_on_mips_for_every_call ... ok
+test numbers::tests::the_socket_plan_numbers_sub_calls_and_block_sizes_are_the_ones_typed_from_the_kernel_files_and_for_mips_the_probes ... ok
+test numbers::tests::the_socket_plan_reuses_the_s3_rows_and_adds_only_listen_and_accept4 ... ok
+test socket_route::tests::a_negative_descriptor_keeps_its_32_bit_pattern_whatever_the_host_width ... ok
+test socket_route::tests::a_refusal_says_which_release_and_why ... ok
+test socket_route::tests::a_release_that_cannot_rule_out_v2_6_27_is_not_admitted_for_the_socketcall_route ... ok
+test socket_route::tests::a_release_that_is_not_a_kernel_version_is_not_parsed ... ok
+test socket_route::tests::each_op_is_issued_as_the_plan_routes_it_with_the_words_in_the_syscalls_own_order ... ok
+test socket_route::tests::every_issue_fits_what_the_trampoline_and_the_kernel_read ... ok
+test socket_route::tests::release_strings_parse_to_the_first_three_numbers_and_the_pre_release_mark ... ok
+test socket_route::tests::the_admission_rule_applies_exactly_where_sub_call_18_is_used ... ok
+test socket_route::tests::the_argument_builders_put_the_syscalls_own_arguments_in_order_and_zero_the_rest ... ok
+test socket_route::tests::the_direct_route_does_not_depend_on_the_release ... ok
+test socket_route::tests::the_socketcall_route_is_refused_by_name_on_v2_6_27_and_its_neighbours_are_admitted ... ok
+test tests::the_host_build_has_no_backend_and_says_so ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 244 tests
+test button_adapter::tests::a_held_button_is_one_press_and_is_reported_stuck_once ... ok
+test button_adapter::tests::a_press_is_one_local_action_and_a_release_is_none_through_the_real_hal_channel ... ok
+test button_adapter::tests::the_sound_mapping_produces_exactly_the_expected_actions ... ok
+test clock_log::tests::a_clock_log_can_be_made_for_every_member_of_the_house ... ok
+test button_adapter::tests::a_fault_that_is_not_a_button_is_ignored ... ok
+test button_adapter::tests::a_mute_bound_to_the_trim_is_caught ... ok
+test button_adapter::tests::a_button_works_for_a_member_with_no_authority_and_the_remote_path_is_shown_dead ... ok
+test button_adapter::tests::a_configuration_that_cannot_work_is_refused_and_a_working_one_is_accepted ... ok
+test button_adapter::tests::an_unknown_state_is_neither_a_press_nor_a_release ... ok
+test button_adapter::tests::a_bouncing_button_cannot_ratchet_the_volume_and_a_spaced_press_acts ... ok
+test button_adapter::tests::over_random_events_cloud_commands_and_rejoins_the_adapter_matches_a_plain_model_and_never_touches_the_group ... ok
+test button_adapter::tests::a_local_mute_survives_cloud_retries_and_a_rejoin_and_unmuting_plays_the_groups_volume ... ok
+test clock_log::tests::a_pseudonymous_clock_log_carries_no_raw_label_in_any_field_or_in_the_jsonl ... ok
+test clock_log::tests::the_leak_scan_names_every_field_a_raw_label_is_in ... ok
+test clock_log::tests::critical_events_survive_a_small_sink_and_every_drop_is_counted ... ok
+test clock_log::tests::the_clock_log_pseudonyms_are_stable_keyed_and_the_ones_the_other_logs_give ... ok
+test clock_log::tests::the_drain_writes_the_documented_relock_sequence_into_the_real_sink ... ok
+test control_adapter::tests::a_local_legacy_retry_of_a_relative_step_applies_again ... ok
+test control_adapter::tests::a_group_step_moves_the_group_volume_and_not_the_member ... ok
+test control_adapter::tests::a_plan_that_did_not_finish_is_not_a_clean_run ... ok
+test button_adapter::tests::a_fault_mute_that_overrides_a_requested_unmute_is_reported_and_the_board_stays_silent ... ok
+test button_adapter::tests::a_press_that_also_releases_is_caught ... ok
+test control_adapter::tests::a_relative_step_clamps_and_a_clamped_step_still_moves_the_revision ... ok
+test clock_log::tests::a_keyed_sink_alone_leaves_the_raw_member_label_in_the_correlation_id ... ok
+test control_adapter::tests::a_tailnet_request_signed_with_a_key_that_is_not_admitted_changes_nothing ... ok
+test control_adapter::tests::a_tailnet_retry_with_the_same_command_number_applies_once ... ok
+test control_adapter::tests::a_tailnet_replay_reports_the_volume_as_it_is_now_not_as_it_was_committed ... ok
+test control_adapter::tests::a_tailnet_step_composed_against_an_older_revision_is_refused_and_remembered ... ok
+test button_adapter::tests::losing_the_button_device_never_unmutes_and_is_not_a_release ... ok
+test control_adapter::tests::a_set_the_endpoint_refuses_fails_the_end_of_campaign_step_by_name ... ok
+test control_adapter::tests::the_harness_keys_follow_the_secret_store_contract ... ok
+test control_adapter::tests::a_retry_sent_as_a_new_command_is_named_by_the_oracle ... ok
+test control_adapter::tests::a_valid_plan_is_not_refused ... ok
+test control_adapter::tests::a_stale_revision_a_client_refreshes_is_named_by_the_oracle ... ok
+test control_adapter::tests::an_invalid_plan_is_refused_before_anything_is_sent ... ok
+test control_adapter::tests::an_absolute_group_set_over_plain_soap_applies_and_a_repeat_leaves_the_volume_where_it_was ... ok
+test control_adapter::tests::an_out_of_range_group_set_is_refused_with_no_effect_and_the_boundary_is_accepted ... ok
+test control_adapter::tests::the_end_of_campaign_step_applies_the_set_and_its_repeat_and_is_refused_nothing_else ... ok
+test control_adapter::tests::the_reference_plan_reaches_the_same_volumes_without_either_ingress ... ok
+test harness::tests::a_blocks_start_maps_back_to_its_scheduled_frame_however_long_the_campaign_runs ... ok
+test harness::tests::a_datagram_made_for_one_member_is_refused_by_another_because_each_session_has_its_own_key ... ok
+test control_adapter::tests::the_race_plan_does_what_the_contract_predicts ... ok
+test clock_log::tests::a_nodes_audible_gate_is_the_same_whatever_its_clock_log_does ... ok
+test harness::tests::a_leap_forward_mid_stream_mutes_at_once_and_a_relock_resumes_at_a_new_admitted_start ... ok
+test harness::tests::a_failure_that_names_no_member_is_recorded_as_the_houses_with_its_whole_text_as_the_cause ... ok
+test clock_log::tests::a_working_a_full_an_unavailable_and_no_sink_leave_the_clock_deciding_alike ... ok
+test harness::tests::a_locked_node_sounds_at_the_admitted_start_and_presents_the_scheduled_frame_at_the_reference_instant ... ok
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 31.54s
+     Running unittests src/lib.rs (.rch-target-<worker>-pool-dd72503f9400a9bc46c7f2a02f3cbbd7/debug/deps/franken_platform-17df48d98b77647b)
+     Running unittests src/lib.rs (.rch-target-<worker>-pool-dd72503f9400a9bc46c7f2a02f3cbbd7/debug/deps/franken_platform_linux-33a4a0957c4eb944)
+     Running unittests src/lib.rs (.rch-target-<worker>-pool-dd72503f9400a9bc46c7f2a02f3cbbd7/debug/deps/franken_speaker-e17d22ac2c4d2ef2)
+test harness::tests::a_campaign_record_names_its_member_in_member_id_and_in_no_free_text_field ... ok
+test harness::tests::a_keyed_campaign_sink_holds_no_raw_member_or_group_label_in_any_field_or_in_the_jsonl ... ok
+test clock_log::tests::a_drain_that_waits_on_the_sink_is_caught_by_the_offer_count ... ok
+test harness::tests::a_house_with_one_participant_left_makes_no_synchronisation_claim ... ok
+test harness::tests::a_planted_fault_names_its_member_as_a_field_and_never_in_its_text ... ok
+test clock_log::tests::every_member_of_a_campaign_reports_its_clock_log ... ok
+test harness::tests::a_planted_volume_fault_needs_a_volume_plan ... ok
+test harness::tests::a_member_that_cannot_take_a_full_block_is_refused_by_the_member_and_both_refusals_are_independent ... ok
+test harness::tests::a_planted_fault_leaves_the_fault_and_its_causal_chain_in_the_log ... ok
+test harness::tests::a_refused_member_is_out_of_the_skew_gate_but_a_silently_muted_one_is_not ... ok
+test harness::tests::a_rejected_command_does_not_adopt_its_epoch_and_cannot_fence_out_the_coordinator ... ok
+test harness::tests::a_member_whose_answer_carries_an_unsupported_message_version_is_refused_and_muted_with_its_cause ... ok
+test harness::tests::a_campaign_that_compared_nothing_does_not_report_the_skew_target_as_met ... ok
+test harness::tests::a_planted_source_fault_without_a_source_change_and_a_change_outside_the_campaign_are_errors ... ok
+test harness::tests::a_member_that_never_sounded_may_render_only_zeros_under_the_new_source ... ok
+test harness::tests::a_suspend_mid_stream_mutes_within_one_probe_and_a_relock_resumes_at_a_new_admitted_start ... ok
+test harness::tests::a_run_in_which_all_but_one_member_is_muted_does_not_pass_the_skew_gate ... ok
+test harness::tests::an_unadmitted_node_never_sounds_and_admitting_it_makes_it_sound_at_the_start ... ok
+test harness::tests::campaign_checks_every_channel_against_the_shadow_render_and_is_simulation_only ... ok
+test clock_log::tests::a_drain_that_lets_the_sink_mute_the_clock_is_caught_by_the_decision_comparison ... ok
+test harness::tests::canary_a_missing_final_block_is_caught_as_a_truncated_stream ... ok
+test harness::tests::canary_false_ready_on_an_unlocked_clock_is_refused_even_when_the_node_skips_its_own_gate ... ok
+test harness::tests::canary_premature_unmute_through_a_weakened_driver_threshold_is_refused ... ok
+test harness::tests::campaign_fencing_probe_drives_the_real_session_and_the_oracle_accepts_it ... ok
+test harness::tests::each_member_and_each_boot_gets_a_different_request_base_and_a_recorded_answer_cannot_cross_a_reboot ... ok
+test harness::tests::each_source_epoch_publishes_its_own_audio_and_epoch_one_is_the_campaigns_original_signal ... ok
+test harness::tests::a_locked_node_keeps_presenting_the_scheduled_frame_past_62_500_blocks ... ok
+test harness::tests::canary_sample_corruption_in_any_channel_of_the_real_campaign_is_caught ... ok
+test harness::tests::harness_oracle_spec_for_the_clock_is_pinned_to_the_n03_configuration ... ok
+test harness::tests::known_limit_a_valid_command_at_an_undeclared_epoch_is_still_applied ... ok
+test harness::tests::nominal_bring_up_is_observed_and_reaches_ready ... ok
+test harness::tests::every_member_stream_is_created_through_negotiation_with_the_agreed_version_and_format ... ok
+test harness::tests::nothing_sounds_before_the_admitted_start_and_the_first_sounding_block_is_the_scheduled_one ... ok
+test harness::tests::a_campaign_with_no_source_change_has_one_program_and_the_nominal_counts ... ok
+test harness::tests::redacting_a_failure_replaces_every_member_label_and_names_the_first_member_it_mentions ... ok
+test harness::tests::simulated_peer_identities_and_nonces_are_valid_distinct_and_deterministic ... ok
+test harness::tests::the_asymmetric_source_keeps_the_left_channel_and_its_mono_mix_never_cancels ... ok
+test harness::tests::a_campaign_with_no_volume_plan_reports_none_and_sounds_the_same_every_time ... ok
+test harness::tests::a_member_whose_channels_all_come_from_the_mono_mix_renders_silence_and_the_endpoint_member_does_not ... ok
+test harness::tests::the_cutover_the_model_restates_is_where_the_pump_stands_93_blocks_ahead ... ok
+test harness::tests::the_campaign_is_deterministic ... ok
+test harness::tests::the_digest_of_silence_is_the_value_computed_independently ... ok
+test harness::tests::the_hal_still_refuses_an_unmute_before_priming_on_its_own ... ok
+test harness::tests::the_leak_scan_names_the_free_text_field_a_raw_member_id_is_put_back_in ... ok
+test harness::tests::the_old_mapping_a_block_index_times_the_rounded_period_misses_its_frame_and_the_exact_one_does_not ... ok
+test harness::tests::the_planted_version_refusal_is_about_the_version_and_not_a_broken_tag ... ok
+test harness::tests::the_campaign_sounds_every_block_of_every_member_and_measures_a_skew_from_independent_clocks ... ok
+test harness::tests::the_default_campaign_sink_bounds_a_burst_but_never_limits_a_healthy_stream ... ok
+test harness::tests::the_simulated_member_clocks_are_pinned_so_a_change_to_them_is_deliberate ... ok
+test harness::tests::the_redacted_labels_are_the_members_the_campaign_has ... ok
+test harness::tests::a_tailnet_retry_sent_as_a_new_command_fails_the_campaign_by_name ... ok
+test harness::tests::a_stale_tailnet_revision_a_client_refreshes_fails_the_campaign_by_name ... ok
+test harness::tests::a_reference_that_reaches_a_different_volume_sounds_different_in_that_member_only ... ok
+test harness::tests::a_clock_leap_in_the_whole_campaign_blinds_the_engine_until_the_relock_and_it_catches_up_as_overdue ... ok
+test harness::tests::unsolicited_replayed_stale_and_wrong_leader_probes_change_nothing_and_never_produce_audio ... ok
+test harness::tests::q01_measure_what_every_member_renders_under_each_source ... ok
+test harness::tests::a_late_block_in_the_whole_campaign_is_refused_as_late_and_concealed_and_nothing_else_moves ... ok
+test harness::tests::a_previous_epoch_datagram_in_the_whole_campaign_is_refused_twice_and_nothing_else_moves ... ok
+test platform_start::tests::a_clock_that_is_absent_is_a_typed_refusal_and_the_other_capabilities_are_still_tried ... ok
+test platform_start::tests::a_device_build_wired_to_a_simulated_backend_is_refused_before_any_kernel_call ... ok
+test platform_start::tests::a_getrandom_failure_at_startup_never_opens_the_legacy_device ... ok
+test platform_start::tests::a_kernel_backend_that_names_no_abi_is_refused_before_any_kernel_call ... ok
+test platform_start::tests::a_kernel_declaring_backend_starts_and_every_capability_reports_kernel ... ok
+test platform_start::tests::a_missing_legacy_device_and_a_failed_read_keep_their_own_typed_refusals ... ok
+test platform_start::tests::a_refused_report_names_the_capability_the_reason_and_the_next_action_and_the_markers_stay_as_they_were ... ok
+test platform_start::tests::a_selected_legacy_provider_in_a_test_environment_starts_through_open_and_never_calls_getrandom ... ok
+test platform_start::tests::a_startup_error_carries_the_action_of_its_code_and_says_to_start_again_exactly_when_it_is_retryable ... ok
+test platform_start::tests::a_wake_open_resource_or_permission_failure_does_not_claim_the_call_is_absent ... ok
+test platform_start::tests::a_wake_source_that_will_not_close_is_a_wake_refusal_and_not_a_silent_pass ... ok
+test platform_start::tests::a_wake_source_the_kernel_cannot_open_refuses_the_platform_on_its_typed_code ... ok
+test platform_start::tests::a_wake_that_cannot_be_signalled_or_is_not_seen_is_a_typed_refusal ... ok
+test platform_start::tests::an_empty_legacy_pool_is_waiting_and_retryable_with_the_provider_shown_and_no_getrandom ... ok
+test platform_start::tests::an_entropy_call_that_is_absent_or_degenerate_is_refused_not_papered_over ... ok
+test platform_start::tests::an_unseeded_pool_is_a_retryable_refusal_and_is_never_answered_with_a_seeded_value ... ok
+test platform_start::tests::every_reason_code_is_produced_by_some_error_and_belongs_to_its_capabilitys_closed_set ... ok
+test platform_start::tests::every_refusal_code_has_one_safe_next_action_and_only_not_seeded_says_to_start_again ... ok
+test platform_start::tests::every_selection_has_one_spelling_and_the_default_alone_has_no_marker_token ... ok
+test platform_start::tests::only_an_unseeded_pool_is_retryable ... ok
+test platform_start::tests::the_command_line_selects_a_provider_only_by_naming_it_and_refuses_everything_else ... ok
+test platform_start::tests::the_committed_legacy_marker_examples_are_exactly_what_each_scenario_prints ... ok
+test platform_start::tests::the_committed_marker_examples_are_exactly_what_each_scenario_prints_and_the_reason_set_matches ... ok
+test platform_start::tests::the_construction_counter_sees_a_second_site_and_ignores_prose ... ok
+test platform_start::tests::the_default_selection_prints_no_provider_token_and_never_opens_the_legacy_device ... ok
+test platform_start::tests::the_evidence_qualified_legacy_provider_is_refused_unavailable_without_any_entropy_call ... ok
+test platform_start::tests::the_kernel_field_is_one_to_sixty_four_safe_bytes_or_the_literal_invalid ... ok
+test platform_start::tests::the_one_shot_check_closes_the_layer_it_opened ... ok
+test platform_start::tests::the_running_kernel_is_recorded_and_never_a_reason_to_refuse ... ok
+test harness::tests::unavailable_full_zero_capacity_and_tiny_log_sinks_do_not_change_the_campaign ... ok
+test playout_adapter::tests::a_block_after_its_cutoff_is_late_and_concealed_even_though_it_arrives_before_presentation ... ok
+test playout_adapter::tests::a_clock_that_cannot_be_used_renders_a_silent_position_and_the_engine_catches_up_as_overdue ... ok
+test playout_adapter::tests::a_duplicate_is_refused_and_plays_once ... ok
+test playout_adapter::tests::a_leaped_node_clock_does_not_latch_a_reading_the_clock_does_not_stand_behind ... ok
+test playout_adapter::tests::a_long_loss_conceals_a_bounded_number_of_blocks_and_then_mutes ... ok
+test playout_adapter::tests::a_missing_block_is_concealed_by_the_contracts_rule_and_the_independent_expectation_agrees ... ok
+test playout_adapter::tests::a_new_stream_has_its_own_engine_that_holds_its_blocks_while_the_old_tail_drains ... ok
+test playout_adapter::tests::a_packet_from_another_stream_epoch_is_refused_and_its_block_is_not_played ... ok
+test playout_adapter::tests::a_packet_of_a_retired_stream_is_refused_and_a_packet_of_an_unknown_stream_is_an_error ... ok
+test playout_adapter::tests::a_planted_datagram_of_the_replaced_stream_is_refused_by_the_receiver_and_changes_nothing_else ... ok
+test playout_adapter::tests::a_planted_late_packet_is_late_its_block_is_concealed_and_the_control_without_the_plant_is_clean ... ok
+test harness::tests::a_datagram_of_the_replaced_stream_after_the_rebind_is_refused_by_the_receiver_and_changes_nothing_else ... ok
+test platform_start::tests::the_speaker_builds_a_layer_and_the_backend_in_exactly_one_place_each ... ok
+test playout_adapter::tests::a_real_block_whose_bytes_are_not_the_ones_sent_is_a_campaign_error ... ok
+test playout_adapter::tests::a_stream_cannot_be_opened_twice_at_the_same_block_or_before_the_latest_one ... ok
+test playout_adapter::tests::an_old_block_that_arrives_after_its_decision_is_refused_and_changes_nothing ... ok
+test playout_adapter::tests::blocks_that_arrive_out_of_order_still_play_in_block_order ... ok
+test playout_adapter::tests::every_block_plays_the_bytes_of_the_stream_that_owns_its_position ... ok
+test playout_adapter::tests::a_planted_swap_reverses_one_pair_of_arrivals_and_every_block_still_plays_its_own_bytes ... ok
+test playout_adapter::tests::finishing_a_run_with_an_undecided_block_is_an_error ... ok
+test playout_adapter::tests::a_planted_previous_epoch_datagram_is_refused_by_the_receiver_and_by_the_engine_and_changes_nothing_else ... ok
+test playout_adapter::tests::one_engine_rebound_at_the_cutover_would_discard_the_new_streams_queued_blocks ... ok
+test playout_adapter::tests::on_time_blocks_play_exactly_the_bytes_that_were_sent ... ok
+test playout_adapter::tests::the_oracle_trips_on_an_integration_that_stamps_the_send_time_as_the_arrival_time ... ok
+test playout_adapter::tests::the_reading_never_falls_and_every_clamp_is_counted ... ok
+test render::tests::a_block_finishing_on_its_deadline_is_on_time_and_one_tick_later_is_dropped ... ok
+test playout_adapter::tests::the_pump_sends_each_block_once_in_order_with_exactly_the_schedules_decisions ... ok
+test render::tests::a_blocked_management_request_cannot_hold_the_render_owners_lock ... ok
+test playout_adapter::tests::the_publish_gate_decides_whose_frame_is_sent_and_a_refused_adapter_is_counted_by_the_code ... ok
+test render::tests::a_control_storm_is_bounded_and_does_not_make_a_render_late ... ok
+test render::tests::a_counter_that_goes_back_across_its_wrap_is_a_regress_and_the_wrap_itself_is_not ... ok
+test render::tests::a_counter_that_goes_back_by_one_faults_the_loop_with_its_own_reason_and_holds_every_buffer ... ok
+test render::tests::a_device_that_runs_dry_with_nothing_dropped_is_a_driver_underrun ... ok
+test render::tests::a_device_that_runs_dry_after_the_loop_dropped_a_block_is_explained_not_blamed_on_the_driver ... ok
+test render::tests::a_forward_overclaim_faults_the_loop_as_a_session_fault_and_leaves_the_mapping_valid ... ok
+test render::tests::a_held_buffer_is_never_released_because_a_timer_ran_out_only_on_an_acknowledgment ... ok
+test render::tests::a_graceful_stop_ramps_to_silence_and_ends_within_the_ramp_plus_the_stop_deadline ... ok
+test render::tests::a_late_wakeup_that_still_meets_the_deadline_is_on_time_and_one_that_does_not_is_a_cpu_miss ... ok
+test render::tests::a_loop_that_recovered_from_a_fault_starts_clean_and_is_not_faulted_by_the_old_events ... ok
+test render::tests::a_full_or_unread_event_sink_changes_no_deadline_and_no_outcome ... ok
+test render::tests::a_new_loop_is_ready_and_silent_and_touches_the_device_only_to_prepare ... ok
+test render::tests::a_one_frame_block_is_rendered_and_submitted_without_indexing_errors ... ok
+test render::tests::a_protection_dsp_that_stops_being_active_faults_the_loop_and_mutes ... ok
+test render::tests::a_regress_during_a_drain_faults_it_instead_of_timing_out_and_the_stop_tail_is_not_trusted ... ok
+test render::tests::a_regress_while_muted_faults_the_same_way_and_leaves_the_muted_state_for_faulted ... ok
+test render::tests::a_render_longer_than_the_period_delays_the_next_block_instead_of_overlapping_it ... ok
+test render::tests::a_stop_the_device_never_acknowledges_faults_and_quarantines_it_does_not_free ... ok
+test render::tests::after_a_regress_the_loop_refuses_the_old_mapping_until_it_is_reinstalled_and_then_takes_a_new_baseline ... ok
+test render::tests::a_short_write_is_retried_within_the_tick_and_the_rest_is_discarded_not_carried ... ok
+test render::tests::consecutive_cpu_misses_trip_the_watchdog_which_mutes_and_stops_rendering ... ok
+test render::tests::device_loss_is_a_persistent_fault_that_cannot_be_acknowledged_or_recovered ... ok
+test render::tests::every_lifecycle_transition_is_taken_and_every_illegal_one_is_refused ... ok
+test render::tests::ingress_loss_and_decode_delay_are_counted_apart_and_only_ingress_loss_resets_the_stream ... ok
+test render::tests::injected_admission_failures_fail_closed_at_start_and_reconnect_and_the_stop_path_still_finishes ... ok
+test render::tests::mute_and_stop_from_the_port_take_effect_and_a_stale_command_does_not_outlive_a_stop ... ok
+test render::tests::start_is_refused_for_a_board_that_is_not_active_and_leaves_the_device_alone ... ok
+test render::tests::process_death_leaves_the_kernels_buffers_alive_and_claims_no_acknowledgment ... ok
+test render::tests::steady_state_blocks_are_released_on_the_period_and_submitted_before_their_deadline ... ok
+test render::tests::the_cleanup_reserve_keeps_a_slot_that_ordinary_blocks_cannot_take_and_the_stop_path_can ... ok
+test render::tests::construction_refuses_what_the_render_path_cannot_carry ... ok
+test render_log::tests::a_critical_event_the_loops_own_queue_lost_marks_the_evidence_incomplete_too ... ok
+test render_log::tests::a_driver_counter_regress_leaves_exactly_one_critical_line_that_carries_the_reaction ... ok
+test render_log::tests::a_fault_is_critical_names_its_reason_and_root_and_the_schedule_is_named_on_other_lines ... ok
+test render_log::tests::a_forward_overclaim_leaves_no_line_that_carries_the_reaction ... ok
+test render_log::tests::a_hostile_identifier_never_reaches_a_line ... ok
+test render_log::tests::a_log_holding_only_critical_lines_loses_the_next_one_and_says_so ... ok
+test render_log::tests::a_long_message_is_cut ... ok
+test render_log::tests::a_small_log_drops_ordinary_lines_first_keeps_the_fault_and_accounts_for_every_line ... ok
+test render::tests::what_reaches_the_device_is_exactly_what_the_stages_produce_in_order_without_loss_or_repeat ... ok
+test render_log::tests::every_line_has_exactly_the_ffw_log_v1_shape_and_survives_the_redactor_unchanged ... ok
+test render_log::tests::state_revision_counts_state_changes_and_timestamps_never_go_back ... ok
+test render_log::tests::a_tiny_or_absent_log_changes_nothing_the_loop_does ... ok
+test render_log::tests::the_causes_are_kept_apart_and_a_cpu_miss_carries_its_lateness ... ok
+test render_log::tests::the_regress_runs_produce_exactly_the_hand_written_lines ... ok
+test render_log::tests::the_scripted_run_produces_exactly_the_hand_written_lines ... ok
+test render_log::tests::without_a_tick_length_latency_is_zero_and_a_tick_is_one_nanosecond ... ok
+test services::tests::a_marker_parses_back_to_the_report_it_came_from_and_nothing_else_parses ... ok
+test services::tests::a_marker_says_absent_or_selected_unimplemented_unqualified_in_words_and_never_ready ... ok
+test services::tests::a_printed_line_claiming_qualification_parses_and_check_refuses_it ... ok
+test services::tests::a_report_that_disagrees_with_this_build_is_refused ... ok
+test services::tests::a_selected_service_claiming_ready_is_refused_and_the_same_report_without_the_claim_passes ... ok
+test services::tests::airplay2_not_selected_reports_absent ... ok
+test services::tests::alexa_bridge_not_selected_reports_absent ... ok
+test services::tests::artwork_not_selected_reports_absent ... ok
+test services::tests::enabling_a_flag_does_not_change_admissions_blocks ... ok
+test services::tests::every_service_has_a_cargo_feature_of_its_name_and_no_other_flag_is_a_service ... ok
+test services::tests::no_build_selection_reports_a_service_implemented_qualified_or_ready ... ok
+test services::tests::spotify_connect_not_selected_reports_absent ... ok
+test services::tests::tailnet_native_not_selected_reports_absent ... ok
+test services::tests::the_contract_names_the_same_flags_on_this_crate_and_none_for_the_render_path ... ok
+test services::tests::the_markers_are_the_reports_markers_one_per_line_in_order ... ok
+test services::tests::the_report_lists_every_service_once_in_a_fixed_order ... ok
+test services::tests::the_report_round_trips_as_json_and_refuses_a_field_it_does_not_know ... ok
+test services::tests::the_wire_names_are_the_contract_names ... ok
+test render_log::tests::the_real_loop_tripping_its_watchdog_leaves_a_log_that_tells_the_story ... ok
+test render::tests::the_committed_scenarios_replay_through_the_real_loop_exactly_as_the_independent_model_says ... ok
+test harness::tests::virtual_house_streams_mixed_s1_s2_fleet_with_zero_output_discontinuities ... ok
+test harness::tests::every_campaign_ends_with_a_group_volume_set_through_the_real_endpoint ... ok
+test harness::tests::a_reordered_pair_in_the_whole_campaign_changes_the_arrival_order_and_nothing_else ... ok
+test harness::tests::under_the_original_source_the_mono_routed_member_renders_only_zeros_and_that_is_not_a_failure ... ok
+test harness::tests::with_a_source_whose_channels_do_not_cancel_every_member_renders_sound ... ok
+test harness::tests::without_the_new_question_a_member_handed_silence_passes_every_other_oracle ... ok
+test harness::tests::the_volume_race_sounds_exactly_like_a_reference_that_sets_the_same_volumes_directly ... ok
+test harness::tests::the_volume_race_around_a_source_change_does_what_the_contract_predicts ... ok
+test harness::tests::a_member_that_renders_silence_fails_the_campaign_by_name ... ok
+test harness::tests::two_adapters_racing_to_replace_the_source_admit_exactly_one_in_either_order_and_the_house_cuts_over_at_one_frame ... ok
+test harness::tests::the_real_playout_engine_decides_every_block_as_the_seeded_schedule_says_it_must ... ok
+test harness::tests::q01_measure_planted_silence_is_named_for_every_member ... ok
+     Running unittests src/main.rs (.rch-target-<worker>-pool-dd72503f9400a9bc46c7f2a02f3cbbd7/debug/deps/franken_speaker-9987988419926410)
+     Running tests/cli_services.rs (.rch-target-<worker>-pool-dd72503f9400a9bc46c7f2a02f3cbbd7/debug/deps/cli_services-258defce10f5f6a6)
+     Running tests/d02_protection_history.rs (.rch-target-<worker>-pool-dd72503f9400a9bc46c7f2a02f3cbbd7/debug/deps/d02_protection_history-fc6c7d81687d381a)
+     Running tests/d03_closed_loop.rs (.rch-target-<worker>-pool-dd72503f9400a9bc46c7f2a02f3cbbd7/debug/deps/d03_closed_loop-7a8c730468051ed0)
+   Doc-tests franken_platform
+test harness::tests::a_replaced_adapter_that_keeps_publishing_is_refused_by_the_gate_and_its_audio_never_sounds ... ok
+
+test result: ok. 244 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.85s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 16 tests
+test cli_airplay2_not_selected_prints_absent ... ok
+test an_unknown_option_is_still_refused_and_the_usage_lists_the_services_option ... ok
+test cli_alexa_bridge_not_selected_prints_absent ... ok
+test every_printed_line_parses_back_to_the_report_this_build_gives_for_that_service ... ok
+test cli_spotify_connect_not_selected_prints_absent ... ok
+test no_service_line_says_ready_and_each_is_absent_or_selected_unimplemented_unqualified ... ok
+test platform_diagnose_is_a_real_command_with_a_safe_action_for_an_unavailable_backend ... ok
+test cli_tailnet_native_not_selected_prints_absent ... ok
+test services_option_exits_zero_with_one_line_per_service_in_order_and_nothing_on_stderr ... ok
+test cli_artwork_not_selected_prints_absent ... ok
+test services_option_is_the_same_on_every_run ... ok
+test platform_startup_is_still_refused_on_a_build_with_no_kernel_backend ... ok
+test the_harness_options_are_still_refused_without_the_harness ... ok
+test the_catalog_option_still_prints_the_catalog_as_json_and_not_the_services ... ok
+test both_platform_commands_reject_malformed_provider_arguments_before_startup ... ok
+test with_no_option_a_build_without_the_harness_still_prints_the_catalog ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 6 tests
+test a_loop_that_unlatched_the_board_at_recover_is_caught ... ok
+test a_latched_fault_survives_recover_and_every_loop_call_until_it_is_cooled_and_cleared ... ok
+test history_survives_a_stop_and_restart_through_the_real_loop ... ok
+test history_survives_a_reconnect_through_the_real_loop ... ok
+test history_survives_a_profile_switch_through_the_real_loop ... ok
+test history_survives_an_ingress_loss_discontinuity_epoch_through_the_real_loop ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 7 tests
+test d03_closed_loop_soak_25_5_hours_crosses_the_counter_wrap ... ignored, 25.5 virtual hours; run with --ignored (soak tier)
+test d03_resampler_epochs_must_advance_in_the_glue_too ... ok
+test d03_source_counter_jump_resets_only_source_local_history_at_an_explicit_epoch ... ok
+test d03_without_the_loop_the_same_drift_overruns_the_bound ... ok
+test d03_closed_loop_holds_the_queue_for_ten_minutes_slow_source ... ok
+test d03_closed_loop_holds_the_queue_for_ten_minutes_fast_source ... ok
+test d03_closed_loop_absorbs_the_u32_timeline_wrap ... ok
+
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+   Doc-tests franken_platform_linux
+   Doc-tests franken_speaker
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+  2026-11-06T16:58:13.610621Z  INFO rch::hook::transfer_orchestration: Remote command finished: exit=0 in 38749ms
+    at rch/src/hook/transfer_orchestration.rs:2985 on ThreadId(1)
+
+[RCH] exec done: exit=0 in 38749ms
+  2026-11-06T16:58:13.648352Z  INFO rch::hook::transfer_orchestration: Retrieving build artifacts...
+    at rch/src/hook/transfer_orchestration.rs:3207 on ThreadId(1)
+
+[RCH] artifacts: retrieving...
+  2026-11-06T16:58:13.648422Z  INFO rch::transfer: Retrieving artifacts from <worker-source> on <worker>
+    at rch/src/transfer.rs:8905 on ThreadId(1)
+
+  2026-11-06T16:58:14.202312Z  INFO rch::transfer: Artifact retrieval budget from selected remote files, selected_bytes: 0, total_timeout_ms: 30000
+    at rch/src/transfer.rs:4389 on ThreadId(1)
+
+  2026-11-06T16:58:14.202357Z  INFO rch::transfer: Artifact selection is verified empty; skipping payload connection
+    at rch/src/transfer.rs:8918 on ThreadId(1)
+
+  2026-11-06T16:58:14.223619Z  INFO rch::hook::transfer_orchestration: Artifacts retrieved: 0 files, 44 bytes in 553ms
+    at rch/src/hook/transfer_orchestration.rs:3272 on ThreadId(1)
+
+[RCH] artifacts done: 0 files, 44 bytes in 553ms
+[RCH] custom target dir sync skipped for <workspace>/target after command with no target artifacts
+[RCH] remote <worker> (44.9s)

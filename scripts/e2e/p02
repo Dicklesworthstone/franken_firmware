@@ -14,32 +14,36 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MANIFEST="$ROOT/Cargo.toml"
-WORKERS="hz4,hz3,ts1,vmi1227854,vmi1153651,vmi1152480,vmi1156319,vmi1293453,vmi1149989,ovh-a"
+WORKER_ENV="${FFW_RCH_WORKERS:+RCH_WORKERS=$FFW_RCH_WORKERS}"
+DEVICE_POOL="${FFW_RCH_DEVICE_WORKERS:-${FFW_RCH_WORKERS:-}}"
+DEVICE_WORKER_ENV="${DEVICE_POOL:+RCH_WORKERS=$DEVICE_POOL}"
+TOOLCHAIN="${FFW_RCH_TOOLCHAIN:-nightly-2026-08-31}"
 
 plan() {
   cat <<EOF
 # Central plan for P02 (run from $ROOT/crates/franken-platform so rch syncs only the crate's Cargo closure; every cargo
 # step names its job count because rch ignores CARGO_BUILD_JOBS). fmt is not an rch command (RCH-E301): run locally.
 rustfmt --edition 2024 --check $ROOT/crates/franken-platform/src/lib.rs
-RCH_REQUIRE_REMOTE=1 RCH_WORKER=$WORKERS rch exec -- cargo test   --locked --offline --manifest-path $MANIFEST -p franken-platform --config build.incremental=false -j 2
-RCH_REQUIRE_REMOTE=1 RCH_WORKER=$WORKERS rch exec -- cargo clippy --locked --offline --manifest-path $MANIFEST -p franken-platform --all-targets --config build.incremental=false -j 2 -- -D warnings
-RCH_REQUIRE_REMOTE=1 RCH_WORKER=$WORKERS rch exec -- cargo clippy --locked --offline --manifest-path $MANIFEST -p franken-platform --lib --features sim --config build.incremental=false -j 2 -- -D warnings
-# Device targets (type check only: nothing is linked or run). Workers need nightly rust-src: ts1 and hz3 (the set E06's batch uses; hz4 is not confirmed).
-RCH_REQUIRE_REMOTE=1 RCH_WORKER=ts1,hz3 rch exec -- cargo +nightly check --locked --offline --manifest-path $MANIFEST -p franken-platform --target mips-unknown-linux-musl    -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2
-RCH_REQUIRE_REMOTE=1 RCH_WORKER=ts1,hz3 rch exec -- cargo +nightly check --locked --offline --manifest-path $MANIFEST -p franken-platform --target powerpc-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2
+RCH_REQUIRE_REMOTE=1 ${WORKER_ENV} rch exec -- cargo test   --locked --offline --manifest-path $MANIFEST -p franken-platform --config build.incremental=false -j 2
+RCH_REQUIRE_REMOTE=1 ${WORKER_ENV} rch exec -- cargo clippy --locked --offline --manifest-path $MANIFEST -p franken-platform --all-targets --config build.incremental=false -j 2 -- -D warnings
+RCH_REQUIRE_REMOTE=1 ${WORKER_ENV} rch exec -- cargo clippy --locked --offline --manifest-path $MANIFEST -p franken-platform --lib --features sim --config build.incremental=false -j 2 -- -D warnings
+# Device targets (type check only: nothing is linked or run). Select workers with the pinned nightly rust-src through native admission;
+# FFW_RCH_WORKERS / FFW_RCH_DEVICE_WORKERS override the candidate pools, never worker capacity or strict-remote policy.
+RCH_REQUIRE_REMOTE=1 ${DEVICE_WORKER_ENV} rch exec -- cargo +$TOOLCHAIN check --locked --offline --manifest-path $MANIFEST -p franken-platform --target mips-unknown-linux-musl    -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2
+RCH_REQUIRE_REMOTE=1 ${DEVICE_WORKER_ENV} rch exec -- cargo +$TOOLCHAIN check --locked --offline --manifest-path $MANIFEST -p franken-platform --target powerpc-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2
 # The Linux leaf (run from $ROOT): the only unsafe crate; clippy on both device targets compiles its asm.
 rustfmt --edition 2024 --check $ROOT/crates/franken-platform-linux/src/lib.rs
-RCH_REQUIRE_REMOTE=1 RCH_WORKER=$WORKERS rch exec -- cargo test   --locked --offline --manifest-path $MANIFEST -p franken-platform-linux --config build.incremental=false -j 2
-RCH_REQUIRE_REMOTE=1 RCH_WORKER=$WORKERS rch exec -- cargo clippy --locked --offline --manifest-path $MANIFEST -p franken-platform-linux --all-targets --config build.incremental=false -j 2 -- -D warnings
-RCH_REQUIRE_REMOTE=1 RCH_WORKER=ts1,hz3 rch exec -- cargo +nightly clippy --locked --offline --manifest-path $MANIFEST -p franken-platform-linux --target mips-unknown-linux-musl    -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2 -- -D warnings
-RCH_REQUIRE_REMOTE=1 RCH_WORKER=ts1,hz3 rch exec -- cargo +nightly clippy --locked --offline --manifest-path $MANIFEST -p franken-platform-linux --target powerpc-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2 -- -D warnings
+RCH_REQUIRE_REMOTE=1 ${WORKER_ENV} rch exec -- cargo test   --locked --offline --manifest-path $MANIFEST -p franken-platform-linux --config build.incremental=false -j 2
+RCH_REQUIRE_REMOTE=1 ${WORKER_ENV} rch exec -- cargo clippy --locked --offline --manifest-path $MANIFEST -p franken-platform-linux --all-targets --config build.incremental=false -j 2 -- -D warnings
+RCH_REQUIRE_REMOTE=1 ${DEVICE_WORKER_ENV} rch exec -- cargo +$TOOLCHAIN clippy --locked --offline --manifest-path $MANIFEST -p franken-platform-linux --target mips-unknown-linux-musl    -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2 -- -D warnings
+RCH_REQUIRE_REMOTE=1 ${DEVICE_WORKER_ENV} rch exec -- cargo +$TOOLCHAIN clippy --locked --offline --manifest-path $MANIFEST -p franken-platform-linux --target powerpc-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2 -- -D warnings
 # The device speaker's startup (run from $ROOT: a crate-directory cwd syncs only that crate's cargo closure): platform_start unit tests, clippy, and both device targets (lib and bin).
 # The device speaker build with the contract's linker and static flags, and the QEMU speaker smoke, are the P01 plan and the E07 runner.
 rustfmt --edition 2024 --check $ROOT/crates/franken-speaker/src/lib.rs $ROOT/crates/franken-speaker/src/main.rs
-RCH_REQUIRE_REMOTE=1 RCH_WORKER=$WORKERS rch exec -- cargo test   --locked --offline --manifest-path $MANIFEST -p franken-speaker --lib --config build.incremental=false -j 2 -- platform_start
-RCH_REQUIRE_REMOTE=1 RCH_WORKER=$WORKERS rch exec -- cargo clippy --locked --offline --manifest-path $MANIFEST -p franken-speaker --all-targets --config build.incremental=false -j 2 -- -D warnings
-RCH_REQUIRE_REMOTE=1 RCH_WORKER=ts1,hz3 rch exec -- cargo +nightly clippy --locked --offline --manifest-path $MANIFEST -p franken-speaker --target mips-unknown-linux-musl    -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2 -- -D warnings
-RCH_REQUIRE_REMOTE=1 RCH_WORKER=ts1,hz3 rch exec -- cargo +nightly clippy --locked --offline --manifest-path $MANIFEST -p franken-speaker --target powerpc-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2 -- -D warnings
+RCH_REQUIRE_REMOTE=1 ${WORKER_ENV} rch exec -- cargo test   --locked --offline --manifest-path $MANIFEST -p franken-speaker --lib --config build.incremental=false -j 2 -- platform_start
+RCH_REQUIRE_REMOTE=1 ${WORKER_ENV} rch exec -- cargo clippy --locked --offline --manifest-path $MANIFEST -p franken-speaker --all-targets --config build.incremental=false -j 2 -- -D warnings
+RCH_REQUIRE_REMOTE=1 ${DEVICE_WORKER_ENV} rch exec -- cargo +$TOOLCHAIN clippy --locked --offline --manifest-path $MANIFEST -p franken-speaker --target mips-unknown-linux-musl    -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2 -- -D warnings
+RCH_REQUIRE_REMOTE=1 ${DEVICE_WORKER_ENV} rch exec -- cargo +$TOOLCHAIN clippy --locked --offline --manifest-path $MANIFEST -p franken-speaker --target powerpc-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2 -- -D warnings
 EOF
 }
 
