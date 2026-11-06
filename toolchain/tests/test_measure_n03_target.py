@@ -583,14 +583,68 @@ class TranscriptAndElfTest(unittest.TestCase):
         self.assertEqual(gates["N03T-ELF"].status, "failed")
         self.assertIn("not 3 (soft)", gates["N03T-ELF"].detail)
 
-    def test_the_central_build_command_is_the_d03_one_for_this_crate(self):
+    def test_the_central_build_command_is_pinned_locked_and_portable_to_the_worker_mirror(self):
         import pathlib
         text = m.central_commands(pathlib.Path("/snap"), "label")
-        for needle in ("RCH_REQUIRE_REMOTE=1", "rch exec --", "cargo +nightly build --offline --release",
+        for needle in ("RCH_REQUIRE_REMOTE=1", "rch exec --source-content-receipt --", "RCH_BUILD_SLOTS=1",
+                       "cargo +nightly-2026-08-31 build --locked --offline --release",
                        "--manifest-path toolchain/src/n03-target/Cargo.toml", "--target mips-unknown-linux-musl",
-                       "-Z build-std=core,alloc,std,panic_abort", "-j 2", "zig-cc-mips-be", "crt-static",
+                       "-Z build-std=core,alloc,std,panic_abort", "-j 1", "zig-cc-mips-be", "crt-static",
+                       '--config \'target.mips-unknown-linux-musl.linker="toolchain/linker/zig-cc-mips-be"\'',
+                       "--bin ffw-n03-target", "--message-format=json",
                        "/snap/build/n03-target-target/mips-unknown-linux-musl/release/ffw-n03-target"):
             self.assertIn(needle, text)
+        self.assertNotIn('linker="/snap/', text)
+        self.assertNotIn("RCH_WORKER=", text)
+        self.assertNotIn("RCH_CARGO_JSON_STDOUT", text, "the named JSON opt-in rejects build-std/config; verify ordinary typed artifact publication")
+
+    def test_the_source_and_target_directory_arguments_preserve_spaces(self):
+        import pathlib
+        import shlex
+        args = shlex.split(m.central_commands(pathlib.Path("/snap with space"), "label"))
+        self.assertEqual(args[1], "/snap with space")
+        self.assertIn("RCH_CANONICAL_PROJECT_ROOT=/snap with space", args)
+        self.assertIn("CARGO_TARGET_DIR=/snap with space/build/n03-target-target", args)
+
+    def test_guest_copy_preserves_its_own_lock_instead_of_seeding_the_workspace_lock(self):
+        import pathlib
+        with tempfile.TemporaryDirectory() as td:
+            repo = pathlib.Path(td) / "repo"
+            guest = repo / m.BENCH_REL
+            guest.mkdir(parents=True)
+            (repo / "Cargo.lock").write_bytes(b"unrelated workspace lock")
+            (guest / "Cargo.lock").write_bytes(b"resolved guest lock")
+            (guest / "Cargo.toml").write_bytes(b"guest manifest")
+            dest = pathlib.Path(td) / "snapshot"
+            m.copy_guest_snapshot(repo, dest)
+            self.assertEqual((dest / m.BENCH_REL / "Cargo.lock").read_bytes(), b"resolved guest lock")
+            self.assertEqual((dest / m.BENCH_REL / "Cargo.toml").read_bytes(), b"guest manifest")
+
+    def test_relative_work_directory_prepares_absolute_build_paths_and_keeps_the_guest_lock(self):
+        import contextlib
+        import pathlib
+        import shlex
+        with tempfile.TemporaryDirectory() as td, contextlib.chdir(td):
+            text = m.prepare(pathlib.Path("guest-run"))
+            plain = (pathlib.Path(td) / "guest-run" / "plain").resolve()
+            command = next(line for line in text.splitlines() if line.startswith("cd "))
+            args = shlex.split(command)
+            self.assertEqual(args[1], str(plain))
+            self.assertIn(f"RCH_CANONICAL_PROJECT_ROOT={plain}", args)
+            self.assertIn(f"CARGO_TARGET_DIR={plain}/build/n03-target-target", args)
+            self.assertEqual((plain / m.BENCH_REL / "Cargo.lock").read_bytes(),
+                             (m.REPO / m.BENCH_REL / "Cargo.lock").read_bytes())
+
+    def test_missing_guest_lock_fails_even_when_a_workspace_lock_exists(self):
+        import pathlib
+        with tempfile.TemporaryDirectory() as td:
+            repo = pathlib.Path(td) / "repo"
+            (repo / m.BENCH_REL).mkdir(parents=True)
+            (repo / "Cargo.lock").write_bytes(b"workspace lock is not a guest pin")
+            dest = pathlib.Path(td) / "snapshot"
+            with self.assertRaisesRegex(m.MeasurementError, "standalone N03 guest Cargo.lock is missing"):
+                m.copy_guest_snapshot(repo, dest)
+            self.assertFalse(dest.exists())
 
     def test_the_guest_crate_is_its_own_workspace_with_two_dependencies(self):
         with open(os.path.join(SRC, "n03-target", "Cargo.toml"), encoding="utf-8") as fh:

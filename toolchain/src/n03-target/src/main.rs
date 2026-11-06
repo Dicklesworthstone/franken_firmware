@@ -60,9 +60,17 @@ fn count() -> u32 {
     let value: u32;
     // SAFETY: reads a hardware register into a general register. No memory is accessed and the stack is not used;
     // the block is deliberately not `nomem`, so the compiler treats it as a barrier for memory operations and keeps
-    // the measured region between two reads.
+    // the measured region between two reads. Scoped noat permits a compiler-selected $at destination;
+    // push/pop restore assembler options, and the directives emit no instructions.
     unsafe {
-        core::arch::asm!("rdhwr {0}, $2", out(reg) value, options(nostack));
+        core::arch::asm!(
+            ".set push",
+            ".set noat",
+            "rdhwr {0}, $2",
+            ".set pop",
+            out(reg) value,
+            options(nostack)
+        );
     }
     value
 }

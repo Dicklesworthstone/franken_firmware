@@ -40,6 +40,7 @@ import hashlib
 import importlib.util
 import json
 import math
+import shlex
 import pathlib
 import re
 import secrets
@@ -528,17 +529,29 @@ def corrupt_one_step(text: str) -> str:
 
 def central_commands(snapshot: pathlib.Path, label: str) -> str:
     target_dir = snapshot / "build" / "n03-target-target"
-    config_linker = f'target.{TARGET}.linker="{snapshot}/toolchain/linker/zig-cc-mips-be"'
+    config_linker = f'target.{TARGET}.linker="toolchain/linker/zig-cc-mips-be"'
     config_flags = f'target.{TARGET}.rustflags=["-C","target-feature=+crt-static","-C","link-self-contained=no"]'
-    return (f"cd {snapshot} && RCH_CANONICAL_PROJECT_ROOT={snapshot} RCH_REQUIRE_REMOTE=1 "
-            f"RCH_WORKER=hz3,ts1 CARGO_TARGET_DIR={target_dir} rch exec -- cargo +nightly build --offline --release "
-            f"--manifest-path {BENCH_REL}/Cargo.toml --target {TARGET} -Z build-std=core,alloc,std,panic_abort "
-            f"--config '{config_linker}' --config '{config_flags}' -j 2"
-            f"   # {label}; ELF: {target_dir}/{TARGET}/release/ffw-n03-target")
+    source_arg = shlex.quote(str(snapshot))
+    return (f"cd {source_arg} && RCH_CANONICAL_PROJECT_ROOT={source_arg} RCH_REQUIRE_REMOTE=1 "
+            f"RCH_BUILD_SLOTS=1 CARGO_TARGET_DIR={shlex.quote(str(target_dir))} "
+            f"rch exec --source-content-receipt -- cargo +nightly-2026-08-31 build --locked --offline --release "
+            f"--manifest-path {BENCH_REL}/Cargo.toml --bin ffw-n03-target --target {TARGET} "
+            f"-Z build-std=core,alloc,std,panic_abort --config '{config_linker}' --config '{config_flags}' "
+            f"--message-format=json -j 1"
+            f"   # {label}; ELF: {str(target_dir / TARGET / 'release' / 'ffw-n03-target')!r}")
+
+
+def copy_guest_snapshot(source_repo: pathlib.Path, destination: pathlib.Path) -> None:
+    """Preserve the guest's resolved lock; a workspace lock would be rewritten by Cargo during the build."""
+    guest = source_repo / BENCH_REL
+    if not (guest / "Cargo.lock").is_file():
+        raise MeasurementError("the standalone N03 guest Cargo.lock is missing; resolve it before preparing an immutable build")
+    shutil.copytree(guest, destination / BENCH_REL, dirs_exist_ok=True)
 
 
 def prepare(work_dir: pathlib.Path) -> str:
     """Snapshot HEAD plus the guest crate (it may be uncommitted yet). Nothing is built; nothing is deleted."""
+    work_dir = work_dir.resolve()
     if work_dir.exists() and any(work_dir.iterdir()):
         raise MeasurementError(f"{work_dir} exists and is not empty; choose a fresh directory (nothing is deleted)")
     plain = work_dir / "plain"
@@ -549,8 +562,7 @@ def prepare(work_dir: pathlib.Path) -> str:
         handle.seek(0)
         with tarfile.open(fileobj=handle, mode="r:") as tar:
             tar.extractall(plain, filter="data")
-    shutil.copytree(REPO / BENCH_REL, plain / BENCH_REL, dirs_exist_ok=True)
-    shutil.copy2(REPO / "Cargo.lock", plain / BENCH_REL / "Cargo.lock")      # a pin; cargo prunes it on the build
+    copy_guest_snapshot(REPO, plain)
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True, text=True, check=True).stdout.strip()
     return "\n".join([
         f"snapshot of HEAD {head} plus {BENCH_REL}: {plain}",
@@ -558,11 +570,13 @@ def prepare(work_dir: pathlib.Path) -> str:
         "Central guest build (RCH only; run from the snapshot root):",
         central_commands(plain, "N03 target guest"),
         "",
-        "Host digests (the same cases.rs on the build host; run from the repository root of the same revision):",
-        "  RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-clock --test n03_target_worlds -- --nocapture",
+        "Host digests (the same cases.rs; run from this prepared snapshot):",
+        f"  cd {shlex.quote(str(plain))} && RCH_REQUIRE_REMOTE=1 RCH_TEST_SLOTS=1 rch exec -- "
+        "cargo +nightly-2026-08-31 test --locked -p franken-clock --test n03_target_worlds -j 1 -- --nocapture",
         "",
         "Then:  FFW_BUILD_DIR=<kernel cache> python3 toolchain/src/measure-n03-target.py run --elf <ELF> "
-        "--log-dir <fresh dir> --host-log <the cargo test log> --revision " + head])
+        "--log-dir <fresh dir> --host-log <the cargo test log>",
+        "Add --revision only after verifying that the live guest overlay is committed unchanged; HEAD above is the archive base."])
 
 
 # ---- command line --------------------------------------------------------------------------------------------------
