@@ -1891,7 +1891,14 @@ class InventoryTests(unittest.TestCase):
 def _load_module(path, name):
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # These fixture imports are read-only probes. A new .pyc would otherwise
+    # change the generated-file snapshot merely by checking it.
+    previous = sys.dont_write_bytecode
+    try:
+        sys.dont_write_bytecode = True
+        spec.loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = previous
     return module
 
 
