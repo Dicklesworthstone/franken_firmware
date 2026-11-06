@@ -306,7 +306,7 @@ def worlds() -> List[Dict[str, Any]]:
         t4 = t1 + 450 * US
         a = m._anchor(t4)
         s_local_mid = t1 + (t4 - t1) // 2
-        allowed = (ref.unc_at(a["sample"], s_local_mid, a["ratio_unc"], m.cfg) + ref.ceil_div(delay, 2)
+        allowed = (ref.unc_at(a["sample"], s_local_mid, a["ratio_unc"], m.cfg, a["ratio"]) + ref.ceil_div(delay, 2)
                    + m.cfg["prediction_slack_ns"])
         predicted = ref.group_at(a["sample"], s_local_mid, a["ratio"])
         want_group_mid = predicted + allowed + delta_extra
@@ -590,8 +590,27 @@ def exchange_cases() -> List[Dict[str, Any]]:
     add("asymmetric", 1_000_000_000, 5_003_000_000, 5_003_050_000, 1_003_550_000)
     add("odd-halves", 1_000_000_001, 5_000_200_001, 5_000_250_002, 1_000_450_004)
     add("zero-delay", 100, 200, 300, 400)
-    add("t4-equals-t1", 100, 200, 300, 100)
+    # Equal readings are a sub-resolution exchange (delay 0) while the dwell is below twice the declared resolution (1000 here),
+    # and a stalled clock (LocalClockRegression) from there on, or on a clock declared exact; one reading earlier is backwards time.
+    add("t4-equals-t1", 100, 200, 2_300, 100)
+    add("t4-equals-t1-sub-resolution", 100, 200, 300, 100)
+    add("t4-equals-t1-dwell-zero", 100, 200, 200, 100)
+    add("t4-equals-t1-dwell-below-the-bound", 100, 200, 2_200, 100)           # dwell 2 000 < 2 * 1000 + ceil(1000 * 100 ppm) = 2 001
+    add("t4-equals-t1-dwell-at-the-bound", 100, 200, 2_201, 100)              # dwell 2 001
+    add("t4-equals-t1-exact-clock", 100, 200, 200, 100, timer_resolution_ns=0)
+    add("t4-equals-t1-coarse-clock", 5_000_000_000, 9_000_000_000_000, 9_000_001_000_000, 5_000_000_000, timer_resolution_ns=1_700_000)
+    add("t4-equals-t1-coarse-dwell-below-the-bound", 5_000_000_000, 9_000_000_000_000, 9_000_003_400_169, 5_000_000_000,
+        timer_resolution_ns=1_700_000)
+    add("t4-equals-t1-coarse-dwell-at-the-bound", 5_000_000_000, 9_000_000_000_000, 9_000_003_400_170, 5_000_000_000,
+        timer_resolution_ns=1_700_000)
+    add("t4-equals-t1-t3-before-t2", 100, 200, 199, 100)
+    add("t4-equals-t1-past-limit", 100, (1 << 62) + 1, (1 << 62) + 1, 100)
+    # A dwell that exceeds the round trip is a rounding, not an impossibility, while the excess is below 2R plus the rate allowance
+    # ceil(rtt * oscillator_bound / 1e9): the delay is clamped to 0, equal readings or not.  (This vector used to be Malformed.)
+    add("t4-one-past-t1-dwell-over-rtt-within-rounding", 100, 200, 300, 101)
+    add("coarse-step-reading", 5_000_000_000, 9_000_000_000_000, 9_000_001_000_000, 5_001_700_000, timer_resolution_ns=1_700_000)
     add("t4-before-t1", 100, 200, 300, 99)
+    add("t4-before-t1-coarse-clock", 5_001_700_000, 9_000_000_000_000, 9_000_000_000_000, 5_000_000_000, timer_resolution_ns=1_700_000)
     add("rtt-at-ttl", 1_000, 2_000, 2_000 + 1_960_000_000, 1_000 + D["request_ttl_ns"])
     add("rtt-past-ttl", 1_000, 2_000, 2_000 + 1_960_000_000, 1_000 + D["request_ttl_ns"] + 1)
     add("t3-before-t2", 1_000, 5_000, 4_999, 2_000_000)
@@ -599,7 +618,22 @@ def exchange_cases() -> List[Dict[str, Any]]:
     add("t2-past-limit", 1_000, (1 << 62) + 1, (1 << 62) + 1, 450_000)
     add("t3-past-limit", 1_000, 1 << 62, (1 << 62) + 1, 450_000)
     add("dwell-equals-rtt", 1_000, 5_000, 5_000 + 449_000, 450_000)
-    add("dwell-past-rtt", 1_000, 5_000, 5_000 + 449_001, 450_000)
+    # rtt 449 000: rate allowance ceil(449 000 * 100 ppm) = 45, so the bound is 2 * 1000 + 45 = 2 045.  (The id `dwell-past-rtt` used to
+    # carry dwell = rtt + 1 and expect Malformed: a false rejection, now admitted with the delay clamped to 0.)
+    add("dwell-one-over-rtt", 1_000, 5_000, 5_000 + 449_001, 450_000)
+    add("dwell-below-the-rounding-bound", 1_000, 5_000, 5_000 + 449_000 + 2_044, 450_000)
+    add("dwell-at-the-rounding-bound", 1_000, 5_000, 5_000 + 449_000 + 2_045, 450_000)
+    # the review's physical witness: local grid 3 ms, group grid 4 ms, declared R 4 ms; send true 2.5 ms (t1 = 0), arrive 2.6 ms (t2 = 0),
+    # leave 4.1 ms (t3 = 4 ms), receive 4.2 ms (t4 = 3 ms): the true dwell 1.5 ms is below the true round trip 1.7 ms, the readings say
+    # round trip 3 ms and dwell 4 ms
+    add("grids-3ms-and-4ms-negative-measured-delay", 0, 0, 4_000_000, 3_000_000, timer_resolution_ns=4_000_000)
+    add("negative-delay-at-the-bound-coarse-clock", 0, 0, 3_000_000 + 8_000_700, 3_000_000, timer_resolution_ns=4_000_000)
+    add("negative-delay-below-the-bound-coarse-clock", 0, 0, 3_000_000 + 8_000_699, 3_000_000, timer_resolution_ns=4_000_000)
+    # the slow-clock witness: R 4 ms, local 80 ppm slow, true group t + 3 999 980 ns, both floored to R: send 0 (t1 = 0), arrive 10 ns
+    # (t2 = 0), leave 4 000 110 (t3 = 8 000 000), receive 4 000 120 (t4 = 0 because L = 3 999 799.99). The true dwell 4 000 100 is below the
+    # true round trip; the readings say round trip 0 and dwell 2R. Bound 2R + ceil((0 + R) * 100 ppm) = 8 000 400.
+    add("slow-clock-reads-zero-across-a-tick", 0, 0, 8_000_000, 0, timer_resolution_ns=4_000_000)
+    add("slow-clock-stall-at-the-bound", 0, 0, 8_000_400, 0, timer_resolution_ns=4_000_000)
     add("delay-at-max", 1_000, 5_000, 5_050, 1_000 + 50_000_050)
     add("delay-past-max", 1_000, 5_000, 5_050, 1_000 + 50_000_051)
     add("tight-max", 1_000, 5_000, 5_050, 1_000 + 1_050, max_delay_ns=1_000)

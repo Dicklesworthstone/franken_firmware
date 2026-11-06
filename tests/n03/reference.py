@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib.util
 import json as _json
+import math
 import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -50,8 +51,20 @@ def ceil_div(a: int, b: int) -> int:
 
 
 def sample(t1: int, t2: int, t3: int, t4: int, cfg: Dict[str, int]) -> Any:
-    """The accepted sample, or the rejection code.  Check order is part of the contract."""
-    if t4 <= t1:
+    """The accepted sample, or the rejection code.  Check order is part of the contract.
+
+    Readings are quantized, so the measured delay (t4 - t1) - (t3 - t2) differs from the true one by (e1 + e3) - (e2 + e4), each
+    rounding error in [0, R): it is above -2R whenever the true delay is not negative.  A dwell that exceeds the round trip by less
+    than 2R plus the rate allowance ceil((rtt + R) * oscillator_bound / 1e9) is a physical exchange and is admitted with the delay
+    clamped to 0, whether or not the readings are equal.  The dwell is read on the coordinator's clock, the round trip on the member's,
+    which run apart by the group-to-local ratio rho, |rho - 1| <= oscillator_bound; the dwell is at most the true round trip, which in
+    local units is the observed one plus up to one hidden tick R, so they differ by up to (rtt + R) * oscillator_bound.  The tick
+    matters most at rtt 0 (equal readings, a sub-resolution exchange): a local clock 80 ppm slow reads 0 across 4 ms of true time.
+    From that bound it is not a rounding: with equal readings the clock stood still
+    for longer than its resolution can hide (LocalClockRegression), with differing readings the timestamps are Malformed.
+    t4 < t1 is backwards time, and a clock declared exact (R = 0) cannot stand still across a round trip."""
+    res = cfg["timer_resolution_ns"]
+    if t4 < t1 or (t4 == t1 and res == 0):
         return "LocalClockRegression"
     rtt = t4 - t1
     if rtt > cfg["request_ttl_ns"]:
@@ -59,9 +72,10 @@ def sample(t1: int, t2: int, t3: int, t4: int, cfg: Dict[str, int]) -> Any:
     if t3 < t2 or t2 > MAX_TIMESTAMP_NS or t3 > MAX_TIMESTAMP_NS:
         return "Malformed"
     dwell = t3 - t2
-    if dwell > rtt:
-        return "Malformed"
-    delay = rtt - dwell
+    excess = max(0, dwell - rtt)
+    if excess > 0 and excess >= 2 * res + ceil_div((rtt + res) * cfg["oscillator_bound_ppb"], NS):
+        return "LocalClockRegression" if rtt == 0 else "Malformed"
+    delay = max(0, rtt - dwell)
     if delay > cfg["max_delay_ns"]:
         return "ExcessiveDelay"
     local_mid = t1 + rtt // 2
@@ -72,22 +86,47 @@ def sample(t1: int, t2: int, t3: int, t4: int, cfg: Dict[str, int]) -> Any:
 # ---- uncertainty, anchor, transform ----------------------------------------------------------------
 
 
+def isqrt_ceil(v: int) -> int:
+    r = math.isqrt(v)
+    return r if r * r >= v else r + 1
+
+
+def quantization_ratio_ppb(resolution_ns: int, observations: int, span_us: int) -> int:
+    """What rounding the readings can do to a least-squares ratio, in ppb: resolution * ceil(sqrt(2n)) / span, rounded up.
+    Each fed observation's offset is off by less than the resolution; the slope moves by at most resolution * sum|d| / S
+    with sum|d| <= sqrt(n S) and S >= span^2 / 2.  Zero for an exact clock, unbounded for a zero span."""
+    if resolution_ns == 0:
+        return 0
+    if span_us == 0:
+        return 1 << 64
+    return ceil_div(resolution_ns * isqrt_ceil(2 * observations) * 1_000_000, span_us)
+
+
 def base_ns(delay: int, cfg: Dict[str, int]) -> int:
-    """What a sample cannot know about itself: half its delay (asymmetry), the timer resolution, the board term."""
-    return ceil_div(delay, 2) + cfg["timer_resolution_ns"] + cfg["calibration_uncertainty_ns"]
+    """What a sample cannot know about itself: half its delay (asymmetry), TWICE the timer resolution (the exchange's four
+    readings, and the reading the answer is asked at), the board term."""
+    return ceil_div(delay, 2) + 2 * cfg["timer_resolution_ns"] + cfg["calibration_uncertainty_ns"]
 
 
-def unc_at(s: Dict[str, int], at: int, ratio_unc_ppb: int, cfg: Dict[str, int]) -> int:
+def query_excess_ns(ratio_ppb: int, ratio_unc_ppb: int, cfg: Dict[str, int]) -> int:
+    """The second resolution (the tick of the reading the answer is asked at) read through the FITTED ratio: a tick of R local ns passes
+    R * rho of group time, rho = 1 + ratio / 1e9 true to within the ratio uncertainty, so the lag of a report is at most
+    R + ceil(R * (ratio + ratio_unc) / 1e9) (nothing extra if the fastest admitted ratio is not above 1)."""
+    fastest = ratio_ppb + ratio_unc_ppb
+    return 0 if fastest <= 0 else ceil_div(cfg["timer_resolution_ns"] * fastest, NS)
+
+
+def unc_at(s: Dict[str, int], at: int, ratio_unc_ppb: int, cfg: Dict[str, int], ratio_ppb: int = 0) -> int:
     age = max(0, at - s["local_mid"])
-    return base_ns(s["delay"], cfg) + ceil_div(age * ratio_unc_ppb, NS)
+    return base_ns(s["delay"], cfg) + query_excess_ns(ratio_ppb, ratio_unc_ppb, cfg) + ceil_div(age * ratio_unc_ppb, NS)
 
 
-def select(samples: Sequence[Dict[str, int]], now: int, ratio_unc_ppb: int, cfg: Dict[str, int]) -> Tuple[int, int]:
+def select(samples: Sequence[Dict[str, int]], now: int, ratio_unc_ppb: int, cfg: Dict[str, int], ratio_ppb: int = 0) -> Tuple[int, int]:
     """(index, uncertainty_ns) of the sample with the smallest uncertainty at ``now``; ties go to the newer
     midpoint, then to the later index."""
     best: Optional[Tuple[int, int, int, int]] = None      # (u, -local_mid, -index, index)
     for i, s in enumerate(samples):
-        u = unc_at(s, now, ratio_unc_ppb, cfg)
+        u = unc_at(s, now, ratio_unc_ppb, cfg, ratio_ppb)
         key = (u, -s["local_mid"], -i, i)
         if best is None or key < best:
             best = key
@@ -189,10 +228,10 @@ def event_label(ev: Dict[str, Any]) -> str:
 
 
 def holdover(s: Dict[str, int], ratio_unc_ppb: int, cfg: Dict[str, int],
-             authority_until: Optional[int], buffer_until: Optional[int]) -> Tuple[int, str]:
+             authority_until: Optional[int], buffer_until: Optional[int], ratio_ppb: int = 0) -> Tuple[int, str]:
     """(first local instant at which holdover is NOT allowed, which bound set it): the minimum of the three
     bounds, ties resolved Authority > Buffer > Uncertainty."""
-    headroom = max(0, cfg["lock_uncertainty_ns"] - base_ns(s["delay"], cfg))
+    headroom = max(0, cfg["lock_uncertainty_ns"] - base_ns(s["delay"], cfg) - query_excess_ns(ratio_ppb, ratio_unc_ppb, cfg))
     if ratio_unc_ppb == 0:
         unc_until = U64_MAX
     else:
@@ -223,10 +262,10 @@ def plan_start(s: Dict[str, int], ratio_ppb: int, ratio_unc_ppb: int, cfg: Dict[
     deadline = max(0, start_local - cfg["catchup_ns"])
     if now > deadline:
         return {"reject": "TooLate", "start_local_ns": start_local, "deadline_local_ns": deadline}
-    u_start = unc_at(s, start_local, ratio_unc_ppb, cfg)
+    u_start = unc_at(s, start_local, ratio_unc_ppb, cfg, ratio_ppb)
     if u_start > cfg["lock_uncertainty_ns"]:
         return {"reject": "UncertaintyAtStart", "uncertainty_at_start_ns": u_start}
-    until, binding = holdover(s, ratio_unc_ppb, cfg, authority_until, buffer_until)
+    until, binding = holdover(s, ratio_unc_ppb, cfg, authority_until, buffer_until, ratio_ppb)
     if start_local >= until:
         return {"reject": "ExpiresBeforeStart", "valid_until_local_ns": until, "binding": binding}
     return {"ok": True, "start_local_ns": start_local, "deadline_local_ns": deadline,
@@ -520,7 +559,7 @@ class Model:
         a = self._anchor(t4)
         if a is not None:
             predicted = group_at(a["sample"], s["local_mid"], a["ratio"])
-            allowed = (unc_at(a["sample"], s["local_mid"], a["ratio_unc"], self.cfg)
+            allowed = (unc_at(a["sample"], s["local_mid"], a["ratio_unc"], self.cfg, a["ratio"])
                        + ceil_div(s["delay"], 2) + self.cfg["prediction_slack_ns"])
             if abs(s["group_mid"] - predicted) > allowed:
                 return ("reject", self._reset("Discontinuity"))
@@ -553,21 +592,30 @@ class Model:
             self.last_fed_us = local_us
 
     # ---- the fit ------------------------------------------------------------------------------
-    def ratio_state(self) -> Tuple[int, int]:
+    def usable_rate(self) -> Optional[Tuple[int, int]]:
+        """The estimator's (ratio, uncertainty) if it is Valid and its quantization bound does not exceed the oscillator's
+        own worst case; the uncertainty is the larger of the statistical one and the quantization bound."""
         e = self.rate.estimate
-        if e is not None and e["status"] == "Valid":
-            return e["correction_ppb"], e["uncertainty_ppb"] * self.cfg["rate_sigma_multiple"] + self.cfg["wander_ppb"]
-        return 0, self.cfg["oscillator_bound_ppb"]
+        if e is None or e["status"] != "Valid":
+            return None
+        q = quantization_ratio_ppb(self.cfg["timer_resolution_ns"], e["observations"], e["span_us"])
+        if q > self.cfg["oscillator_bound_ppb"]:
+            return None
+        statistical = e["uncertainty_ppb"] * self.cfg["rate_sigma_multiple"] + self.cfg["wander_ppb"]
+        return e["correction_ppb"], max(statistical, q)
+
+    def ratio_state(self) -> Tuple[int, int]:
+        usable = self.usable_rate()
+        return usable if usable is not None else (0, self.cfg["oscillator_bound_ppb"])
 
     def rate_in_force(self) -> bool:
-        e = self.rate.estimate
-        return e is not None and e["status"] == "Valid"
+        return self.usable_rate() is not None
 
     def _anchor(self, now: int) -> Optional[Dict[str, Any]]:
         if not self.samples:
             return None
         ratio, ratio_unc = self.ratio_state()
-        i, u = select(self.samples, now, ratio_unc, self.cfg)
+        i, u = select(self.samples, now, ratio_unc, self.cfg, ratio)
         return {"sample": self.samples[i], "ratio": ratio, "ratio_unc": ratio_unc, "unc": u, "index": i}
 
     def status(self, now: int) -> str:
@@ -584,7 +632,7 @@ class Model:
             return "Locked"
         if not self.lock_seen:
             return "Unlocked"
-        until, _ = holdover(a["sample"], a["ratio_unc"], c, self.authority_until, self.buffer_until)
+        until, _ = holdover(a["sample"], a["ratio_unc"], c, self.authority_until, self.buffer_until, a["ratio"])
         return "Holdover" if now < until else "Expired"
 
     def group_ns(self, now: int) -> Optional[int]:
@@ -595,7 +643,7 @@ class Model:
         a = self._anchor(now)
         if a is None:
             return None
-        return holdover(a["sample"], a["ratio_unc"], self.cfg, self.authority_until, self.buffer_until)
+        return holdover(a["sample"], a["ratio_unc"], self.cfg, self.authority_until, self.buffer_until, a["ratio"])
 
     # ---- joining ------------------------------------------------------------------------------
     def plan_start(self, sched: Dict[str, int], now: int) -> Dict[str, Any]:

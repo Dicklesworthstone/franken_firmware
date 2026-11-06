@@ -217,6 +217,25 @@ def registry(vec: dict) -> List[dict]:
               "audible only on a locked/holdover clock within the threshold, a valid authority, an admitted start and the lock count; never right after a reset",
               T("n03_audible_output_always_rests_on_a_locked_clock_a_valid_authority_and_an_admitted_start"),
               ["n03-property"]),
+        _case("N03-COARSE-CLOCK", "AC-STALE", "full",
+              "a coarse clock: equal readings are a sub-resolution exchange, backwards time is not; truth against an injected world; "
+              "stuck, replayed, stale and too-coarse clocks are refused; the rounding bound on the fitted ratio",
+              T("n03_equal_readings_are_a_sub_resolution_exchange_on_a_coarse_clock_and_backwards_time_is_not",
+                "n03_a_coarse_clock_that_probes_on_its_own_tick_locks_and_the_truth_stays_inside_the_reported_uncertainty",
+                "n03_the_truth_stays_inside_the_uncertainty_for_every_phase_asymmetry_and_skew_of_a_coarse_clock",
+                "n03_backwards_time_is_rejected_on_a_coarse_clock_and_equal_readings_across_exchanges_are_not",
+                "n03_a_stuck_local_clock_never_locks_because_the_group_clock_keeps_moving",
+                "n03_replayed_unadmitted_and_stale_responses_are_refused_on_a_coarse_clock_beside_the_exchange_that_is_accepted",
+                "n03_a_step_inside_what_two_roundings_can_account_for_is_noise_and_one_nanosecond_more_is_a_jump_on_a_coarse_clock",
+                "n03_a_clock_too_coarse_for_the_threshold_stays_muted_however_many_exchanges_are_admitted",
+                "n03_a_coarse_clock_read_late_inside_its_tick_is_still_inside_the_uncertainty_that_charges_the_resolution_twice",
+                "n03_a_dwell_over_the_round_trip_is_a_rounding_inside_the_bound_and_malformed_at_it_beside_backwards_time",
+                "n03_a_step_of_two_roundings_between_physical_samples_is_noise_and_a_real_group_clock_step_is_a_jump",
+                "n03_a_slow_clock_that_reads_zero_across_a_tick_is_a_physical_exchange_beside_the_over_bound_refusal",
+                "n03_the_query_tick_follows_the_fitted_mean_ratio_and_not_only_its_error",
+                "n03_the_rounding_bound_on_a_fitted_ratio_is_hand_derived_and_never_binds_at_the_default_resolution",
+                "n03_a_fit_that_rounding_could_have_moved_further_than_the_oscillator_may_drift_is_not_trusted_and_a_finer_clock_still_is"),
+              []),
     ]
 
 

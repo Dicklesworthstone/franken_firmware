@@ -62,8 +62,161 @@
    "id": "t4-equals-t1",
    "t1": 100,
    "t2": 200,
+   "t3": 2300,
+   "t4": 100
+  },
+  {
+   "cfg": {},
+   "expect": {
+    "delay": 0,
+    "group_mid": 250,
+    "local_mid": 100,
+    "offset": 150
+   },
+   "id": "t4-equals-t1-sub-resolution",
+   "t1": 100,
+   "t2": 200,
    "t3": 300,
    "t4": 100
+  },
+  {
+   "cfg": {},
+   "expect": {
+    "delay": 0,
+    "group_mid": 200,
+    "local_mid": 100,
+    "offset": 100
+   },
+   "id": "t4-equals-t1-dwell-zero",
+   "t1": 100,
+   "t2": 200,
+   "t3": 200,
+   "t4": 100
+  },
+  {
+   "cfg": {},
+   "expect": {
+    "delay": 0,
+    "group_mid": 1200,
+    "local_mid": 100,
+    "offset": 1100
+   },
+   "id": "t4-equals-t1-dwell-below-the-bound",
+   "t1": 100,
+   "t2": 200,
+   "t3": 2200,
+   "t4": 100
+  },
+  {
+   "cfg": {},
+   "expect": "LocalClockRegression",
+   "id": "t4-equals-t1-dwell-at-the-bound",
+   "t1": 100,
+   "t2": 200,
+   "t3": 2201,
+   "t4": 100
+  },
+  {
+   "cfg": {
+    "timer_resolution_ns": 0
+   },
+   "expect": "LocalClockRegression",
+   "id": "t4-equals-t1-exact-clock",
+   "t1": 100,
+   "t2": 200,
+   "t3": 200,
+   "t4": 100
+  },
+  {
+   "cfg": {
+    "timer_resolution_ns": 1700000
+   },
+   "expect": {
+    "delay": 0,
+    "group_mid": 9000000500000,
+    "local_mid": 5000000000,
+    "offset": 8995000500000
+   },
+   "id": "t4-equals-t1-coarse-clock",
+   "t1": 5000000000,
+   "t2": 9000000000000,
+   "t3": 9000001000000,
+   "t4": 5000000000
+  },
+  {
+   "cfg": {
+    "timer_resolution_ns": 1700000
+   },
+   "expect": {
+    "delay": 0,
+    "group_mid": 9000001700084,
+    "local_mid": 5000000000,
+    "offset": 8995001700084
+   },
+   "id": "t4-equals-t1-coarse-dwell-below-the-bound",
+   "t1": 5000000000,
+   "t2": 9000000000000,
+   "t3": 9000003400169,
+   "t4": 5000000000
+  },
+  {
+   "cfg": {
+    "timer_resolution_ns": 1700000
+   },
+   "expect": "LocalClockRegression",
+   "id": "t4-equals-t1-coarse-dwell-at-the-bound",
+   "t1": 5000000000,
+   "t2": 9000000000000,
+   "t3": 9000003400170,
+   "t4": 5000000000
+  },
+  {
+   "cfg": {},
+   "expect": "Malformed",
+   "id": "t4-equals-t1-t3-before-t2",
+   "t1": 100,
+   "t2": 200,
+   "t3": 199,
+   "t4": 100
+  },
+  {
+   "cfg": {},
+   "expect": "Malformed",
+   "id": "t4-equals-t1-past-limit",
+   "t1": 100,
+   "t2": 4611686018427387905,
+   "t3": 4611686018427387905,
+   "t4": 100
+  },
+  {
+   "cfg": {},
+   "expect": {
+    "delay": 0,
+    "group_mid": 250,
+    "local_mid": 100,
+    "offset": 150
+   },
+   "id": "t4-one-past-t1-dwell-over-rtt-within-rounding",
+   "t1": 100,
+   "t2": 200,
+   "t3": 300,
+   "t4": 101
+  },
+  {
+   "cfg": {
+    "timer_resolution_ns": 1700000
+   },
+   "expect": {
+    "delay": 700000,
+    "group_mid": 9000000500000,
+    "local_mid": 5000850000,
+    "offset": 8994999650000
+   },
+   "id": "coarse-step-reading",
+   "t1": 5000000000,
+   "t2": 9000000000000,
+   "t3": 9000001000000,
+   "t4": 5001700000
   },
   {
    "cfg": {},
@@ -73,6 +226,17 @@
    "t2": 200,
    "t3": 300,
    "t4": 99
+  },
+  {
+   "cfg": {
+    "timer_resolution_ns": 1700000
+   },
+   "expect": "LocalClockRegression",
+   "id": "t4-before-t1-coarse-clock",
+   "t1": 5001700000,
+   "t2": 9000000000000,
+   "t3": 9000000000000,
+   "t4": 5000000000
   },
   {
    "cfg": {},
@@ -154,12 +318,110 @@
   },
   {
    "cfg": {},
-   "expect": "Malformed",
-   "id": "dwell-past-rtt",
+   "expect": {
+    "delay": 0,
+    "group_mid": 229500,
+    "local_mid": 225500,
+    "offset": 4000
+   },
+   "id": "dwell-one-over-rtt",
    "t1": 1000,
    "t2": 5000,
    "t3": 454001,
    "t4": 450000
+  },
+  {
+   "cfg": {},
+   "expect": {
+    "delay": 0,
+    "group_mid": 230522,
+    "local_mid": 225500,
+    "offset": 5022
+   },
+   "id": "dwell-below-the-rounding-bound",
+   "t1": 1000,
+   "t2": 5000,
+   "t3": 456044,
+   "t4": 450000
+  },
+  {
+   "cfg": {},
+   "expect": "Malformed",
+   "id": "dwell-at-the-rounding-bound",
+   "t1": 1000,
+   "t2": 5000,
+   "t3": 456045,
+   "t4": 450000
+  },
+  {
+   "cfg": {
+    "timer_resolution_ns": 4000000
+   },
+   "expect": {
+    "delay": 0,
+    "group_mid": 2000000,
+    "local_mid": 1500000,
+    "offset": 500000
+   },
+   "id": "grids-3ms-and-4ms-negative-measured-delay",
+   "t1": 0,
+   "t2": 0,
+   "t3": 4000000,
+   "t4": 3000000
+  },
+  {
+   "cfg": {
+    "timer_resolution_ns": 4000000
+   },
+   "expect": "Malformed",
+   "id": "negative-delay-at-the-bound-coarse-clock",
+   "t1": 0,
+   "t2": 0,
+   "t3": 11000700,
+   "t4": 3000000
+  },
+  {
+   "cfg": {
+    "timer_resolution_ns": 4000000
+   },
+   "expect": {
+    "delay": 0,
+    "group_mid": 5500349,
+    "local_mid": 1500000,
+    "offset": 4000349
+   },
+   "id": "negative-delay-below-the-bound-coarse-clock",
+   "t1": 0,
+   "t2": 0,
+   "t3": 11000699,
+   "t4": 3000000
+  },
+  {
+   "cfg": {
+    "timer_resolution_ns": 4000000
+   },
+   "expect": {
+    "delay": 0,
+    "group_mid": 4000000,
+    "local_mid": 0,
+    "offset": 4000000
+   },
+   "id": "slow-clock-reads-zero-across-a-tick",
+   "t1": 0,
+   "t2": 0,
+   "t3": 8000000,
+   "t4": 0
+  },
+  {
+   "cfg": {
+    "timer_resolution_ns": 4000000
+   },
+   "expect": "LocalClockRegression",
+   "id": "slow-clock-stall-at-the-bound",
+   "t1": 0,
+   "t2": 0,
+   "t3": 8000400,
+   "t4": 0
   },
   {
    "cfg": {},
@@ -267,7 +529,7 @@
     "group_mid": 200000000000,
     "local_mid": 100000000000
    },
-   "until": 117990000001
+   "until": 117979990001
   },
   {
    "authority": null,
@@ -281,7 +543,7 @@
     "group_mid": 200000000000,
     "local_mid": 100000000000
    },
-   "until": 399833333334
+   "until": 399666500001
   },
   {
    "authority": 105000000000,
@@ -328,7 +590,7 @@
   {
    "authority": null,
    "binding": "Buffer",
-   "buffer": 117990000001,
+   "buffer": 117979990001,
    "cfg": {},
    "id": "buffer-uncertainty-tie",
    "ratio_unc_ppb": 100000,
@@ -337,7 +599,7 @@
     "group_mid": 200000000000,
     "local_mid": 100000000000
    },
-   "until": 117990000001
+   "until": 117979990001
   },
   {
    "authority": null,
@@ -413,7 +675,7 @@
     "group_mid": 200000000000,
     "local_mid": 100000000000
    },
-   "until": 107990000001
+   "until": 107979990001
   },
   {
    "authority": 50000000000,
@@ -432,13 +694,13 @@
  ],
  "max_timestamp_ns": 4611686018427387904,
  "mixed": {
-  "bound_ns": 1156737,
+  "bound_ns": 1158738,
   "gate_ns": 2000000,
   "members": [
    {
     "audible_true_ns": 23999901117,
     "start_true_ns": 24000000000,
-    "unc_at_start_ns": 547659,
+    "unc_at_start_ns": 548659,
     "world": {
      "cfg": {
       "calibration_uncertainty_ns": 150000,
@@ -701,7 +963,7 @@
         "n03.truth.within"
        ],
        "group_ns": 9020005069906,
-       "holdover_until": 111409843620,
+       "holdover_until": 111352411964,
        "mute": "NotAdmitted",
        "op": "check",
        "output": "Muted",
@@ -714,11 +976,11 @@
        "samples": 16,
        "status": "Locked",
        "tol": {
-        "holdover_until": 22607202,
+        "holdover_until": 22594008,
         "ratio_unc_ppb": 4,
         "uncertainty_ns": 47
        },
-       "uncertainty_ns": 478128
+       "uncertainty_ns": 479128
       },
       {
        "binding": "Uncertainty",
@@ -730,8 +992,8 @@
        "rate_in_force": true,
        "result": "ok",
        "start_local_ns": 27999490493,
-       "uncertainty_at_start_ns": 547659,
-       "valid_until_local_ns": 111409843620
+       "uncertainty_at_start_ns": 548659,
+       "valid_until_local_ns": 111352411964
       },
       {
        "events": [
@@ -914,7 +1176,7 @@
    {
     "audible_true_ns": 23999798936,
     "start_true_ns": 24000000000,
-    "unc_at_start_ns": 609078,
+    "unc_at_start_ns": 610079,
     "world": {
      "cfg": {
       "calibration_uncertainty_ns": 200000,
@@ -1177,7 +1439,7 @@
         "n03.truth.within"
        ],
        "group_ns": 9020005190807,
-       "holdover_until": 111352654693,
+       "holdover_until": 111302022422,
        "mute": "NotAdmitted",
        "op": "check",
        "output": "Muted",
@@ -1190,11 +1452,11 @@
        "samples": 16,
        "status": "Locked",
        "tol": {
-        "holdover_until": 15448269,
+        "holdover_until": 15438024,
         "ratio_unc_ppb": 4,
         "uncertainty_ns": 11
        },
-       "uncertainty_ns": 530132
+       "uncertainty_ns": 531133
       },
       {
        "binding": "Uncertainty",
@@ -1206,8 +1468,8 @@
        "rate_in_force": true,
        "result": "ok",
        "start_local_ns": 40997438196,
-       "uncertainty_at_start_ns": 609078,
-       "valid_until_local_ns": 111352654693
+       "uncertainty_at_start_ns": 610079,
+       "valid_until_local_ns": 111302022422
       },
       {
        "events": [
@@ -1420,8 +1682,8 @@
     "deadline_local_ns": 102900000000,
     "ok": true,
     "start_local_ns": 103000000000,
-    "uncertainty_at_start_ns": 501000,
-    "valid_until_local_ns": 117990000001
+    "uncertainty_at_start_ns": 502001,
+    "valid_until_local_ns": 117979990001
    },
    "id": "ok",
    "now": 101000000000,
@@ -1446,8 +1708,8 @@
     "deadline_local_ns": 103900240019,
     "ok": true,
     "start_local_ns": 104000240019,
-    "uncertainty_at_start_ns": 601025,
-    "valid_until_local_ns": 117990000001
+    "uncertainty_at_start_ns": 602026,
+    "valid_until_local_ns": 117979990001
    },
    "id": "ok-with-ratio",
    "now": 101000000000,
@@ -1474,8 +1736,8 @@
     "deadline_local_ns": 102898150000,
     "ok": true,
     "start_local_ns": 102998150000,
-    "uncertainty_at_start_ns": 500815,
-    "valid_until_local_ns": 117990000001
+    "uncertainty_at_start_ns": 501816,
+    "valid_until_local_ns": 117979990001
    },
    "id": "ok-output-delay",
    "now": 101000000000,
@@ -1626,8 +1888,8 @@
     "deadline_local_ns": 105900000000,
     "ok": true,
     "start_local_ns": 106000000000,
-    "uncertainty_at_start_ns": 801000,
-    "valid_until_local_ns": 117990000001
+    "uncertainty_at_start_ns": 802001,
+    "valid_until_local_ns": 117979990001
    },
    "id": "far-limit-ok",
    "now": 101000000000,
@@ -1673,8 +1935,8 @@
     "deadline_local_ns": 101000000000,
     "ok": true,
     "start_local_ns": 101100000000,
-    "uncertainty_at_start_ns": 311000,
-    "valid_until_local_ns": 117990000001
+    "uncertainty_at_start_ns": 312001,
+    "valid_until_local_ns": 117979990001
    },
    "id": "late-limit-ok",
    "now": 101000000000,
@@ -1766,8 +2028,8 @@
     "deadline_local_ns": 105900000000,
     "ok": true,
     "start_local_ns": 106000000000,
-    "uncertainty_at_start_ns": 801000,
-    "valid_until_local_ns": 117990000001
+    "uncertainty_at_start_ns": 802001,
+    "valid_until_local_ns": 117979990001
    },
    "id": "uncertainty-limit",
    "now": 101000000000,
@@ -1857,7 +2119,7 @@
     "deadline_local_ns": 102900000000,
     "ok": true,
     "start_local_ns": 103000000000,
-    "uncertainty_at_start_ns": 501000,
+    "uncertainty_at_start_ns": 502001,
     "valid_until_local_ns": 103000000001
    },
    "id": "authority-after-start-ok",
@@ -1904,7 +2166,7 @@
     "deadline_local_ns": 102900000000,
     "ok": true,
     "start_local_ns": 103000000000,
-    "uncertainty_at_start_ns": 501000,
+    "uncertainty_at_start_ns": 502001,
     "valid_until_local_ns": 111000000000
    },
    "id": "ties-report-authority",
@@ -1944,7 +2206,7 @@
      "local_mid": 3000000000
     }
    ],
-   "uncertainty_ns": 207000
+   "uncertainty_ns": 208001
   },
   {
    "id": "low-delay-old-beats-new-slow",
@@ -1963,7 +2225,7 @@
      "local_mid": 3000000000
     }
    ],
-   "uncertainty_ns": 63001
+   "uncertainty_ns": 64002
   },
   {
    "id": "old-low-delay-loses-to-aging",
@@ -1982,7 +2244,7 @@
      "local_mid": 120000000000
     }
    ],
-   "uncertainty_ns": 191000
+   "uncertainty_ns": 192001
   },
   {
    "id": "tie-goes-to-newer-mid",
@@ -2001,7 +2263,7 @@
      "local_mid": 2000001000
     }
    ],
-   "uncertainty_ns": 201000
+   "uncertainty_ns": 202000
   },
   {
    "id": "tie-same-mid-later-index",
@@ -2020,7 +2282,7 @@
      "local_mid": 2000000000
     }
    ],
-   "uncertainty_ns": 207000
+   "uncertainty_ns": 208001
   },
   {
    "id": "single",
@@ -2034,7 +2296,7 @@
      "local_mid": 2000000000
     }
    ],
-   "uncertainty_ns": 201001
+   "uncertainty_ns": 202002
   },
   {
    "id": "future-sample-no-negative-age",
@@ -2048,7 +2310,7 @@
      "local_mid": 5000000000
     }
    ],
-   "uncertainty_ns": 201000
+   "uncertainty_ns": 202001
   }
  ],
  "transforms": [
@@ -2174,86 +2436,86 @@
   "M-A-hz3": {
    "checks": 1,
    "max_err_ns": 69906,
-   "max_unc_ns": 478128,
-   "min_margin_ns": 408222
+   "max_unc_ns": 479128,
+   "min_margin_ns": 409222
   },
   "M-B-ts1": {
    "checks": 1,
    "max_err_ns": 190807,
-   "max_unc_ns": 530132,
-   "min_margin_ns": 339325
+   "max_unc_ns": 531133,
+   "min_margin_ns": 340326
   },
   "S01-SYMMETRIC": {
    "checks": 4,
    "max_err_ns": 0,
-   "max_unc_ns": 301023,
-   "min_margin_ns": 201003
+   "max_unc_ns": 302024,
+   "min_margin_ns": 202004
   },
   "S02-ASYMMETRIC-LOCKABLE": {
    "checks": 2,
    "max_err_ns": 1250000,
-   "max_unc_ns": 1761790,
-   "min_margin_ns": 501020
+   "max_unc_ns": 1762791,
+   "min_margin_ns": 502021
   },
   "S03-ASYMMETRIC-TOO-WIDE": {
    "checks": 1,
    "max_err_ns": 3000000,
-   "max_unc_ns": 4001030,
-   "min_margin_ns": 1001030
+   "max_unc_ns": 4002031,
+   "min_margin_ns": 1002031
   },
   "S04-DRIFT-FAST": {
    "checks": 42,
    "max_err_ns": 175500,
-   "max_unc_ns": 533263,
-   "min_margin_ns": 165779
+   "max_unc_ns": 534264,
+   "min_margin_ns": 166779
   },
   "S05-DRIFT-SLOW": {
    "checks": 42,
    "max_err_ns": 137212,
-   "max_unc_ns": 442854,
-   "min_margin_ns": 154733
+   "max_unc_ns": 443855,
+   "min_margin_ns": 155734
   },
   "S06-WRAP": {
    "checks": 40,
    "max_err_ns": 44279,
-   "max_unc_ns": 118046,
-   "min_margin_ns": 51922
+   "max_unc_ns": 119046,
+   "min_margin_ns": 52922
   },
   "S07A-HOLDOVER-UNCERTAINTY": {
    "checks": 2,
-   "max_err_ns": 334,
+   "max_err_ns": 1,
    "max_unc_ns": 2000001,
-   "min_margin_ns": 1999667
+   "min_margin_ns": 2000000
   },
   "S07B-HOLDOVER-AUTHORITY": {
    "checks": 2,
    "max_err_ns": 999,
-   "max_unc_ns": 321002,
-   "min_margin_ns": 320003
+   "max_unc_ns": 322003,
+   "min_margin_ns": 321004
   },
   "S07C-HOLDOVER-BUFFER": {
    "checks": 2,
    "max_err_ns": 999,
-   "max_unc_ns": 261002,
-   "min_margin_ns": 260003
+   "max_unc_ns": 262003,
+   "min_margin_ns": 261004
   },
   "S07D-HOLDOVER-TIE": {
    "checks": 2,
    "max_err_ns": 999,
-   "max_unc_ns": 321002,
-   "min_margin_ns": 320003
+   "max_unc_ns": 322003,
+   "min_margin_ns": 321004
   },
   "S13-REBOOT": {
    "checks": 1,
    "max_err_ns": 0,
-   "max_unc_ns": 501028,
-   "min_margin_ns": 501028
+   "max_unc_ns": 502029,
+   "min_margin_ns": 502029
   },
   "S15-SOAK-3H": {
    "checks": 32,
    "max_err_ns": 283500,
-   "max_unc_ns": 759722,
-   "min_margin_ns": 106272
+   "max_unc_ns": 760723,
+   "min_margin_ns": 107273
   }
  },
  "units": "nanoseconds unless a name says otherwise",
@@ -2313,7 +2575,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9003000450000,
-     "holdover_until": 24990225001,
+     "holdover_until": 24980215001,
      "mute": "NotLocked",
      "op": "check",
      "output": "Muted",
@@ -2325,7 +2587,7 @@
      "resets": 0,
      "samples": 3,
      "status": "Unlocked",
-     "uncertainty_ns": 301023
+     "uncertainty_ns": 302024
     },
     {
      "delay": 400000,
@@ -2348,7 +2610,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9003000600000,
-     "holdover_until": 25990225001,
+     "holdover_until": 25980215001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -2360,7 +2622,7 @@
      "resets": 0,
      "samples": 4,
      "status": "Locked",
-     "uncertainty_ns": 201038
+     "uncertainty_ns": 202039
     },
     {
      "delay": 400000,
@@ -2466,7 +2728,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9011000700000,
-     "holdover_until": 315833558334,
+     "holdover_until": 315666725001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -2479,11 +2741,11 @@
      "samples": 12,
      "status": "Locked",
      "tol": {
-      "holdover_until": 199888890,
+      "holdover_until": 199777668,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 201003
+     "uncertainty_ns": 202004
     },
     {
      "accepted": 12,
@@ -2493,7 +2755,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9011900000000,
-     "holdover_until": 315833558334,
+     "holdover_until": 315666725001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -2506,11 +2768,11 @@
      "samples": 12,
      "status": "Locked",
      "tol": {
-      "holdover_until": 199888890,
+      "holdover_until": 199777668,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 6
      },
-     "uncertainty_ns": 206399
+     "uncertainty_ns": 207400
     }
    ],
    "id": "S01-SYMMETRIC",
@@ -2743,7 +3005,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9007006250000,
-     "holdover_until": 53501775001,
+     "holdover_until": 53334941667,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -2756,11 +3018,11 @@
      "samples": 8,
      "status": "Locked",
      "tol": {
-      "holdover_until": 27666668,
+      "holdover_until": 27555446,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 1751020
+     "uncertainty_ns": 1752021
     },
     {
      "accepted": 8,
@@ -2770,7 +3032,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9008801250000,
-     "holdover_until": 53501775001,
+     "holdover_until": 53334941667,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -2783,11 +3045,11 @@
      "samples": 8,
      "status": "Locked",
      "tol": {
-      "holdover_until": 27666668,
+      "holdover_until": 27555446,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 10
      },
-     "uncertainty_ns": 1761790
+     "uncertainty_ns": 1762791
     }
    ],
    "id": "S02-ASYMMETRIC-LOCKABLE",
@@ -3037,7 +3299,7 @@
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 4001030
+     "uncertainty_ns": 4002031
     },
     {
      "events": [
@@ -3184,7 +3446,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9000003938500,
-     "holdover_until": 20745449501,
+     "holdover_until": 20735439501,
      "mute": "NotLocked",
      "op": "check",
      "output": "Muted",
@@ -3196,7 +3458,7 @@
      "resets": 0,
      "samples": 1,
      "status": "Unlocked",
-     "uncertainty_ns": 425856
+     "uncertainty_ns": 426857
     },
     {
      "delay": 752000,
@@ -3218,7 +3480,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9001006902000,
-     "holdover_until": 22233481001,
+     "holdover_until": 22223471001,
      "mute": "NotLocked",
      "op": "check",
      "output": "Muted",
@@ -3230,7 +3492,7 @@
      "resets": 0,
      "samples": 2,
      "status": "Unlocked",
-     "uncertainty_ns": 377360
+     "uncertainty_ns": 378361
     },
     {
      "delay": 723000,
@@ -3252,7 +3514,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9002009975500,
-     "holdover_until": 23381546501,
+     "holdover_until": 23371536501,
      "mute": "NotLocked",
      "op": "check",
      "output": "Muted",
@@ -3264,7 +3526,7 @@
      "resets": 0,
      "samples": 3,
      "status": "Unlocked",
-     "uncertainty_ns": 362862
+     "uncertainty_ns": 363863
     },
     {
      "delay": 520000,
@@ -3287,7 +3549,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9003003934000,
-     "holdover_until": 25390525001,
+     "holdover_until": 25380515001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -3299,7 +3561,7 @@
      "resets": 0,
      "samples": 4,
      "status": "Locked",
-     "uncertainty_ns": 261372
+     "uncertainty_ns": 262373
     },
     {
      "delay": 1017000,
@@ -3321,7 +3583,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9004007014000,
-     "holdover_until": 25390525001,
+     "holdover_until": 25380515001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -3333,7 +3595,7 @@
      "resets": 0,
      "samples": 5,
      "status": "Locked",
-     "uncertainty_ns": 361680
+     "uncertainty_ns": 362681
     },
     {
      "delay": 865000,
@@ -3355,7 +3617,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9005010095500,
-     "holdover_until": 25671857501,
+     "holdover_until": 25661847501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -3367,7 +3629,7 @@
      "resets": 0,
      "samples": 6,
      "status": "Locked",
-     "uncertainty_ns": 433855
+     "uncertainty_ns": 434856
     },
     {
      "delay": 1078000,
@@ -3389,7 +3651,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9006004175500,
-     "holdover_until": 25671857501,
+     "holdover_until": 25661847501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -3401,7 +3663,7 @@
      "resets": 0,
      "samples": 7,
      "status": "Locked",
-     "uncertainty_ns": 533263
+     "uncertainty_ns": 534264
     },
     {
      "delay": 667000,
@@ -3423,7 +3685,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9007007081500,
-     "holdover_until": 28658918501,
+     "holdover_until": 28648908501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -3435,7 +3697,7 @@
      "resets": 0,
      "samples": 8,
      "status": "Locked",
-     "uncertainty_ns": 334865
+     "uncertainty_ns": 335866
     },
     {
      "delay": 939000,
@@ -3457,7 +3719,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9008010095736,
-     "holdover_until": 64546665677,
+     "holdover_until": 64515117945,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -3470,11 +3732,11 @@
      "samples": 9,
      "status": "Locked",
      "tol": {
-      "holdover_until": 6630419,
+      "holdover_until": 6626438,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 7
      },
-     "uncertainty_ns": 366412
+     "uncertainty_ns": 367412
     },
     {
      "delay": 484000,
@@ -3496,7 +3758,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9009004055754,
-     "holdover_until": 82006870264,
+     "holdover_until": 81968164582,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -3509,11 +3771,11 @@
      "samples": 10,
      "status": "Locked",
      "tol": {
-      "holdover_until": 10528858,
+      "holdover_until": 10522865,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 243097
+     "uncertainty_ns": 244097
     },
     {
      "delay": 802000,
@@ -3535,7 +3797,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9010007066350,
-     "holdover_until": 90329237576,
+     "holdover_until": 90285795202,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -3548,11 +3810,11 @@
      "samples": 11,
      "status": "Locked",
      "tol": {
-      "holdover_until": 13263523,
+      "holdover_until": 13255974,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 7
      },
-     "uncertainty_ns": 266176
+     "uncertainty_ns": 267176
     },
     {
      "delay": 671000,
@@ -3574,7 +3836,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9011010077500,
-     "holdover_until": 101741311595,
+     "holdover_until": 101691374017,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -3587,11 +3849,11 @@
      "samples": 12,
      "status": "Locked",
      "tol": {
-      "holdover_until": 17526159,
+      "holdover_until": 17516184,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 11
      },
-     "uncertainty_ns": 283249
+     "uncertainty_ns": 284249
     },
     {
      "delay": 683000,
@@ -3613,7 +3875,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9012004100110,
-     "holdover_until": 103854725366,
+     "holdover_until": 103803584934,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -3626,11 +3888,11 @@
      "samples": 13,
      "status": "Locked",
      "tol": {
-      "holdover_until": 18380637,
+      "holdover_until": 18370176,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 15
      },
-     "uncertainty_ns": 301740
+     "uncertainty_ns": 302740
     },
     {
      "delay": 700000,
@@ -3652,7 +3914,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9013007097477,
-     "holdover_until": 102071162439,
+     "holdover_until": 102021037126,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -3665,11 +3927,11 @@
      "samples": 14,
      "status": "Locked",
      "tol": {
-      "holdover_until": 17658182,
+      "holdover_until": 17648132,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 19
      },
-     "uncertainty_ns": 322941
+     "uncertainty_ns": 323941
     },
     {
      "delay": 702000,
@@ -3691,7 +3953,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9014010087254,
-     "holdover_until": 101153764778,
+     "holdover_until": 101104161604,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -3704,11 +3966,11 @@
      "samples": 15,
      "status": "Locked",
      "tol": {
-      "holdover_until": 17292219,
+      "holdover_until": 17282377,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 23
      },
-     "uncertainty_ns": 344005
+     "uncertainty_ns": 345005
     },
     {
      "delay": 487000,
@@ -3730,7 +3992,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9015004021221,
-     "holdover_until": 114934412476,
+     "holdover_until": 114880335037,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -3743,11 +4005,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 20534923,
+      "holdover_until": 20523226,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 244570
+     "uncertainty_ns": 245570
     },
     {
      "delay": 492000,
@@ -3769,7 +4031,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9016006918712,
-     "holdover_until": 119112901124,
+     "holdover_until": 119056935151,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -3782,11 +4044,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 21962918,
+      "holdover_until": 21950390,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 247067
+     "uncertainty_ns": 248067
     },
     {
      "delay": 582000,
@@ -3808,7 +4070,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9017009921447,
-     "holdover_until": 126996448939,
+     "holdover_until": 126935985791,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -3821,11 +4083,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 25634417,
+      "holdover_until": 25619793,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 7
      },
-     "uncertainty_ns": 263652
+     "uncertainty_ns": 264652
     },
     {
      "delay": 592000,
@@ -3847,7 +4109,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9018003920659,
-     "holdover_until": 129475561458,
+     "holdover_until": 129413684099,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -3860,11 +4122,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 26847600,
+      "holdover_until": 26832285,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 11
      },
-     "uncertainty_ns": 279337
+     "uncertainty_ns": 280337
     },
     {
      "delay": 699000,
@@ -3886,7 +4148,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9019006929553,
-     "holdover_until": 127907831888,
+     "holdover_until": 127846848842,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -3899,11 +4161,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 26077153,
+      "holdover_until": 26062277,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 15
      },
-     "uncertainty_ns": 296260
+     "uncertainty_ns": 297260
     },
     {
      "delay": 776000,
@@ -3925,7 +4187,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9020009937830,
-     "holdover_until": 132988708404,
+     "holdover_until": 132924826968,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -3938,11 +4200,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 28614837,
+      "holdover_until": 28598513,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 19
      },
-     "uncertainty_ns": 309727
+     "uncertainty_ns": 310727
     },
     {
      "delay": 697000,
@@ -3964,7 +4226,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9021003943570,
-     "holdover_until": 139650913099,
+     "holdover_until": 139583231204,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -3977,11 +4239,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 32120844,
+      "holdover_until": 32102521,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 23
      },
-     "uncertainty_ns": 320892
+     "uncertainty_ns": 321892
     },
     {
      "delay": 772000,
@@ -4003,7 +4265,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9022006949987,
-     "holdover_until": 146022380126,
+     "holdover_until": 145951063624,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -4016,11 +4278,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 35663339,
+      "holdover_until": 35642995,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 27
      },
-     "uncertainty_ns": 331192
+     "uncertainty_ns": 332192
     },
     {
      "delay": 659000,
@@ -4042,7 +4304,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9023010099227,
-     "holdover_until": 153036278077,
+     "holdover_until": 152961388539,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -4055,11 +4317,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 37453183,
+      "holdover_until": 37430749,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 330549
+     "uncertainty_ns": 331549
     },
     {
      "delay": 735000,
@@ -4081,7 +4343,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9024004104685,
-     "holdover_until": 158580695674,
+     "holdover_until": 158502485131,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -4094,11 +4356,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 40848586,
+      "holdover_until": 40824119,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 6
      },
-     "uncertainty_ns": 343257
+     "uncertainty_ns": 344257
     },
     {
      "delay": 869000,
@@ -4120,7 +4382,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9025007107010,
-     "holdover_until": 160162077189,
+     "holdover_until": 160082919427,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -4133,11 +4395,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 41844024,
+      "holdover_until": 41818960,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 11
      },
-     "uncertainty_ns": 355777
+     "uncertainty_ns": 356777
     },
     {
      "delay": 881000,
@@ -4159,7 +4421,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9026010106395,
-     "holdover_until": 160350643965,
+     "holdover_until": 160271373256,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -4172,11 +4434,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 41963521,
+      "holdover_until": 41938386,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 15
      },
-     "uncertainty_ns": 368395
+     "uncertainty_ns": 369395
     },
     {
      "delay": 730000,
@@ -4198,7 +4460,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9027003876714,
-     "holdover_until": 161777786280,
+     "holdover_until": 161698364471,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -4211,11 +4473,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 41227938,
+      "holdover_until": 41202706,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 366046
+     "uncertainty_ns": 367046
     },
     {
      "delay": 828000,
@@ -4237,7 +4499,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9028006878123,
-     "holdover_until": 165663081698,
+     "holdover_until": 165581282107,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -4250,11 +4512,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 43733509,
+      "holdover_until": 43706744,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 7
      },
-     "uncertainty_ns": 378307
+     "uncertainty_ns": 379307
     },
     {
      "delay": 481000,
@@ -4276,7 +4538,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9029010035207,
-     "holdover_until": 182933043495,
+     "holdover_until": 182848355148,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -4289,11 +4551,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 50448666,
+      "holdover_until": 50419978,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 241545
+     "uncertainty_ns": 242545
     },
     {
      "delay": 872000,
@@ -4315,7 +4577,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9030004036965,
-     "holdover_until": 187415198080,
+     "holdover_until": 187327960882,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -4328,11 +4590,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 53531054,
+      "holdover_until": 53500612,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 6
      },
-     "uncertainty_ns": 252938
+     "uncertainty_ns": 253938
     },
     {
      "delay": 655000,
@@ -4354,7 +4616,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9031007038946,
-     "holdover_until": 191242133426,
+     "holdover_until": 191152719978,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -4367,11 +4629,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 56235176,
+      "holdover_until": 56203197,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 11
      },
-     "uncertainty_ns": 263879
+     "uncertainty_ns": 264879
     },
     {
      "delay": 809000,
@@ -4393,7 +4655,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9032010040342,
-     "holdover_until": 195798998602,
+     "holdover_until": 195706993818,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -4406,11 +4668,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 59541970,
+      "holdover_until": 59508110,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 15
      },
-     "uncertainty_ns": 274151
+     "uncertainty_ns": 275151
     },
     {
      "delay": 591000,
@@ -4432,7 +4694,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9033004041588,
-     "holdover_until": 199920463980,
+     "holdover_until": 199826115456,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -4445,11 +4707,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 62614165,
+      "holdover_until": 62578558,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 18
      },
-     "uncertainty_ns": 283876
+     "uncertainty_ns": 284876
     },
     {
      "delay": 858000,
@@ -4471,7 +4733,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9034007042110,
-     "holdover_until": 204059837797,
+     "holdover_until": 203963135351,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -4484,11 +4746,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 65777490,
+      "holdover_until": 65740085,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 23
      },
-     "uncertainty_ns": 293217
+     "uncertainty_ns": 294217
     },
     {
      "delay": 588000,
@@ -4510,7 +4772,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9035009874707,
-     "holdover_until": 205462782271,
+     "holdover_until": 205365741999,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -4523,11 +4785,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 64222675,
+      "holdover_until": 64185008,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 295038
+     "uncertainty_ns": 296038
     },
     {
      "delay": 783000,
@@ -4549,7 +4811,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9036003874982,
-     "holdover_until": 205559172404,
+     "holdover_until": 205462075598,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -4562,11 +4824,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 64297527,
+      "holdover_until": 64259816,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 6
      },
-     "uncertainty_ns": 305276
+     "uncertainty_ns": 306276
     },
     {
      "delay": 835000,
@@ -4588,7 +4850,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9037006874190,
-     "holdover_until": 209105618058,
+     "holdover_until": 209006441226,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -4601,11 +4863,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 67081822,
+      "holdover_until": 67042478,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 11
      },
-     "uncertainty_ns": 315175
+     "uncertainty_ns": 316175
     },
     {
      "delay": 475000,
@@ -4627,7 +4889,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9038010020199,
-     "holdover_until": 221425184198,
+     "holdover_until": 221323897862,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -4640,11 +4902,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 72284366,
+      "holdover_until": 72243330,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 238537
+     "uncertainty_ns": 239537
     },
     {
      "delay": 952000,
@@ -4666,7 +4928,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9039004020395,
-     "holdover_until": 225020048522,
+     "holdover_until": 224916721389,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -4679,11 +4941,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 75226596,
+      "holdover_until": 75183890,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 6
      },
-     "uncertainty_ns": 248157
+     "uncertainty_ns": 249157
     },
     {
      "accepted": 40,
@@ -4693,7 +4955,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9040300020343,
-     "holdover_until": 225020048522,
+     "holdover_until": 224916721389,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -4706,11 +4968,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 75226596,
+      "holdover_until": 75183890,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 12
      },
-     "uncertainty_ns": 260701
+     "uncertainty_ns": 261701
     },
     {
      "accepted": 40,
@@ -4720,7 +4982,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9041900019885,
-     "holdover_until": 225020048522,
+     "holdover_until": 224916721389,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -4733,11 +4995,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 75226596,
+      "holdover_until": 75183890,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 18
      },
-     "uncertainty_ns": 276187
+     "uncertainty_ns": 277187
     }
    ],
    "id": "S04-DRIFT-FAST",
@@ -5270,7 +5532,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9000003985500,
-     "holdover_until": 20575466501,
+     "holdover_until": 20565456501,
      "mute": "NotLocked",
      "op": "check",
      "output": "Muted",
@@ -5282,7 +5544,7 @@
      "resets": 0,
      "samples": 1,
      "status": "Unlocked",
-     "uncertainty_ns": 442854
+     "uncertainty_ns": 443855
     },
     {
      "delay": 769000,
@@ -5304,7 +5566,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9001007125500,
-     "holdover_until": 22148328501,
+     "holdover_until": 22138318501,
      "mute": "NotLocked",
      "op": "check",
      "output": "Muted",
@@ -5316,7 +5578,7 @@
      "resets": 0,
      "samples": 2,
      "status": "Unlocked",
-     "uncertainty_ns": 385860
+     "uncertainty_ns": 386861
     },
     {
      "delay": 633000,
@@ -5338,7 +5600,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9002009903500,
-     "holdover_until": 23831180501,
+     "holdover_until": 23821170501,
      "mute": "NotLocked",
      "op": "check",
      "output": "Muted",
@@ -5350,7 +5612,7 @@
      "resets": 0,
      "samples": 3,
      "status": "Unlocked",
-     "uncertainty_ns": 317866
+     "uncertainty_ns": 318867
     },
     {
      "delay": 490000,
@@ -5373,7 +5635,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9003004038000,
-     "holdover_until": 25540030001,
+     "holdover_until": 25530020001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -5385,7 +5647,7 @@
      "resets": 0,
      "samples": 4,
      "status": "Locked",
-     "uncertainty_ns": 246373
+     "uncertainty_ns": 247374
     },
     {
      "delay": 672000,
@@ -5407,7 +5669,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9004006878000,
-     "holdover_until": 25633040001,
+     "holdover_until": 25623030001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -5419,7 +5681,7 @@
      "resets": 0,
      "samples": 5,
      "status": "Locked",
-     "uncertainty_ns": 337364
+     "uncertainty_ns": 338365
     },
     {
      "delay": 680000,
@@ -5441,7 +5703,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9005009958000,
-     "holdover_until": 26595964001,
+     "holdover_until": 26585954001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -5453,7 +5715,7 @@
      "resets": 0,
      "samples": 6,
      "status": "Locked",
-     "uncertainty_ns": 341364
+     "uncertainty_ns": 342365
     },
     {
      "delay": 756000,
@@ -5475,7 +5737,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9006003983000,
-     "holdover_until": 27209923001,
+     "holdover_until": 27199913001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -5487,7 +5749,7 @@
      "resets": 0,
      "samples": 7,
      "status": "Locked",
-     "uncertainty_ns": 379360
+     "uncertainty_ns": 380361
     },
     {
      "delay": 620000,
@@ -5509,7 +5771,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9007006960259,
-     "holdover_until": 51957354939,
+     "holdover_until": 51933675522,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -5522,11 +5784,11 @@
      "samples": 8,
      "status": "Locked",
      "tol": {
-      "holdover_until": 3780626,
+      "holdover_until": 3778385,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 311155
+     "uncertainty_ns": 312156
     },
     {
      "delay": 416000,
@@ -5548,7 +5810,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9008010004284,
-     "holdover_until": 63809778878,
+     "holdover_until": 63781384132,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -5561,11 +5823,11 @@
      "samples": 9,
      "status": "Locked",
      "tol": {
-      "holdover_until": 5764525,
+      "holdover_until": 5761303,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 209133
+     "uncertainty_ns": 210134
     },
     {
      "delay": 621000,
@@ -5587,7 +5849,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9009004000893,
-     "holdover_until": 73700996637,
+     "holdover_until": 73667073633,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -5600,11 +5862,11 @@
      "samples": 10,
      "status": "Locked",
      "tol": {
-      "holdover_until": 8227656,
+      "holdover_until": 8223057,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 6
      },
-     "uncertainty_ns": 238440
+     "uncertainty_ns": 239441
     },
     {
      "delay": 562000,
@@ -5626,7 +5888,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9010006993437,
-     "holdover_until": 82887366553,
+     "holdover_until": 82848309235,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -5639,11 +5901,11 @@
      "samples": 11,
      "status": "Locked",
      "tol": {
-      "holdover_until": 10906674,
+      "holdover_until": 10900578,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 11
      },
-     "uncertainty_ns": 260274
+     "uncertainty_ns": 261275
     },
     {
      "delay": 721000,
@@ -5665,7 +5927,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9011010006988,
-     "holdover_until": 83108926900,
+     "holdover_until": 83069745750,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -5678,11 +5940,11 @@
      "samples": 12,
      "status": "Locked",
      "tol": {
-      "holdover_until": 10975942,
+      "holdover_until": 10969808,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 15
      },
-     "uncertainty_ns": 285735
+     "uncertainty_ns": 286736
     },
     {
      "delay": 866000,
@@ -5704,7 +5966,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9012003996104,
-     "holdover_until": 90097534149,
+     "holdover_until": 90054447028,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -5717,11 +5979,11 @@
      "samples": 13,
      "status": "Locked",
      "tol": {
-      "holdover_until": 13273408,
+      "holdover_until": 13265989,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 18
      },
-     "uncertainty_ns": 301869
+     "uncertainty_ns": 302870
     },
     {
      "delay": 785000,
@@ -5743,7 +6005,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9013006979862,
-     "holdover_until": 95945297474,
+     "holdover_until": 95898942005,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -5756,11 +6018,11 @@
      "samples": 14,
      "status": "Locked",
      "tol": {
-      "holdover_until": 15363474,
+      "holdover_until": 15354887,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 23
      },
-     "uncertainty_ns": 316978
+     "uncertainty_ns": 317979
     },
     {
      "delay": 795000,
@@ -5782,7 +6044,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9014009985730,
-     "holdover_until": 103282319658,
+     "holdover_until": 103231863486,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -5795,11 +6057,11 @@
      "samples": 15,
      "status": "Locked",
      "tol": {
-      "holdover_until": 18201872,
+      "holdover_until": 18191699,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 27
      },
-     "uncertainty_ns": 328100
+     "uncertainty_ns": 329101
     },
     {
      "delay": 704000,
@@ -5821,7 +6083,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9015003971960,
-     "holdover_until": 110538674830,
+     "holdover_until": 110484163040,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -5834,11 +6096,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 21245568,
+      "holdover_until": 21233693,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 30
      },
-     "uncertainty_ns": 337490
+     "uncertainty_ns": 338491
     },
     {
      "delay": 556000,
@@ -5860,7 +6122,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9016006915277,
-     "holdover_until": 122752051562,
+     "holdover_until": 122692869819,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -5873,11 +6135,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 24062915,
+      "holdover_until": 24048919,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 279063
+     "uncertainty_ns": 280064
     },
     {
      "delay": 699000,
@@ -5899,7 +6161,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9017009910064,
-     "holdover_until": 130230252516,
+     "holdover_until": 130166721163,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -5912,11 +6174,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 27729941,
+      "holdover_until": 27713812,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 7
      },
-     "uncertainty_ns": 294861
+     "uncertainty_ns": 295862
     },
     {
      "delay": 651000,
@@ -5938,7 +6200,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9018003908155,
-     "holdover_until": 132893316455,
+     "holdover_until": 132828236161,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -5951,11 +6213,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 29098576,
+      "holdover_until": 29081651,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 11
      },
-     "uncertainty_ns": 309771
+     "uncertainty_ns": 310772
     },
     {
      "delay": 619000,
@@ -5977,7 +6239,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9019007060786,
-     "holdover_until": 136928756887,
+     "holdover_until": 136861849594,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -5990,11 +6252,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 30192353,
+      "holdover_until": 30174465,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 310555
+     "uncertainty_ns": 311556
     },
     {
      "delay": 635000,
@@ -6016,7 +6278,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9020010110793,
-     "holdover_until": 138443316688,
+     "holdover_until": 138375786498,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -6029,11 +6291,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 30611504,
+      "holdover_until": 30593281,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 318555
+     "uncertainty_ns": 319556
     },
     {
      "delay": 1004000,
@@ -6055,7 +6317,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9021004110611,
-     "holdover_until": 138443316688,
+     "holdover_until": 138375786498,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -6068,11 +6330,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 30611504,
+      "holdover_until": 30593281,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 6
      },
-     "uncertainty_ns": 333288
+     "uncertainty_ns": 334289
     },
     {
      "delay": 645000,
@@ -6094,7 +6356,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9022006862788,
-     "holdover_until": 144998489654,
+     "holdover_until": 144928036388,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -6107,11 +6369,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 33219850,
+      "holdover_until": 33200016,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 323552
+     "uncertainty_ns": 324553
     },
     {
      "delay": 586000,
@@ -6133,7 +6395,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9023009992291,
-     "holdover_until": 154939000810,
+     "holdover_until": 154864521643,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -6146,11 +6408,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 37778134,
+      "holdover_until": 37755967,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 294050
+     "uncertainty_ns": 295051
     },
     {
      "delay": 456000,
@@ -6172,7 +6434,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9024003931295,
-     "holdover_until": 167314484203,
+     "holdover_until": 167236305509,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -6185,11 +6447,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 43210296,
+      "holdover_until": 43185872,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 229048
+     "uncertainty_ns": 230049
     },
     {
      "delay": 836000,
@@ -6211,7 +6473,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9025006930672,
-     "holdover_until": 173581564285,
+     "holdover_until": 173499843328,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -6224,11 +6486,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 47214707,
+      "holdover_until": 47188020,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 7
      },
-     "uncertainty_ns": 241331
+     "uncertainty_ns": 242332
     },
     {
      "delay": 623000,
@@ -6250,7 +6512,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9026009928412,
-     "holdover_until": 177734370625,
+     "holdover_until": 177650302430,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -6263,11 +6525,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 49965917,
+      "holdover_until": 49937675,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 11
      },
-     "uncertainty_ns": 252929
+     "uncertainty_ns": 253930
     },
     {
      "delay": 822000,
@@ -6289,7 +6551,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9027003929358,
-     "holdover_until": 180017348947,
+     "holdover_until": 179931990372,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -6302,11 +6564,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 51511561,
+      "holdover_until": 51482446,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 15
      },
-     "uncertainty_ns": 264223
+     "uncertainty_ns": 265224
     },
     {
      "delay": 934000,
@@ -6328,7 +6590,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9028006932435,
-     "holdover_until": 182811082697,
+     "holdover_until": 182724145055,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -6341,11 +6603,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 53435037,
+      "holdover_until": 53404835,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 19
      },
-     "uncertainty_ns": 275130
+     "uncertainty_ns": 276131
     },
     {
      "delay": 956000,
@@ -6367,7 +6629,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9029009931817,
-     "holdover_until": 187989265759,
+     "holdover_until": 187899401319,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -6380,11 +6642,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 57093433,
+      "holdover_until": 57061163,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 23
      },
-     "uncertainty_ns": 284800
+     "uncertainty_ns": 285801
     },
     {
      "delay": 725000,
@@ -6406,7 +6668,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9030003936171,
-     "holdover_until": 190159494162,
+     "holdover_until": 190068403071,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -6419,11 +6681,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 58662723,
+      "holdover_until": 58629566,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 27
      },
-     "uncertainty_ns": 294970
+     "uncertainty_ns": 295971
     },
     {
      "delay": 360000,
@@ -6445,7 +6707,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9031006982306,
-     "holdover_until": 206462723813,
+     "holdover_until": 206368918172,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -6458,11 +6720,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 63897293,
+      "holdover_until": 63862130,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 181041
+     "uncertainty_ns": 182042
     },
     {
      "delay": 352000,
@@ -6484,7 +6746,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9032010022307,
-     "holdover_until": 212528384849,
+     "holdover_until": 212432005107,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -6497,11 +6759,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 67600519,
+      "holdover_until": 67563400,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 177040
+     "uncertainty_ns": 178041
     },
     {
      "delay": 898000,
@@ -6523,7 +6785,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9033004022687,
-     "holdover_until": 212528384849,
+     "holdover_until": 212432005107,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -6536,11 +6798,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 67600519,
+      "holdover_until": 67563400,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 6
      },
-     "uncertainty_ns": 187363
+     "uncertainty_ns": 188364
     },
     {
      "delay": 851000,
@@ -6562,7 +6824,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9034007022947,
-     "holdover_until": 216468101509,
+     "holdover_until": 216369558488,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -6575,11 +6837,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 70669213,
+      "holdover_until": 70630408,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 11
      },
-     "uncertainty_ns": 197323
+     "uncertainty_ns": 198324
     },
     {
      "delay": 898000,
@@ -6601,7 +6863,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9035010023630,
-     "holdover_until": 216468101509,
+     "holdover_until": 216369558488,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -6614,11 +6876,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 70669213,
+      "holdover_until": 70630408,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 15
      },
-     "uncertainty_ns": 207511
+     "uncertainty_ns": 208512
     },
     {
      "delay": 620000,
@@ -6640,7 +6902,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9036004023641,
-     "holdover_until": 221536487455,
+     "holdover_until": 221435161410,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -6653,11 +6915,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 74717219,
+      "holdover_until": 74676192,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 18
      },
-     "uncertainty_ns": 216492
+     "uncertainty_ns": 217493
     },
     {
      "delay": 492000,
@@ -6679,7 +6941,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9037007026432,
-     "holdover_until": 225077507740,
+     "holdover_until": 224974237339,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -6692,11 +6954,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 77612244,
+      "holdover_until": 77569628,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 23
      },
-     "uncertainty_ns": 225469
+     "uncertainty_ns": 226470
     },
     {
      "delay": 820000,
@@ -6718,7 +6980,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9038010029085,
-     "holdover_until": 229060108606,
+     "holdover_until": 228954651379,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -6731,11 +6993,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 80934038,
+      "holdover_until": 80889598,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 27
      },
-     "uncertainty_ns": 233984
+     "uncertainty_ns": 234985
     },
     {
      "delay": 780000,
@@ -6757,7 +7019,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9039004034164,
-     "holdover_until": 229913692911,
+     "holdover_until": 229807766985,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -6770,11 +7032,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 81655050,
+      "holdover_until": 81610214,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 30
      },
-     "uncertainty_ns": 243124
+     "uncertainty_ns": 244125
     },
     {
      "accepted": 40,
@@ -6784,7 +7046,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9040300037129,
-     "holdover_until": 229913692911,
+     "holdover_until": 229807766985,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -6797,11 +7059,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 81655050,
+      "holdover_until": 81610214,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 36
      },
-     "uncertainty_ns": 255371
+     "uncertainty_ns": 256372
     },
     {
      "accepted": 40,
@@ -6811,7 +7073,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9041900039951,
-     "holdover_until": 229913692911,
+     "holdover_until": 229807766985,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -6824,11 +7086,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 81655050,
+      "holdover_until": 81610214,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 42
      },
-     "uncertainty_ns": 270489
+     "uncertainty_ns": 271490
     }
    ],
    "id": "S05-DRIFT-SLOW",
@@ -7361,7 +7623,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89463487330000,
-     "holdover_until": 23870127001,
+     "holdover_until": 23860117001,
      "mute": "NotLocked",
      "op": "check",
      "output": "Muted",
@@ -7373,7 +7635,7 @@
      "resets": 0,
      "samples": 1,
      "status": "Unlocked",
-     "uncertainty_ns": 113188
+     "uncertainty_ns": 114189
     },
     {
      "delay": 218000,
@@ -7395,7 +7657,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89464487327000,
-     "holdover_until": 24900174001,
+     "holdover_until": 24890164001,
      "mute": "NotLocked",
      "op": "check",
      "output": "Muted",
@@ -7407,7 +7669,7 @@
      "resets": 0,
      "samples": 2,
      "status": "Unlocked",
-     "uncertainty_ns": 110188
+     "uncertainty_ns": 111189
     },
     {
      "delay": 158000,
@@ -7429,7 +7691,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89465487328000,
-     "holdover_until": 26200194001,
+     "holdover_until": 26190184001,
      "mute": "NotLocked",
      "op": "check",
      "output": "Muted",
@@ -7441,7 +7703,7 @@
      "resets": 0,
      "samples": 3,
      "status": "Unlocked",
-     "uncertainty_ns": 80191
+     "uncertainty_ns": 81192
     },
     {
      "delay": 215000,
@@ -7464,7 +7726,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89466487350500,
-     "holdover_until": 26915272501,
+     "holdover_until": 26905262501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -7476,7 +7738,7 @@
      "resets": 0,
      "samples": 4,
      "status": "Locked",
-     "uncertainty_ns": 108688
+     "uncertainty_ns": 109689
     },
     {
      "delay": 223000,
@@ -7498,7 +7760,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89467487333500,
-     "holdover_until": 27875326501,
+     "holdover_until": 27865316501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -7510,7 +7772,7 @@
      "resets": 0,
      "samples": 5,
      "status": "Locked",
-     "uncertainty_ns": 112688
+     "uncertainty_ns": 113689
     },
     {
      "delay": 184000,
@@ -7532,7 +7794,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89468487301000,
-     "holdover_until": 29070357001,
+     "holdover_until": 29060347001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -7544,7 +7806,7 @@
      "resets": 0,
      "samples": 6,
      "status": "Locked",
-     "uncertainty_ns": 93190
+     "uncertainty_ns": 94191
     },
     {
      "delay": 225000,
@@ -7566,7 +7828,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89469487360500,
-     "holdover_until": 29865427501,
+     "holdover_until": 29855417501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -7578,7 +7840,7 @@
      "resets": 0,
      "samples": 7,
      "status": "Locked",
-     "uncertainty_ns": 113688
+     "uncertainty_ns": 114689
     },
     {
      "delay": 189000,
@@ -7600,7 +7862,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89470487374416,
-     "holdover_until": 128376872577,
+     "holdover_until": 128315766558,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -7613,11 +7875,11 @@
      "samples": 8,
      "status": "Locked",
      "tol": {
-      "holdover_until": 28445199,
+      "holdover_until": 28430263,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 95531
+     "uncertainty_ns": 96531
     },
     {
      "delay": 143000,
@@ -7639,7 +7901,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89471487338412,
-     "holdover_until": 145720998791,
+     "holdover_until": 145652142494,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -7652,11 +7914,11 @@
      "samples": 9,
      "status": "Locked",
      "tol": {
-      "holdover_until": 36554574,
+      "holdover_until": 36535609,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 72528
+     "uncertainty_ns": 73528
     },
     {
      "delay": 213000,
@@ -7678,7 +7940,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89472487340927,
-     "holdover_until": 155619798376,
+     "holdover_until": 155545806515,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -7691,11 +7953,11 @@
      "samples": 10,
      "status": "Locked",
      "tol": {
-      "holdover_until": 42210675,
+      "holdover_until": 42188775,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 7
      },
-     "uncertainty_ns": 86042
+     "uncertainty_ns": 87042
     },
     {
      "delay": 201000,
@@ -7717,7 +7979,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89473487341744,
-     "holdover_until": 169555067397,
+     "holdover_until": 169473845825,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -7730,11 +7992,11 @@
      "samples": 11,
      "status": "Locked",
      "tol": {
-      "holdover_until": 50862438,
+      "holdover_until": 50836051,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 11
      },
-     "uncertainty_ns": 97149
+     "uncertainty_ns": 98149
     },
     {
      "delay": 170000,
@@ -7756,7 +8018,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89474487361909,
-     "holdover_until": 183279097824,
+     "holdover_until": 183191700516,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -7769,11 +8031,11 @@
      "samples": 12,
      "status": "Locked",
      "tol": {
-      "holdover_until": 58478746,
+      "holdover_until": 58448193,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 86022
+     "uncertainty_ns": 87022
     },
     {
      "delay": 182000,
@@ -7795,7 +8057,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89475487295906,
-     "holdover_until": 181511828608,
+     "holdover_until": 181425606845,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -7808,11 +8070,11 @@
      "samples": 13,
      "status": "Locked",
      "tol": {
-      "holdover_until": 56737757,
+      "holdover_until": 56708020,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 92022
+     "uncertainty_ns": 93022
     },
     {
      "delay": 251000,
@@ -7834,7 +8096,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89476487296191,
-     "holdover_until": 193080440220,
+     "holdover_until": 192988155244,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -7847,11 +8109,11 @@
      "samples": 14,
      "status": "Locked",
      "tol": {
-      "holdover_until": 64998058,
+      "holdover_until": 64963992,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 7
      },
-     "uncertainty_ns": 102858
+     "uncertainty_ns": 103858
     },
     {
      "delay": 172000,
@@ -7873,7 +8135,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89477487318905,
-     "holdover_until": 206164483615,
+     "holdover_until": 206066645830,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -7886,11 +8148,11 @@
      "samples": 15,
      "status": "Locked",
      "tol": {
-      "holdover_until": 73246722,
+      "holdover_until": 73208433,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 87020
+     "uncertainty_ns": 88020
     },
     {
      "delay": 190000,
@@ -7912,7 +8174,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89478487288903,
-     "holdover_until": 210705988206,
+     "holdover_until": 210605827949,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -7925,11 +8187,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 76404300,
+      "holdover_until": 76364171,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 96019
+     "uncertainty_ns": 97019
     },
     {
      "delay": 226000,
@@ -7951,7 +8213,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89479487288721,
-     "holdover_until": 215885633663,
+     "holdover_until": 215782753005,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -7964,11 +8226,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 80611019,
+      "holdover_until": 80568682,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 7
      },
-     "uncertainty_ns": 105739
+     "uncertainty_ns": 106739
     },
     {
      "delay": 191000,
@@ -7990,7 +8252,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89480487373406,
-     "holdover_until": 220406213784,
+     "holdover_until": 220301981972,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -8003,11 +8265,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 82720557,
+      "holdover_until": 82677100,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 96519
+     "uncertainty_ns": 97519
     },
     {
      "delay": 279000,
@@ -8029,7 +8291,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89481487373915,
-     "holdover_until": 228409548659,
+     "holdover_until": 228301112311,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -8042,11 +8304,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 89528775,
+      "holdover_until": 89481742,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 7
      },
-     "uncertainty_ns": 105740
+     "uncertainty_ns": 106740
     },
     {
      "delay": 192000,
@@ -8068,7 +8330,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89482487364906,
-     "holdover_until": 237222349516,
+     "holdover_until": 237110304698,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -8081,11 +8343,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 95561363,
+      "holdover_until": 95511147,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 97017
+     "uncertainty_ns": 98017
     },
     {
      "delay": 139000,
@@ -8107,7 +8369,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89483487314405,
-     "holdover_until": 246859196493,
+     "holdover_until": 246744214315,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -8120,11 +8382,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 102038917,
+      "holdover_until": 101986033,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 70517
+     "uncertainty_ns": 71517
     },
     {
      "delay": 211000,
@@ -8146,7 +8408,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89484487314657,
-     "holdover_until": 252831997241,
+     "holdover_until": 252713919546,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -8159,11 +8421,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 107606998,
+      "holdover_until": 107551228,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 7
      },
-     "uncertainty_ns": 78986
+     "uncertainty_ns": 79986
     },
     {
      "delay": 171000,
@@ -8185,7 +8447,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89485487312404,
-     "holdover_until": 256355149919,
+     "holdover_until": 256235288958,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -8198,11 +8460,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 109962341,
+      "holdover_until": 109904874,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 86516
+     "uncertainty_ns": 87516
     },
     {
      "delay": 195000,
@@ -8224,7 +8486,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89486487312514,
-     "holdover_until": 260896812284,
+     "holdover_until": 260774577838,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -8237,11 +8499,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 114360403,
+      "holdover_until": 114300638,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 7
      },
-     "uncertainty_ns": 94697
+     "uncertainty_ns": 95697
     },
     {
      "delay": 237000,
@@ -8263,7 +8525,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89487487312199,
-     "holdover_until": 264998712938,
+     "holdover_until": 264874334829,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -8276,11 +8538,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 118406724,
+      "holdover_until": 118344844,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 11
      },
-     "uncertainty_ns": 102597
+     "uncertainty_ns": 103597
     },
     {
      "delay": 270000,
@@ -8302,7 +8564,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89488487314111,
-     "holdover_until": 269737259031,
+     "holdover_until": 269610419863,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -8315,11 +8577,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 124168532,
+      "holdover_until": 124104180,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 23
      },
-     "uncertainty_ns": 109938
+     "uncertainty_ns": 110938
     },
     {
      "delay": 234000,
@@ -8341,7 +8603,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89489487313140,
-     "holdover_until": 273519889240,
+     "holdover_until": 273391089652,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -8354,11 +8616,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 128036480,
+      "holdover_until": 127970123,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 27
      },
-     "uncertainty_ns": 117102
+     "uncertainty_ns": 118102
     },
     {
      "delay": 211000,
@@ -8380,7 +8642,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89490487355405,
-     "holdover_until": 279420783188,
+     "holdover_until": 279290115476,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -8393,11 +8655,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 129318863,
+      "holdover_until": 129250567,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 106515
+     "uncertainty_ns": 107515
     },
     {
      "delay": 216000,
@@ -8419,7 +8681,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89491487333905,
-     "holdover_until": 283730772536,
+     "holdover_until": 283598181712,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -8432,11 +8694,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 132977593,
+      "holdover_until": 132907272,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 109015
+     "uncertainty_ns": 110015
     },
     {
      "delay": 239000,
@@ -8458,7 +8720,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89492487333629,
-     "holdover_until": 286656787923,
+     "holdover_until": 286522649761,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -8471,11 +8733,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 136099406,
+      "holdover_until": 136027434,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 7
      },
-     "uncertainty_ns": 116470
+     "uncertainty_ns": 117470
     },
     {
      "delay": 172000,
@@ -8497,7 +8759,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89493487349904,
-     "holdover_until": 294426607781,
+     "holdover_until": 294290996173,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -8510,11 +8772,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 140724171,
+      "holdover_until": 140650609,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 87015
+     "uncertainty_ns": 88015
     },
     {
      "delay": 235000,
@@ -8536,7 +8798,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89494487349873,
-     "holdover_until": 296662112558,
+     "holdover_until": 296525332364,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -8549,11 +8811,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 143159904,
+      "holdover_until": 143085069,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 7
      },
-     "uncertainty_ns": 94326
+     "uncertainty_ns": 95326
     },
     {
      "delay": 247000,
@@ -8575,7 +8837,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89495487349573,
-     "holdover_until": 298718171169,
+     "holdover_until": 298580316192,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -8588,11 +8850,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 145418568,
+      "holdover_until": 145342552,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 11
      },
-     "uncertainty_ns": 101523
+     "uncertainty_ns": 102523
     },
     {
      "delay": 227000,
@@ -8614,7 +8876,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89496487349852,
-     "holdover_until": 300364342019,
+     "holdover_until": 300225626524,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -8627,11 +8889,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 147239697,
+      "holdover_until": 147162729,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 15
      },
-     "uncertainty_ns": 108642
+     "uncertainty_ns": 109642
     },
     {
      "delay": 229000,
@@ -8653,7 +8915,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89497487311406,
-     "holdover_until": 302715795356,
+     "holdover_until": 302575856928,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -8666,11 +8928,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 147614872,
+      "holdover_until": 147536541,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 115514
+     "uncertainty_ns": 116514
     },
     {
      "delay": 220000,
@@ -8692,7 +8954,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89498487313905,
-     "holdover_until": 306583867662,
+     "holdover_until": 306442744320,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -8705,11 +8967,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 150483768,
+      "holdover_until": 150404105,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 111014
+     "uncertainty_ns": 112014
     },
     {
      "delay": 256000,
@@ -8731,7 +8993,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89499487313824,
-     "holdover_until": 308630999005,
+     "holdover_until": 308488791952,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -8744,11 +9006,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 152803826,
+      "holdover_until": 152722935,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 7
      },
-     "uncertainty_ns": 118046
+     "uncertainty_ns": 119046
     },
     {
      "delay": 161000,
@@ -8770,7 +9032,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89500487315404,
-     "holdover_until": 316465464814,
+     "holdover_until": 316322403297,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -8783,11 +9045,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 157060671,
+      "holdover_until": 156978804,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 3
      },
-     "uncertainty_ns": 81514
+     "uncertainty_ns": 82514
     },
     {
      "delay": 223000,
@@ -8809,7 +9071,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89501487315116,
-     "holdover_until": 317529735246,
+     "holdover_until": 317386118989,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -8822,11 +9084,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 158281081,
+      "holdover_until": 158198579,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 7
      },
-     "uncertainty_ns": 88477
+     "uncertainty_ns": 89477
     },
     {
      "delay": 227000,
@@ -8848,7 +9110,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89502487314616,
-     "holdover_until": 318721980118,
+     "holdover_until": 318577742414,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -8861,11 +9123,11 @@
      "samples": 16,
      "status": "Locked",
      "tol": {
-      "holdover_until": 159653851,
+      "holdover_until": 159570633,
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 11
      },
-     "uncertainty_ns": 95380
+     "uncertainty_ns": 96380
     }
    ],
    "id": "S06-WRAP",
@@ -9482,8 +9744,8 @@
      "rate_in_force": true,
      "result": "ok",
      "start_local_ns": 14000000000,
-     "uncertainty_at_start_ns": 212999,
-     "valid_until_local_ns": 311833558334
+     "uncertainty_at_start_ns": 214000,
+     "valid_until_local_ns": 311666725001
     },
     {
      "events": [
@@ -9523,8 +9785,8 @@
      "events": [
       "n03.truth.within"
      ],
-     "group_ns": 9306833558333,
-     "holdover_until": 311833558334,
+     "group_ns": 9306666725000,
+     "holdover_until": 311666725001,
      "mute": null,
      "op": "check",
      "output": "Audible",
@@ -9537,9 +9799,9 @@
      "samples": 8,
      "status": "Holdover",
      "tol": {
-      "holdover_until": 199888890,
+      "holdover_until": 199777668,
       "ratio_unc_ppb": 4,
-      "uncertainty_ns": 1202
+      "uncertainty_ns": 1201
      },
      "uncertainty_ns": 2000000
     },
@@ -9556,8 +9818,8 @@
      "events": [
       "n03.truth.within"
      ],
-     "group_ns": 9306833558334,
-     "holdover_until": 311833558334,
+     "group_ns": 9306666725001,
+     "holdover_until": 311666725001,
      "mute": "ClockExpired",
      "op": "check",
      "output": "Muted",
@@ -9570,9 +9832,9 @@
      "samples": 8,
      "status": "Expired",
      "tol": {
-      "holdover_until": 199888890,
+      "holdover_until": 199777668,
       "ratio_unc_ppb": 4,
-      "uncertainty_ns": 1202
+      "uncertainty_ns": 1201
      },
      "uncertainty_ns": 2000001
     },
@@ -9641,16 +9903,16 @@
     },
     {
      "binding": "Uncertainty",
-     "deadline_local_ns": 320733108000,
+     "deadline_local_ns": 320566275000,
      "events": [
       "n03.admit.accepted"
      ],
      "op": "admit",
      "rate_in_force": false,
      "result": "ok",
-     "start_local_ns": 320833108000,
-     "uncertainty_at_start_ns": 500978,
-     "valid_until_local_ns": 335823333001
+     "start_local_ns": 320666275000,
+     "uncertainty_at_start_ns": 501979,
+     "valid_until_local_ns": 335646490001
     },
     {
      "events": [
@@ -9753,64 +10015,64 @@
      "op": "tick"
     },
     {
-     "now": 311833558333,
+     "now": 311666725000,
      "op": "check",
-     "truth_group": 9306833558000
+     "truth_group": 9306666725000
     },
     {
-     "now": 311833558333,
+     "now": 311666725000,
      "op": "tick"
     },
     {
-     "now": 311833558334,
+     "now": 311666725001,
      "op": "check",
-     "truth_group": 9306833558000
+     "truth_group": 9306666725000
     },
     {
-     "now": 311833558334,
+     "now": 311666725001,
      "op": "tick"
     },
     {
      "op": "probe",
-     "t1": 316833108000,
-     "t2": 9311833308000,
-     "t3": 9311833358000,
-     "t4": 316833558000
+     "t1": 316666275000,
+     "t2": 9311666475000,
+     "t3": 9311666525000,
+     "t4": 316666725000
     },
     {
      "op": "probe",
-     "t1": 317833108000,
-     "t2": 9312833308000,
-     "t3": 9312833358000,
-     "t4": 317833558000
+     "t1": 317666275000,
+     "t2": 9312666475000,
+     "t3": 9312666525000,
+     "t4": 317666725000
     },
     {
-     "now": 317834558000,
+     "now": 317667725000,
      "op": "tick"
     },
     {
      "epoch": 1,
-     "expires": 1217835558000,
-     "now": 317835558000,
+     "expires": 1217668725000,
+     "now": 317668725000,
      "op": "authority"
     },
     {
      "op": "buffer"
     },
     {
-     "now": 317836558000,
+     "now": 317669725000,
      "op": "tick"
     },
     {
-     "now": 317837558000,
+     "now": 317670725000,
      "op": "admit",
      "sched": {
       "epoch": 1,
-      "start_group_ns": 9315833108000
+      "start_group_ns": 9315666275000
      }
     },
     {
-     "now": 320834108000,
+     "now": 320667275000,
      "op": "tick"
     }
    ],
@@ -9943,7 +10205,7 @@
      "rate_in_force": true,
      "result": "ok",
      "start_local_ns": 14000000000,
-     "uncertainty_at_start_ns": 212999,
+     "uncertainty_at_start_ns": 214000,
      "valid_until_local_ns": 32000450000
     },
     {
@@ -10002,7 +10264,7 @@
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 83
      },
-     "uncertainty_ns": 321002
+     "uncertainty_ns": 322003
     },
     {
      "events": [],
@@ -10035,7 +10297,7 @@
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 83
      },
-     "uncertainty_ns": 321002
+     "uncertainty_ns": 322003
     },
     {
      "events": [
@@ -10112,8 +10374,8 @@
      "rate_in_force": false,
      "result": "ok",
      "start_local_ns": 41000000000,
-     "uncertainty_at_start_ns": 500978,
-     "valid_until_local_ns": 55990225001
+     "uncertainty_at_start_ns": 501979,
+     "valid_until_local_ns": 55980215001
     },
     {
      "events": [
@@ -10412,7 +10674,7 @@
      "rate_in_force": true,
      "result": "ok",
      "start_local_ns": 14000000000,
-     "uncertainty_at_start_ns": 212999,
+     "uncertainty_at_start_ns": 214000,
      "valid_until_local_ns": 22000450000
     },
     {
@@ -10471,7 +10733,7 @@
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 43
      },
-     "uncertainty_ns": 261002
+     "uncertainty_ns": 262003
     },
     {
      "events": [],
@@ -10504,7 +10766,7 @@
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 43
      },
-     "uncertainty_ns": 261002
+     "uncertainty_ns": 262003
     },
     {
      "events": [
@@ -10579,8 +10841,8 @@
      "rate_in_force": false,
      "result": "ok",
      "start_local_ns": 31000000000,
-     "uncertainty_at_start_ns": 500978,
-     "valid_until_local_ns": 45990225001
+     "uncertainty_at_start_ns": 501979,
+     "valid_until_local_ns": 45980215001
     },
     {
      "events": [
@@ -10883,7 +11145,7 @@
      "rate_in_force": true,
      "result": "ok",
      "start_local_ns": 14000000000,
-     "uncertainty_at_start_ns": 212999,
+     "uncertainty_at_start_ns": 214000,
      "valid_until_local_ns": 32000450000
     },
     {
@@ -10942,7 +11204,7 @@
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 83
      },
-     "uncertainty_ns": 321002
+     "uncertainty_ns": 322003
     },
     {
      "events": [],
@@ -10975,7 +11237,7 @@
       "ratio_unc_ppb": 4,
       "uncertainty_ns": 83
      },
-     "uncertainty_ns": 321002
+     "uncertainty_ns": 322003
     },
     {
      "events": [
@@ -11052,8 +11314,8 @@
      "rate_in_force": false,
      "result": "ok",
      "start_local_ns": 41000000000,
-     "uncertainty_at_start_ns": 500978,
-     "valid_until_local_ns": 55990225001
+     "uncertainty_at_start_ns": 501979,
+     "valid_until_local_ns": 55980215001
     },
     {
      "events": [
@@ -11344,8 +11606,8 @@
      "rate_in_force": true,
      "result": "ok",
      "start_local_ns": 17500450000,
-     "uncertainty_at_start_ns": 204002,
-     "valid_until_local_ns": 316833558334
+     "uncertainty_at_start_ns": 205003,
+     "valid_until_local_ns": 316666725001
     },
     {
      "events": [
@@ -11450,8 +11712,8 @@
      "rate_in_force": false,
      "result": "ok",
      "start_local_ns": 23600450000,
-     "uncertainty_at_start_ns": 261023,
-     "valid_until_local_ns": 40990225001
+     "uncertainty_at_start_ns": 262024,
+     "valid_until_local_ns": 40980215001
     },
     {
      "events": [
@@ -11725,8 +11987,8 @@
      "rate_in_force": true,
      "result": "ok",
      "start_local_ns": 17500450000,
-     "uncertainty_at_start_ns": 204002,
-     "valid_until_local_ns": 316833558334
+     "uncertainty_at_start_ns": 205003,
+     "valid_until_local_ns": 316666725001
     },
     {
      "events": [
@@ -11831,8 +12093,8 @@
      "rate_in_force": false,
      "result": "ok",
      "start_local_ns": 23600450000,
-     "uncertainty_at_start_ns": 261023,
-     "valid_until_local_ns": 40990225001
+     "uncertainty_at_start_ns": 262024,
+     "valid_until_local_ns": 40980215001
     },
     {
      "events": [
@@ -12106,8 +12368,8 @@
      "rate_in_force": true,
      "result": "ok",
      "start_local_ns": 17500450000,
-     "uncertainty_at_start_ns": 204002,
-     "valid_until_local_ns": 316833558334
+     "uncertainty_at_start_ns": 205003,
+     "valid_until_local_ns": 316666725001
     },
     {
      "events": [
@@ -12212,8 +12474,8 @@
      "rate_in_force": false,
      "result": "ok",
      "start_local_ns": 23600450000,
-     "uncertainty_at_start_ns": 261023,
-     "valid_until_local_ns": 40990225001
+     "uncertainty_at_start_ns": 262024,
+     "valid_until_local_ns": 40980215001
     },
     {
      "events": [
@@ -12487,8 +12749,8 @@
      "rate_in_force": true,
      "result": "ok",
      "start_local_ns": 17500450000,
-     "uncertainty_at_start_ns": 204002,
-     "valid_until_local_ns": 316833558334
+     "uncertainty_at_start_ns": 205003,
+     "valid_until_local_ns": 316666725001
     },
     {
      "events": [
@@ -12593,8 +12855,8 @@
      "rate_in_force": false,
      "result": "ok",
      "start_local_ns": 23600450000,
-     "uncertainty_at_start_ns": 261023,
-     "valid_until_local_ns": 40990225001
+     "uncertainty_at_start_ns": 262024,
+     "valid_until_local_ns": 40980215001
     },
     {
      "events": [
@@ -12868,8 +13130,8 @@
      "rate_in_force": true,
      "result": "ok",
      "start_local_ns": 17500450000,
-     "uncertainty_at_start_ns": 204002,
-     "valid_until_local_ns": 316833558334
+     "uncertainty_at_start_ns": 205003,
+     "valid_until_local_ns": 316666725001
     },
     {
      "events": [
@@ -12974,8 +13236,8 @@
      "rate_in_force": false,
      "result": "ok",
      "start_local_ns": 23600450000,
-     "uncertainty_at_start_ns": 261023,
-     "valid_until_local_ns": 40990225001
+     "uncertainty_at_start_ns": 262024,
+     "valid_until_local_ns": 40980215001
     },
     {
      "events": [
@@ -13249,8 +13511,8 @@
      "rate_in_force": true,
      "result": "ok",
      "start_local_ns": 17500450000,
-     "uncertainty_at_start_ns": 204002,
-     "valid_until_local_ns": 316833558334
+     "uncertainty_at_start_ns": 205003,
+     "valid_until_local_ns": 316666725001
     },
     {
      "events": [
@@ -13355,8 +13617,8 @@
      "rate_in_force": false,
      "result": "ok",
      "start_local_ns": 24600450000,
-     "uncertainty_at_start_ns": 261023,
-     "valid_until_local_ns": 41990225001
+     "uncertainty_at_start_ns": 262024,
+     "valid_until_local_ns": 41980215001
     },
     {
      "events": [
@@ -13583,7 +13845,7 @@
      "events": [
       "n03.probe.accepted@6/4"
      ],
-     "offset": 8995001001000,
+     "offset": 8995001002001,
      "op": "probe",
      "rate_in_force": false,
      "result": "ok",
@@ -13595,8 +13857,8 @@
      "anchor_local_mid": 15000225000,
      "binding": "Uncertainty",
      "events": [],
-     "group_ns": 9010002451000,
-     "holdover_until": 32990225001,
+     "group_ns": 9010002452001,
+     "holdover_until": 32980215001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -13608,12 +13870,12 @@
      "resets": 0,
      "samples": 6,
      "status": "Locked",
-     "uncertainty_ns": 201123
+     "uncertainty_ns": 202124
     }
    ],
    "id": "S09A-STEP-AT-BOUND",
    "leader": 7,
-   "note": "allowed step = anchor uncertainty + delay/2 + prediction slack = 1001000 ns",
+   "note": "allowed step = anchor uncertainty + delay/2 + prediction slack = 1002001 ns",
    "ops": [
     {
      "op": "probe",
@@ -13653,8 +13915,8 @@
     {
      "op": "probe",
      "t1": 15000000000,
-     "t2": 9010001201000,
-     "t3": 9010001251000,
+     "t2": 9010001202001,
+     "t3": 9010001252001,
      "t4": 15000450000
     },
     {
@@ -13762,7 +14024,7 @@
    ],
    "id": "S09B-STEP-PAST-BOUND",
    "leader": 7,
-   "note": "allowed step = anchor uncertainty + delay/2 + prediction slack = 1001000 ns",
+   "note": "allowed step = anchor uncertainty + delay/2 + prediction slack = 1002001 ns",
    "ops": [
     {
      "op": "probe",
@@ -13802,8 +14064,8 @@
     {
      "op": "probe",
      "t1": 15000000000,
-     "t2": 9010001201001,
-     "t3": 9010001251001,
+     "t2": 9010001202002,
+     "t3": 9010001252002,
      "t4": 15000450000
     },
     {
@@ -13911,8 +14173,8 @@
      "rate_in_force": false,
      "result": "ok",
      "start_local_ns": 15500450000,
-     "uncertainty_at_start_ns": 251023,
-     "valid_until_local_ns": 32990225001
+     "uncertainty_at_start_ns": 252024,
+     "valid_until_local_ns": 32980215001
     },
     {
      "events": [
@@ -14042,7 +14304,7 @@
      "binding": "Uncertainty",
      "events": [],
      "group_ns": 9016008450000,
-     "holdover_until": 38990225001,
+     "holdover_until": 38980215001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -14054,7 +14316,7 @@
      "resets": 0,
      "samples": 4,
      "status": "Locked",
-     "uncertainty_ns": 201123
+     "uncertainty_ns": 202124
     },
     {
      "events": [
@@ -14103,8 +14365,8 @@
      "rate_in_force": false,
      "result": "ok",
      "start_local_ns": 21600450000,
-     "uncertainty_at_start_ns": 261023,
-     "valid_until_local_ns": 38990225001
+     "uncertainty_at_start_ns": 262024,
+     "valid_until_local_ns": 38980215001
     },
     {
      "events": [
@@ -14417,29 +14679,33 @@
      "status": "Unlocked"
     },
     {
+     "delay": 0,
      "events": [
-      "n03.probe.rejected:Malformed"
+      "n03.probe.accepted@4/4",
+      "n03.status.locked"
      ],
+     "offset": 8995000200500,
      "op": "probe",
      "rate_in_force": false,
-     "result": "Malformed",
+     "result": "ok",
      "seq": 1005,
-     "status": "Unlocked"
+     "status": "Locked"
     },
     {
      "events": [
-      "n03.probe.rejected:ExpiredRequest"
+      "n03.probe.rejected:ExpiredRequest",
+      "n03.status.holdover:Uncertainty"
      ],
      "op": "probe",
      "rate_in_force": false,
      "result": "ExpiredRequest",
      "seq": 1006,
-     "status": "Unlocked"
+     "status": "Holdover"
     },
     {
      "delay": 40000000,
      "events": [
-      "n03.probe.accepted@4/4",
+      "n03.probe.accepted@5/4",
       "n03.status.locked"
      ],
      "offset": 8994980200000,
@@ -14452,7 +14718,7 @@
     {
      "delay": 50000000,
      "events": [
-      "n03.probe.accepted@5/4"
+      "n03.probe.accepted@6/4"
      ],
      "offset": 8994975200000,
      "op": "probe",
@@ -14463,14 +14729,13 @@
     },
     {
      "events": [
-      "n03.probe.rejected:ExcessiveDelay",
-      "n03.status.expired"
+      "n03.probe.rejected:ExcessiveDelay"
      ],
      "op": "probe",
      "rate_in_force": false,
      "result": "ExcessiveDelay",
      "seq": 1009,
-     "status": "Expired"
+     "status": "Locked"
     },
     {
      "events": [
@@ -14480,27 +14745,27 @@
      "rate_in_force": false,
      "result": "LocalClockRegression",
      "seq": 1010,
-     "status": "Expired"
+     "status": "Locked"
     },
     {
-     "accepted": 5,
-     "anchor_local_mid": 13000225000,
+     "accepted": 6,
+     "anchor_local_mid": 16000225000,
      "binding": "Uncertainty",
      "events": [],
-     "group_ns": 9028000000000,
-     "holdover_until": 30990225001,
-     "mute": "ClockExpired",
+     "group_ns": 9028000200500,
+     "holdover_until": 35980215001,
+     "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
      "rate_in_force": false,
      "rate_restarts": 0,
      "ratio_ppb": 0,
      "ratio_unc_ppb": 100000,
-     "rejected_total": 10,
+     "rejected_total": 9,
      "resets": 0,
-     "samples": 5,
-     "status": "Expired",
-     "uncertainty_ns": 2200978
+     "samples": 6,
+     "status": "Locked",
+     "uncertainty_ns": 1701979
     },
     {
      "events": [
@@ -14515,14 +14780,14 @@
      "status": "Unlocked"
     },
     {
-     "accepted": 5,
+     "accepted": 6,
      "events": [],
      "mute": "Discontinuity",
      "op": "check",
      "output": "Muted",
      "rate_in_force": false,
      "rate_restarts": 0,
-     "rejected_total": 11,
+     "rejected_total": 10,
      "resets": 1,
      "samples": 0,
      "status": "Unlocked"
@@ -14792,7 +15057,7 @@
      "binding": "Uncertainty",
      "events": [],
      "group_ns": 9008002000000,
-     "holdover_until": 27992225001,
+     "holdover_until": 27982215001,
      "mute": "NotLocked",
      "op": "check",
      "output": "Muted",
@@ -14804,7 +15069,7 @@
      "resets": 0,
      "samples": 1,
      "status": "Unlocked",
-     "uncertainty_ns": 500978
+     "uncertainty_ns": 501979
     }
    ],
    "id": "S12-OUTSTANDING-BOUND",
@@ -15001,8 +15266,8 @@
      "rate_in_force": false,
      "result": "ok",
      "start_local_ns": 12000000000,
-     "uncertainty_at_start_ns": 400978,
-     "valid_until_local_ns": 27990225001
+     "uncertainty_at_start_ns": 401979,
+     "valid_until_local_ns": 27980215001
     },
     {
      "events": [
@@ -15020,7 +15285,7 @@
       "n03.truth.within"
      ],
      "group_ns": 9008000500000,
-     "holdover_until": 27990225001,
+     "holdover_until": 27980215001,
      "mute": null,
      "op": "check",
      "output": "Audible",
@@ -15032,7 +15297,7 @@
      "resets": 0,
      "samples": 6,
      "status": "Holdover",
-     "uncertainty_ns": 501028
+     "uncertainty_ns": 502029
     },
     {
      "events": [],
@@ -15154,8 +15419,8 @@
      "rate_in_force": false,
      "result": "ok",
      "start_local_ns": 19000000000,
-     "uncertainty_at_start_ns": 400978,
-     "valid_until_local_ns": 34990225001
+     "uncertainty_at_start_ns": 401979,
+     "valid_until_local_ns": 34980215001
     },
     {
      "events": [
@@ -15446,7 +15711,7 @@
      "binding": "Uncertainty",
      "events": [],
      "group_ns": 9118000000000,
-     "holdover_until": 135990225001,
+     "holdover_until": 135980215001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -15458,7 +15723,7 @@
      "resets": 0,
      "samples": 10,
      "status": "Holdover",
-     "uncertainty_ns": 700978
+     "uncertainty_ns": 701979
     }
    ],
    "id": "S14-SPARSE-PROBES",
@@ -15930,7 +16195,7 @@
       "n03.truth.within"
      ],
      "group_ns": 84379488449500,
-     "holdover_until": 321026664501,
+     "holdover_until": 321016654501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -15942,7 +16207,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 498748
+     "uncertainty_ns": 499749
     },
     {
      "delay": 295000,
@@ -16336,7 +16601,7 @@
       "n03.truth.within"
      ],
      "group_ns": 84719488265000,
-     "holdover_until": 661744174001,
+     "holdover_until": 661734164001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -16348,7 +16613,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 428255
+     "uncertainty_ns": 429256
     },
     {
      "delay": 1199000,
@@ -16730,7 +16995,7 @@
       "n03.truth.within"
      ],
      "group_ns": 85039488113500,
-     "holdover_until": 982390950501,
+     "holdover_until": 982380940501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -16742,7 +17007,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 364761
+     "uncertainty_ns": 365762
     },
     {
      "delay": 1094000,
@@ -17130,7 +17395,7 @@
       "n03.truth.within"
      ],
      "group_ns": 85369488213500,
-     "holdover_until": 1312933107501,
+     "holdover_until": 1312923097501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -17142,7 +17407,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 311766
+     "uncertainty_ns": 312767
     },
     {
      "delay": 912000,
@@ -17536,7 +17801,7 @@
       "n03.truth.within"
      ],
      "group_ns": 85709488254000,
-     "holdover_until": 1652680714001,
+     "holdover_until": 1652670704001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -17548,7 +17813,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 338264
+     "uncertainty_ns": 339265
     },
     {
      "delay": 1348000,
@@ -17930,7 +18195,7 @@
       "n03.truth.within"
      ],
      "group_ns": 86029488546500,
-     "holdover_until": 1971267696501,
+     "holdover_until": 1971257686501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -17942,7 +18207,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 480750
+     "uncertainty_ns": 481751
     },
     {
      "delay": 1373000,
@@ -18336,7 +18601,7 @@
       "n03.truth.within"
      ],
      "group_ns": 86369488185500,
-     "holdover_until": 2311940210501,
+     "holdover_until": 2311930200501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -18348,7 +18613,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 414756
+     "uncertainty_ns": 415757
     },
     {
      "delay": 1093000,
@@ -18730,7 +18995,7 @@
       "n03.truth.within"
      ],
      "group_ns": 86689488437500,
-     "holdover_until": 2633911854501,
+     "holdover_until": 2633901844501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -18742,7 +19007,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 218776
+     "uncertainty_ns": 219777
     },
     {
      "delay": 1088000,
@@ -19118,7 +19383,7 @@
       "n03.truth.within"
      ],
      "group_ns": 86999488197500,
-     "holdover_until": 2943293387501,
+     "holdover_until": 2943283377501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -19130,7 +19395,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 281769
+     "uncertainty_ns": 282770
     },
     {
      "events": [],
@@ -19530,7 +19795,7 @@
       "n03.truth.within"
      ],
      "group_ns": 87349488236000,
-     "holdover_until": 3290871581001,
+     "holdover_until": 3290861571001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -19542,7 +19807,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 525245
+     "uncertainty_ns": 526246
     },
     {
      "delay": 1140000,
@@ -19948,7 +20213,7 @@
       "n03.truth.within"
      ],
      "group_ns": 87709488427000,
-     "holdover_until": 3653974592001,
+     "holdover_until": 3653964582001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -19960,7 +20225,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 216276
+     "uncertainty_ns": 217277
     },
     {
      "delay": 1024000,
@@ -20360,7 +20625,7 @@
       "n03.truth.within"
      ],
      "group_ns": 88059488299500,
-     "holdover_until": 4001592781501,
+     "holdover_until": 4001582771501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -20372,7 +20637,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 455752
+     "uncertainty_ns": 456753
     },
     {
      "delay": 351000,
@@ -20742,7 +21007,7 @@
       "n03.truth.within"
      ],
      "group_ns": 88359488370500,
-     "holdover_until": 4301843857501,
+     "holdover_until": 4301833847501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -20754,7 +21019,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 431754
+     "uncertainty_ns": 432755
     },
     {
      "events": [],
@@ -21154,7 +21419,7 @@
       "n03.truth.within"
      ],
      "group_ns": 88709488416000,
-     "holdover_until": 4650891904001,
+     "holdover_until": 4650881894001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -21166,7 +21431,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 528245
+     "uncertainty_ns": 529246
     },
     {
      "delay": 755000,
@@ -21560,7 +21825,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89049488158000,
-     "holdover_until": 4993264248001,
+     "holdover_until": 4993254238001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -21572,7 +21837,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 292268
+     "uncertainty_ns": 293269
     },
     {
      "delay": 906000,
@@ -21960,7 +22225,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89379488381000,
-     "holdover_until": 5320446741001,
+     "holdover_until": 5320436731001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -21972,7 +22237,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 575240
+     "uncertainty_ns": 576241
     },
     {
      "delay": 343000,
@@ -22354,7 +22619,7 @@
       "n03.truth.within"
      ],
      "group_ns": 89699488193000,
-     "holdover_until": 5642188408001,
+     "holdover_until": 5642178398001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -22366,7 +22631,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 402257
+     "uncertainty_ns": 403258
     },
     {
      "delay": 862000,
@@ -22742,7 +23007,7 @@
       "n03.truth.within"
      ],
      "group_ns": 90009488616500,
-     "holdover_until": 5951514946501,
+     "holdover_until": 5951504936501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -22754,7 +23019,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 470751
+     "uncertainty_ns": 471752
     },
     {
      "delay": 988000,
@@ -23142,7 +23407,7 @@
       "n03.truth.within"
      ],
      "group_ns": 90339488250500,
-     "holdover_until": 6284046904501,
+     "holdover_until": 6284036894501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -23154,7 +23419,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 218776
+     "uncertainty_ns": 219777
     },
     {
      "delay": 1070000,
@@ -23542,7 +23807,7 @@
       "n03.truth.within"
      ],
      "group_ns": 90669488236000,
-     "holdover_until": 6613064214001,
+     "holdover_until": 6613054204001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -23554,7 +23819,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 318266
+     "uncertainty_ns": 319267
     },
     {
      "delay": 571000,
@@ -23948,7 +24213,7 @@
       "n03.truth.within"
      ],
      "group_ns": 91009488182500,
-     "holdover_until": 6953691732501,
+     "holdover_until": 6953681722501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -23960,7 +24225,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 256772
+     "uncertainty_ns": 257773
     },
     {
      "delay": 612000,
@@ -24354,7 +24619,7 @@
       "n03.truth.within"
      ],
      "group_ns": 91349488458500,
-     "holdover_until": 7290604622501,
+     "holdover_until": 7290594612501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -24366,7 +24631,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 566741
+     "uncertainty_ns": 567742
     },
     {
      "delay": 708000,
@@ -24736,7 +25001,7 @@
       "n03.truth.within"
      ],
      "group_ns": 91649488433500,
-     "holdover_until": 7592505533501,
+     "holdover_until": 7592495523501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -24748,7 +25013,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 377760
+     "uncertainty_ns": 378761
     },
     {
      "delay": 727000,
@@ -25124,7 +25389,7 @@
       "n03.truth.within"
      ],
      "group_ns": 91959488228500,
-     "holdover_until": 7901367118501,
+     "holdover_until": 7901357108501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -25136,7 +25401,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 492748
+     "uncertainty_ns": 493749
     },
     {
      "delay": 909000,
@@ -25530,7 +25795,7 @@
       "n03.truth.within"
      ],
      "group_ns": 92299488394000,
-     "holdover_until": 8239994837001,
+     "holdover_until": 8239984827001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -25542,7 +25807,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 631234
+     "uncertainty_ns": 632235
     },
     {
      "delay": 571000,
@@ -25930,7 +26195,7 @@
       "n03.truth.within"
      ],
      "group_ns": 92629488160000,
-     "holdover_until": 8571726875001,
+     "holdover_until": 8571716865001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -25942,7 +26207,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 459252
+     "uncertainty_ns": 460253
     },
     {
      "delay": 1099000,
@@ -26330,7 +26595,7 @@
       "n03.truth.within"
      ],
      "group_ns": 92959488219500,
-     "holdover_until": 8900954163501,
+     "holdover_until": 8900944153501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -26342,7 +26607,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 537744
+     "uncertainty_ns": 538745
     },
     {
      "delay": 498000,
@@ -26730,7 +26995,7 @@
       "n03.truth.within"
      ],
      "group_ns": 93289488193500,
-     "holdover_until": 9230876382501,
+     "holdover_until": 9230866372501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -26742,7 +27007,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 546743
+     "uncertainty_ns": 547744
     },
     {
      "delay": 440000,
@@ -27136,7 +27401,7 @@
       "n03.truth.within"
      ],
      "group_ns": 93629488348500,
-     "holdover_until": 9568759175501,
+     "holdover_until": 9568749165501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -27148,7 +27413,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 759722
+     "uncertainty_ns": 760723
     },
     {
      "events": [],
@@ -27560,7 +27825,7 @@
       "n03.truth.within"
      ],
      "group_ns": 93999488282000,
-     "holdover_until": 9943957347001,
+     "holdover_until": 9943947337001,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -27572,7 +27837,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 241273
+     "uncertainty_ns": 242274
     },
     {
      "delay": 1397000,
@@ -27966,7 +28231,7 @@
       "n03.truth.within"
      ],
      "group_ns": 94339488395500,
-     "holdover_until": 10280705253501,
+     "holdover_until": 10280695243501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -27978,7 +28243,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 567741
+     "uncertainty_ns": 568742
     },
     {
      "delay": 624000,
@@ -28378,7 +28643,7 @@
       "n03.truth.within"
      ],
      "group_ns": 94689488339500,
-     "holdover_until": 10634067868501,
+     "holdover_until": 10634057858501,
      "mute": "NotAdmitted",
      "op": "check",
      "output": "Muted",
@@ -28390,7 +28655,7 @@
      "resets": 0,
      "samples": 16,
      "status": "Locked",
-     "uncertainty_ns": 232774
+     "uncertainty_ns": 233775
     },
     {
      "delay": 623000,
@@ -36153,8 +36418,8 @@
      "rate_in_force": true,
      "result": "ok",
      "start_local_ns": 22001550000,
-     "uncertainty_at_start_ns": 281008,
-     "valid_until_local_ns": 308500275001
+     "uncertainty_at_start_ns": 282009,
+     "valid_until_local_ns": 308333441667
     },
     {
      "events": [],
@@ -36170,8 +36435,8 @@
      "rate_in_force": true,
      "result": "ok",
      "start_local_ns": 17101550000,
-     "uncertainty_at_start_ns": 251608,
-     "valid_until_local_ns": 308500275001
+     "uncertainty_at_start_ns": 252609,
+     "valid_until_local_ns": 308333441667
     },
     {
      "binding": "Uncertainty",
@@ -36181,8 +36446,8 @@
      "rate_in_force": true,
      "result": "ok",
      "start_local_ns": 19001550000,
-     "uncertainty_at_start_ns": 263008,
-     "valid_until_local_ns": 308500275001
+     "uncertainty_at_start_ns": 264009,
+     "valid_until_local_ns": 308333441667
     },
     {
      "events": [
@@ -36218,8 +36483,8 @@
      "rate_in_force": true,
      "result": "ok",
      "start_local_ns": 18001550000,
-     "uncertainty_at_start_ns": 257008,
-     "valid_until_local_ns": 308500275001
+     "uncertainty_at_start_ns": 258009,
+     "valid_until_local_ns": 308333441667
     },
     {
      "events": [
@@ -36536,8 +36801,8 @@
      "rate_in_force": false,
      "result": "ok",
      "start_local_ns": 15001550000,
-     "uncertainty_at_start_ns": 351128,
-     "valid_until_local_ns": 31490275001
+     "uncertainty_at_start_ns": 352129,
+     "valid_until_local_ns": 31480265001
     },
     {
      "events": [
@@ -36684,8 +36949,8 @@
      "rate_in_force": false,
      "result": "ok",
      "start_local_ns": 16003300000,
-     "uncertainty_at_start_ns": 1951153,
-     "valid_until_local_ns": 16491775001
+     "uncertainty_at_start_ns": 1952154,
+     "valid_until_local_ns": 16481765001
     },
     {
      "events": [],
@@ -36707,7 +36972,7 @@
      "rate_in_force": false,
      "result": "ok",
      "start_local_ns": 14503300000,
-     "uncertainty_at_start_ns": 1801153,
+     "uncertainty_at_start_ns": 1802154,
      "valid_until_local_ns": 15004550000
     },
     {
@@ -36914,8 +37179,8 @@
      "rate_in_force": true,
      "result": "ok",
      "start_local_ns": 18999700000,
-     "uncertainty_at_start_ns": 412997,
-     "valid_until_local_ns": 283500275001
+     "uncertainty_at_start_ns": 413998,
+     "valid_until_local_ns": 283333441667
     },
     {
      "binding": "Uncertainty",
@@ -36927,8 +37192,8 @@
      "rate_in_force": true,
      "result": "ok",
      "start_local_ns": 18999700000,
-     "uncertainty_at_start_ns": 412997,
-     "valid_until_local_ns": 283500275001
+     "uncertainty_at_start_ns": 413998,
+     "valid_until_local_ns": 283333441667
     },
     {
      "events": [
