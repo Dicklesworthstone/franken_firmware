@@ -1,0 +1,23 @@
+{
+  "source_sha256": {
+    "tests/n01/run_cases.py": "40d926d6eb2c2181e04b081c9d95ae0b4b4fae626bbb07e77fbd0b4b7626785b",
+    "tests/n01/test_run_cases.py": "428f26a737f6f8a1442e5fa7ae4078314c931913063d81ea08300e3487af07ce",
+    "tests/n01/case_log.py": "320e2e1377535e386cad35794a2295acd240f163fa282d4c21bce6b508d13b91",
+    "scripts/test/test_support/diagnostics.py": "df90049d7a0b87a3513c45bf4ae7502701d624d34c9e0d8e3e2394f6dba947b7"
+  },
+  "command": [
+    "python3",
+    "-W",
+    "error",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "tests/n01",
+    "-p",
+    "test_run_cases.py"
+  ],
+  "passed": 25,
+  "failed": 0,
+  "scope": "Python runner privacy and existing runner regression tests; no Rust/protocol/fuzz source changes"
+}

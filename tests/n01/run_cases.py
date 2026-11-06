@@ -220,9 +220,17 @@ class Logs:
 
 
 # ---- cases ---------------------------------------------------------------------------------------------------------------------------
+def safe_detail(text: str) -> str:
+    """Apply the existing Q00 policy before human and JSON receipt output."""
+    try:
+        return load_case_log().load(REPO).redact_text(text)
+    except Exception:
+        return "Diagnostic detail withheld: redaction is unavailable."
+
+
 class Result:
     def __init__(self, case_id: str, status: str, detail: str = "", group: str = ""):
-        self.case_id, self.status, self.detail, self.group = case_id, status, detail, group
+        self.case_id, self.status, self.detail, self.group = case_id, status, safe_detail(detail) if detail else "", group
 
     def as_dict(self) -> dict:
         return {"case": self.case_id, "status": self.status, "detail": self.detail, "group": self.group}

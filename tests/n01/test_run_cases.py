@@ -222,6 +222,26 @@ class WholeRuns(unittest.TestCase):
 
 
 class TheDiagnosticReceipt(unittest.TestCase):
+    def test_raw_panic_secrets_are_redacted_before_human_and_json_receipt_output(self):
+        sentinel = "fixture-secret-redaction-canary"
+        name = EVERY[0]
+        panic = "thread '%s' panicked at %s:1:2:\ntoken=%s\n" % (name, os.path.join(os.path.expanduser("~"), "fixture.rs"), sentinel)
+        logs = logs_of(good_log(failed=(name,), extra=panic))
+        results, meta = rc.run("full", logs, scripted())
+        meta["versions"], meta["artifacts"] = rc.versions(), rc.artifact_digests()
+        output = io.StringIO()
+        with redirect_stdout(output):
+            rc.report(results, "full", logs, meta)
+        tmp = tempfile.mkdtemp(prefix="ffw-n01-privacy-")  # retain failure artifacts
+        path = rc.write_receipt(tmp, "full", results, meta, logs, "privacy", None)
+        with open(path, encoding="utf-8") as handle:
+            text = output.getvalue() + handle.read()
+        self.assertNotIn(sentinel, text)
+        self.assertNotIn(os.path.expanduser("~"), text)
+        self.assertIn("REDACTED", text)
+        self.assertIn("first causal event", text)
+        self.assertIn("fixture.rs", text)
+
     def test_a_normal_run_writes_a_complete_log_and_a_receipt_without_a_local_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             results, meta = rc.run("full", logs_of(good_log()), scripted())
@@ -273,7 +293,7 @@ class TheDiagnosticReceipt(unittest.TestCase):
 
 class TheEntryPoint(unittest.TestCase):
     def call(self, *argv):
-        done = subprocess.run([ENTRY] + list(argv), capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        done = subprocess.run([ENTRY] + list(argv), capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=rc.UNIT_TIMEOUT_S)
         return done.returncode, done.stdout, done.stderr
 
     def test_soak_says_why_and_exits_4_and_judges_nothing_even_with_a_log(self):
