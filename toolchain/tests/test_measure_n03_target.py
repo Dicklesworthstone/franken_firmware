@@ -256,7 +256,7 @@ class GoodTranscriptTest(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertEqual(m.exit_code(report), 0)
         self.assertEqual(set(gates), {"N03T-TRANSCRIPT", "N03T-ELF", "N03T-CPU", "N03T-WORLDS", "N03T-SEEDED", "N03T-HOST-BYTES"})
-        self.assertEqual(report["worlds"]["worlds"], 30)
+        self.assertEqual(report["worlds"]["worlds"], 34)
 
     def test_the_report_has_the_numbers_and_the_boundary_line(self):
         _, report = judge()

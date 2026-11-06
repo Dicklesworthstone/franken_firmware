@@ -6,7 +6,7 @@
 //!
 //! Two kinds of case, both through the PUBLIC API of `franken_clock::group` only:
 //!
-//! * the scripted WORLDS of `tests/n03/vectors.json` (the 28 worlds plus the two members of the mixed-generation join):
+//! * the scripted WORLDS of `tests/n03/vectors.json` (the 32 worlds plus the two members of the mixed-generation join):
 //!   an interpreter of the op lists, one JSON record per op, in the shape `tests/n03/reference.py::run_script` produces,
 //!   which is a port of `run_ops` in `crates/franken-clock/src/group/tests.rs` (without its asserts: the judge compares
 //!   the records, so a platform difference is reported as a difference and not as a panic);
@@ -60,6 +60,9 @@ fn cfg_with(over: &Value) -> GroupClockConfig {
                 "output_delay_ns" => cfg.output_delay_ns = n,
                 "catchup_ns" => cfg.catchup_ns = n,
                 "max_future_ns" => cfg.max_future_ns = n,
+                "timer_resolution_ns" => cfg.timer_resolution_ns = n,
+                "oscillator_bound_ppb" => cfg.oscillator_bound_ppb = n,
+                "prediction_slack_ns" => cfg.prediction_slack_ns = n,
                 other => panic!("unknown config override {other}"),
             }
         }
@@ -137,7 +140,7 @@ fn sched_of(v: &Value) -> StartSchedule {
     }
 }
 
-/// Every scripted world to run: the 28 of the vectors, then the two members of the mixed-generation join.
+/// Every scripted world to run: the 32 of the vectors, then the two members of the mixed-generation join.
 pub fn all_worlds(vec: &Value) -> Vec<Value> {
     let mut worlds: Vec<Value> = vec["worlds"].as_array().expect("worlds").to_vec();
     for member in vec["mixed"]["members"].as_array().expect("members") {

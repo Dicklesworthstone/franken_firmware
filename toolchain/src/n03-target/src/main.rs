@@ -4,7 +4,7 @@
 //! It runs as PID 1 of the existing Debian/Malta guest and prints `FFW_N03T_*` lines that
 //! `toolchain/src/measure-n03-target.py` parses and judges. Three things are produced:
 //!
-//! * WORLDS: the scripted worlds of `tests/n03/vectors.json` (28, plus the two members of the mixed-generation join), run
+//! * WORLDS: the scripted worlds of `tests/n03/vectors.json` (32, plus the two members of the mixed-generation join), run
 //!   through the public API of `franken_clock::group`, one JSON record per op. The judge compares every record with the
 //!   independent Python reference (`tests/n03/reference.py`) and with the host build's digests. The clock does
 //!   64-bit and 128-bit integer arithmetic, rational least squares and `f64` on a 32-bit big-endian soft-float target,

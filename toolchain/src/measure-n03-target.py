@@ -6,7 +6,7 @@ big-endian soft-float target, which is where host-green code can differ, and `do
 the target ISA" as not measured. The guest (`toolchain/src/n03-target`, PID 1 of the existing Debian/Malta guest) prints
 `FFW_N03T_*` lines; this script runs it and JUDGES the transcript. Three questions, all bounded by what a QEMU guest can say:
 
-  WORLDS   the 28 scripted worlds of tests/n03/vectors.json and the two members of the mixed-generation join, one record per
+  WORLDS   the 32 scripted worlds of tests/n03/vectors.json and the two members of the mixed-generation join, one record per
            op, compared with the INDEPENDENT Python reference (`tests/n03/reference.py`, through the N03 runner's own
            `judge_world`, which re-derives the expectation now) and byte-for-byte (a digest per world) with the host build of
            the same source file (`crates/franken-clock/tests/n03_target_worlds.rs`). Equal is the expected result; a
