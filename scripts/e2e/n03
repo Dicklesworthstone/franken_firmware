@@ -4,7 +4,11 @@
 #
 #   scripts/e2e/n03                              META checks only; every Rust-backed case is BLOCKED
 #   scripts/e2e/n03 --judge LOG [LOG ...]        judge the centrally run cargo test output
-#   scripts/e2e/n03 --tier smoke|full --judge LOG [--receipts DIR]
+#   scripts/e2e/n03 --tier smoke|full --judge LOG [--receipts DIR] [--deadline-seconds N]
+#                              smoke: the META checks and the smoke-tier cases; full: all of them. Each decided case writes a critical
+#                              begin/end pair into a bounded, redacted JSONL diagnostic log (next to the receipt with --receipts); a
+#                              pass cannot rest on a log that lost one. --judge logs must be regular files (at most 16, 64 MiB together).
+#   scripts/e2e/n03 --tier soak                  NOT RUN, with the reason: exit 4, never a pass (nothing is read or judged)
 #   scripts/e2e/n03 --list                       planned case ids
 #   scripts/e2e/n03 --write-vectors              regenerate tests/n03/vectors.json (Python reference only)
 #
@@ -13,8 +17,9 @@
 #   RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p franken-clock --all-targets -- -D warnings
 # (the module is wired into franken-clock/src/lib.rs only after the first green compile: docs/contracts/n03.md section 9)
 #
-# Exit 0 only when every case passed and none is blocked; 1 on a failed case; 3 when the only
-# non-passes are blocked cases (reported, never counted as passed); 2 on usage errors.
+# Exit 0 only when every case passed, none is blocked and the diagnostic log is complete; 1 on a failed case, a log that lost critical
+# evidence or a passed deadline; 3 when the only non-passes are blocked cases (reported, never counted as passed); 4 for --tier soak
+# (NOT RUN); 2 on usage errors and refused input (a missing, non-regular or oversized --judge log; printed redacted, never echoed raw).
 # DAC / acoustic alignment and cycles on a real core are reported as "not measured: needs hardware"; N03-TARGET-RECEIPT re-judges the
 # committed QEMU run of the big-endian MIPS guest (the clock's decisions on the target ISA and guest instructions per exchange and per
 # gate call; toolchain/results/runs/*/n03-target-receipt.json). With no receipt that case is blocked.

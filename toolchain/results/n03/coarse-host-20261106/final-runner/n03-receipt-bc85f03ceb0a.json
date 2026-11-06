@@ -1,0 +1,256 @@
+{
+ "created_utc": "2026-11-06T22:29:23.845650+00:00",
+ "diagnostics": {
+  "complete": true,
+  "file": "n03-diag-full-bc85f03ceb0a.jsonl",
+  "log": {
+   "bytes": 23967,
+   "critical_lost": false,
+   "dropped": 0,
+   "events": 67,
+   "sha256": "c49f92b6726276987a15526c4e291fbc281a20aefbae743caa4223892f0d625b",
+   "truncated": false
+  },
+  "reasons": []
+ },
+ "evidence_class": "host-simulation",
+ "exit_code": 0,
+ "logs": [
+  {
+   "path": "ffw-n03-v7-root-all-tests-20261106.log",
+   "sha256": "c28ca1b580b0311fb35f532044aa49a66ea6ab750587703b6c9ffec3ffd4e878"
+  },
+  {
+   "path": "ffw-n03-current-single-case-after-cache-20261106.log",
+   "sha256": "3dec87e8e39ae3f63edbf0642828f64d944a87d161d09d807eb4d399a2fd6b74"
+  }
+ ],
+ "meta": {
+  "vectors_sha256": "c4616067ebf0ff418814b2b2648e765beb85756aa94500550001b94f5cca8dce"
+ },
+ "not_measured": [
+  {
+   "item": "dac_or_acoustic_alignment",
+   "recorded_instead": "a network-clock fit with an explicit uncertainty; every report states claim=network-clock-fit-only",
+   "status": "not measured: needs hardware"
+  },
+  {
+   "item": "cpu_cycles_on_real_core",
+   "recorded_instead": "guest instructions per exchange and per gate call under QEMU icount on the soft-float BE MIPS target (N03-TARGET-RECEIPT; executed instructions, not cycles: no cache, pipeline, memory or multiplier timing, no board clock)",
+   "status": "not measured: needs hardware"
+  }
+ ],
+ "replay": "scripts/e2e/n03 --tier full --judge <cargo-test-log>...",
+ "results": [
+  {
+   "detail": "reference agrees with hand-derived values and brute force",
+   "group": "AC-META",
+   "id": "N03-META-ANCHORS",
+   "status": "passed"
+  },
+  {
+   "detail": "vectors.json equals a fresh generation",
+   "group": "AC-META",
+   "id": "N03-META-VECTORS-FRESH",
+   "status": "passed"
+  },
+  {
+   "detail": "every n03_ Rust test belongs to a named case",
+   "group": "AC-META",
+   "id": "N03-META-MAP-COMPLETE",
+   "status": "passed"
+  },
+  {
+   "detail": "every required Rust test exists in the sources",
+   "group": "AC-META",
+   "id": "N03-META-TESTS-EXIST",
+   "status": "passed"
+  },
+  {
+   "detail": "all 34 worlds in the vectors are judged by a case",
+   "group": "AC-META",
+   "id": "N03-META-WORLDS-ALL-JUDGED",
+   "status": "passed"
+  },
+  {
+   "detail": "docs/contracts/n03.md names every case",
+   "group": "AC-META",
+   "id": "N03-META-CONTRACT-NAMES-CASES",
+   "status": "passed"
+  },
+  {
+   "detail": "1 committed receipt(s) re-judged from their stored transcripts; the ELF's soft-float facts are recorded, not re-derived",
+   "group": "AC-TARGET",
+   "id": "N03-TARGET-RECEIPT",
+   "status": "passed"
+  },
+  {
+   "detail": "defaults equal the reference (the explicit 2 ms lock threshold among them); invalid configs refused; board terms converted",
+   "group": "AC-THRESHOLD",
+   "id": "N03-PARAMS",
+   "status": "passed"
+  },
+  {
+   "detail": "four-timestamp exchange: exact midpoints, every sample-level reject at its boundary, check order",
+   "group": "AC-REJECT",
+   "id": "N03-EXCHANGE",
+   "status": "passed"
+  },
+  {
+   "detail": "clock transform in both directions with a ratio, floor rounding, round trip; frame counter wrap arithmetic",
+   "group": "AC-OUTPUTS",
+   "id": "N03-TRANSFORM",
+   "status": "passed"
+  },
+  {
+   "detail": "anchor selection by smallest uncertainty at the query time, ties to the newer midpoint",
+   "group": "AC-NO-NTP",
+   "id": "N03-SELECT",
+   "status": "passed"
+  },
+  {
+   "detail": "holdover limit is min(authority, buffer, uncertainty horizon) with the named binding and tie order",
+   "group": "AC-HOLDOVER",
+   "id": "N03-HOLDOVER-MIN",
+   "status": "passed"
+  },
+  {
+   "detail": "admissible-start decision: check order and every limit, with start, deadline, uncertainty at start and expiry",
+   "group": "AC-OUTPUTS",
+   "id": "N03-PLAN-TABLE",
+   "status": "passed"
+  },
+  {
+   "detail": "symmetric path: unlocked until the fourth exchange, then locked; truth inside the reported uncertainty",
+   "group": "AC-THRESHOLD",
+   "id": "N03-LOCK",
+   "status": "passed"
+  },
+  {
+   "detail": "asymmetric delay: the offset is biased by exactly (df-dr)/2, inside the uncertainty; a path too wide to trust never locks or sounds",
+   "group": "AC-NO-NTP",
+   "id": "N03-ASYMMETRIC",
+   "status": "passed"
+  },
+  {
+   "detail": "+/-80 ppm skew with seeded jitter: the rate estimate comes into force and the truth stays inside the uncertainty; sparse probes restart only the rate fit",
+   "group": "AC-FAULTS",
+   "id": "N03-DRIFT",
+   "status": "passed"
+  },
+  {
+   "detail": "group counter wraps mid-run without a reset; half-range and one-counter-period group jumps are discontinuities, not silent aliases",
+   "group": "AC-WRAP",
+   "id": "N03-WRAP",
+   "status": "passed"
+  },
+  {
+   "detail": "probes stop: audible through holdover, muted at the bound set by uncertainty / authority / buffer (and the tie); recovery is muted until re-admitted",
+   "group": "AC-HOLDOVER",
+   "id": "N03-HOLDOVER",
+   "status": "passed"
+  },
+  {
+   "detail": "suspend, group-clock step, counter reset and local regression each clear the fit and mute; the step boundary pair; relock is muted",
+   "group": "AC-FAULTS",
+   "id": "N03-JUMP",
+   "status": "passed"
+  },
+  {
+   "detail": "leader change: old-epoch probes are inert, the new leader's timebase is not the old one, stale schedules refused, relock muted",
+   "group": "AC-STALE",
+   "id": "N03-LEADER-CHANGE",
+   "status": "passed"
+  },
+  {
+   "detail": "stale / future epoch, unadmitted leader, unsolicited, replayed, wrong echo, malformed, expired, excessive, regressed: each paired with an accepted exchange; outstanding table bounded",
+   "group": "AC-REJECT",
+   "id": "N03-ADMISSION",
+   "status": "passed"
+  },
+  {
+   "detail": "reboot: nothing survives, recorded answers are unsolicited, the member is muted until it locks and is admitted again",
+   "group": "AC-STALE",
+   "id": "N03-REBOOT",
+   "status": "passed"
+  },
+  {
+   "detail": "synchronized join: admissible start at its exact limits, audible only at the start, authority expiry mutes, uncertainty at the start, board output delay",
+   "group": "AC-OUTPUTS",
+   "id": "N03-JOIN",
+   "status": "passed"
+  },
+  {
+   "detail": "an unlocked member cannot output (paired with the positive join); a platform clock fault mutes; no samples means no reading",
+   "group": "AC-STALE",
+   "id": "N03-UNLOCKED-MUTED",
+   "status": "passed"
+  },
+  {
+   "detail": "report has no side effects and states the claim; request numbering wraps; a response answers only its own request",
+   "group": "AC-REJECT",
+   "id": "N03-API",
+   "status": "passed"
+  },
+  {
+   "detail": "structured clock events on the shared bounded buffer: lock, loss, holdover with its binding, expiry, reset and relock progress n of 4, each reject with its cause, estimated error against known truth (every scripted world's per-op event list is re-derived here); exact drop, rate-limit and unavailable accounting with critical events kept or counted lost; a full, unpopped or unavailable buffer changes no decision; production ffw.log.v1 lines that parse back byte for byte and equal the reference's",
+   "group": "AC-DIAGNOSTICS",
+   "id": "N03-DIAGNOSTICS",
+   "status": "passed"
+  },
+  {
+   "detail": "two members with different skews and board profiles join one future start within their summed uncertainty and the provisional 2 ms gate",
+   "group": "AC-MIXED",
+   "id": "N03-MIXED-PROFILE",
+   "status": "passed"
+  },
+  {
+   "detail": "an independent world generator written in the Rust test: truth inside the uncertainty at every probe across five seeds (re-simulated here)",
+   "group": "AC-NOT-DAC",
+   "id": "N03-TRUTH-SIM",
+   "status": "passed"
+  },
+  {
+   "detail": "3 hours at 10 s probes, 10% lost, jitter, drift, across the u32 group counter wrap: no reset, truth inside the uncertainty",
+   "group": "AC-WRAP",
+   "id": "N03-SOAK",
+   "status": "passed"
+  },
+  {
+   "detail": "audible only on a locked/holdover clock within the threshold, a valid authority, an admitted start and the lock count; never right after a reset",
+   "group": "AC-STALE",
+   "id": "N03-PROPERTY",
+   "status": "passed"
+  },
+  {
+   "detail": "four scripted coarse-clock worlds, host and guest: equal readings lock and join (1.7 ms); the physical negative measured delay beside the dwell past 2R + rate, equal-reading regression and t4 < t1 (3 ms / 4 ms ticks); a rounding-only 5 ms offset step beside a 12 ms group step (discontinuity, muted); a fit refused while its rounding bound exceeds the oscillator bound, then in force, the query tick read through the fitted positive ratio (200 us, 80 ppm slow)",
+   "group": "AC-STALE",
+   "id": "N03-COARSE-WORLDS",
+   "status": "passed"
+  },
+  {
+   "detail": "a coarse clock: equal readings are a sub-resolution exchange, backwards time is not; truth against an injected world; stuck, replayed, stale and too-coarse clocks are refused; the rounding bound on the fitted ratio",
+   "group": "AC-STALE",
+   "id": "N03-COARSE-CLOCK",
+   "status": "passed"
+  },
+  {
+   "detail": "no conflicting test status or observation; 1 result(s) were interrupted by other tests' output and attributed to the one open prefix",
+   "group": "AC-META",
+   "id": "N03-META-LOGS-CONSISTENT",
+   "status": "passed"
+  }
+ ],
+ "run_id": "bc85f03ceb0a",
+ "schema": "ffw.n03.receipt.v1",
+ "sources": {
+  "crates/franken-clock/src/group/tests.rs": "98fb63bfa2e8a010c71e3badcc6e6cbcb562590739135791b2a62185bed97df8"
+ },
+ "summary": {
+  "blocked": 0,
+  "failed": 0,
+  "passed": 33,
+  "planned": 33
+ },
+ "tier": "full"
+}

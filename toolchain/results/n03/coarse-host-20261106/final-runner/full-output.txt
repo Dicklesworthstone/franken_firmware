@@ -1,0 +1,40 @@
+N03 tier=full
+PASS     N03-META-ANCHORS
+PASS     N03-META-VECTORS-FRESH
+PASS     N03-META-MAP-COMPLETE
+PASS     N03-META-TESTS-EXIST
+PASS     N03-META-WORLDS-ALL-JUDGED
+PASS     N03-META-CONTRACT-NAMES-CASES
+PASS     N03-TARGET-RECEIPT
+PASS     N03-PARAMS
+PASS     N03-EXCHANGE
+PASS     N03-TRANSFORM
+PASS     N03-SELECT
+PASS     N03-HOLDOVER-MIN
+PASS     N03-PLAN-TABLE
+PASS     N03-LOCK
+PASS     N03-ASYMMETRIC
+PASS     N03-DRIFT
+PASS     N03-WRAP
+PASS     N03-HOLDOVER
+PASS     N03-JUMP
+PASS     N03-LEADER-CHANGE
+PASS     N03-ADMISSION
+PASS     N03-REBOOT
+PASS     N03-JOIN
+PASS     N03-UNLOCKED-MUTED
+PASS     N03-API
+PASS     N03-DIAGNOSTICS
+PASS     N03-MIXED-PROFILE
+PASS     N03-TRUTH-SIM
+PASS     N03-SOAK
+PASS     N03-PROPERTY
+PASS     N03-COARSE-WORLDS
+PASS     N03-COARSE-CLOCK
+PASS     N03-META-LOGS-CONSISTENT
+planned=33 passed=33 failed=0 blocked=0
+NOT MEASURED  dac_or_acoustic_alignment: not measured: needs hardware (recorded instead: a network-clock fit with an explicit uncertainty; every report states claim=network-clock-fit-only)
+NOT MEASURED  cpu_cycles_on_real_core: not measured: needs hardware (recorded instead: guest instructions per exchange and per gate call under QEMU icount on the soft-float BE MIPS target (N03-TARGET-RECEIPT; executed instructions, not cycles: no cache, pipeline, memory or multiplier timing, no board clock))
+diag run=n03-full-bc85f03ceb0a: evidence COMPLETE; events=67 critical=67 dropped=0 critical_lost=0 bytes=23967 sha256=c49f92b67262
+RESULT: QUALIFIED (host simulation; no device claim)
+receipt: <receipt-directory>/n03-receipt-bc85f03ceb0a.json

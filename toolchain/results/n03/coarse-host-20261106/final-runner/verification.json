@@ -1,0 +1,58 @@
+{
+  "bead": "ffw-u07",
+  "consumer": "Independent original-acceptance verification for ffw-u07; replace proof when any listed code changes",
+  "critical_events": 67,
+  "date_utc": "2026-11-06",
+  "files": {
+    "full-output.txt": "eddd19b3cf9f4eec32da4e2f025b920444abea9da29bb19b96916cec955db145",
+    "missing-secret.stderr.txt": "4f7ef2424381def8d8787ce16af737f18fa8a13ffae5485f695b1acaa92d91e1",
+    "missing-secret.stdout.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "mode-results.json": "d3ee76c7354709faadec6f8d4889f02d4623741553fae299ac305f29efaed67e",
+    "n03-diag-full-bc85f03ceb0a.jsonl": "c49f92b6726276987a15526c4e291fbc281a20aefbae743caa4223892f0d625b",
+    "n03-receipt-bc85f03ceb0a.json": "64a65df9b5c65021145d359cd2331720537948815e375a4ec518d959aec65160",
+    "python-tests.txt": "4bacbc4dffba009f1a65ae620617cab63ad3f13093040b43b4fda5743a91c205",
+    "smoke.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "smoke.stdout.txt": "ca55815aba3ec26c649c9f2d529c944120243a3ff26408511333233ee0ca997b",
+    "soak.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "soak.stdout.txt": "f8f95d46c3d47ea29ea077ed5ff70fe80c9de640aec301065613940b93c319b4"
+  },
+  "lost_critical": 0,
+  "mode_results": {
+    "missing_secret_path_refusal": 2,
+    "smoke": 0,
+    "soak_not_run": 4
+  },
+  "not_claimed": [
+    "Physical devices",
+    "Provider playback",
+    "Physical CPU or RAM qualification"
+  ],
+  "public_full_log_sanitization": "Human summaries only: temporary receipt-directory prefixes replaced and trailing horizontal whitespace stripped. Original full-output and mode-output hashes retained. Structured receipt/JSONL and unit output copied byte-for-byte.",
+  "python_tests": {
+    "failed": 0,
+    "passed": 81
+  },
+  "raw_full_log_sha256": "df28d37889476a84e7fec89466f1e0da12c6f62d21a83d15edef3c1b303f9e15",
+  "raw_mode_output_sha256": {
+    "missing-secret.stderr": "4f7ef2424381def8d8787ce16af737f18fa8a13ffae5485f695b1acaa92d91e1",
+    "missing-secret.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "smoke.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "smoke.stdout": "57c11022cda56c9b38ef8f2cf41d5756c119d21e18b17c1bbb7d4adb7af940b5",
+    "soak.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "soak.stdout": "775ef775a0105653d43f95d81018be3afe8e7be509d75e65691b096fe212db10"
+  },
+  "source_base": "ff3dcc1",
+  "source_files": {
+    "scripts/e2e/n03": "1669e6dfefb46a0c90110db3aa70e48385e678bac5c9f79884f378d35acb2eae",
+    "scripts/test/test_support/diagnostics.py": "df90049d7a0b87a3513c45bf4ae7502701d624d34c9e0d8e3e2394f6dba947b7",
+    "tests/n03/case_log.py": "47ea00e397fea6a459d242a3b4d7a2fcfa7bf486ead61089f56a01714ddfe6b0",
+    "tests/n03/run_cases.py": "1978dea560017d1e6583ca5507c68e972d587bbfb46489abb299c316395e33ac",
+    "tests/n03/test_front_door.py": "2d8157d9f1d1a7ae7a3a5d578487cb4f458d36ba7384337d47f2c060f5e8ae25"
+  },
+  "summary": {
+    "blocked": 0,
+    "failed": 0,
+    "passed": 33,
+    "planned": 33
+  }
+}

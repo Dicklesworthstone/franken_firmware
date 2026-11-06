@@ -1,0 +1,3 @@
+N03 soak: NOT RUN. N03 owns no long-running campaign: every case is a finite, deterministic offline check (scripted worlds replayed against the independent reference, Rust tests judged from a centrally run log, the stored guest transcripts re-judged), and the acceptance (bead ffw-u07) asks for injected counter wrap/reset and half-range ambiguity instead of a 24-hour wall-clock run. Nothing here soaks. This is not a pass.
+diag run=n03-soak-4b508eac835b: evidence COMPLETE; events=3 critical=3 dropped=0 critical_lost=0 bytes=2516 sha256=afbb8eb02a39
+receipt: <mode-receipt-directory>/soak/n03-receipt-4b508eac835b.json
