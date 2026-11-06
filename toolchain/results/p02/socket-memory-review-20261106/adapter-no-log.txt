@@ -1,0 +1,45 @@
+BLOCKED  P02-AC-ENTROPY  no retained cargo log supplied (--judge LOG)
+BLOCKED  P02-AC-NO-FAKE-SUCCESS  no retained cargo log supplied (--judge LOG)
+BLOCKED  P02-AC-ABSENT  no retained cargo log supplied (--judge LOG)
+BLOCKED  P02-AC-EINTR  no retained cargo log supplied (--judge LOG)
+BLOCKED  P02-AC-ACCEPT-FCNTL  no retained cargo log supplied (--judge LOG)
+BLOCKED  P02-AC-ABI  no retained cargo log supplied (--judge LOG)
+BLOCKED  P02-AC-STARTUP  no retained cargo log supplied (--judge LOG)
+BLOCKED  P02-AC-MEMORY  no retained cargo log supplied (--judge LOG)
+BLOCKED  P02-AC-WALL-TIME  no retained cargo log supplied (--judge LOG)
+BLOCKED  P02-AC-REAL-BACKEND  no retained cargo log supplied (--judge LOG)
+BLOCKED  P02-RUST-ALL  no retained cargo log supplied (--judge LOG)
+RETAINED FOR REPLAY. First blocked case: P02-AC-ENTROPY: no retained cargo log supplied (--judge LOG)
+  replay: scripts/e2e/p02 --tier full
+  versions: python 3.15.0; receipt ffw.p02.receipt.v1
+  artifact tests/p02/run_cases.py sha256 599eefc8d966c7779f9b7cf9989146fa6a2ec3761d3af2f08fea72ff10b97e6a
+  artifact tests/p02/case_log.py sha256 a78b961cba8961a3689dc050f80cd7e5b8138b64083c997942b6549ae5f88c7b
+  artifact tests/p02/test_run_cases.py sha256 8ce523ed4dcd55fc60ae4b564607a92b4200e92e03f1bc0e964a5ce101237720
+  artifact scripts/e2e/p02 sha256 97c799fc74d1dad14556d662e9a24cb1d0c71360aba253d393a362a5bb04fbb0
+  artifact scripts/test/test_support/diagnostics.py sha256 df90049d7a0b87a3513c45bf4ae7502701d624d34c9e0d8e3e2394f6dba947b7
+  artifact docs/contracts/p02.md sha256 42d1d73d640e321c617a129418db9731bab1c9fd642a6789195e8160adb57dfe
+  artifact Cargo.lock sha256 e2469ade4d83492a899bf8438ad240174f7ee41044ef5f9105d56d1e9c46f837
+  artifact rust-toolchain.toml sha256 ff13c9224217a4ccd63320d8b89cc82d7fa64da14a627e499f9f18db4c6602d0
+  artifact crates/franken-platform/Cargo.toml sha256 da1f55913119ef8daaeeb602544c8d5da4a4cba75fe2719bf106a60fd48f46fb
+  artifact crates/franken-platform-linux/Cargo.toml sha256 a02c6a905c805f5a8bf4b48b0cd8c1cf0493cfb1c3885ea5f74627649275cb04
+  artifact crates/franken-speaker/Cargo.toml sha256 78fabf9a7059ac7e9d8990077f77b05df9cca845025f26d1fd943e09139188bc
+  artifact crates/franken-speaker/src/main.rs sha256 8a805afc227cd79ddb2cfa3a539a495a886dea4de9c4b5865a1ba53b413f21d2
+  artifact crates/franken-platform/src/abi.rs sha256 025c8c825095c384ef6ed84ff8441bcea790303a2e549ace3358f6713b2de4dc
+  artifact crates/franken-platform/src/clock.rs sha256 c4fea8314d31a25c4ec04d82cb0dc3e5f7b538b767a353ecc9dec9af80581ee1
+  artifact crates/franken-platform/src/entropy.rs sha256 250607407562edf5a8dec404e7b6d3572ccb2e577d1dcdcb205e8bfa58d9d210
+  artifact crates/franken-platform/src/layer.rs sha256 616fd4c7ed8d5f8e81bd8b59a5d1aa27c3d8bdfcfc79901b20fc2bc21126d266
+  artifact crates/franken-platform/src/lib.rs sha256 7da6d0c4ddf0269e37955e4b03b125dfeef213b862f434471e840f82251e5b05
+  artifact crates/franken-platform/src/ops.rs sha256 a6bad015d8bbdb66c93bfde657b12671e8a262153e88aedca43175eda5e2a43d
+  artifact crates/franken-platform/src/sim.rs sha256 331a761607d2c3b4646a5ee9dcf08d4dbe90a3097df65ac461e98da0ab795f66
+  artifact crates/franken-platform/src/socket.rs sha256 47e22aafedae7a7642da20c88abd4f8610175dcc2586c61f58264b65ea75c0a4
+  artifact crates/franken-platform/src/wake.rs sha256 33b7f0c6b333dbaca6a7ae9dc4574bcb3bcf261409ac0a223406ced4aaa5d719
+  artifact crates/franken-platform/src/wall_clock.rs sha256 018a3f3e43f992c795cbd639ad30f1981c38870d629c7376361d46ac5fd11670
+  artifact crates/franken-platform-linux/src/lib.rs sha256 b3c228a0096d5391a64967a564148edb71f40d550b854b70e509756e2c5aca64
+  artifact crates/franken-platform-linux/src/numbers.rs sha256 bb3a3df37e50b4549577be84852b2cfac5d8db8cb0e6b18ab9181751591e1437
+  artifact crates/franken-platform-linux/src/socket_route.rs sha256 284b36ba6ced3c9153fd5fbda9f8e7a4fcfc50dba1d58d971d05111eed502237
+  artifact crates/franken-platform-linux/src/sys.rs sha256 c3db52766a8327cbdf5cb368ee03a9c3c2b6647371aa6b25e9bd877c6ce6989a
+  artifact crates/franken-speaker/src/platform_start.rs sha256 ed92e5a275dc42c0338d3bbdd05e0290cbde860c884c0b2302224671aa694b72
+  artifact crates/franken-speaker/tests/cli_services.rs sha256 1fc75fd27f66f3652f056567e2b13ccc02b71374cba3a30eca04c21895c131f6
+diag run=p02-full-60f260dddfccaec6: evidence COMPLETE; events=27 critical=27 dropped=0 critical_lost=0 bytes=9336 sha256=f1fcde681c5c
+P02 e2e tier=full: NOT QUALIFIED  planned=13 passed=2 failed=0 blocked=11
+receipt: <retained-receipts>/p02-60f260dddfccaec6.json

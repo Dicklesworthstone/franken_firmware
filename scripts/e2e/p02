@@ -6,11 +6,19 @@
 #                            and probes, the Rust text and, when present, the libc crate; the generated guest evidence against
 #                            the committed transcripts; the platform-startup marker grammar), then prints the central cargo plan
 #   scripts/e2e/p02 --plan   only print the central plan
+#   scripts/e2e/p02 --tier smoke|full|soak [--judge LOG [LOG ...]] [--receipts DIR] [--list]
+#                              the tiered runner (tests/p02/run_cases.py; its docstring is the description of the tiers and of what a pass is not):
+#                              smoke: the clause map is whole and the Python host cross-checks pass (no log needed).
+#                              full: smoke + one case per requirement id of the acceptance, each decided from named Rust tests in the retained
+#                              cargo log(s) given with --judge; a missing, ignored or failed named test never passes, and without a log the
+#                              Rust cases are BLOCKED. Every run writes a bounded JSONL diagnostic log through the shared Q00 sink; a lost
+#                              critical event makes the run NOT QUALIFIED.
+#                              soak: NOT RUN, with the reason: exit 4, never a pass.
 #
 # The Rust unit tests, clippy and the device-target type checks are central work (`rch exec`), not run here; the plan
 # below is exactly what they are. Nothing in this entry point has run against a kernel.
 #
-# Exit codes: 0 the tests passed; 1 a test failed; 2 usage.
+# Exit codes: 0 the tests passed; 1 a test failed; 2 usage. The tiered runner adds 3 (only blocked cases: evidence missing, never a pass) and 4 (soak).
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MANIFEST="$ROOT/Cargo.toml"
@@ -50,7 +58,8 @@ EOF
 case "${1:-}" in
   --plan) plan; exit 0 ;;
   "") ;;
-  *) echo "usage: scripts/e2e/p02 [--plan]" >&2; exit 2 ;;
+  --tier|--judge|--receipts|--list) exec python3 -B "$ROOT/tests/p02/run_cases.py" "$@" ;;
+  *) echo "usage: scripts/e2e/p02 [--plan | --list | --tier smoke|full|soak [--judge LOG [LOG ...]] [--receipts DIR]]" >&2; exit 2 ;;
 esac
 python3 -B -I -m unittest discover -s "$ROOT/tests/p02" -p 'test_*.py' || { echo "scripts/e2e/p02: tests FAILED" >&2; exit 1; }
 echo

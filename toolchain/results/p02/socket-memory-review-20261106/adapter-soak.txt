@@ -1,0 +1,1 @@
+P02 soak: NOT RUN. P02 owns no long-running test: its Rust tests are scripted-double unit tests that finish in seconds, and the kernel-facing evidence is two bounded QEMU speaker smoke runs recorded under toolchain/results/runs (docs/contracts/p02.md). Nothing here soaks. This is not a pass.

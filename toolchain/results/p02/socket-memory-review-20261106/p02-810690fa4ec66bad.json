@@ -1,0 +1,148 @@
+{
+ "artifacts": {
+  "Cargo.lock": "e2469ade4d83492a899bf8438ad240174f7ee41044ef5f9105d56d1e9c46f837",
+  "crates/franken-platform-linux/Cargo.toml": "a02c6a905c805f5a8bf4b48b0cd8c1cf0493cfb1c3885ea5f74627649275cb04",
+  "crates/franken-platform-linux/src/lib.rs": "b3c228a0096d5391a64967a564148edb71f40d550b854b70e509756e2c5aca64",
+  "crates/franken-platform-linux/src/numbers.rs": "bb3a3df37e50b4549577be84852b2cfac5d8db8cb0e6b18ab9181751591e1437",
+  "crates/franken-platform-linux/src/socket_route.rs": "284b36ba6ced3c9153fd5fbda9f8e7a4fcfc50dba1d58d971d05111eed502237",
+  "crates/franken-platform-linux/src/sys.rs": "c3db52766a8327cbdf5cb368ee03a9c3c2b6647371aa6b25e9bd877c6ce6989a",
+  "crates/franken-platform/Cargo.toml": "da1f55913119ef8daaeeb602544c8d5da4a4cba75fe2719bf106a60fd48f46fb",
+  "crates/franken-platform/src/abi.rs": "025c8c825095c384ef6ed84ff8441bcea790303a2e549ace3358f6713b2de4dc",
+  "crates/franken-platform/src/clock.rs": "c4fea8314d31a25c4ec04d82cb0dc3e5f7b538b767a353ecc9dec9af80581ee1",
+  "crates/franken-platform/src/entropy.rs": "250607407562edf5a8dec404e7b6d3572ccb2e577d1dcdcb205e8bfa58d9d210",
+  "crates/franken-platform/src/layer.rs": "616fd4c7ed8d5f8e81bd8b59a5d1aa27c3d8bdfcfc79901b20fc2bc21126d266",
+  "crates/franken-platform/src/lib.rs": "7da6d0c4ddf0269e37955e4b03b125dfeef213b862f434471e840f82251e5b05",
+  "crates/franken-platform/src/ops.rs": "a6bad015d8bbdb66c93bfde657b12671e8a262153e88aedca43175eda5e2a43d",
+  "crates/franken-platform/src/sim.rs": "331a761607d2c3b4646a5ee9dcf08d4dbe90a3097df65ac461e98da0ab795f66",
+  "crates/franken-platform/src/socket.rs": "47e22aafedae7a7642da20c88abd4f8610175dcc2586c61f58264b65ea75c0a4",
+  "crates/franken-platform/src/wake.rs": "33b7f0c6b333dbaca6a7ae9dc4574bcb3bcf261409ac0a223406ced4aaa5d719",
+  "crates/franken-platform/src/wall_clock.rs": "018a3f3e43f992c795cbd639ad30f1981c38870d629c7376361d46ac5fd11670",
+  "crates/franken-speaker/Cargo.toml": "78fabf9a7059ac7e9d8990077f77b05df9cca845025f26d1fd943e09139188bc",
+  "crates/franken-speaker/src/main.rs": "8a805afc227cd79ddb2cfa3a539a495a886dea4de9c4b5865a1ba53b413f21d2",
+  "crates/franken-speaker/src/platform_start.rs": "ed92e5a275dc42c0338d3bbdd05e0290cbde860c884c0b2302224671aa694b72",
+  "crates/franken-speaker/tests/cli_services.rs": "1fc75fd27f66f3652f056567e2b13ccc02b71374cba3a30eca04c21895c131f6",
+  "docs/contracts/p02.md": "42d1d73d640e321c617a129418db9731bab1c9fd642a6789195e8160adb57dfe",
+  "rust-toolchain.toml": "ff13c9224217a4ccd63320d8b89cc82d7fa64da14a627e499f9f18db4c6602d0",
+  "scripts/e2e/p02": "97c799fc74d1dad14556d662e9a24cb1d0c71360aba253d393a362a5bb04fbb0",
+  "scripts/test/test_support/diagnostics.py": "df90049d7a0b87a3513c45bf4ae7502701d624d34c9e0d8e3e2394f6dba947b7",
+  "tests/p02/case_log.py": "a78b961cba8961a3689dc050f80cd7e5b8138b64083c997942b6549ae5f88c7b",
+  "tests/p02/run_cases.py": "599eefc8d966c7779f9b7cf9989146fa6a2ec3761d3af2f08fea72ff10b97e6a",
+  "tests/p02/test_run_cases.py": "8ce523ed4dcd55fc60ae4b564607a92b4200e92e03f1bc0e964a5ce101237720"
+ },
+ "counts": {
+  "blocked": 0,
+  "failed": 0,
+  "passed": 13
+ },
+ "diagnostics": {
+  "complete": true,
+  "file": "p02-diag-full-810690fa4ec66bad.jsonl",
+  "log": {
+   "bytes": 8841,
+   "critical_lost": false,
+   "dropped": 0,
+   "events": 27,
+   "sha256": "567aff7827f3bb29ae4c666e4769233daf734968056275776f182bea4b7a525c",
+   "truncated": false
+  },
+  "reasons": []
+ },
+ "exit_code": 0,
+ "finished_utc": "2026-11-06T17:36:20+00:00",
+ "judged_logs": [
+  {
+   "path": "toolchain/results/p02/socket-memory-review-20261106/tests.txt",
+   "sha256": "44096f9d895ef95df5afaa022067d16242bcaa9405e8e7f9d6f666f117abccbf"
+  }
+ ],
+ "planned": 13,
+ "replay": "scripts/e2e/p02 --tier full --judge toolchain/results/p02/socket-memory-review-20261106/tests.txt",
+ "results": [
+  {
+   "case": "P02-META-MAP",
+   "detail": "",
+   "group": "meta",
+   "status": "passed"
+  },
+  {
+   "case": "P02-REF-PYTHON",
+   "detail": "",
+   "group": "python",
+   "status": "passed"
+  },
+  {
+   "case": "P02-AC-ENTROPY",
+   "detail": "",
+   "group": "rust",
+   "status": "passed"
+  },
+  {
+   "case": "P02-AC-NO-FAKE-SUCCESS",
+   "detail": "",
+   "group": "rust",
+   "status": "passed"
+  },
+  {
+   "case": "P02-AC-ABSENT",
+   "detail": "",
+   "group": "rust",
+   "status": "passed"
+  },
+  {
+   "case": "P02-AC-EINTR",
+   "detail": "",
+   "group": "rust",
+   "status": "passed"
+  },
+  {
+   "case": "P02-AC-ACCEPT-FCNTL",
+   "detail": "",
+   "group": "rust",
+   "status": "passed"
+  },
+  {
+   "case": "P02-AC-ABI",
+   "detail": "",
+   "group": "rust",
+   "status": "passed"
+  },
+  {
+   "case": "P02-AC-STARTUP",
+   "detail": "",
+   "group": "rust",
+   "status": "passed"
+  },
+  {
+   "case": "P02-AC-MEMORY",
+   "detail": "",
+   "group": "rust",
+   "status": "passed"
+  },
+  {
+   "case": "P02-AC-WALL-TIME",
+   "detail": "",
+   "group": "rust",
+   "status": "passed"
+  },
+  {
+   "case": "P02-AC-REAL-BACKEND",
+   "detail": "",
+   "group": "rust",
+   "status": "passed"
+  },
+  {
+   "case": "P02-RUST-ALL",
+   "detail": "",
+   "group": "rust",
+   "status": "passed"
+  }
+ ],
+ "run_id": "810690fa4ec66bad",
+ "rust_tests_required": 225,
+ "schema": "ffw.p02.receipt.v1",
+ "tier": "full",
+ "versions": {
+  "python": "3.15.0",
+  "receipt_schema": "ffw.p02.receipt.v1"
+ }
+}

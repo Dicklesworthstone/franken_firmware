@@ -24,3 +24,18 @@ Socket calls have no guest execution proof. This record does not qualify a stock
 kernel, physical speaker, service integration, real-time budget or codec resource
 usage. Original full P02 acceptance also requires the separately tested tiered
 bounded Python evidence adapter; compiler results alone do not close it.
+
+The adapter is now implemented. `adapter-tests.txt` records 175 passing Python
+tests, including 38 focused runner tests. `adapter-full.txt` records the actual
+CLI judgment of the retained source-bound compiler output: 13 cases passed,
+225 mandatory named Rust tests, complete evidence with 27 critical events and
+zero loss. The adjacent original JSON receipt and JSONL are retained byte for
+byte and independently audited; their artifact hashes match the judging source.
+Only console receipt-directory labels are normalized in the text transcripts.
+
+The smoke control passes two cases. Missing Rust evidence blocks eleven cases
+and exits three; soak explicitly reports NOT RUN and exits four. Unit controls
+exercise failed/ignored/missing/conflicting results and lost critical evidence.
+Panic details are redacted before human and JSON outputs, replay keeps repository
+paths and disambiguates external inputs by digest, and test subprocesses have
+timeouts. These checks add no Rust execution or device/service qualification.

@@ -1,0 +1,3 @@
+diag run=p02-smoke-5be2add0212a5137: evidence COMPLETE; events=5 critical=5 dropped=0 critical_lost=0 bytes=2825 sha256=66dd997923ad
+P02 e2e tier=smoke: QUALIFIED  planned=2 passed=2 failed=0 blocked=0
+receipt: <retained-receipts>/p02-5be2add0212a5137.json
