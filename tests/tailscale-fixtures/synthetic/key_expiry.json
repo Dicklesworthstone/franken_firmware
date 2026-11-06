@@ -1,0 +1,20 @@
+{
+  "schema": "ffw.t01.fixture.key_expiry.v1",
+  "note": "SYNTHETIC key-expiry and offline-behavior timeline on a virtual clock (seconds). The one rule taken from the official documentation (ledger T01-E10) is that an expired key stops the endpoint's connections until it reauthenticates; the warning window, the offline bound and the handling of an untrusted clock are PROVISIONAL policy of the native design, stated in docs/contracts/t01.md section 5 and decided for the first time by T04 - they are not Tailscale behavior and not measurements. The expected tuples were written by hand from those sentences.",
+  "policy": {"warn_window_s": 604800, "max_offline_netmap_age_s": 86400},
+  "key_expiry": 10000000,
+  "steps": [
+    {"id": "K01", "now": 0, "clock_trusted": true, "control_up": true, "netmap_age_s": 0, "expect": ["valid", "up", "none"]},
+    {"id": "K02", "now": 9395199, "clock_trusted": true, "control_up": true, "netmap_age_s": 10, "expect": ["valid", "up", "none"]},
+    {"id": "K03", "now": 9395200, "clock_trusted": true, "control_up": true, "netmap_age_s": 10, "expect": ["expiring", "up", "renew"]},
+    {"id": "K04", "now": 9999999, "clock_trusted": true, "control_up": true, "netmap_age_s": 10, "expect": ["expiring", "up", "renew"]},
+    {"id": "K05", "now": 10000000, "clock_trusted": true, "control_up": true, "netmap_age_s": 10, "expect": ["expired", "down", "reauthenticate"]},
+    {"id": "K06", "now": 10000001, "clock_trusted": true, "control_up": false, "netmap_age_s": 5000, "expect": ["expired", "down", "reauthenticate"]},
+    {"id": "K07", "now": 100, "clock_trusted": true, "control_up": false, "netmap_age_s": 86400, "expect": ["valid", "up_stale", "retry_control"]},
+    {"id": "K08", "now": 100, "clock_trusted": true, "control_up": false, "netmap_age_s": 86401, "expect": ["valid", "down", "wait_for_control"]},
+    {"id": "K09", "now": 9400000, "clock_trusted": true, "control_up": false, "netmap_age_s": 60, "expect": ["expiring", "up_stale", "retry_control"]},
+    {"id": "K10", "now": 9400000, "clock_trusted": true, "control_up": false, "netmap_age_s": 90000, "expect": ["expiring", "down", "wait_for_control"]},
+    {"id": "K11", "now": 99999999, "clock_trusted": false, "control_up": true, "netmap_age_s": 0, "expect": ["unknown", "hold", "get_trusted_time"]},
+    {"id": "K12", "now": 0, "clock_trusted": false, "control_up": false, "netmap_age_s": 0, "expect": ["unknown", "hold", "get_trusted_time"]}
+  ]
+}

@@ -1,0 +1,728 @@
+{
+ "schema": "ffw.t01.ledger.v1",
+ "note": "Verbatim excerpts of primary sources, each with the sha256 of its excerpt and of the whole source it was cut from. An `immutable` entry is pinned by a git commit or a crate version; a mutable page is pinned only by the digest of what was retrieved at `retrieved_utc` and can legitimately change later. Nothing here is a measurement of a target.",
+ "entries": [
+  {
+   "id": "T01-E01",
+   "topic": "go-ports",
+   "kind": "git_file",
+   "repo": "golang/go",
+   "rev": "2aae1000ea1d4b28923b96db28acf4e3b99d6aff",
+   "path": "src/internal/platform/zosarch.go",
+   "lines": [
+    28,
+    41
+   ],
+   "url": "https://raw.githubusercontent.com/golang/go/2aae1000ea1d4b28923b96db28acf4e3b99d6aff/src/internal/platform/zosarch.go",
+   "immutable": true,
+   "source_sha256": "ddb408bd88e855d78964198f4d41298bd5cabcb6b6b54a1542f3156e022f78e8",
+   "excerpt": "\t{\"linux\", \"386\"},\n\t{\"linux\", \"amd64\"},\n\t{\"linux\", \"arm\"},\n\t{\"linux\", \"arm64\"},\n\t{\"linux\", \"loong64\"},\n\t{\"linux\", \"mips\"},\n\t{\"linux\", \"mips64\"},\n\t{\"linux\", \"mips64le\"},\n\t{\"linux\", \"mipsle\"},\n\t{\"linux\", \"ppc64\"},\n\t{\"linux\", \"ppc64le\"},\n\t{\"linux\", \"riscv64\"},\n\t{\"linux\", \"s390x\"},\n\t{\"linux\", \"sparc64\"},",
+   "excerpt_sha256": "10298de0d402dd8a24f41004bf60a8a06b453b3026835bd43bf00e1619c22d0f",
+   "claim": "Go 1.27.3 supports linux/mips and linux/mipsle (and 64-bit ppc64/ppc64le) and has no 32-bit linux/ppc port."
+  },
+  {
+   "id": "T01-E02",
+   "topic": "go-kernel-floor",
+   "kind": "web_text",
+   "url": "https://go.dev/wiki/MinimumRequirements",
+   "immutable": false,
+   "retrieved_utc": "2026-11-06T19:10Z",
+   "source_sha256": "1001726bda06f717f6adaed2101765a543a5b173705949de1b5a761bdda33fb0",
+   "excerpt": "For Go 1.24 and later: Kernel version 3.2 or later.",
+   "excerpt_sha256": "bf528c970ab562b13baa2d57c6f3a2255cf4a3d5e82847e450e41a8f6c7d928d",
+   "claim": "The Go toolchain's documented minimum Linux kernel since Go 1.24 is 3.2."
+  },
+  {
+   "id": "T01-E03",
+   "topic": "go-ppc64-kernel",
+   "kind": "web_text",
+   "url": "https://go.dev/doc/go1.27",
+   "immutable": false,
+   "retrieved_utc": "2026-11-06T19:10Z",
+   "source_sha256": "a4c56ba584ac26614537ac40bf07aa638314decdacf32ea96acb60dbfe57393e",
+   "excerpt": "ELFv2 support requires Linux kernel 3.13 or later.",
+   "excerpt_sha256": "7aeb00790c05369d04191d3cf79a60f2a978ee33ba134a65013cec4a9981072e",
+   "claim": "Go 1.27 big-endian ppc64 uses ELFv2, which needs Linux 3.13 or later."
+  },
+  {
+   "id": "T01-E04",
+   "topic": "tailscale-go-version",
+   "kind": "git_file",
+   "repo": "tailscale/tailscale",
+   "rev": "73a48057aaf5f60e4f770b398e9b7af576b01dbe",
+   "path": "go.mod",
+   "lines": [
+    3,
+    3
+   ],
+   "url": "https://raw.githubusercontent.com/tailscale/tailscale/73a48057aaf5f60e4f770b398e9b7af576b01dbe/go.mod",
+   "immutable": true,
+   "source_sha256": "f7bccfa7a419a6d375dd2d81911d1d701ca79e0d7f080916d21ad1dd15bf34e6",
+   "excerpt": "go 1.27.3",
+   "excerpt_sha256": "2eb24b11900bf8c65a18e4520ab71effa135f01039e5c2f642bc2a604f4acf7d",
+   "claim": "tailscale v1.104.5 builds with Go 1.27.3."
+  },
+  {
+   "id": "T01-E05",
+   "topic": "tailscale-release-targets",
+   "kind": "git_file",
+   "repo": "tailscale/tailscale",
+   "rev": "73a48057aaf5f60e4f770b398e9b7af576b01dbe",
+   "path": "release/dist/unixpkgs/targets.go",
+   "lines": [
+    79,
+    82
+   ],
+   "url": "https://raw.githubusercontent.com/tailscale/tailscale/73a48057aaf5f60e4f770b398e9b7af576b01dbe/release/dist/unixpkgs/targets.go",
+   "immutable": true,
+   "source_sha256": "5e87cfc420d0868c4de318361f8332f00954ec16054173273a1074fe156b6ac4",
+   "excerpt": "\t\t\"linux/mips64\":   true,\n\t\t\"linux/mips64le\": true,\n\t\t\"linux/mips\":     true,\n\t\t\"linux/mipsle\":   true,",
+   "excerpt_sha256": "2295c7b0109e3e2dc5e0f832ea924d5a8176ae8f2990f88978d1d51b5fea08c7",
+   "claim": "The release tooling builds linux/mips (big-endian 32-bit MIPS) and no PowerPC target."
+  },
+  {
+   "id": "T01-E06",
+   "topic": "official-static-tarballs",
+   "kind": "web_json",
+   "url": "https://pkgs.tailscale.com/stable/?mode=json",
+   "immutable": false,
+   "retrieved_utc": "2026-11-06T19:10Z",
+   "source_sha256": "a5520c3dc838ecbb020c8058d2310fd3f3edcfe211ace6c9e8e789fed052d36e",
+   "excerpt": "Version: 1.104.5; Tarballs: 386, amd64, arm, arm64, geode, mips, mips64, mips64le, mipsle, riscv64",
+   "excerpt_sha256": "68e1c0e5e22f7898b124ebec483d0872a75ed0a16f288faaac7de1011d5900c9",
+   "claim": "The official v1.104.5 static tarballs cover 386, amd64, arm, arm64, geode, mips, mips64, mips64le, mipsle and riscv64: no PowerPC."
+  },
+  {
+   "id": "T01-E07",
+   "topic": "official-mips-tarball",
+   "kind": "web_header",
+   "url": "https://pkgs.tailscale.com/stable/tailscale_1.104.5_mips.tgz",
+   "immutable": false,
+   "retrieved_utc": "2026-11-06T19:10Z",
+   "source_sha256": "182974dd90638c2f3c7a9f1bc3a6d92823fd3e209401120af23dbfed9f34ad2a",
+   "excerpt": "tailscale_1.104.5_mips.tgz: 36700859 bytes, sha256 8e51b3fbe174e83b2efae57e6b191b0f6fdeec5b54989d48ad38c73af586cb5d",
+   "excerpt_sha256": "23e9fada1924aaa111e25df365834a131c6c603d206f066f4471729721710122",
+   "claim": "The official big-endian MIPS static tarball is 36,700,859 bytes (a compressed archive, not a memory footprint)."
+  },
+  {
+   "id": "T01-E08",
+   "topic": "official-userspace-mode",
+   "kind": "web_text",
+   "url": "https://tailscale.com/docs/concepts/userspace-networking",
+   "immutable": false,
+   "retrieved_utc": "2026-11-06T19:10Z",
+   "source_sha256": "f9b76d2fd7857945264e0c894abe45d3bddb8e51a2fb5c1e0e12676fe076981e",
+   "excerpt": "tailscaled functions as a SOCKS5 or HTTP proxy which other processes in the container can connect through.",
+   "excerpt_sha256": "c11c97932c6a97cb083dd9921ffb3a119ff927ec413cf07cb6279d4734437bdb",
+   "claim": "Userspace networking mode is an operating mode of tailscaled (a SOCKS5/HTTP proxy), not a small Rust implementation."
+  },
+  {
+   "id": "T01-E09",
+   "topic": "official-small-build",
+   "kind": "web_text",
+   "url": "https://tailscale.com/docs/how-to/set-up-small-tailscale",
+   "immutable": false,
+   "retrieved_utc": "2026-11-06T19:10Z",
+   "source_sha256": "c003ed186d498a642b9418a8eecc032641f86eec74b7b613148b15739a467e72",
+   "excerpt": "After UPX compression, we've reduced the size of the (combined) Tailscale binary from the original size of 23MiB down to only 4.5MiB",
+   "excerpt_sha256": "db933f2926f99bc9f49b2d7a94f644c5840bf9f2b317fc0699e7f2f9de69150d",
+   "claim": "Tailscale's own small-build guide reports 23MiB to 4.5MiB (UPX-compressed, on-disk) for the combined Go binary; no memory figure."
+  },
+  {
+   "id": "T01-E10",
+   "topic": "official-key-expiry",
+   "kind": "web_text",
+   "url": "https://tailscale.com/docs/features/access-control/key-expiry",
+   "immutable": false,
+   "retrieved_utc": "2026-11-06T19:10Z",
+   "source_sha256": "43eb7b6a03909a2516d3723b4aaad8302fbc5d1bfd88ad504fef5dda9070b9e0",
+   "excerpt": "users need to periodically reauthenticate on each of their devices. The default expiration period depends on your domain setting. By default, new domains are set with an expiry period of 180 days. If reauthentication does not occur, keys expire and connections to/from the given endpoint will stop working.",
+   "excerpt_sha256": "c544396e7fb65b742e4b17b49868006f900d3f3297ea729b9a05b08f6b2fb296",
+   "claim": "Node keys expire (180 days by default); an expired key stops the endpoint's connections until it reauthenticates."
+  },
+  {
+   "id": "T01-E11",
+   "topic": "official-control-data-planes",
+   "kind": "web_text",
+   "url": "https://tailscale.com/docs/concepts/control-data-planes",
+   "immutable": false,
+   "retrieved_utc": "2026-11-06T19:10Z",
+   "source_sha256": "8a5fe0991b0789c327406c38d770f8800f350d6e2341b9f97f1f8d32a82664e5",
+   "excerpt": "In a Tailscale network (known as a tailnet ), the control plane operates through the Tailscale coordination service , while the data plane runs on each tailnet device.",
+   "excerpt_sha256": "712aa9608f41d5ee82bdf282ada43520c5fd8739e55a07d8406ba2c21de38b0c",
+   "claim": "The control plane runs through the Tailscale coordination service, while the data plane runs on each tailnet device."
+  },
+  {
+   "id": "T01-E12",
+   "topic": "official-derp",
+   "kind": "web_text",
+   "url": "https://tailscale.com/docs/reference/derp-servers",
+   "immutable": false,
+   "retrieved_utc": "2026-11-06T19:10Z",
+   "source_sha256": "0104149ac6c472026098c07b1f2795627fcac27bca6a1b2a0a61a3c9632bd8b3",
+   "excerpt": "Negotiating and establishing connections between tailnet devices (direct or relayed). Serving as a fallback option when a direct connection isn't possible and a peer relay server isn't available.",
+   "excerpt_sha256": "059d9f032b71938199677ca270f4a6738d4ec487e17ee843c394a007cb617499",
+   "claim": "DERP negotiates connections and is the fallback relay when a direct connection is impossible."
+  },
+  {
+   "id": "T01-E13",
+   "topic": "tsrs-platforms",
+   "kind": "git_file",
+   "repo": "tailscale/tailscale-rs",
+   "rev": "d34658bbb2eb4593ae6df959aa93e9ee1e0457c6",
+   "path": "README.md",
+   "lines": [
+    97,
+    102
+   ],
+   "url": "https://github.com/tailscale/tailscale-rs/blob/d34658bbb2eb4593ae6df959aa93e9ee1e0457c6/README.md",
+   "immutable": true,
+   "source_sha256": "8317978e237348cacec580fd14bb75589aab783f5d47ac6d58e28e88ea387c86",
+   "excerpt": "We support the following platforms and architectures:\n\n- Linux (`x86_64`/`ARM64`)\n- macOS (`ARM64`)\n- Windows (`x86_64`)\n",
+   "excerpt_sha256": "746e618ba5e1c0373aa7a914665cdc2e654bd4c90d57c290884ce21c2bd54162",
+   "claim": "The only supported platforms are Linux x86_64/ARM64, macOS ARM64 and Windows x86_64."
+  },
+  {
+   "id": "T01-E14",
+   "topic": "tsrs-implemented",
+   "kind": "git_file",
+   "repo": "tailscale/tailscale-rs",
+   "rev": "d34658bbb2eb4593ae6df959aa93e9ee1e0457c6",
+   "path": "README.md",
+   "lines": [
+    111,
+    119
+   ],
+   "url": "https://github.com/tailscale/tailscale-rs/blob/d34658bbb2eb4593ae6df959aa93e9ee1e0457c6/README.md",
+   "immutable": true,
+   "source_sha256": "8317978e237348cacec580fd14bb75589aab783f5d47ac6d58e28e88ea387c86",
+   "excerpt": "These are features that we currently implement:\n\n- Basics\n    - Create TCP and UDP sockets on the tailnet\n    - Communicate with peers via public DERP relays\n    - Communicate with the Tailscale Go client, `tsnet`, and `libtailscale`\n- Language support\n    - Rust API\n    - C, Elixir, and Python bindings",
+   "excerpt_sha256": "b47b42f2ab69e228fdd5203ced4901f575f0825888d75fa1ca1c40110304ff85",
+   "claim": "Implemented: tailnet TCP/UDP sockets, communication through public DERP relays, interop with the Go client."
+  },
+  {
+   "id": "T01-E15",
+   "topic": "tsrs-coming-soon",
+   "kind": "git_file",
+   "repo": "tailscale/tailscale-rs",
+   "rev": "d34658bbb2eb4593ae6df959aa93e9ee1e0457c6",
+   "path": "README.md",
+   "lines": [
+    123,
+    128
+   ],
+   "url": "https://github.com/tailscale/tailscale-rs/blob/d34658bbb2eb4593ae6df959aa93e9ee1e0457c6/README.md",
+   "immutable": true,
+   "source_sha256": "8317978e237348cacec580fd14bb75589aab783f5d47ac6d58e28e88ea387c86",
+   "excerpt": "These are features or efforts we have in the pipeline and are actively working towards, but provide no guarantees on\ntimeline or completion:\n\n- Direct connections (NAT traversal, STUN, and Disco)\n- Peer lookups (addressing peers by hostname)\n",
+   "excerpt_sha256": "dbca5ee077443998d896836bccad1c693e7e487b0c883f066a0586c7afc83de6",
+   "claim": "Direct connections (NAT traversal, STUN, disco) and peer lookup by hostname are not implemented."
+  },
+  {
+   "id": "T01-E16",
+   "topic": "tsrs-unsupported-networking",
+   "kind": "git_file",
+   "repo": "tailscale/tailscale-rs",
+   "rev": "d34658bbb2eb4593ae6df959aa93e9ee1e0457c6",
+   "path": "README.md",
+   "lines": [
+    140,
+    146
+   ],
+   "url": "https://github.com/tailscale/tailscale-rs/blob/d34658bbb2eb4593ae6df959aa93e9ee1e0457c6/README.md",
+   "immutable": true,
+   "source_sha256": "8317978e237348cacec580fd14bb75589aab783f5d47ac6d58e28e88ea387c86",
+   "excerpt": "- Networking\n    - Peer relays\n    - Exit Nodes (either being one, or using one)\n    - MagicDNS\n    - Private DERP relays\n    - Split DNS\n    - Subnet Routers (either being one, or using one)",
+   "excerpt_sha256": "f0ba8f5a59070bf9b91b31203338be20fd687ab32b75cf371f6f6ecff3b88b4e",
+   "claim": "Unsupported: peer relays, exit nodes, MagicDNS, private DERP relays, split DNS, subnet routers."
+  },
+  {
+   "id": "T01-E17",
+   "topic": "tsrs-unsupported-other",
+   "kind": "git_file",
+   "repo": "tailscale/tailscale-rs",
+   "rev": "d34658bbb2eb4593ae6df959aa93e9ee1e0457c6",
+   "path": "README.md",
+   "lines": [
+    161,
+    164
+   ],
+   "url": "https://github.com/tailscale/tailscale-rs/blob/d34658bbb2eb4593ae6df959aa93e9ee1e0457c6/README.md",
+   "immutable": true,
+   "source_sha256": "8317978e237348cacec580fd14bb75589aab783f5d47ac6d58e28e88ea387c86",
+   "excerpt": "- Other Features\n    - Application Capabilities\n    - Automatic Key Rotation\n    - HTTPS Certificates",
+   "excerpt_sha256": "144805c28e9e16facabd16e02b64562a2d02717540697abe4d83b48a74ae9154",
+   "claim": "Unsupported: application capabilities and automatic key rotation."
+  },
+  {
+   "id": "T01-E18",
+   "topic": "tsrs-disco-incomplete",
+   "kind": "git_file",
+   "repo": "tailscale/tailscale-rs",
+   "rev": "d34658bbb2eb4593ae6df959aa93e9ee1e0457c6",
+   "path": "ARCHITECTURE.md",
+   "lines": [
+    128,
+    128
+   ],
+   "url": "https://github.com/tailscale/tailscale-rs/blob/d34658bbb2eb4593ae6df959aa93e9ee1e0457c6/ARCHITECTURE.md",
+   "immutable": true,
+   "source_sha256": "4db5423e9e22607f0fcf56f1aa192ca82c58fc8629344fd6f64c0c5885d574d6",
+   "excerpt": "  - [`ts_disco_protocol`](ts_disco_protocol/src/lib.rs): incomplete implementation of Tailscale's discovery protocol (disco).",
+   "excerpt_sha256": "64708aaf6f0eeb2623594f0d3990477f6cf59e2a2a19b67593a7ae6c41aa0c1d",
+   "claim": "The disco (NAT traversal) protocol crate is an incomplete implementation."
+  },
+  {
+   "id": "T01-E19",
+   "topic": "tsrs-tunnel-partial",
+   "kind": "git_file",
+   "repo": "tailscale/tailscale-rs",
+   "rev": "d34658bbb2eb4593ae6df959aa93e9ee1e0457c6",
+   "path": "ARCHITECTURE.md",
+   "lines": [
+    102,
+    102
+   ],
+   "url": "https://github.com/tailscale/tailscale-rs/blob/d34658bbb2eb4593ae6df959aa93e9ee1e0457c6/ARCHITECTURE.md",
+   "immutable": true,
+   "source_sha256": "4db5423e9e22607f0fcf56f1aa192ca82c58fc8629344fd6f64c0c5885d574d6",
+   "excerpt": "  - [`ts_tunnel`](ts_tunnel/src/lib.rs): a partial implementation of the WireGuard specification that protects all data plane traffic, and is interoperable with other WireGuard clients, including Tailscale clients.",
+   "excerpt_sha256": "beb01d1897ded659eaa780a4e56a878f8610a556a6562651e96794e3f63a8122",
+   "claim": "The data-plane tunnel is a partial WireGuard implementation, interoperable with Tailscale clients."
+  },
+  {
+   "id": "T01-E20",
+   "topic": "tsrs-packetfilter",
+   "kind": "git_file",
+   "repo": "tailscale/tailscale-rs",
+   "rev": "d34658bbb2eb4593ae6df959aa93e9ee1e0457c6",
+   "path": "ARCHITECTURE.md",
+   "lines": [
+    85,
+    85
+   ],
+   "url": "https://github.com/tailscale/tailscale-rs/blob/d34658bbb2eb4593ae6df959aa93e9ee1e0457c6/ARCHITECTURE.md",
+   "immutable": true,
+   "source_sha256": "4db5423e9e22607f0fcf56f1aa192ca82c58fc8629344fd6f64c0c5885d574d6",
+   "excerpt": "  - [`ts_packetfilter`](ts_packetfilter/src/lib.rs): performs filtering of traffic based on a tailnet's policies (ACLs and/or grants), which each node receives from the control plane.",
+   "excerpt_sha256": "e14f6fb05f45c228336bdfcaace8528d4726696eb506f77d6cbec2fa54a30222",
+   "claim": "Policy (ACL/grants) packet filtering is implemented in ts_packetfilter."
+  },
+  {
+   "id": "T01-E21",
+   "topic": "tsrs-control-plane",
+   "kind": "git_file",
+   "repo": "tailscale/tailscale-rs",
+   "rev": "d34658bbb2eb4593ae6df959aa93e9ee1e0457c6",
+   "path": "ARCHITECTURE.md",
+   "lines": [
+    64,
+    65
+   ],
+   "url": "https://github.com/tailscale/tailscale-rs/blob/d34658bbb2eb4593ae6df959aa93e9ee1e0457c6/ARCHITECTURE.md",
+   "immutable": true,
+   "source_sha256": "4db5423e9e22607f0fcf56f1aa192ca82c58fc8629344fd6f64c0c5885d574d6",
+   "excerpt": "- [`ts_control`](ts_control/src/lib.rs): control plane client that handles registration, authorization/authentication, configuration, and streaming updates.\n- [`ts_control_noise`](ts_control_noise/src/lib.rs): abstraction that wraps control plane communications in a Noise IK tunnel, transparently handling cryptography for the client.",
+   "excerpt_sha256": "b146e482a66042e7ed935aa57a4ab85c61f59c4de726e8cb9d19f0ceca2fbad4",
+   "claim": "ts_control handles registration, authorization, configuration and streaming updates; ts_control_noise wraps the control channel in a Noise IK tunnel."
+  },
+  {
+   "id": "T01-E22",
+   "topic": "tsrs-tls-backend",
+   "kind": "git_file",
+   "repo": "tailscale/tailscale-rs",
+   "rev": "d34658bbb2eb4593ae6df959aa93e9ee1e0457c6",
+   "path": "ts_tls_util/Cargo.toml",
+   "lines": [
+    17,
+    17
+   ],
+   "url": "https://github.com/tailscale/tailscale-rs/blob/d34658bbb2eb4593ae6df959aa93e9ee1e0457c6/ts_tls_util/Cargo.toml",
+   "immutable": true,
+   "source_sha256": "d4f1a50f1c14b653d73da6d368c8d9d97cfe23bf8af735b9f968b19982b0f23b",
+   "excerpt": "tokio-rustls = { version = \"0.26\", default-features = false, features = [\"aws-lc-rs\"] }",
+   "excerpt_sha256": "43800b6a45f351488b6a2469e1f2225b86b61a237f002602ef4dd13164759eb2",
+   "claim": "TLS goes through tokio-rustls with the aws-lc-rs backend, unconditionally."
+  },
+  {
+   "id": "T01-E23",
+   "topic": "tsrs-msrv-readme",
+   "kind": "git_file",
+   "repo": "tailscale/tailscale-rs",
+   "rev": "d34658bbb2eb4593ae6df959aa93e9ee1e0457c6",
+   "path": "README.md",
+   "lines": [
+    86,
+    86
+   ],
+   "url": "https://github.com/tailscale/tailscale-rs/blob/d34658bbb2eb4593ae6df959aa93e9ee1e0457c6/README.md",
+   "immutable": true,
+   "source_sha256": "8317978e237348cacec580fd14bb75589aab783f5d47ac6d58e28e88ea387c86",
+   "excerpt": "The current MSRV is 1.97. The current edition is Rust 2024.",
+   "excerpt_sha256": "ad7c81b01b3dd1384fad052b5f6e0e3576b15b0f9977f85494ad231f559dcc8a",
+   "claim": "The README states MSRV 1.97."
+  },
+  {
+   "id": "T01-E24",
+   "topic": "tsrs-msrv-manifest",
+   "kind": "git_file",
+   "repo": "tailscale/tailscale-rs",
+   "rev": "d34658bbb2eb4593ae6df959aa93e9ee1e0457c6",
+   "path": "Cargo.toml",
+   "lines": [
+    62,
+    62
+   ],
+   "url": "https://github.com/tailscale/tailscale-rs/blob/d34658bbb2eb4593ae6df959aa93e9ee1e0457c6/Cargo.toml",
+   "immutable": true,
+   "source_sha256": "0d2779c29ee57feffad6628bee75e7d79f63f62a7b6da4500d0153f4681b546c",
+   "excerpt": "rust-version = \"1.92.0\"",
+   "excerpt_sha256": "6df7ef3bd37b7deb50d8708ffc536c89bc641f8c56a3245c8a155c5fa907f4ff",
+   "claim": "The workspace manifest states rust-version 1.92.0 (the README and the manifest disagree)."
+  },
+  {
+   "id": "T01-E25",
+   "topic": "tsrs-audit",
+   "kind": "git_file",
+   "repo": "tailscale/tailscale-rs",
+   "rev": "d34658bbb2eb4593ae6df959aa93e9ee1e0457c6",
+   "path": "CHANGELOG.md",
+   "lines": [
+    15,
+    17
+   ],
+   "url": "https://github.com/tailscale/tailscale-rs/blob/d34658bbb2eb4593ae6df959aa93e9ee1e0457c6/CHANGELOG.md",
+   "immutable": true,
+   "source_sha256": "64285e7eb8a9e78ddfb581ad5980758055314ca1e0579de4f77d404cd110eeba",
+   "excerpt": "- **Security** (ts_tunnel): we've completed a third-party security audit of the cryptography in ts_tunnel, and this\n  release remediates all security-relevant findings. A number of low-priority findings and \"things to think about\" are\n  open in [GitHub Issues](https://github.com/tailscale/tailscale-rs/issues/162), but aren't security-relevant at the",
+   "excerpt_sha256": "9e2f2b0c5295fb5e09f2f7080b3fa2f0ae6314e5927dd05a9ae474e74b335f7f",
+   "claim": "A third-party security audit of the ts_tunnel cryptography completed with the 0.6.0 release."
+  },
+  {
+   "id": "T01-E26",
+   "topic": "tsrs-tcp-buffers",
+   "kind": "git_file",
+   "repo": "tailscale/tailscale-rs",
+   "rev": "d34658bbb2eb4593ae6df959aa93e9ee1e0457c6",
+   "path": "CHANGELOG.md",
+   "lines": [
+    31,
+    32
+   ],
+   "url": "https://github.com/tailscale/tailscale-rs/blob/d34658bbb2eb4593ae6df959aa93e9ee1e0457c6/CHANGELOG.md",
+   "immutable": true,
+   "source_sha256": "64285e7eb8a9e78ddfb581ad5980758055314ca1e0579de4f77d404cd110eeba",
+   "excerpt": "- Changed (ts_runtime): the overlay netstack is now configured with 64KiB TCP rx/tx buffers (up from 16KiB) and a deeper\n  command channel queue, improving throughput for file downloads.",
+   "excerpt_sha256": "cbaece05e0c39a5ae23d733ab73906cc6fed3498ee42574d40290e0c75fb6ac2",
+   "claim": "The overlay netstack is configured with 64KiB TCP rx/tx buffers (a resource-relevant default)."
+  },
+  {
+   "id": "T01-E27",
+   "topic": "tsrs-key-rotation-wire",
+   "kind": "git_file",
+   "repo": "tailscale/tailscale-rs",
+   "rev": "d34658bbb2eb4593ae6df959aa93e9ee1e0457c6",
+   "path": "ts_control_serde/src/register.rs",
+   "lines": [
+    77,
+    83
+   ],
+   "url": "https://github.com/tailscale/tailscale-rs/blob/d34658bbb2eb4593ae6df959aa93e9ee1e0457c6/ts_control_serde/src/register.rs",
+   "immutable": true,
+   "source_sha256": "fffbcd20be91c4a3b301122683feb912c8951fcd457a3bf3ca4f7bcb83d25e9a",
+   "excerpt": "    /// The current public key of this Tailscale node. In the case of node key rotation, this is\n    /// the \"new\" node public key, and [`RegisterRequest::old_node_key`] contains the expired\n    /// public node key.\n    pub node_key: NodePublicKey,\n    /// The expired public key of this Tailscale node. Only populated when the node key has expired\n    /// and needs to be rotated.\n    pub old_node_key: Option<NodePublicKey>,",
+   "excerpt_sha256": "01a87ac3f630fa2d10a5924468829b7e429504963fdc876e958c28b145d663c5",
+   "claim": "The wire types carry old_node_key for rotation; the flow that uses them automatically is listed as unsupported."
+  },
+  {
+   "id": "T01-E28",
+   "topic": "awslc-arch-sets",
+   "kind": "crate_file",
+   "repo": "crates.io/aws-lc-sys",
+   "rev": "0.45.0",
+   "path": "builder/cc_builder.rs",
+   "lines": [
+    71,
+    82
+   ],
+   "url": "https://docs.rs/crate/aws-lc-sys/0.45.0/source/builder/cc_builder.rs",
+   "immutable": true,
+   "source_sha256": "d7ae3f0968a12cdab02e9583efd73e0f9015b32fab9ae0c6d9c5c80fa5641028",
+   "excerpt": "    } else if target_arch() == \"x86_64\" {\n        source_files.append(&mut Vec::from(linux_x86_64::CRYPTO_LIBRARY));\n    } else if target_arch() == \"aarch64\" {\n        source_files.append(&mut Vec::from(linux_aarch64::CRYPTO_LIBRARY));\n    } else if target_arch() == \"arm\" {\n        source_files.append(&mut Vec::from(linux_arm::CRYPTO_LIBRARY));\n    } else if target_arch() == \"x86\" {\n        source_files.append(&mut Vec::from(linux_x86::CRYPTO_LIBRARY));\n    } else if target_arch() == \"powerpc64\" {\n        source_files.append(&mut Vec::from(linux_ppc64le::CRYPTO_LIBRARY));\n    } else {\n        target_specific_source_found = false;",
+   "excerpt_sha256": "db7a4cfec2394ec6660146b2c3836155bd826094dc62c630bdf06a340d63554a",
+   "claim": "Assembly source sets exist for x86_64, aarch64, arm, x86 and powerpc64 only; other targets have no target-specific source."
+  },
+  {
+   "id": "T01-E29",
+   "topic": "awslc-no-asm-release",
+   "kind": "crate_file",
+   "repo": "crates.io/aws-lc-sys",
+   "rev": "0.45.0",
+   "path": "builder/cc_builder.rs",
+   "lines": [
+    256,
+    258
+   ],
+   "url": "https://docs.rs/crate/aws-lc-sys/0.45.0/source/builder/cc_builder.rs",
+   "immutable": true,
+   "source_sha256": "d7ae3f0968a12cdab02e9583efd73e0f9015b32fab9ae0c6d9c5c80fa5641028",
+   "excerpt": "                    !is_no_asm(),\n                    \"AWS_LC_SYS_NO_ASM only allowed for debug builds!\"\n                );",
+   "excerpt_sha256": "71accc08c92a361295d1533b4ecb21494670e8dcac8eaabe56a5d3cc74a721ef",
+   "claim": "The no-assembly escape hatch is refused in optimized builds."
+  },
+  {
+   "id": "T01-E30",
+   "topic": "awslc-arch-macros",
+   "kind": "crate_file",
+   "repo": "crates.io/aws-lc-sys",
+   "rev": "0.45.0",
+   "path": "aws-lc/include/openssl/target.h",
+   "lines": [
+    55,
+    60
+   ],
+   "url": "https://docs.rs/crate/aws-lc-sys/0.45.0/source/aws-lc/include/openssl/target.h",
+   "immutable": true,
+   "source_sha256": "b4eb3eeeeb2da46043da60b81a961d031580ecd093d5980ffc627605eed9ef0e",
+   "excerpt": "#elif defined(__powerpc__) || defined(__ppc__) || defined(_ARCH_PPC) || defined(__PPC__) || defined(_M_PPC)\n#  if defined(OPENSSL_BIG_ENDIAN)\n#    define OPENSSL_PPC32BE\n#  else\n#   define OPENSSL_PPC32LE\n#  endif",
+   "excerpt_sha256": "8869ef68483d06dc47a4e3a72551ade63a895fcd0df49c7536e38e2d6860d86a",
+   "claim": "AWS-LC recognizes OPENSSL_PPC32BE and OPENSSL_MIPS, so a portable-C build is not ruled out (and not shown)."
+  },
+  {
+   "id": "T01-E31",
+   "topic": "local-stock-kernels",
+   "kind": "local_file",
+   "path": "docs/contracts/e03.md",
+   "lines": [
+    5,
+    6
+   ],
+   "immutable": false,
+   "source_sha256": "369b2aeb5da0efd676c9f6e2d466c2909e508de078577e1a2f64a1fb4cdf0bd6",
+   "excerpt": "capability probing, and the admission gate that consumes it, for the legacy Linux `2.6.14` (PowerPC\nS5/ZB100) and `2.6.35` (MIPS32r2 S1/S3/S9/S12/Sub) stock kernels, and for the Debian `4.9` (BE-PPC) and",
+   "excerpt_sha256": "99b2b30a3a3769505c0fb838cd5494dc2fa24f3c2e6be272b2d2d675d6c24c12",
+   "claim": "The stock kernels are Linux 2.6.14 (PowerPC S5/ZB100) and 2.6.35 (MIPS32r2 S1/S3/S9/S12/Sub); no matching full-system guest exists, so they are unqualified."
+  },
+  {
+   "id": "T01-E32",
+   "topic": "local-nominal-ram",
+   "kind": "local_file",
+   "path": "FIRMWARE_ASSESSMENT.md",
+   "lines": [
+    93,
+    93
+   ],
+   "immutable": false,
+   "source_sha256": "062b60e212bac990031278c3a3fb0d0b1c2e89a9943f8aa17c7cc1e73cad478c",
+   "excerpt": "Our original capacity uncertainty was an extraction mistake: saved description XML already contains lowercase memory, flash, seriesid. Device-reported nominal MB: S5 P100 32/32; Bridge X999 8/8; Playbar A100 128/128; Play:1 A101 128/64; Play:1 A200 256/256; Sub A100 128/64; Play:3 A100 128/64. Owned Play:3 overrides the older teardown's 64 MiB RAM sample. CPU identity still requires separate evidence. See corrected inventory/INVENTORY.md and EE correction facts.",
+   "excerpt_sha256": "a45a16b52035ca9cdd1f67de3f2455f460c4717c3012b0bd82b150db9241cf15",
+   "claim": "Device-reported nominal RAM/flash in MB: S5 P100 32/32, Play:1 A101 128/64, Sub A100 128/64, Play:3 A100 128/64, Playbar A100 128/128."
+  },
+  {
+   "id": "T01-E33",
+   "topic": "tracker-no-footprint",
+   "kind": "tracker",
+   "bead": "ffw-32a",
+   "immutable": false,
+   "retrieved_utc": "2026-11-06T19:10Z",
+   "excerpt": "No native footprint is promised before a complete configuration has been measured.",
+   "excerpt_sha256": "449679678f862e952957374edf0c89b467cb1dc20349105b25a39e1c0ea30996",
+   "claim": "The bead forbids promising any native footprint before a complete configuration is measured."
+  },
+  {
+   "id": "T01-E34",
+   "topic": "tsrs-tokio-net",
+   "kind": "git_file",
+   "repo": "tailscale/tailscale-rs",
+   "rev": "d34658bbb2eb4593ae6df959aa93e9ee1e0457c6",
+   "path": "ts_http_util/Cargo.toml",
+   "lines": [
+    26,
+    26
+   ],
+   "url": "https://github.com/tailscale/tailscale-rs/blob/d34658bbb2eb4593ae6df959aa93e9ee1e0457c6/ts_http_util/Cargo.toml",
+   "immutable": true,
+   "source_sha256": "2b38311939f4184cf8c47c764ca600afa5e8c7024bfd006684467358862c5aa5",
+   "excerpt": "tokio = { workspace = true, features = [\"net\", \"io-util\"] }",
+   "excerpt_sha256": "0bb7ba1cfab9c2cc37f6e4e4fdce6f6114b4b5caf46f5dddb5794bb5f6f814fa",
+   "claim": "The HTTP utilities use tokio's `net` feature, which is built on mio."
+  },
+  {
+   "id": "T01-E35",
+   "topic": "mio-epoll-create1",
+   "kind": "crate_file",
+   "repo": "crates.io/mio",
+   "rev": "1.2.1",
+   "path": "src/sys/unix/selector/epoll.rs",
+   "lines": [
+    29,
+    29
+   ],
+   "url": "https://docs.rs/crate/mio/1.2.1/source/src/sys/unix/selector/epoll.rs",
+   "immutable": true,
+   "source_sha256": "b952cb6d4225f442524d1a5a15bb7cecad6ad4738afaed5776e6b9d4a1203891",
+   "excerpt": "        let ep = unsafe { OwnedFd::from_raw_fd(syscall!(epoll_create1(libc::EPOLL_CLOEXEC))?) };",
+   "excerpt_sha256": "dfc51916656f0054c7d6eaf0050e14d13f16f73bcaba4cc8f56ccdfdd6d5c27f",
+   "claim": "mio 1.2.1 creates its epoll instance with epoll_create1 unconditionally (no epoll_create fallback)."
+  },
+  {
+   "id": "T01-E36",
+   "topic": "kernel-epoll-create1",
+   "kind": "web_text",
+   "url": "https://man7.org/linux/man-pages/man2/epoll_create.2.html",
+   "immutable": false,
+   "retrieved_utc": "2026-11-06T19:10Z",
+   "source_sha256": "022165e1820a997c88aa78b677a0e1032231ae962e692d5a57830f7b352e0021",
+   "excerpt": "epoll_create1 () Linux 2.6.27, glibc 2.9.",
+   "excerpt_sha256": "34b8fb7dccb4aaa1b864bb60da26f778d3baebe193dcc37bdf09d03f59294f13",
+   "claim": "epoll_create1 exists since Linux 2.6.27."
+  },
+  {
+   "id": "T01-E37",
+   "topic": "kernel-eventfd",
+   "kind": "web_text",
+   "url": "https://man7.org/linux/man-pages/man2/eventfd.2.html",
+   "immutable": false,
+   "retrieved_utc": "2026-11-06T19:10Z",
+   "source_sha256": "2639012787a9c3c0acad8dee59179a402ad6e5a4d12b4bed8d65913a7564e482",
+   "excerpt": "eventfd () Linux 2.6.22, glibc 2.8. eventfd2 () Linux 2.6.27",
+   "excerpt_sha256": "96c9ad72436ed42608cde067876cd9581034c9338f902a2e7d20d73795c9b698",
+   "claim": "eventfd exists since Linux 2.6.22 and eventfd2 since 2.6.27."
+  },
+  {
+   "id": "T01-E38",
+   "topic": "official-control-plane-identity",
+   "kind": "web_text",
+   "url": "https://tailscale.com/docs/concepts/control-data-planes",
+   "immutable": false,
+   "retrieved_utc": "2026-11-06T19:10Z",
+   "source_sha256": "8a5fe0991b0789c327406c38d770f8800f350d6e2341b9f97f1f8d32a82664e5",
+   "excerpt": "Authentication and identity functions of the control plane include validating device identities, maintaining access control policies, tracking device registration and removal, and managing device authorization states.",
+   "excerpt_sha256": "07ca72d9013b23684cd16a1d0975c41512f7195c444992f14699b4bbe3b0848b",
+   "claim": "Control-plane identity functions: device identities, access control policies, registration and removal, authorization states."
+  },
+  {
+   "id": "T01-E39",
+   "topic": "official-control-plane-network",
+   "kind": "web_text",
+   "url": "https://tailscale.com/docs/concepts/control-data-planes",
+   "immutable": false,
+   "retrieved_utc": "2026-11-06T19:10Z",
+   "source_sha256": "8a5fe0991b0789c327406c38d770f8800f350d6e2341b9f97f1f8d32a82664e5",
+   "excerpt": "Network setup and maintenance functions of the control plane include distributing subnet routes, configuring DNS settings, managing IP address assignments , and updating network configurations.",
+   "excerpt_sha256": "7c4ed8d47c05fa7704c11b38d6cbd00b3fd242675a85f741153084479f83383f",
+   "claim": "Control-plane network functions: subnet routes, DNS settings, IP address assignment, network configuration updates."
+  },
+  {
+   "id": "T01-E40",
+   "topic": "official-control-plane-coordination",
+   "kind": "web_text",
+   "url": "https://tailscale.com/docs/concepts/control-data-planes",
+   "immutable": false,
+   "retrieved_utc": "2026-11-06T19:10Z",
+   "source_sha256": "8a5fe0991b0789c327406c38d770f8800f350d6e2341b9f97f1f8d32a82664e5",
+   "excerpt": "Connection coordination functions of the control plane include managing NAT traversal , peer discovery, distributing device information, selecting optimal DERP regions, and maintaining device state information.",
+   "excerpt_sha256": "6f06bde3be4756fcc5cd8b6360f9df582fda17ba591ed5fcbda6919d7d8b82e9",
+   "claim": "Control-plane coordination functions: NAT traversal, peer discovery, device information, DERP region selection, device state."
+  },
+  {
+   "id": "T01-E41",
+   "topic": "official-data-plane",
+   "kind": "web_text",
+   "url": "https://tailscale.com/docs/concepts/control-data-planes",
+   "immutable": false,
+   "retrieved_utc": "2026-11-06T19:10Z",
+   "source_sha256": "8a5fe0991b0789c327406c38d770f8800f350d6e2341b9f97f1f8d32a82664e5",
+   "excerpt": "The data plane operates on individual devices within your tailnet, handling the actual movement of encrypted data between devices using the WireGuard protocol. The data plane manages packet encryption , applies routing rules from the control plane , and handles packet forwarding.",
+   "excerpt_sha256": "045a8747a99b26222ce5b8f02554db22b0c3275ebe5fbf00e2c7f107a9da653b",
+   "claim": "The data plane runs on each device: WireGuard transport, encryption, routing rules from the control plane, forwarding."
+  },
+  {
+   "id": "T01-E42",
+   "topic": "tsrs-license",
+   "kind": "git_file",
+   "repo": "tailscale/tailscale-rs",
+   "rev": "d34658bbb2eb4593ae6df959aa93e9ee1e0457c6",
+   "path": "LICENSE",
+   "lines": [
+    1,
+    3
+   ],
+   "url": "https://github.com/tailscale/tailscale-rs/blob/d34658bbb2eb4593ae6df959aa93e9ee1e0457c6/LICENSE",
+   "immutable": true,
+   "source_sha256": "ca47fae724a2dbc238f896c2b6cfd96fa7735916d852e559a8403cd384ba7132",
+   "excerpt": "BSD 3-Clause License\n\nCopyright (c) 2026 Tailscale Inc & contributors.",
+   "excerpt_sha256": "c6683c00d73da5da117531d25c03fc2952e1bfb270e8e94998a111d8ea810009",
+   "claim": "tailscale-rs is BSD 3-Clause licensed."
+  },
+  {
+   "id": "T01-E43",
+   "topic": "tsrs-patent-grant",
+   "kind": "git_file",
+   "repo": "tailscale/tailscale-rs",
+   "rev": "d34658bbb2eb4593ae6df959aa93e9ee1e0457c6",
+   "path": "PATENTS",
+   "lines": [
+    1,
+    1
+   ],
+   "url": "https://github.com/tailscale/tailscale-rs/blob/d34658bbb2eb4593ae6df959aa93e9ee1e0457c6/PATENTS",
+   "immutable": true,
+   "source_sha256": "debc5ca73d082a6c7de743fecdba6f75deafdf9200acfbddeb8ca32d66e6e128",
+   "excerpt": "Additional IP Rights Grant (Patents)",
+   "excerpt_sha256": "d4ecfd781829f99f6ed318c7bfb114b5424aed6f8c46efe0835e64a7b45bea1f",
+   "claim": "tailscale-rs ships an additional patent grant file alongside the BSD licence (its terms are not assessed here)."
+  },
+  {
+   "id": "T01-E44",
+   "topic": "awslc-sys-license",
+   "kind": "crate_file",
+   "repo": "crates.io/aws-lc-sys",
+   "rev": "0.45.0",
+   "path": "Cargo.toml",
+   "lines": [
+    76,
+    76
+   ],
+   "url": "https://docs.rs/crate/aws-lc-sys/0.45.0/source/Cargo.toml",
+   "immutable": true,
+   "source_sha256": "836bac6390070d88f3c804f4212e16ca6e142f6c111795094d925470d07d6866",
+   "excerpt": "license = \"ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)\"",
+   "excerpt_sha256": "6f4aa4002d61abcedb1bcd9c923ae49f890219a313fd1f4796f7c77b2f1acb5a",
+   "claim": "aws-lc-sys declares a composite licence (ISC, Apache-2.0, MIT, BSD-3-Clause)."
+  },
+  {
+   "id": "T01-E45",
+   "topic": "tracker-wireguard-not-membership",
+   "kind": "tracker",
+   "bead": "ffw-32a",
+   "immutable": false,
+   "retrieved_utc": "2026-11-06T19:10Z",
+   "excerpt": "A userspace WireGuard tunnel by itself does not implement Tailscale membership.",
+   "excerpt_sha256": "0c54d1b5c753428efa6e6532d1c8f79f3c40155eb86c5946c0b0be65e715f87e",
+   "claim": "A WireGuard-only tunnel is not Tailscale membership (the bead's definition of native support)."
+  },
+  {
+   "id": "T01-E46",
+   "topic": "tracker-userspace-mode-not-rust",
+   "kind": "tracker",
+   "bead": "ffw-32a",
+   "immutable": false,
+   "retrieved_utc": "2026-11-06T19:10Z",
+   "excerpt": "That documents an operating mode, not a tiny Rust Tailscale implementation for these targets.",
+   "excerpt_sha256": "c53606dc6b7d8b5f050bc63999aec8422bb0cae13680231e9f65869180c12f3e",
+   "claim": "Userspace networking mode is an operating mode of the Go daemon, not a Rust implementation (the bead)."
+  },
+  {
+   "id": "T01-E47",
+   "topic": "tracker-gateway-not-native",
+   "kind": "tracker",
+   "bead": "ffw-32a",
+   "immutable": false,
+   "retrieved_utc": "2026-11-06T19:10Z",
+   "excerpt": "Label this as gateway access rather than per-speaker native membership.",
+   "excerpt_sha256": "aae6285abcc3a7805c6b6d19f1edbdf5f72d8163f7b92aca2f0c0bd8a34b453f",
+   "claim": "A tailnet-to-LAN gateway is gateway access, not per-speaker native membership (the bead)."
+  }
+ ]
+}

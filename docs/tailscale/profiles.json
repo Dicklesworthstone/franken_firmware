@@ -1,0 +1,1136 @@
+{
+ "schema": "ffw.t01.profile.v1",
+ "profile_version": "t01-profile-2026-11-06.1",
+ "status": "provisional feasibility profile, INCOMPLETE: the mandatory legacy-ISA build (X01) and on-target figures (X02) are blocked, so no T01 closure is claimed; native qualification stays pending (T04 admits a development candidate, Q06 qualifies externally)",
+ "frozen_note": "Versioned before any execution; a failed threshold or a changed fact makes a new version and a decision record, never a silent edit.",
+ "targets": {
+  "ppc32be_stock": {
+   "isa": "PowerPC 32-bit big-endian (S5/ZB100 family; MPC8247 603e per the teardown, CPU identity still needs separate evidence)",
+   "rust_triple": "powerpc-unknown-linux-musl",
+   "kernel": "2.6.14",
+   "kernel_state": "unqualified",
+   "stock": true,
+   "nominal_ram_bytes": 33554432,
+   "ram_basis": "device-reported nominal 32 MB (S5 P100); a nominal figure, not a process budget",
+   "evidence": [
+    "T01-E31",
+    "T01-E32"
+   ]
+  },
+  "mips32r2be_stock": {
+   "isa": "MIPS32r2 big-endian (S1/S3/S9/S12/Sub families)",
+   "rust_triple": "mips-unknown-linux-musl",
+   "kernel": "2.6.35",
+   "kernel_state": "unqualified",
+   "stock": true,
+   "nominal_ram_bytes": 134217728,
+   "ram_basis": "device-reported nominal 128 MB (Play:1 A101, Play:3, Playbar, Sub); a nominal figure, not a process budget",
+   "evidence": [
+    "T01-E31",
+    "T01-E32"
+   ]
+  },
+  "ppc32be_harness": {
+   "isa": "PowerPC 32-bit big-endian under QEMU g3beige (a stand-in, not the stock hardware)",
+   "rust_triple": "powerpc-unknown-linux-musl",
+   "kernel": "4.9.0-0.bpo.6-powerpc",
+   "kernel_state": "harness_guest_only",
+   "stock": false,
+   "nominal_ram_bytes": null,
+   "ram_basis": "not a device",
+   "evidence": [
+    "T01-E31"
+   ]
+  },
+  "mips32be_harness": {
+   "isa": "MIPS32 big-endian under QEMU malta (a stand-in, not the stock hardware)",
+   "rust_triple": "mips-unknown-linux-musl",
+   "kernel": "4.19.0-21-4kc-malta",
+   "kernel_state": "harness_guest_only",
+   "stock": false,
+   "nominal_ram_bytes": null,
+   "ram_basis": "not a device",
+   "evidence": [
+    "T01-E31"
+   ]
+  }
+ },
+ "behaviors": [
+  {
+   "id": "enrollment",
+   "text": "Each native node enrolls under its own identity (control registration)."
+  },
+  {
+   "id": "key_lifecycle",
+   "text": "Key lifecycle: node-key expiry is detected and the key is rotated."
+  },
+  {
+   "id": "netmap_updates",
+   "text": "The node receives network state (network-map updates) from the control plane."
+  },
+  {
+   "id": "peer_discovery",
+   "text": "Peer discovery, and addressing a peer by its real node identity."
+  },
+  {
+   "id": "nat_traversal",
+   "text": "NAT traversal for direct paths (STUN and disco)."
+  },
+  {
+   "id": "relay_fallback",
+   "text": "Relay fallback (DERP) where a direct path fails."
+  },
+  {
+   "id": "policy_enforcement",
+   "text": "Access policy from the control plane is applied (ACL/grants packet filter)."
+  },
+  {
+   "id": "reachability_diagnostics",
+   "text": "Reachability diagnostics."
+  },
+  {
+   "id": "dns_naming",
+   "text": "DNS naming reflects real node identity and lifecycle (MagicDNS), not host aliases."
+  },
+  {
+   "id": "offline_behavior",
+   "text": "Explicit behavior on token expiry, revoked access and a disconnected control plane."
+  },
+  {
+   "id": "clock_uncertainty",
+   "text": "Device clock uncertainty is not hidden when credential or certificate validation needs time."
+  },
+  {
+   "id": "bounded_resources",
+   "text": "Bounded relay buffers, peer counts, concurrent sessions and handshake rates."
+  }
+ ],
+ "candidates": {
+  "tailscale-go-1.104.5": {
+   "title": "Official Tailscale client (Go): the reference implementation",
+   "class": "official_reference",
+   "strict_rust": false,
+   "counts_as_native": false,
+   "extensible": false,
+   "facts": {
+    "language": "go",
+    "role": "client",
+    "mode": "native_process",
+    "membership": "own_identity"
+   },
+   "pin": {
+    "repo": "tailscale/tailscale",
+    "tag": "v1.104.5",
+    "commit": "73a48057aaf5f60e4f770b398e9b7af576b01dbe",
+    "go": "1.27.3",
+    "go_commit": "2aae1000ea1d4b28923b96db28acf4e3b99d6aff",
+    "license": "BSD-3-Clause"
+   },
+   "behaviors": {
+    "enrollment": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E38",
+      "T01-E11"
+     ]
+    },
+    "key_lifecycle": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E10"
+     ]
+    },
+    "netmap_updates": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E39",
+      "T01-E40"
+     ]
+    },
+    "peer_discovery": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E40"
+     ]
+    },
+    "nat_traversal": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E40"
+     ]
+    },
+    "relay_fallback": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E12",
+      "T01-E40"
+     ]
+    },
+    "policy_enforcement": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E38",
+      "T01-E41"
+     ]
+    },
+    "reachability_diagnostics": {
+     "state": "unknown",
+     "evidence": [],
+     "note": "not read in this study"
+    },
+    "dns_naming": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E39"
+     ]
+    },
+    "offline_behavior": {
+     "state": "unknown",
+     "evidence": [],
+     "note": "not read in this study"
+    },
+    "clock_uncertainty": {
+     "state": "unknown",
+     "evidence": [],
+     "note": "not read in this study"
+    },
+    "bounded_resources": {
+     "state": "unknown",
+     "evidence": [],
+     "note": "not read in this study"
+    }
+   },
+   "platform": {
+    "ppc32be_stock": {
+     "state": "incompatible",
+     "evidence": [
+      "T01-E01",
+      "T01-E06"
+     ],
+     "unconditional": true,
+     "note": "no linux/ppc port in the Go toolchain and no PowerPC static tarball: nothing to run, whatever the kernel"
+    },
+    "mips32r2be_stock": {
+     "state": "incompatible",
+     "evidence": [
+      "T01-E02",
+      "T01-E31",
+      "T01-E05",
+      "T01-E07"
+     ],
+     "conditional_on": [
+      "the stock kernel release is as reported (E03: reported, not verified by a matching full-system guest)"
+     ],
+     "note": "a big-endian MIPS binary exists, but the Go toolchain's documented kernel floor (3.2) is above the reported stock kernel (2.6.35)"
+    },
+    "ppc32be_harness": {
+     "state": "incompatible",
+     "evidence": [
+      "T01-E01",
+      "T01-E06"
+     ],
+     "unconditional": true,
+     "note": "no linux/ppc port"
+    },
+    "mips32be_harness": {
+     "state": "build_unproven",
+     "evidence": [
+      "T01-E02",
+      "T01-E05",
+      "T01-E07"
+     ],
+     "note": "the official big-endian MIPS binary exists and the harness kernel (4.19) is above the Go floor; it has never been run here"
+    }
+   },
+   "note": "The reference for what native behavior is. Not a strict-Rust implementation, so it can never satisfy the native requirement, and it is not extensible within it."
+  },
+  "tailscale-rs-0.6.1": {
+   "title": "tailscale-rs (official Rust library, preview)",
+   "class": "native_strict_rust",
+   "strict_rust": true,
+   "counts_as_native": false,
+   "extensible": true,
+   "facts": {
+    "language": "rust",
+    "role": "client",
+    "mode": "native_process",
+    "membership": "own_identity"
+   },
+   "pin": {
+    "repo": "tailscale/tailscale-rs",
+    "tag": "v0.6.1",
+    "commit": "d34658bbb2eb4593ae6df959aa93e9ee1e0457c6",
+    "main_watch": "ed813dfe040fbcc4a002ff58ed644abf422435d1",
+    "main_watch_note": "main is at the 0.7.0 version bump, not yet tagged; re-pin when v0.7.0 is tagged",
+    "license": "BSD-3-Clause",
+    "license_evidence": [
+     "T01-E42",
+     "T01-E43"
+    ]
+   },
+   "behaviors": {
+    "enrollment": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E21"
+     ],
+     "note": "registration and authorization in ts_control over a Noise IK control channel"
+    },
+    "key_lifecycle": {
+     "state": "partial",
+     "evidence": [
+      "T01-E17",
+      "T01-E27"
+     ],
+     "note": "the wire types carry old_node_key and the expiry flags; automatic key rotation is listed unsupported"
+    },
+    "netmap_updates": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E21"
+     ],
+     "note": "streaming updates"
+    },
+    "peer_discovery": {
+     "state": "partial",
+     "evidence": [
+      "T01-E15"
+     ],
+     "note": "peers come with the netmap; lookup by hostname is not implemented"
+    },
+    "nat_traversal": {
+     "state": "not_implemented",
+     "evidence": [
+      "T01-E15",
+      "T01-E18"
+     ],
+     "note": "direct connections (STUN, disco) are not implemented; the disco crate is incomplete"
+    },
+    "relay_fallback": {
+     "state": "partial",
+     "evidence": [
+      "T01-E14",
+      "T01-E16"
+     ],
+     "note": "public DERP relays work; private DERP relays are unsupported"
+    },
+    "policy_enforcement": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E20"
+     ],
+     "note": "packet filter from the netmap; application capabilities are unsupported (T01-E17)"
+    },
+    "reachability_diagnostics": {
+     "state": "unknown",
+     "evidence": [],
+     "note": "ts_netcheck reports DERP latency; the rest was not read"
+    },
+    "dns_naming": {
+     "state": "not_implemented",
+     "evidence": [
+      "T01-E16"
+     ],
+     "note": "MagicDNS is unsupported"
+    },
+    "offline_behavior": {
+     "state": "unknown",
+     "evidence": [],
+     "note": "not read in this study"
+    },
+    "clock_uncertainty": {
+     "state": "unknown",
+     "evidence": [],
+     "note": "not read in this study; ts_control_serde uses chrono wall-clock types"
+    },
+    "bounded_resources": {
+     "state": "unknown",
+     "evidence": [
+      "T01-E26"
+     ],
+     "note": "only a fixed 64KiB TCP buffer default was read, not peer or session caps"
+    }
+   },
+   "platform": {
+    "ppc32be_stock": {
+     "state": "incompatible",
+     "evidence": [
+      "T01-E34",
+      "T01-E35",
+      "T01-E36",
+      "T01-E31"
+     ],
+     "conditional_on": [
+      "the stock kernel release is as reported (E03: reported, not verified by a matching full-system guest)"
+     ],
+     "note": "tokio's net feature rides on mio, which calls epoll_create1 unconditionally; epoll_create1 exists since Linux 2.6.27, above the reported 2.6.14. The P02 platform layer's poll fallback is a different design. A kernel or reactor change lifts it."
+    },
+    "mips32r2be_stock": {
+     "state": "no_evidence",
+     "evidence": [
+      "T01-E13",
+      "T01-E22",
+      "T01-E28",
+      "T01-E30"
+     ],
+     "note": "reported kernel 2.6.35 is above the epoll_create1 floor, but the README lists no 32-bit or big-endian target and nothing was built"
+    },
+    "ppc32be_harness": {
+     "state": "no_evidence",
+     "evidence": [
+      "T01-E13",
+      "T01-E22",
+      "T01-E30"
+     ],
+     "note": "nothing was built; the README lists no 32-bit or big-endian target"
+    },
+    "mips32be_harness": {
+     "state": "no_evidence",
+     "evidence": [
+      "T01-E13",
+      "T01-E22",
+      "T01-E30"
+     ],
+     "note": "nothing was built; the README lists no 32-bit or big-endian target"
+    }
+   },
+   "note": "The only strict-Rust candidate with control, DERP and ACL code. It is the right class for the native requirement and does not meet it: see the cells."
+  },
+  "wireguard-userspace": {
+   "title": "A userspace WireGuard implementation alone",
+   "class": "wireguard_only",
+   "strict_rust": true,
+   "counts_as_native": false,
+   "extensible": true,
+   "facts": {
+    "language": "rust",
+    "role": "data_plane",
+    "mode": "wireguard_data_plane_only",
+    "membership": "none"
+   },
+   "pin": null,
+   "pinned": false,
+   "behaviors": {
+    "enrollment": {
+     "state": "not_implemented",
+     "evidence": [
+      "T01-E45"
+     ],
+     "note": "no control plane: not Tailscale membership"
+    },
+    "key_lifecycle": {
+     "state": "not_implemented",
+     "evidence": [
+      "T01-E45"
+     ],
+     "note": "no control plane: not Tailscale membership"
+    },
+    "netmap_updates": {
+     "state": "not_implemented",
+     "evidence": [
+      "T01-E45"
+     ],
+     "note": "no control plane: not Tailscale membership"
+    },
+    "peer_discovery": {
+     "state": "not_implemented",
+     "evidence": [
+      "T01-E45"
+     ],
+     "note": "no control plane: not Tailscale membership"
+    },
+    "nat_traversal": {
+     "state": "not_implemented",
+     "evidence": [
+      "T01-E45"
+     ],
+     "note": "no control plane: not Tailscale membership"
+    },
+    "relay_fallback": {
+     "state": "not_implemented",
+     "evidence": [
+      "T01-E45"
+     ],
+     "note": "no control plane: not Tailscale membership"
+    },
+    "policy_enforcement": {
+     "state": "not_implemented",
+     "evidence": [
+      "T01-E45"
+     ],
+     "note": "no control plane: not Tailscale membership"
+    },
+    "reachability_diagnostics": {
+     "state": "not_implemented",
+     "evidence": [
+      "T01-E45"
+     ],
+     "note": "no control plane: not Tailscale membership"
+    },
+    "dns_naming": {
+     "state": "not_implemented",
+     "evidence": [
+      "T01-E45"
+     ],
+     "note": "no control plane: not Tailscale membership"
+    },
+    "offline_behavior": {
+     "state": "not_implemented",
+     "evidence": [
+      "T01-E45"
+     ],
+     "note": "no control plane: not Tailscale membership"
+    },
+    "clock_uncertainty": {
+     "state": "not_implemented",
+     "evidence": [
+      "T01-E45"
+     ],
+     "note": "no control plane: not Tailscale membership"
+    },
+    "bounded_resources": {
+     "state": "not_implemented",
+     "evidence": [
+      "T01-E45"
+     ],
+     "note": "no control plane: not Tailscale membership"
+    }
+   },
+   "platform": {
+    "ppc32be_stock": {
+     "state": "no_evidence",
+     "evidence": [],
+     "note": "no WireGuard-only implementation is pinned in this study; the class is decided by definition"
+    },
+    "mips32r2be_stock": {
+     "state": "no_evidence",
+     "evidence": [],
+     "note": "no WireGuard-only implementation is pinned in this study; the class is decided by definition"
+    },
+    "ppc32be_harness": {
+     "state": "no_evidence",
+     "evidence": [],
+     "note": "no WireGuard-only implementation is pinned in this study; the class is decided by definition"
+    },
+    "mips32be_harness": {
+     "state": "no_evidence",
+     "evidence": [],
+     "note": "no WireGuard-only implementation is pinned in this study; the class is decided by definition"
+    }
+   },
+   "note": "Class by definition (T01-E45); no specific implementation was pinned or assessed."
+  },
+  "tailscaled-userspace-proxy": {
+   "title": "Rust application using tailscaled's userspace-networking SOCKS5/HTTP proxy on the same device",
+   "class": "wrapper",
+   "strict_rust": false,
+   "counts_as_native": false,
+   "extensible": false,
+   "facts": {
+    "language": "go",
+    "role": "client",
+    "mode": "proxy_of_other_daemon",
+    "membership": "own_identity",
+    "daemon_location": "same_device"
+   },
+   "pin": {
+    "repo": "tailscale/tailscale",
+    "tag": "v1.104.5",
+    "commit": "73a48057aaf5f60e4f770b398e9b7af576b01dbe"
+   },
+   "behaviors": {
+    "enrollment": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E38",
+      "T01-E11"
+     ]
+    },
+    "key_lifecycle": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E10"
+     ]
+    },
+    "netmap_updates": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E39",
+      "T01-E40"
+     ]
+    },
+    "peer_discovery": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E40"
+     ]
+    },
+    "nat_traversal": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E40"
+     ]
+    },
+    "relay_fallback": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E12",
+      "T01-E40"
+     ]
+    },
+    "policy_enforcement": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E38",
+      "T01-E41"
+     ]
+    },
+    "reachability_diagnostics": {
+     "state": "unknown",
+     "evidence": [],
+     "note": "not read in this study"
+    },
+    "dns_naming": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E39"
+     ]
+    },
+    "offline_behavior": {
+     "state": "unknown",
+     "evidence": [],
+     "note": "not read in this study"
+    },
+    "clock_uncertainty": {
+     "state": "unknown",
+     "evidence": [],
+     "note": "not read in this study"
+    },
+    "bounded_resources": {
+     "state": "unknown",
+     "evidence": [],
+     "note": "not read in this study"
+    }
+   },
+   "platform": {
+    "ppc32be_stock": {
+     "state": "incompatible",
+     "evidence": [
+      "T01-E01",
+      "T01-E06"
+     ],
+     "unconditional": true,
+     "note": "no linux/ppc port in the Go toolchain and no PowerPC static tarball: nothing to run, whatever the kernel"
+    },
+    "mips32r2be_stock": {
+     "state": "incompatible",
+     "evidence": [
+      "T01-E02",
+      "T01-E31",
+      "T01-E05",
+      "T01-E07"
+     ],
+     "conditional_on": [
+      "the stock kernel release is as reported (E03: reported, not verified by a matching full-system guest)"
+     ],
+     "note": "a big-endian MIPS binary exists, but the Go toolchain's documented kernel floor (3.2) is above the reported stock kernel (2.6.35)"
+    },
+    "ppc32be_harness": {
+     "state": "incompatible",
+     "evidence": [
+      "T01-E01",
+      "T01-E06"
+     ],
+     "unconditional": true,
+     "note": "no linux/ppc port"
+    },
+    "mips32be_harness": {
+     "state": "build_unproven",
+     "evidence": [
+      "T01-E02",
+      "T01-E05",
+      "T01-E07"
+     ],
+     "note": "the official big-endian MIPS binary exists and the harness kernel (4.19) is above the Go floor; it has never been run here"
+    }
+   },
+   "note": "An operating mode of the Go daemon (T01-E08, T01-E46); the membership is the Go daemon's, so it is not strict-Rust native."
+  },
+  "host-gateway": {
+   "title": "Tailnet-to-LAN gateway on a newer speaker or host (FrankenSonos / franken_remote style)",
+   "class": "gateway",
+   "strict_rust": false,
+   "counts_as_native": false,
+   "extensible": false,
+   "facts": {
+    "language": "go",
+    "role": "client",
+    "mode": "proxy_of_other_daemon",
+    "membership": "host_identity",
+    "daemon_location": "other_host"
+   },
+   "pin": null,
+   "pinned": false,
+   "behaviors": {
+    "enrollment": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E38",
+      "T01-E11"
+     ]
+    },
+    "key_lifecycle": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E10"
+     ]
+    },
+    "netmap_updates": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E39",
+      "T01-E40"
+     ]
+    },
+    "peer_discovery": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E40"
+     ]
+    },
+    "nat_traversal": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E40"
+     ]
+    },
+    "relay_fallback": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E12",
+      "T01-E40"
+     ]
+    },
+    "policy_enforcement": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E38",
+      "T01-E41"
+     ]
+    },
+    "reachability_diagnostics": {
+     "state": "unknown",
+     "evidence": [],
+     "note": "not read in this study"
+    },
+    "dns_naming": {
+     "state": "implemented",
+     "evidence": [
+      "T01-E39"
+     ]
+    },
+    "offline_behavior": {
+     "state": "unknown",
+     "evidence": [],
+     "note": "not read in this study"
+    },
+    "clock_uncertainty": {
+     "state": "unknown",
+     "evidence": [],
+     "note": "not read in this study"
+    },
+    "bounded_resources": {
+     "state": "unknown",
+     "evidence": [],
+     "note": "not read in this study"
+    }
+   },
+   "platform": {
+    "ppc32be_stock": {
+     "state": "not_applicable",
+     "evidence": [
+      "T01-E47"
+     ],
+     "note": "runs on another host; it says nothing about the speaker"
+    },
+    "mips32r2be_stock": {
+     "state": "not_applicable",
+     "evidence": [
+      "T01-E47"
+     ],
+     "note": "runs on another host; it says nothing about the speaker"
+    },
+    "ppc32be_harness": {
+     "state": "not_applicable",
+     "evidence": [
+      "T01-E47"
+     ],
+     "note": "runs on another host; it says nothing about the speaker"
+    },
+    "mips32be_harness": {
+     "state": "not_applicable",
+     "evidence": [
+      "T01-E47"
+     ],
+     "note": "runs on another host; it says nothing about the speaker"
+    }
+   },
+   "note": "Gateway access, never per-speaker native membership (T01-E47). Separately named, as the bead requires."
+  }
+ },
+ "budgets": {
+  "reserve_floor_bytes": 4194304,
+  "reserve_basis": "the bead: the provisional policy reserves at least 4 MiB beyond the measured worst-case total usage",
+  "tailnet_ram_cap_bytes": {
+   "ppc32be_stock": null,
+   "mips32r2be_stock": null,
+   "ppc32be_harness": null,
+   "mips32be_harness": null
+  },
+  "cap_state": "pending: no shared budget is allocated, so no numeric tailnet RAM cap exists (the bead: absent budget is pending, not pass); T04/Q02 allocate it",
+  "nominal_is_not_a_budget": "a device's nominal RAM is not a process budget (the bead); the figures in `targets` are nominal"
+ },
+ "measurements": {
+  "tailscale-rs-0.6.1/ppc32be_stock": {
+   "build": {
+    "state": "pending",
+    "blocker": "needs a central build (root's strict-remote RCH lane); case T01-X01 holds the exact lines and no receipt exists yet"
+   },
+   "binary_bytes": {
+    "state": "pending",
+    "blocker": "needs a central build (root's strict-remote RCH lane); case T01-X01 holds the exact lines and no receipt exists yet"
+   },
+   "rss_peak_bytes": {
+    "state": "pending",
+    "blocker": "no matching full-system guest exists for the stock kernel (E03), so no on-target RSS or CPU is possible; a harness-guest figure would be indicative only and has not been run"
+   },
+   "cpu": {
+    "state": "pending",
+    "blocker": "no matching full-system guest exists for the stock kernel (E03), so no on-target RSS or CPU is possible; a harness-guest figure would be indicative only and has not been run"
+   }
+  },
+  "tailscale-rs-0.6.1/mips32r2be_stock": {
+   "build": {
+    "state": "pending",
+    "blocker": "needs a central build (root's strict-remote RCH lane); case T01-X01 holds the exact lines and no receipt exists yet"
+   },
+   "binary_bytes": {
+    "state": "pending",
+    "blocker": "needs a central build (root's strict-remote RCH lane); case T01-X01 holds the exact lines and no receipt exists yet"
+   },
+   "rss_peak_bytes": {
+    "state": "pending",
+    "blocker": "no matching full-system guest exists for the stock kernel (E03), so no on-target RSS or CPU is possible; a harness-guest figure would be indicative only and has not been run"
+   },
+   "cpu": {
+    "state": "pending",
+    "blocker": "no matching full-system guest exists for the stock kernel (E03), so no on-target RSS or CPU is possible; a harness-guest figure would be indicative only and has not been run"
+   }
+  },
+  "tailscale-rs-0.6.1/ppc32be_harness": {
+   "build": {
+    "state": "pending",
+    "blocker": "needs a central build (root's strict-remote RCH lane); case T01-X01 holds the exact lines and no receipt exists yet"
+   },
+   "binary_bytes": {
+    "state": "pending",
+    "blocker": "needs a central build (root's strict-remote RCH lane); case T01-X01 holds the exact lines and no receipt exists yet"
+   },
+   "rss_peak_bytes": {
+    "state": "pending",
+    "blocker": "no matching full-system guest exists for the stock kernel (E03), so no on-target RSS or CPU is possible; a harness-guest figure would be indicative only and has not been run"
+   },
+   "cpu": {
+    "state": "pending",
+    "blocker": "no matching full-system guest exists for the stock kernel (E03), so no on-target RSS or CPU is possible; a harness-guest figure would be indicative only and has not been run"
+   }
+  },
+  "tailscale-rs-0.6.1/mips32be_harness": {
+   "build": {
+    "state": "pending",
+    "blocker": "needs a central build (root's strict-remote RCH lane); case T01-X01 holds the exact lines and no receipt exists yet"
+   },
+   "binary_bytes": {
+    "state": "pending",
+    "blocker": "needs a central build (root's strict-remote RCH lane); case T01-X01 holds the exact lines and no receipt exists yet"
+   },
+   "rss_peak_bytes": {
+    "state": "pending",
+    "blocker": "no matching full-system guest exists for the stock kernel (E03), so no on-target RSS or CPU is possible; a harness-guest figure would be indicative only and has not been run"
+   },
+   "cpu": {
+    "state": "pending",
+    "blocker": "no matching full-system guest exists for the stock kernel (E03), so no on-target RSS or CPU is possible; a harness-guest figure would be indicative only and has not been run"
+   }
+  },
+  "tailscale-go-1.104.5/ppc32be_stock": {
+   "build": {
+    "state": "not_applicable",
+    "blocker": "nothing to build or run: no Go port for 32-bit PowerPC (T01-E01)"
+   },
+   "binary_bytes": {
+    "state": "not_applicable",
+    "blocker": "nothing to build or run: no Go port for 32-bit PowerPC (T01-E01)"
+   },
+   "rss_peak_bytes": {
+    "state": "not_applicable",
+    "blocker": "nothing to build or run: no Go port for 32-bit PowerPC (T01-E01)"
+   },
+   "cpu": {
+    "state": "not_applicable",
+    "blocker": "nothing to build or run: no Go port for 32-bit PowerPC (T01-E01)"
+   }
+  },
+  "tailscale-go-1.104.5/mips32r2be_stock": {
+   "build": {
+    "state": "pending",
+    "blocker": "needs a central build (root's strict-remote RCH lane); case T01-X01 holds the exact lines and no receipt exists yet"
+   },
+   "binary_bytes": {
+    "state": "observed_not_a_footprint",
+    "value": 36700859,
+    "unit": "bytes",
+    "what": "the compressed official static tarball (tailscale and tailscaled), not an installed size or a memory figure",
+    "evidence": [
+     "T01-E07"
+    ]
+   },
+   "rss_peak_bytes": {
+    "state": "pending",
+    "blocker": "no matching full-system guest exists for the stock kernel (E03), so no on-target RSS or CPU is possible; a harness-guest figure would be indicative only and has not been run"
+   },
+   "cpu": {
+    "state": "pending",
+    "blocker": "no matching full-system guest exists for the stock kernel (E03), so no on-target RSS or CPU is possible; a harness-guest figure would be indicative only and has not been run"
+   }
+  },
+  "tailscale-go-1.104.5/ppc32be_harness": {
+   "build": {
+    "state": "not_applicable",
+    "blocker": "nothing to build or run: no Go port for 32-bit PowerPC (T01-E01)"
+   },
+   "binary_bytes": {
+    "state": "not_applicable",
+    "blocker": "nothing to build or run: no Go port for 32-bit PowerPC (T01-E01)"
+   },
+   "rss_peak_bytes": {
+    "state": "not_applicable",
+    "blocker": "nothing to build or run: no Go port for 32-bit PowerPC (T01-E01)"
+   },
+   "cpu": {
+    "state": "not_applicable",
+    "blocker": "nothing to build or run: no Go port for 32-bit PowerPC (T01-E01)"
+   }
+  },
+  "tailscale-go-1.104.5/mips32be_harness": {
+   "build": {
+    "state": "pending",
+    "blocker": "needs a central build (root's strict-remote RCH lane); case T01-X01 holds the exact lines and no receipt exists yet"
+   },
+   "binary_bytes": {
+    "state": "observed_not_a_footprint",
+    "value": 36700859,
+    "unit": "bytes",
+    "what": "the compressed official static tarball (tailscale and tailscaled), not an installed size or a memory figure",
+    "evidence": [
+     "T01-E07"
+    ]
+   },
+   "rss_peak_bytes": {
+    "state": "pending",
+    "blocker": "no matching full-system guest exists for the stock kernel (E03), so no on-target RSS or CPU is possible; a harness-guest figure would be indicative only and has not been run"
+   },
+   "cpu": {
+    "state": "pending",
+    "blocker": "no matching full-system guest exists for the stock kernel (E03), so no on-target RSS or CPU is possible; a harness-guest figure would be indicative only and has not been run"
+   }
+  }
+ },
+ "derived_facts": {
+  "tailscale-rs-0.6.1": {
+   "tree_sha256": "400e6b2ebd40134a490d47a4d3a111e9a976b6a637675057d9536f8299d73d06",
+   "lock_sha256": "4745e012086b9abeb901c26541e95cea35cb65a868a3a76fc95b018e6fe8b6fd",
+   "lock_packages": 689,
+   "lock_distinct_names": 621,
+   "lock_closure_of_tailscale": 590,
+   "lock_closure_ts_crates": 37,
+   "workspace_members_declared": 45,
+   "member_dirs": 44,
+   "workspace_version": "0.6.1",
+   "rust_version_manifest": "1.92.0",
+   "rust_lines_in_src": 63694,
+   "unsafe_tokens": {
+    "root": 1,
+    "ts_bart": 5,
+    "ts_control_serde": 1,
+    "ts_disco_protocol": 3,
+    "ts_ffi": 74,
+    "ts_kv_store": 9,
+    "ts_netmon": 36,
+    "ts_netstack_smoltcp_socket": 2,
+    "ts_packet": 6,
+    "ts_runtime": 1
+   },
+   "forbid_unsafe_crates": 5,
+   "readme_msrv": "1.97",
+   "readme_platforms": [
+    "Linux (`x86_64`/`ARM64`)",
+    "Windows (`x86_64`)",
+    "macOS (`ARM64`)"
+   ],
+   "readme_unsupported_items": [
+    "AIX",
+    "Android",
+    "Application Capabilities",
+    "Automatic Key Rotation",
+    "BSDs",
+    "Client Metrics",
+    "Device Posture Collection",
+    "Endpoint Collection",
+    "Exit Nodes (either being one, or using one)",
+    "HTTPS Certificates",
+    "Kubernetes",
+    "Log Streaming",
+    "MagicDNS",
+    "Mullvad VPN",
+    "Network Flow Logs",
+    "Node Sharing",
+    "Peer relays",
+    "Plan9",
+    "Private DERP relays",
+    "QNAP",
+    "Split DNS",
+    "Subnet Routers (either being one, or using one)",
+    "Synology DSM",
+    "Taildrive",
+    "Taildrop",
+    "Tailnet Lock",
+    "Tailscale Funnel",
+    "Tailscale SSH",
+    "Tailscale Serve",
+    "Tailscale Services",
+    "Webhooks",
+    "iOS"
+   ],
+   "tls_backend_line": "tokio-rustls = { version = \"0.26\", default-features = false, features = [\"aws-lc-rs\"] }"
+  },
+  "aws-lc-sys-0.45.0": {
+   "tree_sha256": "54f614b4be438cdd31a1a55205f25146426553dea64de14ce5c6ef3e73e17bd9",
+   "crate_version": "0.45.0",
+   "asm_source_sets": [
+    "x86_64",
+    "aarch64",
+    "arm",
+    "x86",
+    "powerpc64"
+   ],
+   "no_asm_refused_in_release": true,
+   "header_defines": {
+    "OPENSSL_PPC32BE": true,
+    "OPENSSL_MIPS": true,
+    "OPENSSL_PPC64BE": true,
+    "OPENSSL_PPC64LE": true
+   }
+  },
+  "mio-1.2.1": {
+   "tree_sha256": "30c857b9b9781fd4bb8e9a0d36149bfe51d9cfc44f061cddd3d47b5a012347d2",
+   "crate_version": "1.2.1",
+   "epoll_create1_calls": 2,
+   "plain_epoll_create_calls": 0
+  },
+  "tailscale-rs-0.6.1/workspace_edges": {
+   "note": "Intra-workspace edges only, plus the third-party closure from the pinned Cargo.lock (declared normal and build edges, every target and feature: an over-approximation). NOT a portability or OS-free claim; nothing was built for any target.",
+   "no_runtime_edge_in_workspace": [
+    "ts_array256",
+    "ts_bart",
+    "ts_bart_packetfilter",
+    "ts_bitset",
+    "ts_capabilityversion",
+    "ts_control_serde",
+    "ts_disco_protocol",
+    "ts_dynbitset",
+    "ts_hexdump",
+    "ts_keys",
+    "ts_kv_store",
+    "ts_nodecapability",
+    "ts_noise",
+    "ts_overlay_router",
+    "ts_packet",
+    "ts_packetfilter",
+    "ts_packetfilter_serde",
+    "ts_packetfilter_state",
+    "ts_peercapability",
+    "ts_time",
+    "ts_transport",
+    "ts_tunnel",
+    "ts_underlay_router"
+   ],
+   "runtime_edge_in_workspace": [
+    "tailscale",
+    "ts_cli_util",
+    "ts_control",
+    "ts_control_noise",
+    "ts_dataplane",
+    "ts_derp",
+    "ts_devtools",
+    "ts_ffi",
+    "ts_future_util",
+    "ts_http_util",
+    "ts_kv_store_tokio",
+    "ts_netcheck",
+    "ts_netmon",
+    "ts_netstack_smoltcp",
+    "ts_netstack_smoltcp_core",
+    "ts_netstack_smoltcp_socket",
+    "ts_python",
+    "ts_runtime",
+    "ts_tls_util",
+    "ts_transport_tun"
+   ],
+   "third_party_reaches_runtime_or_os": {
+    "ts_control_serde": [
+     "libc"
+    ],
+    "ts_disco_protocol": [
+     "libc"
+    ],
+    "ts_keys": [
+     "libc"
+    ],
+    "ts_noise": [
+     "libc"
+    ],
+    "ts_overlay_router": [
+     "libc"
+    ],
+    "ts_packet": [
+     "libc"
+    ],
+    "ts_transport": [
+     "libc"
+    ],
+    "ts_tunnel": [
+     "libc"
+    ],
+    "ts_underlay_router": [
+     "libc"
+    ]
+   }
+  }
+ },
+ "native_requirement": {
+  "status": "required",
+  "waived": false,
+  "satisfied_by": [],
+  "study_outcome": "No candidate is supported on any target. The official client is incompatible with the reported stock kernels (no PowerPC port; kernel floor above 2.6.35) and is not strict-Rust. tailscale-rs is the only strict-Rust candidate: it lacks NAT traversal, automatic key rotation and MagicDNS, is tokio/mio-bound (epoll_create1, above the reported PowerPC kernel), and has never been built for a big-endian 32-bit target. Its protocol-core crates have no INTRA-WORKSPACE edge to a runtime, OS or TLS crate, but their third-party closure still reaches libc (rand -> getrandom -> libc) and is unqualified (derived_facts workspace_edges); no portability is shown. The legacy-ISA build and the on-target memory/CPU figures are blocked on a central build and on guests that do not exist.",
+  "closes": [],
+  "does_not_close": [
+   "T02",
+   "T04",
+   "Q06"
+  ],
+  "gateway_note": "a gateway or wrapper is named separately and never counts as per-speaker native membership",
+  "t01_status": "incomplete: mandatory X01 (legacy-ISA build) and X02 (on-target memory/CPU) are blocked; nothing here waives them or moves them to another bead",
+  "closes_note": "no closure is claimed while X01/X02 are blocked; the bead's own rule (a reproducible negative leaves T02/T04/Q06 and the native requirement open) still holds"
+ }
+}

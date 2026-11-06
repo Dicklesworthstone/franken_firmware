@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# T01 end-to-end entry point (bead ffw-32a): native Tailscale protocol and resource feasibility, offline.
+# Delegates to tests/t01/run_cases.py (stdlib Python; it builds nothing, contacts nothing and never invokes cargo). Contract: docs/contracts/t01.md.
+#
+#   scripts/e2e/t01                                     the full tier without sources: the smoke cases pass, the source probes and the two central cases are BLOCKED (exit 3)
+#   scripts/e2e/t01 --tier smoke                        the ledger, the profile, the rules, the matrix, the synthetic fixtures and the native-requirement statement (seconds)
+#   scripts/e2e/t01 --tier full --sources DIR           also the source probes over the pinned trees in DIR (tailscale-rs/, aws-lc-sys/, mio/); how to fetch them: tests/tailscale-fixtures/evidence/FETCH.md
+#   scripts/e2e/t01 --tier soak                         NOT RUN, with the reason: exit 4, never a pass
+#   scripts/e2e/t01 --receipts DIR                      keep the shared Q00 JSONL diagnostic log and a JSON receipt under DIR (without it the log is kept in a fresh temp directory
+#                                                       whose path is printed; a log that lost critical evidence is NOT QUALIFIED)
+#   scripts/e2e/t01 --list                              the planned cases of the tier
+#
+# Exit 0 only when every case passed, none is blocked and the diagnostic log is complete; 1 on a failed case or a log that lost critical evidence; 3 when the only non-passes are
+# blocked cases (reported, never counted as passed); 4 for --tier soak; 2 on usage errors. The default run exits 3 on purpose: the exact legacy-ISA build (T01-X01) and the on-target
+# memory/CPU figures (T01-X02) need a central build and guests that do not exist, and a pass of the rest says nothing about a target.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+exec python3 -B "$ROOT/tests/t01/run_cases.py" "$@"

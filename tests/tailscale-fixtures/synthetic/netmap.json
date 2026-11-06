@@ -1,0 +1,30 @@
+{
+  "schema": "ffw.t01.fixture.netmap.v1",
+  "note": "SYNTHETIC network map for the node `node-a` (identity.json). The packet-filter semantics are the ones stated in docs/contracts/t01.md section 5: a packet is allowed only if some rule matches its source, destination, port and protocol (default deny); `*` matches anything. The expected decisions were written by hand from that sentence, not produced by the model.",
+  "self": "node-a",
+  "peer_cap": 4,
+  "peers": [
+    {"id": "node-b", "online": true, "home_derp": 1, "key_expiry": 1000000},
+    {"id": "node-c", "online": true, "home_derp": 2, "key_expiry": 1000000},
+    {"id": "node-d", "online": false, "home_derp": null, "key_expiry": 500000}
+  ],
+  "packet_filter": [
+    {"id": "rule-1", "srcs": ["node-b", "node-c"], "dsts": ["node-a"], "ports": [1400, 1401], "proto": "tcp"},
+    {"id": "rule-2", "srcs": ["node-c"], "dsts": ["node-a"], "ports": [5353], "proto": "udp"},
+    {"id": "rule-3", "srcs": ["node-d"], "dsts": ["node-a"], "ports": ["*"], "proto": "*"}
+  ],
+  "filter_cases": [
+    {"id": "F01", "src": "node-b", "dst": "node-a", "port": 1400, "proto": "tcp", "expect": "allow"},
+    {"id": "F02", "src": "node-b", "dst": "node-a", "port": 1402, "proto": "tcp", "expect": "deny"},
+    {"id": "F03", "src": "node-b", "dst": "node-a", "port": 1400, "proto": "udp", "expect": "deny"},
+    {"id": "F04", "src": "node-c", "dst": "node-a", "port": 5353, "proto": "udp", "expect": "allow"},
+    {"id": "F05", "src": "node-b", "dst": "node-a", "port": 5353, "proto": "udp", "expect": "deny"},
+    {"id": "F06", "src": "node-d", "dst": "node-a", "port": 1, "proto": "icmp", "expect": "allow"},
+    {"id": "F07", "src": "node-d", "dst": "node-a", "port": 65535, "proto": "tcp", "expect": "allow"},
+    {"id": "F08", "src": "node-a", "dst": "node-b", "port": 1400, "proto": "tcp", "expect": "deny"},
+    {"id": "F09", "src": "node-x", "dst": "node-a", "port": 1400, "proto": "tcp", "expect": "deny"},
+    {"id": "F10", "src": "node-c", "dst": "node-a", "port": 1401, "proto": "tcp", "expect": "allow"},
+    {"id": "F11", "src": "node-b", "dst": "node-a", "port": 0, "proto": "tcp", "expect": "deny"},
+    {"id": "F12", "src": "node-c", "dst": "node-b", "port": 1400, "proto": "tcp", "expect": "deny"}
+  ]
+}

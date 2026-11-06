@@ -1,0 +1,29 @@
+{
+  "schema": "ffw.t01.fixture.identity.v1",
+  "note": "SYNTHETIC. Placeholder key strings (a type prefix and 64 hex digits; the digits of a key differ from every other key's, whatever its kind), names under the reserved .invalid domain and addresses from the shared tailnet range. Nothing here is a real key, device, account, tailnet or site, and no value was derived from one.",
+  "key_format": {"machine_key": "mkey:", "node_key": "nodekey:", "disco_key": "discokey:", "hex_digits": 64},
+  "nodes": [
+    {"id": "node-a", "pseudonym": "m-000000000001", "hostname": "speaker-a.tailnet.invalid", "role": "speaker", "tags": ["tag:speaker"], "addresses": ["100.64.0.1"],
+     "machine_key": "mkey:0000000000000000000000000000000000000000000000000000000000000a01",
+     "node_key": "nodekey:0000000000000000000000000000000000000000000000000000000000000b01",
+     "disco_key": "discokey:0000000000000000000000000000000000000000000000000000000000000c01"},
+    {"id": "node-b", "pseudonym": "m-000000000002", "hostname": "speaker-b.tailnet.invalid", "role": "speaker", "tags": ["tag:speaker"], "addresses": ["100.64.0.2"],
+     "machine_key": "mkey:0000000000000000000000000000000000000000000000000000000000000a02",
+     "node_key": "nodekey:0000000000000000000000000000000000000000000000000000000000000b02",
+     "disco_key": "discokey:0000000000000000000000000000000000000000000000000000000000000c02"},
+    {"id": "node-c", "pseudonym": "m-000000000003", "hostname": "controller.tailnet.invalid", "role": "controller", "tags": ["tag:controller"], "addresses": ["100.64.0.3"],
+     "machine_key": "mkey:0000000000000000000000000000000000000000000000000000000000000a03",
+     "node_key": "nodekey:0000000000000000000000000000000000000000000000000000000000000b03",
+     "disco_key": "discokey:0000000000000000000000000000000000000000000000000000000000000c03"},
+    {"id": "node-d", "pseudonym": "m-000000000004", "hostname": "gateway.tailnet.invalid", "role": "gateway", "tags": ["tag:gateway"], "addresses": ["100.64.0.4"],
+     "machine_key": "mkey:0000000000000000000000000000000000000000000000000000000000000a04",
+     "node_key": "nodekey:0000000000000000000000000000000000000000000000000000000000000b04",
+     "disco_key": "discokey:0000000000000000000000000000000000000000000000000000000000000c04"}
+  ],
+  "invariants": [
+    "every key is unique across the file and across key kinds",
+    "a gateway has its own identity: its three keys appear on no other node (a node key is never cloned across simultaneously active gateways)",
+    "a hostname is under .invalid and an address is in 100.64.0.0/10",
+    "the pseudonym is what a log may carry; a hostname or a key never reaches a log"
+  ]
+}

@@ -1,0 +1,93 @@
+{
+ "artifacts": {
+  "docs/contracts/t01.md": "18874a3adab3c47e68b255159585a8d6201c7814721243a4905fa644d469d59c",
+  "docs/tailscale/feasibility.md": "32283a3673deaa8e3064171f40a7f4848c48a6a16432e37b7fcdc5c83b9327f7",
+  "docs/tailscale/profiles.json": "5b898665027bc31c91fb700436bd499af2c36b4ec0cd7255fccc4c55cea6b269",
+  "scripts/test/test_support/diagnostics.py": "df90049d7a0b87a3513c45bf4ae7502701d624d34c9e0d8e3e2394f6dba947b7",
+  "tests/t01/case_log.py": "21d58f7a16efd296c8269516d1bb1fd836ed20cfaaeb58e3448058de1ea6180b",
+  "tests/t01/cases.json": "23102bfd040b5fb90aac32f7772feb4b9bcca965d80e75bb6523cd9326fd06eb",
+  "tests/t01/run_cases.py": "8e62dafbab090b60c51500b4a7a85cac44dda5c7a374599d59a467aeb6edfc8c",
+  "tests/t01/t01lib.py": "ce6c900c59f6269bacf0aea1d34f7c25c3e19dae1e8b9bbdd0c596eec7e2dbee",
+  "tests/tailscale-fixtures/evidence/ledger.json": "14a6a857e41daa7e2399d8862385654f478bf0e627d04ebbe3d4895dafa54fbb",
+  "tests/tailscale-fixtures/synthetic/derp_map.json": "0e52e34322fcdb311fed709b31301ac15ca682bdf80a799e6b81b18fddf218ae",
+  "tests/tailscale-fixtures/synthetic/identity.json": "5d21c3f403f7906230733416d6293af9135351a6ab9345424ce185f4547cdf77",
+  "tests/tailscale-fixtures/synthetic/key_expiry.json": "aaa19cf367653c8a047e45af15a92eec350b6e709da9685007e8810e617308bd",
+  "tests/tailscale-fixtures/synthetic/netmap.json": "c93d2177a1885088cf3df991a8aec60099a496120e0994e8b9f85b2b5a77f5a3"
+ },
+ "counts": {
+  "blocked": 0,
+  "failed": 0,
+  "passed": 8
+ },
+ "diagnostics": {
+  "complete": true,
+  "file": "t01-diag-smoke-8cdc69be60fccfa2.jsonl",
+  "log": {
+   "bytes": 6276,
+   "critical_lost": false,
+   "dropped": 0,
+   "events": 17,
+   "sha256": "033fde88e9e18fa025f19acc0e091b4da9adafde136caf9edfbc3f74a3243dea",
+   "truncated": false
+  },
+  "reasons": []
+ },
+ "exit_code": 0,
+ "finished_utc": "2026-11-06T19:59:17+00:00",
+ "python": "3.15.0",
+ "replay": "scripts/e2e/t01 --tier smoke",
+ "results": [
+  {
+   "case": "T01-META-LEDGER",
+   "detail": "",
+   "group": "meta",
+   "status": "passed"
+  },
+  {
+   "case": "T01-META-PROFILE",
+   "detail": "",
+   "group": "meta",
+   "status": "passed"
+  },
+  {
+   "case": "T01-C01-classification",
+   "detail": "",
+   "group": "rules",
+   "status": "passed"
+  },
+  {
+   "case": "T01-C02-cell-rules",
+   "detail": "",
+   "group": "rules",
+   "status": "passed"
+  },
+  {
+   "case": "T01-C03-matrix",
+   "detail": "",
+   "group": "rules",
+   "status": "passed"
+  },
+  {
+   "case": "T01-C04-budget-rules",
+   "detail": "",
+   "group": "rules",
+   "status": "passed"
+  },
+  {
+   "case": "T01-C05-fixtures",
+   "detail": "",
+   "group": "fixtures",
+   "status": "passed"
+  },
+  {
+   "case": "T01-C06-native-requirement",
+   "detail": "",
+   "group": "contract",
+   "status": "passed"
+  }
+ ],
+ "run_id": "8cdc69be60fccfa2",
+ "schema": "ffw.t01.receipt.v1",
+ "sources_supplied": [],
+ "tier": "smoke"
+}

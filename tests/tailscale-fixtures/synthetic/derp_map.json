@@ -1,0 +1,22 @@
+{
+  "schema": "ffw.t01.fixture.derp_map.v1",
+  "note": "SYNTHETIC relay map and route-selection cases. Route policy stated in docs/contracts/t01.md section 5: a reachable peer over a working direct path is `direct`; otherwise the peer's home relay region if that region exists and is reachable; otherwise the reachable region with the lowest measured latency; otherwise `unreachable`. The expected routes were written by hand from that sentence. Hostnames are under the reserved .invalid domain.",
+  "regions": [
+    {"id": 1, "name": "region-one", "reachable": true, "latency_ms": 40, "nodes": ["derp1.relay.invalid"]},
+    {"id": 2, "name": "region-two", "reachable": true, "latency_ms": 25, "nodes": ["derp2.relay.invalid"]},
+    {"id": 3, "name": "region-three", "reachable": false, "latency_ms": null, "nodes": ["derp3.relay.invalid"]}
+  ],
+  "route_cases": [
+    {"id": "R01", "peer": "node-b", "home_derp": 1, "direct_ok": true, "expect": "direct"},
+    {"id": "R02", "peer": "node-b", "home_derp": 1, "direct_ok": false, "expect": "derp:1"},
+    {"id": "R03", "peer": "node-c", "home_derp": 2, "direct_ok": false, "expect": "derp:2"},
+    {"id": "R04", "peer": "node-e", "home_derp": 3, "direct_ok": false, "expect": "derp:2"},
+    {"id": "R05", "peer": "node-f", "home_derp": null, "direct_ok": false, "expect": "derp:2"},
+    {"id": "R06", "peer": "node-g", "home_derp": 9, "direct_ok": false, "expect": "derp:2"},
+    {"id": "R07", "peer": "node-h", "home_derp": 1, "direct_ok": true, "expect": "direct"}
+  ],
+  "no_region_cases": [
+    {"id": "R08", "regions_reachable": [], "peer": "node-b", "home_derp": 1, "direct_ok": false, "expect": "unreachable"},
+    {"id": "R09", "regions_reachable": [], "peer": "node-b", "home_derp": 1, "direct_ok": true, "expect": "direct"}
+  ]
+}

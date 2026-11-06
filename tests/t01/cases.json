@@ -1,0 +1,53 @@
+{
+  "schema": "ffw.t01.cases.v1",
+  "note": "Expected outcomes written by hand from the contract sentences in docs/contracts/t01.md (sections 3 to 5), not produced by the code they judge. Each table is held against the rule in t01lib.py by a runner case and, with a planted fault, by a unit test.",
+  "classification": [
+    {"id": "CL01", "facts": {"language": "rust", "role": "client", "mode": "native_process", "membership": "own_identity"}, "expect": "native_strict_rust"},
+    {"id": "CL02", "facts": {"language": "go", "role": "client", "mode": "native_process", "membership": "own_identity"}, "expect": "official_reference"},
+    {"id": "CL03", "facts": {"language": "c", "role": "client", "mode": "native_process", "membership": "own_identity"}, "expect": "official_reference"},
+    {"id": "CL04", "facts": {"language": "rust", "role": "client", "mode": "native_process", "membership": "host_identity"}, "expect": "unclassifiable"},
+    {"id": "CL05", "facts": {"language": "go", "role": "server", "mode": "native_process", "membership": "none"}, "expect": "control_server_only"},
+    {"id": "CL06", "facts": {"language": "rust", "role": "data_plane", "mode": "wireguard_data_plane_only", "membership": "none"}, "expect": "wireguard_only"},
+    {"id": "CL07", "facts": {"language": "go", "role": "client", "mode": "proxy_of_other_daemon", "membership": "own_identity", "daemon_location": "same_device"}, "expect": "wrapper"},
+    {"id": "CL08", "facts": {"language": "go", "role": "client", "mode": "proxy_of_other_daemon", "membership": "host_identity", "daemon_location": "other_host"}, "expect": "gateway"},
+    {"id": "CL09", "facts": {"language": "rust", "role": "client", "mode": "proxy_of_other_daemon", "membership": "host_identity"}, "expect": "wrapper"},
+    {"id": "CL10", "facts": {"language": "c", "role": "client", "mode": "embeds_foreign_runtime", "membership": "own_identity"}, "expect": "wrapper"},
+    {"id": "CL11", "facts": {"language": "rust", "role": "server", "mode": "wireguard_data_plane_only", "membership": "none"}, "expect": "control_server_only"},
+    {"id": "CL12", "facts": {}, "expect": "unclassifiable"}
+  ],
+  "cell_rules": {
+    "platforms": ["incompatible", "no_evidence", "build_unproven", "build_ok_unrun", "ran_on_target", "not_applicable"],
+    "rows": [
+      {"behavior": "implemented", "extensible": true, "expect": ["incompatible", "no_evidence", "no_evidence", "no_evidence", "supported", "not_applicable"]},
+      {"behavior": "implemented", "extensible": false, "expect": ["incompatible", "no_evidence", "no_evidence", "no_evidence", "supported", "not_applicable"]},
+      {"behavior": "partial", "extensible": true, "expect": ["incompatible", "implementable_upstream_work", "implementable_upstream_work", "implementable_upstream_work", "implementable_upstream_work", "not_applicable"]},
+      {"behavior": "partial", "extensible": false, "expect": ["incompatible", "incompatible", "incompatible", "incompatible", "incompatible", "not_applicable"]},
+      {"behavior": "not_implemented", "extensible": true, "expect": ["incompatible", "implementable_upstream_work", "implementable_upstream_work", "implementable_upstream_work", "implementable_upstream_work", "not_applicable"]},
+      {"behavior": "not_implemented", "extensible": false, "expect": ["incompatible", "incompatible", "incompatible", "incompatible", "incompatible", "not_applicable"]},
+      {"behavior": "unknown", "extensible": true, "expect": ["incompatible", "no_evidence", "no_evidence", "no_evidence", "no_evidence", "not_applicable"]},
+      {"behavior": "unknown", "extensible": false, "expect": ["incompatible", "no_evidence", "no_evidence", "no_evidence", "no_evidence", "not_applicable"]}
+    ]
+  },
+  "budget_rules": {
+    "reserve_floor_bytes": 4194304,
+    "rows": [
+      {"id": "B01", "measured": null, "cap": null, "reserve": 4194304, "expect": "pending:no_measurement"},
+      {"id": "B02", "measured": {"value": 1000000, "unit": "bytes", "receipt": "r"}, "cap": null, "reserve": 4194304, "expect": "pending:no_budget"},
+      {"id": "B03", "measured": {"value": 1000000, "unit": "bytes", "receipt": "r"}, "cap": {"value": 10000000, "unit": "bytes"}, "reserve": 4194304, "expect": "pass"},
+      {"id": "B04", "measured": {"value": 6000000, "unit": "bytes", "receipt": "r"}, "cap": {"value": 10000000, "unit": "bytes"}, "reserve": 4194304, "expect": "fail"},
+      {"id": "B05", "measured": {"value": 5805696, "unit": "bytes", "receipt": "r"}, "cap": {"value": 10000000, "unit": "bytes"}, "reserve": 4194304, "expect": "pass"},
+      {"id": "B06", "measured": {"value": 5805697, "unit": "bytes", "receipt": "r"}, "cap": {"value": 10000000, "unit": "bytes"}, "reserve": 4194304, "expect": "fail"},
+      {"id": "B07", "measured": {"value": 1000, "unit": "kib", "receipt": "r"}, "cap": {"value": 10000000, "unit": "bytes"}, "reserve": 4194304, "expect": "invalid:unit_mismatch"},
+      {"id": "B08", "measured": {"value": 1000000, "unit": "bytes"}, "cap": {"value": 10000000, "unit": "bytes"}, "reserve": 4194304, "expect": "invalid:measurement_without_receipt"},
+      {"id": "B09", "measured": null, "cap": null, "reserve": 4194303, "expect": "invalid:reserve_below_floor"},
+      {"id": "B10", "measured": null, "cap": null, "reserve": null, "expect": "invalid:reserve_below_floor"},
+      {"id": "B11", "measured": {"value": 1000000, "unit": "bytes", "receipt": "r"}, "cap": {"value": 10000000, "unit": "bytes"}, "reserve": 8388608, "expect": "pass"},
+      {"id": "B12", "measured": null, "cap": {"value": 10000000, "unit": "bytes"}, "reserve": 4194304, "expect": "pending:no_measurement"},
+      {"id": "B13", "measured": {"value": 0, "unit": "bytes", "receipt": "r"}, "cap": {"value": 0, "unit": "bytes"}, "reserve": 4194304, "expect": "fail"}
+    ]
+  },
+  "independent_anchors": {
+    "note": "figures obtained with a different tool from the probes (a shell grep over the supplied source), so a probe regression is not checked against itself",
+    "tailscale_rs_lock_packages": {"command": "grep -c '^\\[\\[package\\]\\]' Cargo.lock", "value": 689}
+  }
+}
