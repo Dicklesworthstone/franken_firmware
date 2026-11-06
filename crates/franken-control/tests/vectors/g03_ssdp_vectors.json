@@ -1,0 +1,1750 @@
+{
+ "schema": "ffw.g03.ssdp-vectors.v1",
+ "about": "Hand-written expectations for fsonos/ssdp.rs (G03 slice 2). The service URNs and paths are those of fsonos/soap.rs; the SSDP shapes are those of the UPnP Device Architecture 1.0. Nothing here is a capture of a device or a real controller: the address is from the documentation range and every id is synthetic.",
+ "device": {
+  "uuid": "00000000-0000-4000-8000-00000000a1b2",
+  "address": [
+   192,
+   0,
+   2,
+   10
+  ],
+  "port": 1400,
+  "name": "Test Room",
+  "max_age": 1800
+ },
+ "location": "http://192.0.2.10:1400/xml/device_description.xml",
+ "parse": [
+  {
+   "id": "ssdp-multicast-all",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "3"
+    ],
+    [
+     "ST",
+     "ssdp:all"
+    ]
+   ],
+   "expect": {
+    "search": {
+     "target": "ssdp:all",
+     "mx": 3
+    }
+   }
+  },
+  {
+   "id": "ssdp-rootdevice-mx-120-is-answered-as-5",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "120"
+    ],
+    [
+     "ST",
+     "upnp:rootdevice"
+    ]
+   ],
+   "expect": {
+    "search": {
+     "target": "upnp:rootdevice",
+     "mx": 5
+    }
+   }
+  },
+  {
+   "id": "ssdp-mx-6-is-answered-as-5",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "6"
+    ],
+    [
+     "ST",
+     "ssdp:all"
+    ]
+   ],
+   "expect": {
+    "search": {
+     "target": "ssdp:all",
+     "mx": 5
+    }
+   }
+  },
+  {
+   "id": "ssdp-mx-1-is-kept",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "1"
+    ],
+    [
+     "ST",
+     "ssdp:all"
+    ]
+   ],
+   "expect": {
+    "search": {
+     "target": "ssdp:all",
+     "mx": 1
+    }
+   }
+  },
+  {
+   "id": "ssdp-header-names-are-case-insensitive",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "host",
+     "239.255.255.250:1900"
+    ],
+    [
+     "man",
+     "\"ssdp:discover\""
+    ],
+    [
+     "mx",
+     "2"
+    ],
+    [
+     "st",
+     "urn:schemas-upnp-org:device:ZonePlayer:1"
+    ]
+   ],
+   "expect": {
+    "search": {
+     "target": "urn:schemas-upnp-org:device:ZonePlayer:1",
+     "mx": 2
+    }
+   }
+  },
+  {
+   "id": "ssdp-an-unknown-header-is-ignored",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "3"
+    ],
+    [
+     "ST",
+     "ssdp:all"
+    ],
+    [
+     "USER-AGENT",
+     "controller/1"
+    ]
+   ],
+   "expect": {
+    "search": {
+     "target": "ssdp:all",
+     "mx": 3
+    }
+   }
+  },
+  {
+   "id": "ssdp-a-notify-from-another-device-is-not-a-search",
+   "start": "NOTIFY * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "NT",
+     "upnp:rootdevice"
+    ],
+    [
+     "NTS",
+     "ssdp:alive"
+    ],
+    [
+     "USN",
+     "uuid:other::upnp:rootdevice"
+    ]
+   ],
+   "expect": {
+    "other": "notify"
+   }
+  },
+  {
+   "id": "ssdp-a-response-is-not-a-search",
+   "start": "HTTP/1.1 200 OK",
+   "headers": [
+    [
+     "ST",
+     "upnp:rootdevice"
+    ],
+    [
+     "USN",
+     "uuid:other::upnp:rootdevice"
+    ]
+   ],
+   "expect": {
+    "other": "response"
+   }
+  },
+  {
+   "id": "ssdp-another-method-on-star-is-not-a-search",
+   "start": "OPTIONS * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ]
+   ],
+   "expect": {
+    "other": "method"
+   }
+  },
+  {
+   "id": "ssdp-an-http-1-0-m-search-is-not-answered",
+   "start": "M-SEARCH * HTTP/1.0",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "3"
+    ],
+    [
+     "ST",
+     "ssdp:all"
+    ]
+   ],
+   "expect": {
+    "other": "method"
+   }
+  },
+  {
+   "id": "ssdp-man-without-its-quotes",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "ssdp:discover"
+    ],
+    [
+     "MX",
+     "3"
+    ],
+    [
+     "ST",
+     "ssdp:all"
+    ]
+   ],
+   "expect": {
+    "err": "bad_man"
+   }
+  },
+  {
+   "id": "ssdp-man-other-value",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:alive\""
+    ],
+    [
+     "MX",
+     "3"
+    ],
+    [
+     "ST",
+     "ssdp:all"
+    ]
+   ],
+   "expect": {
+    "err": "bad_man"
+   }
+  },
+  {
+   "id": "ssdp-man-missing",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MX",
+     "3"
+    ],
+    [
+     "ST",
+     "ssdp:all"
+    ]
+   ],
+   "expect": {
+    "err": "missing_header"
+   }
+  },
+  {
+   "id": "ssdp-host-missing",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "3"
+    ],
+    [
+     "ST",
+     "ssdp:all"
+    ]
+   ],
+   "expect": {
+    "err": "missing_header"
+   }
+  },
+  {
+   "id": "ssdp-st-missing",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "3"
+    ]
+   ],
+   "expect": {
+    "err": "missing_header"
+   }
+  },
+  {
+   "id": "ssdp-mx-missing",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "ST",
+     "ssdp:all"
+    ]
+   ],
+   "expect": {
+    "err": "missing_header"
+   }
+  },
+  {
+   "id": "ssdp-mx-zero",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "0"
+    ],
+    [
+     "ST",
+     "ssdp:all"
+    ]
+   ],
+   "expect": {
+    "err": "bad_mx"
+   }
+  },
+  {
+   "id": "ssdp-mx-121",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "121"
+    ],
+    [
+     "ST",
+     "ssdp:all"
+    ]
+   ],
+   "expect": {
+    "err": "bad_mx"
+   }
+  },
+  {
+   "id": "ssdp-mx-signed",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "+3"
+    ],
+    [
+     "ST",
+     "ssdp:all"
+    ]
+   ],
+   "expect": {
+    "err": "bad_mx"
+   }
+  },
+  {
+   "id": "ssdp-mx-text",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "abc"
+    ],
+    [
+     "ST",
+     "ssdp:all"
+    ]
+   ],
+   "expect": {
+    "err": "bad_mx"
+   }
+  },
+  {
+   "id": "ssdp-mx-empty",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     ""
+    ],
+    [
+     "ST",
+     "ssdp:all"
+    ]
+   ],
+   "expect": {
+    "err": "bad_mx"
+   }
+  },
+  {
+   "id": "ssdp-mx-four-digits",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "0003"
+    ],
+    [
+     "ST",
+     "ssdp:all"
+    ]
+   ],
+   "expect": {
+    "err": "bad_mx"
+   }
+  },
+  {
+   "id": "ssdp-st-with-a-space",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "3"
+    ],
+    [
+     "ST",
+     "ssdp: all"
+    ]
+   ],
+   "expect": {
+    "err": "bad_target"
+   }
+  },
+  {
+   "id": "ssdp-st-empty",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "3"
+    ],
+    [
+     "ST",
+     ""
+    ]
+   ],
+   "expect": {
+    "err": "bad_target"
+   }
+  },
+  {
+   "id": "ssdp-st-over-160-characters",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "3"
+    ],
+    [
+     "ST",
+     "uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu"
+    ]
+   ],
+   "expect": {
+    "err": "bad_target"
+   }
+  },
+  {
+   "id": "ssdp-st-at-160-characters-is-kept",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "3"
+    ],
+    [
+     "ST",
+     "uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu"
+    ]
+   ],
+   "expect": {
+    "search": {
+     "target": "uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
+     "mx": 3
+    }
+   }
+  },
+  {
+   "id": "ssdp-host-with-a-space",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "evil host"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "3"
+    ],
+    [
+     "ST",
+     "ssdp:all"
+    ]
+   ],
+   "expect": {
+    "err": "bad_header"
+   }
+  },
+  {
+   "id": "ssdp-duplicate-host",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "3"
+    ],
+    [
+     "ST",
+     "ssdp:all"
+    ],
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ]
+   ],
+   "expect": {
+    "err": "duplicate_header"
+   }
+  },
+  {
+   "id": "ssdp-duplicate-st",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "3"
+    ],
+    [
+     "ST",
+     "ssdp:all"
+    ],
+    [
+     "ST",
+     "upnp:rootdevice"
+    ]
+   ],
+   "expect": {
+    "err": "duplicate_header"
+   }
+  },
+  {
+   "id": "ssdp-duplicate-man",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "3"
+    ],
+    [
+     "ST",
+     "ssdp:all"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ]
+   ],
+   "expect": {
+    "err": "duplicate_header"
+   }
+  },
+  {
+   "id": "ssdp-duplicate-mx",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "3"
+    ],
+    [
+     "ST",
+     "ssdp:all"
+    ],
+    [
+     "MX",
+     "1"
+    ]
+   ],
+   "expect": {
+    "err": "duplicate_header"
+   }
+  },
+  {
+   "id": "ssdp-duplicate-header-in-other-case",
+   "start": "M-SEARCH * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "3"
+    ],
+    [
+     "ST",
+     "ssdp:all"
+    ],
+    [
+     "st",
+     "upnp:rootdevice"
+    ]
+   ],
+   "expect": {
+    "err": "duplicate_header"
+   }
+  },
+  {
+   "id": "ssdp-a-folded-header",
+   "raw": "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: ssdp:all\r\n continued\r\n\r\n",
+   "expect": {
+    "err": "bad_header"
+   }
+  },
+  {
+   "id": "ssdp-a-header-without-a-colon",
+   "raw": "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: ssdp:all\r\nNO-COLON-HERE\r\n\r\n",
+   "expect": {
+    "err": "bad_header"
+   }
+  },
+  {
+   "id": "ssdp-a-header-name-with-a-space",
+   "raw": "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: ssdp:all\r\nBAD NAME: x\r\n\r\n",
+   "expect": {
+    "err": "bad_header"
+   }
+  },
+  {
+   "id": "ssdp-a-header-name-over-32-characters",
+   "raw": "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: ssdp:all\r\nXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX: x\r\n\r\n",
+   "expect": {
+    "err": "bad_header"
+   }
+  },
+  {
+   "id": "ssdp-a-header-line-over-512-characters",
+   "raw": "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: ssdp:all\r\nX-LONG: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n\r\n",
+   "expect": {
+    "err": "bad_header"
+   }
+  },
+  {
+   "id": "ssdp-25-headers",
+   "raw": "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: ssdp:all\r\nX-0: v\r\nX-1: v\r\nX-2: v\r\nX-3: v\r\nX-4: v\r\nX-5: v\r\nX-6: v\r\nX-7: v\r\nX-8: v\r\nX-9: v\r\nX-10: v\r\nX-11: v\r\nX-12: v\r\nX-13: v\r\nX-14: v\r\nX-15: v\r\nX-16: v\r\nX-17: v\r\nX-18: v\r\nX-19: v\r\nX-20: v\r\n\r\n",
+   "expect": {
+    "err": "too_many_headers"
+   }
+  },
+  {
+   "id": "ssdp-24-headers-are-kept",
+   "raw": "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: ssdp:all\r\nX-0: v\r\nX-1: v\r\nX-2: v\r\nX-3: v\r\nX-4: v\r\nX-5: v\r\nX-6: v\r\nX-7: v\r\nX-8: v\r\nX-9: v\r\nX-10: v\r\nX-11: v\r\nX-12: v\r\nX-13: v\r\nX-14: v\r\nX-15: v\r\nX-16: v\r\nX-17: v\r\nX-18: v\r\nX-19: v\r\n\r\n",
+   "expect": {
+    "search": {
+     "target": "ssdp:all",
+     "mx": 2
+    }
+   }
+  },
+  {
+   "id": "ssdp-bare-lf-line-endings",
+   "raw": "M-SEARCH * HTTP/1.1\nHOST: 239.255.255.250:1900\nMAN: \"ssdp:discover\"\nMX: 2\nST: ssdp:all\n\n",
+   "expect": {
+    "err": "bare_line_ending"
+   }
+  },
+  {
+   "id": "ssdp-a-bare-cr",
+   "raw": "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: ssdp:\rall\r\n\r\n",
+   "expect": {
+    "err": "bare_line_ending"
+   }
+  },
+  {
+   "id": "ssdp-no-empty-line-terminator",
+   "raw": "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: ssdp:all\r\n",
+   "expect": {
+    "err": "unterminated"
+   }
+  },
+  {
+   "id": "ssdp-bytes-after-the-empty-line",
+   "raw": "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: ssdp:all\r\n\r\nbody",
+   "expect": {
+    "err": "trailing_bytes"
+   }
+  },
+  {
+   "id": "ssdp-a-non-ascii-byte",
+   "raw": "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: caf\u00e9\r\n\r\n",
+   "expect": {
+    "err": "not_printable_ascii"
+   }
+  },
+  {
+   "id": "ssdp-a-nul-byte",
+   "raw": "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: a\u0000b\r\n\r\n",
+   "expect": {
+    "err": "not_printable_ascii"
+   }
+  },
+  {
+   "id": "ssdp-a-tab",
+   "raw": "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST:\tssdp:all\r\n\r\n",
+   "expect": {
+    "err": "not_printable_ascii"
+   }
+  },
+  {
+   "id": "ssdp-an-unknown-request-line",
+   "start": "GET /index.html HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ]
+   ],
+   "expect": {
+    "err": "bad_request_line"
+   }
+  },
+  {
+   "id": "ssdp-a-lowercase-method",
+   "start": "m-search * HTTP/1.1",
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "MAN",
+     "\"ssdp:discover\""
+    ],
+    [
+     "MX",
+     "3"
+    ],
+    [
+     "ST",
+     "ssdp:all"
+    ]
+   ],
+   "expect": {
+    "err": "bad_request_line"
+   }
+  },
+  {
+   "id": "ssdp-an-empty-datagram",
+   "raw": "",
+   "expect": {
+    "err": "unterminated"
+   }
+  }
+ ],
+ "search": [
+  {
+   "id": "answer-ssdp-all-is-everything-advertised",
+   "st": "ssdp:all",
+   "expect": [
+    [
+     "upnp:rootdevice",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::upnp:rootdevice"
+    ],
+    [
+     "uuid:00000000-0000-4000-8000-00000000a1b2",
+     "uuid:00000000-0000-4000-8000-00000000a1b2"
+    ],
+    [
+     "urn:schemas-upnp-org:device:ZonePlayer:1",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::urn:schemas-upnp-org:device:ZonePlayer:1"
+    ],
+    [
+     "urn:schemas-upnp-org:service:RenderingControl:1",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::urn:schemas-upnp-org:service:RenderingControl:1"
+    ],
+    [
+     "urn:schemas-upnp-org:service:GroupRenderingControl:1",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::urn:schemas-upnp-org:service:GroupRenderingControl:1"
+    ],
+    [
+     "urn:schemas-upnp-org:service:AVTransport:1",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::urn:schemas-upnp-org:service:AVTransport:1"
+    ],
+    [
+     "urn:schemas-upnp-org:service:ZoneGroupTopology:1",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::urn:schemas-upnp-org:service:ZoneGroupTopology:1"
+    ]
+   ]
+  },
+  {
+   "id": "answer-rootdevice",
+   "st": "upnp:rootdevice",
+   "expect": [
+    [
+     "upnp:rootdevice",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::upnp:rootdevice"
+    ]
+   ]
+  },
+  {
+   "id": "answer-own-uuid",
+   "st": "uuid:00000000-0000-4000-8000-00000000a1b2",
+   "expect": [
+    [
+     "uuid:00000000-0000-4000-8000-00000000a1b2",
+     "uuid:00000000-0000-4000-8000-00000000a1b2"
+    ]
+   ]
+  },
+  {
+   "id": "answer-own-uuid-in-capitals",
+   "st": "UUID:00000000-0000-4000-8000-00000000A1B2",
+   "expect": [
+    [
+     "uuid:00000000-0000-4000-8000-00000000a1b2",
+     "uuid:00000000-0000-4000-8000-00000000a1b2"
+    ]
+   ]
+  },
+  {
+   "id": "answer-device-type",
+   "st": "urn:schemas-upnp-org:device:ZonePlayer:1",
+   "expect": [
+    [
+     "urn:schemas-upnp-org:device:ZonePlayer:1",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::urn:schemas-upnp-org:device:ZonePlayer:1"
+    ]
+   ]
+  },
+  {
+   "id": "answer-rendering-control",
+   "st": "urn:schemas-upnp-org:service:RenderingControl:1",
+   "expect": [
+    [
+     "urn:schemas-upnp-org:service:RenderingControl:1",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::urn:schemas-upnp-org:service:RenderingControl:1"
+    ]
+   ]
+  },
+  {
+   "id": "answer-group-rendering-control",
+   "st": "urn:schemas-upnp-org:service:GroupRenderingControl:1",
+   "expect": [
+    [
+     "urn:schemas-upnp-org:service:GroupRenderingControl:1",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::urn:schemas-upnp-org:service:GroupRenderingControl:1"
+    ]
+   ]
+  },
+  {
+   "id": "answer-av-transport",
+   "st": "urn:schemas-upnp-org:service:AVTransport:1",
+   "expect": [
+    [
+     "urn:schemas-upnp-org:service:AVTransport:1",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::urn:schemas-upnp-org:service:AVTransport:1"
+    ]
+   ]
+  },
+  {
+   "id": "answer-zone-group-topology",
+   "st": "urn:schemas-upnp-org:service:ZoneGroupTopology:1",
+   "expect": [
+    [
+     "urn:schemas-upnp-org:service:ZoneGroupTopology:1",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::urn:schemas-upnp-org:service:ZoneGroupTopology:1"
+    ]
+   ]
+  },
+  {
+   "id": "silent-another-uuid",
+   "st": "uuid:00000000-0000-4000-8000-00000000ffff",
+   "expect": []
+  },
+  {
+   "id": "silent-the-retired-content-directory",
+   "st": "urn:schemas-upnp-org:service:ContentDirectory:1",
+   "expect": []
+  },
+  {
+   "id": "silent-a-media-server-device-type",
+   "st": "urn:schemas-upnp-org:device:MediaServer:1",
+   "expect": []
+  },
+  {
+   "id": "silent-a-media-renderer-device-type",
+   "st": "urn:schemas-upnp-org:device:MediaRenderer:1",
+   "expect": []
+  },
+  {
+   "id": "silent-a-newer-version-of-the-device-type",
+   "st": "urn:schemas-upnp-org:device:ZonePlayer:2",
+   "expect": []
+  },
+  {
+   "id": "silent-a-newer-version-of-a-service",
+   "st": "urn:schemas-upnp-org:service:RenderingControl:2",
+   "expect": []
+  },
+  {
+   "id": "silent-ssdp-all-in-capitals",
+   "st": "SSDP:ALL",
+   "expect": []
+  },
+  {
+   "id": "silent-the-empty-target",
+   "st": "",
+   "expect": []
+  }
+ ],
+ "response": {
+  "st": "upnp:rootdevice",
+  "headers": [
+   [
+    "CACHE-CONTROL",
+    "max-age=1800"
+   ],
+   [
+    "EXT",
+    ""
+   ],
+   [
+    "LOCATION",
+    "http://192.0.2.10:1400/xml/device_description.xml"
+   ],
+   [
+    "SERVER",
+    "franken-firmware/0 UPnP/1.0"
+   ],
+   [
+    "ST",
+    "upnp:rootdevice"
+   ],
+   [
+    "USN",
+    "uuid:00000000-0000-4000-8000-00000000a1b2::upnp:rootdevice"
+   ]
+  ]
+ },
+ "notify_alive": [
+  {
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "CACHE-CONTROL",
+     "max-age=1800"
+    ],
+    [
+     "LOCATION",
+     "http://192.0.2.10:1400/xml/device_description.xml"
+    ],
+    [
+     "NT",
+     "upnp:rootdevice"
+    ],
+    [
+     "NTS",
+     "ssdp:alive"
+    ],
+    [
+     "SERVER",
+     "franken-firmware/0 UPnP/1.0"
+    ],
+    [
+     "USN",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::upnp:rootdevice"
+    ]
+   ]
+  },
+  {
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "CACHE-CONTROL",
+     "max-age=1800"
+    ],
+    [
+     "LOCATION",
+     "http://192.0.2.10:1400/xml/device_description.xml"
+    ],
+    [
+     "NT",
+     "uuid:00000000-0000-4000-8000-00000000a1b2"
+    ],
+    [
+     "NTS",
+     "ssdp:alive"
+    ],
+    [
+     "SERVER",
+     "franken-firmware/0 UPnP/1.0"
+    ],
+    [
+     "USN",
+     "uuid:00000000-0000-4000-8000-00000000a1b2"
+    ]
+   ]
+  },
+  {
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "CACHE-CONTROL",
+     "max-age=1800"
+    ],
+    [
+     "LOCATION",
+     "http://192.0.2.10:1400/xml/device_description.xml"
+    ],
+    [
+     "NT",
+     "urn:schemas-upnp-org:device:ZonePlayer:1"
+    ],
+    [
+     "NTS",
+     "ssdp:alive"
+    ],
+    [
+     "SERVER",
+     "franken-firmware/0 UPnP/1.0"
+    ],
+    [
+     "USN",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::urn:schemas-upnp-org:device:ZonePlayer:1"
+    ]
+   ]
+  },
+  {
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "CACHE-CONTROL",
+     "max-age=1800"
+    ],
+    [
+     "LOCATION",
+     "http://192.0.2.10:1400/xml/device_description.xml"
+    ],
+    [
+     "NT",
+     "urn:schemas-upnp-org:service:RenderingControl:1"
+    ],
+    [
+     "NTS",
+     "ssdp:alive"
+    ],
+    [
+     "SERVER",
+     "franken-firmware/0 UPnP/1.0"
+    ],
+    [
+     "USN",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::urn:schemas-upnp-org:service:RenderingControl:1"
+    ]
+   ]
+  },
+  {
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "CACHE-CONTROL",
+     "max-age=1800"
+    ],
+    [
+     "LOCATION",
+     "http://192.0.2.10:1400/xml/device_description.xml"
+    ],
+    [
+     "NT",
+     "urn:schemas-upnp-org:service:GroupRenderingControl:1"
+    ],
+    [
+     "NTS",
+     "ssdp:alive"
+    ],
+    [
+     "SERVER",
+     "franken-firmware/0 UPnP/1.0"
+    ],
+    [
+     "USN",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::urn:schemas-upnp-org:service:GroupRenderingControl:1"
+    ]
+   ]
+  },
+  {
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "CACHE-CONTROL",
+     "max-age=1800"
+    ],
+    [
+     "LOCATION",
+     "http://192.0.2.10:1400/xml/device_description.xml"
+    ],
+    [
+     "NT",
+     "urn:schemas-upnp-org:service:AVTransport:1"
+    ],
+    [
+     "NTS",
+     "ssdp:alive"
+    ],
+    [
+     "SERVER",
+     "franken-firmware/0 UPnP/1.0"
+    ],
+    [
+     "USN",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::urn:schemas-upnp-org:service:AVTransport:1"
+    ]
+   ]
+  },
+  {
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "CACHE-CONTROL",
+     "max-age=1800"
+    ],
+    [
+     "LOCATION",
+     "http://192.0.2.10:1400/xml/device_description.xml"
+    ],
+    [
+     "NT",
+     "urn:schemas-upnp-org:service:ZoneGroupTopology:1"
+    ],
+    [
+     "NTS",
+     "ssdp:alive"
+    ],
+    [
+     "SERVER",
+     "franken-firmware/0 UPnP/1.0"
+    ],
+    [
+     "USN",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::urn:schemas-upnp-org:service:ZoneGroupTopology:1"
+    ]
+   ]
+  }
+ ],
+ "notify_byebye": [
+  {
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "NT",
+     "upnp:rootdevice"
+    ],
+    [
+     "NTS",
+     "ssdp:byebye"
+    ],
+    [
+     "USN",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::upnp:rootdevice"
+    ]
+   ]
+  },
+  {
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "NT",
+     "uuid:00000000-0000-4000-8000-00000000a1b2"
+    ],
+    [
+     "NTS",
+     "ssdp:byebye"
+    ],
+    [
+     "USN",
+     "uuid:00000000-0000-4000-8000-00000000a1b2"
+    ]
+   ]
+  },
+  {
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "NT",
+     "urn:schemas-upnp-org:device:ZonePlayer:1"
+    ],
+    [
+     "NTS",
+     "ssdp:byebye"
+    ],
+    [
+     "USN",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::urn:schemas-upnp-org:device:ZonePlayer:1"
+    ]
+   ]
+  },
+  {
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "NT",
+     "urn:schemas-upnp-org:service:RenderingControl:1"
+    ],
+    [
+     "NTS",
+     "ssdp:byebye"
+    ],
+    [
+     "USN",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::urn:schemas-upnp-org:service:RenderingControl:1"
+    ]
+   ]
+  },
+  {
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "NT",
+     "urn:schemas-upnp-org:service:GroupRenderingControl:1"
+    ],
+    [
+     "NTS",
+     "ssdp:byebye"
+    ],
+    [
+     "USN",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::urn:schemas-upnp-org:service:GroupRenderingControl:1"
+    ]
+   ]
+  },
+  {
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "NT",
+     "urn:schemas-upnp-org:service:AVTransport:1"
+    ],
+    [
+     "NTS",
+     "ssdp:byebye"
+    ],
+    [
+     "USN",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::urn:schemas-upnp-org:service:AVTransport:1"
+    ]
+   ]
+  },
+  {
+   "headers": [
+    [
+     "HOST",
+     "239.255.255.250:1900"
+    ],
+    [
+     "NT",
+     "urn:schemas-upnp-org:service:ZoneGroupTopology:1"
+    ],
+    [
+     "NTS",
+     "ssdp:byebye"
+    ],
+    [
+     "USN",
+     "uuid:00000000-0000-4000-8000-00000000a1b2::urn:schemas-upnp-org:service:ZoneGroupTopology:1"
+    ]
+   ]
+  }
+ ],
+ "description": "<?xml version=\"1.0\"?>\n<root xmlns=\"urn:schemas-upnp-org:device-1-0\"><specVersion><major>1</major><minor>0</minor></specVersion><device><deviceType>urn:schemas-upnp-org:device:ZonePlayer:1</deviceType><friendlyName>Test Room</friendlyName><manufacturer>FrankenFirmware</manufacturer><modelName>franken-speaker</modelName><UDN>uuid:00000000-0000-4000-8000-00000000a1b2</UDN><serviceList><service><serviceType>urn:schemas-upnp-org:service:RenderingControl:1</serviceType><serviceId>urn:upnp-org:serviceId:RenderingControl</serviceId><controlURL>/MediaRenderer/RenderingControl/Control</controlURL><eventSubURL>/MediaRenderer/RenderingControl/Event</eventSubURL></service><service><serviceType>urn:schemas-upnp-org:service:GroupRenderingControl:1</serviceType><serviceId>urn:upnp-org:serviceId:GroupRenderingControl</serviceId><controlURL>/MediaRenderer/GroupRenderingControl/Control</controlURL><eventSubURL>/MediaRenderer/GroupRenderingControl/Event</eventSubURL></service><service><serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType><serviceId>urn:upnp-org:serviceId:AVTransport</serviceId><controlURL>/MediaRenderer/AVTransport/Control</controlURL><eventSubURL>/MediaRenderer/AVTransport/Event</eventSubURL></service><service><serviceType>urn:schemas-upnp-org:service:ZoneGroupTopology:1</serviceType><serviceId>urn:upnp-org:serviceId:ZoneGroupTopology</serviceId><controlURL>/ZoneGroupTopology/Control</controlURL><eventSubURL>/ZoneGroupTopology/Event</eventSubURL></service></serviceList></device></root>",
+ "description_hostile": {
+  "name": "<x>&\"'</x>",
+  "friendly_name_xml": "&lt;x&gt;&amp;\"'&lt;/x&gt;"
+ },
+ "delay": [
+  {
+   "mx": 1,
+   "entropy": 0,
+   "expect": 0
+  },
+  {
+   "mx": 1,
+   "entropy": 999,
+   "expect": 999
+  },
+  {
+   "mx": 1,
+   "entropy": 1000,
+   "expect": 0
+  },
+  {
+   "mx": 1,
+   "entropy": 1234,
+   "expect": 234
+  },
+  {
+   "mx": 3,
+   "entropy": 2999,
+   "expect": 2999
+  },
+  {
+   "mx": 3,
+   "entropy": 3000,
+   "expect": 0
+  },
+  {
+   "mx": 3,
+   "entropy": 7500,
+   "expect": 1500
+  },
+  {
+   "mx": 5,
+   "entropy": 4999,
+   "expect": 4999
+  },
+  {
+   "mx": 5,
+   "entropy": 5000,
+   "expect": 0
+  },
+  {
+   "mx": 5,
+   "entropy": 4294967295,
+   "expect": 2295
+  },
+  {
+   "mx": 0,
+   "entropy": 1500,
+   "expect": 500
+  },
+  {
+   "mx": 200,
+   "entropy": 12345,
+   "expect": 2345
+  }
+ ],
+ "device_reject": [
+  {
+   "id": "device-uppercase-uuid",
+   "uuid": "00000000-0000-4000-8000-00000000A1B2",
+   "address": [
+    192,
+    0,
+    2,
+    10
+   ],
+   "port": 1400,
+   "name": "Test Room",
+   "max_age": 1800,
+   "err": "bad_uuid"
+  },
+  {
+   "id": "device-uuid-with-a-crlf-injection",
+   "uuid": "00000000-0000-4000-8000-00000000a1b2\r\nX: y",
+   "address": [
+    192,
+    0,
+    2,
+    10
+   ],
+   "port": 1400,
+   "name": "Test Room",
+   "max_age": 1800,
+   "err": "bad_uuid"
+  },
+  {
+   "id": "device-uuid-too-short",
+   "uuid": "00000000-0000-4000-8000-00000000a1b",
+   "address": [
+    192,
+    0,
+    2,
+    10
+   ],
+   "port": 1400,
+   "name": "Test Room",
+   "max_age": 1800,
+   "err": "bad_uuid"
+  },
+  {
+   "id": "device-uuid-with-a-misplaced-hyphen",
+   "uuid": "0000000-00000-4000-8000-00000000a1b2",
+   "address": [
+    192,
+    0,
+    2,
+    10
+   ],
+   "port": 1400,
+   "name": "Test Room",
+   "max_age": 1800,
+   "err": "bad_uuid"
+  },
+  {
+   "id": "device-uuid-with-a-non-hex-digit",
+   "uuid": "00000000-0000-4000-8000-00000000a1bg",
+   "address": [
+    192,
+    0,
+    2,
+    10
+   ],
+   "port": 1400,
+   "name": "Test Room",
+   "max_age": 1800,
+   "err": "bad_uuid"
+  },
+  {
+   "id": "device-port-zero",
+   "uuid": "00000000-0000-4000-8000-00000000a1b2",
+   "address": [
+    192,
+    0,
+    2,
+    10
+   ],
+   "port": 0,
+   "name": "Test Room",
+   "max_age": 1800,
+   "err": "bad_port"
+  },
+  {
+   "id": "device-empty-name",
+   "uuid": "00000000-0000-4000-8000-00000000a1b2",
+   "address": [
+    192,
+    0,
+    2,
+    10
+   ],
+   "port": 1400,
+   "name": "",
+   "max_age": 1800,
+   "err": "bad_name"
+  },
+  {
+   "id": "device-name-with-a-newline",
+   "uuid": "00000000-0000-4000-8000-00000000a1b2",
+   "address": [
+    192,
+    0,
+    2,
+    10
+   ],
+   "port": 1400,
+   "name": "a\nb",
+   "max_age": 1800,
+   "err": "bad_name"
+  },
+  {
+   "id": "device-name-over-64-characters",
+   "uuid": "00000000-0000-4000-8000-00000000a1b2",
+   "address": [
+    192,
+    0,
+    2,
+    10
+   ],
+   "port": 1400,
+   "name": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+   "max_age": 1800,
+   "err": "bad_name"
+  },
+  {
+   "id": "device-max-age-below-1800",
+   "uuid": "00000000-0000-4000-8000-00000000a1b2",
+   "address": [
+    192,
+    0,
+    2,
+    10
+   ],
+   "port": 1400,
+   "name": "Test Room",
+   "max_age": 1799,
+   "err": "bad_max_age"
+  },
+  {
+   "id": "device-max-age-above-86400",
+   "uuid": "00000000-0000-4000-8000-00000000a1b2",
+   "address": [
+    192,
+    0,
+    2,
+    10
+   ],
+   "port": 1400,
+   "name": "Test Room",
+   "max_age": 86401,
+   "err": "bad_max_age"
+  }
+ ]
+}

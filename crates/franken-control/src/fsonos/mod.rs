@@ -13,6 +13,10 @@
 //! * [`server`]: the request handler. It routes, applies the ingress policy, and turns every command
 //!   into an N02 control request so N02's authentication, limits, lease check and exactly-once
 //!   application apply to it.
+//! * [`ssdp`]: discovery and the device description, slice 2: a bounded `M-SEARCH` parser, the search
+//!   responses and `NOTIFY alive`/`byebye` datagrams, and the description document, for exactly the
+//!   services served. It builds and parses bytes only; the transport owns the multicast group, the
+//!   clock and the entropy for the response delay.
 //!
 //! `docs/contracts/g03.md` is the contract: the action matrix, the access policy, what is deferred and
 //! why, and the one acceptance clause this slice leaves open.
@@ -23,6 +27,7 @@ pub mod actions;
 pub mod gena;
 pub mod server;
 pub mod soap;
+pub mod ssdp;
 pub mod state;
 pub mod xml;
 

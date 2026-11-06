@@ -115,7 +115,7 @@ class Invariants(unittest.TestCase):
     def test_every_invariant_names_existing_vectors_and_rust_tests(self):
         cases = json.loads(CASES.read_text(encoding="utf-8"))
         ids = set(all_vector_ids(ref.load()))
-        tests = {m: rust_test_names(m) for m in ("xml", "soap", "actions", "state", "gena", "server", "replay")}
+        tests = {m: rust_test_names(m) for m in ("xml", "soap", "actions", "state", "gena", "server", "ssdp", "replay")}
         seen = set()
         for inv in cases["invariants"]:
             self.assertNotIn(inv["id"], seen)
@@ -138,7 +138,7 @@ class Invariants(unittest.TestCase):
         cases = json.loads(CASES.read_text(encoding="utf-8"))
         claimed = {n for inv in cases["invariants"] for n in inv["rust_tests"]}
         unclaimed = []
-        for module in ("xml", "soap", "actions", "state", "gena", "server"):
+        for module in ("xml", "soap", "actions", "state", "gena", "server", "ssdp"):
             for function in sorted(rust_test_names(module)):
                 if f"{module}::{function}" not in claimed:
                     unclaimed.append(f"{module}::{function}")
@@ -202,7 +202,9 @@ class Boundaries(unittest.TestCase):
             self.assertNotRegex(production, r"\.unwrap\(\)|\.expect\(|panic!\(|todo!\(|unimplemented!\(", name)
 
     def test_nothing_in_the_adapter_or_its_fixtures_is_site_data(self):
-        documentation = [ipaddress.ip_network("192.0.2.0/24"), ipaddress.ip_network("2001:db8::/32")]
+        # The SSDP multicast group is a protocol constant (UPnP Device Architecture), not site data.
+        documentation = [ipaddress.ip_network("192.0.2.0/24"), ipaddress.ip_network("2001:db8::/32"),
+                         ipaddress.ip_network("239.255.255.250/32")]
         targets = [p.read_text(encoding="utf-8") for p in FSONOS.glob("*.rs")]
         targets += [ref.VECTORS.read_text(encoding="utf-8"), CONTRACT.read_text(encoding="utf-8")]
         for text in targets:

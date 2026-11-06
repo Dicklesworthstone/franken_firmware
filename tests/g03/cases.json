@@ -466,6 +466,77 @@
         "server::a_plain_soap_retry_of_a_relative_change_applies_twice_and_that_is_pinned",
         "server::a_retried_relative_step_with_the_same_command_id_applies_once"
       ]
+    },
+    {
+      "id": "G03-S01",
+      "statement": "An M-SEARCH is parsed under hard bounds (size, printable ASCII, CRLF only, the empty-line terminator, header count and length, no folding, no duplicate HOST/MAN/MX/ST, MAN exactly \"ssdp:discover\", MX 1 to 120 answered as at most 5, a visible bounded ST); a datagram that breaks one is refused with a fixed word, a valid search is accepted, and another device's NOTIFY or a response is not a search. Truncation and corruption never panic.",
+      "vectors": [],
+      "ssdp_vectors": [
+        "parse"
+      ],
+      "rust_tests": [
+        "ssdp::the_vectors_parse_to_the_expected_search_or_refusal",
+        "ssdp::a_truncated_or_corrupted_search_is_refused_and_never_panics"
+      ]
+    },
+    {
+      "id": "G03-S02",
+      "statement": "Only what this endpoint serves is answered or advertised: ssdp:all is exactly the seven entries, an exact target is one entry (the id ignoring case), and the retired ContentDirectory, other device types and newer versions get silence.",
+      "vectors": [],
+      "ssdp_vectors": [
+        "search"
+      ],
+      "rust_tests": [
+        "ssdp::a_search_is_answered_only_for_what_this_device_actually_serves"
+      ]
+    },
+    {
+      "id": "G03-S03",
+      "statement": "The search response and the NOTIFY alive and byebye datagrams are the golden ones (a byebye has no location and no lifetime), every built datagram is within the cap and CRLF only, and none is mistaken for a search by our own reader.",
+      "vectors": [],
+      "ssdp_vectors": [
+        "response",
+        "notify_alive",
+        "notify_byebye"
+      ],
+      "rust_tests": [
+        "ssdp::responses_and_notifications_are_the_golden_datagrams",
+        "ssdp::every_datagram_built_is_within_the_cap_crlf_only_and_parses_as_not_a_search"
+      ]
+    },
+    {
+      "id": "G03-S04",
+      "statement": "A device configuration is validated before it can reach a header or a document: a non-lowercase or CRLF-bearing id, port zero, an empty, control-character or over-long name, and a max-age outside 1800 to 86400 are each refused with a fixed word, and the permitted configuration builds.",
+      "vectors": [],
+      "ssdp_vectors": [
+        "device_reject"
+      ],
+      "rust_tests": [
+        "ssdp::a_device_configuration_is_validated_before_it_reaches_a_header_or_a_document"
+      ]
+    },
+    {
+      "id": "G03-S05",
+      "statement": "The device description is the golden document, lists exactly the four served services with their control and event paths and never ContentDirectory, escapes a hostile friendly name, and reads back through the bounded XML reader.",
+      "vectors": [],
+      "ssdp_vectors": [
+        "description",
+        "description_hostile"
+      ],
+      "rust_tests": [
+        "ssdp::the_description_is_golden_lists_only_served_services_and_reads_back_through_the_bounded_reader"
+      ]
+    },
+    {
+      "id": "G03-S06",
+      "statement": "The response delay is inside the clamped MX for every MX and every caller-supplied entropy; the module draws no entropy of its own.",
+      "vectors": [],
+      "ssdp_vectors": [
+        "delay"
+      ],
+      "rust_tests": [
+        "ssdp::the_response_delay_is_inside_the_clamped_mx_for_every_mx_and_entropy"
+      ]
     }
   ]
 }
