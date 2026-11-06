@@ -1,0 +1,411 @@
+# Actual runtime excerpt; unrelated diagnostics and compiler output omitted. Full raw SHA256 0d0dfca665ad74b6aa7ef3254b7233be929eb089d4993369d260e9423356b41b
+  2026-11-06T03:54:55.192604Z  INFO rch::hook::transfer_orchestration: Executing command remotely: env 'CARGO_PROFILE_DEV_DEBUG=line-tables-only' 'CARGO_PROFILE_TEST_DEBUG=line-tables-only' cargo test --locked --offline --manifest-path <home>/projects/.ffw-p01r5-342975861657/Cargo.toml -p franken-dsp -p franken-stream --config 'build.incremental=false' -j 1 --config 'env.RCH_BUILD_SOURCE.value="unknown"' --config 'env.RCH_BUILD_SOURCE.force=true' -- --nocapture
+[RCH] retry on bigger worker vmi1264463 (attempt 2/3) after disk admission refused: admission on ovh-a
+  2026-11-06T03:55:24.068804Z  INFO rch::hook::transfer_orchestration: Executing command remotely: env 'CARGO_PROFILE_DEV_DEBUG=line-tables-only' 'CARGO_PROFILE_TEST_DEBUG=line-tables-only' cargo test --locked --offline --manifest-path <home>/projects/.ffw-p01r5-342975861657/Cargo.toml -p franken-dsp -p franken-stream --config 'build.incremental=false' -j 1 --config 'env.RCH_BUILD_SOURCE.value="unknown"' --config 'env.RCH_BUILD_SOURCE.force=true' -- --nocapture
+running 170 tests
+test convert::soft_float_tests::f32_to_s16_and_the_clamp_match_the_original_over_all_four_billion_bit_patterns ... ignored, exhaustive 2^32 sweep: run in release mode with --ignored
+test convert::soft_float_tests::hand_derived_anchors_hold_for_the_new_and_the_original_implementation ... ok
+test convert::soft_float_tests::int_to_f32_matches_the_original_on_every_rounding_and_tie_pattern_of_the_wide_widths ... ok
+test convert::soft_float_tests::the_conversion_code_contains_no_double_precision_and_no_float_compare ... ok
+test convert::tests::block_length_errors_zero_max_misaligned_and_short_buffers ... ok
+test convert::tests::channel_and_rate_mismatches_are_refused ... ok
+test convert::tests::eight_channel_and_one_frame_blocks_convert ... ok
+test convert::tests::endianness_swap_is_lossless_for_every_format ... ok
+test convert::soft_float_tests::f32_to_int_matches_the_original_on_mantissas_at_every_boundary_of_every_exponent_near_the_scale ... ok
+test convert::tests::float_to_float_policy ... ok
+test convert::tests::float_to_integer_vectors ... ok
+test convert::soft_float_tests::int_to_f32_matches_the_original_on_a_million_seeded_values_and_widths ... ok
+test convert::tests::integer_to_float_vectors ... ok
+test convert::tests::integer_width_vectors ... ok
+test convert::tests::interleaved_stride_to_planar_widening_with_padding_and_guards_untouched ... ok
+test convert::tests::legacy_scalar_helpers_use_the_d01_scale_and_round_trip_all_s16 ... ok
+test convert::soft_float_tests::int_to_f32_matches_the_original_for_every_s16_value_at_every_width_including_out_of_range_bits ... ok
+test convert::tests::non_finite_samples_become_silence_and_are_counted ... ok
+test convert::tests::planar_destination_whose_stride_cannot_hold_the_block_is_refused ... ok
+test convert::tests::read_rejects_short_slices_without_panicking ... ok
+test convert::tests::s16_endian_vectors ... ok
+test convert::tests::s24_in_32_endian_and_justification_vectors ... ok
+test convert::tests::s32_and_f32_endian_vectors ... ok
+test format::tests::bytes_per_frame_is_explicit_for_every_format_and_channel_count ... ok
+test format::tests::interleaved_required_len_and_offsets_with_padding ... ok
+test format::tests::offset_arithmetic_is_checked ... ok
+test format::tests::error_codes_are_stable_and_distinct ... ok
+test format::tests::packed_block_lengths_zero_max_misaligned_and_partial ... ok
+test format::tests::planar_required_len_offsets_and_overlap_rejection ... ok
+test format::tests::stream_format_rejects_bad_channels_and_rates ... ok
+test protection::tests::a_fail_muted_board_renders_silence_and_refuses_unmute_whatever_the_volume ... ok
+test protection::tests::a_forbidden_amplifier_policy_is_reported_as_such ... ok
+test protection::tests::a_corrupted_filter_state_latches_a_fault_and_silences_that_channel_at_once ... ok
+test protection::tests::a_malformed_layout_is_invalid_layout_and_is_not_confused_with_no_audio_output ... ok
+test protection::tests::a_latched_fault_blocks_profile_switches_until_cleared ... ok
+test protection::tests::a_new_board_starts_muted_and_needs_an_explicit_unmute ... ok
+test protection::tests::butterworth_designs_have_the_textbook_dc_and_nyquist_gains ... ok
+test protection::tests::a_valid_profile_switch_drains_to_silence_swaps_and_carries_history ... ok
+test protection::tests::an_unsafe_profile_switch_leaves_the_board_fail_muted_until_a_valid_one_is_admitted ... ok
+test protection::tests::dc_rejector_decays_a_constant_like_r_to_the_n ... ok
+test protection::tests::coefficients_are_judged_on_the_stored_f32_value ... ok
+test protection::tests::calibration_json_round_trips_and_rejects_malformed_documents ... ok
+     Running unittests src/lib.rs (.rch-target-vmi1264463-pool-64ebfb84d734fcc7c6a841c94cef7910/debug/deps/franken_dsp-139b519f3176efa0)
+test protection::tests::limiter_attack_and_release_follow_their_closed_forms ... ok
+test protection::tests::low_cutoff_sections_track_an_f64_evaluation_of_the_same_stored_filter ... ok
+test protection::tests::non_finite_input_becomes_silence_and_is_counted_not_faulted ... ok
+test protection::tests::every_synthetic_audio_board_admits_and_the_non_audio_bridge_is_refused_by_name ... ok
+test convert::soft_float_tests::f32_to_f32_matches_the_original_around_one_at_zero_and_on_every_class_of_non_finite ... ok
+test protection::tests::section_step_responses_settle_to_their_dc_gain ... ok
+test protection::tests::production_admission_needs_an_attested_profile_and_a_real_acoustically_referenced_calibration ... ok
+test protection::tests::smoothing_coefficient_matches_one_minus_exp ... ok
+test protection::tests::seek_reconnect_and_source_replacement_never_reset_protection_history ... ok
+test protection::tests::the_compatibility_wrapper_matches_the_preallocated_path ... ok
+test protection::tests::planted_malformed_calibrations_each_fail_muted_with_the_exact_reason ... ok
+test convert::soft_float_tests::f32_to_int_matches_the_original_on_two_million_seeded_bit_patterns_at_random_widths ... ok
+test protection::tests::the_exact_bound_matches_the_independent_reference_on_pinned_designs ... ok
+test protection::tests::the_gain_ceiling_caps_trim_times_user_gain ... ok
+test protection::tests::designs_the_product_bound_refused_are_admitted_and_run_without_a_fault ... ok
+test protection::tests::the_hard_output_ceiling_catches_a_limiter_overshoot_and_counts_it ... ok
+test protection::tests::the_exact_bound_is_never_stricter_than_the_product_bound ... ok
+test protection::tests::the_user_gain_reaches_the_device_by_a_bounded_slew_never_a_step ... ok
+test protection::tests::thermal_history_scales_output_then_latches_a_fault_and_must_cool_before_clearing ... ok
+test protection::tests::the_long_tail_case_is_covered_by_the_remainder_allowance ... ok
+test protection::tests::unknown_unattested_and_calibration_less_boards_come_up_fail_muted ... ok
+test protection::tests::zero_length_and_partial_blocks_are_tolerated ... ok
+test render_events::tests::a_bad_capacity_or_reserve_is_refused ... ok
+test render_events::tests::a_dropped_consumer_changes_what_is_retained_never_what_emit_does ... ok
+test render_events::tests::convert_stats_emit_one_event_per_nonzero_counter_and_none_for_a_clean_block ... ok
+test render_events::tests::critical_events_use_the_reserve_and_are_lost_only_when_the_ring_is_completely_full ... ok
+test render_events::tests::each_fault_code_has_its_own_critical_kind_and_carries_its_channel ... ok
+test render_events::tests::emit_has_no_loop_no_lock_and_no_allocation_in_its_source ... ok
+test render_events::tests::events_are_read_back_oldest_first_with_their_kind_value_and_sequence ... ok
+test render_events::tests::every_kind_round_trips_through_its_slot_index_and_its_name_is_the_serialized_form ... ok
+test render_events::tests::one_block_emits_at_most_max_events_per_block ... ok
+test convert::tests::every_s16_value_round_trips_through_every_wider_format_and_endianness ... ok
+test render_events::tests::ordinary_events_stop_at_capacity_minus_reserve_and_the_gap_shows_in_the_sequence ... ok
+test render_events::tests::ring_counters_emit_the_growth_since_the_previous_call_not_the_cumulative_count ... ok
+test render_events::tests::protection_report_emits_nonzero_counters_and_only_changes_of_status ... ok
+test render_events::tests::a_consumer_that_has_read_nothing_does_not_stop_the_producer ... ok
+test resample::tests::d03_config_is_validated ... ok
+test resample::tests::d03_epoch_reset_clears_history_and_keeps_ratio ... ok
+test resample::tests::d03_epochs_must_advance ... ok
+test resample::tests::d03_fade_in_follows_start_and_reset ... ok
+D03-OBSERVED {"id":"d03-history-ramp","kind":"history","max_abs_error":7.04541562868144e-8}
+test resample::tests::d03_history_is_carried_across_short_blocks_exactly ... ok
+D03-OBSERVED {"id":"d03-pulled-longest","kind":"count","n_out":4147200000,"ppb":-77777,"pulled":4146877445}
+test resample::tests::d03_input_counts_for_outputs_match_closed_form ... ok
+test resample::tests::d03_level_trim_is_proportional_and_bounded ... ok
+test resample::tests::d03_non_finite_and_out_of_range_input_is_contained ... ok
+D03-OBSERVED {"cpu_on_target":"not measured: needs BE guest or hardware","float_ops_per_256_block":8960,"float_ops_per_output_frame":35,"id":"d03-ops","kind":"ops","lookahead_frames":2}
+test resample::tests::d03_operation_counts_are_accounted ... ok
+test protection::tests::step_one_the_harness_measures_correctly_against_the_old_product_bound ... ok
+test protection::tests::the_refusal_is_warranted_the_refused_boost_really_overflows_and_the_admitted_one_does_not ... ok
+test protection::tests::the_exact_bound_is_sound_against_the_realized_chain_with_room_to_spare ... ok
+test resample::tests::d03_output_is_clamped_and_counted ... ok
+test resample::tests::d03_oversize_and_mismatched_blocks_are_refused ... ok
+test resample::tests::d03_params_match_contract ... ok
+D03-OBSERVED {"id":"d03-split-invariance","kind":"split","outputs":12000,"splits_compared":8}
+test resample::tests::d03_output_does_not_depend_on_block_splitting ... ok
+test resample::tests::d03_slew_counts_and_convergence_match ... ok
+D03-OBSERVED {"id":"d03-slew-bound","kind":"slew","max_change_per_256_ppb":2000,"max_step_ppb":250}
+test resample::tests::d03_slew_is_bounded_under_random_targets ... ok
+test resample::tests::d03_slew_schedule_matches_per_quantum ... ok
+D03-OBSERVED {"consumed":8198,"freq_dev_hz":-7.354845444684022e-7,"id":"d03-tone-440-+500000","kind":"tone","produced":8192,"snr_db":113.1577127561166}
+D03-OBSERVED {"consumed":8189,"freq_dev_hz":-3.273631318540595e-8,"id":"d03-tone-1000--500000","kind":"tone","produced":8192,"snr_db":91.66168223029248}
+test resample::tests::d03_ratio_target_is_clamped_to_the_limit ... ok
+D03-OBSERVED {"consumed":8195,"freq_dev_hz":0.006590684471950955,"id":"d03-tone-4000-+137000","kind":"tone","produced":8192,"snr_db":54.23907177614623}
+D03-OBSERVED {"consumed":8191,"freq_dev_hz":-0.0036560313224770972,"id":"d03-tone-10000--250000","kind":"tone","produced":8192,"snr_db":26.687611262327977}
+test resample::tests::d03_underrun_resumes_exactly ... ok
+test resample::tests::d03_zero_length_blocks_change_nothing ... ok
+D03-OBSERVED {"consumed":8194,"freq_dev_hz":-1.7241053271919288e-7,"id":"d03-tone-1000-+0","kind":"tone","produced":8192,"snr_db":156.00915178070676}
+test resample::tests::d03_tone_quality_matches_independent_reference ... ok
+test ring::tests::bump_increments_by_one_and_saturates_instead_of_wrapping ... ok
+test ring::tests::capacity_is_validated ... ok
+test ring::tests::capture_sink_is_bounded_and_rejects_empty_blocks ... ok
+test ring::tests::exact_capacity_fills_then_refuses_then_drains ... ok
+test ring::tests::fifo_with_wrap_returns_exact_bytes ... ok
+test ring::tests::full_and_underrun_leave_state_untouched_and_are_counted ... ok
+test ring::tests::multichannel_frames_stay_whole_across_the_wrap ... ok
+test render_events::tests::slow_full_and_unavailable_sinks_leave_the_real_render_path_bit_identical ... ok
+test ring::tests::zero_misaligned_oversize_and_larger_than_ring_are_typed_errors ... ok
+test tests::big_endian_i16_roundtrip_and_nan_saturation_guard ... ok
+test resample::tests::d03_plan_equals_render ... ok
+test tests::drift_resampler_enforces_500_ppm_bound ... ok
+test tests::board_protection_dsp_blocks_dc_and_separates_tweeter_and_woofer_bands ... ok
+test volume::local_mute_tests::a_member_cut_off_from_its_controller_stops_its_own_sound_and_a_heal_does_not_undo_it ... ok
+test volume::local_mute_tests::a_member_with_no_authority_can_still_be_muted_locally_and_the_remote_path_is_shown_dead ... ok
+test volume::outcome_tests::a_command_reports_the_receipt_it_produced_when_applied_not_the_state_a_replay_finds_later ... ok
+test volume::outcome_tests::a_group_reports_the_authority_and_each_member_and_an_absent_member_never_applied_it ... ok
+test volume::outcome_tests::a_member_added_late_cannot_report_what_happened_before_it_joined ... ok
+test volume::outcome_tests::a_member_that_joined_from_a_snapshot_cannot_report_the_revisions_the_snapshot_covers ... ok
+test volume::outcome_tests::a_refused_command_is_not_recorded_and_consumes_no_revision ... ok
+test volume::outcome_tests::a_revision_nothing_carries_is_not_applied_if_newer_than_everything_and_skipped_if_a_newer_one_was_applied ... ok
+test volume::outcome_tests::an_older_applied_command_keeps_its_result_while_apply_still_refuses_its_replay_as_stale ... ok
+test volume::outcome_tests::asking_changes_nothing ... ok
+test volume::outcome_tests::inside_the_window_a_gap_is_skipped_and_below_it_everything_is_forgotten ... ok
+test volume::outcome_tests::results_beyond_the_retention_window_are_forgotten_with_the_oldest_remembered_revision_stated ... ok
+test ring::tests::two_threads_preserve_order_and_content_with_different_block_sizes ... ok
+test volume::outcome_tests::the_epoch_rules_are_those_of_apply_and_a_new_epoch_forgets_the_old_results ... ok
+test tests::wire_path_round_trips_every_i16_value_exactly ... ok
+test volume::progress_tests::a_board_holding_a_different_gain_has_not_been_told_even_when_both_are_silent ... ok
+test volume::progress_tests::a_board_that_cannot_unmute_completes_silent_and_the_command_says_why ... ok
+test volume::progress_tests::a_caller_that_bypasses_the_member_cannot_make_a_stale_completion_appear ... ok
+test volume::progress_tests::a_fault_the_member_has_not_seen_is_not_completion_and_once_seen_it_supersedes_the_command ... ok
+test volume::progress_tests::a_group_mute_completes_when_the_output_is_silent_and_says_why ... ok
+test ring::tests::behaves_like_a_bounded_fifo_model_across_many_position_wraps ... ok
+test volume::progress_tests::a_local_change_after_acceptance_overtakes_the_command_but_its_own_target_returning_completes_it ... ok
+test volume::progress_tests::a_newer_command_supersedes_an_unfinished_one_and_a_completed_newer_one_does_not_revive_it ... ok
+test volume::progress_tests::a_queued_command_is_accepted_not_completed_and_completes_on_the_sample_the_ramp_lands ... ok
+test volume::progress_tests::a_pending_profile_switch_is_not_completion_while_the_board_drains_to_silence ... ok
+test volume::progress_tests::asking_for_progress_changes_neither_the_member_nor_the_board ... ok
+test volume::progress_tests::an_older_command_with_the_same_target_is_still_superseded_so_the_newest_is_the_one_to_ask_about ... ok
+test volume::tests::a_board_that_is_not_active_keeps_the_member_fault_muted_whatever_is_requested ... ok
+test volume::tests::a_command_can_never_mint_an_epoch_and_declared_epochs_only_move_forward ... ok
+test volume::progress_tests::ids_that_were_never_accepted_report_the_outcome_and_the_epoch_rules_apply ... ok
+test volume::tests::a_group_mute_reaches_a_rejoining_member_through_the_snapshot ... ok
+test volume::tests::a_group_volume_change_preserves_the_room_trim_until_it_is_explicitly_reset ... ok
+test volume::tests::a_rejoining_member_takes_the_groups_current_state_and_starts_muted ... ok
+test volume::tests::a_restored_member_is_silent_and_powerless_until_it_rejoins ... ok
+test volume::tests::a_new_target_mid_ramp_retargets_from_the_current_gain ... ok
+test volume::tests::endpoints_saturate_and_overflowing_steps_are_refused_with_nothing_changed ... ok
+test volume::tests::gain_is_volume_times_trim_clamped_to_the_ceilings_before_any_ramp ... ok
+test volume::tests::group_commands_skip_missing_members_and_a_rejoin_takes_the_current_volume ... ok
+test volume::tests::local_buttons_adjust_the_trim_within_bounds_and_never_unmute ... ok
+test volume::tests::each_role_feeds_the_board_the_signal_it_names ... ok
+test volume::tests::mute_wins_over_volume_and_each_reason_has_exactly_one_owner ... ok
+test volume::tests::mute_wins_over_a_volume_command_in_flight ... ok
+test volume::tests::retries_are_idempotent_and_a_relative_command_applies_exactly_once ... ok
+test volume::tests::reconnect_never_spikes_for_a_live_board_or_a_restarted_one ... ok
+test resample::tests::d03_output_counts_from_inputs_match_closed_form ... ok
+test volume::tests::the_reported_mute_reason_follows_the_declared_priority ... ok
+test volume::tests::stale_and_unauthorized_commands_are_refused_with_nothing_changed ... ok
+test volume::tests::roles_map_onto_the_admitted_layout_and_absent_roles_are_refused_by_name ... ok
+test volume::tests::the_target_is_bounded_before_the_ramp_and_the_ramp_never_overshoots_it ... ok
+test volume::tests::the_view_keeps_desired_bounded_and_applied_gain_apart_and_explains_a_silent_unmute ... ok
+test volume::tests::unknown_and_duplicate_members_are_refused_by_name_with_nothing_changed ... ok
+test convert::soft_float_tests::int_to_f32_matches_the_original_for_every_24_bit_value ... ok
+test volume::outcome_tests::the_answers_match_a_model_over_the_full_log_through_gaps_refusals_snapshots_and_new_epochs ... ok
+test render_events::tests::the_ring_matches_a_plain_queue_across_counter_wraparound_and_small_capacities ... ok
+     Running tests/d01_vectors.rs (.rch-target-vmi1264463-pool-64ebfb84d734fcc7c6a841c94cef7910/debug/deps/d01_vectors-55960276b0a0f979)
+     Running tests/d02_vectors.rs (.rch-target-vmi1264463-pool-64ebfb84d734fcc7c6a841c94cef7910/debug/deps/d02_vectors-48ba7877cfc9be9d)
+test volume::progress_tests::over_random_operations_completed_means_the_board_is_at_rest_and_a_queued_command_never_completes ... ok
+test convert::soft_float_tests::f32_to_int_matches_the_original_on_every_tie_and_integer_code_with_bit_neighbours_at_every_width ... ok
+test result: ok. 169 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.59s
+running 3 tests
+test divergence_report_names_frame_channel_format_and_padding ... ok
+test a_planted_corruption_is_detected_and_located ... ok
+test d01_vectors_match_the_independent_reference ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+running 2 tests
+test a_planted_wrong_expectation_is_detected ... ok
+     Running tests/d03_quality.rs (.rch-target-vmi1264463-pool-64ebfb84d734fcc7c6a841c94cef7910/debug/deps/d03_quality-b580ac7c31e8dc58)
+     Running tests/d03_target_samples.rs (.rch-target-vmi1264463-pool-64ebfb84d734fcc7c6a841c94cef7910/debug/deps/d03_target_samples-7e8fd375725aa59f)
+test d02_vectors_match_the_independent_reference ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+running 7 tests
+test d03_quality_bands_are_the_declared_ones ... ok
+D03-OBSERVED {"band_q_db":85.0,"f0_hz":1000,"gain_db":null,"gain_hi_db":0.01,"gain_lo_db":-0.01,"id":"q-epoch-ramp-1000","interp":"catmull_rom","kind":"quality","meets_band":true,"ppb":500000,"q_db":101.10349688350048,"scenario":"epoch_ramp"}
+test d03_quality_metric_reads_a_known_tone_and_a_known_error ... ok
+D03-OBSERVED {"band_q_db":85.0,"f0_hz":1000,"gain_db":-4.979757157404577e-8,"gain_hi_db":0.01,"gain_lo_db":-0.01,"id":"q-linear-1000-0","interp":"linear","kind":"quality","meets_band":true,"ppb":0,"q_db":152.74441712022326,"scenario":"steady"}
+D03-OBSERVED {"band_q_db":85.0,"f0_hz":1000,"gain_db":-4.979757157404577e-8,"gain_hi_db":0.01,"gain_lo_db":-0.01,"id":"q-steady-1000-0","interp":"catmull_rom","kind":"quality","meets_band":true,"ppb":0,"q_db":152.74441712022326,"scenario":"steady"}
+D03-OBSERVED {"band_q_db":85.0,"f0_hz":1000,"gain_db":-0.01215013487949853,"gain_hi_db":0.01,"gain_lo_db":-0.01,"id":"q-linear-1000-p100","interp":"linear","kind":"quality","meets_band":false,"ppb":100000,"q_db":63.94648538031924,"scenario":"steady"}
+D03-OBSERVED {"band_q_db":85.0,"f0_hz":1000,"gain_db":-0.00003190887824662668,"gain_hi_db":0.01,"gain_lo_db":-0.01,"id":"q-epoch-steady-1000","interp":"catmull_rom","kind":"quality","meets_band":true,"ppb":500000,"q_db":91.70701474723685,"scenario":"epoch_steady"}
+D03-OBSERVED {"band_q_db":22.0,"f0_hz":10000,"gain_db":-3.385850077981698e-8,"gain_hi_db":0.05,"gain_lo_db":-0.6,"id":"q-linear-10000-0","interp":"linear","kind":"quality","meets_band":true,"ppb":0,"q_db":153.30662144341628,"scenario":"steady"}
+D03-OBSERVED {"band_q_db":22.0,"f0_hz":10000,"gain_db":null,"gain_hi_db":0.05,"gain_lo_db":-0.6,"id":"q-epoch-ramp-10000","interp":"catmull_rom","kind":"quality","meets_band":true,"ppb":500000,"q_db":42.220890358820654,"scenario":"epoch_ramp"}
+D03-OBSERVED {"band_q_db":85.0,"f0_hz":1000,"gain_db":-0.000030757688140005445,"gain_hi_db":0.01,"gain_lo_db":-0.01,"id":"q-steady-1000-p100","interp":"catmull_rom","kind":"quality","meets_band":true,"ppb":100000,"q_db":91.63101821987814,"scenario":"steady"}
+D03-OBSERVED {"id":"q-linear-1000-p100-pair","kind":"quality_pair","plant_gain_db":-0.01215013487949853,"plant_id":"q-linear-1000-p100","plant_q_db":63.94648538031924,"real_gain_db":-0.000030757688140005445,"real_id":"q-steady-1000-p100","real_q_db":91.63101821987814}
+D03-OBSERVED {"band_q_db":85.0,"f0_hz":1000,"gain_db":-4.979757157404577e-8,"gain_hi_db":0.01,"gain_lo_db":-0.01,"id":"q-nearest-1000-0","interp":"nearest","kind":"quality","meets_band":true,"ppb":0,"q_db":152.74441712022326,"scenario":"steady"}
+D03-OBSERVED {"band_q_db":22.0,"f0_hz":10000,"gain_db":-0.2788910239064006,"gain_hi_db":0.05,"gain_lo_db":-0.6,"id":"q-epoch-steady-10000","interp":"catmull_rom","kind":"quality","meets_band":true,"ppb":500000,"q_db":28.97688223179491,"scenario":"epoch_steady"}
+test d03_quality_after_an_epoch_reset_meets_the_declared_bands ... ok
+D03-OBSERVED {"band_q_db":85.0,"f0_hz":1000,"gain_db":-0.012149647991135822,"gain_hi_db":0.01,"gain_lo_db":-0.01,"id":"q-linear-1000-m100","interp":"linear","kind":"quality","meets_band":false,"ppb":-100000,"q_db":63.94674623301515,"scenario":"steady"}
+D03-OBSERVED {"band_q_db":22.0,"f0_hz":10000,"gain_db":-3.385850077981698e-8,"gain_hi_db":0.05,"gain_lo_db":-0.6,"id":"q-nearest-10000-0","interp":"nearest","kind":"quality","meets_band":true,"ppb":0,"q_db":153.30662144341628,"scenario":"steady"}
+D03-OBSERVED {"band_q_db":85.0,"f0_hz":1000,"gain_db":-0.00003168985214364094,"gain_hi_db":0.01,"gain_lo_db":-0.01,"id":"q-slewed-1000","interp":"catmull_rom","kind":"quality","meets_band":true,"ppb":500000,"q_db":91.70446841210858,"scenario":"slewed"}
+test d03_quality_at_zero_ratio_every_interpolator_is_exact_so_that_row_is_not_an_interpolation_test ... ok
+D03-OBSERVED {"band_q_db":85.0,"f0_hz":1000,"gain_db":-0.00003071344244253611,"gain_hi_db":0.01,"gain_lo_db":-0.01,"id":"q-steady-1000-m100","interp":"catmull_rom","kind":"quality","meets_band":true,"ppb":-100000,"q_db":91.63024077108787,"scenario":"steady"}
+D03-OBSERVED {"id":"q-linear-1000-m100-pair","kind":"quality_pair","plant_gain_db":-0.012149647991135822,"plant_id":"q-linear-1000-m100","plant_q_db":63.94674623301515,"real_gain_db":-0.00003071344244253611,"real_id":"q-steady-1000-m100","real_q_db":91.63024077108787}
+D03-OBSERVED {"band_q_db":85.0,"f0_hz":1000,"gain_db":-0.00003202540431027408,"gain_hi_db":0.01,"gain_lo_db":-0.01,"id":"q-steady-1000-p500","interp":"catmull_rom","kind":"quality","meets_band":true,"ppb":500000,"q_db":91.70705656642242,"scenario":"steady"}
+D03-OBSERVED {"band_q_db":85.0,"f0_hz":1000,"gain_db":-0.012449156311701202,"gain_hi_db":0.01,"gain_lo_db":-0.01,"id":"q-linear-1000-p500","interp":"linear","kind":"quality","meets_band":false,"ppb":500000,"q_db":63.925196852987185,"scenario":"steady"}
+D03-OBSERVED {"band_q_db":85.0,"f0_hz":1000,"gain_db":-0.00003198783161208789,"gain_hi_db":0.01,"gain_lo_db":-0.01,"id":"q-steady-1000-m500","interp":"catmull_rom","kind":"quality","meets_band":true,"ppb":-500000,"q_db":91.70685547772443,"scenario":"steady"}
+D03-OBSERVED {"band_q_db":22.0,"f0_hz":10000,"gain_db":-0.27579779798564447,"gain_hi_db":0.05,"gain_lo_db":-0.6,"id":"q-slewed-10000","interp":"catmull_rom","kind":"quality","meets_band":true,"ppb":500000,"q_db":28.97512579731782,"scenario":"slewed"}
+test d03_quality_settled_after_a_slew_meets_the_declared_bands ... ok
+D03-OBSERVED {"id":"q-linear-1000-p500-pair","kind":"quality_pair","plant_gain_db":-0.012449156311701202,"plant_id":"q-linear-1000-p500","plant_q_db":63.925196852987185,"real_gain_db":-0.00003202540431027408,"real_id":"q-steady-1000-p500","real_q_db":91.70705656642242}
+D03-OBSERVED {"band_q_db":22.0,"f0_hz":10000,"gain_db":-3.385850077981698e-8,"gain_hi_db":0.05,"gain_lo_db":-0.6,"id":"q-steady-10000-0","interp":"catmull_rom","kind":"quality","meets_band":true,"ppb":0,"q_db":153.30662144341628,"scenario":"steady"}
+D03-OBSERVED {"band_q_db":85.0,"f0_hz":1000,"gain_db":-0.012450138158348528,"gain_hi_db":0.01,"gain_lo_db":-0.01,"id":"q-linear-1000-m500","interp":"linear","kind":"quality","meets_band":false,"ppb":-500000,"q_db":63.924113952271846,"scenario":"steady"}
+D03-OBSERVED {"id":"q-linear-1000-m500-pair","kind":"quality_pair","plant_gain_db":-0.012450138158348528,"plant_id":"q-linear-1000-m500","plant_q_db":63.924113952271846,"real_gain_db":-0.00003198783161208789,"real_id":"q-steady-1000-m500","real_q_db":91.70685547772443}
+D03-OBSERVED {"band_q_db":22.0,"f0_hz":10000,"gain_db":-0.2672044708658033,"gain_hi_db":0.05,"gain_lo_db":-0.6,"id":"q-steady-10000-p100","interp":"catmull_rom","kind":"quality","meets_band":true,"ppb":100000,"q_db":28.970425517085737,"scenario":"steady"}
+D03-OBSERVED {"band_q_db":22.0,"f0_hz":10000,"gain_db":-1.228983584981057,"gain_hi_db":0.05,"gain_lo_db":-0.6,"id":"q-linear-10000-p100","interp":"linear","kind":"quality","meets_band":false,"ppb":100000,"q_db":22.283925017346732,"scenario":"steady"}
+D03-OBSERVED {"band_q_db":22.0,"f0_hz":10000,"gain_db":-0.26720283101026304,"gain_hi_db":0.05,"gain_lo_db":-0.6,"id":"q-steady-10000-m100","interp":"catmull_rom","kind":"quality","meets_band":true,"ppb":-100000,"q_db":28.970450048738428,"scenario":"steady"}
+D03-OBSERVED {"id":"q-linear-10000-p100-pair","kind":"quality_pair","plant_gain_db":-1.228983584981057,"plant_id":"q-linear-10000-p100","plant_q_db":22.283925017346732,"real_gain_db":-0.2672044708658033,"real_id":"q-steady-10000-p100","real_q_db":28.970425517085737}
+D03-OBSERVED {"band_q_db":22.0,"f0_hz":10000,"gain_db":-0.278898560745991,"gain_hi_db":0.05,"gain_lo_db":-0.6,"id":"q-steady-10000-p500","interp":"catmull_rom","kind":"quality","meets_band":true,"ppb":500000,"q_db":28.97690281793105,"scenario":"steady"}
+D03-OBSERVED {"band_q_db":22.0,"f0_hz":10000,"gain_db":-1.2289846113209288,"gain_hi_db":0.05,"gain_lo_db":-0.6,"id":"q-linear-10000-m100","interp":"linear","kind":"quality","meets_band":false,"ppb":-100000,"q_db":22.283927966776606,"scenario":"steady"}
+D03-OBSERVED {"id":"q-linear-10000-m100-pair","kind":"quality_pair","plant_gain_db":-1.2289846113209288,"plant_id":"q-linear-10000-m100","plant_q_db":22.283927966776606,"real_gain_db":-0.26720283101026304,"real_id":"q-steady-10000-m100","real_q_db":28.970450048738428}
+D03-OBSERVED {"band_q_db":22.0,"f0_hz":10000,"gain_db":-0.2788935091398168,"gain_hi_db":0.05,"gain_lo_db":-0.6,"id":"q-steady-10000-m500","interp":"catmull_rom","kind":"quality","meets_band":true,"ppb":-500000,"q_db":28.97682493177036,"scenario":"steady"}
+test d03_quality_steady_ratios_meet_the_declared_bands ... ok
+D03-OBSERVED {"band_q_db":22.0,"f0_hz":10000,"gain_db":-1.263486967000895,"gain_hi_db":0.05,"gain_lo_db":-0.6,"id":"q-linear-10000-p500","interp":"linear","kind":"quality","meets_band":false,"ppb":500000,"q_db":22.236516183847208,"scenario":"steady"}
+D03-OBSERVED {"id":"q-linear-10000-p500-pair","kind":"quality_pair","plant_gain_db":-1.263486967000895,"plant_id":"q-linear-10000-p500","plant_q_db":22.236516183847208,"real_gain_db":-0.278898560745991,"real_id":"q-steady-10000-p500","real_q_db":28.97690281793105}
+D03-OBSERVED {"band_q_db":22.0,"f0_hz":10000,"gain_db":-1.263481251108224,"gain_hi_db":0.05,"gain_lo_db":-0.6,"id":"q-linear-10000-m500","interp":"linear","kind":"quality","meets_band":false,"ppb":-500000,"q_db":22.236509981865787,"scenario":"steady"}
+D03-OBSERVED {"id":"q-linear-10000-m500-pair","kind":"quality_pair","plant_gain_db":-1.263481251108224,"plant_id":"q-linear-10000-m500","plant_q_db":22.236509981865787,"real_gain_db":-0.2788935091398168,"real_id":"q-steady-10000-m500","real_q_db":28.97682493177036}
+D03-OBSERVED {"band_q_db":85.0,"f0_hz":1000,"gain_db":-0.005865061953544609,"gain_hi_db":0.01,"gain_lo_db":-0.01,"id":"q-nearest-1000-p100","interp":"nearest","kind":"quality","meets_band":false,"ppb":100000,"q_db":28.69533921641038,"scenario":"steady"}
+D03-OBSERVED {"id":"q-nearest-1000-p100-pair","kind":"quality_pair","plant_gain_db":-0.005865061953544609,"plant_id":"q-nearest-1000-p100","plant_q_db":28.69533921641038,"real_gain_db":-0.000030757688140005445,"real_id":"q-steady-1000-p100","real_q_db":91.63101821987814}
+D03-OBSERVED {"band_q_db":85.0,"f0_hz":1000,"gain_db":-0.005805381030612199,"gain_hi_db":0.01,"gain_lo_db":-0.01,"id":"q-nearest-1000-m100","interp":"nearest","kind":"quality","meets_band":false,"ppb":-100000,"q_db":28.694727501439882,"scenario":"steady"}
+D03-OBSERVED {"id":"q-nearest-1000-m100-pair","kind":"quality_pair","plant_gain_db":-0.005805381030612199,"plant_id":"q-nearest-1000-m100","plant_q_db":28.694727501439882,"real_gain_db":-0.00003071344244253611,"real_id":"q-steady-1000-m100","real_q_db":91.63024077108787}
+D03-OBSERVED {"band_q_db":85.0,"f0_hz":1000,"gain_db":-0.006173833169789374,"gain_hi_db":0.01,"gain_lo_db":-0.01,"id":"q-nearest-1000-p500","interp":"nearest","kind":"quality","meets_band":false,"ppb":500000,"q_db":28.436971288035963,"scenario":"steady"}
+D03-OBSERVED {"id":"q-nearest-1000-p500-pair","kind":"quality_pair","plant_gain_db":-0.006173833169789374,"plant_id":"q-nearest-1000-p500","plant_q_db":28.436971288035963,"real_gain_db":-0.00003202540431027408,"real_id":"q-steady-1000-p500","real_q_db":91.70705656642242}
+D03-OBSERVED {"band_q_db":85.0,"f0_hz":1000,"gain_db":-0.006324731258631899,"gain_hi_db":0.01,"gain_lo_db":-0.01,"id":"q-nearest-1000-m500","interp":"nearest","kind":"quality","meets_band":false,"ppb":-500000,"q_db":28.438544995942273,"scenario":"steady"}
+D03-OBSERVED {"id":"q-nearest-1000-m500-pair","kind":"quality_pair","plant_gain_db":-0.006324731258631899,"plant_id":"q-nearest-1000-m500","plant_q_db":28.438544995942273,"real_gain_db":-0.00003198783161208789,"real_id":"q-steady-1000-m500","real_q_db":91.70685547772443}
+D03-OBSERVED {"band_q_db":22.0,"f0_hz":10000,"gain_db":-0.5932646812436891,"gain_hi_db":0.05,"gain_lo_db":-0.6,"id":"q-nearest-10000-p100","interp":"nearest","kind":"quality","meets_band":false,"ppb":100000,"q_db":8.343338688527334,"scenario":"steady"}
+D03-OBSERVED {"id":"q-nearest-10000-p100-pair","kind":"quality_pair","plant_gain_db":-0.5932646812436891,"plant_id":"q-nearest-10000-p100","plant_q_db":8.343338688527334,"real_gain_db":-0.2672044708658033,"real_id":"q-steady-10000-p100","real_q_db":28.970425517085737}
+D03-OBSERVED {"band_q_db":22.0,"f0_hz":10000,"gain_db":-0.5935658581867472,"gain_hi_db":0.05,"gain_lo_db":-0.6,"id":"q-nearest-10000-m100","interp":"nearest","kind":"quality","meets_band":false,"ppb":-100000,"q_db":8.342746012187877,"scenario":"steady"}
+D03-OBSERVED {"id":"q-nearest-10000-m100-pair","kind":"quality_pair","plant_gain_db":-0.5935658581867472,"plant_id":"q-nearest-10000-m100","plant_q_db":8.342746012187877,"real_gain_db":-0.26720283101026304,"real_id":"q-steady-10000-m100","real_q_db":28.970450048738428}
+D03-OBSERVED {"band_q_db":22.0,"f0_hz":10000,"gain_db":-0.6309583161123911,"gain_hi_db":0.05,"gain_lo_db":-0.6,"id":"q-nearest-10000-p500","interp":"nearest","kind":"quality","meets_band":false,"ppb":500000,"q_db":8.058117236343591,"scenario":"steady"}
+D03-OBSERVED {"id":"q-nearest-10000-p500-pair","kind":"quality_pair","plant_gain_db":-0.6309583161123911,"plant_id":"q-nearest-10000-p500","plant_q_db":8.058117236343591,"real_gain_db":-0.278898560745991,"real_id":"q-steady-10000-p500","real_q_db":28.97690281793105}
+D03-OBSERVED {"band_q_db":22.0,"f0_hz":10000,"gain_db":-0.6305314237887076,"gain_hi_db":0.05,"gain_lo_db":-0.6,"id":"q-nearest-10000-m500","interp":"nearest","kind":"quality","meets_band":false,"ppb":-500000,"q_db":8.058822423652359,"scenario":"steady"}
+D03-OBSERVED {"id":"q-nearest-10000-m500-pair","kind":"quality_pair","plant_gain_db":-0.6305314237887076,"plant_id":"q-nearest-10000-m500","plant_q_db":8.058822423652359,"real_gain_db":-0.2788935091398168,"real_id":"q-steady-10000-m500","real_q_db":28.97682493177036}
+test d03_quality_planted_nearest_and_linear_interpolators_miss_the_bands ... ok
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+running 5 tests
+test d03_target_seed_derivation_matches_known_answers ... ok
+test d03_target_seeded_samples_depend_on_the_seed ... ok
+test d03_target_tone_generator_is_the_analytic_sine ... ok
+test d03_target_cases_are_the_declared_quality_cases ... ok
+test d03_target_canonical_samples_are_well_formed_and_digested ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+running 3 tests
+test pcm_inputs_are_the_documented_lcg_stream ... ok
+     Running tests/g02_pcm.rs (.rch-target-vmi1264463-pool-64ebfb84d734fcc7c6a841c94cef7910/debug/deps/g02_pcm-e65d051209adadda)
+     Running tests/g02_vectors.rs (.rch-target-vmi1264463-pool-64ebfb84d734fcc7c6a841c94cef7910/debug/deps/g02_vectors-d3e38fd58b603695)
+     Running unittests src/lib.rs (.rch-target-vmi1264463-pool-64ebfb84d734fcc7c6a841c94cef7910/debug/deps/franken_stream-13730a8cf2d23ce3)
+     Running unittests src/bin/n01_wire_guest/main.rs (.rch-target-vmi1264463-pool-64ebfb84d734fcc7c6a841c94cef7910/debug/deps/n01_wire_guest-13d4d18e8c14f5b2)
+     Running tests/n01_loopback.rs (.rch-target-vmi1264463-pool-64ebfb84d734fcc7c6a841c94cef7910/debug/deps/n01_loopback-ad1eeaf09031a9d9)
+     Running tests/n01_wire_replay.rs (.rch-target-vmi1264463-pool-64ebfb84d734fcc7c6a841c94cef7910/debug/deps/n01_wire_replay-6188308dd9d5086f)
+test a_planted_defect_in_the_pcm_path_is_detected ... ok
+test g02_pcm_vectors_match_the_independent_reference ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+running 3 tests
+test g02_assumes_the_d02_synthetic_ramp_is_ten_milliseconds ... ok
+test a_planted_wrong_expectation_is_detected ... ok
+test g02_vectors_match_the_independent_reference ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+running 105 tests
+test negotiation::tests::a_full_exchange_gives_both_sides_the_same_session_and_a_working_bound_key ... ok
+test negotiation::tests::a_mandatory_feature_the_other_side_lacks_is_fatal_in_either_direction ... ok
+test negotiation::tests::an_answer_selecting_a_lower_version_than_is_jointly_supported_is_a_downgrade ... ok
+test negotiation::tests::a_session_this_build_cannot_speak_is_not_turned_into_media_endpoints ... ok
+test negotiation::tests::an_answer_from_an_earlier_negotiation_does_not_answer_a_new_offer ... ok
+test negotiation::tests::an_answer_that_strips_or_adds_selection_content_is_a_mismatch_not_a_session ... ok
+test negotiation::tests::disjoint_version_ranges_have_no_session ... ok
+test negotiation::tests::an_offer_for_an_epoch_older_than_the_receivers_is_refused ... ok
+test negotiation::tests::formats_and_limits_are_negotiated_and_a_limit_below_one_block_is_incompatible ... ok
+test negotiation::tests::even_a_re_authenticated_modified_offer_is_detected_by_the_initiator ... ok
+test negotiation::tests::authenticated_but_unacceptable_messages_are_refused_field_by_field ... ok
+test negotiation::tests::malformed_capability_claims_are_rejected ... ok
+test negotiation::tests::identities_and_nonces_must_be_nonzero_and_distinct ... ok
+test negotiation::tests::endpoints_with_different_capability_sets_share_one_wire_format ... ok
+test negotiation::tests::media_from_a_different_negotiation_does_not_authenticate ... ok
+test negotiation::tests::negotiated_features_are_enforced_by_both_endpoints ... ok
+test negotiation::tests::golden_negotiation_rejections_from_the_reference_carry_the_same_codes ... ok
+test negotiation::tests::an_incompatible_join_leaves_the_existing_group_playing_unchanged ... ok
+test negotiation::tests::golden_negotiations_from_the_independent_python_reference_match_byte_for_byte ... ok
+test negotiation::tests::the_payload_limit_boundary_is_one_full_block_in_steps_of_four_for_either_party ... ok
+test negotiation::tests::old_and_new_firmware_settle_on_the_highest_common_version_and_the_common_features ... ok
+test negotiation::tests::reflections_and_cross_stream_answers_are_refused ... ok
+test playout::group_clock_tests::n04_group_clock_a_block_admitted_at_a_real_reading_plays_and_the_same_arrival_after_the_cutoff_is_late ... ok
+test negotiation::tests::stripping_a_higher_version_from_an_offer_without_the_key_fails_authentication ... ok
+test playout::group_clock_tests::n04_group_clock_the_cutoff_moves_by_exactly_the_uncertainty_the_clock_reports ... ok
+test playout::group_clock_tests::n04_group_clock_the_view_is_within_the_clocks_own_uncertainty_of_the_true_offset ... ok
+test negotiation::tests::the_payload_limit_vectors_are_pinned_by_id_with_hand_written_codes ... ok
+test playout::log::tests::n04_log_config_validates_labels_pseudonyms_capacity_and_bound ... ok
+test playout::group_clock_tests::n04_group_clock_holdover_is_usable_and_expired_unlocked_and_empty_clocks_are_not ... ok
+test playout::log::tests::n04_log_an_over_long_line_is_dropped_whole_and_counted ... ok
+test playout::log::tests::n04_log_no_peer_supplied_text_reaches_a_record ... ok
+test playout::log::tests::n04_log_a_record_is_a_valid_ffw_log_v1_event_and_round_trips_byte_for_byte ... ok
+test playout::log::tests::n04_log_off_means_nothing_is_offered ... ok
+test playout::log::tests::n04_log_stats_summary_line ... ok
+test playout::log::tests::n04_log_the_member_and_group_appear_only_as_pseudonyms ... ok
+test playout::log::tests::n04_log_golden_lines_are_the_hand_assembled_ones ... ok
+test playout::log::tests::n04_log_timestamps_never_go_backwards ... ok
+test negotiation::tests::arbitrary_garbage_is_never_a_negotiation_message ... ok
+test playout::tests::n04_every_world_in_the_vectors_has_a_test ... ok
+test playout::tests::n04_conceal_gains_are_round_0_7_pow_n_in_q15 ... ok
+test playout::tests::n04_frames_to_ns_table_matches_the_reference_and_the_hand_derived_anchors ... ok
+test playout::tests::n04_consume_by_table_matches_the_reference_and_the_hand_derived_anchors ... ok
+test playout::tests::n04_advice_table_matches_the_reference ... ok
+test playout::tests::n04_conceal_blocks_match_the_reference_and_the_hand_derived_samples ... ok
+test playout::tests::n04_profiles_are_the_frozen_table ... ok
+test playout::tests::n04_invalid_configurations_are_refused_field_by_field ... ok
+test playout::tests::n04_the_senders_consume_by_never_extends_a_deadline ... ok
+test playout::tests::n04_world_w01_ontime ... ok
+test negotiation::tests::negotiation_messages_reject_every_truncation_extension_and_single_bit_flip ... ok
+test playout::tests::n04_world_w02_cutoff_boundary ... ok
+test playout::tests::n04_world_w03_uncertainty_moves_cutoff ... ok
+test playout::tests::n04_world_w04_reorder_duplicate ... ok
+test playout::tests::n04_world_w05_burst_music ... ok
+test playout::tests::n04_world_w07_epoch ... ok
+test playout::tests::n04_world_w06_burst_realtime ... ok
+test playout::tests::n04_world_w08_window_and_input ... ok
+test playout::tests::n04_world_w09_repair ... ok
+test playout::tests::n04_world_w09b_repair_before_dac ... ok
+test playout::tests::n04_world_w11_overdue ... ok
+test playout::tests::n04_world_w11b_overdue_boundary ... ok
+test playout::tests::n04_world_w10_clock ... ok
+test playout::tests::n04_world_w12b_step_limit ... ok
+test playout::tests::n04_world_w12c_step_limit ... ok
+test playout::tests::n04_world_w12d_net_cap ... ok
+test playout::tests::n04_world_w13_latency_down ... ok
+test playout::tests::n04_world_w12_latency_up ... ok
+test playout::tests::n04_world_w14_backpressure ... ok
+test playout::tests::n04_world_w13b_latency_down_exact ... ok
+test playout::tests::n04_world_w15_advice ... ok
+test playout::tests::n04_world_w15b_advice_quiet ... ok
+test playout::tests::n04_counters_account_for_every_packet_and_every_decision ... ok
+test playout::tests::n04_world_w16_seeded_music ... ok
+test tests::a_tampered_datagram_never_consumes_a_sequence_number ... ok
+test tests::accepted_traffic_feeds_the_jitter_buffer_and_rejected_traffic_never_reaches_it ... ok
+test tests::an_ignorable_flag_bit_is_authenticated_preserved_and_accepted ... ok
+test tests::a_forged_far_future_sequence_cannot_fence_out_the_real_sender ... ok
+test tests::authenticated_packet_roundtrip_and_tamper_rejection ... ok
+test tests::counters_account_for_every_datagram_exactly_once ... ok
+test playout::tests::n04_world_w17_seeded_realtime ... ok
+test tests::every_truncation_and_extension_is_rejected_without_panicking ... ok
+test tests::field_validation_rejects_authenticated_but_unacceptable_headers ... ok
+test tests::golden_vectors_from_the_independent_python_reference_match_byte_for_byte ... ok
+test tests::header_is_the_documented_big_endian_layout ... ok
+test tests::jitter_buffer_enforces_consume_by_deadline_and_plc_fade ... ok
+test tests::jitter_buffer_rejects_repair_packets_and_reports_pcm_decode_failures_truthfully ... ok
+test tests::keys_and_payloads_never_appear_in_diagnostics ... ok
+test tests::length_version_and_magic_rejections_happen_before_any_mac_work ... ok
+test tests::reorder_inside_the_window_is_admitted_and_duplicates_are_not ... ok
+test playout::tests::n04_properties_hold_on_every_world ... ok
+test tests::replay_window_edges_reorder_depth_and_the_future_bound ... ok
+test tests::replay_window_first_packet_is_bounded_by_the_origin_and_never_adopts_epochs ... ok
+test tests::replay_window_rejects_stale_epochs_and_duplicate_sequences ... ok
+test tests::golden_scenarios_replay_through_the_receiver_exactly_as_the_reference_model_predicts ... ok
+test tests::restart_and_rekey_make_the_previous_stream_inert ... ok
+test tests::stale_future_and_foreign_traffic_is_ignored_without_touching_the_stream ... ok
+test tests::tampered_epoch_format_and_stream_fields_fail_authentication ... ok
+test tests::sender_sequence_epoch_and_identity_rules ... ok
+test tests::the_encoder_refuses_every_frame_the_decoder_would_reject ... ok
+test playout::tests::n04_log_a_blocking_sink_is_never_called_on_the_decision_path ... ok
+test tests::the_window_matches_a_set_based_model_on_a_long_random_walk ... ok
+test playout::tests::n04_log_accounting_holds_after_every_op ... ok
+test playout::tests::n04_log_keeps_up_logs_every_decision_and_refusal ... ok
+test tests::seeded_random_packets_roundtrip_and_any_single_bit_flip_is_rejected ... ok
+test tests::arbitrary_garbage_never_panics_and_never_authenticates ... ok
+test playout::tests::n04_log_loss_is_counted_when_the_sink_is_slow_full_or_unavailable ... ok
+test result: ok. 105 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 1 test
+test two_endpoints_exchange_boundary_datagrams_over_loopback ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 7 tests
+test the_fingerprint_function_matches_the_published_fnv_1a_test_vectors ... ok
+test a_document_that_cannot_be_read_produces_no_done_line ... ok
+test every_accepted_vector_decodes_to_the_references_fields_and_re_encodes_to_the_same_bytes ... ok
+test the_planted_rejections_are_refused_and_the_permitted_positives_are_accepted ... ok
+test the_committed_vectors_replay_with_no_mismatch_and_the_shape_the_judge_requires ... ok
+test the_byte_order_probe_describes_the_machine_that_ran_it ... ok
+test a_replay_handed_a_corrupted_expectation_reports_a_mismatch_and_would_exit_non_zero ... ok
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+  2026-11-06T03:56:03.701285Z  INFO rch::hook::transfer_orchestration: Remote command finished: exit=0 in 38044ms
+[RCH] remote vmi1264463 (69.8s)

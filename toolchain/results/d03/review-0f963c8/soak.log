@@ -1,0 +1,55 @@
+  2026-11-05T03:04:11.780459Z  INFO rch::hook: Selected worker: vmi1152480 at root@<worker-address> (1 slots remaining after reservation, speed 49.5)
+    at rch/src/hook.rs:4233 on ThreadId(1)
+
+  2026-11-05T03:04:12.037728Z  INFO rch::hook::transfer_orchestration: Starting remote compilation pipeline for ws-b6d (hash: dadf8458928f5b03)
+    at rch/src/hook/transfer_orchestration.rs:1144 on ThreadId(1)
+
+  2026-11-05T03:04:12.037814Z  INFO rch::hook::transfer_orchestration: Prepared dependency sync manifest for 1 roots
+    at rch/src/hook/transfer_orchestration.rs:1166 on ThreadId(1)
+
+  2026-11-05T03:04:22.955922Z  INFO rch::hook::transfer_orchestration: Syncing project to worker vmi1152480...
+    at rch/src/hook/transfer_orchestration.rs:1466 on ThreadId(1)
+
+  2026-11-05T03:04:22.967544Z  INFO rch::transfer: Syncing <scratch>/ws-b6d -> <scratch>/ws-b6d on vmi1152480 (streaming)
+    at rch/src/transfer.rs:5939 on ThreadId(1)
+
+  2026-11-05T03:04:26.529366Z  INFO rch::hook::transfer_orchestration: Sync complete: 0 files, 16046 bytes in 3522ms
+    at rch/src/hook/transfer_orchestration.rs:1924 on ThreadId(1)
+
+  2026-11-05T03:04:28.718313Z  INFO rch::hook::transfer_orchestration: Executing command remotely: cargo test -p franken-speaker --locked -j 2 --test d03_closed_loop --config 'env.RCH_BUILD_SOURCE.value="unknown"' --config 'env.RCH_BUILD_SOURCE.force=true' -- --ignored --nocapture
+    at rch/src/hook/transfer_orchestration.rs:2081 on ThreadId(1)
+
+  2026-11-05T03:04:28.727367Z  INFO rch::transfer: Rewriting CARGO_TARGET_DIR for remote execution (worker-scoped path): <scratch>/ws-b6d/target -> <scratch>/ws-b6d/.rch-target-vmi1152480-pool-8404f6ba3bff2da8d3515784a4c2fa44
+    at rch/src/transfer.rs:3950 on ThreadId(1)
+
+  2026-11-05T03:04:28.727434Z  INFO rch::transfer: Wrapping command with external timeout protection, kind: cargo test, timeout_secs: 7200
+    at rch/src/transfer.rs:4791 on ThreadId(1)
+
+
+running 1 test
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running tests/d03_closed_loop.rs (.rch-target-vmi1152480-pool-8404f6ba3bff2da8d3515784a4c2fa44/debug/build/franken-speaker/f2143a3bcf1843f2/out/d03_closed_loop-f2143a3bcf1843f2)
+D03-OBSERVED {"bound_frames":390,"controlled":true,"drift_ppb":-280000,"estimator_discontinuities":0,"final_ratio_ppb":-278259,"id":"d03-loop-25h-soak","inputs_pulled":4405166464,"kind":"closed_loop","max_deviation_frames":259,"outputs":4406400000,"resets":0,"underruns":0,"virtual_seconds":91800,"wraps":1}
+test d03_closed_loop_soak_25_5_hours_crosses_the_counter_wrap ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 3.33s
+
+  2026-11-05T03:04:39.321999Z  INFO rch::hook::transfer_orchestration: Remote command finished: exit=0 in 8973ms
+    at rch/src/hook/transfer_orchestration.rs:2313 on ThreadId(1)
+
+  2026-11-05T03:04:39.352957Z  INFO rch::hook::transfer_orchestration: Retrieving build artifacts...
+    at rch/src/hook/transfer_orchestration.rs:2523 on ThreadId(1)
+
+  2026-11-05T03:04:39.353019Z  INFO rch::transfer: Retrieving artifacts from <scratch>/ws-b6d on vmi1152480
+    at rch/src/transfer.rs:6951 on ThreadId(1)
+
+  2026-11-05T03:04:42.064445Z  INFO rch::transfer: Artifact retrieval budget from selected remote files, selected_bytes: 0, total_timeout_ms: 30000
+    at rch/src/transfer.rs:3604 on ThreadId(1)
+
+  2026-11-05T03:04:45.350323Z  INFO rch::transfer: Artifacts retrieved in 5997ms (0 files, 43 bytes)
+    at rch/src/transfer.rs:7012 on ThreadId(1)
+
+  2026-11-05T03:04:45.372934Z  INFO rch::hook::transfer_orchestration: Artifacts retrieved: 0 files, 43 bytes in 5997ms
+    at rch/src/hook/transfer_orchestration.rs:2588 on ThreadId(1)
+
+[RCH] remote vmi1152480 (35.7s)

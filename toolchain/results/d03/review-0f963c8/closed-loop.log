@@ -1,0 +1,80 @@
+  2026-11-05T03:03:28.968286Z  INFO rch::hook: Selected worker: vmi1152480 at root@<worker-address> (1 slots remaining after reservation, speed 49.5)
+    at rch/src/hook.rs:4233 on ThreadId(1)
+
+  2026-11-05T03:03:29.221375Z  INFO rch::hook::transfer_orchestration: Starting remote compilation pipeline for ws-b6d (hash: dadf8458928f5b03)
+    at rch/src/hook/transfer_orchestration.rs:1144 on ThreadId(1)
+
+  2026-11-05T03:03:29.221558Z  INFO rch::hook::transfer_orchestration: Prepared dependency sync manifest for 1 roots
+    at rch/src/hook/transfer_orchestration.rs:1166 on ThreadId(1)
+
+  2026-11-05T03:03:37.925815Z  INFO rch::hook::transfer_orchestration: Syncing project to worker vmi1152480...
+    at rch/src/hook/transfer_orchestration.rs:1466 on ThreadId(1)
+
+  2026-11-05T03:03:37.936607Z  INFO rch::transfer: Syncing <scratch>/ws-b6d -> <scratch>/ws-b6d on vmi1152480 (streaming)
+    at rch/src/transfer.rs:5939 on ThreadId(1)
+
+  2026-11-05T03:03:39.794661Z  INFO rch::hook::transfer_orchestration: Sync complete: 0 files, 16046 bytes in 1815ms
+    at rch/src/hook/transfer_orchestration.rs:1924 on ThreadId(1)
+
+  2026-11-05T03:03:41.433593Z  INFO rch::hook::transfer_orchestration: Executing command remotely: cargo test -p franken-speaker --locked -j 2 --test d03_closed_loop --config 'env.RCH_BUILD_SOURCE.value="unknown"' --config 'env.RCH_BUILD_SOURCE.force=true' -- --nocapture
+    at rch/src/hook/transfer_orchestration.rs:2081 on ThreadId(1)
+
+  2026-11-05T03:03:41.449492Z  INFO rch::transfer: Rewriting CARGO_TARGET_DIR for remote execution (worker-scoped path): <scratch>/ws-b6d/target -> <scratch>/ws-b6d/.rch-target-vmi1152480-pool-8404f6ba3bff2da8d3515784a4c2fa44
+    at rch/src/transfer.rs:3950 on ThreadId(1)
+
+  2026-11-05T03:03:41.449583Z  INFO rch::transfer: Wrapping command with external timeout protection, kind: cargo test, timeout_secs: 7200
+    at rch/src/transfer.rs:4791 on ThreadId(1)
+
+   Compiling cmov v0.5.4
+   Compiling ctutils v0.4.8
+   Compiling digest v0.11.3
+   Compiling sha2 v0.11.1
+   Compiling hmac v0.13.0
+   Compiling franken-board-profile v0.1.0 (<scratch>/ws-b6d/crates/franken-board-profile)
+   Compiling franken-test-support v0.1.0 (<scratch>/ws-b6d/crates/franken-test-support)
+   Compiling franken-clock v0.1.0 (<scratch>/ws-b6d/crates/franken-clock)
+   Compiling franken-session v0.1.0 (<scratch>/ws-b6d/crates/franken-session)
+   Compiling franken-dsp v0.1.0 (<scratch>/ws-b6d/crates/franken-dsp)
+   Compiling franken-control v0.1.0 (<scratch>/ws-b6d/crates/franken-control)
+   Compiling franken-stream v0.1.0 (<scratch>/ws-b6d/crates/franken-stream)
+   Compiling franken-platform v0.1.0 (<scratch>/ws-b6d/crates/franken-platform)
+   Compiling franken-hal v0.1.0 (<scratch>/ws-b6d/crates/franken-hal)
+   Compiling franken-speaker v0.1.0 (<scratch>/ws-b6d/crates/franken-speaker)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15.83s
+     Running tests/d03_closed_loop.rs (.rch-target-vmi1152480-pool-8404f6ba3bff2da8d3515784a4c2fa44/debug/build/franken-speaker/f2143a3bcf1843f2/out/d03_closed_loop-f2143a3bcf1843f2)
+
+running 7 tests
+test d03_closed_loop_soak_25_5_hours_crosses_the_counter_wrap ... ignored, 25.5 virtual hours; run with --ignored (soak tier)
+test d03_resampler_epochs_must_advance_in_the_glue_too ... ok
+D03-OBSERVED {"bound_frames":302,"controlled":true,"drift_ppb":200000,"estimator_discontinuities":1,"final_ratio_ppb":203218,"id":"d03-loop-jump","inputs_pulled":19204050,"kind":"closed_loop","max_deviation_frames":211,"outputs":19200000,"resets":1,"underruns":0,"virtual_seconds":400,"wraps":0}
+test d03_source_counter_jump_resets_only_source_local_history_at_an_explicit_epoch ... ok
+D03-OBSERVED {"bound_frames":412,"controlled":false,"drift_ppb":300000,"estimator_discontinuities":0,"final_ratio_ppb":0,"id":"d03-loop-uncontrolled","inputs_pulled":28800002,"kind":"closed_loop","max_deviation_frames":8638,"outputs":28800000,"resets":0,"underruns":0,"virtual_seconds":600,"wraps":0}
+test d03_without_the_loop_the_same_drift_overruns_the_bound ... ok
+D03-OBSERVED {"bound_frames":412,"controlled":true,"drift_ppb":300000,"estimator_discontinuities":0,"final_ratio_ppb":303453,"id":"d03-loop-10min-pos","inputs_pulled":28808873,"kind":"closed_loop","max_deviation_frames":234,"outputs":28800000,"resets":0,"underruns":0,"virtual_seconds":600,"wraps":0}
+test d03_closed_loop_holds_the_queue_for_ten_minutes_fast_source ... ok
+D03-OBSERVED {"bound_frames":644,"controlled":true,"drift_ppb":500000,"estimator_discontinuities":0,"final_ratio_ppb":500000,"id":"d03-loop-wrap-20min","inputs_pulled":57628609,"kind":"closed_loop","max_deviation_frames":191,"outputs":57600000,"resets":0,"underruns":0,"virtual_seconds":1200,"wraps":1}
+test d03_closed_loop_absorbs_the_u32_timeline_wrap ... ok
+D03-OBSERVED {"bound_frames":585,"controlled":true,"drift_ppb":-450000,"estimator_discontinuities":0,"final_ratio_ppb":-450468,"id":"d03-loop-10min-neg","inputs_pulled":28787291,"kind":"closed_loop","max_deviation_frames":253,"outputs":28800000,"resets":0,"underruns":0,"virtual_seconds":600,"wraps":0}
+test d03_closed_loop_holds_the_queue_for_ten_minutes_slow_source ... ok
+
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+  2026-11-05T03:04:03.459232Z  INFO rch::hook::transfer_orchestration: Remote command finished: exit=0 in 20600ms
+    at rch/src/hook/transfer_orchestration.rs:2313 on ThreadId(1)
+
+  2026-11-05T03:04:03.482655Z  INFO rch::hook::transfer_orchestration: Retrieving build artifacts...
+    at rch/src/hook/transfer_orchestration.rs:2523 on ThreadId(1)
+
+  2026-11-05T03:04:03.482706Z  INFO rch::transfer: Retrieving artifacts from <scratch>/ws-b6d on vmi1152480
+    at rch/src/transfer.rs:6951 on ThreadId(1)
+
+  2026-11-05T03:04:05.609084Z  INFO rch::transfer: Artifact retrieval budget from selected remote files, selected_bytes: 0, total_timeout_ms: 30000
+    at rch/src/transfer.rs:3604 on ThreadId(1)
+
+  2026-11-05T03:04:09.237381Z  INFO rch::transfer: Artifacts retrieved in 5754ms (0 files, 43 bytes)
+    at rch/src/transfer.rs:7012 on ThreadId(1)
+
+  2026-11-05T03:04:09.256647Z  INFO rch::hook::transfer_orchestration: Artifacts retrieved: 0 files, 43 bytes in 5754ms
+    at rch/src/hook/transfer_orchestration.rs:2588 on ThreadId(1)
+
+[RCH] remote vmi1152480 (42.6s)

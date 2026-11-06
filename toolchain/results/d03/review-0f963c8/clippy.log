@@ -1,0 +1,79 @@
+  2026-11-05T03:04:47.615758Z  INFO rch::hook: Selected worker: vmi1152480 at root@<worker-address> (1 slots remaining after reservation, speed 49.5)
+    at rch/src/hook.rs:4233 on ThreadId(1)
+
+  2026-11-05T03:04:47.875754Z  INFO rch::hook::transfer_orchestration: Starting remote compilation pipeline for ws-b6d (hash: dadf8458928f5b03)
+    at rch/src/hook/transfer_orchestration.rs:1144 on ThreadId(1)
+
+  2026-11-05T03:04:47.875802Z  INFO rch::hook::transfer_orchestration: Prepared dependency sync manifest for 1 roots
+    at rch/src/hook/transfer_orchestration.rs:1166 on ThreadId(1)
+
+  2026-11-05T03:04:57.612414Z  INFO rch::hook::transfer_orchestration: Syncing project to worker vmi1152480...
+    at rch/src/hook/transfer_orchestration.rs:1466 on ThreadId(1)
+
+  2026-11-05T03:04:57.624165Z  INFO rch::transfer: Syncing <scratch>/ws-b6d -> <scratch>/ws-b6d on vmi1152480 (streaming)
+    at rch/src/transfer.rs:5939 on ThreadId(1)
+
+  2026-11-05T03:04:59.387159Z  INFO rch::hook::transfer_orchestration: Sync complete: 0 files, 16046 bytes in 1730ms
+    at rch/src/hook/transfer_orchestration.rs:1924 on ThreadId(1)
+
+  2026-11-05T03:05:01.013441Z  INFO rch::hook::transfer_orchestration: Executing command remotely: cargo clippy --workspace --all-targets --locked --keep-going -j 2 --config 'env.RCH_BUILD_SOURCE.value="unknown"' --config 'env.RCH_BUILD_SOURCE.force=true' -- -D warnings
+    at rch/src/hook/transfer_orchestration.rs:2081 on ThreadId(1)
+
+  2026-11-05T03:05:01.023356Z  INFO rch::transfer: Rewriting CARGO_TARGET_DIR for remote execution (worker-scoped path): <scratch>/ws-b6d/target -> <scratch>/ws-b6d/.rch-target-vmi1152480-pool-8404f6ba3bff2da8d3515784a4c2fa44
+    at rch/src/transfer.rs:3950 on ThreadId(1)
+
+  2026-11-05T03:05:01.023425Z  INFO rch::transfer: Wrapping command with external timeout protection, kind: cargo clippy, timeout_secs: 3600
+    at rch/src/transfer.rs:4791 on ThreadId(1)
+
+    Checking typenum v1.20.1
+    Checking serde_core v1.0.229
+    Checking hybrid-array v0.4.15
+    Checking zmij v1.0.23
+    Checking memchr v2.8.3
+    Checking itoa v1.0.18
+    Checking cmov v0.5.4
+    Checking serde_json v1.0.154
+    Checking ctutils v0.4.8
+    Checking crypto-common v0.2.2
+    Checking block-buffer v0.12.1
+    Checking const-oid v0.10.2
+    Checking cfg-if v1.0.5
+    Checking digest v0.11.3
+    Checking cpufeatures v0.3.1
+    Checking serde v1.0.229
+    Checking sha2 v0.11.1
+    Checking hex v0.4.3
+    Checking thiserror v2.0.21
+    Checking hmac v0.13.0
+    Checking franken-baseline v0.1.0 (<scratch>/ws-b6d/crates/franken-baseline)
+    Checking franken-board-profile v0.1.0 (<scratch>/ws-b6d/crates/franken-board-profile)
+    Checking franken-test-support v0.1.0 (<scratch>/ws-b6d/crates/franken-test-support)
+    Checking franken-dsp v0.1.0 (<scratch>/ws-b6d/crates/franken-dsp)
+    Checking franken-session v0.1.0 (<scratch>/ws-b6d/crates/franken-session)
+    Checking franken-clock v0.1.0 (<scratch>/ws-b6d/crates/franken-clock)
+    Checking franken-stream v0.1.0 (<scratch>/ws-b6d/crates/franken-stream)
+    Checking franken-control v0.1.0 (<scratch>/ws-b6d/crates/franken-control)
+    Checking franken-platform v0.1.0 (<scratch>/ws-b6d/crates/franken-platform)
+    Checking franken-hal v0.1.0 (<scratch>/ws-b6d/crates/franken-hal)
+    Checking franken-alloc-probe v0.1.0 (<scratch>/ws-b6d/crates/franken-alloc-probe)
+    Checking franken-speaker v0.1.0 (<scratch>/ws-b6d/crates/franken-speaker)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 18.85s
+  2026-11-05T03:05:27.667273Z  INFO rch::hook::transfer_orchestration: Remote command finished: exit=0 in 25314ms
+    at rch/src/hook/transfer_orchestration.rs:2313 on ThreadId(1)
+
+  2026-11-05T03:05:27.701098Z  INFO rch::hook::transfer_orchestration: Retrieving build artifacts...
+    at rch/src/hook/transfer_orchestration.rs:2523 on ThreadId(1)
+
+  2026-11-05T03:05:27.701152Z  INFO rch::transfer: Retrieving artifacts from <scratch>/ws-b6d on vmi1152480
+    at rch/src/transfer.rs:6951 on ThreadId(1)
+
+  2026-11-05T03:05:29.777757Z  INFO rch::transfer: Artifact retrieval budget from selected remote files, selected_bytes: 0, total_timeout_ms: 30000
+    at rch/src/transfer.rs:3604 on ThreadId(1)
+
+  2026-11-05T03:05:32.539822Z  INFO rch::transfer: Artifacts retrieved in 4838ms (0 files, 43 bytes)
+    at rch/src/transfer.rs:7012 on ThreadId(1)
+
+  2026-11-05T03:05:32.559182Z  INFO rch::hook::transfer_orchestration: Artifacts retrieved: 0 files, 43 bytes in 4838ms
+    at rch/src/hook/transfer_orchestration.rs:2588 on ThreadId(1)
+
+[RCH] remote vmi1152480 (46.8s)

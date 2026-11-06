@@ -1,0 +1,91 @@
+  2026-11-05T03:03:01.669148Z  INFO rch::hook: Selected worker: vmi1152480 at root@<worker-address> (1 slots remaining after reservation, speed 49.5)
+    at rch/src/hook.rs:4233 on ThreadId(1)
+
+  2026-11-05T03:03:01.925110Z  INFO rch::hook::transfer_orchestration: Starting remote compilation pipeline for ws-b6d (hash: dadf8458928f5b03)
+    at rch/src/hook/transfer_orchestration.rs:1144 on ThreadId(1)
+
+  2026-11-05T03:03:01.925190Z  INFO rch::hook::transfer_orchestration: Prepared dependency sync manifest for 1 roots
+    at rch/src/hook/transfer_orchestration.rs:1166 on ThreadId(1)
+
+  2026-11-05T03:03:12.971668Z  INFO rch::hook::transfer_orchestration: Syncing project to worker vmi1152480...
+    at rch/src/hook/transfer_orchestration.rs:1466 on ThreadId(1)
+
+  2026-11-05T03:03:12.995361Z  INFO rch::transfer: Syncing <scratch>/ws-b6d -> <scratch>/ws-b6d on vmi1152480 (streaming)
+    at rch/src/transfer.rs:5939 on ThreadId(1)
+
+  2026-11-05T03:03:14.928301Z  INFO rch::hook::transfer_orchestration: Sync complete: 0 files, 16046 bytes in 1892ms
+    at rch/src/hook/transfer_orchestration.rs:1924 on ThreadId(1)
+
+  2026-11-05T03:03:16.451201Z  INFO rch::hook::transfer_orchestration: Executing command remotely: cargo test -p franken-clock --locked -j 2 --config 'env.RCH_BUILD_SOURCE.value="unknown"' --config 'env.RCH_BUILD_SOURCE.force=true' -- --nocapture
+    at rch/src/hook/transfer_orchestration.rs:2081 on ThreadId(1)
+
+  2026-11-05T03:03:16.464384Z  INFO rch::transfer: Rewriting CARGO_TARGET_DIR for remote execution (worker-scoped path): <scratch>/ws-b6d/target -> <scratch>/ws-b6d/.rch-target-vmi1152480-pool-8404f6ba3bff2da8d3515784a4c2fa44
+    at rch/src/transfer.rs:3950 on ThreadId(1)
+
+  2026-11-05T03:03:16.464463Z  INFO rch::transfer: Wrapping command with external timeout protection, kind: cargo test, timeout_secs: 7200
+    at rch/src/transfer.rs:4791 on ThreadId(1)
+
+   Compiling franken-clock v0.1.0 (<scratch>/ws-b6d/crates/franken-clock)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.51s
+     Running unittests src/lib.rs (.rch-target-vmi1152480-pool-8404f6ba3bff2da8d3515784a4c2fa44/debug/build/franken-clock/72afea552a62aa17/out/franken_clock-72afea552a62aa17)
+   Doc-tests franken_clock
+
+running 16 tests
+test rate::tests::d03_correction_is_clamped_and_rejoin_is_flagged ... ok
+test rate::tests::d03_epochs_must_advance_and_compare_in_wrapping_order ... ok
+test rate::tests::d03_perfect_drifting_sources_are_recovered_in_both_directions ... ok
+test rate::tests::d03_perfect_nominal_source_has_zero_drift_and_zero_uncertainty ... ok
+test rate::tests::d03_reset_log_is_bounded_and_ordered ... ok
+test rate::tests::d03_wrap_is_absorbed_and_changes_nothing ... ok
+test rate::tests::d03_uncertainty_grows_with_age_and_holdover_is_bounded ... ok
+test rate::tests::d03_window_slides_and_never_exceeds_its_bound ... ok
+test tests::video_sync_reports_audio_latency_and_residual_and_rejects_uncooperative_sources ... ok
+D03-OBSERVED {"dropped":16,"id":"d03-disc-local-regression","kind":"discontinuity","reason":"LocalClockRegression","to_epoch":1}
+D03-OBSERVED {"dropped":16,"id":"d03-disc-local-equal","kind":"discontinuity","reason":"LocalClockRegression","to_epoch":1}
+D03-OBSERVED {"dropped":16,"id":"d03-disc-timeline-backward","kind":"discontinuity","reason":"SourceTimelineAmbiguous","to_epoch":1}
+D03-OBSERVED {"dropped":16,"id":"d03-disc-half-range","kind":"discontinuity","reason":"SourceTimelineAmbiguous","to_epoch":1}
+D03-OBSERVED {"dropped":16,"id":"d03-disc-just-under-half-range","kind":"discontinuity","reason":"ImplausibleRate","to_epoch":1}
+D03-OBSERVED {"dropped":16,"id":"d03-disc-gap","kind":"discontinuity","reason":"ObservationGap","to_epoch":1}
+D03-OBSERVED {"dropped":16,"id":"d03-disc-implausible-rate","kind":"discontinuity","reason":"ImplausibleRate","to_epoch":1}
+D03-OBSERVED {"dropped":16,"id":"d03-disc-position-jump","kind":"discontinuity","reason":"PositionJump","to_epoch":1}
+test rate::tests::d03_estimator_offers_nothing_until_warm ... ok
+test rate::tests::d03_discontinuities_reject_and_park_until_an_explicit_epoch ... ok
+test tests::clock_estimator_converges_and_compensates_board_calibration_delay ... ok
+test rate::tests::d03_config_is_validated ... ok
+test rate::tests::d03_reset_touches_only_its_own_estimator ... ok
+D03-OBSERVED {"correction_ppb":318926,"id":"d03-est-pos","kind":"estimator","ratio_ppb":318926,"status":"Valid","uncertainty_ppb":2310,"wraps":0}
+D03-OBSERVED {"correction_ppb":-406618,"id":"d03-est-neg","kind":"estimator","ratio_ppb":-406618,"status":"Valid","uncertainty_ppb":2022,"wraps":0}
+D03-OBSERVED {"correction_ppb":500000,"id":"d03-est-clamp","kind":"estimator","ratio_ppb":800989,"status":"Clamped","uncertainty_ppb":1689,"wraps":0}
+D03-OBSERVED {"correction_ppb":500000,"id":"d03-est-rejoin","kind":"estimator","ratio_ppb":2998908,"status":"RejoinRequired","uncertainty_ppb":2280,"wraps":0}
+D03-OBSERVED {"correction_ppb":-148804,"id":"d03-est-wrap","kind":"estimator","ratio_ppb":-148804,"status":"Valid","uncertainty_ppb":1664,"wraps":1}
+D03-OBSERVED {"correction_ppb":59355,"id":"d03-est-slide","kind":"estimator","ratio_ppb":59355,"status":"Valid","uncertainty_ppb":733,"wraps":0}
+D03-OBSERVED {"correction_ppb":0,"id":"d03-est-noisy","kind":"estimator","ratio_ppb":-102186,"status":"Noisy","uncertainty_ppb":181920,"wraps":0}
+test rate::tests::d03_estimator_matches_independent_least_squares ... ok
+test rate::tests::d03_rate_defaults_match_contract ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+  2026-11-05T03:03:22.474023Z  INFO rch::hook::transfer_orchestration: Remote command finished: exit=0 in 4668ms
+    at rch/src/hook/transfer_orchestration.rs:2313 on ThreadId(1)
+
+  2026-11-05T03:03:22.499609Z  INFO rch::hook::transfer_orchestration: Retrieving build artifacts...
+    at rch/src/hook/transfer_orchestration.rs:2523 on ThreadId(1)
+
+  2026-11-05T03:03:22.499666Z  INFO rch::transfer: Retrieving artifacts from <scratch>/ws-b6d on vmi1152480
+    at rch/src/transfer.rs:6951 on ThreadId(1)
+
+  2026-11-05T03:03:24.496058Z  INFO rch::transfer: Artifact retrieval budget from selected remote files, selected_bytes: 0, total_timeout_ms: 30000
+    at rch/src/transfer.rs:3604 on ThreadId(1)
+
+  2026-11-05T03:03:26.930388Z  INFO rch::transfer: Artifacts retrieved in 4430ms (0 files, 43 bytes)
+    at rch/src/transfer.rs:7012 on ThreadId(1)
+
+  2026-11-05T03:03:26.949110Z  INFO rch::hook::transfer_orchestration: Artifacts retrieved: 0 files, 43 bytes in 4430ms
+    at rch/src/hook/transfer_orchestration.rs:2588 on ThreadId(1)
+
+[RCH] remote vmi1152480 (27.1s)
