@@ -164,8 +164,10 @@ dependencies = [
  "franken-atomic",
  "franken-board-profile",
  "franken-test-support",
+ "hmac",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror",
 ]
 

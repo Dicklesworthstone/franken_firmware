@@ -11,6 +11,8 @@ workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+hmac.workspace = true
+sha2.workspace = true
 franken-board-profile.workspace = true
 # 64-bit shared state: `src/lib.rs` re-exports franken-atomic's cells on every target (big-endian MIPS32 and
 # PPC32 have no native 64-bit atomics, and a cfg-selected alias would give host and device different APIs).

@@ -11,6 +11,7 @@ pub mod layer;
 pub mod net;
 pub mod ops;
 pub mod wake;
+pub mod wall_clock;
 
 // Test doubles. Compiled for tests and under the `sim` feature only; a device image is built without it.
 #[cfg(any(test, feature = "sim"))]

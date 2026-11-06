@@ -22,6 +22,23 @@ use crate::entropy::{self, EntropyAvailability, EntropyError, EntropyProfile, En
 use crate::ops::{KernelOps, Provenance};
 use crate::wake::{Drained, WakeError, WakeOutcome, Waker};
 use crate::{KernelCapabilityMatrix, PlatformAdmissionError};
+use std::sync::Arc;
+
+/// In-process identity of one admitted clock epoch. Native-width Arc reference
+/// counts work on the 32-bit targets; retaining a token prevents address-reuse
+/// ambiguity after a platform is dropped. Never persisted or used as a secret.
+#[derive(Clone)]
+pub(crate) struct ClockEpoch(Arc<()>);
+
+impl ClockEpoch {
+    pub(crate) fn new() -> Self {
+        Self(Arc::new(()))
+    }
+
+    pub(crate) fn same_epoch(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
 
 /// Why a layer was not built.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -51,6 +68,7 @@ pub struct PlatformLayer<O: KernelOps> {
     getrandom_availability: EntropyAvailability,
     entropy_profile: EntropyProfile,
     clock_resolution_ns: u64,
+    clock_epoch: ClockEpoch,
     last_ns: Option<u64>,
     waker: Waker,
     closed: bool,
@@ -87,6 +105,7 @@ impl<O: KernelOps> PlatformLayer<O> {
             getrandom_availability,
             entropy_profile: EntropyProfile::Getrandom,
             clock_resolution_ns: matrix.clock_monotonic_res_ns,
+            clock_epoch: ClockEpoch::new(),
             last_ns: None,
             waker,
             closed: false,
@@ -116,6 +135,10 @@ impl<O: KernelOps> PlatformLayer<O> {
     #[must_use]
     pub const fn clock_resolution_ns(&self) -> u64 {
         self.clock_resolution_ns
+    }
+
+    pub(crate) fn clock_epoch(&self) -> &ClockEpoch {
+        &self.clock_epoch
     }
 
     /// What the profile says about secure entropy from the **selected** provider (see [`Self::entropy_provider`]).
