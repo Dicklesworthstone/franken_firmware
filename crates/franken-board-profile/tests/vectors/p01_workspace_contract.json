@@ -66,6 +66,20 @@
       "layer": 4
     },
     {
+      "name": "franken-update",
+      "path": "crates/franken-update",
+      "owner": "U02",
+      "role": "library",
+      "unsafe_policy": "forbid",
+      "deps": [
+        "franken-board-profile",
+        "franken-journal"
+      ],
+      "optional_deps": [],
+      "dev_deps": [],
+      "layer": 5
+    },
+    {
       "name": "franken-platform",
       "path": "crates/franken-platform",
       "owner": "P02",
@@ -346,6 +360,11 @@
       "kind": "crate"
     },
     {
+      "path": "crates/franken-update",
+      "owner": "U02",
+      "kind": "crate"
+    },
+    {
       "path": "crates/franken-platform-linux",
       "owner": "P02",
       "kind": "crate"
@@ -558,6 +577,11 @@
     {
       "path": "tests/tailscale-fixtures",
       "owner": "T01",
+      "kind": "fixture"
+    },
+    {
+      "path": "tests/u02",
+      "owner": "U02",
       "kind": "fixture"
     }
   ],

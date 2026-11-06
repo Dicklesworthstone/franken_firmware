@@ -1,0 +1,23 @@
+[package]
+name = "franken-update"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+
+[lints]
+workspace = true
+
+# U02 (ffw-76j): per-board signed manifests, artifact verification, anti-rollback and the offline activation/rollback state machine.
+# The signature primitive is NOT written here: `src/sig.rs` calls ed25519-dalek's `verify_strict`, pinned exactly in the workspace table
+# with default features off. U02 only verifies; it never signs, generates keys or holds a secret. This does not remove the dependency's signing APIs.
+# The persistence is U01's journal
+# (`franken-journal`, the same path form franken-control uses); the board identity is E01's `BoardProfile`.
+[dependencies]
+ed25519-dalek.workspace = true
+franken-board-profile.workspace = true
+franken-journal = { path = "../franken-journal" }
+sha2.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+hex.workspace = true

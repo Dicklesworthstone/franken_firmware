@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# U02 end-to-end entry point (bead ffw-76j): signed staged artifact / update policy.
+# Delegates to tests/u02/e2e.py (offline, stdlib Python; it builds nothing and never invokes cargo).
+#
+#   scripts/e2e/u02                              the full tier: host checks; the Rust tests are BLOCKED without a central log (counted, never skipped)
+#   scripts/e2e/u02 --tier smoke|full|soak       smoke: the quick host checks; soak: NOT RUN, with the reason (exit 4, never a pass)
+#   scripts/e2e/u02 --judge LOG                  also judge a central `cargo test -p franken-update` log by test name (repeatable)
+#   scripts/e2e/u02 --case ID                    run (replay) one case; repeatable
+#   scripts/e2e/u02 --receipts DIR               keep the shared Q00 JSONL diagnostic log and a JSON receipt under DIR
+#   scripts/e2e/u02 --list                       the planned cases
+#   python3 tests/u02/make_vectors.py [--check]  regenerate (or check) crates/franken-update/tests/vectors/u02_vectors.json
+#
+# The Rust suite runs only through the centralized RCH path:
+#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-update --locked --offline -j 2 -- --nocapture > u02.log 2>&1
+#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p franken-update --all-targets --locked --offline -j 2 -- -D warnings
+#
+# Exit 0 only when every case passed, none is blocked and the diagnostic log is complete; 1 on a failed case or a log that lost critical evidence;
+# 3 when the only non-passes are blocked cases (reported, never counted as passed); 4 for --tier soak; 2 on usage errors.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+exec python3 -B "$ROOT/tests/u02/e2e.py" "$@"
