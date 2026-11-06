@@ -360,6 +360,13 @@ def compare(contract: Dict[str, Any], facts: Dict[str, Any], root: str = "") -> 
         if feat["cargo_feature"] and (feat["owner_crate"] not in members
                                       or feat["cargo_feature"] not in members[feat["owner_crate"]]["features"]):
             errs.add(("feature_flag_missing", feat["name"]))
+    # ...and the other way: a crate that carries contract flags has no Cargo feature the contract does not name, so a flag
+    # cannot be added to the build without the contract (and its profiles) knowing it
+    named = {(f["owner_crate"], f["cargo_feature"]) for f in contract["features"] if f["cargo_feature"]}
+    for crate in sorted({owner for owner, _flag in named} & set(members)):
+        for flag in members[crate]["features"]:
+            if flag != "default" and (crate, flag) not in named:
+                errs.add(("feature_flag_unnamed", f"{crate}:{flag}"))
     bins = {n: set(c["bins"]) for n, c in members.items()}
     bins.update({e["name"]: set(e["bins"]) for e in facts["excluded"] if e.get("name")})
     for art in contract["artifacts"]:

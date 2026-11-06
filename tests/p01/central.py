@@ -34,8 +34,9 @@ EVIDENCE_SCHEMA = "ffw.p01.central_evidence.v1"
 # builds are BLK-002's.
 BLK001_STEPS = ("toolchain", "toolchain-default", "workspace-test", "build-franken-speaker-host",
                 "build-ffw-hello-init-mips_be", "build-ffw-hello-init-powerpc_be")
-# P01-BLK-002: the two device speaker builds and the artifact rows they produced.
-BLK002_STEPS = ("build-franken-speaker-mips_be", "build-franken-speaker-powerpc_be")
+# P01-BLK-002: the device speaker builds (full, and the minimal profile's own builds) and the artifact rows they produced.
+BLK002_STEPS = ("build-franken-speaker-mips_be", "build-franken-speaker-powerpc_be",
+                "build-franken-speaker-mips_be-minimal_renderer", "build-franken-speaker-powerpc_be-minimal_renderer")
 # P01-BLK-003: the workspace test, and in its log the replay of the shared vectors by the typed contract.
 BLK003_STEPS = ("workspace-test",)
 REPLAY_TEST_FILE = "crates/franken-board-profile/tests/p01_contract.rs"
@@ -342,6 +343,11 @@ def judge(evidence: Dict[str, Any], contract_now: Dict[str, Any], planned_now: S
     pairs = ref.verify_observed(contract_now, evidence["artifacts"], require_all=False)
     if pairs:
         return "fail", "artifact identity fails the contract: " + ", ".join(sorted({c for c, _ in pairs}))
+    for first, second in plan_mod.differing_builds(contract_now):
+        a, b = rows.get(first), rows.get(second)
+        if a and b and a.get("sha256") == b.get("sha256"):
+            return "fail", (f"{first} and {second} are built with different Cargo features and are the same file "
+                            f"({str(a.get('sha256'))[:12]}): the selection reaches nothing the binary does")
     parts = [f"{head}, worker {','.join(evidence.get('workers', []))}: {len(in_scope)} steps ran the current plan and exited 0"]
     if tests and BLK001_STEPS == tuple(scope):
         parts.append(f"{tests.get('passed', 0)} workspace tests passed, {tests.get('failed', 0)} failed, {tests.get('ignored', 0)} ignored")

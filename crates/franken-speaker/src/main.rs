@@ -60,6 +60,15 @@ fn platform_startup(_selection: franken_speaker::platform_start::EntropySelectio
     ExitCode::from(2)
 }
 
+/// `--services`: print which native services this build selected, one `FFW_SERVICE:` line each (`P01` BLK-006; the text is
+/// `franken_speaker::services::markers`). This is the composition root's caller of the compile-time selection, so the service
+/// Cargo features change what the binary does: a build that selects a service prints it as selected, unimplemented and
+/// unqualified, one that does not prints it as absent, and neither prints it ready. It starts nothing and exits 0.
+fn services() -> ExitCode {
+    print!("{}", franken_speaker::services::markers());
+    ExitCode::SUCCESS
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
     // The harness is a test tool: only a build with the `harness` feature runs it by default.
@@ -71,6 +80,7 @@ fn main() -> ExitCode {
     let mode = args.get(1).map(String::as_str).unwrap_or(default_mode);
 
     match mode {
+        "--services" => services(),
         "--catalog" => {
             let catalog = canonical_board_catalog();
             match serde_json::to_string_pretty(&catalog) {
@@ -120,8 +130,9 @@ fn main() -> ExitCode {
         }
         other => {
             eprintln!(
-                "Usage: franken-speaker [--catalog|--platform-startup [--entropy-provider NAME]|--virtual-house|--self-test] \
-                 (got {other}); --virtual-house and --self-test need a build with `--features harness`, \
+                "Usage: franken-speaker [--catalog|--services|--platform-startup [--entropy-provider NAME]|--virtual-house|--self-test] \
+                 (got {other}); --services prints which native services this build selected, \
+                 --virtual-house and --self-test need a build with `--features harness`, \
                  --platform-startup needs a big-endian MIPS or PowerPC device build"
             );
             ExitCode::from(2)

@@ -110,7 +110,7 @@ def cmd_collect(args) -> int:
     for art in doc["artifacts"]:
         if not art["bin"]:
             continue
-        path = plan_mod.artifact_path(target_dir, art)
+        path = plan_mod.artifact_path(target_dir, art, doc)
         if not os.path.isfile(path):
             missing.append(art["id"])
             continue
@@ -228,7 +228,7 @@ def cmd_ingest(args) -> int:
     for art in doc["artifacts"]:
         if not art["bin"]:
             continue
-        built = plan_mod.artifact_path(target_dir, art)
+        built = plan_mod.artifact_path(target_dir, art, doc)
         if not os.path.isfile(built):
             missing.append(art["id"])
             continue

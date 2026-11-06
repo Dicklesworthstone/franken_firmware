@@ -562,8 +562,8 @@
       "name": "spotify_connect",
       "kind": "native_service",
       "requirement": "required",
-      "owner_crate": "franken-control",
-      "cargo_feature": "",
+      "owner_crate": "franken-speaker",
+      "cargo_feature": "spotify_connect",
       "requires": [
         "protected_render"
       ],
@@ -575,8 +575,8 @@
       "name": "airplay2",
       "kind": "native_service",
       "requirement": "required",
-      "owner_crate": "franken-control",
-      "cargo_feature": "",
+      "owner_crate": "franken-speaker",
+      "cargo_feature": "airplay2",
       "requires": [
         "protected_render"
       ],
@@ -588,8 +588,8 @@
       "name": "tailnet_native",
       "kind": "native_service",
       "requirement": "required",
-      "owner_crate": "franken-control",
-      "cargo_feature": "",
+      "owner_crate": "franken-speaker",
+      "cargo_feature": "tailnet_native",
       "requires": [
         "protected_render"
       ],
@@ -601,8 +601,8 @@
       "name": "alexa_bridge",
       "kind": "native_service",
       "requirement": "required",
-      "owner_crate": "franken-control",
-      "cargo_feature": "",
+      "owner_crate": "franken-speaker",
+      "cargo_feature": "alexa_bridge",
       "requires": [
         "protected_render"
       ],
@@ -614,8 +614,8 @@
       "name": "artwork",
       "kind": "core",
       "requirement": "optional",
-      "owner_crate": "franken-control",
-      "cargo_feature": "",
+      "owner_crate": "franken-speaker",
+      "cargo_feature": "artwork",
       "requires": [],
       "accepted_evidence": [
         "host_simulation",

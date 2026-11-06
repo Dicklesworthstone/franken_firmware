@@ -53,12 +53,14 @@ def _manifest_for(root: str, crate: str, contract: Dict[str, Any]) -> Tuple[str,
     raise KeyError(crate)
 
 
-def artifact_path(target_dir: str, artifact: Dict[str, Any]) -> str:
+def artifact_path(target_dir: str, artifact: Dict[str, Any], contract: Dict[str, Any]) -> str:
+    """Where a build leaves an artifact: in the build's own target directory (see `build_dir`)."""
     triple = ref.TARGETS[artifact["target"]][0]
     leaf = artifact["bin"] or artifact["crate"]
+    base = build_dir(target_dir, contract, artifact)
     if triple == "host":
-        return os.path.join(target_dir, "release", leaf)
-    return os.path.join(target_dir, triple, "release", leaf)
+        return os.path.join(base, "release", leaf)
+    return os.path.join(base, triple, "release", leaf)
 
 
 def _cargo_features(contract: Dict[str, Any], artifact: Dict[str, Any]) -> List[str]:
@@ -70,6 +72,38 @@ def _cargo_features(contract: Dict[str, Any], artifact: Dict[str, Any]) -> List[
         if spec and sel["state"] == "enabled" and spec["cargo_feature"]:
             flags.append(f"{spec['owner_crate']}/{spec['cargo_feature']}")
     return sorted(set(flags))
+
+
+def build_variant(contract: Dict[str, Any], artifact: Dict[str, Any]) -> str:
+    """"" for the first build (in contract order) of a crate for a target, and the profile's name for any later build of the
+    same crate and target with different Cargo features. Artifacts with the same features share one build; artifacts with
+    different features are different cargo invocations, and cargo writes the same file name for both."""
+    firsts: Dict[Tuple[str, str], Tuple[str, ...]] = {}
+    names: Dict[Tuple[str, str, Tuple[str, ...]], str] = {}
+    for art in contract["artifacts"]:
+        if not art["bin"]:
+            continue
+        features = tuple(_cargo_features(contract, art))
+        group = (art["crate"], art["target"])
+        firsts.setdefault(group, features)
+        names.setdefault(group + (features,), "" if features == firsts[group] else art["profile"])
+    return names[(artifact["crate"], artifact["target"], tuple(_cargo_features(contract, artifact)))]
+
+
+def build_dir(target_dir: str, contract: Dict[str, Any], artifact: Dict[str, Any]) -> str:
+    """The CARGO_TARGET_DIR of the build that makes `artifact`: the plan's own directory, or `variants/<profile>` under it for a
+    build whose Cargo features differ from the first build of the same crate and target, so that two profiles of one
+    binary never overwrite each other's file."""
+    variant = build_variant(contract, artifact)
+    return os.path.join(target_dir, "variants", variant) if variant else target_dir
+
+
+def differing_builds(contract: Dict[str, Any]) -> List[Pair]:
+    """Pairs of artifacts that are the same binary for the same target but are built with different Cargo features. Built
+    files that differ only by a flag the binary never reads would be the same bytes; these pairs must not be."""
+    arts = [a for a in contract["artifacts"] if a["bin"]]
+    return [(a["id"], b["id"]) for i, a in enumerate(arts) for b in arts[i + 1:]
+            if (a["crate"], a["target"]) == (b["crate"], b["target"]) and _cargo_features(contract, a) != _cargo_features(contract, b)]
 
 
 def linker_for(contract: Dict[str, Any], artifact: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -85,12 +119,14 @@ def linker_config(root: str, triple: str, linker: Dict[str, Any]) -> List[str]:
 
 
 def unbacked_disabled_features(contract: Dict[str, Any], artifact: Dict[str, Any]) -> List[str]:
-    """Features the artifact's profile disables that have no Cargo flag: the build cannot actually omit them."""
+    """Features the artifact's profile disables that the artifact's own build cannot omit: no Cargo flag, or a flag that belongs
+    to another crate than the one this artifact is built from (a flag on `franken-speaker` does nothing to a probe built from
+    `ffw-hello-init`)."""
     profile = next(p for p in contract["profiles"] if p["name"] == artifact["profile"])
     out = []
     for sel in profile["features"]:
         spec = next((f for f in contract["features"] if f["name"] == sel["feature"]), None)
-        if spec and sel["state"] == "disabled" and not spec["cargo_feature"]:
+        if spec and sel["state"] == "disabled" and not (spec["cargo_feature"] and spec["owner_crate"] == artifact["crate"]):
             out.append(sel["feature"])
     return sorted(out)
 
@@ -101,7 +137,12 @@ def plan_steps(root: str, cwd: str, target_dir: str, contract: Dict[str, Any],
 
     Two toolchain steps record what the build host runs: `rustc +nightly -vV` (the compiler the device builds ask for)
     and plain `rustc -vV`, the compiler a bare `cargo` resolves to there, which is what the workspace test uses and
-    which nothing recorded before. Every cargo step ends with `-j <jobs>`."""
+    which nothing recorded before. Every cargo step ends with `-j <jobs>`.
+
+    Artifacts share a build only when they need the identical cargo invocation, Cargo features included. The first build of
+    a crate for a target is `build-<crate>-<target>` in the plan's target directory; a later build of the same crate and
+    target with other features (the minimal profile, which selects no native service) is
+    `build-<crate>-<target>-<profile>`, in its own `variants/<profile>` target directory (`build_dir`)."""
     root = os.path.realpath(root)
     env = {"RCH_REQUIRE_REMOTE": "1", "CARGO_TARGET_DIR": target_dir}
     jobs_args = ["-j", str(jobs)]
@@ -149,13 +190,17 @@ def plan_steps(root: str, cwd: str, target_dir: str, contract: Dict[str, Any],
             argv += ["--features", ",".join(features)]
         argv += jobs_args
         step_env = dict(env)
+        variant = build_variant(contract, art)
+        if variant:
+            step_env["CARGO_TARGET_DIR"] = build_dir(target_dir, contract, art)
         if not is_device:
             step_env[FOREIGN_ARTIFACTS_ENV] = "1"
         # RCH syncs to the worker only the Cargo closure of the project the step runs from. A linker wrapper under
         # toolchain/linker/ is in no crate's closure, so a step that names one runs from the workspace root, whose sync
         # carries it (observed: from crates/franken-board-profile the sync was 91 files and had no toolchain/).
         uses_linker = is_device and linker_for(contract, art) is not None
-        step = {"id": f"build-{art['crate']}-{art['target']}", "kind": "build", "artifacts": [art["id"]],
+        step = {"id": f"build-{art['crate']}-{art['target']}" + (f"-{variant}" if variant else ""), "kind": "build",
+                "artifacts": [art["id"]],
                 "cwd": root if uses_linker else cwd, "env": step_env, "argv": argv}
         builds[key] = step
         steps.append(step)
@@ -394,7 +439,7 @@ def execute(steps: Sequence[Step], contract: Dict[str, Any], root: str, target_d
             if step["kind"] == "build" and rc == 0:
                 for aid in step["artifacts"]:
                     art = by_id[aid]
-                    built = artifact_path(target_dir, art)
+                    built = artifact_path(target_dir, art, contract)
                     if not os.path.isfile(built):
                         record["status"] = "failed"
                         record["note"] = "build reported success but the artifact file is absent"

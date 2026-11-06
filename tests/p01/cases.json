@@ -899,7 +899,7 @@
   {
    "id": "P01-DRIFT-031",
    "kind": "drift_planted",
-   "title": "an optional dependency gated by a different flag than the contract names",
+   "title": "an optional dependency gated by a different flag than the contract names (the flag it is gated by is also a Cargo feature the contract does not name)",
    "tiers": [
     "smoke",
     "full"
@@ -939,11 +939,15 @@
     }
    ],
    "expect_codes": [
+    "feature_flag_unnamed",
     "optional_gate_mismatch"
    ],
    "expect_subjects": {
     "optional_gate_mismatch": [
      "b->a"
+    ],
+    "feature_flag_unnamed": [
+     "b:other"
     ]
    }
   },
@@ -1124,6 +1128,31 @@
    "expect_subjects": {
     "linker_wrapper_not_executable": [
      "toolchain/linker/w-mips_be"
+    ]
+   }
+  },
+  {
+   "id": "P01-DRIFT-035",
+   "kind": "drift_planted",
+   "title": "a Cargo feature on a crate that carries contract flags, which the contract does not name",
+   "tiers": [
+    "smoke",
+    "full"
+   ],
+   "spec_ops": [
+    {
+     "op": "push",
+     "path": "/members/b/features",
+     "value": "extra"
+    }
+   ],
+   "contract_ops": [],
+   "expect_codes": [
+    "feature_flag_unnamed"
+   ],
+   "expect_subjects": {
+    "feature_flag_unnamed": [
+     "b:extra"
     ]
    }
   },
@@ -1518,7 +1547,7 @@
   {
    "id": "P01-PLAN-001",
    "kind": "plan_exact",
-   "title": "the command plan is exactly the hand-written one: remote only, --locked --offline, absolute manifests, no root cwd",
+   "title": "the command plan is exactly the hand-written one: remote only, --locked --offline, absolute manifests, no root cwd; the minimal speaker is its own build in its own target directory, with none of the native services",
    "tiers": [
     "smoke",
     "full"
@@ -1528,7 +1557,9 @@
     "build-ffw-hello-init-powerpc_be",
     "build-franken-speaker-host",
     "build-franken-speaker-mips_be",
+    "build-franken-speaker-mips_be-minimal_renderer",
     "build-franken-speaker-powerpc_be",
+    "build-franken-speaker-powerpc_be-minimal_renderer",
     "toolchain",
     "toolchain-default",
     "workspace-test"
@@ -1538,9 +1569,154 @@
    ],
    "expect_root_cwd": [
     "build-franken-speaker-mips_be",
-    "build-franken-speaker-powerpc_be"
+    "build-franken-speaker-mips_be-minimal_renderer",
+    "build-franken-speaker-powerpc_be",
+    "build-franken-speaker-powerpc_be-minimal_renderer"
    ],
    "expect_argv": {
+    "build-ffw-hello-init-mips_be": [
+     "rch",
+     "exec",
+     "--",
+     "cargo",
+     "+nightly",
+     "build",
+     "--locked",
+     "--offline",
+     "--manifest-path",
+     "<ROOT>/toolchain/src/ffw-hello-init/Cargo.toml",
+     "--release",
+     "--config",
+     "<ROOT>/toolchain/src/ffw-hello-init/.cargo/config.toml",
+     "--target",
+     "mips-unknown-linux-musl",
+     "-Z",
+     "build-std=core,panic_abort",
+     "-j",
+     "2"
+    ],
+    "build-franken-speaker-host": [
+     "rch",
+     "exec",
+     "--",
+     "cargo",
+     "build",
+     "--locked",
+     "--offline",
+     "--manifest-path",
+     "<ROOT>/crates/franken-speaker/Cargo.toml",
+     "--release",
+     "-p",
+     "franken-speaker",
+     "--features",
+     "franken-speaker/airplay2,franken-speaker/alexa_bridge,franken-speaker/artwork,franken-speaker/harness,franken-speaker/spotify_connect,franken-speaker/tailnet_native",
+     "-j",
+     "2"
+    ],
+    "build-franken-speaker-mips_be": [
+     "rch",
+     "exec",
+     "--",
+     "cargo",
+     "+nightly",
+     "build",
+     "--locked",
+     "--offline",
+     "--manifest-path",
+     "<ROOT>/crates/franken-speaker/Cargo.toml",
+     "--release",
+     "-p",
+     "franken-speaker",
+     "--target",
+     "mips-unknown-linux-musl",
+     "-Z",
+     "build-std=core,alloc,std,panic_abort",
+     "--config",
+     "target.mips-unknown-linux-musl.linker=\"<ROOT>/toolchain/linker/zig-cc-mips-be\"",
+     "--config",
+     "target.mips-unknown-linux-musl.rustflags=[\"-C\",\"target-feature=+crt-static\",\"-C\",\"link-self-contained=no\"]",
+     "--features",
+     "franken-speaker/airplay2,franken-speaker/alexa_bridge,franken-speaker/artwork,franken-speaker/spotify_connect,franken-speaker/tailnet_native",
+     "-j",
+     "2"
+    ],
+    "build-franken-speaker-mips_be-minimal_renderer": [
+     "rch",
+     "exec",
+     "--",
+     "cargo",
+     "+nightly",
+     "build",
+     "--locked",
+     "--offline",
+     "--manifest-path",
+     "<ROOT>/crates/franken-speaker/Cargo.toml",
+     "--release",
+     "-p",
+     "franken-speaker",
+     "--target",
+     "mips-unknown-linux-musl",
+     "-Z",
+     "build-std=core,alloc,std,panic_abort",
+     "--config",
+     "target.mips-unknown-linux-musl.linker=\"<ROOT>/toolchain/linker/zig-cc-mips-be\"",
+     "--config",
+     "target.mips-unknown-linux-musl.rustflags=[\"-C\",\"target-feature=+crt-static\",\"-C\",\"link-self-contained=no\"]",
+     "-j",
+     "2"
+    ],
+    "build-franken-speaker-powerpc_be": [
+     "rch",
+     "exec",
+     "--",
+     "cargo",
+     "+nightly",
+     "build",
+     "--locked",
+     "--offline",
+     "--manifest-path",
+     "<ROOT>/crates/franken-speaker/Cargo.toml",
+     "--release",
+     "-p",
+     "franken-speaker",
+     "--target",
+     "powerpc-unknown-linux-musl",
+     "-Z",
+     "build-std=core,alloc,std,panic_abort",
+     "--config",
+     "target.powerpc-unknown-linux-musl.linker=\"<ROOT>/toolchain/linker/zig-cc-powerpc-be\"",
+     "--config",
+     "target.powerpc-unknown-linux-musl.rustflags=[\"-C\",\"target-feature=+crt-static\",\"-C\",\"link-self-contained=no\"]",
+     "--features",
+     "franken-speaker/airplay2,franken-speaker/alexa_bridge,franken-speaker/artwork,franken-speaker/spotify_connect,franken-speaker/tailnet_native",
+     "-j",
+     "2"
+    ],
+    "build-franken-speaker-powerpc_be-minimal_renderer": [
+     "rch",
+     "exec",
+     "--",
+     "cargo",
+     "+nightly",
+     "build",
+     "--locked",
+     "--offline",
+     "--manifest-path",
+     "<ROOT>/crates/franken-speaker/Cargo.toml",
+     "--release",
+     "-p",
+     "franken-speaker",
+     "--target",
+     "powerpc-unknown-linux-musl",
+     "-Z",
+     "build-std=core,alloc,std,panic_abort",
+     "--config",
+     "target.powerpc-unknown-linux-musl.linker=\"<ROOT>/toolchain/linker/zig-cc-powerpc-be\"",
+     "--config",
+     "target.powerpc-unknown-linux-musl.rustflags=[\"-C\",\"target-feature=+crt-static\",\"-C\",\"link-self-contained=no\"]",
+     "-j",
+     "2"
+    ],
     "toolchain": [
      "rch",
      "exec",
@@ -1571,96 +1747,11 @@
      "build.incremental=false",
      "-j",
      "2"
-    ],
-    "build-franken-speaker-host": [
-     "rch",
-     "exec",
-     "--",
-     "cargo",
-     "build",
-     "--locked",
-     "--offline",
-     "--manifest-path",
-     "<ROOT>/crates/franken-speaker/Cargo.toml",
-     "--release",
-     "-p",
-     "franken-speaker",
-     "--features",
-     "franken-speaker/harness",
-     "-j",
-     "2"
-    ],
-    "build-franken-speaker-powerpc_be": [
-     "rch",
-     "exec",
-     "--",
-     "cargo",
-     "+nightly",
-     "build",
-     "--locked",
-     "--offline",
-     "--manifest-path",
-     "<ROOT>/crates/franken-speaker/Cargo.toml",
-     "--release",
-     "-p",
-     "franken-speaker",
-     "--target",
-     "powerpc-unknown-linux-musl",
-     "-Z",
-     "build-std=core,alloc,std,panic_abort",
-     "--config",
-     "target.powerpc-unknown-linux-musl.linker=\"<ROOT>/toolchain/linker/zig-cc-powerpc-be\"",
-     "--config",
-     "target.powerpc-unknown-linux-musl.rustflags=[\"-C\",\"target-feature=+crt-static\",\"-C\",\"link-self-contained=no\"]",
-     "-j",
-     "2"
-    ],
-    "build-franken-speaker-mips_be": [
-     "rch",
-     "exec",
-     "--",
-     "cargo",
-     "+nightly",
-     "build",
-     "--locked",
-     "--offline",
-     "--manifest-path",
-     "<ROOT>/crates/franken-speaker/Cargo.toml",
-     "--release",
-     "-p",
-     "franken-speaker",
-     "--target",
-     "mips-unknown-linux-musl",
-     "-Z",
-     "build-std=core,alloc,std,panic_abort",
-     "--config",
-     "target.mips-unknown-linux-musl.linker=\"<ROOT>/toolchain/linker/zig-cc-mips-be\"",
-     "--config",
-     "target.mips-unknown-linux-musl.rustflags=[\"-C\",\"target-feature=+crt-static\",\"-C\",\"link-self-contained=no\"]",
-     "-j",
-     "2"
-    ],
-    "build-ffw-hello-init-mips_be": [
-     "rch",
-     "exec",
-     "--",
-     "cargo",
-     "+nightly",
-     "build",
-     "--locked",
-     "--offline",
-     "--manifest-path",
-     "<ROOT>/toolchain/src/ffw-hello-init/Cargo.toml",
-     "--release",
-     "--config",
-     "<ROOT>/toolchain/src/ffw-hello-init/.cargo/config.toml",
-     "--target",
-     "mips-unknown-linux-musl",
-     "-Z",
-     "build-std=core,panic_abort",
-     "-j",
-     "2"
     ]
+   },
+   "expect_target_dirs": {
+    "build-franken-speaker-mips_be-minimal_renderer": "<TARGET_DIR>/variants/minimal_renderer",
+    "build-franken-speaker-powerpc_be-minimal_renderer": "<TARGET_DIR>/variants/minimal_renderer"
    }
   },
   {
@@ -2022,31 +2113,17 @@
   {
    "id": "P01-PLAN-013",
    "kind": "plan_sharing",
-   "title": "full and minimal artifacts share one build; the receipt must say the minimal profile's disabled features have no Cargo flag",
+   "title": "full and minimal artifacts are separate builds: the services are on the full command lines and not on the minimal ones, no artifact shares a file, the probe's disabled features stay unbacked, and without the flags the two share again",
    "tiers": [
     "smoke",
     "full"
    ],
-   "expect_shared": [
-    [
-     "speaker-mips-full",
-     "speaker-mips-min"
-    ],
-    [
-     "speaker-ppc-full",
-     "speaker-ppc-min"
-    ]
-   ],
+   "expect_shared": [],
    "expect_unbacked": {
     "speaker-host-full": [],
     "speaker-mips-full": [],
-    "speaker-mips-min": [
-     "airplay2",
-     "alexa_bridge",
-     "artwork",
-     "spotify_connect",
-     "tailnet_native"
-    ],
+    "speaker-mips-min": [],
+    "speaker-ppc-min": [],
     "hello-init-mips": [
      "airplay2",
      "alexa_bridge",
@@ -2055,7 +2132,51 @@
      "synchronized_groups",
      "tailnet_native"
     ]
-   }
+   },
+   "expect_features": {
+    "speaker-host-full": [
+     "franken-speaker/airplay2",
+     "franken-speaker/alexa_bridge",
+     "franken-speaker/artwork",
+     "franken-speaker/harness",
+     "franken-speaker/spotify_connect",
+     "franken-speaker/tailnet_native"
+    ],
+    "speaker-mips-full": [
+     "franken-speaker/airplay2",
+     "franken-speaker/alexa_bridge",
+     "franken-speaker/artwork",
+     "franken-speaker/spotify_connect",
+     "franken-speaker/tailnet_native"
+    ],
+    "speaker-ppc-full": [
+     "franken-speaker/airplay2",
+     "franken-speaker/alexa_bridge",
+     "franken-speaker/artwork",
+     "franken-speaker/spotify_connect",
+     "franken-speaker/tailnet_native"
+    ],
+    "speaker-mips-min": [],
+    "speaker-ppc-min": [],
+    "hello-init-mips": []
+   },
+   "flagged_services": [
+    "spotify_connect",
+    "airplay2",
+    "tailnet_native",
+    "alexa_bridge",
+    "artwork"
+   ],
+   "expect_shared_without_flags": [
+    [
+     "speaker-mips-full",
+     "speaker-mips-min"
+    ],
+    [
+     "speaker-ppc-full",
+     "speaker-ppc-min"
+    ]
+   ]
   },
   {
    "id": "P01-RCPT-001",
@@ -2162,7 +2283,8 @@
     "status": "failed",
     "failed_steps": [
      "build-ffw-hello-init-mips_be",
-     "build-franken-speaker-mips_be"
+     "build-franken-speaker-mips_be",
+     "build-franken-speaker-mips_be-minimal_renderer"
     ],
     "codes": []
    }
@@ -2665,14 +2787,104 @@
   },
   {
    "id": "P01-BLK-006",
-   "kind": "blocked",
-   "title": "Cargo feature flags for the four native services (and artwork)",
+   "kind": "feature_selection",
+   "title": "Cargo feature flags for the four native services and artwork are real: the contract, the manifest, the speaker's source, the binary's --services option and its real-binary tests, the command plan and admission agree, and the observed full and minimal device speakers are different files",
    "tiers": [
     "smoke",
     "full"
    ],
-   "reason": "the harness is gated by the `harness` feature now; protected_render, the four native services and artwork still have cargo_feature empty: they are compiled in unconditionally, so a profile that 'disables' one is a contract claim the build cannot honour; the minimal-renderer artifacts are the same bytes as the full ones until each service is gated",
-   "owner": "S01/A01/T01/X01 owners; P01 contract flags it per artifact in every receipt"
+   "services": [
+    "spotify_connect",
+    "airplay2",
+    "tailnet_native",
+    "alexa_bridge",
+    "artwork"
+   ],
+   "core_without_flag": [
+    "protected_render",
+    "synchronized_groups"
+   ],
+   "source": "crates/franken-speaker/src/services.rs",
+   "library": "crates/franken-speaker/src/lib.rs",
+   "rust_tests": {
+    "any_build": [
+     "every_service_has_a_cargo_feature_of_its_name_and_no_other_flag_is_a_service",
+     "the_wire_names_are_the_contract_names",
+     "the_contract_names_the_same_flags_on_this_crate_and_none_for_the_render_path",
+     "the_report_lists_every_service_once_in_a_fixed_order",
+     "no_build_selection_reports_a_service_implemented_qualified_or_ready",
+     "a_selected_service_claiming_ready_is_refused_and_the_same_report_without_the_claim_passes",
+     "a_report_that_disagrees_with_this_build_is_refused",
+     "the_report_round_trips_as_json_and_refuses_a_field_it_does_not_know",
+     "enabling_a_flag_does_not_change_admissions_blocks",
+     "a_marker_says_absent_or_selected_unimplemented_unqualified_in_words_and_never_ready",
+     "the_markers_are_the_reports_markers_one_per_line_in_order",
+     "a_marker_parses_back_to_the_report_it_came_from_and_nothing_else_parses",
+     "a_printed_line_claiming_qualification_parses_and_check_refuses_it"
+    ],
+    "per_service": {
+     "spotify_connect": {
+      "on": "spotify_connect_selected_reports_selected_unimplemented_unqualified",
+      "off": "spotify_connect_not_selected_reports_absent"
+     },
+     "airplay2": {
+      "on": "airplay2_selected_reports_selected_unimplemented_unqualified",
+      "off": "airplay2_not_selected_reports_absent"
+     },
+     "tailnet_native": {
+      "on": "tailnet_native_selected_reports_selected_unimplemented_unqualified",
+      "off": "tailnet_native_not_selected_reports_absent"
+     },
+     "alexa_bridge": {
+      "on": "alexa_bridge_selected_reports_selected_unimplemented_unqualified",
+      "off": "alexa_bridge_not_selected_reports_absent"
+     },
+     "artwork": {
+      "on": "artwork_selected_reports_selected_unimplemented_unqualified",
+      "off": "artwork_not_selected_reports_absent"
+     }
+    }
+   },
+   "full": [
+    "speaker-mips-full",
+    "speaker-ppc-full"
+   ],
+   "minimal": [
+    "speaker-mips-min",
+    "speaker-ppc-min"
+   ],
+   "expect_blocks": {
+    "speaker-mips-full": [
+     "required_feature_unqualified:airplay2",
+     "required_feature_unqualified:alexa_bridge",
+     "required_feature_unqualified:protected_render",
+     "required_feature_unqualified:spotify_connect",
+     "required_feature_unqualified:synchronized_groups",
+     "required_feature_unqualified:tailnet_native"
+    ],
+    "speaker-mips-min": [
+     "required_feature_disabled:airplay2",
+     "required_feature_disabled:alexa_bridge",
+     "required_feature_disabled:spotify_connect",
+     "required_feature_disabled:tailnet_native",
+     "required_feature_unqualified:protected_render",
+     "required_feature_unqualified:synchronized_groups"
+    ]
+   },
+   "main": "crates/franken-speaker/src/main.rs",
+   "cli_tests": {
+    "file": "crates/franken-speaker/tests/cli_services.rs",
+    "any_build": [
+     "services_option_exits_zero_with_one_line_per_service_in_order_and_nothing_on_stderr",
+     "no_service_line_says_ready_and_each_is_absent_or_selected_unimplemented_unqualified",
+     "every_printed_line_parses_back_to_the_report_this_build_gives_for_that_service",
+     "services_option_is_the_same_on_every_run",
+     "the_catalog_option_still_prints_the_catalog_as_json_and_not_the_services",
+     "an_unknown_option_is_still_refused_and_the_usage_lists_the_services_option"
+    ]
+   },
+   "observed_reason": "the central run of the current plan has not been ingested: the observed full and minimal device speakers (their built files) are what show that the selection reaches the binary",
+   "observed_owner": "BeigeMaple: central run of the current plan, then `scripts/e2e/p01 ingest`"
   },
   {
    "id": "P01-BLK-007",
@@ -3059,9 +3271,12 @@
    "statement": "Required native features are enforceable in the build, not only claimed in the contract",
    "cases": [
     "P01-BLK-006",
-    "P01-PLAN-013"
+    "P01-PLAN-013",
+    "P01-DRIFT-020",
+    "P01-DRIFT-035"
    ],
-   "status": "blocked"
+   "status": "partial",
+   "note": "the flags are real and judged from the tree (contract, manifest both ways, the speaker's source, the binary's --services option and its real-binary tests, the command plan, admission); P01-BLK-006 passes only when the newest central run, current for the plan and contract, also shows the full and minimal device speakers as different files (it is BLOCKED, named, until then); what the binary prints in the default and the all-on configuration (absent; selected, unimplemented, unqualified; never ready) and that admission is unchanged by a flag are proven only by the Rust tests the case names, which run centrally and whose results are not read here; no service has an implementation behind its flag, and each service bead (S01, A01, T01, X01, artwork's owner) takes over its own"
   },
   {
    "id": "INV-P01-27",

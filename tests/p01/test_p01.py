@@ -304,10 +304,10 @@ class PipelineTests(unittest.TestCase):
         return code, out.getvalue()
 
     def write_artifacts(self, target_dir, wrong_machine_for=()):
-        # speaker-*-full and speaker-*-min are one build and one file, so a wrong ISA must reach both ids
+        # speaker-*-full and speaker-*-min are separate builds and separate files; a wrong ISA is set per id
         doc = small_contract()
         for art in doc["artifacts"]:
-            path = plan.artifact_path(target_dir, art)
+            path = plan.artifact_path(target_dir, art, doc)
             os.makedirs(os.path.dirname(path), exist_ok=True)
             machine = ref.TARGETS[art["target"]][2]
             if art["id"] in wrong_machine_for:
@@ -317,11 +317,11 @@ class PipelineTests(unittest.TestCase):
                 f.write(run_cases.fake_elf(machine, art["crate"].encode() + art["target"].encode(), mips_abi=abi)
                         if art["target"] != "host" else b"host-binary" + art["crate"].encode())
 
-    def test_print_plan_prints_eight_acceptable_steps(self):
+    def test_print_plan_prints_ten_acceptable_steps(self):
         code, out = self.run_pipeline("print-plan")
         self.assertEqual(code, 0)
         doc = json.loads(out)
-        self.assertEqual((len(doc["steps"]), doc["violations"]), (8, []))
+        self.assertEqual((len(doc["steps"]), doc["violations"]), (10, []))
         self.assertEqual(doc["contract_digest"], ref.digest(small_contract()))
 
     def test_collect_with_nothing_built_is_incomplete_not_complete(self):
@@ -628,7 +628,7 @@ class PlanJobsTests(unittest.TestCase):
 
     def test_every_cargo_step_ends_with_the_job_count_and_the_default_is_two(self):
         for jobs, steps in ((2, self.steps()), (3, self.steps(jobs=3))):
-            self.assertEqual(len(self.cargo_steps(steps)), 6)
+            self.assertEqual(len(self.cargo_steps(steps)), 8)
             for step in self.cargo_steps(steps):
                 self.assertEqual(step["argv"][-2:], ["-j", str(jobs)], step["id"])
             self.assertEqual(plan.check_plan(steps, self.root, self.doc), [])
@@ -1092,7 +1092,8 @@ class LinkerPlanTests(unittest.TestCase):
 
     def test_only_the_steps_that_name_a_linker_run_from_the_workspace_root(self):
         at_root = sorted(sid for sid, s in self.steps.items() if os.path.realpath(s["cwd"]) == self.root)
-        self.assertEqual(at_root, ["build-franken-speaker-mips_be", "build-franken-speaker-powerpc_be"])
+        self.assertEqual(at_root, ["build-franken-speaker-mips_be", "build-franken-speaker-mips_be-minimal_renderer",
+                                   "build-franken-speaker-powerpc_be", "build-franken-speaker-powerpc_be-minimal_renderer"])
         for sid in ("toolchain", "toolchain-default", "workspace-test", "build-franken-speaker-host",
                     "build-ffw-hello-init-mips_be", "build-ffw-hello-init-powerpc_be"):
             self.assertEqual(os.path.basename(self.steps[sid]["cwd"]), "franken-board-profile", sid)
@@ -1231,7 +1232,7 @@ class CentralJudgementTests(unittest.TestCase):
             device = art["target"] != "host"
             isa = "mips32r2" if art["target"] == "mips_be" else ""
             fp = "soft" if art["target"] == "mips_be" else ""
-            ident = {"sha256": hashlib_sha(art["target"] + art["crate"]), "elf_machine": {"host": 62, "mips_be": 8, "powerpc_be": 20}[art["target"]],
+            ident = {"sha256": hashlib_sha(art["target"] + art["crate"] + art["profile"]), "elf_machine": {"host": 62, "mips_be": 8, "powerpc_be": 20}[art["target"]],
                      "elf_class": 1 if device else 2, "elf_big_endian": device, "elf_dynamic": not device, "isa_revision": isa, "fp_abi": fp}
             out[art["id"]] = plan.observed_row(self.doc, art, ident)
         return out
@@ -1253,6 +1254,20 @@ class CentralJudgementTests(unittest.TestCase):
         self.assertEqual(verdict, "pass", detail)
         self.assertEqual(len(self.device_ids), 4)
         self.assertIn("speaker-ppc-full", detail)
+
+    def test_full_and_minimal_speakers_built_with_different_features_cannot_be_the_same_file(self):
+        # Planted: the minimal speaker's row carries the full speaker's digest, which is what a binary that never reads its
+        # service features gives (the defect P01-BLK-006 closes). Removing the plant gives the passing case above.
+        for target in ("mips", "ppc"):
+            with self.subTest(target):
+                rows = json.loads(json.dumps(self.rows))
+                rows[f"speaker-{target}-min"]["sha256"] = rows[f"speaker-{target}-full"]["sha256"]
+                verdict, detail = self.judge_devices(self.build(rows))
+                self.assertEqual(verdict, "fail", detail)
+                self.assertIn(f"speaker-{target}-full and speaker-{target}-min", detail)
+                self.assertIn("same file", detail)
+        self.assertEqual(plan.differing_builds(self.doc),
+                         [("speaker-mips-full", "speaker-mips-min"), ("speaker-ppc-full", "speaker-ppc-min")])
 
     def test_a_dynamic_a_hard_float_or_a_wrong_machine_device_artifact_fails(self):
         for label, edit, code in (

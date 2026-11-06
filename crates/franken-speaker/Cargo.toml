@@ -35,3 +35,13 @@ franken-test-support.workspace = true
 default = []
 # The Virtual House harness (`--virtual-house`, `--self-test`). Never part of a device image.
 harness = ["dep:franken-test-support"]
+# Native services and artwork (P01 BLK-006). Each is named in the P01 workspace contract (`cargo_feature`, owner_crate =
+# "franken-speaker"), a profile that disables one is built without its flag, and `services::report()` says whether this build
+# selected it. No provider code is behind any flag yet: a selected service reports selected, unimplemented, unqualified, never
+# ready. Each service's bead (S01, A01, T01, X01; artwork's owner) takes over its own flag and may make it enable the
+# implementation (`dep:...` or `franken-control/...`). `protected_render` and `synchronized_groups` have no flag: see services.rs.
+spotify_connect = []
+airplay2 = []
+tailnet_native = []
+alexa_bridge = []
+artwork = []

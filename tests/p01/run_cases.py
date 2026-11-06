@@ -326,8 +326,9 @@ def run_plan_exact(c) -> Result:
         carrying = sorted(s["id"] for s in steps if plan_mod.FOREIGN_ARTIFACTS_ENV in s["env"])
         if carrying != sorted(c["expect_foreign_on"]):
             raise CaseError(f"{plan_mod.FOREIGN_ARTIFACTS_ENV} is on {carrying}, want {sorted(c['expect_foreign_on'])}")
+    own_dirs = {sid: fill([d])[0] for sid, d in c.get("expect_target_dirs", {}).items()}
     for s in steps:
-        if s["env"]["RCH_REQUIRE_REMOTE"] != "1" or s["env"]["CARGO_TARGET_DIR"] != target_dir:
+        if s["env"]["RCH_REQUIRE_REMOTE"] != "1" or s["env"]["CARGO_TARGET_DIR"] != own_dirs.get(s["id"], target_dir):
             raise CaseError(f"step {s['id']}: environment {s['env']}")
         if os.path.realpath(s["cwd"]) == root and s["id"] not in c.get("expect_root_cwd", []):
             raise CaseError(f"step {s['id']} runs in the repository root")
@@ -391,28 +392,45 @@ def run_plan_rules(c) -> Result:
     return PASS, ""
 
 
+def _features_of(step) -> List[str]:
+    argv = step["argv"]
+    return argv[argv.index("--features") + 1].split(",") if "--features" in argv else []
+
+
 def run_plan_sharing(c) -> Result:
-    root, _t, steps = _plan()
+    """Artifacts share a build only when they need the identical cargo invocation. With a Cargo flag for every native service
+    the minimal profile is its own build, with its own target directory and no service on its command line; take the flags
+    away and it shares the full build again, so the separation is the flags' doing."""
+    root, target_dir, steps = _plan()
     doc = contract()
     shared = [s for s in steps if len(s["artifacts"]) > 1]
     want = {tuple(sorted(x)) for x in c["expect_shared"]}
     got = {tuple(sorted(s["artifacts"])) for s in shared}
     if got != want:
         raise CaseError(f"shared builds {sorted(got)}, want {sorted(want)}")
+    if len({s["id"] for s in steps}) != len(steps):
+        raise CaseError("two steps have the same id")
     for aid, expected in c["expect_unbacked"].items():
         art = next(a for a in doc["artifacts"] if a["id"] == aid)
         if plan_mod.unbacked_disabled_features(doc, art) != expected:
             raise CaseError(f"{aid}: unbacked {plan_mod.unbacked_disabled_features(doc, art)}, want {expected}")
     # a feature that has a Cargo flag reaches the command line exactly when the profile enables it
-    flagged = copy.deepcopy(doc)
-    next(f for f in flagged["features"] if f["name"] == "artwork")["cargo_feature"] = "artwork"
-    on = plan_mod.plan_steps(root, os.path.join(root, "crates"), "/t", flagged)
-    argv_on = next(s for s in on if s["artifacts"] == ["speaker-host-full"])["argv"]
-    argv_min = next(s for s in on if "speaker-mips-min" in s["artifacts"])["argv"]
-    if "franken-control/artwork" not in argv_on[argv_on.index("--features") + 1].split(","):
-        raise CaseError("an enabled feature with a Cargo flag is missing from --features")
-    if "--features" in argv_min and "franken-control/artwork" in argv_min[argv_min.index("--features") + 1]:
-        raise CaseError("a disabled feature leaked into --features")
+    step_of = {aid: s for s in steps for aid in s["artifacts"]}
+    for aid, flags in c["expect_features"].items():
+        if _features_of(step_of[aid]) != flags:
+            raise CaseError(f"{aid}: --features {_features_of(step_of[aid])}, want {flags}")
+    paths = [plan_mod.artifact_path(target_dir, a, doc) for a in doc["artifacts"] if a["bin"]]
+    if len(set(paths)) != len(paths):
+        raise CaseError(f"two artifacts are built to one file: {sorted(paths)}")
+    # the control: without the flags the minimal profile is the same build as the full one
+    cleared = copy.deepcopy(doc)
+    for spec in cleared["features"]:
+        if spec["name"] in c["flagged_services"]:
+            spec["cargo_feature"] = ""
+    again = plan_mod.plan_steps(root, os.path.join(root, "crates"), target_dir, cleared)
+    back = {tuple(sorted(s["artifacts"])) for s in again if len(s["artifacts"]) > 1}
+    if back != {tuple(sorted(x)) for x in c["expect_shared_without_flags"]}:
+        raise CaseError(f"with the flags removed the shared builds are {sorted(back)}")
     return PASS, ""
 
 
@@ -479,11 +497,11 @@ def make_executor(target_dir: str, doc: Dict[str, Any], scenario: str, steps: Li
             return 101, "error: could not compile\n"
         for aid in step["artifacts"]:
             art = by_id[aid]
-            path = plan_mod.artifact_path(target_dir, art)
+            path = plan_mod.artifact_path(target_dir, art, doc)
             if scenario == "missing_artifact" and art["target"] == "mips_be":
                 continue
             machine = ref.TARGETS[art["target"]][2]
-            payload = f"{art['crate']}:{art['target']}".encode()
+            payload = f"{art['crate']}:{art['target']}:{','.join(_features_of(step))}".encode()
             if scenario == "wrong_isa" and art["target"] == "powerpc_be" and art["crate"] == "franken-speaker":
                 machine = 8
             # the speaker is linked static through the declared wrapper; MIPS states its ABI in .MIPS.abiflags
@@ -560,8 +578,10 @@ def _check_identity(doc, receipt, target_dir, path) -> None:
         triple = {"host": "host", "mips_be": "mips-unknown-linux-musl",
                   "powerpc_be": "powerpc-unknown-linux-musl"}[art["target"]]
         leaf = art["bin"]
-        built = os.path.join(target_dir, "release", leaf) if triple == "host" else \
-            os.path.join(target_dir, triple, "release", leaf)
+        # hand-written, not asked of plan.py: the minimal profile is built in its own target directory
+        base = os.path.join(target_dir, "variants", "minimal_renderer") if art["profile"] == "minimal_renderer" else target_dir
+        built = os.path.join(base, "release", leaf) if triple == "host" else \
+            os.path.join(base, triple, "release", leaf)
         with open(built, "rb") as f:
             data = f.read()
         if row["sha256"] != hashlib.sha256(data).hexdigest():
@@ -581,9 +601,10 @@ def _check_identity(doc, receipt, target_dir, path) -> None:
         raise CaseError("one digest is reported for more than one target")
     if receipt["toolchain"].get("release") != "1.101.0-nightly" or "host" not in receipt["toolchain"]:
         raise CaseError(f"toolchain not recorded from the executor's rustc -vV: {receipt['toolchain']}")
-    if receipt["unbacked_disabled_features"]["speaker-mips-min"] != \
-            ["airplay2", "alexa_bridge", "artwork", "spotify_connect", "tailnet_native"]:
-        raise CaseError("the receipt hides that the minimal profile's disabled features have no Cargo flag")
+    if receipt["unbacked_disabled_features"]["speaker-mips-min"] != [] or \
+            receipt["unbacked_disabled_features"]["hello-init-mips"] != \
+            ["airplay2", "alexa_bridge", "protected_render", "spotify_connect", "synchronized_groups", "tailnet_native"]:
+        raise CaseError("the receipt does not say which disabled features the build cannot omit")
 
 
 def _check_restart(receipts_dir, target_dir, first_path, first_receipt) -> None:
@@ -952,6 +973,103 @@ def run_e06_inventory(c) -> Result:
     return BLOCKED, f"{named(best[0])}: {best[3]}{owner}"
 
 
+def run_feature_selection(c) -> Result:
+    """BLK-006: the Cargo flags for the native services are real from the contract down to the command line, and the
+    speaker selects on exactly those flags. Judged from the tree. What the speaker then reports (selected, unimplemented,
+    never ready; absent when the flag is off; admission unchanged) is judged by the Rust tests named in the case, which run
+    centrally with no service feature and with all five; their results are not read here."""
+    doc = contract()
+    services, core = c["services"], c["core_without_flag"]
+    problems: List[str] = []
+    # 1. the contract: each service has a flag of its own name on franken-speaker; the render path has none
+    for name in services:
+        spec = next((f for f in doc["features"] if f["name"] == name), None)
+        if spec is None or (spec["cargo_feature"], spec["owner_crate"]) != (name, "franken-speaker"):
+            problems.append(f"contract: {name} is not gated by a franken-speaker flag of its name")
+    for name in core:
+        spec = next((f for f in doc["features"] if f["name"] == name), None)
+        if spec is None or spec["cargo_feature"] != "":
+            problems.append(f"contract: {name} must have no Cargo flag")
+    # 2. the manifest and the contract name the same flags, both ways (the drift check holds the rest of the tree to this too)
+    data = facts_mod.extract(REPO)
+    speaker = next(m for m in data["members"] if m["name"] == "franken-speaker")
+    if set(speaker["features"]) - {"default"} != set(services) | {"harness"}:
+        problems.append(f"manifest: franken-speaker declares {speaker['features']}")
+    drift = [p for p in facts_mod.compare(doc, data, root=REPO) if p[0].startswith("feature_flag_")]
+    if drift:
+        problems.append(f"drift: {drift}")
+    # 3. the source selects on exactly those flags, and pairs every flag's test with its off test
+    src = _read_text(os.path.join(REPO, *c["source"].split("/")))
+    lib = _read_text(os.path.join(REPO, *c["library"].split("/")))
+    if "pub mod services;" not in lib:
+        problems.append(f"{c['library']} does not declare the services module")
+    selected_on = sorted(set(re.findall(r'cfg!\(feature = "([a-z0-9_]+)"\)', src)))
+    if selected_on != sorted(services):
+        problems.append(f"source: cfg!(feature = ...) selects on {selected_on}, want {sorted(services)}")
+    for name in c["rust_tests"]["any_build"]:
+        if not re.search(rf"#\[test\]\s*fn {name}\(", src):
+            problems.append(f"source: no test {name}")
+    for name, pair in c["rust_tests"]["per_service"].items():
+        on = rf'#\[cfg\(feature = "{name}"\)\]\s*#\[test\]\s*fn {pair["on"]}\('
+        off = rf'#\[cfg\(not\(feature = "{name}"\)\)\]\s*#\[test\]\s*fn {pair["off"]}\('
+        if not re.search(on, src) or not re.search(off, src):
+            problems.append(f"source: {name} lacks its on test {pair['on']} or its off test {pair['off']} under the right cfg")
+    # 3b. the composition root calls the report: the binary has a --services option that prints services::markers(), and the
+    # real-binary tests give the expected line for every service in both configurations (written out, not derived)
+    main = _read_text(os.path.join(REPO, *c["main"].split("/")))
+    if not re.search(r'"--services"\s*=>\s*services\(\)', main) or \
+            not re.search(r'fn services\(\) -> ExitCode \{\s*print!\(\s*"\{\}",\s*franken_speaker::services::markers\(\)\s*\)', main):
+        problems.append(f"{c['main']}: no --services option that prints franken_speaker::services::markers()")
+    if 'format!("FFW_SERVICE:{feature} absent")' not in src or \
+            'format!("FFW_SERVICE:{feature} selected {implemented} {qualified}")' not in src:
+        problems.append(f"{c['source']}: the marker text is not what the binary tests expect")
+    cli = _read_text(os.path.join(REPO, *c["cli_tests"]["file"].split("/")))
+    for name in c["cli_tests"]["any_build"]:
+        if not re.search(rf"#\[test\]\s*fn {name}\(", cli):
+            problems.append(f"{c['cli_tests']['file']}: no test {name}")
+    for index, name in enumerate(services):
+        for state, literal in (("selected", f"FFW_SERVICE:{name} selected unimplemented unqualified"),
+                               ("not_selected", f"FFW_SERVICE:{name} absent")):
+            cfg = f'feature = "{name}"' if state == "selected" else f'not(feature = "{name}")'
+            test = f"cli_{name}_{state}_prints_" + ("selected_unimplemented_unqualified" if state == "selected" else "absent")
+            pattern = (rf"#\[cfg\({re.escape(cfg)}\)\]\s*#\[test\]\s*fn {test}\(\)\s*\{{[^}}]*?lines\[{index}\],\s*"
+                       rf'"{re.escape(literal)}"')
+            if not re.search(pattern, cli):
+                problems.append(f"{c['cli_tests']['file']}: {test} does not expect line {index} to be {literal!r} under {cfg}")
+    # 4. the plan: the minimal profile is its own build, with none of the services; the full profile has all of them
+    root, target_dir, steps = _plan()
+    step_of = {aid: s for s in steps for aid in s["artifacts"]}
+    for aid in c["full"]:
+        want = sorted(f"franken-speaker/{n}" for n in services)
+        if sorted(_features_of(step_of[aid])) != want:
+            problems.append(f"plan: {aid} builds with {_features_of(step_of[aid])}")
+    for aid in c["minimal"]:
+        if any(f.rsplit("/", 1)[-1] in services for f in _features_of(step_of[aid])):
+            problems.append(f"plan: {aid} builds with a service: {_features_of(step_of[aid])}")
+    for full, minimal in zip(c["full"], c["minimal"]):
+        if step_of[full] is step_of[minimal] or step_of[full]["env"]["CARGO_TARGET_DIR"] == step_of[minimal]["env"]["CARGO_TARGET_DIR"]:
+            problems.append(f"plan: {full} and {minimal} are one build or write one directory")
+    # 5. a flag is not evidence: admission is the same with every flag cleared, and the services stay blocked
+    cleared = copy.deepcopy(doc)
+    for spec in cleared["features"]:
+        if spec["name"] in services:
+            spec["cargo_feature"], spec["owner_crate"] = "", "franken-control"
+    for aid, blocks in c["expect_blocks"].items():
+        got, was = ref.admission(doc, aid)["blocks"], ref.admission(cleared, aid)["blocks"]
+        if got != blocks or was != blocks:
+            problems.append(f"admission: {aid} is {got} with the flags and {was} without, want {blocks}")
+    if problems:
+        raise CaseError("; ".join(problems))
+    # 6. observed: the built device speakers of the newest central run, judged against the CURRENT plan and contract; the full
+    # and minimal speakers must be different files (central.judge). The expected output of the binary is judged by the real-binary
+    # tests above, which run centrally in the default and the all-on configuration; their results are not read here.
+    static = f"{len(services)} flags: contract, manifest, source, the --services option and its tests, plan and admission agree"
+    status, detail = run_central_evidence({"judge": "device_artifacts", "reason": c["observed_reason"], "owner": c["observed_owner"]})
+    if status == PASS:
+        return PASS, f"{static}; observed: {detail}"
+    return status, f"{static}; the observed full and minimal device speakers are not yet shown to differ: {detail}"
+
+
 def run_blocked(c) -> Result:
     return BLOCKED, f"{c['reason']} [owner: {c['owner']}]"
 
@@ -965,6 +1083,7 @@ HANDLERS: Dict[str, Callable[[Dict[str, Any]], Result]] = {
     "receipt_tamper": run_receipt_tamper, "inventory_plants": run_inventory_plants, "e06_inventory": run_e06_inventory, "meta_invariants": run_meta_invariants, "meta_codes": run_meta_codes,
     "meta_hygiene": run_meta_hygiene, "meta_vectors_current": run_meta_vectors_current,
     "mutation_canary": run_mutation_canary, "runner_selftest": run_runner_selftest, "blocked": run_blocked,
+    "feature_selection": run_feature_selection,
     "planning_plants": run_planning_plants, "planning_real": run_planning_real,
 }
 
