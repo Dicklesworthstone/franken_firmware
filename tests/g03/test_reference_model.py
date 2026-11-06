@@ -89,6 +89,27 @@ class Mutants(unittest.TestCase):
         failures = ref.check_all(ref.Options(clamp_volume=True), vectors)
         self.assertTrue(all(f[0].startswith("plan-") for f in failures), failures)
 
+    def test_refusing_second_infinite_fails_only_its_own_scenario_and_the_bare_word_still_passes(self):
+        # The defect as it shipped: only the bare word `infinite` was an unbounded request, so the UPnP spelling
+        # `Second-infinite` was a 400. The scenario written for it must be the one that fails, and the older
+        # scenario that uses the bare word must keep passing under the same defect.
+        vectors = ref.load()
+        failures = ref.check_all(ref.Options(second_infinite_refused=True), vectors)
+        self.assertEqual({f[0] for f in failures}, {"gena-second-infinite-is-the-upnp-unbounded-request"})
+        self.assertEqual(ref.check_all(ref.Options(), vectors), [], "the fixed model passes all of them")
+
+    def test_unicode_case_folding_of_the_word_is_caught_by_the_second_infinite_scenario_alone(self):
+        # Python's (?i:) folds dotless i and dotted I to `i`, so a model written with it accepts `Second-\u0131nfinite`, which the
+        # Rust (`eq_ignore_ascii_case`) refuses. The shared-rule trap: the model must be as strict as the code.
+        vectors = ref.load()
+        failures = ref.check_all(ref.Options(unicode_fold_infinite=True), vectors)
+        self.assertEqual({f[0] for f in failures}, {"gena-second-infinite-is-the-upnp-unbounded-request"})
+
+    def test_a_refusal_that_uses_up_a_sid_is_caught_by_the_second_infinite_scenario_alone(self):
+        vectors = ref.load()
+        failures = ref.check_all(ref.Options(sid_taken_before_timeout=True), vectors)
+        self.assertEqual({f[0] for f in failures}, {"gena-second-infinite-is-the-upnp-unbounded-request"})
+
 
 class Invariants(unittest.TestCase):
     def test_every_invariant_names_existing_vectors_and_rust_tests(self):

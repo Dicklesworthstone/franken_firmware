@@ -2149,6 +2149,100 @@ mod tests {
     }
 
     #[test]
+    fn a_controller_that_subscribes_with_second_infinite_gets_a_finite_grant_and_hears_the_next_change()
+     {
+        let mut rig = Rig::new();
+        let sub = [SUB[0], SUB[1], ("TIMEOUT", "Second-infinite")];
+        let h = rig.event("SUBSCRIBE", RC, &sub);
+        assert_eq!(h.response.status, 200);
+        assert_eq!(
+            h.response.headers[1],
+            ("TIMEOUT".to_string(), "Second-300".to_string()),
+            "never forever"
+        );
+        assert_eq!(h.notifications.len(), 1);
+        assert_eq!(h.notifications[0].seq, 0);
+        let sid = h.response.headers[0].1.clone();
+        // The ordinary path works for this subscriber: a volume change reaches it as the next event.
+        let changed = rig.legacy(RC, "SetVolume", &set_volume("30"));
+        assert_eq!(changed.response.status, 200);
+        assert_eq!(changed.notifications.len(), 1);
+        assert_eq!(
+            (
+                changed.notifications[0].sid.as_str(),
+                changed.notifications[0].seq
+            ),
+            (sid.as_str(), 1)
+        );
+        assert!(changed.notifications[0].body.contains("val=\"30\""));
+        // A renewal that asks the same way keeps the id and is granted the same finite time.
+        let renewed = rig.event(
+            "SUBSCRIBE",
+            RC,
+            &[("SID", sid.as_str()), ("TIMEOUT", "Second-infinite")],
+        );
+        assert_eq!(renewed.response.status, 200);
+        assert_eq!(renewed.response.headers[0].1, sid);
+        assert_eq!(renewed.response.headers[1].1, "Second-300");
+        assert!(renewed.notifications.is_empty(), "a renewal sends no event");
+        // The renewed subscriber is still live: the next change reaches it under the same id, SEQ counting on.
+        let after = rig.legacy(RC, "SetVolume", &set_volume("31"));
+        assert_eq!(after.response.status, 200);
+        assert_eq!(after.notifications.len(), 1);
+        assert_eq!(
+            (
+                after.notifications[0].sid.as_str(),
+                after.notifications[0].seq
+            ),
+            (sid.as_str(), 2)
+        );
+        assert!(after.notifications[0].body.contains("val=\"31\""));
+    }
+
+    #[test]
+    fn a_near_miss_of_second_infinite_is_a_400_from_the_endpoint_and_leaves_no_subscription() {
+        let mut rig = Rig::new();
+        for bad in [
+            "Second-infinitely",
+            "Second-infinite5",
+            "Second-infinit",
+            "Second-\u{131}nfinite",
+        ] {
+            let h = rig.event("SUBSCRIBE", RC, &[SUB[0], SUB[1], ("TIMEOUT", bad)]);
+            assert_eq!(h.response.status, 400, "{bad}");
+            assert!(h.response.body.is_empty() && h.notifications.is_empty());
+        }
+        assert!(rig.endpoint.subscriptions().is_empty());
+        // The control: the same request with the right spelling subscribes.
+        let ok = rig.event(
+            "SUBSCRIBE",
+            RC,
+            &[SUB[0], SUB[1], ("TIMEOUT", "Second-infinite")],
+        );
+        assert_eq!(ok.response.status, 200);
+        assert_eq!(rig.endpoint.subscriptions().len(), 1);
+    }
+
+    #[test]
+    fn a_lapsed_second_infinite_grant_is_a_412_on_renewal_and_a_fresh_subscribe_gets_a_new_id() {
+        let mut rig = Rig::new();
+        let sub = [SUB[0], SUB[1], ("TIMEOUT", "Second-infinite")];
+        let first = rig.event("SUBSCRIBE", RC, &sub);
+        let sid = first.response.headers[0].1.clone();
+        rig.now = 301 * 1_000_000_000;
+        let late = rig.event(
+            "SUBSCRIBE",
+            RC,
+            &[("SID", sid.as_str()), ("TIMEOUT", "Second-infinite")],
+        );
+        assert_eq!(late.response.status, 412, "the 300 s grant lapsed");
+        let again = rig.event("SUBSCRIBE", RC, &sub);
+        assert_eq!(again.response.status, 200);
+        assert_ne!(again.response.headers[0].1, sid);
+        assert_eq!(again.notifications[0].seq, 0);
+    }
+
+    #[test]
     fn duplicate_event_headers_and_the_retired_catalog_are_refused() {
         let mut rig = Rig::new();
         let twice = [

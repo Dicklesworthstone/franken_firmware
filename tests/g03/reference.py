@@ -69,6 +69,9 @@ class Options:
     seq_wraps_to_zero: bool = False      # SEQ goes 0 after 4294967295
     callback_any_host: bool = False      # accept a callback naming another host
     no_clamp_timeout: bool = False       # take the requested timeout as it is
+    second_infinite_refused: bool = False  # only the bare word "infinite" is unbounded; the UPnP "Second-infinite" is a 400
+    unicode_fold_infinite: bool = False  # match the word with Unicode case folding (dotless i, dotted I), which the Rust never does
+    sid_taken_before_timeout: bool = False  # a subscribe whose TIMEOUT is refused still uses up a SID
     renewal_takes_callback: bool = False  # a renewal may change the callback
     resend_unchanged: bool = False       # publish even when nothing changed
     full_state_every_event: bool = False  # events carry every variable, not the changed ones
@@ -421,9 +424,19 @@ class Gena:
         self.entries = [e for e in self.entries if now < e["expires"]]
         return before - len(self.entries)
 
+    def second_infinite(self, value):
+        """`Second-infinite`: the unit as for every other TIMEOUT, then the word in any ASCII case, nothing else."""
+        if self.opts.second_infinite_refused or not value.startswith("Second-"):
+            return False
+        word = value[len("Second-"):]
+        if self.opts.unicode_fold_infinite:
+            return re.fullmatch(r"(?i:infinite)", word) is not None
+        return word.isascii() and word.lower() == "infinite"
+
     def timeout(self, header):
         c = self.config
-        if header is None or header.strip().lower() == "infinite":
+        value = None if header is None else header.strip()
+        if value is None or value.lower() == "infinite" or self.second_infinite(value):
             secs = c["default_timeout_secs"]
         else:
             m = re.fullmatch(r"Second-([0-9]+)", header.strip())
@@ -522,7 +535,12 @@ class Gena:
         if callback is None:
             raise Fault(412)
         url = self.callback(callback, peer)
-        secs = self.timeout(timeout)
+        try:
+            secs = self.timeout(timeout)
+        except Fault:
+            if self.opts.sid_taken_before_timeout:
+                self.counter += 1  # the defect: the refusal still used up a SID
+            raise
         if not self.opts.unbounded_table and len(self.entries) >= self.config["max_subscriptions"]:
             raise Fault(503)
         self.counter += 1

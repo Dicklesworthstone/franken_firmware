@@ -261,16 +261,21 @@
     },
     {
       "id": "G03-I14",
-      "statement": "A subscription is granted with a synthetic id, a clamped timeout and the full initial state; infinite and absent mean the default; a malformed timeout is refused.",
+      "statement": "A subscription is granted with a synthetic id, a clamped timeout and the full initial state; an unbounded request (`Second-infinite`, the UPnP spelling, or the bare word) and an absent timeout mean the default and never forever; a malformed timeout, a near miss of `Second-infinite` included, is refused and subscribes nothing.",
       "vectors": [
         "gena-timeouts-are-clamped",
-        "gena-subscribe-then-deltas"
+        "gena-subscribe-then-deltas",
+        "gena-second-infinite-is-the-upnp-unbounded-request"
       ],
       "rust_tests": [
         "gena::timeouts_are_clamped_and_the_default_stands_in_for_infinite_or_none",
         "gena::a_subscription_is_granted_with_an_id_a_timeout_and_the_full_initial_state",
         "gena::each_service_sends_the_variables_the_controller_side_reads",
-        "server::a_local_subscribe_answers_with_sid_and_timeout_and_the_full_initial_state"
+        "server::a_local_subscribe_answers_with_sid_and_timeout_and_the_full_initial_state",
+        "gena::second_infinite_is_the_upnp_spelling_of_an_unbounded_request_and_gets_the_default",
+        "gena::a_near_miss_of_second_infinite_is_a_400_and_subscribes_nothing",
+        "server::a_controller_that_subscribes_with_second_infinite_gets_a_finite_grant_and_hears_the_next_change",
+        "server::a_near_miss_of_second_infinite_is_a_400_from_the_endpoint_and_leaves_no_subscription"
       ]
     },
     {
@@ -278,13 +283,16 @@
       "statement": "A renewal runs from now and keeps the id; a renewal naming a callback or NT is refused; an unknown, expired or other-service id is 412.",
       "vectors": [
         "gena-expiry-and-renewal",
-        "gena-renewal-rules"
+        "gena-renewal-rules",
+        "gena-second-infinite-is-the-upnp-unbounded-request"
       ],
       "rust_tests": [
         "gena::a_renewal_runs_from_now_and_keeps_the_id",
         "gena::a_renewal_with_a_callback_or_nt_is_a_400_and_changes_nothing",
         "gena::a_stale_or_unknown_or_other_service_id_is_a_412",
-        "server::renew_and_unsubscribe_follow_the_rules"
+        "server::renew_and_unsubscribe_follow_the_rules",
+        "gena::second_infinite_expires_at_the_default_and_a_renewal_with_it_runs_from_now",
+        "server::a_lapsed_second_infinite_grant_is_a_412_on_renewal_and_a_fresh_subscribe_gets_a_new_id"
       ]
     },
     {

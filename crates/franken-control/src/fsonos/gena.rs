@@ -15,7 +15,8 @@
 //!   address the request came from** (no name to resolve, no userinfo, a real port). UPnP lets a
 //!   subscriber name another host; this endpoint does not, so it cannot be made to send notifications
 //!   to a third party.
-//! * **Timeouts** are clamped to `[min, max]`; `infinite` and a missing header mean the default.
+//! * **Timeouts** are clamped to `[min, max]`. An unbounded request, `Second-infinite` (the UPnP spelling), the bare word
+//!   `infinite`, or a missing header, is granted the default: this endpoint never grants forever.
 //! * A renewal that carries `CALLBACK` or `NT` is refused; a renewal of an unknown, expired or
 //!   other-service `SID` is `412`, so the controller subscribes afresh.
 //!
@@ -255,12 +256,15 @@ impl SubscriptionTable {
         gone
     }
 
-    /// The timeout to grant for a `TIMEOUT` header: clamped to the bounds; `infinite` or absent is the
-    /// default; anything else that is not `Second-<n>` is refused.
+    /// The timeout to grant for a `TIMEOUT` header: clamped to the bounds; an unbounded request
+    /// (`Second-infinite`, or the bare word `infinite`) or no header is the default; anything else that is
+    /// not `Second-<n>` is refused.
     fn grant_timeout(&self, header: Option<&str>) -> Result<u32, GenaError> {
         let secs = match header.map(str::trim) {
             None => self.config.default_timeout_secs,
-            Some(v) if v.eq_ignore_ascii_case("infinite") => self.config.default_timeout_secs,
+            Some(v) if v.eq_ignore_ascii_case("infinite") || is_second_infinite(v) => {
+                self.config.default_timeout_secs
+            }
             Some(v) => v
                 .strip_prefix("Second-")
                 .and_then(|n| n.parse::<u32>().ok())
@@ -401,6 +405,15 @@ impl SubscriptionTable {
             entry.next_seq = seq;
         }
     }
+}
+
+/// `Second-infinite`: how the UPnP device architecture spells an unbounded subscription (`TIMEOUT: Second-`
+/// followed by an integer or `infinite`). The unit is spelled as for every other `TIMEOUT` here; the word may
+/// be in any case; nothing may follow it.
+fn is_second_infinite(value: &str) -> bool {
+    value
+        .strip_prefix("Second-")
+        .is_some_and(|rest| rest.eq_ignore_ascii_case("infinite"))
 }
 
 /// The headers of a SUBSCRIBE request, by name, as the transport read them.
@@ -798,6 +811,94 @@ mod tests {
                 "{bad:?}"
             );
         }
+    }
+
+    #[test]
+    fn second_infinite_is_the_upnp_spelling_of_an_unbounded_request_and_gets_the_default() {
+        let t = table();
+        let default = GenaConfig::provisional().default_timeout_secs;
+        for ok in [
+            "Second-infinite",
+            " Second-infinite ",
+            "Second-Infinite",
+            "Second-INFINITE",
+            "infinite",
+        ] {
+            assert_eq!(t.grant_timeout(Some(ok)), Ok(default), "{ok:?}");
+        }
+    }
+
+    #[test]
+    fn a_near_miss_of_second_infinite_is_a_400_and_subscribes_nothing() {
+        let mut t = table();
+        for bad in [
+            "Second-infinitely",
+            "Second-infinite5",
+            "Second-infinit",
+            "Second--infinite",
+            "Second-infinite-1",
+            "Second- infinite",
+            "Seconds-infinite",
+            "-infinite",
+            "Second-infinite Second-5",
+            // The word is matched in ASCII case only: dotless i and dotted I are not `i`.
+            "Second-\u{131}nfinite",
+            "Second-inf\u{131}nite",
+            "Second-\u{130}nfinite",
+        ] {
+            assert!(
+                matches!(t.grant_timeout(Some(bad)), Err(GenaError::BadRequest(_))),
+                "{bad:?}"
+            );
+            let refused = t.subscribe(
+                0,
+                Service::RenderingControl,
+                peer(),
+                &headers(CALLBACK, Some(bad)),
+                &state(),
+            );
+            assert!(matches!(refused, Err(GenaError::BadRequest(_))), "{bad:?}");
+        }
+        assert!(t.is_empty());
+    }
+
+    #[test]
+    fn second_infinite_expires_at_the_default_and_a_renewal_with_it_runs_from_now() {
+        let mut t = table();
+        let (grant, _) = t
+            .subscribe(
+                0,
+                Service::RenderingControl,
+                peer(),
+                &headers(CALLBACK, Some("Second-infinite")),
+                &state(),
+            )
+            .expect("the UPnP spelling of an unbounded request subscribes");
+        assert_eq!(grant.timeout_secs, 300);
+        assert_eq!(
+            grant.headers()[1],
+            ("TIMEOUT".to_string(), "Second-300".to_string()),
+            "the grant is finite and says so"
+        );
+        let renewed = t
+            .renew(
+                100 * SEC,
+                Service::RenderingControl,
+                &grant.sid,
+                &SubscribeHeaders {
+                    timeout: Some("Second-infinite"),
+                    ..SubscribeHeaders::default()
+                },
+            )
+            .expect("a renewal may ask the same way");
+        assert_eq!(
+            (renewed.sid.as_str(), renewed.timeout_secs),
+            (grant.sid.as_str(), 300)
+        );
+        // The renewal ran from 100 s and not from the first grant: live a nanosecond before 400 s, gone at it.
+        assert_eq!(t.expire(400 * SEC - 1), 0);
+        assert_eq!(t.expire(400 * SEC), 1);
+        assert!(t.is_empty());
     }
 
     #[test]

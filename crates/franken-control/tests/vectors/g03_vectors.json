@@ -261,6 +261,24 @@
          {"op": "renew", "at_s": 801, "service": "RenderingControl", "sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": null, "expect": {"err": 412}}
        ]},
 
+      {"id": "gena-second-infinite-is-the-upnp-unbounded-request",
+       "steps": [
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": "Second-infinite", "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": 300, "initial": {"seq": 0, "vars": ["Volume=50", "Mute=0"], "revision": 2, "epoch": 10}}}},
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": "Second-infinitely", "state": {}, "expect": {"err": 400}},
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": "Second-infinite5", "state": {}, "expect": {"err": 400}},
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": "Second-\u0131nfinite", "state": {}, "expect": {"err": 400}},
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": "Second-inf\u0131nite", "state": {}, "expect": {"err": 400}},
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": "Second-INFINITE", "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000002", "timeout": 300, "initial": {"seq": 0, "vars": ["Volume=50", "Mute=0"], "revision": 2, "epoch": 10}}}},
+         {"op": "len", "expect": {"len": 2}},
+         {"op": "renew", "at_s": 100, "service": "RenderingControl", "sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": "Second-infinite", "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": 300}}},
+         {"op": "expire", "at_ns": 299999999999, "expect": {"removed": 0}},
+         {"op": "expire", "at_ns": 300000000000, "expect": {"removed": 1}},
+         {"op": "expire", "at_ns": 399999999999, "expect": {"removed": 0}},
+         {"op": "expire", "at_ns": 400000000000, "expect": {"removed": 1}},
+         {"op": "len", "expect": {"len": 0}},
+         {"op": "renew", "at_s": 401, "service": "RenderingControl", "sid": "uuid:5a5a0001-0000-4000-8000-000000000002", "timeout": "Second-infinite", "expect": {"err": 412}}
+       ]},
+
       {"id": "gena-a-lapsed-subscription-is-not-notified",
        "steps": [
          {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": "Second-300", "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": 300, "initial": {"seq": 0, "vars": ["Volume=50", "Mute=0"], "revision": 2, "epoch": 10}}}},
