@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """P01 (ffw-h3g) host-side case runner: the build-identity half.
 
-    run_cases.py --tier smoke|full [--case ID] [--list] [--receipts DIR]
+    run_cases.py --tier smoke|full|soak [--case ID] [--list] [--receipts DIR]
 
 Runs the shared contract vectors and the named cases in cases.json and prints one line per case and an exact
-denominator. Exit codes: 0 qualified, 1 a case failed, 3 only blocked cases stand in the way, 2 usage or a malformed
-case file.
+denominator. Exit codes: 0 qualified, 1 a case failed or the run's evidence is incomplete, 3 only blocked cases stand in the
+way, 2 usage or a malformed case file, 4 `--tier soak` (NOT RUN: see SOAK_REASON; never a pass).
+
+The tier is explicit; there is no default. `smoke` and `full` select cases; `soak` selects none (this contract is a one-shot offline
+check, so there is nothing to soak) and says so. Every case that runs writes critical begin/end events to the shared Q00 diagnostic
+sink (`ff.diag.v1`, via case_log.py); a run whose critical evidence was lost, torn or never closed is NOT QUALIFIED, whatever its cases said.
 
 What a pass means, so it is not over-read:
 * This is a HOST check. It reads Cargo.toml, Cargo.lock and the tree; it never runs cargo, rch, QEMU or a device.
@@ -29,12 +33,15 @@ import secrets
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 
+import case_log  # noqa: E402
+import case_log_fixtures  # noqa: E402
 import central  # noqa: E402
 import facts as facts_mod  # noqa: E402
 import fixtures  # noqa: E402
@@ -55,6 +62,12 @@ RUST_FILE = os.path.join(REPO, "crates", "franken-board-profile", "src", "build_
 CASES_FILE = os.path.join(HERE, "cases.json")
 SCHEMA = "ffw.p01.cases.v1"
 TIERS = ("smoke", "full")
+# `soak` is a tier the caller may ask for, and it is NOT RUN: no case lists it, the runner executes nothing for it, and it exits 4.
+SOAK = "soak"
+SOAK_EXIT = 4
+SOAK_REASON = ("P01 is a one-shot offline check: it reads manifests, the lockfile and the tree, replays fixed vectors and judges committed "
+               "central records. Nothing in it is long-running, randomised or repeated, so there is nothing to soak; a soak of the "
+               "render path, the group clock or a provider belongs to the owners of those features, on their own targets.")
 PASS, FAIL, BLOCKED = "pass", "fail", "blocked"
 Result = Tuple[str, str]
 
@@ -1164,6 +1177,63 @@ def run_blocked(c) -> Result:
     return BLOCKED, f"{c['reason']} [owner: {c['owner']}]"
 
 
+def run_soak_tier(c) -> Result:
+    """P01-SOAK-001: `--tier soak` is explicit, NOT RUN, says why, exits 4 (never 0 and never a pass) and runs no case; `--tier smoke`
+    and `--tier full` keep selecting cases; an unknown tier, or a soak combined with a case, a listing or metadata documents, is refused
+    with exit 2; and with `--receipts` the not-run is written down as a receipt that says it is not qualified. Judged on the real script."""
+    script = os.path.join(HERE, "run_cases.py")
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+
+    def go(*args):
+        return subprocess.run([sys.executable, "-B", script, *args], capture_output=True, text=True, timeout=120, env=env, cwd=REPO)
+
+    problems: List[str] = []
+    out = go("--tier", SOAK)
+    if out.returncode != SOAK_EXIT:
+        problems.append(f"--tier soak exited {out.returncode}, want {SOAK_EXIT}")
+    if "NOT RUN" not in out.stderr or "not a pass" not in out.stderr or "one-shot" not in out.stderr:
+        problems.append("--tier soak does not say on stderr that it is NOT RUN, why, and that it is not a pass")
+    if "P01 cases:" in out.stdout or "PASS" in out.stdout.split():
+        problems.append("--tier soak printed a case denominator or a pass")
+    for label, args in (("an unknown tier", ("--tier", "nightly")), ("a missing tier value", ("--tier",)), ("no tier at all", ()),
+                        ("soak with a case", ("--tier", SOAK, "--case", "P01-META-001")), ("soak with a listing", ("--tier", SOAK, "--list")),
+                        ("soak with one metadata document", ("--tier", SOAK, "--metadata-default", "x.json"))):
+        refused = go(*args)
+        if refused.returncode != 2 or not refused.stderr.strip() or "P01 cases:" in refused.stdout:
+            problems.append(f"{label} exited {refused.returncode}, want 2 with a reason and no run")
+    for tier in TIERS:
+        listed = go("--tier", tier, "--list")
+        if listed.returncode != 0 or not listed.stdout.strip():
+            problems.append(f"--tier {tier} --list exited {listed.returncode}")
+    if any(SOAK in x.get("tiers", []) for x in all_cases()):
+        problems.append("a case lists the soak tier")
+    with tempfile.TemporaryDirectory() as tmp:
+        kept = go("--tier", SOAK, "--receipts", tmp)
+        found = [n for n in os.listdir(tmp) if n.startswith("p01-cases-soak-")]
+        if kept.returncode != SOAK_EXIT or len(found) != 1 or [n for n in os.listdir(tmp) if n not in found]:
+            problems.append(f"--tier soak --receipts: exit {kept.returncode}, files {sorted(os.listdir(tmp))}")
+        else:
+            receipt = load_json(os.path.join(tmp, found[0]))
+            if (receipt.get("tier"), receipt.get("status"), receipt.get("qualified"), receipt.get("results")) != (SOAK, "not_run", False, []) \
+                    or receipt.get("reason") != SOAK_REASON or receipt.get("totals") != {"total": 0, "passed": 0, "failed": 0, "blocked": 0}:
+                problems.append(f"the soak receipt does not say not-run/not-qualified with the reason: {sorted(receipt)}")
+    if problems:
+        raise CaseError("; ".join(problems))
+    return PASS, "soak is NOT RUN (exit 4, reason on stderr and in the receipt); smoke and full still select cases; 6 refusals exit 2"
+
+
+def run_case_log(c) -> Result:
+    """P01-LOG-001: the runner's actual case execution writes critical begin/end/summary events to the shared Q00 `DiagnosticSink`
+    (`ff.diag.v1`). A permitted file sink gives a complete, independently audited log; a full, unavailable or hung sink, a case whose end
+    event was never written, and a log that cannot be built each leave every verdict as it was but make the evidence incomplete, so the run
+    is not qualified; secrets, tokens and the home directory in a case's detail never reach the log (see case_log_fixtures.py)."""
+    picked = [x for x in all_cases() if x["kind"] == "vector"][:3]
+    try:
+        return PASS, case_log_fixtures.judge_worlds(REPO, picked, execute, judge_run)
+    except AssertionError as err:
+        raise CaseError(str(err)) from err
+
+
 HANDLERS: Dict[str, Callable[[Dict[str, Any]], Result]] = {
     "vector": run_vector, "contract_valid": run_contract_valid, "drift_real": run_drift_real,
     "facts_cwd": run_facts_cwd, "drift_planted": run_drift_planted, "static_resolve": run_static_resolve,
@@ -1174,7 +1244,7 @@ HANDLERS: Dict[str, Callable[[Dict[str, Any]], Result]] = {
     "toolchain_plants": run_toolchain_plants, "toolchain_pin": run_toolchain_pin, "meta_invariants": run_meta_invariants, "meta_codes": run_meta_codes,
     "meta_hygiene": run_meta_hygiene, "meta_vectors_current": run_meta_vectors_current,
     "mutation_canary": run_mutation_canary, "runner_selftest": run_runner_selftest, "blocked": run_blocked,
-    "feature_selection": run_feature_selection,
+    "feature_selection": run_feature_selection, "soak_tier": run_soak_tier, "case_log": run_case_log,
     "planning_plants": run_planning_plants, "planning_real": run_planning_real,
 }
 
@@ -1220,19 +1290,89 @@ def _metadata_receipt(inputs: Dict[str, str]) -> Optional[Dict[str, str]]:
     return out
 
 
+def _new_run_id() -> str:
+    return f"{datetime.datetime.now(datetime.timezone.utc):%Y%m%dT%H%M%SZ}-{secrets.token_hex(4)}"
+
+
+def execute(selected: List[Dict[str, Any]], metadata_inputs: Dict[str, str], log: Optional[Any] = None,
+            echo: bool = True) -> List[Dict[str, Any]]:
+    """Run the selected cases in order. Each one is bracketed by critical `case.begin` / `case.end` events in `log` (the shared Q00
+    sink, see case_log.py); the log never decides a verdict, and a case that raises is a failed case, never a pass."""
+    results: List[Dict[str, Any]] = []
+    for c in selected:
+        if c["kind"] == "metadata_real":
+            c = dict(c, _inputs=metadata_inputs)
+        started = time.monotonic()
+        error: Optional[BaseException] = None
+        if log is not None:
+            log.begin(c)
+        try:
+            status, detail = HANDLERS[c["kind"]](c)
+        except CaseError as err:
+            status, detail, error = FAIL, str(err), err
+        except Exception as err:  # noqa: BLE001 - a crashing case is a failed case, never a pass
+            status, detail, error = FAIL, f"{type(err).__name__}: {err}", err
+        if log is not None:
+            log.end(c, status, detail, started, error)
+        results.append({"id": c["id"], "kind": c["kind"], "status": status, "detail": detail})
+        if echo:
+            label = {PASS: "PASS", FAIL: "FAIL", BLOCKED: "BLOCKED"}[status]
+            print(f"{label:<8}{c['id']:<14} {c['title']}" + (f" -- {detail}" if detail else ""))
+    return results
+
+
+def judge_run(results: List[Dict[str, Any]], evidence_complete: bool, single_case: bool = False) -> Dict[str, Any]:
+    """The verdict of one run: counts, whether it is qualified, its outcome and its exit code. A pass never rests on lost evidence:
+    incomplete evidence makes the outcome `incomplete`, the run not qualified and the exit code 1, even if every case passed."""
+    passed = sum(r["status"] == PASS for r in results)
+    failed = sum(r["status"] == FAIL for r in results)
+    blocked = sum(r["status"] == BLOCKED for r in results)
+    raw = "fail" if failed else ("blocked" if blocked else "pass")
+    outcome = raw if raw != "pass" or evidence_complete else "incomplete"
+    qualified = outcome == "pass" and not single_case
+    code = 1 if (failed or not evidence_complete) else (3 if blocked else 0)
+    return {"total": len(results), "passed": passed, "failed": failed, "blocked": blocked, "qualified": qualified,
+            "outcome": outcome, "exit": code}
+
+
+def run_soak(args) -> int:
+    """`--tier soak`: nothing runs. NOT RUN is said on stderr, written into a receipt when one is asked for, and exits 4."""
+    extra = [flag for flag, given in (("--case", args.case), ("--list", args.list), ("--metadata-default", args.metadata_default),
+                                      ("--metadata-harness", args.metadata_harness)) if given]
+    if extra:
+        print(f"error: --tier soak selects no case and cannot be combined with {', '.join(extra)}", file=sys.stderr)
+        return 2
+    print(f"P01: soak tier NOT RUN. {SOAK_REASON} This is not a pass and not a qualification (exit {SOAK_EXIT}).", file=sys.stderr)
+    if args.receipts:
+        os.makedirs(args.receipts, exist_ok=True)
+        run_id = _new_run_id()
+        path = os.path.join(args.receipts, f"p01-cases-{SOAK}-{run_id}.json")
+        receipt = {"schema": "ffw.p01.case_receipt.v1", "kind": "host_check", "run_id": run_id, "tier": SOAK,
+                   "command": [sys.executable, "tests/p01/run_cases.py", "--tier", SOAK], "status": "not_run", "qualified": False,
+                   "reason": SOAK_REASON, "totals": {"total": 0, "passed": 0, "failed": 0, "blocked": 0}, "results": [],
+                   "boundary": "nothing was run: the soak tier selects no case"}
+        with open(path, "x", encoding="utf-8") as f:
+            json.dump(receipt, f, indent=1, sort_keys=True)
+            f.write("\n")
+        print(f"receipt: {path}")
+    return SOAK_EXIT
+
+
 def main(argv: List[str]) -> int:
     ap = argparse.ArgumentParser(description="P01 host-side case runner",
                                  formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
-    ap.add_argument("--tier", required=True, choices=TIERS, help="explicit; there is no default")
+    ap.add_argument("--tier", required=True, choices=TIERS + (SOAK,), help="explicit; there is no default. soak is NOT RUN (exit 4)")
     ap.add_argument("--case", metavar="ID", help="replay one case")
     ap.add_argument("--list", action="store_true", help="list the selected cases and exit")
-    ap.add_argument("--receipts", metavar="DIR", help="write a JSON receipt into DIR (a new file; never overwrites)")
+    ap.add_argument("--receipts", metavar="DIR", help="write a JSON receipt and the diagnostic log into DIR (new files; never overwrites)")
     ap.add_argument("--metadata-default", metavar="FILE",
                     help="`cargo metadata --format-version 1 --locked --offline` output for the default features")
     ap.add_argument("--metadata-harness", metavar="FILE",
                     help="the same with `--features franken-speaker/harness`; both or neither: P01-BLK-007 is judged "
                          "from the pair, and stays BLOCKED (counted, not skipped) without them")
     args = ap.parse_args(argv)
+    if args.tier == SOAK:
+        return run_soak(args)
     if bool(args.metadata_default) != bool(args.metadata_harness):
         print("error: --metadata-default and --metadata-harness go together; one alone cannot be judged and is not "
               "silently ignored", file=sys.stderr)
@@ -1249,32 +1389,24 @@ def main(argv: List[str]) -> int:
         for c in selected:
             print(f"{c['id']}  {c['kind']:<18} {c['title']}")
         return 0
-    results: List[Dict[str, Any]] = []
-    for c in selected:
-        if c["kind"] == "metadata_real":
-            c = dict(c, _inputs=metadata_inputs)
-        try:
-            status, detail = HANDLERS[c["kind"]](c)
-        except CaseError as err:
-            status, detail = FAIL, str(err)
-        except Exception as err:  # noqa: BLE001 - a crashing case is a failed case, never a pass
-            status, detail = FAIL, f"{type(err).__name__}: {err}"
-        results.append({"id": c["id"], "kind": c["kind"], "status": status, "detail": detail})
-        label = {PASS: "PASS", FAIL: "FAIL", BLOCKED: "BLOCKED"}[status]
-        print(f"{label:<8}{c['id']:<14} {c['title']}" + (f" -- {detail}" if detail else ""))
-    passed = sum(r["status"] == PASS for r in results)
-    failed = sum(r["status"] == FAIL for r in results)
-    blocked = sum(r["status"] == BLOCKED for r in results)
+    run_id = _new_run_id()
+    log = case_log.CaseLog.open(REPO, run_id, args.tier, args.receipts)
+    results = execute(selected, metadata_inputs, log)
+    verdict = judge_run(results, True, bool(args.case))
+    evidence = log.finish({k: verdict[k] for k in ("total", "passed", "failed", "blocked")})
+    verdict = judge_run(results, evidence.complete, bool(args.case))
     counts: Dict[str, int] = {}
     for inv in invariants:
         counts[inv["status"]] = counts.get(inv["status"], 0) + 1
-    qualified = failed == 0 and blocked == 0 and not args.case
-    print(f"P01 cases: tier={args.tier} total={len(results)} passed={passed} failed={failed} blocked={blocked} | "
-          + ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
-          + (" -> QUALIFIED" if qualified else " -> NOT QUALIFIED"))
+    print(f"P01 cases: tier={args.tier} total={verdict['total']} passed={verdict['passed']} failed={verdict['failed']} "
+          f"blocked={verdict['blocked']} | " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+          + (" -> QUALIFIED" if verdict["qualified"] else " -> NOT QUALIFIED"))
+    print(evidence.summary)
+    if not evidence.complete:
+        print(f"EVIDENCE INCOMPLETE: the diagnostic log lost or never closed critical evidence ({', '.join(evidence.reasons)}); "
+              "this run is not qualified, whatever its cases said", file=sys.stderr)
     if args.receipts:
         os.makedirs(args.receipts, exist_ok=True)
-        run_id = f"{datetime.datetime.now(datetime.timezone.utc):%Y%m%dT%H%M%SZ}-{secrets.token_hex(4)}"
         path = os.path.join(args.receipts, f"p01-cases-{args.tier}-{run_id}.json")
         doc = contract()
         receipt = {
@@ -1285,7 +1417,10 @@ def main(argv: List[str]) -> int:
             "facts_digest": facts_mod.facts_digest(facts_mod.extract(REPO)),
             "python": sys.version.split()[0],
             "metadata_inputs": _metadata_receipt(metadata_inputs),
-            "totals": {"total": len(results), "passed": passed, "failed": failed, "blocked": blocked},
+            "totals": {k: verdict[k] for k in ("total", "passed", "failed", "blocked")},
+            "qualified": verdict["qualified"], "outcome": verdict["outcome"],
+            "evidence": {"complete": evidence.complete, "reasons": evidence.reasons, "log": evidence.log, "sink": evidence.sink,
+                         "file": os.path.basename(evidence.path) if evidence.path else None},
             "results": results,
             "boundary": "host check: reads manifests, the lockfile and the tree; builds, boots and contacts nothing",
         }
@@ -1293,11 +1428,7 @@ def main(argv: List[str]) -> int:
             json.dump(receipt, f, indent=1, sort_keys=True)
             f.write("\n")
         print(f"receipt: {path}")
-    if failed:
-        return 1
-    if blocked:
-        return 3
-    return 0
+    return verdict["exit"]
 
 
 if __name__ == "__main__":

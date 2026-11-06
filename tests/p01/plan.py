@@ -29,8 +29,10 @@ RECEIPT_SCHEMA = "ffw.p01.receipt.v1"
 HELLO_REL = "toolchain/src/ffw-hello-init"
 WORKSPACE_BUILD_STD = "build-std=core,alloc,std,panic_abort"
 HELLO_BUILD_STD = "build-std=core,panic_abort"
-# RCH admits a build against a worker's slot count and ignores CARGO_BUILD_JOBS, so the plan itself names the job count.
-DEFAULT_JOBS = 2
+# RCH admits a build against a worker's slot count and ignores CARGO_BUILD_JOBS, so the plan itself names the job count. The default is ONE:
+# a worker with a single slot cannot admit `-j 2`, and one job changes how long a build takes, not what it builds (every step, target, feature
+# and flag is the same). `plan_steps(jobs=N)` still takes any positive N, and a cargo step without a positive `-j N` is still refused.
+DEFAULT_JOBS = 1
 # A host-target build runs on a Linux worker; rch refuses to fetch that executable to a different-OS operator unless
 # told to. It is fetched to be identified (hashed, header read), never run, so only host-target builds may carry it.
 FOREIGN_ARTIFACTS_ENV = "RCH_ALLOW_FOREIGN_ARTIFACTS"

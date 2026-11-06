@@ -5,7 +5,8 @@
 # It never invokes cargo itself; builds run only on the central path (`RCH_REQUIRE_REMOTE=1 rch exec -- ...`).
 #
 #   scripts/e2e/p01                              full tier of the host cases (tests/p01/run_cases.py)
-#   scripts/e2e/p01 --tier smoke|full [--case ID] [--list] [--receipts DIR]
+#   scripts/e2e/p01 --tier smoke|full|soak [--case ID] [--list] [--receipts DIR]
+#                                                the tier is explicit; soak is NOT RUN (exit 4, never a pass)
 #   scripts/e2e/p01 print-plan [--cwd DIR] [--target-dir DIR]      the exact central command plan, checked, not run
 #   scripts/e2e/p01 collect --target-dir DIR [--receipts DIR]      identity of artifacts a central build produced
 #   scripts/e2e/p01 execute [--cwd DIR] [--target-dir DIR] [--receipts DIR]
@@ -22,8 +23,9 @@
 #   scripts/e2e/p01 --workspace-suite [...]      the former cargo suite (test, clippy, cross-check, virtual house)
 #                                                via scripts/test/run-workspace-verification.py p01
 #
-# Exit codes of the host cases: 0 every case passed and none is blocked; 1 a case failed; 3 only blocked cases
-# stand in the way (reported, never counted as passed); 2 usage error. The full tier is expected to exit 3 until the
+# Exit codes of the host cases: 0 every case passed, none is blocked and the run's diagnostic log is complete; 1 a case failed or the
+# log lost critical evidence; 3 only blocked cases stand in the way (reported, never counted as passed); 2 usage error; 4 --tier soak
+# (NOT RUN: this one-shot offline contract has nothing to soak; not a pass). The full tier is expected to exit 3 until the
 # central run, the Rust replay and the E06 inventory exist, because those cases are counted as blocked, not skipped.
 #
 # The Rust half replays the same shared vectors under the centralized path:

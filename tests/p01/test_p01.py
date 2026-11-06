@@ -18,12 +18,15 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 
+import case_log  # noqa: E402
+import case_log_fixtures  # noqa: E402
 import central  # noqa: E402
 import facts  # noqa: E402
 import fixtures  # noqa: E402
@@ -269,13 +272,17 @@ class RunnerTests(unittest.TestCase):
     def test_receipts_are_new_files_and_an_earlier_one_is_never_overwritten(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(self.run_main("--tier", "smoke", "--case", "P01-V-001", "--receipts", tmp)[0], 0)
-            first = sorted(os.listdir(tmp))
-            self.assertEqual(len(first), 1)
+            # a run keeps two new files: its receipt and the diagnostic log beside it
+            first = sorted(n for n in os.listdir(tmp) if n.startswith("p01-cases-"))
+            first_logs = sorted(n for n in os.listdir(tmp) if n.startswith("p01-diag-"))
+            self.assertEqual((len(first), len(first_logs), len(os.listdir(tmp))), (1, 1, 2))
             before = run_cases._read_bytes(os.path.join(tmp, first[0]))
+            before_log = run_cases._read_bytes(os.path.join(tmp, first_logs[0]))
             self.assertEqual(self.run_main("--tier", "smoke", "--case", "P01-V-001", "--receipts", tmp)[0], 0)
-            after = sorted(os.listdir(tmp))
-            self.assertEqual(len(after), 2)
+            after = sorted(n for n in os.listdir(tmp) if n.startswith("p01-cases-"))
+            self.assertEqual((len(after), len(os.listdir(tmp))), (2, 4))
             self.assertEqual(run_cases._read_bytes(os.path.join(tmp, first[0])), before)
+            self.assertEqual(run_cases._read_bytes(os.path.join(tmp, first_logs[0])), before_log)
             doc = json.loads(run_cases._read_text(os.path.join(tmp, first[0])))
             self.assertEqual(doc["totals"], {"total": 1, "passed": 1, "failed": 0, "blocked": 0})
             self.assertEqual(doc["contract_digest"], ref.digest(small_contract()))
@@ -580,7 +587,7 @@ class MetadataRealCaseTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("PASS", out)
         self.assertIn("planted faults caught", out)
-        (name,) = os.listdir(receipts)
+        (name,) = [n for n in os.listdir(receipts) if n.startswith("p01-cases-")]
         with open(os.path.join(receipts, name)) as f:
             receipt = json.load(f)
         self.assertEqual(receipt["metadata_inputs"], {
@@ -628,12 +635,27 @@ class PlanJobsTests(unittest.TestCase):
     def cargo_steps(self, steps):
         return [s for s in steps if plan.inner_command(s["argv"])[0] == "cargo"]
 
-    def test_every_cargo_step_ends_with_the_job_count_and_the_default_is_two(self):
-        for jobs, steps in ((2, self.steps()), (3, self.steps(jobs=3))):
+    def test_every_cargo_step_ends_with_the_job_count_and_the_default_is_one(self):
+        self.assertEqual(plan.DEFAULT_JOBS, 1)
+        for jobs, steps in ((1, self.steps()), (3, self.steps(jobs=3))):
             self.assertEqual(len(self.cargo_steps(steps)), 9)
             for step in self.cargo_steps(steps):
                 self.assertEqual(step["argv"][-2:], ["-j", str(jobs)], step["id"])
             self.assertEqual(plan.check_plan(steps, self.root, self.doc), [])
+
+    def test_the_default_changes_only_the_job_count_and_a_zero_or_negative_plan_is_refused(self):
+        one, two = self.steps(), self.steps(jobs=2)
+        self.assertEqual([s["id"] for s in one], [s["id"] for s in two])
+        self.assertEqual(len(one), 10, "all ten steps stay")
+        for a, b in zip(one, two):
+            if plan.inner_command(a["argv"])[0] == "cargo":
+                self.assertEqual((a["argv"][-2:], b["argv"][-2:]), (["-j", "1"], ["-j", "2"]), a["id"])
+            self.assertEqual((a["argv"][:-2], a["env"], a["cwd"]) if a["argv"][-2] == "-j" else a["argv"],
+                             (b["argv"][:-2], b["env"], b["cwd"]) if b["argv"][-2] == "-j" else b["argv"], a["id"])
+        for jobs in (0, -1):
+            with self.subTest(jobs=jobs):
+                refused = {sid for code, sid in plan.check_plan(self.steps(jobs=jobs), self.root, self.doc) if code == "plan_missing_jobs"}
+                self.assertEqual(refused, {s["id"] for s in one if plan.inner_command(s["argv"])[0] == "cargo"})
 
     def test_the_one_toolchain_query_is_plain_rustc_and_no_step_asks_rustc_for_another_compiler(self):
         queries = {s["id"]: s["argv"] for s in self.steps() if plan.inner_command(s["argv"])[0] == "rustc"}
@@ -644,6 +666,7 @@ class PlanJobsTests(unittest.TestCase):
         for label, edit, want in (
                 ("dropped", lambda a: a[:-2], ["plan_missing_jobs"]),
                 ("zero", lambda a: a[:-1] + ["0"], ["plan_missing_jobs"]),
+                ("negative", lambda a: a[:-1] + ["-1"], ["plan_missing_jobs"]),
                 ("not a number", lambda a: a[:-1] + ["many"], ["plan_missing_jobs"]),
                 ("no value", lambda a: a[:-1], ["plan_missing_jobs"]),
                 ("long spelling", lambda a: a[:-2] + ["--jobs", "4"], []),
@@ -2581,6 +2604,244 @@ class ServiceTestsByNameTests(unittest.TestCase):
         no_step = self.logs()
         del no_step[plan.SERVICE_TEST_STEP]
         self.assertEqual(handler(self.evidence(no_step, files=real))[0], run_cases.BLOCKED)
+
+
+class SoakAndDiagnosticsTests(unittest.TestCase):
+    """The two original clauses the runner had not wired: CI selects smoke/full/soak explicitly (soak is NOT RUN for this one-shot offline
+    contract, with its reason, and is never a pass), and every case the runner executes is bracketed by critical events in the shared Q00
+    `DiagnosticSink` (`ff.diag.v1`), with lost critical evidence making the run incomplete and unqualified. Each rejection is paired with its
+    control: the unplanted run."""
+
+    def run_main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = run_cases.main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def never_called(self, *_a, **_k):
+        raise AssertionError("a case was executed")
+
+    # ---- the soak tier
+    def test_soak_is_not_run_says_why_exits_4_and_executes_no_case(self):
+        with mock.patch.dict(run_cases.HANDLERS, {k: self.never_called for k in run_cases.HANDLERS}):
+            code, out, err = self.run_main("--tier", "soak")
+        self.assertEqual(code, run_cases.SOAK_EXIT)
+        self.assertEqual(run_cases.SOAK_EXIT, 4)
+        for needle in ("NOT RUN", "one-shot", "not a pass", "not a qualification", "exit 4"):
+            self.assertIn(needle, err)
+        self.assertEqual(out, "", "no case line, no denominator and no QUALIFIED on stdout")
+
+    def test_soak_with_receipts_writes_a_not_run_receipt_and_no_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, out, _err = self.run_main("--tier", "soak", "--receipts", tmp)
+            (name,) = os.listdir(tmp)
+            with open(os.path.join(tmp, name)) as f:
+                receipt = json.load(f)
+        self.assertEqual(code, 4)
+        self.assertTrue(name.startswith("p01-cases-soak-") and name.endswith(".json"), name)
+        self.assertEqual((receipt["tier"], receipt["status"], receipt["qualified"], receipt["results"]), ("soak", "not_run", False, []))
+        self.assertEqual(receipt["reason"], run_cases.SOAK_REASON)
+        self.assertEqual(receipt["totals"], {"total": 0, "passed": 0, "failed": 0, "blocked": 0})
+        self.assertIn("receipt:", out)
+
+    def test_soak_refuses_a_case_a_listing_and_metadata_documents_and_an_unknown_or_missing_tier_exits_2(self):
+        for label, args in (("a case", ("--case", "P01-META-001")), ("a listing", ("--list",)),
+                            ("one metadata document", ("--metadata-default", "x.json")),
+                            ("a metadata pair", ("--metadata-default", "x.json", "--metadata-harness", "y.json"))):
+            with self.subTest(label):
+                code, out, err = self.run_main("--tier", "soak", *args)
+                self.assertEqual((code, out), (2, ""))
+                self.assertIn("selects no case", err)
+        for label, args in (("an unknown tier", ["--tier", "nightly"]), ("no tier", []), ("an empty tier", ["--tier", ""])):
+            with self.subTest(label):
+                with contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as raised:
+                    run_cases.main(args)
+                self.assertEqual(raised.exception.code, 2)
+                self.assertTrue(err.getvalue().strip())
+
+    def test_smoke_and_full_still_select_cases_and_no_case_lists_soak(self):
+        self.assertEqual(run_cases.TIERS, ("smoke", "full"))
+        listed = {}
+        for tier in run_cases.TIERS:
+            code, out, _err = self.run_main("--tier", tier, "--list")
+            self.assertEqual(code, 0)
+            listed[tier] = {line.split()[0] for line in out.splitlines()}
+        self.assertTrue(listed["smoke"] < listed["full"], "smoke is a strict subset of full")
+        self.assertTrue({"P01-SOAK-001", "P01-LOG-001"} <= listed["smoke"])
+        self.assertFalse([c["id"] for c in run_cases.all_cases() if "soak" in c.get("tiers", [])])
+        self.assertEqual(run_cases.select(run_cases.all_cases(), "soak", None), [])
+
+    # ---- the verdict of a run
+    def test_judge_run_never_lets_a_pass_rest_on_lost_evidence(self):
+        ok = [{"id": "a", "status": "pass"}, {"id": "b", "status": "pass"}]
+        fail = ok + [{"id": "c", "status": "fail"}]
+        blocked = ok + [{"id": "d", "status": "blocked"}]
+        for label, results, complete, single, want in (
+                ("all pass, evidence complete", ok, True, False, (True, "pass", 0)),
+                ("all pass, evidence lost", ok, False, False, (False, "incomplete", 1)),
+                ("a failure, evidence complete", fail, True, False, (False, "fail", 1)),
+                ("a failure, evidence lost", fail, False, False, (False, "fail", 1)),
+                ("a blocked case, evidence complete", blocked, True, False, (False, "blocked", 3)),
+                ("a blocked case, evidence lost", blocked, False, False, (False, "blocked", 1)),
+                ("one case replayed, evidence complete", ok[:1], True, True, (False, "pass", 0))):
+            with self.subTest(label):
+                v = run_cases.judge_run(results, complete, single)
+                self.assertEqual((v["qualified"], v["outcome"], v["exit"]), want)
+
+    # ---- the log of a real run
+    def test_a_run_with_receipts_keeps_a_complete_log_the_receipt_names_by_digest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, out, err = self.run_main("--tier", "smoke", "--case", "P01-V-001", "--receipts", tmp)
+            receipt_name, = [n for n in os.listdir(tmp) if n.startswith("p01-cases-")]
+            log_name, = [n for n in os.listdir(tmp) if n.startswith("p01-diag-")]
+            with open(os.path.join(tmp, receipt_name)) as f:
+                receipt = json.load(f)
+            raw = run_cases._read_bytes(os.path.join(tmp, log_name))
+            events = [json.loads(line) for line in raw.decode("ascii").splitlines()]
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("evidence COMPLETE", out)
+        self.assertEqual([e["type"] for e in events], ["header", "event", "event", "event", "footer"])
+        self.assertEqual([e.get("kind") for e in events[1:4]], ["case.begin", "case.end", "run.summary"])
+        self.assertEqual(events[0]["schema"], "ff.diag.v1")
+        self.assertEqual(events[2]["fields"]["status"], "pass")
+        self.assertEqual(events[3]["fields"], {"total": 1, "passed": 1, "failed": 0, "blocked": 0, "tier": "smoke", "cases": 1})
+        evidence = receipt["evidence"]
+        self.assertEqual((evidence["complete"], evidence["reasons"], evidence["file"]), (True, [], log_name))
+        self.assertEqual(evidence["log"], {"sha256": hashlib.sha256(raw).hexdigest(), "events": 3, "dropped": 0, "bytes": len(raw),
+                                           "truncated": False, "critical_lost": False})
+        self.assertEqual((receipt["outcome"], receipt["qualified"]), ("pass", False), "a single replayed case is never a qualification")
+        self.assertNotIn(tmp, json.dumps(receipt), "the receipt names the log by file name and digest, not by path")
+
+    def test_a_full_run_logs_two_critical_events_per_case_and_one_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, out, _err = self.run_main("--tier", "smoke", "--receipts", tmp)
+            receipt_name, = [n for n in os.listdir(tmp) if n.startswith("p01-cases-")]
+            with open(os.path.join(tmp, receipt_name)) as f:
+                receipt = json.load(f)
+        self.assertEqual(code, 3 if receipt["totals"]["blocked"] else 0, out[-300:])
+        self.assertEqual(receipt["evidence"]["log"]["events"], 2 * receipt["totals"]["total"] + 1)
+        self.assertTrue(receipt["evidence"]["complete"])
+
+    def test_a_log_that_loses_evidence_does_not_change_a_verdict_but_the_run_is_not_qualified(self):
+        diag = case_log.load(run_cases.REPO)
+        down = diag.FaultableSink()
+        down.available = False
+        real_open = case_log.CaseLog.open
+
+        def open_unavailable(repo, run_id, tier, receipts=None, **kw):
+            return real_open(repo, run_id, tier, None, target=down)
+        code, out, err = self.run_main("--tier", "smoke", "--case", "P01-V-001")
+        self.assertEqual((code, err), (0, ""), "control: the unplanted run passes")
+        with mock.patch.object(case_log.CaseLog, "open", staticmethod(open_unavailable)):
+            code, out, err = self.run_main("--tier", "smoke", "--case", "P01-V-001")
+        self.assertEqual(code, 1)
+        self.assertIn("PASS    P01-V-001", out, "the case still passed: the log costs evidence, not a verdict")
+        self.assertIn("NOT QUALIFIED", out)
+        self.assertIn("evidence INCOMPLETE", out)
+        self.assertIn("EVIDENCE INCOMPLETE", err)
+
+    def test_a_receipt_of_an_incomplete_run_says_incomplete_and_names_the_loss(self):
+        diag = case_log.load(run_cases.REPO)
+        full = diag.FaultableSink(capacity_bytes=1500)
+        real_open = case_log.CaseLog.open
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+                case_log.CaseLog, "open", staticmethod(lambda repo, run_id, tier, receipts=None, **kw: real_open(repo, run_id, tier, None, target=full))):
+            code, _out, _err = self.run_main("--tier", "smoke", "--case", "P01-V-001", "--receipts", tmp)
+            receipt_name, = os.listdir(tmp)
+            with open(os.path.join(tmp, receipt_name)) as f:
+                receipt = json.load(f)
+        self.assertEqual(code, 1)
+        self.assertEqual((receipt["outcome"], receipt["qualified"], receipt["evidence"]["complete"]), ("incomplete", False, False))
+        self.assertTrue(receipt["evidence"]["reasons"])
+        self.assertTrue(receipt["evidence"]["log"]["critical_lost"] or receipt["evidence"]["log"]["truncated"])
+        self.assertTrue(receipt["results"][0]["status"] == "pass")
+
+    def test_an_existing_log_is_never_appended_to_and_the_run_is_incomplete(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixed = "20261106T000000Z-aaaaaaaa"
+            path = os.path.join(tmp, f"p01-diag-smoke-{fixed}.jsonl")
+            with open(path, "wb") as f:
+                f.write(b"the first run's evidence\n")
+            with mock.patch.object(run_cases, "_new_run_id", lambda: fixed):
+                code, _out, err = self.run_main("--tier", "smoke", "--case", "P01-V-001", "--receipts", tmp)
+            kept = run_cases._read_bytes(path)
+        self.assertEqual(kept, b"the first run's evidence\n")
+        self.assertEqual(code, 1)
+        self.assertIn("EVIDENCE INCOMPLETE", err)
+
+    def test_a_crashing_case_logs_its_causal_chain_and_a_long_detail_is_clipped_in_the_log_only(self):
+        def crash(_c):
+            try:
+                raise KeyError("inner cause")
+            except KeyError as inner:
+                raise RuntimeError("outer " + "x" * (case_log.DETAIL_CAP + 50)) from inner
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(run_cases.HANDLERS, {"vector": crash}):
+            code, out, _err = self.run_main("--tier", "smoke", "--case", "P01-V-001", "--receipts", tmp)
+            log_name, = [n for n in os.listdir(tmp) if n.startswith("p01-diag-")]
+            events = [json.loads(line) for line in run_cases._read_text(os.path.join(tmp, log_name)).splitlines()]
+        end, = [e for e in events if e.get("kind") == "case.end"]
+        self.assertEqual(code, 1)
+        self.assertEqual((end["level"], end["fields"]["status"]), ("error", "fail"))
+        self.assertEqual([c["type"] for c in end["cause"]], ["RuntimeError", "KeyError"])
+        self.assertLess(len(end["fields"]["detail"]), case_log.DETAIL_CAP + 80)
+        self.assertIn("more chars", end["fields"]["detail"])
+        self.assertIn("x" * (case_log.DETAIL_CAP + 50), out, "the printed line keeps the whole detail")
+
+    def test_a_missing_shared_module_is_an_unavailable_log_not_a_crash_and_not_a_pass(self):
+        with tempfile.TemporaryDirectory() as empty:
+            log = case_log.CaseLog.open(empty, "r1", "smoke")
+            log.begin({"id": "x", "kind": "k", "title": "t"})
+            evidence = log.finish({"total": 0})
+        self.assertFalse(evidence.complete)
+        self.assertTrue(evidence.reasons[0].startswith("diagnostics_unavailable:"))
+        self.assertIsNone(evidence.log)
+
+    # ---- the worlds of P01-LOG-001, and the judgement of them
+    def cases(self):
+        return [c for c in run_cases.all_cases() if c["kind"] == "vector"][:3]
+
+    def test_every_world_of_the_log_case_holds_through_the_real_runner(self):
+        detail = case_log_fixtures.judge_worlds(run_cases.REPO, self.cases(), run_cases.execute, run_cases.judge_run)
+        self.assertIn("baseline complete (7 critical events", detail)
+        self.assertEqual(run_cases.run_case_log({})[0], run_cases.PASS)
+
+    def test_the_log_case_fails_when_the_adapter_lies_about_completeness_or_the_events_are_not_written(self):
+        def lying_finish(self_, totals):
+            real = lying_finish.real(self_, totals)
+            real.complete, real.reasons = True, []
+            return real
+        lying_finish.real = case_log.CaseLog.finish
+        with mock.patch.object(case_log.CaseLog, "finish", lying_finish):
+            with self.assertRaises(AssertionError) as raised:
+                case_log_fixtures.judge_worlds(run_cases.REPO, self.cases(), run_cases.execute, run_cases.judge_run)
+        self.assertIn("evidence still complete", str(raised.exception))
+        with mock.patch.object(case_log.CaseLog, "begin", lambda self_, case: None):
+            with self.assertRaises(AssertionError) as raised:
+                case_log_fixtures.judge_worlds(run_cases.REPO, self.cases(), run_cases.execute, run_cases.judge_run)
+        self.assertIn("baseline", str(raised.exception))
+        self.assertEqual(case_log_fixtures.judge_worlds(run_cases.REPO, self.cases(), run_cases.execute, run_cases.judge_run)[:8], "baseline", "control")
+
+    def test_secrets_a_token_and_the_home_directory_never_reach_the_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = case_log.CaseLog.open(run_cases.REPO, "r2", "smoke", tmp)
+            case = {"id": "P01-RED-1", "kind": "synthetic", "title": "title " + case_log_fixtures.TOKEN}
+            log.begin(case)
+            log.end(case, "fail", f"password={case_log_fixtures.SECRET_VALUE} {case_log_fixtures.TOKEN} {os.path.expanduser('~')}/a", time.monotonic())
+            evidence = log.finish({"total": 1})
+            text = run_cases._read_text(os.path.join(tmp, "p01-diag-smoke-r2.jsonl"))
+        self.assertTrue(evidence.complete, evidence.reasons)
+        for secret in (case_log_fixtures.SECRET_VALUE, case_log_fixtures.TOKEN):
+            self.assertNotIn(secret, text)
+        self.assertIn("[REDACTED", text)
+
+    def test_the_adapter_uses_the_shared_module_and_adds_no_schema_of_its_own(self):
+        diag = case_log.load(run_cases.REPO)
+        self.assertEqual(diag.SCHEMA, "ff.diag.v1")
+        self.assertEqual(os.path.realpath(diag.__file__), os.path.realpath(os.path.join(run_cases.REPO, case_log.DIAG_REL)))
+        self.assertIs(case_log.load(run_cases.REPO), diag, "one module object, however often it is asked for")
+        text = run_cases._read_text(os.path.join(run_cases.HERE, "case_log.py"))
+        self.assertNotIn("ffw.p01.log", text)
+        self.assertNotIn("json.dumps", text, "the adapter serialises nothing: the sink writes the log")
 
 
 class ResolveTests(unittest.TestCase):

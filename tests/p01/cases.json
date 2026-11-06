@@ -1593,7 +1593,7 @@
      "-Z",
      "build-std=core,panic_abort",
      "-j",
-     "2"
+     "1"
     ],
     "build-franken-speaker-host": [
      "rch",
@@ -1611,7 +1611,7 @@
      "--features",
      "franken-speaker/airplay2,franken-speaker/alexa_bridge,franken-speaker/artwork,franken-speaker/harness,franken-speaker/spotify_connect,franken-speaker/tailnet_native",
      "-j",
-     "2"
+     "1"
     ],
     "build-franken-speaker-mips_be": [
      "rch",
@@ -1638,7 +1638,7 @@
      "--features",
      "franken-speaker/airplay2,franken-speaker/alexa_bridge,franken-speaker/artwork,franken-speaker/spotify_connect,franken-speaker/tailnet_native",
      "-j",
-     "2"
+     "1"
     ],
     "build-franken-speaker-mips_be-minimal_renderer": [
      "rch",
@@ -1663,7 +1663,7 @@
      "--config",
      "target.mips-unknown-linux-musl.rustflags=[\"-C\",\"target-feature=+crt-static\",\"-C\",\"link-self-contained=no\"]",
      "-j",
-     "2"
+     "1"
     ],
     "build-franken-speaker-powerpc_be": [
      "rch",
@@ -1690,7 +1690,7 @@
      "--features",
      "franken-speaker/airplay2,franken-speaker/alexa_bridge,franken-speaker/artwork,franken-speaker/spotify_connect,franken-speaker/tailnet_native",
      "-j",
-     "2"
+     "1"
     ],
     "build-franken-speaker-powerpc_be-minimal_renderer": [
      "rch",
@@ -1715,7 +1715,7 @@
      "--config",
      "target.powerpc-unknown-linux-musl.rustflags=[\"-C\",\"target-feature=+crt-static\",\"-C\",\"link-self-contained=no\"]",
      "-j",
-     "2"
+     "1"
     ],
     "toolchain-default": [
      "rch",
@@ -1744,7 +1744,7 @@
      "--config",
      "build.incremental=false",
      "-j",
-     "2"
+     "1"
     ],
     "workspace-test": [
      "rch",
@@ -1760,7 +1760,7 @@
      "--config",
      "build.incremental=false",
      "-j",
-     "2"
+     "1"
     ]
    },
    "expect_target_dirs": {
@@ -2733,6 +2733,24 @@
    ]
   },
   {
+   "id": "P01-SOAK-001",
+   "kind": "soak_tier",
+   "title": "CI selects the tier explicitly: --tier soak is NOT RUN (exit 4, the reason on stderr and in the receipt, never a pass, no case executed); smoke and full still select cases; an unknown tier, no tier, or a soak combined with a case, a listing or metadata documents is refused with exit 2",
+   "tiers": [
+    "smoke",
+    "full"
+   ]
+  },
+  {
+   "id": "P01-LOG-001",
+   "kind": "case_log",
+   "title": "every case the runner executes writes critical begin/end events and the run a summary to the shared Q00 DiagnosticSink (ff.diag.v1): a full, unavailable, hung, unrecorded or missing sink leaves each verdict as it was but makes the evidence incomplete and the run not qualified; secrets, tokens and the home directory never reach the log",
+   "tiers": [
+    "smoke",
+    "full"
+   ]
+  },
+  {
    "id": "P01-META-006",
    "kind": "runner_selftest",
    "title": "the runner's own machinery (selection, expansion, exit codes, exclusive receipts) holds",
@@ -3389,6 +3407,31 @@
     "P01-META-006"
    ],
    "status": "covered"
+  },
+  {
+   "id": "INV-P01-28",
+   "statement": "CI selects smoke, full or soak explicitly; this one-shot offline contract has nothing to soak, so the soak tier is NOT RUN with its reason and is never a pass; a mandatory case that cannot run is counted as blocked and fails qualification, never silently passed",
+   "cases": [
+    "P01-SOAK-001"
+   ],
+   "status": "covered",
+   "note": "smoke and full select cases (the blocked ones stay counted: the full tier exits 3 until the central records exist); `--tier soak` runs nothing, says why on stderr and in the receipt it writes when asked, and exits 4; the soak of the render path, the group clock or a provider belongs to the owners of those features"
+  },
+  {
+   "id": "INV-P01-29",
+   "statement": "Versioned structured JSONL diagnostics through the shared Q00 DiagnosticSink: run, case and correlation ids, monotonic timestamps, bounded event rate, memory and disk with the dropped-event counts exposed, tokens, keys, account and site identifiers redacted, the causal error chain of a failed case, and critical test evidence loss marks the result incomplete",
+   "cases": [
+    "P01-LOG-001"
+   ],
+   "status": "covered",
+   "note": "the runner writes the shared `ff.diag.v1` log (no logger or schema of its own) next to its receipt, re-reads it with the shared `audit_log`, and counts the critical events it must have produced; slow, full and unavailable sinks change no verdict and make the evidence incomplete; the injected faults of this runner are its planted fixtures, named by case id (P01-DRIFT-*, P01-TC-*, P01-INV-*, P01-REC-*), whose expected and observed codes are in each case's logged detail"
+  },
+  {
+   "id": "INV-P01-30",
+   "statement": "Logging fields and checks that need a render path, a group or a provider: pseudonymous member and group ids, source epoch, command and state revision, queue, latency and resource counters, and that slow, full or unavailable log sinks do not change audio deadlines",
+   "cases": [],
+   "status": "inapplicable",
+   "note": "a P01 run reads manifests, the lockfile, fixed vectors and committed central records on the host: it has no member, no group, no source epoch, no command or state revision, no queue, no audio and no deadline, so a field for any of them would be invented; the render path's nonblocking-sink and deadline property belongs to the Q-series on-target work, and the sink's own nonblocking, bounded behaviour is the shared module's tested contract (test_support/test_diagnostics.py), exercised here by P01-LOG-001"
   },
   {
    "id": "INV-P01-23",
