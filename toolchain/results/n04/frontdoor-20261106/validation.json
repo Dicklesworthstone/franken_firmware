@@ -1,0 +1,126 @@
+{
+  "scope": "N04 Python evidence-input/diagnostic wrapper only; no Rust execution, device, provider or N04 qualification",
+  "base_revision": "36445617538f0c7f32bb6876116111acc0e30cfe",
+  "sources_sha256": {
+    "scripts/e2e/n04": "b56a57cfc392f043fdd2dbb64a79ac5c058bfd2c19d9a3299e0cc5bccbfc8b69",
+    "tests/n04/case_log.py": "11208884e5ba5e743d9833eef69791dd06f985857b8dd5619f72921a618e6606",
+    "tests/n04/run_cases.py": "fe2e4ebe5a570b65f60d48f8b330e598933498fbcdfd8be5d9cf64e07c6450a7",
+    "tests/n04/test_front_door.py": "6d341e168d375dee8bbcac57e9795ebd20808611b35db68cf0b9b72acc7ab9d6"
+  },
+  "commands": [
+    {
+      "command": "python3 -B -I -m unittest discover -s tests/n04 -p test_front_door.py",
+      "tests_passed": 17,
+      "observed_summary": "OK",
+      "raw_output_sha256": "d50e938b12f73e0766cfe905385c59798360a382f1f27826cef0db358e17f20e"
+    },
+    {
+      "command": "python3 -B -I -m unittest discover -s tests/n04 -p test_judge.py",
+      "tests_passed": 24,
+      "observed_summary": "OK",
+      "raw_output_sha256": "621e3efbb6a28e3e5f414cceaf43b386ad5689976f803d55374e8232c1dda837"
+    },
+    {
+      "case": "full",
+      "expected_exit": 3,
+      "observed_exit": 3,
+      "stdout_sha256": "4400ce43c23173b166dfe5e5e5437197e847b11e68a103545fe1b57d5765bc78",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "command": "scripts/e2e/n04 --tier full --receipts \"$OWNED_OUTPUT/full\"",
+      "receipt_fields": {
+        "tier": "full",
+        "exit_code": 3,
+        "summary": {
+          "blocked": 24,
+          "fail": 0,
+          "pass": 5
+        }
+      },
+      "diagnostics_fields": {
+        "complete": true,
+        "log": {
+          "bytes": 19579,
+          "critical_lost": false,
+          "dropped": 0,
+          "events": 59,
+          "sha256": "e1bf95cb43424efaf1d9bb1cddc75e5c9fa8a780f759d75a9f1bb7996b2873a6",
+          "truncated": false
+        }
+      }
+    },
+    {
+      "case": "smoke",
+      "expected_exit": 3,
+      "observed_exit": 3,
+      "stdout_sha256": "f6779a23e596fc8ece5aa2e2d41749e26a967a67f5d31f6e86184cf21e9ca905",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "command": "scripts/e2e/n04 --tier smoke --receipts \"$OWNED_OUTPUT/smoke\"",
+      "receipt_fields": {
+        "tier": "smoke",
+        "exit_code": 3,
+        "summary": {
+          "blocked": 23,
+          "fail": 0,
+          "pass": 5
+        }
+      },
+      "diagnostics_fields": {
+        "complete": true,
+        "log": {
+          "bytes": 19066,
+          "critical_lost": false,
+          "dropped": 0,
+          "events": 57,
+          "sha256": "3c6651a16cd111562c56380f8324538dd300c264bf8860b2be58264e680276b8",
+          "truncated": false
+        }
+      }
+    },
+    {
+      "case": "soak",
+      "expected_exit": 4,
+      "observed_exit": 4,
+      "stdout_sha256": "c4c46661f0f4a38e2634e12583c6b057e901863163a23f2e9027a0f96e382a5c",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "command": "scripts/e2e/n04 --tier soak --receipts \"$OWNED_OUTPUT/soak\"",
+      "receipt_fields": {
+        "tier": "soak",
+        "status": "not_run",
+        "qualified": false,
+        "exit_code": 4,
+        "summary": {
+          "blocked": 0,
+          "fail": 0,
+          "pass": 0
+        }
+      },
+      "diagnostics_fields": {
+        "complete": true,
+        "log": {
+          "bytes": 2562,
+          "critical_lost": false,
+          "dropped": 0,
+          "events": 3,
+          "sha256": "aa4c24672c40bf231e3db54683fcea2b2101b6a3e176e374d98b31da38602a3f",
+          "truncated": false
+        }
+      }
+    },
+    {
+      "case": "missing",
+      "expected_exit": 2,
+      "observed_exit": 2,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "65a742f0c8e536bca8579653cd517668c621b85b20eec3127c3682f7d56f5e91",
+      "command": "scripts/e2e/n04 --judge \"$OWNED_OUTPUT/unavailable-input\""
+    }
+  ],
+  "original_oracle_assets_unchanged": [
+    "tests/n04/vectors.json",
+    "tests/n04/reference.py",
+    "tests/n04/anchors.py",
+    "docs/contracts/n04.md"
+  ],
+  "independent_review": "OrangeHarbor independently passed the same17+24 tests and actual post-fstat append, regular-to-FIFO swap and permitted credential-basename redaction controls. Scope is Python wrapper only.",
+  "syntax_checks": "python3 -m py_compile on3 touched Python files; git diff --check; both exit0"
+}

@@ -5,6 +5,10 @@
 #   scripts/e2e/n04                              META checks only; every Rust-backed case is BLOCKED
 #   scripts/e2e/n04 --judge LOG [LOG ...]        judge the centrally run cargo test output
 #   scripts/e2e/n04 --tier smoke|full --judge LOG [--receipts DIR]
+#                              Each decided case writes a critical begin/end pair into a bounded, redacted JSONL diagnostic log (next to the
+#                              receipt with --receipts); a pass cannot rest on a log that lost one. --judge logs must be regular files
+#                              (at most 16, 64 MiB together), read through one opened descriptor.
+#   scripts/e2e/n04 --tier soak                  NOT RUN, with the reason: exit 4, never a pass (nothing is read or judged)
 #   scripts/e2e/n04 --list                       planned case ids
 #   scripts/e2e/n04 --write-vectors              regenerate tests/n04/vectors.json (Python reference only)
 #
@@ -13,8 +17,9 @@
 #   RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p franken-stream --all-targets -- -D warnings
 # (the module is wired into franken-stream/src/lib.rs only after the first green compile: docs/contracts/n04.md section 11)
 #
-# Exit 0 only when every case passed and none is blocked; 1 on a failed case; 3 when the only
-# non-passes are blocked cases (reported, never counted as passed); 2 on usage errors.
+# Exit 0 only when every case passed, none is blocked and the diagnostic log is complete; 1 on a failed case or a log that lost critical
+# evidence; 3 when the only non-passes are blocked cases (reported, never counted as passed); 4 for --tier soak (NOT RUN); 2 on usage
+# errors and refused input (a missing, non-regular or oversized --judge log; printed redacted, never echoed raw).
 # DAC / acoustic presentation, listening quality of concealment and CPU on the target ISA are reported as not measured.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

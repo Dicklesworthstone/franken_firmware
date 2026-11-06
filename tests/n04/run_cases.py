@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """N04 (ffw-nx0) end-to-end runner and judge.
 
-    run_cases.py [--tier smoke|full] [--list] [--write-vectors] [--judge LOG [LOG ...]] [--receipts DIR]
+    run_cases.py [--tier smoke|full|soak] [--list] [--write-vectors] [--judge LOG [LOG ...]] [--receipts DIR]
 
 Offline, standard library only; it builds and boots nothing.
 
@@ -22,7 +22,15 @@ The suite runs only through the centralized RCH path:
     RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-stream -- --nocapture
     RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p franken-stream --all-targets -- -D warnings
 
-Exit codes: 0 qualified, 1 a case failed, 3 only blocked cases stand in the way, 2 usage/malformed.
+Exit codes: 0 qualified, 1 a case failed (or a pass rests on a diagnostic log that lost critical evidence), 3 only blocked cases stand in
+the way, 4 ``--tier soak`` (NOT RUN, never a pass), 2 usage/malformed/refused input.
+
+Front door (bead ffw-nx0, "bounded redacted failure diagnostics", "CI selects smoke/full/soak explicitly"): every printed line, every
+receipt field and the JSONL diagnostic log go through the existing Q00 redaction policy (scripts/test/test_support/diagnostics.py, via
+``case_log.py``), so a path or argument that carries a credential is never echoed. A ``--judge`` log is read through one opened descriptor
+(regular file, at most MAX_LOGS of them, MAX_LOG_BYTES together, growth past the bound refused); anything else is refused with exit 2 before it
+is judged. Each decided case writes a critical begin/end pair into the JSONL log (next to the receipt with ``--receipts``); a pass cannot rest
+on a log that lost one.
 """
 from __future__ import annotations
 
@@ -35,14 +43,29 @@ import json
 import os
 import re
 import secrets
+import stat
 import sys
+import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 VECTORS = os.path.join(HERE, "vectors.json")
 CONTRACT = os.path.join(REPO, "docs", "contracts", "n04.md")
-TIERS = ("smoke", "full")
+TIERS = ("smoke", "full")  # the tiers that judge cases
+ALL_TIERS = TIERS + ("soak",)
+SOAK_EXIT = 4
+SOAK_NOT_RUN = (
+    "N04 soak: NOT RUN. N04 owns no long-running campaign: every case is a finite, deterministic offline check (scripted worlds replayed "
+    "against the independent reference, Rust tests judged from a centrally run log). The 24-hour clean-network campaign and the 100 ms "
+    "bursts at least 10 s apart that the provisional targets ask for need a longer run than the 700-block (3.7 s) seeded schedules "
+    "(docs/contracts/n04.md section 14 item 9). Nothing here soaks. This is not a pass.")
+MAX_LOG_BYTES = 64 * 1024 * 1024  # all --judge logs together
+MAX_LOGS = 16
+OUTPUT_STR_MAX = 4096  # characters of one printed or receipted string, after redaction
+FRONT_DOOR_ID = "N04-FRONT-DOOR"
+SOAK_ID = "N04-SOAK"
+STATUS_WORDS = {"pass": "passed", "fail": "failed", "blocked": "blocked"}  # this runner's words -> the diagnostic sink's
 RECEIPT_SCHEMA = "ffw.n04.receipt.v1"
 MAX_PRINTED = 12
 NOT_MEASURED = [
@@ -275,6 +298,37 @@ def log_cases() -> List[dict]:
 # ---- log parsing --------------------------------------------------------------------------------------------------
 
 
+class LogRefused(Exception):
+    """A --judge log the descriptor-level check refused: not a regular file, over the bound, or grown past it while it was read."""
+
+def read_log_bounded(path: str, remaining: int) -> bytes:
+    """The bytes of one --judge log, read through ONE opened descriptor so that nothing about the path can change between the check and the
+    read. O_NONBLOCK keeps a FIFO from blocking the open; ``fstat`` on the descriptor must say regular file (a FIFO, directory or device that
+    replaced the file is refused before a byte is read); at most ``remaining`` bytes are accepted, and one byte more is asked for so a file
+    that grows while it is read is refused, never truncated and never read without bound."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(path, flags)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise LogRefused("log %s is not a regular file" % path)
+        if info.st_size > remaining:
+            raise LogRefused("the --judge logs exceed %d bytes together (stopped at %s)" % (MAX_LOG_BYTES, path))
+        chunks: List[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(fd, min(1 << 20, remaining + 1 - total))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > remaining:
+                raise LogRefused("a --judge log grew past the %d byte bound while it was read (%s)" % (MAX_LOG_BYTES, path))
+            chunks.append(chunk)
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
 class Logs(d01.Logs):
     """D01's parser, reading ``N04-OBSERVED`` records. ``ignored`` yields to a real result from another log."""
 
@@ -288,13 +342,28 @@ class Logs(d01.Logs):
             return
         super()._record_test(stem, name, status)
 
+    def __init__(self) -> None:
+        super().__init__()
+        self.bytes_read = 0  # all --judge logs together, against MAX_LOG_BYTES
+
     def add(self, path: str) -> None:
-        saved = d01.OBSERVED
+        """Read the log ONCE, through one opened descriptor and within the remaining bound (``read_log_bounded``), then let D01's parser
+        judge a private copy of exactly those bytes. Nothing about ``path`` is trusted again after the open; the recorded digest is that of
+        the bytes judged."""
+        data = read_log_bounded(path, MAX_LOG_BYTES - self.bytes_read)
+        self.bytes_read += len(data)
+        saved, known = d01.OBSERVED, len(self.files)
         d01.OBSERVED = OBSERVED
         try:
-            super().add(path)
+            with tempfile.TemporaryDirectory(prefix="n04-log-") as private_dir:
+                private = os.path.join(private_dir, os.path.basename(path) or "log")
+                with open(private, "xb") as handle:
+                    handle.write(data)
+                super().add(private)
         finally:
             d01.OBSERVED = saved
+        if len(self.files) > known:
+            self.files[-1] = (path, self.files[-1][1])  # the caller's path, not the private copy
 
 
 # ---- the reference's expected records -----------------------------------------------------------------------------
@@ -488,12 +557,32 @@ def compare_record(vec: dict, oid: str, want: dict, got: dict) -> Optional[str]:
 # ---- judging ------------------------------------------------------------------------------------------------------
 
 
+_CASE_LOG: List[Any] = []
+
+
+def load_case_log() -> Any:
+    """The adapter to the shared Q00 diagnostic sink (tests/n04/case_log.py), loaded once by explicit path."""
+    if not _CASE_LOG:
+        _CASE_LOG.append(_load("case_log"))
+    return _CASE_LOG[0]
+
+
+def safe_detail(text: str) -> str:
+    """The existing Q00 redaction policy, with one string bounded to OUTPUT_STR_MAX characters, applied to every printed line and
+    every receipt field. ``Result.detail`` itself stays as the judge produced it. Fails closed."""
+    try:
+        diag = load_case_log().load(REPO)
+        return diag.redact_text(text, diag.RedactionPolicy(max_str_len=OUTPUT_STR_MAX))
+    except Exception:  # noqa: BLE001 - a redactor that is unavailable withholds the text, it never prints it raw
+        return "Diagnostic detail withheld: redaction is unavailable."
+
+
 class Result:
     def __init__(self, case_id: str, status: str, detail: str = "", group: str = ""):
         self.case_id, self.status, self.detail, self.group = case_id, status, detail, group
 
     def as_dict(self) -> dict:
-        return {"id": self.case_id, "status": self.status, "detail": self.detail, "group": self.group}
+        return {"id": self.case_id, "status": self.status, "detail": safe_detail(self.detail) if self.detail else "", "group": self.group}
 
 
 def sha256_file(path: str) -> str:
@@ -633,40 +722,134 @@ def exit_code(results: List[Result]) -> int:
     return 1 if s["fail"] else 3 if s["blocked"] else 0
 
 
-def report(results: List[Result], tier: str) -> None:
+def final_exit(results: List[Result], evidence: Optional[Any]) -> int:
+    """The cases' exit code, except that a pass cannot rest on a diagnostic log that lost critical evidence."""
+    code = exit_code(results)
+    return 1 if code == 0 and evidence is not None and not evidence.complete else code
+
+
+def report(results: List[Result], tier: str, evidence: Optional[Any] = None) -> None:
     for r in results:
-        print("%-8s %-34s %s" % (r.status.upper(), r.case_id, r.detail))
+        print("%-8s %-34s %s" % (r.status.upper(), r.case_id, safe_detail(r.detail) if r.detail else ""))
     s = summarize(results)
-    verdict = "QUALIFIED" if exit_code(results) == 0 else "NOT QUALIFIED"
+    code = final_exit(results, evidence)
+    verdict = "QUALIFIED" if code == 0 else "NOT QUALIFIED"
+    if evidence is not None:
+        print(evidence.summary)
+        if code == 1 and exit_code(results) == 0:
+            verdict = "NOT QUALIFIED (diagnostic evidence incomplete: %s)" % safe_detail(", ".join(evidence.reasons))
     print("N04 cases: tier=%s total=%d passed=%d failed=%d blocked=%d -> %s" % (
         tier, len(results), s["pass"], s["fail"], s["blocked"], verdict))
     for item in NOT_MEASURED:
         print("NOT MEASURED  %s: %s" % (item["item"], item["status"]))
 
 
-def write_receipt(directory: str, tier: str, results: List[Result], meta: dict, logs: Optional[Logs]) -> str:
+def write_receipt(directory: str, tier: str, results: List[Result], meta: dict, logs: Optional[Logs], run_id: Optional[str] = None,
+                  evidence: Optional[Any] = None, status: Optional[str] = None) -> str:
     os.makedirs(directory, exist_ok=True)
-    run_id = secrets.token_hex(8)
+    run_id = run_id or secrets.token_hex(8)
     doc = {"schema": RECEIPT_SCHEMA, "run_id": run_id, "tier": tier,
            "at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
            "summary": summarize(results), "meta": meta, "not_measured": NOT_MEASURED,
-           "logs": [{"name": os.path.basename(p), "sha256": d} for p, d in (logs.files if logs else [])],
+           "logs": [{"name": safe_detail(os.path.basename(p)), "sha256": d} for p, d in (logs.files if logs else [])],
            "results": [r.as_dict() for r in results]}
+    doc["exit_code"] = SOAK_EXIT if tier not in TIERS else final_exit(results, evidence)
+    if status is not None:
+        doc["status"], doc["qualified"] = status, False
+    if evidence is not None:
+        doc["diagnostics"] = {"complete": evidence.complete, "reasons": list(evidence.reasons), "log": evidence.log,
+                              "file": os.path.basename(evidence.path) if evidence.path else None}
     path = os.path.join(directory, "n04-receipt-%s.json" % run_id)
-    with open(path, "x", encoding="utf-8") as handle:
+    with open(path, "x", encoding="utf-8") as handle:  # never overwrites an earlier run's receipt
         json.dump(doc, handle, indent=2, sort_keys=True)
         handle.write("\n")
     return path
 
 
+class _Parser(argparse.ArgumentParser):
+    """argparse echoes the offending value into its error text; that text goes through the Q00 redaction first."""
+
+    def error(self, message: str) -> None:  # type: ignore[override]
+        sys.stderr.write("run_cases: usage error: %s (see --help)\n" % safe_detail(message))
+        raise SystemExit(2)
+
+
+def admit_logs(paths: List[str]) -> Optional[str]:
+    """None when every --judge log passes the EARLY, path-based screen; otherwise the sentence for the refusal. Nothing is opened here.
+    The authority is ``Logs.add`` (an opened descriptor): a path can change after this screen."""
+    if len(paths) > MAX_LOGS:
+        return "too many --judge logs: %d (at most %d)" % (len(paths), MAX_LOGS)
+    total = 0
+    for path in paths:
+        try:
+            info = os.stat(path)
+        except FileNotFoundError:
+            return "no such log %s" % path
+        except OSError as err:
+            return "log %s cannot be examined (%s)" % (path, type(err).__name__)
+        if not stat.S_ISREG(info.st_mode):
+            return "log %s is not a regular file" % path
+        total += info.st_size
+        if total > MAX_LOG_BYTES:
+            return "the --judge logs exceed %d bytes together (stopped at %s)" % (MAX_LOG_BYTES, path)
+    return None
+
+
+def _log_front_door(tier: str, receipts: Optional[str], case_id: str, status: str, group: str, detail: str, totals: Dict[str, int]) -> Any:
+    """One critical, redacted record of a front-door event (a refusal or the NOT RUN soak tier). Returns the Evidence, or None
+    when no receipts directory was named (there is nowhere to keep the log)."""
+    if not receipts:
+        return None
+    log = load_case_log().CaseLog.open(REPO, secrets.token_hex(6), tier, receipts)
+    log.record(case_id, group, status, detail)
+    return log.finish(totals)
+
+
+def refuse(tier: str, receipts: Optional[str], message: str) -> int:
+    """A refused input (exit 2): said once on stderr, redacted and bounded, and kept as one failed record in the JSONL log when a
+    receipts directory was named."""
+    sys.stderr.write("run_cases: %s\n" % safe_detail(message))
+    try:
+        evidence = _log_front_door(tier, receipts, FRONT_DOOR_ID, "failed", "AC-META", message, {"planned": 1, "passed": 0, "failed": 1, "blocked": 0})
+    except Exception as err:  # noqa: BLE001 - the refusal stands whether or not the log could be kept
+        sys.stderr.write("run_cases: the refusal could not be logged (%s)\n" % type(err).__name__)
+        return 2
+    if evidence is not None:
+        kept = os.path.basename(evidence.path) if evidence.path else "no log kept: " + safe_detail(", ".join(evidence.reasons))
+        sys.stderr.write("run_cases: refusal logged: %s\n" % kept)
+    return 2
+
+
+def soak(receipts: Optional[str]) -> int:
+    """``--tier soak``: nothing runs and nothing is read. NOT RUN is said, kept in a receipt and the log when a directory was named,
+    and exits 4."""
+    print(SOAK_NOT_RUN)
+    if receipts:
+        try:
+            run_id = secrets.token_hex(6)
+            log = load_case_log().CaseLog.open(REPO, run_id, "soak", receipts)
+            log.record(SOAK_ID, "AC-META", "blocked", SOAK_NOT_RUN)
+            evidence = log.finish({"planned": 0, "passed": 0, "failed": 0, "blocked": 1})
+            print(evidence.summary)
+            print("receipt: " + safe_detail(write_receipt(receipts, "soak", [], {"reason": SOAK_NOT_RUN}, None, run_id, evidence, "not_run")))
+        except OSError as err:
+            sys.stderr.write("run_cases: the soak receipt could not be written (%s)\n" % type(err).__name__)
+    return SOAK_EXIT
+
+
 def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--tier", choices=TIERS, default="full")
+    parser = _Parser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--tier", choices=ALL_TIERS, default="full", help="smoke | full judge cases; soak is NOT RUN (exit 4)")
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--write-vectors", action="store_true")
     parser.add_argument("--judge", nargs="+", metavar="LOG")
-    parser.add_argument("--receipts", metavar="DIR")
-    args = parser.parse_args(argv)
+    parser.add_argument("--receipts", metavar="DIR", help="write a JSON receipt and the JSONL diagnostic log here")
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        return 2 if exc.code else 0
+    if args.tier not in TIERS:
+        return soak(args.receipts)
     if args.write_vectors:
         doc = gen.build()
         with open(VECTORS, "w", encoding="utf-8") as handle:
@@ -680,17 +863,35 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
     logs: Optional[Logs] = None
     if args.judge:
+        problem = admit_logs(args.judge)
+        if problem:
+            return refuse(args.tier, args.receipts, problem)
         logs = Logs()
-        for path in args.judge:
-            if not os.path.isfile(path):
-                sys.stderr.write("run_cases: no such log: %s\n" % path)
-                return 2
-            logs.add(path)
+        try:
+            for path in args.judge:
+                logs.add(path)
+        except LogRefused as err:
+            return refuse(args.tier, args.receipts, str(err))
+        except OSError as err:
+            return refuse(args.tier, args.receipts, "a --judge log could not be read (%s)" % type(err).__name__)
+    run_id = secrets.token_hex(8)
     results, meta = run(args.tier, logs)
-    report(results, args.tier)
+    header = {"tier": args.tier}
+    if meta.get("vectors_sha256"):
+        header["vectors_sha256"] = meta["vectors_sha256"]
+    log = load_case_log().CaseLog.open(REPO, run_id, args.tier, args.receipts, header_extra=header)
+    for r in results:
+        log.record(r.case_id, r.group, STATUS_WORDS.get(r.status, "failed"), r.detail)
+    evidence = log.finish({STATUS_WORDS[k]: v for k, v in summarize(results).items()})
+    report(results, args.tier, evidence)
+    code = final_exit(results, evidence)
     if args.receipts:
-        print("receipt:", write_receipt(args.receipts, args.tier, results, meta, logs))
-    return exit_code(results)
+        try:
+            print("receipt: " + safe_detail(write_receipt(args.receipts, args.tier, results, meta, logs, run_id, evidence)))
+        except OSError as err:
+            sys.stderr.write("run_cases: the receipt could not be written (%s)\n" % type(err).__name__)
+            return code or 1
+    return code
 
 
 if __name__ == "__main__":
