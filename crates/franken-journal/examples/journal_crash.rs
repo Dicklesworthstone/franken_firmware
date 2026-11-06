@@ -1,13 +1,19 @@
 //! Process-restart crash driver for the U01 journal (`scripts/e2e/u01` runs it).
 //!
 //!   journal_crash init <image>
-//!   journal_crash run  <image> <vectors.json> <script-id> [--die-after-bytes N]
+//!   journal_crash run  <image> <vectors.json> <script-id> [--die-after-bytes N [--await-kill]]
 //!   journal_crash dump <image>
 //!
 //! `init` creates a fresh two-segment file image of erased bytes (it refuses to overwrite). `run` opens the journal on a
 //! file-backed storage and replays one scripted scenario of the shared vectors, printing `ack <i>` after step `i` has
 //! returned. With `--die-after-bytes N` the storage kills the process (`abort`, no unwinding, no flush) in the middle of
 //! the write or erase that crosses the N-th byte, after writing the bytes before it: a real process death mid-write.
+//! With `--await-kill` (only together with `--die-after-bytes`) the storage does not abort. It writes the same bytes, prints
+//! `cut <n>` (the bytes written so far, which equals N) and waits on its stdin; the parent that reads that line kills it with
+//! SIGKILL, which is just as abrupt (no unwinding, no flush, nothing after the last `write`) and stops at exactly the same
+//! byte, because the child can do nothing else while it waits. Its reason: on a host whose core-dump handler starts a process
+//! for every SIGABRT (Ubuntu's apport), a sweep of thousands of deaths pays for thousands of handler runs; a SIGKILL starts none.
+//! If its stdin closes first (the parent is gone) it leaves with exit code 3 and a message, never `abort` and never a hang.
 //! `dump` reopens the image (recovery runs) and prints the recovered state as `state <hex>` and `source <name>`.
 //!
 //! A process kill is not a power cut: bytes already handed to the OS survive it, synced or not. That is the same
@@ -25,11 +31,17 @@ struct FileStorage {
     file: std::fs::File,
     segment: usize,
     die_after: Option<usize>,
+    await_kill: bool,
     written: usize,
 }
 
 impl FileStorage {
-    fn open(path: &str, segment: usize, die_after: Option<usize>) -> std::io::Result<Self> {
+    fn open(
+        path: &str,
+        segment: usize,
+        die_after: Option<usize>,
+        await_kill: bool,
+    ) -> std::io::Result<Self> {
         let file = OpenOptions::new().read(true).write(true).open(path)?;
         if file.metadata()?.len() != (2 * segment) as u64 {
             return Err(std::io::Error::other(
@@ -40,8 +52,31 @@ impl FileStorage {
             file,
             segment,
             die_after,
+            await_kill,
             written: 0,
         })
+    }
+
+    /// The process dies here, after the bytes before the cut are written. By default that is `abort` (SIGABRT: no unwinding, no
+    /// flush). With `--await-kill` it announces the cut and waits for its parent's SIGKILL, so the death is a signal the OS
+    /// answers without a core-dump handler; the bytes on disk are the same, and no later storage operation can run.
+    fn die(&self) -> ! {
+        if !self.await_kill {
+            std::process::abort();
+        }
+        let _ = writeln!(std::io::stdout(), "cut {}", self.written);
+        let _ = std::io::stdout().flush();
+        let mut byte = [0u8; 1];
+        loop {
+            match std::io::stdin().read(&mut byte) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(_) => break,
+            }
+        }
+        eprintln!("await-kill: stdin closed before the parent's kill; leaving with exit code 3");
+        std::process::exit(3)
     }
 
     /// Write `data` at `offset`; if the byte budget runs out inside it, write the part that fits and die.
@@ -61,7 +96,7 @@ impl FileStorage {
             .map_err(|_| StorageFault::Io)?;
         self.written += keep;
         if dying {
-            std::process::abort();
+            self.die();
         }
         Ok(())
     }
@@ -189,7 +224,13 @@ fn apply(journal: &mut Journal<FileStorage>, step: &Value) -> Result<(), Journal
     }
 }
 
-fn run(image: &str, vectors: &str, id: &str, die_after: Option<usize>) -> Result<(), String> {
+fn run(
+    image: &str,
+    vectors: &str,
+    id: &str,
+    die_after: Option<usize>,
+    await_kill: bool,
+) -> Result<(), String> {
     let lim = Limits::tiny();
     let doc: Value =
         serde_json::from_str(&std::fs::read_to_string(vectors).map_err(|e| e.to_string())?)
@@ -198,8 +239,8 @@ fn run(image: &str, vectors: &str, id: &str, die_after: Option<usize>) -> Result
         .as_array()
         .and_then(|all| all.iter().find(|s| s["id"] == id))
         .ok_or_else(|| format!("no script {id}"))?;
-    let storage =
-        FileStorage::open(image, lim.segment_bytes, die_after).map_err(|e| e.to_string())?;
+    let storage = FileStorage::open(image, lim.segment_bytes, die_after, await_kill)
+        .map_err(|e| e.to_string())?;
     let (mut journal, _rec) =
         Journal::open(storage, lim).map_err(|e| format!("open: {}", e.code()))?;
     println!("opened");
@@ -218,7 +259,8 @@ fn run(image: &str, vectors: &str, id: &str, die_after: Option<usize>) -> Result
 
 fn dump(image: &str) -> Result<(), String> {
     let lim = Limits::tiny();
-    let storage = FileStorage::open(image, lim.segment_bytes, None).map_err(|e| e.to_string())?;
+    let storage =
+        FileStorage::open(image, lim.segment_bytes, None, false).map_err(|e| e.to_string())?;
     let (journal, rec) = Journal::open(storage, lim).map_err(|e| format!("open: {}", e.code()))?;
     let source = match rec.source {
         Source::Blank => "blank",
@@ -253,11 +295,15 @@ fn main() -> ExitCode {
     let result = match args.get(1).map(String::as_str) {
         Some("init") if args.len() == 3 => init(&args[2]),
         Some("dump") if args.len() == 3 => dump(&args[2]),
-        Some("run") if args.len() == 5 || (args.len() == 7 && args[5] == "--die-after-bytes") => {
-            let die = if args.len() == 7 { args[6].parse::<usize>().ok() } else { None };
-            run(&args[2], &args[3], &args[4], die)
+        Some("run")
+            if args.len() == 5
+                || (args.len() == 7 && args[5] == "--die-after-bytes")
+                || (args.len() == 8 && args[5] == "--die-after-bytes" && args[7] == "--await-kill") =>
+        {
+            let die = if args.len() >= 7 { args[6].parse::<usize>().ok() } else { None };
+            run(&args[2], &args[3], &args[4], die, args.len() == 8)
         }
-        _ => Err("usage: journal_crash init <image> | run <image> <vectors.json> <script-id> [--die-after-bytes N] | dump <image>".to_string()),
+        _ => Err("usage: journal_crash init <image> | run <image> <vectors.json> <script-id> [--die-after-bytes N [--await-kill]] | dump <image>".to_string()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

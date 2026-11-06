@@ -8,9 +8,12 @@
 //! What it shows, on a real file and across real process boundaries:
 //!   1. a clean run commits every step, leaves a file whose SHA-256 equals the reference's final medium, and a fresh
 //!      process recovers exactly the final state; a second restart changes nothing;
-//!   2. a process that dies (`abort`, no unwinding, no flush) at a sampled byte of the write or erase that crosses it
-//!      recovers exactly the state before or exactly the state after the step that was running, never an acknowledged
-//!      step lost and never a step more than one ahead;
+//!   2. a process that dies (no unwinding, no flush) at a sampled byte of the write or erase that crosses it recovers
+//!      exactly the state before or exactly the state after the step that was running, never an acknowledged step lost and
+//!      never a step more than one ahead. The sweep holds the child at that byte (`--await-kill`: it has written the bytes
+//!      before the cut, prints `cut <n>` and waits) and SIGKILLs it from this parent, because `abort` makes an OS core-dump
+//!      handler (Ubuntu's apport) start a process per death and a sweep dies thousands of times; focused tests show the
+//!      two deaths leave the same image, that the child really waits alive for the kill, and that it never aborts by itself;
 //!   3. the same under `SIGKILL` at arbitrary moments after an acknowledged step;
 //!   4. every committed hostile image (torn tails, flipped bits, replays, two segments, a newer schema, a legacy schema)
 //!      recovers in a real process to the reference's state and source and leaves the reference's bytes behind.
@@ -21,7 +24,7 @@
 //!
 //! Bounds: one child at a time per test, each with a 30 s wall-clock limit and capped output; at most 4 000 children in
 //! the whole test binary; every sweep stops at the first budget that lets the script finish and must have killed at least
-//! once. On a failure the message carries the script, the budget, the child's exit and output tails, and the full image
+//! once (by SIGKILL at the announced cut; only the three-budget equivalence test aborts a child). On a failure the message carries the script, the budget, the child's exit and output tails, and the full image
 //! as hex, so `dump` on those bytes reproduces the recovery exactly.
 //!
 //! The binary is the example `journal_crash` that the SAME `cargo test -p franken-journal` invocation builds (cargo compiles a
@@ -58,6 +61,10 @@ const STDOUT_CAP: u64 = 64 * 1024;
 const STDERR_CAP: u64 = 8 * 1024;
 const MAX_CHILDREN: u32 = 4_000;
 const SWEEP_CAP: usize = 4_096;
+/// The first word of the line a `--await-kill` child prints at its cut, and the two signals the tests tell apart.
+const CUT_PREFIX: &str = "cut ";
+const SIGABRT: i32 = 6;
+const SIGKILL: i32 = 9;
 
 /// The scripts of the clean-run case: the five scenarios of the shared vectors.
 const CLEAN_SCRIPTS: [&str; 5] = [
@@ -176,6 +183,7 @@ fn vectors() -> Value {
 
 struct Script {
     steps: usize,
+    programmed: usize,
     states: Vec<String>,
     final_sha: String,
 }
@@ -189,6 +197,12 @@ fn script(doc: &Value, id: &str) -> Script {
         .unwrap_or_else(|| panic!("no script {id} in the vectors"));
     Script {
         steps: found["steps"].as_array().expect("steps").len(),
+        programmed: usize::try_from(
+            found["bytes_programmed"]
+                .as_u64()
+                .expect("bytes programmed"),
+        )
+        .expect("bytes programmed fit a usize"),
         states: found["states_hex"]
             .as_array()
             .expect("states")
@@ -399,6 +413,115 @@ fn kill_after_acks(bin: &Path, image: &Path, id: &str, target: usize) -> (usize,
     (acked, finished)
 }
 
+/// Run `args` (a `run ... --die-after-bytes N --await-kill` line) and kill it with SIGKILL from this parent at the cut. The child has
+/// written every byte before the cut, then prints `cut <n>` and waits on its stdin, so the moment this parent reads that line the
+/// child can do nothing more: the kill lands at exactly that byte, with no unwinding and no flush, and no core-dump handler runs
+/// (SIGKILL starts none; `abort` starts one per death on a host that has one). `at_the_cut` runs once, after that line and before
+/// the kill, with the child alive. A run that ends by itself (it finished, or failed) is returned as it ended. This parent holds the
+/// child's stdin open until the child has been reaped, so a test that panics drops it and the child leaves by itself (exit code 3).
+fn run_to_the_cut_and_kill(
+    bin: &Path,
+    args: &[&str],
+    at_the_cut: impl FnOnce(&mut Child),
+) -> Outcome {
+    let (outcome, timed_out) =
+        run_to_the_cut_and_kill_bounded(bin, args, STDOUT_CAP, CHILD_TIMEOUT, at_the_cut);
+    assert!(
+        !timed_out,
+        "a child process ran past {} s: {args:?}; code {:?}, signal {:?}, stdout {:?}, stderr {:?}",
+        CHILD_TIMEOUT.as_secs(),
+        outcome.code,
+        outcome.signal,
+        tail(&outcome.stdout, 600),
+        tail(&outcome.stderr, 600)
+    );
+    outcome
+}
+
+/// One absolute deadline covers both stdout and process exit. EOF (including the capped reader stopping) says nothing
+/// about process liveness: in particular the child may still be waiting on the stdin this parent deliberately holds open.
+/// Return a timeout separately, after SIGKILL and wait have reaped the child, so a negative test can inspect that real death.
+fn run_to_the_cut_and_kill_bounded(
+    bin: &Path,
+    args: &[&str],
+    stdout_cap: u64,
+    timeout: Duration,
+    at_the_cut: impl FnOnce(&mut Child),
+) -> (Outcome, bool) {
+    count_child();
+    let deadline = Instant::now() + timeout;
+    let mut child = Command::new(bin)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|e| panic!("cannot spawn {}: {e}", bin.display()));
+    let hold_stdin = child.stdin.take().expect("piped stdin");
+    let stdout = child.stdout.take().expect("piped stdout");
+    let stderr = child.stderr.take().expect("piped stderr");
+    let err_reader = std::thread::spawn(move || read_capped(stderr, STDERR_CAP));
+    let (tx, rx) = channel::<String>();
+    let out_reader = std::thread::spawn(move || {
+        for line in BufReader::new(stdout.take(stdout_cap))
+            .lines()
+            .map_while(Result::ok)
+        {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let mut at_the_cut = Some(at_the_cut);
+    let mut lines: Vec<String> = Vec::new();
+    let mut killed = false;
+    let mut timed_out = false;
+    loop {
+        match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(line) => {
+                let is_cut = line.starts_with(CUT_PREFIX);
+                lines.push(line);
+                if is_cut && !killed {
+                    if let Some(check) = at_the_cut.take() {
+                        check(&mut child);
+                    }
+                    let _ = child.kill();
+                    killed = true;
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                timed_out = true;
+                let _ = child.kill();
+                break;
+            }
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("try_wait") {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            timed_out = true;
+            let _ = child.kill();
+            break child.wait().expect("wait after deadline kill");
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    drop(hold_stdin);
+    out_reader.join().expect("stdout reader");
+    let outcome = Outcome {
+        code: status.code(),
+        signal: status.signal(),
+        stdout: lines
+            .iter()
+            .map(|line| format!("{line}\n"))
+            .collect::<String>(),
+        stderr: err_reader.join().expect("stderr reader"),
+    };
+    (outcome, timed_out)
+}
+
 // ------------------------------------------------------------------------------------------------ the cases
 
 #[test]
@@ -487,7 +610,7 @@ fn u01_proc_a_process_killed_at_sampled_bytes_recovers_exactly_the_old_or_the_ne
         for budget in (0..SWEEP_CAP).step_by(stride) {
             fs::copy(&blank, &image).expect("copy the blank image");
             let budget_text = budget.to_string();
-            let run = run_child(
+            let run = run_to_the_cut_and_kill(
                 &bin,
                 &[
                     "run",
@@ -496,16 +619,31 @@ fn u01_proc_a_process_killed_at_sampled_bytes_recovers_exactly_the_old_or_the_ne
                     id,
                     "--die-after-bytes",
                     budget_text.as_str(),
+                    "--await-kill",
                 ],
+                |_| {},
             );
             let label = format!("{id} budget {budget}");
             let done = run.completed();
             if !done {
-                assert!(
-                    run.signal.is_some(),
+                assert_eq!(
+                    run.signal,
+                    Some(SIGKILL),
                     "{}",
                     describe(
-                        &format!("{label}: the child exited instead of dying"),
+                        &format!("{label}: the child was not killed at the cut"),
+                        &run,
+                        &image
+                    )
+                );
+                let cut_line = format!("{CUT_PREFIX}{budget}");
+                assert!(
+                    run.stdout.lines().any(|line| line == cut_line),
+                    "{}",
+                    describe(
+                        &format!(
+                            "{label}: the child never announced the cut at this byte ({cut_line})"
+                        ),
                         &run,
                         &image
                     )
@@ -530,6 +668,206 @@ fn u01_proc_a_process_killed_at_sampled_bytes_recovers_exactly_the_old_or_the_ne
             finished, 1,
             "{id}: no budget below {SWEEP_CAP} let the script finish"
         );
+    }
+}
+
+#[test]
+fn u01_proc_a_kill_at_the_cut_leaves_the_same_image_as_an_abort_at_the_same_byte() {
+    let bin = crash_binary();
+    let doc = vectors();
+    let vec_path = vectors_path();
+    let scratch = Scratch::new();
+    let blank = scratch.path("blank.img");
+    fs::write(&blank, vec![0xFFu8; 2 * segment()]).expect("blank image");
+    let (by_abort, by_kill) = (scratch.path("abort.img"), scratch.path("kill.img"));
+    let id = "U01-S-002";
+    let s = script(&doc, id);
+    // before any byte, inside the first write, and about halfway through the programmed bytes: all below the script's total
+    for budget in [0, 41, s.programmed / 2] {
+        fs::copy(&blank, &by_abort).expect("copy the blank image");
+        fs::copy(&blank, &by_kill).expect("copy the blank image");
+        let budget_text = budget.to_string();
+        let label = format!("{id} budget {budget}");
+        let aborted = run_child(
+            &bin,
+            &[
+                "run",
+                p(&by_abort),
+                p(&vec_path),
+                id,
+                "--die-after-bytes",
+                budget_text.as_str(),
+            ],
+        );
+        let killed = run_to_the_cut_and_kill(
+            &bin,
+            &[
+                "run",
+                p(&by_kill),
+                p(&vec_path),
+                id,
+                "--die-after-bytes",
+                budget_text.as_str(),
+                "--await-kill",
+            ],
+            |_| {},
+        );
+        assert!(
+            !aborted.completed() && !killed.completed(),
+            "{label}: the budget is past the end of the script, so no child died"
+        );
+        assert_eq!(
+            aborted.signal,
+            Some(SIGABRT),
+            "{}",
+            describe(&format!("{label}: the default death"), &aborted, &by_abort)
+        );
+        assert_eq!(
+            killed.signal,
+            Some(SIGKILL),
+            "{}",
+            describe(&format!("{label}: the death at the cut"), &killed, &by_kill)
+        );
+        assert_eq!(
+            aborted.acks(),
+            killed.acks(),
+            "{label}: both deaths follow the same acknowledgements"
+        );
+        assert_eq!(
+            fs::read(&by_abort).expect("abort image"),
+            fs::read(&by_kill).expect("kill image"),
+            "{label}: the two deaths must leave the same bytes"
+        );
+        assert_eq!(
+            dump(&bin, &by_abort, &format!("{label} restart after abort")),
+            dump(&bin, &by_kill, &format!("{label} restart after kill")),
+            "{label}: the two images must recover the same state and source"
+        );
+    }
+}
+
+#[test]
+fn u01_proc_the_child_waits_alive_at_the_cut_and_only_the_parents_kill_ends_it() {
+    let bin = crash_binary();
+    let doc = vectors();
+    let vec_path = vectors_path();
+    let scratch = Scratch::new();
+    let image = scratch.path("work.img");
+    fs::write(&image, vec![0xFFu8; 2 * segment()]).expect("blank image");
+    let id = "U01-S-002";
+    let s = script(&doc, id);
+    let run = run_to_the_cut_and_kill(
+        &bin,
+        &[
+            "run",
+            p(&image),
+            p(&vec_path),
+            id,
+            "--die-after-bytes",
+            "41",
+            "--await-kill",
+        ],
+        |child| {
+            std::thread::sleep(Duration::from_millis(200));
+            assert!(
+                child.try_wait().expect("try_wait").is_none(),
+                "the child left by itself at the cut instead of waiting to be killed"
+            );
+        },
+    );
+    let note = describe("held at the cut", &run, &image);
+    assert_eq!((run.code, run.signal), (None, Some(SIGKILL)), "{note}");
+    let cuts: Vec<&str> = run
+        .stdout
+        .lines()
+        .filter(|line| line.starts_with(CUT_PREFIX))
+        .collect();
+    assert_eq!(cuts, ["cut 41"], "{note}");
+    assert!(!run.completed(), "{note}");
+    let (state, _source) = dump(&bin, &image, "held at the cut, restart");
+    if let Err(why) = old_or_new(&s.states, run.acks(), false, &state) {
+        panic!("{why}\n{note}");
+    }
+}
+
+#[test]
+fn u01_proc_a_capped_stdout_does_not_bypass_the_child_deadline_or_leave_it_alive() {
+    let bin = crash_binary();
+    let vec_path = vectors_path();
+    let scratch = Scratch::new();
+    let image = scratch.path("work.img");
+    let blank = vec![0xFFu8; 2 * segment()];
+    fs::write(&image, &blank).expect("blank image");
+    // At byte zero the real child reaches its cut during Journal::open, before `opened` is printed. A one-byte reader
+    // sees at most "c", never the complete `cut 0` marker, then closes stdout. The child still waits on the held stdin;
+    // EOF must not turn the parent's bounded wait into an unbounded child.wait() or a graceful stdin-close exit.
+    let timeout = Duration::from_millis(300);
+    let started = Instant::now();
+    let (out, timed_out) = run_to_the_cut_and_kill_bounded(
+        &bin,
+        &[
+            "run",
+            p(&image),
+            p(&vec_path),
+            "U01-S-002",
+            "--die-after-bytes",
+            "0",
+            "--await-kill",
+        ],
+        1,
+        timeout,
+        |_| panic!("a partial cut marker must never trigger a cut kill"),
+    );
+    let elapsed = started.elapsed();
+    let note = describe("stdout capped before cut marker", &out, &image);
+    assert!(
+        timed_out,
+        "the deadline must kill the still-waiting child: {note}"
+    );
+    assert_eq!((out.code, out.signal), (None, Some(SIGKILL)), "{note}");
+    assert!(!out.stdout.contains("cut 0"), "{note}");
+    assert!(
+        elapsed >= timeout && elapsed < CHILD_TIMEOUT,
+        "elapsed {elapsed:?}: {note}"
+    );
+    assert_eq!(fs::read(&image).expect("image"), blank, "{note}");
+    eprintln!("u01_process: capped stdout deadline reaped SIGKILL child after {elapsed:?}");
+}
+
+#[test]
+fn u01_proc_a_waiting_child_whose_parent_is_gone_leaves_by_itself_and_does_not_abort() {
+    let bin = crash_binary();
+    let doc = vectors();
+    let vec_path = vectors_path();
+    let scratch = Scratch::new();
+    let image = scratch.path("work.img");
+    fs::write(&image, vec![0xFFu8; 2 * segment()]).expect("blank image");
+    let id = "U01-S-002";
+    let s = script(&doc, id);
+    // `run_child` gives the child a null stdin: end of input at once, which is what a parent that has gone away looks like
+    let out = run_child(
+        &bin,
+        &[
+            "run",
+            p(&image),
+            p(&vec_path),
+            id,
+            "--die-after-bytes",
+            "41",
+            "--await-kill",
+        ],
+    );
+    let note = describe("parent gone", &out, &image);
+    assert_eq!(
+        (out.code, out.signal),
+        (Some(3), None),
+        "it must leave by itself with exit code 3, not abort and not hang: {note}"
+    );
+    assert!(out.stderr.contains("stdin closed"), "{note}");
+    assert!(out.stdout.lines().any(|line| line == "cut 41"), "{note}");
+    let (state, _source) = dump(&bin, &image, "parent gone, restart");
+    if let Err(why) = old_or_new(&s.states, out.acks(), false, &state) {
+        panic!("{why}\n{note}");
     }
 }
 
