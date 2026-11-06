@@ -1,0 +1,195 @@
+E02 offline Rust analyzer runtime qualification
+
+Source revision: 0a6800d5108f9e5bbc5a0404872ddd199b221881
+Source qualification: E02 source, manifests and toolchain bytes match this revision;
+independent verifier rechecked all 72 owned paths at 15a895e.
+This is Linux host execution on a remote build worker, not a BE guest or speaker.
+Pinned project toolchain (configuration, not a separate compiler-version probe):
+[toolchain]
+channel = "1.99.0"
+
+Command, from an immutable source export:
+  RCH_CANONICAL_PROJECT_ROOT="$PWD" RCH_WORKER=trj \
+  CARGO_BUILD_JOBS=1 RCH_BUILD_SLOTS=1 RCH_TEST_SLOTS=1 \
+  RCH_ENV_ALLOWLIST=CARGO_BUILD_JOBS RCH_REQUIRE_REMOTE=1 \
+  RUST_LOG=info RCH_LOG_LEVEL=info scripts/e2e/e02 --rust-only
+
+Observed remote Cargo command:
+  env CARGO_PROFILE_DEV_DEBUG=line-tables-only \
+      CARGO_PROFILE_TEST_DEBUG=line-tables-only cargo test -p franken-baseline \
+      --config 'env.RCH_BUILD_SOURCE.value="unknown"' \
+      --config 'env.RCH_BUILD_SOURCE.force=true'
+
+Raw retained log SHA256: 896a6b0fb19d062a0e58b9701468b17c0324c5d254aa123325a6387ae0cb4216
+Worker and source paths below are pseudonymized; test lines are otherwise verbatim.
+Native job 30096834294711278: actual command exit 0 after 274874ms; wrapper exit 0.
+Terminal acknowledgment true; wrapper dead and owner absent.
+Source/tree/pair/staging custody released and journal retired.
+No retry, refusal, empty binary or zero-test doctest is counted as a passing case.
+Expected denominator: 95 unit + 23 integration = 118; failed 0; ignored 0.
+
+Observed test output:
+running 95 tests
+test capture::tests::a_minimal_capture_parses_with_documented_defaults ... ok
+test capture::tests::a_profile_or_series_name_shaped_like_a_site_identifier_is_refused_by_name ... ok
+test capture::tests::an_unknown_token_that_is_a_site_identifier_is_redacted_in_the_diagnostic ... ok
+test capture::tests::declaration_errors_are_typed ... ok
+test capture::tests::declarations_and_samples_round_trip ... ok
+test capture::tests::comments_are_never_copied_into_the_capture ... ok
+test capture::tests::sample_errors_are_typed ... ok
+test capture::tests::meta_errors_are_typed ... ok
+test capture::tests::structural_errors_are_typed ... ok
+test compare::tests::a_comparison_renders_its_figures ... ok
+     Running unittests src/lib.rs (<remote-target>/debug/deps/franken_baseline-f0d970826ab1875e)
+test clock::tests::wall_step_is_the_excess_over_the_monotonic_span ... ok
+test compare::tests::the_margin_decides_better_equivalent_and_worse ... ok
+test finding::tests::a_finding_renders_its_numbers ... ok
+test clock::tests::expected_frames_round_down_and_do_not_overflow ... ok
+test json::tests::scalars_render_exactly ... ok
+test memory::tests::kernel_memory_is_kept_apart_and_the_residual_is_signed ... ok
+test memory::tests::a_process_name_shaped_like_a_site_identifier_is_redacted_in_the_report ... ok
+test memory::tests::a_snapshot_label_shaped_like_a_site_identifier_is_refused_by_name ... ok
+test parse::tests::diagnostics_never_repeat_a_site_identifier_or_any_piece_of_one ... ok
+test compare::tests::a_baseline_must_be_a_physical_measurement_with_coverage_and_a_known_rate ... ok
+test finding::tests::findings_are_capped_and_the_overflow_is_counted ... ok
+test memory::tests::peaks_and_headroom_use_the_worst_snapshot ... ok
+test parse::tests::kv_typed_getters ... ok
+test json::tests::containers_keep_insertion_order ... ok
+test clock::tests::since_is_none_when_the_clock_would_go_backwards ... ok
+test memory::tests::parse_errors_are_typed_and_carry_the_line ... ok
+test parse::tests::kv_rejects_duplicates_unknowns_and_non_pairs ... ok
+test memory::tests::a_kernel_thread_contributes_nothing_and_is_named ... ok
+test memory::tests::unavailable_fields_stay_absent_not_zero ... ok
+test memory::tests::process_figures_come_from_the_rollup_and_are_sorted_by_pid ... ok
+test json::tests::strings_are_escaped ... ok
+test json::tests::get_finds_a_key_of_an_object_and_nothing_else ... ok
+test parse::tests::identifiers_and_labels ... ok
+test parse::tests::diagnostics_repeat_at_most_the_bound ... ok
+test memory::tests::shared_pages_are_not_counted_twice ... ok
+test memory::tests::headroom_fails_below_the_declared_reserve_and_is_never_defaulted ... ok
+test compare::tests::with_no_baseline_every_comparative_claim_is_refused ... ok
+test compare::tests::a_zero_baseline_can_only_be_matched_or_beaten_downward ... ok
+test compare::tests::a_current_run_must_itself_be_a_comparable_physical_measurement ... ok
+test finding::tests::extend_keeps_the_cap_and_sums_the_drops ... ok
+test memory::tests::inconsistent_inputs_are_reported_as_findings_not_corrected ... ok
+test capture::tests::oversized_lines_are_refused ... ok
+test parse::tests::signed_integers_are_strict ... ok
+test parse::tests::unsigned_integers_are_strict ... ok
+test procfs::tests::a_process_name_shaped_like_a_site_identifier_is_redacted_not_repeated ... ok
+test procfs::tests::a_kernel_thread_has_no_vm_lines_and_an_old_kernel_has_no_rss_split ... ok
+test procfs::tests::page_sizes_are_validated_and_convert_exactly ... ok
+test procfs::tests::statm_counts_pages_and_converts_through_the_page_size ... ok
+test procfs::tests::meminfo_keys_do_not_match_by_prefix ... ok
+test procfs::tests::smaps_rollup_splits_private_from_shared ... ok
+test procfs::tests::status_without_a_name_or_with_a_bad_unit_is_an_error ... ok
+test redact::tests::a_refusal_names_the_field_and_class_and_never_repeats_the_text ... ok
+test procfs::tests::status_fields_are_read_by_exact_key ... ok
+test redact::tests::a_shape_is_found_anywhere_in_the_text ... ok
+test redact::tests::the_first_matching_shape_names_the_class ... ok
+test series::tests::a_hole_before_a_dropout_blocks_attribution_through_it ... ok
+test series::tests::a_plausible_wraparound_is_counted_exactly_and_stays_uncensored ... ok
+test series::tests::a_counter_value_wider_than_its_declared_width_is_missing_not_trusted ... ok
+test series::tests::holes_use_a_strict_threshold_and_estimate_missing_samples ... ok
+test series::tests::one_firing_candidate_with_an_unobservable_one_is_determined_but_not_exclusive ... ok
+test summary::tests::a_qualified_series_reads_plainly ... ok
+test redact::tests::every_class_has_its_own_name ... ok
+test redact::tests::each_shape_is_named_and_near_misses_are_not_flagged ... ok
+test series::tests::a_counter_reset_is_never_a_negative_rate_and_is_censored ... ok
+test series::tests::clean_capture_has_full_coverage_and_known_zero_dropouts ... ok
+test series::tests::device_frames_without_a_declared_rate_are_not_interpreted ... ok
+test summary::tests::a_missing_field_reads_as_a_question_mark_and_nothing_is_invented ... ok
+test summary::tests::a_measured_run_says_so ... ok
+test series::tests::an_underrun_with_every_candidate_observed_and_quiet_is_an_output_underrun ... ok
+test series::tests::a_truncated_capture_reports_what_is_missing_and_does_not_extrapolate ... ok
+test summary::tests::an_undetermined_cause_is_counted_and_named_as_such ... ok
+test series::tests::no_dropout_signal_means_unknown_never_zero ... ok
+test series::tests::non_monotonic_samples_are_rejected_and_never_reordered ... ok
+test series::tests::a_hole_is_reported_never_interpolated_and_its_events_are_unlocated ... ok
+test series::tests::plain_deltas_and_the_two_ways_a_counter_can_fall ... ok
+test series::tests::the_device_clock_is_compared_to_monotonic_time_and_a_32_bit_wrap_is_not_a_stall ... ok
+test summary::tests::a_made_comparison_and_a_refused_one ... ok
+test series::tests::json_output_is_stable_and_contains_the_named_fields ... ok
+test series::tests::a_gap_in_a_signal_inside_the_window_makes_it_incomplete_not_quiet ... ok
+test series::tests::a_cpu_deadline_miss_alone_is_determined ... ok
+test series::tests::two_firing_candidates_are_ambiguous_not_ranked ... ok
+test series::tests::the_playout_horizon_widens_the_window_to_earlier_intervals ... ok
+test series::tests::a_wall_clock_step_is_reported_and_creates_no_gap_or_dropout ... ok
+test series::tests::an_underrun_interval_is_a_dropout_with_its_exact_span ... ok
+test series::tests::implausible_readings_are_excluded_and_spikes_are_kept_and_flagged ... ok
+test series::tests::missing_signals_make_the_cause_undetermined_and_are_named ... ok
+test series::tests::a_source_outage_needs_the_source_to_stall_while_playing ... ok
+test series::tests::nearest_rank_percentiles ... ok
+test series::tests::network_lateness_alone_is_determined ... ok
+test summary::tests::memory_figures_the_kernel_did_not_give_read_as_unknown_and_an_undeclared_reserve_says_so ... ok
+test summary::tests::memory_findings_are_summed_over_every_snapshot ... ok
+test summary::tests::reasons_are_listed_with_their_own_numbers ... ok
+test summary::tests::unknown_dropouts_read_as_unknown_never_as_zero ... ok
+test summary::tests::the_line_carries_no_input_text ... ok
+test summary::tests::censoring_and_truncation_are_shown ... ok
+
+test result: ok. 95 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.62s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 23 tests
+test a_check_that_found_nothing_to_check_is_reported_with_its_suite_context ... ok
+test a_planted_bad_summary_is_reported_with_its_case_context ... ok
+test a_planted_wrong_vector_is_reported_with_its_replay_context ... ok
+test every_summary_in_cases_json_is_one_short_plain_line ... ok
+test the_never_echoed_check_catches_a_planted_echo ... ok
+test the_helpers_print_the_failure_and_what_was_retained_for_it ... ok
+test the_subset_matcher_accepts_extra_report_keys_and_nothing_else ... ok
+test the_subset_matcher_rejects_every_kind_of_planted_difference ... ok
+test no_capture_or_expected_file_is_orphaned_and_none_is_missing ... ok
+test the_redaction_vectors_agree_with_the_classifier ... ok
+test every_string_a_case_says_is_never_echoed_is_really_in_its_capture ... ok
+test a_planted_vacuous_never_echoed_string_is_reported_with_its_case_context ... ok
+test the_summary_checks_reject_planted_wrong_output ... ok
+test every_invariant_names_existing_cases_or_explains_why_it_has_none ... ok
+     Running unittests src/bin/ffw-baseline.rs (<remote-target>/debug/deps/ffw_baseline-51001ad557a23db9)
+     Running tests/e02_cases.rs (<remote-target>/debug/deps/e02_cases-e44d32020dbd2686)
+test a_real_report_fails_against_a_planted_wrong_expectation ... ok
+test the_cli_never_reports_a_bare_path_in_an_error ... ok
+test a_planted_invariant_fault_is_reported_with_its_case_context ... ok
+test the_analyzer_entrypoint_wires_its_finite_deadline_and_exact_command ... ok
+test sha256_matches_the_published_test_vectors ... ok
+test a_planted_wrong_expectation_fails_the_case_and_retains_its_replay_context ... ok
+test a_planted_missing_file_and_a_planted_orphan_are_reported_with_their_context ... ok
+test a_hung_analyzer_fails_its_case_with_the_replay_line_and_leaves_no_child_running ... ok
+test every_case_in_cases_json_runs_and_matches_its_expected_output ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.00s
+
+   Doc-tests franken_baseline
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+  2026-11-06T04:33:28.468908Z  INFO rch::hook::transfer_orchestration: 
+Observed terminal output:
+  Remote command finished: exit=0 in 274874ms
+  [RCH] remote trj (332.0s)
+  E02 Rust half: PASS (synthetic captures; says nothing about any device)
+
+Independent fixture-entrypoint execution:
+Raw log SHA256: df894828173d7e1a8f3651d26e425860bdf7ba903a4b6ca3fe319fd941e7c2c8
+COMMAND=scripts/e2e/e02 --fixtures-only
+E02_SOURCE_REVISION=0a6800d5108f9e5bbc5a0404872ddd199b221881
+oracle: 28 series/memory cases compared with their expected files; 95 redaction/diagnostic checks; 12 summary lines; recipe scripts run under sh, dash, bash; 0 problem(s)
+E02 local half: PASS (independent oracle only; the Rust analyzer was NOT run)
+
+CALLER_EXIT=0
+
+
+Qualification boundary:
+This validates the offline analyzer and synthetic/replay/error/cleanup cases.
+No incumbent measurements, improved device reliability, provider integration,
+physical output, BE guest execution or firmware installation is claimed.
+The retained prestart resource refusals remain not-run attempts, not test failures
+or passes; this document records only the one successful off-root invocation.
