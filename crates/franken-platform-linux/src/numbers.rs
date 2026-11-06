@@ -10,6 +10,14 @@
 //! * the `libc` crate's tables for the musl targets (`tests/p02/test_syscall_numbers.py` reads them from the cargo registry).
 //!
 //! MIPS o32 numbers are 4000-based; PowerPC32 uses the generic numbering.
+//!
+//! A second table, [`P06Calls`], holds the calls the `P06` primitives (`franken-platform`'s `net` and `durable` modules) are used with,
+//! seventeen in all, each with its **slot count**: the arguments the kernel's entry takes, which the leaf's five-slot trampoline
+//! ([`LEAF_ARG_SLOTS`], `sys.rs`) must be able to carry. Nothing issues these calls yet: it is data and tests, with no wrapper, no
+//! `KernelOps` method and no `unsafe` (`docs/contracts/p06.md`, S3). Three witnesses hold it, each where it applies: the E03 probes
+//! that issued the call, the `libc` crate's tables, and the kernel's own `unistd.h`, call table and prototypes at v2.6.14 and v2.6.35
+//! (`tests/p02/test_syscall_numbers.py`). The fact that matters most is in [`SocketCall`]: **the stock 32-bit PowerPC kernel has no
+//! direct socket calls**, only `socketcall`, while the E03 guests' newer kernels do.
 
 use franken_platform::abi::Abi;
 
@@ -53,6 +61,335 @@ pub const fn for_abi(abi: Abi) -> Numbers {
     match abi {
         Abi::PowerPc32 => POWERPC32,
         Abi::Mips32 => MIPS32_O32,
+    }
+}
+
+/// How many argument slots the leaf's `raw5` trampoline carries (`sys.rs`: "up to five arguments"; on MIPS o32 the fifth is passed on the
+/// stack). A call whose entry takes more cannot be issued through it, whatever its number.
+pub const LEAF_ARG_SLOTS: usize = 5;
+
+/// One call as an ABI has it: its syscall number and how many argument slots the kernel's entry for it takes.
+///
+/// A slot is one register-sized argument. A 64-bit argument takes two, starting on an even register pair on both ABIs, and the pad slot
+/// counts: `pread64` and `pwrite64` are `(fd, buf, count, pad, hi, lo)`, six slots, one more than the leaf can carry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Call {
+    pub number: usize,
+    pub slots: usize,
+}
+
+impl Call {
+    /// Whether the leaf's trampoline can carry every argument of this call.
+    #[must_use]
+    pub const fn fits_the_leaf(self) -> bool {
+        self.slots <= LEAF_ARG_SLOTS
+    }
+}
+
+/// A socket-family call, which an ABI may have as a direct syscall, as a `socketcall` sub-call, or both.
+///
+/// **The stock 32-bit PowerPC kernel (2.6.14, read again at 2.6.35) has no direct socket syscalls:** its table has `socketcall` (102) and
+/// nothing else, so `direct_on_stock` is `false` and a caller there issues `socketcall(sub, args)`, two slots, with the arguments in a
+/// block in memory. The direct numbers PowerPC has here (326 and on) belong to newer kernels, and the E03 guests (4.x) issued them. MIPS
+/// o32 has both forms at 2.6.14 and 2.6.35.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SocketCall {
+    /// The `socketcall` sub-call number (`linux/net.h`): the same on every architecture.
+    pub sub: usize,
+    /// The direct syscall and the slots of its entry.
+    pub direct: Call,
+    /// Whether the stock kernel (2.6.x) has the direct syscall.
+    pub direct_on_stock: bool,
+}
+
+/// The calls the `P06` primitives are used with, per legacy ABI (see the module documentation).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct P06Calls {
+    pub poll: Call,
+    /// The multiplexed socket entry: `socketcall(sub, args)`.
+    pub socketcall: Call,
+    pub socket: SocketCall,
+    pub bind: SocketCall,
+    pub connect: SocketCall,
+    pub getsockname: SocketCall,
+    pub send: SocketCall,
+    pub recv: SocketCall,
+    pub sendto: SocketCall,
+    pub recvfrom: SocketCall,
+    pub setsockopt: SocketCall,
+    pub fsync: Call,
+    pub rename: Call,
+    pub unlink: Call,
+    /// `_llseek(fd, hi, lo, &result, whence)`: five slots, the result stored through a pointer.
+    pub llseek: Call,
+    pub pread64: Call,
+    pub pwrite64: Call,
+}
+
+impl P06Calls {
+    /// Every call by its syscall name, in a fixed order, a socket-family call as its direct form.
+    #[must_use]
+    pub const fn calls(&self) -> [(&'static str, Call); 17] {
+        [
+            ("poll", self.poll),
+            ("socketcall", self.socketcall),
+            ("socket", self.socket.direct),
+            ("bind", self.bind.direct),
+            ("connect", self.connect.direct),
+            ("getsockname", self.getsockname.direct),
+            ("send", self.send.direct),
+            ("recv", self.recv.direct),
+            ("sendto", self.sendto.direct),
+            ("recvfrom", self.recvfrom.direct),
+            ("setsockopt", self.setsockopt.direct),
+            ("fsync", self.fsync),
+            ("rename", self.rename),
+            ("unlink", self.unlink),
+            ("_llseek", self.llseek),
+            ("pread64", self.pread64),
+            ("pwrite64", self.pwrite64),
+        ]
+    }
+
+    /// Every socket-family call by name, in a fixed order.
+    #[must_use]
+    pub const fn socket_calls(&self) -> [(&'static str, SocketCall); 9] {
+        [
+            ("socket", self.socket),
+            ("bind", self.bind),
+            ("connect", self.connect),
+            ("getsockname", self.getsockname),
+            ("send", self.send),
+            ("recv", self.recv),
+            ("sendto", self.sendto),
+            ("recvfrom", self.recvfrom),
+            ("setsockopt", self.setsockopt),
+        ]
+    }
+}
+
+/// PowerPC32: `socketcall` only on the stock kernel; the direct numbers are those of newer kernels.
+pub const P06_POWERPC32: P06Calls = P06Calls {
+    poll: Call {
+        number: 167,
+        slots: 3,
+    },
+    socketcall: Call {
+        number: 102,
+        slots: 2,
+    },
+    socket: SocketCall {
+        sub: 1,
+        direct: Call {
+            number: 326,
+            slots: 3,
+        },
+        direct_on_stock: false,
+    },
+    bind: SocketCall {
+        sub: 2,
+        direct: Call {
+            number: 327,
+            slots: 3,
+        },
+        direct_on_stock: false,
+    },
+    connect: SocketCall {
+        sub: 3,
+        direct: Call {
+            number: 328,
+            slots: 3,
+        },
+        direct_on_stock: false,
+    },
+    getsockname: SocketCall {
+        sub: 6,
+        direct: Call {
+            number: 331,
+            slots: 3,
+        },
+        direct_on_stock: false,
+    },
+    send: SocketCall {
+        sub: 9,
+        direct: Call {
+            number: 334,
+            slots: 4,
+        },
+        direct_on_stock: false,
+    },
+    recv: SocketCall {
+        sub: 10,
+        direct: Call {
+            number: 336,
+            slots: 4,
+        },
+        direct_on_stock: false,
+    },
+    sendto: SocketCall {
+        sub: 11,
+        direct: Call {
+            number: 335,
+            slots: 6,
+        },
+        direct_on_stock: false,
+    },
+    recvfrom: SocketCall {
+        sub: 12,
+        direct: Call {
+            number: 337,
+            slots: 6,
+        },
+        direct_on_stock: false,
+    },
+    setsockopt: SocketCall {
+        sub: 14,
+        direct: Call {
+            number: 339,
+            slots: 5,
+        },
+        direct_on_stock: false,
+    },
+    fsync: Call {
+        number: 118,
+        slots: 1,
+    },
+    rename: Call {
+        number: 38,
+        slots: 2,
+    },
+    unlink: Call {
+        number: 10,
+        slots: 1,
+    },
+    llseek: Call {
+        number: 140,
+        slots: 5,
+    },
+    pread64: Call {
+        number: 179,
+        slots: 6,
+    },
+    pwrite64: Call {
+        number: 180,
+        slots: 6,
+    },
+};
+
+/// MIPS o32 (base 4000): direct socket calls and `socketcall` both exist on the stock kernel.
+pub const P06_MIPS32_O32: P06Calls = P06Calls {
+    poll: Call {
+        number: 4000 + 188,
+        slots: 3,
+    },
+    socketcall: Call {
+        number: 4000 + 102,
+        slots: 2,
+    },
+    socket: SocketCall {
+        sub: 1,
+        direct: Call {
+            number: 4000 + 183,
+            slots: 3,
+        },
+        direct_on_stock: true,
+    },
+    bind: SocketCall {
+        sub: 2,
+        direct: Call {
+            number: 4000 + 169,
+            slots: 3,
+        },
+        direct_on_stock: true,
+    },
+    connect: SocketCall {
+        sub: 3,
+        direct: Call {
+            number: 4000 + 170,
+            slots: 3,
+        },
+        direct_on_stock: true,
+    },
+    getsockname: SocketCall {
+        sub: 6,
+        direct: Call {
+            number: 4000 + 172,
+            slots: 3,
+        },
+        direct_on_stock: true,
+    },
+    send: SocketCall {
+        sub: 9,
+        direct: Call {
+            number: 4000 + 178,
+            slots: 4,
+        },
+        direct_on_stock: true,
+    },
+    recv: SocketCall {
+        sub: 10,
+        direct: Call {
+            number: 4000 + 175,
+            slots: 4,
+        },
+        direct_on_stock: true,
+    },
+    sendto: SocketCall {
+        sub: 11,
+        direct: Call {
+            number: 4000 + 180,
+            slots: 6,
+        },
+        direct_on_stock: true,
+    },
+    recvfrom: SocketCall {
+        sub: 12,
+        direct: Call {
+            number: 4000 + 176,
+            slots: 6,
+        },
+        direct_on_stock: true,
+    },
+    setsockopt: SocketCall {
+        sub: 14,
+        direct: Call {
+            number: 4000 + 181,
+            slots: 5,
+        },
+        direct_on_stock: true,
+    },
+    fsync: Call {
+        number: 4000 + 118,
+        slots: 1,
+    },
+    rename: Call {
+        number: 4000 + 38,
+        slots: 2,
+    },
+    unlink: Call {
+        number: 4000 + 10,
+        slots: 1,
+    },
+    llseek: Call {
+        number: 4000 + 140,
+        slots: 5,
+    },
+    pread64: Call {
+        number: 4000 + 200,
+        slots: 6,
+    },
+    pwrite64: Call {
+        number: 4000 + 201,
+        slots: 6,
+    },
+};
+
+/// The `P06` calls for `abi`.
+#[must_use]
+pub const fn p06_for_abi(abi: Abi) -> P06Calls {
+    match abi {
+        Abi::PowerPc32 => P06_POWERPC32,
+        Abi::Mips32 => P06_MIPS32_O32,
     }
 }
 
@@ -124,6 +461,140 @@ mod tests {
             POWERPC32.close,
         ] {
             assert!(n < 1000, "{n}");
+        }
+    }
+
+    #[test]
+    fn the_p06_tables_differ_per_abi_in_every_number_and_share_every_sub_call() {
+        assert_eq!(p06_for_abi(Abi::PowerPc32), P06_POWERPC32);
+        assert_eq!(p06_for_abi(Abi::Mips32), P06_MIPS32_O32);
+        for ((name, a), (other, b)) in P06_POWERPC32
+            .calls()
+            .into_iter()
+            .zip(P06_MIPS32_O32.calls())
+        {
+            assert_eq!(name, other);
+            assert_ne!(a.number, b.number, "{name}");
+        }
+        for ((name, a), (other, b)) in P06_POWERPC32
+            .socket_calls()
+            .into_iter()
+            .zip(P06_MIPS32_O32.socket_calls())
+        {
+            assert_eq!(name, other);
+            assert_eq!(a.sub, b.sub, "{name}: a sub-call number is not the ABI's");
+        }
+    }
+
+    #[test]
+    fn the_p06_numbers_and_slots_are_the_ones_the_kernel_tables_and_the_guest_probes_give() {
+        // Typed by hand from the v2.6.14 and v2.6.35 `unistd.h` files, the MIPS o32 call table (`scall32-o32.S`: slots), the 32-bit PowerPC
+        // `systbl.h` and `sys_ppc32.c` (`compat_sys_pread64(fd, buf, count, reg6, poshi, poslo)`), and the E03 probes' `nr` modules. The PowerPC
+        // socket numbers (326 and on) are those of the newer kernels the E03 guests run; the 2.6 tables have none.
+        let mips = P06_MIPS32_O32
+            .calls()
+            .map(|(name, call)| (name, call.number, call.slots));
+        assert_eq!(
+            mips,
+            [
+                ("poll", 4188, 3),
+                ("socketcall", 4102, 2),
+                ("socket", 4183, 3),
+                ("bind", 4169, 3),
+                ("connect", 4170, 3),
+                ("getsockname", 4172, 3),
+                ("send", 4178, 4),
+                ("recv", 4175, 4),
+                ("sendto", 4180, 6),
+                ("recvfrom", 4176, 6),
+                ("setsockopt", 4181, 5),
+                ("fsync", 4118, 1),
+                ("rename", 4038, 2),
+                ("unlink", 4010, 1),
+                ("_llseek", 4140, 5),
+                ("pread64", 4200, 6),
+                ("pwrite64", 4201, 6),
+            ]
+        );
+        let ppc = P06_POWERPC32
+            .calls()
+            .map(|(name, call)| (name, call.number, call.slots));
+        assert_eq!(
+            ppc,
+            [
+                ("poll", 167, 3),
+                ("socketcall", 102, 2),
+                ("socket", 326, 3),
+                ("bind", 327, 3),
+                ("connect", 328, 3),
+                ("getsockname", 331, 3),
+                ("send", 334, 4),
+                ("recv", 336, 4),
+                ("sendto", 335, 6),
+                ("recvfrom", 337, 6),
+                ("setsockopt", 339, 5),
+                ("fsync", 118, 1),
+                ("rename", 38, 2),
+                ("unlink", 10, 1),
+                ("_llseek", 140, 5),
+                ("pread64", 179, 6),
+                ("pwrite64", 180, 6),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_powerpc_socket_call_is_direct_only_off_the_stock_kernel() {
+        for (name, call) in P06_POWERPC32.socket_calls() {
+            assert!(
+                !call.direct_on_stock,
+                "{name}: the stock PowerPC kernel has no direct socket call"
+            );
+        }
+        for (name, call) in P06_MIPS32_O32.socket_calls() {
+            assert!(call.direct_on_stock, "{name}");
+        }
+        // `linux/net.h`: SYS_SOCKET 1, SYS_BIND 2, SYS_CONNECT 3, SYS_GETSOCKNAME 6, SYS_SEND 9, SYS_RECV 10, SYS_SENDTO 11, SYS_RECVFROM 12, SYS_SETSOCKOPT 14.
+        for table in [P06_POWERPC32, P06_MIPS32_O32] {
+            assert_eq!(
+                table.socket_calls().map(|(_, call)| call.sub),
+                [1, 2, 3, 6, 9, 10, 11, 12, 14]
+            );
+            assert_eq!(table.socketcall.slots, 2, "socketcall(sub, args)");
+        }
+    }
+
+    #[test]
+    fn exactly_these_calls_need_more_slots_than_the_leaf_carries() {
+        assert_eq!(LEAF_ARG_SLOTS, 5);
+        for table in [P06_POWERPC32, P06_MIPS32_O32] {
+            let too_big: Vec<&str> = table
+                .calls()
+                .into_iter()
+                .filter(|(_, call)| !call.fits_the_leaf())
+                .map(|(name, _)| name)
+                .collect();
+            assert_eq!(too_big, ["sendto", "recvfrom", "pread64", "pwrite64"]);
+        }
+    }
+
+    #[test]
+    fn p06_mips_numbers_are_four_thousand_based_powerpc_numbers_are_not_and_none_repeats() {
+        for (name, call) in P06_MIPS32_O32.calls() {
+            assert!((4000..5000).contains(&call.number), "{name}");
+        }
+        for (name, call) in P06_POWERPC32.calls() {
+            assert!(call.number < 1000, "{name}");
+        }
+        for table in [P06_POWERPC32, P06_MIPS32_O32] {
+            let mut numbers: Vec<usize> = table
+                .calls()
+                .into_iter()
+                .map(|(_, call)| call.number)
+                .collect();
+            numbers.sort_unstable();
+            numbers.dedup();
+            assert_eq!(numbers.len(), 17, "two calls share a number");
         }
     }
 }
