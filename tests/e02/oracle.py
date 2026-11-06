@@ -16,13 +16,20 @@ It also checks the redaction rules (an independent classifier against tests/e02/
 modelled diagnostics and remove-the-plant controls) and the human-run recipe in docs/contracts/e02.md (its two scripts are linted and, if
 clean, run against scripted stand-in /proc files in every POSIX shell present; their output must be the recipe-shaped fixtures).
 """
+import contextlib
+import hashlib
+import io
 import json
 import os
+import platform
 import re
+import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SEC = 1_000_000_000
@@ -813,6 +820,28 @@ def lint_script(name, text):
     return problems
 
 
+def run_recipe_command(argv, env=None, timeout=60):
+    """Bound only a local recipe's owned process group; timeout remains a meaningful failure, never a traceback."""
+    child = subprocess.Popen(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    try:
+        try:
+            out, err = child.communicate(timeout=timeout)
+            return subprocess.CompletedProcess(argv, child.returncode, out, err)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            out, err = child.communicate()
+            return subprocess.CompletedProcess(argv, 124, out, "TIMED OUT after %ss; local recipe group killed; %s" % (timeout, err[:200]))
+    finally:
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        child.wait()
+
+
 def run_sampler(shell, script_path, work):
     d = os.path.join(work, "series-" + shell)
     os.makedirs(d)
@@ -840,7 +869,7 @@ def run_sampler(shell, script_path, work):
                NOTE="SYNTHETIC. Written by the recipe's sampler from scripted stand-in files; it says nothing about any device.",
                COUNTERS="xruns dev_underruns 32 %s/xruns late late_packets 32 %s/late cpu cpu_misses 32 %s/cpu src source_bytes 64 %s/src" % ((d,) * 4),
                GAUGES="play playing %s/play 1" % d)
-    done = subprocess.run([shell, script_path], env=env, capture_output=True, text=True, timeout=60)
+    done = run_recipe_command([shell, script_path], env=env)
     if done.returncode != 0 or done.stderr:
         return None, "%s sampler: exit %d, stderr %r" % (shell, done.returncode, done.stderr[:200])
     with open(env["OUT"], encoding="utf-8") as fh:
@@ -863,7 +892,7 @@ def run_snapshot(shell, script_path, work):
         put(os.path.join(pid, "smaps_rollup"), rollup)
         put(os.path.join(pid, "statm"), statm)
     env = dict(os.environ, PROC=d, MEMOUT=os.path.join(d, "memory.txt"), PAGE_SIZE="4096", RESERVE_KIB="4096")
-    done = subprocess.run([shell, script_path, "recipe-example", "100", "200"], env=env, capture_output=True, text=True, timeout=60)
+    done = run_recipe_command([shell, script_path, "recipe-example", "100", "200"], env=env)
     if done.returncode != 0 or done.stderr:
         return None, "%s snapshot: exit %d, stderr %r" % (shell, done.returncode, done.stderr[:200])
     with open(env["MEMOUT"], encoding="utf-8") as fh:
@@ -913,6 +942,12 @@ def selfcheck_recipe(problems):
     check_recipe(found, scripts={"sample.sh": clean, "snapshot.sh": clean}, execute=lambda scripts, problems: ran.append(1) or [])
     if not ran or found:
         problems.append("self-check: a clean pair of recipe scripts was not executed or was flagged: %r" % (found,))
+    slow = run_recipe_command([sys.executable, "-c", "import time; time.sleep(10)"], timeout=0.02)
+    if slow.returncode != 124 or "TIMED OUT" not in slow.stderr:
+        problems.append("self-check: a recipe timeout lost its bounded failure diagnostic")
+    fast = run_recipe_command([sys.executable, "-c", "print('recipe-positive')"], timeout=2)
+    if fast.returncode != 0 or fast.stdout != "recipe-positive\n" or fast.stderr:
+        problems.append("self-check: a bounded successful recipe was not preserved")
 
 
 def check_recipe(problems, scripts=None, execute=None):
@@ -946,7 +981,7 @@ def execute_recipe(scripts, problems):
             with open(paths[name], "w", encoding="utf-8") as fh:
                 fh.write(text + "\n")
         for shell in shells:
-            syntax = [subprocess.run([shell, "-n", paths[n]], capture_output=True, text=True) for n in sorted(paths)]
+            syntax = [run_recipe_command([shell, "-n", paths[n]]) for n in sorted(paths)]
             if any(s.returncode for s in syntax):
                 problems.append("%s -n rejects a recipe script: %s" % (shell, " ".join(s.stderr for s in syntax)))
                 continue
@@ -1080,6 +1115,526 @@ def selfcheck_summary(problems):
 
 
 # ------------------------------------------------------------------------------------------------
+# what a failure retains (acceptance, "Owned test assets": "Each failure retains replay command, versions/profile/artifact digests, expected
+# versus observed oracle and first causal event. Reruns retain original failure; bounded retries do not launder flaky success."). Each problem
+# line already states the case, the path and the first difference between expected and observed. `failure_block` adds the rest. Nothing in the
+# E02 test assets reruns or retries anything, so a failure stays as it first happened, and every subprocess here is bounded by a timeout.
+
+def digest_of(rel):
+    try:
+        with open(os.path.join(HERE, rel), "rb") as fh:
+            return hashlib.sha256(fh.read()).hexdigest()
+    except OSError as exc:
+        return "unavailable (%s)" % type(exc).__name__
+
+
+def crate_version():
+    with open(os.path.join(HERE, "..", "..", "Cargo.toml"), encoding="utf-8") as fh:
+        found = re.search(r"^\[workspace\.package\][^\[]*?^version\s*=\s*\"([^\"]+)\"", fh.read(), re.M | re.S)
+    return found.group(1) if found else "unknown"
+
+
+def doc_invariant_problems(doc_text, cases):
+    """Every invariant the contract names (not a wildcard such as INV-LOG-*) must be a row of cases.json."""
+    known = {i["id"] for i in cases["invariants"]}
+    names = sorted(set(re.findall(r"INV-[A-Z0-9]+(?:-[A-Z0-9]+)*(?![A-Za-z0-9*-])", doc_text)))
+    return ["docs/contracts/e02.md names %s, which is not an invariant in cases.json" % n for n in names if n not in known]
+
+
+def capture_kind(rel):
+    """`memory` or `series`, from the capture's own header line (not its file name, which is why --print once misread recipe_memory.txt)."""
+    with open(os.path.join(HERE, rel), encoding="utf-8") as fh:
+        return "memory" if fh.readline().startswith("ffw.baseline.memory.v1") else "series"
+
+
+def print_failures(cases, problems):
+    """Every problem, then (only if there is one) the block that lets it be replayed."""
+    for p in problems:
+        print("FAIL:", p)
+    if problems:
+        print(failure_block(cases, problems))
+
+
+def replay_commands(c):
+    """The exact commands that reproduce a case: the analyzer's, and (for a series or memory capture) this oracle's own report."""
+    cmds = [("the analyzer", "(cd tests/e02 && ffw-baseline %s)" % " ".join(shlex.quote(a) for a in c["args"]))]
+    if c["args"][0] in ("series", "memory"):
+        cmds.append(("this oracle's report", "python3 -B -I tests/e02/oracle.py --print %s" % shlex.quote(c["args"][1])))
+    return cmds
+
+
+def failure_block(cases, problems):
+    """The retained context of a failing run, for the cases its problems name. Paths are relative to the repository root."""
+    by_id = {c["id"]: c for c in cases["cases"]}
+    named = []
+    for p in problems:
+        for cid, case in by_id.items():
+            files = [a for a in case["args"] if a.startswith("synthetic/")]
+            files += [case["expect"]] if "expect" in case else []
+            if (re.search(r"(?<![A-Z0-9-])" + re.escape(cid) + r"(?![A-Z0-9-])", p)
+                    or any(rel in p or os.path.basename(rel) in p for rel in files)) and cid not in named:
+                named.append(cid)
+    lines = ["RETAINED FOR REPLAY. First failure: %s" % problems[0], "  replay the whole local half: scripts/e2e/e02 --fixtures-only",
+             "  versions: python %s; franken-baseline %s" % (platform.python_version(), crate_version())]
+    for rel in ("tests/e02/cases.json", "tests/e02/oracle.py", "docs/contracts/e02.md", "tests/e02/redaction_vectors.json", "scripts/e2e/e02"):
+        lines.append("  artifact %s sha256 %s" % (rel, digest_of(os.path.join("..", "..", rel))))
+    if any("recipe" in p or "sampler" in p or "snapshot" in p for p in problems):
+        for rel in ("synthetic/recipe_series.cap", "synthetic/recipe_memory.txt", "expected/recipe_series.json", "expected/recipe_memory.json"):
+            lines.append("  recipe artifact %s sha256 %s" % (rel, digest_of(rel)))
+        lines.append("  recipe context: series/memory report v1; capture v1; profile recipe-example-v1; replay scripts/e2e/e02 --fixtures-only")
+    if not named:
+        lines.append("  global/orphan diagnostic: no single case applies; report schema/capture/profile are not observed")
+    for rel in sorted(set(re.findall(r"(?:synthetic|expected)/[A-Za-z0-9_.-]+", "\n".join(problems)))):
+        lines.append("  applicable artifact %s sha256 %s" % (rel, digest_of(rel)))
+    for cid in named:
+        c = by_id[cid]
+        lines.append("  case %s" % cid)
+        for who, cmd in replay_commands(c):
+            lines.append("    replay (%s): %s" % (who, cmd))
+        captures = [a for a in c["args"] if a.startswith("synthetic/")]
+        for a in captures:
+            lines.append("    capture %s sha256 %s" % (a, digest_of(a)))
+        schema = "n/a"
+        if "expect" in c:
+            lines.append("    expected %s sha256 %s" % (c["expect"], digest_of(c["expect"])))
+            try:
+                schema = load_json(c["expect"]).get("schema", "n/a")
+            except (OSError, ValueError):
+                schema = "unavailable"
+        header = "n/a"
+        if captures:
+            try:
+                with open(os.path.join(HERE, captures[0]), encoding="utf-8") as fh:
+                    header = (fh.readline().split() or ["n/a"])[0]
+            except OSError:
+                header = "unavailable"
+        lines.append("    report schema %s; capture format %s%s" % (schema, header, observed_profile(c)))
+    return "\n".join(lines)
+
+
+def observed_profile(c):
+    """`; profile NAME` when the case has an observed report (a case that expects a report: the analyzer refused nothing), else nothing. A
+    refusal case has no report, so a planted identifier in its capture is never copied into the block."""
+    if "expect" not in c:
+        return ""
+    try:
+        report = oracle_report(c["args"])
+    except (OSError, ValueError, OracleError):
+        return "; profile unavailable (report not derived)"
+    if report is None or not isinstance(report.get("profile"), str):
+        return ""
+    return "; profile %s" % report["profile"]
+
+
+def retention_problems(block, c, first):
+    """What a retained block lacks: the first failure, each replay command exactly, and next to each capture and expected path the file's own
+    sha256, worked out here directly with hashlib. A block that is not a failure's block is reported too."""
+    problems = []
+    if first not in block:
+        problems.append("the first failure is not in the block")
+    for who, cmd in replay_commands(c):
+        if "replay (%s): %s" % (who, cmd) not in block:
+            problems.append("the %s replay command is not in the block" % who)
+    for rel in [a for a in c["args"] if a.startswith("synthetic/")] + ([c["expect"]] if "expect" in c else []):
+        with open(os.path.join(HERE, rel), "rb") as fh:
+            digest = hashlib.sha256(fh.read()).hexdigest()
+        if "%s sha256 %s" % (rel, digest) not in block:
+            problems.append("the sha256 of %s is not in the block, or is not the file's" % rel)
+    if "franken-baseline %s" % crate_version() not in block:
+        problems.append("the crate version is not in the block")
+    if "report schema " not in block or "capture format " not in block:
+        problems.append("the report schema or the capture format is not in the block")
+    if "expect" in c and isinstance(load_json(c["expect"]).get("profile"), str):  # the profile, read from the hand-written expected file
+        if "; profile %s" % load_json(c["expect"])["profile"] not in block:
+            problems.append("the profile of the report is not in the block")
+    if os.path.abspath(HERE) in block:
+        problems.append("the block names an absolute path")
+    return problems
+
+
+def planted_failure_problems(cases, cid, plant):
+    """Plant one wrong number in case `cid`'s hand-written expectation (`plant` edits a copy), run the oracle's own comparison, and check what
+    the failure retains. With no failure there is nothing to retain, and that is a problem too: the check must be able to fail."""
+    c = next(x for x in cases["cases"] if x["id"] == cid)
+    expected = json.loads(json.dumps(load_json(c["expect"])))
+    plant(expected)
+    diff = subset_diff("$", expected, oracle_report(c["args"]))
+    if diff is None:
+        return ["%s: the expected file matched, so there is no failure to retain" % cid]
+    first = "%s: %s" % (cid, diff)
+    return retention_problems(failure_block(cases, [first]), c, first)
+
+
+def selfcheck_failure_retention(problems):
+    cases = load_json("cases.json")
+
+    def wrong_number(report):
+        report["denominators"]["coverage_ppm"] += 1  # E02-RECIPE-SERIES: 1000000 becomes 1000001
+
+    def no_plant(report):
+        pass
+
+    for what, found, expect_problem in (
+            ("a planted wrong number in an expected file", planted_failure_problems(cases, "E02-RECIPE-SERIES", wrong_number), False),
+            ("the same case with the plant removed", planted_failure_problems(cases, "E02-RECIPE-SERIES", no_plant), True)):
+        if bool(found) != expect_problem:
+            problems.append("self-check: %s %s" % (what, "was accepted" if expect_problem else "did not retain what it must: %r" % (found,)))
+    # a block with one thing missing or wrong must be reported
+    c = next(x for x in cases["cases"] if x["id"] == "E02-RECIPE-SERIES")
+    first = "E02-RECIPE-SERIES: $.denominators.coverage_ppm: expected 1000001, oracle has 1000000"
+    block = failure_block(cases, [first])
+    digest = digest_of("synthetic/recipe_series.cap")
+    for what, bad in (("a block without the analyzer's replay command", block.replace("replay (the analyzer)", "replay (x)")),
+                      ("a block without the oracle's replay command", block.replace("replay (this oracle's report)", "replay (x)")),
+                      ("a block with a wrong capture digest", block.replace(digest, "0" * 64)),
+                      ("a block with a wrong expected digest", block.replace(digest_of("expected/recipe_series.json"), "0" * 64)),
+                      ("a block without the crate version", block.replace("franken-baseline %s" % crate_version(), "franken-baseline ?")),
+                      ("a block without the first failure", block.replace(first, "")),
+                      ("a block without the report schema", block.replace("report schema ", "schema ")),
+                      ("a block without the profile", block.replace("; profile recipe-example-v1", "")),
+                      ("a block with another profile", block.replace("; profile recipe-example-v1", "; profile other-v1")),
+                      ("a block that names an absolute path", block.replace("artifact tests/e02/cases.json", "artifact " + os.path.join(os.path.abspath(HERE), "cases.json")))):
+        if not retention_problems(bad, c, first):
+            problems.append("self-check: %s was accepted" % what)
+    if retention_problems(block, c, first):
+        problems.append("self-check: a complete block was flagged: %r" % (retention_problems(block, c, first),))
+    # the profile, written out by hand; and a refusal case has no observed report, so its planted profile (an address) is never in the block
+    if "report schema ffw.baseline.series-report.v1; capture format ffw.baseline.capture.v1; profile recipe-example-v1" not in block:
+        problems.append("self-check: the block for E02-RECIPE-SERIES lacks its schema, capture format and profile line: %r" % (block,))
+    refusal = failure_block(cases, ["E02-R-PROFILE-IP: first failure"])
+    if "192.0.2.17" in refusal or "profile" in refusal.split("capture format")[-1] or "case E02-R-PROFILE-IP" not in refusal:
+        problems.append("self-check: the block for a refusal case echoes a planted profile or does not name the case: %r" % (refusal,))
+    # the replay commands, written out by hand: the check must not move with the function that builds them
+    if replay_commands(c) != [("the analyzer", "(cd tests/e02 && ffw-baseline series synthetic/recipe_series.cap)"),
+                              ("this oracle's report", "python3 -B -I tests/e02/oracle.py --print synthetic/recipe_series.cap")]:
+        problems.append("self-check: the replay commands for E02-RECIPE-SERIES are not the exact commands: %r" % (replay_commands(c),))
+    nob = next(x for x in cases["cases"] if x["id"] == "E02-C-NOBASELINE")
+    if replay_commands(nob) != [("the analyzer", "(cd tests/e02 && ffw-baseline compare synthetic/clean.cap)")]:
+        problems.append("self-check: the replay command for E02-C-NOBASELINE is not the exact command: %r" % (replay_commands(nob),))
+    # the doc may name only invariants that exist
+    if doc_invariant_problems("see INV-LOG-STRUCTURED and INV-LOG-* and INV-NO-SUCH-THING.", cases) != [
+            "docs/contracts/e02.md names INV-NO-SUCH-THING, which is not an invariant in cases.json"]:
+        problems.append("self-check: the doc's invariant references are not checked")
+    # printing: a failure prints its FAIL line and then the block; a run with no failure prints neither
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        print_failures(cases, [first])
+    printed = buf.getvalue()
+    if not printed.startswith("FAIL: " + first + "\n") or retention_problems(printed, c, first):
+        problems.append("self-check: a failure did not print its FAIL line and the retained block: %r" % (printed[:120],))
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        print_failures(cases, [])
+    if buf.getvalue():
+        problems.append("self-check: a run with no failure printed a retained block")
+    # the replay command reads a capture's kind from its header, and the crate version is checked against a second reading
+    if (capture_kind("synthetic/recipe_memory.txt"), capture_kind("synthetic/clean.cap")) != ("memory", "series"):
+        problems.append("self-check: a capture's kind is not read from its header")
+    with open(os.path.join(HERE, "..", "..", "Cargo.toml"), encoding="utf-8") as fh:
+        second = re.search(r'^version = "([^"]+)"', fh.read(), re.M)
+    if not second or crate_version() != second.group(1):
+        problems.append("self-check: the crate version is not the workspace version")
+    unknown_test = json.loads(json.dumps(cases))
+    row = next(i for i in unknown_test["invariants"] if i["id"] == "INV-LOG-FAILURE-RETENTION")
+    row["test_functions"].append("rust:missing_retention_test")
+    if not any("names unknown test function rust:missing_retention_test" in p for p in check_inventory(unknown_test)):
+        problems.append("self-check: a nonexistent retention test was accepted by the invariant map")
+    # File-associated and unanchored failures must retain their actual case, not just global metadata.
+    for first in ("synthetic/recipe_series.cap is referenced but missing", "self-check: E02-RECIPE-SERIES first failure"):
+        found = retention_problems(failure_block(cases, [first]), c, first)
+        if found:
+            problems.append("self-check: identifiable failure lost case context: %r" % found)
+    missing = json.loads(json.dumps(cases))
+    missing["cases"][0]["args"] = ["series", "synthetic/not-present.cap"]
+    block = failure_block(missing, ["synthetic/not-present.cap is referenced but missing"])
+    if "unavailable (FileNotFoundError)" not in block or "case " + missing["cases"][0]["id"] not in block:
+        problems.append("self-check: missing capture did not retain unavailable evidence and its case")
+    for first, artifact in (("redaction vector disagreement", "tests/e02/redaction_vectors.json"),
+                            ("sh sampler: TIMED OUT", "synthetic/recipe_series.cap"),
+                            ("synthetic/orphan.cap is not used by any case", "synthetic/orphan.cap")):
+        block = failure_block(cases, [first])
+        if artifact not in block or "global/orphan diagnostic" not in block:
+            problems.append("self-check: global/orphan failure lost applicable artifact context")
+
+
+# ------------------------------------------------------------------------------------------------
+# the end-to-end script: scripts/e2e/e02 is run, copied into a throwaway tree whose oracle and `rch` are stubs, so that its tiers, its exit
+# codes and its caps are checked on the real script text without running anything real and without recursion. A hung stand-in oracle proves
+# the local cap: the script must return a failure that says TIMED OUT, and the hung child must be gone. For the Rust half the cap is RCH's own
+# deadline: the stand-in rch shows that the script sets it (RCH_TEST_TIMEOUT_SEC) and never signals `rch exec`. Nothing here proves that rch's
+# deadline fires or that a remote job shuts down: the stand-in is only what this check can see of rch, and only a central run exercises the real one.
+
+SCRIPT = os.path.join(HERE, "..", "..", "scripts", "e2e", "e02")
+STUB_ORACLE = chr(10).join([
+    "import os, sys, time, subprocess",
+    "with open(os.environ['E02_STUB_LOG'], 'a') as fh:",
+    "    print('oracle', *sys.argv[1:], file=fh)",
+    "mode = os.environ.get('E02_STUB_ORACLE', 'ok')",
+    "if mode == 'hang-grandchild':",
+    "    child = subprocess.Popen([sys.executable, '-c', 'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(20)'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)",
+    "    with open(os.environ['E02_STUB_CHILD'], 'w') as fh: fh.write(str(child.pid))",
+    "    mode = 'hang'",
+    "if mode == 'hang':",
+    "    with open(os.environ['E02_STUB_PID'], 'w') as fh:",
+    "        fh.write(str(os.getpid()))",
+    "    time.sleep(20)",
+    "print('oracle: stub', mode)",
+    "sys.exit(1 if mode == 'fail' else 0)",
+]) + chr(10)
+STUB_RCH = chr(10).join([
+    "#!/bin/sh",
+    'echo rch "$RCH_REQUIRE_REMOTE" "$RCH_TEST_TIMEOUT_SEC" "$@" >> "$E02_STUB_LOG"',
+    'trap \'echo signalled >> "$E02_STUB_SIGNALS"; exit 143\' TERM INT HUP',
+    'case "${E02_STUB_RCH:-ok}" in',
+    '  deadline) echo "RCH-E303: the test deadline passed (stand-in)" >&2; exit 1 ;;',
+    "  fail) exit 1 ;;",
+    "  slow) sleep 3 & wait $! ;;",
+    "esac",
+    "exit 0",
+]) + chr(10)
+
+WATCHDOG_CAP = str(86400 + os.getpid())  # a cap no other process uses (a day and this check's pid): the scenario below looks for a sleep of exactly this length left behind by the script's own watchdog
+
+
+def call_line(name, extra):
+    """The exact command each half must run, as its stand-in logs it: the oracle in --check mode, and rch with RCH_REQUIRE_REMOTE=1 and the cap as
+    RCH_TEST_TIMEOUT_SEC (1800 unless the scenario sets E02_RUST_TIMEOUT) running the cargo test line the contract names."""
+    if name == "oracle":
+        return "oracle --check"
+    return "rch 1 %s exec -- cargo test -p franken-baseline" % extra.get("E02_RUST_TIMEOUT", "1800")
+
+
+# (name, arguments, extra environment, wanted exit, wanted stub calls, text the output must contain, text it must not contain)
+SCRIPT_SCENARIOS = (
+    ("soak", ["--tier", "soak"], {}, 3, [], ("NOT RUN", "This is not a pass"), ("PASS",)),
+    ("smoke", ["--tier", "smoke"], {}, 0, ["oracle"], ("smoke: PASS", "Rust analyzer was NOT run", "not a qualification"), ("both halves",)),
+    ("smoke-oracle-fails", ["--tier", "smoke"], {"E02_STUB_ORACLE": "fail"}, 1, ["oracle"], ("E02: FAIL",), ("PASS",)),
+    ("full", ["--tier", "full"], {}, 0, ["oracle", "rch"], ("E02 full: PASS (both halves",), ()),
+    ("full-no-rch", ["--tier", "full"], {"E02_TEST_NO_RCH": "1"}, 3, ["oracle"], ("BLOCKED",), ("PASS",)),
+    ("caller-cannot-replace-rch-with-true", ["--rust-only"], {"E02_RCH": "true", "E02_STUB_RCH": "fail"}, 1, ["rch"], ("E02: FAIL",), ("PASS",)),
+    ("full-oracle-fails", ["--tier", "full"], {"E02_STUB_ORACLE": "fail"}, 1, ["oracle", "rch"], ("E02: FAIL",), ("PASS",)),
+    ("full-rch-fails", ["--tier", "full"], {"E02_STUB_RCH": "fail"}, 1, ["oracle", "rch"], ("E02: FAIL", "never signals rch exec"), ("PASS",)),
+    ("no-tier", [], {}, 0, ["oracle", "rch"], ("E02: PASS (both halves",), ("full:",)),
+    ("fixtures-only", ["--fixtures-only"], {}, 0, ["oracle"], ("E02 local half: PASS",), ()),
+    ("rust-only", ["--rust-only"], {}, 0, ["rch"], ("E02 Rust half: PASS",), ()),
+    ("usage-bad-tier", ["--tier", "bogus"], {}, 2, [], ("usage:",), ()),
+    ("usage-no-tier", ["--tier"], {}, 2, [], ("usage:",), ()),
+    ("usage-tier-and-half", ["--tier", "smoke", "--rust-only"], {}, 2, [], ("usage:",), ()),
+    ("usage-unknown", ["--bogus"], {}, 2, [], ("usage:",), ()),
+    ("usage-extra-argument", ["--fixtures-only", "x"], {}, 2, [], ("usage:",), ()),
+    ("a-cap-that-is-not-seconds-is-refused", ["--tier", "smoke"], {"E02_FIXTURES_TIMEOUT": "abc"}, 2, [], ("E02_FIXTURES_TIMEOUT must be a whole number",), ("PASS",)),
+    ("a-zero-cap-is-refused", ["--rust-only"], {"E02_RUST_TIMEOUT": "0"}, 2, [], ("E02_RUST_TIMEOUT must be a whole number",), ("PASS",)),
+    ("hung-oracle-times-out", ["--tier", "smoke"], {"E02_STUB_ORACLE": "hang", "E02_FIXTURES_TIMEOUT": "1"}, 1, ["oracle"],
+     ("TIMED OUT", "never a skip"), ("PASS",)),
+    ("hung-descendant-times-out", ["--tier", "smoke"], {"E02_STUB_ORACLE": "hang-grandchild", "E02_FIXTURES_TIMEOUT": "1"}, 1, ["oracle"],
+     ("TIMED OUT", "never a skip"), ("PASS",)),
+    ("interrupt-oracle", ["--tier", "full"], {"E02_STUB_ORACLE": "hang"}, 130, ["oracle"], ("interrupted",), ("PASS",)),
+    ("a-cap-does-not-hurt-a-fast-oracle", ["--tier", "smoke"], {"E02_FIXTURES_TIMEOUT": "1"}, 0, ["oracle"], ("smoke: PASS",), ("TIMED OUT",)),
+    ("the-rust-cap-is-rchs-own-deadline", ["--rust-only"], {"E02_RUST_TIMEOUT": "77"}, 0, ["rch"], ("Rust half: PASS",), ("TIMED OUT",)),
+    ("the-script-never-signals-rch", ["--rust-only"], {"E02_STUB_RCH": "slow", "E02_RUST_TIMEOUT": "1"}, 0, ["rch"], ("Rust half: PASS",), ("TIMED OUT",)),
+    ("a-deadline-rch-reports-is-a-failure", ["--rust-only"], {"E02_STUB_RCH": "deadline"}, 1, ["rch"],
+     ("RCH-E303", "never a skip", "rch jobs recover"), ("PASS",)),
+    ("no-watchdog-is-left-after-a-fast-oracle", ["--tier", "smoke"], {"E02_FIXTURES_TIMEOUT": WATCHDOG_CAP}, 0, ["oracle"], ("smoke: PASS",), ("TIMED OUT",)),
+)
+
+
+def script_problems(script_text, names=None):
+    """Run the scenarios (all, or those in `names`) against `script_text` and report every way the script differs from what they expect."""
+    problems = []
+    with tempfile.TemporaryDirectory() as root:
+        for sub in (("scripts", "e2e"), ("tests", "e02"), ("stub",), ("no-rch",)):
+            os.makedirs(os.path.join(root, *sub))
+        script = os.path.join(root, "scripts", "e2e", "e02")
+        rch = os.path.join(root, "stub", "rch")
+        for path, text in ((script, script_text), (os.path.join(root, "tests", "e02", "oracle.py"), STUB_ORACLE), (rch, STUB_RCH)):
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+        os.chmod(script, 0o755)
+        os.chmod(rch, 0o755)
+        for name, executable in (("python3", sys.executable), ("dirname", shutil.which("dirname"))):
+            os.symlink(executable, os.path.join(root, "no-rch", name))
+        log = os.path.join(root, "calls.log")
+        for n, (name, args, extra, want_rc, want_calls, contains, absent) in enumerate(SCRIPT_SCENARIOS):
+            if names is not None and name not in names:
+                continue
+            pidfile = os.path.join(root, "pid-%d" % n)
+            childfile = os.path.join(root, "child-%d" % n)
+            with open(log, "w", encoding="utf-8"):
+                pass
+            signals = os.path.join(root, "signals-%d" % n)
+            # the caller's own RCH_* and E02_* settings must not reach the script: it has to set what it needs itself
+            env = {k: v for k, v in os.environ.items() if not k.startswith(("RCH_", "E02_"))}
+            env.update(E02_STUB_LOG=log, E02_STUB_PID=pidfile, E02_STUB_CHILD=childfile, E02_STUB_SIGNALS=signals,
+                       PATH=os.path.join(root, "stub") + os.pathsep + env.get("PATH", ""))
+            env.update(extra)
+            if extra.get("E02_TEST_NO_RCH"):
+                env["PATH"] = os.path.join(root, "no-rch")
+            started = time.monotonic()
+            rc, out = None, ""
+            try:
+                if name == "interrupt-oracle":
+                    child = subprocess.Popen([shutil.which("bash"), script] + args, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+                    deadline = time.monotonic() + 3
+                    while not os.path.exists(pidfile) and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    os.killpg(child.pid, signal.SIGINT)
+                    stdout, stderr = child.communicate(timeout=6)
+                    done = subprocess.CompletedProcess(child.args, child.returncode, stdout, stderr)
+                else:
+                    done = subprocess.run([shutil.which("bash"), script] + args, env=env, capture_output=True, text=True, timeout=12)
+                rc, out = done.returncode, done.stdout + done.stderr
+            except subprocess.TimeoutExpired:
+                problems.append("%s: the script did not return within 12 s" % name)
+            elapsed = time.monotonic() - started
+            with open(log, encoding="utf-8") as fh:
+                lines = fh.read().splitlines()
+            calls = [line.split()[0] for line in lines]
+            if rc is not None and (rc != want_rc or calls != want_calls):
+                problems.append("%s: exit %r with stub calls %r, wanted %r with %r" % (name, rc, calls, want_rc, want_calls))
+            elif rc is not None and lines != [call_line(w, extra) for w in want_calls]:
+                problems.append("%s: the stand-ins were run as %r, wanted %r" % (name, lines, [call_line(w, extra) for w in want_calls]))
+            if os.path.exists(signals):
+                problems.append("%s: the script signalled rch exec" % name)
+            for text in contains:
+                if rc is not None and text not in out:
+                    problems.append("%s: the output lacks %r" % (name, text))
+            for text in absent:
+                if text in out:
+                    problems.append("%s: the output has %r" % (name, text))
+            if name.startswith("no-watchdog"):
+                scan = run_recipe_command(["ps", "-axo", "command"], timeout=30)
+                if scan.returncode:
+                    problems.append("%s: process scan failed: %s" % (name, scan.stderr[:200]))
+                listing = scan.stdout
+                if any(row.strip() in ("sleep " + WATCHDOG_CAP, "/bin/sleep " + WATCHDOG_CAP) for row in listing.splitlines()):
+                    problems.append("%s: the script left its watchdog (sleep %s) running" % (name, WATCHDOG_CAP))
+                    run_recipe_command(["pkill", "-f", "^(/bin/)?sleep " + WATCHDOG_CAP + "$"], timeout=30)  # the stray sleep is this check's own
+            if name == "hung-descendant-times-out":
+                if not os.path.exists(childfile):
+                    problems.append("%s: descendant did not record its pid" % name)
+                else:
+                    with open(childfile, encoding="utf-8") as fh:
+                        descendant = int(fh.read())
+                    state = run_recipe_command(["ps", "-p", str(descendant), "-o", "stat="], timeout=2).stdout.strip()
+                    if state and not state.startswith("Z"):
+                        problems.append("%s: owned descendant was left running" % name)
+                        os.kill(descendant, signal.SIGKILL)  # only this scenario's recorded owned child
+            if name.startswith(("hung", "interrupt")):
+                if elapsed > 6:  # a one-second cap, then TERM: well under the 12 s limit above, which only catches a script that never returns
+                    problems.append("%s: the cap did not fire promptly (%.1f s)" % (name, elapsed))
+                try:
+                    with open(pidfile, encoding="utf-8") as fh:
+                        pid = int(fh.read())
+                except (OSError, ValueError):
+                    problems.append("%s: the stub never recorded its pid" % name)
+                    continue
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    continue
+                problems.append("%s: the hung child %d was left running" % (name, pid))
+                os.kill(pid, 9)  # it is this check's own stub
+    return problems
+
+
+def selfcheck_script():
+    """The real script passes every scenario; a liveness probe that sees live and gone processes; and planted faults in the script, each
+    reported by the scenario made for it (the unmutated script is their control)."""
+    problems = []
+    with open(SCRIPT, encoding="utf-8") as fh:
+        real = fh.read()
+    problems.extend("scripts/e2e/e02: " + p for p in script_problems(real))
+    probe = subprocess.Popen(["sleep", "20"])
+    try:
+        os.kill(probe.pid, 0)
+    except ProcessLookupError:
+        problems.append("self-check: the liveness probe cannot see a live process")
+    probe.terminate()
+    probe.wait()
+    try:
+        os.kill(probe.pid, 0)
+        problems.append("self-check: the liveness probe still sees a process that is gone")
+    except ProcessLookupError:
+        pass
+    nl = chr(10)
+    for what, old, new, names in (
+            ("a soak tier that exits as a pass", 'This is not a pass." >&2' + nl + "  exit 3", 'This is not a pass." >&2' + nl + "  exit 0", ("soak",)),
+            ("a timeout counted as a skip", 'A timeout is a failure, never a skip." >&2' + nl + "    return 1",
+             'A timeout is a failure, never a skip." >&2' + nl + "    return 0", ("hung-oracle-times-out",)),
+            ("a smoke tier that also runs the Rust half", "smoke) mode=fixtures ;;", "smoke) mode=all ;;", ("smoke",)),
+            ("a local deadline that fires late", '    code = proc.wait(timeout=int(sys.argv[1]))',
+             '    code = proc.wait(timeout=int(sys.argv[1]) + 8)', ("hung-oracle-times-out",)),
+            ("cleanup that kills only the parent PID", '    try: os.killpg(proc.pid, signal.SIGKILL)',
+             '    try: os.kill(proc.pid, signal.SIGKILL)', ("hung-descendant-times-out",)),
+            ("a Rust half capped by killing the rch wrapper", 'if ! (cd "$ROOT" && env RCH_REQUIRE_REMOTE=1',
+             'if ! (cd "$ROOT" && run_half Rust "$RUST_TIMEOUT" env RCH_REQUIRE_REMOTE=1', ("the-script-never-signals-rch",))):
+        if real.count(old) != 1:
+            problems.append("self-check: %s: its anchor occurs %d times in the script" % (what, real.count(old)))
+        elif not script_problems(real.replace(old, new), names=names):
+            problems.append("self-check: %s was accepted" % what)
+    return problems
+
+
+# ------------------------------------------------------------------------------------------------
+# the oracle's own FAIL print loop in check(): `--check` is run on a throwaway copy of this tree, once with one hand-written number planted wrong and
+# once as it is. The inner run skips the checks that would run it again (E02_ORACLE_INNER).
+
+def copy_tree(root):
+    for rel in (os.path.join("tests", "e02"), os.path.join("docs", "contracts", "e02.md"), "Cargo.toml", os.path.join("scripts", "e2e", "e02"),
+                os.path.join("crates", "franken-baseline", "tests", "e02_cases.rs")):
+        src, dst = os.path.join(HERE, "..", "..", rel), os.path.join(root, rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        if os.path.isdir(src):
+            shutil.copytree(src, dst, ignore=shutil.ignore_patterns("__pycache__"))
+        else:
+            shutil.copy2(src, dst)
+
+
+def inner_check(root):
+    env = dict(os.environ, E02_ORACLE_INNER="1")
+    done = run_recipe_command([sys.executable, "-B", "-I", os.path.join(root, "tests", "e02", "oracle.py"), "--check"], env=env, timeout=120)
+    return done.returncode, done.stdout + done.stderr
+
+
+def selfcheck_check_output():
+    problems = []
+    first = "E02-RECIPE-SERIES: $.denominators.coverage_ppm: expected 1000001, oracle has 1000000"
+    with tempfile.TemporaryDirectory() as planted, tempfile.TemporaryDirectory() as clean:
+        for root in (planted, clean):
+            copy_tree(root)
+        expected = os.path.join(planted, "tests", "e02", "expected", "recipe_series.json")
+        with open(expected, encoding="utf-8") as fh:
+            text = fh.read()
+        if text.count('"coverage_ppm": 1000000') != 1:
+            return ["self-check: the planted number is not in expected/recipe_series.json exactly once"]
+        with open(expected, "w", encoding="utf-8") as fh:
+            fh.write(text.replace('"coverage_ppm": 1000000', '"coverage_ppm": 1000001'))
+        rc, out = inner_check(planted)
+        digests = {}
+        for rel, base in (("synthetic/recipe_series.cap", planted), ("expected/recipe_series.json", planted)):
+            with open(os.path.join(base, "tests", "e02", rel), "rb") as fh:
+                digests[rel] = hashlib.sha256(fh.read()).hexdigest()
+        wants = ["FAIL: " + first, "RETAINED FOR REPLAY. First failure: " + first,
+                 "replay (the analyzer): (cd tests/e02 && ffw-baseline series synthetic/recipe_series.cap)",
+                 "replay (this oracle's report): python3 -B -I tests/e02/oracle.py --print synthetic/recipe_series.cap",
+                 "synthetic/recipe_series.cap sha256 " + digests["synthetic/recipe_series.cap"],
+                 "expected/recipe_series.json sha256 " + digests["expected/recipe_series.json"],
+                 "report schema ffw.baseline.series-report.v1; capture format ffw.baseline.capture.v1; profile recipe-example-v1",
+                 "franken-baseline " + crate_version()]
+        if rc != 1:
+            problems.append("self-check: --check on a tree with a planted wrong number exited %d, not 1" % rc)
+        problems.extend("self-check: the failing --check output lacks %r" % w for w in wants if w not in out)
+        if "FAIL: " + first in out and "RETAINED FOR REPLAY" in out and out.index("RETAINED FOR REPLAY") < out.index("FAIL: " + first):
+            problems.append("self-check: the retained block is printed before the FAIL line")
+        if planted in out or clean in out:
+            problems.append("self-check: the failing --check output names a temporary path")
+        rc, out = inner_check(clean)
+        if rc != 0 or "FAIL" in out or "RETAINED" in out:
+            problems.append("self-check: --check on an unplanted copy exited %d or printed a failure: %r" % (rc, out[-300:]))
+    return problems
+
+
+# ------------------------------------------------------------------------------------------------
 # comparison and inventory
 
 def subset_diff(path, expected, actual):
@@ -1140,14 +1695,24 @@ def check_inventory(cases):
                 problems.append("%s/%s is not used by any case" % (sub, name))
     covered = set()
     for inv in cases["invariants"]:
-        has_cases, has_why = "cases" in inv, "inapplicable" in inv
-        if has_cases == has_why:
-            problems.append("%s needs exactly one of cases/inapplicable" % inv["id"])
+        has_cases, has_why, has_tests = "cases" in inv, "inapplicable" in inv, "test_functions" in inv
+        if sum((has_cases, has_why, has_tests)) != 1:
+            problems.append("%s needs exactly one of cases/test_functions/inapplicable" % inv["id"])
         elif has_cases:
             for cid in inv["cases"]:
                 if cid not in ids:
                     problems.append("%s names unknown case %s" % (inv["id"], cid))
                 covered.add(cid)
+        elif has_tests:
+            if not inv["test_functions"]:
+                problems.append("%s has no test functions" % inv["id"])
+            with open(os.path.join(HERE, "..", "..", "crates", "franken-baseline", "tests", "e02_cases.rs"), encoding="utf-8") as fh:
+                rust = fh.read()
+            for ref in inv["test_functions"]:
+                kind, _, name = ref.partition(":")
+                found = (kind == "python" and callable(globals().get(name))) or (kind == "rust" and re.search(r"^fn " + re.escape(name) + r"\(", rust, re.M))
+                if not found:
+                    problems.append("%s names unknown test function %s" % (inv["id"], ref))
         elif len(inv["inapplicable"]) <= 20:
             problems.append("%s: explain the inapplicability" % inv["id"])
     for cid in ids:
@@ -1159,15 +1724,24 @@ def check_inventory(cases):
 def check():
     cases = load_json("cases.json")
     problems = check_inventory(cases)
+    if any("referenced but missing" in p for p in problems):
+        print_failures(cases, problems)
+        print("oracle: INCOMPLETE; required fixture unavailable; analyzer comparisons NOT RUN")
+        return 1
     checked = 0
     for c in cases["cases"]:
         if "expect" not in c:
             continue  # malformed-input cases: the Rust parser's error text is what they pin
-        report = oracle_report(c["args"])
+        try:
+            report = oracle_report(c["args"])
+            expected = load_json(c["expect"])
+        except (OSError, ValueError, OracleError) as exc:
+            problems.append("%s: cannot derive or read fixture (%s)" % (c["id"], type(exc).__name__))
+            continue
         if report is None:
             continue  # compare cases: the Rust CLI's own refusal logic
         checked += 1
-        diff = subset_diff("$", load_json(c["expect"]), report)
+        diff = subset_diff("$", expected, report)
         if diff:
             problems.append("%s: %s" % (c["id"], diff))
     compared_redaction = check_redaction(cases, problems)
@@ -1176,6 +1750,12 @@ def check():
     selfcheck_redaction(problems)
     selfcheck_recipe(problems)
     selfcheck_summary(problems)
+    selfcheck_failure_retention(problems)
+    if not os.environ.get("E02_ORACLE_INNER"):
+        problems.extend(selfcheck_script())
+        problems.extend(selfcheck_check_output())
+    with open(DOC, encoding="utf-8") as fh:
+        problems.extend(doc_invariant_problems(fh.read(), cases))
     # Planted negatives for this checker: a mutated expectation must be rejected.
     probe = {"a": {"b": 1}, "c": [1, {"d": "x"}], "e": None}
     for bad in ({"a": {"b": 2}}, {"a": {"z": 1}}, {"c": [1]}, {"c": [1, {"d": "y"}]}, {"e": 0}):
@@ -1183,8 +1763,7 @@ def check():
             problems.append("subset matcher accepted a planted difference: %r" % (bad,))
     if checked == 0:
         problems.append("no series/memory case was checked: a vacuous pass")
-    for p in problems:
-        print("FAIL:", p)
+    print_failures(cases, problems)
     print("oracle: %d series/memory cases compared with their expected files; %d redaction/diagnostic checks; "
           "%d summary lines; recipe scripts run under %s; %d problem(s)" % (checked, compared_redaction, compared_summaries, ", ".join(shells) or "no shell", len(problems)))
     return 0 if not problems else 1
@@ -1194,7 +1773,7 @@ def main(argv):
     if argv[:1] == ["--check"]:
         return check()
     if len(argv) == 2 and argv[0] == "--print":
-        kind = "memory" if os.path.basename(argv[1]).startswith("mem") else "series"
+        kind = capture_kind(argv[1])
         print(json.dumps(oracle_report([kind, argv[1]]), indent=1, sort_keys=False))
         return 0
     print(__doc__)

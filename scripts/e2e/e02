@@ -4,6 +4,9 @@
 #   scripts/e2e/e02                  both halves
 #   scripts/e2e/e02 --fixtures-only  the local half only
 #   scripts/e2e/e02 --rust-only      the Rust half only (central build; see below)
+#   scripts/e2e/e02 --tier smoke     fixtures only: the Rust analyzer is NOT run; a smoke pass is never a qualification
+#   scripts/e2e/e02 --tier full      both halves; exit 0 only if both pass
+#   scripts/e2e/e02 --tier soak      NOT RUN, with the reason; exits 3, never as a pass
 #
 # Two halves, kept honest about what each proves:
 #
@@ -17,39 +20,151 @@
 #     and no fallback:
 #         RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-baseline
 #
-# Exit 0 only if every selected half passed. 1: a check failed. 2: usage. 3: the Rust half could not be
-# run here (no `rch`): that is "blocked", reported as such, and never counted as a pass. The captures
-# are synthetic: a pass is a statement about the analyzer, not about any device.
+# Each half has a wall-clock cap, and a half that exceeds it is a FAILURE (exit 1), never a skip. Nothing is rerun or retried.
+#   - The local half (E02_FIXTURES_TIMEOUT, default 300 s): this script kills the oracle (TERM, then KILL two seconds later). It is a
+#     local process and owns nothing remote.
+#   - The Rust half (E02_RUST_TIMEOUT, default 1800 s): RCH's own execution deadline, set for this one invocation as
+#     RCH_TEST_TIMEOUT_SEC. This script NEVER signals `rch exec`: killing only the local wrapper could leave the remote compiler,
+#     reservations and custody active. When rch's deadline fires, rch reports it and settles its own job, and the half fails. If
+#     completion is unconfirmed, read rch's output, then `rch jobs` and `rch jobs recover <wrapper-id>` (never replay).
+# A cap must be a whole number of seconds above zero (anything else exits 2 before any half runs).
+#
+# Exit 0 only if every selected half passed. 1: a check failed or timed out. 2: usage. 3: the Rust half could not be
+# run here (no `rch`), or the tier is not run (soak): that is "blocked", reported as such, and never counted as a pass.
+# The captures are synthetic: a pass is a statement about the analyzer, not about any device.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+RCH=rch
+FIXTURES_TIMEOUT="${E02_FIXTURES_TIMEOUT:-300}"
+RUST_TIMEOUT="${E02_RUST_TIMEOUT:-1800}"
+
+usage() {
+  echo "usage: scripts/e2e/e02 [--fixtures-only | --rust-only | --tier smoke|full|soak]" >&2
+  exit 2
+}
+
+# A cap that is not a whole number of seconds would end the watchdog at once and leave its half unbounded, so it is refused here.
+need_seconds() {
+  case "$2" in
+    "" | 0* | *[!0-9]*)
+      echo "E02: $1 must be a whole number of seconds above zero, not '$2'" >&2
+      exit 2
+      ;;
+  esac
+}
+need_seconds E02_FIXTURES_TIMEOUT "$FIXTURES_TIMEOUT"
+need_seconds E02_RUST_TIMEOUT "$RUST_TIMEOUT"
+
+# Bound only the LOCAL oracle in its own process group. There is no watchdog or temporary marker.
+# SIGINT/SIGTERM and deadlines stop and reap only that owned group. Never wrap rch exec in this function.
+bounded() {
+  local limit="$1"
+  shift
+  python3 - "$limit" "$@" <<'PY'
+import os, signal, subprocess, sys
+
+class Interrupted(BaseException):
+    def __init__(self, signum): self.signum = signum
+
+def interrupt(signum, _frame):
+    raise Interrupted(signum)
+
+for sig in (signal.SIGINT, signal.SIGTERM): signal.signal(sig, interrupt)
+proc = None
+
+def stop_owned_group():
+    if proc is None: return
+    try: os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError: pass
+    try: proc.wait(timeout=2)
+    except subprocess.TimeoutExpired: pass
+    try: os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError: pass
+    proc.wait()
+
+code = 1
+try:
+    # Do not let a signal interrupt the spawn between creating the child and recording its owner PID.
+    old = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
+    try: proc = subprocess.Popen(sys.argv[2:], start_new_session=True,
+                                 preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_SETMASK, old))
+    finally: signal.pthread_sigmask(signal.SIG_SETMASK, old)
+    code = proc.wait(timeout=int(sys.argv[1]))
+    if code < 0: code = 128 - code
+except subprocess.TimeoutExpired:
+    code = 124
+except Interrupted as exc:
+    code = 128 + exc.signum
+    print("E02 local oracle interrupted by signal %d; stopping its owned process group" % exc.signum, file=sys.stderr)
+except OSError as exc:
+    print("E02 local oracle could not start (%s)" % type(exc).__name__, file=sys.stderr)
+finally:
+    # Cleanup cannot itself be interrupted between TERM, KILL and wait.
+    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
+    stop_owned_group()
+sys.exit(code)
+PY
+}
+
+# run_half NAME SECONDS CMD...: one local half under its cap. A timeout is returned as a failure.
+run_half() {
+  local name="$1" limit="$2" rc=0
+  shift 2
+  bounded "$limit" "$@" || rc=$?
+  if [ "$rc" -eq 124 ]; then
+    echo "E02: the $name half TIMED OUT after ${limit}s and was killed. A timeout is a failure, never a skip." >&2
+    return 1
+  fi
+  if [ "$rc" -ge 128 ]; then
+    exit "$rc"
+  fi
+  return "$rc"
+}
 
 mode=all
+tier=""
 case "${1:-}" in
   "") ;;
   --fixtures-only) mode=fixtures ;;
   --rust-only) mode=rust ;;
-  *)
-    echo "usage: scripts/e2e/e02 [--fixtures-only | --rust-only]" >&2
-    exit 2
+  --tier)
+    tier="${2:-}"
+    case "$tier" in
+      smoke) mode=fixtures ;;
+      full) mode=all ;;
+      soak) mode=soak ;;
+      *) usage ;;
+    esac
     ;;
+  *) usage ;;
 esac
-if [ "$#" -gt 1 ]; then
-  echo "usage: scripts/e2e/e02 [--fixtures-only | --rust-only]" >&2
-  exit 2
+if [ -z "$tier" ] && [ "$#" -gt 1 ]; then
+  usage
+fi
+if [ -n "$tier" ] && [ "$#" -ne 2 ]; then
+  usage
+fi
+
+if [ "$mode" = soak ]; then
+  echo "E02 soak: NOT RUN. The analyzer is a batch function over a finite file, so there is no long-running or randomized work to soak, and a 24-hour campaign is its own authorised receipt (docs/contracts/e02.md, \"Not proven\"). This is not a pass." >&2
+  exit 3
 fi
 
 failed=0
 blocked=0
 
 if [ "$mode" != rust ]; then
-  python3 -B -I "$ROOT/tests/e02/oracle.py" --check || failed=1
+  run_half local "$FIXTURES_TIMEOUT" python3 -B -I "$ROOT/tests/e02/oracle.py" --check || failed=1
 fi
 
 if [ "$mode" != fixtures ]; then
-  if command -v rch >/dev/null 2>&1; then
-    (cd "$ROOT" && RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-baseline) || failed=1
+  if command -v "$RCH" >/dev/null 2>&1; then
+    if ! (cd "$ROOT" && env RCH_REQUIRE_REMOTE=1 RCH_TEST_TIMEOUT_SEC="$RUST_TIMEOUT" "$RCH" exec -- cargo test -p franken-baseline); then
+      echo "E02: the Rust half failed. A timeout is a failure, never a skip: rch's own deadline is ${RUST_TIMEOUT}s (RCH_TEST_TIMEOUT_SEC), and this script never signals rch exec. If rch reports unconfirmed completion, use 'rch jobs' and 'rch jobs recover <wrapper-id>'; do not replay." >&2
+      failed=1
+    fi
   else
-    echo "BLOCKED: 'rch' not found. The Rust half builds only through RCH_REQUIRE_REMOTE=1 rch exec and was NOT run." >&2
+    echo "BLOCKED: '$RCH' not found. The Rust half builds only through RCH_REQUIRE_REMOTE=1 rch exec and was NOT run." >&2
     blocked=1
   fi
 fi
@@ -63,7 +178,19 @@ if [ "$blocked" -ne 0 ]; then
   exit 3
 fi
 case "$mode" in
-  fixtures) echo "E02 local half: PASS (independent oracle only; the Rust analyzer was NOT run)" ;;
+  fixtures)
+    if [ "$tier" = smoke ]; then
+      echo "E02 smoke: PASS (the independent oracle only; the Rust analyzer was NOT run; a smoke pass is not a qualification)"
+    else
+      echo "E02 local half: PASS (independent oracle only; the Rust analyzer was NOT run)"
+    fi
+    ;;
   rust) echo "E02 Rust half: PASS (synthetic captures; says nothing about any device)" ;;
-  *) echo "E02: PASS (both halves; synthetic captures, says nothing about any device)" ;;
+  *)
+    if [ "$tier" = full ]; then
+      echo "E02 full: PASS (both halves; synthetic captures, says nothing about any device)"
+    else
+      echo "E02: PASS (both halves; synthetic captures, says nothing about any device)"
+    fi
+    ;;
 esac
