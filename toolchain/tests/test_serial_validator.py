@@ -917,6 +917,7 @@ class CaptureTests(unittest.TestCase):
              contextlib.ExitStack() as stack:
             if build:
                 stack.enter_context(patch.object(VERIFIER.subprocess, "run", side_effect=fake_run))
+                stack.enter_context(patch.object(VERIFIER, "admit_before_build", return_value={"attempts": 1, "recommendation": "offload", "observation": "observed", "worker": "trj", "reason": None}))
             result = VERIFIER.main(argv if build else ["--skip-build", *argv])
         return result, json.loads((output / "e07-e03-verification-receipt.json").read_text())
 

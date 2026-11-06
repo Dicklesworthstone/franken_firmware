@@ -603,6 +603,54 @@ def run_speaker_controls(arch: str, cfg: dict[str, Any], bin_path: pathlib.Path,
 # Without `--speaker-platform` any FFW_PLATFORM* line is an unknown marker and fails the guest, as the FFW_SPEAKER_* lines do.
 
 PLATFORM_FEATURE = "speaker-platform"
+# With `--entropy-provider NAME` (it needs `--speaker-platform`) the platform step also selects the explicit legacy entropy provider: the
+# guests are built with one more cargo feature (one more argument in the child's argv, printed on the BEGIN line), and the ENTROPY line
+# must carry `provider=`. Only the admitted test environment has a guest step (`platform_expect.PROVIDERS`).
+PROVIDER_FEATURES = {"legacy_dev_random_test_environment": "speaker-platform-legacy-test-env"}
+PROVIDER_OF_ARGUMENT = {argument: name for name, argument in platform_expect.PROVIDERS.items()}
+PROVIDER_BOUNDARY = (
+    "explicit legacy /dev/random provider, selected by name in a harness guest whose two boot scripts pass a static text check for an RNG "
+    "device or a random.* kernel parameter (a text check only: it does not show that the pool was not credited some other way): a "
+    "started run observes the real adapter on that guest's kernel, a `not_seeded` refusal is the information of a pool that has not "
+    "credited and shows no positive; neither says anything about a device or a stock kernel"
+)
+BOOT_SCRIPT_NAMES = ("boot-mips.sh", "boot-ppc.sh")
+
+
+def entropy_injection_problems(scripts: list[pathlib.Path]) -> list[str]:
+    """A static text check of the boot scripts for a provider run, which must read the pool the guest's kernel filled by itself. It names
+    a script that mentions an RNG device (virtio-rng, an rng-random or rng-builtin backend, ...; any mention counts, a comment too,
+    which fails closed) or a `random.*=` kernel parameter (`random.trust_cpu=on`, ...). It does NOT show that the pool was not credited
+    some other way (a seed file, a source the text does not name); a pre-seed or an injected backend stays a forbidden substitute for a
+    credited pool (docs/contracts/p02.md) whether or not this check can see it. An unreadable script is a problem, not a pass."""
+    problems = []
+    for script in scripts:
+        try:
+            text = script.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            problems.append(f"{script.name}:unreadable")
+            continue
+        if re.search(r"rng", text, re.IGNORECASE):
+            problems.append(f"{script.name}:names_an_rng_device")
+        if re.search(r"\brandom\.\w+=", text):
+            problems.append(f"{script.name}:names_a_random_kernel_parameter")
+    return problems
+
+
+def guest_features(platform: dict[str, Any] | None) -> list[str]:
+    """The cargo features the speaker-smoke guests are built with: the smoke step, the platform step, and the provider's feature."""
+    features = [SPEAKER_FEATURE]
+    if platform is not None:
+        features.append(PLATFORM_FEATURE)
+        if platform.get("provider") is not None:
+            features.append(PROVIDER_FEATURES[platform["provider"]])
+    return features
+
+
+def platform_boundary(platform: dict[str, Any]) -> str:
+    return PLATFORM_BOUNDARY if platform.get("provider") is None else PLATFORM_BOUNDARY + "; " + PROVIDER_BOUNDARY
+
+
 PLATFORM_BOUNDARY = (
     "the device franken-speaker's startup, run once as a userspace process under a harness guest, reported what that guest's "
     "kernel answered to the platform layer's clock, entropy and wake probes; says nothing about Sonos silicon, a stock "
@@ -614,7 +662,7 @@ def judge_platform_step(raw_log: str, lines: list[str], positions: dict[str, int
                         platform: dict[str, Any], arch: str) -> dict[str, Any]:
     """The platform half of a transcript. Appends named errors to `errors`; returns the record for the receipt."""
     record: dict[str, Any] = {
-        "argv": [platform_expect.STEP_PATH, platform_expect.STEP_ARG],
+        "argv": [platform_expect.STEP_PATH, *platform_expect.step_argv(platform.get("provider"))],
         "grammar": {"source": platform["grammar"]["source"], "sha256": platform["grammar"]["sha256"]},
         "outcome": "not_run",
         "exit_line": None,
@@ -654,7 +702,7 @@ def judge_platform_step(raw_log: str, lines: list[str], positions: dict[str, int
         errors.append("platform_stdout_mismatch:bytes")
     if measured["stdout_fnv1a64"] != reported["stdout_fnv1a64"]:
         errors.append("platform_stdout_mismatch:fnv1a64")
-    judged = platform_expect.judge_output(region, arch, platform["grammar"])
+    judged = platform_expect.judge_output(region, arch, platform["grammar"], provider=platform.get("provider"))
     problems = list(judged["problems"])
     if not problems:
         problems.extend(platform_expect.judge_exit_status(judged, status))
@@ -670,6 +718,8 @@ def judge_platform_step(raw_log: str, lines: list[str], positions: dict[str, int
     })
     if "degraded_because" in judged and not problems:
         record["degraded_because"] = judged["degraded_because"]
+    if platform.get("provider") is not None:
+        record["provider"], record["claim"] = judged["provider"], judged["claim"]
     return record
 
 
@@ -679,7 +729,7 @@ def judge_platform_control(verification: dict[str, Any], plant: str) -> dict[str
     speaker's lines and nothing else), and the platform verdict is red."""
     checks = {
         "guest_failed": verification["status"] == "FAIL",
-        "only_the_planted_error": verification["validation_errors"] == platform_expect.PLANTS[plant]["expected"],
+        "only_the_planted_error": verification["validation_errors"] == platform_expect.plant_spec(plant)["expected"],
         "no_missing_marker": verification["missing_markers"] == [],
         "no_forbidden_marker": verification["forbidden_hits"] == [],
         "platform_verdict_red": verification.get("platform", {}).get("verdict") == "red",
@@ -692,7 +742,7 @@ def run_platform_controls(raw_log: str, arch: str, cfg: dict[str, Any], speaker:
     """Each plant is the guest's own transcript changed in one way and re-sealed (see `platform_expect.PLANTS`), judged by the
     same verifier. Credited only against an unplanted run of the same guest that was not red (the caller checks)."""
     controls: dict[str, Any] = {}
-    for plant, spec in platform_expect.PLANTS.items():
+    for plant, spec in platform_expect.plants_for(platform.get("provider")).items():
         try:
             planted = platform_expect.plant_transcript(raw_log, plant)
         except ValueError as error:
@@ -750,7 +800,7 @@ def verify_serial_output(
         patterns["FFW_SPEAKER_BEGIN"] = re.escape(speaker_expect.BEGIN_LINE)
         patterns["FFW_SPEAKER_EXIT"] = speaker_expect.EXIT_OK.pattern
     if platform is not None:
-        patterns[platform_expect.STEP_BEGIN_KEY] = re.escape(platform_expect.STEP_BEGIN_LINE)
+        patterns[platform_expect.STEP_BEGIN_KEY] = re.escape(platform_expect.step_begin_line(platform.get("provider")))
         patterns[platform_expect.STEP_EXIT_KEY] = platform_expect.STEP_EXIT_OK.pattern
     positions: dict[str, int] = {}
     errors = []
@@ -862,6 +912,126 @@ def verify_serial_output(
     return result
 
 
+# ---- a positive native admission before EACH guest build (BeigeMaple 6773/6789) ------------------------------------------------
+#
+# The two guest builds used to be issued back to back. In two provider runs (pv3, pv4) the first (mips) built and the second (powerpc)
+# was refused `RCH-I001 capacity sample expired, was superseded, or requires a probe after budget release`: the second admission
+# came within seconds of the first build releasing its budget, so the run never reached QEMU. Now, before each guest build, the
+# runner takes a fresh capacity sample (`rch workers capabilities --refresh --json`) and asks `rch admit --json -- <that exact cargo
+# argv>` (read-only: it syncs and reserves nothing) with the build's own environment and working directory. It builds only on
+#   * `recommendation=offload`, `observation=observed` and a worker that is in the requested set (`RCH_WORKERS`, or `RCH_WORKER`; any
+#     named worker when neither is set), or
+#   * `recommendation=queue`, `observation=observed`, `reason=all_workers_busy` (rch's own queued wait).
+# Anything else is retried, spaced, and after ADMISSION_TRIES tries the run is refused by name (`AdmissionRefused`) with nothing built.
+# The receipt (`build_admission`) records the recommendation, observation, worker id and reason only, never a host address; the stderr
+# of the rch calls is passed through to the runner's own stderr, not into the receipt.
+
+ADMISSION_TRIES = 8
+ADMISSION_SPACING_S = 15.0
+ADMISSION_CALL_TIMEOUT_S = 300.0
+
+
+class AdmissionRefused(RuntimeError):
+    """No positive native admission for a guest build in ADMISSION_TRIES tries (or `rch` could not be run): nothing was built.
+    `verdict` is the last answer, reduced to recommendation, observation, worker and reason; `attempts` is how many tries were made."""
+
+    def __init__(self, message: str, verdict: dict[str, Any], attempts: int) -> None:
+        super().__init__(message)
+        self.verdict = verdict
+        self.attempts = attempts
+
+
+def requested_workers(env: dict[str, str]) -> list[str]:
+    raw = env.get("RCH_WORKERS") or env.get("RCH_WORKER") or ""
+    return [worker for worker in (part.strip() for part in raw.split(",")) if worker]
+
+
+_SAFE_TEXT = re.compile(r"[A-Za-z0-9_-]{1,60}(?:=[A-Za-z0-9_-]{1,60})?(?:,[A-Za-z0-9_-]{1,60}=[A-Za-z0-9_-]{1,60})*")
+
+
+def _safe_text(text: str) -> str:
+    """Only identifier-shaped text reaches the receipt: rch's own words (`all_workers_busy`, `selection_error=...`) and worker ids (`trj`,
+    `ovh-a`) are; a sentence, a `user@host` or a dotted address is replaced by `unrecognized`, so the receipt keeps its promise of never
+    carrying a host address whatever rch puts in a free-text field."""
+    return text if _SAFE_TEXT.fullmatch(text) else "unrecognized"
+
+
+def _verdict_text(value: Any) -> str | None:
+    """A bounded printable form of one verdict field. rch prints a string, or for a failed selection a dict such as
+    `{'selection_error': 'admission_preview_timed_out'}`; anything else is not recorded. Free text is recorded only if it is
+    identifier-shaped (`_safe_text`)."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return _safe_text(value[:120])
+    if isinstance(value, (bool, int)):
+        return str(value)
+    if isinstance(value, dict):
+        pairs = [f"{key}={item}" for key, item in sorted(value.items()) if isinstance(item, (str, int, bool))]
+        joined = ",".join(pairs)[:120]
+        return _safe_text(joined) if joined else None
+    return None
+
+
+def admission_verdict(stdout: str, returncode: int) -> dict[str, Any]:
+    """The four fields of an `rch admit --json` answer that the gate uses, and nothing else (the answer names the worker's host)."""
+    try:
+        data = json.loads(stdout)
+        data = data.get("data", data)
+        selection = data.get("selection") or {}
+        worker = (selection.get("worker") or {}).get("id")
+        return {"recommendation": _verdict_text(data.get("recommendation")), "observation": _verdict_text(data.get("observation")),
+                "worker": _verdict_text(worker), "reason": _verdict_text(selection.get("reason"))}
+    except (ValueError, AttributeError, TypeError):
+        return {"recommendation": "unparsed", "observation": f"rc={returncode}", "worker": None, "reason": None}
+
+
+def verdict_admits(verdict: dict[str, Any], requested: list[str]) -> bool:
+    """Is this answer a positive native admission? An unknown or unobserved answer never is."""
+    if verdict["observation"] != "observed":
+        return False
+    if verdict["recommendation"] == "offload":
+        return verdict["worker"] is not None and (not requested or verdict["worker"] in requested)
+    return verdict["recommendation"] == "queue" and verdict["reason"] == "all_workers_busy"
+
+
+def _rch_call(argv: list[str], env: dict[str, str], cwd: pathlib.Path) -> tuple[str, int]:
+    """Run one rch command for the gate; its stderr is passed through to ours (kept, never in the receipt). Raises OSError when
+    `rch` cannot be run at all."""
+    try:
+        done = subprocess.run(argv, cwd=str(cwd), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              text=True, timeout=ADMISSION_CALL_TIMEOUT_S)
+    except subprocess.TimeoutExpired as error:
+        sys.stderr.write(f"rch {argv[1]} timed out after {error.timeout} s\n")
+        return "", -1
+    if done.stderr:
+        sys.stderr.write(done.stderr)
+    return done.stdout, done.returncode
+
+
+def admit_before_build(arch: str, cmd: list[str], env: dict[str, str], cwd: pathlib.Path) -> dict[str, Any]:
+    """Wait for a positive admission of `cmd` (the `rch exec ... -- cargo ...` command line of one guest build). Returns the
+    receipt record {attempts, recommendation, observation, worker, reason}; raises AdmissionRefused after ADMISSION_TRIES."""
+    argv = cmd[cmd.index("--") + 1:]
+    requested = requested_workers(env)
+    verdict: dict[str, Any] = {"recommendation": None, "observation": None, "worker": None, "reason": None}
+    for attempt in range(1, ADMISSION_TRIES + 1):
+        if attempt > 1:
+            time.sleep(ADMISSION_SPACING_S)
+        try:
+            _rch_call(["rch", "workers", "capabilities", "--refresh", "--json"], env, cwd)       # a fresh sample; its answer is not used
+            stdout, returncode = _rch_call(["rch", "admit", "--json", "--", *argv], env, cwd)
+        except OSError as error:
+            verdict = {"recommendation": "unparsed", "observation": f"rch_not_runnable:{type(error).__name__}", "worker": None, "reason": None}
+            raise AdmissionRefused(f"{arch}: rch could not be run ({type(error).__name__}); nothing was built", verdict, attempt) from error
+        verdict = admission_verdict(stdout, returncode)
+        if verdict_admits(verdict, requested):
+            return {"attempts": attempt, **verdict}
+    raise AdmissionRefused(
+        f"{arch}: no positive admission in {ADMISSION_TRIES} tries (last: recommendation={verdict['recommendation']} "
+        f"observation={verdict['observation']} worker={verdict['worker']} reason={verdict['reason']}); nothing was built", verdict, ADMISSION_TRIES)
+
+
 def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int:
     build_dir = mkinitramfs.resolve_default_build_dir(REPO_ROOT)
 
@@ -878,9 +1048,11 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
             speaker_ctx["host"] = args.speaker_host           # already checked in main(), before anything ran
     platform_ctx: dict[str, Any] | None = None
     if getattr(args, "speaker_platform", False):
-        platform_ctx = {"grammar": platform_expect.load_grammar(REPO_ROOT)}   # already checked in main()
+        platform_ctx = {"grammar": platform_expect.load_grammar(REPO_ROOT),    # already checked in main()
+                        "provider": PROVIDER_OF_ARGUMENT.get(getattr(args, "entropy_provider", None))}
     target_dir = args.target_dir or build_dir / (
-        "hello-init-platform-target" if platform_ctx is not None
+        ("hello-init-platform-target" if platform_ctx["provider"] is None else "hello-init-platform-legacy-target")
+        if platform_ctx is not None
         else "hello-init-speaker-target" if speaker_bins is not None else "hello-init-target")
 
     targets = {
@@ -905,7 +1077,9 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
     # Hashed before the build so the digests describe what was handed to rch, not what the tree became after.
     sources = source_digests(hello_crate)
     build_commands: dict[str, list[str]] = {}
+    admissions: dict[str, dict[str, Any]] = {}
     if not args.skip_build:
+        args.receipt["build_admission"] = admissions        # kept on a refusal too: the error receipt names the guest and its last verdict
         for arch, cfg in targets.items():
             cmd = [
                 "rch",
@@ -922,7 +1096,7 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
                 "build-std=core,panic_abort",
             ]
             if speaker_bins is not None:
-                cmd += ["--features", ",".join([SPEAKER_FEATURE] + ([PLATFORM_FEATURE] if platform_ctx is not None else []))]
+                cmd += ["--features", ",".join(guest_features(platform_ctx))]
             # RCH admits a build against a worker's slot count using ITS OWN core estimate, which ignores
             # CARGO_BUILD_JOBS, so the job count has to be in the command itself ("-j 3 (or fewer)" on a
             # 3-slot worker). Recorded verbatim in build_manifest.command like every other argument.
@@ -933,6 +1107,11 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
             env = os.environ.copy()
             env["CARGO_TARGET_DIR"] = str(target_dir)
             env["RCH_REQUIRE_REMOTE"] = "1"
+            try:
+                admissions[arch] = admit_before_build(arch, cmd, env, hello_crate)
+            except AdmissionRefused as refusal:
+                admissions[arch] = {**refusal.verdict, "attempts": refusal.attempts, "refused": True}
+                raise
             subprocess.run(cmd, cwd=str(hello_crate), env=env, check=True, timeout=3600)
 
     archive_receipts = {}
@@ -1007,8 +1186,7 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
                 "linker_configured": linker,
                 "build_manifest": build_manifest(
                     hello_crate, cfg["triple"], build_commands.get(arch), sources, target_dir,
-                    ([SPEAKER_FEATURE] + ([PLATFORM_FEATURE] if platform_ctx is not None else []))
-                    if speaker_bins is not None else None),
+                    guest_features(platform_ctx) if speaker_bins is not None else None),
                 "qemu_exit_code": returncode,
                 "timed_out": timed_out,
                 "capture_stop_reason": capture["stop_reason"],
@@ -1053,7 +1231,7 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
                         verification["status"] = "FAIL"
             if platform_ctx is not None:
                 platform_record = verification["platform"]
-                platform_record["qualification_boundary"] = PLATFORM_BOUNDARY
+                platform_record["qualification_boundary"] = platform_boundary(platform_ctx)
                 if getattr(args, "platform_controls", False):
                     # Credited only against a baseline that was not red: a plant proves nothing if the unplanted run
                     # of the same guest already failed. A PASS guest has no platform error, so its verdict is green or
@@ -1063,7 +1241,8 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
                     if baseline_ok:
                         platform_controls = run_platform_controls(combined, arch, cfg, speaker_ctx, platform_ctx)
                     else:
-                        platform_controls = {name: {"skipped": "baseline_failed"} for name in platform_expect.PLANTS}
+                        platform_controls = {name: {"skipped": "baseline_failed"}
+                                             for name in platform_expect.plants_for(platform_ctx["provider"])}
                     platform_record["controls"] = platform_controls
                     for name, record in platform_controls.items():
                         if "skipped" in record or "not_applied" in record:
@@ -1113,6 +1292,8 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
         "mkinitramfs_self_test": self_test_receipt,
         "guests": guest_results,
     }
+    if admissions:
+        receipt["build_admission"] = admissions
     if speaker_ctx is not None:
         expected = speaker_ctx["expected"]
         receipt["speaker_smoke"] = {
@@ -1126,13 +1307,21 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
     if platform_ctx is not None:
         receipt["platform_step"] = {
             "feature": PLATFORM_FEATURE,
-            "argv": [platform_expect.STEP_PATH, platform_expect.STEP_ARG],
+            "argv": [platform_expect.STEP_PATH, *platform_expect.step_argv(platform_ctx["provider"])],
             "controls_requested": bool(getattr(args, "platform_controls", False)),
             "grammar": {"source": platform_ctx["grammar"]["source"], "sha256": platform_ctx["grammar"]["sha256"]},
-            # green, degraded or red per guest: degraded (MIPS entropy not_seeded) does not fail the run, and is not green.
+            # green, degraded or red per guest: degraded (an entropy pool that has not credited) does not fail the run, and is not green.
             "verdicts": {arch: guest["platform"]["verdict"] for arch, guest in guest_results.items()
                          if "platform" in guest},
         }
+        if platform_ctx["provider"] is not None:
+            scripts = [SCRIPT_DIR / name for name in BOOT_SCRIPT_NAMES]
+            receipt["platform_step"].update({
+                "provider": platform_ctx["provider"],
+                "provider_feature": PROVIDER_FEATURES[platform_ctx["provider"]],
+                # Checked before any guest (a script that names an RNG device refuses the run): the receipt names what was checked.
+                "entropy_injection_checked": {script.name: sha256_file(script) for script in scripts},
+            })
 
     receipt_path = results_dir / "e07-e03-verification-receipt.json"
     receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
@@ -1188,6 +1377,11 @@ def main(argv: list[str] | None = None) -> int:
     speaker.add_argument("--speaker-platform", action="store_true",
                          help="also run `/franken-speaker --platform-startup` as a second child in each guest (the guests "
                               "are built with the `speaker-platform` feature) and judge its six FFW_PLATFORM:* lines")
+    speaker.add_argument("--entropy-provider", choices=sorted(PROVIDER_OF_ARGUMENT), metavar="NAME",
+                         help="with --speaker-platform, also select the explicit legacy entropy provider in the platform step (the "
+                              "guests are built with its feature; choices: %(choices)s): the ENTROPY line must carry provider=, a "
+                              "`not_seeded` refusal is degraded and shows no positive. Refused when a boot script names an RNG device or a "
+                              "random.* kernel parameter (a static text check)")
     speaker.add_argument("--platform-controls", action="store_true",
                          help="also judge planted transcripts of the platform step (provenance=double, "
                               "provenance=simulated, backend=simulated, a missing capability, a truncated run); each "
@@ -1208,7 +1402,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.check_catalog is not None:
         if (args.speaker_mips is not None or args.speaker_ppc is not None
                 or args.speaker_host_catalog is not None or args.speaker_controls
-                or args.speaker_platform or args.platform_controls):
+                or args.speaker_platform or args.platform_controls or args.entropy_provider is not None):
             parser.error("--check-catalog stands alone; it runs no guest")
         return check_catalog_file(args.check_catalog, parser)
     if args.speaker_mips is not None or args.speaker_ppc is not None:
@@ -1237,11 +1431,17 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--speaker-controls, --speaker-host-catalog and --speaker-platform need --speaker-mips and --speaker-ppc")
     if args.platform_controls and not args.speaker_platform:
         parser.error("--platform-controls needs --speaker-platform")
+    if args.entropy_provider is not None and not args.speaker_platform:
+        parser.error("--entropy-provider needs --speaker-platform")
     if args.speaker_platform:
         try:
             platform_expect.load_grammar(REPO_ROOT)     # fail closed before any guest: a missing grammar judges nothing
         except platform_expect.PlatformGrammarError as error:
             parser.error(f"--speaker-platform: {error}")
+    if args.entropy_provider is not None:
+        injected = entropy_injection_problems([SCRIPT_DIR / name for name in BOOT_SCRIPT_NAMES])
+        if injected:
+            parser.error("--entropy-provider: a boot script fails the entropy-injection text check: " + "; ".join(injected))
     run_id = args.run_id = uuid.uuid4().hex
     results_dir = args.results_dir or REPO_ROOT / "toolchain" / "results" / "runs" / run_id
     results_dir.mkdir(parents=True, exist_ok=False)

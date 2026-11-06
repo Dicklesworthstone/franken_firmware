@@ -1,0 +1,558 @@
+
+>> =============================================================
+>> OpenBIOS 1.1 [Jun 29 2026 21:11]
+>> Configuration device id QEMU version 1 machine id 2
+>> CPUs: 1
+>> Memory: 64M
+>> UUID: 00000000-0000-0000-0000-000000000000
+>> CPU type PowerPC,750
+milliseconds isn't unique.
+Welcome to OpenBIOS v1.1 built on Jun 29 2026 21:11
+>> [ppc] Kernel already loaded (0x01000000 + 0x009c1488) (initrd 0x01ac2000 + 0x00035e98)
+>> [ppc] Kernel command line: console=ttyPZ0,38400 rdinit=/init panic=-1
+>> switching to new context:
+OF stdout device is: /pci@80000000/mac-io@10/escc@13000/ch-a@13020
+Preparing to boot Linux version 4.9.0-0.bpo.6-powerpc (debian-kernel@lists.debian.org) (gcc version 4.9.2 (Debian 4.9.2-10) ) #1 Debian 4.9.88-1+deb9u1~bpo8+1 (2018-05-13)
+Detected machine type: 00000400
+command line: console=ttyS0,9600 console=tty0
+memory layout at init:
+  memory_limit : 00000000 (16 MB aligned)
+  alloc_bottom : 01af8000
+  alloc_top    : 04000000
+  alloc_top_hi : 04000000
+  rmo_top      : 04000000
+  ram_top      : 04000000
+found display   : /pci@80000000/QEMU,VGA@1, opening... done
+copying OF device tree...
+Building dt strings...
+Building dt structure...
+Device tree strings 0x01af9000 -> 0x01af9576
+Device tree struct  0x01afa000 -> 0x01b01000
+Quiescing Open Firmware ...
+Booting Linux via __start() @ 0x01000000 ...
+Hello World !
+[    0.000000] Total memory = 64MB; using 128kB for hash table (at c3fe0000)
+[    0.000000] Linux version 4.9.0-0.bpo.6-powerpc (debian-kernel@lists.debian.org) (gcc version 4.9.2 (Debian 4.9.2-10) ) #1 Debian 4.9.88-1+deb9u1~bpo8+1 (2018-05-13)
+[    0.000000] Found initrd at 0xc1ac2000:0xc1af7e98
+[    0.000000] Found a Heathrow mac-io controller, rev: 0, mapped at 0xff780000
+[    0.000000] PowerMac motherboard: PowerMac G3 (Silk)
+[    0.000000] boot stdout isn't a display !
+[    0.000000] Using PowerMac machine description
+[    0.000000] bootconsole [udbg0] enabled
+[    0.000000] -----------------------------------------------------
+[    0.000000] Hash_size         = 0x20000
+[    0.000000] phys_mem_size     = 0x4000000
+[    0.000000] dcache_bsize      = 0x20
+[    0.000000] icache_bsize      = 0x20
+[    0.000000] cpu_features      = 0x0000000000220472
+[    0.000000]   possible        = 0x0000000005a6fd7f
+[    0.000000]   always          = 0x0000000000020000
+[    0.000000] cpu_user_features = 0x8c000001 0x00000000
+[    0.000000] mmu_features      = 0x00000001
+[    0.000000] Hash              = 0xc3fe0000
+[    0.000000] Hash_mask         = 0x7ff
+[    0.000000] -----------------------------------------------------
+[    0.000000] Found Grackle (MPC106) PCI host bridge at 0x0000000080000000. Firmware bus number: 0->0
+[    0.000000] PCI host bridge /pci@80000000 (primary) ranges:
+[    0.000000]   IO 0x00000000fe000000..0x00000000fe7fffff -> 0x0000000000000000
+[    0.000000]  MEM 0x00000000fd000000..0x00000000fdffffff -> 0x0000000000000000 
+[    0.000000]  MEM 0x0000000080000000..0x000000008fffffff -> 0x0000000080000000 
+[    0.000000] nvram: OF partition at 0x1800
+[    0.000000] nvram: XP partition at 0x1300
+[    0.000000] nvram: NR partition at 0x1400
+[    0.000000] Zone ranges:
+[    0.000000]   DMA      [mem 0x0000000000000000-0x0000000003ffffff]
+[    0.000000]   Normal   empty
+[    0.000000]   HighMem  empty
+[    0.000000] Movable zone start for each node
+[    0.000000] Early memory node ranges
+[    0.000000]   node   0: [mem 0x0000000000000000-0x0000000003ffffff]
+[    0.000000] Initmem setup node 0 [mem 0x0000000000000000-0x0000000003ffffff]
+[    0.000000] Built 1 zonelists in Zone order, mobility grouping on.  Total pages: 16240
+[    0.000000] Kernel command line: console=ttyPZ0,38400 rdinit=/init panic=-1
+[    0.000000] PID hash table entries: 256 (order: -2, 1024 bytes)
+[    0.000000] Dentry cache hash table entries: 8192 (order: 3, 32768 bytes)
+[    0.000000] Inode-cache hash table entries: 4096 (order: 2, 16384 bytes)
+[    0.000000] Sorting __ex_table...
+[    0.000000] Memory: 54440K/65536K available (5992K kernel code, 556K rwdata, 1592K rodata, 424K init, 1409K bss, 11096K reserved, 0K cma-reserved, 0K highmem)
+[    0.000000] Kernel virtual memory layout:
+[    0.000000]   * 0xfffcf000..0xfffff000  : fixmap
+[    0.000000]   * 0xff800000..0xffc00000  : highmem PTEs
+[    0.000000]   * 0xfef5a000..0xff800000  : early ioremap
+[    0.000000]   * 0xc5000000..0xfef5a000  : vmalloc & ioremap
+[    0.000000] NR_IRQS:512 nr_irqs:512 16
+[    0.000000] irq: Found primary Apple PIC /pci@80000000/mac-io@10 for 64 irqs
+[    0.000000] irq: System has 64 possible interrupts
+[    0.000000] GMT Delta read from XPRAM: 0 minutes, DST: off
+[    0.000304] clocksource: timebase: mask: 0xffffffffffffffff max_cycles: 0x3d4983cfa, max_idle_ns: 440795202254 ns
+[    0.000595] clocksource: timebase mult[3c35b795] shift[24] registered
+[    0.004231] Console: colour dummy device 80x25
+[    0.008420] console [ttyPZ0] enabled
+[    0.008420] console [ttyPZ0] enabled
+[    0.008707] bootconsole [udbg0] disabled
+[    0.008707] bootconsole [udbg0] disabled
+[    0.009417] pid_max: default: 32768 minimum: 301
+[    0.010225] Security Framework initialized
+[    0.010376] Yama: disabled by default; enable with sysctl kernel.yama.*
+[    0.011189] AppArmor: AppArmor disabled by boot time parameter
+[    0.011763] Mount-cache hash table entries: 1024 (order: 0, 4096 bytes)
+[    0.011979] Mountpoint-cache hash table entries: 1024 (order: 0, 4096 bytes)
+[    0.020431] ftrace: allocating 20204 entries in 60 pages
+[    0.058441] devtmpfs: initialized
+[    0.064851] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[    0.065199] futex hash table entries: 256 (order: -1, 3072 bytes)
+[    0.069112] NET: Registered protocol family 16
+             
+[    0.076086] PCI: Probing PCI hardware
+[    0.077660] PCI host bridge to bus 0000:00
+[    0.078266] pci_bus 0000:00: root bus resource [io  0x0000-0x7fffff]
+[    0.078473] pci_bus 0000:00: root bus resource [mem 0xfd000000-0xfdffffff] (bus address [0x00000000-0x00ffffff])
+[    0.078822] pci_bus 0000:00: root bus resource [mem 0x80000000-0x8fffffff]
+[    0.079230] pci_bus 0000:00: root bus resource [bus 00-ff]
+[    0.101052] vgaarb: setting as boot device: PCI:0000:00:01.0
+[    0.101215] vgaarb: device added: PCI:0000:00:01.0,decodes=io+mem,owns=io+mem,locks=none
+[    0.101333] vgaarb: loaded
+[    0.101457] vgaarb: bridge control possible 0000:00:01.0
+[    0.102737] SCSI subsystem initialized
+[    0.109009] clocksource: Switched to clocksource timebase
+[    0.141727] VFS: Disk quotas dquot_6.6.0
+[    0.141947] VFS: Dquot-cache hash table entries: 1024 (order 0, 4096 bytes)
+[    0.155099] NET: Registered protocol family 2
+[    0.158759] TCP established hash table entries: 1024 (order: 0, 4096 bytes)
+[    0.159076] TCP bind hash table entries: 1024 (order: 0, 4096 bytes)
+[    0.159239] TCP: Hash tables configured (established 1024 bind 1024)
+[    0.159960] UDP hash table entries: 256 (order: 0, 4096 bytes)
+[    0.160259] UDP-Lite hash table entries: 256 (order: 0, 4096 bytes)
+[    0.161804] NET: Registered protocol family 1
+[    0.165937] Unpacking initramfs...
+[    0.177765] Freeing initrd memory: 212K
+[    0.179748] Thermal assist unit [    0.179862] using timers, 
+[    0.179962] shrink_timer: 500 jiffies
+[    0.182521] audit: initializing netlink subsys (disabled)
+[    0.183218] audit: type=2000 audit(1793957773.147:1): initialized
+[    0.185124] workingset: timestamp_bits=14 max_order=14 bucket_order=0
+[    0.185790] zbud: loaded
+[    0.199516] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 251)
+[    0.200055] io scheduler noop registered
+[    0.200132] io scheduler deadline registered
+[    0.200353] io scheduler cfq registered (default)
+[    0.202926] Using unsupported 800x600 QEMU,VGA at 80000000, depth=32, pitch=3200
+[    0.210322] Console: switching to colour frame buffer device 100x37
+[    0.213078] fb0: Open Firmware frame buffer device on /pci@80000000/QEMU,VGA@1
+[    0.214230] Serial: 8250/16550 driver, 4 ports, IRQ sharing disabled
+[    0.215946] pmac_zilog: 0.6 (Benjamin Herrenschmidt <benh@kernel.crashing.org>)
+[    0.216231] Serial: MPC52xx PSC UART driver
+[    0.216408] Generic non-volatile memory driver v1.1
+[    0.216659] Linux agpgart interface v0.103
+[    0.217352] MacIO PCI driver attached to Heathrow chipset
+[    0.219637] 0.00013020:ch-a: ttyPZ0 at MMIO 0x81093020 (irq = 16, base_baud = 230400) is a Z85c30 ESCC - Serial port
+[    0.220572] 0.00013000:ch-b: ttyPZ1 at MMIO 0x81093000 (irq = 17, base_baud = 230400) is a Z85c30 ESCC - Serial port
+[    0.222191] Macintosh CUDA driver v0.5 for Unified ADB.
+[    0.224002] adb: starting probe task...
+[    0.422937]  [2]: 2 2
+ [3]: 3 3[    0.429302] 
+[    0.459969] ADB keyboard at 2, handler 1
+[    0.460273] Detected ADB keyboard, type [    0.460411] ANSI.
+[    0.461380] input: ADB keyboard as /devices/virtual/input/input0
+[    0.476980] random: fast init done
+[    0.547700] ADB mouse at 3, handler set to 3[    0.547899]  (Mouse Systems A3 Mouse, or compatible)
+[    0.562093] 
+[    0.562694] input: ADB mouse as /devices/virtual/input/input1
+[    0.562897] adb: finished probe task...
+[    1.250586] pata-macio 0.00020000:ata-3: Activating pata-macio chipset Heathrow ATA, Apple bus ID 0
+[    1.253679] scsi host0: pata_macio
+[    1.255279] ata1: PATA max MWDMA2 irq 19
+[    2.308253] pata-macio 0.00021000:ata-3: Activating pata-macio chipset Heathrow ATA, Apple bus ID 1
+[    2.309877] scsi host1: pata_macio
+[    2.310302] ata2: PATA max MWDMA2 irq 22
+[    2.313601] mousedev: PS/2 mouse device common for all mice
+[    2.321997] rtc-generic rtc-generic: rtc core: registered rtc-generic as rtc0
+[    2.322590] ledtrig-cpu: registered to indicate activity on CPUs
+[    2.323314] NET: Registered protocol family 10
+[    2.329327] mip6: Mobile IPv6
+[    2.329479] NET: Registered protocol family 17
+[    2.329629] mpls_gso: MPLS GSO support
+[    2.331036] registered taskstats version 1
+[    2.331689] zswap: loaded using pool lzo/zbud
+[    2.333405] ima: No TPM chip found, activating TPM-bypass!
+[    2.346952] rtc-generic rtc-generic: setting system clock to 2026-11-06 09:36:16 UTC (1793957776)
+[    2.478103] ata2.00: ATAPI: QEMU DVD-ROM, 2.5+, max UDMA/100
+[    2.479290] ata2.00: configured for MWDMA2
+[    2.487409] scsi 1:0:0:0: CD-ROM            QEMU     QEMU DVD-ROM     2.5+ PQ: 0 ANSI: 5
+[    2.522920] Freeing unused kernel memory: 424K
+[    2.523040] This architecture does not have kernel memory protection.
+FFW_MARKER:USERSPACE_START
+FFW_HELLO arch=powerpc-be endian=0x01020304 pid=1 ptr_bits=32
+FFW_BUILD target=powerpc-unknown-linux-musl rustc=1.101.0-nightly rustc_commit=2d20b42b8 linker_flavor=ld.lld libc=none runtime=no_std
+FFW_RUSTC release=1.101.0-nightly commit=2d20b42b883dcfc014f3c2c56081eeb6091c2179 date=2026-11-04 host=x86_64-unknown-linux-gnu llvm=23.1.5
+FFW_GUEST:CONSOLE_LEVEL status=PASS rc=0
+FFW_KERNEL_VERSION: Linux version 4.9.0-0.bpo.6-powerpc (debian-kernel@lists.debian.org) (gcc version 4.9.2 (Debian 4.9.2-10) ) #1 Debian 4.9.88-1+deb9u1~bpo8+1 (2018-05-13)
+FFW_TEST:ERR_ENOENT status=PASS errno=2
+FFW_TEST:ERR_EBADF status=PASS errno=9
+FFW_TEST:ERR_ENOSYS status=PASS errno=38
+FFW_TEST:POS_FD_SHORT_WRITE status=PASS fd=4
+FFW_PROBE:CLOCK_MONOTONIC status=PASS res_ns=1
+FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096
+FFW_PROBE:NONBLOCK_PIPE status=PASS rc=0
+FFW_PROBE:POLL status=PASS rc=1
+FFW_PROBE:EPOLL status=PASS fd=4
+FFW_PROBE:SOCKET_UDP status=PASS fd=4
+FFW_PROBE:ENTROPY status=PASS fd=4
+FFW_PROBE:ATOMICS_32 status=PASS ok=1
+FFW_PROBE:GETRANDOM status=PASS rc=16
+FFW_PROBE:EVENTFD2 status=PASS fd=4
+FFW_PROBE:TIMERFD status=PASS fd=4
+FFW_PROBE:FUTEX status=PASS rc=0
+FFW_PROBE:LOOPBACK_UP status=PASS rc=0
+FFW_PROBE:UDP_LOOPBACK status=PASS rc=24
+FFW_PROBE:ACCEPT4 status=PASS fd=6
+FFW_PROBE:REACTOR_WAKE status=PASS rc=1
+FFW_PROBE:CHARDEV_POLL status=PASS rc=2
+FFW_PROBE:ATOMIC_WIDTH status=PASS bits=32
+FFW_PROBE:ALLOC status=PASS rc=0
+FFW_PROBE:MEM_PEAK status=PASS kb=68
+FFW_PROBE:FS_RENAME status=PASS rc=0
+FFW_PROBE:SIGNAL status=PASS rc=0
+FFW_PROBE:TIMER_SIGNALS status=PASS rc=0
+FFW_PROBE:EINTR_READ status=PASS rc=-4
+probe: run_threads start
+FFW_PROBE:THREADS status=PASS tid=46
+FFW_PROBE:TLS status=PASS tp=305419896
+FFW_SPEAKER_BEGIN path=/franken-speaker argv=--catalog
+[
+  {
+    "schema_version": "ffw.board_profile.v2",
+    "profile_id": "bp-306118206e15e2c9",
+    "model_number": "S5",
+    "model_name": "Play:5 (Gen 1)",
+    "supported_hw_rev": "1.16.3.1-2",
+    "legacy_sw_gen_hint": 1,
+    "cpu_isa": "power_pc32_big_endian",
+    "float_abi": "unverified",
+    "max_atomic_width_bits": 32,
+    "nominal_ram_mib": 32,
+    "nominal_flash_mib": 32,
+    "kernel_capability_profile": "unverified",
+    "audio_driver_abi": "unverified",
+    "hardware_channels": 5,
+    "channel_routing": [
+      "tweeter_left",
+      "tweeter_right",
+      "mid_left",
+      "mid_right",
+      "woofer_center"
+    ],
+    "amplifier_policy": "forbidden_fail_muted",
+    "calibrated_output_delay_us": 0,
+    "calibration_uncertainty_us": 0,
+    "provenance": "assessment_hypothesis",
+    "facts": {
+      "hardware_revision": "hypothesis",
+      "isa": "hypothesis",
+      "nominal_capacity": "device_reported",
+      "calibration": "unknown",
+      "driver_and_routing": "hypothesis",
+      "kernel_capability": "unknown"
+    },
+    "integrity_sha256": "c05d09449bd01ac3a86400d1576a29f446ce577221e83eec504a95ba74d8ed54"
+  },
+  {
+    "schema_version": "ffw.board_profile.v2",
+    "profile_id": "bp-b789b9a1acbc666b",
+    "model_number": "S1",
+    "model_name": "Play:1 (Rev 1)",
+    "supported_hw_rev": "1.8.3.7-1",
+    "legacy_sw_gen_hint": 2,
+    "cpu_isa": "unknown",
+    "float_abi": "unverified",
+    "max_atomic_width_bits": 0,
+    "nominal_ram_mib": 128,
+    "nominal_flash_mib": 64,
+    "kernel_capability_profile": "unverified",
+    "audio_driver_abi": "unverified",
+    "hardware_channels": 2,
+    "channel_routing": [
+      "woofer_mono",
+      "tweeter_mono"
+    ],
+    "amplifier_policy": "forbidden_fail_muted",
+    "calibrated_output_delay_us": 0,
+    "calibration_uncertainty_us": 0,
+    "provenance": "assessment_hypothesis",
+    "facts": {
+      "hardware_revision": "hypothesis",
+      "isa": "contested",
+      "nominal_capacity": "device_reported",
+      "calibration": "unknown",
+      "driver_and_routing": "hypothesis",
+      "kernel_capability": "unknown"
+    },
+    "integrity_sha256": "9180e8a8ce35c05c8771157f34b97edd1d2b5bfd51a9520f001eed9c489fce05"
+  },
+  {
+    "schema_version": "ffw.board_profile.v2",
+    "profile_id": "bp-9f11d26b252b3fb7",
+    "model_number": "S1",
+    "model_name": "Play:1 (Rev 2)",
+    "supported_hw_rev": "1.8.3.7-2",
+    "legacy_sw_gen_hint": 2,
+    "cpu_isa": "unknown",
+    "float_abi": "unverified",
+    "max_atomic_width_bits": 0,
+    "nominal_ram_mib": 128,
+    "nominal_flash_mib": 64,
+    "kernel_capability_profile": "unverified",
+    "audio_driver_abi": "unverified",
+    "hardware_channels": 2,
+    "channel_routing": [
+      "woofer_mono",
+      "tweeter_mono"
+    ],
+    "amplifier_policy": "forbidden_fail_muted",
+    "calibrated_output_delay_us": 0,
+    "calibration_uncertainty_us": 0,
+    "provenance": "assessment_hypothesis",
+    "facts": {
+      "hardware_revision": "hypothesis",
+      "isa": "contested",
+      "nominal_capacity": "device_reported",
+      "calibration": "unknown",
+      "driver_and_routing": "hypothesis",
+      "kernel_capability": "unknown"
+    },
+    "integrity_sha256": "93960f7ca10395b163451bc42a10dc664feb9fc41ee5d35dded7c175b6aff69b"
+  },
+  {
+    "schema_version": "ffw.board_profile.v2",
+    "profile_id": "bp-00cf42d755aad186",
+    "model_number": "S12",
+    "model_name": "Play:1 (S2 Edition)",
+    "supported_hw_rev": "1.20.1.6-2",
+    "legacy_sw_gen_hint": 2,
+    "cpu_isa": "arm32_little_endian_unverified",
+    "float_abi": "unverified",
+    "max_atomic_width_bits": 32,
+    "nominal_ram_mib": 256,
+    "nominal_flash_mib": 256,
+    "kernel_capability_profile": "unverified",
+    "audio_driver_abi": "unverified",
+    "hardware_channels": 2,
+    "channel_routing": [
+      "woofer_mono",
+      "tweeter_mono"
+    ],
+    "amplifier_policy": "forbidden_fail_muted",
+    "calibrated_output_delay_us": 0,
+    "calibration_uncertainty_us": 0,
+    "provenance": "assessment_hypothesis",
+    "facts": {
+      "hardware_revision": "hypothesis",
+      "isa": "hypothesis",
+      "nominal_capacity": "device_reported",
+      "calibration": "unknown",
+      "driver_and_routing": "hypothesis",
+      "kernel_capability": "unknown"
+    },
+    "integrity_sha256": "d4fd13bbc2c4b80e5051d56e607e5253fe428182d16e30d39e33f143b634072c"
+  },
+  {
+    "schema_version": "ffw.board_profile.v2",
+    "profile_id": "bp-86663d1cb74814e4",
+    "model_number": "S3",
+    "model_name": "Play:3 (Rev 1)",
+    "supported_hw_rev": "1.8.1.2-1",
+    "legacy_sw_gen_hint": 2,
+    "cpu_isa": "power_pc32_big_endian",
+    "float_abi": "unverified",
+    "max_atomic_width_bits": 32,
+    "nominal_ram_mib": 128,
+    "nominal_flash_mib": 64,
+    "kernel_capability_profile": "unverified",
+    "audio_driver_abi": "unverified",
+    "hardware_channels": 3,
+    "channel_routing": [
+      "mid_left",
+      "mid_right",
+      "tweeter_mono"
+    ],
+    "amplifier_policy": "forbidden_fail_muted",
+    "calibrated_output_delay_us": 0,
+    "calibration_uncertainty_us": 0,
+    "provenance": "assessment_hypothesis",
+    "facts": {
+      "hardware_revision": "hypothesis",
+      "isa": "hypothesis",
+      "nominal_capacity": "device_reported",
+      "calibration": "unknown",
+      "driver_and_routing": "hypothesis",
+      "kernel_capability": "unknown"
+    },
+    "integrity_sha256": "5a94f7157c3047db534c79e44676f3745c811c46125b2f102272263ecf904c97"
+  },
+  {
+    "schema_version": "ffw.board_profile.v2",
+    "profile_id": "bp-ee8e9119153998e3",
+    "model_number": "S3",
+    "model_name": "Play:3 (Rev 2)",
+    "supported_hw_rev": "1.8.1.2-2",
+    "legacy_sw_gen_hint": 2,
+    "cpu_isa": "power_pc32_big_endian",
+    "float_abi": "unverified",
+    "max_atomic_width_bits": 32,
+    "nominal_ram_mib": 128,
+    "nominal_flash_mib": 64,
+    "kernel_capability_profile": "unverified",
+    "audio_driver_abi": "unverified",
+    "hardware_channels": 3,
+    "channel_routing": [
+      "mid_left",
+      "mid_right",
+      "tweeter_mono"
+    ],
+    "amplifier_policy": "forbidden_fail_muted",
+    "calibrated_output_delay_us": 0,
+    "calibration_uncertainty_us": 0,
+    "provenance": "assessment_hypothesis",
+    "facts": {
+      "hardware_revision": "hypothesis",
+      "isa": "hypothesis",
+      "nominal_capacity": "device_reported",
+      "calibration": "unknown",
+      "driver_and_routing": "hypothesis",
+      "kernel_capability": "unknown"
+    },
+    "integrity_sha256": "9e24aac7e0b1d13c624dd19ed75a9e23534e7c8313686a074b9e2b0d0d6d1b3d"
+  },
+  {
+    "schema_version": "ffw.board_profile.v2",
+    "profile_id": "bp-207ea3c4bcba5c4a",
+    "model_number": "Sub",
+    "model_name": "Sonos Sub (Gen 1/2)",
+    "supported_hw_rev": "1.8.2.4-2",
+    "legacy_sw_gen_hint": 2,
+    "cpu_isa": "unknown",
+    "float_abi": "unverified",
+    "max_atomic_width_bits": 0,
+    "nominal_ram_mib": 128,
+    "nominal_flash_mib": 64,
+    "kernel_capability_profile": "unverified",
+    "audio_driver_abi": "unverified",
+    "hardware_channels": 1,
+    "channel_routing": [
+      "subwoofer_lfe"
+    ],
+    "amplifier_policy": "forbidden_fail_muted",
+    "calibrated_output_delay_us": 0,
+    "calibration_uncertainty_us": 0,
+    "provenance": "assessment_hypothesis",
+    "facts": {
+      "hardware_revision": "hypothesis",
+      "isa": "unknown",
+      "nominal_capacity": "device_reported",
+      "calibration": "unknown",
+      "driver_and_routing": "hypothesis",
+      "kernel_capability": "unknown"
+    },
+    "integrity_sha256": "befc6b8bef78e274a01dc4694f075357e42965689267a5a59a3bff0a19e4e1b4"
+  },
+  {
+    "schema_version": "ffw.board_profile.v2",
+    "profile_id": "bp-0badc2f77e77836a",
+    "model_number": "S9",
+    "model_name": "Playbar",
+    "supported_hw_rev": "1.9.1.10-2",
+    "legacy_sw_gen_hint": 1,
+    "cpu_isa": "unknown",
+    "float_abi": "unverified",
+    "max_atomic_width_bits": 0,
+    "nominal_ram_mib": 128,
+    "nominal_flash_mib": 128,
+    "kernel_capability_profile": "unverified",
+    "audio_driver_abi": "unverified",
+    "hardware_channels": 9,
+    "channel_routing": [
+      {
+        "array_mid_woofer": 0
+      },
+      {
+        "array_mid_woofer": 1
+      },
+      {
+        "array_mid_woofer": 2
+      },
+      {
+        "array_mid_woofer": 3
+      },
+      {
+        "array_mid_woofer": 4
+      },
+      {
+        "array_mid_woofer": 5
+      },
+      {
+        "array_tweeter": 0
+      },
+      {
+        "array_tweeter": 1
+      },
+      {
+        "array_tweeter": 2
+      }
+    ],
+    "amplifier_policy": "forbidden_fail_muted",
+    "calibrated_output_delay_us": 0,
+    "calibration_uncertainty_us": 0,
+    "provenance": "assessment_hypothesis",
+    "facts": {
+      "hardware_revision": "hypothesis",
+      "isa": "unknown",
+      "nominal_capacity": "device_reported",
+      "calibration": "unknown",
+      "driver_and_routing": "hypothesis",
+      "kernel_capability": "unknown"
+    },
+    "integrity_sha256": "6909314ffbf35576080e9d57926ffab1c6e4712b1eb7d2192bf3b336b067f1bc"
+  },
+  {
+    "schema_version": "ffw.board_profile.v2",
+    "profile_id": "bp-9a90c86e24b1d17e",
+    "model_number": "ZB100",
+    "model_name": "Sonos Bridge (Non-Audio)",
+    "supported_hw_rev": "1.5.0.0-1",
+    "legacy_sw_gen_hint": 1,
+    "cpu_isa": "unknown",
+    "float_abi": "unverified",
+    "max_atomic_width_bits": 0,
+    "nominal_ram_mib": 8,
+    "nominal_flash_mib": 8,
+    "kernel_capability_profile": "unverified",
+    "audio_driver_abi": "unverified",
+    "hardware_channels": 0,
+    "channel_routing": [],
+    "amplifier_policy": "forbidden_fail_muted",
+    "calibrated_output_delay_us": 0,
+    "calibration_uncertainty_us": 0,
+    "provenance": "assessment_hypothesis",
+    "facts": {
+      "hardware_revision": "hypothesis",
+      "isa": "unknown",
+      "nominal_capacity": "device_reported",
+      "calibration": "unknown",
+      "driver_and_routing": "unknown",
+      "kernel_capability": "unknown"
+    },
+    "integrity_sha256": "e9e8d5129263e4ef25f62083cff23359a1aa4ab60352cf85fdf0fe68c85fe91d"
+  }
+]
+FFW_SPEAKER_EXIT status=0 stdout_bytes=10006 stdout_fnv1a64=920a91647ae4af73
+FFW_PLATFORM_STEP_BEGIN path=/franken-speaker argv=--platform-startup --entropy-provider=legacy-dev-random-test-environment
+FFW_PLATFORM:BEGIN abi=powerpc32 evidence=harness-ppc-4.9 backend=kernel kernel=4.9.0-0.bpo.6-powerpc
+FFW_PLATFORM:KERNEL status=PASS
+FFW_PLATFORM:CLOCK status=PASS provenance=kernel
+FFW_PLATFORM:ENTROPY status=REFUSED provenance=kernel provider=legacy_dev_random_test_environment reason=not_seeded
+FFW_PLATFORM:WAKE status=PASS provenance=kernel mechanism=eventfd
+FFW_PLATFORM:END started=0 refused=entropy:not_seeded
+FFW_PLATFORM_STEP_EXIT status=3 stdout_bytes=419 stdout_fnv1a64=c77711b2429bfbcc
+FFW_MARKER:TEST_SUCCESS failures=0
+FFW_MARKER:REBOOT_REQUEST
+[    3.030562] reboot: Restarting system

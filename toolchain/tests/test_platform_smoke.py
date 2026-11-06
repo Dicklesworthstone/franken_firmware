@@ -11,6 +11,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -716,7 +717,7 @@ class RunnerPlatformTests(unittest.TestCase):
             (self.root / kernel).write_bytes(b"synthetic-kernel-not-executed")
         return target
 
-    def run_main(self, captures, argv, target_name="target", explicit_target=True, build=False):
+    def run_main(self, captures, argv, target_name="target", explicit_target=True, build=False, real_rch=False):
         self.builds = []
 
         def fake_run(cmd, **kwargs):
@@ -732,8 +733,9 @@ class RunnerPlatformTests(unittest.TestCase):
         with patch.object(VERIFIER.mkinitramfs, "resolve_default_build_dir", return_value=self.root), \
              patch.object(VERIFIER, "capture_guest", side_effect=captures), \
              contextlib.ExitStack() as stack:
-            if build:
+            if build and not real_rch:
                 stack.enter_context(patch.object(VERIFIER.subprocess, "run", side_effect=fake_run))
+                stack.enter_context(patch.object(VERIFIER, "admit_before_build", return_value={"attempts": 1, "recommendation": "offload", "observation": "observed", "worker": "trj", "reason": None}))
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             result = VERIFIER.main(full)
         return result, json.loads((output / "e07-e03-verification-receipt.json").read_text())
@@ -846,6 +848,389 @@ class RunnerPlatformTests(unittest.TestCase):
         self.assertIn("--speaker-platform: cannot read", err.getvalue())
         self.assertFalse((self.root / "unused2").exists())
 
+    # ---- the explicit legacy provider: `--entropy-provider` ----
+
+    PROVIDER_ARGV = ("--speaker-platform", "--platform-controls", "--entropy-provider", "legacy-dev-random-test-environment")
+
+    def provider_captures(self, mips=None, ppc=None):
+        """The provider run of each guest: MIPS degraded (`not_seeded`), PowerPC green, unless a case gives its own."""
+        return [self.capture(mips if mips is not None else provider_text("mips", *PROVIDER_BASELINES["mips degraded"][1:])),
+                self.capture(ppc if ppc is not None else provider_text("ppc", *PROVIDER_BASELINES["ppc green"][1:]))]
+
+    def test_a_provider_run_records_its_provider_and_every_control_caught(self):
+        result, receipt = self.run_main(self.provider_captures(), self.argv(*self.PROVIDER_ARGV))
+        self.assertEqual((result, receipt["status"]), (0, "PASS"))
+        step = receipt["platform_step"]
+        self.assertEqual(step["verdicts"], {"mips": "degraded", "ppc": "green"})
+        self.assertEqual((step["feature"], step["provider"], step["provider_feature"]),
+                         ("speaker-platform", PROV, "speaker-platform-legacy-test-env"))
+        self.assertEqual(step["argv"], ["/franken-speaker", "--platform-startup", PROV_ARG])
+        scripts = {name: VERIFIER.sha256_file(VERIFIER.SCRIPT_DIR / name) for name in ("boot-mips.sh", "boot-ppc.sh")}
+        self.assertEqual(step["entropy_injection_checked"], scripts)
+        for arch, verdict in (("mips", "degraded"), ("ppc", "green")):
+            guest = receipt["guests"][arch]
+            self.assertEqual((guest["status"], guest["validation_errors"]), ("PASS", []), arch)
+            platform = guest["platform"]
+            self.assertEqual((platform["verdict"], platform["provider"]), (verdict, PROV), arch)
+            self.assertEqual(platform["argv"], ["/franken-speaker", "--platform-startup", PROV_ARG])
+            self.assertIn("no positive", platform["claim"])
+            self.assertIn("Sonos silicon", platform["qualification_boundary"])
+            boundary = platform["qualification_boundary"]
+            self.assertIn("static text check", boundary)
+            self.assertIn("does not show that the pool was not credited some other way", boundary)
+            self.assertNotIn("nothing fed", boundary)                     # the sentence a text check cannot establish
+            self.assertEqual(sorted(platform["controls"]), sorted(P.plants_for(PROV)))
+            for name, control in platform["controls"].items():
+                self.assertTrue(control["caught"], (arch, name, control))
+            self.assertEqual(guest["build_manifest"].get("features"),
+                             ["speaker-smoke", "speaker-platform", "speaker-platform-legacy-test-env"])
+        self.assertEqual(receipt["guests"]["mips"]["platform"]["degraded_because"], "entropy:not_seeded")
+
+    def test_a_pool_that_has_not_credited_is_degraded_on_both_guests_and_never_green(self):
+        both = self.provider_captures(ppc=provider_text("ppc", *PROVIDER_BASELINES["ppc degraded"][1:]))
+        result, receipt = self.run_main(both, self.argv(*self.PROVIDER_ARGV))
+        self.assertEqual((result, receipt["status"]), (0, "PASS"))
+        self.assertEqual(receipt["platform_step"]["verdicts"], {"mips": "degraded", "ppc": "degraded"})
+        for arch in ("mips", "ppc"):
+            self.assertNotEqual(receipt["guests"][arch]["platform"]["verdict"], "green", arch)
+            self.assertFalse(receipt["guests"][arch]["platform"]["started"], arch)
+
+    def test_a_missing_device_node_fails_the_provider_run_by_name(self):
+        absent = provider_text("mips", legacy("legacy_device_absent_mips"), 3)
+        result, receipt = self.run_main(self.provider_captures(mips=absent), self.argv(*self.PROVIDER_ARGV))
+        self.assertEqual((result, receipt["status"]), (1, "FAIL"))
+        mips = receipt["guests"]["mips"]
+        self.assertEqual(mips["platform"]["verdict"], "red")
+        self.assertEqual(mips["validation_errors"][0], "platform_not_started:entropy:absent")
+        self.assertEqual(mips["platform"]["controls"], {n: {"skipped": "baseline_failed"} for n in P.plants_for(PROV)})
+        self.assertEqual(receipt["guests"]["ppc"]["status"], "PASS")
+
+    def test_a_provider_run_whose_guest_ran_the_default_step_fails_on_both_counts(self):
+        result, receipt = self.run_main(self.captures(), self.argv(*self.PROVIDER_ARGV))
+        self.assertEqual((result, receipt["status"]), (1, "FAIL"))
+        for arch in ("mips", "ppc"):
+            errors = receipt["guests"][arch]["validation_errors"]
+            self.assertIn(f"invalid:{P.STEP_BEGIN_KEY}", errors, arch)               # the BEGIN line lacks the provider argument
+            self.assertIn("platform_provider_missing:ENTROPY", errors, arch)         # and the child printed no provider=
+
+    def test_a_default_run_rejects_a_guest_that_selected_a_provider(self):
+        result, receipt = self.run_main(self.provider_captures(), self.argv("--speaker-platform"))
+        self.assertEqual((result, receipt["status"]), (1, "FAIL"))
+        for arch in ("mips", "ppc"):
+            errors = receipt["guests"][arch]["validation_errors"]
+            self.assertIn(f"invalid:{P.STEP_BEGIN_KEY}", errors, arch)
+            self.assertTrue(any(e.startswith("platform_fields:ENTROPY:status,provenance,provider") for e in errors), (arch, errors))
+
+    def test_a_default_receipt_has_exactly_the_shape_it_had(self):
+        result, receipt = self.run_main(self.captures(), self.argv("--speaker-platform", "--platform-controls"))
+        self.assertEqual(result, 0)
+        self.assertEqual(sorted(receipt["platform_step"]), ["argv", "controls_requested", "feature", "grammar", "verdicts"])
+        for arch in ("mips", "ppc"):
+            platform = receipt["guests"][arch]["platform"]
+            self.assertNotIn("provider", platform)
+            self.assertNotIn("claim", platform)
+            self.assertEqual(platform["qualification_boundary"], VERIFIER.PLATFORM_BOUNDARY)
+            self.assertEqual(platform["argv"], ["/franken-speaker", "--platform-startup"])
+
+    def test_the_provider_build_command_and_directory(self):
+        result, receipt = self.run_main(self.provider_captures(), self.argv(*self.PROVIDER_ARGV, "--jobs", "2"), build=True)
+        ran = [cmd for cmd, _ in self.builds if cmd[:1] == ["rch"]]
+        self.assertEqual(len(ran), 2)
+        for triple, cmd in zip((base.MIPS_TRIPLE, base.PPC_TRIPLE), ran):
+            self.assertEqual(cmd, ["rch", "exec", "--source-content-receipt", "--", "cargo", "+nightly", "build", "--release",
+                                   "--target", triple, "-Z", "build-std=core,panic_abort",
+                                   "--features", "speaker-smoke,speaker-platform,speaker-platform-legacy-test-env", "-j", "2"])
+        # With no --target-dir the provider build has its own directory: neither the default platform build nor the speaker
+        # smoke build products are overwritten by it.
+        result, receipt = self.run_main(self.provider_captures(), self.argv(*self.PROVIDER_ARGV),
+                                        target_name="hello-init-platform-legacy-target", explicit_target=False)
+        self.assertEqual((result, receipt["status"]), (0, "PASS"))
+
+    def test_provider_arguments_are_refused_with_a_reason(self):
+        for argv, fragment in [
+            (self.argv("--entropy-provider", "legacy-dev-random-test-environment"), "--entropy-provider needs --speaker-platform"),
+            (self.argv("--speaker-platform", "--entropy-provider", "urandom"), "invalid choice"),
+            (self.argv("--speaker-platform", "--entropy-provider", "legacy_dev_random_test_environment"), "invalid choice"),
+            (["--check-catalog", str(self.root / "x"), "--entropy-provider", "legacy-dev-random-test-environment"], "stands alone"),
+        ]:
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as raised:
+                VERIFIER.main(["--skip-build", "--results-dir", str(self.root / "unused3"), *argv])
+            self.assertEqual(raised.exception.code, 2, argv)
+            self.assertIn(fragment, err.getvalue(), argv)
+        self.assertFalse((self.root / "unused3").exists(), "a refused argument list runs nothing and writes nothing")
+
+    def test_a_boot_script_that_names_an_rng_device_refuses_the_provider_run_before_any_guest(self):
+        err = io.StringIO()
+        with patch.object(VERIFIER, "entropy_injection_problems", return_value=["boot-mips.sh:names_an_rng_device"]), \
+                contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as raised:
+            VERIFIER.main(["--skip-build", "--results-dir", str(self.root / "unused4"), *self.argv(*self.PROVIDER_ARGV)])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("fails the entropy-injection text check: boot-mips.sh:names_an_rng_device", err.getvalue())
+        self.assertFalse((self.root / "unused4").exists())
+        # The control: a default platform run never asks the question (the boot scripts are the same files).
+        with patch.object(VERIFIER, "entropy_injection_problems", side_effect=AssertionError("asked")):
+            result, receipt = self.run_main(self.captures(), self.argv("--speaker-platform"))
+        self.assertEqual((result, receipt["status"]), (0, "PASS"))
+
+    # ---- a positive admission before EACH guest build (BeigeMaple 6773/6789): a PATH-stubbed `rch`, no network ----
+
+    OFFLOAD = {"recommendation": "offload", "observation": "observed",
+               "selection": {"worker": {"id": "trj", "host": "ubuntu@host.invalid"}, "reason": "fastest"}}
+    BUSY = {"recommendation": "queue", "observation": "observed",
+            "selection": {"worker": {"id": "trj", "host": "ubuntu@host.invalid"}, "reason": "all_workers_busy"}}
+    STALE = {"recommendation": "queue", "observation": "observed", "selection": {"reason": "capacity_sample_expired"}}
+    # What a real `rch admit --json` printed when its preview timed out (a dict reason, no recommendation).
+    TIMED_OUT = {"recommendation": None, "observation": "unknown",
+                 "selection": {"reason": {"selection_error": "admission_preview_timed_out"}}}
+
+    def stub_run(self, plan, argv=("--speaker-platform",), label="r1", workers=None, tries=3, captures=None, build=True, spacing=0.0,
+                 call_timeout=None):
+        """The runner's build path against a stub `rch` on PATH that answers `workers capabilities`, `admit` (the next verdict of
+        `plan[target]`, the last one repeating) and `exec` (rc 0), and logs every call as one JSON line. Returns (result, receipt,
+        events, stderr)."""
+        stub_dir = self.root / "rchstub"
+        stub_dir.mkdir(exist_ok=True)
+        stub = stub_dir / "rch"
+        if not stub.exists():
+            stub.write_text(RCH_STUB.replace("@PYTHON@", sys.executable), encoding="utf-8")
+            stub.chmod(0o755)
+        (stub_dir / f"plan-{label}.json").write_text(json.dumps(plan), encoding="utf-8")
+        env = {"PATH": str(stub_dir) + os.pathsep + os.environ.get("PATH", ""), "RCH_STUB_DIR": str(stub_dir), "RCH_STUB_RUN": label}
+        err = io.StringIO()
+        with patch.dict(os.environ, env), patch.object(VERIFIER, "ADMISSION_SPACING_S", spacing), \
+                patch.object(VERIFIER, "ADMISSION_TRIES", tries), contextlib.redirect_stderr(err), \
+                patch.object(VERIFIER, "ADMISSION_CALL_TIMEOUT_S", call_timeout or VERIFIER.ADMISSION_CALL_TIMEOUT_S):
+            for name in ("RCH_WORKERS", "RCH_WORKER"):
+                os.environ.pop(name, None)
+            if workers is not None:
+                os.environ["RCH_WORKERS"] = workers
+            result, receipt = self.run_main(captures if captures is not None else self.captures(), self.argv(*argv), build=build,
+                                            real_rch=True)
+        log = stub_dir / f"events-{label}.log"
+        events = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
+        return result, receipt, events, err.getvalue()
+
+    @staticmethod
+    def kinds(events):
+        return [(event["ev"], event.get("target")) for event in events]
+
+    def test_a_guest_is_built_only_after_a_fresh_sample_and_a_positive_admission(self):
+        # (a) queue, then offload: each guest is built once, after its own sample and its own admission.
+        result, receipt, events, _ = self.stub_run({"mips": [self.STALE, self.OFFLOAD], "powerpc": [self.OFFLOAD]})
+        self.assertEqual((result, receipt["status"]), (0, "PASS"))
+        self.assertEqual(self.kinds(events), [
+            ("capabilities", None), ("admit", "mips"), ("capabilities", None), ("admit", "mips"), ("exec-begin", "mips"), ("exec-end", "mips"),
+            ("capabilities", None), ("admit", "powerpc"), ("exec-begin", "powerpc"), ("exec-end", "powerpc")])
+        self.assertEqual(sum(1 for event in events if event["ev"] == "exec-begin"), 2)
+        for event in events:
+            if event["ev"] == "capabilities":
+                self.assertEqual(event["args"], ["workers", "capabilities", "--refresh", "--json"])
+            if event["ev"] == "admit":
+                self.assertEqual(event["args"], ["admit", "--json", "--"])
+        self.assertEqual(receipt["build_admission"], {
+            "mips": {"attempts": 2, "recommendation": "offload", "observation": "observed", "worker": "trj", "reason": "fastest"},
+            "ppc": {"attempts": 1, "recommendation": "offload", "observation": "observed", "worker": "trj", "reason": "fastest"}})
+
+    def test_a_busy_pool_is_rchs_own_queued_wait_and_the_build_goes_ahead(self):
+        result, receipt, events, _ = self.stub_run({"mips": [self.BUSY], "powerpc": [self.BUSY]})
+        self.assertEqual((result, receipt["status"]), (0, "PASS"))
+        self.assertEqual([r["attempts"] for r in receipt["build_admission"].values()], [1, 1])
+        self.assertEqual(sum(1 for event in events if event["ev"] == "exec-begin"), 2)
+
+    def test_a_guest_that_is_never_admitted_is_refused_by_name_and_nothing_is_built(self):
+        # (b) The answer rch really gave when its preview timed out. The first guest is refused: no exec for it, and none for the second.
+        result, receipt, events, stderr = self.stub_run({"mips": [self.TIMED_OUT], "powerpc": [self.OFFLOAD]}, tries=3)
+        self.assertEqual((result, receipt["status"], receipt["error_type"]), (1, "FAIL", "AdmissionRefused"))
+        self.assertEqual(self.kinds(events), [("capabilities", None), ("admit", "mips")] * 3)
+        self.assertFalse([event for event in events if event["ev"].startswith("exec")])
+        self.assertEqual(receipt["build_admission"], {"mips": {
+            "attempts": 3, "recommendation": None, "observation": "unknown", "worker": None,
+            "reason": "selection_error=admission_preview_timed_out", "refused": True}})
+        self.assertNotIn("guests", receipt)                                    # nothing was booted
+        # The host address is in rch's answer and in its stderr: the receipt never has it, the runner's stderr keeps rch's own text.
+        self.assertNotIn("host.invalid", json.dumps(receipt))
+        self.assertIn("stub admit stderr: worker ubuntu@host.invalid", stderr)
+
+    def test_retries_are_spaced_and_a_hung_rch_is_a_refusal_not_a_hang(self):
+        slept = []
+        with patch.object(VERIFIER.time, "sleep", side_effect=slept.append):
+            result, receipt, _, _ = self.stub_run({"mips": [self.TIMED_OUT]}, tries=3, spacing=VERIFIER.ADMISSION_SPACING_S)
+        self.assertEqual((result, receipt["error_type"]), (1, "AdmissionRefused"))
+        # subprocess polls with short sleeps of its own while it waits on a timed call; the gate's are the 15 s ones.
+        self.assertEqual([s for s in slept if s >= 1.0], [15.0, 15.0])           # between the tries, not before the first or after the last
+        # A call that outlives its timeout is killed and counted as no answer; the run does not wait for it.
+        result, receipt, events, stderr = self.stub_run({"mips": [{"__sleep__": 5}]}, label="hang", tries=2, call_timeout=0.4)
+        self.assertEqual((result, receipt["error_type"]), (1, "AdmissionRefused"))
+        self.assertEqual(receipt["build_admission"]["mips"]["observation"], "rc=-1")
+        self.assertIn("timed out", stderr)
+        self.assertFalse([event for event in events if event["ev"].startswith("exec")])
+
+    def test_the_second_guests_admission_comes_after_the_first_build_returns(self):
+        # (c)
+        _, receipt, events, _ = self.stub_run({"mips": [self.OFFLOAD], "powerpc": [self.OFFLOAD]})
+        kinds = self.kinds(events)
+        first_build_done = kinds.index(("exec-end", "mips"))
+        second_admission = kinds.index(("admit", "powerpc"))
+        self.assertGreater(second_admission, first_build_done)
+        self.assertEqual(kinds[first_build_done + 1], ("capabilities", None))       # a fresh sample after the release, before the admit
+        self.assertEqual(kinds[second_admission - 1], ("capabilities", None))
+        self.assertLess(kinds.index(("exec-begin", "mips")), kinds.index(("admit", "powerpc")))
+
+    def test_the_admission_uses_the_builds_own_cargo_argv_environment_and_directory(self):
+        _, receipt, events, _ = self.stub_run({"mips": [self.OFFLOAD], "powerpc": [self.OFFLOAD]}, argv=("--speaker-platform", "--jobs", "2"))
+        for target in ("mips", "powerpc"):
+            admit = next(e for e in events if e["ev"] == "admit" and e["target"] == target)
+            build = next(e for e in events if e["ev"] == "exec-begin" and e["target"] == target)
+            self.assertEqual(admit["argv"], build["argv"], target)                  # the exact cargo argv after the `--`
+            self.assertEqual(admit["argv"][:3], ["cargo", "+nightly", "build"], target)
+            self.assertIn("--features", admit["argv"], target)
+            for key in ("cwd", "target_dir", "remote"):
+                self.assertEqual(admit[key], build[key], (target, key))
+            self.assertEqual(admit["remote"], "1")
+            self.assertTrue(admit["cwd"].endswith("ffw-hello-init"), admit["cwd"])
+            self.assertTrue(admit["target_dir"].endswith("hello-init-platform-target") or admit["target_dir"].endswith("/target"), admit["target_dir"])
+
+    def test_the_admitted_worker_must_be_in_the_requested_set(self):
+        plan = {"mips": [self.OFFLOAD], "powerpc": [self.OFFLOAD]}
+        result, receipt, events, _ = self.stub_run(plan, label="r1", workers="hz3", tries=2)
+        self.assertEqual((result, receipt["status"], receipt["error_type"]), (1, "FAIL", "AdmissionRefused"))
+        self.assertEqual(receipt["build_admission"]["mips"]["worker"], "trj")
+        self.assertFalse([event for event in events if event["ev"].startswith("exec")])
+        # The controls: the same answer is a positive admission when its worker is requested, and when no worker is requested.
+        for label, workers in (("r2", "trj,hz3"), ("r3", None)):
+            result, receipt, _, _ = self.stub_run(plan, label=label, workers=workers, tries=2)
+            self.assertEqual((result, receipt["status"]), (0, "PASS"), workers)
+
+    def test_an_answer_that_is_not_json_is_not_an_admission(self):
+        result, receipt, events, _ = self.stub_run({"mips": [{"__raw__": "garbage, not json", "__rc__": 3}]}, tries=2)
+        self.assertEqual((result, receipt["status"], receipt["error_type"]), (1, "FAIL", "AdmissionRefused"))
+        self.assertEqual(receipt["build_admission"]["mips"],
+                         {"attempts": 2, "recommendation": "unparsed", "observation": "rc=3", "worker": None, "reason": None, "refused": True})
+        self.assertFalse([event for event in events if event["ev"].startswith("exec")])
+
+    def test_a_missing_rch_refuses_at_once_and_a_run_that_builds_nothing_asks_for_nothing(self):
+        env = {"PATH": str(self.root / "nowhere")}
+        with patch.dict(os.environ, env), patch.object(VERIFIER, "ADMISSION_SPACING_S", 0.0), contextlib.redirect_stderr(io.StringIO()):
+            result, receipt = self.run_main(self.captures(), self.argv("--speaker-platform"), build=True, real_rch=True)
+        self.assertEqual((result, receipt["status"], receipt["error_type"]), (1, "FAIL", "AdmissionRefused"))
+        self.assertEqual(receipt["build_admission"]["mips"]["observation"], "rch_not_runnable:FileNotFoundError")
+        self.assertEqual(receipt["build_admission"]["mips"]["refused"], True)
+        # --skip-build issues no build and so asks for no admission: the stub is never called and the receipt has no such record.
+        result, receipt, events, _ = self.stub_run({"mips": [self.OFFLOAD]}, label="skip", build=False)
+        self.assertEqual((result, receipt["status"], events), (0, "PASS", []))
+        self.assertNotIn("build_admission", receipt)
+
+    def test_the_gate_admits_exactly_what_the_instruction_says(self):
+        offload = {"recommendation": "offload", "observation": "observed", "worker": "trj", "reason": "fastest"}
+        table = [
+            (offload, ["trj"], True), (offload, [], True), (offload, ["hz3", "ts1"], False),
+            ({**offload, "worker": None}, [], False), ({**offload, "observation": "unknown"}, [], False),
+            ({**offload, "observation": "cached"}, [], False), ({**offload, "recommendation": "local"}, [], False),
+            ({**offload, "recommendation": "defer"}, [], False), ({**offload, "recommendation": None}, [], False),
+            ({**offload, "recommendation": "queue", "reason": "all_workers_busy"}, ["hz3"], True),
+            ({**offload, "recommendation": "queue", "reason": "capacity_sample_expired"}, [], False),
+            ({**offload, "recommendation": "queue", "reason": None}, [], False),
+            ({**offload, "recommendation": "queue", "observation": "unknown", "reason": "all_workers_busy"}, [], False),
+            ({**offload, "reason": "all_workers_busy"}, ["hz3"], False),                 # busy is a queue answer, not an offload to a stranger
+        ]
+        for verdict, requested, expected in table:
+            self.assertEqual(VERIFIER.verdict_admits(verdict, requested), expected, (verdict, requested))
+        self.assertEqual(VERIFIER.requested_workers({"RCH_WORKERS": "trj, hz3,,", "RCH_WORKER": "ts1"}), ["trj", "hz3"])
+        self.assertEqual(VERIFIER.requested_workers({"RCH_WORKER": "ts1,hz3"}), ["ts1", "hz3"])
+        self.assertEqual(VERIFIER.requested_workers({}), [])
+        self.assertEqual((VERIFIER.ADMISSION_TRIES, VERIFIER.ADMISSION_SPACING_S), (8, 15.0))
+        for stdout, expected in [("garbage", ("unparsed", "rc=7", None, None)), ("[]", ("unparsed", "rc=7", None, None)),
+                                 (json.dumps({"data": self.TIMED_OUT}),
+                                  (None, "unknown", None, "selection_error=admission_preview_timed_out")),
+                                 (json.dumps(self.BUSY), ("queue", "observed", "trj", "all_workers_busy"))]:
+            verdict = VERIFIER.admission_verdict(stdout, 7)
+            self.assertEqual((verdict["recommendation"], verdict["observation"], verdict["worker"], verdict["reason"]), expected, stdout)
+            self.assertNotIn("host.invalid", json.dumps(verdict), "the host address is never read")
+
+    # ---- review of the gate (YellowBrook): the receipt's attempt count is true, and free text from rch never reaches it ----
+
+    def test_a_refusal_records_the_attempts_that_were_made(self):
+        # rch could not be run on the first try: one attempt, not ADMISSION_TRIES.
+        with patch.dict(os.environ, {"PATH": str(self.root / "nowhere")}), patch.object(VERIFIER, "ADMISSION_SPACING_S", 0.0), \
+                contextlib.redirect_stderr(io.StringIO()):
+            result, receipt = self.run_main(self.captures(), self.argv("--speaker-platform"), build=True, real_rch=True)
+        self.assertEqual(receipt["build_admission"]["mips"]["observation"], "rch_not_runnable:FileNotFoundError")
+        self.assertEqual(receipt["build_admission"]["mips"]["attempts"], 1)
+        # The control: a run refused after every one of its tries records all of them.
+        result, receipt, _, _ = self.stub_run({"mips": [self.TIMED_OUT]}, label="tries", tries=3)
+        self.assertEqual((result, receipt["build_admission"]["mips"]["attempts"]), (1, 3))
+
+    def test_free_text_from_rch_is_recorded_only_when_it_is_identifier_shaped(self):
+        for value, expected in [("all_workers_busy", "all_workers_busy"), ("ovh-a", "ovh-a"), ("trj", "trj"),
+                                ({"selection_error": "admission_preview_timed_out"}, "selection_error=admission_preview_timed_out"),
+                                ("ubuntu@host.invalid", "unrecognized"), ("worker ubuntu@host.invalid refused", "unrecognized"), ("ubuntu@trj", "unrecognized"),
+                                ("all workers busy", "unrecognized"),
+                                ("192.0.2.10", "unrecognized"), ("host.invalid", "unrecognized"), ("a/b", "unrecognized"),
+                                ({"detail": "ubuntu@host.invalid"}, "unrecognized"), ("x" * 200, "unrecognized"),
+                                (7, "7"), (True, "True"), ({}, None), (None, None), (["list"], None)]:
+            self.assertEqual(VERIFIER._verdict_text(value), expected, value)
+        # Through the whole run: a reason and a worker id that carry a host reach neither the receipt nor its error record.
+        leaky = {"recommendation": None, "observation": "unknown", "selection": {"reason": "worker ubuntu@host.invalid refused the preview"}}
+        result, receipt, _, _ = self.stub_run({"mips": [leaky]}, label="leakyreason", tries=2)
+        self.assertEqual((result, receipt["error_type"]), (1, "AdmissionRefused"))
+        self.assertEqual(receipt["build_admission"]["mips"]["reason"], "unrecognized")
+        self.assertNotIn("host.invalid", json.dumps(receipt))
+        odd = {"recommendation": "offload", "observation": "observed", "selection": {"worker": {"id": "ubuntu@host.invalid"}, "reason": "fastest"}}
+        result, receipt, _, _ = self.stub_run({"mips": [odd], "powerpc": [odd]}, label="leakyworker", tries=2, workers="trj")
+        self.assertEqual((result, receipt["error_type"]), (1, "AdmissionRefused"))      # an unrecognized id is never in the requested set
+        self.assertNotIn("host.invalid", json.dumps(receipt))
+        # The controls: the same shapes with benign words are recorded as they are.
+        benign = {"recommendation": None, "observation": "unknown", "selection": {"reason": "preview_timed_out"}}
+        result, receipt, _, _ = self.stub_run({"mips": [benign]}, label="benign", tries=2)
+        self.assertEqual(receipt["build_admission"]["mips"]["reason"], "preview_timed_out")
+
+
+# The stub `rch` of the admission tests: answers `workers capabilities`, `admit` and `exec` and logs each call as one JSON line.
+# `admit` answers with the next verdict of plan[target] (the last repeats); `{"__raw__": text, "__rc__": n}` prints text and exits n.
+RCH_STUB = r'''#!@PYTHON@
+import json
+import os
+import sys
+import time
+
+directory, run = os.environ["RCH_STUB_DIR"], os.environ["RCH_STUB_RUN"]
+args = sys.argv[1:]
+after = args[args.index("--") + 1:] if "--" in args else []
+target = next((a.split("-")[0] for a in after if a.endswith("-unknown-linux-musl")), None)
+
+
+def log(event, **fields):
+    with open(os.path.join(directory, f"events-{run}.log"), "a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"ev": event, "target": target, **fields}) + "\n")
+
+
+where = {"cwd": os.getcwd(), "target_dir": os.environ.get("CARGO_TARGET_DIR"), "remote": os.environ.get("RCH_REQUIRE_REMOTE")}
+if args[:2] == ["workers", "capabilities"]:
+    log("capabilities", args=args)
+    print("{}")
+elif args[:1] == ["admit"]:
+    plan = json.load(open(os.path.join(directory, f"plan-{run}.json"), encoding="utf-8"))[target]
+    counter = os.path.join(directory, f"count-{run}-{target}.txt")
+    seen = int(open(counter).read()) if os.path.exists(counter) else 0
+    open(counter, "w").write(str(seen + 1))
+    log("admit", args=args[:3], argv=after, try_number=seen + 1, **where)
+    verdict = plan[min(seen, len(plan) - 1)]
+    sys.stderr.write("stub admit stderr: worker ubuntu@host.invalid\n")
+    if "__sleep__" in verdict:
+        time.sleep(verdict["__sleep__"])
+    if "__raw__" in verdict:
+        print(verdict["__raw__"])
+        sys.exit(verdict["__rc__"])
+    print(json.dumps({"api_version": "1.0", "command": "admit", "success": True, "data": verdict}))
+elif args[:1] == ["exec"]:
+    log("exec-begin", argv=after, **where)
+    log("exec-end")
+else:
+    log("unexpected", args=args)
+    sys.exit(9)
+'''
+
 
 # ---- the guest source, held to the grammar that judges it ----------------------------------------------------------
 
@@ -906,6 +1291,346 @@ class GuestSourceTests(unittest.TestCase):
         self.assertLess(run_at, platform_at)
         self.assertIn('#[cfg(feature = "speaker-platform")]', self.main_rs[run_at:platform_at])
         self.assertIn('#[cfg(feature = "speaker-platform")]\npub fn run_platform', self.smoke_rs)
+
+    def test_the_provider_feature_implies_the_platform_step_and_is_the_one_the_runner_builds(self):
+        self.assertIn('speaker-platform-legacy-test-env = ["speaker-platform"]', self.cargo)
+        self.assertEqual(VERIFIER.PROVIDER_FEATURES, {PROV: "speaker-platform-legacy-test-env"})
+        self.assertNotRegex(self.cargo, r"(?m)^default\s*=")
+
+    def test_the_guest_passes_exactly_the_argument_the_judge_expects_and_only_under_the_feature(self):
+        self.assertEqual(P.provider_arg(PROV), PROV_ARG)
+        self.assertIn(f'Some(c"{PROV_ARG}")', self.smoke_rs)
+        flat = " ".join(self.smoke_rs.split())          # rustfmt may break these lines; the tokens are what matter
+        self.assertIn('#[cfg(all( feature = "speaker-platform", feature = "speaker-platform-legacy-test-env" ))] '
+                      "const PLATFORM_EXTRA: Option<&CStr> = Some(", flat)
+        self.assertIn('#[cfg(all( feature = "speaker-platform", not(feature = "speaker-platform-legacy-test-env") ))] '
+                      "const PLATFORM_EXTRA: Option<&CStr> = None;", flat)
+        # The catalog step and the default platform step run the child exactly as before: no extra argument.
+        self.assertIn("spawn_and_collect(console_fd, ARG_CATALOG, None)", self.smoke_rs)
+        self.assertIn("spawn_and_collect(console_fd, ARG_PLATFORM, PLATFORM_EXTRA)", self.smoke_rs)
+        # The BEGIN line reports the extra argument after the first one, space separated, as `platform_expect.step_begin_line` does.
+        self.assertRegex(self.smoke_rs, r"begin\.push\(ARG_PLATFORM\.to_bytes\(\)\);\n    if let Some\(extra\) = PLATFORM_EXTRA \{\n"
+                                       r"        begin\.push\(b\" \"\);\n        begin\.push\(extra\.to_bytes\(\)\);")
+        self.assertEqual(P.step_begin_line(PROV), f"{P.STEP_BEGIN_KEY} path={P.STEP_PATH} argv={P.STEP_ARG} {PROV_ARG}")
+
+    def test_the_execve_argv_has_room_for_the_extra_argument_and_still_ends_at_the_first_null(self):
+        self.assertIn("fn sys_execve(argv: &[usize; 4], envp: &[usize; 1]) -> isize", self.smoke_rs)
+        self.assertIn("let extra_ptr = extra.map_or(0usize, |extra| extra.as_ptr() as usize);", self.smoke_rs)
+        flat = " ".join(self.smoke_rs.split())
+        self.assertIn("let argv = [ PATH.as_ptr() as usize, arg.as_ptr() as usize, extra_ptr, 0usize, ];", flat)
+
+
+# ---- the explicit legacy provider ----------------------------------------------------------------------------------
+#
+# `docs/contracts/p02.md` ("The legacy provider"): `--platform-startup --entropy-provider legacy-dev-random-test-environment` prints
+# `provider=` on the ENTROPY line alone. The examples are the speaker's own (`p02_legacy_entropy_markers.json`); every expectation below
+# is written out by hand from the contract and the policy in `platform_expect.py`'s docstring, never read back from the judge.
+
+PROV = "legacy_dev_random_test_environment"
+PROV_ARG = "--entropy-provider=legacy-dev-random-test-environment"
+LEGACY_FILE = REPO / "crates" / "franken-speaker" / "tests" / "vectors" / "p02_legacy_entropy_markers.json"
+LEGACY_DOC = json.loads(LEGACY_FILE.read_text(encoding="utf-8"))
+LEGACY = LEGACY_DOC["examples"]
+PROVIDER_PLATFORM = {"grammar": GRAMMAR, "provider": PROV}
+PROV_ENTROPY_NOT_SEEDED = f"FFW_PLATFORM:ENTROPY status=REFUSED provenance=kernel provider={PROV} reason=not_seeded"
+
+
+def legacy(name):
+    return list(LEGACY[name]["lines"])
+
+
+def pjudge(lines, arch, provider=PROV):
+    return P.judge_output(as_bytes(lines) if isinstance(lines, list) else lines, arch, GRAMMAR, provider=provider)
+
+
+def ppc_not_seeded_provider_lines():
+    lines = replaced(legacy("legacy_test_environment_all_pass_powerpc"), 3, PROV_ENTROPY_NOT_SEEDED)
+    return replaced(lines, 5, "FFW_PLATFORM:END started=0 refused=entropy:not_seeded")
+
+
+# The provider baselines: (guest, lines, the guest's exit status). The first of each kind must itself pass.
+PROVIDER_BASELINES = {
+    "ppc green": ("ppc", legacy("legacy_test_environment_all_pass_powerpc"), 0),
+    "mips degraded": ("mips", legacy("legacy_test_environment_not_seeded_mips"), 3),
+    "ppc degraded": ("ppc", ppc_not_seeded_provider_lines(), 3),
+}
+
+
+def provider_block(lines, status, provider=PROV):
+    """The console view of a provider run's platform step: the BEGIN line names both arguments."""
+    return platform_block(lines, status).replace(P.STEP_BEGIN_LINE, P.step_begin_line(provider), 1)
+
+
+def provider_text(arch, lines, status):
+    return transcript(provider_block(lines, status), arch)
+
+
+def pverify(text, arch):
+    return verify(text, arch, platform=PROVIDER_PLATFORM)
+
+
+# What the contract and the policy give each legacy example, for the run that selected the test-environment provider.
+PROVIDER_EXPECTED = {
+    ("legacy_test_environment_all_pass_powerpc", "ppc"): ("green", []),
+    ("legacy_test_environment_not_seeded_mips", "mips"): ("degraded", []),
+    ("legacy_evidence_qualified_unavailable_powerpc", "ppc"): ("red", ["platform_value:ENTROPY:provider=legacy_dev_random"]),
+    ("legacy_device_absent_mips", "mips"): ("red", ["platform_not_started:entropy:absent"]),
+    ("legacy_selected_with_a_simulated_backend_refused", "ppc"): ("red", ["platform_backend_simulated"]),
+}
+
+
+class LegacyProviderJudgeTests(unittest.TestCase):
+    def test_every_legacy_example_has_an_expectation_and_the_table_names_no_other(self):
+        self.assertEqual({name for name, _ in PROVIDER_EXPECTED}, set(LEGACY))
+        self.assertEqual(LEGACY_DOC["provider_values"], ["legacy_dev_random", PROV])
+
+    def test_each_legacy_example_gets_the_verdict_the_contract_gives_it_and_names_its_provider(self):
+        for (name, arch), (verdict, problems) in PROVIDER_EXPECTED.items():
+            record = pjudge(legacy(name), arch)
+            self.assertEqual((record["verdict"], record["problems"]), (verdict, problems), name)
+            self.assertEqual(record["provider"], PROV, name)
+            self.assertIn("test environment", record["claim"], name)
+
+    def test_the_degraded_cell_for_a_provider_run_is_not_seeded_on_either_guest_and_nothing_else(self):
+        # Both guests: a pool that has not credited yet is what a first /dev/random read reports. No positive is shown.
+        for arch, lines in (("mips", PROVIDER_BASELINES["mips degraded"][1]), ("ppc", PROVIDER_BASELINES["ppc degraded"][1])):
+            record = pjudge(lines, arch)
+            self.assertEqual((record["verdict"], record["problems"], record["started"]), ("degraded", [], False), arch)
+            self.assertEqual(record["degraded_because"], "entropy:not_seeded", arch)
+        # The control: the same shape without a provider is still red on PowerPC under the default judge (E03 seeded its pool).
+        plain = replaced(replaced(lines_of("powerpc_all_pass"), 3, "FFW_PLATFORM:ENTROPY status=REFUSED provenance=kernel reason=not_seeded"),
+                         5, "FFW_PLATFORM:END started=0 refused=entropy:not_seeded")
+        self.assertEqual(judge(plain, "ppc")["problems"], ["platform_not_started:entropy:not_seeded"])
+        # Every other reason is red on both guests, with the reason named.
+        for arch, healthy in (("mips", legacy("legacy_test_environment_not_seeded_mips")), ("ppc", legacy("legacy_test_environment_all_pass_powerpc"))):
+            for reason in ("absent", "unavailable", "failed", "no_progress", "invalid", "malformed", "zero_length", "interrupted",
+                           "degenerate", "over_long"):
+                lines = replaced(replaced(healthy, 3, f"FFW_PLATFORM:ENTROPY status=REFUSED provenance=kernel provider={PROV} reason={reason}"),
+                                 5, f"FFW_PLATFORM:END started=0 refused=entropy:{reason}")
+                record = pjudge(lines, arch)
+                self.assertEqual((record["verdict"], record["problems"]), ("red", [f"platform_not_started:entropy:{reason}"]), (arch, reason))
+        # A second refusal beside the degraded one is not degraded.
+        two = replaced(replaced(PROVIDER_BASELINES["ppc degraded"][1], 2, "FFW_PLATFORM:CLOCK status=REFUSED provenance=kernel reason=absent"),
+                       5, "FFW_PLATFORM:END started=0 refused=clock:absent")
+        self.assertEqual(pjudge(two, "ppc")["problems"], ["platform_not_started:clock:absent", "platform_not_started:entropy:not_seeded"])
+
+    def test_the_default_judge_rejects_the_token_and_a_provider_run_rejects_its_absence(self):
+        fields = {"PASS": "status,provenance,provider", "REFUSED": "status,provenance,provider,reason", "NOT_RUN": "status,provenance,provider"}
+        for name, example in LEGACY.items():
+            arch = "mips" if "mips" in name else "ppc"
+            status = next(l for l in example["lines"] if l.startswith("FFW_PLATFORM:ENTROPY ")).split("status=")[1].split(" ")[0]
+            self.assertEqual(judge(example["lines"], arch)["problems"], [f"platform_fields:ENTROPY:{fields[status]}"], name)
+        for name in EXAMPLES:
+            arch = "mips" if "mips" in name else "ppc"
+            record = pjudge(lines_of(name), arch)
+            self.assertEqual((record["verdict"], record["problems"]), ("red", ["platform_provider_missing:ENTROPY"]), name)
+        # The controls: the same two judgments of the right kind of example are accepted.
+        self.assertEqual(judge(lines_of("powerpc_all_pass"), "ppc")["verdict"], "green")
+        self.assertEqual(pjudge(legacy("legacy_test_environment_all_pass_powerpc"), "ppc")["verdict"], "green")
+
+    def test_a_faulty_provider_token_is_named_against_a_green_baseline(self):
+        healthy = legacy("legacy_test_environment_all_pass_powerpc")
+        self.assertEqual((pjudge(healthy, "ppc")["verdict"], pjudge(healthy, "ppc")["problems"]), ("green", []))
+        refused = PROVIDER_BASELINES["ppc degraded"][1]
+        plants = {
+            "empty value": (replaced(healthy, 3, healthy[3].replace(f"provider={PROV}", "provider=")), ["platform_malformed:ENTROPY"]),
+            "the other provider": (replaced(healthy, 3, healthy[3].replace(PROV, "legacy_dev_random")),
+                                   ["platform_value:ENTROPY:provider=legacy_dev_random"]),
+            "an unknown provider": (replaced(healthy, 3, healthy[3].replace(PROV, "urandom")), ["platform_value:ENTROPY:provider=urandom"]),
+            "an uppercase value": (replaced(healthy, 3, healthy[3].replace(PROV, PROV.upper())),
+                                   [f"platform_value:ENTROPY:provider={PROV.upper()}"]),
+            "the token before provenance": (replaced(healthy, 3, f"FFW_PLATFORM:ENTROPY status=PASS provider={PROV} provenance=kernel"),
+                                            ["platform_fields:ENTROPY:status,provider,provenance"]),
+            "the token after the reason": (replaced(refused, 3, f"FFW_PLATFORM:ENTROPY status=REFUSED provenance=kernel reason=not_seeded provider={PROV}"),
+                                           ["platform_fields:ENTROPY:status,provenance,reason,provider"]),
+            "the token twice": (replaced(healthy, 3, healthy[3] + f" provider={PROV}"),
+                                ["platform_fields:ENTROPY:status,provenance,provider,provider"]),
+            "the token on CLOCK": (replaced(healthy, 2, healthy[2] + f" provider={PROV}"),
+                                   ["platform_fields:CLOCK:status,provenance,provider"]),
+            "the token on WAKE": (replaced(healthy, 4, healthy[4].replace(" mechanism", f" provider={PROV} mechanism")),
+                                  ["platform_fields:WAKE:status,provenance,provider,mechanism"]),
+            "the token on END": (replaced(healthy, 5, healthy[5] + f" provider={PROV}"), ["platform_fields:END:started,provider"]),
+            "the token dropped": (replaced(healthy, 3, healthy[3].replace(f" provider={PROV}", "")), ["platform_provider_missing:ENTROPY"]),
+            "simulated provenance": (replaced(healthy, 3, healthy[3].replace("provenance=kernel", "provenance=simulated")),
+                                     ["platform_simulated:ENTROPY"]),
+        }
+        for label, (lines, problems) in plants.items():
+            record = pjudge(lines, "ppc")
+            self.assertEqual((record["verdict"], record["problems"]), ("red", problems), label)
+
+    def test_the_texts_do_not_say_that_no_read_was_ever_observed(self):
+        # BrightLion's one-shot (6575) read /dev/random on PowerPC and got not_seeded: the true statement is that no SEEDED read exists.
+        for label, path in (("platform_expect.py", Path(P.__file__)), ("SPEAKER_SMOKE.md", REPO / "toolchain" / "SPEAKER_SMOKE.md")):
+            text = " ".join(path.read_text(encoding="utf-8").replace("# ", " ").split())
+            self.assertNotRegex(text, r"(?i)\bno `/dev/random` read has been observed", label)
+            self.assertRegex(text, r"(?i)\bno seeded `/dev/random` read has been observed in any guest", label)
+
+    def test_a_provider_the_judge_does_not_know_raises_like_an_unknown_guest(self):
+        for provider in ("legacy_dev_random", "urandom", "", "LEGACY_DEV_RANDOM_TEST_ENVIRONMENT"):
+            with self.assertRaises(ValueError, msg=provider):
+                pjudge(legacy("legacy_test_environment_all_pass_powerpc"), "ppc", provider=provider)
+            with self.assertRaises(ValueError, msg=provider):
+                P.step_begin_line(provider)
+        with self.assertRaises(ValueError):
+            P.plants_for("legacy_dev_random")
+
+    def test_the_default_judge_and_its_constants_are_what_they_were(self):
+        self.assertEqual(P.STEP_BEGIN_LINE, "FFW_PLATFORM_STEP_BEGIN path=/franken-speaker argv=--platform-startup")
+        self.assertEqual(P.step_argv(), ["--platform-startup"])
+        self.assertEqual(P.step_begin_line(), P.STEP_BEGIN_LINE)
+        self.assertEqual(P.plants_for(), P.PLANTS)
+        self.assertEqual(sorted(P.plants_for(PROV)),
+                         sorted(["provenance_double", "provenance_simulated", "backend_simulated", "missing_capability", "truncated",
+                                 "provider_missing", "provider_other", "provider_unknown"]))
+        self.assertEqual(P.DEGRADED, frozenset({("mips", "entropy", "not_seeded")}))
+        default, provider = judge(lines_of("powerpc_all_pass"), "ppc"), pjudge(legacy("legacy_test_environment_all_pass_powerpc"), "ppc")
+        self.assertEqual(set(provider) - set(default), {"provider", "claim"})
+        self.assertEqual(set(default) - set(provider), set())
+        self.assertEqual(P.plant_spec("truncated"), P.PLANTS["truncated"])
+        self.assertEqual(P.plant_spec("provider_missing"), P.PROVIDER_PLANTS["provider_missing"])
+        with self.assertRaises(KeyError):
+            P.plant_spec("nonexistent")
+
+
+class LegacyProviderCrossJudgeTests(unittest.TestCase):
+    """The reference judge in tests/p02 (YellowBrook's) already holds the legacy lines to the speaker's grammar. This judge and that
+    one must agree on every plant YellowBrook's test applies to a healthy legacy output: it reports a fault exactly when this one
+    says red. The unplanted output is the control: both accept it."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ref = load_reference_judge()
+        cls.reasons = GRAMMAR["reasons"]
+        cls.healthy = legacy("legacy_test_environment_all_pass_powerpc")
+
+    def test_both_accept_the_healthy_output_and_every_legacy_example_is_well_formed_to_the_reference(self):
+        self.assertEqual(self.ref.judge(list(self.healthy), self.reasons), [])
+        self.assertEqual(pjudge(self.healthy, "ppc")["verdict"], "green")
+        for name in LEGACY:
+            self.assertEqual(self.ref.judge(legacy(name), self.reasons), [], name)
+
+    def test_they_agree_on_every_plant_of_the_reference_suite(self):
+        h = self.healthy
+        plants = {
+            "an unknown provider value": replaced(h, 3, h[3].replace(PROV, "urandom")),
+            "an empty provider value": replaced(h, 3, h[3].replace(f"provider={PROV}", "provider=")),
+            "an uppercase provider value": replaced(h, 3, h[3].replace(PROV, "LEGACY_DEV_RANDOM")),
+            "the token on the CLOCK line": replaced(h, 2, h[2] + " provider=legacy_dev_random"),
+            "the token on the WAKE line": replaced(h, 4, h[4].replace(" mechanism=eventfd", " provider=legacy_dev_random mechanism=eventfd")),
+            "the token twice": replaced(h, 3, h[3] + " provider=legacy_dev_random"),
+            "the token before the provenance": replaced(h, 3, "FFW_PLATFORM:ENTROPY status=PASS provider=legacy_dev_random provenance=kernel"),
+            "a simulated provenance on a legacy PASS": replaced(h, 3, h[3].replace("provenance=kernel", "provenance=simulated")),
+        }
+        for label, lines in plants.items():
+            self.assertNotEqual(self.ref.judge(lines, self.reasons), [], label)
+            self.assertEqual(pjudge(lines, "ppc")["verdict"], "red", label)
+
+
+class LegacyProviderVerifierTests(unittest.TestCase):
+    def test_the_provider_baselines_pass_and_record_their_verdicts_provider_and_argv(self):
+        for label, (arch, lines, status) in PROVIDER_BASELINES.items():
+            result = pverify(provider_text(arch, lines, status), arch)
+            self.assertEqual((result["status"], result["validation_errors"], result["missing_markers"]), ("PASS", [], []), label)
+            platform = result["platform"]
+            self.assertEqual(platform["verdict"], "green" if status == 0 else "degraded", label)
+            self.assertEqual((platform["provider"], platform["argv"]), (PROV, ["/franken-speaker", "--platform-startup", PROV_ARG]), label)
+            self.assertEqual(platform["console_region"], platform["reported"], label)
+
+    def test_a_default_guest_is_not_a_provider_guest_and_the_reverse(self):
+        # The default guest, judged as a provider run: the BEGIN line and the child's ENTROPY line both say it is the wrong step.
+        result = pverify(good_text("ppc"), "ppc")
+        self.assertEqual(result["status"], "FAIL")
+        self.assertEqual(result["validation_errors"], [f"invalid:{P.STEP_BEGIN_KEY}", "platform_provider_missing:ENTROPY"])
+        # The provider guest, judged as a default run.
+        result = verify(provider_text("ppc", *PROVIDER_BASELINES["ppc green"][1:]), "ppc")
+        self.assertEqual(result["status"], "FAIL")
+        self.assertEqual(result["validation_errors"][0], f"invalid:{P.STEP_BEGIN_KEY}")
+        self.assertIn("platform_fields:ENTROPY:status,provenance,provider", result["validation_errors"])
+        # The controls: each is accepted by its own kind of run.
+        self.assertEqual(verify(good_text("ppc"), "ppc")["status"], "PASS")
+        self.assertEqual(pverify(provider_text("ppc", *PROVIDER_BASELINES["ppc green"][1:]), "ppc")["status"], "PASS")
+
+    def test_every_provider_plant_fails_for_its_own_reason_and_no_other_against_each_baseline(self):
+        for label, (arch, lines, status) in PROVIDER_BASELINES.items():
+            text = provider_text(arch, lines, status)
+            self.assertEqual(pverify(text, arch)["status"], "PASS", label)
+            for plant, spec in P.plants_for(PROV).items():
+                planted = P.plant_transcript(text, plant)
+                self.assertNotEqual(planted, text, (label, plant))
+                result = pverify(planted, arch)
+                self.assertEqual((result["status"], result["validation_errors"]), ("FAIL", spec["expected"]), (label, plant))
+                self.assertTrue(VERIFIER.judge_platform_control(result, plant)["caught"], (label, plant))
+                platform = result["platform"]
+                self.assertEqual(platform["console_region"], platform["reported"], (label, plant))     # resealed
+
+    def test_run_platform_controls_catches_every_plant_of_a_provider_run_and_a_blind_judge_is_not_credited(self):
+        cfg = {"hello": base.HELLO, "enosys": base.ENOSYS, "triple": base.MIPS_TRIPLE}
+        text = provider_text("mips", *PROVIDER_BASELINES["mips degraded"][1:])
+        controls = VERIFIER.run_platform_controls(text, "mips", cfg, SPEAKER, PROVIDER_PLATFORM)
+        self.assertEqual(sorted(controls), sorted(P.plants_for(PROV)))
+        for name, record in controls.items():
+            self.assertTrue(record["caught"], (name, record))
+            self.assertEqual(record["observed"], record["expected"])
+        blind = {"verdict": "green", "problems": [], "lines": [], "outcomes": {}, "started": False, "kernel_release": None,
+                 "provider": PROV, "claim": P.PROVIDER_CLAIM}
+        with patch.object(P, "judge_output", return_value=blind):
+            for plant in P.plants_for(PROV):
+                result = pverify(P.plant_transcript(text, plant), "mips")
+                self.assertFalse(VERIFIER.judge_platform_control(result, plant)["caught"], plant)
+
+    def test_the_provider_plants_need_a_provider_token_to_plant_in(self):
+        for plant in ("provider_missing", "provider_other", "provider_unknown"):
+            with self.assertRaises(ValueError, msg=plant):
+                P.plant_transcript(good_text("ppc"), plant)                    # a default transcript has no provider= to change
+
+
+class EntropyInjectionGuardTests(unittest.TestCase):
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(self.scratch.cleanup)
+        self.root = Path(self.scratch.name)
+
+    def script(self, name, text):
+        path = self.root / name
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_the_real_boot_scripts_name_no_rng_device(self):
+        scripts = [VERIFIER.SCRIPT_DIR / name for name in VERIFIER.BOOT_SCRIPT_NAMES]
+        self.assertEqual(VERIFIER.BOOT_SCRIPT_NAMES, ("boot-mips.sh", "boot-ppc.sh"))
+        self.assertEqual(VERIFIER.entropy_injection_problems(scripts), [])
+
+    def test_every_way_of_feeding_the_guest_host_entropy_is_named(self):
+        clean = self.script("clean.sh", "exec qemu-system-mips -M malta -m 64M -append 'console=ttyS0'\n")
+        self.assertEqual(VERIFIER.entropy_injection_problems([clean]), [])
+        for text in ("exec qemu-system-mips -device virtio-rng-pci\n",
+                     "exec qemu-system-mips -object rng-random,id=rng0,filename=/dev/urandom -device virtio-rng-pci,rng=rng0\n",
+                     "exec qemu-system-ppc -object RNG-BUILTIN,id=r\n",
+                     "exec qemu-system-ppc -device virtio-rng\n"):
+            path = self.script("bad.sh", text)
+            self.assertEqual(VERIFIER.entropy_injection_problems([path]), ["bad.sh:names_an_rng_device"], text)
+
+    def test_a_random_kernel_parameter_is_named_and_a_comment_that_says_rng_fails_closed(self):
+        for text in ("exec qemu-system-ppc -append 'console=ttyPZ0 random.trust_cpu=on'\n",
+                     'exec qemu-system-mips -append "random.trust_bootloader=on rdinit=/init"\n'):
+            self.assertEqual(VERIFIER.entropy_injection_problems([self.script("param.sh", text)]),
+                             ["param.sh:names_a_random_kernel_parameter"], text)
+        both = self.script("both.sh", "exec qemu -device virtio-rng-pci -append 'random.trust_cpu=on'\n")
+        self.assertEqual(VERIFIER.entropy_injection_problems([both]),
+                         ["both.sh:names_an_rng_device", "both.sh:names_a_random_kernel_parameter"])
+        # Not parameters: the device node's name, a longer word, and a word that merely contains `random.`.
+        for text in ("exec qemu -append 'rdinit=/init panic=-1' # the guest reads /dev/random\n",
+                     "exec qemu -append 'randomize_kstack_offset=on'\n", "echo prandom.x=1\n"):
+            self.assertEqual(VERIFIER.entropy_injection_problems([self.script("fine.sh", text)]), [], text)
+        # A comment that says `rng` is flagged on purpose: the check is a text search and fails closed.
+        self.assertEqual(VERIFIER.entropy_injection_problems([self.script("comment.sh", "# there is no rng device here\nexec qemu\n")]),
+                         ["comment.sh:names_an_rng_device"])
+
+    def test_an_unreadable_script_is_a_problem_not_a_pass(self):
+        self.assertEqual(VERIFIER.entropy_injection_problems([self.root / "missing.sh"]), ["missing.sh:unreadable"])
+        self.script("binary.sh", "ok")
+        (self.root / "binary.sh").write_bytes(b"\xff\xfe\x00 not utf-8")
+        self.assertEqual(VERIFIER.entropy_injection_problems([self.root / "binary.sh"]), ["binary.sh:unreadable"])
 
 
 if __name__ == "__main__":

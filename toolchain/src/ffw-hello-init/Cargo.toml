@@ -19,6 +19,11 @@ speaker-smoke = []
 # the catalog step (P02, src/speaker_smoke.rs `run_platform`), with its own wrapper lines; the host runner judges the
 # speaker's six FFW_PLATFORM:* lines (toolchain/src/platform_expect.py). Without it the guest is exactly the speaker-smoke one.
 speaker-platform = ["speaker-smoke"]
+# Off by default, and needs `speaker-platform`. On, the platform step passes one more argument to the child,
+# `--entropy-provider=legacy-dev-random-test-environment`, and prints it on the BEGIN line: the speaker then tries the explicit legacy
+# `/dev/random` provider in this harness guest (P02, `provider=` in toolchain/src/platform_expect.py). Without it the guest is exactly
+# the speaker-platform one.
+speaker-platform-legacy-test-env = ["speaker-platform"]
 
 [profile.release]
 opt-level = "z"

@@ -27,6 +27,13 @@ RCH_WORKER=ts1,hz3,hz4 python3 toolchain/src/run-qemu-verification.py --timeout 
 `python3 toolchain/src/run-qemu-verification.py --check-catalog host-catalog.json` judges the HOST build's `--catalog` output
 alone; run it first. It validates the checker (including its SHA-256 replication) before a guest is held to it.
 
+Before **each** guest build the runner takes a fresh capacity sample (`rch workers capabilities --refresh --json`) and asks
+`rch admit --json -- <that exact cargo argv>` (read-only) with the build's own environment and directory; it builds only on
+`offload`/`observed` from a worker in the requested set (`RCH_WORKERS` or `RCH_WORKER`) or `queue`/`observed`/`all_workers_busy`
+(rch's own queued wait). After 8 tries, 15 s apart, it stops with `AdmissionRefused` naming the guest and the last answer, and builds
+nothing. Back-to-back builds used to meet `RCH-I001` on the second guest. The receipt's `build_admission` keeps the recommendation,
+observation, worker id and reason, never a host address; `--skip-build` asks for nothing.
+
 ## Markers (fixed before any run)
 
 ```
@@ -133,6 +140,28 @@ was not red, and only if the verifier reports exactly the named problem and noth
 | the BEGIN line says `backend=simulated` with every capability still passing | `platform_backend_simulated` |
 | the ENTROPY line is missing | `platform_missing:ENTROPY` |
 | the run stops after the CLOCK line | `platform_truncated:after:CLOCK` |
+
+### The explicit legacy provider (`--entropy-provider legacy-dev-random-test-environment`)
+
+With `--speaker-platform --entropy-provider legacy-dev-random-test-environment` the guests are built with one more feature
+(`speaker-platform-legacy-test-env`, target directory `hello-init-platform-legacy-target`), the child gets one more argument
+(`--entropy-provider=legacy-dev-random-test-environment`, printed on the BEGIN line), and the judge holds the run to what
+`docs/contracts/p02.md` ("The legacy provider") says: the ENTROPY line, and only it, carries `provider=legacy_dev_random_test_environment`
+between `provenance=` and `reason=` on PASS, REFUSED and NOT_RUN alike. The default run is untouched: it still rejects the token
+(`platform_fields:ENTROPY:...`), and a provider run rejects its absence (`platform_provider_missing:ENTROPY`), so neither passes as the other.
+
+| run | verdict |
+|---|---|
+| `ENTROPY PASS` with the provider, `END started=1`, exit 0 | green: the real adapter read a credited pool in a harness guest. Not a device or stock-kernel claim |
+| `ENTROPY REFUSED ... reason=not_seeded` with the provider, `END started=0`, exit 3, the other three `PASS` | degraded on **both** guests: no seeded `/dev/random` read has been observed in any guest, so a pool that has not credited yet is the information, and it shows no positive |
+| any other reason (`absent` = no `/dev/random` node, `unavailable`, `failed`, ...), a wrong or unknown `provider=` value, a missing token | red, each named (`platform_not_started:entropy:<reason>`, `platform_value:ENTROPY:provider=<v>`, `platform_provider_missing:ENTROPY`) |
+
+Plants (`--platform-controls` adds these to the five above): the token removed, `provider=legacy_dev_random`, `provider=urandom`.
+The runner also refuses a provider run when one of the two boot scripts names an RNG device or a `random.*=` kernel parameter, and
+records the scripts' SHA-256 in the receipt. This is a static text check of those two scripts: it does not show that the pool was not
+credited some other way, and the contract forbids a pre-seed, an injected backend and `/dev/urandom` as substitutes.
+**Not shown by any of this:** a `PASS` needs a guest whose pool credits by itself (the 4.19 MIPS guest did so only after 76 to 258 s in
+single scratch runs); until a transcript shows one, the positive path of the legacy provider is unproven and the refusal earns no credit.
 
 ### Tests
 

@@ -1,0 +1,1121 @@
+{
+  "build_admission": {
+    "mips": {
+      "attempts": 1,
+      "observation": "observed",
+      "reason": "success",
+      "recommendation": "offload",
+      "worker": "trj"
+    },
+    "ppc": {
+      "attempts": 1,
+      "observation": "observed",
+      "reason": "affinity_pinned",
+      "recommendation": "offload",
+      "worker": "trj"
+    }
+  },
+  "build_provenance": {
+    "note": "Binary hashes bind this boot. Each guest's build_identity is the probe's own FFW_BUILD report (target, rustc release and commit, linker flavor, libc) plus the FFW_RUSTC `rustc -vV` fields; it describes the booted bytes (the archive's init entry is checked against binary_sha256) but is not an attestation of the remote compiler or linker, which requires the separate build receipt. Each guest's build_manifest records the exact build command and the digests of the sources, lockfile and cargo config handed to rch; those digests are bound to the binary only when the runner built it itself (sources_bound_to_binary), never under --skip-build. Local rustc is not the remote compiler.",
+    "status": "not_attested_by_this_boot_runner"
+  },
+  "guests": {
+    "mips": {
+      "arch": "mips",
+      "binary_bytes": 31908,
+      "binary_sha256": "d47bfc7a7a3954c57b5f12883d323ae64e6395e1294c91e20b19144bc6410b41",
+      "booted_init_sha256": "d47bfc7a7a3954c57b5f12883d323ae64e6395e1294c91e20b19144bc6410b41",
+      "build_identity": {
+        "libc": "none",
+        "linker_flavor": "ld.lld",
+        "runtime": "no_std",
+        "rustc": "1.101.0-nightly",
+        "rustc_commit": "2d20b42b8",
+        "target": "mips-unknown-linux-musl"
+      },
+      "build_manifest": {
+        "command": [
+          "rch",
+          "exec",
+          "--source-content-receipt",
+          "--",
+          "cargo",
+          "+nightly",
+          "build",
+          "--release",
+          "--target",
+          "mips-unknown-linux-musl",
+          "-Z",
+          "build-std=core,panic_abort",
+          "--features",
+          "speaker-smoke,speaker-platform,speaker-platform-legacy-test-env",
+          "-j",
+          "2"
+        ],
+        "environment": {
+          "CARGO_TARGET_DIR": "build/p02-provider-target-pvB1",
+          "RCH_REQUIRE_REMOTE": "1"
+        },
+        "features": [
+          "speaker-smoke",
+          "speaker-platform",
+          "speaker-platform-legacy-test-env"
+        ],
+        "sources_bound_to_binary": true,
+        "sources_sha256": {
+          ".cargo/config.toml": "5e2a7e29e6c0bdd0a8d5eebf9cd38d1f01b76806cdb7e90b9758c14d21e0b560",
+          "Cargo.lock": "8d3ee710523654e19c102b745e9defbb4b47f72fe204f5b86790981af82bfea3",
+          "Cargo.toml": "c413d5c65a2f4cf8324250cca5bca25d1246cf372e98e3d0b81d0959e438e7fa",
+          "build.rs": "e0ee93db501522d3dfba259a72acda430e5612049050cf43fbe737829d46279e",
+          "src/e03_judge.rs": "a966fdd730caecf8ce26f8c69d4e94f9e157007de513af5fe0b1dc6b77aaf124",
+          "src/e03_judge/net.rs": "84a677b24a1dc88145eb32d12dd8502fc3c9b91b88dd41db0ffb31d193dc74f5",
+          "src/e03_judge_rt.rs": "1f6d7e0440abed2812dd7d3b87da4611f39be01f3cdfe16da158776ea72b83aa",
+          "src/e03_probes.rs": "91b94fc236a7570369728aecec195ee0ee63bfc01f062a618e37979a885abe80",
+          "src/e03_probes/net.rs": "840d7713c36efd3606256c301a4a95be6ef072af71314511a843fde51a84b352",
+          "src/e03_probes_rt.rs": "20a8602be872588b6f35dd53d4972d755fcbc07d1d0f42eea852e1c68929d6d9",
+          "src/lib.rs": "bf9fe5cb9e894a66febf1ca5a07b418ce29ed966fb6b45d37fc355a7617a08ba",
+          "src/main.rs": "4ee09ed05417932598e82910d51afbe80bcacad8f3e3f14435bb4d4430bfde63",
+          "src/speaker_judge.rs": "afd7dbedff88f325ae68e5ee861f3aa36cbdbc0c0c80077b5aac2877860aed2c",
+          "src/speaker_smoke.rs": "627838b78a0ae786dee23cfbfeacab089fa0e201358c24fd068ceb688205f0b0"
+        },
+        "target": {
+          "build_std": "core,panic_abort",
+          "builtin_target": true,
+          "cpu_features_overridden": false,
+          "rustflags": [
+            "-C",
+            "linker-flavor=ld.lld",
+            "-C",
+            "relocation-model=static",
+            "-C",
+            "link-arg=--static",
+            "-C",
+            "link-arg=-e",
+            "-C",
+            "link-arg=_start"
+          ],
+          "target_json": null,
+          "triple": "mips-unknown-linux-musl"
+        },
+        "toolchain": {
+          "note": "cargo +nightly selects the worker's nightly; the release and commit that built the binary are the probe's FFW_BUILD report in build_identity",
+          "pinned": false,
+          "selector": "+nightly"
+        }
+      },
+      "capture_byte_limit": 8388608,
+      "capture_layout": "stdout-then-stderr; separate raw streams retained",
+      "capture_stop_reason": null,
+      "elapsed_seconds": 6.651,
+      "forbidden_hits": [],
+      "initramfs_sha256": "5130e5e3d99ee01ae87a6018561a4b1bff60e9dd3e8ce3b0575aacf3af891b48",
+      "kernel_sha256": "3803357ef7821dbf691c901105fb9b2b00382abf67fce8a4be2a0d592267dc61",
+      "kernel_version": "Linux version 4.19.0-21-4kc-malta (debian-kernel@lists.debian.org) (gcc version 8.3.0 (Debian 8.3.0-6)) #1 SMP Debian 4.19.249-2 (2022-06-30)",
+      "libc": {
+        "conclusion": "static_no_loader",
+        "reported_by_probe": "none",
+        "static_elf": {
+          "has_dynamic": false,
+          "has_interp": false,
+          "is_elf": true,
+          "machine": 8,
+          "machine_matches_arch": true,
+          "problems": [],
+          "static": true
+        }
+      },
+      "linker_configured": {
+        "attested": false,
+        "flavor": "ld.lld",
+        "linker": "rust-lld",
+        "source": ".cargo/config.toml"
+      },
+      "marker_order_ok": true,
+      "missing_markers": [],
+      "platform": {
+        "argv": [
+          "/franken-speaker",
+          "--platform-startup",
+          "--entropy-provider=legacy-dev-random-test-environment"
+        ],
+        "claim": "explicit legacy /dev/random provider in an admitted test environment (a harness guest): a started run is an observation of the real adapter on that guest's kernel and says nothing about a device or a stock kernel; a refusal shows no positive",
+        "console_region": {
+          "stdout_bytes": 368,
+          "stdout_fnv1a64": "029c2cefeaac890e"
+        },
+        "controls": {
+          "backend_simulated": {
+            "caught": true,
+            "checks": {
+              "guest_failed": true,
+              "no_forbidden_marker": true,
+              "no_missing_marker": true,
+              "only_the_planted_error": true,
+              "platform_verdict_red": true
+            },
+            "expected": [
+              "platform_backend_simulated"
+            ],
+            "observed": [
+              "platform_backend_simulated"
+            ],
+            "plant": "the BEGIN line says backend=simulated while every capability still passes"
+          },
+          "missing_capability": {
+            "caught": true,
+            "checks": {
+              "guest_failed": true,
+              "no_forbidden_marker": true,
+              "no_missing_marker": true,
+              "only_the_planted_error": true,
+              "platform_verdict_red": true
+            },
+            "expected": [
+              "platform_missing:ENTROPY"
+            ],
+            "observed": [
+              "platform_missing:ENTROPY"
+            ],
+            "plant": "the ENTROPY line is missing from the run"
+          },
+          "provenance_double": {
+            "caught": true,
+            "checks": {
+              "guest_failed": true,
+              "no_forbidden_marker": true,
+              "no_missing_marker": true,
+              "only_the_planted_error": true,
+              "platform_verdict_red": true
+            },
+            "expected": [
+              "platform_value:CLOCK:provenance=double"
+            ],
+            "observed": [
+              "platform_value:CLOCK:provenance=double"
+            ],
+            "plant": "the CLOCK line claims provenance=double (not kernel, simulated or none)"
+          },
+          "provenance_simulated": {
+            "caught": true,
+            "checks": {
+              "guest_failed": true,
+              "no_forbidden_marker": true,
+              "no_missing_marker": true,
+              "only_the_planted_error": true,
+              "platform_verdict_red": true
+            },
+            "expected": [
+              "platform_simulated:CLOCK"
+            ],
+            "observed": [
+              "platform_simulated:CLOCK"
+            ],
+            "plant": "the CLOCK line says provenance=simulated, the value a test double really prints"
+          },
+          "provider_missing": {
+            "caught": true,
+            "checks": {
+              "guest_failed": true,
+              "no_forbidden_marker": true,
+              "no_missing_marker": true,
+              "only_the_planted_error": true,
+              "platform_verdict_red": true
+            },
+            "expected": [
+              "platform_provider_missing:ENTROPY"
+            ],
+            "observed": [
+              "platform_provider_missing:ENTROPY"
+            ],
+            "plant": "the ENTROPY line has no provider= token (the guest ran the default provider)"
+          },
+          "provider_other": {
+            "caught": true,
+            "checks": {
+              "guest_failed": true,
+              "no_forbidden_marker": true,
+              "no_missing_marker": true,
+              "only_the_planted_error": true,
+              "platform_verdict_red": true
+            },
+            "expected": [
+              "platform_value:ENTROPY:provider=legacy_dev_random"
+            ],
+            "observed": [
+              "platform_value:ENTROPY:provider=legacy_dev_random"
+            ],
+            "plant": "the ENTROPY line says provider=legacy_dev_random (the evidence-qualified one) when the test environment was selected"
+          },
+          "provider_unknown": {
+            "caught": true,
+            "checks": {
+              "guest_failed": true,
+              "no_forbidden_marker": true,
+              "no_missing_marker": true,
+              "only_the_planted_error": true,
+              "platform_verdict_red": true
+            },
+            "expected": [
+              "platform_value:ENTROPY:provider=urandom"
+            ],
+            "observed": [
+              "platform_value:ENTROPY:provider=urandom"
+            ],
+            "plant": "the ENTROPY line says provider=urandom (a source that is not a provider)"
+          },
+          "truncated": {
+            "caught": true,
+            "checks": {
+              "guest_failed": true,
+              "no_forbidden_marker": true,
+              "no_missing_marker": true,
+              "only_the_planted_error": true,
+              "platform_verdict_red": true
+            },
+            "expected": [
+              "platform_truncated:after:CLOCK"
+            ],
+            "observed": [
+              "platform_truncated:after:CLOCK"
+            ],
+            "plant": "the run stops after the CLOCK line (no ENTROPY, WAKE or END)"
+          }
+        },
+        "exit_line": "FFW_PLATFORM_STEP_EXIT status=0 stdout_bytes=368 stdout_fnv1a64=029c2cefeaac890e",
+        "grammar": {
+          "sha256": "7be8d7ff7fead558b45a4f16ed289a6e50e5cd2fa4422bbc1751ab5afebdda28",
+          "source": "crates/franken-speaker/tests/vectors/p02_platform_markers.json"
+        },
+        "kernel_release": "4.19.0-21-4kc-malta",
+        "lines": [
+          "FFW_PLATFORM:BEGIN abi=mips32 evidence=harness-mips-4.19 backend=kernel kernel=4.19.0-21-4kc-malta",
+          "FFW_PLATFORM:KERNEL status=PASS",
+          "FFW_PLATFORM:CLOCK status=PASS provenance=kernel",
+          "FFW_PLATFORM:ENTROPY status=PASS provenance=kernel provider=legacy_dev_random_test_environment",
+          "FFW_PLATFORM:WAKE status=PASS provenance=kernel mechanism=eventfd",
+          "FFW_PLATFORM:END started=1"
+        ],
+        "outcome": "exited_0",
+        "outcomes": {
+          "clock": "PASS",
+          "entropy": "PASS",
+          "kernel": "PASS",
+          "wake": "PASS"
+        },
+        "problems": [],
+        "provider": "legacy_dev_random_test_environment",
+        "qualification_boundary": "the device franken-speaker's startup, run once as a userspace process under a harness guest, reported what that guest's kernel answered to the platform layer's clock, entropy and wake probes; says nothing about Sonos silicon, a stock kernel, a board's kernel= string, or whether an unseeded pool later seeds; explicit legacy /dev/random provider, selected by name in a harness guest whose two boot scripts pass a static text check for an RNG device or a random.* kernel parameter (a text check only: it does not show that the pool was not credited some other way): a started run observes the real adapter on that guest's kernel, a `not_seeded` refusal is the information of a pool that has not credited and shows no positive; neither says anything about a device or a stock kernel",
+        "reported": {
+          "stdout_bytes": 368,
+          "stdout_fnv1a64": "029c2cefeaac890e"
+        },
+        "started": true,
+        "verdict": "green"
+      },
+      "probes": {
+        "FFW_PROBE:ACCEPT4": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:ACCEPT4 status=PASS fd=6",
+          "status": "PASS"
+        },
+        "FFW_PROBE:ALLOC": {
+          "raw": "FFW_PROBE:ALLOC status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:ATOMICS_32": {
+          "raw": "FFW_PROBE:ATOMICS_32 status=PASS ok=1",
+          "status": "PASS"
+        },
+        "FFW_PROBE:ATOMIC_WIDTH": {
+          "raw": "FFW_PROBE:ATOMIC_WIDTH status=PASS bits=32",
+          "status": "PASS"
+        },
+        "FFW_PROBE:CHARDEV_POLL": {
+          "raw": "FFW_PROBE:CHARDEV_POLL status=PASS rc=2",
+          "status": "PASS"
+        },
+        "FFW_PROBE:CLOCK_MONOTONIC": {
+          "raw": "FFW_PROBE:CLOCK_MONOTONIC status=PASS res_ns=1",
+          "status": "PASS"
+        },
+        "FFW_PROBE:EINTR_READ": {
+          "raw": "FFW_PROBE:EINTR_READ status=PASS rc=-4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:ENTROPY": {
+          "raw": "FFW_PROBE:ENTROPY status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:EPOLL": {
+          "raw": "FFW_PROBE:EPOLL status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:EVENTFD2": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:EVENTFD2 status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:FS_RENAME": {
+          "raw": "FFW_PROBE:FS_RENAME status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:FUTEX": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:FUTEX status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:GETRANDOM": {
+          "capability": "unseeded",
+          "raw": "FFW_PROBE:GETRANDOM status=UNSEEDED rc=-11",
+          "status": "UNSEEDED"
+        },
+        "FFW_PROBE:LOOPBACK_UP": {
+          "raw": "FFW_PROBE:LOOPBACK_UP status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:MEM_PEAK": {
+          "raw": "FFW_PROBE:MEM_PEAK status=PASS kb=68",
+          "status": "PASS"
+        },
+        "FFW_PROBE:NONBLOCK_PIPE": {
+          "raw": "FFW_PROBE:NONBLOCK_PIPE status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:POLL": {
+          "raw": "FFW_PROBE:POLL status=PASS rc=1",
+          "status": "PASS"
+        },
+        "FFW_PROBE:REACTOR_WAKE": {
+          "raw": "FFW_PROBE:REACTOR_WAKE status=PASS rc=1",
+          "status": "PASS"
+        },
+        "FFW_PROBE:SIGNAL": {
+          "raw": "FFW_PROBE:SIGNAL status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:SOCKET_UDP": {
+          "raw": "FFW_PROBE:SOCKET_UDP status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:THREADS": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:THREADS status=PASS tid=60",
+          "status": "PASS"
+        },
+        "FFW_PROBE:TIMERFD": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:TIMERFD status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:TIMER_SIGNALS": {
+          "raw": "FFW_PROBE:TIMER_SIGNALS status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:TLS": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:TLS status=PASS tp=305419896",
+          "status": "PASS"
+        },
+        "FFW_PROBE:UDP_LOOPBACK": {
+          "raw": "FFW_PROBE:UDP_LOOPBACK status=PASS rc=24",
+          "status": "PASS"
+        },
+        "FFW_TEST:ERR_EBADF": {
+          "raw": "FFW_TEST:ERR_EBADF status=PASS errno=9",
+          "status": "PASS"
+        },
+        "FFW_TEST:ERR_ENOENT": {
+          "raw": "FFW_TEST:ERR_ENOENT status=PASS errno=2",
+          "status": "PASS"
+        },
+        "FFW_TEST:ERR_ENOSYS": {
+          "raw": "FFW_TEST:ERR_ENOSYS status=PASS errno=89",
+          "status": "PASS"
+        },
+        "FFW_TEST:PARTIAL_WRITE": {
+          "raw": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096",
+          "status": "PASS"
+        },
+        "FFW_TEST:POS_FD_SHORT_WRITE": {
+          "raw": "FFW_TEST:POS_FD_SHORT_WRITE status=PASS fd=4",
+          "status": "PASS"
+        }
+      },
+      "qemu_exit_code": 0,
+      "qualification_boundary": "Full-system Debian QEMU guest (Linux 4.19 Malta / Linux 4.9 g3beige); proves ISA, endianness, static ELF startup, initramfs device nodes, and syscall ABI probes; does not substitute for stock Sonos 2.4/2.6 kernel or proprietary audio driver qualification.",
+      "rustc_identity": {
+        "commit_date": "2026-11-04",
+        "commit_hash": "2d20b42b883dcfc014f3c2c56081eeb6091c2179",
+        "host": "x86_64-unknown-linux-gnu",
+        "llvm": "23.1.5",
+        "release": "1.101.0-nightly"
+      },
+      "serial_log_path": "boot-mips-serial.log",
+      "serial_log_sha256": "bd48482f4fa6d7ff530666e04961b51856cdbd042c9a4f45b2e95708515529fe",
+      "speaker": {
+        "argv": [
+          "/franken-speaker",
+          "--catalog"
+        ],
+        "binary": {
+          "archive_entry": {
+            "mode": "0o100755",
+            "sha256": "93755bbf2ee1bdb14306828e0028dfbd4f0a587dd55a4856b7ebf6e0a1f679e3",
+            "size": 564464
+          },
+          "bytes": 564464,
+          "path": "<outside-repo>",
+          "sha256": "93755bbf2ee1bdb14306828e0028dfbd4f0a587dd55a4856b7ebf6e0a1f679e3",
+          "static_elf": {
+            "has_dynamic": false,
+            "has_interp": false,
+            "is_elf": true,
+            "machine": 8,
+            "machine_matches_arch": true,
+            "problems": [],
+            "static": true
+          }
+        },
+        "catalog": {
+          "problems": [],
+          "rows_expected": 9
+        },
+        "console_region": {
+          "stdout_bytes": 10006,
+          "stdout_fnv1a64": "920a91647ae4af73"
+        },
+        "exit_line": "FFW_SPEAKER_EXIT status=0 stdout_bytes=10006 stdout_fnv1a64=920a91647ae4af73",
+        "host_catalog": {
+          "sha256": "69c2e38da2ea10c8ab3f975b372c6d6d1d2e7c684201af7c064dca57aa0b8ada",
+          "stdout_bytes": 10006,
+          "stdout_fnv1a64": "920a91647ae4af73"
+        },
+        "outcome": "exited_0",
+        "qualification_boundary": "Generic full-system QEMU guests (Debian Linux 4.19 Malta / 4.9 g3beige), not Sonos silicon or kernels. Shows the linked franken-speaker starts as a userspace process under a retained-kernel-class guest, runs std, allocation, serde_json and SHA-256 on a big-endian CPU, and prints the catalog the Rust source defines. The catalog has no floating point and the run uses no network, audio or threads beyond startup, so it says nothing about the float ABI, drivers, timing or memory pressure on a real unit.",
+        "reported": {
+          "stdout_bytes": 10006,
+          "stdout_fnv1a64": "920a91647ae4af73"
+        }
+      },
+      "status": "PASS",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "bd48482f4fa6d7ff530666e04961b51856cdbd042c9a4f45b2e95708515529fe",
+      "target_triple": "mips-unknown-linux-musl",
+      "timed_out": false,
+      "unseeded_capabilities": [
+        "GETRANDOM"
+      ],
+      "unsupported_capabilities": [],
+      "validation_errors": []
+    },
+    "ppc": {
+      "arch": "ppc",
+      "binary_bytes": 28684,
+      "binary_sha256": "4cc5b3667125b78e98bd1d8a91b6def93eda926cc824e16527a9866b1711d35b",
+      "booted_init_sha256": "4cc5b3667125b78e98bd1d8a91b6def93eda926cc824e16527a9866b1711d35b",
+      "build_identity": {
+        "libc": "none",
+        "linker_flavor": "ld.lld",
+        "runtime": "no_std",
+        "rustc": "1.101.0-nightly",
+        "rustc_commit": "2d20b42b8",
+        "target": "powerpc-unknown-linux-musl"
+      },
+      "build_manifest": {
+        "command": [
+          "rch",
+          "exec",
+          "--source-content-receipt",
+          "--",
+          "cargo",
+          "+nightly",
+          "build",
+          "--release",
+          "--target",
+          "powerpc-unknown-linux-musl",
+          "-Z",
+          "build-std=core,panic_abort",
+          "--features",
+          "speaker-smoke,speaker-platform,speaker-platform-legacy-test-env",
+          "-j",
+          "2"
+        ],
+        "environment": {
+          "CARGO_TARGET_DIR": "build/p02-provider-target-pvB1",
+          "RCH_REQUIRE_REMOTE": "1"
+        },
+        "features": [
+          "speaker-smoke",
+          "speaker-platform",
+          "speaker-platform-legacy-test-env"
+        ],
+        "sources_bound_to_binary": true,
+        "sources_sha256": {
+          ".cargo/config.toml": "5e2a7e29e6c0bdd0a8d5eebf9cd38d1f01b76806cdb7e90b9758c14d21e0b560",
+          "Cargo.lock": "8d3ee710523654e19c102b745e9defbb4b47f72fe204f5b86790981af82bfea3",
+          "Cargo.toml": "c413d5c65a2f4cf8324250cca5bca25d1246cf372e98e3d0b81d0959e438e7fa",
+          "build.rs": "e0ee93db501522d3dfba259a72acda430e5612049050cf43fbe737829d46279e",
+          "src/e03_judge.rs": "a966fdd730caecf8ce26f8c69d4e94f9e157007de513af5fe0b1dc6b77aaf124",
+          "src/e03_judge/net.rs": "84a677b24a1dc88145eb32d12dd8502fc3c9b91b88dd41db0ffb31d193dc74f5",
+          "src/e03_judge_rt.rs": "1f6d7e0440abed2812dd7d3b87da4611f39be01f3cdfe16da158776ea72b83aa",
+          "src/e03_probes.rs": "91b94fc236a7570369728aecec195ee0ee63bfc01f062a618e37979a885abe80",
+          "src/e03_probes/net.rs": "840d7713c36efd3606256c301a4a95be6ef072af71314511a843fde51a84b352",
+          "src/e03_probes_rt.rs": "20a8602be872588b6f35dd53d4972d755fcbc07d1d0f42eea852e1c68929d6d9",
+          "src/lib.rs": "bf9fe5cb9e894a66febf1ca5a07b418ce29ed966fb6b45d37fc355a7617a08ba",
+          "src/main.rs": "4ee09ed05417932598e82910d51afbe80bcacad8f3e3f14435bb4d4430bfde63",
+          "src/speaker_judge.rs": "afd7dbedff88f325ae68e5ee861f3aa36cbdbc0c0c80077b5aac2877860aed2c",
+          "src/speaker_smoke.rs": "627838b78a0ae786dee23cfbfeacab089fa0e201358c24fd068ceb688205f0b0"
+        },
+        "target": {
+          "build_std": "core,panic_abort",
+          "builtin_target": true,
+          "cpu_features_overridden": false,
+          "rustflags": [
+            "-C",
+            "linker-flavor=ld.lld",
+            "-C",
+            "relocation-model=static",
+            "-C",
+            "link-arg=--static",
+            "-C",
+            "link-arg=-e",
+            "-C",
+            "link-arg=_start"
+          ],
+          "target_json": null,
+          "triple": "powerpc-unknown-linux-musl"
+        },
+        "toolchain": {
+          "note": "cargo +nightly selects the worker's nightly; the release and commit that built the binary are the probe's FFW_BUILD report in build_identity",
+          "pinned": false,
+          "selector": "+nightly"
+        }
+      },
+      "capture_byte_limit": 8388608,
+      "capture_layout": "stdout-then-stderr; separate raw streams retained",
+      "capture_stop_reason": null,
+      "elapsed_seconds": 4.45,
+      "forbidden_hits": [],
+      "initramfs_sha256": "65fe9d807d6933263ee97056f8fd2fb56604374ec0221036432e2ce1b6b1314b",
+      "kernel_sha256": "289f40b63ea9aa82743f568ddeaba669a16a859970497dccf7135596da538f98",
+      "kernel_version": "Linux version 4.9.0-0.bpo.6-powerpc (debian-kernel@lists.debian.org) (gcc version 4.9.2 (Debian 4.9.2-10) ) #1 Debian 4.9.88-1+deb9u1~bpo8+1 (2018-05-13)",
+      "libc": {
+        "conclusion": "static_no_loader",
+        "reported_by_probe": "none",
+        "static_elf": {
+          "has_dynamic": false,
+          "has_interp": false,
+          "is_elf": true,
+          "machine": 20,
+          "machine_matches_arch": true,
+          "problems": [],
+          "static": true
+        }
+      },
+      "linker_configured": {
+        "attested": false,
+        "flavor": "ld.lld",
+        "linker": "rust-lld",
+        "source": ".cargo/config.toml"
+      },
+      "marker_order_ok": true,
+      "missing_markers": [],
+      "platform": {
+        "argv": [
+          "/franken-speaker",
+          "--platform-startup",
+          "--entropy-provider=legacy-dev-random-test-environment"
+        ],
+        "claim": "explicit legacy /dev/random provider in an admitted test environment (a harness guest): a started run is an observation of the real adapter on that guest's kernel and says nothing about a device or a stock kernel; a refusal shows no positive",
+        "console_region": {
+          "stdout_bytes": 419,
+          "stdout_fnv1a64": "c77711b2429bfbcc"
+        },
+        "controls": {
+          "backend_simulated": {
+            "caught": true,
+            "checks": {
+              "guest_failed": true,
+              "no_forbidden_marker": true,
+              "no_missing_marker": true,
+              "only_the_planted_error": true,
+              "platform_verdict_red": true
+            },
+            "expected": [
+              "platform_backend_simulated"
+            ],
+            "observed": [
+              "platform_backend_simulated"
+            ],
+            "plant": "the BEGIN line says backend=simulated while every capability still passes"
+          },
+          "missing_capability": {
+            "caught": true,
+            "checks": {
+              "guest_failed": true,
+              "no_forbidden_marker": true,
+              "no_missing_marker": true,
+              "only_the_planted_error": true,
+              "platform_verdict_red": true
+            },
+            "expected": [
+              "platform_missing:ENTROPY"
+            ],
+            "observed": [
+              "platform_missing:ENTROPY"
+            ],
+            "plant": "the ENTROPY line is missing from the run"
+          },
+          "provenance_double": {
+            "caught": true,
+            "checks": {
+              "guest_failed": true,
+              "no_forbidden_marker": true,
+              "no_missing_marker": true,
+              "only_the_planted_error": true,
+              "platform_verdict_red": true
+            },
+            "expected": [
+              "platform_value:CLOCK:provenance=double"
+            ],
+            "observed": [
+              "platform_value:CLOCK:provenance=double"
+            ],
+            "plant": "the CLOCK line claims provenance=double (not kernel, simulated or none)"
+          },
+          "provenance_simulated": {
+            "caught": true,
+            "checks": {
+              "guest_failed": true,
+              "no_forbidden_marker": true,
+              "no_missing_marker": true,
+              "only_the_planted_error": true,
+              "platform_verdict_red": true
+            },
+            "expected": [
+              "platform_simulated:CLOCK"
+            ],
+            "observed": [
+              "platform_simulated:CLOCK"
+            ],
+            "plant": "the CLOCK line says provenance=simulated, the value a test double really prints"
+          },
+          "provider_missing": {
+            "caught": true,
+            "checks": {
+              "guest_failed": true,
+              "no_forbidden_marker": true,
+              "no_missing_marker": true,
+              "only_the_planted_error": true,
+              "platform_verdict_red": true
+            },
+            "expected": [
+              "platform_provider_missing:ENTROPY"
+            ],
+            "observed": [
+              "platform_provider_missing:ENTROPY"
+            ],
+            "plant": "the ENTROPY line has no provider= token (the guest ran the default provider)"
+          },
+          "provider_other": {
+            "caught": true,
+            "checks": {
+              "guest_failed": true,
+              "no_forbidden_marker": true,
+              "no_missing_marker": true,
+              "only_the_planted_error": true,
+              "platform_verdict_red": true
+            },
+            "expected": [
+              "platform_value:ENTROPY:provider=legacy_dev_random"
+            ],
+            "observed": [
+              "platform_value:ENTROPY:provider=legacy_dev_random"
+            ],
+            "plant": "the ENTROPY line says provider=legacy_dev_random (the evidence-qualified one) when the test environment was selected"
+          },
+          "provider_unknown": {
+            "caught": true,
+            "checks": {
+              "guest_failed": true,
+              "no_forbidden_marker": true,
+              "no_missing_marker": true,
+              "only_the_planted_error": true,
+              "platform_verdict_red": true
+            },
+            "expected": [
+              "platform_value:ENTROPY:provider=urandom"
+            ],
+            "observed": [
+              "platform_value:ENTROPY:provider=urandom"
+            ],
+            "plant": "the ENTROPY line says provider=urandom (a source that is not a provider)"
+          },
+          "truncated": {
+            "caught": true,
+            "checks": {
+              "guest_failed": true,
+              "no_forbidden_marker": true,
+              "no_missing_marker": true,
+              "only_the_planted_error": true,
+              "platform_verdict_red": true
+            },
+            "expected": [
+              "platform_truncated:after:CLOCK"
+            ],
+            "observed": [
+              "platform_truncated:after:CLOCK"
+            ],
+            "plant": "the run stops after the CLOCK line (no ENTROPY, WAKE or END)"
+          }
+        },
+        "degraded_because": "entropy:not_seeded",
+        "exit_line": "FFW_PLATFORM_STEP_EXIT status=3 stdout_bytes=419 stdout_fnv1a64=c77711b2429bfbcc",
+        "grammar": {
+          "sha256": "7be8d7ff7fead558b45a4f16ed289a6e50e5cd2fa4422bbc1751ab5afebdda28",
+          "source": "crates/franken-speaker/tests/vectors/p02_platform_markers.json"
+        },
+        "kernel_release": "4.9.0-0.bpo.6-powerpc",
+        "lines": [
+          "FFW_PLATFORM:BEGIN abi=powerpc32 evidence=harness-ppc-4.9 backend=kernel kernel=4.9.0-0.bpo.6-powerpc",
+          "FFW_PLATFORM:KERNEL status=PASS",
+          "FFW_PLATFORM:CLOCK status=PASS provenance=kernel",
+          "FFW_PLATFORM:ENTROPY status=REFUSED provenance=kernel provider=legacy_dev_random_test_environment reason=not_seeded",
+          "FFW_PLATFORM:WAKE status=PASS provenance=kernel mechanism=eventfd",
+          "FFW_PLATFORM:END started=0 refused=entropy:not_seeded"
+        ],
+        "outcome": "exited_3",
+        "outcomes": {
+          "clock": "PASS",
+          "entropy": "REFUSED",
+          "kernel": "PASS",
+          "wake": "PASS"
+        },
+        "problems": [],
+        "provider": "legacy_dev_random_test_environment",
+        "qualification_boundary": "the device franken-speaker's startup, run once as a userspace process under a harness guest, reported what that guest's kernel answered to the platform layer's clock, entropy and wake probes; says nothing about Sonos silicon, a stock kernel, a board's kernel= string, or whether an unseeded pool later seeds; explicit legacy /dev/random provider, selected by name in a harness guest whose two boot scripts pass a static text check for an RNG device or a random.* kernel parameter (a text check only: it does not show that the pool was not credited some other way): a started run observes the real adapter on that guest's kernel, a `not_seeded` refusal is the information of a pool that has not credited and shows no positive; neither says anything about a device or a stock kernel",
+        "reported": {
+          "stdout_bytes": 419,
+          "stdout_fnv1a64": "c77711b2429bfbcc"
+        },
+        "started": false,
+        "verdict": "degraded"
+      },
+      "probes": {
+        "FFW_PROBE:ACCEPT4": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:ACCEPT4 status=PASS fd=6",
+          "status": "PASS"
+        },
+        "FFW_PROBE:ALLOC": {
+          "raw": "FFW_PROBE:ALLOC status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:ATOMICS_32": {
+          "raw": "FFW_PROBE:ATOMICS_32 status=PASS ok=1",
+          "status": "PASS"
+        },
+        "FFW_PROBE:ATOMIC_WIDTH": {
+          "raw": "FFW_PROBE:ATOMIC_WIDTH status=PASS bits=32",
+          "status": "PASS"
+        },
+        "FFW_PROBE:CHARDEV_POLL": {
+          "raw": "FFW_PROBE:CHARDEV_POLL status=PASS rc=2",
+          "status": "PASS"
+        },
+        "FFW_PROBE:CLOCK_MONOTONIC": {
+          "raw": "FFW_PROBE:CLOCK_MONOTONIC status=PASS res_ns=1",
+          "status": "PASS"
+        },
+        "FFW_PROBE:EINTR_READ": {
+          "raw": "FFW_PROBE:EINTR_READ status=PASS rc=-4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:ENTROPY": {
+          "raw": "FFW_PROBE:ENTROPY status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:EPOLL": {
+          "raw": "FFW_PROBE:EPOLL status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:EVENTFD2": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:EVENTFD2 status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:FS_RENAME": {
+          "raw": "FFW_PROBE:FS_RENAME status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:FUTEX": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:FUTEX status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:GETRANDOM": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:GETRANDOM status=PASS rc=16",
+          "status": "PASS"
+        },
+        "FFW_PROBE:LOOPBACK_UP": {
+          "raw": "FFW_PROBE:LOOPBACK_UP status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:MEM_PEAK": {
+          "raw": "FFW_PROBE:MEM_PEAK status=PASS kb=68",
+          "status": "PASS"
+        },
+        "FFW_PROBE:NONBLOCK_PIPE": {
+          "raw": "FFW_PROBE:NONBLOCK_PIPE status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:POLL": {
+          "raw": "FFW_PROBE:POLL status=PASS rc=1",
+          "status": "PASS"
+        },
+        "FFW_PROBE:REACTOR_WAKE": {
+          "raw": "FFW_PROBE:REACTOR_WAKE status=PASS rc=1",
+          "status": "PASS"
+        },
+        "FFW_PROBE:SIGNAL": {
+          "raw": "FFW_PROBE:SIGNAL status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:SOCKET_UDP": {
+          "raw": "FFW_PROBE:SOCKET_UDP status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:THREADS": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:THREADS status=PASS tid=46",
+          "status": "PASS"
+        },
+        "FFW_PROBE:TIMERFD": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:TIMERFD status=PASS fd=4",
+          "status": "PASS"
+        },
+        "FFW_PROBE:TIMER_SIGNALS": {
+          "raw": "FFW_PROBE:TIMER_SIGNALS status=PASS rc=0",
+          "status": "PASS"
+        },
+        "FFW_PROBE:TLS": {
+          "capability": "supported",
+          "raw": "FFW_PROBE:TLS status=PASS tp=305419896",
+          "status": "PASS"
+        },
+        "FFW_PROBE:UDP_LOOPBACK": {
+          "raw": "FFW_PROBE:UDP_LOOPBACK status=PASS rc=24",
+          "status": "PASS"
+        },
+        "FFW_TEST:ERR_EBADF": {
+          "raw": "FFW_TEST:ERR_EBADF status=PASS errno=9",
+          "status": "PASS"
+        },
+        "FFW_TEST:ERR_ENOENT": {
+          "raw": "FFW_TEST:ERR_ENOENT status=PASS errno=2",
+          "status": "PASS"
+        },
+        "FFW_TEST:ERR_ENOSYS": {
+          "raw": "FFW_TEST:ERR_ENOSYS status=PASS errno=38",
+          "status": "PASS"
+        },
+        "FFW_TEST:PARTIAL_WRITE": {
+          "raw": "FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096",
+          "status": "PASS"
+        },
+        "FFW_TEST:POS_FD_SHORT_WRITE": {
+          "raw": "FFW_TEST:POS_FD_SHORT_WRITE status=PASS fd=4",
+          "status": "PASS"
+        }
+      },
+      "qemu_exit_code": 0,
+      "qualification_boundary": "Full-system Debian QEMU guest (Linux 4.19 Malta / Linux 4.9 g3beige); proves ISA, endianness, static ELF startup, initramfs device nodes, and syscall ABI probes; does not substitute for stock Sonos 2.4/2.6 kernel or proprietary audio driver qualification.",
+      "rustc_identity": {
+        "commit_date": "2026-11-04",
+        "commit_hash": "2d20b42b883dcfc014f3c2c56081eeb6091c2179",
+        "host": "x86_64-unknown-linux-gnu",
+        "llvm": "23.1.5",
+        "release": "1.101.0-nightly"
+      },
+      "serial_log_path": "boot-ppc-serial.log",
+      "serial_log_sha256": "a91608c18cfbfe75844e6414c1fbdae8323ba4272ee4f4878de516f0542c7727",
+      "speaker": {
+        "argv": [
+          "/franken-speaker",
+          "--catalog"
+        ],
+        "binary": {
+          "archive_entry": {
+            "mode": "0o100755",
+            "sha256": "572352947936cece167356e1b211519e5840517814732efa76e86281f353dd8b",
+            "size": 411528
+          },
+          "bytes": 411528,
+          "path": "<outside-repo>",
+          "sha256": "572352947936cece167356e1b211519e5840517814732efa76e86281f353dd8b",
+          "static_elf": {
+            "has_dynamic": false,
+            "has_interp": false,
+            "is_elf": true,
+            "machine": 20,
+            "machine_matches_arch": true,
+            "problems": [],
+            "static": true
+          }
+        },
+        "catalog": {
+          "problems": [],
+          "rows_expected": 9
+        },
+        "console_region": {
+          "stdout_bytes": 10006,
+          "stdout_fnv1a64": "920a91647ae4af73"
+        },
+        "exit_line": "FFW_SPEAKER_EXIT status=0 stdout_bytes=10006 stdout_fnv1a64=920a91647ae4af73",
+        "host_catalog": {
+          "sha256": "69c2e38da2ea10c8ab3f975b372c6d6d1d2e7c684201af7c064dca57aa0b8ada",
+          "stdout_bytes": 10006,
+          "stdout_fnv1a64": "920a91647ae4af73"
+        },
+        "outcome": "exited_0",
+        "qualification_boundary": "Generic full-system QEMU guests (Debian Linux 4.19 Malta / 4.9 g3beige), not Sonos silicon or kernels. Shows the linked franken-speaker starts as a userspace process under a retained-kernel-class guest, runs std, allocation, serde_json and SHA-256 on a big-endian CPU, and prints the catalog the Rust source defines. The catalog has no floating point and the run uses no network, audio or threads beyond startup, so it says nothing about the float ABI, drivers, timing or memory pressure on a real unit.",
+        "reported": {
+          "stdout_bytes": 10006,
+          "stdout_fnv1a64": "920a91647ae4af73"
+        }
+      },
+      "status": "PASS",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "a91608c18cfbfe75844e6414c1fbdae8323ba4272ee4f4878de516f0542c7727",
+      "target_triple": "powerpc-unknown-linux-musl",
+      "timed_out": false,
+      "unseeded_capabilities": [],
+      "unsupported_capabilities": [],
+      "validation_errors": []
+    }
+  },
+  "local_inspection_tools": {
+    "bootstrap_policy_note": "Nightly -Z build-std=core,panic_abort and asm_experimental_arch are scoped strictly to the freestanding PID-1 bootstrap probe; production application, protocol, and DSP crates target stable Rust with #![forbid(unsafe_code)].",
+    "host_lld": "Homebrew LLD 21.1.8 (compatible with GNU linkers)",
+    "host_rustc_nightly": "rustc 1.101.0-nightly (48f4b0553 2026-10-23)",
+    "qemu_mips": "QEMU emulator version 11.1.2",
+    "qemu_ppc": "QEMU emulator version 11.1.2"
+  },
+  "mkinitramfs_self_test": {
+    "deterministic_gzip": true,
+    "modulo_4x4_cases": 16,
+    "negative_oracles": [
+      "bad_device_tuple_0_5",
+      "missing_trailer",
+      "init_sha256_mismatch"
+    ],
+    "receipt": {
+      "archive_sha256": "57ab7e71143378f98fbb3b136e7ef9cd04bf23bb16ee788ce3a28df3a25203c8",
+      "compressed_bytes": 769,
+      "devices": {
+        "dev/console": {
+          "mode": "0o20600",
+          "rdev": [
+            5,
+            1
+          ]
+        },
+        "dev/null": {
+          "mode": "0o20666",
+          "rdev": [
+            1,
+            3
+          ]
+        },
+        "dev/random": {
+          "mode": "0o20600",
+          "rdev": [
+            1,
+            8
+          ]
+        },
+        "dev/ttyPZ0": {
+          "mode": "0o20600",
+          "rdev": [
+            204,
+            192
+          ]
+        },
+        "dev/ttyS0": {
+          "mode": "0o20600",
+          "rdev": [
+            4,
+            64
+          ]
+        },
+        "dev/urandom": {
+          "mode": "0o20666",
+          "rdev": [
+            1,
+            9
+          ]
+        },
+        "dev/zero": {
+          "mode": "0o20666",
+          "rdev": [
+            1,
+            5
+          ]
+        }
+      },
+      "entry_count": 30,
+      "init_sha256": "8df5d4573ff2f9285b410b491094c1a593603b307b1a35fddba11c7accdba606",
+      "init_size": 34,
+      "raw_cpio_sha256": "8603dee55dfb1713524a0db52573d933ef4eea605671482745ee468f3dd2b18f",
+      "uncompressed_bytes": 4096
+    },
+    "status": "PASS"
+  },
+  "platform_step": {
+    "argv": [
+      "/franken-speaker",
+      "--platform-startup",
+      "--entropy-provider=legacy-dev-random-test-environment"
+    ],
+    "controls_requested": true,
+    "entropy_injection_checked": {
+      "boot-mips.sh": "8ecf582054a52ee3cf8b6caa4affeae87ee53be402b781f5528fdaf3ac283fbd",
+      "boot-ppc.sh": "962d59cd6a6f6dceb97d1a37c642084f423d54afa37b809bb3f4c43c9428b610"
+    },
+    "feature": "speaker-platform",
+    "grammar": {
+      "sha256": "7be8d7ff7fead558b45a4f16ed289a6e50e5cd2fa4422bbc1751ab5afebdda28",
+      "source": "crates/franken-speaker/tests/vectors/p02_platform_markers.json"
+    },
+    "provider": "legacy_dev_random_test_environment",
+    "provider_feature": "speaker-platform-legacy-test-env",
+    "verdicts": {
+      "mips": "green",
+      "ppc": "degraded"
+    }
+  },
+  "run_id": "2a405e88bb10497b98b85abeae7dffaf",
+  "schema_version": "ffw.e07_e03.receipt.v1",
+  "speaker_smoke": {
+    "argv": [
+      "/franken-speaker",
+      "--catalog"
+    ],
+    "controls_requested": false,
+    "expected_source": {
+      "path": "crates/franken-board-profile/src/lib.rs",
+      "rows": 9,
+      "schema_version": "ffw.board_profile.v2",
+      "sha256": "7a4656d89d8f124dfc0d4a48da4bfbf339d65680038934a092a053a98a9dd855"
+    },
+    "feature": "speaker-smoke",
+    "host_catalog": {
+      "sha256": "69c2e38da2ea10c8ab3f975b372c6d6d1d2e7c684201af7c064dca57aa0b8ada",
+      "stdout_bytes": 10006,
+      "stdout_fnv1a64": "920a91647ae4af73"
+    }
+  },
+  "status": "PASS"
+}

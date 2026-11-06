@@ -34,6 +34,17 @@ started=1`, exit status 0. `degraded` (E03's own verdict for an unseeded pool: n
 everything else `PASS`. `red`: everything else, each with a named problem. The table of what is degraded is `DEGRADED`; a
 cell is one line to change and the contract's text is the authority for it.
 
+The explicit legacy provider
+----------------------------
+With a provider selected (`judge_output(..., provider="legacy_dev_random_test_environment")`, the runner's `--entropy-provider`) the
+guest step runs `/franken-speaker --platform-startup --entropy-provider=legacy-dev-random-test-environment`, the BEGIN line names both
+arguments, and the ENTROPY line, and only it, carries `provider=<name>` between `provenance=` and `reason=` on PASS, REFUSED and NOT_RUN
+alike (docs/contracts/p02.md, "The legacy provider"). The default judge still rejects that token, and a provider run rejects a line
+without it, so neither kind of run can pass as the other. A started provider run is a harness-guest observation of the real adapter
+reading `/dev/random`: never device evidence, never a stock kernel. `not_seeded` is `degraded` on both guests (no seeded `/dev/random` read
+has been observed in any guest, so a pool that has not credited yet is the information such a run gives, and it shows no positive);
+`absent` (no device node), `unavailable` and every other reason are red.
+
 What this does not establish
 ----------------------------
 That the real backend runs on a board, what a board's `kernel=` string is, or anything about a stock kernel. A transcript
@@ -57,7 +68,29 @@ STEP_PATH = "/franken-speaker"
 STEP_ARG = "--platform-startup"
 STEP_BEGIN_KEY = "FFW_PLATFORM_STEP_BEGIN"
 STEP_EXIT_KEY = "FFW_PLATFORM_STEP_EXIT"
-STEP_BEGIN_LINE = f"{STEP_BEGIN_KEY} path={STEP_PATH} argv={STEP_ARG}"
+# The explicit legacy entropy providers a step may select (docs/contracts/p02.md, "The legacy provider"): the marker value the speaker
+# prints, and the command-line spelling the guest passes. `legacy_dev_random` (the evidence-qualified one, refused `unavailable` without a
+# kernel call) has no guest step: only the admitted test environment can be tried in a harness guest.
+PROVIDERS = {"legacy_dev_random_test_environment": "legacy-dev-random-test-environment"}
+
+
+def provider_arg(provider: str) -> str:
+    """The argument the guest passes for `provider`. Raises ValueError for any name this judge does not know (fail closed)."""
+    if provider not in PROVIDERS:
+        raise ValueError(f"unknown entropy provider {provider!r}")
+    return f"--entropy-provider={PROVIDERS[provider]}"
+
+
+def step_argv(provider: str | None = None) -> list[str]:
+    """The step's argv after the path: `--platform-startup`, and the provider argument when one is selected."""
+    return [STEP_ARG] if provider is None else [STEP_ARG, provider_arg(provider)]
+
+
+def step_begin_line(provider: str | None = None) -> str:
+    return f"{STEP_BEGIN_KEY} path={STEP_PATH} argv={' '.join(step_argv(provider))}"
+
+
+STEP_BEGIN_LINE = step_begin_line()
 LINE_PREFIX = "FFW_PLATFORM:"
 
 # The guest accepts these exit statuses as "the step ran"; the judge decides what they mean (0 started, 3 refused).
@@ -88,6 +121,13 @@ GUEST_ABI = {"mips": ("mips32", "harness-mips-4.19"), "ppc": ("powerpc32", "harn
 # (guest, capability, reason) combinations the contract reports as degraded and not red: getrandom was UNSEEDED at PID-1 boot
 # on the MIPS guest in the E03 run, and one run per guest does not say the pool stays unseeded. PowerPC's was seeded.
 DEGRADED = frozenset({("mips", "entropy", "not_seeded")})
+
+# The same table for a run that selected the legacy provider. No seeded `/dev/random` read has been observed in any guest, so a pool that has
+# not credited yet (`not_seeded`) is what such a run reports on either guest: neither green nor red, and no positive. Every other reason is red
+# (a missing device node is `absent`, a qualified-but-untried provider is `unavailable`).
+DEGRADED_PROVIDER = frozenset({("mips", "entropy", "not_seeded"), ("ppc", "entropy", "not_seeded")})
+PROVIDER_CLAIM = ("explicit legacy /dev/random provider in an admitted test environment (a harness guest): a started run is an observation "
+                  "of the real adapter on that guest's kernel and says nothing about a device or a stock kernel; a refusal shows no positive")
 
 
 class PlatformGrammarError(Exception):
@@ -207,8 +247,9 @@ def _structure(lines: list[str]) -> list[str]:
     return problems
 
 
-def _expected_keys(name: str, pairs: list[tuple[str, str]]) -> list[str]:
-    """The keys a line must carry, in order, given its own status or started value."""
+def _expected_keys(name: str, pairs: list[tuple[str, str]], provider: str | None = None) -> list[str]:
+    """The keys a line must carry, in order, given its own status or started value. A selected provider adds `provider` to the
+    ENTROPY line, between `provenance` and `reason`, on every status."""
     values = dict(pairs)
     if name == "BEGIN":
         return ["abi", "evidence", "backend", "kernel"]
@@ -216,6 +257,8 @@ def _expected_keys(name: str, pairs: list[tuple[str, str]]) -> list[str]:
         return ["started", "refused"] if values.get("started") == "0" else ["started"]
     keys = {"KERNEL": ["status"], "CLOCK": ["status", "provenance"], "ENTROPY": ["status", "provenance"],
             "WAKE": ["status", "provenance", "mechanism"]}[name]
+    if name == "ENTROPY" and provider is not None:
+        keys = keys + ["provider"]
     return keys + ["reason"] if values.get("status") == "REFUSED" else keys
 
 
@@ -235,6 +278,9 @@ def _values(name: str, pairs: list[tuple[str, str]], ctx: dict[str, Any]) -> lis
         elif key == "reason":
             if value not in reasons.get(capability, []):
                 problems.append(f"platform_value:{name}:reason={_shown(value)}")
+        elif key == "provider":
+            if value != ctx.get("provider"):
+                problems.append(f"platform_value:{name}:provider={_shown(value)}")
         elif key == "kernel":
             if not KERNEL_RELEASE.fullmatch(value):
                 problems.append(f"platform_value:{name}:kernel={_shown(value)}")
@@ -245,16 +291,23 @@ def _values(name: str, pairs: list[tuple[str, str]], ctx: dict[str, Any]) -> lis
     return problems
 
 
-def judge_output(data: bytes, arch: str, ctx: dict[str, Any]) -> dict[str, Any]:
+def judge_output(data: bytes, arch: str, ctx: dict[str, Any], provider: str | None = None) -> dict[str, Any]:
     """Judge the child's stdout for the `arch` guest ("mips" or "ppc"). Returns the record that goes in the receipt:
     `verdict` ("green", "degraded" or "red"), `problems` (named; empty unless red), the six lines, what each capability
-    reported, whether it started, and the `kernel=` value, which is recorded and never compared."""
+    reported, whether it started, and the `kernel=` value, which is recorded and never compared. With `provider` (a key of
+    `PROVIDERS`) the run is judged as the explicit legacy-provider run: the ENTROPY line must carry that `provider=`, and the record
+    names the provider and its claim; without it the judge is exactly what it was and rejects the token."""
     if arch not in GUEST_ABI:
         raise ValueError(f"unknown guest {arch!r}")
+    if provider is not None:
+        provider_arg(provider)                  # an unknown name raises, like an unknown guest
+    ctx = dict(ctx, provider=provider)
     problems: list[str] = []
     record: dict[str, Any] = {
         "verdict": "red", "problems": problems, "lines": [], "outcomes": {}, "started": None, "kernel_release": None,
     }
+    if provider is not None:
+        record["provider"], record["claim"] = provider, PROVIDER_CLAIM
     if not data:
         problems.append("platform_empty_output")
         return record
@@ -280,8 +333,11 @@ def judge_output(data: bytes, arch: str, ctx: dict[str, Any]) -> dict[str, Any]:
             problems.append(f"platform_malformed:{name}")
             continue
         keys = [key for key, _ in pairs]
-        if keys != _expected_keys(name, pairs):
-            problems.append(f"platform_fields:{name}:{','.join(keys) if keys else 'none'}")
+        if keys != _expected_keys(name, pairs, provider):
+            if provider is not None and name == "ENTROPY" and keys == _expected_keys(name, pairs):
+                problems.append("platform_provider_missing:ENTROPY")      # the guest ran the default provider
+            else:
+                problems.append(f"platform_fields:{name}:{','.join(keys) if keys else 'none'}")
             continue
         value_problems = _values(name, pairs, ctx)
         problems.extend(value_problems)
@@ -334,7 +390,7 @@ def judge_output(data: bytes, arch: str, ctx: dict[str, Any]) -> dict[str, Any]:
     # Well formed and self-consistent. Whether it shows the positive path is the policy.
     if every_pass and record["started"]:
         record["verdict"] = "green"
-    elif first is not None and (arch, first[0], first[1]) in DEGRADED and sum(
+    elif first is not None and (arch, first[0], first[1]) in (DEGRADED if provider is None else DEGRADED_PROVIDER) and sum(
             1 for cap in CAPABILITIES if outcome[cap]["status"] != "PASS") == 1:
         record["verdict"] = "degraded"
         record["degraded_because"] = f"{first[0]}:{first[1]}"
@@ -384,11 +440,42 @@ PLANTS: dict[str, dict[str, Any]] = {
 }
 
 
+# The plants of a run that selected the legacy provider are the five above plus these (a provider run's baseline carries the token).
+PROVIDER_PLANTS: dict[str, dict[str, Any]] = {
+    "provider_missing": {
+        "plant": "the ENTROPY line has no provider= token (the guest ran the default provider)",
+        "expected": ["platform_provider_missing:ENTROPY"],
+    },
+    "provider_other": {
+        "plant": "the ENTROPY line says provider=legacy_dev_random (the evidence-qualified one) when the test environment was selected",
+        "expected": ["platform_value:ENTROPY:provider=legacy_dev_random"],
+    },
+    "provider_unknown": {
+        "plant": "the ENTROPY line says provider=urandom (a source that is not a provider)",
+        "expected": ["platform_value:ENTROPY:provider=urandom"],
+    },
+}
+
+
+def plants_for(provider: str | None = None) -> dict[str, dict[str, Any]]:
+    """The plants a run is judged against: the five for the default run, those plus the provider ones for a provider run."""
+    if provider is not None:
+        provider_arg(provider)                  # an unknown name raises
+    return dict(PLANTS) if provider is None else {**PLANTS, **PROVIDER_PLANTS}
+
+
+def plant_spec(plant: str) -> dict[str, Any]:
+    """One plant's description and expected problems, from either set. Raises KeyError for a name in neither."""
+    return PLANTS[plant] if plant in PLANTS else PROVIDER_PLANTS[plant]
+
+
 # The plants that change one value on one line: (line, what it says now, what the plant makes it say).
 REPLACEMENTS = {
     "provenance_double": ("CLOCK", "provenance=kernel", "provenance=double"),
     "provenance_simulated": ("CLOCK", "provenance=kernel", "provenance=simulated"),
     "backend_simulated": ("BEGIN", "backend=kernel", "backend=simulated"),
+    "provider_other": ("ENTROPY", "provider=legacy_dev_random_test_environment", "provider=legacy_dev_random"),
+    "provider_unknown": ("ENTROPY", "provider=legacy_dev_random_test_environment", "provider=urandom"),
 }
 
 
@@ -396,7 +483,7 @@ def plant_transcript(raw_log: str, plant: str) -> str:
     """`raw_log` with the platform step's child lines changed as `PLANTS[plant]` says, and the step's EXIT line re-sealed to
     the changed bytes (the status the guest reported is kept). Raises ValueError if the log has no clean platform step or
     the line to change is not there: a plant that cannot be applied is not a caught control."""
-    if plant not in PLANTS:
+    if plant not in PLANTS and plant not in PROVIDER_PLANTS:
         raise ValueError(f"unknown plant {plant!r}")
     lines = raw_log.split("\n")
     begins = [i for i, line in enumerate(lines) if line.strip().startswith(STEP_BEGIN_KEY + " ")]
@@ -424,6 +511,11 @@ def plant_transcript(raw_log: str, plant: str) -> str:
         child[i] = child[i].replace(old, new, 1)
     elif plant == "missing_capability":
         del child[index_of("ENTROPY")]
+    elif plant == "provider_missing":
+        i = index_of("ENTROPY")
+        if " provider=" not in child[i]:
+            raise ValueError("the ENTROPY line carries no provider= token")
+        child[i] = re.sub(r" provider=\S+", "", child[i], count=1)
     else:
         child = child[: index_of("CLOCK") + 1]
     region = "".join(line + "\n" for line in child).encode("utf-8")

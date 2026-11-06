@@ -47,6 +47,19 @@ const PATH: &CStr = c"/franken-speaker";
 const ARG_CATALOG: &CStr = c"--catalog";
 #[cfg(feature = "speaker-platform")]
 const ARG_PLATFORM: &CStr = c"--platform-startup";
+/// The one extra argument of the platform step in a build with `speaker-platform-legacy-test-env`: the explicit legacy `/dev/random`
+/// provider, in an admitted test environment. Without that feature the child's argv is exactly `/franken-speaker --platform-startup`.
+#[cfg(all(
+    feature = "speaker-platform",
+    feature = "speaker-platform-legacy-test-env"
+))]
+const PLATFORM_EXTRA: Option<&CStr> =
+    Some(c"--entropy-provider=legacy-dev-random-test-environment");
+#[cfg(all(
+    feature = "speaker-platform",
+    not(feature = "speaker-platform-legacy-test-env")
+))]
+const PLATFORM_EXTRA: Option<&CStr> = None;
 
 /// Bounds on retries (EINTR) so no loop here is unbounded; the external guest watchdog bounds wall-clock time.
 const READ_ATTEMPTS: usize = 1 << 20;
@@ -68,7 +81,7 @@ fn sys_pipe2(fds: &mut [i32; 2], flags: usize) -> isize {
     unsafe { sys_raw(sys::NR_PIPE2, fds.as_mut_ptr() as usize, flags, 0, 0) }
 }
 
-fn sys_execve(argv: &[usize; 3], envp: &[usize; 1]) -> isize {
+fn sys_execve(argv: &[usize; 4], envp: &[usize; 1]) -> isize {
     unsafe {
         sys_raw(
             nr::EXECVE,
@@ -88,7 +101,7 @@ fn close_all(fds: &[usize]) {
 
 /// Runs in the forked child and never returns: either `execve` replaces the process, or the errno is written
 /// to the error pipe and the child exits.
-fn run_child(out_write: usize, err_write: usize, arg: &CStr) -> ! {
+fn run_child(out_write: usize, err_write: usize, arg: &CStr, extra: Option<&CStr>) -> ! {
     // Standard output becomes the pipe; stdin and stderr remain the console.
     let dup_rc = sys_dup2(out_write, 1);
     let errno = if dup_rc < 0 {
@@ -97,7 +110,14 @@ fn run_child(out_write: usize, err_write: usize, arg: &CStr) -> ! {
         if out_write != 1 {
             let _ = sys_close(out_write);
         }
-        let argv = [PATH.as_ptr() as usize, arg.as_ptr() as usize, 0usize];
+        // argv ends at the first null: with no extra argument it is exactly the two-argument form every earlier step used.
+        let extra_ptr = extra.map_or(0usize, |extra| extra.as_ptr() as usize);
+        let argv = [
+            PATH.as_ptr() as usize,
+            arg.as_ptr() as usize,
+            extra_ptr,
+            0usize,
+        ];
         let envp = [0usize];
         // `execve` only returns on failure, with -errno.
         sys_execve(&argv, &envp).unsigned_abs() as u32
@@ -194,7 +214,7 @@ fn run_parent(console_fd: usize, pid: usize, out_read: usize, err_read: usize) -
     }
 }
 
-fn spawn_and_collect(console_fd: usize, arg: &CStr) -> Outcome {
+fn spawn_and_collect(console_fd: usize, arg: &CStr, extra: Option<&CStr>) -> Outcome {
     let mut out_fds = [-1i32; 2];
     let mut err_fds = [-1i32; 2];
     let rc = sys_pipe2(&mut out_fds, 0);
@@ -228,7 +248,7 @@ fn spawn_and_collect(console_fd: usize, arg: &CStr) -> Outcome {
     }
     if pid == 0 {
         close_all(&[out_read, err_read]);
-        run_child(out_write, err_write, arg);
+        run_child(out_write, err_write, arg, extra);
     }
     close_all(&[out_write, err_write]);
     run_parent(console_fd, pid as usize, out_read, err_read)
@@ -244,7 +264,7 @@ pub fn run(console_fd: usize) -> usize {
     begin.push(b"\n");
     emit_console(console_fd, begin.as_slice());
 
-    let outcome = spawn_and_collect(console_fd, ARG_CATALOG);
+    let outcome = spawn_and_collect(console_fd, ARG_CATALOG, None);
     emit_console(console_fd, exit_line(&outcome).as_bytes());
     usize::from(!outcome.is_success())
 }
@@ -260,10 +280,14 @@ pub fn run_platform(console_fd: usize) -> usize {
     begin.push(PATH.to_bytes());
     begin.push(b" argv=");
     begin.push(ARG_PLATFORM.to_bytes());
+    if let Some(extra) = PLATFORM_EXTRA {
+        begin.push(b" ");
+        begin.push(extra.to_bytes());
+    }
     begin.push(b"\n");
     emit_console(console_fd, begin.as_slice());
 
-    let outcome = spawn_and_collect(console_fd, ARG_PLATFORM);
+    let outcome = spawn_and_collect(console_fd, ARG_PLATFORM, PLATFORM_EXTRA);
     emit_console(
         console_fd,
         exit_line_for(Step::Platform, &outcome).as_bytes(),
