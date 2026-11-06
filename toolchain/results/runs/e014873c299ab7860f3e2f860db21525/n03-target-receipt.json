@@ -1,0 +1,618 @@
+{
+  "bead": "ffw-u07",
+  "claims": [
+    "Two actual QEMU MIPS boots decide as the independent reference and actual host build on all 34 scripted worlds.",
+    "Replay under a changed seed fails N03T-SEEDED; truncation fails N03T-TRANSCRIPT.",
+    "Costs count executed QEMU guest instructions, not physical cycles or CPU utilization."
+  ],
+  "commands": {
+    "boot": "FFW_BUILD_DIR=<kernel cache> python3 -B toolchain/src/measure-n03-target.py run --elf <delivered ELF> --log-dir <fresh directory> --host-log <actual host log> --plant replay|truncate --json",
+    "order_note": "Both boots used the earlier successful build of identical Rust/lock bytes. Final exact repository-export rebuild later delivered the identical ELF SHA256; all 1072 recorded repository-export input hashes matched the committed-source preparation. The run command omitted --revision; this publication binds the exact source independently rather than inferring it from a working directory.",
+    "rejudge": "python3 -B toolchain/src/measure-n03-target.py analyze --elf <same rebuilt ELF> --host-log host-records.bin --log <run>.serial.bin --seed <recorded seed>"
+  },
+  "date_utc": "2026-11-06",
+  "elf": {
+    "build_command": "RCH_REQUIRE_REMOTE=1 rch exec --worker <worker> --source-content-receipt -- cargo +nightly-2026-08-31 build --locked --offline --release --manifest-path toolchain/src/n03-target/Cargo.toml --bin ffw-n03-target --target mips-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort --config 'target.mips-unknown-linux-musl.linker=\"toolchain/linker/zig-cc-mips-be\"' --config 'target.mips-unknown-linux-musl.rustflags=[\"-C\",\"target-feature=+crt-static\",\"-C\",\"link-self-contained=no\"]' --message-format=json -j1",
+    "build_log_sha256": "b231f477d3c7dc6e5048b42538b0cab27a0e1dbf59f8bec22ed81bc6125ec6ed",
+    "build_result": "Final exact-source build exit0; returned ELF SHA256 equals ELF used for both boots, byte-for-byte.",
+    "build_warnings": [
+      "ld.lld: unable to open toolchain library directory lib/rustlib/mips-unknown-linux-musl/lib (no prebuilt target std; build-std used). Warning retained, not suppressed."
+    ],
+    "built_from": {
+      "repository_head": "67dccb5567add2d976841c31b60a80644b989f6b",
+      "repository_inputs": "source-inputs.json",
+      "repository_inputs_sha256": "fc9396a6f9a417e7164df4d4833d29b33334da0c6095b991e4afac8d431654b7",
+      "sha256": {
+        "crates/franken-clock/Cargo.toml": "20eebd81d9dc04143e803c96892b597982df9244e39127a56931103f621a22d4",
+        "crates/franken-clock/src/events.rs": "d3493e6063d96e855759f469f8d6d02b7b2710725cebc00fa76b887ae92950ad",
+        "crates/franken-clock/src/group.rs": "c43b5430246d52cef97e4e09788fa5654f8916d44ebb6019aa47be0ddae33a66",
+        "crates/franken-clock/src/group/tests.rs": "98fb63bfa2e8a010c71e3badcc6e6cbcb562590739135791b2a62185bed97df8",
+        "crates/franken-clock/src/latency.rs": "2e866223c5f444a0ddec4a1f673bc7667abbb7fcef2040c1e2e1c561ec11731c",
+        "crates/franken-clock/src/latency/events.rs": "1e2d1c476bdcf0d82f188272ad4412c44e4d86afbe32fa1b9e65028abb81dc59",
+        "crates/franken-clock/src/lib.rs": "df3820618dd4b6deb2ab47af1289482622be043953f5bd939ea456e60682c218",
+        "crates/franken-clock/src/rate.rs": "36a0252a51c83ce718581f7ea8a2adef81b260db7cf25d40f648e2c305328b0c",
+        "crates/franken-clock/tests/latency_events.rs": "0f41cf2d3a0a53192ba90b75061a8103dbde0c10bef1b1fd2dadf64c34002036",
+        "crates/franken-clock/tests/latency_timeline.rs": "d2e582c99d1001d1bef1a0e6ab88ed9c34423d5d7b96b0ca87882588c5348172",
+        "crates/franken-clock/tests/legacy_video_input_bounds.rs": "4ee7438dbadb22736af8a8a3ef5ded352fdd65807a2bb36665d94f041908279f",
+        "crates/franken-clock/tests/n03_target_worlds.rs": "15bfdfe34c1ab8a544c19c9be9b364dedbf11a67d71f686d4adc47b81f0e9ab6",
+        "toolchain/linker/zig-cc-mips-be": "b0d60bcb217f48b552807e09688aa14c8eae78c930976b720d2fe91b2a14723d",
+        "toolchain/linker/zig-cc-powerpc-be": "a7d03e732a87cf90902da92e473b6dff77f181a030172c717fd56a0a5a1b86b9",
+        "toolchain/src/n03-target/Cargo.lock": "4a756d72d9eb406297736174623a3587249ef36518aa636f7213a6c93e89e21a",
+        "toolchain/src/n03-target/Cargo.toml": "af6ba6d2d8cbdda6980f7991840f72b979fc8cce35aaae8ca312179645d5a005",
+        "toolchain/src/n03-target/rustfmt.toml": "a0f7b328578fd0d3b38bd13bfb7ca6a2d83ec715e09d19ef85b2cab08193044c",
+        "toolchain/src/n03-target/src/cases.rs": "4992eb80e246386dca6532efe50ab9882a7e0fb3db14f02de98d72fe312e350a",
+        "toolchain/src/n03-target/src/main.rs": "d5f9a4837004f21b8ab11523a28dd2f01df0d875c0c227bf56429d2912d9b144"
+      }
+    },
+    "bytes": 1409920,
+    "class": "ELF32 big-endian MIPS",
+    "e_flags": "0x70001005",
+    "executable_words_scanned": 117965,
+    "fpu_opcode_words": 0,
+    "mips_fp_abi": 3,
+    "name": "ffw-n03-target",
+    "publication_blake3": "9a13813348b3ce13a07e19539c6eaee6b725590f4343e8865476d0652486cd44",
+    "sha256": "821492ec36712dd911c6dc550b80c32defc09ee92cefe974c0c90cc52f90f07f",
+    "toolchain": "nightly-2026-08-31 with rust-src, -Z build-std=core,alloc,std,panic_abort"
+  },
+  "evidence_class": "QEMU TCG -icount; soft-float big-endian MIPS32r2 PID1; not hardware",
+  "host_digests": {
+    "log_not_committed": "Worker/private paths omitted; records copied verbatim and parsed maps compared to the complete original log.",
+    "log_sha256": "c28ca1b580b0311fb35f532044aa49a66ea6ab750587703b6c9ffec3ffd4e878",
+    "records_file": "host-records.bin",
+    "records_sha256": "4cce3b4283ce5c1167b47551cfdecd90b7ba3c70ab38e77a5c44db8baa015208",
+    "source": "Actual strict remote selected clock/speaker/harness test run: 411 passed, 0 failed, 1 ignored; current clock production source matches. The later strengthened single clock test separately passed 1/0/94 filtered."
+  },
+  "judge": {
+    "d03_judge_sha256_for_the_ruler_and_boot": "410870a2b994de530244eaef2ccd65bebef98a384c890d61557e8a4c247e82d8",
+    "mkinitramfs_sha256": "7462021e1b00dc374283bb791094557ae52357412c5da53df40a977a0585518f",
+    "reference_sha256": "2de7c6b38320127e276e44b7fbcb1773a846cfe3ea6bd94c571202e8c848d147",
+    "script": "toolchain/src/measure-n03-target.py",
+    "script_sha256": "bd85e370a2e2a9a380ff0c41280a9c7a94b2cba5998e8b5739b8463b97626535",
+    "self_test": "49/49 actual Python preparation/judge tests; no expected numeric result regeneration",
+    "self_test_sha256": "ebb6c21822c495717f601f4098d479385b941270ffbc715982fc20239be5a433",
+    "thresholds": {
+      "region_inside_ruler_range_instructions": [
+        3900000,
+        60000000
+      ],
+      "ruler_before_after_drift": 0.005,
+      "ruler_shape_agreement": 0.005,
+      "two_lowest_reps_within": 0.01
+    }
+  },
+  "native_custody": [
+    {
+      "exit_code": 0,
+      "native_build_id": "30098049032257828",
+      "owner_presence": "absent",
+      "pair_released": true,
+      "retired": true,
+      "sources_released": true,
+      "terminal_acknowledged": true,
+      "tree_retired": true,
+      "wrapper_alive": false,
+      "wrapper_id": "rchw-e65eb125-d7cf-4e17-ae2d-671d8b151637"
+    },
+    {
+      "exit_code": 0,
+      "native_build_id": "30098049032257838",
+      "owner_presence": "absent",
+      "pair_released": true,
+      "retired": true,
+      "sources_released": true,
+      "terminal_acknowledged": true,
+      "tree_retired": true,
+      "wrapper_alive": false,
+      "wrapper_id": "rchw-ebdbf746-2b06-4490-935f-f6e4208e682e"
+    }
+  ],
+  "not_covered": [
+    "No physical speaker, real network, DAC or acoustic alignment.",
+    "No legacy-kernel or PowerPC guest run of this clock.",
+    "No full speaker-service or complete 32MiB RAM budget qualification.",
+    "No physical cycles, cache/pipeline cost, board clock or CPU-percentage claim.",
+    "N03 closure requires independent review of every original acceptance clause."
+  ],
+  "qemu": {
+    "command": "qemu-system-mips -M malta -cpu 24Kf -m 64M -nographic -no-reboot -icount shift=0,align=off,sleep=off -kernel <kernel> -initrd <initramfs> -append \"console=ttyS0,38400 rdinit=/init panic=-1 loglevel=3\"",
+    "kernel": "vmlinux-4.19.0-21-4kc-malta (Debian)",
+    "kernel_sha256": "3803357ef7821dbf691c901105fb9b2b00382abf67fce8a4be2a0d592267dc61",
+    "version": "QEMU emulator version 11.1.3"
+  },
+  "runs": [
+    {
+      "cpu_instructions_per_operation": {
+        "exchange": {
+          "max": 190957.88218353756,
+          "median": 190831.27426934935,
+          "min": 190486.20680543326,
+          "spread": 0.0024761655240795096
+        },
+        "gate": {
+          "max": 84986.51185916508,
+          "median": 84976.11468179157,
+          "min": 84925.53984042472,
+          "spread": 0.0007179467902697438
+        }
+      },
+      "cpu_minstr_per_second_of_audio": 17.03966883808022,
+      "first_finding": null,
+      "gates": {
+        "N03T-CPU": "passed",
+        "N03T-ELF": "passed",
+        "N03T-HOST-BYTES": "passed",
+        "N03T-SEEDED": "passed",
+        "N03T-TRANSCRIPT": "passed",
+        "N03T-WORLDS": "passed"
+      },
+      "id": "normal-1",
+      "judge_exit_code": 0,
+      "judge_output": [
+        "ruler: 5.9412 instructions per Count tick (shapes disagree by 0.0017%, before/after drift 0.0159%, intercept -1267.9 ticks)",
+        "PASSED   N03T-TRANSCRIPT  complete: ALIVE, BEGIN, END",
+        "PASSED   N03T-ELF         32-bit big-endian MIPS, 117965 executable words, no FPU opcodes",
+        "PASSED   N03T-CPU         ruler gates held; every region has a stable floor",
+        "PASSED   N03T-WORLDS      all 34 worlds equal the independent reference, record by record",
+        "PASSED   N03T-SEEDED      the seeded worlds carry this run's seed and match the reference's figures",
+        "PASSED   N03T-HOST-BYTES  every one of the 34 worlds is byte-identical to the host build",
+        "",
+        "build revision: 67dccb5567add2d976841c31b60a80644b989f6b",
+        "",
+        "region       instr/op min     median        max",
+        "exchange         190486.2   190831.3   190957.9",
+        "gate              84925.5    84976.1    84986.5",
+        "",
+        "about 17.04 Minstr/s of one member's clock work (one gate call per 256-frame block and one exchange per 32 blocks), before cache or pipeline effects.",
+        "",
+        "These are INSTRUCTIONS EXECUTED under QEMU TCG (-icount shift=0) on QEMU's 24Kf model, read through a ruler",
+        "calibrated in the guest, not cycles on a real core: no cache, pipeline, memory latency or multiplier timing is",
+        "modelled, and no board clock is involved. The world records are the clock's decisions on the target ISA, judged against",
+        "the independent reference; the clock is a network-clock fit only and says nothing about the real DAC or acoustic path."
+      ],
+      "kind": "real boot",
+      "ruler": {
+        "instructions_per_tick": 5.9412442134313395,
+        "intercept": -1267.9233323568478,
+        "per_shape": {
+          "3": {
+            "intercept": -1111.569073503837,
+            "max_ticks": 10097905.0,
+            "residual": 180.88548420649022,
+            "slope": 0.16831631223928648
+          },
+          "5": {
+            "intercept": -1424.4423050656915,
+            "max_ticks": 10097290.0,
+            "residual": 414.35368018597364,
+            "slope": 0.16831351973235012
+          }
+        },
+        "phase_drift": 0.0001591590959589749,
+        "phases": {
+          "A": {
+            "instructions_per_tick": 5.942052719294189,
+            "intercept": -69.65838392358273,
+            "per_shape": {
+              "3": {
+                "intercept": 303.895767708309,
+                "max_ticks": 10097905.0,
+                "residual": 828.4138404401019,
+                "slope": 0.16828633086970554
+              },
+              "5": {
+                "intercept": -444.12713368888944,
+                "max_ticks": 10097290.0,
+                "residual": 946.3651508949697,
+                "slope": 0.1682977174655196
+              }
+            },
+            "shape_disagreement": 6.765974721847925e-05,
+            "slope": 0.16829201073106304
+          },
+          "B": {
+            "instructions_per_tick": 5.941107062810161,
+            "intercept": -1122.3344524875283,
+            "per_shape": {
+              "3": {
+                "intercept": -884.0089107332751,
+                "max_ticks": 10097921.0,
+                "residual": 358.4585657026619,
+                "slope": 0.16831517002300203
+              },
+              "5": {
+                "intercept": -1361.2437525605783,
+                "max_ticks": 10098127.0,
+                "residual": 611.4051618189551,
+                "slope": 0.16832244326095863
+              }
+            },
+            "shape_disagreement": 4.321108319209612e-05,
+            "slope": 0.1683187980670722
+          }
+        },
+        "shape_disagreement": 1.6590965334235462e-05,
+        "slope": 0.1683149125126527
+      },
+      "seed": 2060659764719049763,
+      "seeded_worlds": {
+        "seed-0": {
+          "got": {
+            "checks": 263,
+            "locked": true,
+            "lost": 37,
+            "max_err": 142128,
+            "max_unc": 331686,
+            "min_margin": 101163,
+            "probes": 300,
+            "rejected": 0,
+            "resets": 0,
+            "run_seed": 2060659764719049763,
+            "seed32": 2590318937,
+            "violations": 0
+          },
+          "match": true,
+          "seed32": 2590318937,
+          "shape": [
+            90000,
+            100,
+            300,
+            0,
+            10,
+            300
+          ]
+        },
+        "seed-1": {
+          "got": {
+            "checks": 480,
+            "locked": true,
+            "lost": 120,
+            "max_err": 478500,
+            "max_unc": 1039257,
+            "min_margin": 207206,
+            "probes": 600,
+            "rejected": 0,
+            "resets": 0,
+            "run_seed": 2060659764719049763,
+            "seed32": 2365602896,
+            "violations": 0
+          },
+          "match": true,
+          "seed32": 2365602896,
+          "shape": [
+            25000,
+            200,
+            800,
+            400,
+            20,
+            600
+          ]
+        }
+      },
+      "transcript": "normal-1.serial.bin",
+      "transcript_bytes": 405000,
+      "transcript_lines": 2022,
+      "transcript_sha256": "35ab17627b6086d8af6fec6289d208769e41ac0ee27cc94c6bb8aaa2aadf02e9"
+    },
+    {
+      "cpu_instructions_per_operation": {
+        "exchange": {
+          "max": 190884.80232782394,
+          "median": 190767.72896982956,
+          "min": 190585.04698887788,
+          "spread": 0.0015728166699434682
+        },
+        "gate": {
+          "max": 84996.61491611884,
+          "median": 84971.87796928373,
+          "min": 84957.88265161484,
+          "spread": 0.0004558995974843836
+        }
+      },
+      "cpu_minstr_per_second_of_audio": 17.046312256878238,
+      "first_finding": null,
+      "gates": {
+        "N03T-CPU": "passed",
+        "N03T-ELF": "passed",
+        "N03T-HOST-BYTES": "passed",
+        "N03T-SEEDED": "passed",
+        "N03T-TRANSCRIPT": "passed",
+        "N03T-WORLDS": "passed"
+      },
+      "id": "normal-2",
+      "judge_exit_code": 0,
+      "judge_output": [
+        "ruler: 5.9428 instructions per Count tick (shapes disagree by 0.0061%, before/after drift 0.0095%, intercept -792.3 ticks)",
+        "PASSED   N03T-TRANSCRIPT  complete: ALIVE, BEGIN, END",
+        "PASSED   N03T-ELF         32-bit big-endian MIPS, 117965 executable words, no FPU opcodes",
+        "PASSED   N03T-CPU         ruler gates held; every region has a stable floor",
+        "PASSED   N03T-WORLDS      all 34 worlds equal the independent reference, record by record",
+        "PASSED   N03T-SEEDED      the seeded worlds carry this run's seed and match the reference's figures",
+        "PASSED   N03T-HOST-BYTES  every one of the 34 worlds is byte-identical to the host build",
+        "",
+        "build revision: 67dccb5567add2d976841c31b60a80644b989f6b",
+        "",
+        "region       instr/op min     median        max",
+        "exchange         190585.0   190767.7   190884.8",
+        "gate              84957.9    84971.9    84996.6",
+        "",
+        "about 17.05 Minstr/s of one member's clock work (one gate call per 256-frame block and one exchange per 32 blocks), before cache or pipeline effects.",
+        "",
+        "These are INSTRUCTIONS EXECUTED under QEMU TCG (-icount shift=0) on QEMU's 24Kf model, read through a ruler",
+        "calibrated in the guest, not cycles on a real core: no cache, pipeline, memory latency or multiplier timing is",
+        "modelled, and no board clock is involved. The world records are the clock's decisions on the target ISA, judged against",
+        "the independent reference; the clock is a network-clock fit only and says nothing about the real DAC or acoustic path."
+      ],
+      "kind": "real boot",
+      "ruler": {
+        "instructions_per_tick": 5.942810050477507,
+        "intercept": -792.3380820117891,
+        "per_shape": {
+          "3": {
+            "intercept": -761.3180286074057,
+            "max_ticks": 10095205.0,
+            "residual": 603.8203635383397,
+            "slope": 0.1682654331776713
+          },
+          "5": {
+            "intercept": -823.70312713366,
+            "max_ticks": 10095190.0,
+            "residual": 1287.4052983745933,
+            "slope": 0.16827570271746553
+          }
+        },
+        "phase_drift": 9.453957166221692e-05,
+        "phases": {
+          "A": {
+            "instructions_per_tick": 5.942857480813424,
+            "intercept": -442.4942395025864,
+            "per_shape": {
+              "3": {
+                "intercept": -62.25511417258531,
+                "max_ticks": 10095205.0,
+                "residual": 837.614240013063,
+                "slope": 0.16826276780205998
+              },
+              "5": {
+                "intercept": -823.70312713366,
+                "max_ticks": 10095190.0,
+                "residual": 1287.4052983745933,
+                "slope": 0.16827570271746553
+              }
+            },
+            "shape_disagreement": 7.687035235871302e-05,
+            "slope": 0.1682692212001567
+          },
+          "B": {
+            "instructions_per_tick": 5.942295672169313,
+            "intercept": -794.1748768482357,
+            "per_shape": {
+              "3": {
+                "intercept": -1051.935823109001,
+                "max_ticks": 10096419.0,
+                "residual": 733.2448429279029,
+                "slope": 0.16828611612961214
+              },
+              "5": {
+                "intercept": -535.9522053794935,
+                "max_ticks": 10095733.0,
+                "residual": 1774.3164003817365,
+                "slope": 0.16828412877236104
+              }
+            },
+            "shape_disagreement": 1.180946492567985e-05,
+            "slope": 0.16828513005226092
+          }
+        },
+        "shape_disagreement": 6.1029922936042934e-05,
+        "slope": 0.1682705641785824
+      },
+      "seed": 3412116006983686015,
+      "seeded_worlds": {
+        "seed-0": {
+          "got": {
+            "checks": 272,
+            "locked": true,
+            "lost": 28,
+            "max_err": 132660,
+            "max_unc": 280181,
+            "min_margin": 101857,
+            "probes": 300,
+            "rejected": 0,
+            "resets": 0,
+            "run_seed": 3412116006983686015,
+            "seed32": 2712119695,
+            "violations": 0
+          },
+          "match": true,
+          "seed32": 2712119695,
+          "shape": [
+            90000,
+            100,
+            300,
+            0,
+            10,
+            300
+          ]
+        },
+        "seed-1": {
+          "got": {
+            "checks": 498,
+            "locked": true,
+            "lost": 102,
+            "max_err": 460546,
+            "max_unc": 1060824,
+            "min_margin": 203065,
+            "probes": 600,
+            "rejected": 0,
+            "resets": 0,
+            "run_seed": 3412116006983686015,
+            "seed32": 385358020,
+            "violations": 0
+          },
+          "match": true,
+          "seed32": 385358020,
+          "shape": [
+            25000,
+            200,
+            800,
+            400,
+            20,
+            600
+          ]
+        }
+      },
+      "transcript": "normal-2.serial.bin",
+      "transcript_bytes": 404999,
+      "transcript_lines": 2022,
+      "transcript_sha256": "2b0263519f089584c34133e4fd9e56e3fc553e90765d8446361c3b6e837d6316"
+    },
+    {
+      "cpu_instructions_per_operation": {
+        "exchange": {
+          "max": 190935.29355193264,
+          "median": 190807.0836717391,
+          "min": 190586.94748559856,
+          "spread": 0.0018277540562446092
+        },
+        "gate": {
+          "max": 84978.25912894256,
+          "median": 84965.68458418528,
+          "min": 84948.13663624771,
+          "spread": 0.0003545986279114629
+        }
+      },
+      "cpu_minstr_per_second_of_audio": 17.044496014719872,
+      "first_finding": "N03T-SEEDED: seeded world 0: the guest used run seed 2060659764719049763 / LCG seed 2590318937, this run's seed derives 3384012915255253722 / 1613330921: the records were not computed from this run's seed",
+      "gates": {
+        "N03T-CPU": "passed",
+        "N03T-ELF": "passed",
+        "N03T-HOST-BYTES": "passed",
+        "N03T-SEEDED": "failed",
+        "N03T-TRANSCRIPT": "passed",
+        "N03T-WORLDS": "passed"
+      },
+      "id": "plant-replay",
+      "judge_exit_code": 1,
+      "judge_output": [
+        "ruler: 5.9384 instructions per Count tick (shapes disagree by 0.0037%, before/after drift 0.0268%, intercept -1218.4 ticks)",
+        "PASSED   N03T-TRANSCRIPT  complete: ALIVE, BEGIN, END",
+        "PASSED   N03T-ELF         32-bit big-endian MIPS, 117965 executable words, no FPU opcodes",
+        "PASSED   N03T-CPU         ruler gates held; every region has a stable floor",
+        "PASSED   N03T-WORLDS      all 34 worlds equal the independent reference, record by record",
+        "FAILED   N03T-SEEDED      seeded world 0: the guest used run seed 2060659764719049763 / LCG seed 2590318937, this run's seed derives 3384012915255253722 / 1613330921: the records were not computed from this run's seed; seeded world 1: the guest used run seed 2060659764719049763 / LCG seed 2365602896, this run's seed derives 3384012915255253722 / 3755888254: the records were not computed from this run's seed",
+        "PASSED   N03T-HOST-BYTES  every one of the 34 worlds is byte-identical to the host build",
+        "",
+        "build revision: 67dccb5567add2d976841c31b60a80644b989f6b",
+        "",
+        "region       instr/op min     median        max",
+        "exchange         190586.9   190807.1   190935.3",
+        "gate              84948.1    84965.7    84978.3",
+        "",
+        "about 17.04 Minstr/s of one member's clock work (one gate call per 256-frame block and one exchange per 32 blocks), before cache or pipeline effects.",
+        "",
+        "These are INSTRUCTIONS EXECUTED under QEMU TCG (-icount shift=0) on QEMU's 24Kf model, read through a ruler",
+        "calibrated in the guest, not cycles on a real core: no cache, pipeline, memory latency or multiplier timing is",
+        "modelled, and no board clock is involved. The world records are the clock's decisions on the target ISA, judged against",
+        "the independent reference; the clock is a network-clock fit only and says nothing about the real DAC or acoustic path."
+      ],
+      "kind": "planted replay under a different seed",
+      "ruler": {
+        "instructions_per_tick": 5.938391857042654,
+        "intercept": -1218.3548758048564,
+        "per_shape": {
+          "3": {
+            "intercept": -796.4949440471828,
+            "max_ticks": 10103621.0,
+            "residual": 1599.2449777536094,
+            "slope": 0.16839262819648554
+          },
+          "5": {
+            "intercept": -1641.0580363236368,
+            "max_ticks": 10102258.0,
+            "residual": 143.66789567144588,
+            "slope": 0.168398915062133
+          }
+        },
+        "phase_drift": 0.0002680112080974063,
+        "phases": {
+          "A": {
+            "instructions_per_tick": 5.937688504537859,
+            "intercept": -1257.5939160641283,
+            "per_shape": {
+              "3": {
+                "intercept": -1008.0432912111282,
+                "max_ticks": 10105040.0,
+                "residual": 1791.9799723000033,
+                "slope": 0.16841796495356695
+              },
+              "5": {
+                "intercept": -1507.4059811551124,
+                "max_ticks": 10103524.0,
+                "residual": 545.0675952481106,
+                "slope": 0.16841345759934453
+              }
+            },
+            "shape_disagreement": 2.6763264473688244e-05,
+            "slope": 0.16841570574740544
+          },
+          "B": {
+            "instructions_per_tick": 5.939280084887953,
+            "intercept": 373.2403497649357,
+            "per_shape": {
+              "3": {
+                "intercept": 636.3837866326794,
+                "max_ticks": 10103621.0,
+                "residual": 1600.176952210255,
+                "slope": 0.16836957758793272
+              },
+              "5": {
+                "intercept": 109.62610951811075,
+                "max_ticks": 10102258.0,
+                "residual": 1484.4298784653656,
+                "slope": 0.1683715869179298
+              }
+            },
+            "shape_disagreement": 1.1933973086010958e-05,
+            "slope": 0.16837057449848578
+          }
+        },
+        "shape_disagreement": 3.7333868817703636e-05,
+        "slope": 0.16839575832538686
+      },
+      "seed": 3384012915255253722,
+      "seeded_worlds": {},
+      "transcript": "plant-replay.serial.bin",
+      "transcript_bytes": 405000,
+      "transcript_lines": 2022,
+      "transcript_sha256": "544de15ab46046ceae74fc0c9f31aa39e74ed8284cdfb7c26721f1e2dcc1ac58"
+    },
+    {
+      "cpu_instructions_per_operation": null,
+      "cpu_minstr_per_second_of_audio": null,
+      "first_finding": "N03T-TRANSCRIPT: transcript is incomplete (BEGIN True, END False)",
+      "gates": {
+        "N03T-TRANSCRIPT": "failed"
+      },
+      "id": "plant-truncate",
+      "judge_exit_code": 1,
+      "judge_output": [
+        "FAILED   N03T-TRANSCRIPT  transcript is incomplete (BEGIN True, END False)",
+        "",
+        "These are INSTRUCTIONS EXECUTED under QEMU TCG (-icount shift=0) on QEMU's 24Kf model, read through a ruler",
+        "calibrated in the guest, not cycles on a real core: no cache, pipeline, memory latency or multiplier timing is",
+        "modelled, and no board clock is involved. The world records are the clock's decisions on the target ISA, judged against",
+        "the independent reference; the clock is a network-clock fit only and says nothing about the real DAC or acoustic path."
+      ],
+      "kind": "planted truncated transcript",
+      "ruler": null,
+      "seed": 3412116006983686015,
+      "seeded_worlds": {},
+      "transcript": "plant-truncate.serial.bin",
+      "transcript_bytes": 253524,
+      "transcript_lines": 1236,
+      "transcript_sha256": "a4e38461e25b6cca901e5039093edbd8403e4d1362e263090f0b38b91d047fa3"
+    }
+  ],
+  "schema": "ffw.n03-target-receipt.v1"
+}

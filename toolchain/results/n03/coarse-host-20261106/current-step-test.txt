@@ -1,0 +1,11 @@
+Actual strict remote targeted execution, 2026-11-06.
+Command: RCH_REQUIRE_REMOTE=1 rch exec --worker <worker> -- cargo +nightly-2026-08-31 test --locked --offline -p franken-clock --lib group::tests::n03_a_step_of_two_roundings_between_physical_samples_is_noise_and_a_real_group_clock_step_is_a_jump -j1 -- --exact --nocapture
+Source: crates/franken-clock/src/group/tests.rs SHA256 98fb63bfa2e8a010c71e3badcc6e6cbcb562590739135791b2a62185bed97df8
+Raw private log SHA256: 3dec87e8e39ae3f63edbf0642828f64d944a87d161d09d807eb4d399a2fd6b74
+
+running 1 test
+test group::tests::n03_a_step_of_two_roundings_between_physical_samples_is_noise_and_a_real_group_clock_step_is_a_jump ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 94 filtered out; finished in 0.00s
+Remote command finished: exit=0 in 27114ms
+
+First attempt failed before compilation for a missing offline symphonia-codec-alac cache entry. A strict remote cargo fetch --locked returned0, then the identical test passed; that failure was not relabeled as a product pass.
