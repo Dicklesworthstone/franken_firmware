@@ -1,0 +1,167 @@
+  2026-11-06T04:25:57.838214Z  INFO rch::hook: Selected worker: <worker> at ubuntu@<address> (2 slots remaining after reservation, speed 47.3)
+    at rch/src/hook.rs:5618 on ThreadId(1)
+
+  2026-11-06T04:25:58.115843Z  INFO rch::hook::transfer_orchestration: Starting remote compilation pipeline for ffw-runtime-batch-e2tgl2b9 (hash: 07685b0ea4ae2ad7)
+    at rch/src/hook/transfer_orchestration.rs:1507 on ThreadId(1)
+
+  2026-11-06T04:25:58.115908Z  INFO rch::hook::transfer_orchestration: Prepared dependency sync manifest for 1 roots
+    at rch/src/hook/transfer_orchestration.rs:1529 on ThreadId(1)
+
+  2026-11-06T04:26:08.549721Z  INFO rch::hook::transfer_orchestration: Syncing project to worker <worker>...
+    at rch/src/hook/transfer_orchestration.rs:1862 on ThreadId(1)
+
+  2026-11-06T04:26:08.561208Z  INFO rch::transfer: Syncing <path> -> <path> on <worker> (streaming)
+    at rch/src/transfer.rs:7589 on ThreadId(1)
+
+  2026-11-06T04:26:10.720328Z  INFO rch::hook::transfer_orchestration: Sync complete: 0 files, 39614 bytes in 2103ms
+    at rch/src/hook/transfer_orchestration.rs:2460 on ThreadId(1)
+
+  2026-11-06T04:26:12.649635Z  INFO rch::hook::transfer_orchestration: Executing command remotely: env 'CARGO_PROFILE_DEV_DEBUG=line-tables-only' 'CARGO_PROFILE_TEST_DEBUG=line-tables-only' cargo test --locked --offline --no-fail-fast -p franken-journal -j 1 --config 'env.RCH_BUILD_SOURCE.value="unknown"' --config 'env.RCH_BUILD_SOURCE.force=true' -- --nocapture
+    at rch/src/hook/transfer_orchestration.rs:2617 on ThreadId(1)
+
+  2026-11-06T04:26:12.661849Z  INFO rch::transfer: Rewriting CARGO_TARGET_DIR for remote execution (worker-scoped path): <path> -> <path>
+    at rch/src/transfer.rs:4698 on ThreadId(1)
+
+
+RCH_EXTERNAL_DEADLINE:8fd731ff-1b2e-4478-9e5c-5c8bd1d97560_DISK_BUDGET:{"reason":"admission","free_bytes":51943424000,"growth_bytes":0,"max_growth_bytes":32212254720,"min_free_bytes":10737418240,"started":false,"detail":"free space cannot cover active build reservations and protected floor","peak_output_bytes":63758336}
+RCH_EXTERNAL_DEADLINE:8fd731ff-1b2e-4478-9e5c-5c8bd1d97560_DISK_BUDGET:{"reason":"admission","free_bytes":51943424000,"growth_bytes":0,"max_growth_bytes":32212254720,"min_free_bytes":10737418240,"started":false,"detail":"free space cannot cover active build reservations and protected floor","peak_output_bytes":63758336}
+  2026-11-06T04:26:23.500758Z  WARN rch::hook: Remote build disk admission refused: admission on <worker>; retrying on higher-capacity worker <worker> (attempt 2/3)
+    at rch/src/hook.rs:6371 on ThreadId(1)
+
+[RCH] retry on bigger worker <worker> (attempt 2/3) after disk admission refused: admission on <worker>
+  2026-11-06T04:26:23.509179Z  INFO rch::hook: Selected worker: <worker> at ubuntu@<address> (1 slots remaining after reservation, speed 57.7) [remote retry 2/3]
+    at rch/src/hook.rs:5618 on ThreadId(1)
+
+  2026-11-06T04:26:23.899143Z  INFO rch::hook::transfer_orchestration: Starting remote compilation pipeline for ffw-runtime-batch-e2tgl2b9 (hash: 07685b0ea4ae2ad7)
+    at rch/src/hook/transfer_orchestration.rs:1507 on ThreadId(1)
+
+  2026-11-06T04:26:23.899204Z  INFO rch::hook::transfer_orchestration: Prepared dependency sync manifest for 1 roots
+    at rch/src/hook/transfer_orchestration.rs:1529 on ThreadId(1)
+
+  2026-11-06T04:26:28.103591Z  INFO rch::hook::transfer_orchestration: Syncing project to worker <worker>...
+    at rch/src/hook/transfer_orchestration.rs:1862 on ThreadId(1)
+
+  2026-11-06T04:26:28.103744Z  INFO rch::transfer: Syncing <path> -> <path> on <worker> (streaming)
+    at rch/src/transfer.rs:7589 on ThreadId(1)
+
+  2026-11-06T04:26:29.733497Z  INFO rch::hook::transfer_orchestration: Sync complete: 0 files, 39610 bytes in 1568ms
+    at rch/src/hook/transfer_orchestration.rs:2460 on ThreadId(1)
+
+  2026-11-06T04:26:30.414797Z  INFO rch::hook::transfer_orchestration: Executing command remotely: env 'CARGO_PROFILE_DEV_DEBUG=line-tables-only' 'CARGO_PROFILE_TEST_DEBUG=line-tables-only' cargo test --locked --offline --no-fail-fast -p franken-journal -j 1 --config 'env.RCH_BUILD_SOURCE.value="unknown"' --config 'env.RCH_BUILD_SOURCE.force=true' -- --nocapture
+    at rch/src/hook/transfer_orchestration.rs:2617 on ThreadId(1)
+
+  2026-11-06T04:26:30.427322Z  INFO rch::transfer: Rewriting CARGO_TARGET_DIR for remote execution (worker-scoped path): <path> -> <path>
+    at rch/src/transfer.rs:4698 on ThreadId(1)
+
+   Compiling typenum v1.20.1
+   Compiling hybrid-array v0.4.15
+   Compiling zmij v1.0.23
+   Compiling serde_core v1.0.229
+   Compiling block-buffer v0.12.1
+   Compiling crypto-common v0.2.2
+   Compiling serde_json v1.0.154
+   Compiling const-oid v0.10.2
+   Compiling digest v0.11.3
+   Compiling cpufeatures v0.3.1
+   Compiling cfg-if v1.0.5
+   Compiling memchr v2.8.3
+   Compiling itoa v1.0.18
+   Compiling sha2 v0.11.1
+   Compiling franken-journal v0.1.0 (<path>
+
+running 13 tests
+test codec::tests::a_segment_header_round_trips_and_a_flipped_bit_is_not_a_header ... ok
+test codec::tests::crc32_matches_the_published_check_value ... ok
+test state::tests::a_mark_never_goes_down_and_an_equal_value_is_fine ... ok
+test state::tests::a_tombstone_keeps_its_slot_and_a_pairing_reset_leaves_one_per_identity ... ok
+test state::tests::errors_name_the_rule_and_never_the_key_or_the_value ... ok
+test storage::tests::a_cut_keeps_the_durable_bytes_plus_a_budgeted_prefix_of_what_was_not_synced ... ok
+test storage::tests::an_io_failure_has_no_effect_on_the_view ... ok
+test storage::tests::programming_can_only_clear_bits_and_an_erase_restores_them ... ok
+test storage::tests::unsynced_writes_are_visible_to_reads_but_not_durable ... ok
+test codec::tests::a_hostile_length_is_refused_before_any_bytes_are_taken ... ok
+test state::tests::a_revoked_identity_returns_only_at_a_strictly_higher_version ... ok
+test state::tests::a_tombstone_operation_is_only_valid_inside_a_snapshot ... ok
+test storage::tests::a_failed_sync_can_leave_the_data_or_not_and_kills_the_power ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 11 tests
+test a_failed_open_leaves_the_medium_for_the_next_attempt ... ok
+test a_mark_never_goes_down_and_an_unchanged_mark_writes_nothing ... ok
+test a_failed_or_unknown_commit_poisons_the_journal_and_reopening_yields_exactly_old_or_new ... ok
+test bounds_are_enforced_and_a_refused_operation_writes_nothing ... ok
+test errors_never_carry_a_key_or_a_value ... ok
+test a_volume_storm_is_one_frame_and_the_wear_budget_is_a_hard_limit ... ok
+test the_three_resets_are_separate_operations ... ok
+test credentials_are_versioned_and_a_tombstone_survives_restart_and_compaction ... ok
+test the_medium_is_never_programmed_over_a_dirty_byte ... ok
+test a_recovered_journal_is_immediately_usable_for_every_hostile_image ... ok
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.13s
+     Running unittests src/lib.rs (.rch-target-<worker>-pool-19fb7b4e924f1446e01281bee401f2de/debug/deps/franken_journal-a4a55fa08923c601)
+     Running tests/u01_faults.rs (.rch-target-<worker>-pool-19fb7b4e924f1446e01281bee401f2de/debug/deps/u01_faults-6e250cf96af19b22)
+test a_revoked_identity_never_comes_back_across_cuts_inside_compactions ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.04s
+
+
+running 9 tests
+test u01_proc_the_old_or_new_check_rejects_a_state_that_is_neither ... ok
+test u01_proc_a_waiting_child_whose_parent_is_gone_leaves_by_itself_and_does_not_abort ... ok
+test u01_proc_a_clean_run_commits_every_step_and_a_fresh_process_recovers_the_exact_reference_bytes ... ok
+test u01_proc_every_hostile_image_recovers_in_a_real_process_as_the_reference_says ... ok
+test u01_proc_sigkill_after_an_acknowledged_step_recovers_exactly_the_old_or_the_new_state ... ok
+     Running tests/u01_process.rs (.rch-target-<worker>-pool-19fb7b4e924f1446e01281bee401f2de/debug/deps/u01_process-b3f61f2cd14e9671)
+u01_process: using <path>
+u01_process: using <path>
+u01_process: using <path>
+u01_process: using <path>
+u01_process: using <path>
+u01_process: using <path>
+u01_process: using <path>
+u01_process: using <path>
+test u01_proc_the_child_waits_alive_at_the_cut_and_only_the_parents_kill_ends_it ... ok
+test u01_proc_a_capped_stdout_does_not_bypass_the_child_deadline_or_leave_it_alive ... ok
+u01_process: capped stdout deadline reaped SIGKILL child after 300.471268ms
+test u01_proc_a_kill_at_the_cut_leaves_the_same_image_as_an_abort_at_the_same_byte ... ok
+     Running tests/u01_vectors.rs (.rch-target-<worker>-pool-19fb7b4e924f1446e01281bee401f2de/debug/deps/u01_vectors-aae2ee0d7516d365)
+test u01_proc_a_process_killed_at_sampled_bytes_recovers_exactly_the_old_or_the_new_state ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.24s
+
+
+running 4 tests
+test the_limits_and_the_format_constants_are_the_ones_the_reference_used ... ok
+test every_hostile_image_opens_as_the_reference_says_and_leaves_the_same_bytes_behind ... ok
+test every_scripted_scenario_produces_the_references_states_outcomes_and_media_bytes ... ok
+   Doc-tests franken_journal
+test power_cut_at_every_point_gives_the_same_media_as_the_reference_and_recovers_old_or_new ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.11s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+  2026-11-06T04:26:50.927904Z  INFO rch::hook::transfer_orchestration: Remote command finished: exit=0 in 19779ms
+    at rch/src/hook/transfer_orchestration.rs:2941 on ThreadId(1)
+
+  2026-11-06T04:26:51.010338Z  INFO rch::hook::transfer_orchestration: Retrieving build artifacts...
+    at rch/src/hook/transfer_orchestration.rs:3163 on ThreadId(1)
+
+  2026-11-06T04:26:51.010520Z  INFO rch::transfer: Retrieving artifacts from <path> on <worker>
+    at rch/src/transfer.rs:8633 on ThreadId(1)
+
+  2026-11-06T04:26:52.782944Z  INFO rch::transfer: Artifact retrieval budget from selected remote files, selected_bytes: 0, total_timeout_ms: 30000
+    at rch/src/transfer.rs:4202 on ThreadId(1)
+
+  2026-11-06T04:26:53.601687Z  INFO rch::transfer: Artifacts retrieved in 2591ms (0 files, 43 bytes)
+    at rch/src/transfer.rs:8694 on ThreadId(1)
+
+  2026-11-06T04:26:53.621716Z  INFO rch::hook::transfer_orchestration: Artifacts retrieved: 0 files, 43 bytes in 2591ms
+    at rch/src/hook/transfer_orchestration.rs:3228 on ThreadId(1)
+
+[RCH] remote <worker> (31.1s)

@@ -1,0 +1,122 @@
+  2026-11-06T04:23:45.898071Z  INFO rch::hook: Selected worker: <worker> at ubuntu@<address> (0 slots remaining after reservation, speed 57.7)
+    at rch/src/hook.rs:5618 on ThreadId(1)
+
+  2026-11-06T04:23:46.676013Z  INFO rch::hook::transfer_orchestration: Starting remote compilation pipeline for ffw-runtime-batch-e2tgl2b9 (hash: 07685b0ea4ae2ad7)
+    at rch/src/hook/transfer_orchestration.rs:1507 on ThreadId(1)
+
+  2026-11-06T04:23:46.677532Z  INFO rch::hook::transfer_orchestration: Prepared dependency sync manifest for 1 roots
+    at rch/src/hook/transfer_orchestration.rs:1529 on ThreadId(1)
+
+  2026-11-06T04:23:51.094764Z  INFO rch::hook::transfer_orchestration: Syncing project to worker <worker>...
+    at rch/src/hook/transfer_orchestration.rs:1862 on ThreadId(1)
+
+  2026-11-06T04:23:51.106817Z  INFO rch::transfer: Syncing <path> -> <path> on <worker> (streaming)
+    at rch/src/transfer.rs:7589 on ThreadId(1)
+
+  2026-11-06T04:23:52.507163Z  INFO rch::hook::transfer_orchestration: Sync complete: 0 files, 39614 bytes in 1182ms
+    at rch/src/hook/transfer_orchestration.rs:2460 on ThreadId(1)
+
+  2026-11-06T04:23:53.247081Z  INFO rch::hook::transfer_orchestration: Executing command remotely: env 'CARGO_PROFILE_DEV_DEBUG=line-tables-only' 'CARGO_PROFILE_TEST_DEBUG=line-tables-only' cargo clippy --locked --offline -p franken-journal --all-targets -j 1 --config 'env.RCH_BUILD_SOURCE.value="unknown"' --config 'env.RCH_BUILD_SOURCE.force=true' -- -D warnings
+    at rch/src/hook/transfer_orchestration.rs:2617 on ThreadId(1)
+
+  2026-11-06T04:23:53.258005Z  INFO rch::transfer: Rewriting CARGO_TARGET_DIR for remote execution (worker-scoped path): <path> -> <path>
+    at rch/src/transfer.rs:4698 on ThreadId(1)
+
+
+RCH_EXTERNAL_DEADLINE:c08784fa-92b1-4519-976a-82d96a7a9d42_DISK_BUDGET:{"reason":"admission","free_bytes":49149435904,"growth_bytes":0,"max_growth_bytes":10737418240,"min_free_bytes":10737418240,"started":false,"detail":"free space cannot cover active build reservations and protected floor","peak_output_bytes":28893184}
+RCH_EXTERNAL_DEADLINE:c08784fa-92b1-4519-976a-82d96a7a9d42_DISK_BUDGET:{"reason":"admission","free_bytes":49149435904,"growth_bytes":0,"max_growth_bytes":10737418240,"min_free_bytes":10737418240,"started":false,"detail":"free space cannot cover active build reservations and protected floor","peak_output_bytes":28893184}
+  2026-11-06T04:23:59.130439Z  WARN rch::hook: Remote build disk admission refused: admission on <worker>; retrying on higher-capacity worker <worker> (attempt 2/3)
+    at rch/src/hook.rs:6371 on ThreadId(1)
+
+[RCH] retry on bigger worker <worker> (attempt 2/3) after disk admission refused: admission on <worker>
+  2026-11-06T04:23:59.139622Z  INFO rch::hook: Selected worker: <worker> at root@<address> (0 slots remaining after reservation, speed 51.5) [remote retry 2/3]
+    at rch/src/hook.rs:5618 on ThreadId(1)
+
+  2026-11-06T04:24:00.021370Z  INFO rch::hook::transfer_orchestration: Starting remote compilation pipeline for ffw-runtime-batch-e2tgl2b9 (hash: 07685b0ea4ae2ad7)
+    at rch/src/hook/transfer_orchestration.rs:1507 on ThreadId(1)
+
+  2026-11-06T04:24:00.021655Z  INFO rch::hook::transfer_orchestration: Prepared dependency sync manifest for 1 roots
+    at rch/src/hook/transfer_orchestration.rs:1529 on ThreadId(1)
+
+  2026-11-06T04:24:12.716068Z  INFO rch::hook::transfer_orchestration: Syncing project to worker <worker>...
+    at rch/src/hook/transfer_orchestration.rs:1862 on ThreadId(1)
+
+  2026-11-06T04:24:12.716245Z  INFO rch::transfer: Syncing <path> -> <path> on <worker> (streaming)
+    at rch/src/transfer.rs:7589 on ThreadId(1)
+
+  2026-11-06T04:24:15.704609Z  INFO rch::hook::transfer_orchestration: Sync complete: 0 files, 39609 bytes in 2921ms
+    at rch/src/hook/transfer_orchestration.rs:2460 on ThreadId(1)
+
+  2026-11-06T04:24:21.053793Z  INFO rch::hook::transfer_orchestration: Executing command remotely: env 'CARGO_PROFILE_DEV_DEBUG=line-tables-only' 'CARGO_PROFILE_TEST_DEBUG=line-tables-only' cargo clippy --locked --offline -p franken-journal --all-targets -j 1 --config 'env.RCH_BUILD_SOURCE.value="unknown"' --config 'env.RCH_BUILD_SOURCE.force=true' -- -D warnings
+    at rch/src/hook/transfer_orchestration.rs:2617 on ThreadId(1)
+
+  2026-11-06T04:24:21.078298Z  INFO rch::transfer: Rewriting CARGO_TARGET_DIR for remote execution (worker-scoped path): <path> -> <path>
+    at rch/src/transfer.rs:4698 on ThreadId(1)
+
+
+RCH_EXTERNAL_DEADLINE:34422a8f-90cd-4160-b27e-5e7cfea0b920_DISK_BUDGET:{"reason":"admission","free_bytes":55707156480,"growth_bytes":0,"max_growth_bytes":10737418240,"min_free_bytes":10737418240,"started":false,"detail":"free space cannot cover active build reservations and protected floor","peak_output_bytes":28893184}
+RCH_EXTERNAL_DEADLINE:34422a8f-90cd-4160-b27e-5e7cfea0b920_DISK_BUDGET:{"reason":"admission","free_bytes":55707156480,"growth_bytes":0,"max_growth_bytes":10737418240,"min_free_bytes":10737418240,"started":false,"detail":"free space cannot cover active build reservations and protected floor","peak_output_bytes":28893184}
+  2026-11-06T04:24:35.002233Z  WARN rch::hook: Remote build disk admission refused: admission on <worker>; retrying on higher-capacity worker <worker> (attempt 3/3)
+    at rch/src/hook.rs:6371 on ThreadId(1)
+
+[RCH] retry on bigger worker <worker> (attempt 3/3) after disk admission refused: admission on <worker>
+  2026-11-06T04:24:35.011842Z  INFO rch::hook: Selected worker: <worker> at ubuntu@<address> (2 slots remaining after reservation, speed 47.3) [remote retry 3/3]
+    at rch/src/hook.rs:5618 on ThreadId(1)
+
+  2026-11-06T04:24:35.319771Z  INFO rch::hook::transfer_orchestration: Starting remote compilation pipeline for ffw-runtime-batch-e2tgl2b9 (hash: 07685b0ea4ae2ad7)
+    at rch/src/hook/transfer_orchestration.rs:1507 on ThreadId(1)
+
+  2026-11-06T04:24:35.319843Z  INFO rch::hook::transfer_orchestration: Prepared dependency sync manifest for 1 roots
+    at rch/src/hook/transfer_orchestration.rs:1529 on ThreadId(1)
+
+  2026-11-06T04:24:52.523512Z  INFO rch::hook::transfer_orchestration: Syncing project to worker <worker>...
+    at rch/src/hook/transfer_orchestration.rs:1862 on ThreadId(1)
+
+  2026-11-06T04:24:52.523647Z  INFO rch::transfer: Syncing <path> -> <path> on <worker> (streaming)
+    at rch/src/transfer.rs:7589 on ThreadId(1)
+
+  2026-11-06T04:24:55.824878Z  INFO rch::hook::transfer_orchestration: Sync complete: 0 files, 39613 bytes in 3245ms
+    at rch/src/hook/transfer_orchestration.rs:2460 on ThreadId(1)
+
+  2026-11-06T04:24:57.458183Z  INFO rch::hook::transfer_orchestration: Executing command remotely: env 'CARGO_PROFILE_DEV_DEBUG=line-tables-only' 'CARGO_PROFILE_TEST_DEBUG=line-tables-only' cargo clippy --locked --offline -p franken-journal --all-targets -j 1 --config 'env.RCH_BUILD_SOURCE.value="unknown"' --config 'env.RCH_BUILD_SOURCE.force=true' -- -D warnings
+    at rch/src/hook/transfer_orchestration.rs:2617 on ThreadId(1)
+
+  2026-11-06T04:24:57.468564Z  INFO rch::transfer: Rewriting CARGO_TARGET_DIR for remote execution (worker-scoped path): <path> -> <path>
+    at rch/src/transfer.rs:4698 on ThreadId(1)
+
+    Checking typenum v1.20.1
+    Checking hybrid-array v0.4.15
+   Compiling zmij v1.0.23
+   Compiling serde_core v1.0.229
+    Checking crypto-common v0.2.2
+    Checking block-buffer v0.12.1
+   Compiling serde_json v1.0.154
+    Checking const-oid v0.10.2
+    Checking digest v0.11.3
+    Checking cfg-if v1.0.5
+    Checking itoa v1.0.18
+    Checking memchr v2.8.3
+    Checking cpufeatures v0.3.1
+    Checking sha2 v0.11.1
+    Checking franken-journal v0.1.0 (<path>
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.03s
+
+  2026-11-06T04:25:13.575722Z  INFO rch::hook::transfer_orchestration: Remote command finished: exit=0 in 14579ms
+    at rch/src/hook/transfer_orchestration.rs:2941 on ThreadId(1)
+
+  2026-11-06T04:25:13.631052Z  INFO rch::hook::transfer_orchestration: Retrieving build artifacts...
+    at rch/src/hook/transfer_orchestration.rs:3163 on ThreadId(1)
+
+  2026-11-06T04:25:13.631321Z  INFO rch::transfer: Retrieving artifacts from <path> on <worker>
+    at rch/src/transfer.rs:8633 on ThreadId(1)
+
+  2026-11-06T04:25:15.543066Z  INFO rch::transfer: Artifact retrieval budget from selected remote files, selected_bytes: 0, total_timeout_ms: 30000
+    at rch/src/transfer.rs:4202 on ThreadId(1)
+
+  2026-11-06T04:25:18.142197Z  INFO rch::transfer: Artifacts retrieved in 4510ms (0 files, 44 bytes)
+    at rch/src/transfer.rs:8694 on ThreadId(1)
+
+  2026-11-06T04:25:18.161411Z  INFO rch::hook::transfer_orchestration: Artifacts retrieved: 0 files, 44 bytes in 4510ms
+    at rch/src/hook/transfer_orchestration.rs:3228 on ThreadId(1)
+
+[RCH] remote <worker> (44.9s)

@@ -1,0 +1,6 @@
+PASS    U01-E-001  the Python unit tests and the verification battery hold -- 13 tests
+PASS    U01-E-002  the shared vectors are current -- u01 vectors: up to date
+U01 cases: total=2 passed=2 failed=0 blocked=0
+diag run=u01-smoke-bb7b6ac1777fb084: evidence COMPLETE; events=5 critical=5 dropped=0 critical_lost=0 bytes=2818 sha256=636a9e4601da
+U01 e2e tier=smoke: QUALIFIED
+receipt: <path>

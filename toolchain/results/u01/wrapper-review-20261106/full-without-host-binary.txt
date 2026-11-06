@@ -1,0 +1,12 @@
+PASS    U01-E-001  the Python unit tests and the verification battery hold -- 13 tests
+PASS    U01-E-002  the shared vectors are current -- u01 vectors: up to date
+BLOCKED U01-E-003  a process killed at every byte of the 'credentials' scenario recovers the old or the new state -- needs a journal_crash binary this host can run (see --help; central form: tests/u01_process.rs + judge_log.py); never counted as passed
+BLOCKED U01-E-004  a process killed at every byte of the 'namespaces' scenario recovers the old or the new state -- needs a journal_crash binary this host can run (see --help; central form: tests/u01_process.rs + judge_log.py); never counted as passed
+BLOCKED U01-E-005  a process killed at every 29th byte of the compacting 'churn' scenario recovers the old or the new state -- needs a journal_crash binary this host can run (see --help; central form: tests/u01_process.rs + judge_log.py); never counted as passed
+BLOCKED U01-E-006  SIGKILL at arbitrary moments of the 'churn' scenario recovers the old or the new state -- needs a journal_crash binary this host can run (see --help; central form: tests/u01_process.rs + judge_log.py); never counted as passed
+U01 cases: total=6 passed=2 failed=0 blocked=4
+diag run=u01-full-a15cc58c0fce395d: evidence COMPLETE; events=13 critical=13 dropped=0 critical_lost=0 bytes=5472 sha256=d8bc8a2fa446
+RETAINED FOR REPLAY. First blocked case: U01-E-003: needs a journal_crash binary this host can run (see --help; central form: tests/u01_process.rs + judge_log.py); never counted as passed
+  replay: scripts/e2e/u01 --tier full
+U01 e2e tier=full: NOT QUALIFIED
+receipt: <path>

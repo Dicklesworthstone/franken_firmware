@@ -1,0 +1,389 @@
+{
+  "coverage": {
+    "model_cutpoints": "all modeled publication operations and unsynced byte boundaries",
+    "python_standin": "harness-only control; never Rust or device evidence",
+    "real_process_hostile_images": 16,
+    "real_process_strides": {
+      "S001": 1,
+      "S002": 1,
+      "S003": 29,
+      "S004": 1,
+      "S005": 3
+    }
+  },
+  "logs": {
+    "central-judge.txt": {
+      "published_sha256": "c373a3ea714321ee33298b185e21686645392eb25dd2d730c4aac0a4bf4137af",
+      "raw_sha256": "c373a3ea714321ee33298b185e21686645392eb25dd2d730c4aac0a4bf4137af"
+    },
+    "clippy-retained.txt": {
+      "published_sha256": "0b918283f534ae49dd259f6e2ba0dc193148ebe7f5fe434fdc6ab92d9b41da28",
+      "raw_sha256": "9767b3f405c38a5f4ddf090609a940757e741b920784fc187cc5cdb3d02403b7"
+    },
+    "full-without-host-binary.txt": {
+      "published_sha256": "77d02f92a30e9550ec03248dbad665a5d8235eff32acdc0c540084ab6c1482dd",
+      "raw_sha256": "a1d7826c98e8dc32746b83e8cf7a666a4d07846fa8f5ee82ee57bfc0faf51d32"
+    },
+    "python-tests.txt": {
+      "published_sha256": "359236fd1c8a219f94ebb6bd29ab643ee86d81b35ff54ff35b7aa7aafa283ce7",
+      "raw_sha256": "359236fd1c8a219f94ebb6bd29ab643ee86d81b35ff54ff35b7aa7aafa283ce7"
+    },
+    "rust-tests-retained.txt": {
+      "published_sha256": "c4820106b2303a9e27bd382ded4e7efbedf0a3ae785b966efde8b99d119a45e5",
+      "raw_sha256": "19d506f77899f6e194afc51aff3732446acc62ae6ad6255e767575eb4cd14e5f"
+    },
+    "smoke.txt": {
+      "published_sha256": "e7b5d6ccf9f43987b32a9c2ec1d5c1e535154a3ba116ae61ea0051074918171f",
+      "raw_sha256": "73d2e4c281ea80e3d0dff5e83315f2fc0835672cec9781b01f57e4f57b14f715"
+    },
+    "soak-not-run.txt": {
+      "published_sha256": "d82d7dc39c046ca657fc5ac00f05a4b381fcab774c7eaf11908a4331d5f11c6b",
+      "raw_sha256": "d82d7dc39c046ca657fc5ac00f05a4b381fcab774c7eaf11908a4331d5f11c6b"
+    }
+  },
+  "native_commands": [
+    {
+      "ack": true,
+      "alive": false,
+      "argv": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "--offline",
+        "-p",
+        "franken-journal",
+        "--all-targets",
+        "-j",
+        "1",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "custody": {
+        "pair_released": true,
+        "retired": true,
+        "sources_released": true,
+        "tree_retired": true
+      },
+      "exit": 0,
+      "identity": {
+        "local_wrapper_id": "rchw-c178295a-506d-4e43-9416-631974a9d719",
+        "remote_build_id": "30096834294711267"
+      },
+      "kind": "jobs",
+      "owner": "absent",
+      "phase": "finished",
+      "state": "finished"
+    },
+    {
+      "ack": true,
+      "alive": false,
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "--no-fail-fast",
+        "-p",
+        "franken-journal",
+        "-j",
+        "1",
+        "--",
+        "--nocapture"
+      ],
+      "custody": {
+        "pair_released": true,
+        "retired": true,
+        "sources_released": true,
+        "tree_retired": true
+      },
+      "exit": 0,
+      "identity": {
+        "local_wrapper_id": "rchw-c68e3f66-84a6-4600-8ef9-fecd14a5889b",
+        "remote_build_id": "30096834294711273"
+      },
+      "kind": "jobs",
+      "owner": "absent",
+      "phase": "finished",
+      "state": "finished"
+    }
+  ],
+  "python_tests": {
+    "failed": 0,
+    "passed": 53
+  },
+  "retained_rust_tests": {
+    "blocked": 0,
+    "failed": 0,
+    "passed": 37
+  },
+  "schema": "ffw.u01.wrapper-qualification.v1",
+  "scope": "offline wrapper and source-matched retained journal process evidence; no flash/device proof",
+  "shared_diagnostic_artifacts": {
+    "u01-a15cc58c0fce395d.json": "86d6a6984a46f879612aeb57f60b60dbd58eb2f22791d84bfa5bc0f20d30a498",
+    "u01-bb7b6ac1777fb084.json": "5eb383022b08a1658fb466a40a1626cd42adbf253687cacc9148dfedcfaaf012",
+    "u01-diag-full-a15cc58c0fce395d.jsonl": "d8bc8a2fa44662aa8b8f46900eb771597f508c92df789fb4f2be03c58da95e34",
+    "u01-diag-smoke-bb7b6ac1777fb084.jsonl": "636a9e4601dac7333c1388f03e92b49ce73bb4e20e6341908581443d062409a1"
+  },
+  "source_binding": {
+    "lock_packages": {
+      "block-buffer@0.12.1": {
+        "checksum": "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa",
+        "dependencies": [
+          "hybrid-array"
+        ],
+        "name": "block-buffer",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "0.12.1"
+      },
+      "cfg-if@1.0.5": {
+        "checksum": "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600",
+        "name": "cfg-if",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "1.0.5"
+      },
+      "cmov@0.5.4": {
+        "checksum": "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a",
+        "name": "cmov",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "0.5.4"
+      },
+      "const-oid@0.10.2": {
+        "checksum": "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c",
+        "name": "const-oid",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "0.10.2"
+      },
+      "cpufeatures@0.3.1": {
+        "checksum": "5ca28b0ae3115b884660db4118d803791fd6756b6e88f39c0f3f7859060d7566",
+        "dependencies": [
+          "libc"
+        ],
+        "name": "cpufeatures",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "0.3.1"
+      },
+      "crypto-common@0.2.2": {
+        "checksum": "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453",
+        "dependencies": [
+          "hybrid-array"
+        ],
+        "name": "crypto-common",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "0.2.2"
+      },
+      "ctutils@0.4.8": {
+        "checksum": "261af4dc7a06ea8a527a8717d8cbba3417530d6ea14e1edb3de6b67806be474f",
+        "dependencies": [
+          "cmov"
+        ],
+        "name": "ctutils",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "0.4.8"
+      },
+      "digest@0.11.3": {
+        "checksum": "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2",
+        "dependencies": [
+          "block-buffer",
+          "const-oid",
+          "crypto-common",
+          "ctutils"
+        ],
+        "name": "digest",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "0.11.3"
+      },
+      "franken-journal@0.1.0": {
+        "dependencies": [
+          "serde_json",
+          "sha2"
+        ],
+        "name": "franken-journal",
+        "version": "0.1.0"
+      },
+      "hybrid-array@0.4.15": {
+        "checksum": "27f864f10dfb56725ce5ce5472bc52252c8f93a4ab86327122cebf62c5f59a17",
+        "dependencies": [
+          "typenum"
+        ],
+        "name": "hybrid-array",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "0.4.15"
+      },
+      "itoa@1.0.18": {
+        "checksum": "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682",
+        "name": "itoa",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "1.0.18"
+      },
+      "libc@0.2.191": {
+        "checksum": "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a",
+        "name": "libc",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "0.2.191"
+      },
+      "memchr@2.8.3": {
+        "checksum": "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98",
+        "name": "memchr",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "2.8.3"
+      },
+      "proc-macro2@1.0.107": {
+        "checksum": "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9",
+        "dependencies": [
+          "unicode-ident"
+        ],
+        "name": "proc-macro2",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "1.0.107"
+      },
+      "quote@1.0.47": {
+        "checksum": "1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001",
+        "dependencies": [
+          "proc-macro2"
+        ],
+        "name": "quote",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "1.0.47"
+      },
+      "serde@1.0.229": {
+        "checksum": "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba",
+        "dependencies": [
+          "serde_core",
+          "serde_derive"
+        ],
+        "name": "serde",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "1.0.229"
+      },
+      "serde_core@1.0.229": {
+        "checksum": "67dca2c9c51e58a4791a4b1ed58308b39c64224d349a935ab5039aa360942a48",
+        "dependencies": [
+          "serde_derive"
+        ],
+        "name": "serde_core",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "1.0.229"
+      },
+      "serde_derive@1.0.229": {
+        "checksum": "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348",
+        "dependencies": [
+          "proc-macro2",
+          "quote",
+          "syn"
+        ],
+        "name": "serde_derive",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "1.0.229"
+      },
+      "serde_json@1.0.154": {
+        "checksum": "e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6",
+        "dependencies": [
+          "itoa",
+          "memchr",
+          "serde",
+          "serde_core",
+          "zmij"
+        ],
+        "name": "serde_json",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "1.0.154"
+      },
+      "sha2@0.11.1": {
+        "checksum": "47d7069beb7d6ac7b9acd1039986e73443f24234f41074da099d6f994ac9ad19",
+        "dependencies": [
+          "cfg-if",
+          "cpufeatures",
+          "digest"
+        ],
+        "name": "sha2",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "0.11.1"
+      },
+      "syn@3.0.9": {
+        "checksum": "d78c8dee4c7bf0e14673097256fed6142ce9d3b85a408189d07482442145823b",
+        "dependencies": [
+          "proc-macro2",
+          "quote",
+          "unicode-ident"
+        ],
+        "name": "syn",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "3.0.9"
+      },
+      "typenum@1.20.1": {
+        "checksum": "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20",
+        "name": "typenum",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "1.20.1"
+      },
+      "unicode-ident@1.0.27": {
+        "checksum": "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563",
+        "name": "unicode-ident",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "1.0.27"
+      },
+      "zmij@1.0.23": {
+        "checksum": "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b",
+        "name": "zmij",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "version": "1.0.23"
+      }
+    },
+    "profiles": {
+      "release": {
+        "codegen-units": 1,
+        "lto": true,
+        "opt-level": "z",
+        "panic": "abort",
+        "strip": "symbols"
+      }
+    },
+    "raw_logs": {
+      "rb-b1-u01-clippy.log": "9767b3f405c38a5f4ddf090609a940757e741b920784fc187cc5cdb3d02403b7",
+      "rb-b2-u01-test.log": "19d506f77899f6e194afc51aff3732446acc62ae6ad6255e767575eb4cd14e5f"
+    },
+    "source_sha256": {
+      "crates/franken-journal/Cargo.toml": "e4cdada28d6c103e11b2acc2f2d3f04b7149149a901279e5aa2d1a6ed7189e32",
+      "crates/franken-journal/examples/journal_crash.rs": "2f6fca8e77b503d3a5d4e6b176beb3b496b0f7493d6850e23465128760df3830",
+      "crates/franken-journal/src/codec.rs": "2fb9ac6efd55efcc3cafdb66513fd12aebb6cfc41644eeb3333c0f1bf2b79144",
+      "crates/franken-journal/src/journal.rs": "ed4017efd1f0b7c8c63df5186f54cfa6181bb6190aac93459c10f3834aaa28e9",
+      "crates/franken-journal/src/lib.rs": "a3dfb74704c90a08d517915890effe50aa1001140c751096ab3fee502b78c863",
+      "crates/franken-journal/src/state.rs": "490ad86218cc5e514a7c29e29fe0eb78455aca2d3117b5fde34a1b678f37625b",
+      "crates/franken-journal/src/storage.rs": "ecb35ff16193106d810b70f19b8f2ced98f8b4990316f07ec13e7628ba1dc55d",
+      "crates/franken-journal/tests/common/mod.rs": "8f4a8f6fb57a06736ab6f051f8e5c7e019c706a657a68a861d72038cf99528ac",
+      "crates/franken-journal/tests/u01_faults.rs": "28ce04fb6dcdfbff669e9b93c6a265aae21ce9d0afecf172c9083f28b36732da",
+      "crates/franken-journal/tests/u01_process.rs": "05cc5fc04848aedc1a98bac41fb905a6189416ed28d28ca089bc517a98450d51",
+      "crates/franken-journal/tests/u01_vectors.rs": "97724f5adf1d286923023cb52339696b52e5fb012ce32c4d61e87f4c960a6e4f",
+      "crates/franken-journal/tests/vectors/u01_vectors.json": "c664d72bd23c0b8d05f83a7b726f65ca946785b329fb56f245fb2f1f19e668e2",
+      "rust-toolchain.toml": "ff13c9224217a4ccd63320d8b89cc82d7fa64da14a627e499f9f18db4c6602d0"
+    },
+    "workspace_dependency_pins": {
+      "serde_json": "1.0",
+      "sha2": "0.11"
+    },
+    "workspace_lints": {
+      "rust": {
+        "unsafe_code": "forbid"
+      }
+    },
+    "workspace_package": {
+      "edition": "2024",
+      "license-file": "LICENSE",
+      "version": "0.1.0"
+    }
+  },
+  "tier_exits": {
+    "full_without_host_binary": 3,
+    "smoke": 0,
+    "soak_not_run": 4
+  },
+  "wrapper_sha256": {
+    "scripts/e2e/u01": "40408625790afd4d99be7c842fff6e52546d81373c0d17bceba307add644d918",
+    "scripts/test/test_support/diagnostics.py": "df90049d7a0b87a3513c45bf4ae7502701d624d34c9e0d8e3e2394f6dba947b7",
+    "tests/u01/case_log.py": "55ffbce6f834adb08f949d11e30c8b3aeedc37b927867be47bb9190b679c20ad",
+    "tests/u01/e2e.py": "cf1fc9facc3efe9869fecf32220e74b54151995ad5fa75c814b051271f77c0c1",
+    "tests/u01/judge_log.py": "4ccee71e60749cfb85c098e064c2c691d1a2143e55b911fb892f39e143d081fa",
+    "tests/u01/test_e2e.py": "e6aa7cb6d70a7e353bc5c12a68dae16e95bf57eacbf20ea49088f110208bc642"
+  }
+}

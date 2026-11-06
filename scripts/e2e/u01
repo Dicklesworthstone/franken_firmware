@@ -2,7 +2,11 @@
 # U01 end-to-end entry point (bead ffw-mgb): the crash-consistent state journal.
 # Delegates to tests/u01/e2e.py (offline, stdlib Python; it builds nothing and never invokes cargo).
 #
-#   scripts/e2e/u01                              host checks; the process-restart cases are BLOCKED (counted, never skipped)
+#   scripts/e2e/u01                              the full tier: host checks; the process-restart cases are BLOCKED (counted, never skipped)
+#   scripts/e2e/u01 --tier smoke|full|soak       smoke: the host checks only; soak: NOT RUN, with the reason (exit 4, never a pass)
+#   scripts/e2e/u01 --case ID                    run (replay) one case; repeatable
+#   scripts/e2e/u01 --receipts DIR               keep the shared Q00 JSONL diagnostic log and a JSON receipt under DIR (without it the log is
+#                                                kept in a fresh temp directory whose path is printed; a log that lost critical evidence is NOT QUALIFIED)
 #   scripts/e2e/u01 --binary PATH                also kill a REAL process mid-write and recover (needs an example binary THIS host can run)
 #   scripts/e2e/u01 --mutants                    also run the mutation canary (about a minute)
 #   scripts/e2e/u01 --list                       the planned cases
@@ -17,8 +21,8 @@
 # and architecture). tests/u01/fake_crash.py is a Python stand-in that exercises this driver's logic; it is not evidence
 # about the Rust code.
 #
-# Exit 0 only when every case passed and none is blocked; 1 on a failed case; 3 when the only non-passes are blocked cases
-# (reported, never counted as passed); 2 on usage errors.
+# Exit 0 only when every case passed, none is blocked and the diagnostic log is complete; 1 on a failed case or a log that lost critical
+# evidence; 3 when the only non-passes are blocked cases (reported, never counted as passed); 4 for --tier soak; 2 on usage errors.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 exec python3 -B "$ROOT/tests/u01/e2e.py" "$@"

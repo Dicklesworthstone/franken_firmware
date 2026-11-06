@@ -1,0 +1,1 @@
+U01 soak: NOT RUN. The process experiments already kill a real process at every byte of two scenarios, at every 29th byte of the compacting one and by SIGKILL at six acknowledged steps; a soak would be a long randomized kill campaign against the centrally built example, which nothing here implements or schedules. This is not a pass.
