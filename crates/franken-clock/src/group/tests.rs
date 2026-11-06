@@ -41,6 +41,7 @@ fn cfg_with(over: &Value) -> GroupClockConfig {
                 "output_delay_ns" => cfg.output_delay_ns = n,
                 "catchup_ns" => cfg.catchup_ns = n,
                 "max_future_ns" => cfg.max_future_ns = n,
+                "timer_resolution_ns" => cfg.timer_resolution_ns = n,
                 other => panic!("unknown config override {other}"),
             }
         }
@@ -231,22 +232,29 @@ fn n03_a_symmetric_exchange_has_the_hand_derived_midpoints() {
     assert_eq!(s.local_mid_ns, 1_000_225_000);
     assert_eq!(s.group_mid_ns, 5_000_225_000);
     assert_eq!(s.offset_ns(), 4_000_000_000);
-    // base uncertainty: half the delay (200 000) + 1 000 timer resolution + 0 calibration
-    assert_eq!(base_uncertainty_ns(&std_cfg(), s.delay_ns), 201_000);
-    // growth: 6 ms of age at 100 ppm is exactly 600 ns, rounded up
+    // base uncertainty: half the delay (200 000) + twice the 1 000 timer resolution (the exchange, and the reading asked at) +
+    // 0 calibration
+    assert_eq!(base_uncertainty_ns(&std_cfg(), s.delay_ns), 202_000);
+    // the second resolution (the tick of the reading asked at) read through the fitted ratio r and its uncertainty u costs ceil(1000 * (r + u) / 1e9) more:
+    // 1 ns for u = 100 ppm (0.1000...) and for u = 1 ppb. Growth: 6 ms of age at 100 ppm is exactly 600 ns, rounded up
     assert_eq!(
-        uncertainty_at(&std_cfg(), &s, s.local_mid_ns + 6_000_000, 100_000),
-        201_600
+        uncertainty_at(&std_cfg(), &s, s.local_mid_ns + 6_000_000, 0, 100_000),
+        202_601
     );
     // one ns of age at 1 ppb still costs a whole ns (never rounds down)
     assert_eq!(
-        uncertainty_at(&std_cfg(), &s, s.local_mid_ns + 1, 1),
-        201_001
+        uncertainty_at(&std_cfg(), &s, s.local_mid_ns + 1, 0, 1),
+        202_002
     );
-    // and a time before the midpoint costs nothing
+    // and a time before the midpoint costs no growth
     assert_eq!(
-        uncertainty_at(&std_cfg(), &s, s.local_mid_ns - 5, 100_000),
-        201_000
+        uncertainty_at(&std_cfg(), &s, s.local_mid_ns - 5, 0, 100_000),
+        202_001
+    );
+    // an exactly known ratio costs nothing more than the base
+    assert_eq!(
+        uncertainty_at(&std_cfg(), &s, s.local_mid_ns, 0, 0),
+        202_000
     );
 }
 
@@ -1879,4 +1887,983 @@ fn n03_log_labels_are_validated_and_a_fault_entry_rides_along_when_given() {
         "{line}"
     );
     assert!(line.contains("\"cause\":\"UnadmittedLeader\""), "{line}");
+}
+
+// ------------------------------------------------------------------------------------------ coarse clocks
+//
+// A coarse clock reads the same value before and after a short round trip. These tests give such a member a world with an exact
+// true time it can only see through rounded readings, so every claim about the uncertainty is compared with a truth that is not
+// in the code under test. The expectations of the pure cases are worked out by hand in the comments; the scenario figures
+// (counts of equal-reading exchanges, number of checks) were predicted by running the same worlds through the Python reference
+// `tests/n03/reference.py` before any compile. These tests belong to the case `N03-COARSE-CLOCK`.
+
+/// Exact true time `t` (ns), a member clock and a coordinator clock that each read it rounded down to a multiple of their
+/// resolution (a group resolution of 0 reads exact). The member's clock has a skew and a start phase.
+struct Coarse {
+    res: u64,
+    group_res: u64,
+    skew_ppb: i64,
+    local0: u64,
+    group0: u64,
+}
+
+impl Coarse {
+    fn local(&self, t: u64) -> u64 {
+        let skewed = i128::from(t) * i128::from(self.skew_ppb);
+        let v = i128::from(self.local0) + i128::from(t) + skewed.div_euclid(1_000_000_000);
+        let v = u64::try_from(v).expect("a positive local time");
+        v - v % self.res
+    }
+
+    fn group_read(&self, t: u64) -> u64 {
+        let v = self.group0 + t;
+        if self.group_res == 0 {
+            v
+        } else {
+            v - v % self.group_res
+        }
+    }
+
+    fn group_true(&self, t: u64) -> u64 {
+        self.group0 + t
+    }
+
+    /// The first true instant at which the member's clock shows `reading` (the clock never goes back).
+    fn tick(&self, reading: u64) -> u64 {
+        let (mut lo, mut hi) = (0_u64, 1_u64 << 44);
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if self.local(mid) >= reading {
+                hi = mid;
+            } else {
+                lo = mid + 1;
+            }
+        }
+        lo
+    }
+}
+
+/// A coarse clock's configuration. The resolution is charged twice in every uncertainty, so the 2 ms default threshold would
+/// refuse a 1.7 ms clock for good (its uncertainty is at least 3.4 ms); the worlds that must lock raise it to 4 ms.
+fn coarse_cfg(res: u64) -> GroupClockConfig {
+    let mut cfg = std_cfg();
+    cfg.timer_resolution_ns = res;
+    cfg.lock_uncertainty_ns = 4_000_000;
+    cfg.validate().expect("a coarse configuration is valid");
+    cfg
+}
+
+/// One exchange sent at true time `ts` with forward delay `df`, coordinator dwell and return delay `dr`: the member's request,
+/// the coordinator's answer as the world reads it, and the member's receipt. Returns `(t1, t4, outcome)`.
+fn coarse_probe(
+    world: &Coarse,
+    gc: &mut GroupClock,
+    ts: u64,
+    (df, dwell, dr): (u64, u64, u64),
+) -> (u64, u64, Result<Accepted, ProbeReject>) {
+    let req = gc.next_probe(world.local(ts));
+    let resp = ProbeResponse {
+        epoch: 1,
+        leader: 7,
+        seq: req.seq,
+        t1_echo_ns: req.t1_local_ns,
+        t2_group_ns: world.group_read(ts + df),
+        t3_group_ns: world.group_read(ts + df + dwell),
+    };
+    let t4 = world.local(ts + df + dwell + dr);
+    (req.t1_local_ns, t4, gc.on_response(resp, t4))
+}
+
+/// An exchange whose four readings the test states: group time `group` at both `t2` and `t3`, local readings `t1` and `t4`.
+fn flat_exchange(
+    gc: &mut GroupClock,
+    t1: u64,
+    t4: u64,
+    group: u64,
+) -> Result<Accepted, ProbeReject> {
+    let req = gc.next_probe(t1);
+    let resp = ProbeResponse {
+        epoch: 1,
+        leader: 7,
+        seq: req.seq,
+        t1_echo_ns: t1,
+        t2_group_ns: group,
+        t3_group_ns: group,
+    };
+    gc.on_response(resp, t4)
+}
+
+/// Uncertainty minus error at the reading `now`, the error taken against the exact group time at the instant the member's
+/// clock first showed it (when a start scheduled by that reading fires).
+fn tick_margin(world: &Coarse, gc: &GroupClock, now: u64) -> Option<i128> {
+    let a = gc.reading(now)?;
+    let error = group_at(&a, now).abs_diff(world.group_true(world.tick(now)));
+    Some(i128::from(a.uncertainty_ns) - i128::from(error))
+}
+
+/// The same against the exact group time at any instant `t_now` at which the clock shows `now`. A coarse clock shows one value
+/// for a whole tick, so this is the public claim the uncertainty has to meet, not the tick's first instant alone.
+fn instant_margin(world: &Coarse, gc: &GroupClock, now: u64, t_now: u64) -> Option<i128> {
+    let a = gc.reading(now)?;
+    let error = group_at(&a, now).abs_diff(world.group_true(t_now));
+    Some(i128::from(a.uncertainty_ns) - i128::from(error))
+}
+
+/// Hand-derived. Resolution R = 1.7 ms, t1 = t4 = 5 000 000 000, t2 = 9 000 000 000 000, so the round trip is below R:
+/// delay 0 (all a reading can say), local_mid = t1, group_mid = t2 + dwell / 2 (floor), and the base uncertainty is 2R.
+/// The coordinator's dwell is admitted below 2R (its own two readings are rounded too) and refused from 2R as a clock that
+/// stood still. Readings that differ keep the exact rules, and a clock declared exact cannot stand still at all.
+#[test]
+fn n03_equal_readings_are_a_sub_resolution_exchange_on_a_coarse_clock_and_backwards_time_is_not() {
+    let r = 1_700_000;
+    let (t1, t2) = (5_000_000_000_u64, 9_000_000_000_000_u64);
+    let cfg = coarse_cfg(r);
+    let s = Sample::from_exchange(t1, t2, t2, t1, &cfg).expect("zero dwell");
+    assert_eq!((s.delay_ns, s.local_mid_ns, s.group_mid_ns), (0, t1, t2));
+    assert_eq!(base_uncertainty_ns(&cfg, s.delay_ns), 2 * r);
+    let s = Sample::from_exchange(t1, t2, t2 + 1_000_000, t1, &cfg).expect("1 ms dwell");
+    assert_eq!(
+        (s.delay_ns, s.local_mid_ns, s.group_mid_ns),
+        (0, t1, t2 + 500_000)
+    );
+    // for equal readings the bound is 2R plus the rate allowance over the hidden tick: 3 400 000 + ceil(1.7e6 * 100 ppm) = 3 400 170
+    let s = Sample::from_exchange(t1, t2, t2 + 3_400_169, t1, &cfg).expect("one under the bound");
+    assert_eq!(s.group_mid_ns, t2 + 1_700_084);
+    assert_eq!(
+        Sample::from_exchange(t1, t2, t2 + 3_400_170, t1, &cfg),
+        Err(ProbeReject::LocalClockRegression),
+        "the bound cannot hide inside one reading"
+    );
+    // an exact clock cannot read the same value across a round trip
+    assert_eq!(
+        Sample::from_exchange(t1, t2, t2, t1, &coarse_cfg(0)),
+        Err(ProbeReject::LocalClockRegression)
+    );
+    // backwards time is never rounding, on any clock
+    for res in [0, 1_000, r] {
+        assert_eq!(
+            Sample::from_exchange(t1, t2, t2, t1 - 1, &coarse_cfg(res)),
+            Err(ProbeReject::LocalClockRegression),
+            "resolution {res}"
+        );
+    }
+    // readings one tick apart are an ordinary exchange: delay is the round trip less the dwell
+    let s = Sample::from_exchange(t1, t2, t2 + 1_000_000, t1 + r, &cfg).expect("one tick apart");
+    assert_eq!((s.delay_ns, s.local_mid_ns), (700_000, t1 + 850_000));
+    // a dwell longer than the round trip is a rounding while the excess is below 2R plus the rate allowance, readings equal or not:
+    // rtt 1 ms, allowance ceil((1 ms + the hidden tick 1.7 ms) * 100 ppm) = 270 ns, so the bound is 3 400 270; the delay is clamped to 0 below it
+    let rtt = 1_000_000;
+    let s = Sample::from_exchange(t1, t2, t2 + rtt + 3_400_269, t1 + rtt, &cfg)
+        .expect("one under the bound");
+    assert_eq!((s.delay_ns, s.local_mid_ns), (0, t1 + 500_000));
+    assert_eq!(
+        Sample::from_exchange(t1, t2, t2 + rtt + 3_400_270, t1 + rtt, &cfg),
+        Err(ProbeReject::Malformed),
+        "the bound is no rounding"
+    );
+    // the same one nanosecond over, at the default resolution, used to be Malformed and is a rounding
+    let s = Sample::from_exchange(t1, t2, t2 + 101, t1 + 100, &std_cfg()).expect("a rounding");
+    assert_eq!(
+        (s.delay_ns, s.local_mid_ns, s.group_mid_ns),
+        (0, t1 + 50, t2 + 50)
+    );
+    // the review's physical witness by hand: local grid 3 ms, group grid 4 ms, declared R = 4 ms. Send at true 2.5 ms: t1 = 0; it
+    // arrives at 2.6 ms: t2 = 0; the reply leaves at 4.1 ms: t3 = 4 ms; it arrives at 4.2 ms: t4 = 3 ms. Round trip 3 ms, dwell 4 ms.
+    let s = Sample::from_exchange(0, 0, 4_000_000, 3_000_000, &coarse_cfg(4_000_000))
+        .expect("grids 3 ms and 4 ms");
+    assert_eq!(
+        (s.delay_ns, s.local_mid_ns, s.group_mid_ns),
+        (0, 1_500_000, 2_000_000)
+    );
+    // an equal-reading exchange is still checked for impossible timestamps first
+    assert_eq!(
+        Sample::from_exchange(t1, t2, t2 - 1, t1, &cfg),
+        Err(ProbeReject::Malformed)
+    );
+    assert_eq!(
+        Sample::from_exchange(t1, MAX_TIMESTAMP_NS + 1, MAX_TIMESTAMP_NS + 1, t1, &cfg),
+        Err(ProbeReject::Malformed)
+    );
+}
+
+/// A member that sends on a tick of its own 1.7 ms clock and hears back inside the same tick reads t4 == t1 every time. Before
+/// the correction every one of those exchanges was refused and the member never locked. The truth is compared at the first
+/// and at the last instant at which the clock shows the reading asked about.
+#[test]
+fn n03_a_coarse_clock_that_probes_on_its_own_tick_locks_and_the_truth_stays_inside_the_reported_uncertainty()
+ {
+    let r = 1_700_000_u64;
+    // (coordinator resolution, member skew in ppb, start phase in ns)
+    for (group_res, skew_ppb, phase) in [(r, 0, 0), (0, 80_000, 0), (r, -80_000, 1_000_003)] {
+        let world = Coarse {
+            res: r,
+            group_res,
+            skew_ppb,
+            local0: 3_000_000_000 + phase,
+            group0: 40_000_000_000_000,
+        };
+        let mut gc = GroupClock::new(coarse_cfg(r), 1, 7, 1000).expect("member");
+        let mut first_lock = None;
+        let mut min_margin = i128::MAX;
+        for k in 0..12_u64 {
+            let ts = world.tick(world.local(k * 1_000_000_000) + r);
+            let (t1, t4, outcome) = coarse_probe(&world, &mut gc, ts, (120_000, 40_000, 240_000));
+            assert_eq!(
+                t4, t1,
+                "world {group_res}/{skew_ppb}: the exchange fits inside one tick"
+            );
+            let accepted = outcome.expect("an equal-reading exchange is admitted");
+            if first_lock.is_none() && accepted.status == ClockStatus::Locked {
+                first_lock = Some(k);
+                // hand-derived: delay 0, age 0, no board term, so the uncertainty is twice the resolution (3.4 ms) plus 170 ns for
+                // the second resolution read through the 100 ppm bound (1.7e6 * 1e5 / 1e9 = 170); the
+                // headroom to the 4 ms threshold is 599 830 ns, which the 100 ppm bound spends in 5 998 300 000 ns (plus the next)
+                assert_eq!(gc.reading(t4).expect("reading").uncertainty_ns, 2 * r + 170);
+                assert_eq!(
+                    gc.holdover(t4),
+                    Some(Holdover {
+                        until_local_ns: t1 + 5_998_300_001,
+                        binding: Binding::Uncertainty
+                    })
+                );
+            }
+            let now = world.local(ts + 400_000 + 250_000_000);
+            // the truth at the first instant the clock shows `now`, and at the last one, which is nearly a resolution later
+            let first = world.tick(now);
+            let last = world.tick(now + r) - 1;
+            assert_eq!((world.local(first), world.local(last)), (now, now));
+            for t_now in [first, last] {
+                min_margin =
+                    min_margin.min(instant_margin(&world, &gc, now, t_now).expect("a reading"));
+            }
+            min_margin = min_margin.min(tick_margin(&world, &gc, now).expect("a reading"));
+        }
+        assert_eq!(
+            first_lock,
+            Some(3),
+            "it locks on the fourth, as any clock does"
+        );
+        assert!(
+            min_margin > 0,
+            "world {group_res}/{skew_ppb}: the truth left the uncertainty by {}",
+            -min_margin
+        );
+        // the same exchanges on a clock declared exact are refused: the declared resolution is what admits them
+        let mut exact = GroupClock::new(coarse_cfg(0), 1, 7, 1000).expect("member");
+        let ts = world.tick(world.local(0) + r);
+        let (_, _, outcome) = coarse_probe(&world, &mut exact, ts, (120_000, 40_000, 240_000));
+        assert_eq!(outcome, Err(ProbeReject::LocalClockRegression));
+        // estimated error against the known truth is logged as within
+        let ts = world.tick(world.local(13 * 1_000_000_000) + r);
+        let (_, _, outcome) = coarse_probe(&world, &mut gc, ts, (120_000, 40_000, 240_000));
+        outcome.expect("admitted");
+        let now = world.local(ts + 400_000 + 250_000_000);
+        let error = gc
+            .note_truth(now, world.group_true(world.tick(now)))
+            .expect("an estimate");
+        assert!(error.unsigned_abs() <= gc.reading(now).expect("reading").uncertainty_ns);
+        let seen = labels(&mut gc);
+        assert!(seen.iter().any(|l| l == "n03.truth.within"), "{seen:?}");
+        assert!(!seen.iter().any(|l| l == "n03.truth.violated"), "{seen:?}");
+    }
+}
+
+/// Every start phase, path asymmetry, member skew and coordinator resolution of a 1.7 ms and a 0.4 ms clock, 40 jittered
+/// probes each: no reset, and the truth inside the uncertainty both at the clock's tick and at an arbitrary instant of the
+/// tick. Predicted by the Python reference: 4 320 checks, 1 454 of the exchanges with equal readings
+/// (all on the 1.7 ms clock; a 0.4 ms clock sees a 400 us round trip as one tick or more).
+#[test]
+fn n03_the_truth_stays_inside_the_uncertainty_for_every_phase_asymmetry_and_skew_of_a_coarse_clock()
+{
+    let (mut checks, mut equal) = (0_u64, 0_u64);
+    let (mut worst_tick, mut worst_instant) = (i128::MAX, i128::MAX);
+    for res in [1_700_000_u64, 400_000] {
+        for group_res in [res, 0] {
+            for skew_ppb in [0_i64, 80_000, -80_000] {
+                for asym in [0_u64, 120_000, 240_000] {
+                    for phase in [0, res / 3, res / 2 + 7] {
+                        let world = Coarse {
+                            res,
+                            group_res,
+                            skew_ppb,
+                            local0: 3_000_000_000 + phase,
+                            group0: 40_000_000_000_000,
+                        };
+                        let mut gc = GroupClock::new(coarse_cfg(res), 1, 7, 1000).expect("member");
+                        let mut state = 1 + u32::try_from(phase % 7).expect("small");
+                        for k in 0..40_u64 {
+                            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                            let ts = k * 1_000_000_000 + u64::from(state) % 5_000_000;
+                            let path = (120_000 + asym, 40_000, 240_000);
+                            let (t1, t4, outcome) = coarse_probe(&world, &mut gc, ts, path);
+                            outcome.expect("a clean coarse exchange is admitted");
+                            equal += u64::from(t4 == t1);
+                            let t_now = ts + path.0 + path.1 + path.2 + 1_500_000;
+                            let now = world.local(t_now);
+                            let on_tick = tick_margin(&world, &gc, now).expect("a reading");
+                            let any_instant =
+                                instant_margin(&world, &gc, now, t_now).expect("a reading");
+                            worst_tick = worst_tick.min(on_tick);
+                            worst_instant = worst_instant.min(any_instant);
+                            checks += 1;
+                        }
+                        assert_eq!(gc.stats().resets, 0, "a clean coarse world never resets");
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!((checks, equal), (4_320, 1_454));
+    assert!(
+        worst_tick > 0,
+        "on the tick the truth left the uncertainty by {}",
+        -worst_tick
+    );
+    assert!(
+        worst_instant > 0,
+        "at an instant of the tick the truth left the uncertainty by {}",
+        -worst_instant
+    );
+}
+
+/// Backwards time is still refused on a coarse clock, and equal readings across exchanges are not backwards time. Readings
+/// are on the 1.7 ms grid; the group clock reads the same offset throughout.
+#[test]
+fn n03_backwards_time_is_rejected_on_a_coarse_clock_and_equal_readings_across_exchanges_are_not() {
+    let r = 1_700_000_u64;
+    let off = 8_994_999_200_000_u64;
+    let tick = 5_100_000_000_u64; // 3 000 ticks
+    let mut gc = GroupClock::new(coarse_cfg(r), 1, 7, 10).expect("member");
+    assert!(flat_exchange(&mut gc, tick, tick, tick + off).is_ok());
+    // t4 before t1 inside the exchange: a sample-level reject that leaves the fit alone
+    assert_eq!(
+        flat_exchange(&mut gc, tick + r, tick, tick + r + off),
+        Err(ProbeReject::LocalClockRegression)
+    );
+    let stats = gc.stats();
+    assert_eq!((stats.resets, stats.accepted, gc.sample_count()), (0, 1, 1));
+    assert_eq!(stats.rejected(ProbeReject::LocalClockRegression), 1);
+    // the same reading again, across exchanges: equal is not backwards, so it is admitted
+    assert!(flat_exchange(&mut gc, tick, tick, tick + off).is_ok());
+    assert_eq!((gc.stats().resets, gc.sample_count()), (0, 2));
+    // one tick back between exchanges: the clock went back, so the fit is cleared and the member is muted
+    assert_eq!(
+        flat_exchange(&mut gc, tick - r, tick - r, tick - r + off),
+        Err(ProbeReject::LocalClockRegression)
+    );
+    let stats = gc.stats();
+    assert_eq!((stats.resets, gc.sample_count()), (1, 0));
+    assert_eq!(stats.rejected(ProbeReject::LocalClockRegression), 2);
+    assert_eq!(gc.tick(tick), Output::Muted(MuteReason::Discontinuity));
+}
+
+/// A local clock that does not advance while the group clock does is not a coarse clock, it is stuck: its exchanges are
+/// admitted one at a time (equal readings, a small dwell) and each next one disagrees with the last by a second of group time,
+/// which is a clock jump. It never gathers four samples, never locks and is never audible.
+#[test]
+fn n03_a_stuck_local_clock_never_locks_because_the_group_clock_keeps_moving() {
+    let mut gc = GroupClock::new(coarse_cfg(1_700_000), 1, 7, 1000).expect("member");
+    let frozen = 5_000_000_000_u64;
+    let (mut accepted, mut jumps) = (0_u32, 0_u32);
+    for k in 0..20_u64 {
+        let req = gc.next_probe(frozen);
+        let group = 9_000_000_000_000 + k * 1_000_000_000;
+        let resp = ProbeResponse {
+            epoch: 1,
+            leader: 7,
+            seq: req.seq,
+            t1_echo_ns: frozen,
+            t2_group_ns: group,
+            t3_group_ns: group + 40_000,
+        };
+        match gc.on_response(resp, frozen) {
+            Ok(_) => accepted += 1,
+            Err(ProbeReject::Discontinuity) => jumps += 1,
+            Err(other) => panic!("unexpected rejection {other:?}"),
+        }
+        assert_ne!(gc.status(frozen), ClockStatus::Locked);
+        assert!(!gc.tick(frozen).is_audible());
+    }
+    assert_eq!((accepted, jumps), (10, 10));
+    assert_eq!(gc.stats().resets, 10);
+}
+
+/// Replay, unadmitted leader, wrong echo and stale epoch are refused on the equal-reading path, each beside the exchange that
+/// is accepted. Two requests sent in the same tick carry the same `t1`, so the sequence number alone tells them apart.
+#[test]
+fn n03_replayed_unadmitted_and_stale_responses_are_refused_on_a_coarse_clock_beside_the_exchange_that_is_accepted()
+ {
+    let r = 1_700_000_u64;
+    let t1 = 5_100_000_000_u64;
+    let mut gc = GroupClock::new(coarse_cfg(r), 1, 7, 50).expect("member");
+    let first = gc.next_probe(t1);
+    let second = gc.next_probe(t1);
+    assert_eq!(first.t1_local_ns, second.t1_local_ns);
+    assert_ne!(first.seq, second.seq);
+    let answer = |seq: u64| ProbeResponse {
+        epoch: 1,
+        leader: 7,
+        seq,
+        t1_echo_ns: t1,
+        t2_group_ns: t1 + 8_994_999_200_000,
+        t3_group_ns: t1 + 8_994_999_240_000,
+    };
+    assert!(gc.on_response(answer(first.seq), t1).is_ok());
+    assert_eq!(
+        gc.on_response(answer(first.seq), t1),
+        Err(ProbeReject::UnsolicitedOrReplayed),
+        "a request is answered once"
+    );
+    let mut stranger = answer(second.seq);
+    stranger.leader = 99;
+    assert_eq!(
+        gc.on_response(stranger, t1),
+        Err(ProbeReject::UnadmittedLeader)
+    );
+    let mut wrong_echo = answer(second.seq);
+    wrong_echo.t1_echo_ns = t1 + r;
+    assert_eq!(
+        gc.on_response(wrong_echo, t1),
+        Err(ProbeReject::UnsolicitedOrReplayed)
+    );
+    assert!(
+        gc.on_response(answer(second.seq), t1).is_ok(),
+        "the right answer still counts"
+    );
+    assert_eq!((gc.sample_count(), gc.stats().resets), (2, 0));
+    gc.begin_epoch(2, 8).expect("a newer epoch");
+    assert_eq!(
+        gc.on_response(answer(second.seq), t1),
+        Err(ProbeReject::StaleEpoch)
+    );
+}
+
+/// The prediction check keeps its meaning on a coarse clock. After five samples on the 1.7 ms grid the sixth, a second
+/// later, is judged against what the fit predicts. The step it may differ by is, by hand: the anchor's uncertainty at the new
+/// midpoint (2R = 3 400 000, the second resolution through the 100 ppm bound 170, 100 ppm of the 999 600 000 ns age rounded up
+/// 99 960), plus half the delay (0), plus the slack, 500 000: 3 400 000 + 170 + 99 960 + 500 000 = 4 000 130. Two coarse exchanges can differ by nearly 2R (3.4 ms) in what they
+/// measure, which the anchor's own 2R covers. A step of exactly the allowance is noise; one nanosecond more is a jump that
+/// clears the fit.
+#[test]
+fn n03_a_step_inside_what_two_roundings_can_account_for_is_noise_and_one_nanosecond_more_is_a_jump_on_a_coarse_clock()
+ {
+    let r = 1_700_000_u64;
+    let off = 8_994_999_200_000_u64;
+    let t1_of = |k: u64| 5_100_000_000 + k * 999_600_000; // 588 ticks apart, so on the grid
+    for extra in [0_u64, 1] {
+        let mut gc = GroupClock::new(coarse_cfg(r), 1, 7, 100).expect("member");
+        for k in 0..5 {
+            assert!(flat_exchange(&mut gc, t1_of(k), t1_of(k), t1_of(k) + off).is_ok());
+        }
+        let age = t1_of(5) - t1_of(4);
+        assert_eq!(age, 999_600_000);
+        let allowed = 2 * r + 170 + age.div_ceil(10_000) + 500_000;
+        assert_eq!(allowed, 4_000_130);
+        let outcome = flat_exchange(
+            &mut gc,
+            t1_of(5),
+            t1_of(5),
+            t1_of(5) + off + allowed + extra,
+        );
+        if extra == 0 {
+            assert!(outcome.is_ok(), "{outcome:?}");
+            assert_eq!(gc.stats().resets, 0);
+        } else {
+            assert_eq!(outcome, Err(ProbeReject::Discontinuity));
+            assert_eq!((gc.stats().resets, gc.sample_count()), (1, 0));
+        }
+    }
+}
+
+/// A clock whose rounding alone, with the board term, is above the threshold admits every valid exchange and still never
+/// locks, however many arrive: the reported uncertainty is twice the resolution plus the board term, which is why it stays
+/// muted. The default 2 ms threshold is inclusive: an uncertainty of 2 000 000 locks, 2 000 001 does not. So a 1.7 ms clock
+/// (3.4 ms) cannot lock at the default threshold at all.
+#[test]
+fn n03_a_clock_too_coarse_for_the_threshold_stays_muted_however_many_exchanges_are_admitted() {
+    // (resolution, board calibration uncertainty, whether it can lock)
+    // 2R + board + R * 100 ppm: for R = 800 000 that is 1 600 000 + board + 80; for 999 950 it is 1 999 900 + 100
+    let cases = [
+        (4_000_000_u64, 0_u64, false),
+        (1_700_000, 0, false),
+        (800_000, 399_920, true),
+        (800_000, 399_921, false),
+        (999_950, 0, true),
+        (999_951, 0, false),
+    ];
+    for (r, cal, can_lock) in cases {
+        let mut cfg = std_cfg();
+        cfg.timer_resolution_ns = r;
+        cfg.calibration_uncertainty_ns = cal;
+        let mut gc = GroupClock::new(cfg, 1, 7, 7).expect("member");
+        let mut ever_locked = false;
+        let mut last = 0;
+        for k in 0..40_u64 {
+            let t1 = r * (3_000 + 600 * k);
+            let accepted = flat_exchange(&mut gc, t1, t1, t1 + 9_000_000_000_000)
+                .expect("a valid exchange is admitted whatever the clock can qualify");
+            ever_locked |= accepted.status == ClockStatus::Locked;
+            last = t1;
+        }
+        assert_eq!(ever_locked, can_lock, "resolution {r}, board term {cal}");
+        assert_eq!(
+            gc.reading(last).expect("reading").uncertainty_ns,
+            2 * r + cal + r.div_ceil(10_000),
+            "delay 0 and age 0: twice the resolution, the board term and the second resolution through the 100 ppm bound"
+        );
+        if !can_lock {
+            let sched = StartSchedule {
+                epoch: 1,
+                start_group_ns: 9_000_000_000_000 + last + 500_000_000,
+            };
+            assert_eq!(gc.plan_start(sched, last), Err(StartReject::NotLocked));
+            assert_eq!(gc.output(last), Output::Muted(MuteReason::NotLocked));
+            assert_eq!(gc.status(last), ClockStatus::Unlocked);
+        }
+    }
+}
+
+/// The independent review's witness, by hand. R = 1.7 ms; the member's clock reads floor(t / R) * R; the true group time is
+/// t + 1.6 ms and the coordinator reads it the same way. Four exchanges at true times 0 to 0.03 ms all read t1 = t4 = 0 and
+/// t2 = t3 = floor((t + 1.6 ms) / R) * R = 0, so the offset is estimated as 0 where it is 1.6 ms. At true time 1.6 ms the
+/// member still reads 0 (a tick lasts until 1.7 ms): the report is 0 and the true group time is 3.2 ms, an error of 3.2 ms.
+/// Charging the resolution once (1.7 ms) was exceeded; charging it twice (3.4 ms) holds at every instant of the tick, and 3.4 ms
+/// is above the default 2 ms threshold, so that clock must not lock there at all.
+#[test]
+fn n03_a_coarse_clock_read_late_inside_its_tick_is_still_inside_the_uncertainty_that_charges_the_resolution_twice()
+ {
+    let r = 1_700_000_u64;
+    let world = Coarse {
+        res: r,
+        group_res: r,
+        skew_ppb: 0,
+        local0: 0,
+        group0: 1_600_000,
+    };
+    for threshold in [2_000_000_u64, 4_000_000] {
+        let mut cfg = std_cfg();
+        cfg.timer_resolution_ns = r;
+        cfg.lock_uncertainty_ns = threshold;
+        let mut gc = GroupClock::new(cfg, 1, 7, 1000).expect("member");
+        for k in 0..4_u64 {
+            let (t1, t4, outcome) =
+                coarse_probe(&world, &mut gc, k * 10_000, (5_000, 5_000, 5_000));
+            assert_eq!((t1, t4), (0, 0));
+            outcome.expect("admitted");
+            assert_eq!(
+                world.group_read(k * 10_000 + 5_000),
+                0,
+                "the coordinator reads 0 as well"
+            );
+        }
+        let a = gc.reading(0).expect("reading");
+        assert_eq!(
+            a.uncertainty_ns,
+            2 * r + 170,
+            "delay 0, age 0: twice the resolution and the second one read through the 100 ppm bound, exactly"
+        );
+        if threshold == 2_000_000 {
+            // 3.4 ms is above the 2 ms threshold: the bound cannot support a lock, so it does not lock
+            assert_eq!(gc.status(0), ClockStatus::Unlocked);
+            assert_eq!(gc.output(0), Output::Muted(MuteReason::NotLocked));
+            continue;
+        }
+        assert_eq!(gc.status(0), ClockStatus::Locked);
+        assert_eq!(group_at(&a, 0), 0, "the report");
+        // at true time 1.6 ms the clock still shows 0 and the group is at 3.2 ms
+        let error = group_at(&a, world.local(1_600_000)).abs_diff(world.group_true(1_600_000));
+        assert_eq!(error, 3_200_000);
+        assert!(error > r, "more than the single charge");
+        assert!(error <= a.uncertainty_ns, "inside the doubled one");
+        for t_now in (0..r).step_by(100_000).chain([r - 1]) {
+            assert_eq!(world.local(t_now), 0);
+            let margin = instant_margin(&world, &gc, 0, t_now).expect("a reading");
+            assert!(margin >= 100_000, "true time {t_now}: margin {margin}");
+        }
+    }
+}
+
+/// The independent review's second witness, in a physical world: local grid 3 ms, group grid 4 ms, zero true offset and rate,
+/// declared (coarsest) resolution 4 ms. Send at true 2.5 ms: t1 = 0. It arrives at 2.6 ms: t2 = 0. The reply leaves at 4.1 ms:
+/// t3 = 4 ms. It arrives at 4.2 ms: t4 = 3 ms. The true dwell 1.5 ms is below the true round trip 1.7 ms, and the readings say a
+/// round trip of 3 ms and a dwell of 4 ms. That exchange is admitted with the delay clamped to 0 (local_mid 1.5 ms, group_mid 2 ms),
+/// where the old exact rule refused it. The bound is not blind: a dwell over the round trip by 2R plus the rate allowance
+/// (8 ms + ceil((3 ms + the hidden tick 4 ms) * 100 ppm) = 700 ns) is `Malformed`, one nanosecond under it is a rounding, and
+/// backwards time is still backwards.
+#[test]
+fn n03_a_dwell_over_the_round_trip_is_a_rounding_inside_the_bound_and_malformed_at_it_beside_backwards_time()
+ {
+    let world = Coarse {
+        res: 3_000_000,
+        group_res: 4_000_000,
+        skew_ppb: 0,
+        local0: 0,
+        group0: 0,
+    };
+    let mut cfg = coarse_cfg(4_000_000);
+    cfg.lock_uncertainty_ns = 10_000_000;
+    let mut gc = GroupClock::new(cfg, 1, 7, 5).expect("member");
+    let (t1, t4, outcome) = coarse_probe(&world, &mut gc, 2_500_000, (100_000, 1_500_000, 100_000));
+    assert_eq!((t1, t4), (0, 3_000_000));
+    assert_eq!(
+        (world.group_read(2_600_000), world.group_read(4_100_000)),
+        (0, 4_000_000)
+    );
+    outcome.expect("a quantization-consistent negative measured delay is admitted");
+    let a = gc.reading(t4).expect("reading");
+    assert_eq!(
+        (
+            a.sample.delay_ns,
+            a.sample.local_mid_ns,
+            a.sample.group_mid_ns
+        ),
+        (0, 1_500_000, 2_000_000)
+    );
+    // the bound, on a hand-built exchange of the same clocks (rtt 3 ms): the excess must stay under 8 000 000 + 700
+    for (dwell, admitted) in [
+        (3_000_000 + 8_000_699, true),
+        (3_000_000 + 8_000_700, false),
+    ] {
+        let req = gc.next_probe(3_000_000);
+        let resp = ProbeResponse {
+            epoch: 1,
+            leader: 7,
+            seq: req.seq,
+            t1_echo_ns: 3_000_000,
+            t2_group_ns: 4_000_000,
+            t3_group_ns: 4_000_000 + dwell,
+        };
+        let outcome = gc.on_response(resp, 6_000_000);
+        if admitted {
+            assert!(outcome.is_ok(), "{outcome:?}");
+        } else {
+            assert_eq!(
+                outcome,
+                Err(ProbeReject::Malformed),
+                "excess 2R + the rate allowance is no rounding"
+            );
+        }
+    }
+    // true backwards time, with an excess of dwell on top: still LocalClockRegression
+    let req = gc.next_probe(9_000_000);
+    let resp = ProbeResponse {
+        epoch: 1,
+        leader: 7,
+        seq: req.seq,
+        t1_echo_ns: 9_000_000,
+        t2_group_ns: 8_000_000,
+        t3_group_ns: 12_000_000,
+    };
+    assert_eq!(
+        gc.on_response(resp, 8_999_999),
+        Err(ProbeReject::LocalClockRegression)
+    );
+}
+
+/// The independent review's natural prediction-slack witness, in a physical world: the same grids, zero offset, declared R = 4 ms.
+/// Tiny exchanges around true 3 ms read (t1, t2, t3, t4) = (3 ms, 0, 0, 3 ms); around true 8 ms they read (6 ms, 8 ms, 8 ms, 6 ms).
+/// The fit of the first predicts the group time 3 ms at local 6 ms and the new sample says 8 ms: a step of 5 ms that no clock
+/// stepped. Charging the resolution once allowed R + 300 ns (3 ms of age at 100 ppm) + 500 us = 4 500 300 ns and called it a jump;
+/// the anchor's 2R (8 ms) + 400 (the second resolution through 100 ppm: 4e6 * 1e5 / 1e9) + 300 + 500 000 = 8 500 700
+/// admits it. A real step is still refused: the group clock jumping 10 ms makes it 13 ms (the coordinator reads 16 ms).
+#[test]
+fn n03_a_step_of_two_roundings_between_physical_samples_is_noise_and_a_real_group_clock_step_is_a_jump()
+ {
+    let mut cfg = coarse_cfg(4_000_000);
+    cfg.lock_uncertainty_ns = 10_000_000;
+    for step in [0_u64, 10_000_000] {
+        let world = Coarse {
+            res: 3_000_000,
+            group_res: 4_000_000,
+            skew_ppb: 0,
+            local0: 0,
+            group0: 0,
+        };
+        let stepped = Coarse {
+            group0: step,
+            ..world
+        };
+        let mut gc = GroupClock::new(cfg.clone(), 1, 7, 9).expect("member");
+        for k in 0..4_u64 {
+            let (t1, t4, outcome) =
+                coarse_probe(&world, &mut gc, 3_000_000 + k * 10_000, (5_000, 0, 5_000));
+            assert_eq!((t1, t4), (3_000_000, 3_000_000));
+            assert_eq!(world.group_read(3_005_000 + k * 10_000), 0);
+            outcome.expect("admitted");
+        }
+        let anchor = gc.reading(6_000_000).expect("reading");
+        assert_eq!(
+            anchor.ratio_unc_ppb, 100_000,
+            "no fit is in force after four samples"
+        );
+        let (t1, t4, outcome) = coarse_probe(&stepped, &mut gc, 8_000_000, (5_000, 0, 5_000));
+        assert_eq!((t1, t4), (6_000_000, 6_000_000));
+        assert_eq!(
+            stepped.group_read(8_005_000),
+            8_000_000 + step / 4_000_000 * 4_000_000
+        );
+        let allowed = 2 * 4_000_000 + 400 + 300 + 500_000;
+        assert_eq!(allowed, 8_500_700);
+        if step == 0 {
+            assert!(
+                5_000_000 > 4_000_000 + 300 + 500_000,
+                "the single charge would have refused this"
+            );
+            assert!(5_000_000 < allowed);
+            outcome.expect("two roundings are noise");
+            assert_eq!(gc.stats().resets, 0);
+        } else {
+            assert_eq!(outcome, Err(ProbeReject::Discontinuity));
+            assert_eq!((gc.stats().resets, gc.sample_count()), (1, 0));
+        }
+    }
+}
+
+/// DarkValley's slow-clock witness (7852): the rate acts on the TRUE elapsed time, which an observed round trip of zero hides by up
+/// to a whole tick. R = 4 ms; the member's clock is 80 ppm slow, `L(t) = 0.99992 t`, floored to R; the true group time is
+/// `t + 3 999 980` ns, floored to R. Send at true 0: t1 = 0. It arrives at 10 ns: group 3 999 990, t2 = 0. The reply leaves at
+/// 4 000 110: group 8 000 090, t3 = 8 000 000. It arrives at 4 000 120: `L = 3 999 799` is below R, t4 = 0. The true dwell
+/// 4 000 100 ns is below the true round trip 4 000 120 ns, yet the readings give round trip 0 and dwell exactly 2R. A rate allowance
+/// over the observed round trip alone (0) refuses it as a stalled clock; over the observed round trip plus the hidden tick it is
+/// `2R + ceil(4e6 * 100 ppm) = 8 000 400`, which admits it (80 ppm is inside the 100 ppm bound), and an excess of 8 000 400 is no
+/// rounding. Beside it, true backwards time is still refused.
+#[test]
+fn n03_a_slow_clock_that_reads_zero_across_a_tick_is_a_physical_exchange_beside_the_over_bound_refusal()
+ {
+    let world = Coarse {
+        res: 4_000_000,
+        group_res: 4_000_000,
+        skew_ppb: -80_000,
+        local0: 0,
+        group0: 3_999_980,
+    };
+    assert_eq!(
+        (
+            world.local(0),
+            world.group_read(10),
+            world.group_read(4_000_110),
+            world.local(4_000_120)
+        ),
+        (0, 0, 8_000_000, 0)
+    );
+    let mut gc = GroupClock::new(coarse_cfg(4_000_000), 1, 7, 3).expect("member");
+    let (t1, t4, outcome) = coarse_probe(&world, &mut gc, 0, (10, 4_000_100, 10));
+    assert_eq!((t1, t4), (0, 0));
+    outcome.expect("a slow clock's exchange is physical, however it reads");
+    let a = gc.reading(0).expect("reading");
+    assert_eq!(
+        (
+            a.sample.delay_ns,
+            a.sample.local_mid_ns,
+            a.sample.group_mid_ns
+        ),
+        (0, 0, 4_000_000)
+    );
+    // the bound, hand-built on the same readings: an excess of 8 000 399 is a rounding, 8 000 400 is not
+    for (dwell, admitted) in [(8_000_399_u64, true), (8_000_400, false)] {
+        let req = gc.next_probe(0);
+        let resp = ProbeResponse {
+            epoch: 1,
+            leader: 7,
+            seq: req.seq,
+            t1_echo_ns: 0,
+            t2_group_ns: 0,
+            t3_group_ns: dwell,
+        };
+        let outcome = gc.on_response(resp, 0);
+        if admitted {
+            assert!(outcome.is_ok(), "{outcome:?}");
+        } else {
+            assert_eq!(outcome, Err(ProbeReject::LocalClockRegression));
+        }
+    }
+    // and one reading back is backwards on any clock, whatever the rate
+    assert_eq!(
+        Sample::from_exchange(1, 0, 0, 0, &coarse_cfg(4_000_000)),
+        Err(ProbeReject::LocalClockRegression)
+    );
+}
+
+/// DarkValley's fitted-rate witness (7852): the query tick is read through the FITTED mean ratio plus its error, not through the error
+/// alone. R = 100 us, fitted ratio +80 ppm, uncertainty 6 ppm: a local tick passes 100 000 * 1.000080 = 100 008 ns of group time, and
+/// 100 000 * 1.000086 = 100 008.6 at the fastest admitted ratio, so the excess over R is `ceil(8.6) = 9` (the error alone would show
+/// `ceil(0.6) = 1`). A slow fit has none: at -80 ppm +- 6 ppm the lag is at most R. The hold-over headroom shrinks by the same nanoseconds.
+#[test]
+fn n03_the_query_tick_follows_the_fitted_mean_ratio_and_not_only_its_error() {
+    let mut cfg = std_cfg();
+    cfg.timer_resolution_ns = 100_000;
+    assert_eq!(query_tick_rate_excess_ns(&cfg, 80_000, 6_000), 9);
+    assert_eq!(
+        query_tick_rate_excess_ns(&cfg, 80_000, 0),
+        8,
+        "an exactly known fast ratio still costs"
+    );
+    assert_eq!(query_tick_rate_excess_ns(&cfg, 0, 6_000), 1);
+    assert_eq!(
+        query_tick_rate_excess_ns(&cfg, -80_000, 6_000),
+        0,
+        "the fastest admitted ratio is below 1"
+    );
+    assert_eq!(
+        query_tick_rate_excess_ns(&cfg, -80_000, 100_000),
+        2,
+        "-80 ppm + 100 ppm = 20 ppm: 2 ns"
+    );
+    let mut exact = std_cfg();
+    exact.timer_resolution_ns = 0;
+    assert_eq!(
+        query_tick_rate_excess_ns(&exact, 80_000, 6_000),
+        0,
+        "an exact clock has no tick"
+    );
+    // the sample: delay 0, so the base is 2R = 200 000
+    let s = Sample {
+        delay_ns: 0,
+        local_mid_ns: 100_000_000_000,
+        group_mid_ns: 9_000_000_000_000,
+    };
+    assert_eq!(
+        uncertainty_at(&cfg, &s, s.local_mid_ns, 80_000, 6_000),
+        200_009
+    );
+    assert_eq!(uncertainty_at(&cfg, &s, s.local_mid_ns, 0, 6_000), 200_001);
+    assert_eq!(
+        uncertainty_at(&cfg, &s, s.local_mid_ns, -80_000, 6_000),
+        200_000
+    );
+    // the hold-over limit, closed form: headroom 2 000 000 - 200 009 = 1 799 991; at 6 ppm that lasts 299 998 500 000 ns (plus the next)
+    let fast = holdover_for(&cfg, &anchor_of(s, 80_000, 6_000), None, None);
+    assert_eq!(
+        fast,
+        Holdover {
+            until_local_ns: s.local_mid_ns + 299_998_500_001,
+            binding: Binding::Uncertainty
+        }
+    );
+    // with the error alone (ratio 0) the headroom is 1 799 999 and lasts 299 999 833 333 ns (plus the next)
+    let error_only = holdover_for(&cfg, &anchor_of(s, 0, 6_000), None, None);
+    assert_eq!(error_only.until_local_ns, s.local_mid_ns + 299_999_833_334);
+    // and the instant before the fast limit still meets the threshold, the limit does not, with the fitted ratio in the arithmetic
+    assert!(
+        uncertainty_at(&cfg, &s, fast.until_local_ns - 1, 80_000, 6_000) <= cfg.lock_uncertainty_ns
+    );
+    assert!(uncertainty_at(&cfg, &s, fast.until_local_ns, 80_000, 6_000) > cfg.lock_uncertainty_ns);
+}
+
+/// Hand-derived: the largest slope error rounding can cause is `R * ceil(sqrt(2n)) / span`, in ppb.
+#[test]
+fn n03_the_rounding_bound_on_a_fitted_ratio_is_hand_derived_and_never_binds_at_the_default_resolution()
+ {
+    // 8 points over 4 s: ceil(sqrt(16)) = 4, 1000 * 4 * 1e6 / 4e6 = 1000
+    assert_eq!(quantization_ratio_ppb(1_000, 8, 4_000_000), 1_000);
+    // 64 points over 4 s: ceil(sqrt(128)) = 12 (11.3 rounds up), 1000 * 12 * 1e6 / 4e6 = 3000
+    assert_eq!(quantization_ratio_ppb(1_000, 64, 4_000_000), 3_000);
+    // 1.7 ms, 16 points over 150 s: ceil(sqrt(32)) = 6, 1.7e6 * 6 * 1e6 / 150e6 = 68 000
+    assert_eq!(quantization_ratio_ppb(1_700_000, 16, 150_000_000), 68_000);
+    // rounding up: 1 ns, 3 points (ceil(sqrt(6)) = 3) over 1 s is 3 ppb, over 2 s 1.5 ppb -> 2
+    assert_eq!(quantization_ratio_ppb(1, 3, 1_000_000), 3);
+    assert_eq!(quantization_ratio_ppb(1, 3, 2_000_000), 2);
+    assert_eq!(
+        quantization_ratio_ppb(0, 64, 4_000_000),
+        0,
+        "an exact clock"
+    );
+    assert_eq!(
+        quantization_ratio_ppb(1_000, 8, 0),
+        u64::MAX,
+        "no span, no bound"
+    );
+    // at the default 1 us resolution it never exceeds the 6 ppm wander term that already sits in every ratio uncertainty,
+    // for any window the estimator can offer, so the default-configuration numbers are exactly what they were
+    let cfg = std_cfg();
+    for n in cfg.rate.min_observations..=cfg.rate.window {
+        let bound = quantization_ratio_ppb(cfg.timer_resolution_ns, n, cfg.rate.min_span_us);
+        assert!(bound <= cfg.wander_ppb, "{n} points: {bound} ppb");
+    }
+}
+
+/// Aliasing is the case the statistical bound cannot see. A 1.7 ms clock probing exactly once a second sees the same rounding
+/// on every sample, so the least-squares residuals are tiny and the estimator reports a small standard error for a ratio that
+/// is wrong by tens of ppm. The truth here is a local clock 80 ppm slow, so group time runs 80 006 ppb fast against it. While the
+/// estimator is `Valid` with a statistical claim (three sigmas plus wander) that the real error exceeds, the member must not use
+/// it: the rounding bound is above the oscillator's own 100 ppm, so the oscillator bound stands. A finer 100 us clock, whose
+/// rounding bound is below it, is paired: its fit is in force, its uncertainty is the larger of the two bounds, and it holds
+/// the truth.
+#[test]
+fn n03_a_fit_that_rounding_could_have_moved_further_than_the_oscillator_may_drift_is_not_trusted_and_a_finer_clock_still_is()
+ {
+    const TRUE_RATIO_PPB: i64 = 80_006;
+    let run = |res: u64, phase: u64| {
+        let world = Coarse {
+            res,
+            group_res: res,
+            skew_ppb: -80_000,
+            local0: 3_000_000_000 + phase,
+            group0: 40_000_000_000_000,
+        };
+        let mut gc = GroupClock::new(coarse_cfg(res), 1, 7, 1000).expect("member");
+        let (mut valid, mut refused, mut fabricated, mut in_force) = (0_u32, 0_u32, 0_u32, 0_u32);
+        for k in 0..70_u64 {
+            let ts = world.tick(world.local(k * 1_000_000_000) + res);
+            let (_, t4, outcome) = coarse_probe(&world, &mut gc, ts, (120_000, 40_000, 240_000));
+            outcome.expect("admitted");
+            let Some(e) = gc
+                .rate
+                .estimate()
+                .filter(|e| e.status == EstimateStatus::Valid)
+            else {
+                continue;
+            };
+            valid += 1;
+            // the bound by hand: the smallest root with root^2 >= 2n, then R * root * 1e6 / span, rounded up
+            let root = (1..=12_u128)
+                .find(|root| root * root >= 2 * u128::from(e.observations))
+                .expect("at most 64 points");
+            let rounding =
+                u64::try_from((u128::from(res) * root * 1_000_000).div_ceil(u128::from(e.span_us)))
+                    .expect("fits");
+            let statistical = e.uncertainty_ppb * 3 + 6_000;
+            let a = gc.reading(t4).expect("reading");
+            if gc.rate_in_force() {
+                in_force += 1;
+                assert_eq!(a.ratio_ppb, e.correction_ppb);
+                assert_eq!(
+                    a.ratio_unc_ppb,
+                    statistical.max(rounding),
+                    "the larger of two bounds on one error"
+                );
+                assert!(rounding <= 100_000);
+                assert!(
+                    (e.ratio_ppb - TRUE_RATIO_PPB).unsigned_abs() <= a.ratio_unc_ppb,
+                    "probe {k}: the claimed ratio uncertainty {} excludes the true ratio",
+                    a.ratio_unc_ppb
+                );
+            } else {
+                refused += 1;
+                assert!(rounding > 100_000, "probe {k}: refused for a reason");
+                assert_eq!((a.ratio_ppb, a.ratio_unc_ppb), (0, 100_000));
+                assert!(
+                    TRUE_RATIO_PPB.unsigned_abs() <= a.ratio_unc_ppb,
+                    "the oscillator bound holds the truth"
+                );
+                if (e.ratio_ppb - TRUE_RATIO_PPB).unsigned_abs() > statistical {
+                    fabricated += 1;
+                }
+            }
+        }
+        (valid, refused, fabricated, in_force)
+    };
+    // the 1.7 ms clock: the estimator is Valid on 63 of the 70 probes and is never trusted; on 3 of them the old statistical
+    // claim (about 9 ppm) was off by about 81 ppm
+    let (valid, refused, fabricated, in_force) = run(1_700_000, 1_000_003);
+    assert!(valid >= 40, "the estimator was Valid on {valid} probes");
+    assert_eq!((refused, in_force), (valid, 0));
+    assert!(
+        fabricated >= 1,
+        "no probe showed a statistical claim the truth exceeds"
+    );
+    // the 100 us clock: the same estimator is in force on every Valid probe
+    let (valid, refused, fabricated, in_force) = run(100_000, 33_333);
+    assert!(valid >= 40);
+    assert_eq!((refused, fabricated, in_force), (0, 0, valid));
 }

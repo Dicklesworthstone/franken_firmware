@@ -15,7 +15,8 @@
 //! * **No promise from an NTP-style offset alone.** The four-timestamp offset is exact only when the two path
 //!   delays are equal, which the timestamps cannot show. Its error is bounded by half the exchange delay
 //!   (the bias of a path with delays `df` and `dr` is exactly `(df - dr) / 2`), so that half is *in* the
-//!   uncertainty, together with the timer resolution, the board term and growth with age.
+//!   uncertainty, together with twice the timer resolution (the exchange's readings, and the reading the answer is asked
+//!   at: a coarse clock shows one value for a whole tick), the board term and growth with age.
 //! * **Authenticity is N01's job.** Probes arrive over the authenticated control channel. This module checks what
 //!   is left: epoch, leader, request/response pairing (replay), timing sanity and plausibility.
 //! * **Standalone.** Plain-typed inputs (`u64` epoch and nanosecond timestamps, as N01 carries them) and no
@@ -63,8 +64,11 @@ pub enum ProbeReject {
     UnadmittedLeader,
     /// No outstanding request has this sequence: unsolicited, already answered (a replay), or long expired.
     UnsolicitedOrReplayed,
-    /// The local clock did not advance across the exchange (a sample-level reject), or went backwards between two
-    /// exchanges (the fit is cleared: nothing measured on the old clock describes the new readings).
+    /// The local clock went backwards across the exchange (`t4 < t1`), or stood still for longer than its declared
+    /// resolution can hide (equal readings are only a sub-resolution exchange when the dwell the coordinator reports
+    /// is below twice the resolution, and never on a clock declared exact); both are sample-level rejects. Or it went
+    /// backwards between two exchanges, which clears the fit: nothing measured on the old clock describes the new
+    /// readings. Equal readings across two exchanges are not backwards time.
     LocalClockRegression,
     /// The exchange took longer than the request lifetime.
     ExpiredRequest,
@@ -276,7 +280,9 @@ pub struct GroupClockConfig {
     pub lock_uncertainty_ns: u64,
     /// A probe newer than this keeps the status `Locked`; older timing is `Holdover`.
     pub fresh_ns: u64,
-    /// Worst-case ratio error of the local oscillator, used until the rate estimator has a usable estimate.
+    /// Worst-case error of the group-to-local ratio `rho` (group time per unit of local time, `ratio_ppb` is `rho - 1`): the true
+    /// `rho` is within this of 1 whatever the rate estimator says. It is the ratio uncertainty used until the estimator has a
+    /// usable estimate, and the only rate bound available to a single exchange (see [`Sample::from_exchange`]).
     pub oscillator_bound_ppb: u64,
     /// The rate estimator reports a one-sigma standard error; the ratio uncertainty used here is this many sigmas
     /// plus [`Self::wander_ppb`].
@@ -285,7 +291,12 @@ pub struct GroupClockConfig {
     /// own uncertainty. It is an assumption, not a measurement (the default covers the D03 estimator's own aging
     /// allowance, 100 ppb/s over its 60 s holdover).
     pub wander_ppb: u64,
-    /// Resolution of the local clock readings (each exchange has two).
+    /// The declared resolution of every reading in an exchange: the member's two local readings and the coordinator's
+    /// two group readings are each taken to be the true time rounded down by less than this. A clock coarser than
+    /// what is declared here breaks the bounds; declare the coarsest of the member's and the coordinator's. Zero
+    /// declares an exact clock, which cannot read the same value before and after a network round trip. It is charged
+    /// twice in every uncertainty (the exchange, and the reading the answer is asked at), so a clock whose `2 *
+    /// resolution + calibration_uncertainty_ns` is above [`Self::lock_uncertainty_ns`] can never lock.
     pub timer_resolution_ns: u64,
     /// The board's calibration uncertainty (`BoardProfile::calibration_uncertainty_us`).
     pub calibration_uncertainty_ns: u64,
@@ -414,6 +425,23 @@ pub struct Sample {
 impl Sample {
     /// Validate an exchange and reduce it to a sample. `t1` and `t4` are local readings, `t2` and `t3` group
     /// readings. The checks run in this order, which is part of the contract.
+    ///
+    /// Readings are quantized, so the measured delay `(t4 - t1) - (t3 - t2)` can be negative for an exchange whose
+    /// true delay is not: the measured delay differs from the true one by `(e1 + e3) - (e2 + e4)`, each rounding error
+    /// `e` in `[0, R)`, so it is above `-2R` whenever the true delay is not negative. A dwell that exceeds the round
+    /// trip by **less than** `2R` plus the rate allowance `ceil((rtt + R) * oscillator_bound_ppb / 1e9)` is therefore
+    /// consistent with a physical exchange and is admitted with the delay clamped to zero, whether the
+    /// readings are equal or differ (an equal-readings exchange is the case of a round trip of zero: a
+    /// **sub-resolution exchange**). The rate allowance: the dwell is read on the coordinator's clock and the round trip on the
+    /// member's, which run apart by the ratio `rho`, `|rho - 1| <= oscillator_bound_ppb`; the dwell is at most the true round
+    /// trip, which in local units is the observed round trip plus up to one hidden tick `R` (the observed one is rounded down by
+    /// less than `R`), so the two differ by up to `(rtt + R) * oscillator_bound_ppb`. The tick matters most when the observed
+    /// round trip is zero: a local clock 80 ppm slow can read 0 across 4 ms of true time. The resolution in
+    /// [`base_uncertainty_ns`] bounds its offset. A dwell that exceeds
+    /// the round trip by the bound or more cannot be a rounding: with equal readings the local clock stood still
+    /// for longer than its resolution can hide (`LocalClockRegression`), with differing readings the timestamps are
+    /// `Malformed`. `t4 < t1` is backwards time on any clock, and a clock declared exact (`timer_resolution_ns == 0`)
+    /// cannot read the same value before and after a network round trip: both are `LocalClockRegression`.
     pub fn from_exchange(
         t1: u64,
         t2: u64,
@@ -421,7 +449,8 @@ impl Sample {
         t4: u64,
         cfg: &GroupClockConfig,
     ) -> Result<Self, ProbeReject> {
-        if t4 <= t1 {
+        let resolution = cfg.timer_resolution_ns;
+        if t4 < t1 || (t4 == t1 && resolution == 0) {
             return Err(ProbeReject::LocalClockRegression);
         }
         let rtt = t4 - t1;
@@ -432,10 +461,19 @@ impl Sample {
             return Err(ProbeReject::Malformed);
         }
         let dwell = t3 - t2;
-        if dwell > rtt {
-            return Err(ProbeReject::Malformed);
+        let excess = dwell.saturating_sub(rtt);
+        let rate_allowance = ((u128::from(rtt) + u128::from(resolution))
+            * u128::from(cfg.oscillator_bound_ppb))
+        .div_ceil(1_000_000_000);
+        let allowed = u128::from(resolution) * 2 + rate_allowance;
+        if excess > 0 && u128::from(excess) >= allowed {
+            return Err(if rtt == 0 {
+                ProbeReject::LocalClockRegression
+            } else {
+                ProbeReject::Malformed
+            });
         }
-        let delay = rtt - dwell;
+        let delay = rtt.saturating_sub(dwell);
         if delay > cfg.max_delay_ns {
             return Err(ProbeReject::ExcessiveDelay);
         }
@@ -455,21 +493,89 @@ impl Sample {
 
 // --------------------------------------------------------------------------------------------- the pure core
 
-/// What a sample cannot know about itself: half its delay (path asymmetry), the timer resolution, the board term.
+/// What a sample cannot know about itself: half its delay (path asymmetry), **twice** the timer resolution, the board term.
+///
+/// The resolution is charged twice. With the rounding errors `e1..e4` of `t1..t4` in `[0, R)`, the offset the midpoints give
+/// is wrong by `(df - dr) / 2` plus `(e1 + e4 - e2 - e3) / 2`, and the measured delay differs from the true one by
+/// `(e1 + e3) - (e2 + e4)`; taking the worst path split for either sign of the asymmetry leaves an error strictly below
+/// `delay / 2 + R` (below `R` for a measured delay of zero, the sub-resolution case). That is the exchange. The reading the
+/// answer is asked at is rounded the same way: a clock that shows `now` shows it for a whole tick, so the true time is up
+/// to one more `R` later than `now` says, and the reported group time lags the true one by that much on top (an exact
+/// group time at an arbitrary instant of the tick lies in `(-delay/2 - 2R, delay/2 + R)` of the report, a group reading
+/// rounded the same way in `(-delay/2 - 2R, delay/2 + 2R)`). So the claim "the true group time at any instant at which the
+/// local clock shows `now` is within the uncertainty of the reported group time" needs `2R`, and this is that bound. It is
+/// checked by brute force over every phase of small grids in `tests/n03/anchors.py`.
 #[must_use]
 pub fn base_uncertainty_ns(cfg: &GroupClockConfig, delay_ns: u64) -> u64 {
     delay_ns
         .div_ceil(2)
-        .saturating_add(cfg.timer_resolution_ns)
+        .saturating_add(cfg.timer_resolution_ns.saturating_mul(2))
         .saturating_add(cfg.calibration_uncertainty_ns)
 }
 
-/// The sample's uncertainty at local time `at`: its base term plus growth with age at `ratio_unc_ppb`.
+/// What the second resolution of [`base_uncertainty_ns`], the tick of the reading the answer is asked at, costs more when it
+/// is read through the rate. A tick is `R` of local time; the group time that passes during it is `R * rho`, where the group-to-local
+/// ratio `rho = 1 + ratio_ppb / 1e9` is the fitted mean rate, true to within `ratio_unc_ppb`. So the lag of a report behind the true
+/// time is at most `R * (1 + (ratio_ppb + ratio_unc_ppb) / 1e9)`: the excess over `R` is `ceil(R * (ratio_ppb + ratio_unc_ppb) / 1e9)`,
+/// zero if the fastest admitted ratio is not above 1 (the lag is then at most `R`) or for an exact clock. The fitted mean matters
+/// as much as its error: at `ratio = +80 ppm` a 100 us tick passes 100 008 ns of group time, which the error alone (6 ppm) does not show.
 #[must_use]
-pub fn uncertainty_at(cfg: &GroupClockConfig, s: &Sample, at: u64, ratio_unc_ppb: u64) -> u64 {
+pub fn query_tick_rate_excess_ns(
+    cfg: &GroupClockConfig,
+    ratio_ppb: i64,
+    ratio_unc_ppb: u64,
+) -> u64 {
+    let fastest = i128::from(ratio_ppb) + i128::from(ratio_unc_ppb);
+    let Ok(fastest) = u128::try_from(fastest) else {
+        return 0;
+    };
+    let excess = (u128::from(cfg.timer_resolution_ns) * fastest).div_ceil(1_000_000_000);
+    u64::try_from(excess).unwrap_or(u64::MAX)
+}
+
+/// The sample's uncertainty at local time `at`: its base term, the query tick seen through the fitted ratio `ratio_ppb` and its
+/// uncertainty, and growth with age at `ratio_unc_ppb`.
+#[must_use]
+pub fn uncertainty_at(
+    cfg: &GroupClockConfig,
+    s: &Sample,
+    at: u64,
+    ratio_ppb: i64,
+    ratio_unc_ppb: u64,
+) -> u64 {
     let age = u128::from(at.saturating_sub(s.local_mid_ns));
     let growth = (age * u128::from(ratio_unc_ppb)).div_ceil(1_000_000_000);
-    base_uncertainty_ns(cfg, s.delay_ns).saturating_add(u64::try_from(growth).unwrap_or(u64::MAX))
+    base_uncertainty_ns(cfg, s.delay_ns)
+        .saturating_add(query_tick_rate_excess_ns(cfg, ratio_ppb, ratio_unc_ppb))
+        .saturating_add(u64::try_from(growth).unwrap_or(u64::MAX))
+}
+
+/// What rounding the readings can do to a fitted ratio, in ppb. Each fed observation's offset is off by less than
+/// `resolution_ns` from rounding (the exchange's four readings, [`base_uncertainty_ns`]). An ordinary least-squares slope over
+/// `observations` points spanning `span_us` has weights `d_i / S` (`d_i` the distance from the mean time, `S` the sum of
+/// their squares), so the slope moves by at most `resolution * sum|d_i| / S`. `sum|d_i| <= sqrt(n * S)` (Cauchy-Schwarz)
+/// and `S >= span^2 / 2` (the two ends alone), hence at most `resolution * sqrt(2n) / span`, rounded up with the square
+/// root rounded up. A constant error (the board term, a steady path asymmetry) cancels in a slope and is not here.
+/// Zero for an exact clock; unbounded for a span of zero. It says nothing about the 48 kHz frame position the estimator
+/// is fed, which D03 owns.
+#[must_use]
+pub fn quantization_ratio_ppb(resolution_ns: u64, observations: u32, span_us: u64) -> u64 {
+    if resolution_ns == 0 {
+        return 0;
+    }
+    if span_us == 0 {
+        return u64::MAX;
+    }
+    let twice = u64::from(observations) * 2;
+    let floor = twice.isqrt();
+    let root = if floor * floor < twice {
+        floor + 1
+    } else {
+        floor
+    };
+    let ppb =
+        (u128::from(resolution_ns) * u128::from(root) * 1_000_000).div_ceil(u128::from(span_us));
+    u64::try_from(ppb).unwrap_or(u64::MAX)
 }
 
 /// A sample chosen as the anchor of the clock transform, with the ratio it is extrapolated by.
@@ -492,7 +598,7 @@ pub fn select_anchor<'a>(
 ) -> Option<Anchor> {
     let mut best: Option<(u64, u64, Sample)> = None;
     for s in samples {
-        let u = uncertainty_at(cfg, s, now, ratio_unc_ppb);
+        let u = uncertainty_at(cfg, s, now, ratio_ppb, ratio_unc_ppb);
         let better = match best {
             None => true,
             Some((bu, bmid, _)) => u < bu || (u == bu && s.local_mid_ns >= bmid),
@@ -543,7 +649,8 @@ pub fn holdover_for(
     authority_until: Option<u64>,
     buffer_until: Option<u64>,
 ) -> Holdover {
-    let base = base_uncertainty_ns(cfg, a.sample.delay_ns);
+    let base = base_uncertainty_ns(cfg, a.sample.delay_ns)
+        .saturating_add(query_tick_rate_excess_ns(cfg, a.ratio_ppb, a.ratio_unc_ppb));
     let headroom = cfg.lock_uncertainty_ns.saturating_sub(base);
     let unc_until = if a.ratio_unc_ppb == 0 {
         u64::MAX
@@ -629,7 +736,7 @@ pub fn decide_start(
     if now > deadline {
         return Err(StartReject::TooLate);
     }
-    let u_start = uncertainty_at(cfg, &a.sample, start_local, a.ratio_unc_ppb);
+    let u_start = uncertainty_at(cfg, &a.sample, start_local, a.ratio_ppb, a.ratio_unc_ppb);
     if u_start > cfg.lock_uncertainty_ns {
         return Err(StartReject::UncertaintyAtStart);
     }
@@ -1048,6 +1155,7 @@ impl GroupClock {
                 &self.cfg,
                 &a.sample,
                 sample.local_mid_ns,
+                a.ratio_ppb,
                 a.ratio_unc_ppb,
             )) + u128::from(sample.delay_ns.div_ceil(2))
                 + u128::from(self.cfg.prediction_slack_ns);
@@ -1114,20 +1222,34 @@ impl GroupClock {
         }
     }
 
-    /// The ratio of group time to local time and its uncertainty: the rate estimator's if it has a usable (`Valid`)
-    /// estimate as of its newest observation, otherwise zero with the oscillator's worst-case bound. It does not
-    /// depend on the time asked about: only a new probe changes it, so holdover and start planning can be computed in
-    /// closed form.
-    fn ratio_state(&self) -> (i64, u64) {
-        match self.rate.estimate() {
-            Some(e) if e.status == EstimateStatus::Valid => (
-                e.correction_ppb,
-                e.uncertainty_ppb
-                    .saturating_mul(self.cfg.rate_sigma_multiple)
-                    .saturating_add(self.cfg.wander_ppb),
-            ),
-            _ => (0, self.cfg.oscillator_bound_ppb),
+    /// The rate estimator's ratio and its uncertainty, if it has a usable estimate as of its newest observation: `Valid`,
+    /// and with a quantization bound ([`quantization_ratio_ppb`]) that does not exceed the oscillator's own worst case.
+    /// The uncertainty is the larger of the estimator's statistical one (sigmas plus wander) and the quantization bound,
+    /// which are two bounds on one error and are not added. A fit that cannot beat the oscillator's worst case is not in
+    /// force.
+    fn usable_rate(&self) -> Option<(i64, u64)> {
+        let e = self
+            .rate
+            .estimate()
+            .filter(|e| e.status == EstimateStatus::Valid)?;
+        let quantization =
+            quantization_ratio_ppb(self.cfg.timer_resolution_ns, e.observations, e.span_us);
+        if quantization > self.cfg.oscillator_bound_ppb {
+            return None;
         }
+        let statistical = e
+            .uncertainty_ppb
+            .saturating_mul(self.cfg.rate_sigma_multiple)
+            .saturating_add(self.cfg.wander_ppb);
+        Some((e.correction_ppb, statistical.max(quantization)))
+    }
+
+    /// The ratio of group time to local time and its uncertainty: the rate estimator's if it is usable, otherwise
+    /// zero with the oscillator's worst-case bound. It does not depend on the time asked about: only a new probe
+    /// changes it, so holdover and start planning can be computed in closed form.
+    fn ratio_state(&self) -> (i64, u64) {
+        self.usable_rate()
+            .unwrap_or((0, self.cfg.oscillator_bound_ppb))
     }
 
     fn anchor_at(&self, now_local_ns: u64) -> Option<Anchor> {
@@ -1322,7 +1444,7 @@ impl GroupClock {
     /// Whether the frequency fit currently has a usable estimate (otherwise the oscillator bound is in force).
     #[must_use]
     pub fn rate_in_force(&self) -> bool {
-        matches!(self.rate.estimate(), Some(e) if e.status == EstimateStatus::Valid)
+        self.usable_rate().is_some()
     }
 
     /// A bounded diagnostic snapshot at local time `now`, with no side effects. Never a claim about the DAC.
