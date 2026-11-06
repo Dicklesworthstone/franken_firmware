@@ -1,0 +1,33 @@
+D03 tier=full
+PASS     D03-META-ANCHORS                   
+PASS     D03-META-BANDS-DECLARED            
+PASS     D03-META-VECTORS-FRESH             
+PASS     D03-META-MAP-COMPLETE              
+PASS     D03-META-TESTS-EXIST               
+PASS     D03-META-CONTRACT-NAMES-CASES      
+PASS     D03-TARGET-RECEIPT                 
+PASS     D03-RATIO-DRIFT                    
+PASS     D03-RATIO-LIMIT                    
+PASS     D03-SPECTRA                        
+PASS     D03-COUNTS                         
+PASS     D03-SLEW                           
+PASS     D03-SHORT-BLOCKS                   
+PASS     D03-HISTORY                        
+PASS     D03-SAMPLE-SAFETY                  
+PASS     D03-WRAP                           
+PASS     D03-DISCONTINUITY                  
+PASS     D03-EPOCH-RESET                    
+PASS     D03-DIAGNOSTICS                    
+PASS     D03-LOOP-FAST                      
+PASS     D03-LOOP-SLOW                      
+PASS     D03-LOOP-WRAP                      
+PASS     D03-LOOP-UNCONTROLLED              
+PASS     D03-LOOP-JUMP                      
+PASS     D03-QUALITY                        
+PASS     D03-QUALITY-NEGATIVE               
+PASS     D03-META-LOGS-CONSISTENT           
+planned=27 passed=27 failed=0 blocked=0
+NOT MEASURED  cpu_cycles_on_real_core: not measured: needs hardware (recorded instead: float operations per output frame and per 256-frame block, and guest instructions per output frame under QEMU icount on the soft-float BE MIPS target (D03-TARGET-RECEIPT; executed instructions, not cycles: no cache, pipeline, memory or multiplier timing, no board clock))
+diag run=d03-full-9451e5162f7f: evidence COMPLETE; events=55 critical=55 dropped=0 critical_lost=0 bytes=18567 sha256=1992f326f902
+RESULT: QUALIFIED (host simulation; no device claim)
+receipt: <repo>/toolchain/results/d03/review-0f963c8/d03-receipt-9451e5162f7f.json

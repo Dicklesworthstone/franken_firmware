@@ -1,0 +1,106 @@
+{
+  "schema": "ffw.d03.independent-completion.v1",
+  "review_revision": "0f963c8109344ae4aaa6fd4cf620aa5cc08549d4",
+  "judge_revision": "5e789a8",
+  "older_runtime": "1427e25a25b9924dae48300d9b4d5db04db0a882 plus exact overlay recorded by b6d.rc; core source matches below",
+  "dsp_runtime": "34297586165752050914568fa692c5c7bdda07bb",
+  "inputs": [
+    {
+      "public_log": "dsp-observations.log",
+      "raw_sha256": "0d0dfca665ad74b6aa7ef3254b7233be929eb089d4993369d260e9423356b41b",
+      "public_sha256": "08391889607930c6dabd046e8cf4eaa42327aa5068117be1d2bcc089efa27deb",
+      "transformation": "ANSI and private host/path redaction only; retain every D03 observation, every test result/status/header and remote command/exit; omit unrelated stdout"
+    },
+    {
+      "public_log": "clock.log",
+      "raw_sha256": "05269dcf4eece2706d88a44eada9ba98312efede9ad3a35cc0992a6df5dd5145",
+      "public_sha256": "3cf484dbc735d504dcee94af18014481eec0b3187fa65419d652497e079d6600",
+      "transformation": "ANSI and private host/path redaction only"
+    },
+    {
+      "public_log": "closed-loop.log",
+      "raw_sha256": "66c10cdc4ed8b6fd325c64eb99f7f431f1cd0faa3e61d990a30fc4728bc8c545",
+      "public_sha256": "b8824a1427070015ca3b4f0d52191cd85caa3ad6ba52a6c378ea49b403d39f1b",
+      "transformation": "ANSI and private host/path redaction only"
+    },
+    {
+      "public_log": "soak.log",
+      "raw_sha256": "246a1c03b5af15a1b0af6080ac77dbbef0755afa26e4ee2a4eb129b2dd077c59",
+      "public_sha256": "e0a0157590a87197313a52b1e113908c0d46b372b22cbb2702a37095bab9a16c",
+      "transformation": "ANSI and private host/path redaction only"
+    },
+    {
+      "public_log": "clippy.log",
+      "raw_sha256": "7945ced45669ac8fef9ab6d1a538ecf52437feaae9a06f1f6084d7f8809f492a",
+      "public_sha256": "43c27d8d2ccff217ba33564a73c598b3b855f9d7aaeb9d500b97ba2734eebbab",
+      "transformation": "ANSI and private host/path redaction only"
+    }
+  ],
+  "unchanged_d03_sources": [
+    {
+      "path": "crates/franken-clock/src/rate.rs",
+      "sha256": "36a0252a51c83ce718581f7ea8a2adef81b260db7cf25d40f648e2c305328b0c",
+      "b6d_matches_current": true
+    },
+    {
+      "path": "crates/franken-dsp/src/resample.rs",
+      "sha256": "531d75b56bada21e9160c10fcfff64140526ee3d2c1d4d03ad0dcb64f6712f41",
+      "b6d_matches_current": true
+    },
+    {
+      "path": "crates/franken-dsp/src/resample/tests.rs",
+      "sha256": "6c2ee94aca77f1fb3b3fe173499df75e5000d3346eeb430a0827952dfefb8a88",
+      "b6d_matches_current": true
+    },
+    {
+      "path": "crates/franken-speaker/tests/d03_closed_loop.rs",
+      "sha256": "dafb2058ac9f4a919566fbbd246a2b2c39fb22cfec0b2ef3e7db33d96e8224c3",
+      "b6d_matches_current": true
+    }
+  ],
+  "limits": [
+    "Older runtime is not a run of the whole current crate graph. Later crate-root wiring, manifests and lockfile differ; D03 pure modules/closed-loop test match byte for byte.",
+    "Current-revision broad runtime and cross-build evidence remains in P01 receipt rev-342975861657.",
+    "Host simulation and retained BE MIPS QEMU evidence only; no device audio, board CPU cycles or acoustic qualification."
+  ],
+  "commands": {
+    "clock": [
+      "cargo",
+      "test",
+      "-p",
+      "franken-clock",
+      "--locked",
+      "-j",
+      "2",
+      "--",
+      "--nocapture"
+    ],
+    "closed_loop": [
+      "cargo",
+      "test",
+      "-p",
+      "franken-speaker",
+      "--test",
+      "d03_closed_loop",
+      "--locked",
+      "-j",
+      "2",
+      "--",
+      "--nocapture"
+    ],
+    "soak": [
+      "cargo",
+      "test",
+      "-p",
+      "franken-speaker",
+      "--test",
+      "d03_closed_loop",
+      "--locked",
+      "-j",
+      "2",
+      "--",
+      "--ignored",
+      "--nocapture"
+    ]
+  }
+}

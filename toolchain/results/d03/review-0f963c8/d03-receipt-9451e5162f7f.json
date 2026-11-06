@@ -1,0 +1,284 @@
+{
+ "artifacts": {
+  "Cargo.lock": "8e3ea0d826c2eceaea978d7c64cbfb5c45e30c7eff6359617071c4d2e5364f82",
+  "crates/franken-clock/Cargo.toml": "20eebd81d9dc04143e803c96892b597982df9244e39127a56931103f621a22d4",
+  "crates/franken-clock/src/rate.rs": "36a0252a51c83ce718581f7ea8a2adef81b260db7cf25d40f648e2c305328b0c",
+  "crates/franken-dsp/Cargo.toml": "920059d1bee72f86b1d9d0a7caae8e4f93964840d37106127082602b780b8dfa",
+  "crates/franken-dsp/src/resample.rs": "531d75b56bada21e9160c10fcfff64140526ee3d2c1d4d03ad0dcb64f6712f41",
+  "crates/franken-dsp/src/resample/tests.rs": "6c2ee94aca77f1fb3b3fe173499df75e5000d3346eeb430a0827952dfefb8a88",
+  "crates/franken-dsp/tests/d03_quality.rs": "6e26a25c4907457eedc8f6cb1d3ec3e562f6af0b2562e6c1f70f128511e1c629",
+  "crates/franken-dsp/tests/d03_target_samples.rs": "0d73bf4505f8650a6c22bca16f05d9759224b6eda6357bbf6da3382a393f9853",
+  "crates/franken-speaker/Cargo.toml": "78fabf9a7059ac7e9d8990077f77b05df9cca845025f26d1fd943e09139188bc",
+  "crates/franken-speaker/tests/d03_closed_loop.rs": "dafb2058ac9f4a919566fbbd246a2b2c39fb22cfec0b2ef3e7db33d96e8224c3",
+  "docs/contracts/d03.md": "59070bceb957b5b30cfaff90ed44dc9ca7ca5c58328bdbd792dc15a6836b789c",
+  "rust-toolchain.toml": "ff13c9224217a4ccd63320d8b89cc82d7fa64da14a627e499f9f18db4c6602d0",
+  "scripts/test/test_support/diagnostics.py": "df90049d7a0b87a3513c45bf4ae7502701d624d34c9e0d8e3e2394f6dba947b7",
+  "tests/d01/run_cases.py": "a8be8f29be09a7197502ec05f33ed37ae4a015faa07ccbe89be3d757b9f2a083",
+  "tests/d03/anchors.py": "fc20911148529a1159cf67da48067fe2ca5e44482aa195cd2869f3cfccf3078b",
+  "tests/d03/case_log.py": "172571bc2555002e03faebc0ec85b5cefdeeff84bef414b8c4f3aa362067478c",
+  "tests/d03/generate.py": "295d8ec7f632cee3704c057ec6e8a6cd28d324f9d64648edc8d2fe8427f8ccee",
+  "tests/d03/reference.py": "a726c9167705d5d013c4bbbdb74dfa78f3086c268d643cfc1f7b47b9349d34da",
+  "tests/d03/run_cases.py": "33d76008fda1f23577c08c2909fa3259ac336ed359b7c522342070c28ffeac06",
+  "tests/d03/vectors.json": "0cf1fc004f2e611e62710d4065e32abc841bdf0fd2bf801ef6cb8f0e839d4ab8",
+  "toolchain/results/runs/d84c5acebdc812c5c64a9af2feaa2d2c/d03-target-receipt.json": "48757c4c7d2b55c82c12077603b601e6e1cea3d80464def1edb24f459dcfd3a8",
+  "toolchain/src/measure-d03-target.py": "410870a2b994de530244eaef2ccd65bebef98a384c890d61557e8a4c247e82d8"
+ },
+ "created_utc": "2026-11-06T06:04:17.909201+00:00",
+ "diagnostics": {
+  "complete": true,
+  "file": "d03-diag-full-9451e5162f7f.jsonl",
+  "log": {
+   "bytes": 18567,
+   "critical_lost": false,
+   "dropped": 0,
+   "events": 55,
+   "sha256": "1992f326f90283ba58996bbcb2664a182a0408b23510a9a8636325bb5b74904b",
+   "truncated": false
+  },
+  "reasons": []
+ },
+ "evidence_class": "host-simulation",
+ "exit_code": 0,
+ "logs": [
+  {
+   "path": "dsp-observations.log",
+   "sha256": "08391889607930c6dabd046e8cf4eaa42327aa5068117be1d2bcc089efa27deb"
+  },
+  {
+   "path": "clock.log",
+   "sha256": "3cf484dbc735d504dcee94af18014481eec0b3187fa65419d652497e079d6600"
+  },
+  {
+   "path": "closed-loop.log",
+   "sha256": "b8824a1427070015ca3b4f0d52191cd85caa3ad6ba52a6c378ea49b403d39f1b"
+  },
+  {
+   "path": "soak.log",
+   "sha256": "e0a0157590a87197313a52b1e113908c0d46b372b22cbb2702a37095bab9a16c"
+  }
+ ],
+ "meta": {
+  "artifacts": {
+   "Cargo.lock": "8e3ea0d826c2eceaea978d7c64cbfb5c45e30c7eff6359617071c4d2e5364f82",
+   "crates/franken-clock/Cargo.toml": "20eebd81d9dc04143e803c96892b597982df9244e39127a56931103f621a22d4",
+   "crates/franken-clock/src/rate.rs": "36a0252a51c83ce718581f7ea8a2adef81b260db7cf25d40f648e2c305328b0c",
+   "crates/franken-dsp/Cargo.toml": "920059d1bee72f86b1d9d0a7caae8e4f93964840d37106127082602b780b8dfa",
+   "crates/franken-dsp/src/resample.rs": "531d75b56bada21e9160c10fcfff64140526ee3d2c1d4d03ad0dcb64f6712f41",
+   "crates/franken-dsp/src/resample/tests.rs": "6c2ee94aca77f1fb3b3fe173499df75e5000d3346eeb430a0827952dfefb8a88",
+   "crates/franken-dsp/tests/d03_quality.rs": "6e26a25c4907457eedc8f6cb1d3ec3e562f6af0b2562e6c1f70f128511e1c629",
+   "crates/franken-dsp/tests/d03_target_samples.rs": "0d73bf4505f8650a6c22bca16f05d9759224b6eda6357bbf6da3382a393f9853",
+   "crates/franken-speaker/Cargo.toml": "78fabf9a7059ac7e9d8990077f77b05df9cca845025f26d1fd943e09139188bc",
+   "crates/franken-speaker/tests/d03_closed_loop.rs": "dafb2058ac9f4a919566fbbd246a2b2c39fb22cfec0b2ef3e7db33d96e8224c3",
+   "docs/contracts/d03.md": "59070bceb957b5b30cfaff90ed44dc9ca7ca5c58328bdbd792dc15a6836b789c",
+   "rust-toolchain.toml": "ff13c9224217a4ccd63320d8b89cc82d7fa64da14a627e499f9f18db4c6602d0",
+   "scripts/test/test_support/diagnostics.py": "df90049d7a0b87a3513c45bf4ae7502701d624d34c9e0d8e3e2394f6dba947b7",
+   "tests/d01/run_cases.py": "a8be8f29be09a7197502ec05f33ed37ae4a015faa07ccbe89be3d757b9f2a083",
+   "tests/d03/anchors.py": "fc20911148529a1159cf67da48067fe2ca5e44482aa195cd2869f3cfccf3078b",
+   "tests/d03/case_log.py": "172571bc2555002e03faebc0ec85b5cefdeeff84bef414b8c4f3aa362067478c",
+   "tests/d03/generate.py": "295d8ec7f632cee3704c057ec6e8a6cd28d324f9d64648edc8d2fe8427f8ccee",
+   "tests/d03/reference.py": "a726c9167705d5d013c4bbbdb74dfa78f3086c268d643cfc1f7b47b9349d34da",
+   "tests/d03/run_cases.py": "33d76008fda1f23577c08c2909fa3259ac336ed359b7c522342070c28ffeac06",
+   "tests/d03/vectors.json": "0cf1fc004f2e611e62710d4065e32abc841bdf0fd2bf801ef6cb8f0e839d4ab8",
+   "toolchain/results/runs/d84c5acebdc812c5c64a9af2feaa2d2c/d03-target-receipt.json": "48757c4c7d2b55c82c12077603b601e6e1cea3d80464def1edb24f459dcfd3a8",
+   "toolchain/src/measure-d03-target.py": "410870a2b994de530244eaef2ccd65bebef98a384c890d61557e8a4c247e82d8"
+  },
+  "vectors_sha256": "0cf1fc004f2e611e62710d4065e32abc841bdf0fd2bf801ef6cb8f0e839d4ab8",
+  "versions": {
+   "python": "3.15.0",
+   "receipt_schema": "ffw.d03.receipt.v1",
+   "vectors_schema": "ffw.d03.vectors.v1"
+  }
+ },
+ "not_measured": [
+  {
+   "item": "cpu_cycles_on_real_core",
+   "recorded_instead": "float operations per output frame and per 256-frame block, and guest instructions per output frame under QEMU icount on the soft-float BE MIPS target (D03-TARGET-RECEIPT; executed instructions, not cycles: no cache, pipeline, memory or multiplier timing, no board clock)",
+   "status": "not measured: needs hardware"
+  }
+ ],
+ "replay": "scripts/e2e/d03 --tier full --judge dsp-observations.log clock.log closed-loop.log soak.log",
+ "results": [
+  {
+   "detail": "reference agrees with a naive simulation",
+   "group": "AC4",
+   "id": "D03-META-ANCHORS",
+   "status": "passed"
+  },
+  {
+   "detail": "the band table in docs/contracts/d03.md equals the reference's and the vectors'",
+   "group": "AC4",
+   "id": "D03-META-BANDS-DECLARED",
+   "status": "passed"
+  },
+  {
+   "detail": "vectors.json equals a fresh generation",
+   "group": "AC4",
+   "id": "D03-META-VECTORS-FRESH",
+   "status": "passed"
+  },
+  {
+   "detail": "every d03_ Rust test belongs to a named case",
+   "group": "AC4",
+   "id": "D03-META-MAP-COMPLETE",
+   "status": "passed"
+  },
+  {
+   "detail": "every required Rust test exists in the sources",
+   "group": "AC4",
+   "id": "D03-META-TESTS-EXIST",
+   "status": "passed"
+  },
+  {
+   "detail": "docs/contracts/d03.md names every case",
+   "group": "AC4",
+   "id": "D03-META-CONTRACT-NAMES-CASES",
+   "status": "passed"
+  },
+  {
+   "detail": "1 committed receipt(s) re-judged from their stored transcripts; the ELF's soft-float facts are recorded, not re-derived",
+   "group": "AC3",
+   "id": "D03-TARGET-RECEIPT",
+   "status": "passed"
+  },
+  {
+   "detail": "positive and negative drift recovered by the estimator and applied by the resampler",
+   "group": "AC1",
+   "id": "D03-RATIO-DRIFT",
+   "status": "passed"
+  },
+  {
+   "detail": "ratio limit: estimator correction clamp / rejoin flag, resampler target clamp and config bounds",
+   "group": "AC1",
+   "id": "D03-RATIO-LIMIT",
+   "status": "passed"
+  },
+  {
+   "detail": "tone frequency and SNR against the independent Catmull-Rom response bound",
+   "group": "AC1",
+   "id": "D03-SPECTRA",
+   "status": "passed"
+  },
+  {
+   "detail": "exact output and input frame counts, including the 24-hour case, plan == render",
+   "group": "AC1",
+   "id": "D03-COUNTS",
+   "status": "passed"
+  },
+  {
+   "detail": "bounded slew: per-quantum schedule, <= 2 ppm per 256 output frames under random targets",
+   "group": "AC1",
+   "id": "D03-SLEW",
+   "status": "passed"
+  },
+  {
+   "detail": "short, zero-length and split blocks; underrun and exact resume; refused oversize blocks",
+   "group": "AC1",
+   "id": "D03-SHORT-BLOCKS",
+   "status": "passed"
+  },
+  {
+   "detail": "nonzero history carried across blocks (exact linear-ramp oracle)",
+   "group": "AC1",
+   "id": "D03-HISTORY",
+   "status": "passed"
+  },
+  {
+   "detail": "non-finite and out-of-range input contained; output clamped and counted; fade-in",
+   "group": "AC1",
+   "id": "D03-SAMPLE-SAFETY",
+   "status": "passed"
+  },
+  {
+   "detail": "u32 timeline wrap absorbed without a reset",
+   "group": "AC1",
+   "id": "D03-WRAP",
+   "status": "passed"
+  },
+  {
+   "detail": "clock jump / timeline step / gap / implausible rate / position jump reject and park until an explicit epoch",
+   "group": "AC1",
+   "id": "D03-DISCONTINUITY",
+   "status": "passed"
+  },
+  {
+   "detail": "reset clears only source-local history, keeps config/counters/ratio, records the reason, epochs advance",
+   "group": "AC1",
+   "id": "D03-EPOCH-RESET",
+   "status": "passed"
+  },
+  {
+   "detail": "correction ratio, uncertainty with age, holdover bound, reset reason, operation counts recorded",
+   "group": "AC3",
+   "id": "D03-DIAGNOSTICS",
+   "status": "passed"
+  },
+  {
+   "detail": "10 virtual minutes, fast source: bounded queue, exact output count, ratio converges",
+   "group": "AC2",
+   "id": "D03-LOOP-FAST",
+   "status": "passed"
+  },
+  {
+   "detail": "10 virtual minutes, slow source",
+   "group": "AC2",
+   "id": "D03-LOOP-SLOW",
+   "status": "passed"
+  },
+  {
+   "detail": "20 virtual minutes across the u32 counter wrap; no reset",
+   "group": "AC2",
+   "id": "D03-LOOP-WRAP",
+   "status": "passed"
+  },
+  {
+   "detail": "negative control: without the loop the same drift overruns the bound",
+   "group": "AC2",
+   "id": "D03-LOOP-UNCONTROLLED",
+   "status": "passed"
+  },
+  {
+   "detail": "mid-run source-counter jump: one explicit epoch each side, ratio held, no output gap",
+   "group": "AC2",
+   "id": "D03-LOOP-JUMP",
+   "status": "passed"
+  },
+  {
+   "detail": "THD+N and carrier gain of 1 kHz and 10 kHz sines at -1 dBFS through the resampler (ratios 0, +/-100, +/-500 ppm; after an epoch reset; settled after a slew) meet the bands declared before the run and the reference's first-principles figures",
+   "group": "AC3",
+   "id": "D03-QUALITY",
+   "status": "passed"
+  },
+  {
+   "detail": "planted nearest-neighbour and linear interpolators miss the bands (paired with the real kernel meeting them); at zero ratio every interpolator is exact, so that row is shown not to be an interpolation test",
+   "group": "AC3",
+   "id": "D03-QUALITY-NEGATIVE",
+   "status": "passed"
+  },
+  {
+   "detail": "no conflicting test status or observation; no header pairing, exact names used: dsp-observations.log: 11 header(s), 13 section(s), 0 orphan test line(s)",
+   "group": "AC4",
+   "id": "D03-META-LOGS-CONSISTENT",
+   "status": "passed"
+  }
+ ],
+ "run_id": "9451e5162f7f",
+ "schema": "ffw.d03.receipt.v1",
+ "sources": {
+  "crates/franken-clock/src/rate.rs": "36a0252a51c83ce718581f7ea8a2adef81b260db7cf25d40f648e2c305328b0c",
+  "crates/franken-dsp/src/resample/tests.rs": "6c2ee94aca77f1fb3b3fe173499df75e5000d3346eeb430a0827952dfefb8a88",
+  "crates/franken-dsp/tests/d03_quality.rs": "6e26a25c4907457eedc8f6cb1d3ec3e562f6af0b2562e6c1f70f128511e1c629",
+  "crates/franken-speaker/tests/d03_closed_loop.rs": "dafb2058ac9f4a919566fbbd246a2b2c39fb22cfec0b2ef3e7db33d96e8224c3"
+ },
+ "summary": {
+  "blocked": 0,
+  "failed": 0,
+  "passed": 27,
+  "planned": 27
+ },
+ "tier": "full",
+ "versions": {
+  "python": "3.15.0",
+  "receipt_schema": "ffw.d03.receipt.v1",
+  "vectors_schema": "ffw.d03.vectors.v1"
+ }
+}
