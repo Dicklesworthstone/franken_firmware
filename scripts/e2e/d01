@@ -5,6 +5,7 @@
 #   scripts/e2e/d01                              META checks only; every Rust-backed case is BLOCKED
 #   scripts/e2e/d01 --judge LOG [LOG ...]        judge the centrally run cargo test output
 #   scripts/e2e/d01 --tier smoke|full --judge LOG [--receipts DIR]
+#   scripts/e2e/d01 --tier soak                  NOT RUN, with the reason: exit 4, never a pass
 #   scripts/e2e/d01 --list                       planned case ids
 #   scripts/e2e/d01 --write-vectors              regenerate tests/d01/vectors.json (Python reference only)
 #
@@ -12,8 +13,12 @@
 #   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-dsp -- --nocapture
 #   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-alloc-probe
 #
-# Exit 0 only when every case passed and none is blocked; 1 on a failed case; 3 when the only
-# non-passes are blocked cases (reported, never counted as passed); 2 on usage errors.
+# Every run writes a JSONL diagnostic log through the shared Q00 sink (next to the receipt with --receipts); a run whose log lost
+# critical evidence is NOT QUALIFIED. A run that is not a pass prints how to replay it, its versions and artifact digests.
+#
+# Exit 0 only when every case passed, none is blocked and the diagnostic log is complete; 1 on a failed case or a log that lost
+# critical evidence; 3 when the only non-passes are blocked cases (reported, never counted as passed); 4 for --tier soak
+# (not run); 2 on usage errors.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 if [ "$#" -eq 0 ]; then

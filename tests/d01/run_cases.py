@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """D01 (ffw-f3b) end-to-end runner and judge.
 
-    run_cases.py [--tier smoke|full] [--list] [--write-vectors] [--judge LOG [LOG ...]]
+    run_cases.py [--tier smoke|full|soak] [--list] [--write-vectors] [--judge LOG [LOG ...]]
                  [--receipts DIR]
 
 What it does, offline and with the standard library only (it builds and boots nothing):
@@ -20,7 +20,15 @@ never passed and never dropped. The Rust suites run only through the centralized
     RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-dsp -- --nocapture
     RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-alloc-probe
 
-Exit codes: 0 qualified, 1 a case failed, 3 only blocked cases stand in the way, 2 usage/malformed.
+Every run also writes its own diagnostic log through the shared Q00 sink (``tests/d01/case_log.py``: ``ff.diag.v1`` JSONL, a CRITICAL
+begin and end per decided case and a run summary, with counted drops). A run whose log lost critical evidence is NOT QUALIFIED
+whatever the cases say. A run that is not a pass says how to replay it, which versions it ran under and the sha256 of every artifact
+it judged, in the printed output and in the receipt.
+
+The ``soak`` tier is selectable and is NOT RUN: it says why, exits 4 and is never a pass.
+
+Exit codes: 0 qualified, 1 a case failed or the log lost critical evidence, 3 only blocked cases stand in the way, 4 the soak tier
+(not run), 2 usage/malformed.
 """
 from __future__ import annotations
 
@@ -30,17 +38,35 @@ import hashlib
 import importlib.util
 import json
 import os
+import platform
 import re
 import secrets
+import shlex
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 VECTORS = os.path.join(HERE, "vectors.json")
-TIERS = ("smoke", "full")
+TIERS = ("smoke", "full", "soak")
+RUN_TIERS = ("smoke", "full")  # the tiers that judge anything; soak is selectable and not run
+SOAK_EXIT = 4
+SOAK_NOT_RUN = (
+    "D01 soak: NOT RUN. Every D01 case is a finite, deterministic offline check (conversion vectors, ring scripts, pipelines, named "
+    "Rust tests), so there is no long-running or randomized work here to soak. The campaigns the bead names (24-hour clean playback "
+    "with zero unexplained underruns, board CPU and deadline percentiles) are board or provider evidence and need separately "
+    "authorized receipts. This is not a pass.")
 RECEIPT_SCHEMA = "ffw.d01.receipt.v1"
 MAX_PRINTED = 12
+# Files whose bytes decide the verdict besides the Rust sources below; their sha256 goes into every receipt and every non-pass report.
+JUDGED_ARTIFACTS = (
+    "tests/d01/vectors.json", "tests/d01/reference.py", "tests/d01/generate.py", "tests/d01/anchors.py",
+    "tests/d01/run_cases.py", "tests/d01/case_log.py", "scripts/test/test_support/diagnostics.py", "docs/contracts/d01.md",
+    "Cargo.lock", "rust-toolchain.toml",
+    # the implementation the judged log belongs to (RUST_SOURCES below adds the files that hold the tests)
+    "crates/franken-dsp/Cargo.toml", "crates/franken-dsp/src/render_events.rs",
+    "crates/franken-alloc-probe/Cargo.toml", "crates/franken-alloc-probe/src/lib.rs",
+)
 
 # (path, binary stem, module prefix in cargo's test names)
 RUST_SOURCES = [
@@ -62,6 +88,15 @@ PACKAGE_BINARIES = {
 }
 TEST_FN = re.compile(r"#\[test\]\s*((?:#\[[^\]]*\]\s*)*)fn\s+([A-Za-z0-9_]+)")
 OBSERVED = re.compile(r"D01-OBSERVED (\{.*\})\s*$")
+# cargo's failure report: `---- <test name> stdout ----`, then the test's output, whose `panicked at` line (and the message under it)
+# is the first causal event of a FAILED test.
+FAILURE_HEAD = re.compile(r"^---- (\S+) stdout ----\s*$")
+FAILURE_WINDOW = 8  # lines after the head that are searched for the panic
+# Under `--nocapture` (the central line in docs/contracts/d01.md) libtest captures nothing, so there is no `---- stdout ----` block: the
+# panic goes to stderr as it happens, `thread '<test name>' (<id>) panicked at <location>:` (the `(<id>)` is newer rustc), with the
+# message on the next line. libtest names the thread after the test, so the quoted name keys the event whatever order RCH's separate
+# streams arrive in.
+PANIC_LIVE = re.compile(r"thread '([^']+)'(?: \(\d+\))? panicked at (.+?)\s*$")
 TEST_LINE = re.compile(r"\btest (\S+) \.\.\. (ok|FAILED|ignored)\b")
 # `Running unittests src/lib.rs (<any path>/<stem>-<hash>)`: the stem is the last path component.
 RUNNING = re.compile(r"^\s*Running .*?\((?:[^()]*/)?([A-Za-z0-9_]+)-[0-9a-f]{6,}\)\s*$")
@@ -97,6 +132,7 @@ def _load(name: str) -> Any:
 ref = _load("reference")
 gen = _load("generate")
 anchors = _load("anchors")
+case_log = _load("case_log")
 
 
 class Result:
@@ -178,6 +214,8 @@ class Logs:
         self.interrupted_results = 0
         self.files: List[Tuple[str, str]] = []
         self._digests: set = set()
+        # test name -> where cargo's failure report shows the panic: `<log>:<line>: <panicked at ...> | <message>`
+        self.failure_context: Dict[str, str] = {}
 
     def _record_observation(self, text: str) -> None:
         try:
@@ -225,8 +263,51 @@ class Logs:
             if current is not None:
                 current["interrupted"].append(interrupted)
 
+        failing: Optional[List[Any]] = None  # [test name, lines searched, the `panicked at` text once seen]
+
+        def flush_failure() -> None:
+            nonlocal failing
+            if failing is not None and failing[2] is not None:
+                self.failure_context.setdefault(failing[0], failing[2])
+            failing = None
+
+        live: Optional[List[Any]] = None  # [test name, `file:line: thread ... panicked at ...` text, lines searched for the message]
+
+        def flush_live() -> None:
+            nonlocal live
+            if live is not None:
+                self.failure_context.setdefault(live[0], live[1])  # the first panic of a test wins, in either form
+            live = None
+
         with open(path, encoding="utf-8", errors="replace") as handle:
             for number, line in enumerate(handle, 1):
+                hit = PANIC_LIVE.search(line)
+                if hit:
+                    flush_live()
+                    live = [hit.group(1), f"{base}:{number}: thread '{hit.group(1)}' panicked at {hit.group(2)[:200]}", 0]
+                elif live is not None:
+                    live[2] += 1
+                    said = line.strip()
+                    if said and not (TEST_LINE.search(line) or OPEN_PREFIX.match(said) or RUNNING.match(line)):
+                        live[1] += f" | {said[:200]}"  # the message sits under the `panicked at` line
+                        flush_live()
+                    elif said or live[2] >= FAILURE_WINDOW:
+                        flush_live()  # something else came first: the cause is the panic line alone
+                head = FAILURE_HEAD.match(line)
+                if head:
+                    flush_failure()
+                    failing = [head.group(1), 0, None]
+                elif failing is not None:
+                    failing[1] += 1
+                    seen = line.strip()
+                    if failing[2] is None:
+                        if "panicked at" in line:
+                            failing[2] = f"{base}:{number}: {seen[:200]}"
+                    elif seen:
+                        failing[2] += f" | {seen[:200]}"  # the message sits under the `panicked at` line
+                        flush_failure()
+                    if failing is not None and failing[1] >= FAILURE_WINDOW:
+                        flush_failure()
                 running = RUNNING.match(line)
                 if running:
                     headers.append(running.group(1))
@@ -273,6 +354,8 @@ class Logs:
                     open_prefix = (prefix.group(1), number)
                 elif BARE_RESULT.match(text) and current is not None:
                     notes.append(f"{base}: line {number}: a result token with no test prefix open")
+        flush_failure()
+        flush_live()
         if open_prefix is not None:
             notes.append(f"{base}: the log ends while `test {open_prefix[0]} ... ` (line {open_prefix[1]}) has no result")
 
@@ -426,6 +509,8 @@ def smoke_ids(cases: List[dict]) -> List[str]:
 
 
 def run(tier: str, logs: Optional[Logs]) -> Tuple[List[Result], dict]:
+    if tier not in RUN_TIERS:
+        raise ValueError(f"tier {tier!r} judges nothing (the soak tier is not run)")
     results: List[Result] = []
     doc, text = load_vectors()
     fresh_doc = gen.build()
@@ -494,7 +579,8 @@ def run(tier: str, logs: Optional[Logs]) -> Tuple[List[Result], dict]:
         if status == "ok":
             results.append(Result(case_id, "passed", "", "rust"))
         elif status == "FAILED":
-            results.append(Result(case_id, "failed", "cargo reported FAILED", "rust"))
+            cause = logs.failure_context.get(name) if logs is not None else None
+            results.append(Result(case_id, "failed", "cargo reported FAILED" + (f"; first causal event {cause}" if cause else ""), "rust"))
         elif status == "CONFLICT":
             results.append(Result(case_id, "failed", "the logs report this test with conflicting statuses", "rust"))
         elif status == "AMBIGUOUS":
@@ -523,7 +609,60 @@ def exit_code(results: List[Result]) -> int:
     return 0
 
 
-def report(results: List[Result], tier: str) -> None:
+def artifact_digests() -> Dict[str, str]:
+    """sha256 of every file whose bytes decide a verdict: the judge, its oracle and vectors, the shared sink, the lock and the Rust
+    sources the judged log must belong to. A file that cannot be read says so; it is never left out."""
+    out: Dict[str, str] = {}
+    for rel in list(JUDGED_ARTIFACTS) + [rel for rel, _, _ in RUST_SOURCES]:
+        path = os.path.join(REPO, rel)
+        out[rel] = sha256_file(path) if os.path.isfile(path) else "missing"
+    return out
+
+
+def artifact_set_digest(digests: Dict[str, str]) -> str:
+    """One digest over the sorted `path digest` lines, small enough for the log header."""
+    return hashlib.sha256("".join(f"{rel} {digest}\n" for rel, digest in sorted(digests.items())).encode("utf-8")).hexdigest()
+
+
+def versions() -> Dict[str, Any]:
+    doc, _ = load_vectors()
+    return {"python": platform.python_version(), "receipt_schema": RECEIPT_SCHEMA,
+            "vectors_schema": doc.get("schema") if isinstance(doc, dict) else None}
+
+
+def replay_command(tier: str, logs: Optional[Logs]) -> str:
+    names = [os.path.basename(path) for path, _ in logs.files] if logs else []
+    return f"scripts/e2e/d01 --tier {tier}" + (" --judge " + " ".join(shlex.quote(n) for n in names) if names else "")
+
+
+def final_exit(results: List[Result], evidence: Optional[Any]) -> int:
+    """The cases' exit code, except that a pass cannot rest on a diagnostic log that lost critical evidence."""
+    code = exit_code(results)
+    if code == 0 and evidence is not None and not evidence.complete:
+        return 1
+    return code
+
+
+def retained_lines(results: List[Result], tier: str, logs: Optional[Logs], meta: dict) -> List[str]:
+    """What a run that is not a pass keeps: the first failure (or block) with its expected-versus-observed text, the exact replay
+    command, the versions and the digest of every artifact judged. Paths are relative to the repository root."""
+    bad = [r for r in results if r.status == "failed"] or [r for r in results if r.status == "blocked"]
+    if not bad:
+        return []
+    first = bad[0]
+    lines = [f"RETAINED FOR REPLAY. First {first.status} case: {first.case_id}: {first.detail}",
+             f"  replay: {replay_command(tier, logs)}"]
+    for path, digest in (logs.files if logs else []):
+        lines.append(f"  judged log {os.path.basename(path)} sha256 {digest}")
+    v = meta["versions"]
+    lines.append(f"  versions: python {v['python']}; receipt {v['receipt_schema']}; vectors {v['vectors_schema']}")
+    for rel, digest in meta["artifacts"].items():
+        lines.append(f"  artifact {rel} sha256 {digest}")
+    return lines
+
+
+def report(results: List[Result], tier: str, logs: Optional[Logs] = None, meta: Optional[dict] = None,
+           evidence: Optional[Any] = None) -> None:
     counts = summarize(results)
     for status, label in (("failed", "FAIL"), ("blocked", "BLOCKED")):
         rows = [r for r in results if r.status == status]
@@ -531,26 +670,38 @@ def report(results: List[Result], tier: str) -> None:
             print(f"{label:8s} {r.case_id}  {r.detail}")
         if len(rows) > MAX_PRINTED:
             print(f"{label:8s} ... and {len(rows) - MAX_PRINTED} more {status} case(s)")
-    verdict = "QUALIFIED" if exit_code(results) == 0 else "NOT QUALIFIED"
+    if meta is not None:
+        for line in retained_lines(results, tier, logs, meta):
+            print(line)
+    verdict = "QUALIFIED" if final_exit(results, evidence) == 0 else "NOT QUALIFIED"
+    note = ""
+    if evidence is not None:
+        print(evidence.summary)
+        if not evidence.complete:
+            note = "  [diagnostic evidence INCOMPLETE: " + ", ".join(evidence.reasons) + "]"
     print(f"D01 e2e tier={tier}: {verdict}  planned={len(results)} passed={counts['passed']} "
-          f"failed={counts['failed']} blocked={counts['blocked']}")
+          f"failed={counts['failed']} blocked={counts['blocked']}{note}")
 
 
-def write_receipt(directory: str, tier: str, results: List[Result], meta: dict, logs: Optional[Logs]) -> str:
+def write_receipt(directory: str, tier: str, results: List[Result], meta: dict, logs: Optional[Logs],
+                  run_id: Optional[str] = None, evidence: Optional[Any] = None) -> str:
     os.makedirs(directory, exist_ok=True)
-    run_id = secrets.token_hex(8)
+    run_id = run_id or secrets.token_hex(8)
     path = os.path.join(directory, f"d01-{run_id}.json")
     doc = {
         "schema": RECEIPT_SCHEMA, "run_id": run_id, "tier": tier,
         "finished_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-        "counts": summarize(results), "exit_code": exit_code(results),
+        "counts": summarize(results), "exit_code": final_exit(results, evidence),
         "judged_logs": [{"path": os.path.basename(p), "sha256": h} for p, h in (logs.files if logs else [])],
         "repeated_inputs_skipped": list(logs.repeated_inputs) if logs else [],
         "identical_repeated_observations": logs.identical_repeats if logs else 0,
         "unattributed_logs": list(logs.unattributed_logs) if logs else [],
-        "replay": "scripts/e2e/d01 --tier " + tier + (" --judge <cargo-test-log>..." if logs else ""),
+        "replay": replay_command(tier, logs),
         **meta, "results": [r.as_dict() for r in results],
     }
+    if evidence is not None:
+        doc["diagnostics"] = {"complete": evidence.complete, "reasons": list(evidence.reasons), "log": evidence.log,
+                              "file": os.path.basename(evidence.path) if evidence.path else None}
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(doc, handle, indent=1, sort_keys=True)
         handle.write("\n")
@@ -563,7 +714,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--list", action="store_true", help="list planned case ids and exit")
     parser.add_argument("--write-vectors", action="store_true", help="regenerate tests/d01/vectors.json")
     parser.add_argument("--judge", nargs="+", metavar="LOG", help="cargo test output file(s) to judge")
-    parser.add_argument("--receipts", metavar="DIR", help="write a JSON receipt here")
+    parser.add_argument("--receipts", metavar="DIR", help="write a JSON receipt and the JSONL diagnostic log here")
     args = parser.parse_args(argv)
 
     if args.write_vectors:
@@ -571,6 +722,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             handle.write(gen.dumps(gen.build()))
         print(f"wrote {os.path.relpath(VECTORS, REPO)} ({sha256_file(VECTORS)[:16]}...)")
         return 0
+    if args.tier not in RUN_TIERS:
+        print(SOAK_NOT_RUN)
+        return SOAK_EXIT
     logs: Optional[Logs] = None
     if args.judge:
         logs = Logs()
@@ -584,10 +738,24 @@ def main(argv: Optional[List[str]] = None) -> int:
         for r in results:
             print(r.case_id)
         return 0
-    report(results, args.tier)
+    meta["versions"] = versions()
+    meta["artifacts"] = artifact_digests()
+    run_id = secrets.token_hex(8)
+    log = case_log.CaseLog.open(REPO, run_id, args.tier, args.receipts, header_extra={
+        "python": meta["versions"]["python"], "tier": args.tier, "artifact_count": len(meta["artifacts"]),
+        "artifact_set_sha256": artifact_set_digest(meta["artifacts"]), "vectors_sha256": meta["vectors_sha256"]})
+    for r in results:
+        log.record(r.case_id, r.group, r.status, r.detail)
+    evidence = log.finish(summarize(results))
+    report(results, args.tier, logs, meta, evidence)
+    code = final_exit(results, evidence)
     if args.receipts:
-        print("receipt:", write_receipt(args.receipts, args.tier, results, meta, logs))
-    return exit_code(results)
+        try:
+            print("receipt:", write_receipt(args.receipts, args.tier, results, meta, logs, run_id, evidence))
+        except OSError as err:
+            print(f"error: the receipt could not be written under {args.receipts}: {type(err).__name__}", file=sys.stderr)
+            return code or 1
+    return code
 
 
 if __name__ == "__main__":

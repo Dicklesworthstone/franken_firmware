@@ -670,7 +670,10 @@ class CommandLine(Harness):
             handle.write(perfect_log(self.doc))
         receipts = os.path.join(self.tmp.name, "receipts")
         self.assertEqual(self.run_main(["--judge", log, "--receipts", receipts]), 0)
-        (name,) = os.listdir(receipts)
+        # the receipts directory holds the receipt and the JSONL diagnostic log of the same run, nothing else
+        (name,) = [n for n in os.listdir(receipts) if n.endswith(".json")]
+        (diag_name,) = [n for n in os.listdir(receipts) if n.endswith(".jsonl")]
+        self.assertEqual(sorted(os.listdir(receipts)), sorted([name, diag_name]))
         with open(os.path.join(receipts, name), encoding="utf-8") as handle:
             receipt = json.load(handle)
         self.assertEqual(receipt["schema"], "ffw.d01.receipt.v1")
@@ -678,6 +681,277 @@ class CommandLine(Harness):
         self.assertEqual(receipt["counts"]["blocked"], 0)
         self.assertEqual(len(receipt["judged_logs"][0]["sha256"]), 64)
         self.assertEqual(self.run_main(["--tier", "full"]), 3)
+
+
+class Retention(Harness):
+    """The original acceptance clauses about tiers, structured diagnostics and what a failure keeps. Each plant is paired with its
+    control (the same run without the plant), and every digest is recomputed here with hashlib from the files themselves."""
+
+    # Written out by hand, so that a file silently dropped from the runner's own list is noticed: the verdict rests on these bytes.
+    MUST_BIND = (
+        "tests/d01/vectors.json", "tests/d01/reference.py", "tests/d01/generate.py", "tests/d01/anchors.py", "tests/d01/run_cases.py",
+        "tests/d01/case_log.py", "scripts/test/test_support/diagnostics.py", "docs/contracts/d01.md", "Cargo.lock", "rust-toolchain.toml",
+        "crates/franken-dsp/Cargo.toml", "crates/franken-dsp/src/format.rs", "crates/franken-dsp/src/convert.rs",
+        "crates/franken-dsp/src/ring.rs", "crates/franken-dsp/src/render_events.rs", "crates/franken-dsp/src/lib.rs",
+        "crates/franken-dsp/tests/d01_vectors.rs", "crates/franken-alloc-probe/Cargo.toml", "crates/franken-alloc-probe/src/lib.rs",
+        "crates/franken-alloc-probe/tests/render_path_no_alloc.rs", "crates/franken-alloc-probe/tests/render_events_no_alloc.rs",
+    )
+
+    def write(self, name: str, text: str) -> str:
+        path = os.path.join(self.tmp.name, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        return path
+
+    def run_main(self, argv: List[str]) -> tuple:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = runner.main(argv)
+        return code, out.getvalue()
+
+    @staticmethod
+    def sha(path: str) -> str:
+        with open(path, "rb") as handle:
+            return hashlib.sha256(handle.read()).hexdigest()
+
+    def diag(self) -> Any:
+        return runner.case_log.load(runner.REPO)
+
+    # ---- tiers
+
+    def test_the_soak_tier_is_selectable_and_is_never_a_pass(self) -> None:
+        good = self.write("good.log", perfect_log(self.doc))
+        code, _ = self.run_main(["--tier", "full", "--judge", good])
+        self.assertEqual(code, 0, "control: the same log qualifies at the full tier")
+        code, text = self.run_main(["--tier", "soak", "--judge", good])
+        self.assertEqual(code, runner.SOAK_EXIT)
+        self.assertEqual(runner.SOAK_EXIT, 4)
+        self.assertIn("NOT RUN", text)
+        self.assertIn("not a pass", text)
+        self.assertNotIn("QUALIFIED", text.replace("NOT QUALIFIED", ""))
+        self.assertEqual(self.run_main(["--tier", "soak"])[0], 4, "soak does not depend on a log")
+        with self.assertRaises(ValueError):
+            runner.run("soak", None)  # nothing can be judged under the soak tier, even by calling the judge directly
+
+    # ---- a failure keeps what a replay needs
+
+    def test_a_failing_run_prints_the_replay_command_the_versions_and_digests_that_equal_the_files(self) -> None:
+        case = next(c for c in self.doc["cases"] if c["kind"] == "convert")
+        bad = self.write("corrupt.log", perfect_log(self.doc, mutate={case["id"]: lambda o: {**o, "dst_hex": "00" + o["dst_hex"][2:]}}))
+        code, text = self.run_main(["--tier", "full", "--judge", bad])
+        self.assertEqual(code, 1)
+        lines = text.splitlines()
+        (first,) = [l for l in lines if l.startswith("RETAINED FOR REPLAY.")]
+        self.assertTrue(first.startswith(f"RETAINED FOR REPLAY. First failed case: {case['id']}: "), first)
+        self.assertIn("first divergence at frame", first)  # the expected-versus-observed text of the first causal event
+        self.assertIn("  replay: scripts/e2e/d01 --tier full --judge corrupt.log", lines)
+        self.assertIn(f"  judged log corrupt.log sha256 {self.sha(bad)}", lines)
+        self.assertIn(f"  versions: python {sys.version.split()[0]}; receipt ffw.d01.receipt.v1; vectors ffw.d01.vectors.v1", lines)
+        shown = {l.split()[1]: l.split()[3] for l in lines if l.startswith("  artifact ")}
+        self.assertEqual(set(shown), set(runner.artifact_digests()))
+        self.assertTrue(set(self.MUST_BIND) <= set(shown), sorted(set(self.MUST_BIND) - set(shown)))
+        for rel, digest in shown.items():
+            self.assertEqual(digest, self.sha(os.path.join(runner.REPO, rel)), rel)  # recomputed here, not taken from the runner
+        self.assertNotIn(runner.REPO, text, "a retained path is relative to the repository root")
+        # control: the same run without the plant keeps nothing and says nothing of the kind
+        good = self.write("good.log", perfect_log(self.doc))
+        code, text = self.run_main(["--tier", "full", "--judge", good])
+        self.assertEqual(code, 0)
+        self.assertNotIn("RETAINED", text)
+
+    def test_a_blocked_run_keeps_the_same_replay_context(self) -> None:
+        code, text = self.run_main(["--tier", "full"])
+        self.assertEqual(code, 3)
+        self.assertIn("RETAINED FOR REPLAY. First blocked case: ", text)
+        self.assertIn("  replay: scripts/e2e/d01 --tier full\n", text)
+
+    def test_a_failed_rust_test_names_its_first_causal_event(self) -> None:
+        name = next(n for stem, n in runner.derive_rust_tests() if n.startswith("ring::tests::"))
+        section = ["", "failures:", "", f"---- {name} stdout ----", f"thread '{name}' panicked at crates/franken-dsp/src/ring.rs:9:9:",
+                   "assertion `left == right` failed", "  left: 1", " right: 2", "", "failures:", f"    {name}", ""]
+        with_event = self.parse(cargo_log(self.doc, failed_tests=(name,)) + "\n".join(section) + "\n")
+        results, _ = runner.run("full", with_event)
+        (hit,) = [r for r in results if r.status == "failed"]
+        self.assertTrue(hit.case_id.endswith("::" + name), hit.case_id)
+        self.assertIn("first causal event cargo0.log:", hit.detail)
+        self.assertIn("panicked at crates/franken-dsp/src/ring.rs:9:9:", hit.detail)
+        self.assertIn("assertion `left == right` failed", hit.detail)
+        # control: a FAILED test whose report is not in the log still fails, and claims no cause it cannot show
+        without = self.parse(cargo_log(self.doc, failed_tests=(name,)))
+        results, _ = runner.run("full", without)
+        (hit,) = [r for r in results if r.status == "failed"]
+        self.assertEqual(hit.detail, "cargo reported FAILED")
+
+    def test_a_failed_rust_test_under_nocapture_names_its_first_causal_event_from_the_live_stderr_line(self) -> None:
+        # The documented central line is `cargo test ... -- --nocapture`: nothing is captured, so there is no `---- stdout ----` block. The
+        # panic goes to stderr as it happens, with the message on the next line, and RCH delivers stderr and stdout as separate streams.
+        names = [n for stem, n in runner.derive_rust_tests() if n.startswith("ring::tests::")]
+        name, other = names[0], names[1]
+        live = [f"thread '{name}' (4242) panicked at crates/franken-dsp/src/ring.rs:9:9:", "assertion `left == right` failed",
+                "  left: 1", " right: 2", "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace"]
+        base = cargo_log(self.doc, failed_tests=(name,))
+        want_at = "thread '%s' panicked at crates/franken-dsp/src/ring.rs:9:9:" % name
+
+        def failed_detail(text: str) -> str:
+            results, _ = runner.run("full", self.parse(text))
+            (hit,) = [r for r in results if r.status == "failed"]
+            return hit.detail
+
+        lines = base.split("\n")
+        middle = "\n".join(lines[:3] + live + lines[3:])  # live, between the lines of a section
+        appended = base + "\n".join(live) + "\n"  # a separate stream, after the stdout
+        older = "\n".join(lines[:3] + [live[0].replace(" (4242)", "")] + live[1:] + lines[3:])  # rustc before the thread id
+        for label, text in (("between lines", middle), ("separate stream", appended), ("older rustc", older)):
+            detail = failed_detail(text)
+            self.assertIn("first causal event cargo0.log:", detail, label)
+            self.assertIn(want_at, detail, label)
+            self.assertIn("assertion `left == right` failed", detail, label)
+            self.assertNotIn("RUST_BACKTRACE", detail, label)  # the message is the line under the panic, not the note after it
+        # keyed by the thread's test name: another test's panic is not this test's cause
+        wrong = "\n".join(lines[:3] + [l.replace(name, other) for l in live] + lines[3:])
+        self.assertEqual(failed_detail(wrong), "cargo reported FAILED")
+        # a panic line that is followed at once by another test's result keeps the panic line and invents no message
+        cut = "\n".join(lines[:3] + [live[0], f"test {other} ... ok"] + lines[3:])
+        detail = failed_detail(cut)
+        self.assertTrue(detail.endswith(want_at), detail)
+        # the control: the same FAILED test with no panic in the log claims no cause
+        self.assertEqual(failed_detail(base), "cargo reported FAILED")
+
+    def test_an_unwritable_receipts_directory_is_a_verdict_not_a_traceback(self) -> None:
+        good = self.write("good.log", perfect_log(self.doc))
+        blocker = self.write("blocker", "a regular file, so nothing can be created under it")
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = runner.main(["--tier", "full", "--judge", good, "--receipts", os.path.join(blocker, "sub")])
+        self.assertEqual(code, 1)
+        self.assertIn("NOT QUALIFIED", out.getvalue())
+        self.assertIn("diagnostic evidence INCOMPLETE: receipts_unavailable:", out.getvalue())
+        self.assertIn("the receipt could not be written", err.getvalue())
+        # the control: a directory that can be made gives a qualified run and a receipt
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = runner.main(["--tier", "full", "--judge", good, "--receipts", os.path.join(self.tmp.name, "fine")])
+        self.assertEqual((code, err.getvalue()), (0, ""))
+        self.assertIn("QUALIFIED", out.getvalue())
+
+    # ---- the receipt
+
+    def test_the_receipt_carries_digests_versions_and_the_exact_replay_command(self) -> None:
+        good = self.write("good.log", perfect_log(self.doc))
+        receipts = os.path.join(self.tmp.name, "receipts")
+        self.assertEqual(self.run_main(["--tier", "full", "--judge", good, "--receipts", receipts])[0], 0)
+        (name,) = [n for n in os.listdir(receipts) if n.endswith(".json")]
+        with open(os.path.join(receipts, name), encoding="utf-8") as handle:
+            receipt = json.load(handle)
+        self.assertEqual(receipt["replay"], "scripts/e2e/d01 --tier full --judge good.log")
+        self.assertEqual(receipt["versions"], {"python": sys.version.split()[0], "receipt_schema": "ffw.d01.receipt.v1",
+                                               "vectors_schema": "ffw.d01.vectors.v1"})
+        self.assertEqual(set(receipt["artifacts"]), set(runner.artifact_digests()))
+        self.assertTrue(set(self.MUST_BIND) <= set(receipt["artifacts"]), sorted(set(self.MUST_BIND) - set(receipt["artifacts"])))
+        for rel, digest in receipt["artifacts"].items():
+            self.assertEqual(digest, self.sha(os.path.join(runner.REPO, rel)), rel)
+        self.assertEqual(receipt["judged_logs"], [{"path": "good.log", "sha256": self.sha(good)}])
+
+    # ---- the structured diagnostic log
+
+    def test_every_run_writes_a_complete_jsonl_log_next_to_its_receipt_and_the_header_binds_the_artifacts(self) -> None:
+        good = self.write("good.log", perfect_log(self.doc))
+        receipts = os.path.join(self.tmp.name, "receipts")
+        self.assertEqual(self.run_main(["--tier", "full", "--judge", good, "--receipts", receipts])[0], 0)
+        (name,) = [n for n in os.listdir(receipts) if n.endswith(".json")]
+        (diag_name,) = [n for n in os.listdir(receipts) if n.endswith(".jsonl")]
+        with open(os.path.join(receipts, name), encoding="utf-8") as handle:
+            receipt = json.load(handle)
+        run_id = receipt["run_id"]
+        self.assertEqual(diag_name, f"d01-diag-full-{run_id}.jsonl")
+        path = os.path.join(receipts, diag_name)
+        audit = self.diag().audit_log(path)  # the shared module's own re-read of the file
+        cases = len(receipt["results"])
+        self.assertEqual(cases, 4 + receipt["planned_vectors"] + receipt["planned_rust_tests"])
+        self.assertTrue(audit.complete, audit.reasons)
+        self.assertEqual(audit.critical_events, 2 * cases + 1)
+        self.assertEqual(receipt["diagnostics"]["complete"], True)
+        self.assertEqual(receipt["diagnostics"]["file"], diag_name)
+        self.assertEqual(receipt["diagnostics"]["log"]["critical_lost"], 0)
+        self.assertEqual(receipt["diagnostics"]["log"]["sha256"], self.sha(path))
+        records = []
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                records.append(json.loads(line))
+        header = records[0]
+        self.assertEqual(header["schema"], "ff.diag.v1")
+        self.assertEqual(header["timebase"]["clock"], "monotonic_ns")
+        want_set = hashlib.sha256("".join(f"{rel} {self.sha(os.path.join(runner.REPO, rel))}\n" for rel in sorted(receipt["artifacts"])).encode()).hexdigest()
+        self.assertEqual(header["extra"]["artifact_set_sha256"], want_set)
+        self.assertEqual(header["extra"]["vectors_sha256"], self.sha(runner.VECTORS))
+        begins = {r["case"]: r for r in records if r.get("kind") == "case.begin"}
+        ends = {r["case"]: r for r in records if r.get("kind") == "case.end"}
+        self.assertEqual(len(begins), cases)
+        self.assertEqual(set(begins), set(ends))
+        by_id = {r["id"]: r for r in receipt["results"]}
+        for case_id, end in ends.items():
+            self.assertEqual(end["corr"], begins[case_id]["corr"])
+            # the sink cuts a very long id (some Rust test paths); the cut id must still name exactly one decided case
+            (match,) = [r for rid, r in by_id.items() if rid.startswith(case_id)]
+            self.assertEqual(end["fields"]["status"], match["status"], case_id)
+        self.assertEqual(sum(1 for r in records if r.get("kind") == "run.summary"), 1)
+        # a rerun never overwrites the first run's evidence
+        self.assertEqual(self.run_main(["--tier", "full", "--judge", good, "--receipts", receipts])[0], 0)
+        self.assertEqual(len([n for n in os.listdir(receipts) if n.endswith(".jsonl")]), 2)
+
+    def test_lost_critical_evidence_makes_a_run_that_would_pass_not_qualified(self) -> None:
+        results, meta = runner.run("full", self.parse(perfect_log(self.doc)))
+        self.assertEqual(runner.exit_code(results), 0)
+        diag = self.diag()
+
+        def evidence(target: Any) -> Any:
+            log = runner.case_log.CaseLog.open(runner.REPO, "t1", "full", target=target)
+            for r in results:
+                log.record(r.case_id, r.group, r.status, r.detail)
+            return log.finish(runner.summarize(results))
+
+        whole = evidence(diag.FaultableSink())
+        self.assertTrue(whole.complete, whole.reasons)  # control: a sink that takes every write
+        self.assertEqual(runner.final_exit(results, whole), 0)
+        full = evidence(diag.FaultableSink(capacity_bytes=60_000))  # the plant: a disk that fills long before the run ends
+        self.assertFalse(full.complete)
+        self.assertTrue(any("critical" in reason for reason in full.reasons), full.reasons)
+        self.assertEqual(runner.final_exit(results, full), 1)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            runner.report(results, "full", None, {**meta, "versions": runner.versions(), "artifacts": runner.artifact_digests()}, full)
+        self.assertIn("NOT QUALIFIED", out.getvalue())
+        self.assertIn("diagnostic evidence INCOMPLETE", out.getvalue())
+        # a failure is still a failure when the log is whole, and an incomplete log does not hide a failure
+        failing = [runner.Result("D01-X", "failed", "x", "vector")] + results
+        self.assertEqual(runner.final_exit(failing, full), 1)
+        self.assertEqual(runner.final_exit(failing, whole), 1)
+
+    def test_a_case_that_wrote_no_events_is_caught_by_the_independent_count_not_only_by_the_sinks_own_loss_accounting(self) -> None:
+        diag = self.diag()
+
+        def evidence(extra_case: bool) -> Any:
+            log = runner.case_log.CaseLog.open(runner.REPO, "t3", "full", target=diag.FaultableSink())
+            for n in range(3):
+                log.record(f"D01-X-{n}", "vector", "passed", "")
+            if extra_case:
+                log.cases += 1  # a case the judge decided and that never reached the log
+            return log.finish({"passed": 4, "failed": 0, "blocked": 0})
+
+        self.assertTrue(evidence(False).complete)  # control
+        missing = evidence(True)
+        self.assertFalse(missing.complete)
+        self.assertEqual(missing.reasons, ["critical_event_count:7_of_9"])
+
+    def test_an_unavailable_diagnostics_module_is_an_incomplete_log_not_a_crash(self) -> None:
+        empty_repo = tempfile.mkdtemp(dir=self.tmp.name)  # a tree with no scripts/test/test_support/diagnostics.py
+        log = runner.case_log.CaseLog.open(empty_repo, "t2", "full")
+        log.record("D01-X", "vector", "passed", "")
+        evidence = log.finish({"passed": 1, "failed": 0, "blocked": 0})
+        self.assertFalse(evidence.complete)
+        self.assertTrue(evidence.reasons[0].startswith("diagnostics_unavailable"), evidence.reasons)
+        results, _ = runner.run("full", self.parse(perfect_log(self.doc)))
+        self.assertEqual(runner.final_exit(results, evidence), 1)
 
 
 class AcceptanceMap(unittest.TestCase):
