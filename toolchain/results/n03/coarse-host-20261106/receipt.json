@@ -57,6 +57,24 @@
       "terminal_acknowledged": true,
       "wrapper_alive": false,
       "wrapper_id": "rchw-11c0af2b-cf98-417b-bcdf-9e491b498982"
+    },
+    {
+      "custody_retired": true,
+      "exit_code": 0,
+      "file": "clippy-be-v8.txt",
+      "native_id": "30098049032257781",
+      "owner_presence": "absent",
+      "proof_class": "two-target static check only",
+      "public_sha256": "adf59d8a836db9e2b949871e30918d080e53f3b75dbf37b0a8a39b7ba9b735c7",
+      "raw_sha256": "7f84e45f45b79c344ae1bc498b213041f3a0737644ec9fe9e100932ca54764aa",
+      "scope": "franken-speaker library and binaries with no default features; not harness or full service qualification",
+      "targets": [
+        "mips-unknown-linux-musl",
+        "powerpc-unknown-linux-musl"
+      ],
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "wrapper_id": "rchw-03a142c5-70a3-4da6-9542-4b1e1f00a3aa"
     }
   ],
   "schema": "ffw.n03.host-receipt.v1",

@@ -28,6 +28,11 @@ evidence bindings, not a self-contained source archive.
   refusal assertions. `clippy-v8.txt` contains the Cargo payload.
 - v8 workspace formatting and guest formatting both exited zero. Shared guest
   cases use style edition 2024 without changing the guest's compilation edition.
+- v8 selected-core Clippy also exited zero for both `mips-unknown-linux-musl`
+  and `powerpc-unknown-linux-musl`. See `clippy-be-v8.txt` and native job
+  `30098049032257781` in the receipt. This checks the speaker library/binary
+  dependency closure without default features; it is neither a guest run nor
+  qualification of the full service or harness profiles.
 - **v8 runtime replay is not run.** Its only change from v7 is the strengthened
   clock test. Do not describe the 411-test result as execution of that new test.
 
@@ -56,6 +61,12 @@ RCH_REQUIRE_REMOTE=1 rch exec --job --worker ovh-b -- \
 
 RCH_REQUIRE_REMOTE=1 rch exec --job --worker trj -- \
   cargo fmt --manifest-path toolchain/src/n03-target/Cargo.toml -- --check
+
+RCH_REQUIRE_REMOTE=1 RCH_CHECK_SLOTS=1 RCH_BUILD_SLOTS=1 RCH_TEST_SLOTS=1 \
+  rch exec --worker ovh-b -- cargo +nightly-2026-08-31 clippy --locked \
+  --no-default-features -p franken-speaker --lib --bins \
+  --target mips-unknown-linux-musl --target powerpc-unknown-linux-musl \
+  -Z build-std=core,alloc,std,panic_abort -j1 -- -D warnings
 ```
 
 The runtime and guest-format commands used unversioned Cargo; their compiler
@@ -66,10 +77,11 @@ nightly pin shown. No compiler-version claim is inferred from a later probe.
 job identities and terminal custody. All listed jobs have terminal ACK, dead
 wrappers, absent owners and retired source/tree/pair custody. Public payloads
 omit RCH transport chatter; source-mirror and pooled-target paths are replaced
-with `<source>` and `<target>`. Cargo test output, counts, failures and stdout
+with `<source>` and `<target>`; the BE transcript also replaces the worker's
+Rust installation prefix with `<rust-toolchain>`. Cargo test output, counts, failures and stdout
 records within those payloads are retained without selecting only successes.
 
 Remaining checks are the current runtime replay, refreshed guest execution and
-its seeded/replay/truncation controls, and current target checks. Worker
+its seeded/replay/truncation controls, and the broader feature-profile checks. Worker
 admission refusals and telemetry failures remain failures or not-run outcomes;
 none is treated as a code pass.
