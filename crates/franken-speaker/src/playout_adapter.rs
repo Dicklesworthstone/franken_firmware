@@ -2266,7 +2266,6 @@ mod tests {
         let prepared = s
             .play
             .prepare_stream(STREAM_B, 1, 30, &both, s.clock.epoch())
-            .ok()
             .expect("fits beside the playing stream");
         assert_eq!(s.play.stream_count(), 1);
         s.play.commit_stream(STREAM_B, prepared, None);

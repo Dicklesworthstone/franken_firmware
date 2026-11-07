@@ -1,0 +1,8 @@
+# Private device evidence and agent scratch are not compilation inputs.
+# Keep Cargo sources, public inventory, contracts, and test fixtures included.
+.local-real/
+.claude/
+.ee/
+.mor/
+research/
+ingest-rehearsal-*/
