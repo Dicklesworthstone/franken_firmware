@@ -1,0 +1,65 @@
+    Finished `test` profile [unoptimized] target(s) in 66m 36s
+running 6 tests
+test blocking_helper_boundary_census_requires_classification ... ok
+test blocking_helper_census_sees_an_unclassified_try_helper ... ok
+test embedder_context_routes_spawn_blocking_to_caller_owned_pool ... ok
+test handle_spawn_shutdown_race_completes_or_cancels ... ok
+test native_restricted_context_preserves_queued_blocking_io_and_cleanup ... ok
+test pool_spawn_shutdown_race_completes_or_cancels ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.06s
+running 1 test
+test http_client_resolves_and_connects_by_name_on_a_forbidden_pool_without_blocking_work ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+running 50 tests
+test a_cancelled_loop_of_sleeps_returns_to_the_scheduler_every_turn ... ok
+test abort_and_join_complete_promptly_for_a_timer_parked_native_child ... ok
+test abort_before_first_poll_keeps_task_level_cancellation_attribution ... ok
+test abort_does_not_have_separate_force_kill_method ... ok
+test abort_path_uses_weak_handle_to_avoid_keeping_task_alive ... ok
+test abort_repolls_a_capacity_parked_send_to_graceful_cancellation ... ok
+test abort_repolls_a_mutex_parked_operation_to_graceful_cancellation ... ok
+test abort_repolls_a_semaphore_parked_acquire_to_graceful_cancellation ... ok
+test abort_repolls_an_explicit_cx_websocket_close_write_to_typed_cancellation ... ok
+test abort_with_reason_does_not_call_drop_guard_bypass_machinery ... ok
+test acknowledged_cancellation_can_finish_async_cleanup_before_join_completes ... ok
+test cancel_handlers_run_on_both_abort_and_cancel_via_same_checkpoint_path ... ok
+test cancellation_published_at_the_end_of_pending_repolls_user_code ... ok
+test checked_other_primitives_refuse_cancel_and_reuse_on_native_current_thread ... ok
+test checked_other_primitives_refuse_cancel_and_reuse_on_native_sharded_workers ... ok
+test checked_owned_permit_cancellation_and_same_poll_reuse_on_native_current_thread ... ok
+test checked_owned_permit_cancellation_and_same_poll_reuse_on_native_sharded_workers ... ok
+test checked_zero_quota_refuses_before_publication_on_native_current_thread ... ok
+test checked_zero_quota_refuses_before_publication_on_native_sharded_workers ... ok
+test crate_atomic_ordering_is_the_core_ordering_the_publication_pins_name ... ok
+test cross_reference_to_prior_audits ... ok
+test cross_thread_abort_on_multi_worker_runtime_preserves_mutex_cancellation_and_waiter_cleanup ... ok
+test cross_thread_cx_cancel_wakes_a_timer_parked_native_task ... ok
+test cx_cancel_fast_uses_same_publish_mechanism_minimal_attribution ... ok
+test cx_cancel_with_publishes_via_same_stable_envelope_as_abort ... ok
+test legacy_state_ready_future_drop_panic_is_published_as_join_error ... ok
+test legacy_state_task_keeps_cancellation_dominant_result_attribution ... ok
+test legacy_state_task_panic_after_abort_remains_panicked ... ok
+test local_abort_before_first_poll_keeps_task_level_cancellation_attribution ... ok
+test local_spawn_abort_preserves_mutex_cancellation_and_waiter_cleanup ... ok
+test mailbox_and_scope_spawn_paths_classify_before_terminal_publication ... ok
+test native_nested_masks_preserve_checkpoint_deferral_and_unwind_restoration ... ok
+test no_unsafe_thread_termination_in_abort_or_cancel_paths ... ok
+test ordinary_spawn_keeps_cancellation_dominant_for_cancellation_blind_late_values ... ok
+test panic_during_cancel_cleanup_outranks_task_cancellation ... ok
+test read_only_cancellation_observation_does_not_reclassify_a_late_value ... ok
+test run_test_preserves_typed_cancellation_from_a_parked_spawn ... ok
+test sibling_terminal_handle_publishers_are_cx_independent ... ok
+test spawn_blocking_discards_a_late_value_after_wrapper_cancellation ... ok
+test spawn_blocking_in_discards_a_late_value_after_wrapper_cancellation ... ok
+test stable_publication_pins_reject_relaxed_orderings ... ok
+test stream_cancellation::channel_streams_cancel_without_producer_on_native_current_thread ... ok
+test stream_cancellation::channel_streams_cancel_without_producer_on_native_sharded_workers ... ok
+test task_handle_abort_default_reason_is_user_kind_not_force_kill ... ok
+test task_handle_abort_defers_panic_isolated_wakers_to_runtime_publication ... ok
+test task_handle_abort_publishes_via_same_stable_envelope_as_cancel ... ok
+test task_handle_abort_strengthens_existing_cancel_reason ... ok
+test terminal_publication_boundary_preserves_panics_as_join_errors ... ok
+test watch_and_broadcast_cancel_without_producer_on_native_current_thread ... ok
+test watch_and_broadcast_cancel_without_producer_on_native_sharded_workers ... ok
+test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.18s
+[RCH] remote trj (4053.3s)
