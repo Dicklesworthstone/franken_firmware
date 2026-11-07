@@ -718,7 +718,7 @@
    "kind": "blocked",
    "tier": "full",
    "owner": "Asupersync repository owner",
-   "blocker": "adapting Asupersync is not part of slice 1 and needs the owner's go-ahead",
+   "blocker": "owner-authorized upstream adaptation is outside slice 1 and its full implementation and qualification remain open",
    "needs": "real feature gates that exclude host modules and dependencies, the facade pointed at the semantic types where a use needs them, worker/blocking/job/stack caps, pre-admitted cleanup records; this repository only provides the replacement."
   },
   {
