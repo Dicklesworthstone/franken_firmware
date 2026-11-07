@@ -10,10 +10,11 @@
 //!
 //! What it shows is host allocation behaviour on the platform the test runs on. It says nothing about memory use or
 //! timing on a board, and a build on another ISA would have to repeat it.
-use franken_alloc_probe::{CountingAllocator, is_active, measure};
+use franken_alloc_probe::{CountingAllocator, fail_next_allocation, is_active, measure};
 use franken_stream::playout::{
-    BLOCK_FRAMES, BLOCK_PAYLOAD_BYTES, ClockView, LatencyChange, LogConfig, LogSink, MediaPacket,
-    PlayoutConfig, PlayoutEngine, PlayoutProfile, RepairBlock, SinkReply, consume_by, frames_to_ns,
+    AdmitError, AllocationError, BLOCK_FRAMES, BLOCK_PAYLOAD_BYTES, ClockView, LatencyChange,
+    LogConfig, LogSink, MediaPacket, PlayoutConfig, PlayoutEngine, PlayoutProfile, RepairBlock,
+    SinkReply, consume_by, frames_to_ns,
 };
 
 #[global_allocator]
@@ -474,5 +475,263 @@ fn n04_playout_engine_consume_path_does_not_allocate_after_construction() {
          \"construction_allocations\":{construction_allocations},\"construction_bytes\":{construction_bytes},\
          \"measured\":{{\"allocations\":{allocations},\"reallocations\":{reallocations},\"deallocations\":{deallocations}}},\
          \"ops\":{ops},\"decided\":{decided},\"log_emitted\":{log_emitted},\"paths_reached\":true}}"
+    );
+}
+
+#[test]
+fn n04_playout_engine_refused_capacity_allocates_nothing() {
+    assert!(
+        is_active(),
+        "the counting allocator must detect a real allocation"
+    );
+    let cfg = PlayoutConfig {
+        work_ns: WORK,
+        lead_ns: LEAD,
+        tolerance_ns: 100_000,
+    };
+    let need = PlayoutEngine::resident_bytes(&PlayoutProfile::MUSIC);
+    // Control: an admitted construction is seen, and requests at least the queue the profile states.
+    let (admitted, built) = measure(|| PlayoutEngine::new_within(PlayoutProfile::MUSIC, cfg, need));
+    assert!(admitted.is_ok());
+    assert!(
+        built.allocations >= 1
+            && built.bytes_requested >= PlayoutProfile::MUSIC.playout_queue_bytes(),
+        "an admitted construction must be visible to the probe: {built:?}"
+    );
+    // Refusals: one byte short, no budget, and an invalid configuration. None of them may touch the allocator at all.
+    let bad = PlayoutConfig { work_ns: 0, ..cfg };
+    for (label, config, budget) in [
+        ("one byte short", cfg, need - 1),
+        ("no budget", cfg, 0),
+        ("invalid configuration", bad, usize::MAX),
+    ] {
+        let (refused, delta) =
+            measure(|| PlayoutEngine::new_within(PlayoutProfile::MUSIC, config, budget));
+        assert!(refused.is_err(), "{label}");
+        assert!(delta.is_zero(), "{label}: a refusal allocated: {delta:?}");
+        assert_eq!(delta.bytes_requested, 0, "{label}");
+    }
+}
+
+#[test]
+fn n04_playout_engine_allocator_failure_is_a_typed_refusal_and_the_permitted_allocation_succeeds() {
+    assert!(
+        is_active(),
+        "the counting allocator must detect a real allocation"
+    );
+    let cfg = PlayoutConfig {
+        work_ns: WORK,
+        lead_ns: LEAD,
+        tolerance_ns: 100_000,
+    };
+    let need = PlayoutEngine::resident_bytes(&PlayoutProfile::MUSIC);
+    // Control: with a sufficient budget and no failure armed the engine is built, by a real allocation.
+    let (built, delta) = measure(|| PlayoutEngine::new_within(PlayoutProfile::MUSIC, cfg, need));
+    assert!(built.is_ok());
+    assert!(delta.allocations >= 1, "{delta:?}");
+    // The allocator refuses the slot queue: a typed refusal naming the bytes asked for, never an abort.
+    let ((refused, fired), failed_delta) = measure(|| {
+        fail_next_allocation(|| PlayoutEngine::new_within(PlayoutProfile::MUSIC, cfg, need))
+    });
+    assert!(fired, "the failure must have hit a real allocation");
+    // Failed attempts are allocator activity too: the no-allocation oracle must never hide them.
+    assert_eq!(failed_delta.allocations, 1, "{failed_delta:?}");
+    assert_eq!(failed_delta.reallocations, 0, "{failed_delta:?}");
+    assert_eq!(failed_delta.deallocations, 0, "{failed_delta:?}");
+    assert_eq!(
+        failed_delta.bytes_requested,
+        PlayoutProfile::MUSIC.playout_queue_bytes(),
+        "{failed_delta:?}"
+    );
+    assert!(!failed_delta.is_zero(), "{failed_delta:?}");
+    assert!(matches!(
+        refused,
+        Err(AdmitError::Allocation(AllocationError { requested_bytes }))
+            if requested_bytes == PlayoutProfile::MUSIC.playout_queue_bytes()
+    ));
+    // The failure was one-shot: the next permitted call succeeds again.
+    assert!(PlayoutEngine::new_within(PlayoutProfile::MUSIC, cfg, need).is_ok());
+    // A failure armed around code that never allocates proves nothing, and says so.
+    let ((idle, fired_idle), idle_delta) = measure(|| fail_next_allocation(|| 1 + 1));
+    assert_eq!(idle, 2);
+    assert!(!fired_idle);
+    assert!(idle_delta.is_zero(), "{idle_delta:?}");
+    assert_eq!(idle_delta.bytes_requested, 0, "{idle_delta:?}");
+}
+
+#[test]
+fn n04_playout_log_replacement_survives_an_allocator_failure_with_its_records() {
+    assert!(
+        is_active(),
+        "the counting allocator must detect a real allocation"
+    );
+    let cfg = PlayoutConfig {
+        work_ns: WORK,
+        lead_ns: LEAD,
+        tolerance_ns: 100_000,
+    };
+    let log = |capacity| {
+        LogConfig::new(
+            "n04-probe",
+            "alloc",
+            "p-0123456789abcdef",
+            "p-fedcba9876543210",
+            capacity,
+        )
+        .expect("valid log configuration")
+    };
+    let mut eng = PlayoutEngine::new(PlayoutProfile::MUSIC, cfg).expect("valid config");
+    eng.enable_log(log(4));
+    let _ = eng.begin_stream(1, 0, ANCHOR);
+    let before = eng.log_stats().expect("diagnostics are on");
+    assert!(before.queued >= 1, "{before:?}");
+    let heap_before = eng.log_heap_bytes();
+    let replacement = log(8);
+    let budget = PlayoutEngine::log_heap_bytes_for(&replacement).expect("fits") + heap_before;
+    // The allocator refuses the new ring: a typed refusal, and the old log runs on with its records.
+    let (refused, fired) = fail_next_allocation(|| eng.enable_log_within(replacement, budget));
+    assert!(fired, "the failure must have hit a real allocation");
+    assert!(matches!(refused, Err(AdmitError::Allocation(_))));
+    assert_eq!(eng.log_stats(), Some(before));
+    assert_eq!(eng.log_heap_bytes(), heap_before);
+    // Control: the same replacement with no failure is admitted (both logs fit while it is built) and replaces the log.
+    eng.enable_log_within(log(8), budget)
+        .expect("fits with both logs held");
+    assert!(eng.log_heap_bytes() > heap_before);
+}
+
+#[test]
+fn n04_log_config_labels_fault_and_clone_are_inline_even_at_the_label_limit() {
+    assert!(
+        is_active(),
+        "the allocator must detect the positive allocation control"
+    );
+    let label_bytes = [b'x'; 64];
+    let label = core::str::from_utf8(&label_bytes).expect("ASCII label");
+    let too_long_bytes = [b'x'; 65];
+    let too_long = core::str::from_utf8(&too_long_bytes).expect("ASCII label");
+    let ((config, cloned), delta) = measure(|| {
+        let config = LogConfig::new(label, label, "p-0123456789abcdef", "p-fedcba9876543210", 4)
+            .expect("maximum labels are permitted")
+            .with_fault(label)
+            .expect("maximum fault is permitted");
+        let cloned = config.clone();
+        std::hint::black_box((config, cloned))
+    });
+    assert!(delta.is_zero(), "valid configuration allocated: {delta:?}");
+    assert_eq!(delta.bytes_requested, 0);
+    assert_eq!(config, cloned);
+    assert_eq!(config.heap_bytes(), 0);
+    assert_eq!(cloned.heap_bytes(), 0);
+    let expected_debug = format!(
+        "LogConfig {{ run_id: {label:?}, case_id: {label:?}, member_id: \"p-0123456789abcdef\", group_id: \"p-fedcba9876543210\", fault: Some({label:?}), capacity: 4, max_line: 1024 }}"
+    );
+    assert_eq!(
+        format!("{config:?}"),
+        expected_debug,
+        "Debug retains the text representation"
+    );
+
+    let ((bad_run, bad_fault, replaced), delta) = measure(|| {
+        (
+            LogConfig::new(
+                too_long,
+                label,
+                "p-0123456789abcdef",
+                "p-fedcba9876543210",
+                4,
+            ),
+            cloned.clone().with_fault(too_long),
+            cloned.clone().with_fault("replacement"),
+        )
+    });
+    assert!(
+        delta.is_zero(),
+        "validation or fault replacement allocated: {delta:?}"
+    );
+    assert_eq!(delta.bytes_requested, 0);
+    assert!(matches!(
+        bad_run,
+        Err(franken_stream::playout::LogConfigError::InvalidLabel { field: "run_id" })
+    ));
+    assert!(matches!(
+        bad_fault,
+        Err(franken_stream::playout::LogConfigError::InvalidLabel { field: "fault" })
+    ));
+    assert_eq!(replaced.expect("valid replacement").heap_bytes(), 0);
+
+    // Only the ring allocates, and a maximum-label configuration still admits the same bounded ring.
+    let budget = PlayoutEngine::log_ring_bytes_for(&config).expect("ring size fits");
+    assert_eq!(PlayoutEngine::log_heap_bytes_for(&config), Some(budget));
+    let mut engine = PlayoutEngine::new(
+        PlayoutProfile::MUSIC,
+        PlayoutConfig {
+            work_ns: WORK,
+            lead_ns: LEAD,
+            tolerance_ns: 100_000,
+        },
+    )
+    .expect("valid engine");
+    let (admitted, delta) = measure(|| engine.enable_log_within(config, budget));
+    admitted.expect("the permitted ring still allocates and is admitted");
+    assert!(
+        delta.allocations >= 1,
+        "ring allocation must remain visible: {delta:?}"
+    );
+    assert_eq!(engine.log_heap_bytes(), engine.log_ring_bytes());
+    assert!(engine.log_heap_bytes() >= budget);
+}
+
+#[test]
+fn n04_untrusted_route_hint_is_allocation_free_for_permitted_and_refused_wire() {
+    use franken_stream::{
+        AuthenticatedStreamPacket, MIN_DATAGRAM_BYTES, PacketKind, StreamFormat, StreamId,
+        StreamKey, StreamReceiver, untrusted_route_hint,
+    };
+
+    assert!(
+        is_active(),
+        "the allocation probe must observe its positive control"
+    );
+    let key = StreamKey::from_bytes([0x42; 32]);
+    let id = StreamId::new(19).expect("nonzero synthetic stream");
+    let packet = AuthenticatedStreamPacket {
+        stream_id: id,
+        session_epoch: 1,
+        seq: 7,
+        kind: PacketKind::Media,
+        format: StreamFormat::Pcm16BeStereo48k,
+        flags: 0,
+        start_frame: 0,
+        presentation_time_ns: 100_000_000,
+        consume_by_ns: 95_000_000,
+        fec_group_id: 0,
+        fec_index: 0,
+        fec_group_size: 0,
+        payload: vec![0; 4],
+    };
+    let wire = packet.encode_signed(&key).expect("valid signed media");
+    let short = &wire[..MIN_DATAGRAM_BYTES - 1];
+    let mut bad_magic = wire.clone();
+    bad_magic[0] ^= 1;
+    let ((permitted, truncated, malformed), delta) = measure(|| {
+        (
+            untrusted_route_hint(&wire),
+            untrusted_route_hint(short),
+            untrusted_route_hint(&bad_magic),
+        )
+    });
+    assert!(delta.is_zero(), "routing hints allocated: {delta:?}");
+    assert_eq!(delta.bytes_requested, 0);
+    assert_eq!(
+        permitted.expect("structural routing hint").stream_id,
+        id.get()
+    );
+    assert!(truncated.is_err());
+    assert!(malformed.is_err());
+    let mut receiver = StreamReceiver::new(key, id, 1);
+    assert_eq!(
+        receiver.accept(&wire).expect("still requires admission"),
+        packet
     );
 }

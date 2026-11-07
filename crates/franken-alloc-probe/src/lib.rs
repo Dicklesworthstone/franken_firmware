@@ -11,9 +11,12 @@
 //!
 //! * the crate lint level is `deny` (see `Cargo.toml`), and the only `allow` is the single
 //!   `unsafe impl GlobalAlloc` below;
-//! * every method forwards its arguments **unchanged** to [`std::alloc::System`], so the
-//!   allocator contract is exactly `System`'s; the caller's obligations pass straight through;
-//! * the only extra work is bumping thread-local `Cell<usize>` counters. They are const-initialised
+//! * calls normally forward their arguments **unchanged** to [`std::alloc::System`]. An explicitly
+//!   armed, calling-thread-only failure instead returns null once from `alloc`, `alloc_zeroed` or
+//!   `realloc`, as allowed by `GlobalAlloc`. A failed `realloc` leaves the original allocation
+//!   owned by the caller; `dealloc` always forwards. The caller's obligations remain unchanged;
+//! * the extra work counts every allocator attempt (including injected failures) and manages the
+//!   calling thread's one-shot failure flag. These thread-local `Cell` values are const-initialised
 //!   and have no destructor, so touching them neither allocates nor registers a TLS destructor
 //!   (which would recurse into the allocator), and `try_with` makes access during thread teardown
 //!   a no-op rather than a panic;
@@ -33,6 +36,8 @@ thread_local! {
     static REALLOCATIONS: Cell<usize> = const { Cell::new(0) };
     static DEALLOCATIONS: Cell<usize> = const { Cell::new(0) };
     static BYTES_REQUESTED: Cell<usize> = const { Cell::new(0) };
+    static FAIL_NEXT: Cell<bool> = const { Cell::new(false) };
+    static FAILURES: Cell<usize> = const { Cell::new(0) };
 }
 
 fn bump(counter: &'static LocalKey<Cell<usize>>, by: usize) {
@@ -43,7 +48,22 @@ fn read(counter: &'static LocalKey<Cell<usize>>) -> usize {
     counter.try_with(Cell::get).unwrap_or(0)
 }
 
-/// A global allocator that counts calls (per thread) and otherwise behaves exactly like `System`.
+/// True exactly once after [`fail_next_allocation`] armed the calling thread: the allocator call that sees it returns null (the
+/// `GlobalAlloc` way to say "out of memory"). Other threads never see it, so unrelated allocations are not failed.
+fn fail_now() -> bool {
+    FAIL_NEXT
+        .try_with(|armed| {
+            let fire = armed.replace(false);
+            if fire {
+                bump(&FAILURES, 1);
+            }
+            fire
+        })
+        .unwrap_or(false)
+}
+
+/// A global allocator that counts every attempted call (per thread), including injected failures.
+/// Normally it forwards to `System`; [`fail_next_allocation`] can instead return null once on the calling thread.
 #[derive(Debug, Default)]
 pub struct CountingAllocator;
 
@@ -55,13 +75,18 @@ impl CountingAllocator {
 }
 
 #[allow(unsafe_code)]
-// SAFETY: every method forwards its arguments unchanged to `System`, which upholds the
-// `GlobalAlloc` contract; the only added behaviour is incrementing const-initialised,
-// destructor-free thread-local counters, which cannot allocate or unwind.
+// SAFETY: calls normally forward unchanged to `System`. The sole exception is an explicitly
+// armed, calling-thread-only failure: returning null from alloc/alloc_zeroed/realloc is permitted
+// by GlobalAlloc. A failed realloc does not touch or free the original allocation, and dealloc
+// always forwards. Attempt counters and the one-shot flag use const-initialised, destructor-free
+// thread-local Cells; this instrumentation cannot allocate or unwind.
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         bump(&ALLOCATIONS, 1);
         bump(&BYTES_REQUESTED, layout.size());
+        if fail_now() {
+            return std::ptr::null_mut();
+        }
         // SAFETY: caller upholds `GlobalAlloc::alloc`'s contract; forwarded unchanged.
         unsafe { System.alloc(layout) }
     }
@@ -69,6 +94,9 @@ unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         bump(&ALLOCATIONS, 1);
         bump(&BYTES_REQUESTED, layout.size());
+        if fail_now() {
+            return std::ptr::null_mut();
+        }
         // SAFETY: caller upholds `GlobalAlloc::alloc_zeroed`'s contract; forwarded unchanged.
         unsafe { System.alloc_zeroed(layout) }
     }
@@ -82,6 +110,9 @@ unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         bump(&REALLOCATIONS, 1);
         bump(&BYTES_REQUESTED, new_size);
+        if fail_now() {
+            return std::ptr::null_mut();
+        }
         // SAFETY: caller upholds `GlobalAlloc::realloc`'s contract; forwarded unchanged.
         unsafe { System.realloc(ptr, layout, new_size) }
     }
@@ -133,6 +164,27 @@ pub fn measure<R>(f: impl FnOnce() -> R) -> (R, AllocSnapshot) {
         bytes_requested: after.bytes_requested.wrapping_sub(before.bytes_requested),
     };
     (result, delta)
+}
+
+/// Run `f` with the calling thread's NEXT allocator call (`alloc`, `alloc_zeroed` or `realloc`) failing once: it returns null, which
+/// `Vec::try_reserve_exact` and the other fallible reservations report as an error. Use it only around code that reserves fallibly (an
+/// infallible allocation that fails aborts the process), with the first allocation `f` makes being the one under test. Returns `f`'s
+/// result and whether a call really failed (false means `f` never allocated, so the test proved nothing). Other threads are untouched
+/// and the failure is disarmed when `f` returns or unwinds. A failed call still counts as an allocator
+/// attempt and contributes its requested bytes to [`snapshot`] and [`measure`]; it cannot appear as no allocator activity.
+pub fn fail_next_allocation<R>(f: impl FnOnce() -> R) -> (R, bool) {
+    struct Disarm;
+    impl Drop for Disarm {
+        fn drop(&mut self) {
+            let _ = FAIL_NEXT.try_with(|armed| armed.set(false));
+        }
+    }
+    let failures_before = read(&FAILURES);
+    let _ = FAIL_NEXT.try_with(|armed| armed.set(true));
+    let disarm = Disarm;
+    let result = f();
+    drop(disarm);
+    (result, read(&FAILURES) != failures_before)
 }
 
 /// True when [`CountingAllocator`] is the running binary's global allocator (it counted a real

@@ -43,8 +43,9 @@ use std::collections::BTreeMap;
 
 use franken_clock::group::GroupClock;
 use franken_dsp::{FRAMES_PER_BLOCK, StereoAudioBlock};
+use franken_platform::MemoryBudgetLedger;
 use franken_stream::playout::{
-    BLOCK_PAYLOAD_BYTES, Decision, MediaPacket, Outcome, PlayoutConfig, PlayoutEngine,
+    AdmitError, BLOCK_PAYLOAD_BYTES, Decision, MediaPacket, Outcome, PlayoutConfig, PlayoutEngine,
     PlayoutProfile, Poll, frames_to_ns,
 };
 use franken_stream::{
@@ -55,6 +56,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::clock_view::ClockViewBridge as MonotoneReading;
 use crate::harness::SimNodeClock;
+use crate::media_playout::{MediaAdmitError, admit_engine, engine_resident_bytes};
 
 /// Time the render path spends between the engine's decision and the DMA submission, and the lead it needs to submit
 /// before the presentation instant. Illustrative simulation values (N04's vectors use the same), not measurements.
@@ -288,26 +290,80 @@ pub(crate) struct NodePlayout {
     replaced_refusals: BTreeMap<String, u64>,
 }
 
-/// A fresh N04 engine bound to `stream_epoch`, with `anchor_block` presented at `anchor_group_ns` on the group clock.
+/// Why a stream generation could not be opened on a member. Every variant is typed and static (numbers and `&'static str` only), so
+/// building one allocates nothing: a refusal caused by memory pressure cannot itself fail for want of memory. Text is made from it
+/// only by a caller, after the bounded admission path has returned (`Display`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum OpenRefusal {
+    /// A stream was opened on a member that has none.
+    NoStream,
+    /// The new stream would not start after the latest one.
+    CutoverNotAfter {
+        cutover_block: u64,
+        latest_first_block: u64,
+    },
+    /// The stream id was already opened on this member.
+    DuplicateStream(u64),
+    /// The shared admission (configuration, platform floor, capacity or allocation) refused the engine.
+    Admission(MediaAdmitError),
+    /// The engine refused to bind to the stream.
+    StartRefused(&'static str),
+    /// The generation list could not be given room for one more entry.
+    GenerationList,
+}
+
+impl core::fmt::Display for OpenRefusal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NoStream => f.write_str("a stream was opened on a member that has none"),
+            Self::CutoverNotAfter {
+                cutover_block,
+                latest_first_block,
+            } => write!(
+                f,
+                "a stream cannot start at block {cutover_block}, the latest one starts at {latest_first_block}"
+            ),
+            Self::DuplicateStream(id) => write!(f, "stream {id:#x} was already opened"),
+            Self::Admission(MediaAdmitError::Engine(AdmitError::Config(config))) => {
+                write!(f, "playout configuration refused: {}", config.code())
+            }
+            Self::Admission(other) => write!(f, "playout admission refused: {}", other.code()),
+            Self::StartRefused(code) => write!(f, "playout stream refused: {code}"),
+            Self::GenerationList => f.write_str("playout admission refused: allocation"),
+        }
+    }
+}
+
+/// A stream generation that is built and admitted but not live: its engine, bound to the stream, and the room for it in the
+/// generation list. Dropping it releases both and changes nothing; [`NodePlayout::commit_stream`] makes it live and cannot fail.
+pub(crate) struct PreparedStream {
+    engine: PlayoutEngine,
+    cutover_block: u64,
+}
+
+/// A fresh N04 engine bound to `stream_epoch`, with `anchor_block` presented at `anchor_group_ns` on the group clock, admitted
+/// through the shared [`admit_engine`] beside `resident_elsewhere_bytes`.
 fn new_engine(
     stream_epoch: u64,
     anchor_block: u64,
     anchor_group_ns: u64,
-) -> Result<PlayoutEngine, String> {
+    ledger: &MemoryBudgetLedger,
+    resident_elsewhere_bytes: u64,
+) -> Result<PlayoutEngine, OpenRefusal> {
     let cfg = PlayoutConfig {
         work_ns: RENDER_WORK_NS,
         lead_ns: RENDER_LEAD_NS,
         tolerance_ns: TIMELINE_TOLERANCE_NS,
     };
-    let mut engine = PlayoutEngine::new(PlayoutProfile::MUSIC, cfg)
-        .map_err(|e| format!("playout configuration refused: {}", e.code()))?;
+    let mut engine = admit_engine(PlayoutProfile::MUSIC, cfg, ledger, resident_elsewhere_bytes)
+        .map_err(OpenRefusal::Admission)?;
     engine
         .begin_stream(
             stream_epoch,
             anchor_block * (FRAMES_PER_BLOCK as u64),
             anchor_group_ns,
         )
-        .map_err(|e| format!("playout stream refused: {}", e.code()))?;
+        .map_err(|e| OpenRefusal::StartRefused(e.code()))?;
     Ok(engine)
 }
 
@@ -338,8 +394,10 @@ impl NodePlayout {
         stream_id: u64,
         stream_epoch: u64,
         anchor_group_ns: u64,
+        ledger: &MemoryBudgetLedger,
     ) -> Result<Self, String> {
-        let engine = new_engine(stream_epoch, 0, anchor_group_ns)?;
+        let engine =
+            new_engine(stream_epoch, 0, anchor_group_ns, ledger, 0).map_err(|e| e.to_string())?;
         Ok(Self {
             engines: vec![StreamEngine {
                 stream_id,
@@ -352,6 +410,20 @@ impl NodePlayout {
         })
     }
 
+    /// Bytes every engine this member still holds occupies (struct, slots as the allocator kept them, diagnostics heap): what a new
+    /// generation must be admitted beside. The generation list itself is simulation bookkeeping, not board memory, and is not counted.
+    pub(crate) fn resident_bytes(&self) -> u64 {
+        self.engines
+            .iter()
+            .map(|e| engine_resident_bytes(&e.engine))
+            .fold(0, u64::saturating_add)
+    }
+
+    /// How many stream generations are held.
+    pub(crate) fn stream_count(&self) -> usize {
+        self.engines.len()
+    }
+
     /// The first block this member's sender has not sent yet: where a source change admitted now cuts over.
     pub(crate) fn first_unsent(&self) -> u64 {
         self.next_send
@@ -359,38 +431,80 @@ impl NodePlayout {
 
     /// A source change was admitted: open stream `stream_id` at `cutover_block`. Its own engine is bound now, so it takes the
     /// new stream's packets as they arrive; the previous stream's engine keeps deciding the blocks below the cutover (drain
-    /// to a common future cutover) and is retired once it has. The new stream continues the group's timeline.
+    /// to a common future cutover) and is retired once it has. The new stream continues the group's timeline. This is
+    /// [`Self::prepare_stream`] followed by [`Self::commit_stream`]: a refusal changes nothing.
     pub(crate) fn open_stream(
         &mut self,
         stream_id: u64,
         stream_epoch: u64,
         cutover_block: u64,
+        ledger: &MemoryBudgetLedger,
     ) -> Result<(), String> {
+        let prepared = self
+            .prepare_stream(stream_id, stream_epoch, cutover_block, ledger)
+            .map_err(|e| e.to_string())?;
+        self.commit_stream(stream_id, prepared);
+        Ok(())
+    }
+
+    /// Build and admit the next generation without touching anything live: the checks, the shared admission beside every engine
+    /// still held (a replaced stream drains to the cutover, so they overlap), the engine itself, and the room for one more entry
+    /// in the generation list. Nothing here formats text; every refusal is a typed [`OpenRefusal`].
+    pub(crate) fn prepare_stream(
+        &mut self,
+        stream_id: u64,
+        stream_epoch: u64,
+        cutover_block: u64,
+        ledger: &MemoryBudgetLedger,
+    ) -> Result<PreparedStream, OpenRefusal> {
         let Some(latest) = self.engines.last() else {
-            return Err("a stream was opened on a member that has none".to_string());
+            return Err(OpenRefusal::NoStream);
         };
         if cutover_block <= latest.first_block {
-            return Err(format!(
-                "a stream cannot start at block {cutover_block}, the latest one starts at {}",
-                latest.first_block
-            ));
+            return Err(OpenRefusal::CutoverNotAfter {
+                cutover_block,
+                latest_first_block: latest.first_block,
+            });
         }
         if self.engines.iter().any(|e| e.stream_id == stream_id) {
-            return Err(format!("stream {stream_id:#x} was already opened"));
+            return Err(OpenRefusal::DuplicateStream(stream_id));
         }
         let anchor_group_ns =
             self.origin_group_ns + frames_to_ns(cutover_block * (FRAMES_PER_BLOCK as u64));
-        let engine = new_engine(stream_epoch, cutover_block, anchor_group_ns)?;
+        let resident = self.resident_bytes();
+        let engine = new_engine(
+            stream_epoch,
+            cutover_block,
+            anchor_group_ns,
+            ledger,
+            resident,
+        )?;
+        self.engines
+            .try_reserve(1)
+            .map_err(|_| OpenRefusal::GenerationList)?;
+        Ok(PreparedStream {
+            engine,
+            cutover_block,
+        })
+    }
+
+    /// Make a prepared generation live. It cannot fail: the engine exists and the list already has room for it.
+    pub(crate) fn commit_stream(&mut self, stream_id: u64, prepared: PreparedStream) {
         if let Some(latest) = self.engines.last_mut() {
-            latest.until_block = Some(cutover_block);
+            latest.until_block = Some(prepared.cutover_block);
         }
         self.engines.push(StreamEngine {
             stream_id,
-            engine,
-            first_block: cutover_block,
+            engine: prepared.engine,
+            first_block: prepared.cutover_block,
             until_block: None,
         });
-        Ok(())
+    }
+
+    /// Test fixture: pretend this member's sender has sent blocks `0..block`.
+    #[cfg(test)]
+    pub(crate) fn set_first_unsent(&mut self, block: u64) {
+        self.next_send = block;
     }
 
     /// The stream generation that decides block `blk`: the latest one that starts at or before it.
@@ -852,6 +966,11 @@ fn settle(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The harness's explicit synthetic budget: the platform ledger of a nominal board with the standard 2 MiB stream line.
+    fn synthetic_ledger() -> MemoryBudgetLedger {
+        crate::media_playout::synthetic_ledger(2 * 1024 * 1024)
+    }
     use franken_clock::group::{GroupClockConfig, ProbeResponse};
     use franken_stream::{StreamId, StreamKey};
     use franken_test_support::NetworkScheduleConfig;
@@ -992,7 +1111,13 @@ mod tests {
         fn with_epochs(engine_epoch: u64, wire_epoch: u64) -> Self {
             let (sim, tl) = (sim(), timeline());
             Self {
-                play: NodePlayout::bind(STREAM, engine_epoch, tl.pts_group_ns(0)).expect("binds"),
+                play: NodePlayout::bind(
+                    STREAM,
+                    engine_epoch,
+                    tl.pts_group_ns(0),
+                    &synthetic_ledger(),
+                )
+                .expect("binds"),
                 clock: locked_clock(&sim),
                 sim,
                 tl,
@@ -1033,6 +1158,48 @@ mod tests {
             Played::Silent(why) => panic!("block {blk} was silent: {why:?}"),
             Played::NoDecision => panic!("block {blk} had no decision"),
         }
+    }
+
+    #[test]
+    fn a_refused_next_stream_leaves_the_playing_one_deciding_real_blocks_and_a_funded_one_still_opens()
+     {
+        let mut s = Scenario::new();
+        let held = s.play.resident_bytes();
+        for blk in 0..20 {
+            s.arrives(blk, 20_000_000);
+        }
+        for blk in 0..10 {
+            let played = s.decide(blk);
+            assert_eq!(authentic(played, blk), source_bytes(blk), "block {blk}");
+        }
+        // The next stream does not fit beside the playing one: a typed refusal, nothing live changed.
+        let tight = crate::media_playout::synthetic_ledger(2 * held - 1);
+        let refused = s
+            .play
+            .prepare_stream(STREAM_B, 1, 30, &tight)
+            .err()
+            .expect("no room beside the playing stream");
+        assert!(matches!(
+            refused,
+            OpenRefusal::Admission(MediaAdmitError::Engine(AdmitError::Capacity(_)))
+        ));
+        assert_eq!(s.play.stream_count(), 1);
+        // The stream that was playing goes on deciding REAL blocks, each with exactly the bytes its sender sent.
+        for blk in 10..20 {
+            let played = s.decide(blk);
+            assert_eq!(authentic(played, blk), source_bytes(blk), "block {blk}");
+        }
+        assert_eq!(s.play.report().decided_real, 20);
+        // Control: with room for both, the candidate is prepared (still not live) and then committed.
+        let both = crate::media_playout::synthetic_ledger(2 * held);
+        let prepared = s
+            .play
+            .prepare_stream(STREAM_B, 1, 30, &both)
+            .ok()
+            .expect("fits beside the playing stream");
+        assert_eq!(s.play.stream_count(), 1);
+        s.play.commit_stream(STREAM_B, prepared);
+        assert_eq!(s.play.stream_count(), 2);
     }
 
     #[test]
@@ -1383,7 +1550,8 @@ mod tests {
         };
         let mut wire = Wire::new(1);
         let mut schedule = NetworkSchedule::new(cfg.clone());
-        let mut play = NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0)).expect("binds");
+        let mut play =
+            NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0), &synthetic_ledger()).expect("binds");
         let frame_for = |blk: u64| Wire::frame(&timeline(), blk, source_bytes(blk));
         let mut link = SendLink {
             member_id: "spk-test",
@@ -1465,7 +1633,8 @@ mod tests {
                 duplicate_bps: 0,
                 ..NetworkScheduleConfig::default()
             });
-            let mut play = NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0)).expect("binds");
+            let mut play = NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0), &synthetic_ledger())
+                .expect("binds");
             let frame_for = |blk: u64| Wire::frame(&timeline(), blk, source_bytes(blk));
             play.send_until(
                 &mut SendLink {
@@ -1694,7 +1863,8 @@ mod tests {
     impl TwoStreams {
         fn new(cutover: u64, total: u64) -> Self {
             let (sim, tl) = (sim(), timeline());
-            let mut play = NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0)).expect("binds");
+            let mut play = NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0), &synthetic_ledger())
+                .expect("binds");
             let mut old = Wire::on_stream(STREAM);
             let mut new = Wire::on_stream(STREAM_B);
             for blk in 0..cutover {
@@ -1704,7 +1874,8 @@ mod tests {
                 play.stage(tl.send_true_ns(blk) + 5_000_000, 0, packet);
             }
             play.next_send = cutover;
-            play.open_stream(STREAM_B, 1, cutover).expect("opens");
+            play.open_stream(STREAM_B, 1, cutover, &synthetic_ledger())
+                .expect("opens");
             for blk in cutover..total {
                 let payload = other_bytes(blk);
                 play.note_sent(blk, &payload);
@@ -1851,20 +2022,55 @@ mod tests {
     }
 
     #[test]
+    fn a_source_change_that_does_not_fit_beside_the_playing_stream_is_refused_and_the_member_is_unchanged()
+     {
+        let tl = timeline();
+        let ledger = synthetic_ledger();
+        let mut play = NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0), &ledger).expect("binds");
+        let held = engine_resident_bytes(&play.engines[0].engine);
+        // A line that holds the playing engine and a candidate of the same profile, less one byte.
+        let tight = crate::media_playout::synthetic_ledger(2 * held - 1);
+        let err = play
+            .open_stream(STREAM_B, 1, 10, &tight)
+            .expect_err("no room beside the playing stream");
+        assert!(err.contains("admission refused: capacity"), "{err}");
+        assert_eq!(play.engines.len(), 1);
+        assert_eq!(play.engines[0].stream_id, STREAM);
+        assert!(play.engines[0].until_block.is_none());
+        // Exactly enough for both: admitted, and the new generation is appended.
+        let both = crate::media_playout::synthetic_ledger(2 * held);
+        play.open_stream(STREAM_B, 1, 10, &both)
+            .expect("fits beside it");
+        assert_eq!(play.engines.len(), 2);
+        // The first stream alone binds in the tight line (the refusal was the overlap).
+        assert!(NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0), &tight).is_ok());
+    }
+
+    #[test]
     fn a_stream_cannot_be_opened_twice_at_the_same_block_or_before_the_latest_one() {
         let tl = timeline();
-        let mut play = NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0)).expect("binds");
-        assert!(play.open_stream(STREAM_B, 1, 0).is_err());
-        play.open_stream(STREAM_B, 1, 10).expect("opens");
+        let mut play =
+            NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0), &synthetic_ledger()).expect("binds");
         assert!(
-            play.open_stream(STREAM, 1, 20).is_err(),
+            play.open_stream(STREAM_B, 1, 0, &synthetic_ledger())
+                .is_err()
+        );
+        play.open_stream(STREAM_B, 1, 10, &synthetic_ledger())
+            .expect("opens");
+        assert!(
+            play.open_stream(STREAM, 1, 20, &synthetic_ledger())
+                .is_err(),
             "a stream id is never reused"
         );
         assert!(
-            play.open_stream(0x77, 1, 10).is_err(),
+            play.open_stream(0x77, 1, 10, &synthetic_ledger()).is_err(),
             "not at or before the latest start"
         );
-        assert!(NodePlayout::unbound().open_stream(STREAM, 1, 10).is_err());
+        assert!(
+            NodePlayout::unbound()
+                .open_stream(STREAM, 1, 10, &synthetic_ledger())
+                .is_err()
+        );
     }
 
     /// The pump over a link with no loss, no jitter and no duplicates, with a publish gate and a replaced adapter that keeps
@@ -1882,7 +2088,8 @@ mod tests {
             duplicate_bps: 0,
             ..NetworkScheduleConfig::default()
         });
-        let mut play = NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0)).expect("binds");
+        let mut play =
+            NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0), &synthetic_ledger()).expect("binds");
         let owner = |blk: u64| Wire::frame(&timeline(), blk, source_bytes(blk));
         let stale = |blk: u64| Wire::frame(&timeline(), blk, other_bytes(blk));
         play.send_until(
@@ -1988,7 +2195,8 @@ mod tests {
                 duplicate_bps: 0,
                 ..NetworkScheduleConfig::default()
             });
-            let mut play = NodePlayout::bind(STREAM_B, 1, tl.pts_group_ns(0)).expect("binds");
+            let mut play = NodePlayout::bind(STREAM_B, 1, tl.pts_group_ns(0), &synthetic_ledger())
+                .expect("binds");
             let owner = |blk: u64| Wire::frame(&timeline(), blk, source_bytes(blk));
             play.send_until(
                 &mut SendLink {
@@ -2034,7 +2242,8 @@ mod tests {
         // A fault with no replaced stream to send from is a campaign error.
         let mut wire = Wire::on_stream(STREAM_B);
         let mut schedule = NetworkSchedule::new(NetworkScheduleConfig::default());
-        let mut play = NodePlayout::bind(STREAM_B, 1, tl.pts_group_ns(0)).expect("binds");
+        let mut play =
+            NodePlayout::bind(STREAM_B, 1, tl.pts_group_ns(0), &synthetic_ledger()).expect("binds");
         let owner = |blk: u64| Wire::frame(&timeline(), blk, source_bytes(blk));
         let err = play
             .send_until(

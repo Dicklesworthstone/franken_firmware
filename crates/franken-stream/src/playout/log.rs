@@ -76,15 +76,51 @@ fn valid_pseudonym(text: &str) -> bool {
             .all(|&c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
 }
 
+/// Validated ASCII text retained inline, including its exact logical length.
+/// Only the checked LogConfig constructors create these values.
+#[derive(Clone, PartialEq, Eq)]
+struct InlineText<const CAPACITY: usize> {
+    bytes: [u8; CAPACITY],
+    len: usize,
+}
+
+impl<const CAPACITY: usize> InlineText<CAPACITY> {
+    fn from_validated(text: &str) -> Self {
+        debug_assert!(text.is_ascii() && text.len() <= CAPACITY);
+        let mut bytes = [0; CAPACITY];
+        bytes[..text.len()].copy_from_slice(text.as_bytes());
+        Self {
+            bytes,
+            len: text.len(),
+        }
+    }
+
+    fn as_str(&self) -> Result<&str, fmt::Error> {
+        core::str::from_utf8(&self.bytes[..self.len]).map_err(|_| fmt::Error)
+    }
+}
+
+impl<const CAPACITY: usize> Display for InlineText<CAPACITY> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str()?)
+    }
+}
+
+impl<const CAPACITY: usize> fmt::Debug for InlineText<CAPACITY> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self.as_str()?, f)
+    }
+}
+
 /// Where the diagnostics go and how much memory they may use: `capacity` lines of up to [`MAX_LINE_BYTES`] each,
 /// allocated once when logging is enabled.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogConfig {
-    run_id: String,
-    case_id: String,
-    member_id: String,
-    group_id: String,
-    fault: Option<String>,
+    run_id: InlineText<MAX_LABEL_LEN>,
+    case_id: InlineText<MAX_LABEL_LEN>,
+    member_id: InlineText<18>,
+    group_id: InlineText<18>,
+    fault: Option<InlineText<MAX_LABEL_LEN>>,
     capacity: usize,
     max_line: usize,
 }
@@ -118,10 +154,10 @@ impl LogConfig {
             return Err(LogConfigError::ZeroCapacity);
         }
         Ok(Self {
-            run_id: run_id.to_string(),
-            case_id: case_id.to_string(),
-            member_id: member_id.to_string(),
-            group_id: group_id.to_string(),
+            run_id: InlineText::from_validated(run_id),
+            case_id: InlineText::from_validated(case_id),
+            member_id: InlineText::from_validated(member_id),
+            group_id: InlineText::from_validated(group_id),
             fault: None,
             capacity,
             max_line: MAX_LINE_BYTES,
@@ -136,7 +172,7 @@ impl LogConfig {
         if !valid_label(fault) {
             return Err(LogConfigError::InvalidLabel { field: "fault" });
         }
-        self.fault = Some(fault.to_string());
+        self.fault = Some(InlineText::from_validated(fault));
         Ok(self)
     }
 
@@ -299,7 +335,7 @@ struct Record<'a> {
 pub(super) struct DiagLog {
     cfg: LogConfig,
     reserve: usize,
-    ring: Box<[Line]>,
+    ring: Vec<Line>,
     head: usize,
     count: usize,
     scratch: Line,
@@ -315,10 +351,22 @@ impl core::fmt::Debug for Line {
 
 impl DiagLog {
     fn new(cfg: LogConfig) -> Self {
-        let capacity = cfg.capacity;
+        let ring = vec![Line::EMPTY; cfg.capacity];
+        Self::with_ring(cfg, ring)
+    }
+
+    /// The same ring, reserved fallibly: `None` when the allocator cannot give it. The `Vec` that was reserved is the one kept.
+    fn try_new(cfg: LogConfig) -> Option<Self> {
+        let mut ring: Vec<Line> = Vec::new();
+        ring.try_reserve_exact(cfg.capacity).ok()?;
+        ring.resize(cfg.capacity, Line::EMPTY);
+        Some(Self::with_ring(cfg, ring))
+    }
+
+    fn with_ring(cfg: LogConfig, ring: Vec<Line>) -> Self {
         Self {
-            reserve: capacity / 4,
-            ring: vec![Line::EMPTY; capacity].into_boxed_slice(),
+            reserve: cfg.capacity / 4,
+            ring,
             cfg,
             head: 0,
             count: 0,
@@ -326,6 +374,16 @@ impl DiagLog {
             last_ts: 0,
             stats: LogStats::default(),
         }
+    }
+
+    /// Bytes this ring holds on the heap.
+    fn ring_bytes(&self) -> usize {
+        self.ring.capacity() * core::mem::size_of::<Line>()
+    }
+
+    /// Heap this log holds: the ring; configuration text is inline.
+    fn heap_bytes(&self) -> usize {
+        self.ring_bytes().saturating_add(self.cfg.heap_bytes())
     }
 
     fn stats(&self) -> LogStats {
@@ -499,11 +557,84 @@ const fn decision_cause(outcome: Outcome) -> Option<&'static str> {
     }
 }
 
+impl LogConfig {
+    /// Configuration text is inline, so construction, fault replacement and cloning retain no heap.
+    /// Its storage is already counted by `size_of::<PlayoutEngine>()` when diagnostics are installed.
+    #[must_use]
+    pub fn heap_bytes(&self) -> usize {
+        0
+    }
+}
+
 impl PlayoutEngine {
     /// Turn diagnostics on (or restart them with a new configuration). This is the only point that allocates for
     /// the log: `capacity` lines of [`MAX_LINE_BYTES`] each. Records start flowing with the next call.
     pub fn enable_log(&mut self, cfg: LogConfig) {
         self.diag = Some(DiagLog::new(cfg));
+    }
+
+    /// Bytes of the ring [`PlayoutEngine::enable_log`] allocates for `cfg`: `capacity` lines of `size_of::<Line>()` each (the
+    /// [`MAX_LINE_BYTES`] of text and a length), by checked multiplication; `None` if that does not fit a `usize`. The inline handle is
+    /// already part of `size_of::<PlayoutEngine>()` and is not counted again.
+    #[must_use]
+    pub fn log_ring_bytes_for(cfg: &LogConfig) -> Option<usize> {
+        cfg.capacity.checked_mul(core::mem::size_of::<Line>())
+    }
+
+    /// Bytes of the ring held now (0 with diagnostics off).
+    #[must_use]
+    pub fn log_ring_bytes(&self) -> usize {
+        self.diag.as_ref().map_or(0, DiagLog::ring_bytes)
+    }
+
+    /// Heap bytes [`PlayoutEngine::enable_log`] holds for `cfg`: the ring ([`Self::log_ring_bytes_for`]); configuration text is inline.
+    /// `None` on overflow.
+    #[must_use]
+    pub fn log_heap_bytes_for(cfg: &LogConfig) -> Option<usize> {
+        Self::log_ring_bytes_for(cfg)?.checked_add(cfg.heap_bytes())
+    }
+
+    /// Heap bytes the diagnostics hold now (0 with diagnostics off): the ring as the allocator gave it.
+    #[must_use]
+    pub fn log_heap_bytes(&self) -> usize {
+        self.diag.as_ref().map_or(0, DiagLog::heap_bytes)
+    }
+
+    /// [`PlayoutEngine::enable_log`] under a budget: `budget_bytes` is what the caller's ledger leaves for diagnostics heap. A restart holds
+    /// the old log until the new one exists, so both rings count against it, and what the allocator
+    /// actually kept for the new ring is charged before it is published. A refusal (over budget, or an allocator that cannot give the
+    /// ring) leaves the log as it was, running, with its records.
+    ///
+    /// # Errors
+    /// The new log (and the one it replaces) does not fit `budget_bytes`, or the allocator could not give the ring.
+    pub fn enable_log_within(
+        &mut self,
+        cfg: LogConfig,
+        budget_bytes: usize,
+    ) -> Result<(), super::AdmitError> {
+        let ring_bytes = Self::log_ring_bytes_for(&cfg);
+        let needed =
+            Self::log_heap_bytes_for(&cfg).and_then(|n| n.checked_add(self.log_heap_bytes()));
+        if !matches!(needed, Some(n) if n <= budget_bytes) {
+            return Err(super::AdmitError::Capacity(super::CapacityError {
+                needed_bytes: needed.unwrap_or(usize::MAX),
+                budget_bytes,
+            }));
+        }
+        let Some(log) = DiagLog::try_new(cfg) else {
+            return Err(super::AdmitError::Allocation(super::AllocationError {
+                requested_bytes: ring_bytes.unwrap_or(usize::MAX),
+            }));
+        };
+        let kept = log.heap_bytes().checked_add(self.log_heap_bytes());
+        if !matches!(kept, Some(n) if n <= budget_bytes) {
+            return Err(super::AdmitError::Capacity(super::CapacityError {
+                needed_bytes: kept.unwrap_or(usize::MAX),
+                budget_bytes,
+            }));
+        }
+        self.diag = Some(log);
+        Ok(())
     }
 
     /// The log's counts, or `None` if diagnostics are off.

@@ -16,6 +16,10 @@
 //! Memory is fixed at construction (`horizon_blocks` slots of one block each); the consume path allocates
 //! nothing and copies at most one block per call. Latency changes are accepted only from the control channel
 //! ([`PlayoutEngine::apply_change`]) and are bounded per step and in net.
+//!
+//! A caller that owns a memory ledger builds the engine with [`PlayoutEngine::new_within`]: the profile's footprint
+//! ([`PlayoutEngine::resident_bytes`]) is checked against the budget it offers, and a profile that does not fit is refused with a
+//! typed [`CapacityError`] before anything is allocated.
 
 use serde::Serialize;
 
@@ -182,6 +186,45 @@ impl PlayoutConfig {
             Err(ConfigError::ToleranceTooLarge)
         } else {
             Ok(())
+        }
+    }
+}
+
+/// A profile that does not fit the memory the caller offered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CapacityError {
+    /// Bytes the engine would occupy: [`PlayoutEngine::resident_bytes`] of the profile.
+    pub needed_bytes: usize,
+    /// Bytes the caller offered.
+    pub budget_bytes: usize,
+}
+
+/// The allocator could not give memory the budget had admitted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AllocationError {
+    /// Bytes that were asked for.
+    pub requested_bytes: usize,
+}
+
+/// Why [`PlayoutEngine::new_within`] built nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdmitError {
+    /// The configuration is invalid. It is judged first, whatever the budget.
+    Config(ConfigError),
+    /// The profile does not fit the budget.
+    Capacity(CapacityError),
+    /// The profile fits the budget but the allocator could not give the memory.
+    Allocation(AllocationError),
+}
+
+impl AdmitError {
+    /// A stable name: the invalid configuration field, or `capacity`.
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Config(error) => error.code(),
+            Self::Capacity(_) => "capacity",
+            Self::Allocation(_) => "allocation",
         }
     }
 }
@@ -544,6 +587,60 @@ impl Slot {
     };
 }
 
+/// Bytes of one slot of the decoded playout queue, as the compiler lays it out for the target being built: the 1024-byte payload, a
+/// `u16` frame count and a use flag (1027 bytes of fields) rounded up to the slot's alignment, which is 1028 wherever a `u16` is
+/// 2-byte aligned (the host and the big-endian MIPS and PowerPC targets). The rule, not the number, is what is asserted at compile time
+/// below. Allocator metadata is not counted.
+pub const SLOT_BYTES: usize = core::mem::size_of::<Slot>();
+
+/// `slots` slots of `slot_bytes` plus `inline_bytes`, or `None` when that does not fit a `usize`: every step is a checked operation, so
+/// an admission decision can never rest on a wrapped number.
+const fn footprint(slots: usize, slot_bytes: usize, inline_bytes: usize) -> Option<usize> {
+    match slots.checked_mul(slot_bytes) {
+        Some(queue) => queue.checked_add(inline_bytes),
+        None => None,
+    }
+}
+
+// Checked for every target this crate is built for, so a layout that differs on a target fails that target's build instead of
+// being assumed: (1) the slot is its fields rounded up to its alignment; (2) the widest profile a `u16` horizon can name, with the
+// engine struct, still fits a `usize` (this matters on the 32-bit big-endian targets).
+const _: () = {
+    let fields = BLOCK_PAYLOAD_BYTES + 2 + 1;
+    let align = core::mem::align_of::<Slot>();
+    assert!(SLOT_BYTES == fields.div_ceil(align) * align);
+    assert!(
+        footprint(
+            u16::MAX as usize,
+            SLOT_BYTES,
+            core::mem::size_of::<PlayoutEngine>()
+        )
+        .is_some()
+    );
+};
+
+impl PlayoutProfile {
+    /// Slots [`PlayoutEngine::new`] builds: `horizon_blocks`, and at least one (the queue is never empty).
+    const fn queue_slots(&self) -> usize {
+        if self.horizon_blocks == 0 {
+            1
+        } else {
+            self.horizon_blocks as usize
+        }
+    }
+
+    /// Heap bytes [`PlayoutEngine::new`] requests for this profile's decoded playout queue (`usize::MAX` if that is not representable,
+    /// which no `u16` horizon reaches: checked at compile time). It is the engine's only allocation besides the optional diagnostics
+    /// ring, which the caller counts with its own `capacity` (section 15 of the contract).
+    #[must_use]
+    pub const fn playout_queue_bytes(&self) -> usize {
+        match footprint(self.queue_slots(), SLOT_BYTES, 0) {
+            Some(bytes) => bytes,
+            None => usize::MAX,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct PendingChange {
     effective_frame: u64,
@@ -569,7 +666,8 @@ pub struct PlayoutEngine {
     origin: u64,
     first_block: u64,
     cursor: u64,
-    slots: Box<[Slot]>,
+    /// The `Vec` the (fallible) reservation produced, kept as it is: no conversion to a boxed slice, which may shrink and reallocate.
+    slots: Vec<Slot>,
     hist: [u8; HISTORY_BLOCKS],
     last_real: [u8; BLOCK_PAYLOAD_BYTES],
     have_last_real: bool,
@@ -594,14 +692,23 @@ impl PlayoutEngine {
     /// `cfg` is invalid, or the profile has no slots.
     pub fn new(profile: PlayoutProfile, cfg: PlayoutConfig) -> Result<Self, ConfigError> {
         cfg.validate()?;
-        Ok(Self {
+        Ok(Self::with_slots(
+            profile,
+            cfg,
+            vec![Slot::EMPTY; usize::from(profile.horizon_blocks.max(1))],
+        ))
+    }
+
+    /// The engine over already-allocated `slots`: the one place its fields are listed.
+    fn with_slots(profile: PlayoutProfile, cfg: PlayoutConfig, slots: Vec<Slot>) -> Self {
+        Self {
             profile,
             cfg,
             epoch: None,
             origin: 0,
             first_block: 0,
             cursor: 0,
-            slots: vec![Slot::EMPTY; usize::from(profile.horizon_blocks.max(1))].into_boxed_slice(),
+            slots,
             hist: [H_NONE; HISTORY_BLOCKS],
             last_real: [0; BLOCK_PAYLOAD_BYTES],
             have_last_real: false,
@@ -617,7 +724,83 @@ impl PlayoutEngine {
             last_now: None,
             stats: PlayoutStats::default(),
             diag: None,
-        })
+        }
+    }
+
+    /// Bytes an engine for `profile` occupies, wherever the caller puts the struct: the struct itself and its decoded playout queue.
+    /// The diagnostics ring ([`PlayoutEngine::enable_log`]) and allocator metadata are not included.
+    /// The struct holds every other piece of the engine inline (the pending latency change, the history, the arrival margins, the last
+    /// real block, the counters and the diagnostics handle); `usize::MAX` if the sum is not representable.
+    #[must_use]
+    pub const fn resident_bytes(profile: &PlayoutProfile) -> usize {
+        match Self::checked_resident_bytes(profile) {
+            Some(bytes) => bytes,
+            None => usize::MAX,
+        }
+    }
+
+    /// Heap bytes this engine holds now: the slot queue as the allocator actually gave it (`Vec::capacity`, which may exceed the count
+    /// that was asked for) and the diagnostics heap (the ring and the configuration's strings). The struct itself is
+    /// `size_of::<Self>()`; the two together are what a ledger charges for a built engine.
+    #[must_use]
+    pub fn owned_heap_bytes(&self) -> usize {
+        self.slots
+            .capacity()
+            .saturating_mul(SLOT_BYTES)
+            .saturating_add(self.log_heap_bytes())
+    }
+
+    const fn checked_resident_bytes(profile: &PlayoutProfile) -> Option<usize> {
+        footprint(
+            profile.queue_slots(),
+            SLOT_BYTES,
+            core::mem::size_of::<Self>(),
+        )
+    }
+
+    /// Build an engine only if it fits `budget_bytes`, the caller's line of its memory ledger for this stream. The configuration is
+    /// judged first; then [`PlayoutEngine::resident_bytes`] against the budget. A profile that does not fit is refused with a typed
+    /// [`CapacityError`] **before anything is allocated**: no smaller profile is substituted and no existing engine is touched, so a
+    /// stream that is playing is never evicted to make room.
+    ///
+    /// # Errors
+    /// An invalid configuration, or a profile that does not fit the budget.
+    pub fn new_within(
+        profile: PlayoutProfile,
+        cfg: PlayoutConfig,
+        budget_bytes: usize,
+    ) -> Result<Self, AdmitError> {
+        cfg.validate().map_err(AdmitError::Config)?;
+        let checked = Self::checked_resident_bytes(&profile);
+        if !matches!(checked, Some(needed) if needed <= budget_bytes) {
+            return Err(AdmitError::Capacity(CapacityError {
+                needed_bytes: checked.unwrap_or(usize::MAX),
+                budget_bytes,
+            }));
+        }
+        // Only now, with the configuration valid and the footprint admitted, is memory asked for, and it is asked for fallibly: an allocator
+        // that cannot give the slots is a typed refusal, not an abort. The `Vec` the reservation produced is the one the engine keeps.
+        let count = profile.queue_slots();
+        let mut slots: Vec<Slot> = Vec::new();
+        if slots.try_reserve_exact(count).is_err() {
+            return Err(AdmitError::Allocation(AllocationError {
+                requested_bytes: profile.playout_queue_bytes(),
+            }));
+        }
+        // The allocator may give more than was asked for (`try_reserve_exact` only promises at least): what is kept is what is charged,
+        // and it must still fit before the engine is published.
+        let kept = slots
+            .capacity()
+            .checked_mul(SLOT_BYTES)
+            .and_then(|queue| queue.checked_add(core::mem::size_of::<Self>()));
+        if !matches!(kept, Some(bytes) if bytes <= budget_bytes) {
+            return Err(AdmitError::Capacity(CapacityError {
+                needed_bytes: kept.unwrap_or(usize::MAX),
+                budget_bytes,
+            }));
+        }
+        slots.resize(count, Slot::EMPTY);
+        Ok(Self::with_slots(profile, cfg, slots))
     }
 
     #[must_use]

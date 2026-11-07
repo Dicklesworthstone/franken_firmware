@@ -454,6 +454,38 @@ fn check_frame_structure(wire: &[u8]) -> Result<usize, StreamError> {
     Ok(payload_len)
 }
 
+/// Unauthenticated header values used only to select an already admitted receiver.
+///
+/// Every value remains attacker-controlled. A hint cannot authorize a stream,
+/// epoch, frame or allocation, and it must never advance a replay window. The
+/// selected [`StreamReceiver`] must still [`accept`](StreamReceiver::accept) the
+/// original datagram before any packet reaches playout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UntrustedRouteHint {
+    pub stream_id: u64,
+    pub session_epoch: u64,
+    pub start_frame: u64,
+}
+
+/// Read a bounded routing hint without allocating, authenticating or changing state.
+///
+/// This reuses the wire decoder's structural checks and network-order offsets.
+/// It deliberately does not validate authenticated field semantics: even an
+/// altered header can yield a hint while the receiver rejects its MAC. Callers
+/// may use it to choose among existing bounded generation contexts, never to
+/// create one or treat a packet as admitted.
+///
+/// # Errors
+/// The same cheap length, magic and wire-version errors as the receiver.
+pub fn untrusted_route_hint(datagram: &[u8]) -> Result<UntrustedRouteHint, StreamError> {
+    check_frame_structure(datagram)?;
+    Ok(UntrustedRouteHint {
+        stream_id: be_u64(datagram, OFF_STREAM_ID),
+        session_epoch: be_u64(datagram, OFF_EPOCH),
+        start_frame: be_u64(datagram, OFF_START_FRAME),
+    })
+}
+
 fn compute_tag_16(key: &StreamKey, header: &[u8], payload: &[u8]) -> [u8; AUTH_TAG_LEN_BYTES] {
     let mut mac = HmacSha256::new_from_slice(&key.0).expect("32-byte HMAC key is valid");
     mac.update(AUTH_CONTEXT);
@@ -1219,6 +1251,124 @@ mod tests {
             fec_group_size: 0,
             payload,
         }
+    }
+
+    #[test]
+    fn n04_untrusted_route_hint_reads_network_order_without_admitting_a_packet() {
+        let mut packet = media_packet(7, 0x1122_3344_5566_7700, pcm(1, 9));
+        packet.stream_id = sid(0x1020_3040_5060_7080);
+        packet.session_epoch = 0x0102_0304_0506_0708;
+        let wire = packet.encode_signed(&key()).expect("valid signed packet");
+        assert_eq!(
+            untrusted_route_hint(&wire),
+            Ok(UntrustedRouteHint {
+                stream_id: packet.stream_id.get(),
+                session_epoch: packet.session_epoch,
+                start_frame: packet.start_frame,
+            })
+        );
+        let mut receiver = StreamReceiver::new(key(), packet.stream_id, packet.session_epoch);
+        assert_eq!(receiver.counters().accepted, 0);
+        assert_eq!(
+            receiver.accept(&wire).expect("hint did not consume it"),
+            packet
+        );
+        assert_eq!(receiver.counters().accepted, 1);
+    }
+
+    #[test]
+    fn n04_untrusted_route_hint_cannot_authorize_forged_header_or_payload() {
+        let packet = media_packet(7, 0, pcm(1, 9));
+        let wire = packet.encode_signed(&key()).expect("valid signed packet");
+        for offset in [
+            OFF_STREAM_ID,
+            OFF_EPOCH,
+            OFF_START_FRAME,
+            HEADER_LEN_BYTES,
+            wire.len() - 1,
+        ] {
+            let mut forged = wire.clone();
+            forged[offset] ^= 1;
+            assert!(untrusted_route_hint(&forged).is_ok());
+            let mut receiver = StreamReceiver::new(key(), packet.stream_id, packet.session_epoch);
+            assert_eq!(
+                receiver.accept(&forged),
+                Err(StreamError::AuthenticationFailed)
+            );
+            assert_eq!(receiver.counters().accepted, 0);
+            assert_eq!(
+                receiver
+                    .accept(&wire)
+                    .expect("forgery consumed no sequence"),
+                packet
+            );
+        }
+    }
+
+    #[test]
+    fn n04_untrusted_route_hint_does_not_validate_authenticated_field_semantics() {
+        let packet = media_packet(7, 0, pcm(1, 9));
+        let wire = packet.encode_signed(&key()).expect("valid signed packet");
+        let mut invalid = wire.clone();
+        invalid[OFF_FLAGS] |= CRITICAL_FLAGS_MASK;
+        remac(&mut invalid, &key());
+        assert!(untrusted_route_hint(&invalid).is_ok());
+        let mut receiver = StreamReceiver::new(key(), packet.stream_id, packet.session_epoch);
+        assert!(matches!(
+            receiver.accept(&invalid),
+            Err(StreamError::UnknownCriticalFlags { .. })
+        ));
+        assert_eq!(receiver.counters().accepted, 0);
+        assert_eq!(
+            receiver
+                .accept(&wire)
+                .expect("invalid fields consumed no sequence"),
+            packet
+        );
+    }
+
+    #[test]
+    fn n04_untrusted_route_hint_rejects_truncated_oversized_and_malformed_wire() {
+        let packet = media_packet(7, 0, pcm(1, 9));
+        let wire = packet.encode_signed(&key()).expect("valid signed packet");
+        for end in 0..wire.len() {
+            assert!(matches!(
+                untrusted_route_hint(&wire[..end]),
+                Err(StreamError::PacketTooShort(_) | StreamError::Truncated { .. })
+            ));
+        }
+        assert!(untrusted_route_hint(&wire).is_ok());
+        let maximum = media_packet(8, 256, pcm(FRAMES_PER_BLOCK, 9))
+            .encode_signed(&key())
+            .expect("maximum media payload");
+        assert_eq!(maximum.len(), MAX_DATAGRAM_BYTES);
+        assert!(untrusted_route_hint(&maximum).is_ok());
+        assert!(matches!(
+            untrusted_route_hint(&vec![0; MAX_DATAGRAM_BYTES + 1]),
+            Err(StreamError::DatagramTooLong { .. })
+        ));
+        let mut bad = wire.clone();
+        bad[0] ^= 1;
+        assert_eq!(untrusted_route_hint(&bad), Err(StreamError::BadMagic));
+        bad = wire.clone();
+        bad[OFF_VERSION] = WIRE_VERSION + 1;
+        assert!(matches!(
+            untrusted_route_hint(&bad),
+            Err(StreamError::UnsupportedWireVersion { .. })
+        ));
+        bad = wire.clone();
+        bad[OFF_PAYLOAD_LEN..OFF_PAYLOAD_LEN + 2]
+            .copy_from_slice(&((MAX_PAYLOAD_BYTES + 1) as u16).to_be_bytes());
+        assert!(matches!(
+            untrusted_route_hint(&bad),
+            Err(StreamError::PayloadTooLarge { .. })
+        ));
+        bad = wire;
+        bad.push(0);
+        assert!(matches!(
+            untrusted_route_hint(&bad),
+            Err(StreamError::TrailingBytes { .. })
+        ));
     }
 
     fn hex(bytes: &[u8]) -> String {

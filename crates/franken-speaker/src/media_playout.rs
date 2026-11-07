@@ -53,9 +53,11 @@ use franken_clock::group::{
 use franken_platform::clock::ClockError;
 use franken_platform::layer::PlatformLayer;
 use franken_platform::ops::KernelOps;
+use franken_platform::{MemoryBudgetLedger, PlatformAdmissionError};
 use franken_stream::playout::{
-    Admission, BLOCK_PAYLOAD_BYTES, ConfigError, Decision, MediaPacket, Outcome, PlayoutConfig,
-    PlayoutEngine, PlayoutProfile, PlayoutStats, Poll, StartReject as EngineStartReject,
+    Admission, AdmitError, BLOCK_PAYLOAD_BYTES, Decision, LogConfig, MediaPacket, Outcome,
+    PlayoutConfig, PlayoutEngine, PlayoutProfile, PlayoutStats, Poll,
+    StartReject as EngineStartReject,
 };
 use franken_stream::{ReceiverCounters, StreamError, StreamReceiver};
 
@@ -184,6 +186,81 @@ impl Preparation {
     }
 }
 
+/// Why a media path (or its diagnostics ring) was not admitted. Nothing is built or changed on a refusal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MediaAdmitError {
+    /// The platform ledger fails its own safety floor ([`MemoryBudgetLedger::verify_budget`]): the whole-system commitment leaves too
+    /// little headroom, whatever the stream line holds.
+    Platform(PlatformAdmissionError),
+    /// The engine refused: an invalid configuration (judged first), a footprint beyond the stream-and-jitter line that is left, or an
+    /// allocation the allocator could not give.
+    Engine(AdmitError),
+}
+
+impl MediaAdmitError {
+    /// A stable name: `memory_budget` for the platform floor, otherwise the engine's own code.
+    #[must_use]
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Platform(_) => "memory_budget",
+            Self::Engine(error) => error.code(),
+        }
+    }
+}
+
+/// The room the ledger's `stream_and_jitter_bytes` line leaves after `resident_elsewhere_bytes`, once the whole ledger passes its floor.
+fn stream_room(
+    ledger: &MemoryBudgetLedger,
+    resident_elsewhere_bytes: u64,
+) -> Result<usize, MediaAdmitError> {
+    ledger.verify_budget().map_err(MediaAdmitError::Platform)?;
+    let room = ledger
+        .stream_and_jitter_bytes
+        .saturating_sub(resident_elsewhere_bytes);
+    Ok(usize::try_from(room).unwrap_or(usize::MAX))
+}
+
+/// Bytes an engine holds: its struct, its slot queue as the allocator kept it, and the diagnostics heap (ring and configuration
+/// strings) if diagnostics are on.
+#[must_use]
+pub fn engine_resident_bytes(engine: &PlayoutEngine) -> u64 {
+    let bytes = core::mem::size_of::<PlayoutEngine>().saturating_add(engine.owned_heap_bytes());
+    u64::try_from(bytes).unwrap_or(u64::MAX)
+}
+
+/// The one admission of a playout engine: the configuration first, then the ledger's floor, then the footprint against the stream line
+/// that is left beside `resident_elsewhere_bytes`, then a fallible allocation. [`MediaPlayout::new`] and the virtual-house adapter both
+/// build their engines through it.
+///
+/// # Errors
+/// See [`MediaAdmitError`].
+pub fn admit_engine(
+    profile: PlayoutProfile,
+    config: PlayoutConfig,
+    ledger: &MemoryBudgetLedger,
+    resident_elsewhere_bytes: u64,
+) -> Result<PlayoutEngine, MediaAdmitError> {
+    config
+        .validate()
+        .map_err(|e| MediaAdmitError::Engine(AdmitError::Config(e)))?;
+    let room = stream_room(ledger, resident_elsewhere_bytes)?;
+    PlayoutEngine::new_within(profile, config, room).map_err(MediaAdmitError::Engine)
+}
+
+/// A synthetic platform ledger for tests: the nominal 32 MiB board's commitments, with `stream_and_jitter_bytes` set explicitly.
+#[cfg(test)]
+pub(crate) fn synthetic_ledger(stream_and_jitter_bytes: u64) -> MemoryBudgetLedger {
+    MemoryBudgetLedger {
+        nominal_ram_bytes: 32 * 1024 * 1024,
+        kernel_and_driver_reserved_bytes: 14 * 1024 * 1024,
+        dma_ring_reserved_bytes: 512 * 1024,
+        core_runtime_peak_bytes: 3 * 1024 * 1024,
+        stream_and_jitter_bytes,
+        native_integrations_bytes: 4 * 1024 * 1024,
+        required_safety_floor_bytes: MemoryBudgetLedger::MIN_SAFETY_FLOOR_BYTES,
+    }
+}
+
 /// One speaker's media path for one stream: the receiver, the playout engine and the clock view that joins them.
 #[derive(Debug)]
 pub struct MediaPlayout {
@@ -200,21 +277,66 @@ impl MediaPlayout {
     /// A consumer over `receiver` (built by the caller from the negotiated session), with a fresh engine. The engine is
     /// unbound: nothing is accepted into it until [`Self::admit_start`] succeeds.
     ///
+    /// Admission is part of building it. `ledger` is the platform's [`MemoryBudgetLedger`]: its whole-system floor is checked first
+    /// ([`MemoryBudgetLedger::verify_budget`]), then the path must fit the ledger's `stream_and_jitter_bytes` line **beside**
+    /// `resident_elsewhere_bytes`, the bytes the paths that stay resident while this one is built already hold (during a replacement,
+    /// the playing path's [`Self::resident_bytes`], so the old and the new count together at the peak; 0 for the first). This path's
+    /// receiver, clock bridge and counters (inline in this struct) are charged with its engine. A refusal builds nothing and touches
+    /// no other path; no smaller profile is substituted. The diagnostics ring is charged separately, when it is turned on
+    /// ([`Self::enable_diag_log`]).
+    ///
     /// # Errors
-    /// The engine's configuration is invalid.
+    /// The configuration is invalid (judged first), the ledger fails its floor, the footprint does not fit the line that is left, or
+    /// the allocator could not give the memory.
     pub fn new(
         receiver: StreamReceiver,
         profile: PlayoutProfile,
         config: PlayoutConfig,
-    ) -> Result<Self, ConfigError> {
+        ledger: &MemoryBudgetLedger,
+        resident_elsewhere_bytes: u64,
+    ) -> Result<Self, MediaAdmitError> {
+        let held = resident_elsewhere_bytes.saturating_add(Self::inline_bytes());
         Ok(Self {
             receiver,
-            engine: PlayoutEngine::new(profile, config)?,
+            engine: admit_engine(profile, config, ledger, held)?,
             bridge: ClockViewBridge::default(),
             clock_faults: 0,
             resolution_refusals: 0,
             resolution_refused: false,
         })
+    }
+
+    /// Bytes of this struct that are not the engine: the receiver, the clock bridge and the counters.
+    fn inline_bytes() -> u64 {
+        u64::try_from(core::mem::size_of::<Self>() - core::mem::size_of::<PlayoutEngine>())
+            .unwrap_or(u64::MAX)
+    }
+
+    /// Bytes this path holds: its inline state, the engine and its slot queue, and the diagnostics ring if one is on. This is the
+    /// `resident_elsewhere_bytes` a replacement candidate must be admitted beside.
+    #[must_use]
+    pub fn resident_bytes(&self) -> u64 {
+        engine_resident_bytes(&self.engine).saturating_add(Self::inline_bytes())
+    }
+
+    /// Turn the engine's diagnostics on (or restart them) under the same ledger line: the ring is charged beside this path's own bytes
+    /// and `resident_elsewhere_bytes`, and a restart counts the old ring and the new one together. A refusal leaves the log running as
+    /// it was.
+    ///
+    /// # Errors
+    /// The ledger fails its floor, the ring does not fit what is left of the line, or the allocator could not give it.
+    pub fn enable_diag_log(
+        &mut self,
+        log: LogConfig,
+        ledger: &MemoryBudgetLedger,
+        resident_elsewhere_bytes: u64,
+    ) -> Result<(), MediaAdmitError> {
+        let room = stream_room(ledger, resident_elsewhere_bytes)?;
+        let ring = u64::try_from(self.engine.log_heap_bytes()).unwrap_or(u64::MAX);
+        let own = usize::try_from(self.resident_bytes().saturating_sub(ring)).unwrap_or(usize::MAX);
+        self.engine
+            .enable_log_within(log, room.saturating_sub(own))
+            .map_err(MediaAdmitError::Engine)
     }
 
     /// The one local time every path uses. First the platform's reported resolution against the group clock's configured
@@ -404,7 +526,7 @@ mod tests {
     use franken_clock::group::{ClockStatus, GroupClockConfig, ProbeResponse};
     use franken_platform::abi::Abi;
     use franken_platform::ops::{Provenance, Timespec};
-    use franken_stream::playout::{BLOCK_FRAMES, frames_to_ns};
+    use franken_stream::playout::{BLOCK_FRAMES, CapacityError, ConfigError, frames_to_ns};
     use franken_stream::{OutboundFrame, StreamId, StreamKey, StreamSender};
     use std::cell::Cell;
     use std::rc::Rc;
@@ -510,8 +632,14 @@ mod tests {
                 lead_ns: 1_000_000,
                 tolerance_ns: 1_000_000,
             };
-            let media =
-                MediaPlayout::new(receiver, PlayoutProfile::MUSIC, config).expect("media path");
+            let media = MediaPlayout::new(
+                receiver,
+                PlayoutProfile::MUSIC,
+                config,
+                &synthetic_ledger(2 * 1024 * 1024),
+                0,
+            )
+            .expect("media path");
             Self {
                 time,
                 errno,
@@ -838,6 +966,163 @@ mod tests {
         let stats = rig.media.engine_stats();
         assert_eq!((stats.decided_real, stats.decided_muted_overdue), (2, 0));
         assert_eq!(rig.media.clock_faults(), 0);
+    }
+
+    fn media_config() -> PlayoutConfig {
+        PlayoutConfig {
+            work_ns: 2_000_000,
+            lead_ns: 1_000_000,
+            tolerance_ns: 1_000_000,
+        }
+    }
+
+    fn receiver() -> StreamReceiver {
+        StreamReceiver::new(key(), stream_id(), 1)
+    }
+
+    #[test]
+    fn a_replacement_that_does_not_fit_beside_the_playing_path_is_refused_atomically_and_the_playing_path_is_untouched()
+     {
+        let rig = Rig::new();
+        let before = rig.media.engine.snapshot();
+        let old = rig.media.resident_bytes();
+        let engine_need = PlayoutEngine::resident_bytes(&PlayoutProfile::MUSIC);
+        // The playing path and a candidate of the same profile hold the same bytes, so a line of 2 x old holds exactly both.
+        let one_short = synthetic_ledger(2 * old - 1);
+        let refused = MediaPlayout::new(
+            receiver(),
+            PlayoutProfile::MUSIC,
+            media_config(),
+            &one_short,
+            old,
+        )
+        .expect_err("no room beside the playing path");
+        assert_eq!(
+            refused,
+            MediaAdmitError::Engine(AdmitError::Capacity(CapacityError {
+                needed_bytes: engine_need,
+                budget_bytes: engine_need - 1,
+            }))
+        );
+        assert_eq!(refused.code(), "capacity");
+        assert_eq!(rig.media.engine.snapshot(), before);
+        assert_eq!(rig.media.resident_bytes(), old);
+        // Exactly enough for both: admitted, and the playing path is still the one it was.
+        let both = synthetic_ledger(2 * old);
+        let second = MediaPlayout::new(
+            receiver(),
+            PlayoutProfile::MUSIC,
+            media_config(),
+            &both,
+            old,
+        )
+        .expect("fits beside the playing path");
+        assert_eq!(second.resident_bytes(), old);
+        assert_eq!(rig.media.engine.snapshot(), before);
+        // Control: the same tight line admits the same profile when nothing else is resident, so the refusal was the overlap.
+        assert!(
+            MediaPlayout::new(
+                receiver(),
+                PlayoutProfile::MUSIC,
+                media_config(),
+                &one_short,
+                0
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_ledger_that_fails_its_floor_admits_nothing_and_a_bad_configuration_is_judged_before_the_ledger()
+     {
+        let mut failing = synthetic_ledger(2 * 1024 * 1024);
+        failing.nominal_ram_bytes = 20 * 1024 * 1024; // less than what is already committed
+        let refused = MediaPlayout::new(
+            receiver(),
+            PlayoutProfile::MUSIC,
+            media_config(),
+            &failing,
+            0,
+        )
+        .expect_err("the floor fails");
+        assert!(matches!(
+            refused,
+            MediaAdmitError::Platform(PlatformAdmissionError::MemoryBudgetExceeded { .. })
+        ));
+        assert_eq!(refused.code(), "memory_budget");
+        let bad = PlayoutConfig {
+            work_ns: 0,
+            ..media_config()
+        };
+        let refused = MediaPlayout::new(receiver(), PlayoutProfile::MUSIC, bad, &failing, 0)
+            .expect_err("the configuration is invalid");
+        assert_eq!(
+            refused,
+            MediaAdmitError::Engine(AdmitError::Config(ConfigError::WorkNotPositive))
+        );
+        // Control: the same ledger with a sound nominal size admits.
+        assert!(
+            MediaPlayout::new(
+                receiver(),
+                PlayoutProfile::MUSIC,
+                media_config(),
+                &synthetic_ledger(2 * 1024 * 1024),
+                0
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn the_diagnostic_ring_is_charged_to_the_same_line_and_a_refused_restart_keeps_the_old_ring() {
+        let log = |capacity| {
+            LogConfig::new(
+                "n04-media",
+                "unit",
+                "p-0123456789abcdef",
+                "p-fedcba9876543210",
+                capacity,
+            )
+            .expect("valid log configuration")
+        };
+        let mut rig = Rig::new();
+        let ring = PlayoutEngine::log_heap_bytes_for(&log(4)).expect("fits a usize");
+        let base = rig.media.resident_bytes();
+        let ring_u64 = u64::try_from(ring).expect("fits");
+        // Exactly the path plus one ring: admitted and accounted.
+        let exact = synthetic_ledger(base + ring_u64);
+        rig.media
+            .enable_diag_log(log(4), &exact, 0)
+            .expect("the ring fits exactly");
+        assert_eq!(rig.media.engine.log_heap_bytes(), ring);
+        assert_eq!(rig.media.resident_bytes(), base + ring_u64);
+        // A restart holds the old ring and the new one together: the same line cannot take it, and the old ring stays.
+        let refused = rig
+            .media
+            .enable_diag_log(log(4), &exact, 0)
+            .expect_err("old plus new do not fit");
+        assert!(matches!(
+            refused,
+            MediaAdmitError::Engine(AdmitError::Capacity(_))
+        ));
+        assert_eq!(rig.media.engine.log_heap_bytes(), ring);
+        assert!(rig.media.engine.log_stats().is_some());
+        // Room for both rings: the restart is admitted.
+        let both = synthetic_ledger(base + 2 * ring_u64);
+        rig.media
+            .enable_diag_log(log(4), &both, 0)
+            .expect("a restart fits with both rings");
+        assert_eq!(rig.media.engine.log_heap_bytes(), ring);
+        // One byte short of the first ring: refused, nothing turned on.
+        let mut fresh = Rig::new();
+        assert!(
+            fresh
+                .media
+                .enable_diag_log(log(4), &synthetic_ledger(base + ring_u64 - 1), 0)
+                .is_err()
+        );
+        assert_eq!(fresh.media.engine.log_heap_bytes(), 0);
+        assert!(fresh.media.engine.log_stats().is_none());
     }
 
     #[test]

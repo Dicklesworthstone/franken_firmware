@@ -397,6 +397,158 @@ fn n04_profiles_are_the_frozen_table() {
     observed(&json!({"id": "n04-profiles", "profile_version": PROFILE_VERSION}));
 }
 
+fn capacity_cfg() -> PlayoutConfig {
+    PlayoutConfig {
+        work_ns: 1_500_000,
+        lead_ns: 2_000_000,
+        tolerance_ns: 100_000,
+    }
+}
+
+fn zero_horizon() -> PlayoutProfile {
+    PlayoutProfile {
+        horizon_blocks: 0,
+        ..PlayoutProfile::REALTIME
+    }
+}
+
+#[test]
+fn n04_capacity_the_footprint_is_stated_from_the_slot_and_matches_what_new_builds() {
+    // A slot is the 1024-byte payload, a u16 frame count and a use flag: 1027 bytes, 1028 with the count's 2-byte alignment.
+    assert!(SLOT_BYTES >= BLOCK_PAYLOAD_BYTES + 2 + 1);
+    assert_eq!(SLOT_BYTES, 1028);
+    // 94 x 1028 = 96 632 and 9 x 1028 = 9 252, worked out by hand; a horizon of zero still gets the one slot new() builds.
+    assert_eq!(PlayoutProfile::MUSIC.playout_queue_bytes(), 96_632);
+    assert_eq!(PlayoutProfile::REALTIME.playout_queue_bytes(), 9_252);
+    assert_eq!(zero_horizon().playout_queue_bytes(), 1_028);
+    // The stated numbers are what new() builds, read off the engine itself.
+    for p in [
+        PlayoutProfile::MUSIC,
+        PlayoutProfile::REALTIME,
+        zero_horizon(),
+    ] {
+        let eng = PlayoutEngine::new(p, capacity_cfg()).expect("valid configuration");
+        assert_eq!(
+            eng.slots.len() * core::mem::size_of::<Slot>(),
+            p.playout_queue_bytes(),
+            "{}",
+            p.name
+        );
+        assert_eq!(
+            PlayoutEngine::resident_bytes(&p),
+            core::mem::size_of::<PlayoutEngine>() + p.playout_queue_bytes(),
+            "{}",
+            p.name
+        );
+    }
+    // The struct holds, at least, the history, the arrival margins and the last real block it declares.
+    assert!(
+        core::mem::size_of::<PlayoutEngine>()
+            >= HISTORY_BLOCKS + MARGIN_WINDOW * 8 + BLOCK_PAYLOAD_BYTES
+    );
+}
+
+#[test]
+fn n04_capacity_the_footprint_arithmetic_is_checked_and_the_widest_profile_is_refused_not_wrapped()
+{
+    assert_eq!(footprint(94, 1028, 1000), Some(94 * 1028 + 1000));
+    assert_eq!(footprint(0, 1028, 7), Some(7));
+    // The product wraps: refused, never a small number.
+    assert_eq!(footprint(usize::MAX, 2, 0), None);
+    assert_eq!(footprint(usize::MAX / 2 + 1, 2, 0), None);
+    // The largest product that fits, the sum landing exactly on the top, and the sum that wraps.
+    assert_eq!(footprint(usize::MAX / 2, 2, 0), Some(usize::MAX - 1));
+    assert_eq!(footprint(usize::MAX / 2, 2, 1), Some(usize::MAX));
+    assert_eq!(footprint(usize::MAX / 2, 2, 2), None);
+    // The widest profile a u16 horizon names is representable on this target (also a compile-time assertion), and a budget that fits
+    // the music profile refuses it with both numbers named, before anything is allocated.
+    let widest = PlayoutProfile {
+        horizon_blocks: u16::MAX,
+        ..PlayoutProfile::MUSIC
+    };
+    assert_eq!(
+        widest.playout_queue_bytes(),
+        usize::from(u16::MAX) * SLOT_BYTES
+    );
+    let music = PlayoutEngine::resident_bytes(&PlayoutProfile::MUSIC);
+    let wide = PlayoutEngine::resident_bytes(&widest);
+    assert_eq!(
+        wide,
+        usize::from(u16::MAX) * SLOT_BYTES + core::mem::size_of::<PlayoutEngine>()
+    );
+    assert!(matches!(
+        PlayoutEngine::new_within(widest, capacity_cfg(), music),
+        Err(AdmitError::Capacity(CapacityError { needed_bytes, budget_bytes }))
+            if needed_bytes == wide && budget_bytes == music
+    ));
+}
+
+#[test]
+fn n04_capacity_an_engine_is_built_only_within_its_budget_and_a_refusal_builds_nothing() {
+    let cfg = capacity_cfg();
+    let need = PlayoutEngine::resident_bytes(&PlayoutProfile::MUSIC);
+    let rt = PlayoutEngine::resident_bytes(&PlayoutProfile::REALTIME);
+    assert!(rt < need);
+    // Exactly the budget: admitted, and it is the engine new() builds.
+    let within = PlayoutEngine::new_within(PlayoutProfile::MUSIC, cfg, need).expect("fits exactly");
+    let plain = PlayoutEngine::new(PlayoutProfile::MUSIC, cfg).expect("valid configuration");
+    assert_eq!(within.snapshot(), plain.snapshot());
+    assert_eq!(within.profile(), plain.profile());
+    // One byte short: a typed capacity error that names both numbers.
+    let short = PlayoutEngine::new_within(PlayoutProfile::MUSIC, cfg, need - 1)
+        .expect_err("one byte short is refused");
+    assert_eq!(
+        short,
+        AdmitError::Capacity(CapacityError {
+            needed_bytes: need,
+            budget_bytes: need - 1,
+        })
+    );
+    assert_eq!(short.code(), "capacity");
+    // No budget at all is a refusal too, and a generous one admits.
+    assert_eq!(
+        PlayoutEngine::new_within(PlayoutProfile::MUSIC, cfg, 0).expect_err("no budget"),
+        AdmitError::Capacity(CapacityError {
+            needed_bytes: need,
+            budget_bytes: 0,
+        })
+    );
+    assert!(PlayoutEngine::new_within(PlayoutProfile::MUSIC, cfg, usize::MAX).is_ok());
+    // A profile that does not fit is refused, not shrunk: the realtime budget builds realtime and refuses music.
+    assert!(PlayoutEngine::new_within(PlayoutProfile::REALTIME, cfg, rt).is_ok());
+    let music_in_realtime_budget = PlayoutEngine::new_within(PlayoutProfile::MUSIC, cfg, rt);
+    assert!(matches!(
+        music_in_realtime_budget,
+        Err(AdmitError::Capacity(CapacityError { needed_bytes, budget_bytes })) if needed_bytes == need && budget_bytes == rt
+    ));
+    // The configuration is judged first, whatever the budget.
+    let bad = PlayoutConfig { work_ns: 0, ..cfg };
+    for budget in [0, need - 1, need, usize::MAX] {
+        let refused = PlayoutEngine::new_within(PlayoutProfile::MUSIC, bad, budget)
+            .expect_err("an invalid configuration is never built");
+        assert_eq!(
+            refused,
+            AdmitError::Config(ConfigError::WorkNotPositive),
+            "{budget}"
+        );
+        assert_eq!(refused.code(), "work_ns");
+    }
+    observed(&json!({
+        "id": "n04-capacity",
+        "slot_bytes": SLOT_BYTES,
+        "inline_bytes": core::mem::size_of::<PlayoutEngine>(),
+        "music_queue_bytes": PlayoutProfile::MUSIC.playout_queue_bytes(),
+        "realtime_queue_bytes": PlayoutProfile::REALTIME.playout_queue_bytes(),
+        "zero_horizon_queue_bytes": zero_horizon().playout_queue_bytes(),
+        "music_resident_bytes": need,
+        "realtime_resident_bytes": rt,
+        "admitted_at_budget": true,
+        "refused_one_byte_short": {"needed_bytes": need, "budget_bytes": need - 1, "code": short.code()},
+        "config_error_wins_at_zero_budget": AdmitError::Config(ConfigError::WorkNotPositive).code(),
+        "realtime_budget_refuses_music": true,
+    }));
+}
+
 #[test]
 fn n04_frames_to_ns_table_matches_the_reference_and_the_hand_derived_anchors() {
     let rows = vectors()["tables"]["frames_to_ns"].as_array().unwrap();

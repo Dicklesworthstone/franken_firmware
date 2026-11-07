@@ -12,8 +12,8 @@ use crate::control_adapter::{
     VolumeStep, exercise_group_volume_set,
 };
 use crate::playout_adapter::{
-    CampaignTimeline, LinkFault, NodePlayout, Played, PlayoutMemberReport, PreviousEpoch, Publish,
-    SendLink, Silence,
+    CampaignTimeline, LinkFault, NodePlayout, OpenRefusal, Played, PlayoutMemberReport,
+    PreparedStream, PreviousEpoch, Publish, SendLink, Silence,
 };
 use franken_board_profile::{BoardProfile, synthetic_test_fixture_catalog};
 use franken_clock::LatencyLedger;
@@ -344,6 +344,36 @@ fn stream_refused_event(
     }
 }
 
+/// Why a member could not prepare its next stream. Typed and static: nothing here allocates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SwitchRefusal {
+    /// The member has a sender but no media key or receiver.
+    Incomplete,
+    /// The simulated stream id was refused.
+    StreamId,
+    /// The playout refused to open the stream.
+    Open(OpenRefusal),
+}
+
+impl core::fmt::Display for SwitchRefusal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Incomplete => f.write_str("has a sender but no media key or receiver"),
+            Self::StreamId => f.write_str("the simulated stream id was refused"),
+            Self::Open(refusal) => core::fmt::Display::fmt(refusal, f),
+        }
+    }
+}
+
+/// Everything a member needs to switch to its next stream, built and admitted ahead of the commit: the new stream id, the
+/// receiver's epoch, the media key and the prepared playout generation.
+pub(crate) struct PreparedSwitch {
+    id: StreamId,
+    epoch: u64,
+    key: StreamKey,
+    stream: PreparedStream,
+}
+
 /// Per-speaker node in the Virtual House simulator (`Q01` / `ffw-gmq`).
 pub struct VirtualSpeakerNode {
     pub member_id: String,
@@ -375,6 +405,10 @@ pub struct VirtualSpeakerNode {
     pub(crate) stream_key: Option<StreamKey>,
     /// The sender of the stream a source change replaced: what a planted `StaleStreamDatagram` sends with.
     pub(crate) replaced_sender: Option<StreamSender>,
+    /// The platform ledger this node was admitted with (its board's): the budget every stream it opens is admitted against.
+    pub(crate) memory_budget: MemoryBudgetLedger,
+    /// The next stream, built and admitted but not live (see `prepare_switch`): kept until the whole group commits or discards it.
+    pub(crate) pending_switch: Option<PreparedSwitch>,
     /// Real blocks played per source epoch, identified from the bytes that sounded.
     pub(crate) source_blocks: BTreeMap<u64, u64>,
     /// FNV-1a over every sample this node rendered, in block, channel and frame order (see [`fnv1a_extend_samples`]).
@@ -762,6 +796,11 @@ struct Scenario {
     /// What the source's two channels are. Under [`SourceSignal::Asymmetric`] the campaign also asks that every member that was
     /// sent audio and sounded it rendered something.
     signal: SourceSignal,
+    /// Test-only injection at the source-change point: the named member's stream line is cut to hold the engine it is playing and one
+    /// candidate, less one byte, so its next stream is refused for capacity. The campaign EXPECTS exactly that typed refusal from that
+    /// member: it records one refusal and carries on with the old source, and every other refusal still fails the campaign. A run in which
+    /// the expected refusal does not happen fails too.
+    expect_capacity_refusal: Option<&'static str>,
 }
 
 impl Scenario {
@@ -769,7 +808,25 @@ impl Scenario {
         source_switch: None,
         volume: None,
         signal: SourceSignal::Opposed,
+        expect_capacity_refusal: None,
     };
+}
+
+/// The stable code under which the arbiter report records the one expected capacity refusal.
+const EXPECTED_CAPACITY_REFUSAL_CODE: &str = "MEMORY_ADMISSION_CAPACITY";
+
+/// True only for the one refusal a scenario expects: the member at `expected_index` refusing its next stream for CAPACITY of the shared
+/// admission. A platform-floor refusal, an allocation refusal, another member, a plan, epoch, program or race failure is not it.
+fn is_expected_capacity_refusal(refusal: &GroupRefusal, expected_index: Option<usize>) -> bool {
+    matches!(
+        refusal,
+        GroupRefusal::Member {
+            index,
+            refusal: SwitchRefusal::Open(OpenRefusal::Admission(
+                crate::media_playout::MediaAdmitError::Engine(franken_stream::playout::AdmitError::Capacity(_))
+            )),
+        } if Some(*index) == expected_index
+    )
 }
 
 /// The two racing adapters' identities, as the arbiter sees them. Synthetic labels.
@@ -955,9 +1012,144 @@ impl SourceDesk {
 /// minted. The winner's start begins a new stream: every member that has a stream cuts over at the first block its sender has
 /// not sent yet (drain to a common future cutover), with a new stream id, its receiver rebound, a new sender and a new engine.
 /// Returns the cutover block.
+#[cfg(test)]
 fn execute_source_switch(
     switch: SourceSwitch,
     total_blocks: u64,
+    session: &UnifiedGroupSession,
+    desk: &mut SourceDesk,
+    nodes: &mut BTreeMap<String, VirtualSpeakerNode>,
+) -> Result<u64, String> {
+    switch_group(switch, total_blocks, session, desk, nodes)
+        .map_err(|refusal| refusal.describe(nodes))
+}
+
+/// Why a group source change was refused. Where memory pressure can cause the refusal it is typed and static (a member's index and its
+/// [`SwitchRefusal`], or a unit variant), and every prepared candidate has ALREADY been released when it is returned: text is made
+/// from it only afterwards, by [`GroupRefusal::describe`], outside the bounded prepare path.
+#[derive(Debug)]
+enum GroupRefusal {
+    /// The plan itself was refused before anything was prepared (the members disagree on the cutover, none has a stream, or it is
+    /// too late). Cold invariant text; nothing was built that could leak.
+    Plan(String),
+    /// The source epoch cannot advance.
+    EpochExhausted,
+    /// The member at `index` (in the order of the nodes map) refused to prepare its next stream.
+    Member {
+        index: usize,
+        refusal: SwitchRefusal,
+    },
+    /// The program could not be given room for the new entry.
+    ProgramRoom,
+    /// The arbiter race failed one of its own invariants.
+    Race(String),
+}
+
+impl GroupRefusal {
+    /// The campaign's text for this refusal. This is the only place that formats; it runs after the refusal was returned.
+    fn describe(self, nodes: &BTreeMap<String, VirtualSpeakerNode>) -> String {
+        match self {
+            Self::Plan(text) | Self::Race(text) => text,
+            Self::EpochExhausted => "the source epoch is exhausted".to_string(),
+            Self::Member { index, refusal } => {
+                let member = nodes
+                    .values()
+                    .nth(index)
+                    .map_or("(unknown member)", |node| node.member_id.as_str());
+                format!("member {member}: {refusal}")
+            }
+            Self::ProgramRoom => {
+                "the program could not be given room for the new stream".to_string()
+            }
+        }
+    }
+}
+
+/// The group switch: plan, PREPARE every member, make room, race at the arbiter, COMMIT every member. A refusal at any step before the
+/// commit releases every member's candidate first and leaves the arbiter, the program and every member as they were.
+fn switch_group(
+    switch: SourceSwitch,
+    total_blocks: u64,
+    session: &UnifiedGroupSession,
+    desk: &mut SourceDesk,
+    nodes: &mut BTreeMap<String, VirtualSpeakerNode>,
+) -> Result<u64, GroupRefusal> {
+    // 1. The cutover: where every member's sender stands now. Reads only.
+    let mut cutover = None;
+    for (id, node) in nodes.iter() {
+        if node.coordinator_sender.is_none() {
+            continue;
+        }
+        let first_unsent = node.playout.first_unsent();
+        match cutover {
+            None => cutover = Some(first_unsent),
+            Some(agreed) if agreed != first_unsent => {
+                return Err(GroupRefusal::Plan(format!(
+                    "member {id} would cut over at block {first_unsent}, the others at {agreed}"
+                )));
+            }
+            Some(_) => {}
+        }
+    }
+    let Some(cutover) = cutover else {
+        return Err(GroupRefusal::Plan(
+            "no member has a stream to switch".to_string(),
+        ));
+    };
+    if cutover >= total_blocks {
+        return Err(GroupRefusal::Plan(format!(
+            "the source change was admitted too late: the new stream would start at block {cutover} of {total_blocks}"
+        )));
+    }
+    // 2. The epoch the winning start must mint, checked: an exhausted arbiter refuses here, before anything is prepared.
+    let expected_epoch = desk
+        .arbiter
+        .view(session)
+        .epoch
+        .get()
+        .checked_add(1)
+        .ok_or(GroupRefusal::EpochExhausted)?;
+    // 3. PREPARE every member's next stream (its engine, admitted against its own ledger, and the room for it) while the arbiter, the
+    //    program and every member's identity are still as they were. One member's refusal is kept typed, every candidate is released,
+    //    and only then is it returned.
+    let mut failed: Option<(usize, SwitchRefusal)> = None;
+    for (index, node) in nodes.values_mut().enumerate() {
+        if let Err(refusal) = node.prepare_switch(expected_epoch, cutover) {
+            failed = Some((index, refusal));
+            break;
+        }
+    }
+    if let Some((index, refusal)) = failed {
+        discard_prepared_switches(nodes);
+        return Err(GroupRefusal::Member { index, refusal });
+    }
+    // 4. The commit will add one program entry: make room for it now, so that step cannot fail for want of memory either.
+    if desk.program.entries.try_reserve(1).is_err() {
+        discard_prepared_switches(nodes);
+        return Err(GroupRefusal::ProgramRoom);
+    }
+    // 5. The race at the arbiter, then the commit: nothing past a successful race can fail.
+    match race_and_commit_source_switch(switch, cutover, session, desk, nodes) {
+        Ok(cutover) => Ok(cutover),
+        Err(text) => {
+            discard_prepared_switches(nodes);
+            Err(GroupRefusal::Race(text))
+        }
+    }
+}
+
+/// Drop every member's prepared stream: the candidates are released and nothing live was ever changed.
+fn discard_prepared_switches(nodes: &mut BTreeMap<String, VirtualSpeakerNode>) {
+    for node in nodes.values_mut() {
+        node.pending_switch = None;
+    }
+}
+
+/// The arbiter race for a switch whose every member has already prepared, then the infallible commit of the program and of every
+/// member. An error before the commit leaves the members as they were (the caller discards their candidates).
+fn race_and_commit_source_switch(
+    switch: SourceSwitch,
+    cutover: u64,
     session: &UnifiedGroupSession,
     desk: &mut SourceDesk,
     nodes: &mut BTreeMap<String, VirtualSpeakerNode>,
@@ -1027,30 +1219,8 @@ fn execute_source_switch(
         .clone()
         .ok_or_else(|| "a start left the group with no owner".to_string())?;
 
-    let mut cutover = None;
-    for (id, node) in nodes.iter() {
-        if node.coordinator_sender.is_none() {
-            continue;
-        }
-        let first_unsent = node.playout.first_unsent();
-        match cutover {
-            None => cutover = Some(first_unsent),
-            Some(agreed) if agreed != first_unsent => {
-                return Err(format!(
-                    "member {id} would cut over at block {first_unsent}, the others at {agreed}"
-                ));
-            }
-            Some(_) => {}
-        }
-    }
-    let cutover = cutover.ok_or_else(|| "no member has a stream to switch".to_string())?;
-    if cutover >= total_blocks {
-        return Err(format!(
-            "the source change was admitted too late: the new stream would start at block {cutover} of {total_blocks}"
-        ));
-    }
     for node in nodes.values_mut() {
-        node.switch_stream(admitted.epoch.get(), cutover)?;
+        node.commit_switch();
     }
     desk.program.push(cutover, owner, admitted.epoch);
     desk.report.cutover_block = Some(cutover);
@@ -1104,26 +1274,68 @@ impl VirtualSpeakerNode {
     /// receiver is told over the control channel"): a new stream id on the same media key, the member's real receiver rebound
     /// to it, a new sender, and a new playout engine bound at the cutover. The old sender is kept: a replaced adapter's
     /// datagrams are what a planted `StaleStreamDatagram` sends. A member with no stream has nothing to switch.
+    /// This member's stream after a source change, in one step: [`Self::prepare_switch`] and, only if it succeeded,
+    /// [`Self::commit_switch`]. A refusal leaves the member exactly as it was.
     fn switch_stream(&mut self, source_epoch: u64, cutover_block: u64) -> Result<(), String> {
-        let Some(old_sender) = self.coordinator_sender.take() else {
+        self.prepare_switch(source_epoch, cutover_block)
+            .map_err(|e| format!("member {}: {e}", self.member_id))?;
+        self.commit_switch();
+        Ok(())
+    }
+
+    /// Build and admit the next stream without changing anything live: the media key, the receiver's epoch and the new stream id are
+    /// read, the playout generation is built and admitted against this node's own ledger, and the result is kept in
+    /// `pending_switch`. A member with no stream has nothing to prepare. Every refusal is typed; no text is made here.
+    fn prepare_switch(
+        &mut self,
+        source_epoch: u64,
+        cutover_block: u64,
+    ) -> Result<(), SwitchRefusal> {
+        self.pending_switch = None;
+        if self.coordinator_sender.is_none() {
             return Ok(());
-        };
-        let (Some(key), Some(receiver)) = (self.stream_key.clone(), self.receiver.as_mut()) else {
-            self.coordinator_sender = Some(old_sender);
-            return Err(format!(
-                "member {}: has a sender but no media key or receiver",
-                self.member_id
-            ));
+        }
+        let (Some(key), Some(epoch)) = (
+            self.stream_key.clone(),
+            self.receiver.as_ref().map(StreamReceiver::active_epoch),
+        ) else {
+            return Err(SwitchRefusal::Incomplete);
         };
         let id = StreamId::new(simulated_stream_id(&self.member_id, source_epoch))
-            .map_err(|e| e.to_string())?;
-        let epoch = receiver.active_epoch();
-        receiver.bind_stream(id, epoch);
-        self.coordinator_sender = Some(StreamSender::new(key, id, epoch));
-        self.replaced_sender = Some(old_sender);
-        self.playout
-            .open_stream(id.get(), epoch, cutover_block)
-            .map_err(|e| format!("member {}: {e}", self.member_id))
+            .map_err(|_| SwitchRefusal::StreamId)?;
+        let stream = self
+            .playout
+            .prepare_stream(id.get(), epoch, cutover_block, &self.memory_budget)
+            .map_err(SwitchRefusal::Open)?;
+        self.pending_switch = Some(PreparedSwitch {
+            id,
+            epoch,
+            key,
+            stream,
+        });
+        Ok(())
+    }
+
+    /// Make the prepared stream live: the generation is committed, the receiver is rebound, and the new sender replaces the old one,
+    /// which is kept (a replaced adapter's datagrams are what a planted `StaleStreamDatagram` sends). It cannot fail; with nothing
+    /// prepared it does nothing.
+    fn commit_switch(&mut self) {
+        let Some(PreparedSwitch {
+            id,
+            epoch,
+            key,
+            stream,
+        }) = self.pending_switch.take()
+        else {
+            return;
+        };
+        self.playout.commit_stream(id.get(), stream);
+        if let Some(receiver) = self.receiver.as_mut() {
+            receiver.bind_stream(id, epoch);
+        }
+        self.replaced_sender = self
+            .coordinator_sender
+            .replace(StreamSender::new(key, id, epoch));
     }
 
     pub fn bring_up_admitted(
@@ -1265,6 +1477,7 @@ impl VirtualSpeakerNode {
                 CAMPAIGN_STREAM_ID,
                 initial_epoch,
                 Self::block_pts_group_ns(0),
+                &budget,
             )?
         } else {
             NodePlayout::unbound()
@@ -1292,6 +1505,8 @@ impl VirtualSpeakerNode {
             previous_epoch: link.previous_epoch,
             stream_key: link.media_key,
             replaced_sender: None,
+            memory_budget: budget,
+            pending_switch: None,
             source_blocks: BTreeMap::new(),
             output_digest: OUTPUT_DIGEST_START,
             audible_authentic_blocks: 0,
@@ -1967,17 +2182,42 @@ fn run_campaign_scenario(
         if let Some(switch) = scenario.source_switch
             && switch.block == blk_idx
         {
-            let cutover =
-                execute_source_switch(switch, total_blocks, &session, &mut desk, &mut nodes)?;
-            if matches!(fault, Some(OutputFault::ReplacedSourceKeepsPublishing)) {
-                stale_publisher_from = Some(cutover);
-                sink.emit_critical(fault_injected_event(
-                    seed,
-                    blk_idx,
-                    send_time_ns,
-                    &session,
-                    fault,
-                ));
+            // The expected-refusal scenario cuts the named member's line here, then the typed group boundary decides.
+            let expected_index = match scenario.expect_capacity_refusal {
+                Some(member) => {
+                    let node = nodes.get_mut(member).ok_or_else(|| {
+                        "the expected capacity refusal names a member the house does not have"
+                            .to_string()
+                    })?;
+                    let held = node.playout.resident_bytes();
+                    node.memory_budget.stream_and_jitter_bytes =
+                        held.saturating_mul(2).saturating_sub(1);
+                    nodes.keys().position(|id| id == member)
+                }
+                None => None,
+            };
+            match switch_group(switch, total_blocks, &session, &mut desk, &mut nodes) {
+                Ok(cutover) => {
+                    if matches!(fault, Some(OutputFault::ReplacedSourceKeepsPublishing)) {
+                        stale_publisher_from = Some(cutover);
+                        sink.emit_critical(fault_injected_event(
+                            seed,
+                            blk_idx,
+                            send_time_ns,
+                            &session,
+                            fault,
+                        ));
+                    }
+                }
+                // Only the selected, typed, expected refusal is a rejected control command; the old source plays on.
+                Err(refusal) if is_expected_capacity_refusal(&refusal, expected_index) => {
+                    *desk
+                        .report
+                        .refused
+                        .entry(EXPECTED_CAPACITY_REFUSAL_CODE.to_string())
+                        .or_default() += 1;
+                }
+                Err(other) => return Err(other.describe(&nodes)),
             }
         }
         // Volume steps of this block run before anything reads the session's gain, after any source change, so a step and a
@@ -2342,6 +2582,18 @@ fn run_campaign_scenario(
             fault: None,
             cause: None,
         });
+    }
+
+    // A scenario that expected the capacity refusal and did not get exactly one is a failure, not a pass.
+    if scenario.expect_capacity_refusal.is_some()
+        && desk
+            .report
+            .refused
+            .get(EXPECTED_CAPACITY_REFUSAL_CODE)
+            .copied()
+            != Some(1)
+    {
+        return Err("the expected capacity refusal did not happen exactly once".to_string());
     }
 
     // What the arbiter ended with, before the fencing probe moves the group to a newer epoch.
@@ -5189,6 +5441,343 @@ mod tests {
             endpoint.output_fnv1a64,
             silent_digest(FAULT_BLOCKS, endpoint.hardware_channels),
             "the endpoint member renders silence: its digest cannot see its volume"
+        );
+    }
+
+    #[test]
+    fn a_later_member_that_cannot_be_funded_leaves_every_member_the_arbiter_and_the_program_unchanged()
+     {
+        let session = UnifiedGroupSession::new("grp-test", "spk-a", 1);
+        let mut desk = SourceDesk::start(&session).expect("the first source starts");
+        let mut nodes: BTreeMap<String, VirtualSpeakerNode> = BTreeMap::new();
+        for id in ["spk-a", "spk-b"] {
+            let mut node = VirtualSpeakerNode::bring_up_admitted(id, fixture_board("S5"), 1)
+                .expect("bring-up");
+            node.playout.set_first_unsent(20);
+            nodes.insert(id.to_string(), node);
+        }
+        let switch = SourceSwitch {
+            block: 20,
+            first: Racer::AirPlay,
+        };
+        let funded = nodes["spk-b"].memory_budget.clone();
+        let held = nodes["spk-b"].playout.resident_bytes();
+        nodes
+            .get_mut("spk-b")
+            .expect("member")
+            .memory_budget
+            .stream_and_jitter_bytes = 2 * held - 1;
+        let epoch_before = desk.arbiter.view(&session).epoch.get();
+        let admitted_before = desk.report.admitted;
+        let program_before = desk.program.entries.len();
+        // The typed refusal, before any text: the second member (index 1), a capacity refusal of the shared admission.
+        let typed = switch_group(switch, 40, &session, &mut desk, &mut nodes)
+            .expect_err("the later member cannot be funded");
+        assert!(matches!(
+            typed,
+            GroupRefusal::Member {
+                index: 1,
+                refusal: SwitchRefusal::Open(OpenRefusal::Admission(
+                    crate::media_playout::MediaAdmitError::Engine(
+                        franken_stream::playout::AdmitError::Capacity(_)
+                    )
+                )),
+            }
+        ));
+        assert_eq!(desk.report.admitted, admitted_before);
+        let err = execute_source_switch(switch, 40, &session, &mut desk, &mut nodes)
+            .expect_err("the later member cannot be funded");
+        assert!(
+            err.contains("spk-b") && err.contains("admission refused: capacity"),
+            "{err}"
+        );
+        // The arbiter and the program never moved ...
+        assert_eq!(desk.arbiter.view(&session).epoch.get(), epoch_before);
+        assert_eq!(desk.report.admitted, admitted_before);
+        assert_eq!(desk.program.entries.len(), program_before);
+        assert_eq!(desk.report.cutover_block, None);
+        // ... and neither did any member, the earlier one included: no candidate kept, one generation, no replaced sender, and the
+        // old stream still authenticates.
+        for id in ["spk-a", "spk-b"] {
+            let node = nodes.get_mut(id).expect("member");
+            assert!(node.pending_switch.is_none(), "{id}");
+            assert_eq!(node.playout.stream_count(), 1, "{id}");
+            assert!(node.replaced_sender.is_none(), "{id}");
+            node_block(node, false, 0).expect("the old stream still authenticates");
+        }
+        // Control: funded, the same call switches every member, and the arbiter and the program move together.
+        nodes.get_mut("spk-b").expect("member").memory_budget = funded;
+        let cutover = execute_source_switch(switch, 40, &session, &mut desk, &mut nodes)
+            .expect("a funded group switch");
+        assert_eq!(cutover, 20);
+        assert_eq!(desk.arbiter.view(&session).epoch.get(), epoch_before + 1);
+        assert_eq!(desk.report.admitted, admitted_before + 1);
+        assert_eq!(desk.program.entries.len(), program_before + 1);
+        assert_eq!(desk.report.cutover_block, Some(20));
+        for id in ["spk-a", "spk-b"] {
+            let node = nodes.get_mut(id).expect("member");
+            assert!(node.pending_switch.is_none(), "{id}");
+            assert_eq!(node.playout.stream_count(), 2, "{id}");
+            assert!(node.replaced_sender.is_some(), "{id}");
+            node_block(node, false, 1).expect("the new stream authenticates");
+        }
+    }
+
+    /// The member that sorts last: a LATER member in the order the group switch prepares them.
+    fn later_member() -> &'static str {
+        let mut ids = CAMPAIGN_MEMBER_IDS.to_vec();
+        ids.sort_unstable();
+        ids.last().copied().expect("the house has members")
+    }
+
+    fn refusal_scenario() -> Scenario {
+        Scenario {
+            expect_capacity_refusal: Some(later_member()),
+            ..scenario_at(VOLUME_SWITCH_AT, Racer::AirPlay)
+        }
+    }
+
+    #[test]
+    fn an_expected_capacity_refusal_at_the_source_change_leaves_the_house_playing_the_old_source_as_with_no_change()
+     {
+        let baseline = run_scenario(SEED, FAULT_BLOCKS, None, Scenario::NONE)
+            .expect("the same seed with no source change");
+        let funded = run_scenario(
+            SEED,
+            FAULT_BLOCKS,
+            None,
+            scenario_at(VOLUME_SWITCH_AT, Racer::AirPlay),
+        )
+        .expect("the funded source change");
+        let refused = run_scenario(SEED, FAULT_BLOCKS, None, refusal_scenario())
+            .expect("the expected refusal is handled and the campaign continues");
+        // One refusal is on record, and the arbiter ended exactly where the no-change campaign did: same epoch, same owner, no cutover.
+        assert_eq!(
+            refused.source,
+            SourceReport {
+                admitted: 1,
+                refused: BTreeMap::from([(EXPECTED_CAPACITY_REFUSAL_CODE.to_string(), 1)]),
+                final_epoch: baseline.source.final_epoch,
+                final_owner: baseline.source.final_owner.clone(),
+                cutover_block: None,
+            }
+        );
+        // Every member kept playing the old source, block for block, exactly as with no change: the same blocks per source epoch and
+        // the same samples, long after the attempted cutover.
+        let attempted_cutover = cutover_for(VOLUME_SWITCH_AT);
+        assert!(
+            attempted_cutover < FAULT_BLOCKS,
+            "the run goes past the cutover"
+        );
+        for (id, stats) in &refused.members {
+            let base = &baseline.members[id];
+            assert_eq!(stats.source_blocks, base.source_blocks, "{id}");
+            assert_eq!(stats.output_fnv1a64, base.output_fnv1a64, "{id}");
+            assert_eq!(stats.rendered_blocks, base.rendered_blocks, "{id}");
+            assert_eq!(stats.authentic_blocks, base.authentic_blocks, "{id}");
+            assert_eq!(stats.playout, base.playout, "{id}");
+            let old_epoch_blocks: u64 = stats.source_blocks.values().sum();
+            assert!(
+                old_epoch_blocks > attempted_cutover,
+                "{id}: real old-source blocks after the attempted cutover"
+            );
+            assert_eq!(
+                stats.source_blocks.len(),
+                1,
+                "{id}: only the old source ever sounded"
+            );
+        }
+        // The funded control still switches (the refusal was the injected shortfall, not the switch), and it does change the program.
+        assert_eq!(funded.source.cutover_block, Some(attempted_cutover));
+        assert_eq!(
+            funded.source.refused.get(EXPECTED_CAPACITY_REFUSAL_CODE),
+            None
+        );
+        assert!(
+            funded
+                .members
+                .values()
+                .any(|stats| stats.source_blocks.len() == 2)
+        );
+    }
+
+    #[test]
+    fn an_expected_refusal_that_does_not_happen_or_names_nobody_fails_and_only_the_selected_variant_is_accepted()
+     {
+        // The expectation with no source change in the scenario: nothing is refused, and the campaign says so.
+        let err = run_scenario(
+            SEED,
+            FAULT_BLOCKS,
+            None,
+            Scenario {
+                expect_capacity_refusal: Some(later_member()),
+                ..Scenario::NONE
+            },
+        )
+        .expect_err("an expected refusal that never happened is a failure");
+        assert!(err.contains("expected capacity refusal"), "{err}");
+        // A member the house does not have.
+        let err = run_scenario(
+            SEED,
+            FAULT_BLOCKS,
+            None,
+            Scenario {
+                expect_capacity_refusal: Some("spk-nobody"),
+                ..scenario_at(VOLUME_SWITCH_AT, Racer::AirPlay)
+            },
+        )
+        .expect_err("the expectation names a member that is not in the house");
+        assert!(err.contains("does not have"), "{err}");
+        // The filter itself: exactly the selected member with a capacity refusal of the shared admission, nothing else.
+        let capacity = || {
+            SwitchRefusal::Open(OpenRefusal::Admission(
+                crate::media_playout::MediaAdmitError::Engine(
+                    franken_stream::playout::AdmitError::Capacity(
+                        franken_stream::playout::CapacityError {
+                            needed_bytes: 2,
+                            budget_bytes: 1,
+                        },
+                    ),
+                ),
+            ))
+        };
+        assert!(is_expected_capacity_refusal(
+            &GroupRefusal::Member {
+                index: 4,
+                refusal: capacity()
+            },
+            Some(4)
+        ));
+        assert!(!is_expected_capacity_refusal(
+            &GroupRefusal::Member {
+                index: 3,
+                refusal: capacity()
+            },
+            Some(4)
+        ));
+        assert!(!is_expected_capacity_refusal(
+            &GroupRefusal::Member {
+                index: 4,
+                refusal: capacity()
+            },
+            None
+        ));
+        let allocation = SwitchRefusal::Open(OpenRefusal::Admission(
+            crate::media_playout::MediaAdmitError::Engine(
+                franken_stream::playout::AdmitError::Allocation(
+                    franken_stream::playout::AllocationError { requested_bytes: 1 },
+                ),
+            ),
+        ));
+        assert!(!is_expected_capacity_refusal(
+            &GroupRefusal::Member {
+                index: 4,
+                refusal: allocation
+            },
+            Some(4)
+        ));
+        assert!(!is_expected_capacity_refusal(
+            &GroupRefusal::Member {
+                index: 4,
+                refusal: SwitchRefusal::Incomplete
+            },
+            Some(4)
+        ));
+        for other in [
+            GroupRefusal::EpochExhausted,
+            GroupRefusal::ProgramRoom,
+            GroupRefusal::Plan("x".to_string()),
+            GroupRefusal::Race("x".to_string()),
+        ] {
+            assert!(!is_expected_capacity_refusal(&other, Some(4)), "{other:?}");
+        }
+    }
+
+    fn node_block(
+        node: &mut VirtualSpeakerNode,
+        from_replaced: bool,
+        blk: u64,
+    ) -> Result<(), StreamError> {
+        let frame = franken_stream::OutboundFrame::media(
+            blk * 256,
+            1_000_000_000 + blk * 5_333_333,
+            994_000_000 + blk * 5_333_333,
+            vec![0x11; 1024],
+        );
+        let sender = if from_replaced {
+            node.replaced_sender.as_mut().expect("a replaced sender")
+        } else {
+            node.coordinator_sender.as_mut().expect("a sender")
+        };
+        let wire = sender.send(frame).expect("encodes");
+        node.receiver
+            .as_mut()
+            .expect("a receiver")
+            .accept(&wire)
+            .map(|_| ())
+    }
+
+    #[test]
+    fn a_source_change_the_ledger_cannot_fund_is_refused_whole_and_the_old_stream_still_authenticates()
+     {
+        let mut node = VirtualSpeakerNode::bring_up_admitted("spk-test", fixture_board("S5"), 1)
+            .expect("bring-up");
+        assert!(
+            node.coordinator_sender.is_some(),
+            "the nominal bring-up negotiates a stream"
+        );
+        let funded = node.memory_budget.clone();
+        let held = node.playout.resident_bytes();
+        node_block(&mut node, false, 0).expect("the old stream authenticates before the change");
+        // A stream line that holds the playing engine and one candidate, less one byte.
+        node.memory_budget.stream_and_jitter_bytes = 2 * held - 1;
+        let err = node
+            .switch_stream(2, 10)
+            .expect_err("no room beside the playing stream");
+        assert!(err.contains("admission refused: capacity"), "{err}");
+        // Nothing the active stream stands on moved: one generation, no replaced sender, the same sender and receiver.
+        assert_eq!(node.playout.stream_count(), 1);
+        assert!(node.replaced_sender.is_none());
+        let accepted = node
+            .receiver
+            .as_ref()
+            .expect("receiver")
+            .counters()
+            .accepted;
+        let wrong_before = node
+            .receiver
+            .as_ref()
+            .expect("receiver")
+            .counters()
+            .rejected_wrong_stream;
+        node_block(&mut node, false, 1)
+            .expect("the old stream still authenticates after the refusal");
+        let counters = node.receiver.as_ref().expect("receiver").counters();
+        assert_eq!(counters.accepted, accepted + 1);
+        assert_eq!(counters.rejected_wrong_stream, wrong_before);
+        // Control: the same member with a funded line switches, rebinds the receiver and keeps the old sender as the stale one.
+        node.memory_budget = funded;
+        node.switch_stream(2, 10).expect("a funded source change");
+        assert_eq!(node.playout.stream_count(), 2);
+        assert!(node.replaced_sender.is_some());
+        node_block(&mut node, false, 2).expect("the new stream authenticates");
+        let wrong = node
+            .receiver
+            .as_ref()
+            .expect("receiver")
+            .counters()
+            .rejected_wrong_stream;
+        assert!(
+            node_block(&mut node, true, 3).is_err(),
+            "the replaced stream no longer authenticates"
+        );
+        assert_eq!(
+            node.receiver
+                .as_ref()
+                .expect("receiver")
+                .counters()
+                .rejected_wrong_stream,
+            wrong + 1
         );
     }
 
