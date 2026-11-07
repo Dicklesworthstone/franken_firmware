@@ -26,11 +26,17 @@ The feature set was taken from the pinned manifests, and cross-checked against t
 
 The audit's structural pins read `env!("CARGO_MANIFEST_DIR")/src/**` (and `tests/*`), and one census walks all of `src`. Inside
 asupersync that is the asupersync root; here it would name this harness. `tests/cancel_audit.rs` defines a `macro_rules! env` that
-answers `CARGO_MANIFEST_DIR` with `ASUP_ROOT` and passes every other `env!` through. `build.rs` sets `ASUP_ROOT` only after
+answers only `CARGO_MANIFEST_DIR` with `ASUP_ROOT`; these immutable audit files make no other environment query.
+A new unsupported query fails compilation. `build.rs` sets `ASUP_ROOT` only after
 `provenance/verify.rs` proves the directory is the pinned commit, clean. A wrong or missing tree fails the build; it cannot pass a pin.
 Consequence: libtest names are `audit::<name>` and `audit::stream_cancellation::<name>`.
 
-## Run (central; nothing here was built or run when this was written)
+## Run (central)
+
+The focused all-target compile and strict all-target Clippy passed remotely on
+2026-11-07 after correcting an unused macro arm and a test-helper type alias.
+The 48 original tests and 14 provenance controls have **not run** in this harness;
+neither compile result qualifies cancellation behavior or the broader P05 bead.
 
 ```
 python3 scripts/audit_check.py static
@@ -51,7 +57,7 @@ python3 scripts/audit_check.py run audit.log --exit-status "$status"      # --re
 3. **Lint gate on asupersync itself.** A dependency is compiled with `--cap-lints allow`, so `-D warnings` no longer gates
    asupersync's own code here (the broad clippy lane still does). It still gates the audit and this harness.
 4. **Test names** carry the `audit::` prefix (above).
-5. **Assumptions not yet shown by a build:** `macro_rules! env` shadows the built-in `env!` for the audit module; Cargo's git
+5. **Compile observations, still awaiting native execution:** `macro_rules! env` shadows the built-in `env!` for the audit module; Cargo's git
    checkout lives at `$CARGO_HOME/git/checkouts/asupersync-*/<rev prefix>`, keeps its `.git`, and `git` can read it (git refuses
    a directory owned by another user; the build then fails with git's words rather than skipping the check). If any is wrong
    the build or the guard fails; none can produce a pass.

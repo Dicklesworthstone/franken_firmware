@@ -311,7 +311,8 @@ fn modify_conformance_manifest(root: &Path) {
 fn every_departure_from_the_pinned_clean_checkout_is_rejected_by_name() {
     // (what is done to a fresh clean checkout, text the refusal must contain). Each repository is accepted before it is touched,
     // so the refusal is the change and not the repository.
-    let cases: [(fn(&Path), &str); 6] = [
+    type CheckoutDeparture = fn(&Path);
+    let cases: [(CheckoutDeparture, &str); 6] = [
         (modify_source, "src/a.rs"),
         (add_untracked_source, "src/extra.rs"),
         (add_ignored_source, "src/hidden.rs"),
