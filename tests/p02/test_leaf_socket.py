@@ -408,11 +408,11 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(sorted(known - cited), [], "a leaf Rust test the contract does not name")
         self.assertEqual(sorted(cited - known), [], "names that are not leaf tests")
 
-    def test_the_file_table_and_the_unsafe_surface_paragraph_say_twelve(self):
+    def test_the_file_table_and_the_unsafe_surface_paragraph_say_fourteen(self):
         row = next(line for line in self.doc.splitlines() if line.startswith("| `crates/franken-platform-linux/` |"))
-        self.assertIn("twelve typed wrappers", row)
+        self.assertIn("fourteen typed wrappers", row)
         self.assertIn("socket route plan and the release admission", row)
-        self.assertIn("**plus twelve typed wrappers**", self.doc)
+        self.assertIn("**plus fourteen typed wrappers**", self.doc)
         self.assertIn("the only\nother `unsafe` site", self.doc)
 
 

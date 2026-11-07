@@ -1,0 +1,133 @@
+{
+  "scope": "Additive datagram ABI policy and syscall routing only",
+  "base_revision": "fe32efe68ba784e795b369a42e6a2ee7ffd0dedb",
+  "new_component_tests": {
+    "datagram_policy": 16,
+    "route": 7,
+    "passed": 23,
+    "failed": 0
+  },
+  "parent_native_run": {
+    "command_exit_code": 101,
+    "passed": 752,
+    "failed": 3,
+    "ignored": 1,
+    "failed_tests": [
+      "net_carrier::tests::n07_s1_zero_loss_paced_delivery_into_the_playout_path",
+      "net_carrier::tests::n07_s2_a_slow_peer_is_isolated_bounded_and_recovers_with_fresh_audio_only",
+      "net_carrier::tests::n07_s4_interface_and_address_events_keep_identity_resume_muted_and_refuse_stale_paths"
+    ]
+  },
+  "source_inputs": {
+    "crates/franken-platform/src/datagram.rs": "cbbc20ac8b0c16d7d43c0ef931fc499fccb4e718da1fba13a3e37b4a890c3458",
+    "crates/franken-platform/src/lib.rs": "888f420af6b096e32c0fb17a4498e4c0f733d3062e9c5e5de3b95436574ae0d0",
+    "crates/franken-platform-linux/src/datagram_route.rs": "72daa0bd8c33c1094d49b297351f9dd059c5d2d2f66959edff8fffb9df87b897",
+    "crates/franken-platform-linux/src/lib.rs": "9e91a50a733165b9c042d63e9a3d57ce9c38af700500dd833414a2ad6db1e3de",
+    "crates/franken-platform-linux/src/sys.rs": "70a20e326cef6ec873905b82d2c6af9745713176993d90e897f48282e9f2a147",
+    "docs/contracts/p02.md": "dec9d4dcbd7e4e0896b2aea9c47bd7d3eac4d3c0711dbb9c9c077cfb80bef714",
+    "tests/p02/test_leaf_socket.py": "f2ad0f3f2281f68b6127611b6f7cceea245cb363e9bd93a4465453e9d5f538c9",
+    "tests/p02/test_socket_slice.py": "ade73b90333c24b4bd6c40ff318feb22ad78872fe46dd26ba9dd55fa8fc6c39b"
+  },
+  "gates": {
+    "parent_native": {
+      "command_exit_code": 101,
+      "receipt_root": "aa6a858a549246cb6740140cdaf9ef05bac98298d0d92e0c06ac8be73b0c346d",
+      "raw_log_sha256": "fcee31fca6bdd003ece84ec5bc40a49a52aa8dfb68cb1138fdb8721c9250459c",
+      "source_manifest_files": 1249,
+      "source_mismatches_at_review": [],
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "owner_presence": "absent",
+      "sources_released": true,
+      "tree_retired": true,
+      "pair_released": true,
+      "staging_released": null,
+      "retired": true
+    },
+    "host_clippy": {
+      "command_exit_code": 0,
+      "receipt_root": "28559470c7a0b128b4134f6ae5abaa6a5d6c1d6080247ab853b34bce9b6b209e",
+      "raw_log_sha256": "a9362ca6cc2964a25b4bede2a87bd0ec71f6f7b95d01d8a7f371ed5d06b90c13",
+      "source_manifest_files": 1249,
+      "source_mismatches_at_review": [],
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "owner_presence": "absent",
+      "sources_released": true,
+      "tree_retired": true,
+      "pair_released": true,
+      "staging_released": true,
+      "retired": true
+    },
+    "powerpc_check": {
+      "command_exit_code": 0,
+      "receipt_root": "f5b4c0e6fef5a44c6113ac100f22587a7f516280a922581208a6266dfcb939ae",
+      "raw_log_sha256": "455600341e9ba13630e7fedf42c488c39d711cb70dc2e119fd2498ad08a2ce64",
+      "source_manifest_files": 1249,
+      "source_mismatches_at_review": [],
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "owner_presence": "absent",
+      "sources_released": true,
+      "tree_retired": true,
+      "pair_released": true,
+      "staging_released": true,
+      "retired": true
+    },
+    "mips_check": {
+      "command_exit_code": 0,
+      "receipt_root": "fcd30b2bf32e76e5c3c55fc09bfbf5a27cfbaafff970b536d69daa3b71041e39",
+      "raw_log_sha256": "6113e387faed650133bcbd3a4255a30f8ad6d79e5f1302c8640aec1e1400e608",
+      "source_manifest_files": 1249,
+      "source_mismatches_at_review": [],
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "owner_presence": "absent",
+      "sources_released": true,
+      "tree_retired": true,
+      "pair_released": true,
+      "staging_released": true,
+      "retired": true
+    },
+    "powerpc_clippy": {
+      "command_exit_code": 0,
+      "receipt_root": "aa6e540e8399d4124e58bc4220c1b7c01ca5d210c85a20d809ee7d52eac1b1dd",
+      "raw_log_sha256": "448925e64dd792a8cc5d4929c42af962266cac73f20eb517cc5e71e85896769c",
+      "source_manifest_files": 1249,
+      "source_mismatches_at_review": [],
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "owner_presence": "absent",
+      "sources_released": true,
+      "tree_retired": true,
+      "pair_released": true,
+      "staging_released": true,
+      "retired": true
+    },
+    "mips_clippy": {
+      "command_exit_code": 0,
+      "receipt_root": "dabd69d1c721f35a7152cb7cf143cd57b5055794efa4e34ee02e105639ed97d0",
+      "raw_log_sha256": "c556b66a4132ace0ceedf2a979ffe4f88e7ef8699c65fdf0c4ddf57e3ca0c655",
+      "source_manifest_files": 1249,
+      "source_mismatches_at_review": [],
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "owner_presence": "absent",
+      "sources_released": true,
+      "tree_retired": true,
+      "pair_released": true,
+      "staging_released": true,
+      "retired": true
+    }
+  },
+  "target_execution": "Neither BE guest has issued these socketcalls; compile and lint only for the unsafe leaf. Host policy tests use scripted KernelOps.",
+  "admission": {
+    "full_p02": false,
+    "full_n07": false,
+    "production_or_board": false,
+    "combined_e06_refresh_pending": true
+  },
+  "publication_note": "Evidence files added after captures. All eight selected inputs match every recorded gate. The broader carrier remains uncommitted and failed three speaker tests.",
+  "native.log_sha256": "10ee6579ad4ff31b03dd90f7491b276af9c996ededd88890cc22bb6d3bbde92b",
+  "parent-failures.log_sha256": "de183a6cbf124ab760fded2cdffb35d5cc737fe7541d3310319dce9456bc0751"
+}

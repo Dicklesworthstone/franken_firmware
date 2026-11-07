@@ -25,6 +25,10 @@
 //!   is `socketcall`, whose sub-call 18 is `paccept` (a different call) on a v2.6.27 kernel, so that release is refused **by name, before any socket
 //!   call**; MIPS o32 uses the direct calls and is admitted on any release. The five socket calls compile on both BE targets, but no
 //!   guest has issued a `socketcall`. Which words each call is issued as is [`socket_route::issue_for`], host-tested; `sys.rs` only executes them.
+//! * **The datagram carrier seam is a second, additive step on the same admission.** [`SocketKernel`] also implements
+//!   `franken_platform::datagram::DatagramOps` (`sendto`, `recvfrom`), two more wrappers in `sys.rs`. Both are issued as `socketcall` sub-calls 11
+//!   and 12 on **both** ABIs, with the words decided by [`datagram_route`] (host-tested, no `unsafe`); there is no wider trampoline. No guest has
+//!   issued a `socketcall` on either ABI, and on MIPS o32 these would be the first (the leaf's other socket calls are direct there).
 //! * It declares [`Provenance::Kernel`] and the ABI it was compiled for, which [`PlatformLayer::admit`] checks against the
 //!   profile's.
 //! * The socket wrappers have no guest execution proof. Other startup operations have run on the named QEMU harness kernels; the
@@ -35,6 +39,7 @@
 #![cfg_attr(target_arch = "mips", feature(asm_experimental_arch))]
 #![deny(unsafe_code)]
 
+pub mod datagram_route;
 pub mod numbers;
 pub mod socket_route;
 
@@ -65,6 +70,7 @@ mod backend {
     use super::sys;
     use crate::socket_route::{self, SocketRefusal};
     use franken_platform::abi::Abi;
+    use franken_platform::datagram::DatagramOps;
     use franken_platform::ops::{KernelOps, Provenance, Timespec};
     use franken_platform::socket::SocketOps;
     use std::time::Instant;
@@ -175,6 +181,23 @@ mod backend {
 
         fn recv(&mut self, fd: i32, buf: &mut [u8], flags: u32) -> isize {
             sys::recv(fd, buf, flags)
+        }
+    }
+
+    impl DatagramOps for SocketKernel {
+        fn sendto(&mut self, fd: i32, buf: &[u8], flags: u32, addr: &[u8]) -> isize {
+            sys::sendto(fd, buf, flags, addr)
+        }
+
+        fn recvfrom(
+            &mut self,
+            fd: i32,
+            buf: &mut [u8],
+            flags: u32,
+            addr: &mut [u8],
+            addr_len: &mut u32,
+        ) -> isize {
+            sys::recvfrom(fd, buf, flags, addr, addr_len)
         }
     }
 

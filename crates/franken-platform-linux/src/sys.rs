@@ -21,7 +21,13 @@
 //!    whether a call is direct or goes through `socketcall`, is decided by [`crate::socket_route::issue_for`] from the plan in
 //!    [`crate::numbers`]; this module executes the result and chooses nothing. **No guest has issued a `socketcall`**; the five socket wrappers
 //!    compile on both BE targets but have no socket guest-execution proof.
+//! 6. The two datagram wrappers (`sendto`, `recvfrom`) go through `socketcall` on **both** ABIs, with the six words decided by
+//!    [`crate::datagram_route`], and add one obligation to invariant 2: `recvfrom`'s last word is the address of a local-to-the-call
+//!    `u32` (an exclusively borrowed `&mut u32`) that the kernel reads once, as the room it has for the sender's address, and overwrites once,
+//!    as that address's real length. The room is set from the address buffer's own length just before the call and never exceeds it. A
+//!    `socklen_t` is the kernel's 32-bit `int` on both ABIs, and user space and kernel are both big-endian, so no byte swap is involved.
 
+use crate::datagram_route::{DatagramCall, datagram_issue_for, recvfrom_words, sendto_words};
 use crate::numbers::{Numbers, socket_plan_for};
 use crate::socket_route::{
     Issue, accept4_args, bind_args, issue_for, listen_args, recv_args, socket_args,
@@ -311,5 +317,54 @@ pub(crate) fn recv(fd: i32, buf: &mut [u8], flags: u32) -> isize {
     );
     // SAFETY: invariants 1, 2 and 5: the buffer word is the address of `buf`, exclusively borrowed for the whole call, and the length word is its
     // length; the kernel writes at most that many bytes.
+    unsafe { execute(issue) }
+}
+
+/// `sendto(fd, buf, buf.len(), flags, addr, addr.len())`, issued as `socketcall(sendto, &block)`.
+pub(crate) fn sendto(fd: i32, buf: &[u8], flags: u32, addr: &[u8]) -> isize {
+    let issue = datagram_issue_for(
+        COMPILED_ABI,
+        DatagramCall::SendTo,
+        sendto_words(
+            fd,
+            buf.as_ptr() as usize,
+            buf.len(),
+            flags,
+            addr.as_ptr() as usize,
+            addr.len(),
+        ),
+    );
+    // SAFETY: invariants 1, 2, 5 and 6: the buffer and address words are the addresses of `buf` and `addr`, borrowed for the whole call, and the
+    // length words are their lengths; the kernel reads at most that many bytes from each.
+    unsafe { execute(issue) }
+}
+
+/// `recvfrom(fd, buf, buf.len(), flags, addr, &addr_len)`, issued as `socketcall(recvfrom, &block)`. The room offered for the sender's address is
+/// `addr.len()`, whatever `*addr_len` held on entry; on return `*addr_len` is what the kernel reported.
+pub(crate) fn recvfrom(
+    fd: i32,
+    buf: &mut [u8],
+    flags: u32,
+    addr: &mut [u8],
+    addr_len: &mut u32,
+) -> isize {
+    // The room is the address buffer's own length, never more, so the kernel cannot write past `addr`. (A buffer that does not fit the 32-bit
+    // length is offered no room at all.)
+    *addr_len = u32::try_from(addr.len()).unwrap_or(0);
+    let issue = datagram_issue_for(
+        COMPILED_ABI,
+        DatagramCall::RecvFrom,
+        recvfrom_words(
+            fd,
+            buf.as_mut_ptr() as usize,
+            buf.len(),
+            flags,
+            addr.as_mut_ptr() as usize,
+            core::ptr::from_mut(addr_len) as usize,
+        ),
+    );
+    // SAFETY: invariants 1, 2, 5 and 6: the buffer and address words are the addresses of `buf` and `addr`, exclusively borrowed for the whole call,
+    // and the kernel writes at most `buf.len()` and `*addr_len` (= `addr.len()`) bytes; the last word is the address of `addr_len`, an
+    // exclusively borrowed `u32` that the kernel reads once and overwrites once.
     unsafe { execute(issue) }
 }

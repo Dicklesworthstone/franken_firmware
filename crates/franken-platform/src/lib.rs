@@ -18,6 +18,10 @@ pub mod wall_clock;
 #[cfg(any(test, feature = "sim"))]
 pub mod sim;
 
+// The datagram carrier seam (`N07`, on `P02`): `sendto` and `recvfrom`, additive to `socket`. Declared apart from the ordered group above, which
+// `tests/p06/test_durable.py` pins as `clock`, `durable`, `entropy` in a row.
+pub mod datagram;
+
 use crate::entropy::EntropyAvailability;
 use franken_board_profile::{BoardProfile, CpuIsa};
 use serde::{Deserialize, Serialize};

@@ -1,0 +1,16 @@
+test net_carrier::tests::n07_s1_zero_loss_paced_delivery_into_the_playout_path ... FAILED
+---- net_carrier::tests::n07_s1_zero_loss_paced_delivery_into_the_playout_path stdout ----
+thread 'net_carrier::tests::n07_s1_zero_loss_paced_delivery_into_the_playout_path' (3282717) panicked at crates/franken-speaker/src/net_carrier/tests.rs:1293:5:
+assertion `left == right` failed
+  left: PortFaults { send_path_unavailable: 0, send_message_too_long: 0, send_other: 0, recv_path_unavailable: 0, recv_discarded: 0, recv_other: 0, rebinds: 1, rebind_failures: 0 }
+ right: PortFaults { send_path_unavailable: 0, send_message_too_long: 0, send_other: 0, recv_path_unavailable: 0, recv_discarded: 0, recv_other: 0, rebinds: 0, rebind_failures: 0 }
+test net_carrier::tests::n07_s2_a_slow_peer_is_isolated_bounded_and_recovers_with_fresh_audio_only ... FAILED
+---- net_carrier::tests::n07_s2_a_slow_peer_is_isolated_bounded_and_recovers_with_fresh_audio_only stdout ----
+thread 'net_carrier::tests::n07_s2_a_slow_peer_is_isolated_bounded_and_recovers_with_fresh_audio_only' (3282756) panicked at crates/franken-speaker/src/net_carrier/tests.rs:1367:9:
+block 50 was presented before the room came back and must not be heard
+test net_carrier::tests::n07_s4_interface_and_address_events_keep_identity_resume_muted_and_refuse_stale_paths ... FAILED
+---- net_carrier::tests::n07_s4_interface_and_address_events_keep_identity_resume_muted_and_refuse_stale_paths stdout ----
+thread 'net_carrier::tests::n07_s4_interface_and_address_events_keep_identity_resume_muted_and_refuse_stale_paths' (3283564) panicked at crates/franken-speaker/src/net_carrier/tests.rs:1670:5:
+assertion `left == right` failed
+  left: [Rebind { ip: 127.0.0.1, attempt: 1 }, ReleaseStale { old_ip: 127.0.0.2 }, Resume { ip: 127.0.0.1, generation: 4 }]
+ right: [Rebind { ip: 127.0.0.1, attempt: 1 }, ReleaseStale { old_ip: 127.0.0.2 }, Resume { ip: 127.0.0.1, generation: 3 }]
