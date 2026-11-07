@@ -52,6 +52,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 VECTORS = os.path.join(HERE, "vectors.json")
 PAIRED_TRACE = os.path.join(HERE, "paired_trace.json")
+BOUNDARY_TRACE = os.path.join(HERE, "boundary_trace.json")
 CONTRACT = os.path.join(REPO, "docs", "contracts", "n04.md")
 TIERS = ("smoke", "full")  # the tiers that judge cases
 ALL_TIERS = TIERS + ("soak",)
@@ -140,6 +141,7 @@ def _load(name: str) -> Any:
 
 ref, gen, anchors = _load("reference"), _load("generate"), _load("anchors")
 paired = _load("paired")
+boundary = _load("boundary")
 
 
 def _load_d01_parser() -> Any:
@@ -209,9 +211,11 @@ def _case(cid: str, group: str, tier: str, what: str, tests: List[Tuple[str, str
 def registry() -> List[dict]:
     cases = [
         _case("N04-PROFILES", "AC-CAPS", "smoke",
-              "music and realtime policies are the frozen table (horizon, conceal maximum, notice, step, net cap); invalid configs refused",
-              T("n04_profiles_are_the_frozen_table", "n04_invalid_configurations_are_refused_field_by_field"),
-              ["n04-profiles", "n04-configs"]),
+              "music and realtime policies are the frozen table (horizon, conceal maximum, notice, step, net cap); invalid configs refused; the "
+              "realtime horizon, notice and step edges hold at the edge and one step past it through the real engine",
+              T("n04_profiles_are_the_frozen_table", "n04_invalid_configurations_are_refused_field_by_field",
+                "n04_realtime_profile_boundaries_hold_exactly_through_the_real_engine"),
+              ["n04-profiles", "n04-configs", "n04-realtime-boundaries"]),
         _case("N04-CUTOFF-FORMULA", "AC-CUTOFF", "smoke",
               "frame-to-time mapping and consume_by = presentation - work - lead - uncertainty, clamped at zero, against hand-derived anchors",
               T("n04_frames_to_ns_table_matches_the_reference_and_the_hand_derived_anchors",
@@ -474,6 +478,7 @@ def expected_records(vec: dict) -> Dict[str, dict]:
     out["n04-sender-consume-by"] = {"id": "n04-sender-consume-by",
                                     "cutoff": ref.consume_by(2_000_000_000, cfg["work_ns"], cfg["lead_ns"], 200_000)}
     out["n04-paired-seeded"] = paired.expected_record()
+    out["n04-realtime-boundaries"] = boundary.expected_record()
     return out
 
 
@@ -650,6 +655,8 @@ def compare_log(oid: str, want: dict, got: dict) -> Optional[str]:
 def compare_record(vec: dict, oid: str, want: dict, got: dict) -> Optional[str]:
     if oid == "n04-paired-seeded":
         return paired.compare_record(want, got)
+    if oid == "n04-realtime-boundaries":
+        return boundary.compare_record(want, got)
     if oid.startswith(("n04-log-w", "n04-logscn-")):
         return compare_log(oid, want, got)
     if "results" in want:
@@ -757,9 +764,15 @@ def meta_results(vec: Optional[dict], note: str) -> List[Result]:
             paired_fresh = json.load(handle) == paired.fixture()
     except (OSError, ValueError):
         paired_fresh = False
-    add("N04-META-VECTORS-FRESH", fresh == vec and paired_fresh,
-        "vectors.json and additive paired_trace.json equal fresh generations" if fresh == vec and paired_fresh
-        else "vectors.json or paired_trace.json is missing or stale; preserve original worlds and regenerate only the changed fixture")
+    try:
+        with open(BOUNDARY_TRACE, encoding="utf-8") as handle:
+            boundary_fresh = json.load(handle) == boundary.fixture()
+    except (OSError, ValueError):
+        boundary_fresh = False
+    fixtures_fresh = paired_fresh and boundary_fresh
+    add("N04-META-VECTORS-FRESH", fresh == vec and fixtures_fresh,
+        "vectors.json and the additive paired_trace.json and boundary_trace.json equal fresh generations" if fresh == vec and fixtures_fresh
+        else "vectors.json, paired_trace.json or boundary_trace.json is missing or stale; preserve original worlds and regenerate only the changed fixture")
 
     cases = registry()
     mapped = {(stem, name) for case in cases for stem, name in case["tests"]}
@@ -832,6 +845,7 @@ def run(tier: str, logs: Optional[Logs]) -> Tuple[List[Result], dict]:
     results = meta_results(vec, note)
     meta = {"vectors_sha256": sha256_file(VECTORS) if vec is not None else None,
             "paired_trace_sha256": sha256_file(PAIRED_TRACE) if os.path.isfile(PAIRED_TRACE) else None,
+            "boundary_trace_sha256": sha256_file(BOUNDARY_TRACE) if os.path.isfile(BOUNDARY_TRACE) else None,
             "profile_version": ref.PROFILE_VERSION}
     if vec is None:
         return results, meta

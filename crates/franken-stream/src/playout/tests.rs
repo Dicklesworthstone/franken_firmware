@@ -411,6 +411,58 @@ fn n04_both_policies_replay_the_identical_seeded_trace_with_backpressure() {
     );
 }
 
+/// The realtime profile's edges, each at the edge and one step past it, through the real engine: a packet for block cursor+8 (the last of 9 slots)
+/// is admitted and plays while cursor+9 is `too_far_ahead` and never queued; a change effective 2 blocks ahead is accepted while 1 is `too_soon`;
+/// a step of exactly 4 blocks is accepted while 4 blocks and one nanosecond, and 5 blocks, are `transition_too_large`. The expectations are written
+/// in the fixture from the contract; the judge re-derives every result from the independent reference.
+#[test]
+fn n04_realtime_profile_boundaries_hold_exactly_through_the_real_engine() {
+    // The edges are derived from this table; if it changes, the fixture must be rethought, not silently re-aimed.
+    let rt = PlayoutProfile::REALTIME;
+    assert_eq!(
+        (rt.horizon_blocks, rt.notice_blocks, rt.max_step_blocks),
+        (9, 2, 4)
+    );
+    let fixture: Value =
+        serde_json::from_str(include_str!("../../../../tests/n04/boundary_trace.json"))
+            .expect("boundary fixture parses");
+    assert_eq!(fixture["schema"], "ffw.n04.realtime-boundaries.v1");
+    let worlds = fixture["worlds"].as_array().expect("worlds");
+    assert_eq!(worlds.len(), 3);
+    let all_ops: Vec<Value> = worlds.iter().map(|world| world["ops"].clone()).collect();
+    let trace_digest = digest(&all_ops);
+    assert_eq!(trace_digest, text(&fixture["trace_digest"]));
+    let mut records = Vec::new();
+    for world in worlds {
+        let id = text(&world["id"]);
+        assert_eq!(world["profile"], "realtime", "{id}");
+        let results = run_world(world);
+        let labels = world["labels"].as_object().expect("labels");
+        for e in world["expect"].as_array().expect("expect") {
+            let label = text(&e["label"]);
+            let result = &results[usize::try_from(u(&labels[label])).unwrap()];
+            assert_eq!(
+                dig(result, text(&e["key"])),
+                &e["value"],
+                "{id}: {label}.{} in {result}",
+                text(&e["key"])
+            );
+        }
+        let got = digest(&results);
+        assert_eq!(
+            got,
+            text(&fixture["expected_digests"][id]),
+            "{id}: the results differ from the reference (the judge names the first op)"
+        );
+        records.push(json!({"id": id, "digest": got, "results": results}));
+    }
+    observed(&json!({
+        "id": "n04-realtime-boundaries",
+        "trace_digest": trace_digest,
+        "worlds": records
+    }));
+}
+
 const WORLD_IDS: [&str; 24] = [
     "W01-ONTIME",
     "W02-CUTOFF-BOUNDARY",

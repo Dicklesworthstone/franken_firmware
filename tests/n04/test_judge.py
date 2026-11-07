@@ -257,6 +257,74 @@ class JudgeTests(unittest.TestCase):
                 meta = {result.case_id: result for result in rc.meta_results(VEC, "")}
                 self.assertEqual(meta["N04-META-VECTORS-FRESH"].status, "fail")
 
+    def test_the_realtime_boundary_case_requires_its_native_test_and_observation(self):
+        name = "n04_realtime_profile_boundaries_hold_exactly_through_the_real_engine"
+        self.assertIn(("franken_stream", "playout::tests::" + name),
+                      [tuple(t) for c in rc.registry() if c["id"] == "N04-PROFILES" for t in c["tests"]])
+        self.assertEqual(judge(build_log(GOOD))["N04-PROFILES"].status, "pass")
+        self.assertEqual(judge(build_log(GOOD, skip_tests=(name,)))["N04-PROFILES"].status, "blocked")
+        self.assertEqual(judge(build_log(GOOD, ignored_tests=(name,)))["N04-PROFILES"].status, "blocked")
+        self.assertEqual(judge(build_log(GOOD, failed_tests=(name,)))["N04-PROFILES"].status, "fail")
+        self.assertEqual(judge(build_log(without("n04-realtime-boundaries")))["N04-PROFILES"].status, "blocked")
+
+    def test_a_changed_boundary_result_is_rederived_and_names_the_world_and_operation(self):
+        fixture = rc.boundary.fixture()
+        step = next(i for i, w in enumerate(fixture["worlds"]) if w["id"] == "B03-REALTIME-STEP")
+        labels = fixture["worlds"][step]["labels"]
+        # The permitted step reported refused, and a refused step reported accepted: each is named by world and operation.
+        for label, claimed in (("ch-4-blocks", {"ok": False, "reason": "transition_too_large"}),
+                               ("ch-5-blocks", {"ok": True, "reason": "accepted", "delta_ns": 1})):
+            with self.subTest(label=label):
+                got = judge(build_log(tampered("n04-realtime-boundaries", lambda item: item["worlds"][step]["results"].__setitem__(
+                    labels[label], claimed))))["N04-PROFILES"]
+                self.assertEqual(got.status, "fail")
+                self.assertIn("B03-REALTIME-STEP op %d (change)" % labels[label], got.detail)
+        got = judge(build_log(tampered("n04-realtime-boundaries", lambda item: item["worlds"].reverse())))["N04-PROFILES"]
+        self.assertEqual(got.status, "fail")
+        self.assertIn("boundary worlds must be", got.detail)
+        got = judge(build_log(tampered("n04-realtime-boundaries", lambda item: item.update(trace_digest="0" * 64))))["N04-PROFILES"]
+        self.assertEqual(got.status, "fail")
+        self.assertIn("identity", got.detail)
+        self.assertEqual(judge(build_log(GOOD))["N04-PROFILES"].status, "pass")
+
+    def test_the_boundary_fixture_is_fresh_probes_each_edge_on_both_sides_and_notices_a_drifted_table(self):
+        doc = rc.boundary.fixture()
+        with open(rc.BOUNDARY_TRACE, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle), doc)
+        expect = {w["id"]: {(e["label"], e["key"]): e["value"] for e in w["expect"]} for w in doc["worlds"]}
+        # Every edge has its permitted side and its refused side, in the contract's words.
+        self.assertEqual((expect["B01-REALTIME-HORIZON"][("last-slot", "r")], expect["B01-REALTIME-HORIZON"][("one-past", "r")]),
+                         ("admitted", "too_far_ahead"))
+        self.assertEqual((expect["B01-REALTIME-HORIZON"][("d8", "d.outcome")], expect["B01-REALTIME-HORIZON"][("d9", "d.outcome")]),
+                         ("real", "concealed"))
+        self.assertEqual((expect["B02-REALTIME-NOTICE"][("ch-2-blocks", "ok")], expect["B02-REALTIME-NOTICE"][("ch-1-block", "reason")]),
+                         (True, "too_soon"))
+        self.assertEqual((expect["B03-REALTIME-STEP"][("ch-4-blocks", "ok")], expect["B03-REALTIME-STEP"][("ch-4-blocks-plus-1ns", "reason")],
+                          expect["B03-REALTIME-STEP"][("ch-5-blocks", "reason")]), (True, "transition_too_large", "transition_too_large"))
+        profile = rc.boundary.R.PROFILES["realtime"]
+        self.assertEqual((profile["horizon"], profile["notice"], profile["max_step"]), (9, 2, 4))
+        # The unmodified reference satisfies every expectation; a realtime table that drifted by one does not, so a drift cannot go unseen.
+        for world in doc["worlds"]:
+            rc.boundary.check_world(world)
+        for key, drifted in (("horizon", 10), ("notice", 1), ("max_step", 5)):
+            with self.subTest(drift=key):
+                with mock.patch.dict(rc.boundary.R.PROFILES["realtime"], {key: drifted}):
+                    with self.assertRaises(AssertionError):
+                        for world in doc["worlds"]:
+                            rc.boundary.check_world(world)
+        # A stale fixture is refused by META.
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "boundary_trace.json")
+            altered = copy.deepcopy(doc)
+            altered["worlds"][0]["ops"][1][5] -= 256
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(altered, handle)
+            with mock.patch.object(rc, "BOUNDARY_TRACE", path):
+                meta = {result.case_id: result for result in rc.meta_results(VEC, "")}
+                self.assertEqual(meta["N04-META-VECTORS-FRESH"].status, "fail")
+        meta = {result.case_id: result for result in rc.meta_results(VEC, "")}
+        self.assertEqual(meta["N04-META-VECTORS-FRESH"].status, "pass", meta["N04-META-VECTORS-FRESH"].detail)
+
     # -- a divergent result is named by operation -------------------------------------------------------------------
 
     def test_a_flipped_result_fails_its_case_and_names_the_first_divergent_op(self):
