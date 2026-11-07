@@ -138,6 +138,8 @@ def admission_problem(spec: Dict[str, Any], raw: bytes, summary: Dict[str, Any])
         rc = spec["ab_receipt"]
         if rc is None or rc["slot_bytes"] < m["artifact_size"] + spec["reserve"] or (rc["synthetic"] and not b["synthetic"]):
             return "A/B planned without a receipt that covers it"
+        if rc["digest"] == ref.ZERO32.hex():
+            return "A/B planned on a receipt with no digest"
     return None
 
 
@@ -240,6 +242,8 @@ def artifact_problem(m: Dict[str, Any], data: bytes, ok: bool) -> Optional[str]:
 def group_problem(v: Dict[str, Any], got: Dict[str, Any]) -> Optional[str]:
     if "upgrade_others" in got:
         return "an action on another member"
+    if got["decision"] == "admit" and not 0 <= v["index"] < len(v["members"]):
+        return "admitted although no member is at the index: nobody would take the candidate"
     if got["decision"] == "admit":
         cand = _image(v["candidate"])
         for j, m in enumerate(v["members"]):

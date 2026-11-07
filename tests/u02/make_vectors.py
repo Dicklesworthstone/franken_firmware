@@ -387,6 +387,20 @@ def admission_vectors() -> List[Dict[str, Any]]:
         ctx={"ab_receipt": dict(rc_ok, synthetic=True), "board": "ppc_policy_standin"}, invariants=["AB"])
     add("U02-ADM-063", "a synthetic receipt on a synthetic fixture board is the model's own use", good, {"ok": ab}, ctx={"ab_receipt": dict(rc_ok, synthetic=True)}, invariants=["AB"])
     add("U02-ADM-064", "no capacity receipt and no recovery path: nothing is claimed and nothing is planned", good, refuse("no_recovery_path"), ctx={"recovery_path": False}, invariants=["AB"])
+    # a receipt is bound by its digest; an all-zero digest is "absent" (as everywhere else), so the slots it names prove nothing
+    nodigest = dict(rc_ok, digest=ref.ZERO32.hex())
+    add("U02-ADM-066", "a capacity receipt with no digest binds nothing: its slots are not used, A/B is not claimed, and a single slot with a recovery path is planned", good, {"ok": GOOD},
+        ctx={"ab_receipt": nodigest, "board": "ppc_policy_standin"}, invariants=["AB"])
+    add("U02-ADM-067", "the same receipt with no recovery path: nothing is claimed and nothing is planned", good, refuse("no_recovery_path"),
+        ctx={"ab_receipt": nodigest, "recovery_path": False, "board": "ppc_policy_standin"}, invariants=["AB"])
+    add("U02-ADM-068", "a synthetic receipt for a real board is refused whether or not it has a digest", good, refuse("synthetic_receipt_for_real_profile"),
+        ctx={"ab_receipt": dict(nodigest, synthetic=True), "board": "ppc_policy_standin"}, invariants=["AB"])
+    add("U02-ADM-069", "a receipt whose slot is exactly the artifact plus its reserve proves A/B", good, {"ok": ab},
+        ctx={"ab_receipt": dict(rc_ok, slot_bytes=len(ART) + 4096), "board": "ppc_policy_standin"}, invariants=["AB"])
+    add("U02-ADM-070", "a receipt whose slot is one byte short of the artifact plus its reserve does not", good, {"ok": GOOD},
+        ctx={"ab_receipt": dict(rc_ok, slot_bytes=len(ART) + 4095), "board": "ppc_policy_standin"}, invariants=["AB"])
+    add("U02-ADM-071", "a digest that is zero except for its last byte is a digest", good, {"ok": ab},
+        ctx={"ab_receipt": dict(rc_ok, digest="00" * 31 + "01"), "board": "ppc_policy_standin"}, invariants=["AB"])
     return v
 
 
@@ -661,6 +675,15 @@ def group_vectors() -> Dict[str, Any]:
     add("U02-GRP-011", "three members, one conflict: only that one is named", [m("a", old), m("b", stage1), m("c", old)], 0, stage2,
         {"decision": "refuse", "code": "wire_incompatible", "conflicts": ["c"], "assumed": []})
     add("U02-GRP-012", "a group of one has nobody to disagree with", [m("a", old)], 0, img(130, 9, 9, 9), admit_ok)
+    # the target is a member: an index that names none is refused before any other member is assessed, and a valid target need not be member 0
+    no_target = {"decision": "refuse", "code": "invalid_target", "conflicts": [], "assumed": []}
+    add("U02-GRP-013", "an empty group has no member to upgrade, so nothing is admitted (every member would otherwise count as somebody else)", [], 0, stage1, no_target)
+    add("U02-GRP-014", "index equal to the number of members names nobody", [m("a", old), m("b", old)], 2, stage1, no_target)
+    add("U02-GRP-015", "an index far past the group names nobody", [m("a", old), m("b", old), m("c", old)], 7, stage1, no_target)
+    add("U02-GRP-016", "an index that names nobody is refused as such, not as a member nobody has heard from", [m("a", old), m("b", None, True)], 5, stage1, no_target)
+    add("U02-GRP-017", "the target may be the last member: the others, including member 0, are the ones that are compared", [m("a", old), m("b", old), m("c", old)], 2, stage1, admit_ok)
+    add("U02-GRP-018", "the target may be in the middle: both neighbours are compared and only they are named", [m("a", old), m("b", old), m("c", old)], 1, stage2,
+        {"decision": "refuse", "code": "wire_incompatible", "conflicts": ["a", "c"], "assumed": []})
     rollbacks: List[Dict[str, Any]] = []
 
     def rb(vid: str, title: str, stored: int, backup: Optional[int], target: Dict[str, Any], expect: str) -> None:
@@ -712,7 +735,11 @@ def dumps(doc: Dict[str, Any]) -> str:
 def main(argv: List[str]) -> int:
     text = dumps(build())
     if "--check" in argv:
-        have = open(OUT, encoding="utf-8").read() if os.path.exists(OUT) else ""
+        if os.path.exists(OUT):
+            with open(OUT, encoding="utf-8") as handle:
+                have = handle.read()
+        else:
+            have = ""
         if have != text:
             print(f"{os.path.relpath(OUT, REPO)} differs from what make_vectors.py writes")
             return 1

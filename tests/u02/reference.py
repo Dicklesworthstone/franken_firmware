@@ -56,7 +56,7 @@ BUGS: Tuple[str, ...] = (
     "floor_raised_at_stage", "floor_raised_on_rollback", "confirm_forgets_floor", "failed_candidate_retried",
     "restart_forgets_stage", "stale_manifest_copy_trusted", "trial_never_expires", "commit_not_atomic",
     "group_upgrades_others", "disconnected_ignored", "wire_window_ignored", "wire_upper_bound_ignored", "unknown_peer_skipped",
-    "restart_skips_admission",
+    "restart_skips_admission", "target_unchecked", "zero_digest_receipt_accepted",
 )
 
 
@@ -320,7 +320,7 @@ def plan_for(ctx: Context, m: Dict[str, Any], bugs: FrozenSet[str]) -> Dict[str,
         slot, digest, synthetic = receipt
         if synthetic and not ctx.board.synthetic and "synthetic_receipt_for_real" not in bugs:
             raise Refusal("synthetic_receipt_for_real_profile")
-        if slot >= need:
+        if slot >= need and (digest != ZERO32 or "zero_digest_receipt_accepted" in bugs):     # a receipt with no digest binds nothing
             mode, ab = "ab_slots", "proven_by_external_receipt"
     if "ab_without_receipt" in bugs and mode is None:
         mode, ab = "ab_slots", "proven_by_external_receipt"
@@ -662,9 +662,12 @@ def wire_compatible(a: Installed, b: Installed) -> bool:
 
 def group_decision(members: List[Member], idx: int, cand: Installed, bugs: FrozenSet[str] = frozenset()) -> Dict[str, Any]:
     """May member `idx` take `cand` while the others stay as they are? The answer never includes an action on another member. A member whose image is
-    unknown, connected or not, cannot be assessed and blocks the admission."""
+    unknown, connected or not, cannot be assessed and blocks the admission. An `idx` that names no member (an empty group, or `idx >= len(members)`) is
+    `invalid_target`: with nobody to upgrade there is nothing to admit, and every real member would otherwise be counted as "somebody else"."""
     assumed: List[str] = []
     conflicts: List[str] = []
+    if not 0 <= idx < len(members) and "target_unchecked" not in bugs:
+        return {"decision": "refuse", "code": "invalid_target", "conflicts": [], "assumed": []}     # no member `idx` exists: nothing is assessed
     unknown = sorted(m.ident for j, m in enumerate(members) if j != idx and m.image is None)
     if unknown and "unknown_peer_skipped" not in bugs:
         return {"decision": "refuse", "code": "unknown_member_state", "conflicts": unknown, "assumed": []}

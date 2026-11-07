@@ -3,7 +3,7 @@
 //! The answer never contains an action on another member. A candidate that the rest of the group could not talk to is refused and the group
 //! is preserved; nobody is upgraded or migrated to make a new sender acceptable. A member that is disconnected counts through the image it
 //! last reported, and the answer says so; a member nobody has ever heard from, connected or not, cannot be assessed, so the admission is
-//! refused.
+//! refused. The member that takes the candidate must exist: an index that names nobody is refused as `invalid_target`.
 
 use crate::policy::{Installed, settings_readable};
 
@@ -18,9 +18,9 @@ pub struct Member {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Decision {
     pub admit: bool,
-    /// `ok`, `wire_incompatible` or `unknown_member_state`.
+    /// `ok`, `wire_incompatible`, `unknown_member_state` or `invalid_target`.
     pub code: &'static str,
-    /// Members the candidate cannot talk to (or, for `unknown_member_state`, every member that could not be assessed), sorted.
+    /// Members the candidate cannot talk to (or, for `unknown_member_state`, every member that could not be assessed), sorted. Empty for `invalid_target`.
     pub conflicts: Vec<String>,
     /// Disconnected members that were judged by their last known image, sorted.
     pub assumed: Vec<String>,
@@ -38,8 +38,20 @@ pub fn wire_compatible(a: &Installed, b: &Installed) -> bool {
 }
 
 /// May member `index` take `candidate`, with every other member left exactly as it is?
+///
+/// `index` must name a member. An empty group, or an `index` at or past `members.len()`, has nobody to upgrade: it is refused as `invalid_target`
+/// before any member is assessed. Without that check every real member would count as "somebody else", and a group with nobody in it, or with
+/// the wrong index, could be answered `ok` for a member that does not exist.
 #[must_use]
 pub fn group_decision(members: &[Member], index: usize, candidate: &Installed) -> Decision {
+    if index >= members.len() {
+        return Decision {
+            admit: false,
+            code: "invalid_target",
+            conflicts: Vec::new(),
+            assumed: Vec::new(),
+        };
+    }
     let mut unknown: Vec<String> = members
         .iter()
         .enumerate()

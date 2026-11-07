@@ -7,7 +7,7 @@ mod common;
 
 use common::{
     Eng, arr32, board, doc, dynamic, fresh_engine, index, installed, limits, num, policy, restart,
-    restart_with, text, unhex,
+    restart_with, text, unhex, wide,
 };
 use franken_board_profile::{CpuIsa, synthetic_test_fixture_catalog};
 use franken_journal::MemStorage;
@@ -16,9 +16,10 @@ use franken_update::engine::{
 };
 use franken_update::group::{Member, group_decision, rollback_decision};
 use franken_update::manifest::{FEATURES, MAX_MANIFEST, Manifest};
-use franken_update::policy::{Board, TrustStore, VENDOR_ACCEPTANCE, admit};
+use franken_update::policy::{AbReceipt, Board, Installed, TrustStore, VENDOR_ACCEPTANCE, admit};
 use franken_update::{ALL_CODES, UpdateError, sig};
 use serde_json::{Value, json};
+use std::collections::{BTreeMap, BTreeSet};
 
 fn same(id: &str, got: Result<Value, UpdateError>, want: &Value) {
     let got = match got {
@@ -44,47 +45,315 @@ fn the_constants_the_vectors_were_written_for_are_the_crates() {
     assert_eq!(names, FEATURES);
 }
 
-#[test]
-fn every_refusal_a_vector_names_is_a_stable_code_of_the_crate() {
-    fn walk(v: &Value, found: &mut Vec<String>) {
-        match v {
-            Value::Object(map) => {
-                for (key, inner) in map {
-                    if key == "refuse" {
-                        found.push(inner.as_str().expect("a code").to_string());
-                    }
-                    walk(inner, found);
+/// The sections of the vector file and the family every case id in each one carries (`U02-ADM-004` is the fourth admission case).
+const FAMILIES: [(&str, &str); 9] = [
+    ("ed25519", "ED"),
+    ("keys_check", "KEY"),
+    ("trust", "TRUST"),
+    ("parse", "PARSE"),
+    ("admit", "ADM"),
+    ("artifact", "ART"),
+    ("engine", "ENG"),
+    ("group", "GRP"),
+    ("rollback", "RB"),
+];
+
+/// Codes of the crate that no vector can name: tests in this crate reach them directly (the board profile gate and the unknown ISA in
+/// `a_profile_that_fails_its_own_gate_or_names_an_unknown_isa_is_not_a_board`, a gap in the staging medium and a record the journal holds that
+/// this code cannot read in `u02_restart.rs`).
+const OUTSIDE_THE_VECTORS: [&str; 4] = [
+    "staging_gap",
+    "profile_invalid",
+    "isa_unsupported",
+    "corrupt_state",
+];
+
+/// What a rolling-update decision may say. `invalid_target` is the answer for an index that names no member.
+const GROUP_CODES: [&str; 4] = [
+    "ok",
+    "wire_incompatible",
+    "unknown_member_state",
+    "invalid_target",
+];
+
+/// The refusals the acceptance lines of `ffw-76j` stand on (`docs/contracts/u02.md` section 10), each with the code it must name and the permitted
+/// case that sits beside it. They are written out here, apart from the file `make_vectors.py` writes, so that deleting one of these cases, renaming it,
+/// or editing its expected code until a failing run passes is itself a failure. The vector file may hold more cases than these; engine scripts are
+/// pinned by the replay of every state after every operation.
+const REQUIRED: &[(&str, &str, &str)] = &[
+    ("U02-ADM-002", "bad_signature", "U02-ADM-001"),
+    ("U02-ADM-003", "bad_signature", "U02-ADM-001"),
+    ("U02-ADM-004", "unknown_signing_key", "U02-ADM-001"),
+    ("U02-ADM-005", "revoked_signing_key", "U02-ADM-006"),
+    ("U02-ADM-009", "stage_forbidden", "U02-ADM-001"),
+    ("U02-ADM-010", "stage_forbidden", "U02-ADM-001"),
+    ("U02-ADM-011", "stage_forbidden", "U02-ADM-001"),
+    ("U02-ADM-012", "vendor_claim_forbidden", "U02-ADM-001"),
+    ("U02-ADM-013", "bypass_claim_forbidden", "U02-ADM-001"),
+    ("U02-ADM-014", "ab_claim_forbidden", "U02-ADM-001"),
+    ("U02-ADM-015", "wrong_board", "U02-ADM-019"),
+    ("U02-ADM-016", "hardware_revision_mismatch", "U02-ADM-001"),
+    ("U02-ADM-017", "isa_mismatch", "U02-ADM-019"),
+    ("U02-ADM-018", "kernel_profile_mismatch", "U02-ADM-001"),
+    ("U02-ADM-020", "profile_not_attested", "U02-ADM-023"),
+    ("U02-ADM-024", "required_feature_missing", "U02-ADM-025"),
+    ("U02-ADM-026", "below_security_floor", "U02-ADM-027"),
+    ("U02-ADM-028", "downgrade_not_permitted", "U02-ADM-029"),
+    ("U02-ADM-031", "version_reused", "U02-ADM-001"),
+    ("U02-ADM-034", "candidate_previously_failed", "U02-ADM-035"),
+    ("U02-ADM-037", "calibration_schema_mismatch", "U02-ADM-001"),
+    ("U02-ADM-038", "settings_incompatible", "U02-ADM-039"),
+    ("U02-ADM-045", "ssh_fix_missing", "U02-ADM-044"),
+    ("U02-ADM-046", "ssh_fix_missing", "U02-ADM-048"),
+    ("U02-ADM-052", "ssh_password_forbidden", "U02-ADM-053"),
+    ("U02-ADM-056", "ssh_unqualified", "U02-ADM-057"),
+    ("U02-ADM-058", "insufficient_capacity", "U02-ADM-059"),
+    (
+        "U02-ADM-062",
+        "synthetic_receipt_for_real_profile",
+        "U02-ADM-063",
+    ),
+    ("U02-ADM-064", "no_recovery_path", "U02-ADM-001"),
+    ("U02-ADM-067", "no_recovery_path", "U02-ADM-066"),
+    (
+        "U02-ADM-068",
+        "synthetic_receipt_for_real_profile",
+        "U02-ADM-066",
+    ),
+    ("U02-ART-002", "artifact_truncated", "U02-ART-001"),
+    ("U02-ART-004", "artifact_oversized", "U02-ART-001"),
+    ("U02-ART-005", "artifact_digest_mismatch", "U02-ART-001"),
+];
+
+fn is_case_id(id: &str, family: &str) -> bool {
+    id.strip_prefix("U02-")
+        .and_then(|rest| rest.strip_prefix(family))
+        .and_then(|rest| rest.strip_prefix('-'))
+        .is_some_and(|digits| digits.len() == 3 && digits.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Every refusal name in the document, with the ids of the cases that name it. A refusal belongs to the nearest enclosing object that has an `id`.
+fn named_refusals<'a>(
+    v: &'a Value,
+    case: &'a str,
+    found: &mut BTreeMap<String, BTreeSet<&'a str>>,
+) {
+    match v {
+        Value::Object(map) => {
+            let case = map.get("id").and_then(Value::as_str).unwrap_or(case);
+            for (key, inner) in map {
+                if key == "refuse" {
+                    let code = inner.as_str().unwrap_or("<not text>");
+                    found.entry(code.to_string()).or_default().insert(case);
                 }
+                named_refusals(inner, case, found);
             }
-            Value::Array(items) => items.iter().for_each(|item| walk(item, found)),
-            _ => {}
+        }
+        Value::Array(items) => {
+            for item in items {
+                named_refusals(item, case, found);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// What is wrong with the inventory of the vector document, one sentence each; empty when nothing is. It asks for what the acceptance needs rather
+/// than for a number of refusals: every case id is unique and filed under its own family; every refusal the vectors name is a code of the crate; every
+/// code of the crate is exercised except the four that tests here reach directly; each cited refusal is there with its code and beside its permitted
+/// positive; and the rolling-update answers cover every decision, including a target that does not exist and a target other than member 0.
+fn inventory_problems(d: &Value) -> Vec<String> {
+    let mut problems = Vec::new();
+    let mut by_id: BTreeMap<&str, &Value> = BTreeMap::new();
+    for (section, family) in FAMILIES {
+        let Some(cases) = d[section].as_array() else {
+            problems.push(format!("section `{section}` is missing"));
+            continue;
+        };
+        for case in cases {
+            let Some(id) = case["id"].as_str() else {
+                problems.push(format!("a case in `{section}` has no id"));
+                continue;
+            };
+            if !is_case_id(id, family) {
+                problems.push(format!(
+                    "case `{id}` is misfiled: `{section}` holds only U02-{family}-NNN"
+                ));
+            }
+            if by_id.insert(id, case).is_some() {
+                problems.push(format!("case id `{id}` is used twice"));
+            }
         }
     }
-    let mut found = Vec::new();
-    walk(&doc(), &mut found);
-    assert!(
-        found.len() > 100,
-        "the vectors name {} refusals",
-        found.len()
-    );
-    for code in &found {
-        assert!(
-            ALL_CODES.contains(&code.as_str()),
-            "`{code}` is not a code of the crate"
-        );
+    let mut named = BTreeMap::new();
+    named_refusals(d, "", &mut named);
+    for (code, ids) in &named {
+        if !ALL_CODES.contains(&code.as_str()) {
+            let ids: Vec<&str> = ids.iter().copied().collect();
+            problems.push(format!(
+                "`{code}` is not a code of the crate (named by {})",
+                ids.join(", ")
+            ));
+        }
     }
-    // and every code of the crate is exercised by some vector, except these four, which tests in this crate reach directly (the board profile gate,
-    // a gap in the staging medium, a record the journal holds that this code cannot read)
-    let outside_the_vectors = [
-        "staging_gap",
-        "profile_invalid",
-        "isa_unsupported",
-        "corrupt_state",
-    ];
     for code in ALL_CODES {
+        if !named.contains_key(*code) && !OUTSIDE_THE_VECTORS.contains(code) {
+            problems.push(format!("no vector exercises `{code}`"));
+        }
+    }
+    for &(refusal, code, positive) in REQUIRED {
+        match by_id.get(refusal) {
+            None => problems.push(format!("required case `{refusal}` is missing")),
+            Some(case) if case["expect"] != json!({ "refuse": code }) => {
+                problems.push(format!("required case `{refusal}` must refuse `{code}`"));
+            }
+            Some(_) => {}
+        }
+        match by_id.get(positive) {
+            None => problems.push(format!(
+                "`{positive}`, the permitted case beside `{refusal}`, is missing"
+            )),
+            Some(case) if case["expect"].get("ok").is_none() => {
+                problems.push(format!(
+                    "`{positive}` beside `{refusal}` must be a permitted outcome"
+                ));
+            }
+            Some(_) => {}
+        }
+    }
+    let mut decisions = BTreeSet::new();
+    let (mut later_admits, mut later_refuses) = (false, false);
+    for case in d["group"].as_array().into_iter().flatten() {
+        let id = case["id"].as_str().unwrap_or("<no id>");
+        let code = case["expect"]["code"].as_str().unwrap_or("<no code>");
+        if !GROUP_CODES.contains(&code) {
+            problems.push(format!(
+                "group case `{id}` expects `{code}`, which is not a rolling-update decision"
+            ));
+        }
+        decisions.insert(code);
+        let members = u64::try_from(case["members"].as_array().map_or(0, Vec::len)).unwrap_or(0);
+        let target = case["index"].as_u64().unwrap_or(0);
+        if target > 0 && target < members {
+            later_admits |= code == "ok";
+            later_refuses |= code == "wire_incompatible";
+        }
+    }
+    for code in GROUP_CODES {
+        if !decisions.contains(code) {
+            problems.push(format!("no group vector expects `{code}`"));
+        }
+    }
+    if !later_admits {
+        problems.push("no group vector admits a target other than member 0".to_string());
+    }
+    if !later_refuses {
+        problems.push("no group vector refuses a target other than member 0".to_string());
+    }
+    problems
+}
+
+#[test]
+fn every_refusal_a_vector_names_is_a_stable_code_of_the_crate() {
+    // the vector file as committed: nothing missing, nothing twice, every refusal a code of the crate and every code of the crate exercised except
+    // four, and every cited refusal there with its code beside its permitted case. There is no count of refusals to reach: `ffw-76j` asks for named
+    // cases and coverage of the stable codes, not for a number.
+    let problems = inventory_problems(&doc());
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+fn case_mut<'a>(d: &'a mut Value, section: &str, id: &str) -> &'a mut Value {
+    d[section]
+        .as_array_mut()
+        .expect("a section")
+        .iter_mut()
+        .find(|case| case["id"] == id)
+        .unwrap_or_else(|| panic!("no case {id} in {section}"))
+}
+
+fn remove_case(d: &mut Value, section: &str, id: &str) {
+    let cases = d[section].as_array_mut().expect("a section");
+    let before = cases.len();
+    cases.retain(|case| case["id"] != id);
+    assert_eq!(cases.len() + 1, before, "{id} was there once");
+}
+
+/// One edit to the committed vectors, and the sentence the inventory must then say.
+fn plant(d: &mut Value, which: &str) -> String {
+    match which {
+        "a cited refusal is deleted" => {
+            remove_case(d, "admit", "U02-ADM-004");
+            "required case `U02-ADM-004` is missing".to_string()
+        }
+        "a cited refusal's code is edited to another real code" => {
+            case_mut(d, "admit", "U02-ADM-004")["expect"] = json!({ "refuse": "bad_signature" });
+            "required case `U02-ADM-004` must refuse `unknown_signing_key`".to_string()
+        }
+        "a permitted case is turned into a refusal" => {
+            case_mut(d, "admit", "U02-ADM-006")["expect"] = json!({ "refuse": "bad_signature" });
+            "`U02-ADM-006` beside `U02-ADM-005` must be a permitted outcome".to_string()
+        }
+        "a permitted case is deleted" => {
+            remove_case(d, "admit", "U02-ADM-006");
+            "`U02-ADM-006`, the permitted case beside `U02-ADM-005`, is missing".to_string()
+        }
+        "a case id is used twice" => {
+            let copy = case_mut(d, "admit", "U02-ADM-001").clone();
+            d["admit"].as_array_mut().expect("a section").push(copy);
+            "case id `U02-ADM-001` is used twice".to_string()
+        }
+        "a case is filed under the wrong family" => {
+            let mut copy = case_mut(d, "group", "U02-GRP-001").clone();
+            copy["id"] = json!("U02-ADM-099");
+            d["group"].as_array_mut().expect("a section").push(copy);
+            "case `U02-ADM-099` is misfiled: `group` holds only U02-GRP-NNN".to_string()
+        }
+        "a refusal names a code that is not one" => {
+            case_mut(d, "admit", "U02-ADM-004")["expect"] = json!({ "refuse": "made_up_code" });
+            "`made_up_code` is not a code of the crate (named by U02-ADM-004)".to_string()
+        }
+        "the only case for a code is deleted" => {
+            remove_case(d, "admit", "U02-ADM-052");
+            "no vector exercises `ssh_password_forbidden`".to_string()
+        }
+        "no group vector names a missing target" => {
+            for id in ["U02-GRP-013", "U02-GRP-014", "U02-GRP-015", "U02-GRP-016"] {
+                remove_case(d, "group", id);
+            }
+            "no group vector expects `invalid_target`".to_string()
+        }
+        "every group vector targets member 0" => {
+            for case in d["group"].as_array_mut().expect("a section") {
+                case["index"] = json!(0);
+            }
+            "no group vector admits a target other than member 0".to_string()
+        }
+        other => panic!("unknown plant `{other}`"),
+    }
+}
+
+#[test]
+fn each_gap_planted_in_the_vector_inventory_is_named_and_the_unplanted_vectors_have_none() {
+    // the permitted positive beside every plant: the committed vectors are clean
+    assert_eq!(inventory_problems(&doc()), Vec::<String>::new());
+    for which in [
+        "a cited refusal is deleted",
+        "a cited refusal's code is edited to another real code",
+        "a permitted case is turned into a refusal",
+        "a permitted case is deleted",
+        "a case id is used twice",
+        "a case is filed under the wrong family",
+        "a refusal names a code that is not one",
+        "the only case for a code is deleted",
+        "no group vector names a missing target",
+        "every group vector targets member 0",
+    ] {
+        let mut d = doc();
+        let want = plant(&mut d, which);
+        let problems = inventory_problems(&d);
         assert!(
-            found.iter().any(|f| f == code) || outside_the_vectors.contains(code),
-            "no vector exercises `{code}`"
+            problems.contains(&want),
+            "{which}: wanted `{want}`, got {problems:#?}"
         );
     }
 }
@@ -216,6 +485,66 @@ fn every_admission_gets_the_refusal_or_the_plan_written_by_hand() {
         same(text(v, "id"), got, &v["expect"]);
     }
     assert!(admitted >= 20, "the permitted positives ran: {admitted}");
+}
+
+fn plan_of(
+    d: &Value,
+    spec: &Value,
+    raw: &[u8],
+    receipt: Option<AbReceipt>,
+    recovery_path: bool,
+) -> Result<(&'static str, &'static str), UpdateError> {
+    let mut p = policy(d, spec);
+    p.ab_receipt = receipt;
+    p.recovery_path = recovery_path;
+    admit(&p, &dynamic(spec), raw).map(|a| (a.plan.mode.label(), a.plan.ab.label()))
+}
+
+#[test]
+fn a_capacity_receipt_proves_two_slots_only_with_a_digest_and_room_and_a_missing_one_changes_nothing_else()
+ {
+    let d = doc();
+    // U02-ADM-060: a non-synthetic board, so a synthetic receipt is refused; the receipts below replace the one it carries
+    let v = d["admit"]
+        .as_array()
+        .expect("admit vectors")
+        .iter()
+        .find(|v| v["id"] == "U02-ADM-060")
+        .expect("U02-ADM-060");
+    let (spec, raw) = (&v["ctx"], unhex(&v["manifest"]));
+    let need = Manifest::parse(&raw).expect("a manifest").artifact_size + wide(spec, "reserve");
+    let receipt = |slot_bytes: u32, digest: [u8; 32], synthetic: bool| {
+        Some(AbReceipt {
+            slot_bytes,
+            digest,
+            synthetic,
+        })
+    };
+    let plan =
+        |r: Option<AbReceipt>, recovery_path: bool| plan_of(&d, spec, &raw, r, recovery_path);
+    let proven: Result<(&str, &str), UpdateError> = Ok(("ab_slots", "proven_by_external_receipt"));
+    let single: Result<(&str, &str), UpdateError> = Ok(("single_slot_recovery", "not_proven"));
+    let (mut first_bit, mut last_bit) = ([0u8; 32], [0u8; 32]);
+    first_bit[0] = 1;
+    last_bit[31] = 1;
+    // the permitted positives: any digest but zero, a slot of exactly the artifact plus its reserve
+    for digest in [[7u8; 32], first_bit, last_bit] {
+        assert_eq!(plan(receipt(need, digest, false), true), proven);
+    }
+    assert_eq!(plan(receipt(need - 1, [7; 32], false), true), single);
+    assert_eq!(plan(None, true), single);
+    // no digest: nothing is proven however large the slot it names, the recovery path decides, and a synthetic receipt for a real board is still refused
+    assert_eq!(plan(receipt(u32::MAX, [0; 32], false), true), single);
+    assert_eq!(
+        plan(receipt(u32::MAX, [0; 32], false), false),
+        Err(UpdateError::NoRecoveryPath)
+    );
+    for digest in [[0u8; 32], [7; 32]] {
+        assert_eq!(
+            plan(receipt(need, digest, true), true),
+            Err(UpdateError::SyntheticReceiptForRealProfile)
+        );
+    }
 }
 
 #[test]
@@ -353,6 +682,56 @@ fn a_member_takes_a_candidate_only_if_the_rest_of_the_group_can_still_talk_to_it
             text(v, "id")
         );
     }
+}
+
+fn group_case(d: &Value, id: &str) -> (Vec<Member>, Installed) {
+    let v = d["group"]
+        .as_array()
+        .expect("group vectors")
+        .iter()
+        .find(|v| v["id"] == id)
+        .unwrap_or_else(|| panic!("no group vector {id}"));
+    let members = v["members"]
+        .as_array()
+        .expect("members")
+        .iter()
+        .map(member)
+        .collect();
+    let candidate = installed(&json!({ "installed": v["candidate"] })).expect("a candidate");
+    (members, candidate)
+}
+
+#[test]
+fn an_index_that_names_no_member_is_refused_before_anyone_is_assessed_and_every_real_index_is_not()
+{
+    let d = doc();
+    let (members, candidate) = group_case(&d, "U02-GRP-001");
+    // the permitted positive: in a group where everyone can talk to the candidate, any member may take it
+    for at in 0..members.len() {
+        let got = group_decision(&members, at, &candidate);
+        assert_eq!((got.admit, got.code), (true, "ok"), "member {at}");
+    }
+    for (name, group, at) in [
+        ("an empty group", Vec::new(), 0),
+        ("one past the last member", members.clone(), members.len()),
+        ("the largest index", members.clone(), usize::MAX),
+    ] {
+        let got = group_decision(&group, at, &candidate);
+        assert_eq!((got.admit, got.code), (false, "invalid_target"), "{name}");
+        assert!(
+            got.conflicts.is_empty() && got.assumed.is_empty(),
+            "{name}: nobody was assessed"
+        );
+    }
+    // a member nobody has heard from does not turn a missing target into a different refusal
+    let mut with_unknown = members;
+    with_unknown.push(Member {
+        id: "z".to_string(),
+        image: None,
+        connected: true,
+    });
+    let got = group_decision(&with_unknown, 9, &candidate);
+    assert_eq!((got.admit, got.code), (false, "invalid_target"));
 }
 
 #[test]

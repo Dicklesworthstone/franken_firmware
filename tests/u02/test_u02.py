@@ -50,10 +50,10 @@ class ReferenceAndVectors(Base):
 
     def test_the_vector_counts_and_ids(self) -> None:
         counts = {k: len(v) for k, v in self.doc.items() if isinstance(v, list)}
-        self.assertEqual(counts, {"admit": 65, "artifact": 6, "ed25519": 15, "engine": 29, "group": 12, "keys_check": 12, "parse": 23, "rollback": 5, "trust": 9})
+        self.assertEqual(counts, {"admit": 71, "artifact": 6, "ed25519": 15, "engine": 29, "group": 18, "keys_check": 12, "parse": 23, "rollback": 5, "trust": 9})
         ids = [v["id"] for group in counts for v in self.doc[group]]
         self.assertEqual(len(ids), len(set(ids)))
-        self.assertEqual(len(ids), 176)
+        self.assertEqual(len(ids), 188)
 
     def test_every_hand_written_expectation_agrees_with_the_model(self) -> None:
         self.assertEqual(judge.failing(self.doc), [])
@@ -199,7 +199,8 @@ class PairedNegativesAndPositives(Base):
     PAIRS = [("U02-ADM-005", "U02-ADM-006"), ("U02-ADM-020", "U02-ADM-023"), ("U02-ADM-024", "U02-ADM-025"), ("U02-ADM-026", "U02-ADM-027"),
              ("U02-ADM-028", "U02-ADM-029"), ("U02-ADM-038", "U02-ADM-039"), ("U02-ADM-052", "U02-ADM-053"), ("U02-ADM-056", "U02-ADM-057"),
              ("U02-ADM-058", "U02-ADM-059"), ("U02-ADM-062", "U02-ADM-063"), ("U02-ADM-064", "U02-ADM-001"), ("U02-ADM-034", "U02-ADM-035"),
-             ("U02-ADM-015", "U02-ADM-019"), ("U02-ADM-045", "U02-ADM-044"), ("U02-ADM-046", "U02-ADM-048")]
+             ("U02-ADM-015", "U02-ADM-019"), ("U02-ADM-045", "U02-ADM-044"), ("U02-ADM-046", "U02-ADM-048"), ("U02-ADM-067", "U02-ADM-066"),
+             ("U02-ADM-068", "U02-ADM-066")]
 
     def test_each_refusal_is_paired_with_the_permitted_behaviour_it_must_not_break(self) -> None:
         for refusal, positive in self.PAIRS:
@@ -230,8 +231,8 @@ class PlantedDefects(Base):
         self.assertEqual(judge.failing(self.doc), [])
         self.assertEqual(judge.unsound(self.doc), [])
 
-    def test_there_are_47_distinct_planted_defects(self) -> None:
-        self.assertEqual((len(ref.BUGS), len(set(ref.BUGS))), (47, 47))
+    def test_there_are_49_distinct_planted_defects(self) -> None:
+        self.assertEqual((len(ref.BUGS), len(set(ref.BUGS))), (49, 49))
 
     def test_every_planted_defect_is_caught_by_the_vectors_and_removing_it_restores_green(self) -> None:
         for bug in ref.BUGS:
@@ -366,12 +367,132 @@ class RustAgreement(Base):
         self.assertNotIn("Manifest::parse", opened)
         self.assertIn("wire_read_max", grp.split("pub fn wire_compatible")[1].split("pub fn group_decision")[0], "the window has an upper bound")
         self.assertIn("other.image.is_none()", grp.split("pub fn group_decision")[1], "an unknown image blocks, connected or not")
+        target = grp.split("pub fn group_decision")[1].split("let mut unknown")[0]
+        self.assertIn("index >= members.len()", target, "a target that names no member is checked before anyone is assessed")
+        self.assertIn('code: "invalid_target"', target)
         self.assertIn("|| wire_schema > wire_read_max", man)
         self.assertIn("pub const INSTALLED_LEN: usize = 55;", pol)
+        self.assertIn("receipt.digest != ZERO32 && u64::from(receipt.slot_bytes) >= need", pol, "a receipt with no digest never proves A/B")
         self.assertEqual(len(ref.Installed(1, 1, 1, 1, 1, 1, 1, 1, 1, bytes(32)).pack()), 55)
         restart = read(CRATE, "tests", "u02_restart.rs")
         self.assertNotIn("persisted().expect(\"a readable state\")", restart.split("fn cut_every_step")[1].split("fn u02_cut_every_step_of_a_successful")[0],
                          "the crash oracle compares the exact tuple, not the lossy summary")
+
+
+class ReceiptDigest(Base):
+    """A capacity receipt is bound by its digest: ZERO32 means absent, so it proves nothing however large the slot it names."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        v = self.admit["U02-ADM-060"]
+        self.spec, self.raw = v["ctx"], bytes.fromhex(v["manifest"])
+        self.need = ref.parse(self.raw)["artifact_size"] + self.spec["reserve"]
+
+    def plan(self, slot: int, digest: bytes, synthetic: bool = False, recovery: bool = True, bugs: frozenset = frozenset()) -> Any:
+        receipt = None if slot < 0 else {"slot_bytes": slot, "digest": digest.hex(), "synthetic": synthetic}
+        ctx = dict(self.spec, recovery_path=recovery, ab_receipt=receipt)
+        got = judge._outcome(lambda: judge._summary(ref.admit(mv.build_ctx(ctx, bugs), self.raw, bugs)))
+        return (got["ok"]["mode"], got["ok"]["ab"]) if "ok" in got else got["refuse"]
+
+    def test_only_a_receipt_with_a_digest_and_room_proves_two_slots(self) -> None:
+        proven, single = ("ab_slots", "proven_by_external_receipt"), ("single_slot_recovery", "not_proven")
+        for digest in (b"\x07" * 32, b"\x01" + bytes(31), bytes(31) + b"\x01"):         # the permitted positives: any digest but zero, exact fit
+            self.assertEqual(self.plan(self.need, digest), proven, digest.hex())
+        self.assertEqual(self.plan(self.need - 1, b"\x07" * 32), single)
+        self.assertEqual(self.plan(-1, bytes(32)), single)
+        self.assertEqual(self.plan(2**32 - 1, bytes(32)), single, "no digest, a huge slot: nothing is proven")
+        self.assertEqual(self.plan(2**32 - 1, bytes(32), recovery=False), "no_recovery_path")
+        for digest in (bytes(32), b"\x07" * 32):
+            self.assertEqual(self.plan(self.need, digest, synthetic=True), "synthetic_receipt_for_real_profile")
+
+    def test_the_planted_defect_proves_ab_on_a_receipt_with_no_digest(self) -> None:
+        bug = frozenset({"zero_digest_receipt_accepted"})
+        self.assertEqual(self.plan(2**32 - 1, bytes(32), bugs=bug), ("ab_slots", "proven_by_external_receipt"))
+
+
+class GroupTarget(Base):
+    """`group_decision(members, index, candidate)`: the member that takes the candidate has to exist."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        v = next(x for x in self.doc["group"] if x["id"] == "U02-GRP-001")
+        self.members = [ref.Member(m["id"], judge._image(m["image"]), m["connected"]) for m in v["members"]]
+        self.candidate = judge._image(v["candidate"])
+
+    def test_an_index_that_names_no_member_is_invalid_and_every_real_index_is_not(self) -> None:
+        for at in range(len(self.members)):                                   # the permitted positive: everyone is compatible, any member may take it
+            self.assertEqual(ref.group_decision(self.members, at, self.candidate)["code"], "ok", at)
+        nobody = {"decision": "refuse", "code": "invalid_target", "conflicts": [], "assumed": []}
+        for members, at in (([], 0), (self.members, len(self.members)), (self.members, 99), (self.members, -1)):
+            self.assertEqual(ref.group_decision(members, at, self.candidate), nobody, (len(members), at))
+        unheard = self.members + [ref.Member("z", None, True)]                # an unknown peer does not change what a missing target is
+        self.assertEqual(ref.group_decision(unheard, 9, self.candidate), nobody)
+
+    def test_the_planted_defect_answers_ok_for_a_member_that_does_not_exist(self) -> None:
+        bug = frozenset({"target_unchecked"})
+        self.assertEqual(ref.group_decision([], 0, self.candidate, bug)["decision"], "admit")
+        self.assertEqual(ref.group_decision(self.members, len(self.members), self.candidate, bug)["decision"], "admit")
+
+
+class RustInventoryAgrees(Base):
+    """`u02_vectors.rs` holds a hand-written inventory of the vector file. The Rust has not been compiled, so the same obligations are run here over the
+    committed vectors, and the constants typed in the Rust are compared with the sources they stand for."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.rs = read(CRATE, "tests", "u02_vectors.rs")
+        self.lib = read(CRATE, "src", "lib.rs")
+
+    def block(self, opening: str) -> str:
+        return self.rs.split(opening)[1].split("];")[0]
+
+    def required(self) -> List[Any]:
+        table = self.block("const REQUIRED: &[(&str, &str, &str)] = &[")
+        rows = re.findall(r'\(\s*"(U02-[A-Z]+-\d{3})",\s*"([a-z_]+)",\s*"(U02-[A-Z]+-\d{3})",?\s*\)', table)
+        self.assertEqual(table.count('"U02-'), 2 * len(rows), "every row of the Rust table was read")
+        return rows
+
+    def named(self) -> set:
+        def walk(node: Any) -> List[str]:
+            if isinstance(node, dict):
+                return [x for k, v in node.items() for x in ([v] if k == "refuse" else []) + walk(v)]
+            if isinstance(node, list):
+                return [x for item in node for x in walk(item)]
+            return []
+        return set(walk(self.doc))
+
+    def test_every_cited_refusal_is_there_with_its_code_beside_a_permitted_case(self) -> None:
+        by_id = {v["id"]: v for group in ("admit", "artifact") for v in self.doc[group]}
+        rows = self.required()
+        self.assertEqual(len({r for r, _, _ in rows}), len(rows), "a refusal is cited once")
+        for refusal, code, positive in rows:
+            with self.subTest(refusal=refusal):
+                self.assertEqual(by_id[refusal]["expect"], {"refuse": code})
+                self.assertIn("ok", by_id[positive]["expect"])
+
+    def test_the_pairs_this_file_pins_are_all_cited_by_the_rust_table(self) -> None:
+        cited = {(r, p) for r, _, p in self.required()}
+        for pair in PairedNegativesAndPositives.PAIRS:
+            self.assertIn(pair, cited)
+
+    def test_the_exempt_codes_the_families_and_the_decisions_are_what_the_sources_say(self) -> None:
+        listed = set(re.findall(r'^    "([a-z_]+)",$', self.lib.split("pub const ALL_CODES")[1].split("];")[0], re.M))
+        outside = set(re.findall(r'"([a-z_]+)"', self.block("const OUTSIDE_THE_VECTORS: [&str; 4] = [")))
+        self.assertTrue(outside <= listed)
+        self.assertEqual(self.named(), listed - outside, "every code of the crate is exercised by a vector except the exempt four, and no vector names another")
+        decisions = set(re.findall(r'"([a-z_]+)"', self.block("const GROUP_CODES: [&str; 4] = [")))
+        self.assertEqual({v["expect"]["code"] for v in self.doc["group"]}, decisions)
+        answered = set(re.findall(r'"code": "([a-z_]+)"', read(HERE, "reference.py").split("def group_decision")[1].split("def rollback_decision")[0]))
+        self.assertEqual(answered, decisions, "the decisions the reference can give are the ones the Rust inventory lists")
+        families = dict(re.findall(r'\("([a-z0-9_]+)", "([A-Z]+)"\)', self.block("const FAMILIES: [(&str, &str); 9] = [")))
+        self.assertEqual(sorted(families), sorted(k for k, v in self.doc.items() if isinstance(v, list)))
+        for section, family in families.items():
+            self.assertTrue(all(re.fullmatch(rf"U02-{family}-\d{{3}}", v["id"]) for v in self.doc[section]), section)
+
+    def test_a_target_other_than_member_0_is_admitted_and_refused_by_some_vector(self) -> None:
+        later = [v for v in self.doc["group"] if 0 < v["index"] < len(v["members"])]
+        self.assertIn("ok", {v["expect"]["code"] for v in later})
+        self.assertIn("wire_incompatible", {v["expect"]["code"] for v in later})
 
 
 class BoundedRunner(Base):
@@ -386,7 +507,7 @@ class BoundedRunner(Base):
         import subprocess
         import time
         for _ in range(60):
-            state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False).stdout.strip()
+            state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False, timeout=5).stdout.strip()
             if not state or state.startswith("Z"):
                 return True
             time.sleep(0.05)
@@ -433,8 +554,8 @@ class Contract(Base):
         self.text = read(CONTRACT)
 
     def test_it_states_the_counts_the_sources_have(self) -> None:
-        self.assertIn("176 cases: 15 signature, 12 key, 9 trust-store, 23 parse, 65 admission, 6 artifact, 29 engine scripts, 12 group, 5 rollback", self.text)
-        self.assertIn("**47 planted defects**", self.text)
+        self.assertIn("188 cases: 15 signature, 12 key, 9 trust-store, 23 parse, 71 admission, 6 artifact, 29 engine scripts, 18 group, 5 rollback", self.text)
+        self.assertIn("**49 planted defects**", self.text)
         vec, rst = rust_tests(os.path.join(CRATE, "tests", "u02_vectors.rs")), rust_tests(os.path.join(CRATE, "tests", "u02_restart.rs"))
         self.assertIn(f"u02_vectors.rs` ({len(vec)} tests)", self.text)
         self.assertIn(f"u02_restart.rs` ({len(rst)} tests)", self.text)

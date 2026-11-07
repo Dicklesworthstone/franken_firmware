@@ -188,7 +188,8 @@ impl Installed {
 }
 
 /// An external statement that a board's flash holds two slots of a given size. The digest binds the receipt; this crate cannot check its
-/// content. A receipt for a synthetic fixture is refused for any board that is not one.
+/// content. A receipt for a synthetic fixture is refused for any board that is not one. A receipt whose digest is all zero (`ZERO32` means absent
+/// everywhere else in this crate) binds nothing: whatever slot size it names, it never proves A/B.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AbReceipt {
     pub slot_bytes: u32,
@@ -333,7 +334,7 @@ fn plan_for(policy: &Policy, m: &Manifest) -> Result<Plan, UpdateError> {
         if receipt.synthetic && !policy.board.synthetic {
             return Err(UpdateError::SyntheticReceiptForRealProfile);
         }
-        if u64::from(receipt.slot_bytes) >= need {
+        if receipt.digest != ZERO32 && u64::from(receipt.slot_bytes) >= need {
             chosen = Some(Plan {
                 mode: Mode::AbSlots,
                 ab: AbStatus::ProvenByExternalReceipt,
