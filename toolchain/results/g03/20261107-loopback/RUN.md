@@ -85,3 +85,39 @@ The thirteen server cases and five client cases are source, not executed test
 credit. G03 stays open for actual-client execution, discovery, subscriptions,
 grouping and reconnect qualification. Clippy, Python models and source review
 cannot substitute for that behavior or for board playback.
+
+## Later native execution: server passed, combined batch failed
+
+At 16:19 UTC, a repeat of the previously executed complete consumer command
+was admitted on `hz2`, without modifying admission or compiler-profile settings:
+
+```sh
+CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 \
+RCH_BUILD_SLOTS=1 RCH_QUEUE_WHEN_BUSY=0 RCH_REQUIRE_REMOTE=1 \
+rch exec --source-content-receipt --worker hz2 -- \
+  cargo +nightly-2026-08-31 test --locked --no-fail-fast -j1 \
+  -p franken-control -p franken-speaker -p franken-alloc-probe \
+  --features franken-speaker/harness -- --show-output --test-threads=1
+```
+
+Observed: **1,012 passed, 4 failed, 1 ignored across 20 test groups**, exit 101.
+The ignored case is the unrun D03 soak. All thirteen
+`fsonos_loopback::tests` passed, including real socket volume/mute, endpoint
+faults, bounded parsing, stalled clients and listener shutdown. The real N06
+speaker-consumer cases passed 12/12; N07 speaker-consumer cases passed 22/22.
+This command does not run the `franken-stream` unit-test binary.
+
+The four failures are in `n07_carrier_heap` (one other case passed): admission
+and report coverage omitted the separately allocated group registry. The first
+red is retained. The repair must account for its actual owner/capacity and keep
+the exact admission check and planted growth/underreporting negatives; it may
+not add a fitted tolerance. The combined batch is **not qualified**.
+
+Build `30099060530610537`; exact content root
+`fd8414231c8c0f931f5e40d1f88454c146b92ca1b073a85a6f9c11c3ed6bcd16`.
+All 1,355 captured inputs matched before this evidence update. The wrapper is
+finished, exit 101 acknowledged, owner absent, source/tree/pair retired;
+staging-release is null on this failed execution, not claimed true.
+
+The separate five-case actual-client package remains UNRUN. A second attempt
+on `hz2` also received a pre-Cargo disk-reservation refusal, exit 120.
