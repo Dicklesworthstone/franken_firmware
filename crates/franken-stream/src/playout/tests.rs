@@ -325,6 +325,92 @@ world_test!(n04_world_w15b_advice_quiet, "W15B-ADVICE-QUIET");
 world_test!(n04_world_w16_seeded_music, "W16-SEEDED-MUSIC");
 world_test!(n04_world_w17_seeded_realtime, "W17-SEEDED-REALTIME");
 
+/// Unlike W16/W17 (separate policy-specific stress worlds), BOTH engines consume these exact same ordered ops.
+/// The independent Python judge regenerates the seed's schedule and every policy-specific result, op by op.
+#[test]
+fn n04_both_policies_replay_the_identical_seeded_trace_with_backpressure() {
+    let fixture: Value =
+        serde_json::from_str(include_str!("../../../../tests/n04/paired_trace.json"))
+            .expect("paired trace parses");
+    assert_eq!(fixture["schema"], "ffw.n04.paired-trace.v1");
+    let ops = fixture["ops"].as_array().expect("paired ops");
+    let trace_digest = digest(ops);
+    assert_eq!(trace_digest, text(&fixture["trace_digest"]));
+    let blocks = u(&fixture["blocks"]);
+    assert_eq!(blocks, 700);
+    assert!(u(&fixture["cfg"]["work_ns"]) > 0);
+    assert!(u(&fixture["cfg"]["lead_ns"]) > 0);
+    let mut policies = Vec::new();
+    for (profile, conceal_max) in [("music", 8), ("realtime", 3)] {
+        // Only the policy changes. There is one common arrival/decision/submission schedule, with no per-policy rescheduling.
+        let world = json!({"profile": profile, "cfg": fixture["cfg"], "ops": ops});
+        let mut next_block = 0u64;
+        let mut real = 0u64;
+        let mut muted_gap = 0u64;
+        let mut maximum_run = 0u64;
+        let mut delivered = 0u64;
+        let mut abandoned = 0u64;
+        let results = run_world_with(&world, &mut |_, op, result, engine| {
+            assert!(engine.snapshot().queued <= u32::from(profile_named(profile).horizon_blocks));
+            if op[0] == "decide" {
+                assert_eq!(
+                    result["poll"], "decision",
+                    "{profile}: every due position must be decided"
+                );
+                let decision = &result["d"];
+                assert_eq!(
+                    u(&decision["block"]),
+                    next_block,
+                    "{profile}: exactly once, in order"
+                );
+                let payload_frames =
+                    if decision["outcome"] == "real" || decision["outcome"] == "concealed" {
+                        256
+                    } else {
+                        0 // A muted decision advances one block but carries no audio payload.
+                    };
+                assert_eq!(u(&decision["frames"]), payload_frames);
+                next_block += 1;
+                if decision["outcome"] == "real" {
+                    real += 1;
+                } else if decision["outcome"] == "muted_gap" {
+                    muted_gap += 1;
+                }
+                if let Some(run) = decision["run"].as_u64() {
+                    maximum_run = maximum_run.max(run);
+                }
+            } else if op[0] == "deliver" {
+                match text(&result["delivery"]) {
+                    "delivered" => delivered += 1,
+                    "abandoned" => abandoned += 1,
+                    other => panic!("unknown delivery outcome {other}"),
+                }
+            }
+        });
+        assert_eq!(next_block, blocks);
+        assert!(
+            real > 0 && muted_gap > 0,
+            "{profile}: positive playback and long-gap silence must both be reached"
+        );
+        assert_eq!(
+            maximum_run, conceal_max,
+            "{profile}: its own concealment bound is exercised"
+        );
+        assert!(
+            delivered > 0 && abandoned > 0,
+            "{profile}: permitted submission and backpressure must both be reached"
+        );
+        assert_eq!(delivered + abandoned, blocks);
+        let got = digest(&results);
+        assert_eq!(got, text(&fixture["expected_digests"][profile]));
+        policies.push(json!({"profile": profile, "trace_digest": trace_digest, "digest": got, "results": results}));
+    }
+    observed(
+        &json!({"id": "n04-paired-seeded", "seed": fixture["seed"], "blocks": blocks,
+                     "trace_digest": trace_digest, "policies": policies}),
+    );
+}
+
 const WORLD_IDS: [&str; 24] = [
     "W01-ONTIME",
     "W02-CUTOFF-BOUNDARY",
@@ -415,7 +501,7 @@ fn zero_horizon() -> PlayoutProfile {
 #[test]
 fn n04_capacity_the_footprint_is_stated_from_the_slot_and_matches_what_new_builds() {
     // A slot is the 1024-byte payload, a u16 frame count and a use flag: 1027 bytes, 1028 with the count's 2-byte alignment.
-    assert!(SLOT_BYTES >= BLOCK_PAYLOAD_BYTES + 2 + 1);
+    const { assert!(SLOT_BYTES > BLOCK_PAYLOAD_BYTES + 2) };
     assert_eq!(SLOT_BYTES, 1028);
     // 94 x 1028 = 96 632 and 9 x 1028 = 9 252, worked out by hand; a horizon of zero still gets the one slot new() builds.
     assert_eq!(PlayoutProfile::MUSIC.playout_queue_bytes(), 96_632);

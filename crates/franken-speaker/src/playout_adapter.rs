@@ -1634,6 +1634,15 @@ mod tests {
         let at_tail = s.tl.decision_true_ns(CUT - 1) - 5_000_000;
         s.play.stage_raw(at_tail - 1_000_000, 0, high);
         s.play.stage_raw(at_tail, 0, tail);
+        // Render the prefix before advancing arrival time to the held tail. The monotonic view must never be rewound to block 0.
+        for blk in 0..CUT - 1 {
+            let played = decide_raw(&mut s, blk);
+            assert_eq!(
+                authentic(played, blk),
+                source_bytes(blk),
+                "old prefix block {blk}"
+            );
+        }
         s.play
             .deliver_until(&s.clock, &s.sim, at_tail, Some(&mut s.wire.receiver))
             .expect("delivers");
@@ -1654,7 +1663,7 @@ mod tests {
                 ..franken_stream::ReceiverCounters::default()
             }
         );
-        for blk in 0..CUT + 10 {
+        for blk in CUT - 1..CUT + 10 {
             let want = if blk < CUT {
                 source_bytes(blk)
             } else {
@@ -1688,6 +1697,15 @@ mod tests {
         let at_tail = s.tl.decision_true_ns(CUT - 1) - 5_000_000;
         s.play.stage_raw(at_tail - 1_000_000, 0, high);
         s.play.stage_raw(at_tail, 0, tail);
+        // Render the prefix before advancing arrival time to the held tail. The monotonic view must never be rewound to block 0.
+        for blk in 0..CUT - 1 {
+            let played = decide_raw(&mut s, blk);
+            assert_eq!(
+                authentic(played, blk),
+                source_bytes(blk),
+                "old prefix block {blk}"
+            );
+        }
         s.play
             .deliver_until(&s.clock, &s.sim, at_tail, Some(&mut s.wire.receiver))
             .expect("delivers");
@@ -1708,7 +1726,7 @@ mod tests {
                 ..franken_stream::ReceiverCounters::default()
             }
         );
-        for blk in 0..CUT {
+        for blk in CUT - 1..CUT {
             let played = decide_raw(&mut s, blk);
             assert_eq!(authentic(played, blk), source_bytes(blk), "old block {blk}");
         }

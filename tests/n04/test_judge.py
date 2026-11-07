@@ -12,6 +12,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 
@@ -90,7 +91,7 @@ def build_log(records, skip_tests=(), failed_tests=(), ignored_tests=(), layout=
             body.append("test %s ... %s" % (n, "FAILED" if bare in failed_tests else "ignored" if bare in ignored_tests else "ok"))
         passed = sum(1 for n in shown if n.rsplit("::", 1)[-1] not in bad)
         body += ["", "test result: ok. %d passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s" % passed]
-        where = "unittests src/lib.rs" if stem == "franken_stream" else "tests/%s.rs" % stem
+        where = "unittests src/lib.rs" if stem in ("franken_stream", "franken_speaker") else "tests/%s.rs" % stem
         headers.append("     Running %s (.rch-target-w0-pool-0123456789abcdef/debug/deps/%s-0123456789abcdef)" % (where, stem))
         bodies.append(body)
         if layout == "classic":
@@ -131,6 +132,43 @@ def op_index(wid, kind, nth=0):
 
 
 class JudgeTests(unittest.TestCase):
+    def test_rate_model_boundaries_and_reserved_critical_credit(self):
+        rate = ref.LogRate()
+        for _ in range(ref.LOG_BURST):
+            self.assertTrue(rate.take(0, False))
+        self.assertFalse(rate.take(0, False))
+        self.assertFalse(rate.take(976_562, False))
+        self.assertTrue(rate.take(976_563, False))
+        self.assertFalse(rate.take(0, False))
+        self.assertTrue(rate.take(0, True), "ordinary traffic cannot spend critical credit")
+        self.assertTrue(rate.take((1 << 64) - 1, False))
+        for _ in range(ref.LOG_BURST - 1):
+            self.assertTrue(rate.take(0, False))
+        self.assertFalse(rate.take(0, False), "backwards time cannot refill")
+        self.assertEqual(ref.log_rate_observation()["rows"], [False, False, True, False, True, True, False])
+
+    def test_rate_precedes_oversize_and_preserves_loss_accounting(self):
+        writer = ref.LogWriter("run", "case", b"key", "member", "group", max_line=1)
+        ring = ref.LogRing(4)
+        writer.ring = ring
+        for _ in range(ref.LOG_BURST):
+            writer.line(0, 0, 1, 0, 0, 0, "n04.refusal.bad_input", "fixed")
+        writer.line(0, 0, 1, 0, 0, 0, "n04.refusal.bad_input", "fixed")
+        self.assertEqual((ring.dropped_oversize, ring.dropped_rate, ring.critical_lost), (ref.LOG_BURST, 1, 0))
+        for _ in range(ref.LOG_BURST + 1):
+            writer.line(0, 0, 1, 0, 0, 0, "n04.poll.clock_unusable", "fixed")
+        self.assertEqual(ring.critical_lost, ref.LOG_BURST + 1)
+        self.assertEqual(ring.emitted, ring.dropped_full + ring.dropped_oversize + ring.dropped_rate)
+        positive = ref.LogWriter("run", "case", b"key", "member", "group")
+        self.assertIsNotNone(positive.line(0, 0, 1, 0, 0, 0, "n04.decision.real", "fixed"))
+
+    def test_rate_observation_is_required_and_cannot_hide_critical_loss(self):
+        self.assertEqual(judge(build_log(GOOD))["N04-LOG-LOSS"].status, "pass")
+        self.assertEqual(judge(build_log(without("n04-log-rate")))["N04-LOG-LOSS"].status, "blocked")
+        def hide_loss(record):
+            record["saturated"]["critical_lost"] = 0
+        self.assertEqual(judge(build_log(tampered("n04-log-rate", hide_loss)))["N04-LOG-LOSS"].status, "fail")
+
     def statuses(self, results):
         return {cid: results[cid].status for cid in CASE_IDS}
 
@@ -151,6 +189,73 @@ class JudgeTests(unittest.TestCase):
         results = judge(build_log(GOOD), tier="smoke")
         self.assertNotIn("N04-SEEDED", results)
         self.assertIn("N04-ONTIME", results)
+
+    def test_the_paired_seeded_case_requires_its_actual_native_test_and_observation(self):
+        name = "n04_both_policies_replay_the_identical_seeded_trace_with_backpressure"
+        self.assertEqual(judge(build_log(GOOD))["N04-SEEDED"].status, "pass")
+        self.assertEqual(judge(build_log(GOOD, skip_tests=(name,)))["N04-SEEDED"].status, "blocked")
+        self.assertEqual(judge(build_log(GOOD, ignored_tests=(name,)))["N04-SEEDED"].status, "blocked")
+        self.assertEqual(judge(build_log(GOOD, failed_tests=(name,)))["N04-SEEDED"].status, "fail")
+        self.assertEqual(judge(build_log(without("n04-paired-seeded")))["N04-SEEDED"].status, "blocked")
+
+    def test_paired_trace_identity_rejects_a_changed_seed_or_event_order(self):
+        original = rc.paired.fixture()
+        changed_seed = rc.paired.schedule(rc.paired.SEED + 1)
+        changed_order = copy.deepcopy(original["ops"])
+        packet_indices = [i for i, op in enumerate(changed_order) if op[0] == "packet"]
+        first, second = packet_indices[:2]
+        changed_order[first], changed_order[second] = changed_order[second], changed_order[first]
+        self.assertNotEqual(gen.digest(changed_seed), original["trace_digest"])
+        self.assertNotEqual(gen.digest(changed_order), original["trace_digest"])
+        for label, altered in (("changed seed", changed_seed), ("changed order", changed_order)):
+            with self.subTest(fault=label):
+                recs = tampered("n04-paired-seeded", lambda record: record["policies"][1].update(
+                    trace_digest=gen.digest(altered)))
+                got = judge(build_log(recs))["N04-SEEDED"]
+                self.assertEqual(got.status, "fail")
+                self.assertIn("trace identity", got.detail)
+        self.assertEqual(judge(build_log(GOOD))["N04-SEEDED"].status, "pass")
+
+    def test_paired_policy_results_are_rederived_even_if_the_trace_identity_is_claimed_unchanged(self):
+        record = rc.paired.expected_record()
+        altered_ops = rc.paired.schedule(rc.paired.SEED + 1)
+        altered_results = gen.world_results(rc.paired.world("realtime", altered_ops))
+        self.assertNotEqual(altered_results, record["policies"][1]["results"])
+        got = judge(build_log(tampered("n04-paired-seeded", lambda item: item["policies"][1].update(
+            results=altered_results, digest=gen.digest(altered_results)))))["N04-SEEDED"]
+        self.assertEqual(got.status, "fail")
+        self.assertIn("realtime paired", got.detail)
+        index = next(i for i, result in enumerate(record["policies"][1]["results"])
+                     if result.get("poll") == "decision")
+        got = judge(build_log(tampered("n04-paired-seeded", lambda item: item["policies"][1]["results"][index]["d"].update(
+            block=9999))))["N04-SEEDED"]
+        self.assertEqual(got.status, "fail")
+        self.assertIn("op %d (decide)" % index, got.detail)
+
+    def test_the_additive_paired_fixture_is_fresh_and_contains_the_declared_faults(self):
+        doc = rc.paired.fixture()
+        with open(rc.PAIRED_TRACE, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle), doc)
+        packets = [op for op in doc["ops"] if op[0] == "packet"]
+        blocks = [op[5] // 256 for op in packets]
+        absent = set(range(rc.paired.BLOCKS)) - set(blocks)
+        self.assertTrue(set(range(300, 319)) <= absent)
+        self.assertTrue(absent - set(range(300, 319)), "independent loss outside the burst")
+        self.assertLess(len(set(blocks)), len(blocks), "duplicate arrivals")
+        self.assertTrue(any(a > b for a, b in zip(blocks, blocks[1:])), "reordered arrivals")
+        self.assertGreater(len({op[6] - op[1] for op in packets}), 1, "jitter")
+        self.assertEqual(sum(op[0] == "deliver" for op in doc["ops"]), rc.paired.BLOCKS)
+        self.assertGreater(doc["cfg"]["work_ns"], 0)
+        self.assertGreater(doc["cfg"]["lead_ns"], 0)
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "paired_trace.json")
+            altered = copy.deepcopy(doc)
+            altered["ops"] = rc.paired.schedule(rc.paired.SEED + 1)
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(altered, handle)
+            with mock.patch.object(rc, "PAIRED_TRACE", path):
+                meta = {result.case_id: result for result in rc.meta_results(VEC, "")}
+                self.assertEqual(meta["N04-META-VECTORS-FRESH"].status, "fail")
 
     # -- a divergent result is named by operation -------------------------------------------------------------------
 
@@ -386,6 +491,60 @@ class JudgeTests(unittest.TestCase):
                 self.assertEqual(judge(build_log(GOOD, failed_tests=(name,)))["N04-ROUTE-HINT"].status, "fail")
                 self.assertEqual(judge(build_log(GOOD, skip_tests=(name,)))["N04-ROUTE-HINT"].status, "blocked")
                 self.assertEqual(judge(build_log(GOOD, ignored_tests=(name,)))["N04-ROUTE-HINT"].status, "blocked")
+
+    def test_each_arrival_control_must_run_and_pass_in_its_own_speaker_binary(self):
+        # Synthetic log controls only: no result here says the Rust executed. The permitted old-tail and fresh-epoch restart
+        # are mandatory alongside rejection cases, so refusal-only execution cannot qualify the composition.
+        for layout in ("classic", "rch"):
+            good = judge(build_log(GOOD, layout=layout))
+            for cid in rc.ARRIVAL_TESTS_BY_CASE:
+                self.assertEqual(good[cid].status, "pass", good[cid].detail)
+        for cid, names in rc.ARRIVAL_TESTS_BY_CASE.items():
+            for name in names:
+                with self.subTest(case=cid, test=name):
+                    self.assertEqual(judge(build_log(GOOD, skip_tests=(name,)))[cid].status, "blocked")
+                    self.assertEqual(judge(build_log(GOOD, ignored_tests=(name,)))[cid].status, "blocked")
+                    self.assertEqual(judge(build_log(GOOD, failed_tests=(name,)))[cid].status, "fail")
+
+    def test_arrival_positive_controls_are_registered_and_cannot_borrow_a_stream_binary_result(self):
+        required = {
+            "N04-ONTIME": "an_old_stream_datagram_still_in_flight_at_the_commit_is_authenticated_on_arrival_by_the_old_generation_and_played",
+            "N04-EPOCH": "a_fresh_group_epoch_can_resume_with_a_new_stream_without_relabeling_any_old_queued_generation",
+        }
+        cases = {case["id"]: case for case in rc.registry()}
+        for cid, name in required.items():
+            with self.subTest(case=cid):
+                full_name = "playout_adapter::tests::" + name
+                self.assertIn(("franken_speaker", full_name), cases[cid]["tests"])
+                # A passing name under franken_stream is not evidence of the speaker's composition test.
+                log = build_log(GOOD, skip_tests=(name,))
+                foreign = (
+                    "\n     Running unittests src/lib.rs (target/debug/deps/franken_stream-fedcba9876543210)\n"
+                    "running 1 test\ntest " + full_name + " ... ok\n"
+                    "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n"
+                )
+                self.assertEqual(judge(log + foreign)[cid].status, "blocked")
+
+    def test_the_arrival_source_map_detects_a_removed_or_ignored_native_control(self):
+        name = "a_fresh_group_epoch_can_resume_with_a_new_stream_without_relabeling_any_old_queued_generation"
+        full_name = "playout_adapter::tests::" + name
+        with open(os.path.join(rc.REPO, rc.ARRIVAL_SOURCE), encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertEqual(source.count("fn " + name), 1)
+        self.assertIn(("franken_speaker", full_name, False), rc.derive_rust_tests())
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "playout_adapter.rs")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(source.replace("fn " + name, "fn removed_" + name))
+            with mock.patch.object(rc, "ARRIVAL_SOURCE", path):
+                meta = {result.case_id: result for result in rc.meta_results(VEC, "")}
+                self.assertEqual(meta["N04-META-MAP-COMPLETE"].status, "fail")
+                self.assertIn(name, meta["N04-META-MAP-COMPLETE"].detail)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(source.replace("fn " + name, "#[ignore]\n    fn " + name))
+            with mock.patch.object(rc, "ARRIVAL_SOURCE", path):
+                self.assertIn(("franken_speaker", full_name, True), rc.derive_rust_tests())
+        self.assertIn(("franken_speaker", full_name, False), rc.derive_rust_tests())
 
     def test_the_probe_binary_is_attributed_by_its_own_header_in_both_layouts(self):
         for layout in ("classic", "rch"):

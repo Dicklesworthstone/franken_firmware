@@ -484,6 +484,28 @@ def is_critical(kind: str) -> bool:
     return not (kind == "n04.decision.real" or kind == "n04.delivery.delivered" or kind.startswith("n04.refusal."))
 
 
+LOG_RATE = 1024
+LOG_BURST = 2048
+
+
+class LogRate:
+    """Independent exact-integer credit model; separate ordinary/critical buckets, no floats."""
+    def __init__(self):
+        self.last = [0, 0]
+        self.credit = [LOG_BURST * 1_000_000_000] * 2
+
+    def take(self, now: int, critical: bool) -> bool:
+        k = int(critical)
+        now = max(now, self.last[k])
+        self.credit[k] = min(LOG_BURST * 1_000_000_000,
+                             self.credit[k] + (now - self.last[k]) * LOG_RATE)
+        self.last[k] = now
+        if self.credit[k] < 1_000_000_000:
+            return False
+        self.credit[k] -= 1_000_000_000
+        return True
+
+
 class LogWriter:
     def __init__(self, run_id: str, case_id: str, key: bytes, member: str, group: str,
                  fault: Optional[str] = None, max_line: int = MAX_LINE_BYTES):
@@ -496,6 +518,8 @@ class LogWriter:
         self.lines: List[str] = []
         self.kinds: List[str] = []
         self.dropped_oversize = 0
+        self.dropped_rate = 0
+        self.rate = LogRate()
         self.ring: Optional["LogRing"] = None
 
     def line(self, candidate_ts: int, n: int, epoch: int, revision: int, queue: int, latency_us: int, kind: str,
@@ -503,6 +527,11 @@ class LogWriter:
         """Build one record. The timestamp never goes backwards. A line longer than the bound is dropped, never cut."""
         ts = max(candidate_ts, self.last_ts)
         self.last_ts = ts
+        if not self.rate.take(ts, is_critical(kind)):
+            self.dropped_rate += 1
+            if self.ring is not None:
+                self.ring.rate_drop(is_critical(kind))
+            return None
         rec: Dict[str, Any] = {
             "schema_version": LOG_SCHEMA, "timestamp_mono_ns": ts, "run_id": self.run_id, "case_id": self.case_id,
             "correlation_id": "%s#%d" % (self.member_p, n), "member_id": self.member_p, "group_id": self.group_p,
@@ -602,7 +631,7 @@ def run_world_logged(world: Dict[str, Any], log: Dict[str, Any]) -> Tuple[List[D
 # sink, oldest first, at most ``budget`` offers per call; a sink that is full or unavailable leaves the line queued.
 # Ordinary records may use ``capacity - capacity // 4`` slots, critical ones all of them, so a flood of ordinary records
 # cannot crowd out the evidence a run is untrustworthy without. Every record is either delivered, queued or counted
-# as dropped: emitted == delivered + queued + dropped_full + dropped_oversize.
+# as dropped: emitted == delivered + queued + dropped_full + dropped_oversize + dropped_rate.
 
 SINK_REPLIES = ("taken", "full", "unavailable")
 LOG_STAT_KEYS = ["emitted", "delivered", "queued", "dropped_full", "dropped_oversize", "critical_lost", "offers",
@@ -617,8 +646,13 @@ class LogRing:
         self.reserve = capacity // 4
         self.queue: deque = deque()
         self.delivered: List[str] = []
-        self.emitted = self.dropped_full = self.dropped_oversize = self.critical_lost = 0
+        self.emitted = self.dropped_full = self.dropped_oversize = self.dropped_rate = self.critical_lost = 0
         self.offers = self.sink_full_polls = self.sink_unavailable_polls = 0
+
+    def rate_drop(self, critical: bool) -> None:
+        self.emitted += 1
+        self.dropped_rate += 1
+        self.critical_lost += int(critical)
 
     def push(self, line: Optional[str], critical: bool) -> None:
         self.emitted += 1
@@ -653,10 +687,28 @@ class LogRing:
         return cursor
 
     def stats(self) -> Dict[str, int]:
-        return dict(emitted=self.emitted, delivered=len(self.delivered), queued=len(self.queue),
+        result = dict(emitted=self.emitted, delivered=len(self.delivered), queued=len(self.queue),
                     dropped_full=self.dropped_full, dropped_oversize=self.dropped_oversize,
                     critical_lost=self.critical_lost, offers=self.offers, sink_full_polls=self.sink_full_polls,
                     sink_unavailable_polls=self.sink_unavailable_polls)
+        if self.dropped_rate:
+            result["dropped_rate"] = self.dropped_rate
+        return result
+
+
+def log_rate_observation() -> Dict[str, Any]:
+    rate = LogRate()
+    for _ in range(LOG_BURST):
+        assert rate.take(0, False)
+    times = [0, 976_562, 976_563, 0, (1 << 64) - 1, 0]
+    rows = [rate.take(t, False) for t in times]
+    # A backwards read after MAX can spend existing credit, but cannot mint any.
+    for _ in range(LOG_BURST - 2):
+        assert rate.take(0, False)
+    rows.append(rate.take(0, False))
+    return {"id": "n04-log-rate", "policy": "n04.log-rate.v1", "rate": LOG_RATE, "burst": LOG_BURST, "rows": rows,
+            "normal": {"emitted": 2050, "queued": 4, "dropped_full": 2045, "dropped_rate": 1, "critical_lost": 0},
+            "saturated": {"emitted": 4098, "queued": 4, "dropped_full": 4092, "dropped_rate": 2, "critical_lost": 2048}}
 
 
 def run_world_sinked(world: Dict[str, Any], log: Dict[str, Any], plan: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], LogRing]:

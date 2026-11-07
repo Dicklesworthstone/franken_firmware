@@ -326,6 +326,7 @@ fn n04_log_stats_summary_line() {
         queued: 3,
         dropped_full: 2,
         dropped_oversize: 1,
+        dropped_rate: 0,
         critical_lost: 0,
         offers: 6,
         sink_full_polls: 1,
@@ -334,7 +335,7 @@ fn n04_log_stats_summary_line() {
     assert!(stats.accounted());
     assert_eq!(
         stats.to_string(),
-        "n04 log: emitted=10 delivered=4 queued=3 dropped=3 (full=2 oversize=1) critical_lost=0 evidence=complete"
+        "n04 log: emitted=10 delivered=4 queued=3 dropped=3 (full=2 oversize=1 rate=0) critical_lost=0 evidence=complete"
     );
     let lost = LogStats {
         critical_lost: 2,
@@ -353,6 +354,96 @@ fn n04_log_stats_summary_line() {
         .accounted(),
         "a missing record is visible"
     );
+}
+
+#[test]
+fn n04_log_rate_is_bounded_before_formatting_with_refill_and_critical_reserve() {
+    let mut bucket = RateBucket::full();
+    for _ in 0..LogConfig::BURST_EVENTS_PER_CLASS {
+        assert!(bucket.take(0), "the declared initial burst is permitted");
+    }
+    let mut rows = Vec::new();
+    for ts in [0, 976_562, 976_563, 0, u64::MAX, 0] {
+        rows.push(bucket.take(ts));
+    }
+    for _ in 0..LogConfig::BURST_EVENTS_PER_CLASS - 2 {
+        assert!(
+            bucket.take(0),
+            "a backwards read can spend only existing credit"
+        );
+    }
+    rows.push(bucket.take(0));
+    assert_eq!(rows, [false, false, true, false, true, true, false]);
+
+    fn record(critical: bool) -> Record<'static> {
+        Record {
+            ts: 0,
+            n: 0,
+            epoch: 1,
+            revision: 0,
+            queue: 0,
+            latency_us: 0,
+            kind: if critical {
+                format_args!("n04.poll.clock_unusable")
+            } else {
+                format_args!("n04.refusal.bad_input")
+            },
+            message: format_args!("fixed"),
+            cause: None,
+            critical,
+        }
+    }
+    struct MustNotFormat;
+    impl Display for MustNotFormat {
+        fn fmt(&self, _: &mut fmt::Formatter<'_>) -> fmt::Result {
+            panic!("rate refusal must precede formatting")
+        }
+    }
+    let guarded = MustNotFormat;
+    let mut log = DiagLog::new(config(4));
+    for _ in 0..LogConfig::BURST_EVENTS_PER_CLASS {
+        log.emit(&record(false));
+    }
+    log.emit(&Record {
+        kind: format_args!("{guarded}"),
+        ..record(false)
+    });
+    log.emit(&record(true));
+    let normal = log.stats();
+    assert!(normal.accounted() && normal.evidence_complete());
+    assert_eq!(
+        (normal.queued, normal.dropped_rate, normal.critical_lost),
+        (4, 1, 0)
+    );
+    for _ in 1..LogConfig::BURST_EVENTS_PER_CLASS {
+        log.emit(&record(true));
+    }
+    log.emit(&Record {
+        kind: format_args!("{guarded}"),
+        ..record(true)
+    });
+    let saturated = log.stats();
+    assert!(saturated.accounted() && !saturated.evidence_complete());
+    assert_eq!(saturated.dropped_rate, 2);
+    assert_eq!(saturated.critical_lost, LogConfig::BURST_EVENTS_PER_CLASS);
+    let fields = |s: LogStats| {
+        serde_json::json!({
+            "emitted": s.emitted, "queued": s.queued, "dropped_full": s.dropped_full,
+            "dropped_rate": s.dropped_rate, "critical_lost": s.critical_lost,
+        })
+    };
+    println!(
+        "N04-OBSERVED {}",
+        serde_json::json!({
+        "id": "n04-log-rate", "policy": LogConfig::RATE_POLICY_VERSION, "rate": LogConfig::EVENTS_PER_SECOND_PER_CLASS,
+            "burst": LogConfig::BURST_EVENTS_PER_CLASS, "rows": rows,
+            "normal": fields(normal), "saturated": fields(saturated),
+        })
+    );
+    // The permitted critical record remains queued beside the ordinary reserve, in original order.
+    let mut sink = Collect::default();
+    assert_eq!(log.drain(&mut sink, 4).taken, 4);
+    assert_eq!(sink.0.len(), 4);
 }
 
 #[test]

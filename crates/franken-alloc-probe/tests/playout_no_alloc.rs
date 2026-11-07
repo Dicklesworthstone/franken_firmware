@@ -20,6 +20,48 @@ use franken_stream::playout::{
 #[global_allocator]
 static ALLOCATOR: CountingAllocator = CountingAllocator::new();
 
+#[test]
+fn n04_log_rate_admission_and_refusal_do_not_allocate() {
+    assert!(
+        is_active(),
+        "the allocator sensor must see a real allocation"
+    );
+    let mut engine = PlayoutEngine::new(
+        PlayoutProfile::MUSIC,
+        PlayoutConfig {
+            work_ns: WORK,
+            lead_ns: LEAD,
+            tolerance_ns: 100_000,
+        },
+    )
+    .expect("valid engine");
+    engine.enable_log(
+        LogConfig::new(
+            "rate",
+            "probe",
+            "p-0123456789abcdef",
+            "p-fedcba9876543210",
+            4,
+        )
+        .expect("valid log"),
+    );
+    let ((), delta) = measure(|| {
+        for _ in 0..LogConfig::BURST_EVENTS_PER_CLASS + 10 {
+            engine
+                .begin_stream(1, 0, ANCHOR)
+                .expect("a same-epoch start is permitted");
+        }
+    });
+    assert!(
+        delta.is_zero(),
+        "rate admission/refusal allocated: {delta:?}"
+    );
+    assert_eq!(delta.bytes_requested, 0);
+    let stats = engine.log_stats().expect("logging enabled");
+    assert_eq!(stats.dropped_rate, 10);
+    assert!(stats.accounted() && !stats.evidence_complete());
+}
+
 const ANCHOR: u64 = 2_000_000_000;
 const WORK: u64 = 1_500_000;
 const LEAD: u64 = 2_000_000;

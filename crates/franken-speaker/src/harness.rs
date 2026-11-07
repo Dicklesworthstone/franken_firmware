@@ -4044,7 +4044,11 @@ mod tests {
                 (0, 0, 0, 0, 0, 0, 0, 0),
                 "member {id}"
             );
-            assert_eq!((p.admitted, p.duplicate), (real, duplicates), "member {id}");
+            assert_eq!(
+                (p.admitted, p.duplicate, p.replay_refused_at_receiver),
+                (real, 0, duplicates),
+                "member {id}: raw duplicate datagrams are refused by N01, never offered twice to the engine"
+            );
             // The legacy counters keep their meaning: real blocks, and blocks that were missing.
             assert_eq!(stats.authentic_blocks, real, "member {id}");
             assert_eq!(stats.concealed_blocks, concealed + gap, "member {id}");

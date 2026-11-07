@@ -7,7 +7,7 @@
 //! whatever the sink does, the engine's decisions are the ones it takes with no log at all.
 //!
 //! Nothing is lost silently. Every record is delivered, still queued, or counted as dropped:
-//! `emitted == delivered + queued + dropped_full + dropped_oversize` ([`LogStats::accounted`]). A line longer than
+//! `emitted == delivered + queued + dropped_full + dropped_oversize + dropped_rate` ([`LogStats::accounted`]). A line longer than
 //! the bound is dropped whole, never cut. Ordinary records (a real block, a refused packet, a delivered block) may use
 //! all but a quarter of the ring; critical ones (everything that changes what is heard or the timeline) may use all of
 //! it, so a flood of ordinary records cannot crowd out the evidence a run cannot be trusted without. When a critical
@@ -126,6 +126,14 @@ pub struct LogConfig {
 }
 
 impl LogConfig {
+    /// Version of the frozen provisional event-rate policy.
+    pub const RATE_POLICY_VERSION: &'static str = "n04.log-rate.v1";
+    /// Frozen provisional rate per class (ordinary and critical), not measured device capacity.
+    /// Each class has its own allowance, so ordinary traffic cannot spend critical credit.
+    pub const EVENTS_PER_SECOND_PER_CLASS: u64 = 1024;
+    /// Maximum initial/refilled burst per class; admission is bounded by this burst plus rate times elapsed time.
+    pub const BURST_EVENTS_PER_CLASS: u64 = 2048;
+
     /// `member_id` and `group_id` must already be pseudonyms (`ffw.pseudonym.v1`: `p-` and 16 hex characters of the
     /// keyed SHA-256 of the identifier); a raw identifier is refused, so one cannot reach a record by mistake.
     ///
@@ -236,6 +244,10 @@ pub struct LogStats {
     pub dropped_full: u64,
     /// Not stored because the line was longer than the bound.
     pub dropped_oversize: u64,
+    /// Refused by the event-rate policy, before formatting or sink work.
+    /// Zero is omitted to preserve healthy-run observation bytes.
+    #[serde(skip_serializing_if = "zero_rate_drops")]
+    pub dropped_rate: u64,
     /// Critical records among the dropped.
     pub critical_lost: u64,
     /// Lines offered to a sink.
@@ -247,7 +259,7 @@ pub struct LogStats {
 impl LogStats {
     #[must_use]
     pub const fn dropped(&self) -> u64 {
-        self.dropped_full + self.dropped_oversize
+        self.dropped_full + self.dropped_oversize + self.dropped_rate
     }
 
     /// Every record is delivered, queued or counted as dropped.
@@ -268,13 +280,14 @@ impl Display for LogStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "n04 log: emitted={} delivered={} queued={} dropped={} (full={} oversize={}) critical_lost={} evidence={}",
+            "n04 log: emitted={} delivered={} queued={} dropped={} (full={} oversize={} rate={}) critical_lost={} evidence={}",
             self.emitted,
             self.delivered,
             self.queued,
             self.dropped(),
             self.dropped_full,
             self.dropped_oversize,
+            self.dropped_rate,
             self.critical_lost,
             if self.evidence_complete() {
                 "complete"
@@ -282,6 +295,56 @@ impl Display for LogStats {
                 "INCOMPLETE"
             },
         )
+    }
+}
+
+fn zero_rate_drops(value: &u64) -> bool {
+    *value == 0
+}
+
+/// Fixed-storage credit; fractions are exact and full buckets discard surplus credit.
+#[derive(Debug, Clone, Copy)]
+struct RateBucket {
+    tokens: u64,
+    remainder: u64,
+    last_ns: u64,
+}
+
+impl RateBucket {
+    const NS_PER_SECOND: u64 = 1_000_000_000;
+    const FILL_NS: u64 = 2 * Self::NS_PER_SECOND;
+
+    const fn full() -> Self {
+        Self {
+            tokens: LogConfig::BURST_EVENTS_PER_CLASS,
+            remainder: 0,
+            last_ns: 0,
+        }
+    }
+
+    fn take(&mut self, now_ns: u64) -> bool {
+        let elapsed = now_ns.saturating_sub(self.last_ns);
+        self.last_ns = self.last_ns.max(now_ns);
+        if elapsed >= Self::FILL_NS {
+            self.tokens = LogConfig::BURST_EVENTS_PER_CLASS;
+            self.remainder = 0;
+        } else {
+            // elapsed < 2e9 and rate=1024: this sum is below 2.049e12 on every target.
+            let credit = elapsed * LogConfig::EVENTS_PER_SECOND_PER_CLASS + self.remainder;
+            let tokens = self.tokens + credit / Self::NS_PER_SECOND;
+            self.tokens = tokens.min(LogConfig::BURST_EVENTS_PER_CLASS);
+            self.remainder = if tokens >= LogConfig::BURST_EVENTS_PER_CLASS {
+                0
+            } else {
+                credit % Self::NS_PER_SECOND
+            };
+        }
+        if self.tokens == 0 {
+            false
+        } else {
+            self.tokens -= 1;
+            true
+        }
     }
 }
 
@@ -340,6 +403,7 @@ pub(super) struct DiagLog {
     count: usize,
     scratch: Line,
     last_ts: u64,
+    rates: [RateBucket; 2],
     stats: LogStats,
 }
 
@@ -372,6 +436,7 @@ impl DiagLog {
             count: 0,
             scratch: Line::EMPTY,
             last_ts: 0,
+            rates: [RateBucket::full(); 2],
             stats: LogStats::default(),
         }
     }
@@ -398,6 +463,11 @@ impl DiagLog {
         self.stats.emitted += 1;
         let ts = r.ts.max(self.last_ts);
         self.last_ts = ts;
+        if !self.rates[usize::from(r.critical)].take(ts) {
+            self.stats.dropped_rate += 1;
+            self.stats.critical_lost += u64::from(r.critical);
+            return;
+        }
         self.scratch.len = 0;
         let fits = {
             let c = &self.cfg;

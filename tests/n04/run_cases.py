@@ -51,6 +51,7 @@ from typing import Any, Dict, List, Optional, Tuple
 HERE = os.path.dirname(os.path.realpath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 VECTORS = os.path.join(HERE, "vectors.json")
+PAIRED_TRACE = os.path.join(HERE, "paired_trace.json")
 CONTRACT = os.path.join(REPO, "docs", "contracts", "n04.md")
 TIERS = ("smoke", "full")  # the tiers that judge cases
 ALL_TIERS = TIERS + ("soak",)
@@ -95,6 +96,35 @@ PL = "playout::log::tests::"
 PG = "playout::group_clock_tests::"
 ALLOC_STEM = "playout_no_alloc"
 
+# The virtual-house arrival consumer has its own binary and tests without the n04_ prefix.
+# Require these existing composition controls as well as the engine and hint tests: a stream-only log cannot qualify them.
+ARRIVAL_SOURCE = "crates/franken-speaker/src/playout_adapter.rs"
+ARRIVAL_TEST_FN = re.compile(r"#\[test\]\s*((?:#\[[^\]]*\]\s*)*)fn\s+([A-Za-z0-9_]+)")
+ARRIVAL_TESTS_BY_CASE = {
+    "N04-ONTIME": (
+        "an_old_stream_datagram_still_in_flight_at_the_commit_is_authenticated_on_arrival_by_the_old_generation_and_played",
+        "the_rebound_receiver_alone_would_refuse_the_old_tail_so_the_positive_control_needs_the_old_generations_receiver",
+        "rapid_generations_each_keep_their_own_receiver_copy_while_they_owe_a_tail_and_only_the_ledger_caps_them",
+    ),
+    "N04-ROUTE-HINT": (
+        "an_authentic_old_stream_datagram_past_the_cutover_that_arrives_first_cannot_poison_the_replay_window_of_the_tail_still_owed",
+        "a_tampered_high_sequence_datagram_fails_its_mac_is_counted_by_n01_and_leaves_the_tail_playable",
+        "an_authentic_next_stream_datagram_below_its_first_block_that_arrives_first_cannot_poison_the_node_receivers_replay_window",
+        "a_duplicate_a_post_cutover_old_datagram_and_damaged_ones_are_refused_by_the_layer_that_owns_the_check",
+        "a_datagram_for_a_retired_generation_is_refused_and_a_generation_keeps_its_receiver_only_while_it_owes_a_tail",
+    ),
+    "N04-EPOCH": (
+        "a_trusted_group_epoch_change_fences_all_queued_generations_and_the_delayed_tail",
+        "a_group_epoch_change_leaves_retired_history_alone_and_fences_the_still_live_generation",
+        "a_single_initial_generation_is_fenced_without_new_arrivals_and_a_prepared_candidate_cannot_change_its_epoch_at_commit",
+        "a_fresh_group_epoch_can_resume_with_a_new_stream_without_relabeling_any_old_queued_generation",
+    ),
+    "N04-CAPACITY": (
+        "a_refused_next_stream_leaves_raw_old_traffic_authenticating_on_the_receiver_that_was_never_rebound",
+        "a_refused_next_stream_leaves_the_playing_one_deciding_real_blocks_and_a_funded_one_still_opens",
+    ),
+}
+
 
 def _load(name: str) -> Any:
     spec = importlib.util.spec_from_file_location("n04_" + name, os.path.join(HERE, name + ".py"))
@@ -109,6 +139,7 @@ def _load(name: str) -> Any:
 
 
 ref, gen, anchors = _load("reference"), _load("generate"), _load("anchors")
+paired = _load("paired")
 
 
 def _load_d01_parser() -> Any:
@@ -176,7 +207,7 @@ def _case(cid: str, group: str, tier: str, what: str, tests: List[Tuple[str, str
 
 
 def registry() -> List[dict]:
-    return [
+    cases = [
         _case("N04-PROFILES", "AC-CAPS", "smoke",
               "music and realtime policies are the frozen table (horizon, conceal maximum, notice, step, net cap); invalid configs refused",
               T("n04_profiles_are_the_frozen_table", "n04_invalid_configurations_are_refused_field_by_field"),
@@ -234,14 +265,20 @@ def registry() -> List[dict]:
               WT("W15-ADVICE", "W15B-ADVICE-QUIET") + T("n04_advice_table_matches_the_reference"),
               ["W15-ADVICE", "W15B-ADVICE-QUIET", "n04-advice"]),
         _case("N04-SEEDED", "AC-FAULTS", "full",
-              "seeded loss, jitter, reorder, duplicate, slow and burst schedules (700 blocks each) in both policies, every decision re-derived by the reference",
-              WT("W16-SEEDED-MUSIC", "W17-SEEDED-REALTIME"), ["W16-SEEDED-MUSIC", "W17-SEEDED-REALTIME"]),
+              "the original policy-specific seeded stress worlds, plus one identical seeded loss/jitter/reorder/duplicate/burst trace replayed unchanged in both policies with positive downstream costs and backpressure; every decision re-derived by the reference",
+              WT("W16-SEEDED-MUSIC", "W17-SEEDED-REALTIME")
+              + T("n04_both_policies_replay_the_identical_seeded_trace_with_backpressure"),
+              ["W16-SEEDED-MUSIC", "W17-SEEDED-REALTIME", "n04-paired-seeded"]),
         _case("N04-PROPERTIES", "AC-ONCE", "smoke",
               "on every world, with the test file's own arithmetic: queue never above the horizon, one decision per block in order, played bytes are the admitted bytes, nothing admitted at or after its cutoff, every packet has one fate",
               T("n04_properties_hold_on_every_world", "n04_counters_account_for_every_packet_and_every_decision",
                 "n04_every_world_in_the_vectors_has_a_test"),
               ["n04-properties", "n04-accounting-w16-seeded-music", "n04-accounting-w17-seeded-realtime"]),
     ] + log_cases() + edge_cases() + capacity_cases() + ingress_cases()
+    for case in cases:
+        case["tests"] += [("franken_speaker", "playout_adapter::tests::" + name)
+                          for name in ARRIVAL_TESTS_BY_CASE.get(case["id"], ())]
+    return cases
 
 
 def edge_cases() -> List[dict]:
@@ -259,7 +296,8 @@ def edge_cases() -> List[dict]:
         _case("N04-NO-ALLOC", "AC-CAPS", "smoke",
               "under the counting allocator: the probe is live, construction allocates, and a seeded 400-block script through every consume-path "
               "call and the log drain makes no allocation, reallocation or free",
-              [(ALLOC_STEM, "n04_playout_engine_consume_path_does_not_allocate_after_construction")], ["n04-no-alloc"]),
+              [(ALLOC_STEM, "n04_playout_engine_consume_path_does_not_allocate_after_construction"),
+               (ALLOC_STEM, "n04_log_rate_admission_and_refusal_do_not_allocate")], ["n04-no-alloc"]),
     ]
 
 
@@ -323,8 +361,9 @@ def log_cases() -> List[dict]:
               "a lost critical record marks the evidence incomplete; an over-long line is dropped whole; the decisions do not change",
               T("n04_log_loss_is_counted_when_the_sink_is_slow_full_or_unavailable",
                 "n04_log_accounting_holds_after_every_op") + LT("n04_log_an_over_long_line_is_dropped_whole_and_counted",
-                                                                 "n04_log_stats_summary_line"),
-              scenarios + ["n04-log-accounting"]),
+                                                                 "n04_log_stats_summary_line",
+                                                                 "n04_log_rate_is_bounded_before_formatting_with_refill_and_critical_reserve"),
+              scenarios + ["n04-log-accounting", "n04-log-rate"]),
         _case("N04-LOG-NONBLOCKING", "AC-LOG", "smoke",
               "the decision path never calls the sink: a sink that would block is offered nothing until a drain, and a drain makes at most its budget of offers",
               T("n04_log_a_blocking_sink_is_never_called_on_the_decision_path"), ["n04-log-blocking"]),
@@ -430,9 +469,11 @@ def expected_records(vec: dict) -> Dict[str, dict]:
     out["n04-advice"] = {"id": "n04-advice", "rows": [ref.advice(r["margins"], r["net_shift_ns"], ref.PROFILES[r["profile"]])
                                                         for r in t["advice"]]}
     out.update(expected_log_records(vec))
+    out["n04-log-rate"] = ref.log_rate_observation()
     cfg = vec["defaults"]
     out["n04-sender-consume-by"] = {"id": "n04-sender-consume-by",
                                     "cutoff": ref.consume_by(2_000_000_000, cfg["work_ns"], cfg["lead_ns"], 200_000)}
+    out["n04-paired-seeded"] = paired.expected_record()
     return out
 
 
@@ -607,6 +648,8 @@ def compare_log(oid: str, want: dict, got: dict) -> Optional[str]:
 
 
 def compare_record(vec: dict, oid: str, want: dict, got: dict) -> Optional[str]:
+    if oid == "n04-paired-seeded":
+        return paired.compare_record(want, got)
     if oid.startswith(("n04-log-w", "n04-logscn-")):
         return compare_log(oid, want, got)
     if "results" in want:
@@ -662,7 +705,7 @@ def load_vectors() -> Tuple[Optional[dict], str]:
 
 
 def derive_rust_tests() -> List[Tuple[str, str, bool]]:
-    """(binary stem, cargo test name, ignored) for every ``n04_`` test in the sources, macro-made ones included."""
+    """Every ``n04_`` test, including macro-made ones, and the explicitly named arrival-consumer controls."""
     found: List[Tuple[str, str, bool]] = []
     for rel, stem, prefix in RUST_SOURCES:
         path = os.path.join(REPO, rel)
@@ -674,6 +717,14 @@ def derive_rust_tests() -> List[Tuple[str, str, bool]]:
             found.append((stem, prefix + name, "ignore" in attrs))
         for name in WORLD_MACRO.findall(source):
             found.append((stem, prefix + name, False))
+    arrival_path = os.path.join(REPO, ARRIVAL_SOURCE)
+    if os.path.isfile(arrival_path):
+        with open(arrival_path, encoding="utf-8") as handle:
+            arrival_source = handle.read()
+        required = {name for names in ARRIVAL_TESTS_BY_CASE.values() for name in names}
+        for attrs, name in ARRIVAL_TEST_FN.findall(arrival_source):
+            if name in required:
+                found.append(("franken_speaker", "playout_adapter::tests::" + name, "ignore" in attrs))
     return found
 
 
@@ -690,8 +741,14 @@ def meta_results(vec: Optional[dict], note: str) -> List[Result]:
         out.append(Result("N04-META-VECTORS-FRESH", "fail", note, "META"))
         return out
     fresh = json.loads(_fresh_vectors())
-    add("N04-META-VECTORS-FRESH", fresh == vec, "vectors.json equals a fresh generation" if fresh == vec
-        else "tests/n04/vectors.json is stale: run scripts/e2e/n04 --write-vectors")
+    try:
+        with open(PAIRED_TRACE, encoding="utf-8") as handle:
+            paired_fresh = json.load(handle) == paired.fixture()
+    except (OSError, ValueError):
+        paired_fresh = False
+    add("N04-META-VECTORS-FRESH", fresh == vec and paired_fresh,
+        "vectors.json and additive paired_trace.json equal fresh generations" if fresh == vec and paired_fresh
+        else "vectors.json or paired_trace.json is missing or stale; preserve original worlds and regenerate only the changed fixture")
 
     cases = registry()
     mapped = {(stem, name) for case in cases for stem, name in case["tests"]}
@@ -762,7 +819,9 @@ def judge_case(case: dict, vec: dict, want: Dict[str, dict], logs: Optional[Logs
 def run(tier: str, logs: Optional[Logs]) -> Tuple[List[Result], dict]:
     vec, note = load_vectors()
     results = meta_results(vec, note)
-    meta = {"vectors_sha256": sha256_file(VECTORS) if vec is not None else None, "profile_version": ref.PROFILE_VERSION}
+    meta = {"vectors_sha256": sha256_file(VECTORS) if vec is not None else None,
+            "paired_trace_sha256": sha256_file(PAIRED_TRACE) if os.path.isfile(PAIRED_TRACE) else None,
+            "profile_version": ref.PROFILE_VERSION}
     if vec is None:
         return results, meta
     want = expected_records(vec)
