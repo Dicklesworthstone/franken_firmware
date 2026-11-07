@@ -27,6 +27,9 @@ LOGFILE_SRC = ref.ROOT / "crates" / "franken-control" / "src" / "logfile.rs"
 PROBE_TESTS = ref.ROOT / "crates" / "franken-alloc-probe" / "tests"
 CONTROL_TESTS = ref.ROOT / "crates" / "franken-control" / "tests"  # the stepper scan is an integration test of the crate
 SPEAKER_PLANE = ref.ROOT / "crates" / "franken-speaker" / "src" / "control_adapter.rs"  # the durable control plane's tests
+# The regular-file medium and the process-restart test that runs the plane over it (unix, harness): a missing file is a failure.
+SPEAKER_MEDIUM = ref.ROOT / "crates" / "franken-speaker" / "src" / "file_medium.rs"
+SPEAKER_PROCESS = ref.ROOT / "crates" / "franken-speaker" / "tests" / "n02_process_restart.rs"
 HEAP_TEST = PROBE_TESTS / "n02_heap_high_water.rs"
 CONTRACT = ref.ROOT / "docs" / "contracts" / "n02.md"
 CASES =Path(__file__).resolve().parent / "cases.json"
@@ -672,7 +675,7 @@ class Mapping(unittest.TestCase):
         # The file sink (logfile.rs) is outside channel/ on purpose: the runtime-profile scan forbids the filesystem
         # in the channel's sources. Its tests are named by the same invariants, so it is read as well.
         # The heap tests (INV-HEAP-BOUND and the probe's own figure) are in franken-alloc-probe/tests, for the same kind of reason.
-        sources = sorted(CHANNEL_SRC.rglob("*.rs")) + [LOGFILE_SRC] + sorted(PROBE_TESTS.glob("*.rs")) + sorted(CONTROL_TESTS.glob("*.rs")) + [SPEAKER_PLANE]
+        sources = sorted(CHANNEL_SRC.rglob("*.rs")) + [LOGFILE_SRC] + sorted(PROBE_TESTS.glob("*.rs")) + sorted(CONTROL_TESTS.glob("*.rs")) + [SPEAKER_PLANE, SPEAKER_MEDIUM, SPEAKER_PROCESS]
         source = "\n".join(p.read_text(encoding="utf-8") for p in sources)
         names = {n for i in self.cases()["invariants"] for n in i["rust_tests"]}
         for group in self.cases()["other_rust_checks"].values():

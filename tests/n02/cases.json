@@ -809,7 +809,7 @@
     },
     {
       "id": "INV-DURABILITY-LATCH",
-      "claim": "The first store that fails latches the channel's durable path failed. While latched nothing is staged and no journal call is made; the local user's stop and mute-on are applied to the live session, a cancel still withdraws, and every other command (relative or absolute, from any role, a controller's stop included) is refused as InternalFault with the cause durability_failed and is not recorded, so the same request can be sent again; nothing that raises volume gets through. Only reopen_from_open clears the latch: the channel then offers at least the mark the medium holds (a write the medium took despite the error does not lock it out as MarkRegressed) and keeps the larger of each identity's floor; a medium that cannot be opened leaves the latch. The first accepted local stop or mute-on that itself discovers the failure (also when another writer poisoned the journal) is applied to the live session and delivered (StoreFailed::applied) while a co-queued volume increase, relative step or unmute stays unapplied and withheld; a revoked or forged mute-on is not applied. The one critical record of a failed step names a command that stays withheld, never a silence that is then applied (a step of only silences still writes it, naming number 0).",
+      "claim": "The first store that fails latches the channel's durable path failed. While latched nothing is staged and no journal call is made; the local user's stop and mute-on are applied to the live session, a cancel still withdraws, and every other command (relative or absolute, from any role, a controller's stop included) is refused as InternalFault with the cause durability_failed and is not recorded, so the same request can be sent again; nothing that raises volume gets through. Only reopen_from_open clears the latch: the channel then offers at least the mark the medium holds (a write the medium took despite the error does not lock it out as MarkRegressed) and keeps the larger of each identity's floor; a medium that cannot be opened leaves the latch. The first accepted local stop or mute-on that itself discovers the failure (also when another writer poisoned the journal) is applied to the live session and delivered (StoreFailed::applied) while a co-queued volume increase, relative step or unmute stays unapplied and withheld; a revoked or forged mute-on is not applied. The one critical record of a failed step names a command that stays withheld, never a silence that is then applied (a step of only silences still writes it, naming number 0). Across a process boundary, over a regular file with one chosen program or sync failure injected (harness, unix only): the panel's mute-on is answered 200, is applied to the live session and the plane is latched at that step; a controller's volume set and the panel's unmute are refused with the volume unchanged and the member still muted; the file keeps its old mark, and a fresh process without the fault restores it and applies the same three steps in full; after a failed sync the file holds the old or the new mark and nothing else. These are three SEQUENTIAL requests, checked by the process_restart group in other_rust_checks, and they are NOT evidence for the one-step property stated above (the mute-on applied while the set and the unmute of the same step are withheld), which only the in-process step_then_store tests evidence.",
       "rust_tests": [
         "a_latched_path_still_silences_for_the_local_user_and_refuses_everything_else_without_touching_the_journal",
         "reopening_the_journal_clears_the_latch_and_what_was_refused_while_it_held_can_be_sent_again",
@@ -820,7 +820,7 @@
         "a_revoked_or_forged_local_mute_on_is_not_applied_by_the_first_failure",
         "a_failed_step_names_a_withheld_command_in_its_one_critical_record_and_not_a_silence_it_then_applies",
         "a_step_of_only_a_local_mute_on_and_a_failing_store_still_writes_one_critical_record",
-        "an_owner_that_forgot_to_restore_still_gets_the_first_local_mute_on_applied_and_nothing_else"
+        "an_owner_that_forgot_to_restore_still_gets_the_first_local_mute_on_applied_and_the_controller_volume_and_the_unmute_stay_withheld"
       ],
       "scenarios": [],
       "scenario_inapplicable": "These are properties of the channel over U01's journal on an in-memory medium with fault injection (and of the transaction around it), judged by Rust tests; the Python scenario model has no journal and nothing to say about them."
@@ -870,7 +870,7 @@
     },
     {
       "id": "INV-DURABLE-BOOT",
-      "claim": "boot_durable opens the journal, restores the revision mark and the relative-command floors and returns the stepper in one call, before the channel's first step: a blank medium boots with nothing to restore; a journal holding a mark and floors gives both to the channel and a restored floor is in force at once; a medium that cannot be opened boots latched and refusing; a journal with no valid state boots durable but refusing for the run; a channel that has already stepped is refused; and what a booted stepper stores is what the next boot over the same medium restores. The speaker's Virtual House control plane has a durable constructor over it (its campaign fixture stays volatile and says so): a restart over the same medium answers a delivered tailnet step 801 and applies a bridge step once. A latched owner is reopened in one call (reopen_durable): a medium that opens clears the latch and the new stepper stores again; one that cannot be opened leaves the latch; a journal ahead of the session is offered at its mark with its floors in force. A latched boot returns a stepper through which the local user's stop and mute-on work and a controller's command is refused, and which latches a channel that is not latched rather than step it volatilely.",
+      "claim": "boot_durable opens the journal, restores the revision mark and the relative-command floors and returns the stepper in one call, before the channel's first step: a blank medium boots with nothing to restore; a journal holding a mark and floors gives both to the channel and a restored floor is in force at once; a medium that cannot be opened boots latched and refusing; a journal with no valid state boots durable but refusing for the run; a channel that has already stepped is refused; and what a booted stepper stores is what the next boot over the same medium restores. The speaker's Virtual House control plane has a durable constructor over it (its campaign fixture stays volatile and says so): a restart over the same medium answers a delivered tailnet step 801 and applies a bridge step once. A latched owner is reopened in one call (reopen_durable): a medium that opens clears the latch and the new stepper stores again; one that cannot be opened leaves the latch; a journal ahead of the session is offered at its mark with its floors in force. A latched boot returns a stepper through which the local user's stop and mute-on work and a controller's command is refused, and which latches a channel that is not latched rather than step it volatilely. Over a regular file (the harness's FileMedium, unix only, no device medium) the same plane runs as a PROCESS: a new process restores the mark and the floors from the file alone (it is told only the session's revision and volume, which G01 does not store) and answers the delivered tailnet step 801 where a fresh file applies the identical request; a process killed after its acknowledged steps does the same for a fresh process; a file that is not the medium's is refused by name before any plane exists and left unchanged. A process kill keeps every byte already handed to the OS, so none of this is evidence of sync_all or of a power cut.",
       "scenarios": [],
       "scenario_inapplicable": "These are properties of the owner's boot over U01's journal on an in-memory medium, judged by Rust tests; the Python scenario model has no journal.",
       "rust_tests": [
@@ -886,7 +886,9 @@
         "a_medium_that_still_cannot_be_opened_leaves_the_latch_where_it_was",
         "a_reopen_over_a_journal_that_is_ahead_of_the_session_offers_the_larger_mark_and_keeps_its_floors",
         "a_latched_boot_returns_a_stepper_through_which_the_local_user_can_still_silence_and_nothing_else_works",
-        "the_latched_stepper_never_lets_a_healthy_channel_step_as_if_it_were_durable"
+        "the_latched_stepper_never_lets_a_healthy_channel_step_as_if_it_were_durable",
+        "a_new_process_restores_the_mark_and_the_floor_from_the_file_and_refuses_the_delivered_step",
+        "a_process_killed_after_its_acknowledged_steps_holds_the_file_and_a_fresh_process_restores_from_it"
       ]
     },
     {
@@ -1225,6 +1227,32 @@
       "a_nested_window_that_unwinds_hands_its_own_peak_to_the_enclosing_window",
       "the_same_nested_window_returning_normally_keeps_the_enclosing_peak_and_reports_its_own",
       "windows_measure_exactly_after_a_nested_window_has_unwound_and_been_caught"
+    ],
+    "file_medium": [
+      "the_checksum_is_the_standard_crc32",
+      "a_new_file_is_the_header_and_two_erased_segments",
+      "what_was_programmed_and_synced_is_there_after_the_file_is_reopened",
+      "create_new_refuses_every_existing_path_and_leaves_it_exactly_as_it_was",
+      "a_geometry_the_journal_cannot_use_or_a_file_cannot_bound_is_refused_before_anything_is_made",
+      "a_file_that_is_not_this_format_is_refused_by_name_and_never_changed",
+      "what_is_not_a_regular_file_with_one_link_is_refused_and_untouched",
+      "a_second_open_is_refused_while_the_first_lives_and_allowed_after",
+      "a_file_the_owner_cannot_write_is_denied_and_unchanged",
+      "offsets_are_checked_before_any_write_and_programming_only_clears_bits",
+      "the_first_failure_latches_and_every_later_call_returns_it",
+      "error_codes_are_unique_snake_case_names_that_carry_no_data",
+      "a_fail_plan_is_program_or_sync_and_a_count_of_at_least_one",
+      "a_faulting_medium_fails_exactly_the_chosen_program_after_it_is_armed_and_the_failed_one_has_no_effect",
+      "a_faulting_medium_fails_exactly_the_chosen_sync_and_what_was_written_stays_in_the_file",
+      "a_faulting_medium_with_no_plan_is_the_medium_it_wraps"
+    ],
+    "process_restart": [
+      "child_output_at_the_limit_is_retained_and_one_extra_byte_is_an_error",
+      "dropping_a_held_child_reaps_it_and_releases_the_real_file_lock",
+      "the_step_limit_accepts_sixty_four_and_refuses_sixty_five_before_opening_the_file",
+      "what_is_not_this_mediums_file_is_refused_by_name_before_any_plane_exists_and_left_alone",
+      "a_failed_commit_of_a_local_mute_on_still_silences_and_latches_and_the_file_keeps_its_old_mark",
+      "an_unknown_sync_outcome_latches_the_plane_and_a_fresh_process_finds_the_old_or_the_new_mark"
     ]
   }
 }

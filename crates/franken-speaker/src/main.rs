@@ -139,6 +139,12 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        // The durable control plane as a process over a regular file (N02): `init` makes the file, `run` boots the plane over it,
+        // so a test can restart the owner as a NEW process. Harness builds on unix only; any other build reports the usage text.
+        #[cfg(all(unix, feature = "harness"))]
+        franken_speaker::control_restart::MODE => {
+            franken_speaker::control_restart::main(&args[2..])
+        }
         #[cfg(not(feature = "harness"))]
         "--virtual-house" | "--self-test" => {
             eprintln!(

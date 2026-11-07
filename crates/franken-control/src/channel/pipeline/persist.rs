@@ -1637,28 +1637,41 @@ mod tests {
     }
 
     #[test]
-    fn an_owner_that_forgot_to_restore_still_gets_the_first_local_mute_on_applied_and_nothing_else()
-    {
+    fn an_owner_that_forgot_to_restore_still_gets_the_first_local_mute_on_applied_and_the_controller_volume_and_the_unmute_stay_withheld()
+     {
         let mut medium = blank_medium();
         let _held_back = first_life(&mut medium, Owner::Faithful).unwrap();
         let mut reborn = MemStorage::from_image(limits().segment_bytes, medium.durable());
         let mut two = Incarnation::boot(&mut reborn, Owner::Unrestored);
         assert_eq!(two.restored, None);
-        // The local mute-on and a volume set arrive together.
+        let revision = two.session.state_revision;
+        // Together: a controller's volume set (composed against the session's current revision, so it would take effect
+        // if the step were kept), the local mute-on, and the local unmute that follows the mute-on.
+        queue(&mut two, "ctl-a", 1, set_group(70));
         queue(&mut two, "panel", 1, mute(true));
-        queue(&mut two, "panel", 2, set_group(70));
+        queue(&mut two, "panel", 2, mute(false));
         let journal = two.journal.as_mut().unwrap();
         let failed = step_then_store(&mut two.channel, 0, &mut two.session, journal).unwrap_err();
-        // The journal still refuses to go down, for the same reason as above...
+        // The journal still refuses to go down, for the same reason as in the test above, and the mark it holds is untouched.
         assert_eq!(failed.cause, JournalError::MarkRegressed { current: 7 });
         assert_eq!(two.stored_mark(), Some(7));
-        // ...the volume set is withheld and has no effect, as it must...
-        assert_eq!(seqs(&failed.withheld), vec![2]);
-        assert_eq!(two.session.group_master_volume, BASE);
-        // ...and the mute-on, which only silences, took effect on the live session after all and is to be delivered.
-        assert_eq!(seqs(&failed.applied), vec![1]);
+        // The mute-on took effect once on the live session, is delivered and is not withheld...
+        assert_eq!(named(&failed.applied), vec![("panel".to_string(), 1)]);
         assert!(committed(&failed.applied[0].outcome));
         assert!(two.session.members["kitchen"].muted);
+        assert_eq!(
+            two.session.state_revision,
+            revision + 1,
+            "only the mute advanced the live revision"
+        );
+        // ...while the controller's volume set and the unmute are genuinely withheld, with the state unchanged by them:
+        // the group ends silent, never louder, and the volume is where it was.
+        assert_eq!(
+            named(&failed.withheld),
+            vec![("ctl-a".to_string(), 1), ("panel".to_string(), 2)]
+        );
+        assert_eq!(two.session.group_master_volume, BASE);
+        // The fault is truthful: the path is latched failed with the journal's own code.
         assert!(matches!(
             two.channel.durability(),
             Durability::Failed { .. }
@@ -2812,6 +2825,16 @@ mod tests {
         let mut seqs: Vec<u64> = settled.iter().map(|s| s.seq).collect();
         seqs.sort_unstable();
         seqs
+    }
+
+    /// Who and which number, sorted: for a step that settled commands from more than one peer.
+    fn named(settled: &[Settlement]) -> Vec<(String, u64)> {
+        let mut named: Vec<(String, u64)> = settled
+            .iter()
+            .map(|s| (s.peer.as_str().to_string(), s.seq))
+            .collect();
+        named.sort();
+        named
     }
 
     #[test]

@@ -86,7 +86,7 @@ mod restart;
 mod submit_log;
 
 pub use ack::AckOutcome;
-pub use boot::{Booted, DurableBoot, Limits, Storage, boot_durable, reopen_durable};
+pub use boot::{Booted, DurableBoot, Limits, Storage, StorageFault, boot_durable, reopen_durable};
 pub use persist::{
     Cause, DevelopmentVolatile, Durable, FloorCause, HIGH_WATER_KEY, LatchedStepper,
     MemoryJournalStepper, OwnedDurable, REFUSING_FLOOR, RamMedium, Reopened, Restored,

@@ -48,6 +48,13 @@ use franken_session::{
 };
 use serde::{Deserialize, Serialize};
 
+#[cfg(unix)]
+use crate::file_medium::{FaultingMedium, FileMedium};
+
+/// The device's own panel: a LOCAL-USER peer, admitted only to the faulting durable plane. Synthetic label; its key is a public fixture.
+#[cfg(unix)]
+const PANEL_PEER: &str = "panel";
+
 /// The identities the two ingresses speak as. Synthetic labels.
 const BRIDGE_PEER: &str = "legacy-bridge";
 const TAILNET_PEER: &str = "tailnet-controller";
@@ -421,6 +428,16 @@ enum PlaneStepper {
     // neither allocation is inside a measured channel step/datagram window. Nested journal allocations are separate.
     #[cfg_attr(not(test), allow(dead_code))]
     Durable(Box<OwnedDurable<RamMedium>>),
+    // Built by `new_durable_file`, which the process-restart driver (`control_restart`, harness builds) calls. The medium is a regular
+    // file, so what this stepper stores survives the process; the journal and the boot are the same as for `Durable`.
+    #[cfg(unix)]
+    #[cfg_attr(not(feature = "harness"), allow(dead_code))]
+    DurableFile(Box<OwnedDurable<FileMedium>>),
+    // Built by `new_durable_faulting`: the same file medium behind a wrapper that can fail one chosen storage call, so a process test
+    // can make the commit of a chosen step fail on a real file.
+    #[cfg(unix)]
+    #[cfg_attr(not(feature = "harness"), allow(dead_code))]
+    DurableFaulting(Box<OwnedDurable<FaultingMedium<FileMedium>>>),
 }
 
 /// The real endpoint, channel and peer directory, and the two identities that reach them.
@@ -521,13 +538,147 @@ impl ControlPlane {
         }
     }
 
+    /// [`ControlPlane::new_durable`], over a regular file ([`FileMedium`]) instead of RAM: the same boot ([`boot_durable`], before the
+    /// channel's first step), the same stepper, so a plane built over the same file in ANOTHER PROCESS is given the revision mark and
+    /// the relative-command floors this one stored. Returns what was restored, for the caller's log. The session (G01) is not stored
+    /// anywhere: the caller rebuilds it.
+    ///
+    /// # Errors
+    /// If the plane cannot be built, the channel has already stepped, or the file's journal cannot be opened (a plane that is
+    /// latched failed from its first step is not a plane this harness can run).
+    #[cfg(unix)]
+    #[cfg_attr(not(feature = "harness"), allow(dead_code))]
+    pub(crate) fn new_durable_file(
+        session: &UnifiedGroupSession,
+        member_id: &str,
+        now_ns: u64,
+        medium: FileMedium,
+    ) -> Result<(Self, Restored, RestoredFloors), String> {
+        let mut plane = Self::new(session, member_id, now_ns)?;
+        match boot_durable(&mut plane.channel, medium, Limits::standard())
+            .map_err(|e| format!("durable boot: {e}"))?
+        {
+            Booted::Durable(boot) => {
+                plane.stepper = PlaneStepper::DurableFile(Box::new(boot.stepper));
+                Ok((plane, boot.mark, boot.floors))
+            }
+            Booted::Latched { code, .. } => Err(format!(
+                "durable boot: the medium could not be opened ({code})"
+            )),
+        }
+    }
+
+    /// [`ControlPlane::new_durable_file`] over a [`FaultingMedium`] (a plan of `None` makes it the plain file medium), and with the
+    /// device's panel admitted as a LOCAL-USER peer so a test can send the one kind of command that still applies to the live session
+    /// when the store has failed (a mute-on). The caller arms the medium after this returns, so the journal's own writes while it opens
+    /// are not counted.
+    ///
+    /// # Errors
+    /// As [`ControlPlane::new_durable_file`], and if the panel cannot be admitted.
+    #[cfg(unix)]
+    #[cfg_attr(not(feature = "harness"), allow(dead_code))]
+    pub(crate) fn new_durable_faulting(
+        session: &UnifiedGroupSession,
+        member_id: &str,
+        now_ns: u64,
+        medium: FaultingMedium<FileMedium>,
+    ) -> Result<(Self, Restored, RestoredFloors), String> {
+        let mut plane = Self::new(session, member_id, now_ns)?;
+        let panel = PeerId::parse(PANEL_PEER).map_err(|e| format!("panel peer id: {e}"))?;
+        plane
+            .channel
+            .authority_mut()
+            .admit(
+                &panel,
+                PeerRole::LocalUser,
+                &fixture_key(PANEL_PEER),
+                None,
+                1,
+            )
+            .map_err(|e| format!("admitting {panel}: {e:?}"))?;
+        match boot_durable(&mut plane.channel, medium, Limits::standard())
+            .map_err(|e| format!("durable boot: {e}"))?
+        {
+            Booted::Durable(boot) => {
+                plane.stepper = PlaneStepper::DurableFaulting(Box::new(boot.stepper));
+                Ok((plane, boot.mark, boot.floors))
+            }
+            Booted::Latched { code, .. } => Err(format!(
+                "durable boot: the medium could not be opened ({code})"
+            )),
+        }
+    }
+
+    /// The device's panel (a LOCAL-USER peer admitted by [`ControlPlane::new_durable_faulting`]) asks for the member to be muted or
+    /// unmuted, signed with its fixture key on the tailnet route, as the endpoint's own tests send it. A local user's mute-on is the
+    /// one change that still applies to the live session when the store has failed.
+    ///
+    /// # Errors
+    /// If the request cannot be built.
+    #[cfg(unix)]
+    #[cfg_attr(not(feature = "harness"), allow(dead_code))]
+    pub(crate) fn send_panel_mute(
+        &mut self,
+        session: &mut UnifiedGroupSession,
+        now_ns: u64,
+        seq: u64,
+        muted: bool,
+    ) -> Result<Sent, String> {
+        let panel = PeerId::parse(PANEL_PEER).map_err(|e| format!("panel peer id: {e}"))?;
+        let command = ControlCommand::SetMemberMute {
+            member_id: self.member_id.clone(),
+            muted,
+        };
+        let epoch = session.current_epoch;
+        let signed = RequestBody::new(panel, seq, epoch, None, command)
+            .map_err(|e| format!("panel request body: {e:?}"))?;
+        let proof = compute_proof(&fixture_key(PANEL_PEER), &signed.signing_bytes());
+        let proof_hex: String = proof
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let desired = if muted { "1" } else { "0" };
+        let args = [
+            ("InstanceID", "0"),
+            ("Channel", "Master"),
+            ("DesiredMute", desired),
+        ];
+        let service = Service::RenderingControl;
+        let body = envelope(service, "SetMute", &args);
+        let soap_action = format!("\"{}#SetMute\"", service.urn());
+        let seq_text = seq.to_string();
+        let epoch_text = epoch.to_string();
+        let headers = [
+            ("SOAPACTION", soap_action.as_str()),
+            ("X-Franken-Peer", PANEL_PEER),
+            ("X-Franken-Seq", seq_text.as_str()),
+            ("X-Franken-Epoch", epoch_text.as_str()),
+            ("X-Franken-Proof", proof_hex.as_str()),
+        ];
+        Ok(self.dispatch(session, now_ns, Ingress::Tailnet, service, &headers, &body))
+    }
+
+    /// Whether the channel has latched its durability failed: a store failed or the journal is poisoned, so only the local user's
+    /// stop and mute-on still work and every other command is refused.
+    #[cfg(unix)]
+    #[cfg_attr(not(feature = "harness"), allow(dead_code))]
+    pub(crate) fn durability_failed(&self) -> bool {
+        matches!(
+            self.channel.durability(),
+            franken_control::channel::pipeline::Durability::Failed { .. }
+        )
+    }
+
     /// The medium a durable plane stores into, given back when the plane is dropped: what a restart is built over. `None` for
-    /// the volatile fixture, which stores nothing.
+    /// the volatile fixture, which stores nothing, and for a plane over a file (its restart is a new process opening the file).
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn into_medium(self) -> Option<RamMedium> {
         match self.stepper {
             PlaneStepper::Durable(stepper) => Some(stepper.into_journal().into_storage()),
             PlaneStepper::Volatile(_) => None,
+            #[cfg(unix)]
+            PlaneStepper::DurableFile(_) | PlaneStepper::DurableFaulting(_) => None,
         }
     }
 
@@ -566,6 +717,26 @@ impl ControlPlane {
                 self.endpoint.handle(&mut ctx, &request)
             }
             PlaneStepper::Durable(stepper) => {
+                let mut ctx = Context {
+                    channel: &mut self.channel,
+                    session,
+                    stepper: &mut **stepper,
+                    now_ns,
+                };
+                self.endpoint.handle(&mut ctx, &request)
+            }
+            #[cfg(unix)]
+            PlaneStepper::DurableFile(stepper) => {
+                let mut ctx = Context {
+                    channel: &mut self.channel,
+                    session,
+                    stepper: &mut **stepper,
+                    now_ns,
+                };
+                self.endpoint.handle(&mut ctx, &request)
+            }
+            #[cfg(unix)]
+            PlaneStepper::DurableFaulting(stepper) => {
                 let mut ctx = Context {
                     channel: &mut self.channel,
                     session,

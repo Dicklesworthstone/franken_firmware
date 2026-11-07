@@ -37,6 +37,14 @@ mod clock_log;
 #[cfg(any(test, feature = "harness"))]
 mod control_adapter;
 
+// A regular-file `Storage` for the harness control plane, and the process-restart driver that runs the durable plane over it
+// (`--control-restart`). Harness and test builds on unix only; neither is compiled into a device build.
+#[cfg(all(unix, any(test, feature = "harness")))]
+pub mod file_medium;
+
+#[cfg(all(unix, feature = "harness"))]
+pub mod control_restart;
+
 #[cfg(any(test, feature = "harness"))]
 mod harness;
 

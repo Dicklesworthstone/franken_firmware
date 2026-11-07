@@ -31,7 +31,9 @@
 //! * **Restore the session.** G01's.
 
 use franken_journal::{Journal, Recovery};
-pub use franken_journal::{Limits, Storage};
+// `StorageFault` is what every `Storage` method returns: an owner outside this crate (the speaker's file-backed prototype)
+// names it to implement `Storage`, with no `franken-journal` edge of its own.
+pub use franken_journal::{Limits, Storage, StorageFault};
 
 use super::persist::{
     Cause, LatchedStepper, OwnedDurable, Reopened, Restored, RestoredFloors, reopen_from_open,
