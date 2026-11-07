@@ -57,6 +57,10 @@ def good_records():
     recs.append({"id": "n04-no-alloc", "probe_active": True, "control_allocations": 1, "construction_allocations": 5,
                  "construction_bytes": 163_000, "measured": {"allocations": 0, "reallocations": 0, "deallocations": 0},
                  "ops": 1100, "decided": 400, "log_emitted": 700, "paths_reached": True})
+    recs.append({"id": "n04-capacity", "slot_bytes": 1028, "inline_bytes": 2300, "music_queue_bytes": 96_632, "realtime_queue_bytes": 9_252,
+                 "zero_horizon_queue_bytes": 1028, "music_resident_bytes": 98_932, "realtime_resident_bytes": 11_552,
+                 "admitted_at_budget": True, "refused_one_byte_short": {"needed_bytes": 98_932, "budget_bytes": 98_931, "code": "capacity"},
+                 "config_error_wins_at_zero_budget": "work_ns", "realtime_budget_refuses_music": True})
     recs.append({"id": "n04-log-blocking", "world": "W16-SEEDED-MUSIC", "ops": len(w16["ops"]), "decision_path_offers": 0,
                  "decision_path_virtual_ns": 0, "results_digest": gen.digest(gen.world_results(w16)), "drain_budget": 3,
                  "drain_offers": 3, "drain_virtual_ns": 3_000_000_000, "queued_before_drain_nonzero": True})
@@ -351,6 +355,27 @@ class JudgeTests(unittest.TestCase):
                 results = judge(build_log(tampered("n04-no-alloc", mutate)))
                 self.assertEqual(results["N04-NO-ALLOC"].status, "fail", label)
         self.assertEqual(judge(build_log(GOOD))["N04-NO-ALLOC"].status, "pass")
+
+    def test_a_capacity_observation_that_breaks_a_rule_fails(self):
+        for label, mutate in {
+            "a slot of 1032 bytes": lambda r: r.update(slot_bytes=1032),
+            "a music queue of 94 x 1024": lambda r: r.update(music_queue_bytes=96_256),
+            "a realtime queue that is one slot short": lambda r: r.update(realtime_queue_bytes=8_224),
+            "a zero horizon that builds no slot": lambda r: r.update(zero_horizon_queue_bytes=0),
+            "a resident size that leaves out the struct": lambda r: r.update(music_resident_bytes=r["music_queue_bytes"]),
+            "an engine struct smaller than what it holds": lambda r: r.update(
+                inline_bytes=1000, music_resident_bytes=1000 + r["music_queue_bytes"], realtime_resident_bytes=1000 + r["realtime_queue_bytes"]),
+            "an engine refused at its exact budget": lambda r: r.update(admitted_at_budget=False),
+            "a refusal at the budget instead of one byte short": lambda r: r["refused_one_byte_short"].update(budget_bytes=r["music_resident_bytes"]),
+            "a refusal that names no needed bytes": lambda r: r["refused_one_byte_short"].update(needed_bytes=0),
+            "a refusal that is not the capacity code": lambda r: r["refused_one_byte_short"].update(code="work_ns"),
+            "the budget judged before the configuration": lambda r: r.update(config_error_wins_at_zero_budget="capacity"),
+            "a smaller profile substituted for the one that did not fit": lambda r: r.update(realtime_budget_refuses_music=False),
+        }.items():
+            with self.subTest(label):
+                results = judge(build_log(tampered("n04-capacity", mutate)))
+                self.assertEqual(results["N04-CAPACITY"].status, "fail", label)
+        self.assertEqual(judge(build_log(GOOD))["N04-CAPACITY"].status, "pass")
 
     def test_the_probe_binary_is_attributed_by_its_own_header_in_both_layouts(self):
         for layout in ("classic", "rch"):

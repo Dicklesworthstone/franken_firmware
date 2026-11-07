@@ -30,6 +30,15 @@ SAMPLES = [10_000, -10_000, 32_767, -32_768, 0, 1, -1, 2, -2, 16_384, -16_384]
 CONCEAL = {1: [7_000, -7_000, 22_937, -22_938, 0, 1, -1, 1, -1, 11_469, -11_469],
            8: [576, -576, 1_889, -1_889, 0, 0, 0, 0, 0, 945, -944]}
 
+# Memory admission (contract section 1). A slot is the 1024-byte payload, a u16 frame count (2) and a use flag (1) = 1027 bytes, rounded up to the
+# count's 2-byte alignment = 1028. A queue is `horizon` slots, never fewer than one: 94 * 1028 = 94_000 + 94 * 28 = 94_000 + 2_632 = 96_632;
+# 9 * 1028 = 9_000 + 252 = 9_252; a horizon of 0 or 1 is the one slot, 1_028.
+SLOT_BYTES = 1028
+CAPACITY_QUEUE = [(0, 1_028), (1, 1_028), (9, 9_252), (94, 96_632)]
+# The engine's own struct must at least hold what the contract says it holds: the 128-entry history (a byte each), the 64 arrival margins
+# (an i64 each) and the last real block: 128 + 64 * 8 + 1024 = 128 + 512 + 1024 = 1_664. Only the compiler knows the exact size.
+INLINE_FLOOR = 1_664
+
 # (profile, margins, net_shift_ns) -> (action, blocks, reason)
 M10 = [10_000_000]
 ADVICE = [
@@ -305,6 +314,14 @@ def check() -> List[str]:
         if (got["action"], got["blocks"], got["reason"]) != want:
             problems.append("advice(%s, %d margins, net %d) = %r, hand-derived %r" % (
                 profile, len(margins), net, (got["action"], got["blocks"], got["reason"]), want))
+    if R.SLOT_BYTES != SLOT_BYTES:
+        problems.append("SLOT_BYTES %d != %d" % (R.SLOT_BYTES, SLOT_BYTES))
+    for horizon, want in CAPACITY_QUEUE:
+        got = R.queue_bytes(horizon)
+        if got != want:
+            problems.append("queue_bytes(%d) = %d, hand-derived %d" % (horizon, got, want))
+    if (R.PROFILES["music"]["horizon"], R.PROFILES["realtime"]["horizon"]) != (94, 9):
+        problems.append("the profile horizons are not the 94 and 9 the capacity anchors use")
     problems += check_log()
     caps = (R.frames_to_ns(R.PROFILES["music"]["max_net"] * 256), R.frames_to_ns(R.PROFILES["realtime"]["max_net"] * 256))
     if caps != (CAP_MUSIC, CAP_REALTIME):

@@ -39,6 +39,15 @@ PROFILES = {
     "realtime": dict(horizon=9, max_conceal=3, notice=2, max_step=4, max_net=9),
 }
 
+# Memory admission (contract section 1). A slot of the decoded playout queue is the 1024-byte payload, a u16 frame count and a use flag:
+# 1027 bytes, rounded up to the count's 2-byte alignment. Allocator metadata is not counted.
+SLOT_BYTES = 1028
+
+
+def queue_bytes(horizon_blocks: int) -> int:
+    """Heap bytes of the decoded playout queue: `horizon_blocks` slots, and at least one (the queue is never empty)."""
+    return max(horizon_blocks, 1) * SLOT_BYTES
+
 STAT_KEYS = [
     "packets_seen", "repairs_seen", "admitted", "admitted_repair", "duplicate", "duplicate_conflict",
     "duplicate_repair", "late", "late_repair", "not_bound", "stale_epoch", "future_epoch", "clock_unusable",

@@ -240,7 +240,7 @@ def registry() -> List[dict]:
               T("n04_properties_hold_on_every_world", "n04_counters_account_for_every_packet_and_every_decision",
                 "n04_every_world_in_the_vectors_has_a_test"),
               ["n04-properties", "n04-accounting-w16-seeded-music", "n04-accounting-w17-seeded-realtime"]),
-    ] + log_cases() + edge_cases()
+    ] + log_cases() + edge_cases() + capacity_cases()
 
 
 def edge_cases() -> List[dict]:
@@ -259,6 +259,25 @@ def edge_cases() -> List[dict]:
               "under the counting allocator: the probe is live, construction allocates, and a seeded 400-block script through every consume-path "
               "call and the log drain makes no allocation, reallocation or free",
               [(ALLOC_STEM, "n04_playout_engine_consume_path_does_not_allocate_after_construction")], ["n04-no-alloc"]),
+    ]
+
+
+def capacity_cases() -> List[dict]:
+    """Memory admission (contract section 1; bead section 9: a profile that does not fit is a typed capacity error, before anything is built)."""
+    return [
+        _case("N04-CAPACITY", "AC-CAPS", "smoke",
+              "the slot, queue and resident bytes are the arithmetic of the slot layout and match what new() builds; an engine is built at exactly "
+              "its budget and refused one byte short with a typed error naming both numbers; the configuration is judged before the budget; "
+              "a profile that does not fit is refused, not shrunk; the footprint arithmetic is checked (a product or sum that would wrap is "
+              "refused) and the widest u16 profile is refused, not wrapped; a refusal allocates nothing (counting allocator); an allocator that fails the slot queue or a log ring is a typed refusal that keeps the old log and its records (fail-next-allocation probe); a log configuration's labels and fault are inline, so building, re-faulting and cloning one allocates nothing even at the 64-byte limit",
+              T("n04_capacity_the_footprint_is_stated_from_the_slot_and_matches_what_new_builds",
+                "n04_capacity_the_footprint_arithmetic_is_checked_and_the_widest_profile_is_refused_not_wrapped",
+                "n04_capacity_an_engine_is_built_only_within_its_budget_and_a_refusal_builds_nothing")
+              + [(ALLOC_STEM, "n04_playout_engine_refused_capacity_allocates_nothing"),
+                 (ALLOC_STEM, "n04_playout_engine_allocator_failure_is_a_typed_refusal_and_the_permitted_allocation_succeeds"),
+                 (ALLOC_STEM, "n04_playout_log_replacement_survives_an_allocator_failure_with_its_records"),
+                 (ALLOC_STEM, "n04_log_config_labels_fault_and_clone_are_inline_even_at_the_label_limit")],
+              ["n04-capacity"]),
     ]
 
 
@@ -454,6 +473,31 @@ def check_no_alloc(got: dict) -> Optional[str]:
     return None
 
 
+def check_capacity(got: dict) -> Optional[str]:
+    """Memory admission, from numbers worked out on paper (anchors.py), not from the Rust: the slot is 1028 bytes, a queue is its horizon in slots
+    (at least one), an engine occupies its own struct plus its queue, the constructor admits exactly at the budget, refuses one byte short with both
+    numbers, and judges the configuration first. The struct's own size is the one number only the compiler knows: it is held to its floor."""
+    queue = dict(anchors.CAPACITY_QUEUE)
+    want = {"slot_bytes": anchors.SLOT_BYTES, "music_queue_bytes": queue[ref.PROFILES["music"]["horizon"]],
+            "realtime_queue_bytes": queue[ref.PROFILES["realtime"]["horizon"]], "zero_horizon_queue_bytes": queue[0],
+            "admitted_at_budget": True, "config_error_wins_at_zero_budget": "work_ns", "realtime_budget_refuses_music": True}
+    for key, value in want.items():
+        if got.get(key) != value:
+            return "%s: observed %s, expected %s" % (key, json.dumps(got.get(key))[:80], json.dumps(value))
+    inline = got.get("inline_bytes")
+    if not isinstance(inline, int) or isinstance(inline, bool) or inline < anchors.INLINE_FLOOR:
+        return "inline_bytes is %r, expected at least %d (the history, the arrival margins and the last block the struct holds)" % (inline, anchors.INLINE_FLOOR)
+    for name in ("music", "realtime"):
+        resident = got.get(name + "_resident_bytes")
+        if resident != inline + want[name + "_queue_bytes"]:
+            return "%s_resident_bytes is %r, expected the struct %d plus the queue %d" % (name, resident, inline, want[name + "_queue_bytes"])
+    need = got["music_resident_bytes"]
+    if got.get("refused_one_byte_short") != {"needed_bytes": need, "budget_bytes": need - 1, "code": "capacity"}:
+        return "refused_one_byte_short: observed %s, expected needed %d, budget %d, code capacity" % (
+            json.dumps(got.get("refused_one_byte_short"))[:120], need, need - 1)
+    return None
+
+
 def check_log_accounting(vec: dict, got: dict) -> Optional[str]:
     """The Rust re-checked emitted = delivered + queued + dropped after EVERY op of every world and scenario; the count
     of ops it says it checked must be the vectors' own."""
@@ -620,7 +664,7 @@ def meta_results(vec: Optional[dict], note: str) -> List[Result]:
 
     problems = anchors.check()
     add("N04-META-ANCHORS", not problems, "; ".join(problems[:MAX_PRINTED]) or "the reference agrees with %d hand-derived anchors" % (
-        len(anchors.FRAMES_TO_NS) + len(anchors.CONSUME_BY) + len(anchors.CONCEAL) + len(anchors.ADVICE)))
+        len(anchors.FRAMES_TO_NS) + len(anchors.CONSUME_BY) + len(anchors.CONCEAL) + len(anchors.ADVICE) + len(anchors.CAPACITY_QUEUE)))
     if vec is None:
         out.append(Result("N04-META-VECTORS-FRESH", "fail", note, "META"))
         return out
@@ -677,6 +721,8 @@ def judge_case(case: dict, vec: dict, want: Dict[str, dict], logs: Optional[Logs
             why = check_group_clock(got)
         elif oid == "n04-no-alloc":
             why = check_no_alloc(got)
+        elif oid == "n04-capacity":
+            why = check_capacity(got)
         elif oid == "n04-log-accounting":
             why = check_log_accounting(vec, got)
         elif oid == "n04-log-blocking":
