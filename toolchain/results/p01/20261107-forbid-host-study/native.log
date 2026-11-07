@@ -1,0 +1,71 @@
+p01-forbid-native-hz4
+    Finished `test` profile [unoptimized] target(s) in 18.77s
+running 26 tests
+test build_contract::tests::canonical_json_sorts_keys_and_is_compact ... ok
+test build_contract::tests::closure_includes_the_start_and_everything_below_it ... ok
+test build_contract::tests::cycle_detection_finds_each_component_once_and_ignores_acyclic_edges ... ok
+test build_contract::tests::elf_machines_are_distinct_for_the_two_device_isas ... ok
+test build_contract::tests::every_target_agrees_with_the_board_profile_isa ... ok
+test build_contract::tests::hex64_accepts_only_lowercase_sha256_text ... ok
+test build_contract::tests::target_strings_match_their_serde_names ... ok
+test tests::bridge_is_never_an_audio_target ... ok
+test tests::canonical_json_carries_none_of_the_invented_facts ... ok
+test tests::canonical_rows_are_non_admissible_hypotheses_with_valid_digests ... ok
+test tests::canonical_rows_match_inventory_and_declare_unknowns_instead_of_inventing ... ok
+test tests::canonicalizers_accept_and_reject_the_shared_grammar ... ok
+test tests::complete_attested_evidence_is_eligible_and_order_independent ... ok
+test tests::conflicting_observations_stay_visible_and_ineligible ... ok
+test tests::each_missing_or_weak_piece_of_evidence_blocks_activation_with_its_own_reason ... ok
+test tests::editing_a_fact_or_value_after_the_digest_is_detected ... ok
+test tests::fact_statuses_report_unattested_names_in_a_stable_order ... ok
+test tests::fixture_catalog_is_synthetic_admissible_offline_and_never_activation_eligible ... ok
+test tests::hypothesis_and_synthetic_rows_never_make_a_device_eligible ... ok
+test tests::identity_provenance_is_clamped_and_isa_evidence_is_what_raises_it ... ok
+test tests::missing_facts_deserialize_fail_closed ... ok
+test tests::nominal_bytes_parser_keeps_units_distinct_and_rejects_guessing ... ok
+test tests::non_canonical_spellings_select_the_same_row ... ok
+test tests::profile_ids_use_the_shared_formula_with_golden_vectors ... ok
+test tests::relabelling_or_downgrading_a_fixture_makes_the_offline_gate_refuse_it ... ok
+test tests::s5_hypothesis_names_every_unattested_fact ... ok
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+running 4 tests
+test every_vector_id_is_unique_and_every_kind_is_known ... ok
+test the_contract_digest_is_the_pinned_value_and_independent_of_the_file_layout ... ok
+test the_declared_contract_is_valid_before_any_defect_is_planted ... ok
+test the_shared_vectors_replay_exactly ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+p01-forbid-services-hz4
+    Finished `test` profile [unoptimized] target(s) in 23.66s
+running 18 tests
+test services::tests::a_marker_parses_back_to_the_report_it_came_from_and_nothing_else_parses ... ok
+test services::tests::a_marker_says_absent_or_selected_unimplemented_unqualified_in_words_and_never_ready ... ok
+test services::tests::a_printed_line_claiming_qualification_parses_and_check_refuses_it ... ok
+test services::tests::a_report_that_disagrees_with_this_build_is_refused ... ok
+test services::tests::a_selected_service_claiming_ready_is_refused_and_the_same_report_without_the_claim_passes ... ok
+test services::tests::airplay2_not_selected_reports_absent ... ok
+test services::tests::alexa_bridge_not_selected_reports_absent ... ok
+test services::tests::artwork_not_selected_reports_absent ... ok
+test services::tests::enabling_a_flag_does_not_change_admissions_blocks ... ok
+test services::tests::every_service_has_a_cargo_feature_of_its_name_and_no_other_flag_is_a_service ... ok
+test services::tests::no_build_selection_reports_a_service_implemented_qualified_or_ready ... ok
+test services::tests::spotify_connect_not_selected_reports_absent ... ok
+test services::tests::tailnet_native_not_selected_reports_absent ... ok
+test services::tests::the_contract_names_the_same_flags_on_this_crate_and_none_for_the_render_path ... ok
+test services::tests::the_markers_are_the_reports_markers_one_per_line_in_order ... ok
+test services::tests::the_report_lists_every_service_once_in_a_fixed_order ... ok
+test services::tests::the_report_round_trips_as_json_and_refuses_a_field_it_does_not_know ... ok
+test services::tests::the_wire_names_are_the_contract_names ... ok
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 282 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+p01-forbid-clippy-ovhb
+    Finished `dev` profile [unoptimized] target(s) in 35.15s
+

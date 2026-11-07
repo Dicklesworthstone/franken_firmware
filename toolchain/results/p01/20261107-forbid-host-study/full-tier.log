@@ -1,0 +1,2 @@
+P01 cases: tier=full total=261 passed=253 failed=0 blocked=8 | covered=22, inapplicable=2, partial=6 -> NOT QUALIFIED
+diag run=p01-full-20261107T110645Z-980f1396: evidence COMPLETE; events=523 critical=523 dropped=0 critical_lost=0 bytes=176929 sha256=c7ee3045a411
