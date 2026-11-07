@@ -1,0 +1,23 @@
+Observed current-source gates; sanitized excerpts.
+
+Clippy --locked -p franken-update --all-targets -j1 -- -D warnings
+Finished `dev` profile [unoptimized] target(s) in 17.49s
+Exit status: 0
+
+PowerPC all-target check, nightly-2026-08-31, build-std=core,alloc,std,panic_abort
+Exit status: 0
+MIPS all-target check, nightly-2026-08-31, build-std=core,alloc,std,panic_abort
+Exit status: 0
+These are compilation checks, not target guest execution.
+
+Python unittest discovery: 53 tests, OK.
+
+PASS    U02-E-001  the vectors are exactly what the generator writes -- u02 vectors: up to date
+PASS    U02-E-002  reference, oracle, pins, paired positives, Rust-source agreement, contract -- OK
+PASS    U02-E-003  every planted defect is caught, the control is green -- 50 planted defects: 49 caught by the vectors, the rest by the crash test; the control is green after each
+PASS    U02-E-004  the Ed25519 oracle against OpenSSL -- signatures byte-equal to OpenSSL, verdicts equal on flipped bits
+PASS    U02-E-005  the by-name judge catches planted failures -- self-test: 9 planted or control logs judged as intended
+PASS    U02-E-006  the Rust tests of franken-update, by test name, from a central log -- U02 rust tests by name: 33 ok, 0 failed, 0 blocked of 33 required -> PASS
+U02 cases: total=6 passed=6 failed=0 blocked=0
+diag run=u02-full-d5215779a474adf7: evidence COMPLETE; events=13 critical=13 dropped=0 critical_lost=0 bytes=5191 sha256=b3eab03565a3
+U02 e2e tier=full: QUALIFIED

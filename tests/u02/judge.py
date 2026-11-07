@@ -98,8 +98,9 @@ def admission_problem(spec: Dict[str, Any], raw: bytes, summary: Dict[str, Any])
     b = mv.BOARDS[spec["board"]]
     if (m["profile_id"], m["hw_rev"], m["isa"], m["kernel_profile"]) != (b["profile_id"], b["hw_rev"], b["isa"], b["kernel_profile"]):
         return "not this board"
-    if spec["production"] and (b["synthetic"] or not b["attested"] or spec["evidence"] is None or m["evidence_digest"].hex() != spec["evidence"]):
-        return "production admission without an attested board and matching E01 evidence"
+    if spec["production"] and (b["synthetic"] or not b["attested"] or spec["evidence"] is None or not any(m["evidence_digest"])
+                               or m["evidence_digest"].hex() != spec["evidence"]):
+        return "production admission without an attested board and a non-zero E01 evidence digest that the manifest carries and the device was handed"
     if m["features"] & spec["required"] != spec["required"]:
         return "a required feature is missing"
     if m["security_version"] < spec["floor"]:

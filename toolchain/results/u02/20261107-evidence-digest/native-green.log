@@ -1,0 +1,42 @@
+Observed native Linux execution; sanitized result-only excerpt.
+Command: RCH_REQUIRE_REMOTE=1 rch exec --source-content-receipt -- cargo +1.99.0 test --locked -p franken-update --no-fail-fast -j1 -- --nocapture
+Exit status: 0
+
+running 16 tests
+test u02_a_gap_in_the_staging_medium_is_refused_and_writes_nothing ... ok
+test u02_a_journal_that_failed_refuses_every_transition_until_it_is_reopened ... ok
+test u02_a_manifest_copy_that_no_longer_matches_the_journal_is_not_resumed ... ok
+test u02_a_restart_under_the_unchanged_policy_resumes_every_phase_and_the_update_still_completes ... ok
+test u02_bit_rot_anywhere_in_the_staged_bytes_is_caught_at_activation ... ok
+test u02_a_stage_is_resumed_only_if_its_signing_key_is_still_trusted ... ok
+test u02_a_power_cut_at_any_unsynced_byte_resumes_at_the_checkpoint_and_the_artifact_completes ... ok
+test u02_records_this_code_cannot_read_are_corrupt_state_and_never_guessed_at ... ok
+test u02_the_boots_left_survive_a_restart_between_two_unhealthy_reports_and_the_trial_rolls_back ... ok
+test u02_the_summary_is_blind_where_the_exact_state_is_not ... ok
+test u02_a_floor_raised_above_the_candidate_drops_the_update_and_a_lower_one_does_not ... ok
+test u02_the_floor_and_the_installed_image_are_never_split_by_a_cut_in_the_confirm ... ok
+test u02_a_changed_policy_drops_the_update_in_every_phase_and_the_unchanged_one_resumes_it ... ok
+test u02_cut_every_step_of_a_successful_update_leaves_exactly_the_old_or_the_new_state ... ok
+test u02_cut_every_step_of_a_wrong_artifact_and_of_an_abort_leaves_exactly_the_old_or_the_new_state ... ok
+test u02_cut_every_step_of_a_trial_that_fails_leaves_exactly_the_old_or_the_new_state ... ok
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.70s
+
+running 17 tests
+test a_profile_that_fails_its_own_gate_or_names_an_unknown_isa_is_not_a_board ... ok
+test a_rollback_after_a_settings_migration_needs_a_reader_or_a_preserved_copy ... ok
+test a_staged_artifact_is_whole_or_it_is_named_truncated_oversized_or_wrong ... ok
+test a_member_takes_a_candidate_only_if_the_rest_of_the_group_can_still_talk_to_it_and_nobody_else_is_touched ... ok
+test an_index_that_names_no_member_is_refused_before_anyone_is_assessed_and_every_real_index_is_not ... ok
+test every_manifest_parses_or_is_refused_by_the_structural_rule_written_for_it ... ok
+test every_refusal_a_vector_names_is_a_stable_code_of_the_crate ... ok
+test keys_are_admitted_only_when_canonical_on_the_curve_not_small_order_and_torsion_free ... ok
+test the_constants_the_vectors_were_written_for_are_the_crates ... ok
+test a_trust_store_holds_at_most_four_distinct_admissible_keys ... ok
+test the_vector_boards_are_what_the_synthetic_catalog_says_and_none_is_attested ... ok
+test each_gap_planted_in_the_vector_inventory_is_named_and_the_unplanted_vectors_have_none ... ok
+test a_capacity_receipt_proves_two_slots_only_with_a_digest_and_room_and_a_missing_one_changes_nothing_else ... ok
+test an_all_zero_evidence_digest_means_none_so_two_zeros_never_match_in_production ... ok
+test signatures_verify_strictly_and_only_under_an_admissible_key ... ok
+test every_engine_script_ends_in_the_state_written_by_hand_after_every_operation ... ok
+test every_admission_gets_the_refusal_or_the_plan_written_by_hand ... ok
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.56s

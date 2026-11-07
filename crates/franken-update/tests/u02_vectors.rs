@@ -96,6 +96,8 @@ const REQUIRED: &[(&str, &str, &str)] = &[
     ("U02-ADM-017", "isa_mismatch", "U02-ADM-019"),
     ("U02-ADM-018", "kernel_profile_mismatch", "U02-ADM-001"),
     ("U02-ADM-020", "profile_not_attested", "U02-ADM-023"),
+    ("U02-ADM-021", "evidence_mismatch", "U02-ADM-023"),
+    ("U02-ADM-022", "evidence_mismatch", "U02-ADM-023"),
     ("U02-ADM-024", "required_feature_missing", "U02-ADM-025"),
     ("U02-ADM-026", "below_security_floor", "U02-ADM-027"),
     ("U02-ADM-028", "downgrade_not_permitted", "U02-ADM-029"),
@@ -120,6 +122,12 @@ const REQUIRED: &[(&str, &str, &str)] = &[
         "synthetic_receipt_for_real_profile",
         "U02-ADM-066",
     ),
+    ("U02-ADM-072", "evidence_mismatch", "U02-ADM-023"),
+    ("U02-ADM-073", "evidence_mismatch", "U02-ADM-023"),
+    ("U02-ADM-074", "evidence_mismatch", "U02-ADM-023"),
+    ("U02-ADM-076", "profile_not_attested", "U02-ADM-023"),
+    ("U02-ADM-077", "unknown_signing_key", "U02-ADM-001"),
+    ("U02-ADM-078", "evidence_mismatch", "U02-ADM-023"),
     ("U02-ART-002", "artifact_truncated", "U02-ART-001"),
     ("U02-ART-004", "artifact_oversized", "U02-ART-001"),
     ("U02-ART-005", "artifact_digest_mismatch", "U02-ART-001"),
@@ -545,6 +553,42 @@ fn a_capacity_receipt_proves_two_slots_only_with_a_digest_and_room_and_a_missing
             Err(UpdateError::SyntheticReceiptForRealProfile)
         );
     }
+}
+
+fn admit_case<'a>(d: &'a Value, id: &str) -> &'a Value {
+    d["admit"]
+        .as_array()
+        .expect("admit vectors")
+        .iter()
+        .find(|v| v["id"] == id)
+        .unwrap_or_else(|| panic!("{id} is not an admission vector"))
+}
+
+#[test]
+fn an_all_zero_evidence_digest_means_none_so_two_zeros_never_match_in_production() {
+    let d = doc();
+    // U02-ADM-072: an image that names no evidence; U02-ADM-023: one that names a digest, with the same digest handed to the device
+    let (names_none, names_one) = (admit_case(&d, "U02-ADM-072"), admit_case(&d, "U02-ADM-023"));
+    let digest = arr32(&names_one["ctx"]["evidence"]);
+    let verdict = |case: &Value, evidence: Option<[u8; 32]>, production: bool| {
+        let mut p = policy(&d, &case["ctx"]);
+        p.evidence = evidence;
+        p.production = production;
+        admit(&p, &dynamic(&case["ctx"]), &unhex(&case["manifest"])).map(|a| a.plan.mode.label())
+    };
+    let admitted: Result<&str, UpdateError> = Ok("single_slot_recovery");
+    let refused: Result<&str, UpdateError> = Err(UpdateError::EvidenceMismatch);
+    // the permitted positive: a digest that is not zero, the same on both sides
+    assert_eq!(verdict(names_one, Some(digest), true), admitted);
+    // an image that names no evidence is refused whatever the device holds, and a device handed none or zero refuses whatever the image names
+    for handed in [None, Some([0u8; 32]), Some(digest)] {
+        assert_eq!(verdict(names_none, handed, true), refused, "{handed:?}");
+    }
+    for handed in [None, Some([0u8; 32])] {
+        assert_eq!(verdict(names_one, handed, true), refused, "{handed:?}");
+    }
+    // the evidence is a production gate: offline, the same two zeros are admitted
+    assert_eq!(verdict(names_none, Some([0; 32]), false), admitted);
 }
 
 #[test]

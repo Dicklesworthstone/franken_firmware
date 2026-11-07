@@ -401,6 +401,27 @@ def admission_vectors() -> List[Dict[str, Any]]:
         ctx={"ab_receipt": dict(rc_ok, slot_bytes=len(ART) + 4095), "board": "ppc_policy_standin"}, invariants=["AB"])
     add("U02-ADM-071", "a digest that is zero except for its last byte is a digest", good, {"ok": ab},
         ctx={"ab_receipt": dict(rc_ok, digest="00" * 31 + "01"), "board": "ppc_policy_standin"}, invariants=["AB"])
+    # an evidence digest of zero means none, on either side: two zeros are not a match (the manifest table of docs/contracts/u02.md; ADM-023 is the positive)
+    zero, prod = ref.ZERO32.hex(), {"production": True, "board": "ppc_policy_standin"}
+    first_only, last_only = b"\x01" + bytes(31), bytes(31) + b"\x01"
+    add("U02-ADM-072", "production, attested, the manifest names no evidence and the device was handed an all-zero digest: two zeros are not a match", good,
+        refuse("evidence_mismatch"), ctx=dict(prod, evidence=zero), invariants=["PRODUCTION"])
+    add("U02-ADM-073", "production, attested, the manifest names no evidence and the device has a digest", good, refuse("evidence_mismatch"),
+        ctx=dict(prod, evidence=EVIDENCE.hex()), invariants=["PRODUCTION"])
+    add("U02-ADM-074", "production, attested, the manifest names evidence and the device was handed an all-zero digest", manifest(evidence_digest=EVIDENCE),
+        refuse("evidence_mismatch"), ctx=dict(prod, evidence=zero), invariants=["PRODUCTION"])
+    add("U02-ADM-075", "the same two zeros under an offline policy are admitted: the evidence is a production gate", good, {"ok": GOOD},
+        ctx={"board": "ppc_policy_standin", "evidence": zero}, invariants=["PRODUCTION"])
+    add("U02-ADM-076", "a synthetic fixture in production with two zeros: the fixture is refused first", good, refuse("profile_not_attested"),
+        ctx={"production": True, "board": "ppc", "evidence": zero}, invariants=["PRODUCTION"])
+    add("U02-ADM-077", "an unknown signer with two zeros in production: the key is refused first", manifest(signer="X"), refuse("unknown_signing_key"),
+        ctx=dict(prod, evidence=zero), invariants=["PRODUCTION", "TRUST"])
+    add("U02-ADM-078", "a missing required feature with two zeros in production: the evidence is refused before the feature is looked at", manifest(features=drop),
+        refuse("evidence_mismatch"), ctx=dict(prod, evidence=zero), invariants=["PRODUCTION", "FEATURES"])
+    add("U02-ADM-079", "a digest that is zero except for its last byte is a digest: carried and handed over, it is admitted", manifest(evidence_digest=last_only), {"ok": GOOD},
+        ctx=dict(prod, evidence=last_only.hex()), invariants=["PRODUCTION"])
+    add("U02-ADM-080", "a digest that is zero except for its first byte is a digest: carried and handed over, it is admitted", manifest(evidence_digest=first_only), {"ok": GOOD},
+        ctx=dict(prod, evidence=first_only.hex()), invariants=["PRODUCTION"])
     return v
 
 
@@ -628,6 +649,9 @@ def engine_vectors(assets: Dict[str, Any]) -> Dict[str, Any]:
         staged_ops("m1") + [restart_with(staged0), restart_with(idle0, recovery_path=False)], ["RESTART-ADMISSION", "PLAN"])
     add("U02-ENG-017", "writes and a finish with nothing staged are refused", [OP("write", R("not_staging"), idle0, artifact="a1", **{"from": 0, "to": 16}), OP("finish", R("not_staging"), idle0),
         OP("activate", R("not_staged"), idle0), OP("boot", R("not_in_trial"), idle0, healthy=True)], ["ORDER"])
+    add("U02-ENG-030", "a device turned to production with an all-zero evidence digest drops a stage whose manifest names no evidence; offline the same stage resumes",
+        staged_ops("m1") + [restart_with(staged0), restart_with(idle0, production=True, evidence=ref.ZERO32.hex())], ["RESTART-ADMISSION", "PRODUCTION"],
+        board="ppc_policy_standin")
     return {"scripts": scripts}
 
 

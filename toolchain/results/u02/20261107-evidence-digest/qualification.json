@@ -1,0 +1,53 @@
+{
+  "schema": "ffw.u02.offline_qualification.v1",
+  "date": "2026-11-07",
+  "source_base": "55837734fd82f1c4d502884d6fbf930e2a7c0f54",
+  "execution": "native Linux through strictly remote RCH",
+  "hardware_qualified": false,
+  "target_guest_execution": false,
+  "vectors": 198,
+  "native_tests": {"passed": 33, "failed": 0, "ignored": 0},
+  "causal_old_policy": {"passed": 29, "failed": 4, "exit": 101},
+  "python_tests": 53,
+  "e2e": {"passed": 6, "failed": 0, "blocked": 0, "planted_defects_detected": 50, "critical_events": 13, "critical_events_lost": 0},
+  "final_gate_custody": {
+    "source_files_matched_per_gate": 1216,
+    "source_files_changed_per_gate": 0,
+    "terminal_acknowledged": true,
+    "wrapper_alive": false,
+    "owner_presence": "absent",
+    "sources_released": true,
+    "tree_retired": true,
+    "pair_released": true,
+    "staging_released": true,
+    "retired": true
+  },
+  "receipt_roots": {
+    "native": "9ac43d8dc53aba44f24c05ef34592b770d9578366ca58b793502bac47f04015a",
+    "clippy": "2a1ce032f911ae8fd020bc8c24030af2139d9ad20483132ee862f71da061904a",
+    "powerpc_check": "d9d518371598af89ef39bfe987af7e7602a3c22a10f3d387fc554010a82fdee6",
+    "mips_check": "9f224e67265c711197fd0dfaed6c2425a6e2465541059a950c469ca5957ecb80"
+  },
+  "private_raw_log_sha256": {
+    "preliminary_compile_failure": "720fd272c3a4425bcd4ed35b1a6246650e7f8285e40e74e4dfb1069c6883bcf6",
+    "causal_old_policy": "da2fa0bc20240fc7375298edd5fb49a6d05ec9787ae7729bf6df3ca2b40c90d6",
+    "native": "499a667736821eaf44cafc5183ff23226079bbe0a266a0599e09d38b43b5744c",
+    "clippy": "b3f9ce9a184ab771d4561ac3585b53f3dd464e8f39d9c1769b031c70f8a77d6c",
+    "powerpc_check": "a9d7e8d305925bcd7f907664a3ba5c63c1ef9c307f1d345a15ddf7e1c770328f",
+    "mips_check": "4a9053dfacfb67dce378a75fc28dac9c69935b859c72530b329baad1736bf773",
+    "e2e": "45f1d23a86682178fa8447b5d857955d253749bc8405107113911102b31f2332"
+  },
+  "qualified_source_sha256": {
+    "Cargo.toml": "aaa18ac81f7c5988682724f95df89202d222f395e08326ebc3661a815bfa99e6",
+    "Cargo.lock": "fe219a8abdf919c3a14bade5b9ef686c4bbbdbb547435032f94ca451f3a404ba",
+    "crates/franken-update/src/policy.rs": "25b8f940f2ad961ae0887ab512524775a8de221863679365394b7aaec1014d91",
+    "crates/franken-update/tests/u02_restart.rs": "939956b85bca83a72c0b813102a807b9d15837dd20791238ff8cc46d6d63c17d",
+    "crates/franken-update/tests/u02_vectors.rs": "290fbd26750b76dc37c612628cdbb535f0693232caf9e580defe5fdb2421d769",
+    "crates/franken-update/tests/vectors/u02_vectors.json": "fee878fd9cd0eadef0fdd0bcef9ebe43cf6e5b8cfb2d3c0ae3cd3c6423a0bbc8",
+    "docs/contracts/u02.md": "4b45b8003f0ca8d175c1fd7f04c6fa90b923e05e88b0fa461cf05fe12f627616",
+    "tests/u02/judge.py": "19502b89878a560b389ad54388bb89654a820da09d016d98e6d5a98c83b04d39",
+    "tests/u02/make_vectors.py": "2ae8a44bcc6e2a4e2243b3b2e54f4a1a721bfc529f068829b103fa62425ef39c",
+    "tests/u02/reference.py": "e070537411188c19bf793cf63ea91457e870896212f77fadb317c2a772b6d980",
+    "tests/u02/test_u02.py": "5be244e3af4f5c527c451be6aac2d62eb5260c4fa5c5e49554340d1e80c59dc1"
+  }
+}

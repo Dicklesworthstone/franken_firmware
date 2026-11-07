@@ -1,0 +1,32 @@
+Observed native Linux execution; sanitized failure-only excerpt.
+Command: RCH_REQUIRE_REMOTE=1 rch exec --source-content-receipt -- cargo +1.99.0 test --locked -p franken-update --no-fail-fast -j1 -- --nocapture
+Exit status: 101
+Total: 29 passed, 4 failed, 0 ignored.
+
+The preliminary attempt was a compile failure, not causal regression evidence:
+error: functions used as tests can not have any arguments
+error: could not compile `franken-update` (test "u02_vectors") due to 1 previous error
+The stray helper #[test] was removed before both causal red and green runs.
+
+Actual causal failures under the old production predicate:
+
+u02_a_changed_policy_drops_the_update_in_every_phase_and_the_unchanged_one_resumes_it
+assertion `left == right` failed: production is turned on with an all-zero evidence digest over an image that names none / Staging
+  left: None
+ right: Some(EvidenceMismatch)
+test result: FAILED. 15 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.90s
+
+an_all_zero_evidence_digest_means_none_so_two_zeros_never_match_in_production
+  left: Ok("single_slot_recovery")
+ right: Err(EvidenceMismatch)
+
+every_engine_script_ends_in_the_state_written_by_hand_after_every_operation
+assertion `left == right` failed: U02-ENG-030 op 13 restart_with: state
+  left: Object {"floor": Number(4), "installed": Number(90), "next": Number(0), "phase": String("staged")}
+ right: Object {"floor": Number(4), "installed": Number(90), "next": Number(0), "phase": String("idle")}
+
+every_admission_gets_the_refusal_or_the_plan_written_by_hand
+assertion `left == right` failed: U02-ADM-072
+  left: Object {"ok": Object {"ab": String("not_proven"), "downgrade": Bool(false), "mode": String("single_slot_recovery"), "vendor_acceptance": String("not_claimed")}}
+ right: Object {"refuse": String("evidence_mismatch")}
+test result: FAILED. 14 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.67s

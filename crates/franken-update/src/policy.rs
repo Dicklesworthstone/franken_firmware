@@ -204,7 +204,8 @@ pub struct Policy {
     pub board: Board,
     /// Production admission. `false` is an offline test configuration.
     pub production: bool,
-    /// E01's evidence digest for this board, as supplied by the owner of that output. `None` means none was supplied.
+    /// E01's evidence digest for this board, as supplied by the owner of that output. `None` means none was supplied, and so does an all-zero
+    /// digest (`ZERO32` is "absent" everywhere in this crate): neither ever matches, not even a manifest that carries none.
     pub evidence: Option<[u8; 32]>,
     /// Feature bits an image must carry (P01's required features).
     pub required: u16,
@@ -387,7 +388,9 @@ pub fn admit(policy: &Policy, state: &Dynamic, raw: &[u8]) -> Result<Admitted, U
         if board.synthetic || !board.attested {
             return Err(UpdateError::ProfileNotAttested);
         }
-        if policy.evidence != Some(m.evidence_digest) {
+        // Zero means none on either side (the manifest's evidence digest is zero when it names no evidence). Two zeros are not a match: an image
+        // that names no evidence, or a device that was handed none, has nothing to equal.
+        if !matches!(policy.evidence, Some(e) if e != ZERO32 && e == m.evidence_digest) {
             return Err(UpdateError::EvidenceMismatch);
         }
     }

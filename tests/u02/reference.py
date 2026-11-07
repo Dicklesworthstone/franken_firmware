@@ -56,7 +56,7 @@ BUGS: Tuple[str, ...] = (
     "floor_raised_at_stage", "floor_raised_on_rollback", "confirm_forgets_floor", "failed_candidate_retried",
     "restart_forgets_stage", "stale_manifest_copy_trusted", "trial_never_expires", "commit_not_atomic",
     "group_upgrades_others", "disconnected_ignored", "wire_window_ignored", "wire_upper_bound_ignored", "unknown_peer_skipped",
-    "restart_skips_admission", "target_unchecked", "zero_digest_receipt_accepted",
+    "restart_skips_admission", "target_unchecked", "zero_digest_receipt_accepted", "zero_evidence_matches",
 )
 
 
@@ -354,7 +354,9 @@ def admit(ctx: Context, raw: bytes, bugs: FrozenSet[str] = frozenset()) -> Dict[
     if ctx.production:
         if (board.synthetic or not board.attested) and "synthetic_in_production" not in bugs:
             raise Refusal("profile_not_attested")
-        if "evidence_not_checked" not in bugs and (ctx.evidence is None or m["evidence_digest"] != ctx.evidence):
+        # zero means none on either side, so two zeros are not a match
+        if "evidence_not_checked" not in bugs and (ctx.evidence is None or (ctx.evidence == ZERO32 and "zero_evidence_matches" not in bugs)
+                                                   or m["evidence_digest"] != ctx.evidence):
             raise Refusal("evidence_mismatch")
     if m["features"] & ctx.required != ctx.required and "feature_not_required" not in bugs:
         raise Refusal("required_feature_missing")

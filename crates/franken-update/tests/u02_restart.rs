@@ -610,6 +610,16 @@ fn cases(d: &Value) -> Vec<Case> {
             refusal: UpdateError::EvidenceMismatch,
         },
         Case {
+            label: "production is turned on with an all-zero evidence digest over an image that names none",
+            manifest: "m1",
+            tweak: vec![("board", Value::from("ppc_policy_standin"))],
+            change: Box::new(|p: &mut Policy| {
+                p.production = true;
+                p.evidence = Some([0u8; 32]);
+            }),
+            refusal: UpdateError::EvidenceMismatch,
+        },
+        Case {
             label: "there is no A/B receipt and no recovery path any more",
             manifest: "m1",
             tweak: vec![],

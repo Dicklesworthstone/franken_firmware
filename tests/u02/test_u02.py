@@ -50,10 +50,10 @@ class ReferenceAndVectors(Base):
 
     def test_the_vector_counts_and_ids(self) -> None:
         counts = {k: len(v) for k, v in self.doc.items() if isinstance(v, list)}
-        self.assertEqual(counts, {"admit": 71, "artifact": 6, "ed25519": 15, "engine": 29, "group": 18, "keys_check": 12, "parse": 23, "rollback": 5, "trust": 9})
+        self.assertEqual(counts, {"admit": 80, "artifact": 6, "ed25519": 15, "engine": 30, "group": 18, "keys_check": 12, "parse": 23, "rollback": 5, "trust": 9})
         ids = [v["id"] for group in counts for v in self.doc[group]]
         self.assertEqual(len(ids), len(set(ids)))
-        self.assertEqual(len(ids), 188)
+        self.assertEqual(len(ids), 198)
 
     def test_every_hand_written_expectation_agrees_with_the_model(self) -> None:
         self.assertEqual(judge.failing(self.doc), [])
@@ -200,7 +200,9 @@ class PairedNegativesAndPositives(Base):
              ("U02-ADM-028", "U02-ADM-029"), ("U02-ADM-038", "U02-ADM-039"), ("U02-ADM-052", "U02-ADM-053"), ("U02-ADM-056", "U02-ADM-057"),
              ("U02-ADM-058", "U02-ADM-059"), ("U02-ADM-062", "U02-ADM-063"), ("U02-ADM-064", "U02-ADM-001"), ("U02-ADM-034", "U02-ADM-035"),
              ("U02-ADM-015", "U02-ADM-019"), ("U02-ADM-045", "U02-ADM-044"), ("U02-ADM-046", "U02-ADM-048"), ("U02-ADM-067", "U02-ADM-066"),
-             ("U02-ADM-068", "U02-ADM-066")]
+             ("U02-ADM-068", "U02-ADM-066"), ("U02-ADM-021", "U02-ADM-023"), ("U02-ADM-022", "U02-ADM-023"), ("U02-ADM-072", "U02-ADM-023"),
+             ("U02-ADM-073", "U02-ADM-023"), ("U02-ADM-074", "U02-ADM-023"), ("U02-ADM-076", "U02-ADM-023"), ("U02-ADM-077", "U02-ADM-001"),
+             ("U02-ADM-078", "U02-ADM-023")]
 
     def test_each_refusal_is_paired_with_the_permitted_behaviour_it_must_not_break(self) -> None:
         for refusal, positive in self.PAIRS:
@@ -231,8 +233,8 @@ class PlantedDefects(Base):
         self.assertEqual(judge.failing(self.doc), [])
         self.assertEqual(judge.unsound(self.doc), [])
 
-    def test_there_are_49_distinct_planted_defects(self) -> None:
-        self.assertEqual((len(ref.BUGS), len(set(ref.BUGS))), (49, 49))
+    def test_there_are_50_distinct_planted_defects(self) -> None:
+        self.assertEqual((len(ref.BUGS), len(set(ref.BUGS))), (50, 50))
 
     def test_every_planted_defect_is_caught_by_the_vectors_and_removing_it_restores_green(self) -> None:
         for bug in ref.BUGS:
@@ -410,6 +412,56 @@ class ReceiptDigest(Base):
         self.assertEqual(self.plan(2**32 - 1, bytes(32), bugs=bug), ("ab_slots", "proven_by_external_receipt"))
 
 
+class EvidenceDigest(Base):
+    """In production the manifest's evidence digest must equal the one handed to the device, and zero means none on either side: two zeros are not a match."""
+
+    def verdict(self, raw: bytes, evidence: Any, production: bool = True, board: str = "ppc_policy_standin", bugs: frozenset = frozenset()) -> str:
+        ctx = dict(mv.ctx_default(), production=production, board=board, evidence=None if evidence is None else evidence.hex())
+        got = judge._outcome(lambda: judge._summary(ref.admit(mv.build_ctx(ctx, bugs), raw, bugs)))
+        return "admitted" if "ok" in got else got["refuse"]
+
+    def test_production_matches_only_a_nonzero_digest_that_both_sides_carry(self) -> None:
+        none, e = bytes(32), mv.EVIDENCE
+        first, last = b"\x01" + bytes(31), bytes(31) + b"\x01"
+        for digest in (e, first, last):                                  # the permitted positives: any digest but zero, the same on both sides
+            self.assertEqual(self.verdict(mv.manifest(evidence_digest=digest), digest), "admitted", digest.hex())
+        for carried, handed in ((none, none), (none, None), (none, e), (e, none), (e, None), (e, first)):
+            with self.subTest(carried=carried.hex()[:4], handed=None if handed is None else handed.hex()[:4]):
+                self.assertEqual(self.verdict(mv.manifest(evidence_digest=carried), handed), "evidence_mismatch")
+        self.assertEqual(self.verdict(mv.manifest(), none, production=False), "admitted", "the evidence is a production gate")
+
+    def test_an_earlier_rule_names_its_own_refusal_and_a_later_one_waits_for_the_evidence(self) -> None:
+        none, drop = bytes(32), ref.FEATURES_ALL & ~(1 << ref.FEATURES.index("tailnet_native"))
+        self.assertEqual(self.verdict(mv.manifest(), none, board="ppc"), "profile_not_attested")
+        self.assertEqual(self.verdict(mv.manifest(signer="X"), none), "unknown_signing_key")
+        self.assertEqual(self.verdict(mv.manifest(features=drop), none), "evidence_mismatch")
+        self.assertEqual(self.verdict(mv.manifest(features=drop, evidence_digest=mv.EVIDENCE), mv.EVIDENCE), "required_feature_missing")
+
+    def test_the_planted_defect_matches_two_zeros_and_nothing_else_changes(self) -> None:
+        bug = frozenset({"zero_evidence_matches"})
+        self.assertEqual(self.verdict(mv.manifest(), bytes(32), bugs=bug), "admitted")
+        for carried, handed in ((bytes(32), None), (bytes(32), mv.EVIDENCE), (mv.EVIDENCE, bytes(32))):
+            self.assertEqual(self.verdict(mv.manifest(evidence_digest=carried), handed, bugs=bug), "evidence_mismatch")
+
+    def test_the_restart_script_drops_the_stage_only_when_production_and_two_zeros_arrive(self) -> None:
+        script = next(s for s in self.doc["engine"] if s["id"] == "U02-ENG-030")
+        results = [(op["op"], op["expect"]["state"]["phase"]) for op in script["ops"]]
+        self.assertEqual(results[-3:], [("finish", "staged"), ("restart_with", "staged"), ("restart_with", "idle")])
+        self.assertEqual(script["ctx"]["production"], False)
+
+    def test_the_rust_gate_reads_zero_as_none_before_it_compares(self) -> None:
+        pol = read(CRATE, "src", "policy.rs")
+        self.assertIn("matches!(policy.evidence, Some(e) if e != ZERO32 && e == m.evidence_digest)", pol)
+        self.assertNotIn("policy.evidence != Some(m.evidence_digest)", pol)
+
+    def test_the_real_journal_restart_table_has_the_zero_evidence_case(self) -> None:
+        restart = read(CRATE, "tests", "u02_restart.rs")
+        case = restart.split("production is turned on with an all-zero evidence digest over an image that names none")[1].split("Case {")[0]
+        self.assertIn("p.production = true;", case)
+        self.assertIn("p.evidence = Some([0u8; 32]);", case)
+        self.assertIn("refusal: UpdateError::EvidenceMismatch", case)
+
+
 class GroupTarget(Base):
     """`group_decision(members, index, candidate)`: the member that takes the candidate has to exist."""
 
@@ -554,8 +606,8 @@ class Contract(Base):
         self.text = read(CONTRACT)
 
     def test_it_states_the_counts_the_sources_have(self) -> None:
-        self.assertIn("188 cases: 15 signature, 12 key, 9 trust-store, 23 parse, 71 admission, 6 artifact, 29 engine scripts, 18 group, 5 rollback", self.text)
-        self.assertIn("**49 planted defects**", self.text)
+        self.assertIn("198 cases: 15 signature, 12 key, 9 trust-store, 23 parse, 80 admission, 6 artifact, 30 engine scripts, 18 group, 5 rollback", self.text)
+        self.assertIn("**50 planted defects**", self.text)
         vec, rst = rust_tests(os.path.join(CRATE, "tests", "u02_vectors.rs")), rust_tests(os.path.join(CRATE, "tests", "u02_restart.rs"))
         self.assertIn(f"u02_vectors.rs` ({len(vec)} tests)", self.text)
         self.assertIn(f"u02_restart.rs` ({len(rst)} tests)", self.text)
