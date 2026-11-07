@@ -1,0 +1,4 @@
+Checking franken-stream v0.1.0 (<workspace>/crates/franken-stream)
+    Checking franken-speaker v0.1.0 (<workspace>/crates/franken-speaker)
+    Checking franken-alloc-probe v0.1.0 (<workspace>/crates/franken-alloc-probe)
+    Finished `dev` profile [unoptimized] target(s) in 23.58s

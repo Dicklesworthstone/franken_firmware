@@ -1,0 +1,37 @@
+PASS     N04-META-ANCHORS                   the reference agrees with 35 hand-derived anchors
+PASS     N04-META-VECTORS-FRESH             vectors.json and additive paired_trace.json equal fresh generations
+PASS     N04-META-MAP-COMPLETE              every Rust n04_ test is mapped to a case and every mapped test exists
+PASS     N04-META-WORLDS-ALL-JUDGED         every world in the vectors is judged by a case
+PASS     N04-META-CONTRACT-NAMES-CASES      docs/contracts/n04.md names every case
+PASS     N04-PROFILES                       2 tests ok, 2 records re-derived from the reference
+PASS     N04-CUTOFF-FORMULA                 2 tests ok, 2 records re-derived from the reference
+PASS     N04-CUTOFF-BOUNDARY                3 tests ok, 3 records re-derived from the reference
+PASS     N04-ONTIME                         4 tests ok, 1 records re-derived from the reference
+PASS     N04-REORDER-DUP                    1 tests ok, 1 records re-derived from the reference
+PASS     N04-LOSS-CONCEAL                   4 tests ok, 4 records re-derived from the reference
+PASS     N04-EPOCH                          5 tests ok, 1 records re-derived from the reference
+PASS     N04-WINDOW-INPUT                   1 tests ok, 1 records re-derived from the reference
+PASS     N04-REPAIR                         2 tests ok, 2 records re-derived from the reference
+PASS     N04-CLOCK                          1 tests ok, 1 records re-derived from the reference
+PASS     N04-OVERDUE                        2 tests ok, 2 records re-derived from the reference
+PASS     N04-LATENCY-UP                     3 tests ok, 3 records re-derived from the reference
+PASS     N04-LATENCY-DOWN                   2 tests ok, 2 records re-derived from the reference
+PASS     N04-LATENCY-CAP                    1 tests ok, 1 records re-derived from the reference
+PASS     N04-BACKPRESSURE                   1 tests ok, 1 records re-derived from the reference
+PASS     N04-ADVICE                         3 tests ok, 3 records re-derived from the reference
+PASS     N04-SEEDED                         3 tests ok, 3 records re-derived from the reference
+PASS     N04-PROPERTIES                     3 tests ok, 3 records re-derived from the reference
+PASS     N04-LOG-LINES                      6 tests ok, 24 records re-derived from the reference
+PASS     N04-LOG-LOSS                       5 tests ok, 14 records re-derived from the reference
+PASS     N04-LOG-NONBLOCKING                1 tests ok, 1 records re-derived from the reference
+PASS     N04-LOG-CONFIG                     2 tests ok, 0 records re-derived from the reference
+PASS     N04-GROUP-CLOCK                    4 tests ok, 1 records re-derived from the reference
+PASS     N04-NO-ALLOC                       2 tests ok, 1 records re-derived from the reference
+PASS     N04-CAPACITY                       9 tests ok, 1 records re-derived from the reference
+PASS     N04-ROUTE-HINT                     10 tests ok, 0 records re-derived from the reference
+diag run=n04-full-dda9720218ffb408: evidence COMPLETE; events=63 critical=63 dropped=0 critical_lost=0 bytes=20493 sha256=aa63a482e92f
+N04 cases: tier=full total=31 passed=31 failed=0 blocked=0 -> QUALIFIED
+NOT MEASURED  dac_or_acoustic_presentation: not measured: needs a BE guest or hardware
+NOT MEASURED  concealment_listening_quality: not evaluated: no listening test exists
+NOT MEASURED  cpu_and_memory_on_target_isa: not measured: needs a BE guest or hardware
+NOT MEASURED  real_network_loss_and_jitter: not measured: scripted and seeded schedules only
