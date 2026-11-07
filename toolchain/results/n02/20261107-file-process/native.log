@@ -1,0 +1,225 @@
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.45s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test channel::pipeline::persist::tests::a_journal_poisoned_from_outside_before_the_first_local_mute_on_does_not_lose_it ... ok
+test channel::pipeline::persist::tests::an_owner_that_forgot_to_restore_still_gets_the_first_local_mute_on_applied_and_the_controller_volume_and_the_unmute_stay_withheld ... ok
+test channel::pipeline::persist::tests::the_first_local_mute_on_that_discovers_a_failed_store_still_silences_the_live_session ... ok
+test result: ok. 562 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.42s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test file_medium::tests::a_fail_plan_is_program_or_sync_and_a_count_of_at_least_one ... ok
+test file_medium::tests::a_faulting_medium_fails_exactly_the_chosen_program_after_it_is_armed_and_the_failed_one_has_no_effect ... ok
+test file_medium::tests::a_faulting_medium_fails_exactly_the_chosen_sync_and_what_was_written_stays_in_the_file ... ok
+test file_medium::tests::a_faulting_medium_with_no_plan_is_the_medium_it_wraps ... ok
+test file_medium::tests::a_file_that_is_not_this_format_is_refused_by_name_and_never_changed ... ok
+test file_medium::tests::a_file_the_owner_cannot_write_is_denied_and_unchanged ... ok
+test file_medium::tests::a_geometry_the_journal_cannot_use_or_a_file_cannot_bound_is_refused_before_anything_is_made ... ok
+test file_medium::tests::a_new_file_is_the_header_and_two_erased_segments ... ok
+test file_medium::tests::a_second_open_is_refused_while_the_first_lives_and_allowed_after ... ok
+test file_medium::tests::create_new_refuses_every_existing_path_and_leaves_it_exactly_as_it_was ... ok
+test file_medium::tests::error_codes_are_unique_snake_case_names_that_carry_no_data ... ok
+test file_medium::tests::offsets_are_checked_before_any_write_and_programming_only_clears_bits ... ok
+test file_medium::tests::the_checksum_is_the_standard_crc32 ... ok
+test file_medium::tests::the_first_failure_latches_and_every_later_call_returns_it ... ok
+test file_medium::tests::what_is_not_a_regular_file_with_one_link_is_refused_and_untouched ... ok
+test file_medium::tests::what_was_programmed_and_synced_is_there_after_the_file_is_reopened ... ok
+test result: ok. 342 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 59.03s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.58s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.21s
+test a_failed_commit_of_a_local_mute_on_still_silences_and_latches_and_the_file_keeps_its_old_mark ... ok
+test a_new_process_restores_the_mark_and_the_floor_from_the_file_and_refuses_the_delivered_step ... ok
+test a_process_killed_after_its_acknowledged_steps_holds_the_file_and_a_fresh_process_restores_from_it ... ok
+test an_unknown_sync_outcome_latches_the_plane_and_a_fresh_process_finds_the_old_or_the_new_mark ... ok
+test child_output_at_the_limit_is_retained_and_one_extra_byte_is_an_error ... ok
+test dropping_a_held_child_reaps_it_and_releases_the_real_file_lock ... ok
+test the_step_limit_accepts_sixty_four_and_refuses_sixty_five_before_opening_the_file ... ok
+test what_is_not_this_mediums_file_is_refused_by_name_before_any_plane_exists_and_left_alone ... ok
+N02_PROC_TEST: child args=[init plane.img] exit=Some(0) signal=None
+N02_PROC_TEST:   N02_PROC: init ok segment_bytes=8192 file_bytes=16416
+N02_PROC_TEST: child args=[run plane.img fresh tail:1:cur:10,legacy:5] exit=Some(0) signal=None
+N02_PROC_TEST:   N02_PROC: boot session_revision=2 member_volume=50 member_muted=false restored_mark=FreshMedium restored_floors=Nothing
+N02_PROC_TEST:   N02_PROC: step 1 kind=tail seq=1 sent_revision=2 status=200 volume=60 fault=none session_revision=3 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 2 kind=legacy seq=none sent_revision=none status=200 volume=65 fault=none session_revision=4 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: end session_revision=4 member_volume=65 member_muted=false latched=false
+N02_PROC_TEST: child args=[run plane.img 4:65 panel:1:1,tail:2:cur:10,panel:2:0 --fail-at program:1] exit=Some(0) signal=None
+N02_PROC_TEST:   N02_PROC: boot session_revision=4 member_volume=65 member_muted=false restored_mark=Mark(4) restored_floors=Table { identities: 1 }
+N02_PROC_TEST:   N02_PROC: step 1 kind=panel seq=1 sent_revision=none status=200 volume=none fault=none session_revision=5 member_muted=true latched=true
+N02_PROC_TEST:   N02_PROC: step 2 kind=tail seq=2 sent_revision=5 status=500 volume=none fault=501 session_revision=5 member_muted=true latched=true
+N02_PROC_TEST:   N02_PROC: step 3 kind=panel seq=2 sent_revision=none status=500 volume=none fault=501 session_revision=5 member_muted=true latched=true
+N02_PROC_TEST:   N02_PROC: end session_revision=5 member_volume=65 member_muted=true latched=true
+N02_PROC_TEST: child args=[run plane.img 4:65 panel:1:1,tail:2:cur:10,panel:2:0 --fail-at none] exit=Some(0) signal=None
+N02_PROC_TEST:   N02_PROC: boot session_revision=4 member_volume=65 member_muted=false restored_mark=Mark(4) restored_floors=Table { identities: 1 }
+N02_PROC_TEST:   N02_PROC: step 1 kind=panel seq=1 sent_revision=none status=200 volume=none fault=none session_revision=5 member_muted=true latched=false
+N02_PROC_TEST:   N02_PROC: step 2 kind=tail seq=2 sent_revision=5 status=200 volume=75 fault=none session_revision=6 member_muted=true latched=false
+N02_PROC_TEST:   N02_PROC: step 3 kind=panel seq=2 sent_revision=none status=200 volume=none fault=none session_revision=7 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: end session_revision=7 member_volume=75 member_muted=false latched=false
+N02_PROC_TEST: a failed commit: the panel mute-on applied live, the plane latched, the set and the unmute were refused, and the file kept mark 4; the same script with no fault succeeded in full
+N02_PROC_TEST: child args=[init plane.img] exit=Some(0) signal=None
+N02_PROC_TEST:   N02_PROC: init ok segment_bytes=8192 file_bytes=16416
+N02_PROC_TEST: child args=[run plane.img fresh tail:1:cur:10,legacy:5] exit=Some(0) signal=None
+N02_PROC_TEST:   N02_PROC: boot session_revision=2 member_volume=50 member_muted=false restored_mark=FreshMedium restored_floors=Nothing
+N02_PROC_TEST:   N02_PROC: step 1 kind=tail seq=1 sent_revision=2 status=200 volume=60 fault=none session_revision=3 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 2 kind=legacy seq=none sent_revision=none status=200 volume=65 fault=none session_revision=4 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: end session_revision=4 member_volume=65 member_muted=false latched=false
+N02_PROC_TEST: child args=[run plane.img 4:65 tail:1:cur:10,tail:2:cur:10,legacy:5] exit=Some(0) signal=None
+N02_PROC_TEST:   N02_PROC: boot session_revision=4 member_volume=65 member_muted=false restored_mark=Mark(4) restored_floors=Table { identities: 1 }
+N02_PROC_TEST:   N02_PROC: step 1 kind=tail seq=1 sent_revision=4 status=500 volume=none fault=801 session_revision=4 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 2 kind=tail seq=2 sent_revision=4 status=200 volume=75 fault=none session_revision=5 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 3 kind=legacy seq=none sent_revision=none status=200 volume=80 fault=none session_revision=6 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: end session_revision=6 member_volume=80 member_muted=false latched=false
+N02_PROC_TEST: restart restored mark=4 floors=1 identity, refused number 1 with 801, applied number 2
+N02_PROC_TEST: child args=[init blank.img] exit=Some(0) signal=None
+N02_PROC_TEST:   N02_PROC: init ok segment_bytes=8192 file_bytes=16416
+N02_PROC_TEST: child args=[run blank.img 4:65 tail:1:cur:10] exit=Some(0) signal=None
+N02_PROC_TEST:   N02_PROC: boot session_revision=4 member_volume=65 member_muted=false restored_mark=FreshMedium restored_floors=Nothing
+N02_PROC_TEST:   N02_PROC: step 1 kind=tail seq=1 sent_revision=4 status=200 volume=75 fault=none session_revision=5 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: end session_revision=5 member_volume=75 member_muted=false latched=false
+N02_PROC_TEST: control: the same request to a blank file was applied (volume 75); the refusal above came from the file
+N02_PROC_TEST: child args=[init plane.img] exit=Some(0) signal=None
+N02_PROC_TEST:   N02_PROC: init ok segment_bytes=8192 file_bytes=16416
+N02_PROC_TEST:   N02_PROC: boot session_revision=2 member_volume=50 member_muted=false restored_mark=FreshMedium restored_floors=Nothing
+N02_PROC_TEST:   N02_PROC: step 1 kind=tail seq=1 sent_revision=2 status=200 volume=60 fault=none session_revision=3 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 2 kind=legacy seq=none sent_revision=none status=200 volume=65 fault=none session_revision=4 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: end session_revision=4 member_volume=65 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: held note=a kill keeps every byte already handed to the OS, synced or not; a killed owner shows a restart and says nothing about sync_all
+N02_PROC_TEST: child args=[run plane.img fresh -] exit=Some(2) signal=None
+N02_PROC_TEST:   N02_PROC: refused code=locked
+N02_PROC_TEST: kill: SIGKILL keeps every byte already handed to the OS, synced or not; this case shows a restart after a kill and says nothing about sync_all
+N02_PROC_TEST: child args=[run plane.img 4:65 tail:1:cur:10,tail:2:cur:10] exit=Some(0) signal=None
+N02_PROC_TEST:   N02_PROC: boot session_revision=4 member_volume=65 member_muted=false restored_mark=Mark(4) restored_floors=Table { identities: 1 }
+N02_PROC_TEST:   N02_PROC: step 1 kind=tail seq=1 sent_revision=4 status=500 volume=none fault=801 session_revision=4 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 2 kind=tail seq=2 sent_revision=4 status=200 volume=75 fault=none session_revision=5 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: end session_revision=5 member_volume=75 member_muted=false latched=false
+N02_PROC_TEST: child args=[init plane.img] exit=Some(0) signal=None
+N02_PROC_TEST:   N02_PROC: init ok segment_bytes=8192 file_bytes=16416
+N02_PROC_TEST: child args=[run plane.img fresh tail:1:cur:10,legacy:5] exit=Some(0) signal=None
+N02_PROC_TEST:   N02_PROC: boot session_revision=2 member_volume=50 member_muted=false restored_mark=FreshMedium restored_floors=Nothing
+N02_PROC_TEST:   N02_PROC: step 1 kind=tail seq=1 sent_revision=2 status=200 volume=60 fault=none session_revision=3 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 2 kind=legacy seq=none sent_revision=none status=200 volume=65 fault=none session_revision=4 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: end session_revision=4 member_volume=65 member_muted=false latched=false
+N02_PROC_TEST: child args=[run plane.img 4:65 panel:1:1,tail:2:cur:10 --fail-at sync:1] exit=Some(0) signal=None
+N02_PROC_TEST:   N02_PROC: boot session_revision=4 member_volume=65 member_muted=false restored_mark=Mark(4) restored_floors=Table { identities: 1 }
+N02_PROC_TEST:   N02_PROC: step 1 kind=panel seq=1 sent_revision=none status=200 volume=none fault=none session_revision=5 member_muted=true latched=true
+N02_PROC_TEST:   N02_PROC: step 2 kind=tail seq=2 sent_revision=5 status=500 volume=none fault=501 session_revision=5 member_muted=true latched=true
+N02_PROC_TEST:   N02_PROC: end session_revision=5 member_volume=65 member_muted=true latched=true
+N02_PROC_TEST: child args=[run plane.img 4:65 - --fail-at none] exit=Some(0) signal=None
+N02_PROC_TEST:   N02_PROC: boot session_revision=4 member_volume=65 member_muted=false restored_mark=Mark(5) restored_floors=Table { identities: 1 }
+N02_PROC_TEST:   N02_PROC: end session_revision=4 member_volume=65 member_muted=false latched=false
+N02_PROC_TEST: a failed sync: the plane latched; the file held the NEW mark
+N02_PROC_TEST: child args=[init guard.img] exit=Some(0) signal=None
+N02_PROC_TEST:   N02_PROC: init ok segment_bytes=8192 file_bytes=16416
+N02_PROC_TEST:   N02_PROC: boot session_revision=2 member_volume=50 member_muted=false restored_mark=FreshMedium restored_floors=Nothing
+N02_PROC_TEST:   N02_PROC: end session_revision=2 member_volume=50 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: held note=a kill keeps every byte already handed to the OS, synced or not; a killed owner shows a restart and says nothing about sync_all
+N02_PROC_TEST: child args=[run guard.img fresh -] exit=Some(0) signal=None
+N02_PROC_TEST:   N02_PROC: boot session_revision=2 member_volume=50 member_muted=false restored_mark=NeverStored restored_floors=Nothing
+N02_PROC_TEST:   N02_PROC: end session_revision=2 member_volume=50 member_muted=false latched=false
+N02_PROC_TEST: child args=[init limit.img] exit=Some(0) signal=None
+N02_PROC_TEST:   N02_PROC: init ok segment_bytes=8192 file_bytes=16416
+N02_PROC_TEST: child args=[run limit.img fresh legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0] exit=Some(0) signal=None
+N02_PROC_TEST:   N02_PROC: boot session_revision=2 member_volume=50 member_muted=false restored_mark=FreshMedium restored_floors=Nothing
+N02_PROC_TEST:   N02_PROC: step 1 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 2 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 3 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 4 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 5 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 6 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 7 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 8 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 9 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 10 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 11 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 12 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 13 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 14 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 15 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 16 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 17 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 18 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 19 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 20 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 21 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 22 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 23 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 24 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 25 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 26 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 27 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 28 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 29 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 30 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 31 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 32 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 33 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 34 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 35 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 36 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 37 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 38 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 39 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 40 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 41 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 42 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 43 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 44 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 45 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 46 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 47 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 48 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 49 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 50 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 51 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 52 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 53 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 54 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 55 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 56 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 57 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 58 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 59 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 60 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 61 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 62 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 63 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: step 64 kind=legacy seq=none sent_revision=none status=500 volume=none fault=402 session_revision=2 member_muted=false latched=false
+N02_PROC_TEST:   N02_PROC: end session_revision=2 member_volume=50 member_muted=false latched=false
+N02_PROC_TEST: child args=[run limit.img fresh legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0,legacy:0] exit=Some(2) signal=None
+N02_PROC_TEST:   N02_PROC: failed reason=too many steps
+N02_PROC_TEST: child args=[init valid.img] exit=Some(0) signal=None
+N02_PROC_TEST:   N02_PROC: init ok segment_bytes=8192 file_bytes=16416
+N02_PROC_TEST: child args=[init flipped.img] exit=Some(0) signal=None
+N02_PROC_TEST:   N02_PROC: init ok segment_bytes=8192 file_bytes=16416
+N02_PROC_TEST: child args=[init linked.img] exit=Some(0) signal=None
+N02_PROC_TEST:   N02_PROC: init ok segment_bytes=8192 file_bytes=16416
+N02_PROC_TEST: child args=[run missing.img fresh -] exit=Some(2) signal=None
+N02_PROC_TEST:   N02_PROC: refused code=not_found
+N02_PROC_TEST: child args=[run directory fresh -] exit=Some(2) signal=None
+N02_PROC_TEST:   N02_PROC: refused code=not_regular_file
+N02_PROC_TEST: child args=[run link.img fresh -] exit=Some(2) signal=None
+N02_PROC_TEST:   N02_PROC: refused code=not_regular_file
+N02_PROC_TEST: child args=[run foreign.bin fresh -] exit=Some(2) signal=None
+N02_PROC_TEST:   N02_PROC: refused code=bad_header
+N02_PROC_TEST: child args=[run short.bin fresh -] exit=Some(2) signal=None
+N02_PROC_TEST:   N02_PROC: refused code=wrong_length
+N02_PROC_TEST: child args=[run flipped.img fresh -] exit=Some(2) signal=None
+N02_PROC_TEST:   N02_PROC: refused code=bad_header
+N02_PROC_TEST: child args=[run linked.img fresh -] exit=Some(2) signal=None
+N02_PROC_TEST:   N02_PROC: refused code=not_exclusive
+N02_PROC_TEST: child args=[init foreign.bin] exit=Some(2) signal=None
+N02_PROC_TEST:   N02_PROC: refused code=already_exists
+N02_PROC_TEST: child args=[init valid.img] exit=Some(2) signal=None
+N02_PROC_TEST:   N02_PROC: refused code=already_exists
+N02_PROC_TEST: child args=[run valid.img fresh -] exit=Some(0) signal=None
+N02_PROC_TEST:   N02_PROC: boot session_revision=2 member_volume=50 member_muted=false restored_mark=FreshMedium restored_floors=Nothing
+N02_PROC_TEST:   N02_PROC: end session_revision=2 member_volume=50 member_muted=false latched=false
+N02_PROC_TEST: 9 refusals named, each with the file untouched; the valid file booted
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.49s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

@@ -1,0 +1,234 @@
+{
+  "schema": "ffw.n02_file_process.component.v1",
+  "component_commit": "83fad9e821f0de6a47e5ee3ae3ca6ab23f032cad",
+  "original_owned_inputs": {
+    "crates/franken-control/src/channel/pipeline.rs": "c0eb39c25529c75374a6672e2042aed867406676fe071cefec815a4d65fcbdd8",
+    "crates/franken-control/src/channel/pipeline/boot.rs": "62af5b024dc3e801523aee32e6a6d8c7f3f05b8e53d4560dc627681b276a419d",
+    "crates/franken-control/src/channel/pipeline/persist.rs": "291cd7065053fa9c241586df4cc2579bc957d42bee62cb6c2a837176cab1de67",
+    "crates/franken-speaker/src/control_adapter.rs": "b4799d850ca4b66f486469f5dc77d87ceba05bf52b88b09052a59993171181d4",
+    "crates/franken-speaker/src/control_restart.rs": "9aaf7f5c58b510284cc54cf100663480918beb78f86f66dbffb65aaca66d0637",
+    "crates/franken-speaker/src/file_medium.rs": "65d5e6078137d61b8d2934434e9953fff9c0aecfeb6efc6451bc7f2b74e18121",
+    "crates/franken-speaker/src/lib.rs": "41bcb325abab4e4ebd043eab08fc6875cf6b3052347656a375faac0e6cf590dc",
+    "crates/franken-speaker/src/main.rs": "deafd1b8ceee57a1f2aa3be909cea58487a536874bfcae74707d02115524d280",
+    "crates/franken-speaker/tests/n02_process_restart.rs": "5ecf4a687b450b1e05e397a12f5a0b9573990702f792fcdc300df7ca0d2d1510",
+    "docs/contracts/n02.md": "c2abfa8c0b100f55ed71003bc22a7dc84a665065a9302b1c300f11655bcb2cdb",
+    "tests/n02/cases.json": "bdb7ed219f7176d40fd5afcd4c00f9ecc2fa75349d627bbadf650aeb8c64f35c",
+    "tests/n02/test_reference_model.py": "4a9b2ceb66631c51b9ab1e7a74b23a224d63edb03e97a0bb90eae09a54941c76"
+  },
+  "published_owned_inputs": {
+    "crates/franken-control/src/channel/pipeline.rs": "c0eb39c25529c75374a6672e2042aed867406676fe071cefec815a4d65fcbdd8",
+    "crates/franken-control/src/channel/pipeline/boot.rs": "62af5b024dc3e801523aee32e6a6d8c7f3f05b8e53d4560dc627681b276a419d",
+    "crates/franken-control/src/channel/pipeline/persist.rs": "291cd7065053fa9c241586df4cc2579bc957d42bee62cb6c2a837176cab1de67",
+    "crates/franken-speaker/src/control_adapter.rs": "b4799d850ca4b66f486469f5dc77d87ceba05bf52b88b09052a59993171181d4",
+    "crates/franken-speaker/src/control_restart.rs": "9aaf7f5c58b510284cc54cf100663480918beb78f86f66dbffb65aaca66d0637",
+    "crates/franken-speaker/src/file_medium.rs": "8fbdbdec8287d90da487339711d816ef635928b958a1d876b1ed92e9f8fffd53",
+    "crates/franken-speaker/src/lib.rs": "41bcb325abab4e4ebd043eab08fc6875cf6b3052347656a375faac0e6cf590dc",
+    "crates/franken-speaker/src/main.rs": "deafd1b8ceee57a1f2aa3be909cea58487a536874bfcae74707d02115524d280",
+    "crates/franken-speaker/tests/n02_process_restart.rs": "5ecf4a687b450b1e05e397a12f5a0b9573990702f792fcdc300df7ca0d2d1510",
+    "docs/contracts/n02.md": "c2abfa8c0b100f55ed71003bc22a7dc84a665065a9302b1c300f11655bcb2cdb",
+    "tests/n02/cases.json": "bdb7ed219f7176d40fd5afcd4c00f9ecc2fa75349d627bbadf650aeb8c64f35c",
+    "tests/n02/test_reference_model.py": "4a9b2ceb66631c51b9ab1e7a74b23a224d63edb03e97a0bb90eae09a54941c76"
+  },
+  "gates": [
+    {
+      "label": "native",
+      "receipt": {
+        "build_id": "30099060530610395",
+        "command_exit_code": 0,
+        "content_root": "4549947bd39b61e455ac79ca76807aad59dac716e476b8cffbc89fed7f30c900",
+        "captured_files": 1326
+      },
+      "raw_log_sha256": "ec47abea5777d18a4b92ac90b444b594f13d9a6ab1d095ec7763bc43ff49eeac",
+      "counts": {
+        "passed": 980,
+        "failed": 0,
+        "ignored": 1,
+        "filtered": 0,
+        "groups": 19
+      },
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "owner_presence": "absent",
+      "releases": {
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "staging_released": true,
+        "retired": true
+      },
+      "fixture_correction_applied": false
+    },
+    {
+      "label": "harness_clippy",
+      "receipt": {
+        "build_id": "30099060530610392",
+        "command_exit_code": 0,
+        "content_root": "04ed31d72f628134a193ff3465ecbc6ab70ca06b3d9c92773068d9d362d6ebc9",
+        "captured_files": 1326
+      },
+      "raw_log_sha256": "306fb5118e2b4225ca84dc36685d7ac1ac239cd1931538c95f32f28c6d4e7479",
+      "counts": {
+        "passed": 0,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0,
+        "groups": 0
+      },
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "owner_presence": "absent",
+      "releases": {
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "staging_released": true,
+        "retired": true
+      },
+      "fixture_correction_applied": false
+    },
+    {
+      "label": "default_clippy",
+      "receipt": {
+        "build_id": "30099060530610406",
+        "command_exit_code": 0,
+        "content_root": "393e542f2282199613e5d56ff88c306da513283ad707929b95faa2f8e09f2b19",
+        "captured_files": 1326
+      },
+      "raw_log_sha256": "5a8ba683ecd79def6559cd4c78c87d312645e515967c64f1d2b2e3309c902a20",
+      "counts": {
+        "passed": 0,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0,
+        "groups": 0
+      },
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "owner_presence": "absent",
+      "releases": {
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "staging_released": true,
+        "retired": true
+      },
+      "fixture_correction_applied": false
+    },
+    {
+      "label": "powerpc_check",
+      "receipt": {
+        "build_id": "30099060530610404",
+        "command_exit_code": 0,
+        "content_root": "f3638c8e23fa1213c985072be50cd797c7270685e1d96eb014667409a65cea9d",
+        "captured_files": 1326
+      },
+      "raw_log_sha256": "0a0555911c70a130a4232ebc7888c12d09fa016deee06c78464fbb9a147eaa61",
+      "counts": {
+        "passed": 0,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0,
+        "groups": 0
+      },
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "owner_presence": "absent",
+      "releases": {
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "staging_released": true,
+        "retired": true
+      },
+      "fixture_correction_applied": false
+    },
+    {
+      "label": "mips_check",
+      "receipt": {
+        "build_id": "30099060530610408",
+        "command_exit_code": 0,
+        "content_root": "e8647dd894a1958613a719b6213d6160c139473f01b19111c29cc38e8b9e2ee7",
+        "captured_files": 1326
+      },
+      "raw_log_sha256": "e3aaf6f7d420e2bda0ef22c1374328b26632f7d2a745dddd81ee564dae076b28",
+      "counts": {
+        "passed": 0,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0,
+        "groups": 0
+      },
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "owner_presence": "absent",
+      "releases": {
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "staging_released": true,
+        "retired": true
+      },
+      "fixture_correction_applied": false
+    },
+    {
+      "label": "fixture_native",
+      "receipt": {
+        "build_id": "30099060530610423",
+        "command_exit_code": 0,
+        "content_root": "c09ac7f6810d9a0d300515c0a8a0c27a15b0a3cc149839d2eaf9901bb64d628f",
+        "captured_files": 1326
+      },
+      "raw_log_sha256": "d308d58481c73261076927c3887138c5cfe289f80aac01123cefd4f774207bf5",
+      "counts": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 341,
+        "groups": 1
+      },
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "owner_presence": "absent",
+      "releases": {
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "staging_released": true,
+        "retired": true
+      },
+      "fixture_correction_applied": true
+    },
+    {
+      "label": "fixture_clippy",
+      "receipt": {
+        "build_id": "30099060530610415",
+        "command_exit_code": 0,
+        "content_root": "e095a6c74c0232bed52230dd2851894e4bf7616f4114cd864a863ad47fc742a6",
+        "captured_files": 1326
+      },
+      "raw_log_sha256": "fd9d902eab3d4967b90f3afdb7192ea272baf1f229e4f6f4b5693c924d5a6611",
+      "counts": {
+        "passed": 0,
+        "failed": 0,
+        "ignored": 0,
+        "filtered": 0,
+        "groups": 0
+      },
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "owner_presence": "absent",
+      "releases": {
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "staging_released": true,
+        "retired": true
+      },
+      "fixture_correction_applied": true
+    }
+  ],
+  "source_validation": "Each capture matched all1326 input files when reviewed before the test-only correction. The five original gates match component83fad9e. The two fixture gates match the published correction. The only later source delta is the cfg(test) valid-symlink precondition/assertion included alongside this record.",
+  "log_scope": "Selected actual test verdicts, process output and compiler terminal lines. Full private RCH manifests and machine paths omitted; raw log SHA256 retained.",
+  "full_bead_closed": false,
+  "qualification_boundary": "Offline regular-file and process prototype. G01 session revision/volume are supplied fixture state, not restored session state. Process kill is not power-cut or physical flash proof. FullN02 depends on P03 and remaining original acceptance."
+}

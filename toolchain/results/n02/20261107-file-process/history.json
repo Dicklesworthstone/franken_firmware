@@ -1,0 +1,61 @@
+{
+  "schema": "ffw.n02_file_process.attempt_history.v1",
+  "attempts": [
+    {
+      "name": "initial_full_native",
+      "exit": 101,
+      "passed": 979,
+      "failed": 1,
+      "ignored": 1,
+      "raw_log_sha256": "9ff804aab122b80fdbe69bed10264890e59916301fd0963fc0081b61d7c715e4",
+      "cause": "Unix socket fixture setup exceeded SUN_LEN before its socket refusal, hard-link refusals and final positive open could execute. A fresh short relative fixture retained all assertions."
+    },
+    {
+      "name": "initial_clippy_admission",
+      "exit": 103,
+      "tests_run": false,
+      "raw_log_sha256": "f1a099addb3607efab7c9f96bd428ff8f4c7e5d1bb3b7915e75d101179c4c49e",
+      "cause": "Worker queue timeout; no compiler result."
+    },
+    {
+      "name": "initial_powerpc_admission",
+      "exit": 120,
+      "tests_run": false,
+      "raw_log_sha256": "4908eebd4857b11d9b15786e0e48493785cdb2ece7520835f06dd966a20c9757",
+      "cause": "RCH-E330 disk reservation refusal, started:false. A later worker executed both BE checks successfully."
+    },
+    {
+      "name": "short_relative_fixture_native",
+      "exit": 0,
+      "passed": 980,
+      "failed": 0,
+      "ignored": 1,
+      "limitation": "Review later found that the symlink had become dangling. The socket and hard-link assertions ran, but this run alone did not establish the valid-symlink target-preservation control."
+    },
+    {
+      "name": "valid_symlink_first_admission",
+      "exit": 120,
+      "tests_run": false,
+      "raw_log_sha256": "644650218b6d1446ca9999754e79a3a44ccb87dc7c8a7327335f9e505c86e5a4",
+      "cause": "RCH-E330 disk reservation refusal before Cargo started."
+    },
+    {
+      "name": "valid_symlink_second_admission",
+      "exit": 103,
+      "tests_run": false,
+      "raw_log_sha256": "5b560ce06d8f4a97109b90dc2c287a05697f0a392d8d40853ea92a711c9653c7",
+      "cause": "Worker queue timeout; no test result."
+    },
+    {
+      "name": "valid_symlink_focused_native",
+      "exit": 0,
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 341,
+      "cause": "The strengthened existing case executed on TRJ; exact source and custody are in qualification.json."
+    }
+  ],
+  "negative_canaries": "Caught planted allocator panics in the broad run are passing rejection canaries, not product failures.",
+  "boundary": "Capacity refusals are not source failures or passes. The final focused result is one rerun, not a new distinct test. No threshold, assertion, disk floor or global fallback was weakened."
+}
