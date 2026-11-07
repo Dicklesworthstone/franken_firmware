@@ -1,0 +1,4375 @@
+{
+ "scenarios": [
+  {
+   "expect": {
+    "final_now_ns": 56152000,
+    "id": "N07-S1-zero-loss-paced",
+    "peers": {
+     "1": {
+      "control_received": [
+       11
+      ],
+      "delivered": [
+       [
+        1,
+        0,
+        0
+       ],
+       [
+        1,
+        1,
+        1
+       ],
+       [
+        1,
+        2,
+        2
+       ],
+       [
+        1,
+        3,
+        3
+       ],
+       [
+        1,
+        4,
+        4
+       ],
+       [
+        1,
+        5,
+        5
+       ],
+       [
+        1,
+        6,
+        6
+       ],
+       [
+        1,
+        7,
+        7
+       ],
+       [
+        1,
+        8,
+        8
+       ],
+       [
+        1,
+        9,
+        9
+       ],
+       [
+        1,
+        10,
+        10
+       ],
+       [
+        1,
+        11,
+        11
+       ],
+       [
+        1,
+        12,
+        12
+       ],
+       [
+        1,
+        13,
+        13
+       ],
+       [
+        1,
+        14,
+        14
+       ],
+       [
+        1,
+        15,
+        15
+       ]
+      ],
+      "receiver": {
+       "consumed_next": 16,
+       "inbound_len": 0,
+       "stats": {
+        "control_delivered": 1,
+        "control_dropped_full": 0,
+        "control_oversize": 0,
+        "control_read": 1,
+        "control_wrong_source": 0,
+        "inbound_overflow": 0,
+        "io_errors": 0,
+        "media_accepted": 16,
+        "media_read": 16,
+        "media_rejected": 0,
+        "reports_sent": 26
+       },
+       "stream": {
+        "accepted": 16,
+        "datagrams_seen": 16,
+        "mac_verifications": 16,
+        "rejected_authentication": 0,
+        "rejected_future_epoch": 0,
+        "rejected_future_sequence": 0,
+        "rejected_malformed_fields": 0,
+        "rejected_not_negotiated": 0,
+        "rejected_replay": 0,
+        "rejected_stale_epoch": 0,
+        "rejected_structure": 0,
+        "rejected_unsupported_version": 0,
+        "rejected_wrong_stream": 0
+       }
+      },
+      "relay": null,
+      "sample_mismatches": 0,
+      "samples_checked": 16,
+      "view": {
+       "control_queued": 0,
+       "counters": {
+        "control_dropped_send_error": 0,
+        "control_rejected_full": 0,
+        "control_sent": 1,
+        "control_submitted": 1,
+        "media_dropped_aggregate_bytes": 0,
+        "media_dropped_aggregate_packets": 0,
+        "media_dropped_fenced_bytes": 0,
+        "media_dropped_fenced_packets": 0,
+        "media_dropped_late_bytes": 0,
+        "media_dropped_late_packets": 0,
+        "media_dropped_overflow_bytes": 0,
+        "media_dropped_overflow_packets": 0,
+        "media_dropped_send_error_bytes": 0,
+        "media_dropped_send_error_packets": 0,
+        "media_sent_bytes": 17664,
+        "media_sent_packets": 16,
+        "media_submitted_bytes": 17664,
+        "media_submitted_packets": 16,
+        "queue_delay_ns_max": 53888000,
+        "queue_delay_ns_total": 347808000,
+        "reports_accepted": 26,
+        "window_stalled_pumps": 0
+       },
+       "fence": null,
+       "in_flight": 0,
+       "path_mtu": 1500,
+       "peer": 1,
+       "queued_bytes": 0,
+       "queued_packets": 0,
+       "reported_next": 16,
+       "sent_next": 16,
+       "stalled": false
+      }
+     },
+     "2": {
+      "control_received": [],
+      "delivered": [
+       [
+        1,
+        0,
+        0
+       ],
+       [
+        1,
+        1,
+        1
+       ],
+       [
+        1,
+        2,
+        2
+       ],
+       [
+        1,
+        3,
+        3
+       ],
+       [
+        1,
+        4,
+        4
+       ],
+       [
+        1,
+        5,
+        5
+       ],
+       [
+        1,
+        6,
+        6
+       ],
+       [
+        1,
+        7,
+        7
+       ],
+       [
+        1,
+        8,
+        8
+       ],
+       [
+        1,
+        9,
+        9
+       ],
+       [
+        1,
+        10,
+        10
+       ],
+       [
+        1,
+        11,
+        11
+       ],
+       [
+        1,
+        12,
+        12
+       ],
+       [
+        1,
+        13,
+        13
+       ],
+       [
+        1,
+        14,
+        14
+       ],
+       [
+        1,
+        15,
+        15
+       ]
+      ],
+      "receiver": {
+       "consumed_next": 16,
+       "inbound_len": 0,
+       "stats": {
+        "control_delivered": 0,
+        "control_dropped_full": 0,
+        "control_oversize": 0,
+        "control_read": 0,
+        "control_wrong_source": 0,
+        "inbound_overflow": 0,
+        "io_errors": 0,
+        "media_accepted": 16,
+        "media_read": 16,
+        "media_rejected": 0,
+        "reports_sent": 26
+       },
+       "stream": {
+        "accepted": 16,
+        "datagrams_seen": 16,
+        "mac_verifications": 16,
+        "rejected_authentication": 0,
+        "rejected_future_epoch": 0,
+        "rejected_future_sequence": 0,
+        "rejected_malformed_fields": 0,
+        "rejected_not_negotiated": 0,
+        "rejected_replay": 0,
+        "rejected_stale_epoch": 0,
+        "rejected_structure": 0,
+        "rejected_unsupported_version": 0,
+        "rejected_wrong_stream": 0
+       }
+      },
+      "relay": null,
+      "sample_mismatches": 0,
+      "samples_checked": 16,
+      "view": {
+       "control_queued": 0,
+       "counters": {
+        "control_dropped_send_error": 0,
+        "control_rejected_full": 0,
+        "control_sent": 0,
+        "control_submitted": 0,
+        "media_dropped_aggregate_bytes": 0,
+        "media_dropped_aggregate_packets": 0,
+        "media_dropped_fenced_bytes": 0,
+        "media_dropped_fenced_packets": 0,
+        "media_dropped_late_bytes": 0,
+        "media_dropped_late_packets": 0,
+        "media_dropped_overflow_bytes": 0,
+        "media_dropped_overflow_packets": 0,
+        "media_dropped_send_error_bytes": 0,
+        "media_dropped_send_error_packets": 0,
+        "media_sent_bytes": 17664,
+        "media_sent_packets": 16,
+        "media_submitted_bytes": 17664,
+        "media_submitted_packets": 16,
+        "queue_delay_ns_max": 56152000,
+        "queue_delay_ns_total": 376792000,
+        "reports_accepted": 26,
+        "window_stalled_pumps": 0
+       },
+       "fence": null,
+       "in_flight": 0,
+       "path_mtu": 1500,
+       "peer": 2,
+       "queued_bytes": 0,
+       "queued_packets": 0,
+       "reported_next": 16,
+       "sent_next": 16,
+       "stalled": false
+      }
+     }
+    },
+    "stats": {
+     "admissions_rejected": 0,
+     "control_datagrams_in": 52,
+     "epoch_advances": 0,
+     "link_down_pumps": 0,
+     "link_events": 0,
+     "mtu_fences": 0,
+     "mtu_unfences": 0,
+     "pace_limited_pumps": 25,
+     "path_changes": 0,
+     "pumps": 26,
+     "recv_errors": 0,
+     "removed_peer_dropped_bytes": 0,
+     "removed_peer_dropped_packets": 0,
+     "reports_bad_tag": 0,
+     "reports_invalid": 0,
+     "reports_malformed": 0,
+     "reports_stale_epoch": 0,
+     "reports_unknown_source": 0,
+     "reports_wrong_stream": 0,
+     "send_cap_pumps": 0,
+     "stale_submits": 0
+    },
+    "trace": [
+     {
+      "code": "ok",
+      "name": "control",
+      "op": 0
+     },
+     {
+      "evicted": 0,
+      "name": "submit",
+      "op": 1,
+      "queued": 32,
+      "rejected_aggregate": 0,
+      "skipped_fenced": 0,
+      "submitted": 16
+     },
+     {
+      "final_pump": {
+       "control_sent": 0,
+       "late_dropped": 0,
+       "link_down": false,
+       "media_sent": 1,
+       "next_send_ns": null,
+       "pace_limited": false,
+       "reports_applied": 0,
+       "send_cap_hit": false,
+       "window_stalled_peers": 0
+      },
+      "name": "settle",
+      "now_ns": 56152000,
+      "op": 2,
+      "settle_pumps": 26
+     }
+    ]
+   },
+   "id": "N07-S1-zero-loss-paced",
+   "limits": {
+    "pace_bytes_per_sec": 500000
+   },
+   "ops": [
+    {
+     "op": "control",
+     "peer": 1,
+     "tag": 11
+    },
+    {
+     "blocks": 16,
+     "deadline_ns": 1000000000,
+     "first_block": 0,
+     "op": "submit"
+    },
+    {
+     "op": "settle"
+    }
+   ],
+   "peers": [
+    {
+     "mtu": 1500,
+     "peer": 1
+    },
+    {
+     "mtu": 1500,
+     "peer": 2
+    }
+   ],
+   "what": "two peers, no loss: every block delivered in order, paced, with control sent ahead"
+  },
+  {
+   "expect": {
+    "final_now_ns": 319999980,
+    "id": "N07-S2-slow-peer-isolated",
+    "peers": {
+     "1": {
+      "control_received": [],
+      "delivered": [
+       [
+        1,
+        0,
+        0
+       ],
+       [
+        1,
+        1,
+        1
+       ],
+       [
+        1,
+        2,
+        2
+       ],
+       [
+        1,
+        3,
+        3
+       ],
+       [
+        1,
+        4,
+        4
+       ],
+       [
+        1,
+        5,
+        5
+       ],
+       [
+        1,
+        6,
+        6
+       ],
+       [
+        1,
+        7,
+        7
+       ],
+       [
+        1,
+        8,
+        8
+       ],
+       [
+        1,
+        9,
+        9
+       ],
+       [
+        1,
+        10,
+        10
+       ],
+       [
+        1,
+        11,
+        11
+       ],
+       [
+        1,
+        12,
+        12
+       ],
+       [
+        1,
+        13,
+        13
+       ],
+       [
+        1,
+        14,
+        14
+       ],
+       [
+        1,
+        15,
+        15
+       ],
+       [
+        1,
+        16,
+        16
+       ],
+       [
+        1,
+        17,
+        17
+       ],
+       [
+        1,
+        18,
+        18
+       ],
+       [
+        1,
+        19,
+        19
+       ],
+       [
+        1,
+        20,
+        20
+       ],
+       [
+        1,
+        21,
+        21
+       ],
+       [
+        1,
+        22,
+        22
+       ],
+       [
+        1,
+        23,
+        23
+       ],
+       [
+        1,
+        24,
+        24
+       ],
+       [
+        1,
+        25,
+        25
+       ],
+       [
+        1,
+        26,
+        26
+       ],
+       [
+        1,
+        27,
+        27
+       ],
+       [
+        1,
+        28,
+        28
+       ],
+       [
+        1,
+        29,
+        29
+       ],
+       [
+        1,
+        30,
+        30
+       ],
+       [
+        1,
+        31,
+        31
+       ],
+       [
+        1,
+        32,
+        32
+       ],
+       [
+        1,
+        33,
+        33
+       ],
+       [
+        1,
+        34,
+        34
+       ],
+       [
+        1,
+        35,
+        35
+       ],
+       [
+        1,
+        36,
+        36
+       ],
+       [
+        1,
+        37,
+        37
+       ],
+       [
+        1,
+        38,
+        38
+       ],
+       [
+        1,
+        39,
+        39
+       ],
+       [
+        1,
+        40,
+        40
+       ],
+       [
+        1,
+        41,
+        41
+       ],
+       [
+        1,
+        42,
+        42
+       ],
+       [
+        1,
+        43,
+        43
+       ],
+       [
+        1,
+        44,
+        44
+       ],
+       [
+        1,
+        45,
+        45
+       ],
+       [
+        1,
+        46,
+        46
+       ],
+       [
+        1,
+        47,
+        47
+       ],
+       [
+        1,
+        48,
+        48
+       ],
+       [
+        1,
+        49,
+        49
+       ],
+       [
+        1,
+        50,
+        50
+       ],
+       [
+        1,
+        51,
+        51
+       ],
+       [
+        1,
+        52,
+        52
+       ],
+       [
+        1,
+        53,
+        53
+       ],
+       [
+        1,
+        54,
+        54
+       ],
+       [
+        1,
+        55,
+        55
+       ],
+       [
+        1,
+        56,
+        56
+       ],
+       [
+        1,
+        57,
+        57
+       ],
+       [
+        1,
+        58,
+        58
+       ],
+       [
+        1,
+        59,
+        59
+       ]
+      ],
+      "receiver": {
+       "consumed_next": 60,
+       "inbound_len": 0,
+       "stats": {
+        "control_delivered": 0,
+        "control_dropped_full": 0,
+        "control_oversize": 0,
+        "control_read": 0,
+        "control_wrong_source": 0,
+        "inbound_overflow": 0,
+        "io_errors": 0,
+        "media_accepted": 60,
+        "media_read": 60,
+        "media_rejected": 0,
+        "reports_sent": 61
+       },
+       "stream": {
+        "accepted": 60,
+        "datagrams_seen": 60,
+        "mac_verifications": 60,
+        "rejected_authentication": 0,
+        "rejected_future_epoch": 0,
+        "rejected_future_sequence": 0,
+        "rejected_malformed_fields": 0,
+        "rejected_not_negotiated": 0,
+        "rejected_replay": 0,
+        "rejected_stale_epoch": 0,
+        "rejected_structure": 0,
+        "rejected_unsupported_version": 0,
+        "rejected_wrong_stream": 0
+       }
+      },
+      "relay": null,
+      "sample_mismatches": 0,
+      "samples_checked": 60,
+      "view": {
+       "control_queued": 0,
+       "counters": {
+        "control_dropped_send_error": 0,
+        "control_rejected_full": 0,
+        "control_sent": 0,
+        "control_submitted": 0,
+        "media_dropped_aggregate_bytes": 0,
+        "media_dropped_aggregate_packets": 0,
+        "media_dropped_fenced_bytes": 0,
+        "media_dropped_fenced_packets": 0,
+        "media_dropped_late_bytes": 0,
+        "media_dropped_late_packets": 0,
+        "media_dropped_overflow_bytes": 0,
+        "media_dropped_overflow_packets": 0,
+        "media_dropped_send_error_bytes": 0,
+        "media_dropped_send_error_packets": 0,
+        "media_sent_bytes": 66240,
+        "media_sent_packets": 60,
+        "media_submitted_bytes": 66240,
+        "media_submitted_packets": 60,
+        "queue_delay_ns_max": 0,
+        "queue_delay_ns_total": 0,
+        "reports_accepted": 61,
+        "window_stalled_pumps": 0
+       },
+       "fence": null,
+       "in_flight": 0,
+       "path_mtu": 1500,
+       "peer": 1,
+       "queued_bytes": 0,
+       "queued_packets": 0,
+       "reported_next": 60,
+       "sent_next": 60,
+       "stalled": false
+      }
+     },
+     "2": {
+      "control_received": [],
+      "delivered": [
+       [
+        1,
+        0,
+        0
+       ],
+       [
+        1,
+        1,
+        1
+       ],
+       [
+        1,
+        2,
+        2
+       ],
+       [
+        1,
+        3,
+        3
+       ],
+       [
+        1,
+        4,
+        4
+       ],
+       [
+        1,
+        5,
+        5
+       ],
+       [
+        1,
+        6,
+        6
+       ],
+       [
+        1,
+        7,
+        7
+       ],
+       [
+        1,
+        8,
+        36
+       ],
+       [
+        1,
+        9,
+        37
+       ],
+       [
+        1,
+        10,
+        38
+       ],
+       [
+        1,
+        11,
+        39
+       ],
+       [
+        1,
+        12,
+        40
+       ],
+       [
+        1,
+        13,
+        41
+       ],
+       [
+        1,
+        14,
+        42
+       ],
+       [
+        1,
+        15,
+        43
+       ],
+       [
+        1,
+        16,
+        44
+       ],
+       [
+        1,
+        17,
+        45
+       ],
+       [
+        1,
+        18,
+        46
+       ],
+       [
+        1,
+        19,
+        47
+       ],
+       [
+        1,
+        20,
+        48
+       ],
+       [
+        1,
+        21,
+        49
+       ],
+       [
+        1,
+        22,
+        50
+       ],
+       [
+        1,
+        23,
+        51
+       ],
+       [
+        1,
+        24,
+        52
+       ],
+       [
+        1,
+        25,
+        53
+       ],
+       [
+        1,
+        26,
+        54
+       ],
+       [
+        1,
+        27,
+        55
+       ],
+       [
+        1,
+        28,
+        56
+       ],
+       [
+        1,
+        29,
+        57
+       ],
+       [
+        1,
+        30,
+        58
+       ],
+       [
+        1,
+        31,
+        59
+       ]
+      ],
+      "receiver": {
+       "consumed_next": 32,
+       "inbound_len": 0,
+       "stats": {
+        "control_delivered": 0,
+        "control_dropped_full": 0,
+        "control_oversize": 0,
+        "control_read": 0,
+        "control_wrong_source": 0,
+        "inbound_overflow": 0,
+        "io_errors": 0,
+        "media_accepted": 32,
+        "media_read": 32,
+        "media_rejected": 0,
+        "reports_sent": 21
+       },
+       "stream": {
+        "accepted": 32,
+        "datagrams_seen": 32,
+        "mac_verifications": 32,
+        "rejected_authentication": 0,
+        "rejected_future_epoch": 0,
+        "rejected_future_sequence": 0,
+        "rejected_malformed_fields": 0,
+        "rejected_not_negotiated": 0,
+        "rejected_replay": 0,
+        "rejected_stale_epoch": 0,
+        "rejected_structure": 0,
+        "rejected_unsupported_version": 0,
+        "rejected_wrong_stream": 0
+       }
+      },
+      "relay": null,
+      "sample_mismatches": 0,
+      "samples_checked": 32,
+      "view": {
+       "control_queued": 0,
+       "counters": {
+        "control_dropped_send_error": 0,
+        "control_rejected_full": 0,
+        "control_sent": 0,
+        "control_submitted": 0,
+        "media_dropped_aggregate_bytes": 0,
+        "media_dropped_aggregate_packets": 0,
+        "media_dropped_fenced_bytes": 0,
+        "media_dropped_fenced_packets": 0,
+        "media_dropped_late_bytes": 30912,
+        "media_dropped_late_packets": 28,
+        "media_dropped_overflow_bytes": 0,
+        "media_dropped_overflow_packets": 0,
+        "media_dropped_send_error_bytes": 0,
+        "media_dropped_send_error_packets": 0,
+        "media_sent_bytes": 35328,
+        "media_sent_packets": 32,
+        "media_submitted_bytes": 66240,
+        "media_submitted_packets": 60,
+        "queue_delay_ns_max": 26666665,
+        "queue_delay_ns_total": 85333328,
+        "reports_accepted": 21,
+        "window_stalled_pumps": 33
+       },
+       "fence": null,
+       "in_flight": 0,
+       "path_mtu": 1500,
+       "peer": 2,
+       "queued_bytes": 0,
+       "queued_packets": 0,
+       "reported_next": 32,
+       "sent_next": 32,
+       "stalled": false
+      }
+     },
+     "3": {
+      "control_received": [],
+      "delivered": [
+       [
+        1,
+        0,
+        0
+       ],
+       [
+        1,
+        1,
+        1
+       ],
+       [
+        1,
+        2,
+        2
+       ],
+       [
+        1,
+        3,
+        3
+       ],
+       [
+        1,
+        4,
+        4
+       ],
+       [
+        1,
+        5,
+        5
+       ],
+       [
+        1,
+        6,
+        6
+       ],
+       [
+        1,
+        7,
+        7
+       ],
+       [
+        1,
+        8,
+        8
+       ],
+       [
+        1,
+        9,
+        9
+       ],
+       [
+        1,
+        10,
+        10
+       ],
+       [
+        1,
+        11,
+        11
+       ],
+       [
+        1,
+        12,
+        12
+       ],
+       [
+        1,
+        13,
+        13
+       ],
+       [
+        1,
+        14,
+        14
+       ],
+       [
+        1,
+        15,
+        15
+       ],
+       [
+        1,
+        16,
+        16
+       ],
+       [
+        1,
+        17,
+        17
+       ],
+       [
+        1,
+        18,
+        18
+       ],
+       [
+        1,
+        19,
+        19
+       ],
+       [
+        1,
+        20,
+        20
+       ],
+       [
+        1,
+        21,
+        21
+       ],
+       [
+        1,
+        22,
+        22
+       ],
+       [
+        1,
+        23,
+        23
+       ],
+       [
+        1,
+        24,
+        24
+       ],
+       [
+        1,
+        25,
+        25
+       ],
+       [
+        1,
+        26,
+        26
+       ],
+       [
+        1,
+        27,
+        27
+       ],
+       [
+        1,
+        28,
+        28
+       ],
+       [
+        1,
+        29,
+        29
+       ],
+       [
+        1,
+        30,
+        30
+       ],
+       [
+        1,
+        31,
+        31
+       ],
+       [
+        1,
+        32,
+        32
+       ],
+       [
+        1,
+        33,
+        33
+       ],
+       [
+        1,
+        34,
+        34
+       ],
+       [
+        1,
+        35,
+        35
+       ],
+       [
+        1,
+        36,
+        36
+       ],
+       [
+        1,
+        37,
+        37
+       ],
+       [
+        1,
+        38,
+        38
+       ],
+       [
+        1,
+        39,
+        39
+       ],
+       [
+        1,
+        40,
+        40
+       ],
+       [
+        1,
+        41,
+        41
+       ],
+       [
+        1,
+        42,
+        42
+       ],
+       [
+        1,
+        43,
+        43
+       ],
+       [
+        1,
+        44,
+        44
+       ],
+       [
+        1,
+        45,
+        45
+       ],
+       [
+        1,
+        46,
+        46
+       ],
+       [
+        1,
+        47,
+        47
+       ],
+       [
+        1,
+        48,
+        48
+       ],
+       [
+        1,
+        49,
+        49
+       ],
+       [
+        1,
+        50,
+        50
+       ],
+       [
+        1,
+        51,
+        51
+       ],
+       [
+        1,
+        52,
+        52
+       ],
+       [
+        1,
+        53,
+        53
+       ],
+       [
+        1,
+        54,
+        54
+       ],
+       [
+        1,
+        55,
+        55
+       ],
+       [
+        1,
+        56,
+        56
+       ],
+       [
+        1,
+        57,
+        57
+       ],
+       [
+        1,
+        58,
+        58
+       ],
+       [
+        1,
+        59,
+        59
+       ]
+      ],
+      "receiver": {
+       "consumed_next": 60,
+       "inbound_len": 0,
+       "stats": {
+        "control_delivered": 0,
+        "control_dropped_full": 0,
+        "control_oversize": 0,
+        "control_read": 0,
+        "control_wrong_source": 0,
+        "inbound_overflow": 0,
+        "io_errors": 0,
+        "media_accepted": 60,
+        "media_read": 60,
+        "media_rejected": 0,
+        "reports_sent": 61
+       },
+       "stream": {
+        "accepted": 60,
+        "datagrams_seen": 60,
+        "mac_verifications": 60,
+        "rejected_authentication": 0,
+        "rejected_future_epoch": 0,
+        "rejected_future_sequence": 0,
+        "rejected_malformed_fields": 0,
+        "rejected_not_negotiated": 0,
+        "rejected_replay": 0,
+        "rejected_stale_epoch": 0,
+        "rejected_structure": 0,
+        "rejected_unsupported_version": 0,
+        "rejected_wrong_stream": 0
+       }
+      },
+      "relay": null,
+      "sample_mismatches": 0,
+      "samples_checked": 60,
+      "view": {
+       "control_queued": 0,
+       "counters": {
+        "control_dropped_send_error": 0,
+        "control_rejected_full": 0,
+        "control_sent": 0,
+        "control_submitted": 0,
+        "media_dropped_aggregate_bytes": 0,
+        "media_dropped_aggregate_packets": 0,
+        "media_dropped_fenced_bytes": 0,
+        "media_dropped_fenced_packets": 0,
+        "media_dropped_late_bytes": 0,
+        "media_dropped_late_packets": 0,
+        "media_dropped_overflow_bytes": 0,
+        "media_dropped_overflow_packets": 0,
+        "media_dropped_send_error_bytes": 0,
+        "media_dropped_send_error_packets": 0,
+        "media_sent_bytes": 66240,
+        "media_sent_packets": 60,
+        "media_submitted_bytes": 66240,
+        "media_submitted_packets": 60,
+        "queue_delay_ns_max": 0,
+        "queue_delay_ns_total": 0,
+        "reports_accepted": 61,
+        "window_stalled_pumps": 0
+       },
+       "fence": null,
+       "in_flight": 0,
+       "path_mtu": 1500,
+       "peer": 3,
+       "queued_bytes": 0,
+       "queued_packets": 0,
+       "reported_next": 60,
+       "sent_next": 60,
+       "stalled": false
+      }
+     }
+    },
+    "stats": {
+     "admissions_rejected": 0,
+     "control_datagrams_in": 143,
+     "epoch_advances": 0,
+     "link_down_pumps": 0,
+     "link_events": 0,
+     "mtu_fences": 0,
+     "mtu_unfences": 0,
+     "pace_limited_pumps": 1,
+     "path_changes": 0,
+     "pumps": 61,
+     "recv_errors": 0,
+     "removed_peer_dropped_bytes": 0,
+     "removed_peer_dropped_packets": 0,
+     "reports_bad_tag": 0,
+     "reports_invalid": 0,
+     "reports_malformed": 0,
+     "reports_stale_epoch": 0,
+     "reports_unknown_source": 0,
+     "reports_wrong_stream": 0,
+     "send_cap_pumps": 0,
+     "stale_submits": 0
+    },
+    "trace": [
+     {
+      "control_sent": 0,
+      "evicted": 0,
+      "late_dropped": 26,
+      "media_sent": 88,
+      "name": "stream",
+      "op": 1,
+      "queued": 120,
+      "rejected_aggregate": 0,
+      "skipped_fenced": 0,
+      "submitted": 40
+     },
+     {
+      "control_sent": 0,
+      "evicted": 0,
+      "late_dropped": 2,
+      "media_sent": 64,
+      "name": "stream",
+      "op": 3,
+      "queued": 60,
+      "rejected_aggregate": 0,
+      "skipped_fenced": 0,
+      "submitted": 20
+     },
+     {
+      "final_pump": {
+       "control_sent": 0,
+       "late_dropped": 0,
+       "link_down": false,
+       "media_sent": 0,
+       "next_send_ns": null,
+       "pace_limited": false,
+       "reports_applied": 0,
+       "send_cap_hit": false,
+       "window_stalled_peers": 0
+      },
+      "name": "settle",
+      "now_ns": 319999980,
+      "op": 4,
+      "settle_pumps": 1
+     }
+    ]
+   },
+   "id": "N07-S2-slow-peer-isolated",
+   "limits": {
+    "aggregate_queue_bytes": 33120,
+    "aggregate_queue_packets": 30,
+    "peer_queue_bytes": 13248,
+    "peer_queue_packets": 12,
+    "window_packets": 8
+   },
+   "ops": [
+    {
+     "active": false,
+     "op": "consumer",
+     "peer": 2
+    },
+    {
+     "blocks": 40,
+     "deadline_ns": 30000000,
+     "first_block": 0,
+     "op": "stream",
+     "period_ns": 5333333
+    },
+    {
+     "active": true,
+     "op": "consumer",
+     "peer": 2
+    },
+    {
+     "blocks": 20,
+     "deadline_ns": 30000000,
+     "first_block": 40,
+     "op": "stream",
+     "period_ns": 5333333
+    },
+    {
+     "op": "settle"
+    }
+   ],
+   "peers": [
+    {
+     "mtu": 1500,
+     "peer": 1
+    },
+    {
+     "mtu": 1500,
+     "peer": 2
+    },
+    {
+     "mtu": 1500,
+     "peer": 3
+    }
+   ],
+   "receiver_limits": {
+    "inbound_packets": 8
+   },
+   "what": "peer 2 stops consuming and reporting: its window closes, its queue drops its own, the others are untouched, and it recovers with fresh audio only"
+  },
+  {
+   "expect": {
+    "final_now_ns": 48453334,
+    "id": "N07-S3-saturation-control-priority",
+    "peers": {
+     "2": {
+      "control_received": [],
+      "delivered": [
+       [
+        1,
+        0,
+        32
+       ],
+       [
+        1,
+        1,
+        33
+       ],
+       [
+        1,
+        2,
+        34
+       ],
+       [
+        1,
+        3,
+        35
+       ],
+       [
+        1,
+        4,
+        36
+       ],
+       [
+        1,
+        5,
+        37
+       ],
+       [
+        1,
+        6,
+        38
+       ],
+       [
+        1,
+        7,
+        39
+       ]
+      ],
+      "receiver": {
+       "consumed_next": 8,
+       "inbound_len": 0,
+       "stats": {
+        "control_delivered": 0,
+        "control_dropped_full": 0,
+        "control_oversize": 0,
+        "control_read": 0,
+        "control_wrong_source": 0,
+        "inbound_overflow": 0,
+        "io_errors": 0,
+        "media_accepted": 8,
+        "media_read": 8,
+        "media_rejected": 0,
+        "reports_sent": 16
+       },
+       "stream": {
+        "accepted": 8,
+        "datagrams_seen": 8,
+        "mac_verifications": 8,
+        "rejected_authentication": 0,
+        "rejected_future_epoch": 0,
+        "rejected_future_sequence": 0,
+        "rejected_malformed_fields": 0,
+        "rejected_not_negotiated": 0,
+        "rejected_replay": 0,
+        "rejected_stale_epoch": 0,
+        "rejected_structure": 0,
+        "rejected_unsupported_version": 0,
+        "rejected_wrong_stream": 0
+       }
+      },
+      "relay": null,
+      "sample_mismatches": 0,
+      "samples_checked": 8,
+      "view": {
+       "control_queued": 0,
+       "counters": {
+        "control_dropped_send_error": 0,
+        "control_rejected_full": 0,
+        "control_sent": 0,
+        "control_submitted": 0,
+        "media_dropped_aggregate_bytes": 35328,
+        "media_dropped_aggregate_packets": 32,
+        "media_dropped_fenced_bytes": 0,
+        "media_dropped_fenced_packets": 0,
+        "media_dropped_late_bytes": 0,
+        "media_dropped_late_packets": 0,
+        "media_dropped_overflow_bytes": 0,
+        "media_dropped_overflow_packets": 0,
+        "media_dropped_send_error_bytes": 0,
+        "media_dropped_send_error_packets": 0,
+        "media_sent_bytes": 8832,
+        "media_sent_packets": 8,
+        "media_submitted_bytes": 44160,
+        "media_submitted_packets": 40,
+        "queue_delay_ns_max": 44680000,
+        "queue_delay_ns_total": 154880002,
+        "reports_accepted": 16,
+        "window_stalled_pumps": 0
+       },
+       "fence": null,
+       "in_flight": 0,
+       "path_mtu": 1500,
+       "peer": 2,
+       "queued_bytes": 0,
+       "queued_packets": 0,
+       "reported_next": 8,
+       "sent_next": 8,
+       "stalled": false
+      }
+     },
+     "3": {
+      "control_received": [
+       9,
+       10
+      ],
+      "delivered": [
+       [
+        1,
+        0,
+        31
+       ],
+       [
+        1,
+        1,
+        32
+       ],
+       [
+        1,
+        2,
+        33
+       ],
+       [
+        1,
+        3,
+        34
+       ],
+       [
+        1,
+        4,
+        35
+       ],
+       [
+        1,
+        5,
+        36
+       ],
+       [
+        1,
+        6,
+        37
+       ],
+       [
+        1,
+        7,
+        38
+       ],
+       [
+        1,
+        8,
+        39
+       ]
+      ],
+      "receiver": {
+       "consumed_next": 9,
+       "inbound_len": 0,
+       "stats": {
+        "control_delivered": 2,
+        "control_dropped_full": 0,
+        "control_oversize": 0,
+        "control_read": 2,
+        "control_wrong_source": 0,
+        "inbound_overflow": 0,
+        "io_errors": 0,
+        "media_accepted": 9,
+        "media_read": 9,
+        "media_rejected": 0,
+        "reports_sent": 16
+       },
+       "stream": {
+        "accepted": 9,
+        "datagrams_seen": 9,
+        "mac_verifications": 9,
+        "rejected_authentication": 0,
+        "rejected_future_epoch": 0,
+        "rejected_future_sequence": 0,
+        "rejected_malformed_fields": 0,
+        "rejected_not_negotiated": 0,
+        "rejected_replay": 0,
+        "rejected_stale_epoch": 0,
+        "rejected_structure": 0,
+        "rejected_unsupported_version": 0,
+        "rejected_wrong_stream": 0
+       }
+      },
+      "relay": null,
+      "sample_mismatches": 0,
+      "samples_checked": 9,
+      "view": {
+       "control_queued": 0,
+       "counters": {
+        "control_dropped_send_error": 0,
+        "control_rejected_full": 0,
+        "control_sent": 2,
+        "control_submitted": 2,
+        "media_dropped_aggregate_bytes": 34224,
+        "media_dropped_aggregate_packets": 31,
+        "media_dropped_fenced_bytes": 0,
+        "media_dropped_fenced_packets": 0,
+        "media_dropped_late_bytes": 0,
+        "media_dropped_late_packets": 0,
+        "media_dropped_overflow_bytes": 0,
+        "media_dropped_overflow_packets": 0,
+        "media_dropped_send_error_bytes": 0,
+        "media_dropped_send_error_packets": 0,
+        "media_sent_bytes": 9936,
+        "media_sent_packets": 9,
+        "media_submitted_bytes": 44160,
+        "media_submitted_packets": 40,
+        "queue_delay_ns_max": 48453334,
+        "queue_delay_ns_total": 180693336,
+        "reports_accepted": 16,
+        "window_stalled_pumps": 0
+       },
+       "fence": null,
+       "in_flight": 0,
+       "path_mtu": 1500,
+       "peer": 3,
+       "queued_bytes": 0,
+       "queued_packets": 0,
+       "reported_next": 9,
+       "sent_next": 9,
+       "stalled": false
+      }
+     }
+    },
+    "stats": {
+     "admissions_rejected": 0,
+     "control_datagrams_in": 34,
+     "epoch_advances": 0,
+     "link_down_pumps": 0,
+     "link_events": 0,
+     "mtu_fences": 0,
+     "mtu_unfences": 0,
+     "pace_limited_pumps": 15,
+     "path_changes": 0,
+     "pumps": 16,
+     "recv_errors": 0,
+     "removed_peer_dropped_bytes": 4416,
+     "removed_peer_dropped_packets": 4,
+     "reports_bad_tag": 0,
+     "reports_invalid": 0,
+     "reports_malformed": 0,
+     "reports_stale_epoch": 0,
+     "reports_unknown_source": 0,
+     "reports_wrong_stream": 0,
+     "send_cap_pumps": 0,
+     "stale_submits": 0
+    },
+    "trace": [
+     {
+      "evicted": 96,
+      "name": "submit",
+      "op": 0,
+      "queued": 120,
+      "rejected_aggregate": 0,
+      "skipped_fenced": 0,
+      "submitted": 40
+     },
+     {
+      "code": "ok",
+      "name": "control",
+      "op": 1
+     },
+     {
+      "name": "pump",
+      "op": 2,
+      "pump": {
+       "control_sent": 1,
+       "late_dropped": 0,
+       "link_down": false,
+       "media_sent": 7,
+       "next_send_ns": 3026667,
+       "pace_limited": true,
+       "reports_applied": 0,
+       "send_cap_hit": false,
+       "window_stalled_peers": 0
+      }
+     },
+     {
+      "code": "ok",
+      "name": "control",
+      "op": 3
+     },
+     {
+      "name": "pump",
+      "op": 4,
+      "pump": {
+       "control_sent": 1,
+       "late_dropped": 0,
+       "link_down": false,
+       "media_sent": 0,
+       "next_send_ns": 3173334,
+       "pace_limited": true,
+       "reports_applied": 0,
+       "send_cap_hit": false,
+       "window_stalled_peers": 0
+      }
+     },
+     {
+      "final_pump": {
+       "control_sent": 0,
+       "late_dropped": 0,
+       "link_down": false,
+       "media_sent": 1,
+       "next_send_ns": null,
+       "pace_limited": false,
+       "reports_applied": 0,
+       "send_cap_hit": false,
+       "window_stalled_peers": 0
+      },
+      "name": "settle",
+      "now_ns": 48453334,
+      "op": 6,
+      "settle_pumps": 14
+     }
+    ]
+   },
+   "id": "N07-S3-saturation-control-priority",
+   "limits": {
+    "aggregate_queue_bytes": 26496,
+    "aggregate_queue_packets": 24,
+    "pace_bytes_per_sec": 300000,
+    "peer_load_bytes_per_sec": 50000,
+    "peer_queue_bytes": 17664,
+    "peer_queue_packets": 16,
+    "window_packets": 64
+   },
+   "ops": [
+    {
+     "blocks": 40,
+     "deadline_ns": 1000000000,
+     "first_block": 0,
+     "op": "submit"
+    },
+    {
+     "op": "control",
+     "peer": 3,
+     "tag": 9
+    },
+    {
+     "op": "pump"
+    },
+    {
+     "op": "control",
+     "peer": 3,
+     "tag": 10
+    },
+    {
+     "op": "pump"
+    },
+    {
+     "op": "remove_peer",
+     "peer": 1
+    },
+    {
+     "op": "settle"
+    }
+   ],
+   "peers": [
+    {
+     "mtu": 1500,
+     "peer": 1
+    },
+    {
+     "mtu": 1500,
+     "peer": 2
+    },
+    {
+     "mtu": 1500,
+     "peer": 3
+    }
+   ],
+   "what": "media saturates the pacer and the aggregate cap: control still goes first in its pump, and media keeps its share"
+  },
+  {
+   "expect": {
+    "final_now_ns": 44744000,
+    "id": "N07-S4-epoch-fence",
+    "peers": {
+     "1": {
+      "control_received": [],
+      "delivered": [
+       [
+        1,
+        0,
+        0
+       ],
+       [
+        1,
+        1,
+        1
+       ],
+       [
+        1,
+        2,
+        2
+       ],
+       [
+        1,
+        3,
+        3
+       ],
+       [
+        2,
+        6,
+        200
+       ],
+       [
+        2,
+        7,
+        201
+       ],
+       [
+        2,
+        8,
+        202
+       ],
+       [
+        2,
+        9,
+        203
+       ]
+      ],
+      "receiver": {
+       "consumed_next": 10,
+       "inbound_len": 0,
+       "stats": {
+        "control_delivered": 0,
+        "control_dropped_full": 0,
+        "control_oversize": 0,
+        "control_read": 0,
+        "control_wrong_source": 0,
+        "inbound_overflow": 0,
+        "io_errors": 0,
+        "media_accepted": 8,
+        "media_read": 14,
+        "media_rejected": 6,
+        "reports_sent": 23
+       },
+       "stream": {
+        "accepted": 8,
+        "datagrams_seen": 14,
+        "mac_verifications": 14,
+        "rejected_authentication": 0,
+        "rejected_future_epoch": 6,
+        "rejected_future_sequence": 0,
+        "rejected_malformed_fields": 0,
+        "rejected_not_negotiated": 0,
+        "rejected_replay": 0,
+        "rejected_stale_epoch": 0,
+        "rejected_structure": 0,
+        "rejected_unsupported_version": 0,
+        "rejected_wrong_stream": 0
+       }
+      },
+      "relay": null,
+      "sample_mismatches": 0,
+      "samples_checked": 8,
+      "view": {
+       "control_queued": 0,
+       "counters": {
+        "control_dropped_send_error": 0,
+        "control_rejected_full": 0,
+        "control_sent": 0,
+        "control_submitted": 0,
+        "media_dropped_aggregate_bytes": 0,
+        "media_dropped_aggregate_packets": 0,
+        "media_dropped_fenced_bytes": 8832,
+        "media_dropped_fenced_packets": 8,
+        "media_dropped_late_bytes": 0,
+        "media_dropped_late_packets": 0,
+        "media_dropped_overflow_bytes": 0,
+        "media_dropped_overflow_packets": 0,
+        "media_dropped_send_error_bytes": 0,
+        "media_dropped_send_error_packets": 0,
+        "media_sent_bytes": 15456,
+        "media_sent_packets": 14,
+        "media_submitted_bytes": 24288,
+        "media_submitted_packets": 22,
+        "queue_delay_ns_max": 26632000,
+        "queue_delay_ns_total": 137152000,
+        "reports_accepted": 10,
+        "window_stalled_pumps": 0
+       },
+       "fence": null,
+       "in_flight": 0,
+       "path_mtu": 1500,
+       "peer": 1,
+       "queued_bytes": 0,
+       "queued_packets": 0,
+       "reported_next": 10,
+       "sent_next": 10,
+       "stalled": false
+      }
+     },
+     "2": {
+      "control_received": [],
+      "delivered": [
+       [
+        1,
+        0,
+        0
+       ],
+       [
+        1,
+        1,
+        1
+       ],
+       [
+        1,
+        2,
+        2
+       ],
+       [
+        2,
+        0,
+        100
+       ],
+       [
+        2,
+        1,
+        101
+       ],
+       [
+        2,
+        2,
+        102
+       ],
+       [
+        2,
+        3,
+        103
+       ],
+       [
+        2,
+        4,
+        104
+       ],
+       [
+        2,
+        5,
+        105
+       ],
+       [
+        2,
+        6,
+        200
+       ],
+       [
+        2,
+        7,
+        201
+       ],
+       [
+        2,
+        8,
+        202
+       ],
+       [
+        2,
+        9,
+        203
+       ]
+      ],
+      "receiver": {
+       "consumed_next": 10,
+       "inbound_len": 0,
+       "stats": {
+        "control_delivered": 0,
+        "control_dropped_full": 0,
+        "control_oversize": 0,
+        "control_read": 0,
+        "control_wrong_source": 0,
+        "inbound_overflow": 0,
+        "io_errors": 0,
+        "media_accepted": 13,
+        "media_read": 14,
+        "media_rejected": 1,
+        "reports_sent": 23
+       },
+       "stream": {
+        "accepted": 13,
+        "datagrams_seen": 14,
+        "mac_verifications": 14,
+        "rejected_authentication": 0,
+        "rejected_future_epoch": 0,
+        "rejected_future_sequence": 0,
+        "rejected_malformed_fields": 0,
+        "rejected_not_negotiated": 0,
+        "rejected_replay": 0,
+        "rejected_stale_epoch": 1,
+        "rejected_structure": 0,
+        "rejected_unsupported_version": 0,
+        "rejected_wrong_stream": 0
+       }
+      },
+      "relay": null,
+      "sample_mismatches": 0,
+      "samples_checked": 13,
+      "view": {
+       "control_queued": 0,
+       "counters": {
+        "control_dropped_send_error": 0,
+        "control_rejected_full": 0,
+        "control_sent": 0,
+        "control_submitted": 0,
+        "media_dropped_aggregate_bytes": 0,
+        "media_dropped_aggregate_packets": 0,
+        "media_dropped_fenced_bytes": 9936,
+        "media_dropped_fenced_packets": 9,
+        "media_dropped_late_bytes": 0,
+        "media_dropped_late_packets": 0,
+        "media_dropped_overflow_bytes": 0,
+        "media_dropped_overflow_packets": 0,
+        "media_dropped_send_error_bytes": 0,
+        "media_dropped_send_error_packets": 0,
+        "media_sent_bytes": 14352,
+        "media_sent_packets": 13,
+        "media_submitted_bytes": 24288,
+        "media_submitted_packets": 22,
+        "queue_delay_ns_max": 24368000,
+        "queue_delay_ns_total": 114512000,
+        "reports_accepted": 23,
+        "window_stalled_pumps": 0
+       },
+       "fence": null,
+       "in_flight": 0,
+       "path_mtu": 1500,
+       "peer": 2,
+       "queued_bytes": 0,
+       "queued_packets": 0,
+       "reported_next": 10,
+       "sent_next": 10,
+       "stalled": false
+      }
+     }
+    },
+    "stats": {
+     "admissions_rejected": 0,
+     "control_datagrams_in": 46,
+     "epoch_advances": 1,
+     "link_down_pumps": 0,
+     "link_events": 0,
+     "mtu_fences": 0,
+     "mtu_unfences": 0,
+     "pace_limited_pumps": 21,
+     "path_changes": 0,
+     "pumps": 23,
+     "recv_errors": 0,
+     "removed_peer_dropped_bytes": 0,
+     "removed_peer_dropped_packets": 0,
+     "reports_bad_tag": 0,
+     "reports_invalid": 0,
+     "reports_malformed": 0,
+     "reports_stale_epoch": 13,
+     "reports_unknown_source": 0,
+     "reports_wrong_stream": 0,
+     "send_cap_pumps": 0,
+     "stale_submits": 1
+    },
+    "trace": [
+     {
+      "evicted": 0,
+      "name": "submit",
+      "op": 0,
+      "queued": 24,
+      "rejected_aggregate": 0,
+      "skipped_fenced": 0,
+      "submitted": 12
+     },
+     {
+      "name": "pump",
+      "op": 1,
+      "pump": {
+       "control_sent": 0,
+       "late_dropped": 0,
+       "link_down": false,
+       "media_sent": 7,
+       "next_send_ns": 1728000,
+       "pace_limited": true,
+       "reports_applied": 0,
+       "send_cap_hit": false,
+       "window_stalled_peers": 0
+      }
+     },
+     {
+      "code": "STALE_EPOCH",
+      "name": "stale_submit",
+      "op": 3
+     },
+     {
+      "evicted": 0,
+      "name": "submit",
+      "op": 4,
+      "queued": 12,
+      "rejected_aggregate": 0,
+      "skipped_fenced": 0,
+      "submitted": 6
+     },
+     {
+      "final_pump": {
+       "control_sent": 0,
+       "late_dropped": 0,
+       "link_down": false,
+       "media_sent": 1,
+       "next_send_ns": null,
+       "pace_limited": false,
+       "reports_applied": 0,
+       "send_cap_hit": false,
+       "window_stalled_peers": 0
+      },
+      "name": "settle",
+      "now_ns": 26632000,
+      "op": 5,
+      "settle_pumps": 13
+     },
+     {
+      "evicted": 0,
+      "name": "submit",
+      "op": 8,
+      "queued": 8,
+      "rejected_aggregate": 0,
+      "skipped_fenced": 0,
+      "submitted": 4
+     },
+     {
+      "final_pump": {
+       "control_sent": 0,
+       "late_dropped": 0,
+       "link_down": false,
+       "media_sent": 1,
+       "next_send_ns": null,
+       "pace_limited": false,
+       "reports_applied": 0,
+       "send_cap_hit": false,
+       "window_stalled_peers": 0
+      },
+      "name": "settle",
+      "now_ns": 44744000,
+      "op": 9,
+      "settle_pumps": 9
+     }
+    ]
+   },
+   "id": "N07-S4-epoch-fence",
+   "limits": {
+    "pace_bytes_per_sec": 500000
+   },
+   "ops": [
+    {
+     "blocks": 12,
+     "deadline_ns": 1000000000,
+     "first_block": 0,
+     "op": "submit"
+    },
+    {
+     "op": "pump"
+    },
+    {
+     "op": "epoch",
+     "skip_receivers": [
+      1
+     ],
+     "to": 2
+    },
+    {
+     "epoch": 1,
+     "op": "stale_submit"
+    },
+    {
+     "blocks": 6,
+     "deadline_ns": 1000000000,
+     "first_block": 100,
+     "op": "submit"
+    },
+    {
+     "op": "settle"
+    },
+    {
+     "op": "receiver_epoch",
+     "peer": 1,
+     "to": 2
+    },
+    {
+     "epoch": 1,
+     "op": "inject_old",
+     "peer": 2
+    },
+    {
+     "blocks": 4,
+     "deadline_ns": 1000000000,
+     "first_block": 200,
+     "op": "submit"
+    },
+    {
+     "op": "settle"
+    }
+   ],
+   "peers": [
+    {
+     "mtu": 1500,
+     "peer": 1
+    },
+    {
+     "mtu": 1500,
+     "peer": 2
+    }
+   ],
+   "what": "advancing the epoch drops what was queued, a send under the old epoch is refused, a late receiver rejects the new epoch and is rejected in turn"
+  },
+  {
+   "expect": {
+    "final_now_ns": 191999988,
+    "id": "N07-S5-mtu-admission-address-family",
+    "peers": {
+     "1": {
+      "control_received": [],
+      "delivered": [
+       [
+        1,
+        0,
+        0
+       ],
+       [
+        1,
+        1,
+        1
+       ],
+       [
+        1,
+        2,
+        2
+       ],
+       [
+        1,
+        3,
+        3
+       ],
+       [
+        1,
+        4,
+        4
+       ],
+       [
+        1,
+        5,
+        5
+       ],
+       [
+        1,
+        6,
+        6
+       ],
+       [
+        1,
+        7,
+        7
+       ],
+       [
+        1,
+        8,
+        8
+       ],
+       [
+        1,
+        9,
+        9
+       ],
+       [
+        1,
+        10,
+        10
+       ],
+       [
+        1,
+        11,
+        11
+       ],
+       [
+        1,
+        12,
+        12
+       ],
+       [
+        1,
+        13,
+        13
+       ],
+       [
+        1,
+        14,
+        14
+       ],
+       [
+        1,
+        15,
+        15
+       ],
+       [
+        1,
+        16,
+        16
+       ],
+       [
+        1,
+        17,
+        17
+       ],
+       [
+        1,
+        18,
+        18
+       ],
+       [
+        1,
+        19,
+        19
+       ],
+       [
+        1,
+        20,
+        20
+       ],
+       [
+        1,
+        21,
+        21
+       ],
+       [
+        1,
+        22,
+        22
+       ],
+       [
+        1,
+        23,
+        23
+       ],
+       [
+        1,
+        24,
+        24
+       ],
+       [
+        1,
+        25,
+        25
+       ],
+       [
+        1,
+        26,
+        26
+       ],
+       [
+        1,
+        27,
+        27
+       ],
+       [
+        1,
+        28,
+        28
+       ],
+       [
+        1,
+        29,
+        29
+       ],
+       [
+        1,
+        30,
+        30
+       ],
+       [
+        1,
+        31,
+        31
+       ],
+       [
+        1,
+        32,
+        32
+       ],
+       [
+        1,
+        33,
+        33
+       ],
+       [
+        1,
+        34,
+        34
+       ],
+       [
+        1,
+        35,
+        35
+       ]
+      ],
+      "receiver": {
+       "consumed_next": 36,
+       "inbound_len": 0,
+       "stats": {
+        "control_delivered": 0,
+        "control_dropped_full": 0,
+        "control_oversize": 0,
+        "control_read": 0,
+        "control_wrong_source": 0,
+        "inbound_overflow": 0,
+        "io_errors": 0,
+        "media_accepted": 36,
+        "media_read": 36,
+        "media_rejected": 0,
+        "reports_sent": 37
+       },
+       "stream": {
+        "accepted": 36,
+        "datagrams_seen": 36,
+        "mac_verifications": 36,
+        "rejected_authentication": 0,
+        "rejected_future_epoch": 0,
+        "rejected_future_sequence": 0,
+        "rejected_malformed_fields": 0,
+        "rejected_not_negotiated": 0,
+        "rejected_replay": 0,
+        "rejected_stale_epoch": 0,
+        "rejected_structure": 0,
+        "rejected_unsupported_version": 0,
+        "rejected_wrong_stream": 0
+       }
+      },
+      "relay": null,
+      "sample_mismatches": 0,
+      "samples_checked": 36,
+      "view": {
+       "control_queued": 0,
+       "counters": {
+        "control_dropped_send_error": 0,
+        "control_rejected_full": 0,
+        "control_sent": 0,
+        "control_submitted": 0,
+        "media_dropped_aggregate_bytes": 0,
+        "media_dropped_aggregate_packets": 0,
+        "media_dropped_fenced_bytes": 0,
+        "media_dropped_fenced_packets": 0,
+        "media_dropped_late_bytes": 0,
+        "media_dropped_late_packets": 0,
+        "media_dropped_overflow_bytes": 0,
+        "media_dropped_overflow_packets": 0,
+        "media_dropped_send_error_bytes": 0,
+        "media_dropped_send_error_packets": 0,
+        "media_sent_bytes": 39744,
+        "media_sent_packets": 36,
+        "media_submitted_bytes": 39744,
+        "media_submitted_packets": 36,
+        "queue_delay_ns_max": 0,
+        "queue_delay_ns_total": 0,
+        "reports_accepted": 37,
+        "window_stalled_pumps": 0
+       },
+       "fence": null,
+       "in_flight": 0,
+       "path_mtu": 1500,
+       "peer": 1,
+       "queued_bytes": 0,
+       "queued_packets": 0,
+       "reported_next": 36,
+       "sent_next": 36,
+       "stalled": false
+      }
+     },
+     "2": {
+      "control_received": [],
+      "delivered": [
+       [
+        1,
+        0,
+        0
+       ],
+       [
+        1,
+        1,
+        1
+       ],
+       [
+        1,
+        2,
+        2
+       ],
+       [
+        1,
+        3,
+        3
+       ],
+       [
+        1,
+        4,
+        4
+       ],
+       [
+        1,
+        5,
+        5
+       ],
+       [
+        1,
+        6,
+        6
+       ],
+       [
+        1,
+        7,
+        7
+       ],
+       [
+        1,
+        8,
+        8
+       ],
+       [
+        1,
+        9,
+        9
+       ],
+       [
+        1,
+        10,
+        10
+       ],
+       [
+        1,
+        11,
+        11
+       ],
+       [
+        1,
+        12,
+        24
+       ],
+       [
+        1,
+        13,
+        25
+       ],
+       [
+        1,
+        14,
+        26
+       ],
+       [
+        1,
+        15,
+        27
+       ],
+       [
+        1,
+        16,
+        28
+       ],
+       [
+        1,
+        17,
+        29
+       ],
+       [
+        1,
+        18,
+        30
+       ],
+       [
+        1,
+        19,
+        31
+       ],
+       [
+        1,
+        20,
+        32
+       ],
+       [
+        1,
+        21,
+        33
+       ],
+       [
+        1,
+        22,
+        34
+       ],
+       [
+        1,
+        23,
+        35
+       ]
+      ],
+      "receiver": {
+       "consumed_next": 24,
+       "inbound_len": 0,
+       "stats": {
+        "control_delivered": 0,
+        "control_dropped_full": 0,
+        "control_oversize": 0,
+        "control_read": 0,
+        "control_wrong_source": 0,
+        "inbound_overflow": 0,
+        "io_errors": 0,
+        "media_accepted": 24,
+        "media_read": 24,
+        "media_rejected": 0,
+        "reports_sent": 37
+       },
+       "stream": {
+        "accepted": 24,
+        "datagrams_seen": 24,
+        "mac_verifications": 24,
+        "rejected_authentication": 0,
+        "rejected_future_epoch": 0,
+        "rejected_future_sequence": 0,
+        "rejected_malformed_fields": 0,
+        "rejected_not_negotiated": 0,
+        "rejected_replay": 0,
+        "rejected_stale_epoch": 0,
+        "rejected_structure": 0,
+        "rejected_unsupported_version": 0,
+        "rejected_wrong_stream": 0
+       }
+      },
+      "relay": null,
+      "sample_mismatches": 0,
+      "samples_checked": 24,
+      "view": {
+       "control_queued": 0,
+       "counters": {
+        "control_dropped_send_error": 0,
+        "control_rejected_full": 0,
+        "control_sent": 0,
+        "control_submitted": 0,
+        "media_dropped_aggregate_bytes": 0,
+        "media_dropped_aggregate_packets": 0,
+        "media_dropped_fenced_bytes": 13248,
+        "media_dropped_fenced_packets": 12,
+        "media_dropped_late_bytes": 0,
+        "media_dropped_late_packets": 0,
+        "media_dropped_overflow_bytes": 0,
+        "media_dropped_overflow_packets": 0,
+        "media_dropped_send_error_bytes": 0,
+        "media_dropped_send_error_packets": 0,
+        "media_sent_bytes": 26496,
+        "media_sent_packets": 24,
+        "media_submitted_bytes": 39744,
+        "media_submitted_packets": 36,
+        "queue_delay_ns_max": 0,
+        "queue_delay_ns_total": 0,
+        "reports_accepted": 37,
+        "window_stalled_pumps": 0
+       },
+       "fence": null,
+       "in_flight": 0,
+       "path_mtu": 1500,
+       "peer": 2,
+       "queued_bytes": 0,
+       "queued_packets": 0,
+       "reported_next": 24,
+       "sent_next": 24,
+       "stalled": false
+      }
+     }
+    },
+    "stats": {
+     "admissions_rejected": 5,
+     "control_datagrams_in": 74,
+     "epoch_advances": 0,
+     "link_down_pumps": 0,
+     "link_events": 0,
+     "mtu_fences": 1,
+     "mtu_unfences": 1,
+     "pace_limited_pumps": 0,
+     "path_changes": 0,
+     "pumps": 37,
+     "recv_errors": 0,
+     "removed_peer_dropped_bytes": 0,
+     "removed_peer_dropped_packets": 0,
+     "reports_bad_tag": 0,
+     "reports_invalid": 0,
+     "reports_malformed": 0,
+     "reports_stale_epoch": 0,
+     "reports_unknown_source": 0,
+     "reports_wrong_stream": 0,
+     "send_cap_pumps": 0,
+     "stale_submits": 0
+    },
+    "trace": [
+     {
+      "code": "PATH_MTU_TOO_SMALL",
+      "name": "add_peer",
+      "op": 0
+     },
+     {
+      "code": "OVER_BUDGET",
+      "name": "add_peer",
+      "op": 1
+     },
+     {
+      "code": "NOT_LOOPBACK",
+      "name": "add_peer",
+      "op": 2
+     },
+     {
+      "code": "UNSUPPORTED_ADDRESS_FAMILY",
+      "name": "add_peer",
+      "op": 3
+     },
+     {
+      "code": "DUPLICATE_PEER",
+      "name": "add_peer",
+      "op": 4
+     },
+     {
+      "control_sent": 0,
+      "evicted": 0,
+      "late_dropped": 0,
+      "media_sent": 24,
+      "name": "stream",
+      "op": 5,
+      "queued": 24,
+      "rejected_aggregate": 0,
+      "skipped_fenced": 0,
+      "submitted": 12
+     },
+     {
+      "name": "set_mtu",
+      "op": 6,
+      "outcome": "fenced"
+     },
+     {
+      "control_sent": 0,
+      "evicted": 0,
+      "late_dropped": 0,
+      "media_sent": 12,
+      "name": "stream",
+      "op": 7,
+      "queued": 12,
+      "rejected_aggregate": 0,
+      "skipped_fenced": 12,
+      "submitted": 12
+     },
+     {
+      "name": "set_mtu",
+      "op": 8,
+      "outcome": "carrying"
+     },
+     {
+      "control_sent": 0,
+      "evicted": 0,
+      "late_dropped": 0,
+      "media_sent": 24,
+      "name": "stream",
+      "op": 9,
+      "queued": 24,
+      "rejected_aggregate": 0,
+      "skipped_fenced": 0,
+      "submitted": 12
+     },
+     {
+      "final_pump": {
+       "control_sent": 0,
+       "late_dropped": 0,
+       "link_down": false,
+       "media_sent": 0,
+       "next_send_ns": null,
+       "pace_limited": false,
+       "reports_applied": 0,
+       "send_cap_hit": false,
+       "window_stalled_peers": 0
+      },
+      "name": "settle",
+      "now_ns": 191999988,
+      "op": 10,
+      "settle_pumps": 1
+     }
+    ]
+   },
+   "id": "N07-S5-mtu-admission-address-family",
+   "limits": {
+    "pace_bytes_per_sec": 500000
+   },
+   "ops": [
+    {
+     "mtu": 1100,
+     "op": "add_peer",
+     "peer": 3
+    },
+    {
+     "mtu": 1500,
+     "op": "add_peer",
+     "peer": 3
+    },
+    {
+     "kind": "lan",
+     "mtu": 1500,
+     "op": "add_peer",
+     "peer": 4
+    },
+    {
+     "kind": "v6",
+     "mtu": 1500,
+     "op": "add_peer",
+     "peer": 5
+    },
+    {
+     "mtu": 1500,
+     "op": "add_peer",
+     "peer": 1
+    },
+    {
+     "blocks": 12,
+     "deadline_ns": 30000000,
+     "first_block": 0,
+     "op": "stream",
+     "period_ns": 5333333
+    },
+    {
+     "mtu": 1100,
+     "op": "set_mtu",
+     "peer": 2
+    },
+    {
+     "blocks": 12,
+     "deadline_ns": 30000000,
+     "first_block": 12,
+     "op": "stream",
+     "period_ns": 5333333
+    },
+    {
+     "mtu": 1500,
+     "op": "set_mtu",
+     "peer": 2
+    },
+    {
+     "blocks": 12,
+     "deadline_ns": 30000000,
+     "first_block": 24,
+     "op": "stream",
+     "period_ns": 5333333
+    },
+    {
+     "op": "settle"
+    }
+   ],
+   "peers": [
+    {
+     "mtu": 1500,
+     "peer": 1
+    },
+    {
+     "mtu": 1500,
+     "peer": 2
+    }
+   ],
+   "what": "a peer whose path cannot carry a block is refused or fenced without fragmenting and without disturbing the others; so are an over-budget peer, a LAN address and an undeclared address family"
+  },
+  {
+   "expect": {
+    "final_now_ns": 159999990,
+    "id": "N07-S6-link-and-address-change",
+    "peers": {
+     "1": {
+      "control_received": [],
+      "delivered": [
+       [
+        1,
+        0,
+        0
+       ],
+       [
+        1,
+        1,
+        1
+       ],
+       [
+        1,
+        2,
+        2
+       ],
+       [
+        1,
+        3,
+        3
+       ],
+       [
+        1,
+        4,
+        4
+       ],
+       [
+        1,
+        5,
+        5
+       ],
+       [
+        1,
+        6,
+        13
+       ],
+       [
+        1,
+        7,
+        14
+       ],
+       [
+        1,
+        8,
+        15
+       ],
+       [
+        1,
+        9,
+        16
+       ],
+       [
+        1,
+        10,
+        17
+       ],
+       [
+        1,
+        11,
+        18
+       ],
+       [
+        1,
+        12,
+        19
+       ],
+       [
+        1,
+        13,
+        20
+       ],
+       [
+        1,
+        14,
+        21
+       ],
+       [
+        1,
+        15,
+        22
+       ],
+       [
+        1,
+        16,
+        23
+       ],
+       [
+        1,
+        17,
+        24
+       ],
+       [
+        1,
+        18,
+        25
+       ],
+       [
+        1,
+        19,
+        26
+       ],
+       [
+        1,
+        20,
+        27
+       ],
+       [
+        1,
+        21,
+        28
+       ],
+       [
+        1,
+        22,
+        29
+       ]
+      ],
+      "receiver": {
+       "consumed_next": 23,
+       "inbound_len": 0,
+       "stats": {
+        "control_delivered": 0,
+        "control_dropped_full": 0,
+        "control_oversize": 0,
+        "control_read": 0,
+        "control_wrong_source": 0,
+        "inbound_overflow": 0,
+        "io_errors": 0,
+        "media_accepted": 23,
+        "media_read": 23,
+        "media_rejected": 0,
+        "reports_sent": 19
+       },
+       "stream": {
+        "accepted": 23,
+        "datagrams_seen": 23,
+        "mac_verifications": 23,
+        "rejected_authentication": 0,
+        "rejected_future_epoch": 0,
+        "rejected_future_sequence": 0,
+        "rejected_malformed_fields": 0,
+        "rejected_not_negotiated": 0,
+        "rejected_replay": 0,
+        "rejected_stale_epoch": 0,
+        "rejected_structure": 0,
+        "rejected_unsupported_version": 0,
+        "rejected_wrong_stream": 0
+       }
+      },
+      "relay": null,
+      "sample_mismatches": 0,
+      "samples_checked": 23,
+      "view": {
+       "control_queued": 0,
+       "counters": {
+        "control_dropped_send_error": 0,
+        "control_rejected_full": 0,
+        "control_sent": 0,
+        "control_submitted": 0,
+        "media_dropped_aggregate_bytes": 0,
+        "media_dropped_aggregate_packets": 0,
+        "media_dropped_fenced_bytes": 0,
+        "media_dropped_fenced_packets": 0,
+        "media_dropped_late_bytes": 7728,
+        "media_dropped_late_packets": 7,
+        "media_dropped_overflow_bytes": 0,
+        "media_dropped_overflow_packets": 0,
+        "media_dropped_send_error_bytes": 0,
+        "media_dropped_send_error_packets": 0,
+        "media_sent_bytes": 25392,
+        "media_sent_packets": 23,
+        "media_submitted_bytes": 33120,
+        "media_submitted_packets": 30,
+        "queue_delay_ns_max": 26666665,
+        "queue_delay_ns_total": 165333323,
+        "reports_accepted": 19,
+        "window_stalled_pumps": 0
+       },
+       "fence": null,
+       "in_flight": 0,
+       "path_mtu": 1500,
+       "peer": 1,
+       "queued_bytes": 0,
+       "queued_packets": 0,
+       "reported_next": 23,
+       "sent_next": 23,
+       "stalled": false
+      }
+     },
+     "2": {
+      "control_received": [],
+      "delivered": [
+       [
+        1,
+        0,
+        0
+       ],
+       [
+        1,
+        1,
+        1
+       ],
+       [
+        1,
+        2,
+        2
+       ],
+       [
+        1,
+        3,
+        3
+       ],
+       [
+        1,
+        4,
+        4
+       ],
+       [
+        1,
+        5,
+        5
+       ],
+       [
+        1,
+        6,
+        13
+       ],
+       [
+        1,
+        7,
+        14
+       ],
+       [
+        1,
+        8,
+        15
+       ],
+       [
+        1,
+        9,
+        16
+       ],
+       [
+        1,
+        10,
+        17
+       ],
+       [
+        1,
+        11,
+        18
+       ],
+       [
+        1,
+        12,
+        19
+       ],
+       [
+        1,
+        13,
+        20
+       ],
+       [
+        1,
+        14,
+        21
+       ],
+       [
+        1,
+        15,
+        22
+       ],
+       [
+        1,
+        16,
+        23
+       ],
+       [
+        1,
+        17,
+        24
+       ],
+       [
+        1,
+        18,
+        25
+       ],
+       [
+        1,
+        19,
+        26
+       ],
+       [
+        1,
+        20,
+        27
+       ],
+       [
+        1,
+        21,
+        28
+       ],
+       [
+        1,
+        22,
+        29
+       ]
+      ],
+      "receiver": {
+       "consumed_next": 23,
+       "inbound_len": 0,
+       "stats": {
+        "control_delivered": 0,
+        "control_dropped_full": 0,
+        "control_oversize": 0,
+        "control_read": 0,
+        "control_wrong_source": 0,
+        "inbound_overflow": 0,
+        "io_errors": 0,
+        "media_accepted": 8,
+        "media_read": 8,
+        "media_rejected": 0,
+        "reports_sent": 7
+       },
+       "stream": {
+        "accepted": 8,
+        "datagrams_seen": 8,
+        "mac_verifications": 8,
+        "rejected_authentication": 0,
+        "rejected_future_epoch": 0,
+        "rejected_future_sequence": 0,
+        "rejected_malformed_fields": 0,
+        "rejected_not_negotiated": 0,
+        "rejected_replay": 0,
+        "rejected_stale_epoch": 0,
+        "rejected_structure": 0,
+        "rejected_unsupported_version": 0,
+        "rejected_wrong_stream": 0
+       }
+      },
+      "relay": null,
+      "sample_mismatches": 0,
+      "samples_checked": 23,
+      "view": {
+       "control_queued": 0,
+       "counters": {
+        "control_dropped_send_error": 0,
+        "control_rejected_full": 0,
+        "control_sent": 0,
+        "control_submitted": 0,
+        "media_dropped_aggregate_bytes": 0,
+        "media_dropped_aggregate_packets": 0,
+        "media_dropped_fenced_bytes": 0,
+        "media_dropped_fenced_packets": 0,
+        "media_dropped_late_bytes": 7728,
+        "media_dropped_late_packets": 7,
+        "media_dropped_overflow_bytes": 0,
+        "media_dropped_overflow_packets": 0,
+        "media_dropped_send_error_bytes": 0,
+        "media_dropped_send_error_packets": 0,
+        "media_sent_bytes": 25392,
+        "media_sent_packets": 23,
+        "media_submitted_bytes": 33120,
+        "media_submitted_packets": 30,
+        "queue_delay_ns_max": 26666665,
+        "queue_delay_ns_total": 202666654,
+        "reports_accepted": 19,
+        "window_stalled_pumps": 0
+       },
+       "fence": null,
+       "in_flight": 0,
+       "path_mtu": 1500,
+       "peer": 2,
+       "queued_bytes": 0,
+       "queued_packets": 0,
+       "reported_next": 23,
+       "sent_next": 23,
+       "stalled": false
+      }
+     }
+    },
+    "stats": {
+     "admissions_rejected": 0,
+     "control_datagrams_in": 39,
+     "epoch_advances": 0,
+     "link_down_pumps": 12,
+     "link_events": 2,
+     "mtu_fences": 0,
+     "mtu_unfences": 0,
+     "pace_limited_pumps": 12,
+     "path_changes": 1,
+     "pumps": 31,
+     "recv_errors": 0,
+     "removed_peer_dropped_bytes": 0,
+     "removed_peer_dropped_packets": 0,
+     "reports_bad_tag": 0,
+     "reports_invalid": 0,
+     "reports_malformed": 0,
+     "reports_stale_epoch": 0,
+     "reports_unknown_source": 1,
+     "reports_wrong_stream": 0,
+     "send_cap_pumps": 0,
+     "stale_submits": 0
+    },
+    "trace": [
+     {
+      "control_sent": 0,
+      "evicted": 0,
+      "late_dropped": 0,
+      "media_sent": 12,
+      "name": "stream",
+      "op": 0,
+      "queued": 12,
+      "rejected_aggregate": 0,
+      "skipped_fenced": 0,
+      "submitted": 6
+     },
+     {
+      "control_sent": 0,
+      "evicted": 0,
+      "late_dropped": 0,
+      "media_sent": 0,
+      "name": "stream",
+      "op": 2,
+      "queued": 24,
+      "rejected_aggregate": 0,
+      "skipped_fenced": 0,
+      "submitted": 12
+     },
+     {
+      "control_sent": 0,
+      "evicted": 0,
+      "late_dropped": 14,
+      "media_sent": 19,
+      "name": "stream",
+      "op": 4,
+      "queued": 12,
+      "rejected_aggregate": 0,
+      "skipped_fenced": 0,
+      "submitted": 6
+     },
+     {
+      "control_sent": 0,
+      "evicted": 0,
+      "late_dropped": 0,
+      "media_sent": 14,
+      "name": "stream",
+      "op": 7,
+      "queued": 12,
+      "rejected_aggregate": 0,
+      "skipped_fenced": 0,
+      "submitted": 6
+     },
+     {
+      "final_pump": {
+       "control_sent": 0,
+       "late_dropped": 0,
+       "link_down": false,
+       "media_sent": 1,
+       "next_send_ns": null,
+       "pace_limited": false,
+       "reports_applied": 0,
+       "send_cap_hit": false,
+       "window_stalled_peers": 0
+      },
+      "name": "settle",
+      "now_ns": 159999990,
+      "op": 8,
+      "settle_pumps": 1
+     }
+    ]
+   },
+   "id": "N07-S6-link-and-address-change",
+   "limits": {
+    "pace_bytes_per_sec": 500000
+   },
+   "ops": [
+    {
+     "blocks": 6,
+     "deadline_ns": 30000000,
+     "first_block": 0,
+     "op": "stream",
+     "period_ns": 5333333
+    },
+    {
+     "op": "link",
+     "up": false
+    },
+    {
+     "blocks": 12,
+     "deadline_ns": 30000000,
+     "first_block": 6,
+     "op": "stream",
+     "period_ns": 5333333
+    },
+    {
+     "op": "link",
+     "up": true
+    },
+    {
+     "blocks": 6,
+     "deadline_ns": 30000000,
+     "first_block": 18,
+     "op": "stream",
+     "period_ns": 5333333
+    },
+    {
+     "op": "addr_change",
+     "peer": 2
+    },
+    {
+     "op": "old_report",
+     "peer": 2
+    },
+    {
+     "blocks": 6,
+     "deadline_ns": 30000000,
+     "first_block": 24,
+     "op": "stream",
+     "period_ns": 5333333
+    },
+    {
+     "op": "settle"
+    }
+   ],
+   "peers": [
+    {
+     "mtu": 1500,
+     "peer": 1
+    },
+    {
+     "mtu": 1500,
+     "peer": 2
+    }
+   ],
+   "what": "a simulated link-down ages queued audio out instead of replaying it; a peer keeps its identity across an address change and the old path's reports are refused"
+  },
+  {
+   "expect": {
+    "final_now_ns": 140608000,
+    "id": "N07-S7-loss-and-reorder",
+    "peers": {
+     "1": {
+      "control_received": [],
+      "delivered": [
+       [
+        1,
+        0,
+        0
+       ],
+       [
+        1,
+        1,
+        1
+       ],
+       [
+        1,
+        2,
+        2
+       ],
+       [
+        1,
+        4,
+        4
+       ],
+       [
+        1,
+        3,
+        3
+       ],
+       [
+        1,
+        6,
+        6
+       ],
+       [
+        1,
+        8,
+        8
+       ],
+       [
+        1,
+        7,
+        7
+       ],
+       [
+        1,
+        9,
+        9
+       ],
+       [
+        1,
+        11,
+        11
+       ],
+       [
+        1,
+        12,
+        12
+       ],
+       [
+        1,
+        13,
+        13
+       ],
+       [
+        1,
+        14,
+        14
+       ],
+       [
+        1,
+        16,
+        16
+       ],
+       [
+        1,
+        15,
+        15
+       ],
+       [
+        1,
+        17,
+        17
+       ],
+       [
+        1,
+        19,
+        19
+       ],
+       [
+        1,
+        20,
+        20
+       ],
+       [
+        1,
+        21,
+        21
+       ],
+       [
+        1,
+        23,
+        23
+       ],
+       [
+        1,
+        25,
+        25
+       ],
+       [
+        1,
+        26,
+        26
+       ],
+       [
+        1,
+        28,
+        28
+       ],
+       [
+        1,
+        29,
+        29
+       ],
+       [
+        1,
+        31,
+        31
+       ],
+       [
+        1,
+        32,
+        32
+       ],
+       [
+        1,
+        33,
+        33
+       ],
+       [
+        1,
+        34,
+        34
+       ],
+       [
+        1,
+        35,
+        35
+       ],
+       [
+        1,
+        37,
+        37
+       ],
+       [
+        1,
+        39,
+        39
+       ],
+       [
+        1,
+        40,
+        40
+       ],
+       [
+        1,
+        41,
+        41
+       ],
+       [
+        1,
+        42,
+        42
+       ],
+       [
+        1,
+        44,
+        44
+       ],
+       [
+        1,
+        45,
+        45
+       ],
+       [
+        1,
+        46,
+        46
+       ],
+       [
+        1,
+        47,
+        47
+       ],
+       [
+        1,
+        48,
+        48
+       ],
+       [
+        1,
+        50,
+        50
+       ],
+       [
+        1,
+        51,
+        51
+       ],
+       [
+        1,
+        53,
+        53
+       ],
+       [
+        1,
+        54,
+        54
+       ],
+       [
+        1,
+        55,
+        55
+       ],
+       [
+        1,
+        57,
+        57
+       ],
+       [
+        1,
+        58,
+        58
+       ],
+       [
+        1,
+        59,
+        59
+       ]
+      ],
+      "receiver": {
+       "consumed_next": 60,
+       "inbound_len": 0,
+       "stats": {
+        "control_delivered": 0,
+        "control_dropped_full": 0,
+        "control_oversize": 0,
+        "control_read": 0,
+        "control_wrong_source": 0,
+        "inbound_overflow": 0,
+        "io_errors": 0,
+        "media_accepted": 47,
+        "media_read": 47,
+        "media_rejected": 0,
+        "reports_sent": 65
+       },
+       "stream": {
+        "accepted": 47,
+        "datagrams_seen": 47,
+        "mac_verifications": 47,
+        "rejected_authentication": 0,
+        "rejected_future_epoch": 0,
+        "rejected_future_sequence": 0,
+        "rejected_malformed_fields": 0,
+        "rejected_not_negotiated": 0,
+        "rejected_replay": 0,
+        "rejected_stale_epoch": 0,
+        "rejected_structure": 0,
+        "rejected_unsupported_version": 0,
+        "rejected_wrong_stream": 0
+       }
+      },
+      "relay": {
+       "forwarded": 47,
+       "lost": 13,
+       "reordered": 3
+      },
+      "sample_mismatches": 0,
+      "samples_checked": 47,
+      "view": {
+       "control_queued": 0,
+       "counters": {
+        "control_dropped_send_error": 0,
+        "control_rejected_full": 0,
+        "control_sent": 0,
+        "control_submitted": 0,
+        "media_dropped_aggregate_bytes": 0,
+        "media_dropped_aggregate_packets": 0,
+        "media_dropped_fenced_bytes": 0,
+        "media_dropped_fenced_packets": 0,
+        "media_dropped_late_bytes": 0,
+        "media_dropped_late_packets": 0,
+        "media_dropped_overflow_bytes": 0,
+        "media_dropped_overflow_packets": 0,
+        "media_dropped_send_error_bytes": 0,
+        "media_dropped_send_error_packets": 0,
+        "media_sent_bytes": 66240,
+        "media_sent_packets": 60,
+        "media_submitted_bytes": 66240,
+        "media_submitted_packets": 60,
+        "queue_delay_ns_max": 133576000,
+        "queue_delay_ns_total": 2040104000,
+        "reports_accepted": 65,
+        "window_stalled_pumps": 0
+       },
+       "fence": null,
+       "in_flight": 0,
+       "path_mtu": 1500,
+       "peer": 1,
+       "queued_bytes": 0,
+       "queued_packets": 0,
+       "reported_next": 60,
+       "sent_next": 60,
+       "stalled": false
+      }
+     },
+     "2": {
+      "control_received": [],
+      "delivered": [
+       [
+        1,
+        0,
+        0
+       ],
+       [
+        1,
+        1,
+        1
+       ],
+       [
+        1,
+        2,
+        2
+       ],
+       [
+        1,
+        3,
+        3
+       ],
+       [
+        1,
+        4,
+        4
+       ],
+       [
+        1,
+        5,
+        5
+       ],
+       [
+        1,
+        6,
+        6
+       ],
+       [
+        1,
+        7,
+        7
+       ],
+       [
+        1,
+        8,
+        8
+       ],
+       [
+        1,
+        9,
+        9
+       ],
+       [
+        1,
+        10,
+        10
+       ],
+       [
+        1,
+        11,
+        11
+       ],
+       [
+        1,
+        12,
+        12
+       ],
+       [
+        1,
+        13,
+        13
+       ],
+       [
+        1,
+        14,
+        14
+       ],
+       [
+        1,
+        15,
+        15
+       ],
+       [
+        1,
+        16,
+        16
+       ],
+       [
+        1,
+        17,
+        17
+       ],
+       [
+        1,
+        18,
+        18
+       ],
+       [
+        1,
+        19,
+        19
+       ],
+       [
+        1,
+        20,
+        20
+       ],
+       [
+        1,
+        21,
+        21
+       ],
+       [
+        1,
+        22,
+        22
+       ],
+       [
+        1,
+        23,
+        23
+       ],
+       [
+        1,
+        24,
+        24
+       ],
+       [
+        1,
+        25,
+        25
+       ],
+       [
+        1,
+        26,
+        26
+       ],
+       [
+        1,
+        27,
+        27
+       ],
+       [
+        1,
+        28,
+        28
+       ],
+       [
+        1,
+        29,
+        29
+       ],
+       [
+        1,
+        30,
+        30
+       ],
+       [
+        1,
+        31,
+        31
+       ],
+       [
+        1,
+        32,
+        32
+       ],
+       [
+        1,
+        33,
+        33
+       ],
+       [
+        1,
+        34,
+        34
+       ],
+       [
+        1,
+        35,
+        35
+       ],
+       [
+        1,
+        36,
+        36
+       ],
+       [
+        1,
+        37,
+        37
+       ],
+       [
+        1,
+        38,
+        38
+       ],
+       [
+        1,
+        39,
+        39
+       ],
+       [
+        1,
+        40,
+        40
+       ],
+       [
+        1,
+        41,
+        41
+       ],
+       [
+        1,
+        42,
+        42
+       ],
+       [
+        1,
+        43,
+        43
+       ],
+       [
+        1,
+        44,
+        44
+       ],
+       [
+        1,
+        45,
+        45
+       ],
+       [
+        1,
+        46,
+        46
+       ],
+       [
+        1,
+        47,
+        47
+       ],
+       [
+        1,
+        48,
+        48
+       ],
+       [
+        1,
+        49,
+        49
+       ],
+       [
+        1,
+        50,
+        50
+       ],
+       [
+        1,
+        51,
+        51
+       ],
+       [
+        1,
+        52,
+        52
+       ],
+       [
+        1,
+        53,
+        53
+       ],
+       [
+        1,
+        54,
+        54
+       ],
+       [
+        1,
+        55,
+        55
+       ],
+       [
+        1,
+        56,
+        56
+       ],
+       [
+        1,
+        57,
+        57
+       ],
+       [
+        1,
+        58,
+        58
+       ],
+       [
+        1,
+        59,
+        59
+       ]
+      ],
+      "receiver": {
+       "consumed_next": 60,
+       "inbound_len": 0,
+       "stats": {
+        "control_delivered": 0,
+        "control_dropped_full": 0,
+        "control_oversize": 0,
+        "control_read": 0,
+        "control_wrong_source": 0,
+        "inbound_overflow": 0,
+        "io_errors": 0,
+        "media_accepted": 60,
+        "media_read": 60,
+        "media_rejected": 0,
+        "reports_sent": 65
+       },
+       "stream": {
+        "accepted": 60,
+        "datagrams_seen": 60,
+        "mac_verifications": 60,
+        "rejected_authentication": 0,
+        "rejected_future_epoch": 0,
+        "rejected_future_sequence": 0,
+        "rejected_malformed_fields": 0,
+        "rejected_not_negotiated": 0,
+        "rejected_replay": 0,
+        "rejected_stale_epoch": 0,
+        "rejected_structure": 0,
+        "rejected_unsupported_version": 0,
+        "rejected_wrong_stream": 0
+       }
+      },
+      "relay": null,
+      "sample_mismatches": 0,
+      "samples_checked": 60,
+      "view": {
+       "control_queued": 0,
+       "counters": {
+        "control_dropped_send_error": 0,
+        "control_rejected_full": 0,
+        "control_sent": 0,
+        "control_submitted": 0,
+        "media_dropped_aggregate_bytes": 0,
+        "media_dropped_aggregate_packets": 0,
+        "media_dropped_fenced_bytes": 0,
+        "media_dropped_fenced_packets": 0,
+        "media_dropped_late_bytes": 0,
+        "media_dropped_late_packets": 0,
+        "media_dropped_overflow_bytes": 0,
+        "media_dropped_overflow_packets": 0,
+        "media_dropped_send_error_bytes": 0,
+        "media_dropped_send_error_packets": 0,
+        "media_sent_bytes": 66240,
+        "media_sent_packets": 60,
+        "media_submitted_bytes": 66240,
+        "media_submitted_packets": 60,
+        "queue_delay_ns_max": 135840000,
+        "queue_delay_ns_total": 2110528000,
+        "reports_accepted": 65,
+        "window_stalled_pumps": 0
+       },
+       "fence": null,
+       "in_flight": 0,
+       "path_mtu": 1500,
+       "peer": 2,
+       "queued_bytes": 0,
+       "queued_packets": 0,
+       "reported_next": 60,
+       "sent_next": 60,
+       "stalled": false
+      }
+     }
+    },
+    "stats": {
+     "admissions_rejected": 0,
+     "control_datagrams_in": 130,
+     "epoch_advances": 0,
+     "link_down_pumps": 0,
+     "link_events": 0,
+     "mtu_fences": 0,
+     "mtu_unfences": 0,
+     "pace_limited_pumps": 63,
+     "path_changes": 0,
+     "pumps": 65,
+     "recv_errors": 0,
+     "removed_peer_dropped_bytes": 0,
+     "removed_peer_dropped_packets": 0,
+     "reports_bad_tag": 0,
+     "reports_invalid": 0,
+     "reports_malformed": 0,
+     "reports_stale_epoch": 0,
+     "reports_unknown_source": 0,
+     "reports_wrong_stream": 0,
+     "send_cap_pumps": 0,
+     "stale_submits": 0
+    },
+    "trace": [
+     {
+      "evicted": 0,
+      "name": "submit",
+      "op": 0,
+      "queued": 60,
+      "rejected_aggregate": 0,
+      "skipped_fenced": 0,
+      "submitted": 30
+     },
+     {
+      "final_pump": {
+       "control_sent": 0,
+       "late_dropped": 0,
+       "link_down": false,
+       "media_sent": 1,
+       "next_send_ns": null,
+       "pace_limited": false,
+       "reports_applied": 0,
+       "send_cap_hit": false,
+       "window_stalled_peers": 0
+      },
+      "name": "settle",
+      "now_ns": 4768000,
+      "op": 1,
+      "settle_pumps": 4
+     },
+     {
+      "evicted": 0,
+      "name": "submit",
+      "op": 2,
+      "queued": 60,
+      "rejected_aggregate": 0,
+      "skipped_fenced": 0,
+      "submitted": 30
+     },
+     {
+      "final_pump": {
+       "control_sent": 0,
+       "late_dropped": 0,
+       "link_down": false,
+       "media_sent": 1,
+       "next_send_ns": null,
+       "pace_limited": false,
+       "reports_applied": 0,
+       "send_cap_hit": false,
+       "window_stalled_peers": 0
+      },
+      "name": "settle",
+      "now_ns": 140608000,
+      "op": 3,
+      "settle_pumps": 61
+     }
+    ]
+   },
+   "id": "N07-S7-loss-and-reorder",
+   "limits": {
+    "pace_burst_bytes": 65536,
+    "pace_bytes_per_sec": 500000,
+    "window_packets": 64
+   },
+   "ops": [
+    {
+     "blocks": 30,
+     "deadline_ns": 1000000000,
+     "first_block": 0,
+     "op": "submit"
+    },
+    {
+     "op": "settle"
+    },
+    {
+     "blocks": 30,
+     "deadline_ns": 1000000000,
+     "first_block": 30,
+     "op": "submit"
+    },
+    {
+     "op": "settle"
+    }
+   ],
+   "peers": [
+    {
+     "mtu": 1500,
+     "peer": 1,
+     "relay": {
+      "loss_permille": 150,
+      "reorder_permille": 200,
+      "seed": 7
+     }
+    },
+    {
+     "mtu": 1500,
+     "peer": 2
+    }
+   ],
+   "what": "a seeded relay drops and reorders peer 1's datagrams on the way to its receiver; the replay window and the reports cope and the clean peer is unaffected"
+  }
+ ],
+ "schema": "ffw.n07.scenarios.v1"
+}

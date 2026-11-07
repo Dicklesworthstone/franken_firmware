@@ -1,0 +1,1093 @@
+{
+ "cases": [
+  {
+   "first_failure": null,
+   "id": "N07-E01",
+   "observed": {
+    "dropped_late_bytes": {
+     "1": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     },
+     "2": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     }
+    },
+    "fault_schedule": [
+     {
+      "op": "control",
+      "peer": 1,
+      "tag": 11
+     },
+     {
+      "blocks": 16,
+      "deadline_ns": 1000000000,
+      "first_block": 0,
+      "op": "submit"
+     },
+     {
+      "op": "settle"
+     }
+    ],
+    "media_packets_sent": 32,
+    "media_wire_bytes_sent": 35328,
+    "payload_bytes_sent": 32768,
+    "queue_delay_ns_max": {
+     "1": 53888000,
+     "2": 56152000
+    },
+    "seeds": [],
+    "wire_overhead_bytes": 2560
+   },
+   "status": "passed"
+  },
+  {
+   "first_failure": null,
+   "id": "N07-E02",
+   "observed": {
+    "dropped_late_bytes": {
+     "1": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     },
+     "2": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 30912,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     },
+     "3": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     }
+    },
+    "fault_schedule": [
+     {
+      "active": false,
+      "op": "consumer",
+      "peer": 2
+     },
+     {
+      "blocks": 40,
+      "deadline_ns": 30000000,
+      "first_block": 0,
+      "op": "stream",
+      "period_ns": 5333333
+     },
+     {
+      "active": true,
+      "op": "consumer",
+      "peer": 2
+     },
+     {
+      "blocks": 20,
+      "deadline_ns": 30000000,
+      "first_block": 40,
+      "op": "stream",
+      "period_ns": 5333333
+     },
+     {
+      "op": "settle"
+     }
+    ],
+    "media_packets_sent": 152,
+    "media_wire_bytes_sent": 167808,
+    "payload_bytes_sent": 155648,
+    "queue_delay_ns_max": {
+     "1": 0,
+     "2": 26666665,
+     "3": 0
+    },
+    "seeds": [],
+    "wire_overhead_bytes": 12160
+   },
+   "status": "passed"
+  },
+  {
+   "first_failure": null,
+   "id": "N07-E03",
+   "observed": {
+    "dropped_late_bytes": {
+     "2": {
+      "media_dropped_aggregate_bytes": 35328,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     },
+     "3": {
+      "media_dropped_aggregate_bytes": 34224,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     }
+    },
+    "fault_schedule": [
+     {
+      "blocks": 40,
+      "deadline_ns": 1000000000,
+      "first_block": 0,
+      "op": "submit"
+     },
+     {
+      "op": "control",
+      "peer": 3,
+      "tag": 9
+     },
+     {
+      "op": "pump"
+     },
+     {
+      "op": "control",
+      "peer": 3,
+      "tag": 10
+     },
+     {
+      "op": "pump"
+     },
+     {
+      "op": "remove_peer",
+      "peer": 1
+     },
+     {
+      "op": "settle"
+     }
+    ],
+    "media_packets_sent": 17,
+    "media_wire_bytes_sent": 18768,
+    "payload_bytes_sent": 17408,
+    "queue_delay_ns_max": {
+     "2": 44680000,
+     "3": 48453334
+    },
+    "seeds": [],
+    "wire_overhead_bytes": 1360
+   },
+   "status": "passed"
+  },
+  {
+   "first_failure": null,
+   "id": "N07-E04",
+   "observed": {
+    "dropped_late_bytes": {
+     "1": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 8832,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     },
+     "2": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 9936,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     }
+    },
+    "fault_schedule": [
+     {
+      "blocks": 12,
+      "deadline_ns": 1000000000,
+      "first_block": 0,
+      "op": "submit"
+     },
+     {
+      "op": "pump"
+     },
+     {
+      "op": "epoch",
+      "skip_receivers": [
+       1
+      ],
+      "to": 2
+     },
+     {
+      "epoch": 1,
+      "op": "stale_submit"
+     },
+     {
+      "blocks": 6,
+      "deadline_ns": 1000000000,
+      "first_block": 100,
+      "op": "submit"
+     },
+     {
+      "op": "settle"
+     },
+     {
+      "op": "receiver_epoch",
+      "peer": 1,
+      "to": 2
+     },
+     {
+      "epoch": 1,
+      "op": "inject_old",
+      "peer": 2
+     },
+     {
+      "blocks": 4,
+      "deadline_ns": 1000000000,
+      "first_block": 200,
+      "op": "submit"
+     },
+     {
+      "op": "settle"
+     }
+    ],
+    "media_packets_sent": 27,
+    "media_wire_bytes_sent": 29808,
+    "payload_bytes_sent": 27648,
+    "queue_delay_ns_max": {
+     "1": 26632000,
+     "2": 24368000
+    },
+    "seeds": [],
+    "wire_overhead_bytes": 2160
+   },
+   "status": "passed"
+  },
+  {
+   "first_failure": null,
+   "id": "N07-E05",
+   "observed": {
+    "dropped_late_bytes": {
+     "1": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     },
+     "2": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 13248,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     }
+    },
+    "fault_schedule": [
+     {
+      "mtu": 1100,
+      "op": "add_peer",
+      "peer": 3
+     },
+     {
+      "mtu": 1500,
+      "op": "add_peer",
+      "peer": 3
+     },
+     {
+      "kind": "lan",
+      "mtu": 1500,
+      "op": "add_peer",
+      "peer": 4
+     },
+     {
+      "kind": "v6",
+      "mtu": 1500,
+      "op": "add_peer",
+      "peer": 5
+     },
+     {
+      "mtu": 1500,
+      "op": "add_peer",
+      "peer": 1
+     },
+     {
+      "blocks": 12,
+      "deadline_ns": 30000000,
+      "first_block": 0,
+      "op": "stream",
+      "period_ns": 5333333
+     },
+     {
+      "mtu": 1100,
+      "op": "set_mtu",
+      "peer": 2
+     },
+     {
+      "blocks": 12,
+      "deadline_ns": 30000000,
+      "first_block": 12,
+      "op": "stream",
+      "period_ns": 5333333
+     },
+     {
+      "mtu": 1500,
+      "op": "set_mtu",
+      "peer": 2
+     },
+     {
+      "blocks": 12,
+      "deadline_ns": 30000000,
+      "first_block": 24,
+      "op": "stream",
+      "period_ns": 5333333
+     },
+     {
+      "op": "settle"
+     }
+    ],
+    "media_packets_sent": 60,
+    "media_wire_bytes_sent": 66240,
+    "payload_bytes_sent": 61440,
+    "queue_delay_ns_max": {
+     "1": 0,
+     "2": 0
+    },
+    "seeds": [],
+    "wire_overhead_bytes": 4800
+   },
+   "status": "passed"
+  },
+  {
+   "first_failure": null,
+   "id": "N07-E06",
+   "observed": {
+    "dropped_late_bytes": {
+     "1": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 7728,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     },
+     "2": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 7728,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     }
+    },
+    "fault_schedule": [
+     {
+      "blocks": 6,
+      "deadline_ns": 30000000,
+      "first_block": 0,
+      "op": "stream",
+      "period_ns": 5333333
+     },
+     {
+      "op": "link",
+      "up": false
+     },
+     {
+      "blocks": 12,
+      "deadline_ns": 30000000,
+      "first_block": 6,
+      "op": "stream",
+      "period_ns": 5333333
+     },
+     {
+      "op": "link",
+      "up": true
+     },
+     {
+      "blocks": 6,
+      "deadline_ns": 30000000,
+      "first_block": 18,
+      "op": "stream",
+      "period_ns": 5333333
+     },
+     {
+      "op": "addr_change",
+      "peer": 2
+     },
+     {
+      "op": "old_report",
+      "peer": 2
+     },
+     {
+      "blocks": 6,
+      "deadline_ns": 30000000,
+      "first_block": 24,
+      "op": "stream",
+      "period_ns": 5333333
+     },
+     {
+      "op": "settle"
+     }
+    ],
+    "media_packets_sent": 46,
+    "media_wire_bytes_sent": 50784,
+    "payload_bytes_sent": 47104,
+    "queue_delay_ns_max": {
+     "1": 26666665,
+     "2": 26666665
+    },
+    "seeds": [],
+    "wire_overhead_bytes": 3680
+   },
+   "status": "passed"
+  },
+  {
+   "first_failure": null,
+   "id": "N07-E07",
+   "observed": {
+    "dropped_late_bytes": {
+     "1": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     },
+     "2": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     }
+    },
+    "fault_schedule": [
+     {
+      "blocks": 30,
+      "deadline_ns": 1000000000,
+      "first_block": 0,
+      "op": "submit"
+     },
+     {
+      "op": "settle"
+     },
+     {
+      "blocks": 30,
+      "deadline_ns": 1000000000,
+      "first_block": 30,
+      "op": "submit"
+     },
+     {
+      "op": "settle"
+     }
+    ],
+    "media_packets_sent": 120,
+    "media_wire_bytes_sent": 132480,
+    "payload_bytes_sent": 122880,
+    "queue_delay_ns_max": {
+     "1": 133576000,
+     "2": 135840000
+    },
+    "seeds": [
+     7
+    ],
+    "wire_overhead_bytes": 9600
+   },
+   "status": "passed"
+  },
+  {
+   "first_failure": null,
+   "id": "N07-E08",
+   "status": "passed"
+  },
+  {
+   "first_failure": null,
+   "id": "N07-U01",
+   "status": "passed"
+  },
+  {
+   "first_failure": null,
+   "id": "N07-U02",
+   "status": "passed"
+  },
+  {
+   "first_failure": null,
+   "id": "N07-U03",
+   "status": "passed"
+  },
+  {
+   "first_failure": null,
+   "id": "N07-E09",
+   "status": "passed"
+  },
+  {
+   "first_failure": null,
+   "id": "N07-E10",
+   "status": "passed"
+  },
+  {
+   "first_failure": null,
+   "id": "N07-E11",
+   "observed": {
+    "dropped_late_bytes": {
+     "1": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     },
+     "2": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     }
+    },
+    "fault_schedule": [],
+    "heard_real": {
+     "1": 48,
+     "2": 48
+    },
+    "largest_datagram_bytes": 1104,
+    "link_log": [
+     "0:[Rebind { ip: 127.0.0.1, attempt: 1 }, Resume { ip: 127.0.0.1, generation: 1 }]"
+    ],
+    "not_measured": "not_measured",
+    "provenance": "simulated_host_loopback",
+    "queue_delay_ns_max": {
+     "1": 0,
+     "2": 0
+    },
+    "seed": 1799
+   },
+   "status": "passed"
+  },
+  {
+   "first_failure": null,
+   "id": "N07-E12",
+   "observed": {
+    "dropped_late_bytes": {
+     "1": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     },
+     "2": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     },
+     "3": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 30912,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     }
+    },
+    "fault_schedule": [],
+    "heard_real": {
+     "1": 200,
+     "2": 200,
+     "3": 138
+    },
+    "largest_datagram_bytes": 1104,
+    "link_log": [
+     "0:[Rebind { ip: 127.0.0.1, attempt: 1 }, Resume { ip: 127.0.0.1, generation: 1 }]"
+    ],
+    "not_measured": "not_measured",
+    "provenance": "simulated_host_loopback",
+    "queue_delay_ns_max": {
+     "1": 0,
+     "2": 1000000,
+     "3": 91000000
+    },
+    "seed": 1799
+   },
+   "status": "passed"
+  },
+  {
+   "first_failure": null,
+   "id": "N07-E13",
+   "observed": {
+    "dropped_late_bytes": {
+     "1": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 30912,
+      "media_dropped_send_error_bytes": 0
+     },
+     "2": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 32016,
+      "media_dropped_send_error_bytes": 0
+     }
+    },
+    "fault_schedule": [],
+    "heard_real": {
+     "1": 42,
+     "2": 42
+    },
+    "largest_datagram_bytes": 1104,
+    "link_log": [
+     "0:[Rebind { ip: 127.0.0.1, attempt: 1 }, Resume { ip: 127.0.0.1, generation: 1 }]"
+    ],
+    "not_measured": "not_measured",
+    "provenance": "simulated_host_loopback",
+    "queue_delay_ns_max": {
+     "1": 215000000,
+     "2": 216000000
+    },
+    "seed": 1799
+   },
+   "status": "passed"
+  },
+  {
+   "first_failure": null,
+   "id": "N07-E14",
+   "observed": {
+    "dropped_late_bytes": {
+     "1": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 14352,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     },
+     "2": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 14352,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     }
+    },
+    "fault_schedule": [],
+    "heard_real": {
+     "1": 207,
+     "2": 200
+    },
+    "largest_datagram_bytes": 1104,
+    "link_log": [
+     "0:[Rebind { ip: 127.0.0.1, attempt: 1 }, Resume { ip: 127.0.0.1, generation: 1 }]",
+     "101210000000:InterfaceDown",
+     "101210000000:Quiesce { reason: InterfaceDown }",
+     "101370000000:InterfaceUp",
+     "101370000000:Resume { ip: 127.0.0.1, generation: 1 }",
+     "101530000000:AddressBound { ip: 127.0.0.2, lease_ns: None }",
+     "101530000000:Quiesce { reason: AddressChanged }",
+     "101530000000:Rebind { ip: 127.0.0.2, attempt: 1 }",
+     "101530000000:ReleaseStale { old_ip: 127.0.0.1 }",
+     "101530000000:Resume { ip: 127.0.0.2, generation: 2 }",
+     "101904000000:AddressBound { ip: 203.0.113.77, lease_ns: None }",
+     "101904000000:Quiesce { reason: AddressChanged }",
+     "101904000000:Rebind { ip: 203.0.113.77, attempt: 1 }",
+     "101936000000:AddressBound { ip: 127.0.0.1, lease_ns: None }",
+     "101936000000:Rebind { ip: 127.0.0.1, attempt: 1 }",
+     "101936000000:ReleaseStale { old_ip: 127.0.0.2 }"
+    ],
+    "not_measured": "not_measured",
+    "provenance": "simulated_host_loopback",
+    "queue_delay_ns_max": {
+     "1": 90000000,
+     "2": 90000000
+    },
+    "seed": 1799
+   },
+   "status": "passed"
+  },
+  {
+   "first_failure": null,
+   "id": "N07-E15",
+   "observed": {
+    "dropped_late_bytes": {
+     "1": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 4416,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     }
+    },
+    "fault_schedule": [],
+    "heard_real": {
+     "1": 0
+    },
+    "largest_datagram_bytes": 0,
+    "link_log": [
+     "0:[Rebind { ip: 127.0.0.1, attempt: 1 }, Resume { ip: 127.0.0.1, generation: 1 }]",
+     "100050000000:AddressBound { ip: 203.0.113.77, lease_ns: None }",
+     "100050000000:Quiesce { reason: AddressChanged }",
+     "100050000000:Rebind { ip: 203.0.113.77, attempt: 1 }",
+     "100156000000:Rebind { ip: 203.0.113.77, attempt: 2 }",
+     "100395000000:Rebind { ip: 203.0.113.77, attempt: 3 }",
+     "100887000000:Rebind { ip: 203.0.113.77, attempt: 4 }",
+     "101739000000:Rebind { ip: 203.0.113.77, attempt: 5 }",
+     "103590000000:Rebind { ip: 203.0.113.77, attempt: 6 }",
+     "103590000000:GiveUp { reason: ReconnectBudgetSpent }",
+     "103590000000:AddressBound { ip: 127.0.0.1, lease_ns: None }",
+     "103590000000:Resume { ip: 127.0.0.1, generation: 3 }"
+    ],
+    "not_measured": "not_measured",
+    "provenance": "simulated_host_loopback",
+    "queue_delay_ns_max": {
+     "1": 0
+    },
+    "seed": 1799
+   },
+   "status": "passed"
+  },
+  {
+   "first_failure": null,
+   "id": "N07-E16",
+   "observed": {
+    "dropped_late_bytes": {
+     "1": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     },
+     "2": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     }
+    },
+    "fault_schedule": [],
+    "heard_real": {
+     "1": 142,
+     "2": 142
+    },
+    "largest_datagram_bytes": 1104,
+    "link_log": [
+     "0:[Rebind { ip: 127.0.0.1, attempt: 1 }, Resume { ip: 127.0.0.1, generation: 1 }]"
+    ],
+    "not_measured": "not_measured",
+    "provenance": "simulated_host_loopback",
+    "queue_delay_ns_max": {
+     "1": 0,
+     "2": 0
+    },
+    "seed": 1799
+   },
+   "status": "passed"
+  },
+  {
+   "first_failure": null,
+   "id": "N07-E17",
+   "observed": {
+    "dropped_late_bytes": {
+     "1": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 37536,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 1104
+     },
+     "2": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     }
+    },
+    "fault_schedule": [],
+    "heard_real": {
+     "1": 85,
+     "2": 120
+    },
+    "largest_datagram_bytes": 1104,
+    "link_log": [
+     "0:[Rebind { ip: 127.0.0.1, attempt: 1 }, Resume { ip: 127.0.0.1, generation: 1 }]"
+    ],
+    "not_measured": "not_measured",
+    "provenance": "simulated_host_loopback",
+    "queue_delay_ns_max": {
+     "1": 0,
+     "2": 0
+    },
+    "seed": 1799
+   },
+   "status": "passed"
+  },
+  {
+   "first_failure": null,
+   "id": "N07-E18",
+   "observed": {
+    "dropped_late_bytes": {
+     "1": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     }
+    },
+    "fault_schedule": [
+     [
+      4,
+      "reorder"
+     ],
+     [
+      6,
+      "drop"
+     ],
+     [
+      14,
+      "reorder"
+     ],
+     [
+      20,
+      "drop"
+     ],
+     [
+      24,
+      "drop"
+     ],
+     [
+      25,
+      "reorder"
+     ],
+     [
+      26,
+      "drop"
+     ],
+     [
+      29,
+      "reorder"
+     ],
+     [
+      35,
+      "reorder"
+     ],
+     [
+      36,
+      "reorder"
+     ],
+     [
+      39,
+      "drop"
+     ],
+     [
+      43,
+      "drop"
+     ],
+     [
+      47,
+      "reorder"
+     ],
+     [
+      48,
+      "drop"
+     ],
+     [
+      54,
+      "drop"
+     ],
+     [
+      56,
+      "reorder"
+     ],
+     [
+      69,
+      "reorder"
+     ],
+     [
+      73,
+      "drop"
+     ],
+     [
+      75,
+      "reorder"
+     ],
+     [
+      79,
+      "drop"
+     ],
+     [
+      91,
+      "drop"
+     ],
+     [
+      94,
+      "drop"
+     ],
+     [
+      100,
+      "reorder"
+     ],
+     [
+      102,
+      "reorder"
+     ],
+     [
+      103,
+      "reorder"
+     ],
+     [
+      107,
+      "drop"
+     ],
+     [
+      111,
+      "drop"
+     ],
+     [
+      114,
+      "drop"
+     ]
+    ],
+    "heard_real": {
+     "1": 105
+    },
+    "largest_datagram_bytes": 1104,
+    "link_log": [
+     "0:[Rebind { ip: 127.0.0.1, attempt: 1 }, Resume { ip: 127.0.0.1, generation: 1 }]"
+    ],
+    "not_measured": "not_measured",
+    "provenance": "simulated_host_loopback",
+    "queue_delay_ns_max": {
+     "1": 0
+    },
+    "seed": 1592592135
+   },
+   "status": "passed"
+  },
+  {
+   "first_failure": null,
+   "id": "N07-E19",
+   "observed": {
+    "dropped_late_bytes": {
+     "1": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     },
+     "2": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 0,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     },
+     "3": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 30912,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     }
+    },
+    "fault_schedule": [],
+    "heard_real": {
+     "1": 200,
+     "2": 200,
+     "3": 156
+    },
+    "largest_datagram_bytes": 1104,
+    "link_log": [
+     "0:[Rebind { ip: 127.0.0.1, attempt: 1 }, Resume { ip: 127.0.0.1, generation: 1 }]"
+    ],
+    "not_measured": "not_measured",
+    "provenance": "simulated_host_loopback",
+    "queue_delay_ns_max": {
+     "1": 0,
+     "2": 1000000,
+     "3": 91000000
+    },
+    "seed": 1799
+   },
+   "status": "passed"
+  },
+  {
+   "first_failure": null,
+   "id": "N07-E20",
+   "observed": {
+    "dropped_late_bytes": {
+     "1": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 1409808,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     }
+    },
+    "fault_schedule": [
+     [
+      59,
+      "drop"
+     ]
+    ],
+    "heard_real": {
+     "1": 120
+    },
+    "largest_datagram_bytes": 1104,
+    "link_log": [
+     "0:[Rebind { ip: 127.0.0.1, attempt: 1 }, Resume { ip: 127.0.0.1, generation: 1 }]"
+    ],
+    "not_measured": "not_measured",
+    "provenance": "simulated_host_loopback",
+    "queue_delay_ns_max": {
+     "1": 20001000000
+    },
+    "seed": 1799
+   },
+   "status": "passed"
+  },
+  {
+   "first_failure": null,
+   "id": "N07-E21",
+   "observed": {
+    "dropped_late_bytes": {
+     "1": {
+      "media_dropped_aggregate_bytes": 0,
+      "media_dropped_fenced_bytes": 0,
+      "media_dropped_late_bytes": 1409808,
+      "media_dropped_overflow_bytes": 0,
+      "media_dropped_send_error_bytes": 0
+     }
+    },
+    "fault_schedule": [],
+    "heard_real": {
+     "1": 120
+    },
+    "largest_datagram_bytes": 1104,
+    "link_log": [
+     "0:[Rebind { ip: 127.0.0.1, attempt: 1 }, Resume { ip: 127.0.0.1, generation: 1 }]"
+    ],
+    "not_measured": "not_measured",
+    "provenance": "simulated_host_loopback",
+    "queue_delay_ns_max": {
+     "1": 20001000000
+    },
+    "seed": 1799
+   },
+   "status": "passed"
+  }
+ ],
+ "first_failure": null,
+ "log_sha256": [
+  "ebbf6e6787147f409c0a214b57c890e50ce73b11245ab0b9f9ad45332b21a1d7"
+ ],
+ "not_measured": [
+  "cpu",
+  "memory",
+  "physical radio",
+  "interfaces, leases and resolvers (simulated or absent)"
+ ],
+ "revision": "cc4fd89-dirty",
+ "schema": "ffw.n07.receipt.v1"
+}

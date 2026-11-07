@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# N07 end-to-end entry point (bead ffw-ybr): the bounded, paced UDP carrier over real loopback sockets (docs/contracts/n07.md).
+# Delegates to tests/n07/run_cases.py (offline, stdlib Python; it builds and runs nothing).
+#
+#   scripts/e2e/n07                              META checks only; every Rust-backed case is BLOCKED
+#   scripts/e2e/n07 --judge LOG [LOG ...]        judge the centrally run cargo test output
+#   scripts/e2e/n07 --judge LOG --revision REV --receipts DIR
+#   scripts/e2e/n07 --list                       the cases
+#   python3 tests/n07/model.py --write           regenerate crates/franken-stream/tests/vectors/n07_scenarios.json
+#
+# The Rust runs only through the centralized RCH path; this script never invokes cargo (docs/contracts/n07.md section 6):
+#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy --locked --offline -p franken-stream -p franken-speaker --all-targets -- -D warnings
+#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test --locked --offline -p franken-stream --lib -- --nocapture --test-threads=1 > n07-stream-lib.log 2>&1
+#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test --locked --offline -p franken-stream --test n07_carrier --test n07_ownership -- --nocapture --test-threads=1 > n07-stream-it.log 2>&1
+#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test --locked --offline -p franken-speaker --lib net_carrier -- --nocapture --test-threads=1 > n07-speaker.log 2>&1
+# The speaker line needs the platform datagram patch (IvoryFalcon) applied first.
+#
+# Exit 0 only when every case passed and none is blocked; 1 on a failed case; 3 when the only non-passes are blocked cases
+# (reported, never counted as passed); 2 on usage errors.
+# Sockets are real and loopback-only, behind a SIMULATED host kernel in the speaker worlds (host-only evidence). Interfaces,
+# leases, resolvers and radios are not touched: link events are synthetic and say so. CPU and memory are not measured. Physical radio behaviour stays Q03/Q06 evidence.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+exec python3 -B "$ROOT/tests/n07/run_cases.py" "$@"

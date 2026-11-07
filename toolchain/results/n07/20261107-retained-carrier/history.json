@@ -1,0 +1,66 @@
+[
+  {
+    "command_exit_code": 101,
+    "failed_tests": [
+      "test net_carrier::tests::n07_s1_zero_loss_paced_delivery_into_the_playout_path ... FAILED",
+      "test net_carrier::tests::n07_s2_a_slow_peer_is_isolated_bounded_and_recovers_with_fresh_audio_only ... FAILED",
+      "test net_carrier::tests::n07_s4_interface_and_address_events_keep_identity_resume_muted_and_refuse_stale_paths ... FAILED"
+    ],
+    "phase": "stacked-v2b-first-native",
+    "raw_log_sha256": "fcee31fca6bdd003ece84ec5bc40a49a52aa8dfb68cb1138fdb8721c9250459c",
+    "receipt_root": "aa6a858a549246cb6740140cdaf9ef05bac98298d0d92e0c06ac8be73b0c346d",
+    "result_lines": [
+      "test result: ok. 221 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s",
+      "test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: FAILED. 297 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 66.10s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s",
+      "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s",
+      "test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.18s",
+      "test result: ok. 152 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.21s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s",
+      "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s",
+      "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "command_exit_code": 101,
+    "failed_tests": [
+      "test net_carrier::tests::n07_s4_interface_and_address_events_keep_identity_resume_muted_and_refuse_stale_paths ... FAILED"
+    ],
+    "phase": "v4a-e06v4-native-vmi129-locked-fetch",
+    "raw_log_sha256": "c1ff65c0eea9b0262796e65cca1bf17b112d826d2e54358ace94d4c525126a56",
+    "receipt_root": "cf00eba9df2155ef9dc8b3b5e06e68ac9d9405c851cfe677e3ac2aed9c1f21fd",
+    "result_lines": [
+      "test result: FAILED. 305 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 64.31s"
+    ]
+  },
+  {
+    "command_exit_code": null,
+    "failed_tests": [],
+    "phase": "v4b-arithmetic-python",
+    "raw_log_sha256": "bf06681267a6958417c268d51177c9aeea59bdb5e4f2039b6eadfd90c6c0b73a",
+    "receipt_root": null,
+    "result_lines": [
+      "Ran 32 tests in 1.297s",
+      "FAILED (failures=3)"
+    ]
+  },
+  {
+    "command_exit_code": null,
+    "failed_tests": [],
+    "phase": "v4b-arithmetic-registered-python",
+    "raw_log_sha256": "a7e291711a98c178070e0a77504ecb91d2299b2dc9de0ffe6d3021dc8445781f",
+    "receipt_root": null,
+    "result_lines": [
+      "Ran 32 tests in 1.241s",
+      "OK"
+    ]
+  }
+]

@@ -22,6 +22,8 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::collections::BTreeMap;
 
+pub mod carrier; // N07 (`ffw-ybr`)
+pub mod link; // N07 (`ffw-ybr`)
 mod negotiation;
 pub mod playout; // N04 (`ffw-nx0`)
 pub use negotiation::{
@@ -484,6 +486,19 @@ pub fn untrusted_route_hint(datagram: &[u8]) -> Result<UntrustedRouteHint, Strea
         session_epoch: be_u64(datagram, OFF_EPOCH),
         start_frame: be_u64(datagram, OFF_START_FRAME),
     })
+}
+
+/// The sequence number a structurally valid datagram claims, read without authenticating it.
+///
+/// For a consumer that has just seen the datagram admitted by its own receiver (`MediaPlayout::ingest` returned `Ok`), so the
+/// MAC has passed and the value is the sender's. Anywhere else the value is attacker-controlled and may only be used to
+/// route or count, never to move state.
+///
+/// # Errors
+/// The same cheap length, magic and wire-version errors as the receiver.
+pub fn untrusted_sequence(datagram: &[u8]) -> Result<u64, StreamError> {
+    check_frame_structure(datagram)?;
+    Ok(be_u64(datagram, OFF_SEQ))
 }
 
 fn compute_tag_16(key: &StreamKey, header: &[u8], payload: &[u8]) -> [u8; AUTH_TAG_LEN_BYTES] {
