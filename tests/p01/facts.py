@@ -15,14 +15,54 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import tomllib
 from typing import Any, Dict, Iterable, List, Set, Tuple
 
 Pair = Tuple[str, str]
 
+# What "forbid" means for an excluded host-only study, held to the crate itself (rustc's own `forbid` is the enforcer; this is the
+# offline check that the crate really asks for it): its manifest lint table says `forbid`, and its source agrees.
+FORBID_ATTR = "#![forbid(unsafe_code)]"
+CRATE_ROOTS = ("src/lib.rs", "src/main.rs", "build.rs")
+UNSAFE_USE = re.compile(r"\bunsafe\s*(?:\{|fn\b|impl\b|trait\b|extern\b)")
+
 # Cargo profile names the contract uses -> where their values are read from.
 PROFILE_SOURCES = {"release": ("workspace", "release"), "bootstrap_release": ("ffw-hello-init", "release")}
+
+
+def _opens_with_forbid(path: str) -> bool:
+    """The file's leading lines (blank, `//` comments and other inner attributes aside) include `#![forbid(unsafe_code)]`."""
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            text = line.strip()
+            if text == FORBID_ATTR:
+                return True
+            if text and not text.startswith(("//", "#![")):
+                return False
+    return False
+
+
+def source_forbids_unsafe(root: str, rel: str) -> bool:
+    """True when the crate at `rel` holds `forbid` in its own source: it has a library or binary root, every root it has (library,
+    binary, build script) opens with `#![forbid(unsafe_code)]`, and no `.rs` file of the crate (build output aside) has an `unsafe`
+    block, fn, impl, trait or extern outside a `//` comment. A host-only check; it never runs cargo."""
+    base = os.path.join(root, rel)
+    roots = [r for r in CRATE_ROOTS if os.path.isfile(os.path.join(base, r))]
+    if not any(r.startswith("src/") for r in roots):
+        return False
+    if not all(_opens_with_forbid(os.path.join(base, r)) for r in roots):
+        return False
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = sorted(d for d in dirnames if d != "target" and not d.startswith("."))
+        for fname in sorted(filenames):
+            if not fname.endswith(".rs"):
+                continue
+            with open(os.path.join(dirpath, fname), encoding="utf-8", errors="replace") as f:
+                if any(UNSAFE_USE.search(line.split("//", 1)[0]) for line in f):
+                    return False
+    return True
 
 
 def _load(path: str) -> Dict[str, Any]:
@@ -282,6 +322,11 @@ def compare(contract: Dict[str, Any], facts: Dict[str, Any], root: str = "") -> 
             errs.add(("excluded_mismatch", path))
         elif have_ex[path]["name"] != want_ex[path]["name"]:
             errs.add(("excluded_name_mismatch", path))
+        elif want_ex[path]["unsafe_policy"] == "forbid":
+            # a host-only study that declares forbid is held to it: its own lint table (not the workspace's, it has its own
+            # [workspace]) and, with a root, its source
+            if have_ex[path]["lints"] != "forbid" or (root and not source_forbids_unsafe(root, path)):
+                errs.add(("unsafe_policy_drift", want_ex[path]["name"]))
 
     # dependency edges, both directions, per kind
     flags = {f["name"]: f["cargo_feature"] for f in contract["features"]}

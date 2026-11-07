@@ -285,8 +285,13 @@ def validate(doc: Dict[str, Any]) -> List[Pair]:
               or (c["unsafe_policy"] == "deny_with_scoped_allow" and c["role"] in ("host_tool", "test_support", "platform")))
         if not ok:
             errs.add(("unsafe_policy_not_permitted", c["name"]))
+    # An excluded crate is a freestanding startup probe (device targets: bootstrap_probe) or a host-only study (no device
+    # target: forbid, in its own lint table, which the tree check in facts.py holds to the manifest and the source). Scoped
+    # unsafe is never an excluded crate's policy. Mirrors `check_unsafe_policy` in build_contract.rs.
     for e in doc["excluded"]:
-        if e["unsafe_policy"] != "bootstrap_probe":
+        ok = ((e["unsafe_policy"] == "bootstrap_probe" and bool(e["targets"]))
+              or (e["unsafe_policy"] == "forbid" and not e["targets"]))
+        if not ok:
             errs.add(("unsafe_policy_not_permitted", e["name"]))
 
     # --- the feature registry

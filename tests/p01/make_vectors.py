@@ -253,9 +253,27 @@ def build(base):
     v.append(validate("P01-V-047", "the bootstrap-probe policy is refused for a workspace crate",
                       [S("/crates/name=franken-hal/unsafe_policy", "bootstrap_probe")],
                       ["unsafe_policy_not_permitted"], {"unsafe_policy_not_permitted": ["franken-hal"]}))
-    v.append(validate("P01-V-048", "an excluded crate must declare the bootstrap-probe policy",
+    v.append(validate("P01-V-048", "an excluded crate with device targets must declare the bootstrap-probe policy",
                       [S("/excluded/name=ffw-hello-init/unsafe_policy", "forbid")],
                       ["unsafe_policy_not_permitted"], {"unsafe_policy_not_permitted": ["ffw-hello-init"]}))
+    # An excluded host-only study (no device target) holds `forbid`; only the device-target startup probe is a bootstrap probe.
+    v.append(validate("P01-V-132", "a host-only excluded study may declare forbid, and the startup probe keeps bootstrap_probe",
+                      [S("/excluded/name=n05-repair-study/unsafe_policy", "forbid"),
+                       S("/excluded/name=ffw-hello-init/unsafe_policy", "bootstrap_probe")], []))
+    v.append(validate("P01-V-133", "a host-only excluded study is not a bootstrap probe",
+                      [S("/excluded/name=n05-repair-study/unsafe_policy", "bootstrap_probe")],
+                      ["unsafe_policy_not_permitted"], {"unsafe_policy_not_permitted": ["n05-repair-study"]}))
+    v.append(validate("P01-V-134", "scoped unsafe is refused for an excluded host-only study",
+                      [S("/excluded/name=n05-repair-study/unsafe_policy", "deny_with_scoped_allow")],
+                      ["unsafe_policy_not_permitted"], {"unsafe_policy_not_permitted": ["n05-repair-study"]}))
+    v.append(validate("P01-V-137", "scoped unsafe is refused for the excluded startup probe",
+                      [S("/excluded/name=ffw-hello-init/unsafe_policy", "deny_with_scoped_allow")],
+                      ["unsafe_policy_not_permitted"], {"unsafe_policy_not_permitted": ["ffw-hello-init"]}))
+    v.append(validate("P01-V-135", "an excluded crate that names a device target cannot declare forbid",
+                      [P("/excluded/name=n05-repair-study/targets", "mips_be")],
+                      ["unsafe_policy_not_permitted"], {"unsafe_policy_not_permitted": ["n05-repair-study"]}))
+    v.append(parse("P01-V-136", "an unknown unsafe policy for an excluded crate is not accepted",
+                   [S("/excluded/name=n05-repair-study/unsafe_policy", "unchecked")]))
     v.append(validate("P01-V-049", "a pending member that reuses a member's name is refused",
                       [P("/pending_members", {"name": "franken-hal", "path": "crates/franken-baseline",
                                               "owner": "E02", "reason": "root edit pending"})],

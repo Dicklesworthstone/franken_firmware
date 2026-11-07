@@ -2729,6 +2729,21 @@
      "a present marker is ignored when the declaration is unmeasured",
      "if row[\"fp_abi\"] != ln[\"float_abi\"] and (ln[\"abi_measured\"] or row[\"fp_abi\"] != \"\"):",
      "if row[\"fp_abi\"] != ln[\"float_abi\"] and ln[\"abi_measured\"]:"
+    ],
+    [
+     "a host-only excluded study may be a bootstrap probe",
+     "(e[\"unsafe_policy\"] == \"bootstrap_probe\" and bool(e[\"targets\"]))",
+     "(e[\"unsafe_policy\"] == \"bootstrap_probe\")"
+    ],
+    [
+     "an excluded crate with device targets may declare forbid",
+     "(e[\"unsafe_policy\"] == \"forbid\" and not e[\"targets\"]))",
+     "(e[\"unsafe_policy\"] == \"forbid\"))"
+    ],
+    [
+     "scoped unsafe is accepted for an excluded host-only study",
+     "or (e[\"unsafe_policy\"] == \"forbid\" and not e[\"targets\"]))",
+     "or (e[\"unsafe_policy\"] in (\"forbid\", \"deny_with_scoped_allow\") and not e[\"targets\"]))"
     ]
    ]
   },
@@ -3246,6 +3261,12 @@
     "P01-V-046",
     "P01-V-047",
     "P01-V-048",
+    "P01-V-132",
+    "P01-V-133",
+    "P01-V-134",
+    "P01-V-135",
+    "P01-V-136",
+    "P01-V-137",
     "P01-V-089",
     "P01-V-090",
     "P01-V-091",

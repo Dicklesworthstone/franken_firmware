@@ -1,0 +1,169 @@
+{
+  "schema": "ffw.p01.qualification.v1",
+  "scope": "safe excluded host-study contract and critical-log accounting; not whole-project admission",
+  "baseline_commit": "90606cc",
+  "rust_results": {
+    "board_profile_library": 26,
+    "contract_integration": 4,
+    "vectors_replayed": 143,
+    "speaker_service_consumer": 18,
+    "failed": 0,
+    "ignored": 0
+  },
+  "python_results": {
+    "tests": 230,
+    "failed": 0,
+    "critical_log_loss_plants": [
+      "missing case.begin",
+      "missing case.end"
+    ]
+  },
+  "full_tier": {
+    "total": 261,
+    "passed": 253,
+    "failed": 0,
+    "blocked": 8,
+    "qualified": false,
+    "critical_events": 523,
+    "critical_lost": 0
+  },
+  "gates": [
+    {
+      "name": "p01-forbid-native-hz4",
+      "command": [
+        "rch",
+        "exec",
+        "--source-content-receipt",
+        "--worker",
+        "hz4",
+        "--",
+        "cargo",
+        "+nightly-2026-08-31",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "franken-board-profile",
+        "--lib",
+        "--test",
+        "p01_contract",
+        "-j1",
+        "--",
+        "--show-output",
+        "--test-threads=1"
+      ],
+      "source_receipt_root": "448b07f34954a041b7fb701453ccd4a0d717310e3ada6fdda7d24d6b975d148e",
+      "command_sha256": "5d7f5a219ba4e89b9b8c8b980b9aed65e09cdd861185dd2f3dc5b1b6e3a01da4",
+      "synced_files": 1253,
+      "all_synced_files_matched_before_python_only_logging_followup": true,
+      "rust_and_vector_input_sha256": {
+        "crates/franken-board-profile/src/build_contract.rs": "83a533dd332b73d7f0ed1061fec314673076efb5901f18b1718362f0bf6119b5",
+        "crates/franken-board-profile/tests/vectors/p01_contract_vectors.json": "1397bad8412916bbf3c340db8a8cd28a961394ac42dc286b78662f893f5da3a5",
+        "crates/franken-board-profile/tests/vectors/p01_workspace_contract.json": "3f351d1917bc4ab8649e4ce2cc9a87a2c4a9f9061b2beb7d80c9dd7387c880f1"
+      },
+      "custody": {
+        "exit": 0,
+        "state": "finished",
+        "ack": true,
+        "wrapper": false,
+        "owner": "absent",
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "staging_released": true,
+        "retired": true
+      }
+    },
+    {
+      "name": "p01-forbid-services-hz4",
+      "command": [
+        "rch",
+        "exec",
+        "--source-content-receipt",
+        "--worker",
+        "hz4",
+        "--",
+        "cargo",
+        "+nightly-2026-08-31",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "franken-speaker",
+        "services::",
+        "-j1",
+        "--",
+        "--show-output",
+        "--test-threads=1"
+      ],
+      "source_receipt_root": "22d9173e8fe7f7586dfb656e606434f6fc6d598185bf01cf8d58c0e2d3b3961e",
+      "command_sha256": "af2f28b64987fa3e3bf3de216a9f2c33a3736e0608b3166a1757c814df3eec27",
+      "synced_files": 1253,
+      "all_synced_files_matched_before_python_only_logging_followup": true,
+      "rust_and_vector_input_sha256": {
+        "crates/franken-board-profile/src/build_contract.rs": "83a533dd332b73d7f0ed1061fec314673076efb5901f18b1718362f0bf6119b5",
+        "crates/franken-board-profile/tests/vectors/p01_contract_vectors.json": "1397bad8412916bbf3c340db8a8cd28a961394ac42dc286b78662f893f5da3a5",
+        "crates/franken-board-profile/tests/vectors/p01_workspace_contract.json": "3f351d1917bc4ab8649e4ce2cc9a87a2c4a9f9061b2beb7d80c9dd7387c880f1"
+      },
+      "custody": {
+        "exit": 0,
+        "state": "finished",
+        "ack": true,
+        "wrapper": false,
+        "owner": "absent",
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "staging_released": true,
+        "retired": true
+      }
+    },
+    {
+      "name": "p01-forbid-clippy-ovhb",
+      "command": [
+        "rch",
+        "exec",
+        "--source-content-receipt",
+        "--worker",
+        "ovh-b",
+        "--",
+        "cargo",
+        "+nightly-2026-08-31",
+        "clippy",
+        "--locked",
+        "--offline",
+        "-p",
+        "franken-board-profile",
+        "-p",
+        "franken-speaker",
+        "--all-targets",
+        "-j1",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "source_receipt_root": "67d5f9ad1709fe9f012f8bf402c5aedcf12ddf271faa44774f2384ddbdd3e144",
+      "command_sha256": "6e356a04d083f72ca8c657e80eebada8432e755c7cb2b782fb71c38fb0d00ee7",
+      "synced_files": 1253,
+      "all_synced_files_matched_before_python_only_logging_followup": true,
+      "rust_and_vector_input_sha256": {
+        "crates/franken-board-profile/src/build_contract.rs": "83a533dd332b73d7f0ed1061fec314673076efb5901f18b1718362f0bf6119b5",
+        "crates/franken-board-profile/tests/vectors/p01_contract_vectors.json": "1397bad8412916bbf3c340db8a8cd28a961394ac42dc286b78662f893f5da3a5",
+        "crates/franken-board-profile/tests/vectors/p01_workspace_contract.json": "3f351d1917bc4ab8649e4ce2cc9a87a2c4a9f9061b2beb7d80c9dd7387c880f1"
+      },
+      "custody": {
+        "exit": 0,
+        "state": "finished",
+        "ack": true,
+        "wrapper": false,
+        "owner": "absent",
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "staging_released": true,
+        "retired": true
+      }
+    }
+  ],
+  "post_capture_change": "Only tests/p01/test_p01.py changed after the three captures, adding independent complete-exit mapping, explicit health gate, and missing-critical-event regression. All Rust and embedded-vector inputs above remained identical. Python230 was rerun on that final file."
+}

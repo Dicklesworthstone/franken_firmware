@@ -282,6 +282,14 @@
         "mips_be",
         "powerpc_be"
       ]
+    },
+    {
+      "name": "n05-repair-study",
+      "path": "toolchain/n05-repair-study",
+      "owner": "N05",
+      "reason": "Host-only N05 repair-comparison study with its own [workspace] table and lockfile, kept off the production lock; listed in the root exclude and never a product artifact. It names no device target and forbids unsafe code in its own lint table and in every crate root, which the tree check reads from the manifest and the source.",
+      "unsafe_policy": "forbid",
+      "targets": []
     }
   ],
   "pending_members": [],
@@ -584,6 +592,21 @@
     {
       "path": "tests/u02",
       "owner": "U02",
+      "kind": "fixture"
+    },
+    {
+      "path": "toolchain/n05-repair-study",
+      "owner": "N05",
+      "kind": "crate"
+    },
+    {
+      "path": "tests/n05",
+      "owner": "N05",
+      "kind": "fixture"
+    },
+    {
+      "path": "tests/n07",
+      "owner": "N07",
       "kind": "fixture"
     }
   ],

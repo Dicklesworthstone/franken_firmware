@@ -2688,6 +2688,124 @@ class ServiceTestsByNameTests(unittest.TestCase):
         self.assertEqual(handler(self.evidence(no_step, files=real))[0], run_cases.BLOCKED)
 
 
+class ExcludedHostStudyTests(unittest.TestCase):
+    """An excluded host-only study (no device target) declares `forbid`, and the tree check holds it to that: its own manifest lint
+    table and its own source, not a label. The scoped bootstrap probe (device targets) is left alone, and scoped unsafe is never an
+    excluded crate's policy. Each refusal is paired with its control: the unplanted crate."""
+
+    PATH = "tools/study"
+    ROOT_OK = "//! A host-only study.\n#![forbid(unsafe_code)]\n\npub fn f() -> u8 {\n    1\n}\n"
+    STUDY = {"name": "study", "path": PATH, "owner": "T9", "reason": "a synthetic host-only study", "unsafe_policy": "forbid", "targets": []}
+
+    def tree(self, tmp, lint="forbid", files=None, policy="forbid", targets=()):
+        """A synthetic workspace plus an excluded crate; returns (contract, facts). `files` replaces the crate's source files."""
+        spec = fixtures.base_spec()
+        spec["exclude"] = [self.PATH]
+        fixtures.materialize(tmp, spec)
+        manifest = ['[package]', 'name = "study"', 'version = "0.1.0"', 'edition = "2024"', ""]
+        if lint == "workspace":
+            manifest += ["[lints]", "workspace = true", ""]
+        elif lint != "none":
+            manifest += ["[lints.rust]", f'unsafe_code = "{lint}"', ""]
+        manifest += ["[workspace]", ""]
+        crate = os.path.join(tmp, self.PATH)
+        sources = {"src/lib.rs": self.ROOT_OK} if files is None else files
+        for rel, text in dict({"Cargo.toml": "\n".join(manifest)}, **sources).items():
+            path = os.path.join(crate, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+        contract = fixtures.mini_contract(spec)
+        contract["excluded"] = [dict(self.STUDY, unsafe_policy=policy, targets=list(targets))]
+        contract["assets"].append({"path": self.PATH, "owner": "T9", "kind": "crate"})
+        return contract, facts.extract(tmp)
+
+    def drift(self, **kw):
+        with tempfile.TemporaryDirectory() as tmp:
+            contract, got = self.tree(tmp, **kw)
+            return facts.compare(contract, got, root=tmp)
+
+    def test_a_study_that_forbids_unsafe_in_its_manifest_and_source_is_clean(self):
+        self.assertEqual(self.drift(), [])
+        self.assertEqual(self.drift(files={"src/lib.rs": self.ROOT_OK, "src/main.rs": self.ROOT_OK, "build.rs": self.ROOT_OK}), [])
+
+    def test_a_study_whose_manifest_does_not_forbid_unsafe_is_drift(self):
+        for lint in ("none", "deny", "warn", "allow", "workspace"):
+            with self.subTest(lint):
+                self.assertEqual(self.drift(lint=lint), [("unsafe_policy_drift", "study")])
+
+    def test_a_study_whose_source_does_not_hold_forbid_is_drift(self):
+        body = "pub fn f() -> u8 {\n    1\n}\n"
+        late = body + "#![forbid(unsafe_code)]\n"
+        for label, files in (
+                ("the library root lacks the attribute", {"src/lib.rs": body}),
+                ("the attribute is not leading", {"src/lib.rs": late}),
+                ("a binary root lacks it", {"src/lib.rs": self.ROOT_OK, "src/main.rs": "fn main() {}\n"}),
+                ("a build script lacks it", {"src/lib.rs": self.ROOT_OK, "build.rs": "fn main() {}\n"}),
+                ("no library or binary root", {"build.rs": self.ROOT_OK}),
+                ("an unsafe block in a module", {"src/lib.rs": self.ROOT_OK, "src/m.rs": "pub fn g() {\n    unsafe { h() }\n}\n"}),
+                ("an unsafe fn in an integration test", {"src/lib.rs": self.ROOT_OK, "tests/t.rs": "unsafe fn g() {}\n"}),
+                ("an unsafe impl in a nested directory", {"src/lib.rs": self.ROOT_OK, "src/a/b.rs": "unsafe impl Send for T {}\n"})):
+            with self.subTest(label):
+                self.assertEqual(self.drift(files=files), [("unsafe_policy_drift", "study")])
+
+    def test_words_comments_and_build_output_that_mention_unsafe_are_not_unsafe_code(self):
+        quiet = {"src/lib.rs": self.ROOT_OK,
+                 "src/m.rs": "// unsafe { documented, not used }\npub fn not_unsafe_at_all() -> bool {\n    true\n}\n",
+                 "target/debug/gen.rs": "pub fn g() {\n    unsafe { h() }\n}\n"}
+        self.assertEqual(self.drift(files=quiet), [])
+
+    def test_the_policy_label_follows_the_device_targets_and_scoped_unsafe_is_never_allowed(self):
+        with open(run_cases.CONTRACT_FILE, encoding="utf-8") as f:
+            real = json.load(f)
+        self.assertEqual(ref.validate(real), [], "control: the declared contract is valid")
+        for label, name, policy, targets, want in (
+                ("host study, forbid", "n05-repair-study", "forbid", [], []),
+                ("host study, bootstrap_probe", "n05-repair-study", "bootstrap_probe", [], ["n05-repair-study"]),
+                ("host study, scoped unsafe", "n05-repair-study", "deny_with_scoped_allow", [], ["n05-repair-study"]),
+                ("host study with a device target, forbid", "n05-repair-study", "forbid", ["mips_be"], ["n05-repair-study"]),
+                ("startup probe, bootstrap_probe", "ffw-hello-init", "bootstrap_probe", ["mips_be", "powerpc_be"], []),
+                ("startup probe, forbid", "ffw-hello-init", "forbid", ["mips_be", "powerpc_be"], ["ffw-hello-init"]),
+                ("startup probe, scoped unsafe", "ffw-hello-init", "deny_with_scoped_allow", ["mips_be", "powerpc_be"], ["ffw-hello-init"])):
+            with self.subTest(label):
+                contract = copy.deepcopy(real)
+                row = next(e for e in contract["excluded"] if e["name"] == name)
+                row["unsafe_policy"], row["targets"] = policy, targets
+                got = sorted(n for code, n in ref.validate(contract) if code == "unsafe_policy_not_permitted")
+                self.assertEqual(got, want)
+
+    def test_the_bootstrap_probe_is_not_held_to_a_lint_it_does_not_have(self):
+        probe_files = {"src/main.rs": "fn main() { unsafe { raw() } }\n"}
+        self.assertEqual(self.drift(lint="none", files=probe_files, policy="bootstrap_probe", targets=["mips_be"]), [])
+
+    def test_the_real_n05_study_is_declared_forbid_and_its_manifest_and_source_enforce_it(self):
+        rel = "toolchain/n05-repair-study"
+        with open(run_cases.CONTRACT_FILE, encoding="utf-8") as f:
+            declared = {e["path"]: e for e in json.load(f)["excluded"]}
+        self.assertEqual((declared[rel]["unsafe_policy"], declared[rel]["targets"]), ("forbid", []))
+        have = {e["path"]: e for e in facts.extract(run_cases.REPO)["excluded"]}
+        self.assertEqual(have[rel]["lints"], "forbid")
+        self.assertTrue(facts.source_forbids_unsafe(run_cases.REPO, rel))
+        self.assertEqual(declared["toolchain/src/ffw-hello-init"]["unsafe_policy"], "bootstrap_probe")
+        # the same checks refuse a copy of the real crate once the plant is in: a downgraded lint, a dropped attribute, one unsafe block
+        with tempfile.TemporaryDirectory() as tmp:
+            copy = os.path.join(tmp, rel)
+            shutil.copytree(os.path.join(run_cases.REPO, rel), copy, ignore=shutil.ignore_patterns("target"))
+            self.assertTrue(facts.source_forbids_unsafe(tmp, rel), "control: the unplanted copy holds")
+            with open(os.path.join(copy, "src", "model.rs"), "a", encoding="utf-8") as f:
+                f.write("\npub fn planted() {\n    unsafe { core::hint::unreachable_unchecked() }\n}\n")
+            self.assertFalse(facts.source_forbids_unsafe(tmp, rel))
+        with tempfile.TemporaryDirectory() as tmp:
+            copy = os.path.join(tmp, rel)
+            shutil.copytree(os.path.join(run_cases.REPO, rel), copy, ignore=shutil.ignore_patterns("target"))
+            with open(os.path.join(copy, "src", "lib.rs"), encoding="utf-8") as f:
+                lib = f.read()
+            self.assertIn(facts.FORBID_ATTR, lib)
+            with open(os.path.join(copy, "src", "lib.rs"), "w", encoding="utf-8") as f:
+                f.write(lib.replace(facts.FORBID_ATTR, ""))
+            self.assertFalse(facts.source_forbids_unsafe(tmp, rel))
+
+
 class SoakAndDiagnosticsTests(unittest.TestCase):
     """The two original clauses the runner had not wired: CI selects smoke/full/soak explicitly (soak is NOT RUN for this one-shot offline
     contract, with its reason, and is never a pass), and every case the runner executes is bracketed by critical events in the shared Q00
@@ -2794,15 +2912,77 @@ class SoakAndDiagnosticsTests(unittest.TestCase):
         self.assertEqual((receipt["outcome"], receipt["qualified"]), ("pass", False), "a single replayed case is never a qualification")
         self.assertNotIn(tmp, json.dumps(receipt), "the receipt names the log by file name and digest, not by path")
 
-    def test_a_full_run_logs_two_critical_events_per_case_and_one_summary(self):
+    def full_smoke_run(self, *extra):
+        """One run of the smoke tier with a receipts directory: (exit code, stdout, the receipt it wrote)."""
         with tempfile.TemporaryDirectory() as tmp:
-            code, out, _err = self.run_main("--tier", "smoke", "--receipts", tmp)
+            code, out, _err = self.run_main("--tier", "smoke", *extra, "--receipts", tmp)
             receipt_name, = [n for n in os.listdir(tmp) if n.startswith("p01-cases-")]
             with open(os.path.join(tmp, receipt_name)) as f:
                 receipt = json.load(f)
-        self.assertEqual(code, 3 if receipt["totals"]["blocked"] else 0, out[-300:])
+        return code, out, receipt
+
+    @staticmethod
+    def exit_with_complete_evidence(totals):
+        """The exit code of a run whose log is COMPLETE, written out from the runner's contract (a failed case is 1, else a blocked
+        case is 3, else 0) and not read back from `judge_run`, so the test does not grade the runner with the runner."""
+        return 1 if totals["failed"] else (3 if totals["blocked"] else 0)
+
+    def test_a_full_run_logs_two_critical_events_per_case_and_one_summary(self):
+        # This test is about the log's accounting. Its exit-code line used to be `3 if blocked else 0`, which has no `failed` branch and so
+        # also asserted that no case anywhere in the repository fails; when two real cases failed (contract drift, a stale E06 audit) the
+        # accounting test went red with a log that was complete (events = 2 * total + 1). The same assertion is now the whole mapping,
+        # and "no case failed" is its own test below, so the repository's health is still gated and is named, not inferred.
+        code, out, receipt = self.full_smoke_run()
+        self.assertEqual(code, self.exit_with_complete_evidence(receipt["totals"]), out[-300:])
         self.assertEqual(receipt["evidence"]["log"]["events"], 2 * receipt["totals"]["total"] + 1)
         self.assertTrue(receipt["evidence"]["complete"])
+
+    def test_the_full_smoke_tier_has_no_failed_case(self):
+        _code, _out, receipt = self.full_smoke_run()
+        failed = [r["id"] for r in receipt["results"] if r["status"] == "fail"]
+        self.assertEqual(failed, [], "the declared repository fails these cases; each is its own lane's drift, not a logging fault")
+        self.assertEqual(receipt["totals"]["failed"], 0)
+
+    def test_a_critical_event_the_sink_never_saw_makes_the_run_incomplete_and_changes_no_verdict(self):
+        # Plant: one case's `case.begin` (or `case.end`) is counted by the runner and never reaches the sink, so the sink cannot know it
+        # is missing; only the runner's own expectation (2 per case + 1) can. Control: the same run unplanted is complete.
+        def lose(method, nth):
+            real = getattr(case_log.CaseLog, method)
+            calls = []
+
+            def lossy(log, case, *args, **kw):
+                calls.append(case["id"])
+                if len(calls) == nth:
+                    if method == "begin":
+                        log.cases += 1  # the runner counted this case; the event never left it
+                    return None
+                return real(log, case, *args, **kw)
+            return mock.patch.object(case_log.CaseLog, method, lossy)
+
+        _code, _out, control = self.full_smoke_run()
+        total = control["totals"]["total"]
+        self.assertTrue(control["evidence"]["complete"], "control: the unplanted run is complete")
+        self.assertEqual(control["evidence"]["log"]["events"], 2 * total + 1)
+        verdicts = [(r["id"], r["status"]) for r in control["results"]]
+        for method in ("begin", "end"):
+            with self.subTest(method), lose(method, 3):
+                code, out, receipt = self.full_smoke_run()
+            evidence = receipt["evidence"]
+            self.assertFalse(evidence["complete"], out[-300:])
+            self.assertIn(f"critical_event_count:{2 * total}_of_{2 * total + 1}", evidence["reasons"])
+            self.assertEqual(evidence["log"]["events"], 2 * total, "one critical event short of 2 per case + 1")
+            self.assertEqual(code, 1)
+            self.assertFalse(receipt["qualified"])
+            self.assertEqual([(r["id"], r["status"]) for r in receipt["results"]], verdicts, "the log costs evidence, not a verdict")
+        # The same plant in a single-case run, where the unplanted exit code is 0 whatever the rest of the repository does.
+        _c, _o, one = self.full_smoke_run("--case", "P01-V-001")
+        self.assertEqual((one["evidence"]["complete"], one["evidence"]["log"]["events"]), (True, 3), "control: one case, three events")
+        for method in ("begin", "end"):
+            with self.subTest("single case, " + method), lose(method, 1):
+                code, _out, receipt = self.full_smoke_run("--case", "P01-V-001")
+            self.assertEqual((code, receipt["evidence"]["complete"], receipt["evidence"]["log"]["events"]), (1, False, 2))
+            self.assertIn("critical_event_count:2_of_3", receipt["evidence"]["reasons"])
+            self.assertEqual(receipt["results"][0]["status"], "pass", "the case still passed")
 
     def test_a_log_that_loses_evidence_does_not_change_a_verdict_but_the_run_is_not_qualified(self):
         diag = case_log.load(run_cases.REPO)

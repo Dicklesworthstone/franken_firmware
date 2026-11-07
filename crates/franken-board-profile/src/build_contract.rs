@@ -229,11 +229,12 @@ pub enum CrateRole {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UnsafePolicy {
-    /// `unsafe_code = "forbid"` through the workspace lint table.
+    /// `unsafe_code = "forbid"` through the workspace lint table; for an excluded host-only study (no device
+    /// target), through the crate's own `[lints.rust]` table.
     Forbid,
     /// `unsafe_code = "deny"` with a scoped, commented allow. Test and host tools only.
     DenyWithScopedAllow,
-    /// A freestanding bootstrap probe outside the workspace. Never a product artifact.
+    /// A freestanding bootstrap probe outside the workspace, built for device targets. Never a product artifact.
     BootstrapProbe,
 }
 
@@ -1012,12 +1013,22 @@ impl WorkspaceContract {
                 ));
             }
         }
+        // An excluded crate is one of two things, and its device targets say which. A freestanding startup
+        // probe is built for device targets and is the only excluded crate that may be a bootstrap probe.
+        // A host-only study names no device target and holds the same bar as a member, `forbid`, in its own
+        // lint table (the tree check reads that table and the crate's source; see `tests/p01/facts.py`).
+        // Scoped unsafe is never an excluded crate's policy.
         for spec in &self.excluded {
-            if spec.unsafe_policy != UnsafePolicy::BootstrapProbe {
+            let allowed = match spec.unsafe_policy {
+                UnsafePolicy::BootstrapProbe => !spec.targets.is_empty(),
+                UnsafePolicy::Forbid => spec.targets.is_empty(),
+                UnsafePolicy::DenyWithScopedAllow => false,
+            };
+            if !allowed {
                 errs.push(ContractError::new(
                     code::UNSAFE_POLICY_NOT_PERMITTED,
                     spec.name.as_str(),
-                    "an excluded crate must declare the bootstrap-probe policy",
+                    "device-target probes are bootstrap_probe; host-only studies are forbid",
                 ));
             }
         }
