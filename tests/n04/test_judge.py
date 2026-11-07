@@ -377,6 +377,16 @@ class JudgeTests(unittest.TestCase):
                 self.assertEqual(results["N04-CAPACITY"].status, "fail", label)
         self.assertEqual(judge(build_log(GOOD))["N04-CAPACITY"].status, "pass")
 
+    def test_the_route_hint_case_passes_only_when_every_one_of_its_tests_ran_and_passed(self):
+        hint = "n04_untrusted_route_hint_cannot_authorize_forged_header_or_payload"
+        alloc = "n04_untrusted_route_hint_is_allocation_free_for_permitted_and_refused_wire"
+        self.assertEqual(judge(build_log(GOOD))["N04-ROUTE-HINT"].status, "pass")
+        for name in (hint, alloc):
+            with self.subTest(name):
+                self.assertEqual(judge(build_log(GOOD, failed_tests=(name,)))["N04-ROUTE-HINT"].status, "fail")
+                self.assertEqual(judge(build_log(GOOD, skip_tests=(name,)))["N04-ROUTE-HINT"].status, "blocked")
+                self.assertEqual(judge(build_log(GOOD, ignored_tests=(name,)))["N04-ROUTE-HINT"].status, "blocked")
+
     def test_the_probe_binary_is_attributed_by_its_own_header_in_both_layouts(self):
         for layout in ("classic", "rch"):
             with self.subTest(layout=layout):

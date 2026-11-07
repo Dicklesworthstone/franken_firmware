@@ -83,6 +83,7 @@ RUST_SOURCES = [("crates/franken-stream/src/playout/tests.rs", "franken_stream",
                 ("crates/franken-stream/src/playout/log/tests.rs", "franken_stream", "playout::log::tests::"),
                 ("crates/franken-stream/src/playout/group_clock_tests.rs", "franken_stream",
                  "playout::group_clock_tests::"),
+                ("crates/franken-stream/src/lib.rs", "franken_stream", "tests::"),
                 ("crates/franken-alloc-probe/tests/playout_no_alloc.rs", "playout_no_alloc", "")]
 TEST_FN = re.compile(r"#\[test\]\s*((?:#\[[^\]]*\]\s*)*)fn\s+(n04_[A-Za-z0-9_]+)")
 WORLD_MACRO = re.compile(r"world_test!\(\s*(n04_[a-z0-9_]+)\s*,")
@@ -240,7 +241,7 @@ def registry() -> List[dict]:
               T("n04_properties_hold_on_every_world", "n04_counters_account_for_every_packet_and_every_decision",
                 "n04_every_world_in_the_vectors_has_a_test"),
               ["n04-properties", "n04-accounting-w16-seeded-music", "n04-accounting-w17-seeded-realtime"]),
-    ] + log_cases() + edge_cases() + capacity_cases()
+    ] + log_cases() + edge_cases() + capacity_cases() + ingress_cases()
 
 
 def edge_cases() -> List[dict]:
@@ -278,6 +279,26 @@ def capacity_cases() -> List[dict]:
                  (ALLOC_STEM, "n04_playout_log_replacement_survives_an_allocator_failure_with_its_records"),
                  (ALLOC_STEM, "n04_log_config_labels_fault_and_clone_are_inline_even_at_the_label_limit")],
               ["n04-capacity"]),
+    ]
+
+
+def ingress_cases() -> List[dict]:
+    """The arrival consumer's routing read (N01 ``untrusted_route_hint``). The speaker's composition routes a raw datagram by this hint to a
+    generation that already exists and authenticates it through that generation's receiver; these tests are the hint's own, in N01's crate."""
+    return [
+        _case("N04-ROUTE-HINT", "AC-CAPS", "smoke",
+              "the routing hint reads the stream id, epoch and first frame from a datagram's own header in network order and admits nothing; a forged "
+              "header, payload or tag keeps the shape the hint reads but still fails the receiver's MAC before any state changes; a re-MACed datagram "
+              "with invalid authenticated fields is read as a hint and refused by the receiver's semantic checks without consuming the genuine "
+              "sequence; truncated, oversized, wrong-magic and wrong-version wire is refused with a typed error, each beside a valid control; the "
+              "read allocates nothing on permitted or refused wire (counting allocator, sensor shown live) and the receiver still admits the "
+              "packet afterwards",
+              [(C, "tests::" + name) for name in (
+                  "n04_untrusted_route_hint_reads_network_order_without_admitting_a_packet",
+                  "n04_untrusted_route_hint_cannot_authorize_forged_header_or_payload",
+                  "n04_untrusted_route_hint_does_not_validate_authenticated_field_semantics",
+                  "n04_untrusted_route_hint_rejects_truncated_oversized_and_malformed_wire")] + [(ALLOC_STEM, "n04_untrusted_route_hint_is_allocation_free_for_permitted_and_refused_wire")],
+              []),
     ]
 
 

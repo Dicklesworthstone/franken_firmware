@@ -1275,7 +1275,9 @@ impl VirtualSpeakerNode {
     /// to it, a new sender, and a new playout engine bound at the cutover. The old sender is kept: a replaced adapter's
     /// datagrams are what a planted `StaleStreamDatagram` sends. A member with no stream has nothing to switch.
     /// This member's stream after a source change, in one step: [`Self::prepare_switch`] and, only if it succeeded,
-    /// [`Self::commit_switch`]. A refusal leaves the member exactly as it was.
+    /// [`Self::commit_switch`]. A refusal leaves the member exactly as it was. Unit tests only: the campaign prepares every member first and
+    /// commits only if all were admitted.
+    #[cfg(test)]
     fn switch_stream(&mut self, source_epoch: u64, cutover_block: u64) -> Result<(), String> {
         self.prepare_switch(source_epoch, cutover_block)
             .map_err(|e| format!("member {}: {e}", self.member_id))?;
@@ -1305,7 +1307,13 @@ impl VirtualSpeakerNode {
             .map_err(|_| SwitchRefusal::StreamId)?;
         let stream = self
             .playout
-            .prepare_stream(id.get(), epoch, cutover_block, &self.memory_budget)
+            .prepare_stream(
+                id.get(),
+                epoch,
+                cutover_block,
+                &self.memory_budget,
+                self.clock.epoch(),
+            )
             .map_err(SwitchRefusal::Open)?;
         self.pending_switch = Some(PreparedSwitch {
             id,
@@ -1329,7 +1337,10 @@ impl VirtualSpeakerNode {
         else {
             return;
         };
-        self.playout.commit_stream(id.get(), stream);
+        // The generation being replaced keeps a copy of the receiver as it was BEFORE the rebind: its datagrams still in flight are
+        // authenticated by that copy when they arrive (N01 holds one stream at a time, so the node's own receiver cannot do both).
+        let retained = self.receiver.clone();
+        self.playout.commit_stream(id.get(), stream, retained);
         if let Some(receiver) = self.receiver.as_mut() {
             receiver.bind_stream(id, epoch);
         }
@@ -1478,6 +1489,7 @@ impl VirtualSpeakerNode {
                 initial_epoch,
                 Self::block_pts_group_ns(0),
                 &budget,
+                clock.epoch(),
             )?
         } else {
             NodePlayout::unbound()
@@ -2366,7 +2378,13 @@ fn run_campaign_scenario(
             let played = if streaming {
                 Some(
                     node.playout
-                        .decide_block(blk_idx, &timeline, &node.clock, &node.sim_clock)
+                        .decide_block(
+                            blk_idx,
+                            &timeline,
+                            &node.clock,
+                            &node.sim_clock,
+                            node.receiver.as_mut(),
+                        )
                         .map_err(|e| format!("member {member_id}: {e}"))?,
                 )
             } else {
@@ -4053,6 +4071,8 @@ mod tests {
         stale_stream: Option<u64>,
         /// The replaced adapter kept publishing after the cutover, and the gate refused it with this code.
         replaced_publishes: Option<&'static str>,
+        /// The instant the source change commits (and the node's receiver is rebound): old-stream datagrams arriving after it cross the commit.
+        commit_ns: Option<u64>,
     }
 
     /// What one member's playout must come to, and the legacy counters that follow from it.
@@ -4203,11 +4223,32 @@ mod tests {
         let (mut authentic, mut concealed_legacy) = (0, 0);
         let mut source_blocks = BTreeMap::new();
         let (mut highest, mut next) = (None, 0);
+        // The blocks whose datagram N01 has authenticated at arrival so far (a replay window per generation, one datagram per block).
+        let mut seen: BTreeSet<u64> = BTreeSet::new();
         for j in 0..total {
             let usable = outage.is_none_or(|(from, until)| !(from..until).contains(&j));
             while next < arrivals.len() && arrivals[next].0 <= decision_ns(j) {
-                let (_, blk, _, previous_epoch) = arrivals[next];
+                let (arrival, blk, copy, previous_epoch) = arrivals[next];
                 next += 1;
+                // A raw datagram is authenticated by its generation's receiver when it arrives, unless the generation is retired (its
+                // receiver is gone: refused, and the arrival ledger records nothing from unauthenticated data). The second datagram of a
+                // block is N01's replay refusal and never reaches the engine. The planted late block (both copies) and the planted
+                // previous-epoch datagram were authenticated when they were sent, so they are not authenticated again.
+                let admitted_at_send = previous_epoch || plant.late == Some(blk);
+                if !admitted_at_send {
+                    if engines[engine_of(blk)].retired() {
+                        report.retired_stream_refused += 1;
+                        continue;
+                    }
+                    if !seen.insert(blk) {
+                        report.replay_refused_at_receiver += 1;
+                        continue;
+                    }
+                    if engine_of(blk) == 0 && plant.commit_ns.is_some_and(|commit| arrival > commit)
+                    {
+                        report.accepted_by_draining_generation += 1;
+                    }
+                }
                 if highest.is_some_and(|h| blk < h) {
                     report.out_of_order_arrivals += 1;
                 }
@@ -4584,6 +4625,10 @@ mod tests {
     fn switch_plant(r: u64) -> Plant {
         Plant {
             cutover: Some(cutover_for(r)),
+            commit_ns: Some(
+                CAMPAIGN_ORIGIN_NS + block_offset_ns(r - 1) + PLAYOUT_HORIZON_NS
+                    - (1_500_000 + 2_000_000),
+            ),
             ..Plant::default()
         }
     }
@@ -5593,6 +5638,34 @@ mod tests {
             funded.source.refused.get(EXPECTED_CAPACITY_REFUSAL_CODE),
             None
         );
+        // The funded switch drained the old stream's tail through the retained receivers. Per member, the old-stream datagrams that were
+        // still in flight at the commit (replayed independently from the seeded schedule: SplitMix64, three draws per block, seed + 101
+        // per member, arrival = send + jitter; `.ffw-n04-wire-arrival-*/inflight.py`, run by hand, not by this test) were authenticated
+        // by the old generation's copy of the receiver after the node's receiver had moved to the new stream.
+        let draining = BTreeMap::from([
+            ("spk-bedroom-s1", 4),
+            ("spk-den-s3", 7),
+            ("spk-kitchen-s12", 5),
+            ("spk-living-sub", 6),
+            ("spk-office-s5", 5),
+        ]);
+        for (id, stats) in &funded.members {
+            let playout = &stats.playout;
+            assert_eq!(
+                playout.accepted_by_draining_generation,
+                draining[id.as_str()],
+                "{id}"
+            );
+            assert_eq!(
+                (
+                    playout.wrong_stream_refused_at_receiver,
+                    playout.refused_at_receiver,
+                    playout.outside_generation_refused
+                ),
+                (0, 0, 0),
+                "{id}"
+            );
+        }
         assert!(
             funded
                 .members

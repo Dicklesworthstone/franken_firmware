@@ -9,11 +9,19 @@
 //! * **Time order.** The engine decides block `k` about 496 ms after it was sent (`pts - work - lead`), so the sender runs
 //!   ~93 blocks ahead of the renderer. [`NodePlayout::send_until`] is called from the render loop and sends, in block order,
 //!   every block whose send instant is not later than the instant the next block is decided. The seeded network schedule,
-//!   the N01 sender and `StreamReceiver::accept` are still called exactly once per block, in block order, with the same
-//!   arguments as before, so the fault schedule and the N01 behaviour do not change.
-//! * **Arrivals.** An authenticated packet is staged at its arrival instant and handed to the engine in arrival order
-//!   ([`NodePlayout::deliver_until`]), so jitter really reorders blocks, and a duplicate the schedule produces really
-//!   arrives twice (the schedule produced them all along; the legacy path ignored them).
+//!   the N01 sender are still called exactly once per block, in block order, with the same arguments as before, so the fault
+//!   schedule does not change; `StreamReceiver::accept` is called when the datagram ARRIVES (next bullet), not when it is sent.
+//! * **Arrivals.** The RAW datagram is staged at its arrival instant ([`InFlight::Raw`]); when it arrives the N01 receiver of
+//!   the generation its header names authenticates it ([`NodePlayout::deliver_until`]) and only then is it handed to the engine, in arrival
+//!   order, so jitter really reorders blocks. The datagram is authenticated on a TRIAL copy of that receiver, which replaces it only when N01
+//!   refused the datagram or the generation permits the authenticated block: an authenticated datagram of another interval (the replaced
+//!   adapter's post-cutover block) never moves the window of the tail the generation still owes. The copy is valid only inside the trusted
+//!   group epoch (`GroupClock::epoch`) under which its generation was prepared: when that moves, EVERY stale generation is FENCED
+//!   (copy dropped, queue cleared, later datagrams refused by name), including the newest or initial generation with no copy.
+//!   A later source commit cannot relabel queued epoch-1 data as authorized by epoch 2. A duplicate the schedule produces really arrives twice, and N01's replay window refuses
+//!   the second copy (`replay_refused_at_receiver`): it is not an engine duplicate and is not counted as one. A datagram is
+//!   routed by the hint `franken_stream::untrusted_route_hint` reads from its own header (stream id, epoch, start frame): attacker-controlled,
+//!   allocation-free, never an admission and never a replay-window update. The receiver it selects still checks MAC, identity, epoch and replay.
 //! * **Views.** Every engine call carries a `ClockView` built from the node's own `GroupClock` (`group_ns`,
 //!   `report().uncertainty_ns`, usable while Locked or Holdover) read at the node's own simulated local time, never from
 //!   the simulation's true time. The engine refuses a view that goes backwards, and a refreshed clock fit can step a
@@ -26,9 +34,14 @@
 //!
 //! * **Streams.** A source change is a new stream (N01 §4: a fresh stream id, the receiver told to rebind), and the N04
 //!   engine holds exactly one stream (`begin_stream` clears its queue). So each stream generation has its own engine
-//!   ([`NodePlayout::open_stream`]): the old one drains the blocks below the cutover frame, the new one is bound when the
+//!   ([`NodePlayout::prepare_stream`] then [`NodePlayout::commit_stream`]): the old one drains the blocks below the cutover frame, the new one is bound when the
 //!   change is admitted and already holds the new stream's blocks, which arrive about 490 ms before the old tail has
-//!   drained. A packet goes to the engine of its own stream; one for a stream whose last block is decided is refused.
+//!   drained. A packet goes to the engine of its own stream; one for a stream whose last block is decided is refused. A source
+//!   commit rebinds the node's receiver to the new stream (N01 holds one stream at a time), so the generation being replaced keeps a
+//!   COPY of the receiver as it was ([`StreamEngine`]`.ingress`) for as long as its below-cutover tail is owed: old datagrams still
+//!   in flight at the commit are authenticated by it when they arrive, and an authenticated block outside the generation's own
+//!   interval (at or after its cutover, or before its first block) is refused (`outside_generation_refused`). The copy is dropped
+//!   when the generation retires, and is charged to the member's ledger line while it exists.
 //! * **The publish gate.** Every block the pump sends is first passed through the source arbiter's gate ([`Publish`]), so
 //!   a replaced adapter that keeps offering its blocks is refused and its audio never reaches a member.
 //! * **Planted faults.** A [`LinkFault`] acts on the packets of one block position (arrives late, swaps arrival order
@@ -50,6 +63,7 @@ use franken_stream::playout::{
 };
 use franken_stream::{
     AuthenticatedStreamPacket, OutboundFrame, StreamError, StreamReceiver, StreamSender,
+    untrusted_route_hint,
 };
 use franken_test_support::NetworkSchedule;
 use serde::{Deserialize, Serialize};
@@ -177,6 +191,29 @@ pub struct PlayoutMemberReport {
     pub retired_stream_refused: u64,
     /// Planted datagrams of the stream a source change replaced that the member's own receiver refused as `WRONG_STREAM`.
     pub wrong_stream_refused_at_receiver: u64,
+    /// Datagrams N01's replay window refused when they ARRIVED (the second copy of a duplicate): a refusal of the receiver, never an
+    /// engine duplicate.
+    #[serde(default)]
+    pub replay_refused_at_receiver: u64,
+    /// Datagrams refused at ingress, before any engine, for any reason other than a replay: a header that cannot be read, a stream this
+    /// member never opened, or a refusal by the selected receiver (a failed MAC, a malformed field, a wrong stream or epoch): damaged or
+    /// misrouted data, ordinary network behaviour that nothing in the nominal campaign produces.
+    #[serde(default)]
+    pub refused_at_receiver: u64,
+    /// Datagrams a generation's receiver authenticated whose block lies outside that generation's own interval: the replaced
+    /// adapter's blocks at or after the cutover, which are never played.
+    #[serde(default)]
+    pub outside_generation_refused: u64,
+    /// Datagrams authenticated at arrival by the COPY of the receiver a draining generation kept across a source commit: the old
+    /// stream's tail that was still in flight when the node's receiver was rebound.
+    #[serde(default)]
+    pub accepted_by_draining_generation: u64,
+    /// Generations a trusted group-epoch change invalidated (receiver copy dropped, queue cleared).
+    #[serde(default)]
+    pub group_epoch_fenced_generations: u64,
+    /// Datagrams refused because their generation had been fenced by a trusted group-epoch change.
+    #[serde(default)]
+    pub group_epoch_fenced_refused: u64,
     /// Blocks the replaced adapter offered after its replacement that the arbiter's publish gate refused, by the gate's
     /// stable refusal code.
     pub replaced_publishes_refused: BTreeMap<String, u64>,
@@ -234,12 +271,32 @@ pub(crate) struct Publish<'a> {
     pub gate: &'a dyn Fn(bool, u64) -> Result<(), String>,
 }
 
-/// One block as the link carries it: when the seeded schedule delivers it (and its duplicate), and the packet the member's
-/// receiver authenticated.
+/// One block as the link carries it: when the seeded schedule delivers it (and its duplicate), and what travels.
 struct Sent {
     deliver_rel_ns: u64,
     duplicate_rel_ns: Option<u64>,
-    packet: AuthenticatedStreamPacket,
+    packet: InFlight,
+}
+
+/// What is in flight to a member's playout.
+#[derive(Clone)]
+enum InFlight {
+    /// The datagram as it was sent. When it ARRIVES, the routing hint read from its own header selects the generation whose receiver
+    /// authenticates it; that receiver still verifies the MAC, the stream identity, the epoch and the replay window. `start_frame` is
+    /// the staging key's block only (the sender's own value, or the hint's for a datagram staged by hand, 0 if its header cannot be read).
+    Raw { start_frame: u64, wire: Vec<u8> },
+    /// A packet some receiver already authenticated: a planted defect that models a hole in the first line of defence, or a unit
+    /// test staging a packet by hand.
+    Admitted(AuthenticatedStreamPacket),
+}
+
+impl InFlight {
+    fn start_frame(&self) -> u64 {
+        match self {
+            Self::Raw { start_frame, .. } => *start_frame,
+            Self::Admitted(packet) => packet.start_frame,
+        }
+    }
 }
 
 /// One stream generation of a member's playout: its id on the wire and its own N04 engine (see the module documentation).
@@ -250,6 +307,15 @@ struct StreamEngine {
     first_block: u64,
     /// The first block of the next stream: this one decides nothing at or after it. `None` while it is the latest.
     until_block: Option<u64>,
+    /// The copy of the node's receiver this generation keeps while its below-cutover tail is owed: the receiver as it was when the next
+    /// stream was committed. `None` for the latest generation (the node's own receiver serves it) and once this one is retired.
+    ingress: Option<StreamReceiver>,
+    /// The trusted group epoch when this generation was admitted. Independent of source-owner revisions and never refreshed by
+    /// a later source commit: the newest generation and queued packets are bound just as strictly as a draining receiver copy.
+    admitted_group_epoch: u64,
+    /// A trusted group-epoch change invalidated this generation: its copy was dropped and its queue cleared, and nothing
+    /// routed to it is accepted any more.
+    fenced: bool,
 }
 
 impl StreamEngine {
@@ -273,8 +339,8 @@ pub(crate) struct NodePlayout {
     /// Group time at which block 0 is presented: every later stream continues this timeline.
     origin_group_ns: u64,
     mono: MonotoneReading,
-    /// Authenticated packets that have been sent and not yet arrived: (arrival true time, block, copy) -> packet.
-    in_flight: BTreeMap<(u64, u64, u8), AuthenticatedStreamPacket>,
+    /// Datagrams that have been sent and not yet arrived: (arrival true time, block, copy) -> what travels.
+    in_flight: BTreeMap<(u64, u64, u8), InFlight>,
     /// The next block this member's sender will send.
     next_send: u64,
     /// Digest of the payload sent for each block that has not been decided yet.
@@ -287,6 +353,12 @@ pub(crate) struct NodePlayout {
     stale_refused_at_receiver: u64,
     retired_stream_refused: u64,
     wrong_stream_refused_at_receiver: u64,
+    replay_refused_at_receiver: u64,
+    refused_at_receiver: u64,
+    outside_generation_refused: u64,
+    accepted_by_draining_generation: u64,
+    group_epoch_fenced_generations: u64,
+    group_epoch_fenced_refused: u64,
     replaced_refusals: BTreeMap<String, u64>,
 }
 
@@ -339,6 +411,19 @@ impl core::fmt::Display for OpenRefusal {
 pub(crate) struct PreparedStream {
     engine: PlayoutEngine,
     cutover_block: u64,
+    /// Captured from the trusted clock at preparation, never refreshed when the candidate is committed.
+    group_epoch: u64,
+}
+
+/// Bytes of the copy of a receiver that a draining generation keeps (the `StreamReceiver` struct: its key, ids, replay window,
+/// counters and profile are all inline). A source commit charges one, beside the engines, for the generation it replaces.
+///
+/// This is a logical count of retained receiver VALUES in the host simulation, not a measurement of process memory: the
+/// `Option<StreamReceiver>` slot is inline in every generation entry (Some or None) and the generation list is simulation bookkeeping
+/// ([`NodePlayout::resident_bytes`]), so dropping a copy releases its ledger charge but shrinks no allocation. Each arriving datagram's
+/// trial copy ([`NodePlayout::deliver_until`]) is one temporary stack value of the same size, bounded to one at a time and not charged.
+pub(crate) fn retained_receiver_bytes() -> u64 {
+    u64::try_from(core::mem::size_of::<StreamReceiver>()).unwrap_or(u64::MAX)
 }
 
 /// A fresh N04 engine bound to `stream_epoch`, with `anchor_block` presented at `anchor_group_ns` on the group clock, admitted
@@ -384,6 +469,12 @@ impl NodePlayout {
             stale_refused_at_receiver: 0,
             retired_stream_refused: 0,
             wrong_stream_refused_at_receiver: 0,
+            replay_refused_at_receiver: 0,
+            refused_at_receiver: 0,
+            outside_generation_refused: 0,
+            accepted_by_draining_generation: 0,
+            group_epoch_fenced_generations: 0,
+            group_epoch_fenced_refused: 0,
             replaced_refusals: BTreeMap::new(),
         }
     }
@@ -395,6 +486,7 @@ impl NodePlayout {
         stream_epoch: u64,
         anchor_group_ns: u64,
         ledger: &MemoryBudgetLedger,
+        group_epoch: u64,
     ) -> Result<Self, String> {
         let engine =
             new_engine(stream_epoch, 0, anchor_group_ns, ledger, 0).map_err(|e| e.to_string())?;
@@ -404,6 +496,9 @@ impl NodePlayout {
                 engine,
                 first_block: 0,
                 until_block: None,
+                ingress: None,
+                admitted_group_epoch: group_epoch,
+                fenced: false,
             }],
             origin_group_ns: anchor_group_ns,
             ..Self::unbound()
@@ -415,11 +510,18 @@ impl NodePlayout {
     pub(crate) fn resident_bytes(&self) -> u64 {
         self.engines
             .iter()
-            .map(|e| engine_resident_bytes(&e.engine))
+            .map(|e| {
+                engine_resident_bytes(&e.engine).saturating_add(if e.ingress.is_some() {
+                    retained_receiver_bytes()
+                } else {
+                    0
+                })
+            })
             .fold(0, u64::saturating_add)
     }
 
     /// How many stream generations are held.
+    #[cfg(test)]
     pub(crate) fn stream_count(&self) -> usize {
         self.engines.len()
     }
@@ -432,7 +534,9 @@ impl NodePlayout {
     /// A source change was admitted: open stream `stream_id` at `cutover_block`. Its own engine is bound now, so it takes the
     /// new stream's packets as they arrive; the previous stream's engine keeps deciding the blocks below the cutover (drain
     /// to a common future cutover) and is retired once it has. The new stream continues the group's timeline. This is
-    /// [`Self::prepare_stream`] followed by [`Self::commit_stream`]: a refusal changes nothing.
+    /// [`Self::prepare_stream`] followed by [`Self::commit_stream`]: a refusal changes nothing. Unit tests only: the harness prepares and
+    /// commits separately, because the commit also hands the generation a copy of the node's receiver.
+    #[cfg(test)]
     pub(crate) fn open_stream(
         &mut self,
         stream_id: u64,
@@ -440,10 +544,14 @@ impl NodePlayout {
         cutover_block: u64,
         ledger: &MemoryBudgetLedger,
     ) -> Result<(), String> {
+        let group_epoch = self
+            .engines
+            .last()
+            .map_or(0, |stream| stream.admitted_group_epoch);
         let prepared = self
-            .prepare_stream(stream_id, stream_epoch, cutover_block, ledger)
+            .prepare_stream(stream_id, stream_epoch, cutover_block, ledger, group_epoch)
             .map_err(|e| e.to_string())?;
-        self.commit_stream(stream_id, prepared);
+        self.commit_stream(stream_id, prepared, None);
         Ok(())
     }
 
@@ -456,6 +564,7 @@ impl NodePlayout {
         stream_epoch: u64,
         cutover_block: u64,
         ledger: &MemoryBudgetLedger,
+        group_epoch: u64,
     ) -> Result<PreparedStream, OpenRefusal> {
         let Some(latest) = self.engines.last() else {
             return Err(OpenRefusal::NoStream);
@@ -471,7 +580,10 @@ impl NodePlayout {
         }
         let anchor_group_ns =
             self.origin_group_ns + frames_to_ns(cutover_block * (FRAMES_PER_BLOCK as u64));
-        let resident = self.resident_bytes();
+        // The commit will keep a copy of the receiver for the generation it replaces: charge it with the candidate's overlap.
+        let resident = self
+            .resident_bytes()
+            .saturating_add(retained_receiver_bytes());
         let engine = new_engine(
             stream_epoch,
             cutover_block,
@@ -485,19 +597,38 @@ impl NodePlayout {
         Ok(PreparedStream {
             engine,
             cutover_block,
+            group_epoch,
         })
     }
 
-    /// Make a prepared generation live. It cannot fail: the engine exists and the list already has room for it.
-    pub(crate) fn commit_stream(&mut self, stream_id: u64, prepared: PreparedStream) {
+    /// Make a prepared generation live. It cannot fail: the engine exists and the list already has room for it. `retained` is the
+    /// copy of the node's receiver, taken BEFORE it is rebound to the new stream, that the generation being replaced keeps to
+    /// authenticate its in-flight tail when it arrives (`None` for a caller that stages only packets it has authenticated itself).
+    /// The candidate carries the trusted `GroupClock::epoch` captured at preparation. The replaced generation retains its original
+    /// admission epoch; committing a new source must never relabel old queued data as authorized by a later group epoch.
+    pub(crate) fn commit_stream(
+        &mut self,
+        stream_id: u64,
+        prepared: PreparedStream,
+        retained: Option<StreamReceiver>,
+    ) {
         if let Some(latest) = self.engines.last_mut() {
             latest.until_block = Some(prepared.cutover_block);
+            latest.ingress = if latest.fenced || latest.admitted_group_epoch != prepared.group_epoch
+            {
+                None
+            } else {
+                retained
+            };
         }
         self.engines.push(StreamEngine {
             stream_id,
             engine: prepared.engine,
             first_block: prepared.cutover_block,
             until_block: None,
+            ingress: None,
+            admitted_group_epoch: prepared.group_epoch,
+            fenced: false,
         });
     }
 
@@ -519,9 +650,21 @@ impl NodePlayout {
         copy: u8,
         packet: AuthenticatedStreamPacket,
     ) {
-        let block = packet.start_frame / (FRAMES_PER_BLOCK as u64);
-        self.in_flight
-            .insert((arrival_true_ns, block, copy), packet);
+        self.stage_entry(arrival_true_ns, copy, InFlight::Admitted(packet));
+    }
+
+    /// Stage a datagram as sent, to be routed by its own header and authenticated on arrival (the staging key's block is read from the
+    /// same unauthenticated hint; a datagram whose header cannot be read is staged under block 0 and refused when it arrives). Unit tests
+    /// only: the campaign stages through `send_block`.
+    #[cfg(test)]
+    pub(crate) fn stage_raw(&mut self, arrival_true_ns: u64, copy: u8, wire: Vec<u8>) {
+        let start_frame = untrusted_route_hint(&wire).map_or(0, |hint| hint.start_frame);
+        self.stage_entry(arrival_true_ns, copy, InFlight::Raw { start_frame, wire });
+    }
+
+    fn stage_entry(&mut self, arrival_true_ns: u64, copy: u8, entry: InFlight) {
+        let block = entry.start_frame() / (FRAMES_PER_BLOCK as u64);
+        self.in_flight.insert((arrival_true_ns, block, copy), entry);
     }
 
     /// Record by hand what the sender sent for `blk` (tests that stage packets themselves; `send_until` records it).
@@ -614,6 +757,7 @@ impl NodePlayout {
             }
         };
         let payload_digest = digest(&frame.payload);
+        let start_frame = frame.start_frame;
         let wire = link.sender.send(frame).map_err(|e| {
             format!(
                 "member {}: block {blk} could not be encoded: {e}",
@@ -627,12 +771,21 @@ impl NodePlayout {
         let Some(deliver_rel_ns) = decision.deliver_time_ns else {
             return Ok(None);
         };
-        let packet = link.receiver.accept(&wire).map_err(|e| {
-            format!(
-                "member {}: block {blk} refused by the receiver: {e}",
-                link.member_id
-            )
-        })?;
+        // The datagram is NOT authenticated here. It travels as sent, and the receiver of the generation its own header names
+        // authenticates it when it arrives. The one exception is the planted `Late` packet, which models the engine's own lateness: it
+        // is authenticated now by a scratch copy of the receiver, because the real receiver's replay window must not be pushed
+        // ~93 blocks past the arrivals it has yet to see.
+        let packet = if link.fault == Some(LinkFault::Late { block: blk }) {
+            let mut scratch = link.receiver.clone();
+            InFlight::Admitted(scratch.accept(&wire).map_err(|e| {
+                format!(
+                    "member {}: block {blk} refused by the receiver: {e}",
+                    link.member_id
+                )
+            })?)
+        } else {
+            InFlight::Raw { start_frame, wire }
+        };
         self.sent_digest.insert(blk, payload_digest);
         Ok(Some(Sent {
             deliver_rel_ns,
@@ -644,9 +797,9 @@ impl NodePlayout {
     /// Stage a sent block's duplicate (copy 1, if the schedule made one) and the block itself (copy 0).
     fn stage_sent(&mut self, sent: Sent, tl: &CampaignTimeline) {
         if let Some(duplicate_rel_ns) = sent.duplicate_rel_ns {
-            self.stage(tl.origin_ns + duplicate_rel_ns, 1, sent.packet.clone());
+            self.stage_entry(tl.origin_ns + duplicate_rel_ns, 1, sent.packet.clone());
         }
-        self.stage(tl.origin_ns + sent.deliver_rel_ns, 0, sent.packet);
+        self.stage_entry(tl.origin_ns + sent.deliver_rel_ns, 0, sent.packet);
     }
 
     /// Plant a datagram of the previous epoch for `blk`, other audio than the block's own, arriving [`STALE_LEAD_NS`]
@@ -739,48 +892,176 @@ impl NodePlayout {
         Ok(())
     }
 
-    /// Hand each engine the staged packets of its own stream that arrive at or before `until_true_ns`, in arrival order,
-    /// each with the view of the node's own clock at its arrival instant.
+    /// Hand each engine the staged datagrams of its own stream that arrive at or before `until_true_ns`, in arrival order, each
+    /// with the view of the node's own clock at its arrival instant. A RAW datagram is first authenticated by the N01 receiver of
+    /// the generation the header's routing hint names: the node's own receiver (`newest`) for the latest generation, the copy a draining
+    /// generation kept for an earlier one. A generation whose tail is all decided keeps no receiver, and its datagrams are refused.
+    /// A datagram N01 refuses is counted by why (replay window: `replay_refused_at_receiver`; anything else:
+    /// `refused_at_receiver`); one that N01 admits but whose block is outside the generation's own interval is
+    /// `outside_generation_refused`, and the receiver is left exactly as it was (the admission was a trial). Only a datagram that passes
+    /// all of that reaches the engine.
     pub(crate) fn deliver_until(
         &mut self,
         clock: &GroupClock,
         sim: &SimNodeClock,
         until_true_ns: u64,
+        mut newest: Option<&mut StreamReceiver>,
     ) -> Result<(), String> {
         if self.engines.is_empty() {
             return Ok(());
         }
+        for stream in &mut self.engines {
+            if stream.ingress.is_some() && stream.retired() {
+                stream.ingress = None;
+            }
+        }
+        self.fence_stale_generations(clock.epoch())?;
         while let Some((&(arrival, _, _), _)) = self.in_flight.first_key_value() {
             if arrival > until_true_ns {
                 break;
             }
-            let Some((_, packet)) = self.in_flight.pop_first() else {
+            let Some((_, entry)) = self.in_flight.pop_first() else {
                 break;
             };
-            let block = packet.start_frame / (FRAMES_PER_BLOCK as u64);
-            if self
-                .highest_delivered
-                .is_some_and(|highest| block < highest)
-            {
-                self.out_of_order += 1;
+            let admitted = matches!(entry, InFlight::Admitted(_));
+            let block = entry.start_frame() / (FRAMES_PER_BLOCK as u64);
+            let stream = match &entry {
+                InFlight::Admitted(packet) => packet.stream_id.get(),
+                InFlight::Raw { wire, .. } => match untrusted_route_hint(wire) {
+                    Ok(hint) => hint.stream_id,
+                    Err(_) => {
+                        // A header that cannot be read names no generation: refused before anything is selected.
+                        self.refused_at_receiver += 1;
+                        continue;
+                    }
+                },
+            };
+            if admitted {
+                self.note_arrival(block);
             }
-            self.highest_delivered = self.highest_delivered.max(Some(block));
-            let stream = packet.stream_id.get();
             let Some(at) = self.engines.iter().position(|e| e.stream_id == stream) else {
-                return Err(format!(
-                    "a packet of stream {stream:#x} reached a playout path that has no such stream"
-                ));
+                if admitted {
+                    return Err(format!(
+                        "a packet of stream {stream:#x} reached a playout path that has no such stream"
+                    ));
+                }
+                // A raw datagram naming a stream this member never opened is data to refuse, not an error of the simulation.
+                self.refused_at_receiver += 1;
+                continue;
             };
             if self.engines[at].retired() {
+                // A raw datagram of a retired generation is not authenticated (its receiver is gone), so its header says nothing the
+                // arrival ledger may record.
                 self.retired_stream_refused += 1;
                 continue;
             }
+            if self.engines[at].fenced {
+                // A trusted group-epoch change invalidated this generation: nothing routed to it is accepted, and nothing it
+                // kept can reach its engine.
+                self.group_epoch_fenced_refused += 1;
+                continue;
+            }
+            let packet = match entry {
+                InFlight::Admitted(packet) => packet,
+                InFlight::Raw { wire, .. } => {
+                    let is_newest = at + 1 == self.engines.len();
+                    // The interval is read before the receiver is borrowed: the receiver may be this generation's own copy.
+                    let (first, until) =
+                        (self.engines[at].first_block, self.engines[at].until_block);
+                    let receiver = if is_newest {
+                        newest.as_deref_mut()
+                    } else {
+                        self.engines[at].ingress.as_mut()
+                    };
+                    let Some(receiver) = receiver else {
+                        return Err(format!(
+                            "a datagram of stream {stream:#x} arrived at a playout path with no receiver for it"
+                        ));
+                    };
+                    // N01 records a sequence number the moment it admits a datagram. A datagram that authenticates but belongs to another
+                    // generation's interval (the replaced adapter's post-cutover block, 64 or more sequence numbers ahead of the tail this
+                    // generation still owes) must not have moved this receiver's replay window: the tail would then be a "replay".
+                    // So the datagram is authenticated by a TRIAL copy (inline: key, window, counters; no heap), and the trial replaces
+                    // the real receiver only when N01 refused the datagram (a refusal changes nothing but the counters, which the
+                    // receiver must keep) or when this generation permits the authenticated block.
+                    let mut trial = StreamReceiver::clone(receiver);
+                    match trial.accept(&wire) {
+                        Ok(packet) => {
+                            // The block is read from the AUTHENTICATED packet, not from the staging key.
+                            let block = packet.start_frame / (FRAMES_PER_BLOCK as u64);
+                            if block < first || until.is_some_and(|until| block >= until) {
+                                // The trial is dropped: the receiver is exactly as it was, and its own counters do not see this datagram.
+                                self.outside_generation_refused += 1;
+                                continue;
+                            }
+                            *receiver = trial;
+                            if !is_newest {
+                                self.accepted_by_draining_generation += 1;
+                            }
+                            self.note_arrival(block);
+                            packet
+                        }
+                        Err(StreamError::ReplayOrDuplicatePacket { .. }) => {
+                            *receiver = trial;
+                            self.replay_refused_at_receiver += 1;
+                            continue;
+                        }
+                        Err(_) => {
+                            *receiver = trial;
+                            self.refused_at_receiver += 1;
+                            continue;
+                        }
+                    }
+                }
+            };
             let view = self.mono.at_local(clock, sim.local(arrival));
             let media = MediaPacket::from_authenticated(&packet)
                 .ok_or_else(|| "a repair packet reached the playout path".to_string())?;
             let _ = self.engines[at].engine.on_packet(view, &media);
         }
         Ok(())
+    }
+
+    /// Every generation and its queued blocks belong to the trusted group epoch under which that generation was admitted.
+    /// If `GroupClock::epoch` has moved since, the generation is fenced: its copy is dropped, its engine is re-bound to the
+    /// stream epoch it already had, at its own cursor (the engine's way to clear its queue: the blocks it still owes are decided with no
+    /// history, never played), and what is routed to it afterwards is refused by name. This includes the latest generation, even before
+    /// it has a retained receiver copy. A source change inside the same epoch fences nothing. The epoch comes from the clock the engines
+    /// are driven by, never from a datagram.
+    fn fence_stale_generations(&mut self, group_epoch: u64) -> Result<(), String> {
+        for (index, stream) in self.engines.iter_mut().enumerate() {
+            if stream.fenced || stream.retired() || stream.admitted_group_epoch == group_epoch {
+                continue;
+            }
+            stream.ingress = None;
+            stream.fenced = true;
+            let snap = stream.engine.snapshot();
+            if let Some(epoch) = snap.epoch {
+                let frame = snap.cursor * (FRAMES_PER_BLOCK as u64);
+                stream
+                    .engine
+                    .begin_stream(epoch, frame, self.origin_group_ns + frames_to_ns(frame))
+                    .map_err(|e| {
+                        format!(
+                            "stream {index}: the engine refused the re-bind that clears its queue: {}",
+                            e.code()
+                        )
+                    })?;
+            }
+            self.group_epoch_fenced_generations += 1;
+        }
+        Ok(())
+    }
+
+    /// One block handed to an engine's decision path: count it as out of order if a higher block was handed before.
+    fn note_arrival(&mut self, block: u64) {
+        if self
+            .highest_delivered
+            .is_some_and(|highest| block < highest)
+        {
+            self.out_of_order += 1;
+        }
+        self.highest_delivered = self.highest_delivered.max(Some(block));
     }
 
     /// Decide block `blk`: deliver what has arrived by the decision instant, then ask the engine of the stream that owns
@@ -792,8 +1073,9 @@ impl NodePlayout {
         tl: &CampaignTimeline,
         clock: &GroupClock,
         sim: &SimNodeClock,
+        newest: Option<&mut StreamReceiver>,
     ) -> Result<Played, String> {
-        self.decide_with_bytes(blk, tl, clock, sim)
+        self.decide_with_bytes(blk, tl, clock, sim, newest)
             .map(|(played, _)| played)
     }
 
@@ -805,9 +1087,10 @@ impl NodePlayout {
         tl: &CampaignTimeline,
         clock: &GroupClock,
         sim: &SimNodeClock,
+        newest: Option<&mut StreamReceiver>,
     ) -> Result<(Played, Vec<u8>), String> {
         let at = tl.decision_true_ns(blk);
-        self.deliver_until(clock, sim, at)?;
+        self.deliver_until(clock, sim, at, newest)?;
         let Some(idx) = self.engine_index_for_block(blk) else {
             return Err(format!("block {blk} decided on a member with no stream"));
         };
@@ -906,6 +1189,12 @@ impl NodePlayout {
             streams_opened: u64::try_from(self.engines.len()).unwrap_or(u64::MAX),
             retired_stream_refused: self.retired_stream_refused,
             wrong_stream_refused_at_receiver: self.wrong_stream_refused_at_receiver,
+            replay_refused_at_receiver: self.replay_refused_at_receiver,
+            refused_at_receiver: self.refused_at_receiver,
+            outside_generation_refused: self.outside_generation_refused,
+            accepted_by_draining_generation: self.accepted_by_draining_generation,
+            group_epoch_fenced_generations: self.group_epoch_fenced_generations,
+            group_epoch_fenced_refused: self.group_epoch_fenced_refused,
             replaced_publishes_refused: self.replaced_refusals.clone(),
             ..PlayoutMemberReport::default()
         };
@@ -1008,14 +1297,19 @@ mod tests {
 
     /// A member that took four exchanges (10 ms apart, 400 us each way, 50 us of dwell) with the coordinator.
     fn locked_clock(sim: &SimNodeClock) -> GroupClock {
+        locked_clock_at(sim, 1)
+    }
+
+    /// [`locked_clock`] in group epoch `epoch`: a clock that joined that epoch and locked after the same four exchanges.
+    fn locked_clock_at(sim: &SimNodeClock, epoch: u64) -> GroupClock {
         let cfg = GroupClockConfig::standard().expect("standard config");
-        let mut clock = GroupClock::new(cfg, 1, COORDINATOR, 100).expect("member");
+        let mut clock = GroupClock::new(cfg, epoch, COORDINATOR, 100).expect("member");
         for k in 1..=4_u64 {
             let t1 = k * 10_000_000;
             let req = clock.next_probe(sim.local(t1));
             let (t2, t3) = (t1 + 400_000, t1 + 450_000);
             let resp = ProbeResponse {
-                epoch: 1,
+                epoch,
                 leader: COORDINATOR,
                 seq: req.seq,
                 t1_echo_ns: req.t1_local_ns,
@@ -1116,6 +1410,7 @@ mod tests {
                     engine_epoch,
                     tl.pts_group_ns(0),
                     &synthetic_ledger(),
+                    1, // This fixture's trusted clock epoch; the wire/engine epochs vary independently.
                 )
                 .expect("binds"),
                 clock: locked_clock(&sim),
@@ -1136,7 +1431,7 @@ mod tests {
 
         fn decide(&mut self, blk: u64) -> (Played, Vec<u8>) {
             self.play
-                .decide_with_bytes(blk, &self.tl, &self.clock, &self.sim)
+                .decide_with_bytes(blk, &self.tl, &self.clock, &self.sim, None)
                 .expect("decides")
         }
 
@@ -1160,6 +1455,781 @@ mod tests {
         }
     }
 
+    /// The packet a staged entry carries, opened: a pre-authenticated entry as it is, a raw datagram parsed by a throwaway receiver
+    /// of the stream its header names, with the test key (so a test can read its payload without touching any real receiver).
+    fn opened(entry: &InFlight) -> AuthenticatedStreamPacket {
+        match entry {
+            InFlight::Admitted(packet) => packet.clone(),
+            InFlight::Raw { wire, .. } => {
+                let stream = untrusted_route_hint(wire)
+                    .expect("a readable header")
+                    .stream_id;
+                (0..4)
+                    .find_map(|epoch| {
+                        StreamReceiver::new(
+                            StreamKey::from_bytes([0x42; 32]),
+                            StreamId::new(stream).expect("stream id"),
+                            epoch,
+                        )
+                        .accept(wire)
+                        .ok()
+                    })
+                    .expect("a raw datagram of the test key")
+            }
+        }
+    }
+
+    /// The cutover of the raw-arrival tests: the old stream carries blocks below it, the next one from it.
+    const CUT: u64 = 30;
+
+    fn decide_raw(s: &mut Scenario, blk: u64) -> (Played, Vec<u8>) {
+        s.play
+            .decide_with_bytes(blk, &s.tl, &s.clock, &s.sim, Some(&mut s.wire.receiver))
+            .expect("decides")
+    }
+
+    /// The old stream's blocks `0..CUT`, all but the last already delivered to the node's receiver; then the next stream is
+    /// committed at `CUT` exactly as the harness's commit does it (the generation being replaced keeps a copy of the receiver as it
+    /// was, the node's receiver is rebound to the new stream) and its blocks `CUT..CUT + 10` are in flight. Returns the fixture
+    /// and the old stream's last block as a wire datagram, held back: still in flight at the commit.
+    fn crossing() -> (Scenario, Vec<u8>) {
+        let mut s = Scenario::new();
+        let held = s.play.resident_bytes();
+        let mut tail = Vec::new();
+        for blk in 0..CUT {
+            let payload = source_bytes(blk);
+            s.play.note_sent(blk, &payload);
+            let wire = s
+                .wire
+                .sender
+                .send(Wire::frame(&s.tl, blk, payload))
+                .expect("encodes");
+            if blk == CUT - 1 {
+                tail = wire;
+            } else {
+                s.play
+                    .stage_raw(s.tl.send_true_ns(blk) + 10_000_000, 0, wire);
+            }
+        }
+        s.play
+            .deliver_until(
+                &s.clock,
+                &s.sim,
+                s.tl.send_true_ns(CUT - 1) + 10_000_000,
+                Some(&mut s.wire.receiver),
+            )
+            .expect("the early old blocks arrive before the commit");
+        let room = crate::media_playout::synthetic_ledger(2 * held + retained_receiver_bytes());
+        let prepared = s
+            .play
+            .prepare_stream(STREAM_B, 1, CUT, &room, s.clock.epoch())
+            .unwrap_or_else(|e| panic!("room beside the playing stream: {e}"));
+        s.play
+            .commit_stream(STREAM_B, prepared, Some(s.wire.receiver.clone()));
+        s.wire
+            .receiver
+            .bind_stream(StreamId::new(STREAM_B).expect("stream id"), 1);
+        let mut new = Wire::on_stream(STREAM_B);
+        for blk in CUT..CUT + 10 {
+            let payload = other_bytes(blk);
+            s.play.note_sent(blk, &payload);
+            let wire = new
+                .sender
+                .send(Wire::frame(&s.tl, blk, payload))
+                .expect("encodes");
+            s.play
+                .stage_raw(s.tl.send_true_ns(blk) + 10_000_000, 0, wire);
+        }
+        (s, tail)
+    }
+
+    #[test]
+    fn an_old_stream_datagram_still_in_flight_at_the_commit_is_authenticated_on_arrival_by_the_old_generation_and_played()
+     {
+        let (mut s, tail) = crossing();
+        // The delayed tail arrives AFTER the commit, when the node's receiver already speaks the new stream, and before its cutoff.
+        s.play
+            .stage_raw(s.tl.decision_true_ns(CUT - 1) - 5_000_000, 0, tail);
+        for blk in 0..CUT {
+            let played = decide_raw(&mut s, blk);
+            assert_eq!(authentic(played, blk), source_bytes(blk), "old block {blk}");
+        }
+        for blk in CUT..CUT + 10 {
+            let played = decide_raw(&mut s, blk);
+            assert_eq!(authentic(played, blk), other_bytes(blk), "new block {blk}");
+        }
+        let r = s.play.report();
+        assert_eq!(
+            r.accepted_by_draining_generation, 1,
+            "only the tail crossed the commit"
+        );
+        assert_eq!(
+            (
+                r.wrong_stream_refused_at_receiver,
+                r.replay_refused_at_receiver,
+                r.refused_at_receiver,
+                r.outside_generation_refused,
+                r.retired_stream_refused
+            ),
+            (0, 0, 0, 0, 0)
+        );
+        assert_eq!(r.decided_real, CUT + 10);
+        // The node's own receiver spoke the old stream for the first 29 blocks and the new one for ten, and refused nothing.
+        let c = s.wire.receiver.counters();
+        assert_eq!((c.accepted, c.rejected_wrong_stream), (CUT - 1 + 10, 0));
+    }
+
+    #[test]
+    fn the_rebound_receiver_alone_would_refuse_the_old_tail_so_the_positive_control_needs_the_old_generations_receiver()
+     {
+        // The knockout: a single receiver rebound at the commit is N01's one-stream refusal for the old tail (what a composition that
+        // routes only to the rebound receiver would do to it).
+        let (mut s, tail) = crossing();
+        let mut lone = s.wire.receiver.clone();
+        assert!(matches!(
+            lone.accept(&tail),
+            Err(StreamError::WrongStream { .. })
+        ));
+        // The composed path still plays it, from the very same bytes.
+        s.play
+            .stage_raw(s.tl.decision_true_ns(CUT - 1) - 5_000_000, 0, tail);
+        for blk in 0..CUT {
+            let played = decide_raw(&mut s, blk);
+            assert_eq!(authentic(played, blk), source_bytes(blk), "old block {blk}");
+        }
+        assert_eq!(s.play.report().accepted_by_draining_generation, 1);
+    }
+
+    /// The replaced adapter's sender goes on past the cutover: it is the old stream's, keyed with the member's media key, so what it
+    /// sends AUTHENTICATES. Its sequence number equals its block here (block `b` was the `b`-th send). Returns the datagram of block `through`.
+    fn old_sender_runs_ahead(s: &mut Scenario, through: u64) -> Vec<u8> {
+        let mut last = Vec::new();
+        for blk in CUT..=through {
+            last = s
+                .wire
+                .sender
+                .send(Wire::frame(&s.tl, blk, other_bytes(blk)))
+                .expect("encodes");
+        }
+        last
+    }
+
+    #[test]
+    fn an_authentic_old_stream_datagram_past_the_cutover_that_arrives_first_cannot_poison_the_replay_window_of_the_tail_still_owed()
+     {
+        let (mut s, tail) = crossing();
+        let high = old_sender_runs_ahead(&mut s, 100);
+        // The mechanism, on N01 itself (the control that makes the case decisive): a receiver that RECORDS the post-cutover datagram
+        // refuses the tail it still owes, because seq 29 is 71 behind seq 100 and the window is 64 packets.
+        let mut lone = s.play.engines[0]
+            .ingress
+            .clone()
+            .expect("the replaced generation holds its receiver while its tail is owed");
+        assert_eq!(lone.accept(&high).expect("it authenticates").seq, 100);
+        assert!(matches!(
+            lone.accept(&tail),
+            Err(StreamError::ReplayOrDuplicatePacket { .. })
+        ));
+        // The composed path, the same two datagrams in the same order: the post-cutover one first.
+        let at_tail = s.tl.decision_true_ns(CUT - 1) - 5_000_000;
+        s.play.stage_raw(at_tail - 1_000_000, 0, high);
+        s.play.stage_raw(at_tail, 0, tail);
+        s.play
+            .deliver_until(&s.clock, &s.sim, at_tail, Some(&mut s.wire.receiver))
+            .expect("delivers");
+        // The copy was taken after 29 accepted datagrams and the tail is its 30th: the post-cutover datagram authenticated on a trial
+        // and left no trace in the receiver, window or counters.
+        let kept = s.play.engines[0]
+            .ingress
+            .as_ref()
+            .expect("the tail is decided later, so the copy is still held")
+            .counters()
+            .clone();
+        assert_eq!(
+            kept,
+            franken_stream::ReceiverCounters {
+                datagrams_seen: CUT,
+                accepted: CUT,
+                mac_verifications: CUT,
+                ..franken_stream::ReceiverCounters::default()
+            }
+        );
+        for blk in 0..CUT + 10 {
+            let want = if blk < CUT {
+                source_bytes(blk)
+            } else {
+                other_bytes(blk)
+            };
+            let played = decide_raw(&mut s, blk);
+            assert_eq!(authentic(played, blk), want, "block {blk}");
+        }
+        let r = s.play.report();
+        assert_eq!(
+            (
+                r.outside_generation_refused,
+                r.accepted_by_draining_generation,
+                r.replay_refused_at_receiver,
+                r.refused_at_receiver,
+                r.wrong_stream_refused_at_receiver,
+                r.retired_stream_refused
+            ),
+            (1, 1, 0, 0, 0, 0)
+        );
+        assert_eq!(r.decided_real, CUT + 10);
+    }
+
+    #[test]
+    fn a_tampered_high_sequence_datagram_fails_its_mac_is_counted_by_n01_and_leaves_the_tail_playable()
+     {
+        let (mut s, tail) = crossing();
+        let mut high = old_sender_runs_ahead(&mut s, 100);
+        let last = high.len() - 1;
+        high[last] ^= 0x01;
+        let at_tail = s.tl.decision_true_ns(CUT - 1) - 5_000_000;
+        s.play.stage_raw(at_tail - 1_000_000, 0, high);
+        s.play.stage_raw(at_tail, 0, tail);
+        s.play
+            .deliver_until(&s.clock, &s.sim, at_tail, Some(&mut s.wire.receiver))
+            .expect("delivers");
+        // A real failure is the receiver's own: counted once, as an authentication failure, with the window untouched.
+        let kept = s.play.engines[0]
+            .ingress
+            .as_ref()
+            .expect("the copy is still held")
+            .counters()
+            .clone();
+        assert_eq!(
+            kept,
+            franken_stream::ReceiverCounters {
+                datagrams_seen: CUT + 1,
+                accepted: CUT,
+                mac_verifications: CUT + 1,
+                rejected_authentication: 1,
+                ..franken_stream::ReceiverCounters::default()
+            }
+        );
+        for blk in 0..CUT {
+            let played = decide_raw(&mut s, blk);
+            assert_eq!(authentic(played, blk), source_bytes(blk), "old block {blk}");
+        }
+        let r = s.play.report();
+        assert_eq!(
+            (
+                r.refused_at_receiver,
+                r.outside_generation_refused,
+                r.replay_refused_at_receiver,
+                r.accepted_by_draining_generation
+            ),
+            (1, 0, 0, 1)
+        );
+    }
+
+    #[test]
+    fn an_authentic_next_stream_datagram_below_its_first_block_that_arrives_first_cannot_poison_the_node_receivers_replay_window()
+     {
+        let (mut s, tail) = crossing();
+        // The next stream's sender again, from its start: its first ten frames are the blocks `crossing` already has in flight (the same
+        // bytes), then it runs ahead to seq 99 with a frame for a block BELOW the stream's first block.
+        let mut next = Wire::on_stream(STREAM_B);
+        let own_first = next
+            .sender
+            .send(Wire::frame(&s.tl, CUT, other_bytes(CUT)))
+            .expect("encodes");
+        for blk in CUT + 1..CUT + 10 {
+            next.sender
+                .send(Wire::frame(&s.tl, blk, other_bytes(blk)))
+                .expect("encodes");
+        }
+        let mut below = Vec::new();
+        for _ in 10..100 {
+            below = next
+                .sender
+                .send(Wire::frame(&s.tl, 5, other_bytes(5)))
+                .expect("encodes");
+        }
+        // The mechanism on N01 itself: recording it makes the stream's own first frame (seq 0) a replay.
+        let mut lone = s.wire.receiver.clone();
+        assert_eq!(lone.accept(&below).expect("it authenticates").seq, 99);
+        assert!(matches!(
+            lone.accept(&own_first),
+            Err(StreamError::ReplayOrDuplicatePacket { .. })
+        ));
+        // The composed path: it arrives before any block of the stream, is refused by interval, and every block still plays.
+        s.play
+            .stage_raw(s.tl.send_true_ns(CUT) + 5_000_000, 0, below);
+        s.play
+            .stage_raw(s.tl.decision_true_ns(CUT - 1) - 5_000_000, 0, tail);
+        for blk in 0..CUT + 10 {
+            let want = if blk < CUT {
+                source_bytes(blk)
+            } else {
+                other_bytes(blk)
+            };
+            let played = decide_raw(&mut s, blk);
+            assert_eq!(authentic(played, blk), want, "block {blk}");
+        }
+        let r = s.play.report();
+        assert_eq!(
+            (
+                r.outside_generation_refused,
+                r.replay_refused_at_receiver,
+                r.refused_at_receiver,
+                r.decided_real
+            ),
+            (1, 0, 0, CUT + 10)
+        );
+        // The node's receiver saw 29 old and 10 new datagrams (the tail went to the old generation's copy) and nothing else.
+        let c = s.wire.receiver.counters();
+        assert_eq!(
+            (
+                c.datagrams_seen,
+                c.accepted,
+                c.rejected_replay,
+                c.rejected_wrong_stream
+            ),
+            (CUT - 1 + 10, CUT - 1 + 10, 0, 0)
+        );
+    }
+
+    #[test]
+    fn a_trusted_group_epoch_change_fences_all_queued_generations_and_the_delayed_tail() {
+        // Same-epoch source changes still drain their exact bytes in the preceding controls. Here BOTH generations were admitted in
+        // epoch 1; being the latest source does not authorize the second generation under a relocked epoch-2 clock.
+        let (mut s, tail) = crossing();
+        s.play
+            .deliver_until(
+                &s.clock,
+                &s.sim,
+                s.tl.send_true_ns(CUT + 9) + 10_000_000,
+                Some(&mut s.wire.receiver),
+            )
+            .expect("queue both generations before the authority changes");
+        assert_eq!(
+            s.play.engines[0].engine.snapshot().queued,
+            u32::try_from(CUT - 1).expect("small")
+        );
+        assert_eq!(
+            s.play.engines[1].engine.snapshot().queued,
+            10,
+            "newest generation already holds real old-epoch audio"
+        );
+        assert!(s.play.engines[0].ingress.is_some());
+        s.clock = locked_clock_at(&s.sim, 2);
+        s.play
+            .stage_raw(s.tl.decision_true_ns(CUT - 1) - 5_000_000, 0, tail);
+        s.play
+            .deliver_until(
+                &s.clock,
+                &s.sim,
+                s.tl.decision_true_ns(0),
+                Some(&mut s.wire.receiver),
+            )
+            .expect("fence old admission epochs");
+        assert!(s.play.engines.iter().all(|generation| generation.fenced
+            && generation.ingress.is_none()
+            && generation.engine.snapshot().queued == 0));
+        for blk in 0..CUT + 10 {
+            let (played, bytes) = decide_raw(&mut s, blk);
+            assert!(
+                matches!(played, Played::Silent(_)) && bytes.is_empty(),
+                "old-epoch block {blk} sounded"
+            );
+        }
+        let r = s.play.report();
+        assert_eq!(
+            (
+                r.group_epoch_fenced_generations,
+                r.group_epoch_fenced_refused,
+                r.accepted_by_draining_generation,
+                r.decided_real,
+                r.decided_muted_nohistory
+            ),
+            (2, 1, 0, 0, CUT + 10)
+        );
+        assert_eq!(
+            (
+                r.replay_refused_at_receiver,
+                r.refused_at_receiver,
+                r.outside_generation_refused,
+                r.retired_stream_refused
+            ),
+            (0, 0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn a_group_epoch_change_leaves_retired_history_alone_and_fences_the_still_live_generation() {
+        let (mut s, tail) = crossing();
+        s.play
+            .stage_raw(s.tl.decision_true_ns(CUT - 1) - 5_000_000, 0, tail);
+        for blk in 0..CUT {
+            let played = decide_raw(&mut s, blk);
+            assert_eq!(
+                authentic(played, blk),
+                source_bytes(blk),
+                "same-epoch old block {blk}"
+            );
+        }
+        s.clock = locked_clock_at(&s.sim, 2);
+        for blk in CUT..CUT + 10 {
+            let (played, bytes) = decide_raw(&mut s, blk);
+            assert!(
+                matches!(played, Played::Silent(_)) && bytes.is_empty(),
+                "newest old-epoch block {blk} sounded"
+            );
+        }
+        let r = s.play.report();
+        assert_eq!(
+            (
+                r.group_epoch_fenced_generations,
+                r.group_epoch_fenced_refused,
+                r.accepted_by_draining_generation,
+                r.decided_real,
+                r.decided_muted_nohistory
+            ),
+            (1, 0, 1, CUT, 10)
+        );
+        assert!(
+            !s.play.engines[0].fenced,
+            "already-retired history is not a new fence event"
+        );
+        assert!(s.play.engines[1].fenced);
+    }
+
+    #[test]
+    fn a_single_initial_generation_is_fenced_without_new_arrivals_and_a_prepared_candidate_cannot_change_its_epoch_at_commit()
+     {
+        let mut s = Scenario::new();
+        for blk in 0..4 {
+            s.arrives(blk, 10_000_000);
+        }
+        s.play
+            .deliver_until(&s.clock, &s.sim, s.tl.send_true_ns(3) + 10_000_000, None)
+            .expect("queue authenticated test traffic before epoch change");
+        assert_eq!(s.play.engines[0].engine.snapshot().queued, 4);
+        assert!(s.play.engines[0].ingress.is_none());
+        let prepared = s
+            .play
+            .prepare_stream(STREAM_B, 1, 10, &synthetic_ledger(), s.clock.epoch())
+            .unwrap_or_else(|error| panic!("candidate fits: {error}"));
+        s.clock = locked_clock_at(&s.sim, 2);
+        // No datagram arrives after the change; deciding itself must fence the initial queue.
+        let (played, bytes) = s.decide(0);
+        assert!(matches!(played, Played::Silent(_)) && bytes.is_empty());
+        assert!(s.play.engines[0].fenced);
+        assert_eq!(s.play.engines[0].engine.snapshot().queued, 0);
+        s.play
+            .commit_stream(STREAM_B, prepared, Some(s.wire.receiver.clone()));
+        assert!(
+            s.play.engines[0].ingress.is_none(),
+            "a commit cannot resurrect a fenced receiver"
+        );
+        assert_eq!(
+            s.play.engines[1].admitted_group_epoch, 1,
+            "candidate keeps the epoch captured at preparation"
+        );
+        s.play
+            .deliver_until(&s.clock, &s.sim, s.tl.decision_true_ns(1), None)
+            .expect("stale candidate fences before any delivery");
+        assert!(s.play.engines[1].fenced);
+        assert_eq!(s.play.report().group_epoch_fenced_generations, 2);
+    }
+
+    #[test]
+    fn a_fresh_group_epoch_can_resume_with_a_new_stream_without_relabeling_any_old_queued_generation()
+     {
+        const STREAM_C: u64 = 0x5EED_5EED_0000_0003;
+        const RESTART: u64 = CUT + 10;
+        let (mut s, tail) = crossing();
+        s.play
+            .deliver_until(
+                &s.clock,
+                &s.sim,
+                s.tl.send_true_ns(RESTART - 1) + 10_000_000,
+                Some(&mut s.wire.receiver),
+            )
+            .expect("queue old admission before epoch changes");
+        assert_eq!(s.play.engines[1].engine.snapshot().queued, 10);
+        s.clock = locked_clock_at(&s.sim, 2);
+        // Commit before deliver_until observes the new epoch: retaining B here must not relabel its old queue as epoch 2.
+        let room = synthetic_ledger();
+        let prepared = s
+            .play
+            .prepare_stream(STREAM_C, 2, RESTART, &room, s.clock.epoch())
+            .unwrap_or_else(|error| panic!("fresh authorized stream must fit: {error}"));
+        s.play
+            .commit_stream(STREAM_C, prepared, Some(s.wire.receiver.clone()));
+        assert_eq!(s.play.engines[1].admitted_group_epoch, 1);
+        assert!(
+            s.play.engines[1].ingress.is_none(),
+            "never retain old authority under a new grant"
+        );
+        assert_eq!(s.play.engines[2].admitted_group_epoch, 2);
+        let id = StreamId::new(STREAM_C).expect("fresh id");
+        s.wire.receiver.bind_stream(id, 2);
+        let mut sender = StreamSender::new(StreamKey::from_bytes([0x42; 32]), id, 2);
+        for blk in RESTART..RESTART + 5 {
+            let payload = other_bytes(blk);
+            s.play.note_sent(blk, &payload);
+            let wire = sender
+                .send(Wire::frame(&s.tl, blk, payload))
+                .expect("encodes new-epoch bytes");
+            s.play
+                .stage_raw(s.tl.send_true_ns(blk) + 10_000_000, 0, wire);
+        }
+        s.play
+            .stage_raw(s.tl.decision_true_ns(CUT - 1) - 5_000_000, 0, tail);
+        for blk in 0..RESTART {
+            let (played, bytes) = decide_raw(&mut s, blk);
+            assert!(
+                matches!(played, Played::Silent(_)) && bytes.is_empty(),
+                "old-epoch block {blk} sounded after fresh grant"
+            );
+        }
+        for blk in RESTART..RESTART + 5 {
+            let played = decide_raw(&mut s, blk);
+            assert_eq!(
+                authentic(played, blk),
+                other_bytes(blk),
+                "fresh-epoch block {blk}"
+            );
+        }
+        let r = s.play.report();
+        assert_eq!(
+            (
+                r.group_epoch_fenced_generations,
+                r.group_epoch_fenced_refused,
+                r.decided_real,
+                r.decided_muted_nohistory
+            ),
+            (2, 1, 5, RESTART)
+        );
+        assert_eq!(s.wire.receiver.active_epoch(), 2);
+        assert!(!s.play.engines[2].fenced);
+    }
+
+    #[test]
+    fn a_duplicate_a_post_cutover_old_datagram_and_damaged_ones_are_refused_by_the_layer_that_owns_the_check()
+     {
+        let (mut s, tail) = crossing();
+        let early = s.tl.decision_true_ns(CUT - 1) - 5_000_000;
+        // The tail twice: the second copy reaches N01's replay window of the old generation's receiver, not the engine.
+        s.play.stage_raw(early, 0, tail.clone());
+        s.play.stage_raw(early + 1_000_000, 1, tail);
+        // The replaced adapter keeps publishing: a validly keyed old-stream datagram for a block at the cutover. The old generation's
+        // receiver authenticates it, and its own interval refuses it; the next stream's block at that position plays.
+        let stale = s
+            .wire
+            .sender
+            .send(Wire::frame(&s.tl, CUT + 1, other_bytes(CUT + 7)))
+            .expect("encodes");
+        s.play.stage_raw(early, 0, stale);
+        // A damaged old datagram (its MAC fails) for a block that is otherwise lost, a datagram whose header cannot be read, and a
+        // datagram that names a stream this member never opened.
+        let mut damaged = s
+            .wire
+            .sender
+            .send(Wire::frame(&s.tl, CUT - 2, source_bytes(CUT - 2)))
+            .expect("encodes");
+        let last = damaged.len() - 1;
+        damaged[last] ^= 0x01;
+        s.play.stage_raw(early, 0, damaged);
+        s.play.stage_raw(early + 2_000_000, 0, vec![0; 64]);
+        let mut stranger = Wire::on_stream(0x77);
+        let unopened = stranger
+            .sender
+            .send(Wire::frame(&s.tl, CUT - 3, source_bytes(CUT - 3)))
+            .expect("encodes");
+        s.play.stage_raw(early + 3_000_000, 0, unopened);
+        for blk in 0..CUT + 10 {
+            let (played, bytes) = decide_raw(&mut s, blk);
+            let want = if blk < CUT {
+                source_bytes(blk)
+            } else {
+                other_bytes(blk)
+            };
+            assert_eq!(authentic((played, bytes), blk), want, "block {blk}");
+        }
+        let r = s.play.report();
+        assert_eq!(
+            r.replay_refused_at_receiver, 1,
+            "N01's replay window, not an engine duplicate"
+        );
+        assert_eq!(r.duplicate, 0);
+        assert_eq!(r.outside_generation_refused, 1);
+        assert_eq!(
+            r.refused_at_receiver, 3,
+            "a failed MAC, an unreadable header and an unopened stream"
+        );
+        assert_eq!(r.accepted_by_draining_generation, 1);
+        assert_eq!(r.decided_real, CUT + 10);
+    }
+
+    #[test]
+    fn a_datagram_for_a_retired_generation_is_refused_and_a_generation_keeps_its_receiver_only_while_it_owes_a_tail()
+     {
+        let (mut s, tail) = crossing();
+        s.play
+            .stage_raw(s.tl.decision_true_ns(CUT - 1) - 5_000_000, 0, tail);
+        assert!(
+            s.play.engines[0].ingress.is_some(),
+            "the replaced generation holds a copy while its tail is owed"
+        );
+        for blk in 0..CUT {
+            let _ = decide_raw(&mut s, blk);
+        }
+        // Block CUT-1 is decided, so the old generation is retired: a late datagram of it is refused by name, and its copy is dropped.
+        let late = s
+            .wire
+            .sender
+            .send(Wire::frame(&s.tl, CUT - 1, source_bytes(CUT - 1)))
+            .expect("encodes");
+        s.play
+            .stage_raw(s.tl.decision_true_ns(CUT) - 1_000_000, 0, late);
+        let _ = decide_raw(&mut s, CUT);
+        assert_eq!(s.play.report().retired_stream_refused, 1);
+        assert!(
+            s.play.engines[0].ingress.is_none(),
+            "a retired generation keeps nothing"
+        );
+        assert_eq!(
+            s.play.resident_bytes(),
+            s.play
+                .engines
+                .iter()
+                .map(|e| engine_resident_bytes(&e.engine))
+                .sum::<u64>()
+        );
+    }
+
+    #[test]
+    fn a_refused_next_stream_leaves_raw_old_traffic_authenticating_on_the_receiver_that_was_never_rebound()
+     {
+        let mut s = Scenario::new();
+        let held = s.play.resident_bytes();
+        for blk in 0..20 {
+            let payload = source_bytes(blk);
+            s.play.note_sent(blk, &payload);
+            let wire = s
+                .wire
+                .sender
+                .send(Wire::frame(&s.tl, blk, payload))
+                .expect("encodes");
+            s.play
+                .stage_raw(s.tl.send_true_ns(blk) + 10_000_000, 0, wire);
+        }
+        // One byte short of the candidate plus the receiver copy a commit would retain: refused, nothing live changed.
+        let short =
+            crate::media_playout::synthetic_ledger(2 * held + retained_receiver_bytes() - 1);
+        let refused = s
+            .play
+            .prepare_stream(STREAM_B, 1, 30, &short, s.clock.epoch())
+            .err()
+            .expect("no room");
+        assert!(matches!(
+            refused,
+            OpenRefusal::Admission(MediaAdmitError::Engine(AdmitError::Capacity(_)))
+        ));
+        for blk in 0..20 {
+            let played = decide_raw(&mut s, blk);
+            assert_eq!(authentic(played, blk), source_bytes(blk), "block {blk}");
+        }
+        let c = s.wire.receiver.counters();
+        assert_eq!((c.accepted, c.rejected_wrong_stream), (20, 0));
+        let r = s.play.report();
+        assert_eq!(
+            (
+                r.accepted_by_draining_generation,
+                r.refused_at_receiver,
+                r.decided_real
+            ),
+            (0, 0, 20)
+        );
+        // Exactly the funded line prepares it.
+        let exact = crate::media_playout::synthetic_ledger(2 * held + retained_receiver_bytes());
+        assert!(
+            s.play
+                .prepare_stream(STREAM_B, 1, 30, &exact, s.clock.epoch())
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn rapid_generations_each_keep_their_own_receiver_copy_while_they_owe_a_tail_and_only_the_ledger_caps_them()
+     {
+        const STREAM_C: u64 = 0x5EED_5EED_0000_0003;
+        const CUT2: u64 = CUT + 10;
+        let (mut s, tail) = crossing();
+        let e = engine_resident_bytes(&s.play.engines[0].engine);
+        let r = retained_receiver_bytes();
+        // A third stream is committed at CUT2 while the first still owes its tail and every block of the second is in flight:
+        // three generations at once, the first two each holding a copy of the receiver as it was when the next one was committed.
+        let short = crate::media_playout::synthetic_ledger(3 * e + 2 * r - 1);
+        assert!(
+            s.play
+                .prepare_stream(STREAM_C, 1, CUT2, &short, s.clock.epoch())
+                .is_err(),
+            "one byte short of the second copy"
+        );
+        let room = crate::media_playout::synthetic_ledger(3 * e + 2 * r);
+        let prepared = s
+            .play
+            .prepare_stream(STREAM_C, 1, CUT2, &room, s.clock.epoch())
+            .unwrap_or_else(|e| panic!("room for three generations and two retained copies: {e}"));
+        s.play
+            .commit_stream(STREAM_C, prepared, Some(s.wire.receiver.clone()));
+        s.wire
+            .receiver
+            .bind_stream(StreamId::new(STREAM_C).expect("stream id"), 1);
+        assert_eq!(s.play.stream_count(), 3);
+        assert_eq!(s.play.resident_bytes(), 3 * e + 2 * r);
+        let mut third = Wire::on_stream(STREAM_C);
+        for blk in CUT2..CUT2 + 5 {
+            let payload = other_bytes(blk);
+            s.play.note_sent(blk, &payload);
+            let wire = third
+                .sender
+                .send(Wire::frame(&s.tl, blk, payload))
+                .expect("encodes");
+            s.play
+                .stage_raw(s.tl.send_true_ns(blk) + 10_000_000, 0, wire);
+        }
+        s.play
+            .stage_raw(s.tl.decision_true_ns(CUT - 1) - 5_000_000, 0, tail);
+        for blk in 0..CUT2 + 5 {
+            let want = if blk < CUT {
+                source_bytes(blk)
+            } else {
+                other_bytes(blk)
+            };
+            let played = decide_raw(&mut s, blk);
+            assert_eq!(authentic(played, blk), want, "block {blk}");
+        }
+        let report = s.play.report();
+        // The first stream's tail crossed two rebinds and the second stream's ten blocks crossed one.
+        assert_eq!(report.accepted_by_draining_generation, 1 + 10);
+        assert_eq!(
+            (
+                report.refused_at_receiver,
+                report.replay_refused_at_receiver,
+                report.outside_generation_refused,
+                report.wrong_stream_refused_at_receiver
+            ),
+            (0, 0, 0, 0)
+        );
+        assert_eq!(report.decided_real, CUT2 + 5);
+        // Every copy is dropped when its generation has decided its tail.
+        assert!(s.play.engines.iter().all(|e| e.ingress.is_none()));
+        assert_eq!(
+            s.play.resident_bytes(),
+            s.play
+                .engines
+                .iter()
+                .map(|e| engine_resident_bytes(&e.engine))
+                .sum::<u64>()
+        );
+    }
+
     #[test]
     fn a_refused_next_stream_leaves_the_playing_one_deciding_real_blocks_and_a_funded_one_still_opens()
      {
@@ -1173,10 +2243,11 @@ mod tests {
             assert_eq!(authentic(played, blk), source_bytes(blk), "block {blk}");
         }
         // The next stream does not fit beside the playing one: a typed refusal, nothing live changed.
-        let tight = crate::media_playout::synthetic_ledger(2 * held - 1);
+        let tight =
+            crate::media_playout::synthetic_ledger(2 * held + retained_receiver_bytes() - 1);
         let refused = s
             .play
-            .prepare_stream(STREAM_B, 1, 30, &tight)
+            .prepare_stream(STREAM_B, 1, 30, &tight, s.clock.epoch())
             .err()
             .expect("no room beside the playing stream");
         assert!(matches!(
@@ -1191,14 +2262,14 @@ mod tests {
         }
         assert_eq!(s.play.report().decided_real, 20);
         // Control: with room for both, the candidate is prepared (still not live) and then committed.
-        let both = crate::media_playout::synthetic_ledger(2 * held);
+        let both = crate::media_playout::synthetic_ledger(2 * held + retained_receiver_bytes());
         let prepared = s
             .play
-            .prepare_stream(STREAM_B, 1, 30, &both)
+            .prepare_stream(STREAM_B, 1, 30, &both, s.clock.epoch())
             .ok()
             .expect("fits beside the playing stream");
         assert_eq!(s.play.stream_count(), 1);
-        s.play.commit_stream(STREAM_B, prepared);
+        s.play.commit_stream(STREAM_B, prepared, None);
         assert_eq!(s.play.stream_count(), 2);
     }
 
@@ -1367,7 +2438,7 @@ mod tests {
         assert_eq!(concealed, [6]);
         // Only now does the old packet reach the engine (it arrives 882 ms into the campaign, after every decision above).
         s.play
-            .deliver_until(&s.clock, &s.sim, 900_000_000)
+            .deliver_until(&s.clock, &s.sim, 900_000_000, None)
             .expect("delivers");
         let r = s.play.report();
         assert_eq!((r.late, r.decided_real, r.decided_concealed), (1, 11, 1));
@@ -1469,7 +2540,7 @@ mod tests {
         s.play.stage(s.tl.send_true_ns(2) + 20_000_000, 0, packet);
         s.decide(0);
         s.decide(1);
-        let err = match s.play.decide_block(2, &s.tl, &s.clock, &s.sim) {
+        let err = match s.play.decide_block(2, &s.tl, &s.clock, &s.sim, None) {
             Err(e) => e,
             Ok(_) => panic!("a block with bytes nobody sent was played"),
         };
@@ -1550,8 +2621,8 @@ mod tests {
         };
         let mut wire = Wire::new(1);
         let mut schedule = NetworkSchedule::new(cfg.clone());
-        let mut play =
-            NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0), &synthetic_ledger()).expect("binds");
+        let mut play = NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0), &synthetic_ledger(), 1)
+            .expect("binds");
         let frame_for = |blk: u64| Wire::frame(&timeline(), blk, source_bytes(blk));
         let mut link = SendLink {
             member_id: "spk-test",
@@ -1589,7 +2660,7 @@ mod tests {
         let staged: Vec<_> = play.in_flight.keys().copied().collect();
         let want: Vec<_> = expected.keys().copied().collect();
         assert_eq!(staged, want);
-        assert!(play.in_flight.values().all(|p| p.start_frame % 256 == 0));
+        assert!(play.in_flight.values().all(|p| p.start_frame() % 256 == 0));
         // A block is sent once: asking again for the same instant sends nothing.
         play.send_until(&mut link, tl.decision_true_ns(0), 1_000, &tl, &frame_for)
             .expect("sends");
@@ -1633,7 +2704,7 @@ mod tests {
                 duplicate_bps: 0,
                 ..NetworkScheduleConfig::default()
             });
-            let mut play = NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0), &synthetic_ledger())
+            let mut play = NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0), &synthetic_ledger(), 1)
                 .expect("binds");
             let frame_for = |blk: u64| Wire::frame(&timeline(), blk, source_bytes(blk));
             play.send_until(
@@ -1667,7 +2738,13 @@ mod tests {
             (0..self.total)
                 .map(|blk| {
                     self.play
-                        .decide_with_bytes(blk, &self.tl, &self.clock, &self.sim)
+                        .decide_with_bytes(
+                            blk,
+                            &self.tl,
+                            &self.clock,
+                            &self.sim,
+                            Some(&mut self.wire.receiver),
+                        )
                         .expect("decides")
                 })
                 .collect()
@@ -1778,15 +2855,18 @@ mod tests {
             .in_flight
             .get(&(ORIGIN + offset(20) - STALE_LEAD_NS, 20, 2))
             .expect("the stale packet is staged");
+        let staged = opened(staged);
         assert_eq!(staged.session_epoch, 0);
         assert_eq!(staged.start_frame, 20 * (FRAMES_PER_BLOCK as u64));
         assert_ne!(staged.payload, source_bytes(20));
-        // The member's receiver refused it at N01 (its replay window is untouched: the 60 real packets were accepted).
+        // The member's receiver refused it at N01 when it was planted. Its replay window is untouched: the 60 real datagrams are
+        // still in flight and are authenticated when they arrive (below).
         let counters = planted.wire.receiver.counters();
-        assert_eq!((counters.rejected_stale_epoch, counters.accepted), (1, 60));
+        assert_eq!((counters.rejected_stale_epoch, counters.accepted), (1, 0));
 
         let played = planted.decide_all();
         assert_plays_own_bytes(&played, &[]);
+        assert_eq!(planted.wire.receiver.counters().accepted, 60);
         let p = planted.play.report();
         assert_eq!(
             PlayoutMemberReport {
@@ -1863,7 +2943,7 @@ mod tests {
     impl TwoStreams {
         fn new(cutover: u64, total: u64) -> Self {
             let (sim, tl) = (sim(), timeline());
-            let mut play = NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0), &synthetic_ledger())
+            let mut play = NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0), &synthetic_ledger(), 1)
                 .expect("binds");
             let mut old = Wire::on_stream(STREAM);
             let mut new = Wire::on_stream(STREAM_B);
@@ -1895,7 +2975,7 @@ mod tests {
 
         fn decide(&mut self, blk: u64) -> (Played, Vec<u8>) {
             self.play
-                .decide_with_bytes(blk, &self.tl, &self.clock, &self.sim)
+                .decide_with_bytes(blk, &self.tl, &self.clock, &self.sim, None)
                 .expect("decides")
         }
     }
@@ -2013,7 +3093,7 @@ mod tests {
         fresh.play.stage(fresh.tl.send_true_ns(3), 0, stray);
         let err = match fresh
             .play
-            .decide_block(0, &fresh.tl, &fresh.clock, &fresh.sim)
+            .decide_block(0, &fresh.tl, &fresh.clock, &fresh.sim, None)
         {
             Err(e) => e,
             Ok(_) => panic!("a packet of an unknown stream was accepted"),
@@ -2026,10 +3106,11 @@ mod tests {
      {
         let tl = timeline();
         let ledger = synthetic_ledger();
-        let mut play = NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0), &ledger).expect("binds");
+        let mut play = NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0), &ledger, 1).expect("binds");
         let held = engine_resident_bytes(&play.engines[0].engine);
         // A line that holds the playing engine and a candidate of the same profile, less one byte.
-        let tight = crate::media_playout::synthetic_ledger(2 * held - 1);
+        let tight =
+            crate::media_playout::synthetic_ledger(2 * held + retained_receiver_bytes() - 1);
         let err = play
             .open_stream(STREAM_B, 1, 10, &tight)
             .expect_err("no room beside the playing stream");
@@ -2038,19 +3119,19 @@ mod tests {
         assert_eq!(play.engines[0].stream_id, STREAM);
         assert!(play.engines[0].until_block.is_none());
         // Exactly enough for both: admitted, and the new generation is appended.
-        let both = crate::media_playout::synthetic_ledger(2 * held);
+        let both = crate::media_playout::synthetic_ledger(2 * held + retained_receiver_bytes());
         play.open_stream(STREAM_B, 1, 10, &both)
             .expect("fits beside it");
         assert_eq!(play.engines.len(), 2);
         // The first stream alone binds in the tight line (the refusal was the overlap).
-        assert!(NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0), &tight).is_ok());
+        assert!(NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0), &tight, 1).is_ok());
     }
 
     #[test]
     fn a_stream_cannot_be_opened_twice_at_the_same_block_or_before_the_latest_one() {
         let tl = timeline();
-        let mut play =
-            NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0), &synthetic_ledger()).expect("binds");
+        let mut play = NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0), &synthetic_ledger(), 1)
+            .expect("binds");
         assert!(
             play.open_stream(STREAM_B, 1, 0, &synthetic_ledger())
                 .is_err()
@@ -2088,8 +3169,8 @@ mod tests {
             duplicate_bps: 0,
             ..NetworkScheduleConfig::default()
         });
-        let mut play =
-            NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0), &synthetic_ledger()).expect("binds");
+        let mut play = NodePlayout::bind(STREAM, 1, tl.pts_group_ns(0), &synthetic_ledger(), 1)
+            .expect("binds");
         let owner = |blk: u64| Wire::frame(&timeline(), blk, source_bytes(blk));
         let stale = |blk: u64| Wire::frame(&timeline(), blk, other_bytes(blk));
         play.send_until(
@@ -2118,11 +3199,12 @@ mod tests {
     #[test]
     fn the_publish_gate_decides_whose_frame_is_sent_and_a_refused_adapter_is_counted_by_the_code() {
         let staged = |play: &NodePlayout, blk: u64| {
-            play.in_flight
-                .get(&(ORIGIN + offset(blk), blk, 0))
-                .expect("staged")
-                .payload
-                .clone()
+            opened(
+                play.in_flight
+                    .get(&(ORIGIN + offset(blk), blk, 0))
+                    .expect("staged"),
+            )
+            .payload
         };
         // The gate refuses the replaced adapter (as `SOURCE_REPLACED`) and admits the owner.
         let refusing = |replaced: bool, _blk: u64| -> Result<(), String> {
@@ -2195,8 +3277,9 @@ mod tests {
                 duplicate_bps: 0,
                 ..NetworkScheduleConfig::default()
             });
-            let mut play = NodePlayout::bind(STREAM_B, 1, tl.pts_group_ns(0), &synthetic_ledger())
-                .expect("binds");
+            let mut play =
+                NodePlayout::bind(STREAM_B, 1, tl.pts_group_ns(0), &synthetic_ledger(), 1)
+                    .expect("binds");
             let owner = |blk: u64| Wire::frame(&timeline(), blk, source_bytes(blk));
             play.send_until(
                 &mut SendLink {
@@ -2234,16 +3317,17 @@ mod tests {
             },
             p
         );
-        // The member's real receiver refused it, by name, and accepted exactly the 40 genuine packets; nothing was staged for it.
+        // The member's real receiver refused it, by name, when it was planted; nothing was staged for it. The 40 genuine datagrams are
+        // still in flight: a receiver authenticates them when they arrive, not when they are sent.
         assert_eq!(control_wire.receiver.counters().rejected_wrong_stream, 0);
         assert_eq!(planted_wire.receiver.counters().rejected_wrong_stream, 1);
-        assert_eq!(planted_wire.receiver.counters().accepted, 40);
+        assert_eq!(planted_wire.receiver.counters().accepted, 0);
         assert_eq!(planted.in_flight.len(), control.in_flight.len());
         // A fault with no replaced stream to send from is a campaign error.
         let mut wire = Wire::on_stream(STREAM_B);
         let mut schedule = NetworkSchedule::new(NetworkScheduleConfig::default());
-        let mut play =
-            NodePlayout::bind(STREAM_B, 1, tl.pts_group_ns(0), &synthetic_ledger()).expect("binds");
+        let mut play = NodePlayout::bind(STREAM_B, 1, tl.pts_group_ns(0), &synthetic_ledger(), 1)
+            .expect("binds");
         let owner = |blk: u64| Wire::frame(&timeline(), blk, source_bytes(blk));
         let err = play
             .send_until(
