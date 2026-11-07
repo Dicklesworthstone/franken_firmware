@@ -1,0 +1,144 @@
+{
+ "artifacts": {
+  "docs/contracts/t01.md": "53461d18c5b3b7a8e0c7254c81f6f248c41be2a0e838fd7de29f17188547ab2b",
+  "docs/tailscale/feasibility.md": "32283a3673deaa8e3064171f40a7f4848c48a6a16432e37b7fcdc5c83b9327f7",
+  "docs/tailscale/profiles.json": "5b898665027bc31c91fb700436bd499af2c36b4ec0cd7255fccc4c55cea6b269",
+  "scripts/test/test_support/diagnostics.py": "df90049d7a0b87a3513c45bf4ae7502701d624d34c9e0d8e3e2394f6dba947b7",
+  "tests/t01/case_log.py": "21d58f7a16efd296c8269516d1bb1fd836ed20cfaaeb58e3448058de1ea6180b",
+  "tests/t01/cases.json": "c6bb9466a3660b21942f520b6042ef882376540c8e9d66a0871e64fb474bf914",
+  "tests/t01/run_cases.py": "24da18ff4841bffc4651c318d5bd7c8b75a78c0d640fdc2e0fa6955a3b24b72f",
+  "tests/t01/t01lib.py": "dd2c72ee71c33b9cdfe11e6d6b2fb955820b28882251161fa923e0ada8208ead",
+  "tests/tailscale-fixtures/evidence/ledger.json": "14a6a857e41daa7e2399d8862385654f478bf0e627d04ebbe3d4895dafa54fbb",
+  "tests/tailscale-fixtures/synthetic/derp_map.json": "0e52e34322fcdb311fed709b31301ac15ca682bdf80a799e6b81b18fddf218ae",
+  "tests/tailscale-fixtures/synthetic/identity.json": "5d21c3f403f7906230733416d6293af9135351a6ab9345424ce185f4547cdf77",
+  "tests/tailscale-fixtures/synthetic/key_expiry.json": "aaa19cf367653c8a047e45af15a92eec350b6e709da9685007e8810e617308bd",
+  "tests/tailscale-fixtures/synthetic/netmap.json": "c93d2177a1885088cf3df991a8aec60099a496120e0994e8b9f85b2b5a77f5a3",
+  "tests/tailscale-fixtures/x01/consumer.lock": "89b750bec181a50442b5663f804b34911d706c4b8156778aea3ead94810f52ea",
+  "toolchain/results/tailscale/builds/x01-core-mips-unknown-linux-musl-20261107.log": "f3a8274b50f41f3853c13bde182f68b6e3a38104943ac95fc2b048b024a3ae1e",
+  "toolchain/results/tailscale/builds/x01-core-powerpc-unknown-linux-musl-20261107.log": "72f5114291c4c4a173d4fea7135cc643e81332c3d2b3df9bd9f8461f064a9748",
+  "toolchain/results/tailscale/builds/x01-whole-mips-unknown-linux-musl-20261107.log": "119161ccd4349419019fa3e63144c33b68fcd94a38eb217632ad99eb3d31ca1e",
+  "toolchain/results/tailscale/builds/x01-whole-powerpc-unknown-linux-musl-20261107.log": "8391da0a6ee1619dc0d9aeabd6542bd8475f158c12226c857effaf4bacbcbbfe"
+ },
+ "counts": {
+  "blocked": 2,
+  "failed": 0,
+  "passed": 13
+ },
+ "diagnostics": {
+  "complete": true,
+  "file": "t01-diag-full-71f9a235d148927a.jsonl",
+  "log": {
+   "bytes": 11183,
+   "critical_lost": false,
+   "dropped": 0,
+   "events": 31,
+   "sha256": "9d7a9f2ca1af1e1e294d65832e90eab675aaa4374c46ec101150d3edabca276e",
+   "truncated": false
+  },
+  "reasons": []
+ },
+ "exit_code": 3,
+ "finished_utc": "2026-11-07T09:48:04+00:00",
+ "python": "3.15.0",
+ "replay": "scripts/e2e/t01 --tier full --sources SOURCES_DIR",
+ "results": [
+  {
+   "case": "T01-META-LEDGER",
+   "detail": "",
+   "group": "meta",
+   "status": "passed"
+  },
+  {
+   "case": "T01-META-PROFILE",
+   "detail": "",
+   "group": "meta",
+   "status": "passed"
+  },
+  {
+   "case": "T01-C01-classification",
+   "detail": "",
+   "group": "rules",
+   "status": "passed"
+  },
+  {
+   "case": "T01-C02-cell-rules",
+   "detail": "",
+   "group": "rules",
+   "status": "passed"
+  },
+  {
+   "case": "T01-C03-matrix",
+   "detail": "",
+   "group": "rules",
+   "status": "passed"
+  },
+  {
+   "case": "T01-C04-budget-rules",
+   "detail": "",
+   "group": "rules",
+   "status": "passed"
+  },
+  {
+   "case": "T01-C05-fixtures",
+   "detail": "",
+   "group": "fixtures",
+   "status": "passed"
+  },
+  {
+   "case": "T01-C06-native-requirement",
+   "detail": "",
+   "group": "contract",
+   "status": "passed"
+  },
+  {
+   "case": "T01-P01-tsrs-source",
+   "detail": "",
+   "group": "probe",
+   "status": "passed"
+  },
+  {
+   "case": "T01-P02-workspace-edges",
+   "detail": "",
+   "group": "probe",
+   "status": "passed"
+  },
+  {
+   "case": "T01-P03-awslc-targets",
+   "detail": "",
+   "group": "probe",
+   "status": "passed"
+  },
+  {
+   "case": "T01-P04-mio-reactor",
+   "detail": "",
+   "group": "probe",
+   "status": "passed"
+  },
+  {
+   "case": "T01-P05-ledger-vs-sources",
+   "detail": "",
+   "group": "probe",
+   "status": "passed"
+  },
+  {
+   "case": "T01-X01-legacy-isa-build",
+   "detail": "INCOMPLETE, type-check only (cargo check, build-std); nothing linked or run: core (the seven core crates) on powerpc-unknown-linux-musl: BUILT (type-check only; 176 artifacts); whole (the whole library) on powerpc-unknown-linux-musl: BUILT (type-check only; 340 artifacts); core (the seven core crates) on mips-unknown-linux-musl: BUILT (type-check only; 176 artifacts); whole (the whole library) on mips-unknown-linux-musl: STOPPED at aws-lc-sys v0.45.0 (exit 101): the worker has no C compiler 'mips-linux-musl-gcc' for this target, a toolchain blocker and not an ISA or source finding. A core pass is partial evidence only. T01-X02, the linked build and the native requirement are untouched",
+   "group": "central",
+   "status": "blocked"
+  },
+  {
+   "case": "T01-X02-target-resources",
+   "detail": "no measurement receipt under toolchain/results/tailscale/measurements/: no on-target figure is possible: there is no 2.6.14 PowerPC or 2.6.35 MIPS full-system guest (E03), and a harness-guest run (Debian 4.9 / 4.19) is indicative only and has not been run",
+   "group": "central",
+   "status": "blocked"
+  }
+ ],
+ "run_id": "71f9a235d148927a",
+ "schema": "ffw.t01.receipt.v1",
+ "sources_supplied": [
+  "aws-lc-sys",
+  "mio",
+  "tailscale-rs"
+ ],
+ "tier": "full"
+}

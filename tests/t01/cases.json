@@ -49,5 +49,43 @@
   "independent_anchors": {
     "note": "figures obtained with a different tool from the probes (a shell grep over the supplied source), so a probe regression is not checked against itself",
     "tailscale_rs_lock_packages": {"command": "grep -c '^\\[\\[package\\]\\]' Cargo.lock", "value": 689}
+  },
+  "x01_build": {
+    "note": "The pins of the compile-only gate T01-X01, written by hand from the resolved consumer workspace and the first real PowerPC log, not produced by the judge. consumer_files are the sha256 of the four files a cargo run in the consumer reads (the lock is the cargo-resolved 183-package lock of mail 10200); lock_packages and lock_registry come from the shell commands below (lock_path is their difference), so the judge's own lock parse is checked against another tool. The std fingerprint is the compiler_builtins version in the nightly-2026-08-31 library source that the first real log compiled, and std_registry are the seven crates.io crates that build-std itself compiles (all seven are in library/Cargo.lock of that toolchain's rust-src, which was read separately); any other registry crate must be in the consumer lock. The contract asks for two attempts per target, the seven core crates (core: -p x01_core in the consumer workspace) and the whole library (whole: -p tailscale in the pinned tailscale-rs workspace); `attempts` names each one's manifest and package. Nothing here is a runtime, memory, CPU or enrollment figure.",
+    "targets": ["powerpc-unknown-linux-musl", "mips-unknown-linux-musl"],
+    "toolchain": "nightly-2026-08-31",
+    "build_std": "core,alloc,std,panic_abort",
+    "package": "x01_core",
+    "attempts": {
+      "core": {"manifest": "Cargo.toml", "package": "x01_core"},
+      "whole": {"manifest": "tailscale-rs/Cargo.toml", "package": "tailscale"}
+    },
+    "core_crates": ["ts_keys", "ts_noise", "ts_tunnel", "ts_control_serde", "ts_packetfilter_state", "ts_disco_protocol", "ts_overlay_router"],
+    "std_crates": ["core", "alloc", "std", "panic_abort"],
+    "std_fingerprint": {"compiler_builtins": "0.1.160"},
+    "std_registry": ["addr2line 0.27.1", "adler2 2.0.1", "gimli 0.34.0", "miniz_oxide 0.9.1", "object 0.39.1", "rustc-demangle 0.1.28", "rustc-literal-escaper 0.0.8"],
+    "tailscale_rs_version": "0.6.1",
+    "cc_wrappers": {
+      "note": "The C compiler for aws-lc-sys on the whole-library MIPS attempt. cargo's own env table sets CC_mips_unknown_linux_musl through exactly three explicit --config keys (value, relative, force) naming one of the three wrapper files below, which root syncs beside the tree under x01-cc/. All enforce Zig 0.14.1 and Zig's big-endian o32 soft-float target (mips-linux-musleabi). The first is a byte copy of toolchain/linker/zig-cc-mips-be and passes cc-rs's Rust --target spelling through, which Zig rejects; the second drops exactly the two known --target spellings and refuses --target=OTHER and -target, but forwarded the bare two-argument --target OTHER and -target=OTHER; the third (v2) refuses all of those overrides, and is the one to ship. The one-key inline-table spelling is refused by cargo and is accepted only as a record of that refusal. No other --config argument and no other file under x01-cc/ is accepted.",
+      "target": "mips-unknown-linux-musl",
+      "attempt": "whole",
+      "env_key": "CC_mips_unknown_linux_musl",
+      "files": {
+        "x01-cc/zig-cc-mips-be": {"sha256": "b0d60bcb217f48b552807e09688aa14c8eae78c930976b720d2fe91b2a14723d", "role": "the repository's linker driver, byte for byte (toolchain/linker/zig-cc-mips-be)"},
+        "x01-cc/zig-cc-mips-be-ccrs": {"sha256": "17848d169db2dc71d048a13999c8a605104b6b77d3e846b2359039ab725bfa8d", "role": "adapter for cc-rs, committed as tests/tailscale-fixtures/x01/x01-cc/zig-cc-mips-be-ccrs; kept unchanged, its recorded build stands"},
+        "x01-cc/zig-cc-mips-be-ccrs-v2": {"sha256": "3dc93ff4f618cd96f1a8f4dbe68b0f37a9712778d3bf0f3f6e3d634eb61e64ab", "role": "hardened adapter (refuses bare --target and -target= overrides too), committed as tests/tailscale-fixtures/x01/x01-cc/zig-cc-mips-be-ccrs-v2"}
+      }
+    },
+    "consumer_files": {
+      "Cargo.toml": "eb13d6f685612971c57fe859be85ab23bb83fd941056f58f6bebfb52c7cb2847",
+      "Cargo.lock": "89b750bec181a50442b5663f804b34911d706c4b8156778aea3ead94810f52ea",
+      "x01_core/Cargo.toml": "a80ce8a31e0fce8db55d7342237b572c0e320ff213c7b5783fbef82f466105b2",
+      "x01_core/src/lib.rs": "fb1bc23b06d9bbbd041b3e336e214215c50d8e21e57238dead20db48b0c1b63d"
+    },
+    "lock_fixture": "tests/tailscale-fixtures/x01/consumer.lock",
+    "lock_packages": 183,
+    "lock_registry": 163,
+    "lock_path": 20,
+    "lock_commands": ["grep -c '^\\[\\[package\\]\\]' consumer.lock", "grep -c '^source = \"registry+https://github.com/rust-lang/crates.io-index\"' consumer.lock"]
   }
 }

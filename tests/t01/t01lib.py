@@ -14,6 +14,7 @@ import ipaddress
 import json
 import os
 import re
+import shlex
 import signal
 import stat
 import threading
@@ -773,3 +774,493 @@ def check_probe(facts, expected, label):
         elif facts[key] != expected[key]:
             problems.append("%s: %s is %r on the supplied source, the profile records %r" % (label, key, facts[key], expected[key]))
     return problems
+
+
+# ---- X01: the captured, compile-only build records -----------------------------------------------------------------------------------------
+#
+# T01-X01 asks for TWO attempts on EACH legacy target (the contract, section 6): the check of the seven core crates ("core", `-p x01_core` in the consumer workspace) AND the same check of the
+# whole library ("whole", `-p tailscale` in the pinned tailscale-rs workspace), the second "expected to stop at the first crate that does not build; the receipt names it". Each attempt is judged
+# from the CAPTURED LOG of one real run, never from anyone's account of it; the case (run_cases.case_build) passes only when all four attempts BUILT, and a stop is kept and named, never hidden. The log has the shape the first real run produced (a PowerPC `cargo check` of the resolved
+# consumer workspace through `rch exec --source-content-receipt`): a first line `COMMAND: <json argv>`, rch's own text, cargo's `--message-format=json` messages, cargo's `Finished` line,
+# rch's `Remote command finished: exit=N` and its `[RCH] source content receipt: <json>` (the sha256 of every file it synced). The judge below reads those and nothing else. What a pass
+# says is bounded by what the log can say: this exact cargo check command, on these exact inputs, compiled the seven core crates and their locked closure for this triple and finished
+# with exit 0. It says nothing about linking, running, memory, CPU, enrollment or a native endpoint; those are other cases and other receipts.
+
+MAX_LOG_BYTES = 8 * 1024 * 1024
+X01_SCOPE = "compile-only"
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+_ENV_ALLOWED = ("CARGO_INCREMENTAL", "CARGO_PROFILE_DEV_DEBUG", "CARGO_PROFILE_TEST_DEBUG", "CARGO_HOME", "CARGO_BUILD_JOBS")
+_RCH_CONFIG_KEYS = ("build.build-dir", "env.RCH_BUILD_SOURCE.value", "env.RCH_BUILD_SOURCE.force")
+_REGISTRY_INDEX = "https://github.com/rust-lang/crates.io-index"
+_PKG_ID = re.compile(r"^(?:path\+file://(?P<path>[^#]+)|registry\+(?P<index>[^#]*)|(?P<other>[a-z]+\+[^#]*))#(?:(?P<name>[A-Za-z0-9_.-]+)@)?(?P<version>[^@#]+)$")
+
+
+def read_bounded_file(path, max_bytes=MAX_LOG_BYTES):
+    """The bytes of ONE plain regular file. `lstat` first (a symlink, FIFO, device or directory, or a file over the cap, is refused without being opened), then the file is opened without
+    following a link and without blocking, checked again (same device and inode, still regular), and read to the cap plus one byte. The message never carries the path."""
+    name = _shown(os.path.basename(str(path)))
+    before = os.lstat(path)
+    if not stat.S_ISREG(before.st_mode):
+        raise SourceRefused("%s is not a plain regular file (a link, FIFO, device or directory is refused)" % name)
+    if before.st_size > max_bytes:
+        raise SourceRefused("%s is %d bytes, over the %d byte cap" % (name, before.st_size, max_bytes))
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | _O_CLOEXEC)
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            raise SourceRefused("%s changed between the check and the read" % name)
+        chunks, total = [], 0
+        while total <= max_bytes:
+            chunk = os.read(fd, min(1 << 20, max_bytes + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+    finally:
+        os.close(fd)
+    if total > max_bytes:
+        raise SourceRefused("%s grew past the %d byte cap while it was read" % (name, max_bytes))
+    return b"".join(chunks)
+
+
+def redact_build_log(text):
+    """The committed form of a raw build log: terminal colors removed; worker addresses, the login name used to reach a worker, the local and the remote home directory replaced. Nothing the judge reads is touched (it reads
+    the same facts from the raw and the redacted text)."""
+    text = _ANSI.sub("", text)
+    text = re.sub(r"/Users/[^/\s\"'<>]+", "<local>", text)
+    text = re.sub(r"/home/[^/\s\"'<>]+", "<home>", text)
+    text = SITE_PATTERNS[0].sub("<ip>", text)
+    return re.sub(r"[\w.-]+@(?=<ip>)", "<user>@", text)
+
+
+def site_hits(text):
+    """Which kinds of site data (an IPv4 address, a personal home path, an e-mail-like token) a text still holds. Kinds only, never the matched text."""
+    return [kind for kind, pattern in zip(("ipv4", "personal-path", "email-like"), SITE_PATTERNS) if pattern.search(text)]
+
+
+def tree_digest_of_entries(entries):
+    """`tree_digest` computed from a {relative path: sha256} map: the same digest, so a recorded file list can be held against the pin without the tree itself."""
+    return sha256_text("".join("%s\0%s\n" % (rel, entries[rel]) for rel in sorted(entries, key=_digest_key)))
+
+
+def _cargo_semantics(tokens, rch_rewrites):
+    """What a cargo command line asks for, as data. Anything not recognised lands in `extra`, which a pinned command must leave empty."""
+    sem = {"toolchain": None, "subcommand": None, "locked": False, "offline": False, "build_std": None, "jobs": None, "manifest": None, "target": None, "package": [],
+           "message_format": None, "configs": [], "extra": []}
+    i = 1
+    while i < len(tokens):
+        tok, nxt = tokens[i], (tokens[i + 1] if i + 1 < len(tokens) else None)
+        if tok.startswith("+") and sem["toolchain"] is None and sem["subcommand"] is None:
+            sem["toolchain"] = tok[1:]
+        elif sem["subcommand"] is None and not tok.startswith("-"):
+            sem["subcommand"] = tok
+        elif tok == "--locked":
+            sem["locked"] = True
+        elif tok == "--offline":
+            sem["offline"] = True
+        elif tok == "-Z" and nxt is not None and nxt.startswith("build-std="):
+            sem["build_std"] = nxt[len("build-std="):]
+            i += 1
+        elif re.fullmatch(r"-j\d+", tok):
+            sem["jobs"] = tok[2:]
+        elif tok == "--manifest-path" and nxt is not None:
+            sem["manifest"] = nxt
+            i += 1
+        elif tok == "--target" and nxt is not None:
+            sem["target"] = nxt
+            i += 1
+        elif tok == "-p" and nxt is not None:
+            sem["package"].append(nxt)
+            i += 1
+        elif tok == "--message-format=json":
+            sem["message_format"] = "json"
+        elif rch_rewrites and tok == "--config" and nxt is not None and nxt.split("=", 1)[0] in _RCH_CONFIG_KEYS:
+            i += 1
+        elif tok == "--config" and nxt is not None:
+            sem["configs"].append(nxt)
+            i += 1
+        elif rch_rewrites and tok == "--target-dir" and nxt is not None:
+            i += 1
+        else:
+            sem["extra"].append(_shown(tok))
+        i += 1
+    return sem
+
+
+def _check_semantics(sem, anchors, label):
+    problems = []
+    if sem["toolchain"] != anchors["toolchain"]:
+        problems.append("%s: toolchain %r, the pinned toolchain is %r" % (label, sem["toolchain"], anchors["toolchain"]))
+    if sem["subcommand"] != "check":
+        problems.append("%s: subcommand %r, this gate is `cargo check` (compile only)" % (label, sem["subcommand"]))
+    if not sem["locked"]:
+        problems.append("%s: not run with --locked" % label)
+    if sem["build_std"] != anchors["build_std"]:
+        problems.append("%s: build-std %r, the pinned set is %r" % (label, sem["build_std"], anchors["build_std"]))
+    if _attempt_kind(sem, anchors) is None:
+        problems.append("%s: packages %r, the pinned selections are only %r" % (label, sem["package"], [a["package"] for a in anchors["attempts"].values()]))
+    if sem["target"] not in anchors["targets"]:
+        problems.append("%s: target %r is not one of the pinned legacy targets %r" % (label, sem["target"], anchors["targets"]))
+    if sem["message_format"] != "json":
+        problems.append("%s: not --message-format=json, so cargo's artifacts are not in the log" % label)
+    if sem["extra"]:
+        problems.append("%s: unexpected arguments %r" % (label, sem["extra"][:4]))
+    problems += ["%s: %s" % (label, p) for p in _cc_config(sem, anchors, _attempt_kind(sem, anchors))[2]]
+    return problems
+
+
+def cc_forms(anchors):
+    """Every C compiler configuration a command line may carry, as {wrapper: {form: sorted --config strings}}. Exactly three explicit cargo env keys (value, relative, force) for a pinned wrapper
+    path, or the single inline-table spelling, which cargo REFUSES and which is therefore accepted only as a record of that refusal. Nothing else is a pinned C compiler configuration."""
+    cc = anchors["cc_wrappers"]
+    key = "env." + cc["env_key"]
+    forms = {}
+    for wrapper in cc["files"]:
+        forms[wrapper] = {"keys": sorted(['%s.value="%s"' % (key, wrapper), "%s.relative=true" % key, "%s.force=true" % key]),
+                          "inline": ['%s={value="%s",relative=true,force=true}' % (key, wrapper)]}
+    return forms
+
+
+def _cc_config(sem, anchors, kind):
+    """(wrapper, form, problems) for the --config arguments of one command line: (None, None, []) when it carries none."""
+    if not sem["configs"]:
+        return None, None, []
+    cc = anchors["cc_wrappers"]
+    for wrapper, forms in cc_forms(anchors).items():
+        for form, want in forms.items():
+            if sorted(sem["configs"]) == want:
+                problems = []
+                if sem["target"] != cc["target"] or kind != cc["attempt"]:
+                    problems.append("the C compiler configuration is pinned for the %s attempt on %s only" % (cc["attempt"], cc["target"]))
+                return wrapper, form, problems
+    return None, None, ["unexpected --config arguments %r: only the pinned C compiler wrapper table is accepted" % [_shown(c) for c in sem["configs"][:4]]]
+
+
+def _attempt_kind(sem, anchors):
+    """"core" or "whole": the pinned attempt whose package selection (and only that) this command line asks for."""
+    kinds = [name for name, attempt in anchors["attempts"].items() if sem["package"] == [attempt["package"]]]
+    return kinds[0] if len(kinds) == 1 else None
+
+
+def _package_id(pid):
+    match = _PKG_ID.match(pid) if isinstance(pid, str) else None
+    if not match:
+        return None
+    path = match.group("path")
+    name = match.group("name") or (os.path.basename(path.rstrip("/")) if path else None)
+    return {"path": path, "index": match.group("index"), "other": match.group("other"), "name": name, "version": match.group("version")}
+
+
+def check_x01_lock(lock_text, anchors):
+    """The committed copy of the resolved consumer lock: the pinned digest, the counts a shell grep gave, only crates.io sources, and `x01_core` depends on exactly the seven core crates."""
+    problems = []
+    if sha256_text(lock_text) != anchors["consumer_files"]["Cargo.lock"]:
+        problems.append("the consumer lock fixture is not the pinned resolved lock (sha256 differs)")
+    try:
+        lock = tomllib.loads(lock_text)
+    except ValueError:
+        return problems + ["the consumer lock fixture is not valid TOML"]
+    packages = lock.get("package", [])
+    registry = [p for p in packages if str(p.get("source", "")).startswith("registry+")]
+    local = [p for p in packages if "source" not in p]
+    if (len(packages), len(registry), len(local)) != (anchors["lock_packages"], anchors["lock_registry"], anchors["lock_path"]):
+        problems.append("the lock has %d packages (%d registry, %d path), the independent grep gave %d / %d / %d" % (
+            len(packages), len(registry), len(local), anchors["lock_packages"], anchors["lock_registry"], anchors["lock_path"]))
+    if len(registry) + len(local) != len(packages):
+        problems.append("the lock has a package whose source is neither crates.io nor a path")
+    if any(p["source"] != "registry+" + _REGISTRY_INDEX for p in registry) or any("checksum" not in p for p in registry):
+        problems.append("a locked registry package is not from the crates.io index or has no checksum")
+    top = [p for p in packages if p["name"] == anchors["package"]]
+    if len(top) != 1 or sorted(top[0].get("dependencies", [])) != sorted(anchors["core_crates"]):
+        problems.append("%s does not depend on exactly the seven core crates in the lock" % anchors["package"])
+    return problems
+
+
+def judge_build_record(text, anchors, tree_pin, lock_text, redacted=False):
+    """Judge one captured build log of ONE attempt: the seven-core-crate check ("core": `-p x01_core` in the consumer workspace) or the whole-library check ("whole": `-p tailscale` in the
+    pinned tailscale-rs workspace), for one legacy target. Returns (problems, facts).
+
+    `problems` are defects of the RECORD: it does not hold (a pin, the structure, a contradiction between the log's own witnesses). A build that STOPPED is not a defect of its record: it is the
+    outcome, `facts["outcome"]` is "built" or "stopped", and a stop names where and why (`facts["stop"]`), classified only from text the log itself holds. A stop is never read as a built attempt, nor
+    as an ISA or source finding unless its cause says so. `facts` carries what was established and never a runtime, memory, CPU or enrollment figure, because the log cannot hold one."""
+    problems = []
+    facts = {"scope": X01_SCOPE}
+    lines = _ANSI.sub("", text).splitlines()
+    try:
+        lock = tomllib.loads(lock_text)
+    except ValueError:
+        return ["the consumer lock fixture cannot be read"], facts
+    lock_registry = {(p["name"], p["version"]) for p in lock.get("package", []) if str(p.get("source", "")).startswith("registry+")}
+    lock_local = {(p["name"], p["version"]) for p in lock.get("package", []) if "source" not in p}
+    std_registry = {tuple(item.split(" ", 1)) for item in anchors["std_registry"]}
+    attempts = anchors["attempts"]
+
+    # 1. the command, as the capture wrapper wrote it, and as rch executed it
+    argv = None
+    if lines and lines[0].startswith("COMMAND: "):
+        try:
+            argv = json.loads(lines[0][len("COMMAND: "):])
+        except ValueError:
+            argv = None
+        if not (isinstance(argv, list) and all(isinstance(a, str) for a in argv)):
+            argv = None
+    argv_sem, worker = None, None
+    if argv is None:
+        problems.append("the first line is not a `COMMAND: <json argv>` line")
+    elif argv[:2] != ["rch", "exec"] or "--" not in argv or argv[argv.index("--") + 1:argv.index("--") + 2] != ["cargo"]:
+        problems.append("the command is not `rch exec ... -- cargo ...`")
+    else:
+        cut = argv.index("--")
+        opts, i = argv[2:cut], 0
+        while i < len(opts):
+            if opts[i] == "--source-content-receipt":
+                i += 1
+            elif opts[i] == "--worker" and i + 1 < len(opts):
+                worker, i = opts[i + 1], i + 2
+            else:
+                problems.append("unexpected rch option %r" % _shown(opts[i]))
+                i += 1
+        argv_sem = _cargo_semantics(argv[cut + 1:], False)
+        problems += _check_semantics(argv_sem, anchors, "command")
+    kind = _attempt_kind(argv_sem, anchors) if argv_sem else None
+    target = argv_sem["target"] if argv_sem else None
+    cc_wrapper, cc_form, _ = _cc_config(argv_sem, anchors, kind) if argv_sem else (None, None, [])
+    facts.update({"target": target, "attempt": kind, "cc": ({"wrapper": cc_wrapper, "sha256": anchors["cc_wrappers"]["files"][cc_wrapper]["sha256"], "form": cc_form} if cc_wrapper else None)})
+    if kind and argv_sem["manifest"] != attempts[kind]["manifest"]:
+        problems.append("command: manifest %r, the %s attempt runs %r" % (argv_sem["manifest"], kind, attempts[kind]["manifest"]))
+    remotes = [line.split("Executing command remotely: ", 1)[1] for line in lines if "Executing command remotely: " in line]
+    remote_sem = None
+    if len(remotes) != 1:
+        problems.append("expected one 'Executing command remotely' line, found %d" % len(remotes))
+    else:
+        try:
+            words = shlex.split(remotes[0])
+        except ValueError:
+            words = []
+            problems.append("the remote command line does not split into words (truncated?)")
+        else:
+            if not words:                  # an empty or blank command splits into no words at all: nothing would be checked, so it is a defect and never a pass
+                problems.append("the remote command line is empty: no cargo invocation was recorded")
+        j = 1 if words[:1] == ["env"] else 0
+        while j < len(words) and re.fullmatch(r"[A-Z_][A-Z0-9_]*=.*", words[j]):
+            if words[j].split("=", 1)[0] not in _ENV_ALLOWED:
+                problems.append("the remote command sets %s, which changes the build" % words[j].split("=", 1)[0])
+            j += 1
+        if words and words[j:j + 1] != ["cargo"]:
+            problems.append("the remote command is not a cargo invocation")
+        elif words:
+            remote_sem = _cargo_semantics(words[j:], True)
+            problems += _check_semantics(remote_sem, anchors, "remote command")
+    if argv_sem and remote_sem:
+        for key in ("toolchain", "subcommand", "locked", "offline", "build_std", "jobs", "target", "package", "message_format", "configs"):
+            if argv_sem[key] != remote_sem[key]:
+                problems.append("the command and the remote command disagree on %s (%r vs %r)" % (key, argv_sem[key], remote_sem[key]))
+
+    # 2. what rch says it synced, and the pins it is held against
+    receipts = [line for line in lines if line.startswith("[RCH] source content receipt:")]
+    root, remote_root, receipt = None, None, None
+    if len(receipts) != 1:
+        problems.append("expected one rch source content receipt, found %d" % len(receipts))
+    else:
+        try:
+            receipt = json.loads(receipts[0].split(":", 1)[1].strip())
+        except ValueError:
+            problems.append("the rch source content receipt is not valid JSON (truncated?)")
+    if isinstance(receipt, dict):
+        roots = receipt.get("roots")
+        if receipt.get("schema") != "rch.source_content_receipt.v1" or receipt.get("root_count") != 1 or not isinstance(roots, list) or len(roots) != 1:
+            problems.append("the rch source content receipt is not one root of schema rch.source_content_receipt.v1")
+        else:
+            root = roots[0]
+        if worker is not None and receipt.get("worker_id") != worker:
+            problems.append("the receipt's worker differs from the worker the command asked for")
+        facts["worker"] = receipt.get("worker_id")
+    entries = {}
+    if isinstance(root, dict):
+        files = root.get("files")
+        remote_root = root.get("remote_root")
+        if not isinstance(files, list) or not isinstance(remote_root, str) or not remote_root.startswith("/"):
+            problems.append("the receipt's root has no file list or no remote root")
+        else:
+            for entry in files:
+                path, digest = (entry.get("path"), entry.get("sha256")) if isinstance(entry, dict) else (None, None)
+                if not isinstance(path, str) or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest) or path.startswith("/") or ".." in path.split("/"):
+                    problems.append("the receipt lists a malformed file entry")
+                elif path in entries:
+                    problems.append("the receipt lists %s twice" % _shown(path))
+                else:
+                    entries[path] = digest
+            if root.get("file_count") != len(files) or root.get("byte_count") != sum(e.get("byte_count", 0) for e in files if isinstance(e, dict)):
+                problems.append("the receipt's file_count or byte_count does not match its own file list")
+        if root.get("mode") != "full" or root.get("is_primary") is not True:
+            problems.append("the synced root is not the full primary root")
+    if remote_sem and kind and remote_root and remote_sem["manifest"] != "%s/%s" % (remote_root, attempts[kind]["manifest"]):
+        problems.append("remote command: the manifest is not the synced root's %s" % attempts[kind]["manifest"])
+    for rel, want in anchors["consumer_files"].items():
+        if entries and entries.get(rel) != want:
+            problems.append("synced %s is not the pinned consumer file (stale or changed)" % rel)
+    pinned_cc = anchors["cc_wrappers"]["files"]
+    if entries:
+        stray = sorted(p for p in entries if p.startswith("x01-cc/") and p not in pinned_cc)
+        if stray:
+            problems.append("the synced root holds files under x01-cc/ that are not pinned C compiler wrappers: %s" % ", ".join(_shown(p) for p in stray[:3]))
+        for path, info in pinned_cc.items():
+            if path in entries and entries[path] != info["sha256"]:
+                problems.append("synced %s is not the pinned wrapper (sha256 %s, pinned %s)" % (path, entries[path][:12], info["sha256"][:12]))
+        if cc_wrapper and cc_wrapper not in entries:
+            problems.append("the wrapper %s the command configures is not among the synced files" % cc_wrapper)
+    if entries:
+        under = sorted(p for p in entries if p.startswith("x01_core/"))
+        if under != ["x01_core/Cargo.toml", "x01_core/src/lib.rs"]:
+            problems.append("the consumer package holds files beyond its manifest and src/lib.rs")
+        if any(p == "rust-toolchain" or p == "rust-toolchain.toml" or p.startswith(".cargo/") or p in ("build.rs", "config.toml") for p in entries):
+            problems.append("the synced root holds a cargo config, toolchain override or build script that can change the build")
+        pinned = {p[len("tailscale-rs/"):]: d for p, d in entries.items() if p.startswith("tailscale-rs/")}
+        tree = tree_digest_of_entries(pinned)
+        facts.update({"source_files": len(entries), "tree_sha256": tree, "lock_sha256": entries.get("Cargo.lock")})
+        if tree != tree_pin:
+            problems.append("the synced tailscale-rs tree digest %s is not the pinned %s" % (tree[:12], tree_pin[:12]))
+
+    # 3. cargo's own messages and the terminal result: three witnesses (cargo, rch, the receipt) that must agree
+    messages = []
+    for number, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if stripped.startswith("{"):
+            try:
+                doc = json.loads(stripped)
+            except ValueError:
+                problems.append("line %d looks like a cargo message but is not valid JSON (truncated?)" % number)
+                continue
+            if isinstance(doc, dict) and isinstance(doc.get("reason"), str):
+                messages.append(doc)
+    finished = [i for i, m in enumerate(messages) if m["reason"] == "build-finished"]
+    refused = not messages                 # cargo refused to start (a rejected --config, say): there is no cargo message at all, and then only a consistent refusal is a record
+    last_ok = len(finished) == 1 and finished[0] == len(messages) - 1
+    if not last_ok and not refused:
+        problems.append("cargo's build-finished message is missing, repeated or not last")
+    success = messages[finished[0]].get("success") if last_ok else None
+    exits = [m.group(1) for m in (re.search(r"Remote command finished: exit=(-?\d+)", line) for line in lines) if m]
+    if len(exits) != 1:
+        problems.append("rch's remote command exit is %s, expected exactly one exit line" % (exits or "absent"))
+    rch_exit = int(exits[0]) if len(exits) == 1 else None
+    receipt_exit = receipt.get("command_exit_code") if isinstance(receipt, dict) else None
+    finished_lines = len([line for line in lines if re.match(r"\s*Finished `", line)])
+    compiler_error = any(m["reason"] == "compiler-message" and str(m.get("message", {}).get("level", "")).startswith("error") for m in messages)
+    error_line = any(re.match(r"\s*error(\[E\d+\])?:", line) for line in lines)
+    outcome = None
+    if refused:
+        if rch_exit not in (None, 0) and receipt_exit == rch_exit and finished_lines == 0 and error_line:
+            outcome = "stopped"
+        elif rch_exit is not None and not any("terminal results" in p for p in problems):
+            problems.append("the log holds no cargo message and is not a consistent refusal: rch exit %r, receipt exit %r, %d Finished line(s), error line %s" % (rch_exit, receipt_exit, finished_lines, error_line))
+    elif last_ok and rch_exit is not None and isinstance(receipt_exit, int):
+        if success is True and rch_exit == 0 and receipt_exit == 0 and finished_lines == 1 and not compiler_error and not error_line:
+            outcome = "built"
+        elif success is False and rch_exit != 0 and receipt_exit == rch_exit and finished_lines == 0:
+            outcome = "stopped"
+        else:
+            problems.append("the terminal results disagree: build-finished success=%r, rch exit %r, receipt exit %r, %d Finished line(s), compiler error %s, error line %s"
+                            % (success, rch_exit, receipt_exit, finished_lines, compiler_error, error_line))
+    elif last_ok and rch_exit is not None:
+        problems.append("the receipt records no command_exit_code")
+    if outcome == "built" and cc_form == "inline":
+        problems.append("the inline-table C compiler configuration is refused by cargo, so a log that claims to have built with it does not hold")
+    facts["outcome"] = outcome
+    if outcome == "stopped":
+        body = "\n".join(lines)
+        script = re.findall(r"^error: failed to run custom build command for `([^`]+)`", body, re.M)
+        unit = re.findall(r"^error: could not compile `([^`]+)`", body, re.M)
+        tools = sorted(set(re.findall(r'error occurred in cc-rs: failed to find tool "([^"]+)"', body)))
+        refused_arg = re.findall(r"^\s*error: --config argument `([^`]+)` sets a value to an inline table, which is not accepted", body, re.M)
+        spelled = sorted(set(re.findall(r"unable to parse target query '([^']+)'", body)))
+        stop = {"package": (script or unit or [None])[0], "exit": rch_exit, "class": "unclassified", "tool": None, "detail": None}
+        if refused and refused_arg and argv_sem and refused_arg[0] in argv_sem["configs"]:     # cargo refused a --config argument this very command carried
+            stop.update({"class": "cargo-config-rejected", "detail": refused_arg[0]})
+        elif script and "error occurred in cc-rs: command did not execute successfully" in body and target and spelled == [target]:      # the configured C compiler ran and refused the target spelling
+            stop.update({"class": "c-compiler-rejected-target", "detail": target})
+        elif script and len(tools) == 1:               # a build script failed because cc-rs could not find the target's C compiler, and the log names that one tool
+            stop.update({"class": "missing-c-toolchain", "tool": tools[0]})
+        facts["stop"] = stop
+
+    # 4. what was compiled
+    artifacts = [m for m in messages if m["reason"] == "compiler-artifact"]
+    if outcome == "built" and not artifacts:
+        problems.append("no compiler-artifact message: nothing was compiled")
+    tc = anchors["toolchain"]
+    found = {"registry": set(), "tailscale_rs": set(), "x01": False, "std": {}}
+    libs = set()
+    for art in artifacts:
+        pid = _package_id(art.get("package_id"))
+        kinds = (art.get("target") or {}).get("kind") or []
+        raw_names = art.get("filenames")
+        names_ok = isinstance(raw_names, list) and all(isinstance(f, str) for f in raw_names)
+        names = raw_names if names_ok else []
+        if pid is None:
+            problems.append("an artifact has an unreadable package id")
+            continue
+        label = "%s %s" % (pid["name"], pid["version"])
+        if not names_ok:
+            problems.append("%s has no readable filenames list (missing, not a list, or not all strings)" % label)
+        for_target = False
+        host = any(k in kinds for k in ("custom-build", "proc-macro"))
+        if pid["index"] is not None:
+            if pid["index"] != _REGISTRY_INDEX:
+                problems.append("%s comes from a registry other than crates.io" % label)
+            elif kind != "whole" and (pid["name"], pid["version"]) not in lock_registry and (pid["name"], pid["version"]) not in std_registry:
+                problems.append("%s is neither in the locked closure nor one of the toolchain's own build-std crates" % label)
+            found["registry"].add((pid["name"], pid["version"]))
+        elif pid["other"] is not None:
+            problems.append("%s comes from a %s source" % (label, pid["other"].split("+")[0]))
+        else:
+            path = pid["path"]
+            # An artifact counts toward a REQUIRED crate only with a witness: at least one output file name, and every one of them under the selected target's directory. Without it (an empty or
+            # unreadable filenames list) nothing ties the artifact to the target, so a record could be promoted to another target by emptying its file names.
+            witness = bool(target) and bool(names) and all("/%s/debug/" % target in name for name in names)
+            if kind != "whole" and remote_root and path == remote_root + "/x01_core":
+                found["x01"] = found["x01"] or witness
+                for_target = True
+            elif remote_root and kind == "whole" and (path == remote_root + "/tailscale-rs" or path.startswith(remote_root + "/tailscale-rs/")):
+                if pid["version"] != anchors["tailscale_rs_version"]:
+                    problems.append("%s is not at the pinned tailscale-rs version" % label)
+                found["tailscale_rs"].add(pid["name"])
+                for_target = True
+                if "lib" in kinds and witness:
+                    libs.add(pid["name"])
+            elif remote_root and kind != "whole" and path == "%s/tailscale-rs/%s" % (remote_root, pid["name"]):
+                if (pid["name"], pid["version"]) not in lock_local or pid["version"] != anchors["tailscale_rs_version"]:
+                    problems.append("%s is not the locked tailscale-rs crate" % label)
+                found["tailscale_rs"].add(pid["name"])
+                for_target = True
+                if "lib" in kinds and witness:
+                    libs.add(pid["name"])
+            elif re.search(r"/toolchains/%s-[A-Za-z0-9_.-]+/lib/rustlib/src/rust/library/" % re.escape(tc), path):
+                if witness:
+                    found["std"][pid["name"]] = pid["version"]
+                for_target = True
+            else:
+                problems.append("%s is built from a path outside the synced tree and the pinned toolchain" % label)
+        for name in names:
+            others = [t for t in anchors["targets"] if t != target and "/%s/" % t in name]
+            if others:
+                problems.append("%s has an artifact under the other legacy target %s" % (label, others[0]))
+            elif target and for_target and not host and "/%s/debug/" % target not in name:
+                problems.append("%s has an artifact outside the %s directory" % (label, target))
+    if outcome == "built" and kind:
+        need = list(anchors["core_crates"]) + (["tailscale"] if kind == "whole" else [])
+        witnessed = "with an output file under the %s directory" % target
+        for crate in need:
+            if crate not in libs:
+                problems.append("%s has no compiled library artifact %s" % (crate, witnessed))
+        if kind == "core" and not found["x01"]:
+            problems.append("%s itself was not compiled (no artifact %s)" % (attempts["core"]["package"], witnessed))
+        for std in anchors["std_crates"]:
+            if std not in found["std"]:
+                problems.append("build-std did not compile %s (no artifact %s)" % (std, witnessed))
+        for name, version in anchors["std_fingerprint"].items():
+            if found["std"].get(name) != version:
+                problems.append("the toolchain's standard library source has %s %s, the pinned toolchain has %s" % (name, found["std"].get(name), version))
+    if redacted and site_hits(text):
+        problems.append("a committed record still holds site data (%s): redact the raw log" % ", ".join(site_hits(text)))
+    facts.update({"toolchain": tc, "artifacts": len(artifacts), "registry_packages": len(found["registry"]), "tailscale_rs_packages": len(found["tailscale_rs"]),
+                  "std_packages": len(found["std"]), "core_crates_compiled": len(libs & set(anchors["core_crates"]))})
+    return problems, facts

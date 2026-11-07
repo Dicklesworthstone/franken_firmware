@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
 """T01 tiered runner and bounded diagnostic receipt (bead ffw-32a): native Tailscale protocol and resource feasibility, offline.
 
-    run_cases.py [--tier smoke|full|soak] [--sources DIR] [--receipts DIR] [--list]
+    run_cases.py [--tier smoke|full|soak] [--sources DIR] [--receipts DIR] [--build-log LOG ...] [--list]
+    run_cases.py --redact-build-log RAW DEST
 
-Offline, standard library only; it builds nothing, boots nothing, contacts nothing and never invokes cargo. It judges the study's own artifacts: the evidence ledger, the frozen profile
+Offline, standard library only; it builds nothing, boots nothing, contacts nothing and never invokes cargo (it READS the captured log of a build somebody else ran). It judges the study's own artifacts: the evidence ledger, the frozen profile
 (docs/tailscale/profiles.json), the synthetic fixtures, and the rules that turn them into a matrix. It measures no target: a resource figure is `pending` until a receipt from a run on
 the target exists, and no such run is possible locally.
 
 Tiers (explicit):
 
   smoke  the ledger and the profile hold; the classification, cell and budget rules equal the tables written by hand in cases.json; the matrix is complete and has no `supported`
-         cell; the synthetic identity, network-map, relay and key-expiry fixtures equal the model; the native requirement is still required; with X01 and X02 blocked the study is incomplete and closes nothing.
+         cell; the synthetic identity, network-map, relay and key-expiry fixtures equal the model; the native requirement is still required; with X02 blocked and nothing linked or run the study is incomplete and closes nothing.
   full   smoke, and the source probes: with ``--sources DIR`` (subdirectories `tailscale-rs`, `aws-lc-sys`, `mio`: the pinned trees, extracted) they recompute the census recorded in
-         the profile and re-check every ledger excerpt against the file it was cut from. Without ``--sources`` those cases are BLOCKED. The cases that need a central build or an
-         on-target measurement (T01-X01, T01-X02) are BLOCKED until a receipt exists under toolchain/results/tailscale/; they are never a pass.
+         the profile and re-check every ledger excerpt against the file it was cut from. Without ``--sources`` those cases are BLOCKED. T01-X01 judges the captured build logs
+         under toolchain/results/tailscale/builds/ (and any ``--build-log LOG``): the contract's TWO COMPILE-ONLY ``cargo check`` attempts on EACH legacy target, the seven core crates and
+         the whole library, held against pinned inputs. It PASSES only when all four attempts built; otherwise it is BLOCKED with every attempt accounted for (built, stopped at a named
+         crate with its classified cause, or not recorded), and FAILED by any record that does not hold. A stop is kept and named, never read as a pass nor as an ISA finding it does not
+         show. T01-X02 (on-target memory and CPU) is BLOCKED until a measurement receipt exists; a compile record never satisfies it, nor a runtime, enrollment or native-endpoint claim.
   soak   selectable, says why nothing runs, exits 4. It is never a pass.
 
 Every decided case writes a CRITICAL begin and end event through the shared Q00 sink (``case_log.py``); a run whose log lost critical evidence is NOT QUALIFIED. A run that is not a pass
@@ -58,18 +62,26 @@ CONTRACT_PHRASES = (
 )
 JUDGED_ARTIFACTS = ("tests/t01/run_cases.py", "tests/t01/t01lib.py", "tests/t01/case_log.py", "tests/t01/cases.json", "docs/tailscale/profiles.json", "docs/tailscale/feasibility.md", CONTRACT,
                     "tests/tailscale-fixtures/evidence/ledger.json", "tests/tailscale-fixtures/synthetic/identity.json", "tests/tailscale-fixtures/synthetic/netmap.json",
-                    "tests/tailscale-fixtures/synthetic/derp_map.json", "tests/tailscale-fixtures/synthetic/key_expiry.json", "scripts/test/test_support/diagnostics.py")
+                    "tests/tailscale-fixtures/synthetic/derp_map.json", "tests/tailscale-fixtures/synthetic/key_expiry.json", "tests/tailscale-fixtures/x01/consumer.lock", "tests/tailscale-fixtures/x01/x01-cc/zig-cc-mips-be-ccrs",
+                    "tests/tailscale-fixtures/x01/x01-cc/zig-cc-mips-be-ccrs-v2", "scripts/test/test_support/diagnostics.py")
+BUILD_DIR = ("toolchain", "results", "tailscale", "builds")
 SOURCE_DIRS = {"tailscale-rs": "tailscale/tailscale-rs", "aws-lc-sys": "crates.io/aws-lc-sys", "mio": "crates.io/mio"}
 
-# The exact central lines that would give the legacy-ISA build evidence (case T01-X01). NOT RUN: they need root's strict-remote lane, an export of the pinned commit and the locked
-# dependencies in the workers' offline registry, which this study could not check (its own machine's cache holds 473 of the 643 locked registry packages; see RUN.md).
+# The central lines that give the legacy-ISA COMPILE evidence (case T01-X01), in the form the first real runs used. They are root's, on its strict-remote lane, from the resolved consumer
+# workspace (the pinned tailscale-rs tree, x01_core, and the resolved lock tests/tailscale-fixtures/x01/consumer.lock); the capture wrapper writes `COMMAND: <json argv>` as the first line and
+# then rch's stdout and stderr. The log is the record; nothing here runs them.
 CENTRAL_LINES = (
-    "# from an export of tailscale/tailscale-rs at d34658bbb2eb4593ae6df959aa93e9ee1e0457c6, once its locked dependencies are in the workers' offline registry (an authorized import step):",
-    "RCH_REQUIRE_REMOTE=1 rch exec -- cargo +nightly-2026-08-31 check --locked --offline -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2 "
-    "--target {triple} -p ts_keys -p ts_noise -p ts_tunnel -p ts_control_serde -p ts_packetfilter_state -p ts_disco_protocol -p ts_overlay_router",
-    "RCH_REQUIRE_REMOTE=1 rch exec -- cargo +nightly-2026-08-31 check --locked --offline -Z build-std=core,alloc,std,panic_abort --config build.incremental=false -j 2 --target {triple} -p tailscale",
-    "# {triple} in powerpc-unknown-linux-musl, mips-unknown-linux-musl. The first line is the runtime-free protocol core; the second is the whole library and is expected to stop at the first crate "
-    "that does not build (the receipt names it).",
+    "# from the consumer workspace (cwd), one run per target:",
+    "rch exec --source-content-receipt --worker <W> -- cargo +nightly-2026-08-31 check --locked -Z build-std=core,alloc,std,panic_abort -j1 --manifest-path Cargo.toml "
+    "--target {triple} -p x01_core --message-format=json",
+    "# the same check of the whole library, in the pinned tailscale-rs workspace (its own lock), from the same synced root:",
+    "rch exec --source-content-receipt --worker <W> -- cargo +nightly-2026-08-31 check --locked -Z build-std=core,alloc,std,panic_abort -j1 --manifest-path tailscale-rs/Cargo.toml "
+    "--target {triple} -p tailscale --message-format=json",
+    "# MIPS whole library only: aws-lc-sys needs a C compiler for the target, which the workers lack, so root syncs the pinned wrapper files under x01-cc/ and sets CC through exactly three explicit "
+    "cargo env keys (one --config argument each): env.CC_mips_unknown_linux_musl.value=\"x01-cc/zig-cc-mips-be-ccrs-v2\", env.CC_mips_unknown_linux_musl.relative=true, "
+    "env.CC_mips_unknown_linux_musl.force=true. The one-argument inline-table spelling is refused by cargo.",
+    "# {triple} in powerpc-unknown-linux-musl, mips-unknown-linux-musl: four attempts, each captured. x01_core depends on the seven core crates only. The whole-library attempt may stop at the "
+    "first crate that does not build (the log names it); a stop is recorded, classified from its own text, and does not complete T01-X01. Neither is a link or a run.",
 )
 MEASUREMENT_BLOCKER = ("no on-target figure is possible: there is no 2.6.14 PowerPC or 2.6.35 MIPS full-system guest (E03), and a harness-guest run (Debian 4.9 / 4.19) is indicative only and has not been run")
 
@@ -318,12 +330,85 @@ def receipt_files(kind: str, repo: str = REPO) -> List[str]:
     return sorted(os.path.join(directory, n) for n in os.listdir(directory) if n.endswith(".json")) if os.path.isdir(directory) else []
 
 
-def case_build(repo: str) -> Result:
-    if not receipt_files("builds", repo):
-        return blocked("T01-X01-legacy-isa-build", "central",
-                       "no build receipt under toolchain/results/tailscale/builds/: the exact legacy-ISA build needs a central run (root's strict-remote lane) that has not been made. "
-                       "The lines are in CENTRAL_LINES and docs/contracts/t01.md section 6; mips and powerpc are separate runs")
-    return blocked("T01-X01-legacy-isa-build", "central", "a build receipt exists but this runner has no judge for it yet: add one with the first real receipt, do not read it as a pass")
+X01_ID = "T01-X01-legacy-isa-build"
+X01_KINDS = (("core", "the seven core crates"), ("whole", "the whole library"))
+
+
+def stop_text(stop: Dict[str, Any]) -> str:
+    """A stop in one short sentence (the shared case log bounds a detail at 1024 characters, so the account has to fit): where it stopped and why, as the log's own text classified it."""
+    where = "at %s" % stop["package"] if stop.get("package") else "at an unnamed crate"
+    if stop.get("class") == "missing-c-toolchain":
+        return "STOPPED %s: the worker has no C compiler '%s', a toolchain blocker and not an ISA or source finding" % (where, stop["tool"])
+    if stop.get("class") == "cargo-config-rejected":
+        return "REJECTED by cargo before building: an inline-table --config, a syntax failure and not an ISA or source finding"
+    if stop.get("class") == "c-compiler-rejected-target":
+        return "STOPPED %s: the C compiler wrapper rejected the target spelling '%s', an adapter failure and not an ISA or source finding" % (where, stop["detail"])
+    return "STOPPED %s: the cause is not classified here, so it is read neither as a toolchain blocker nor as an ISA or source finding" % where
+
+
+def account_x01(got: Dict[Any, List[Dict[str, Any]]], targets: Any) -> Any:
+    """One short line per required attempt, and whether every one built. A stop stays in the account even when a later run built the same attempt."""
+    lines, complete = [], True
+    for target in targets:
+        for kind, _what in X01_KINDS:
+            records = got.get((target, kind), [])
+            built = [f for f in records if f["outcome"] == "built"]
+            stops = [f["stop"] for f in records if f["outcome"] == "stopped"]
+            if built:
+                text = "BUILT (%d artifacts)" % built[0]["artifacts"]
+                wrappers = sorted({(f["cc"]["wrapper"], f["cc"]["sha256"][:12]) for f in built if f.get("cc")})
+                if wrappers:
+                    text += " with the pinned C compiler wrapper%s %s (Zig 0.14.1, three cargo env keys)" % ("s" if len(wrappers) > 1 else "", " and ".join("%s (sha256 %s)" % w for w in wrappers))
+                if stops:
+                    text += "; earlier stops kept: " + "; ".join(stop_text(s) for s in stops)
+            elif stops:
+                text, complete = "; ".join(stop_text(s) for s in stops), False
+            else:
+                text, complete = "NOT RECORDED", False
+            lines.append("%s %s: %s" % (kind, target.split("-")[0], text))
+    return lines, complete
+
+
+def case_build(repo: str, data: Optional[Dict[str, Any]] = None, build_logs: Any = ()) -> Result:
+    """Judge the captured compile-only build logs: those committed under toolchain/results/tailscale/builds/ (which must be redacted) and any supplied with --build-log (which may be raw).
+    The contract asks for four attempts, the seven core crates and the whole library on each legacy target. A record that does not hold FAILS the case; it PASSES only when all four
+    attempts built; otherwise it is BLOCKED with every attempt accounted for, so a core-only pass, a stop, or a missing attempt can never read as the whole probe."""
+    directory = os.path.join(repo, *BUILD_DIR)
+    names = sorted(os.listdir(directory)) if os.path.isdir(directory) else []
+    logs, unjudged = [n for n in names if n.endswith(".log")], [n for n in names if n.endswith(".json")]
+    if not logs and not build_logs:
+        if unjudged:
+            return blocked(X01_ID, "central", "a build receipt exists but this runner has no judge for it yet: the judged record is the captured build log (builds/*.log, contract section 6); "
+                           "do not read a JSON receipt as a pass")
+        return blocked(X01_ID, "central",
+                       "no build record under toolchain/results/tailscale/builds/: the legacy-ISA build probes (the seven core crates AND the whole library, on powerpc and on mips) need central runs "
+                       "(root's strict-remote lane) whose captured logs are committed there. The lines are in CENTRAL_LINES and docs/contracts/t01.md section 6")
+    data = data or inputs(repo)
+    anchors = data["cases"]["x01_build"]
+    tree_pin = data["profile"]["derived_facts"]["tailscale-rs-0.6.1"]["tree_sha256"]
+    lock_text = L.read_bounded_file(os.path.join(repo, *anchors["lock_fixture"].split("/"))).decode("utf-8")
+    problems = ["lock fixture: " + p for p in L.check_x01_lock(lock_text, anchors)]
+    got: Dict[Any, List[Dict[str, Any]]] = {}
+    records = [(name, os.path.join(directory, name), True) for name in logs] + [("supplied build log %d" % (i + 1), path, False) for i, path in enumerate(build_logs)]
+    for label, path, redacted in records:
+        try:
+            text = L.read_bounded_file(path).decode("utf-8")
+        except (L.SourceRefused, OSError, UnicodeDecodeError) as err:
+            problems.append("%s: %s" % (label, failure_detail(err) if isinstance(err, (OSError, UnicodeDecodeError)) else str(err)))
+            continue
+        found, facts = L.judge_build_record(text, anchors, tree_pin, lock_text, redacted)
+        problems += ["%s: %s" % (label, p) for p in found]
+        if not found:
+            got.setdefault((facts["target"], facts["attempt"]), []).append(facts)
+    if problems:
+        return judged(X01_ID, "central", problems)
+    lines, complete = account_x01(got, anchors["targets"])
+    bound = "type-check only: nothing linked or run, no runtime, memory, CPU, enrollment or native-endpoint result; T01-X02 and the native requirement are untouched"
+    if unjudged:
+        return blocked(X01_ID, "central", "INCOMPLETE and a JSON build receipt exists that this runner has no judge for it yet; %s: %s" % (bound, "; ".join(lines)))
+    if not complete:
+        return blocked(X01_ID, "central", "INCOMPLETE; a core pass is partial evidence only; %s: %s" % (bound, "; ".join(lines)))
+    return Result(X01_ID, "passed", "all four required attempts built; %s: %s" % (bound, "; ".join(lines)), "central")
 
 
 def case_resources(repo: str) -> Result:
@@ -343,18 +428,18 @@ DESCRIPTIONS = {
     "T01-C03-matrix": "the derived matrix is complete, has no supported cell, and only tailscale-rs is in the strict-Rust native class",
     "T01-C04-budget-rules": "missing data is pending, never a pass; units, receipts and the 4 MiB reserve floor are enforced; no cap is allocated",
     "T01-C05-fixtures": "synthetic identity, network-map, relay and key-expiry fixtures equal the model on hand-written expectations",
-    "T01-C06-native-requirement": "the native requirement stays required and unwaived; the study stays incomplete while X01/X02 are blocked and closes no other task; gateways and the Go client never count as native",
+    "T01-C06-native-requirement": "the native requirement stays required and unwaived; the study stays incomplete while X02 is blocked and nothing is linked or run, and closes no other task; gateways and the Go client never count as native",
     "T01-P01-tsrs-source": "the pinned tailscale-rs tree: digest, lock census, unsafe census, README claims (needs --sources)",
     "T01-P02-workspace-edges": "which tailscale-rs crates have an intra-workspace edge to a runtime, OS or TLS crate, and which third-party closures still reach one: NOT a portability claim (needs --sources)",
     "T01-P03-awslc-targets": "aws-lc-sys 0.45.0: its assembly target sets, the no-asm refusal in optimized builds, the BE 32-bit arch macros (needs --sources)",
     "T01-P04-mio-reactor": "mio 1.2.1 creates its epoll instance with epoll_create1 and has no epoll_create fallback (needs --sources)",
     "T01-P05-ledger-vs-sources": "every ledger excerpt cut from a supplied source file is re-cut from that file (needs --sources)",
-    "T01-X01-legacy-isa-build": "the exact legacy-ISA build of the candidates (needs a central build receipt; BLOCKED until one exists)",
+    "T01-X01-legacy-isa-build": "the legacy-ISA COMPILE-ONLY checks, the seven core crates AND the whole library on each target (captured cargo check logs; PASSES only when all four built, else BLOCKED with every attempt accounted for)",
     "T01-X02-target-resources": "memory and CPU measurements on the target (needs a measurement receipt; BLOCKED until one exists)",
 }
 
 
-def run(tier: str, sources: Optional[str] = None, repo: str = REPO) -> List[Result]:
+def run(tier: str, sources: Optional[str] = None, repo: str = REPO, build_logs: Any = ()) -> List[Result]:
     if tier not in RUN_TIERS:
         raise ValueError("tier %r judges nothing (the soak tier is not run)" % tier)
     try:
@@ -365,7 +450,7 @@ def run(tier: str, sources: Optional[str] = None, repo: str = REPO) -> List[Resu
     results = [guarded(case_id, "contract", lambda case=case: case(data, repo)) for case_id, case in zip(SMOKE_IDS, SMOKE_CASES)]
     if tier == "full":
         results += [case_tsrs(data, sources), case_workspace_edges(data, sources), case_awslc(data, sources), case_mio(data, sources), case_ledger_sources(data, sources),
-                    guarded("T01-X01-legacy-isa-build", "central", lambda: case_build(repo)), guarded("T01-X02-target-resources", "central", lambda: case_resources(repo))]
+                    guarded("T01-X01-legacy-isa-build", "central", lambda: case_build(repo, data, build_logs)), guarded("T01-X02-target-resources", "central", lambda: case_resources(repo))]
     return results
 
 
@@ -391,7 +476,12 @@ def final_exit(results: List[Result], evidence: Optional[Any]) -> int:
 
 
 def artifact_digests(repo: str = REPO) -> Dict[str, str]:
-    return {rel: (L.sha256_file(os.path.join(repo, rel)) if os.path.isfile(os.path.join(repo, rel)) else "missing") for rel in JUDGED_ARTIFACTS}
+    digests = {rel: (L.sha256_file(os.path.join(repo, rel)) if os.path.isfile(os.path.join(repo, rel)) else "missing") for rel in JUDGED_ARTIFACTS}
+    builds = os.path.join(repo, *BUILD_DIR)
+    for name in sorted(os.listdir(builds)) if os.path.isdir(builds) else []:
+        if name.endswith(".log") and os.path.isfile(os.path.join(builds, name)):
+            digests["/".join(BUILD_DIR + (name,))] = L.sha256_file(os.path.join(builds, name))
+    return digests
 
 
 def artifact_set_digest(digests: Dict[str, str]) -> str:
@@ -454,13 +544,42 @@ def load_case_log() -> Any:
     return case_log
 
 
+def redact_command(raw: str, dest: str) -> int:
+    """Write the committed form of a raw build log. Refuses an unreadable or oversize input, refuses to overwrite, and writes nothing if site data would remain."""
+    try:
+        text = L.read_bounded_file(raw).decode("utf-8")
+    except (L.SourceRefused, OSError, UnicodeDecodeError) as err:
+        print("error: the raw log was not read: %s" % (failure_detail(err) if isinstance(err, (OSError, UnicodeDecodeError)) else err), file=sys.stderr)
+        return 2
+    redacted = L.redact_build_log(text)
+    hits = L.site_hits(redacted)
+    if hits:
+        print("error: site data would remain (%s); nothing was written" % ", ".join(hits), file=sys.stderr)
+        return 1
+    try:
+        with open(dest, "x", encoding="utf-8", newline="") as handle:
+            handle.write(redacted)
+    except FileExistsError:
+        print("error: the destination exists; it is never overwritten", file=sys.stderr)
+        return 1
+    except OSError as err:
+        print("error: the destination was not written: %s" % type(err).__name__, file=sys.stderr)
+        return 2
+    print("redacted record written: %d bytes, sha256 %s (raw sha256 %s)" % (len(redacted.encode("utf-8")), L.sha256_text(redacted), L.sha256_text(text)))
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="T01 tiered runner and judge (ffw-32a)")
     parser.add_argument("--tier", choices=TIERS, default="full")
     parser.add_argument("--sources", metavar="DIR", help="the pinned source trees, extracted: tailscale-rs/, aws-lc-sys/, mio/")
     parser.add_argument("--receipts", metavar="DIR", help="write a JSON receipt and the JSONL diagnostic log here")
     parser.add_argument("--list", action="store_true", help="list the planned case ids of the tier and exit")
+    parser.add_argument("--build-log", metavar="LOG", action="append", default=[], help="also judge this captured build log (raw or redacted); repeatable")
+    parser.add_argument("--redact-build-log", metavar=("RAW", "DEST"), nargs=2, help="write the committed (redacted) form of a raw build log and exit")
     args = parser.parse_args(argv)
+    if args.redact_build_log:
+        return redact_command(*args.redact_build_log)
     if args.tier not in RUN_TIERS:
         print(SOAK_NOT_RUN)
         return SOAK_EXIT
@@ -481,7 +600,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     log = case_log.CaseLog.open(REPO, run_id, args.tier, args.receipts, header_extra={
         "python": platform.python_version(), "tier": args.tier, "artifact_count": len(artifacts), "artifact_set_sha256": artifact_set_digest(artifacts)})
     try:
-        results = run(args.tier, args.sources)
+        results = run(args.tier, args.sources, REPO, tuple(args.build_log))
     except Exception as err:  # noqa: BLE001 - last resort: still a failed, logged, receipted run, never a traceback
         results = [Result("T01-RUNNER", "failed", "the runner raised %s" % failure_detail(err, args.sources), "runner")]
     for r in results:

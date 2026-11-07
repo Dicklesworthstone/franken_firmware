@@ -1,8 +1,8 @@
 {
  "schema": "ffw.t01.profile.v1",
- "profile_version": "t01-profile-2026-11-06.1",
- "status": "provisional feasibility profile, INCOMPLETE: the mandatory legacy-ISA build (X01) and on-target figures (X02) are blocked, so no T01 closure is claimed; native qualification stays pending (T04 admits a development candidate, Q06 qualifies externally)",
- "frozen_note": "Versioned before any execution; a failed threshold or a changed fact makes a new version and a decision record, never a silent edit.",
+ "profile_version": "t01-profile-2026-11-07.1",
+ "status": "provisional feasibility profile, INCOMPLETE: the legacy-ISA compile attempts (X01) built as type-checks only, with nothing linked or run, and the on-target figures (X02) are blocked, so no T01 closure is claimed; native qualification stays pending (T04 admits a development candidate, Q06 qualifies externally)",
+ "frozen_note": "Versioned before any execution; a failed threshold or a changed fact makes a new version and a decision record, never a silent edit. Version t01-profile-2026-11-07.1 replaces t01-profile-2026-11-06.1 after the first legacy-ISA build records (decision record: toolchain/results/tailscale/RUN.md): only wording changed: the status line, the per-cell build blockers and platform notes that said no build existed or that no receipt existed, the workspace-edge note, t01_status and closes_note; no state, evidence citation, cell or figure changed.",
  "targets": {
   "ppc32be_stock": {
    "isa": "PowerPC 32-bit big-endian (S5/ZB100 family; MPC8247 603e per the teardown, CPU identity still needs separate evidence)",
@@ -373,7 +373,7 @@
       "T01-E28",
       "T01-E30"
      ],
-     "note": "reported kernel 2.6.35 is above the epoll_create1 floor, but the README lists no 32-bit or big-endian target and nothing was built"
+     "note": "reported kernel 2.6.35 is above the epoll_create1 floor, but the README lists no 32-bit or big-endian target and the whole library only type-checks for mips-unknown-linux-musl (T01-X01): nothing was linked or run"
     },
     "ppc32be_harness": {
      "state": "no_evidence",
@@ -382,7 +382,7 @@
       "T01-E22",
       "T01-E30"
      ],
-     "note": "nothing was built; the README lists no 32-bit or big-endian target"
+     "note": "the whole library and its seven core crates type-check for powerpc-unknown-linux-musl (T01-X01, cargo check with build-std, judged from captured logs); nothing was linked or run; the README lists no 32-bit or big-endian target"
     },
     "mips32be_harness": {
      "state": "no_evidence",
@@ -391,7 +391,7 @@
       "T01-E22",
       "T01-E30"
      ],
-     "note": "nothing was built; the README lists no 32-bit or big-endian target"
+     "note": "the whole library and its seven core crates type-check for mips-unknown-linux-musl (T01-X01, cargo check with build-std, judged from captured logs); nothing was linked or run; the README lists no 32-bit or big-endian target"
     }
    },
    "note": "The only strict-Rust candidate with control, DERP and ACL code. It is the right class for the native requirement and does not meet it: see the cells."
@@ -794,11 +794,11 @@
   "tailscale-rs-0.6.1/ppc32be_stock": {
    "build": {
     "state": "pending",
-    "blocker": "needs a central build (root's strict-remote RCH lane); case T01-X01 holds the exact lines and no receipt exists yet"
+    "blocker": "the whole library and its seven core crates type-check for powerpc-unknown-linux-musl (T01-X01, cargo check with build-std, judged from captured logs); no linked build has been made, so no build figure exists and this stays pending"
    },
    "binary_bytes": {
     "state": "pending",
-    "blocker": "needs a central build (root's strict-remote RCH lane); case T01-X01 holds the exact lines and no receipt exists yet"
+    "blocker": "no binary exists: the T01-X01 attempts are type-checks and cargo check does not link; this needs a linked build (root's strict-remote RCH lane)"
    },
    "rss_peak_bytes": {
     "state": "pending",
@@ -812,11 +812,11 @@
   "tailscale-rs-0.6.1/mips32r2be_stock": {
    "build": {
     "state": "pending",
-    "blocker": "needs a central build (root's strict-remote RCH lane); case T01-X01 holds the exact lines and no receipt exists yet"
+    "blocker": "the whole library and its seven core crates type-check for mips-unknown-linux-musl (T01-X01, cargo check with build-std, judged from captured logs); no linked build has been made, so no build figure exists and this stays pending"
    },
    "binary_bytes": {
     "state": "pending",
-    "blocker": "needs a central build (root's strict-remote RCH lane); case T01-X01 holds the exact lines and no receipt exists yet"
+    "blocker": "no binary exists: the T01-X01 attempts are type-checks and cargo check does not link; this needs a linked build (root's strict-remote RCH lane)"
    },
    "rss_peak_bytes": {
     "state": "pending",
@@ -830,11 +830,11 @@
   "tailscale-rs-0.6.1/ppc32be_harness": {
    "build": {
     "state": "pending",
-    "blocker": "needs a central build (root's strict-remote RCH lane); case T01-X01 holds the exact lines and no receipt exists yet"
+    "blocker": "the whole library and its seven core crates type-check for powerpc-unknown-linux-musl (T01-X01, cargo check with build-std, judged from captured logs); no linked build has been made, so no build figure exists and this stays pending"
    },
    "binary_bytes": {
     "state": "pending",
-    "blocker": "needs a central build (root's strict-remote RCH lane); case T01-X01 holds the exact lines and no receipt exists yet"
+    "blocker": "no binary exists: the T01-X01 attempts are type-checks and cargo check does not link; this needs a linked build (root's strict-remote RCH lane)"
    },
    "rss_peak_bytes": {
     "state": "pending",
@@ -848,11 +848,11 @@
   "tailscale-rs-0.6.1/mips32be_harness": {
    "build": {
     "state": "pending",
-    "blocker": "needs a central build (root's strict-remote RCH lane); case T01-X01 holds the exact lines and no receipt exists yet"
+    "blocker": "the whole library and its seven core crates type-check for mips-unknown-linux-musl (T01-X01, cargo check with build-std, judged from captured logs); no linked build has been made, so no build figure exists and this stays pending"
    },
    "binary_bytes": {
     "state": "pending",
-    "blocker": "needs a central build (root's strict-remote RCH lane); case T01-X01 holds the exact lines and no receipt exists yet"
+    "blocker": "no binary exists: the T01-X01 attempts are type-checks and cargo check does not link; this needs a linked build (root's strict-remote RCH lane)"
    },
    "rss_peak_bytes": {
     "state": "pending",
@@ -884,7 +884,7 @@
   "tailscale-go-1.104.5/mips32r2be_stock": {
    "build": {
     "state": "pending",
-    "blocker": "needs a central build (root's strict-remote RCH lane); case T01-X01 holds the exact lines and no receipt exists yet"
+    "blocker": "needs a central build of the Go client (root's strict-remote RCH lane); T01-X01 covers tailscale-rs only, so no build record of the Go client exists"
    },
    "binary_bytes": {
     "state": "observed_not_a_footprint",
@@ -925,7 +925,7 @@
   "tailscale-go-1.104.5/mips32be_harness": {
    "build": {
     "state": "pending",
-    "blocker": "needs a central build (root's strict-remote RCH lane); case T01-X01 holds the exact lines and no receipt exists yet"
+    "blocker": "needs a central build of the Go client (root's strict-remote RCH lane); T01-X01 covers tailscale-rs only, so no build record of the Go client exists"
    },
    "binary_bytes": {
     "state": "observed_not_a_footprint",
@@ -1039,7 +1039,7 @@
    "plain_epoll_create_calls": 0
   },
   "tailscale-rs-0.6.1/workspace_edges": {
-   "note": "Intra-workspace edges only, plus the third-party closure from the pinned Cargo.lock (declared normal and build edges, every target and feature: an over-approximation). NOT a portability or OS-free claim; nothing was built for any target.",
+   "note": "Intra-workspace edges only, plus the third-party closure from the pinned Cargo.lock (declared normal and build edges, every target and feature: an over-approximation). NOT a portability or OS-free claim; it comes from manifests and the lock alone, without building or running anything (the T01-X01 type-checks are separate evidence and show no OS-freedom).",
    "no_runtime_edge_in_workspace": [
     "ts_array256",
     "ts_bart",
@@ -1122,7 +1122,7 @@
   "status": "required",
   "waived": false,
   "satisfied_by": [],
-  "study_outcome": "No candidate is supported on any target. The official client is incompatible with the reported stock kernels (no PowerPC port; kernel floor above 2.6.35) and is not strict-Rust. tailscale-rs is the only strict-Rust candidate: it lacks NAT traversal, automatic key rotation and MagicDNS, is tokio/mio-bound (epoll_create1, above the reported PowerPC kernel), and has never been built for a big-endian 32-bit target. Its protocol-core crates have no INTRA-WORKSPACE edge to a runtime, OS or TLS crate, but their third-party closure still reaches libc (rand -> getrandom -> libc) and is unqualified (derived_facts workspace_edges); no portability is shown. The legacy-ISA build and the on-target memory/CPU figures are blocked on a central build and on guests that do not exist.",
+  "study_outcome": "No candidate is yet admitted for these fleet profiles. The official client is incompatible with the reported stock kernels (no PowerPC port; kernel floor above 2.6.35) and is not strict-Rust. tailscale-rs lacks NAT traversal, automatic key rotation and MagicDNS and is tokio/mio-bound (epoll_create1, above the reported PowerPC kernel). Its seven protocol-core crates and whole library now pass the pinned compile-only checks on both big-endian 32-bit musl targets. Those results do not establish linking, execution, stock-kernel compatibility or memory/CPU admission. The core crates have no intra-workspace runtime, OS or TLS edge, but their third-party closure still reaches libc through rand/getrandom and remains unqualified for this use. T01-X01 records those type-checks; T01-X02 and the required native feature remain blocked on measured client guest execution.",
   "closes": [],
   "does_not_close": [
    "T02",
@@ -1130,7 +1130,7 @@
    "Q06"
   ],
   "gateway_note": "a gateway or wrapper is named separately and never counts as per-speaker native membership",
-  "t01_status": "incomplete: mandatory X01 (legacy-ISA build) and X02 (on-target memory/CPU) are blocked; nothing here waives them or moves them to another bead",
-  "closes_note": "no closure is claimed while X01/X02 are blocked; the bead's own rule (a reproducible negative leaves T02/T04/Q06 and the native requirement open) still holds"
+  "t01_status": "incomplete: the legacy-ISA compile attempts (X01) built as type-checks only, nothing was linked or run, and X02 (on-target memory/CPU) is blocked; nothing here waives anything or moves it to another bead",
+  "closes_note": "no closure is claimed while X02 is blocked and nothing is linked or run; the bead's own rule (a reproducible negative leaves T02/T04/Q06 and the native requirement open) still holds"
  }
 }

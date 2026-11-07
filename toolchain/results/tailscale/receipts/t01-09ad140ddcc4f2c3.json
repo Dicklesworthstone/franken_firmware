@@ -1,0 +1,150 @@
+{
+ "artifacts": {
+  "docs/contracts/t01.md": "e52ccd8f8fa965e70f5ef91c03ee97f1a5d76da90232c6eb3f7f25149f6ac242",
+  "docs/tailscale/feasibility.md": "e3df48f55f21d9fd36255c44fa8328538897c0cef78823bec62bd6fea74a3213",
+  "docs/tailscale/profiles.json": "c23d2a4adcb1ee77f9607216dce5d35d60e27045f56bf38e0b27f8ab1d839af7",
+  "scripts/test/test_support/diagnostics.py": "df90049d7a0b87a3513c45bf4ae7502701d624d34c9e0d8e3e2394f6dba947b7",
+  "tests/t01/case_log.py": "21d58f7a16efd296c8269516d1bb1fd836ed20cfaaeb58e3448058de1ea6180b",
+  "tests/t01/cases.json": "fac2d4efa513c1fe6e0c02c68176ef05ae145031eb6741103a8bdc9893346aff",
+  "tests/t01/run_cases.py": "de1b4958020ac2c2cf4743fe2e90616bd04a20b3efc5f46a51add99e51b052fc",
+  "tests/t01/t01lib.py": "5509b026b7b9fffe715afeffd059f9cc18f4f3e57ecc7f361db4625296d4b92c",
+  "tests/tailscale-fixtures/evidence/ledger.json": "14a6a857e41daa7e2399d8862385654f478bf0e627d04ebbe3d4895dafa54fbb",
+  "tests/tailscale-fixtures/synthetic/derp_map.json": "0e52e34322fcdb311fed709b31301ac15ca682bdf80a799e6b81b18fddf218ae",
+  "tests/tailscale-fixtures/synthetic/identity.json": "5d21c3f403f7906230733416d6293af9135351a6ab9345424ce185f4547cdf77",
+  "tests/tailscale-fixtures/synthetic/key_expiry.json": "aaa19cf367653c8a047e45af15a92eec350b6e709da9685007e8810e617308bd",
+  "tests/tailscale-fixtures/synthetic/netmap.json": "c93d2177a1885088cf3df991a8aec60099a496120e0994e8b9f85b2b5a77f5a3",
+  "tests/tailscale-fixtures/x01/consumer.lock": "89b750bec181a50442b5663f804b34911d706c4b8156778aea3ead94810f52ea",
+  "tests/tailscale-fixtures/x01/x01-cc/zig-cc-mips-be-ccrs": "17848d169db2dc71d048a13999c8a605104b6b77d3e846b2359039ab725bfa8d",
+  "tests/tailscale-fixtures/x01/x01-cc/zig-cc-mips-be-ccrs-v2": "3dc93ff4f618cd96f1a8f4dbe68b0f37a9712778d3bf0f3f6e3d634eb61e64ab",
+  "toolchain/results/tailscale/builds/x01-core-mips-unknown-linux-musl-20261107.log": "f3a8274b50f41f3853c13bde182f68b6e3a38104943ac95fc2b048b024a3ae1e",
+  "toolchain/results/tailscale/builds/x01-core-powerpc-unknown-linux-musl-20261107.log": "72f5114291c4c4a173d4fea7135cc643e81332c3d2b3df9bd9f8461f064a9748",
+  "toolchain/results/tailscale/builds/x01-whole-mips-unknown-linux-musl-20261107.log": "119161ccd4349419019fa3e63144c33b68fcd94a38eb217632ad99eb3d31ca1e",
+  "toolchain/results/tailscale/builds/x01-whole-mips-unknown-linux-musl-zig-ccrs-20261107.log": "0a6401ab1e6df450bf618e866a697b47e0ecd5a9f09f4edc4d3125499749dd1a",
+  "toolchain/results/tailscale/builds/x01-whole-mips-unknown-linux-musl-zig-ccrs-v2-20261107.log": "dee4fadaf85330546356fac1e61acedb04cd5116e481c2d17739818a11b3fba3",
+  "toolchain/results/tailscale/builds/x01-whole-mips-unknown-linux-musl-zig-inline-20261107.log": "b66a5e6ec0ae794da0f586cdf5b02b11d51085994ff502a149cfd7e315eff9bb",
+  "toolchain/results/tailscale/builds/x01-whole-mips-unknown-linux-musl-zig-keys-20261107.log": "9c041c477ae69d54682dc94aa1c7f26e7a2e1346597276f2314d96b1791675c7",
+  "toolchain/results/tailscale/builds/x01-whole-powerpc-unknown-linux-musl-20261107.log": "8391da0a6ee1619dc0d9aeabd6542bd8475f158c12226c857effaf4bacbcbbfe"
+ },
+ "counts": {
+  "blocked": 1,
+  "failed": 0,
+  "passed": 14
+ },
+ "diagnostics": {
+  "complete": true,
+  "file": "t01-diag-full-09ad140ddcc4f2c3.jsonl",
+  "log": {
+   "bytes": 11183,
+   "critical_lost": false,
+   "dropped": 0,
+   "events": 31,
+   "sha256": "9761f5b9ebdf5297f4f708f873c91b2a86eebedc783e6c38a5be5354e4c424e4",
+   "truncated": false
+  },
+  "reasons": []
+ },
+ "exit_code": 3,
+ "finished_utc": "2026-11-07T10:37:36+00:00",
+ "python": "3.15.0",
+ "replay": "scripts/e2e/t01 --tier full --sources SOURCES_DIR",
+ "results": [
+  {
+   "case": "T01-META-LEDGER",
+   "detail": "",
+   "group": "meta",
+   "status": "passed"
+  },
+  {
+   "case": "T01-META-PROFILE",
+   "detail": "",
+   "group": "meta",
+   "status": "passed"
+  },
+  {
+   "case": "T01-C01-classification",
+   "detail": "",
+   "group": "rules",
+   "status": "passed"
+  },
+  {
+   "case": "T01-C02-cell-rules",
+   "detail": "",
+   "group": "rules",
+   "status": "passed"
+  },
+  {
+   "case": "T01-C03-matrix",
+   "detail": "",
+   "group": "rules",
+   "status": "passed"
+  },
+  {
+   "case": "T01-C04-budget-rules",
+   "detail": "",
+   "group": "rules",
+   "status": "passed"
+  },
+  {
+   "case": "T01-C05-fixtures",
+   "detail": "",
+   "group": "fixtures",
+   "status": "passed"
+  },
+  {
+   "case": "T01-C06-native-requirement",
+   "detail": "",
+   "group": "contract",
+   "status": "passed"
+  },
+  {
+   "case": "T01-P01-tsrs-source",
+   "detail": "",
+   "group": "probe",
+   "status": "passed"
+  },
+  {
+   "case": "T01-P02-workspace-edges",
+   "detail": "",
+   "group": "probe",
+   "status": "passed"
+  },
+  {
+   "case": "T01-P03-awslc-targets",
+   "detail": "",
+   "group": "probe",
+   "status": "passed"
+  },
+  {
+   "case": "T01-P04-mio-reactor",
+   "detail": "",
+   "group": "probe",
+   "status": "passed"
+  },
+  {
+   "case": "T01-P05-ledger-vs-sources",
+   "detail": "",
+   "group": "probe",
+   "status": "passed"
+  },
+  {
+   "case": "T01-X01-legacy-isa-build",
+   "detail": "all four required attempts built; type-check only: nothing linked or run, no runtime, memory, CPU, enrollment or native-endpoint result; T01-X02 and the native requirement are untouched: core powerpc: BUILT (176 artifacts); whole powerpc: BUILT (340 artifacts); core mips: BUILT (176 artifacts); whole mips: BUILT (340 artifacts) with the pinned C compiler wrappers x01-cc/zig-cc-mips-be-ccrs (sha256 17848d169db2) and x01-cc/zig-cc-mips-be-ccrs-v2 (sha256 3dc93ff4f618) (Zig 0.14.1, three cargo env keys); earlier stops kept: STOPPED at aws-lc-sys v0.45.0: the worker has no C compiler 'mips-linux-musl-gcc', a toolchain blocker and not an ISA or source finding; REJECTED by cargo before building: an inline-table --config, a syntax failure and not an ISA or source finding; STOPPED at aws-lc-sys v0.45.0: the C compiler wrapper rejected the target spelling 'mips-unknown-linux-musl', an adapter failure and not an ISA or source finding",
+   "group": "central",
+   "status": "passed"
+  },
+  {
+   "case": "T01-X02-target-resources",
+   "detail": "no measurement receipt under toolchain/results/tailscale/measurements/: no on-target figure is possible: there is no 2.6.14 PowerPC or 2.6.35 MIPS full-system guest (E03), and a harness-guest run (Debian 4.9 / 4.19) is indicative only and has not been run",
+   "group": "central",
+   "status": "blocked"
+  }
+ ],
+ "run_id": "09ad140ddcc4f2c3",
+ "schema": "ffw.t01.receipt.v1",
+ "sources_supplied": [
+  "aws-lc-sys",
+  "mio",
+  "tailscale-rs"
+ ],
+ "tier": "full"
+}

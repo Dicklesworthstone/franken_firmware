@@ -27,7 +27,77 @@ The pinned trees are not committed (third-party source). `--sources DIR` re-chec
 | `python3 tests/p01/run_cases.py --tier smoke` | none | before registering the two new test directories: 243 passed, 1 failed (`P01-CON-002 asset_uncovered[tests/t01]`), 7 blocked; after: **244 passed, 0 failed, 7 blocked**, unchanged from main |
 
 The two blocked cases are the point of the study, not an omission: `T01-X01` (the exact legacy-ISA build) needs a central build and `T01-X02` (on-target memory and CPU) needs a guest
-that does not exist. A run that blocks them exits 3 and is never qualified.
+that does not exist. A run that blocks them exits 3 and is never qualified. (This paragraph and the three receipts above are the record of that first run and are kept as they were: for `T01-X01`
+they say BLOCKED because no build record existed then. The next section supersedes it for X01 only.)
+
+## X01: the judge of the captured compile-only build records (2026-11-07)
+
+The contract (section 6) asks for two attempts on each legacy target: the check of the seven core crates AND the same check of the whole library. Root ran them through its strict-remote lane from one
+synced root (the pinned tailscale-rs tree, `x01_core` over the seven core crates, and the cargo-resolved lock `89b750bec181a50442b5663f804b34911d706c4b8156778aea3ead94810f52ea`): the core check with
+`-p x01_core` and the whole-library check with `--manifest-path tailscale-rs/Cargo.toml -p tailscale`, each on PowerPC and on MIPS. `judge_build_record` in `tests/t01/t01lib.py`, wired into `T01-X01` in
+`tests/t01/run_cases.py`, judges the captured logs; the contract section 6 says what it reads and what a pass is. **It judges the captured log, not anyone's account of it. A pass is a type-check only, and
+`T01-X01` passes only when all four attempts built.** A stop is kept, named and never read as a pass; core records alone are partial evidence.
+
+The MIPS whole library needed a C compiler for aws-lc-sys that the workers do not have, so it has five records: the first stopped for want of one, then four attempts with a Zig 0.14.1 wrapper. All five are
+kept; the last two built.
+
+| attempt | raw log (root's capture, not committed: it holds a worker address and home paths) | committed record (redacted), under `builds/` | judged outcome |
+|---|---|---|---|
+| core, powerpc | 275,705 bytes, sha256 `ffed89b27665c8646518396077d19d185723cbfa1428a6dbb79cf7caa039aa48` | `x01-core-powerpc-unknown-linux-musl-20261107.log`, 274,459 bytes, `72f5114291c4c4a173d4fea7135cc643e81332c3d2b3df9bd9f8461f064a9748` | BUILT: 176 artifacts (119 crates.io, 19 tailscale-rs, `x01_core`, 11 std/toolchain), rch exit 0 |
+| core, mips | 274,468 bytes, `8719715de99f7072b8d9a01a2e687f3a4fbc992b1c7179b923604e18b3075177` | `x01-core-mips-unknown-linux-musl-20261107.log`, 273,222 bytes, `f3a8274b50f41f3853c13bde182f68b6e3a38104943ac95fc2b048b024a3ae1e` | BUILT: the same counts |
+| whole, powerpc | 445,069 bytes, `473ea8b8967c149abf4437f6c905315cc8ff01d19f8137495fd7fa86a2b6d57a` | `x01-whole-powerpc-unknown-linux-musl-20261107.log`, 443,823 bytes, `8391da0a6ee1619dc0d9aeabd6542bd8475f158c12226c857effaf4bacbcbbfe` | BUILT: 340 artifacts (243 crates.io, 36 tailscale-rs packages including `tailscale`, 11 std/toolchain), `Finished dev` in 4m 24s, rch exit 0 |
+| whole, mips (1: no C compiler) | 284,143 bytes, `b7a372794e724d658fcbfc7817b6f242aa361effc39aefaf8f6710a2c8a8c1a7` | `x01-whole-mips-unknown-linux-musl-20261107.log`, 283,239 bytes, `119161ccd4349419019fa3e63144c33b68fcd94a38eb217632ad99eb3d31ca1e` | STOPPED at the `aws-lc-sys v0.45.0` build script (exit 101 in cargo, rch and the receipt, after 145 artifacts): cc-rs found no `mips-linux-musl-gcc` on the worker. A toolchain blocker, not an ISA or source finding |
+| whole, mips (2: inline config) | 97,825 bytes, `34bd8a68eb69fb3f24da69733217ceaa183c54feb6b9fffc45b8839fb6b842e5` | `x01-whole-mips-unknown-linux-musl-zig-inline-20261107.log`, 97,233 bytes, `b66a5e6ec0ae794da0f586cdf5b02b11d51085994ff502a149cfd7e315eff9bb` | REJECTED by cargo before it built anything (no cargo message, exit 101): the one-argument inline-table `--config` for the original wrapper is not accepted. A syntax failure, not an ISA or source finding |
+| whole, mips (3: original wrapper) | 311,919 bytes, `a181d2471819952fdf28e265b8c3c1553147ab6b8e207b76b42cc301f9f408f0` | `x01-whole-mips-unknown-linux-musl-zig-keys-20261107.log`, 311,081 bytes, `9c041c477ae69d54682dc94aa1c7f26e7a2e1346597276f2314d96b1791675c7` | STOPPED at `aws-lc-sys v0.45.0` (exit 101, 145 artifacts): three explicit keys, the repository's own wrapper `x01-cc/zig-cc-mips-be`; Zig answered `unable to parse target query 'mips-unknown-linux-musl'` because cc-rs appends the Rust `--target=` spelling. An adapter failure, not an ISA or source finding |
+| whole, mips (4: adapter, first) | 438,111 bytes, `9b946b63c090ce7c5c118fa8879c9a9b69c22bd2d37aeef7c86788c1f5b3ad80` | `x01-whole-mips-unknown-linux-musl-zig-ccrs-20261107.log`, 436,931 bytes, `0a6401ab1e6df450bf618e866a697b47e0ecd5a9f09f4edc4d3125499749dd1a` | **BUILT**: 340 artifacts, `Finished dev` in 3m 25s, rch exit 0, with the adapter `x01-cc/zig-cc-mips-be-ccrs` (sha256 `17848d169db2dc71d048a13999c8a605104b6b77d3e846b2359039ab725bfa8d`) set by exactly three explicit cargo env keys; 552 synced files, the two extra ones being the two pinned wrappers |
+| whole, mips (5: adapter, hardened) | 430,054 bytes, `e3f0d6158728b52a4ae790afa96b490df7d36ae55f65d2b164e150d31c902619` | `x01-whole-mips-unknown-linux-musl-zig-ccrs-v2-20261107.log`, 428,874 bytes, `dee4fadaf85330546356fac1e61acedb04cd5116e481c2d17739818a11b3fba3` | **BUILT**: 340 artifacts, `Finished dev` in 41.34s, rch exit 0, with the hardened adapter `x01-cc/zig-cc-mips-be-ccrs-v2` (sha256 `3dc93ff4f618cd96f1a8f4dbe68b0f37a9712778d3bf0f3f6e3d634eb61e64ab`) set by exactly three explicit cargo env keys; 553 synced files, the three extra ones being the three pinned wrappers. The configured path differs from record 4, so cargo reran the C build instead of trusting objects from the earlier run |
+
+The records are made by `scripts/e2e/t01 --redact-build-log RAW DEST` (terminal colors removed; IPv4 addresses, the login name used to reach a worker, and the local and remote home-directory prefixes replaced by
+`<ip>`, `<user>`, `<local>` and `<home>`); the judge reads the same facts from the raw and the redacted text. The resolved lock is committed as `tests/tailscale-fixtures/x01/consumer.lock` (183 packages: 163 crates.io,
+20 path). For every attempt the tailscale-rs tree digest is RECOMPUTED from rch's per-file list and equals the pin `400e6b2e...`, the four consumer files equal their pins, and no cargo config, toolchain override or
+build script is synced. The C compiler wrappers: the original is the repository's own `toolchain/linker/zig-cc-mips-be` byte for byte (sha256 `b0d60bcb...`); the first adapter is committed as
+`tests/tailscale-fixtures/x01/x01-cc/zig-cc-mips-be-ccrs` (unchanged, its recorded build stands) and drops exactly `--target=mips-unknown-linux-musl` and `--target=mips-linux-musleabi`, refusing `--target=OTHER` and
+`-target` but, by an oversight in its own wording, forwarding the bare two-argument `--target OTHER` and `-target=OTHER`; this did not touch the recorded cc-rs invocation, which only appends `--target=`. The hardened
+adapter `x01-cc/zig-cc-mips-be-ccrs-v2` (sha256 `3dc93ff4...`, committed beside it) refuses all four spellings; all three enforce Zig 0.14.1.
+
+| item | value |
+|---|---|
+| `T01-X01` on the committed records | **PASSED**: all four required attempts built (type-check only); the account lists the three earlier stops of the MIPS whole library and both wrappers that built it; nothing is linked or run |
+| `scripts/e2e/t01 --tier full --sources SOURCES_DIR --receipts ...` | `t01-09ad140ddcc4f2c3.json`: exit 3, **14 passed, 0 failed, 1 blocked** (`T01-X02`); diag `events=31 critical=31 dropped=0 critical_lost=0`, complete |
+| `python3 -B -W error -m unittest tests/t01/test_t01.py` | 80 tests (the 48 earlier tests, of which three that assert the state before any build record existed and one that pins the profile version are changed on purpose, plus 32 in `BuildRecord`), OK; with `T01_SOURCES` set to the pinned trees the real-tree test runs too |
+| `scripts/e2e/t01 --tier full` (no sources) and `--tier smoke` | 9 passed / 0 failed / 6 blocked, exit 3; 8 passed, exit 0 |
+| P01 smoke on a git-archive export of the base, before and after | see the hand-off mail: identical per-case statuses |
+
+The three earlier tests changed here assert the state before any build record existed, which is no longer the repository's state: the runner's passed and blocked case sets, the receipt counts (8 passed, 7 blocked
+became 9 and 6) and the entry point's `planned=15 passed=8 failed=0 blocked=7` (now `passed=9 blocked=6`, with `T01-X02` asserted blocked). Nothing was weakened: each now asserts the new state exactly.
+
+Paired falsifiers (each is made in a copy of a real record's text, must be reported for the named reason, and the unplanted record must pass again): everything listed in the earlier version of this section (wrong target,
+missing crates, stale or changed inputs, truncated and failed logs, every disagreement between the three terminal witnesses, a changed command, a foreign package), and for the C compiler configuration: an unpinned
+wrapper path, a missing key, an extra key, a different environment variable, a patched dependency, a command and remote command that disagree, the configuration on another target, the refused inline spelling
+claimed to have built, a changed wrapper, the original wrapper changed, the configured wrapper not synced, an unpinned file beside the wrappers; for a cargo refusal: no error text, exit 0, another exit in the receipt, no exit
+line, cut before the receipt. The two new stop classes are read only from the log's own text (changing or removing that text makes the stop `unclassified`, and a refused argument that this command did not carry is not
+that class). The adapter itself is run with a stand-in `zig`: it drops exactly the two known target spellings, refuses any other override (exit 98) and any other Zig version (exit 97). The account is shown to fit the
+shared 1024-character detail bound with the compile-versus-runtime boundary stated first, so nothing can truncate it away.
+
+The hardened adapter is tested with a stand-in `zig`: it refuses `--target=OTHER`, bare `--target OTHER`, `-target OTHER` and `-target=OTHER` (and a bare `--target` or `-target` without a value), exit 98, still
+drops the two known spellings, forwards every other flag in order (flags that only mention "target" are not overrides) and refuses any other Zig version (exit 97). The first adapter is run beside it as the retained
+baseline: it forwards the two spellings the hardened one refuses and refuses the two it always refused, so the oversight is documented by a test rather than by prose.
+
+Profile and study wording (decision record for `t01-profile-2026-11-07.1`, which replaces `t01-profile-2026-11-06.1` as the profile's own rule asks): the statements that said nothing was built or that no build receipt
+existed were true when written and are not true now, so they are corrected WITHIN the proven compile scope and nowhere else. Changed: the profile's status line, the per-cell `build` blockers of the four tailscale-rs
+targets (a type-check of the whole library and its seven core crates passed for the target's triple; no linked build has been made, so the figure stays pending), their `binary_bytes` blockers (`cargo check` does not
+link, so no binary exists), the two Go-client `build` blockers (they pointed at T01-X01, which covers tailscale-rs only), the three platform notes that said nothing was built, the workspace-edge note,
+`t01_status`, `closes_note`, and the stale lines in `feasibility.md` and the contract. **Unchanged, and tested as unchanged:** every platform state (`ppc32be_stock` stays `incompatible` on the kernel's missing
+`epoll_create1`; the other three stay `no_evidence`; none becomes `build_ok_unrun` or `ran_on_target`, which need a receipt), every measurement state (all pending: a type-check is not a build, a binary, an RSS or a CPU
+figure), every evidence citation, every cell, the native requirement (required, unwaived, unsatisfied, closes nothing) and `T01-X02`. The version pin in `test_the_committed_profile_holds` moved to the new version.
+
+PROVENANCE LIMIT (also in the contract): the successful log does not show the compiler being run. That Zig 0.14.1 compiled aws-lc-sys's C sources rests on the pinned wrapper file, which enforces the version, the three
+keys that point cargo at it, the synced hash that says which file it was, and the three earlier records of the same attempt without it; it is not observed in the log.
+
+LIMITS (also in the contract): the log is not signed, so a log edited consistently everywhere is indistinguishable from a real one; rch's own `receipt_root`, `content_root` and `command_sha256` are recorded, not
+recomputed; the separate status file and any custody note are not used; for the whole-library attempts the judge does not re-derive the closure against the upstream lock (`--locked` and the pinned tree digest, which
+includes `tailscale-rs/Cargo.lock`, carry it); the redaction removes addresses, the login name and home paths, nothing else. A pass says the commands type-checked what they name. It says nothing about linking,
+running, memory, CPU, enrollment or a native endpoint, and `T01-X02` and the native requirement are untouched.
 
 ## Cross-checks with a different tool
 
@@ -62,6 +132,14 @@ the repository is offline-only: a `cargo --locked --offline` build of the candid
 
 ## Not done
 
-No build of any candidate for any target, no on-target or guest figure, no enrollment, and no crypto known-answer probe. The X01 central lines are unproven: a `cargo metadata --offline` of a
-scratch consumer workspace over the seven core crates failed on this machine at a missing registry package (`crypto_box`), so an authorized registry import step must precede them; only the lock walk behind it (`core_import_manifest`, used by the third-party reach probe) is in this patch; a committed import manifest, its check and a consumer-workspace form of the lines are NOT. `ledger-pass*` drafts of the evidence ledger and the scratch fetch
-directory are kept privately by the author.
+No link or run of any candidate for any target, no on-target or guest figure, no enrollment, and no crypto known-answer probe. The compile-only X01 records are type-checks: the seven core crates and the whole
+library on both targets (the MIPS whole library with a pinned Zig 0.14.1 C compiler wrapper after three earlier stops). The lock walk behind the earlier import list (`core_import_manifest`) remains
+in this study, and the resolved lock fixture is what the judge holds a core log against. `ledger-pass*` drafts of the evidence ledger and the scratch fetch directory are kept privately by the author.
+
+## Central verification of the final v6 judge (2026-11-07)
+
+The final integrated judge passed all85 Python tests with warnings treated as errors and all three pinned source trees supplied. The full run produced `receipts/t01-0db87ae2afa33766.json`:14 passed, zero failed, one blocked (`T01-X02`),31 critical events and zero lost. No client was linked, executed or enrolled. The type-check evidence covers both the seven core crates and the whole library on each BE32 target; the five successful records cover those four attempts and the three earlier stops remain recorded. Native/platform/measurement states stay unadmitted.
+
+Independent supervisor review reproduced rejection of empty remote commands and cross-target promotion with missing output filenames. Required target artifacts now have nonempty output witnesses under the selected target directory. A second independent review reproduced byte-for-byte equality between all eight public records and redactions of their original raw logs; no public record was unmatched or ambiguous. The logs remain unsigned and do not themselves establish runtime or resource behavior.
+
+Root also corrected three current-status statements that still said no BE build evidence existed: the native-requirement summary, the contract comparison table and its no-claim list. Earlier dated records above stay historical. The initial root source-dependent test used the build snapshot without the aws-lc-sys/mio sibling trees and failed; correcting that input, without changing tests, yielded85/85. A new native client guest measurement is still required for qualification.

@@ -149,7 +149,7 @@ class Profile(unittest.TestCase):
 
     def test_the_committed_profile_holds(self):
         self.assertEqual(L.check_profile(PROFILE, LEDGER), [])
-        self.assertEqual(PROFILE["profile_version"], "t01-profile-2026-11-06.1")
+        self.assertEqual(PROFILE["profile_version"], "t01-profile-2026-11-07.1")      # the version bump the profile's own rule asks for; the old version is named in frozen_note
 
     def test_each_planted_fault_is_reported(self):
         tsrs, go = "tailscale-rs-0.6.1", "tailscale-go-1.104.5"
@@ -723,8 +723,8 @@ class Runner(unittest.TestCase):
         smoke = {r.case_id: r.status for r in rc.run("smoke")}
         self.assertEqual(set(smoke.values()), {"passed"})
         full = {r.case_id: r.status for r in rc.run("full")}
-        self.assertEqual({k for k, v in full.items() if v == "blocked"}, set(rc.FULL_IDS))
-        self.assertEqual({k for k, v in full.items() if v == "passed"}, set(rc.SMOKE_IDS))
+        self.assertEqual({k for k, v in full.items() if v == "blocked"}, set(rc.FULL_IDS) - {"T01-X01-legacy-isa-build"})     # all four attempts have a built record now
+        self.assertEqual({k for k, v in full.items() if v == "passed"}, set(rc.SMOKE_IDS) | {"T01-X01-legacy-isa-build"})
 
     def test_a_wrong_source_tree_fails_its_probe_instead_of_passing(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -776,7 +776,7 @@ class TheLogAndReceipt(unittest.TestCase):
             with open(path, encoding="utf-8") as handle:
                 text = handle.read()
             doc = json.loads(text)
-            self.assertEqual((doc["schema"], doc["tier"], doc["exit_code"], doc["counts"]), (rc.RECEIPT_SCHEMA, "full", 3, {"passed": 8, "failed": 0, "blocked": 7}))
+            self.assertEqual((doc["schema"], doc["tier"], doc["exit_code"], doc["counts"]), (rc.RECEIPT_SCHEMA, "full", 3, {"passed": 9, "failed": 0, "blocked": 6}))
             self.assertEqual(set(doc["artifacts"].values()) & {"missing"}, set())
             self.assertEqual(sorted(os.path.splitext(n)[1] for n in os.listdir(tmp)), [".json", ".jsonl"])
             self.assertNotIn(tmp, text)
@@ -819,6 +819,895 @@ class TheLogAndReceipt(unittest.TestCase):
         self.assertFalse(any("/some/where/private" in l for l in with_sources))
 
 
+class BuildRecord(unittest.TestCase):
+    """T01-X01: the judge of the captured, compile-only build record. The positive control is the first REAL record (the redacted PowerPC log committed under
+    toolchain/results/tailscale/builds/); every plant is made in a copy of its text, must be reported for the named reason, and the unplanted text must pass again."""
+    BUILDS = os.path.join(REPO, "toolchain", "results", "tailscale", "builds")
+    PPC = os.path.join(BUILDS, "x01-core-powerpc-unknown-linux-musl-20261107.log")
+    PREFIX = "[RCH] source content receipt:"
+    SEED_LOCK = "4745e012086b9abeb901c26541e95cea35cb65a868a3a76fc95b018e6fe8b6fd"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.anchors = CASES["x01_build"]
+        cls.pin = PROFILE["derived_facts"]["tailscale-rs-0.6.1"]["tree_sha256"]
+        cls.lock = L.read_bounded_file(os.path.join(REPO, *cls.anchors["lock_fixture"].split("/"))).decode("utf-8")
+        cls.text = L.read_bounded_file(cls.PPC).decode("utf-8")
+        real = lambda kind, target: L.read_bounded_file(os.path.join(cls.BUILDS, "x01-%s-%s-unknown-linux-musl-20261107.log" % (kind, target))).decode("utf-8")
+        cls.core_ppc, cls.core_mips, cls.whole_ppc, cls.whole_mips = cls.text, real("core", "mips"), real("whole", "powerpc"), real("whole", "mips")
+        tagged = lambda tag: L.read_bounded_file(os.path.join(cls.BUILDS, "x01-whole-mips-unknown-linux-musl-%s-20261107.log" % tag)).decode("utf-8")
+        cls.zig_inline, cls.zig_keys, cls.zig_ccrs, cls.zig_ccrs_v2 = tagged("zig-inline"), tagged("zig-keys"), tagged("zig-ccrs"), tagged("zig-ccrs-v2")
+        cls.six = {"1.log": cls.core_ppc, "2.log": cls.core_mips, "3.log": cls.whole_ppc, "4.log": cls.whole_mips, "5.log": cls.zig_inline, "6.log": cls.zig_keys}
+
+    def judge(self, text, redacted=True):
+        return L.judge_build_record(text, self.anchors, self.pin, self.lock, redacted)
+
+    def plant(self, name, mutate, needle, base=None):
+        """Control, plant, reported for the named reason, and the unplanted record passing again."""
+        base = self.text if base is None else base
+        self.assertEqual(self.judge(base)[0], [], name + ": control")
+        text = mutate(base)
+        self.assertNotEqual(text, base, name + ": the plant changed nothing")
+        problems, _ = self.judge(text)
+        self.assertTrue(planted(problems, needle), "%s: %r not in %r" % (name, needle, problems[:4]))
+        self.assertEqual(self.judge(base)[0], [], name + ": removing the plant restores the pass")
+
+    def edit_receipt(self, text, fn):
+        out = []
+        for line in text.split("\n"):
+            if line.startswith(self.PREFIX):
+                doc = json.loads(line.split(":", 1)[1].strip())
+                fn(doc)
+                line = self.PREFIX + " " + json.dumps(doc, separators=(",", ":"))
+            out.append(line)
+        return "\n".join(out)
+
+    def files(self, doc):
+        return doc["roots"][0]["files"]
+
+    @staticmethod
+    def drop(text, needle, start='{"reason":"compiler-artifact"'):
+        return "\n".join(line for line in text.split("\n") if not (line.startswith(start) and needle in line))
+
+    @staticmethod
+    def raw_form(text):
+        return text.replace("<home>", "/home/ubuntu").replace("<local>", "/Users/someone").replace("<user>@", "ubuntu@").replace("<ip>", "203.0.113.7").replace("   Compiling libc", "\x1b[1;32m   Compiling\x1b[0m libc")
+
+    # ---- the real record and its boundaries ----------------------------------------------------------------------------------------------------
+
+    def test_the_first_real_powerpc_record_passes_and_says_only_that_it_compiled(self):
+        problems, facts = self.judge(self.text)
+        self.assertEqual(problems, [])
+        self.assertEqual((facts["target"], facts["scope"], facts["toolchain"], facts["worker"]), ("powerpc-unknown-linux-musl", "compile-only", "nightly-2026-08-31", "ovh-b"))
+        self.assertEqual((facts["attempt"], facts["outcome"], facts["stop"] if "stop" in facts else None), ("core", "built", None))
+        self.assertEqual((facts["artifacts"], facts["registry_packages"], facts["tailscale_rs_packages"], facts["std_packages"], facts["core_crates_compiled"]), (176, 119, 19, 11, 7))
+        self.assertEqual((facts["tree_sha256"], facts["lock_sha256"], facts["source_files"]), (self.pin, self.anchors["consumer_files"]["Cargo.lock"], 550))
+        for word in ("rss", "cpu", "run", "enroll", "endpoint", "latency", "memory"):
+            self.assertFalse([k for k in facts if word in k], word)          # the log cannot hold a runtime figure, so the judge reports none
+        self.assertEqual(L.site_hits(self.text), [])
+        self.assertEqual(L.check_x01_lock(self.lock, self.anchors), [])
+
+    def test_the_raw_and_the_redacted_log_give_one_verdict_and_a_committed_raw_log_is_refused(self):
+        raw = self.raw_form(self.text)
+        self.assertEqual({"ipv4", "personal-path"}, set(L.site_hits(raw)))
+        self.assertTrue(all(token in self.text for token in ("<home>", "<local>", "<ip>", "<user>@<ip>")))
+        self.assertIn("ubuntu@203.0.113.7", raw)
+        self.assertEqual(L.redact_build_log(raw), self.text)
+        a, b = self.judge(self.text, True), self.judge(raw, False)
+        self.assertEqual((a[0], a[1]), (b[0], b[1]))
+        self.assertTrue(planted(self.judge(raw, True)[0], "still holds site data"))             # raw, as if committed
+
+    def test_a_wrong_target_is_reported_wherever_it_is_planted(self):
+        ppc, mips = "powerpc-unknown-linux-musl", "mips-unknown-linux-musl"
+        first = lambda t: t.replace(ppc, mips, 1)                                              # the COMMAND line only
+        self.plant("command only", first, "disagree on target")
+        self.plant("command only: artifacts", first, "other legacy target")
+        self.plant("unpinned triple everywhere", lambda t: t.replace(ppc, "riscv64gc-unknown-linux-musl"), "not one of the pinned legacy targets")
+
+        def remote_only(t):
+            return "\n".join(l.replace("--target " + ppc, "--target " + mips) if "Executing command remotely" in l else l for l in t.split("\n"))
+        self.plant("remote command only", remote_only, "disagree on target")
+
+        def one_artifact(t):
+            lines = t.split("\n")
+            i = next(i for i, l in enumerate(lines) if l.startswith('{"reason":"compiler-artifact"') and "/tailscale-rs/ts_keys#" in l)
+            lines[i] = lines[i].replace(ppc, mips)
+            return "\n".join(lines)
+        self.plant("one artifact in the other target's directory", one_artifact, "other legacy target")
+
+        def one_artifact_unlisted(t):
+            lines = t.split("\n")
+            i = next(i for i, l in enumerate(lines) if l.startswith('{"reason":"compiler-artifact"') and "/tailscale-rs/ts_keys#" in l)
+            lines[i] = lines[i].replace("/" + ppc + "/debug/", "/debug/")
+            return "\n".join(lines)
+        self.plant("a core crate built outside the target directory", one_artifact_unlisted, "outside the powerpc-unknown-linux-musl directory")
+
+    def test_each_missing_core_crate_and_std_crate_is_reported(self):
+        for crate in self.anchors["core_crates"]:
+            self.plant(crate, lambda t, c=crate: self.drop(t, "/tailscale-rs/%s#" % c), "%s has no compiled library artifact" % crate)
+        self.plant("x01_core", lambda t: self.drop(t, "/x01_core#"), "x01_core itself was not compiled")
+        for std in self.anchors["std_crates"]:
+            self.plant(std, lambda t, s=std: self.drop(t, "/library/%s#" % s), "build-std did not compile %s" % std)
+        self.plant("std fingerprint", lambda t: t.replace("compiler_builtins@0.1.160", "compiler_builtins@0.1.159"), "compiler_builtins")
+
+    def test_a_stale_lock_a_stale_source_and_a_changed_consumer_are_reported(self):
+        def set_hash(rel, value):
+            def mutate(doc):
+                for entry in self.files(doc):
+                    if entry["path"] == rel:
+                        entry["sha256"] = value
+            return lambda t: self.edit_receipt(t, mutate)
+        self.plant("the seed lock instead of the resolved lock", set_hash("Cargo.lock", self.SEED_LOCK), "synced Cargo.lock is not the pinned")
+        self.plant("a changed consumer manifest", set_hash("x01_core/Cargo.toml", "0" * 64), "x01_core/Cargo.toml is not the pinned")
+        self.plant("a changed consumer root manifest", set_hash("Cargo.toml", "1" * 64), "synced Cargo.toml is not the pinned")
+        self.plant("a changed consumer lib.rs", set_hash("x01_core/src/lib.rs", "2" * 64), "x01_core/src/lib.rs is not the pinned")
+        self.plant("one changed source file", set_hash("tailscale-rs/ts_keys/src/lib.rs", "3" * 64), "tree digest")
+
+        def remove_one(doc):
+            files = self.files(doc)
+            files.pop(next(i for i, e in enumerate(files) if e["path"] == "tailscale-rs/ts_noise/src/lib.rs"))
+        self.plant("one source file missing from the list", lambda t: self.edit_receipt(t, remove_one), "tree digest")
+
+        def add_one(doc):
+            self.files(doc).append({"path": "tailscale-rs/ts_keys/src/extra.rs", "sha256": "4" * 64, "byte_count": 1, "executable": False})
+        self.plant("one source file added", lambda t: self.edit_receipt(t, add_one), "tree digest")
+
+        def duplicate(doc):
+            self.files(doc).append({"path": "Cargo.lock", "sha256": self.SEED_LOCK, "byte_count": 1, "executable": False})
+        self.plant("the lock listed twice", lambda t: self.edit_receipt(t, duplicate), "twice")
+
+        def extra_file(rel):
+            return lambda t: self.edit_receipt(t, lambda doc: self.files(doc).append({"path": rel, "sha256": "5" * 64, "byte_count": 1, "executable": False}))
+        self.plant("a cargo config in the root", extra_file(".cargo/config.toml"), "cargo config, toolchain override or build script")
+        self.plant("a toolchain override in the root", extra_file("rust-toolchain.toml"), "cargo config, toolchain override or build script")
+        self.plant("a build script in the consumer package", extra_file("x01_core/build.rs"), "beyond its manifest")
+        self.plant("a count that is not its own list", lambda t: self.edit_receipt(t, lambda doc: doc["roots"][0].update(file_count=549)), "does not match its own file list")
+        self.plant("another worker", lambda t: self.edit_receipt(t, lambda doc: doc.update(worker_id="other")), "worker")
+        self.plant("another schema", lambda t: self.edit_receipt(t, lambda doc: doc.update(schema="rch.source_content_receipt.v0")), "schema rch.source_content_receipt.v1")
+        self.plant("a partial root", lambda t: self.edit_receipt(t, lambda doc: doc["roots"][0].update(mode="partial")), "not the full primary root")
+
+    def test_truncated_failed_and_zero_run_logs_are_reported(self):
+        self.assertTrue(planted(self.judge("")[0], "COMMAND"))
+        self.assertTrue(planted(self.judge(self.text.split("\n")[0] + "\n")[0], "expected one"))
+        cut = self.text.index('{"reason":"build-finished"')
+        self.plant("cut before build-finished", lambda t: t[:cut], "build-finished")
+        self.plant("cut in the middle", lambda t: t[:len(t) // 2], "build-finished")
+        last = self.text.rindex(self.PREFIX)
+        self.plant("the receipt line cut short", lambda t: t[:last + len(self.PREFIX) + 4000], "not valid JSON")
+        self.plant("build-finished failed", lambda t: t.replace('"reason":"build-finished","success":true', '"reason":"build-finished","success":false'), "terminal results disagree")
+        self.plant("rch exit 101", lambda t: t.replace("Remote command finished: exit=0", "Remote command finished: exit=101"), "terminal results disagree")
+        self.plant("receipt exit 101", lambda t: self.edit_receipt(t, lambda doc: doc.update(command_exit_code=101)), "terminal results disagree")
+        self.plant("no Finished line", lambda t: "\n".join(l for l in t.split("\n") if "Finished `" not in l), "terminal results disagree")
+        self.plant("zero artifacts", lambda t: self.drop(t, ""), "nothing was compiled")
+        self.plant("a compiler error message", lambda t: t.replace('{"reason":"build-finished"', '{"reason":"compiler-message","message":{"level":"error","message":"x"}}\n{"reason":"build-finished"'), "terminal results disagree")
+        self.plant("an error line", lambda t: t.replace("    Finished `", "error[E0432]: unresolved import\n    Finished `"), "terminal results disagree")
+        self.plant("artifacts after build-finished", lambda t: t + '\n{"reason":"compiler-artifact","package_id":"x"}\n', "build-finished")
+        self.plant("no exit line", lambda t: "\n".join(l for l in t.split("\n") if "Remote command finished" not in l), "remote command exit")
+
+    def test_only_the_pinned_check_command_is_accepted(self):
+        def both(old, new):
+            def mutate(text):
+                lines = text.split("\n")
+                lines = [l.replace(old, new) if (l.startswith("COMMAND: ") or "Executing command remotely" in l) else l for l in lines]
+                return "\n".join(lines)
+            return mutate
+        self.plant("build instead of check", lambda t: both(" check ", " build ")(both('"check"', '"build"')(t)), "subcommand")
+        self.plant("a run", lambda t: both(" check ", " run ")(both('"check"', '"run"')(t)), "subcommand")
+        self.plant("not locked", lambda t: both(" --locked", "")(both('"--locked", ', "")(t)), "not run with --locked")
+        self.plant("another toolchain", both("nightly-2026-08-31", "nightly-2026-09-07"), "toolchain")
+        self.plant("another build-std set", lambda t: both("core,alloc,std,panic_abort", "core,alloc,std")(t), "build-std")
+        self.plant("the whole library's package with the core manifest", lambda t: both(" x01_core", " tailscale")(both('"x01_core"', '"tailscale"')(t)), "manifest")
+        self.plant("a package that is neither attempt", lambda t: both(" x01_core", " ts_keys")(both('"x01_core"', '"ts_keys"')(t)), "the pinned selections are only")
+        self.plant("no json messages", lambda t: both(" '--message-format=json'", "")(both(', "--message-format=json"', "")(t)), "message-format")
+        self.plant("a release build", lambda t: both(" -p x01_core", " -p x01_core --release")(t), "unexpected arguments")
+        self.plant("a patched dependency", lambda t: both("--config 'env.RCH_BUILD_SOURCE.value", "--config 'patch.crates-io.serde.path=\"/x\"' --config 'env.RCH_BUILD_SOURCE.value")(t), "unexpected --config arguments")
+        self.plant("rustflags in the remote environment", both("env 'CARGO_INCREMENTAL=0'", "env 'RUSTFLAGS=-Cdebuginfo=2' 'CARGO_INCREMENTAL=0'"), "sets RUSTFLAGS")
+        self.plant("an unexpected rch option", lambda t: t.replace('"--source-content-receipt",', '"--source-content-receipt", "--force",', 1), "unexpected rch option")
+        self.plant("not an rch command", lambda t: t.replace('["rch", "exec",', '["sh", "exec",', 1), "not `rch exec")
+
+    def test_a_package_from_anywhere_but_the_lock_the_synced_tree_and_the_toolchain_is_reported(self):
+        index = "registry+https://github.com/rust-lang/crates.io-index#"
+        self.plant("a registry crate that is not locked", lambda t: t.replace(index + "serde@1.0.228", index + "serde@9.9.9", 1), "neither in the locked closure")
+        self.plant("another registry", lambda t: t.replace(index + "serde@1.0.228", "registry+https://example.invalid/index#serde@1.0.228", 1), "other than crates.io")
+        self.plant("a git source", lambda t: t.replace(index + "serde@1.0.228", "git+https://example.invalid/x?rev=abc#serde@1.0.228", 1), "git source")
+        self.plant("a std crate at another version", lambda t: t.replace("gimli@0.34.0", "gimli@0.33.0", 1), "neither in the locked closure")
+        self.plant("a tailscale-rs crate at another version", lambda t: t.replace("/tailscale-rs/ts_keys#0.6.1", "/tailscale-rs/ts_keys#0.6.2", 1), "not the locked tailscale-rs crate")
+        self.plant("a path outside the synced tree", lambda t: t.replace("path+file:///data/tmp/rch/", "path+file:///elsewhere/tmp/rch/", 1), "outside the synced tree and the pinned toolchain")
+
+    # ---- the two false accepts GrayMeadow found in v3+v4+v5 (mail 10671): an empty remote command, and file names that were emptied ---------------------
+
+    REMOTE = "Executing command remotely: "
+    PPC_T, MIPS_T = "powerpc-unknown-linux-musl", "mips-unknown-linux-musl"
+
+    def real_records(self):
+        """The eight REAL committed records: (text, built). Five built, three stopped (no C compiler; cargo refused the inline table; Zig could not parse the Rust target spelling)."""
+        return {"core powerpc": (self.core_ppc, True), "core mips": (self.core_mips, True), "whole powerpc": (self.whole_ppc, True), "whole mips, cc-rs adapter": (self.zig_ccrs, True),
+                "whole mips, hardened adapter": (self.zig_ccrs_v2, True), "whole mips, original stop": (self.whole_mips, False), "whole mips, inline refusal": (self.zig_inline, False),
+                "whole mips, target spelling stop": (self.zig_keys, False)}
+
+    def with_remote(self, text, replacement):
+        return "\n".join(l.split(self.REMOTE, 1)[0] + self.REMOTE + replacement if self.REMOTE in l else l for l in text.split("\n"))
+
+    @staticmethod
+    def edit_artifacts(text, fn, needle=None):
+        out = []
+        for line in text.split("\n"):
+            if line.startswith('{"reason":"compiler-artifact"') and (needle is None or needle in line):
+                doc = json.loads(line)
+                fn(doc)
+                line = json.dumps(doc, separators=(",", ":"))
+            out.append(line)
+        return "\n".join(out)
+
+    def retarget(self, text, old, new):
+        """Only the two places the command is recorded: the COMMAND line and the remote command. The receipt, the sources and the cargo messages stay as they were."""
+        return "\n".join(l.replace(old, new) if (l.startswith("COMMAND: ") or self.REMOTE in l) else l for l in text.split("\n"))
+
+    def test_an_empty_or_blank_remote_command_is_a_defect_of_every_real_record(self):
+        for name, (text, _built) in self.real_records().items():
+            self.assertEqual(self.judge(text)[0], [], name + ": the real record is the control")
+            for label, blank in (("empty", ""), ("blank", "   \t ")):
+                self.plant("%s: %s remote command" % (name, label), lambda t, b=blank: self.with_remote(t, b), "the remote command line is empty", base=text)
+        problems, _ = self.judge(self.with_remote(self.core_ppc, ""))
+        self.assertEqual(len(problems), 1, problems)                                             # nothing else is claimed to have been checked, and nothing else is reported
+        self.plant("only environment words", lambda t: self.with_remote(t, "env 'CARGO_INCREMENTAL=0'"), "not a cargo invocation")
+        self.plant("unsplittable", lambda t: self.with_remote(t, "cargo 'unterminated"), "does not split into words")
+        self.assertFalse(planted(self.judge(self.with_remote(self.core_ppc, "cargo 'unterminated"))[0], "line is empty"))
+
+    def test_target_artifacts_without_an_output_file_under_the_selected_target_do_not_count(self):
+        emptied = lambda t: self.edit_artifacts(t, lambda d: d.update(filenames=[]))
+        for name, (text, built) in self.real_records().items():
+            if built:
+                self.plant("%s: every artifact's file names emptied" % name, emptied, "ts_keys has no compiled library artifact with an output file under the", base=text)
+                problems, _ = self.judge(emptied(text))
+                self.assertTrue(planted(problems, "ts_noise has no compiled library artifact"), name)
+                self.assertTrue(planted(problems, "build-std did not compile core"), name)
+                self.assertEqual(planted(problems, "x01_core itself was not compiled"), name.startswith("core"), name)
+                self.assertEqual(planted(problems, "tailscale has no compiled library artifact"), name.startswith("whole"), name)
+            else:
+                self.assertEqual(self.judge(emptied(text))[0], [], name + ": a stop makes no claim to have built, so it has no required artifacts to witness")
+
+        def only(needle):
+            return lambda t: self.edit_artifacts(t, lambda d: d.update(filenames=[]), needle)
+        # each counting site on its own: the one required crate whose file names are emptied is the one reported
+        only_problem = lambda text, needle: self.judge(only(needle)(text))[0]
+        self.assertEqual(only_problem(self.core_ppc, "/tailscale-rs/ts_keys#"), ["ts_keys has no compiled library artifact with an output file under the %s directory" % self.PPC_T])
+        self.assertEqual(only_problem(self.core_ppc, "/x01_core#"), ["x01_core itself was not compiled (no artifact with an output file under the %s directory)" % self.PPC_T])
+        self.assertEqual(only_problem(self.whole_ppc, "#tailscale@0.6.1"), ["tailscale has no compiled library artifact with an output file under the %s directory" % self.PPC_T])
+        for std in self.anchors["std_crates"]:
+            self.assertTrue(planted(only_problem(self.core_ppc, "/library/%s#" % std), "build-std did not compile %s (no artifact" % std), std)
+        self.assertEqual(only_problem(self.core_ppc, "/library/core#"), ["build-std did not compile core (no artifact with an output file under the %s directory)" % self.PPC_T])
+        self.plant("one core crate's file names emptied", only("/tailscale-rs/ts_keys#"), "ts_keys has no compiled library artifact")
+
+        def outside(doc):
+            doc["filenames"] = ["/elsewhere/libts_keys.rlib"]
+
+        def one_inside_one_outside(doc):
+            doc["filenames"] = doc["filenames"][:1] + ["/elsewhere/libts_keys.rlib"]
+        for label, fn in (("every file name outside the target directory", outside), ("one inside and one outside", one_inside_one_outside)):
+            problems = self.judge(self.edit_artifacts(self.core_ppc, fn, "/tailscale-rs/ts_keys#"))[0]
+            self.assertTrue(planted(problems, "outside the %s directory" % self.PPC_T), label)         # the older directory check
+            self.assertTrue(planted(problems, "ts_keys has no compiled library artifact"), label)       # and the witness: every file name must be under the target
+
+    def test_a_record_cannot_be_promoted_to_another_target_by_emptying_its_output_files(self):
+        emptied = lambda t: self.edit_artifacts(t, lambda d: d.update(filenames=[]))
+        for name, text, own, other in (("core powerpc", self.core_ppc, self.PPC_T, self.MIPS_T), ("core mips", self.core_mips, self.MIPS_T, self.PPC_T), ("whole powerpc", self.whole_ppc, self.PPC_T, self.MIPS_T)):
+            flipped = self.retarget(text, own, other)
+            problems, facts = self.judge(flipped)
+            self.assertEqual(facts["target"], other, name)
+            self.assertTrue(planted(problems, "other legacy target"), name + ": with its file names intact the other target's directory gives the promotion away")
+            problems, facts = self.judge(emptied(flipped))
+            self.assertTrue(planted(problems, "has no compiled library artifact with an output file under the %s directory" % other), name)
+            self.assertFalse(planted(problems, "other legacy target"), name + ": emptying the names removes the older detector's input, so the witness is what rejects it")
+            self.plant(name + ": retargeted, then emptied", lambda t, o=own, n=other: emptied(self.retarget(t, o, n)), "has no compiled library artifact", base=text)
+        for name in ("whole mips, cc-rs adapter", "whole mips, hardened adapter"):          # the pinned C compiler configuration rejects the retarget on its own; the plain emptying still needs the witness
+            text = self.real_records()[name][0]
+            self.plant(name + ": emptied", emptied, "has no compiled library artifact", base=text)
+
+    def test_a_filenames_value_that_is_not_a_list_of_strings_is_reported_by_itself_and_never_counts(self):
+        serde = "crates.io-index#serde@1.0.228"
+        bad = (("missing", lambda d: d.pop("filenames")), ("null", lambda d: d.update(filenames=None)), ("a string", lambda d: d.update(filenames="libserde.rlib")),
+               ("an object", lambda d: d.update(filenames={"a": "b"})), ("a list with a non-string", lambda d: d.update(filenames=["x", 3])))
+        for label, fn in bad:
+            problems, _ = self.judge(self.edit_artifacts(self.text, fn, serde))
+            self.assertTrue(problems and all("serde 1.0.228 has no readable filenames list" in p for p in problems), (label, problems[:2]))
+            self.assertEqual(self.judge(self.text)[0], [], label + ": removing the plant restores the pass")
+            problems, _ = self.judge(self.edit_artifacts(self.text, fn, "/tailscale-rs/ts_keys#"))
+            self.assertTrue(planted(problems, "ts_keys 0.6.1 has no readable filenames list"), label)
+            self.assertTrue(planted(problems, "ts_keys has no compiled library artifact"), label + ": a crate with no readable file names is not counted either")
+
+    def test_the_forged_cross_target_record_cannot_complete_the_four_attempts(self):
+        data = rc.inputs()
+        forged = self.edit_artifacts(self.retarget(self.core_ppc, self.PPC_T, self.MIPS_T), lambda d: d.update(filenames=[]))
+        four = {"1.log": self.core_ppc, "2.log": self.core_mips, "3.log": self.whole_ppc, "4.log": self.relabel(self.whole_ppc)}
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo_with(tmp, four)
+            self.assertEqual(rc.case_build(tmp, data).status, "passed")                          # the control: the four records the existing test accepts
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo_with(tmp, dict(four, **{"2.log": forged}))                                 # the powerpc record, presented as the mips core attempt
+            result = rc.case_build(tmp, data)
+            self.assertEqual(result.status, "failed", result.detail)
+            self.assertIn("2.log: ", result.detail)
+            self.assertIn("has no compiled library artifact", result.detail)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo_with(tmp, dict(four, **{"2.log": self.with_remote(self.core_mips, "")}))   # an unchecked remote command
+            result = rc.case_build(tmp, data)
+            self.assertEqual(result.status, "failed", result.detail)
+            self.assertIn("the remote command line is empty", result.detail)
+
+    # ---- the case, the runner and the boundaries --------------------------------------------------------------------------------------------
+
+    def repo_with(self, tmp, records):
+        lock = os.path.join(tmp, *self.anchors["lock_fixture"].split("/"))
+        os.makedirs(os.path.dirname(lock))
+        with open(lock, "w", encoding="utf-8") as handle:
+            handle.write(self.lock)
+        for name, text in records.items():
+            write_raw(tmp, "toolchain/results/tailscale/builds/" + name, text)
+
+    def relabel(self, text):
+        return text.replace("powerpc-unknown-linux-musl", "mips-unknown-linux-musl")
+
+    def test_the_case_reports_each_state_and_passes_only_when_all_four_attempts_built(self):
+        data = rc.inputs()
+        ppc, mips = "powerpc-unknown-linux-musl", "mips-unknown-linux-musl"
+        four = {"1.log": self.core_ppc, "2.log": self.core_mips, "3.log": self.whole_ppc, "4.log": self.relabel(self.whole_ppc)}      # 4: a relabelled stand-in for the MIPS retry that has not been made
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo_with(tmp, {})
+            self.assertIn("no build record", rc.case_build(tmp, data).detail)
+        with tempfile.TemporaryDirectory() as tmp:                                              # the core attempts alone, on both targets: partial evidence, never the whole probe
+            self.repo_with(tmp, {"1.log": self.core_ppc, "2.log": self.core_mips})
+            core = rc.case_build(tmp, data)
+            self.assertEqual(core.status, "blocked", core.detail)
+            for said in ("INCOMPLETE", "a core pass is partial evidence only", "core powerpc: BUILT", "core mips: BUILT", "whole powerpc: NOT RECORDED", "whole mips: NOT RECORDED"):
+                self.assertIn(said, core.detail)
+        with tempfile.TemporaryDirectory() as tmp:                                              # the four real records: three built, the MIPS whole library stopped for want of a C compiler
+            self.repo_with(tmp, {"1.log": self.core_ppc, "2.log": self.core_mips, "3.log": self.whole_ppc, "4.log": self.whole_mips})
+            real = rc.case_build(tmp, data)
+            self.assertEqual(real.status, "blocked", real.detail)
+            for said in ("whole powerpc: BUILT", "whole mips: STOPPED at aws-lc-sys v0.45.0", "'mips-linux-musl-gcc'", "a toolchain blocker and not an ISA or source finding"):
+                self.assertIn(said, real.detail)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo_with(tmp, four)
+            allbuilt = rc.case_build(tmp, data)
+            self.assertEqual(allbuilt.status, "passed", allbuilt.detail)
+            for said in ("all four required attempts built", "type-check only", "no runtime, memory, CPU, enrollment or native-endpoint result", "T01-X02 and the native requirement are untouched"):
+                self.assertIn(said, allbuilt.detail)
+            self.assertEqual(rc.case_resources(tmp).status, "blocked")                          # a compile record never answers the resource case
+            self.assertEqual(rc.exit_code([allbuilt, rc.case_resources(tmp)]), 3)               # so a run that has it is still not a pass
+            self.assertEqual(rc.case_native_requirement(data, REPO).status, "passed")
+            self.assertNotIn("supported", set(L.matrix(PROFILE).values()))
+            write(tmp, "toolchain/results/tailscale/builds/other.json", "{}\n")
+            self.assertIn("no judge for it yet", rc.case_build(tmp, data).detail)                # a receipt nobody can judge still blocks
+        with tempfile.TemporaryDirectory() as tmp:                                              # a later run built what stopped: the stop stays in the account
+            self.repo_with(tmp, dict(four, **{"5-earlier-stop.log": self.whole_mips}))
+            kept = rc.case_build(tmp, data)
+            self.assertEqual(kept.status, "passed", kept.detail)
+            self.assertIn("earlier stops kept: STOPPED at aws-lc-sys v0.45.0", kept.detail)
+        with tempfile.TemporaryDirectory() as tmp:                                              # a record that does not hold fails the case, whatever else is recorded
+            self.repo_with(tmp, dict(four, **{"bad.log": self.whole_mips.replace("Remote command finished: exit=101", "Remote command finished: exit=0")}))
+            bad = rc.case_build(tmp, data)
+            self.assertEqual(bad.status, "failed")
+            self.assertIn("bad.log: ", bad.detail)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo_with(tmp, {"ppc.log": self.raw_form(self.text)})
+            self.assertIn("still holds site data", rc.case_build(tmp, data).detail)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo_with(tmp, {"ppc.log": self.text})
+            os.symlink(self.PPC, os.path.join(tmp, "toolchain/results/tailscale/builds/link.log"))
+            linked = rc.case_build(tmp, data)
+            self.assertEqual(linked.status, "failed")
+            self.assertIn("not a plain regular file", linked.detail)
+            self.assertNotIn(REPO, linked.detail)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo_with(tmp, {})
+            raw = os.path.join(tmp, "raw.txt")
+            with open(raw, "w", encoding="utf-8") as handle:
+                handle.write(self.raw_form(self.text))
+            supplied = rc.case_build(tmp, data, (raw,))
+            self.assertIn("core powerpc: BUILT", supplied.detail)
+            self.assertNotIn(tmp, supplied.detail)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo_with(tmp, {"ppc.log": self.text})
+            lock = os.path.join(tmp, *self.anchors["lock_fixture"].split("/"))
+            with open(lock, "a", encoding="utf-8") as handle:
+                handle.write("# changed\n")
+            self.assertIn("lock fixture", rc.case_build(tmp, data).detail)
+
+    def test_the_whole_library_records_hold_the_powerpc_build_and_the_named_mips_stop(self):
+        problems, facts = self.judge(self.whole_ppc)
+        self.assertEqual(problems, [])
+        self.assertEqual((facts["attempt"], facts["target"], facts["outcome"], facts["artifacts"]), ("whole", "powerpc-unknown-linux-musl", "built", 340))
+        self.assertEqual((facts["core_crates_compiled"], facts["std_packages"]), (7, 11))
+        self.assertGreater(facts["tailscale_rs_packages"], 19)
+        problems, facts = self.judge(self.whole_mips)
+        self.assertEqual(problems, [])
+        self.assertEqual((facts["attempt"], facts["target"], facts["outcome"]), ("whole", "mips-unknown-linux-musl", "stopped"))
+        self.assertEqual(facts["stop"], {"package": "aws-lc-sys v0.45.0", "exit": 101, "class": "missing-c-toolchain", "tool": "mips-linux-musl-gcc", "detail": None})
+        problems, facts = self.judge(self.core_mips)
+        self.assertEqual((problems, facts["attempt"], facts["outcome"]), ([], "core", "built"))
+
+    def test_a_stop_is_a_held_record_that_is_never_a_built_attempt(self):
+        def stop(text):                                                                         # a consistent stop of the core record: failure in all three witnesses, no Finished line
+            text = text.replace('"reason":"build-finished","success":true', '"reason":"build-finished","success":false').replace("Remote command finished: exit=0", "Remote command finished: exit=101")
+            text = "\n".join(l for l in text.split("\n") if "Finished `" not in l)
+            return self.edit_receipt(text, lambda doc: doc.update(command_exit_code=101))
+        stopped = stop(self.text)
+        problems, facts = self.judge(stopped)
+        self.assertEqual((problems, facts["outcome"], facts["stop"]), ([], "stopped", {"package": None, "exit": 101, "class": "unclassified", "tool": None, "detail": None}))
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo_with(tmp, {"1.log": stopped, "2.log": self.core_mips, "3.log": self.whole_ppc, "4.log": self.relabel(self.whole_ppc)})
+            result = rc.case_build(tmp, rc.inputs())
+            self.assertEqual(result.status, "blocked", result.detail)
+            self.assertIn("core powerpc: STOPPED at an unnamed crate: the cause is not classified here", result.detail)
+            self.assertIn("neither as a toolchain blocker nor as an ISA or source finding", result.detail)
+
+    def test_the_stop_is_classified_from_its_own_text_and_cannot_be_doctored_into_a_build(self):
+        base = self.whole_mips
+        cc = 'error occurred in cc-rs: failed to find tool "mips-linux-musl-gcc"'
+        self.assertIn(cc, base)
+
+        def forged(text):                                                                       # every witness says built, and the error text is gone
+            out = []
+            for line in text.split("\n"):
+                if line.startswith("error"):
+                    continue
+                if "Remote command finished: exit=101" in line:
+                    out.append("    Finished `dev` profile [unoptimized] target(s) in 1m 41s")
+                    line = line.replace("exit=101", "exit=0")
+                out.append(line)
+            text = "\n".join(out).replace('"reason":"build-finished","success":false', '"reason":"build-finished","success":true')
+            return self.edit_receipt(text, lambda doc: doc.update(command_exit_code=0))
+        self.plant("the success flag only", lambda t: t.replace('"success":false', '"success":true'), "terminal results disagree", base)
+        self.plant("the exit code only", lambda t: t.replace("exit=101", "exit=0"), "terminal results disagree", base)
+        self.plant("the receipt's exit only", lambda t: self.edit_receipt(t, lambda doc: doc.update(command_exit_code=0)), "terminal results disagree", base)
+        self.plant("another exit in the receipt", lambda t: self.edit_receipt(t, lambda doc: doc.update(command_exit_code=1)), "terminal results disagree", base)
+        def finished_line(text):
+            out = []
+            for line in text.split("\n"):
+                if "Remote command finished: exit=101" in line:
+                    out.append("    Finished `dev` profile [unoptimized] target(s) in 1s")
+                out.append(line)
+            return "\n".join(out)
+        self.plant("a Finished line in a stop", finished_line, "terminal results disagree", base)
+        self.plant("a stop doctored into a clean build", forged, "has no compiled library artifact", base)
+        known = lambda text: (lambda p, f: (p, f["stop"]))(*self.judge(text))
+        self.assertEqual(known(base)[1]["class"], "missing-c-toolchain")
+        no_cc = "\n".join(l for l in base.split("\n") if "error occurred in cc-rs" not in l)
+        self.assertEqual(known(no_cc), ([], {"package": "aws-lc-sys v0.45.0", "exit": 101, "class": "unclassified", "tool": None, "detail": None}))     # without the cc-rs text it is not called a toolchain blocker
+        self.assertEqual(known(base.replace("mips-linux-musl-gcc", "other-gcc"))[1]["tool"], "other-gcc")                              # the tool comes from the text, not from this test
+        self.assertEqual(known(base + "\n" + cc.replace("mips-linux-musl-gcc", "second-gcc") + "\n")[1]["class"], "unclassified")      # two different tools: not classified
+        no_package = "\n".join(l for l in base.split("\n") if not l.startswith("error: failed to run custom build command"))
+        self.assertEqual(known(no_package), ([], {"package": None, "exit": 101, "class": "unclassified", "tool": None, "detail": None}))
+
+    def test_the_whole_library_attempt_is_held_to_its_own_manifest_package_and_artifacts(self):
+        base = self.whole_ppc
+
+        def both(old, new):
+            return lambda text: "\n".join(l.replace(old, new) if (l.startswith("COMMAND: ") or "Executing command remotely" in l) else l for l in text.split("\n"))
+        self.plant("the core manifest for the whole library", both("tailscale-rs/Cargo.toml", "Cargo.toml"), "manifest", base)
+        self.plant("the core package with the whole library's manifest", lambda t: both(" tailscale ", " x01_core ")(both('"tailscale",', '"x01_core",')(t)), "manifest", base)
+        self.plant("no tailscale library artifact", lambda t: self.drop(t, "/tailscale-rs#tailscale@"), "tailscale has no compiled library artifact", base)
+        for crate in ("ts_keys", "ts_tunnel"):
+            self.plant(crate, lambda t, c=crate: self.drop(t, "/tailscale-rs/%s#" % c), "%s has no compiled library artifact" % crate, base)
+        self.plant("a tailscale-rs crate at another version", lambda t: t.replace("/tailscale-rs/ts_keys#0.6.1", "/tailscale-rs/ts_keys#0.6.2", 1), "not at the pinned tailscale-rs version", base)
+        self.plant("a git source", lambda t: t.replace("registry+https://github.com/rust-lang/crates.io-index#serde@", "git+https://example.invalid/x?rev=abc#serde@", 1), "git source", base)
+        self.plant("a path outside the synced tree", lambda t: t.replace("path+file:///data/tmp/rch/", "path+file:///elsewhere/tmp/rch/", 1), "outside the synced tree and the pinned toolchain", base)
+        self.plant("the upstream lock changed", lambda t: self.edit_receipt(t, lambda doc: [e.update(sha256="6" * 64) for e in self.files(doc) if e["path"] == "tailscale-rs/Cargo.lock"]), "tree digest", base)
+        ppc, mips = "powerpc-unknown-linux-musl", "mips-unknown-linux-musl"
+
+        def one_artifact(text):
+            lines = text.split("\n")
+            i = next(i for i, l in enumerate(lines) if l.startswith('{"reason":"compiler-artifact"') and "/tailscale-rs/ts_keys#" in l)
+            lines[i] = lines[i].replace(ppc, mips)
+            return "\n".join(lines)
+        self.plant("one artifact under the other target", one_artifact, "other legacy target", base)
+
+    def test_a_compile_record_is_independent_of_the_measurement_receipt(self):
+        data = rc.inputs()
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo_with(tmp, {"1.log": self.core_ppc, "2.log": self.core_mips, "3.log": self.whole_ppc, "4.log": self.relabel(self.whole_ppc)})
+            write(tmp, "toolchain/results/tailscale/measurements/x.json", "{}\n")
+            self.assertIn("no judge for it yet", rc.case_resources(tmp).detail)
+            self.assertEqual(rc.case_build(tmp, data).status, "passed")                         # and a measurement file does not touch the compile verdict
+
+    def test_the_historical_receipts_are_kept_byte_for_byte_and_still_say_blocked(self):
+        pinned = {"t01-8cdc69be60fccfa2.json": "29211952173eb4e8ad087d63bf7bee2a1c52740685b0cd70e58faf2ba717b235",
+                  "t01-01665612603d232e.json": "d2f7340eb21cd96efdf095e9eb4a92da81b6172e4298756c6ce9469a1d12f5fa",
+                  "t01-9f4270b321a6868a.json": "3559d98853a11079eb2d0e7cdf80e4f11b1d725b836171742afb5c48f5466199"}
+        directory = os.path.join(REPO, "toolchain", "results", "tailscale", "receipts")
+        for name, digest in pinned.items():
+            data = L.read_bounded_file(os.path.join(directory, name))
+            self.assertEqual(L.sha256_bytes(data), digest, name)
+            doc = json.loads(data)
+            x01 = [r for r in doc["results"] if r["case"] == "T01-X01-legacy-isa-build"]
+            if doc["tier"] == "full":
+                self.assertEqual([r["status"] for r in x01], ["blocked"], name)
+                self.assertTrue(x01[0]["detail"].startswith("no build receipt under toolchain/results/tailscale/builds/"), name)
+
+    def test_the_committed_records_are_redacted_regular_files_that_hold_and_keep_every_earlier_failure(self):
+        names = sorted(os.listdir(self.BUILDS))
+        self.assertEqual([n for n in names if n.endswith(".log")], [
+            "x01-core-mips-unknown-linux-musl-20261107.log", "x01-core-powerpc-unknown-linux-musl-20261107.log", "x01-whole-mips-unknown-linux-musl-20261107.log",
+            "x01-whole-mips-unknown-linux-musl-zig-ccrs-20261107.log", "x01-whole-mips-unknown-linux-musl-zig-ccrs-v2-20261107.log",
+            "x01-whole-mips-unknown-linux-musl-zig-inline-20261107.log", "x01-whole-mips-unknown-linux-musl-zig-keys-20261107.log", "x01-whole-powerpc-unknown-linux-musl-20261107.log"])
+        outcomes = {}
+        for name in names:
+            path = os.path.join(self.BUILDS, name)
+            self.assertTrue(os.path.isfile(path) and not os.path.islink(path), name)
+            text = L.read_bounded_file(path).decode("utf-8")
+            self.assertEqual(L.site_hits(text), [], name)
+            if name.endswith(".log"):
+                problems, facts = self.judge(text)
+                self.assertEqual(problems, [], name)
+                outcomes[name[4:-13]] = (facts["target"], facts["attempt"], facts["outcome"], (facts.get("stop") or {}).get("class"), (facts.get("cc") or {}).get("wrapper"))
+        ppc, mips = "powerpc-unknown-linux-musl", "mips-unknown-linux-musl"
+        self.assertEqual(outcomes, {
+            "core-powerpc-unknown-linux-musl": (ppc, "core", "built", None, None), "core-mips-unknown-linux-musl": (mips, "core", "built", None, None),
+            "whole-powerpc-unknown-linux-musl": (ppc, "whole", "built", None, None),
+            "whole-mips-unknown-linux-musl": (mips, "whole", "stopped", "missing-c-toolchain", None),
+            "whole-mips-unknown-linux-musl-zig-inline": (mips, "whole", "stopped", "cargo-config-rejected", "x01-cc/zig-cc-mips-be"),
+            "whole-mips-unknown-linux-musl-zig-keys": (mips, "whole", "stopped", "c-compiler-rejected-target", "x01-cc/zig-cc-mips-be"),
+            "whole-mips-unknown-linux-musl-zig-ccrs": (mips, "whole", "built", None, "x01-cc/zig-cc-mips-be-ccrs"),
+            "whole-mips-unknown-linux-musl-zig-ccrs-v2": (mips, "whole", "built", None, "x01-cc/zig-cc-mips-be-ccrs-v2")})
+        live = rc.case_build(REPO)
+        self.assertEqual(live.status, "passed", live.detail)                                    # every earlier failure is still recorded, and the account says so
+        self.assertEqual(live.detail.count("STOPPED at aws-lc-sys v0.45.0"), 2)
+        for said in ("earlier stops kept", "REJECTED by cargo before building", "x01-cc/zig-cc-mips-be-ccrs (sha256 17848d169db2)", "x01-cc/zig-cc-mips-be-ccrs-v2 (sha256 3dc93ff4f618)",
+                     "a toolchain blocker and not an ISA or source finding"):
+            self.assertIn(said, live.detail)
+
+    def cfg_both(self, old, new):
+        """Replace text in the COMMAND line and in the executed remote command only."""
+        return lambda text: "\n".join(l.replace(old, new) if (l.startswith("COMMAND: ") or "Executing command remotely" in l) else l for l in text.split("\n"))
+
+    def test_the_three_zig_attempts_hold_as_a_cargo_refusal_the_original_wrapper_stop_and_the_build(self):
+        problems, facts = self.judge(self.zig_inline)
+        self.assertEqual(problems, [])
+        self.assertEqual((facts["outcome"], facts["artifacts"], facts["cc"]["form"], facts["stop"]["class"], facts["stop"]["package"]), ("stopped", 0, "inline", "cargo-config-rejected", None))
+        self.assertEqual(facts["stop"]["detail"], 'env.CC_mips_unknown_linux_musl={value="x01-cc/zig-cc-mips-be",relative=true,force=true}')
+        problems, facts = self.judge(self.zig_keys)
+        self.assertEqual(problems, [])
+        self.assertEqual((facts["outcome"], facts["cc"]["wrapper"], facts["cc"]["form"], facts["stop"]["class"], facts["stop"]["detail"], facts["stop"]["package"]),
+                         ("stopped", "x01-cc/zig-cc-mips-be", "keys", "c-compiler-rejected-target", "mips-unknown-linux-musl", "aws-lc-sys v0.45.0"))
+        problems, facts = self.judge(self.zig_ccrs)
+        self.assertEqual(problems, [])
+        self.assertEqual((facts["outcome"], facts["attempt"], facts["target"], facts["artifacts"], facts["core_crates_compiled"]), ("built", "whole", "mips-unknown-linux-musl", 340, 7))
+        self.assertEqual(facts["cc"], {"wrapper": "x01-cc/zig-cc-mips-be-ccrs", "sha256": self.anchors["cc_wrappers"]["files"]["x01-cc/zig-cc-mips-be-ccrs"]["sha256"], "form": "keys"})
+
+    def swap_cfg(self, old, new):
+        """Replace one --config string in the COMMAND line (JSON) and in the executed remote command (rch single-quotes every one)."""
+        pairs = [(json.dumps(old), json.dumps(new)), ("'%s'" % old, "'%s'" % new)]
+        return lambda text: "\n".join(self.apply_pairs(line, pairs) for line in text.split("\n"))
+
+    def apply_pairs(self, line, pairs):
+        if line.startswith("COMMAND: ") or "Executing command remotely" in line:
+            for old, new in pairs:
+                line = line.replace(old, new)
+        return line
+
+    def drop_cfg(self, cfg):
+        pairs = [(', "--config", %s' % json.dumps(cfg), ""), (" --config '%s'" % cfg, "")]
+        return lambda text: "\n".join(self.apply_pairs(line, pairs) for line in text.split("\n"))
+
+    def add_cfg(self, cfg):
+        pairs = [('"--message-format=json"', '"--message-format=json", "--config", %s' % json.dumps(cfg)), ("'--message-format=json'", "'--message-format=json' --config '%s'" % cfg)]
+        return lambda text: "\n".join(self.apply_pairs(line, pairs) for line in text.split("\n"))
+
+    def test_the_c_compiler_configuration_is_exactly_the_pinned_one(self):
+        base = self.zig_ccrs
+        key = "env.CC_mips_unknown_linux_musl"
+        wrapper = "x01-cc/zig-cc-mips-be-ccrs"
+        value, relative, force = '%s.value="%s"' % (key, wrapper), "%s.relative=true" % key, "%s.force=true" % key
+        self.plant("an unpinned wrapper path", self.swap_cfg(value, '%s.value="x01-cc/zig-cc-other"' % key), "unexpected --config arguments", base)
+        self.plant("a missing key", self.drop_cfg(force), "unexpected --config arguments", base)
+        self.plant("a missing value key", self.drop_cfg(value), "unexpected --config arguments", base)
+        self.plant("an extra key", self.add_cfg('%s.flags="-O3"' % key), "unexpected --config arguments", base)
+        self.plant("a different environment variable", self.swap_cfg(relative, 'env.CFLAGS.value="x"'), "unexpected --config arguments", base)
+        self.plant("a patched dependency", self.swap_cfg(relative, 'patch.crates-io.serde.path="/x"'), "unexpected --config arguments", base)
+        self.plant("a path outside the pinned table that exists in the root", self.swap_cfg(value, '%s.value="tailscale-rs/Cargo.toml"' % key), "unexpected --config arguments", base)
+
+        def remote_only(text):                                                                   # the remote command names the other pinned wrapper, the command does not
+            return "\n".join(line.replace("'%s'" % value, "'%s.value=\"x01-cc/zig-cc-mips-be\"'" % key) if "Executing command remotely" in line else line for line in text.split("\n"))
+        self.plant("the command and the remote command disagree", remote_only, "disagree on configs", base)
+        mips, ppc = "mips-unknown-linux-musl", "powerpc-unknown-linux-musl"
+        self.plant("the configuration on another target", lambda t: self.cfg_both("--target " + mips, "--target " + ppc)(self.cfg_both('"%s"' % mips, '"%s"' % ppc)(t)),
+                   "pinned for the whole attempt on %s only" % mips, base)
+        inline_value = '%s={value="%s",relative=true,force=true}' % (key, wrapper)
+        self.plant("the refused inline spelling claimed to have built", lambda t: self.drop_cfg(force)(self.drop_cfg(relative)(self.swap_cfg(value, inline_value)(t))),
+                   "inline-table C compiler configuration is refused by cargo", base)
+
+        def set_hash(path, digest):
+            return lambda t: self.edit_receipt(t, lambda doc: [e.update(sha256=digest) for e in self.files(doc) if e["path"] == path])
+        self.plant("a changed wrapper", set_hash("x01-cc/zig-cc-mips-be-ccrs", "7" * 64), "is not the pinned wrapper", base)
+        self.plant("the original wrapper changed", set_hash("x01-cc/zig-cc-mips-be", "8" * 64), "is not the pinned wrapper", base)
+        self.plant("the configured wrapper not synced", lambda t: self.edit_receipt(t, lambda doc: self.files(doc).pop(next(i for i, e in enumerate(self.files(doc)) if e["path"] == wrapper))),
+                   "is not among the synced files", base)
+        self.plant("an unpinned file beside the wrappers", lambda t: self.edit_receipt(t, lambda doc: self.files(doc).append({"path": "x01-cc/extra", "sha256": "9" * 64, "byte_count": 1, "executable": True})),
+                   "not pinned C compiler wrappers", base)
+        self.assertIsNone(self.judge(self.whole_ppc)[1]["cc"])                                  # no configuration at all is the ordinary case
+
+    def test_the_new_stop_classes_come_only_from_the_logs_own_text(self):
+        known = lambda text: self.judge(text)[1]["stop"]
+        inline = self.zig_inline
+        self.assertEqual(known(inline)["class"], "cargo-config-rejected")
+        self.assertEqual(known(inline.replace("sets a value to an inline table", "is wrong in another way"))["class"], "unclassified")            # a different cargo error is not that class
+        refused = [l for l in inline.split("\n") if "sets a value to an inline table" in l][0]
+        other = refused.replace("x01-cc/zig-cc-mips-be", "x01-cc/zig-cc-mips-x")
+        self.assertEqual(known(inline.replace(refused, other))["class"], "unclassified")                                                          # it must name an argument this command carried
+        keys = self.zig_keys
+        self.assertEqual(known(keys), {"package": "aws-lc-sys v0.45.0", "exit": 101, "class": "c-compiler-rejected-target", "tool": None, "detail": "mips-unknown-linux-musl"})
+        no_query = "\n".join(l for l in keys.split("\n") if "unable to parse target query" not in l)
+        self.assertEqual(known(no_query)["class"], "unclassified")
+        self.assertEqual(known(keys.replace("unable to parse target query 'mips-unknown-linux-musl'", "unable to parse target query 'riscv64-unknown-linux-musl'"))["class"], "unclassified")
+        self.assertEqual(known(keys.replace("error occurred in cc-rs: command did not execute successfully", "error occurred in cc-rs: something else"))["class"], "unclassified")
+        # a refusal that is not consistent is not a record
+        self.plant("a refusal without its error text", lambda t: "\n".join(l for l in t.split("\n") if "sets a value to an inline table" not in l), "not a consistent refusal", inline)
+        self.plant("a refusal with exit 0", lambda t: t.replace("exit=101", "exit=0"), "not a consistent refusal", inline)
+        self.plant("a refusal with another exit in the receipt", lambda t: self.edit_receipt(t, lambda doc: doc.update(command_exit_code=1)), "not a consistent refusal", inline)
+        self.plant("a refusal without its exit line", lambda t: "\n".join(l for l in t.split("\n") if "Remote command finished" not in l), "remote command exit", inline)
+        self.plant("a refusal cut before its receipt", lambda t: t[:t.rindex("[RCH] source content receipt:")], "expected one rch source content receipt", inline)
+
+    def test_the_wrapper_pins_are_the_files_they_name(self):
+        files = self.anchors["cc_wrappers"]["files"]
+        original = L.read_bounded_file(os.path.join(REPO, "toolchain", "linker", "zig-cc-mips-be"))
+        self.assertEqual(L.sha256_bytes(original), files["x01-cc/zig-cc-mips-be"]["sha256"])                                                         # the repository's own linker driver
+        adapter = L.read_bounded_file(os.path.join(REPO, "tests", "tailscale-fixtures", "x01", "x01-cc", "zig-cc-mips-be-ccrs"))
+        self.assertEqual(L.sha256_bytes(adapter), files["x01-cc/zig-cc-mips-be-ccrs"]["sha256"])
+        self.assertEqual(sorted(files), ["x01-cc/zig-cc-mips-be", "x01-cc/zig-cc-mips-be-ccrs", "x01-cc/zig-cc-mips-be-ccrs-v2"])
+        hardened = L.read_bounded_file(os.path.join(REPO, "tests", "tailscale-fixtures", "x01", "x01-cc", "zig-cc-mips-be-ccrs-v2"))
+        self.assertEqual(L.sha256_bytes(hardened), files["x01-cc/zig-cc-mips-be-ccrs-v2"]["sha256"])
+        for body in (original, adapter, hardened):
+            self.assertIn(b"want=0.14.1", body)                                                                                                       # the Zig version is enforced by the file
+            self.assertIn(b"-target mips-linux-musleabi", body)                                                                                       # Zig's big-endian o32 soft-float target
+        self.assertEqual(set(self.anchors["cc_wrappers"]) - {"note", "files"}, {"target", "attempt", "env_key"})
+
+    def test_the_adapter_normalizes_only_the_two_known_target_spellings(self):
+        adapter = os.path.join(REPO, "tests", "tailscale-fixtures", "x01", "x01-cc", "zig-cc-mips-be-ccrs")
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = os.path.join(tmp, "zig")
+            with open(fake, "w", encoding="utf-8") as handle:
+                handle.write('#!/bin/sh\nif [ "$1" = version ]; then printf "%s\\n" "$FAKE_ZIG_VERSION"; exit 0; fi\nprintf "ARG:%s\\n" "$@"\n')
+            os.chmod(fake, 0o755)
+
+            def run(version, *args):
+                done = subprocess.run(["bash", adapter, *args], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60,
+                                      env={"PATH": tmp + os.pathsep + "/usr/bin:/bin", "FAKE_ZIG_VERSION": version, "HOME": tmp})
+                return done.returncode, [l[4:] for l in done.stdout.splitlines() if l.startswith("ARG:")], done.stderr
+            code, args, _ = run("0.14.1", "-O0", "--target=mips-unknown-linux-musl", "-c", "x.c")
+            self.assertEqual((code, args), (0, ["cc", "-target", "mips-linux-musleabi", "-O0", "-c", "x.c"]))                                              # the Rust spelling is dropped, the rest kept in order
+            code, args, _ = run("0.14.1", "--target=mips-linux-musleabi", "-c", "x.c")
+            self.assertEqual((code, args), (0, ["cc", "-target", "mips-linux-musleabi", "-c", "x.c"]))
+            code, args, err = run("0.14.1", "--target=mips-unknown-linux-gnu", "-c", "x.c")
+            self.assertEqual((code, args, "unsupported target override" in err), (98, [], True))                                                       # any other target override is refused
+            code, args, err = run("0.14.1", "-target", "x", "-c", "x.c")
+            self.assertEqual((code, args), (98, []))
+            code, args, err = run("0.15.0", "-c", "x.c")
+            self.assertEqual((code, args, "zig 0.14.1 required, found 0.15.0" in err), (97, [], True))                                                # a different Zig is refused
+
+    def test_the_full_real_account_fits_the_shared_bound_and_states_the_boundary_first(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo_with(tmp, self.six)
+            blocked = rc.case_build(tmp, rc.inputs())
+            self.assertEqual(blocked.status, "blocked", blocked.detail)                                                                                # without the adapter build the MIPS whole library has only stops
+            self.assertIn("whole mips: STOPPED at aws-lc-sys v0.45.0", blocked.detail)
+            self.assertIn("REJECTED by cargo before building", blocked.detail)
+            self.assertIn("rejected the target spelling", blocked.detail)
+            self.repo_with(os.path.join(tmp, "x"), dict(self.six, **{"7.log": self.zig_ccrs}))
+            passed = rc.case_build(os.path.join(tmp, "x"), rc.inputs())
+            self.assertEqual(passed.status, "passed", passed.detail)
+            self.assertNotIn("zig-cc-mips-be-ccrs-v2", passed.detail)                                                                                  # only the wrappers that built are named
+            self.repo_with(os.path.join(tmp, "y"), dict(self.six, **{"7.log": self.zig_ccrs, "8.log": self.zig_ccrs_v2}))
+            both = rc.case_build(os.path.join(tmp, "y"), rc.inputs())
+            self.assertEqual(both.status, "passed", both.detail)
+            self.assertIn("wrappers x01-cc/zig-cc-mips-be-ccrs (sha256 17848d169db2) and x01-cc/zig-cc-mips-be-ccrs-v2 (sha256 3dc93ff4f618)", both.detail)
+        for result in (blocked, passed, both, rc.case_build(REPO)):
+            self.assertLess(len(result.detail), 1000, result.detail)
+            self.assertNotIn("[+", result.detail)                                                                                                      # nothing the shared case log bound would cut
+            boundary = result.detail.index("T01-X02 and the native requirement are untouched")
+            self.assertLess(boundary, result.detail.index("core powerpc"))                                                                           # the boundary comes before the account, so it cannot be truncated away
+            self.assertIn("nothing linked or run", result.detail)
+
+    def test_a_built_attempt_with_a_stale_wrapper_fails_the_case_and_the_earlier_stops_cannot_pass_it(self):
+        data = rc.inputs()
+        with tempfile.TemporaryDirectory() as tmp:
+            stale = self.edit_receipt(self.zig_ccrs, lambda doc: [e.update(sha256="a" * 64) for e in self.files(doc) if e["path"] == "x01-cc/zig-cc-mips-be-ccrs"])
+            self.repo_with(tmp, dict(self.six, **{"7.log": stale}))
+            result = rc.case_build(tmp, data)
+            self.assertEqual(result.status, "failed")
+            self.assertIn("7.log: ", result.detail)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.repo_with(tmp, dict(self.six, **{"7.log": self.zig_inline.replace("zig-cc-mips-be", "zig-cc-mips-be-ccrs")}))
+            self.assertEqual(rc.case_build(tmp, data).status, "failed")                                                                              # an altered record does not hold
+
+    ADAPTERS = os.path.join(REPO, "tests", "tailscale-fixtures", "x01", "x01-cc")
+
+    def run_adapter(self, name, version, *args):
+        """Run one committed wrapper under bash with a stand-in `zig` that prints its arguments (no real Zig, no compile)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = os.path.join(tmp, "zig")
+            with open(fake, "w", encoding="utf-8") as handle:
+                handle.write('#!/bin/sh\nif [ "$1" = version ]; then printf "%s\\n" "$FAKE_ZIG_VERSION"; exit 0; fi\nprintf "ARG:%s\\n" "$@"\n')
+            os.chmod(fake, 0o755)
+            done = subprocess.run(["bash", os.path.join(self.ADAPTERS, name), *args], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60,
+                                  env={"PATH": tmp + os.pathsep + "/usr/bin:/bin", "FAKE_ZIG_VERSION": version, "HOME": tmp})
+        return done.returncode, [l[4:] for l in done.stdout.splitlines() if l.startswith("ARG:")], done.stderr
+
+    def test_the_hardened_adapter_refuses_every_spelling_of_a_target_override_and_forwards_the_rest(self):
+        v2 = "zig-cc-mips-be-ccrs-v2"
+        code, args, _ = self.run_adapter(v2, "0.14.1", "-O0", "--target=mips-unknown-linux-musl", "-c", "x.c")
+        self.assertEqual((code, args), (0, ["cc", "-target", "mips-linux-musleabi", "-O0", "-c", "x.c"]))                                          # the Rust spelling is dropped, the rest kept in order
+        code, args, _ = self.run_adapter(v2, "0.14.1", "--target=mips-linux-musleabi", "-c", "x.c")
+        self.assertEqual((code, args), (0, ["cc", "-target", "mips-linux-musleabi", "-c", "x.c"]))
+        code, args, _ = self.run_adapter(v2, "0.14.1", "-DTARGET=1", "-Itarget/include", "-Wno-error=target", "-c", "x.c")                          # flags that only mention "target" are not overrides
+        self.assertEqual((code, args), (0, ["cc", "-target", "mips-linux-musleabi", "-DTARGET=1", "-Itarget/include", "-Wno-error=target", "-c", "x.c"]))
+        for override in (["--target=mips-unknown-linux-gnu"], ["--target", "mips-unknown-linux-gnu"], ["-target", "mips-unknown-linux-gnu"], ["-target=mips-unknown-linux-gnu"],
+                         ["--target"], ["-target"], ["--target", "mips-unknown-linux-musl"]):                                                          # all four spellings, with a value or without, even the known one in two arguments
+            code, args, err = self.run_adapter(v2, "0.14.1", "-O0", *override, "-c", "x.c")
+            self.assertEqual((code, args, "unsupported target override" in err), (98, [], True), override)
+        code, args, err = self.run_adapter(v2, "0.15.0", "-c", "x.c")
+        self.assertEqual((code, args, "zig 0.14.1 required, found 0.15.0" in err), (97, [], True))
+
+    def test_the_first_adapter_forwarded_the_two_spellings_the_hardened_one_refuses(self):
+        # the retained baseline: x01-cc/zig-cc-mips-be-ccrs is unchanged and its recorded build stands; it let these two through, which the broader "any other override" wording should have refused
+        for override in (["--target", "mips-unknown-linux-gnu"], ["-target=mips-unknown-linux-gnu"]):
+            code, args, _ = self.run_adapter("zig-cc-mips-be-ccrs", "0.14.1", "-O0", *override, "-c", "x.c")
+            self.assertEqual((code, args), (0, ["cc", "-target", "mips-linux-musleabi", "-O0", *override, "-c", "x.c"]), override)
+            code, args, err = self.run_adapter("zig-cc-mips-be-ccrs-v2", "0.14.1", "-O0", *override, "-c", "x.c")
+            self.assertEqual((code, args, "unsupported target override" in err), (98, [], True), override)
+        for override in (["--target=mips-unknown-linux-gnu"], ["-target", "mips-unknown-linux-gnu"]):                                                 # what both always refused, still refused by both
+            for name in ("zig-cc-mips-be-ccrs", "zig-cc-mips-be-ccrs-v2"):
+                self.assertEqual(self.run_adapter(name, "0.14.1", *override, "-c", "x.c")[:2], (98, []), (name, override))
+
+    def test_the_hardened_wrapper_record_holds_and_its_pin_is_exact(self):
+        problems, facts = self.judge(self.zig_ccrs_v2)
+        self.assertEqual(problems, [])
+        self.assertEqual((facts["outcome"], facts["attempt"], facts["target"], facts["artifacts"], facts["core_crates_compiled"]), ("built", "whole", "mips-unknown-linux-musl", 340, 7))
+        self.assertEqual(facts["cc"], {"wrapper": "x01-cc/zig-cc-mips-be-ccrs-v2", "sha256": "3dc93ff4f618cd96f1a8f4dbe68b0f37a9712778d3bf0f3f6e3d634eb61e64ab", "form": "keys"})
+        base, wrapper, key = self.zig_ccrs_v2, "x01-cc/zig-cc-mips-be-ccrs-v2", "env.CC_mips_unknown_linux_musl"
+
+        def set_hash(path, digest):
+            return lambda t: self.edit_receipt(t, lambda doc: [e.update(sha256=digest) for e in self.files(doc) if e["path"] == path])
+        self.plant("a changed hardened wrapper", set_hash(wrapper, "b" * 64), "is not the pinned wrapper", base)
+        self.plant("the hardened wrapper not synced", lambda t: self.edit_receipt(t, lambda doc: self.files(doc).pop(next(i for i, e in enumerate(self.files(doc)) if e["path"] == wrapper))),
+                   "is not among the synced files", base)
+        self.plant("an unpinned successor", self.swap_cfg('%s.value="%s"' % (key, wrapper), '%s.value="x01-cc/zig-cc-mips-be-ccrs-v3"' % key), "unexpected --config arguments", base)
+        self.plant("an unpinned file beside the three", lambda t: self.edit_receipt(t, lambda doc: self.files(doc).append({"path": "x01-cc/zig-cc-mips-be-ccrs-v3", "sha256": "c" * 64, "byte_count": 1, "executable": True})),
+                   "not pinned C compiler wrappers", base)
+        self.plant("a changed first adapter, which stays pinned", set_hash("x01-cc/zig-cc-mips-be-ccrs", "d" * 64), "is not the pinned wrapper", base)
+        # the earlier adapter's build and its three stops are still judged exactly as before
+        self.assertEqual(self.judge(self.zig_ccrs)[1]["cc"]["wrapper"], "x01-cc/zig-cc-mips-be-ccrs")
+        self.assertEqual(sorted(self.anchors["cc_wrappers"]["files"]), ["x01-cc/zig-cc-mips-be", "x01-cc/zig-cc-mips-be-ccrs", "x01-cc/zig-cc-mips-be-ccrs-v2"])
+        v2 = L.read_bounded_file(os.path.join(self.ADAPTERS, "zig-cc-mips-be-ccrs-v2"))
+        self.assertEqual(L.sha256_bytes(v2), "3dc93ff4f618cd96f1a8f4dbe68b0f37a9712778d3bf0f3f6e3d634eb61e64ab")
+        for line in (b"want=0.14.1", b"-target mips-linux-musleabi", b"--target=*|--target|-target|-target=*)"):
+            self.assertIn(line, v2)
+
+    def test_the_x01_statements_in_the_profile_and_the_study_match_the_recorded_scope_and_strengthen_nothing(self):
+        profile = L.load_json(L.PROFILE)
+        self.assertEqual(profile["profile_version"], "t01-profile-2026-11-07.1")
+        for said in ("t01-profile-2026-11-06.1", "no state, evidence citation, cell or figure changed"):
+            self.assertIn(said, profile["frozen_note"])
+        self.assertIn("type-checks only", profile["status"])
+        self.assertIn("nothing linked or run", profile["status"])
+        raw = json.dumps(profile)
+        for stale in ("no receipt exists yet", "nothing was built", "mandatory legacy-ISA build (X01)", "X01/X02 are blocked", "while X01/X02"):
+            self.assertNotIn(stale, raw)
+        for tid in ("ppc32be_stock", "mips32r2be_stock", "ppc32be_harness", "mips32be_harness"):
+            m = profile["measurements"]["tailscale-rs-0.6.1/" + tid]
+            triple = profile["targets"][tid]["rust_triple"]
+            self.assertEqual((m["build"]["state"], m["binary_bytes"]["state"], m["rss_peak_bytes"]["state"], m["cpu"]["state"]), ("pending",) * 4)       # nothing became a measurement
+            self.assertIn("type-check for " + triple, m["build"]["blocker"])
+            self.assertIn("no linked build has been made", m["build"]["blocker"])
+            self.assertIn("cargo check does not link", m["binary_bytes"]["blocker"])
+        for tid in ("mips32r2be_stock", "mips32be_harness"):
+            self.assertIn("covers tailscale-rs only", profile["measurements"]["tailscale-go-1.104.5/" + tid]["build"]["blocker"])
+        platform = profile["candidates"]["tailscale-rs-0.6.1"]["platform"]
+        self.assertEqual({k: v["state"] for k, v in platform.items()}, {"ppc32be_stock": "incompatible", "mips32r2be_stock": "no_evidence", "ppc32be_harness": "no_evidence", "mips32be_harness": "no_evidence"})
+        for tid in ("mips32r2be_stock", "ppc32be_harness", "mips32be_harness"):
+            self.assertIn("type-check", platform[tid]["note"])
+            self.assertIn("nothing was linked or run", platform[tid]["note"])
+            self.assertNotIn("receipt", platform[tid])                                                                                              # no build_ok_unrun, so no receipt is claimed
+        self.assertTrue(platform["ppc32be_stock"]["note"].startswith("tokio's net feature rides on mio"))                                           # the kernel incompatibility is untouched
+        for cand in profile["candidates"].values():
+            for p in cand["platform"].values():
+                self.assertNotIn(p["state"], ("build_ok_unrun", "ran_on_target"))
+        nr = profile["native_requirement"]
+        self.assertEqual((nr["status"], nr["waived"], nr["satisfied_by"], nr["closes"]), ("required", False, [], []))
+        self.assertIn("X02", nr["t01_status"])
+        self.assertIn("nothing was linked or run", nr["t01_status"])
+        self.assertNotIn("supported", set(L.matrix(profile).values()))
+        with open(os.path.join(REPO, "docs", "tailscale", "feasibility.md"), encoding="utf-8") as handle:
+            study = handle.read()
+        with open(os.path.join(REPO, "docs", "contracts", "t01.md"), encoding="utf-8") as handle:
+            contract = handle.read()
+        for stale in ("This is the first thing a central build would answer", "until an actual selected Cargo graph and build (T01-X01)", "the mandatory legacy-ISA build (T01-X01)",
+                      "while the mandatory T01-X01 build", "BLOCKED until all four built"):
+            self.assertNotIn(stale, study + contract)
+        for said in ("so whether the crypto passes on big-endian 32-bit stays unknown", "stays **unqualified**", "built as type-checks only"):
+            self.assertIn(said, study)
+        self.assertIn("INCOMPLETE and pending", contract)
+
+    def test_the_lock_fixture_is_the_pinned_lock_and_a_changed_one_is_reported(self):
+        def fault(mutate, needle):
+            self.assertEqual(L.check_x01_lock(self.lock, self.anchors), [])
+            self.assertTrue(planted(L.check_x01_lock(mutate(self.lock), self.anchors), needle), needle)
+        fault(lambda t: t.replace("checksum = ", "checksum = \"0\" #", 1), "sha256 differs")
+        pinned = copy.deepcopy(self.anchors)
+        for cut in (lambda t: t.rsplit("[[package]]", 1)[0], lambda t: t.replace("registry+https://github.com/rust-lang/crates.io-index", "git+https://example.invalid/x", 1)):
+            changed = cut(self.lock)
+            pinned["consumer_files"]["Cargo.lock"] = L.sha256_text(changed)                      # the digest is made to agree, so only the structure can object
+            problems = L.check_x01_lock(changed, pinned)
+            self.assertTrue(problems, "a structurally changed lock must be reported")
+        pinned = copy.deepcopy(self.anchors)
+        pinned["core_crates"] = pinned["core_crates"][:-1]
+        self.assertTrue(planted(L.check_x01_lock(self.lock, pinned), "does not depend on exactly the seven core crates"))
+
+    def test_the_tree_digest_of_a_file_list_equals_the_digest_of_the_tree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            entries = {}
+            for rel, body in {"Cargo.toml": b"a", "src/lib.rs": b"b", "src/z/mod.rs": b"c", "src/a.rs": b"d", "zz": b"e", "src-x/y.rs": b"f"}.items():
+                write_raw(tmp, rel, body.decode())
+                entries[rel] = hashlib.sha256(body).hexdigest()
+            self.assertEqual(L.tree_digest_of_entries(entries), L.tree_digest(tmp))
+
+    def test_one_log_file_is_read_without_following_a_link_or_blocking_and_within_its_cap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            good = os.path.join(tmp, "good.log")
+            with open(good, "wb") as handle:
+                handle.write(b"x" * 100)
+            self.assertEqual(len(L.read_bounded_file(good, 100)), 100)
+            for refused in (lambda: L.read_bounded_file(good, 99),):
+                with self.assertRaises(L.SourceRefused) as caught:
+                    refused()
+                self.assertNotIn(tmp, str(caught.exception))
+            link = os.path.join(tmp, "link.log")
+            os.symlink(good, link)
+            fifo = os.path.join(tmp, "fifo.log")
+            os.mkfifo(fifo)
+            for odd in (link, fifo, tmp):
+                with self.assertRaises(L.SourceRefused) as caught:
+                    L.read_bounded_file(odd)
+                self.assertNotIn(tmp, str(caught.exception))
+            with self.assertRaises(FileNotFoundError):
+                L.read_bounded_file(os.path.join(tmp, "absent.log"))
+
+    def test_the_redact_command_writes_once_refuses_to_overwrite_and_never_leaves_site_data(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            raw, dest = os.path.join(tmp, "raw.txt"), os.path.join(tmp, "out.log")
+            with open(raw, "w", encoding="utf-8") as handle:
+                handle.write(self.raw_form(self.text))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(rc.redact_command(raw, dest), 0)
+            self.assertEqual(L.read_bounded_file(dest).decode("utf-8"), self.text)
+            self.assertNotIn(tmp, out.getvalue())
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(rc.redact_command(raw, dest), 1)                                   # never overwrites
+                self.assertEqual(rc.redact_command(os.path.join(tmp, "absent"), os.path.join(tmp, "o2")), 2)
+            self.assertEqual(L.read_bounded_file(dest).decode("utf-8"), self.text)
+            self.assertNotIn(tmp, err.getvalue())
+
+    def test_the_entry_point_judges_a_supplied_log_and_never_prints_its_path(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as scratch:
+            good, bad = os.path.join(tmp, "good.txt"), os.path.join(tmp, "bad.txt")
+            with open(good, "w", encoding="utf-8") as handle:
+                handle.write(self.raw_form(self.text))
+            with open(bad, "w", encoding="utf-8") as handle:
+                handle.write(self.raw_form(self.text).replace("Remote command finished: exit=0", "Remote command finished: exit=101"))
+            run = lambda *argv: subprocess.run([ENTRY, *argv], capture_output=True, text=True, stdin=subprocess.DEVNULL, env=dict(os.environ, TMPDIR=scratch), timeout=300)
+            ok = run("--tier", "full", "--build-log", good)
+            self.assertEqual(ok.returncode, 3, ok.stdout + ok.stderr)                                # T01-X02 stays blocked whatever the compile records say
+            self.assertNotIn("FAIL     T01-X01-legacy-isa-build", ok.stdout)                           # independent of which records are committed
+            self.assertNotIn(tmp, ok.stdout + ok.stderr)
+            failing = run("--tier", "full", "--build-log", bad)
+            self.assertEqual(failing.returncode, 1, failing.stdout + failing.stderr)
+            self.assertIn("FAIL     T01-X01-legacy-isa-build", failing.stdout)
+            self.assertIn("supplied build log 1:", failing.stdout)
+            self.assertNotIn(tmp, failing.stdout + failing.stderr)
+
+
 class TheEntryPoint(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -839,8 +1728,9 @@ class TheEntryPoint(unittest.TestCase):
         self.assertIn("evidence COMPLETE", out)
         code, out, _ = self.call()
         self.assertEqual(code, 3, out)
-        self.assertIn("planned=15 passed=8 failed=0 blocked=7", out)
-        self.assertIn("BLOCKED  T01-X01-legacy-isa-build", out)
+        self.assertIn("planned=15 passed=9 failed=0 blocked=6", out)
+        self.assertNotIn("T01-X01-legacy-isa-build", out)                                  # passed: only blocked and failed cases are printed
+        self.assertIn("BLOCKED  T01-X02-target-resources", out)
         code, out, _ = self.call("--tier", "soak")
         self.assertEqual((code, "T01 soak: NOT RUN" in out, "This is not a pass." in out), (4, True, True))
         code, out, _ = self.call("--tier", "full", "--list")

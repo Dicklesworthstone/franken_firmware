@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# cc-rs appends the Rust spelling; normalize only the known equivalent target.
+# Refuse both one-argument and two-argument forms of every other override.
+set -euo pipefail
+want=0.14.1
+have=$(zig version)
+if [[ "$have" != "$want" ]]; then
+    echo "ffw-x01-cc: zig $want required, found $have" >&2
+    exit 97
+fi
+filtered=()
+for arg in "$@"; do
+    case "$arg" in
+        --target=mips-unknown-linux-musl|--target=mips-linux-musleabi) ;;
+        --target=*|--target|-target|-target=*)
+            echo "ffw-x01-cc: unsupported target override" >&2
+            exit 98
+            ;;
+        *) filtered+=("$arg") ;;
+    esac
+done
+exec zig cc -target mips-linux-musleabi "${filtered[@]}"

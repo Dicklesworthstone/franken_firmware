@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# cc-rs recognizes Zig's Clang frontend and appends the Rust target spelling.
+# Zig 0.14.1 uses a different spelling for this same BE, o32, soft-float ABI.
+# Normalize only those two known spellings; reject other target overrides.
+set -euo pipefail
+want=0.14.1
+have=$(zig version)
+if [[ "$have" != "$want" ]]; then
+    echo "ffw-x01-cc: zig $want required, found $have" >&2
+    exit 97
+fi
+filtered=()
+for arg in "$@"; do
+    case "$arg" in
+        --target=mips-unknown-linux-musl|--target=mips-linux-musleabi) ;;
+        --target=*|-target)
+            echo "ffw-x01-cc: unsupported target override" >&2
+            exit 98
+            ;;
+        *) filtered+=("$arg") ;;
+    esac
+done
+exec zig cc -target mips-linux-musleabi "${filtered[@]}"
