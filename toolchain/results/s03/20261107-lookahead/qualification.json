@@ -1,0 +1,116 @@
+{
+  "attempts": [
+    {
+      "exit_status": 130,
+      "gate": "native",
+      "owner_presence": "absent",
+      "reason": "Pinned worker remained queued; separately released worker vmi1293453 then executed successfully",
+      "remote_build_id": null,
+      "state": "cancelled before admission",
+      "terminal_acknowledged": true,
+      "worker": "hz4",
+      "wrapper": "rchw-88227d3c-04bd-4093-a372-9f3f1161aab7",
+      "wrapper_alive": false
+    }
+  ],
+  "base_revision": "80fa33608119814308ededba1bfe98164620b4c7",
+  "gates": {
+    "clippy": {
+      "ack": true,
+      "build": "30099060530610323",
+      "command_sha256": "9af6344b7e556b130e484b97c583983f9c275e0addf3d74dd42aa381a4f0b7a7",
+      "exit": 0,
+      "files": 1297,
+      "mismatches": [],
+      "owner": "absent",
+      "pair_released": true,
+      "published_log_sha256": "9af95b9cc662ab267d55586ece891012bce8677a078452adbb591c9902f39219",
+      "raw_log_sha256": "137cd90223e647d054c1d1bfd22d98a83465976f17c1987b38b33431265d8616",
+      "retired": true,
+      "root": "29c7b4ab7307553247a4e6dcf1e9f61d19aabd1cff1dbd6b561c55adaf308ad7",
+      "sources_released": true,
+      "staging_released": true,
+      "state": "finished",
+      "tree_retired": true,
+      "wrapper": false
+    },
+    "mips_check": {
+      "ack": true,
+      "build": "30099060530610331",
+      "command_sha256": "7cd83880044958c96436fc9da2b752bb033dce8b10f71cd99384b647940f87e0",
+      "exit": 0,
+      "files": 1297,
+      "mismatches": [],
+      "owner": "absent",
+      "pair_released": true,
+      "published_log_sha256": "e7c130aa231e14342c74ae1c4771c16fbfd013a238fd56e216e6ef83dcaf6750",
+      "raw_log_sha256": "66d8b29d9df9f828e57334d490b58022ab72130e53bf92b148cae6055cddc5de",
+      "retired": true,
+      "root": "c075f2c9fbb23bdc445da7bbd9f9ec21c8133c0c922087fd11020c4d499b5d99",
+      "sources_released": true,
+      "staging_released": true,
+      "state": "finished",
+      "tree_retired": true,
+      "wrapper": false
+    },
+    "native": {
+      "ack": true,
+      "build": "30099060530610324",
+      "command_sha256": "f03fac18134a7927980e90275cba300ddb30ae2b1fc701859f4670261776b1cb",
+      "exit": 0,
+      "files": 1297,
+      "mismatches": [],
+      "owner": "absent",
+      "pair_released": true,
+      "published_log_sha256": "570e5d0a61b3d3d54e5c14b0f6884cff6e9527c9f0bef461d72f4dc10e4bd0d7",
+      "raw_log_sha256": "06a628613e1299289bd45077b6c53c28bf3481eef0b19d63595af0bb69ae9cd1",
+      "retired": true,
+      "root": "2e3b3e1a1d06df2fe91202b5d057869d6994ca1d03f45842e446a906a721a18f",
+      "sources_released": true,
+      "staging_released": true,
+      "state": "finished",
+      "tree_retired": true,
+      "wrapper": false
+    },
+    "powerpc_check": {
+      "ack": true,
+      "build": "30099060530610327",
+      "command_sha256": "2d635dde06c1404383d90913784b44bcde3329211dc385498f8a493fb1d2d187",
+      "exit": 0,
+      "files": 1297,
+      "mismatches": [],
+      "owner": "absent",
+      "pair_released": true,
+      "published_log_sha256": "b7ff2e060730f033546fb9e7a9b503cd6d7869f2b858ae713622439bed74fdef",
+      "raw_log_sha256": "e61500a42a756e0b0f532618a329aa1a89448aca62b17c1bb24e8eaf844683fc",
+      "retired": true,
+      "root": "d3289c013ce0e179435a8b49907ef930d573a9dc92efb77e81b8e91f1a1f82c3",
+      "sources_released": true,
+      "staging_released": true,
+      "state": "finished",
+      "tree_retired": true,
+      "wrapper": false
+    }
+  },
+  "native": {
+    "failed": 0,
+    "ignored": 0,
+    "new_lookahead_tests": 41,
+    "passed": 117
+  },
+  "not_measured": [
+    "HAL output fence adapter",
+    "provider fetching or decoding",
+    "native source on oldest board",
+    "board RSS and shared ledger admission",
+    "BE guest execution"
+  ],
+  "scope": "Compressed lookahead data structure and transition barrier; no real HAL adapter or source admission",
+  "source_inputs": {
+    "crates/franken-session/src/lib.rs": "8f08be134c98362ae8c90cc445eff67e6fd2d98cdf35574739309156f5097cb7",
+    "crates/franken-session/src/lookahead.rs": "f59dd4711d4a21c70a8d0a753526eae9faf62cf77efaf20c80ea21077aeecde3",
+    "crates/franken-session/src/lookahead/tests.rs": "5d5ca6757820150a8db11c76f24613f40eae890e32c747d55f3fb0c4c70d1516",
+    "docs/contracts/s03.md": "b713499335b12c570adebec4f62643f1beae05d1c7fe788b262d47236419929b"
+  },
+  "source_review": "YellowLantern AM10902; formatting-only changes before all four captures"
+}

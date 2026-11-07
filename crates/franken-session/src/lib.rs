@@ -12,6 +12,11 @@
 //! Which source owns the group's program (Spotify, AirPlay 2, line-in) is decided by
 //! [`SourceArbiter`] in [`source`]: replace or reject by kind and command class, one source epoch per
 //! observed epoch, and a publish gate that refuses a replaced source.
+//!
+//! The compressed lookahead a source keeps ahead of its decoder (`S03` / `ffw-mxt`) is the bounded
+//! [`LookaheadQueue`] in [`lookahead`]: bytes, exact-frame media time and chunks are accounted
+//! separately, and a seek or skip is not acknowledged until the renderer's evidence fences the old
+//! submitted output.
 
 #![forbid(unsafe_code)]
 
@@ -19,8 +24,17 @@ use franken_board_profile::BoardProfile;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod lookahead;
 mod membership;
 mod source;
+pub use lookahead::{
+    CapKind, Chunk, Evicted, FenceKind, FenceOutcome, FenceRequest, FenceToken, Handoff,
+    HandoffTicket, LookaheadError, LookaheadLimits, LookaheadQueue, LookaheadStats,
+    MAX_LOOKAHEAD_BYTES, MAX_LOOKAHEAD_CHUNKS, MAX_LOOKAHEAD_MEDIA_MS, MAX_LOOKAHEAD_OUTSTANDING,
+    OutputDomain, OutputFence, OutputFenceSource, OutputPosition, Readiness, Retirement,
+    TrackSerial, TransitionAck, TransitionStart, TransitionStatus, UnqualifiedFence,
+    duration_ns_ceil, required_link_bps,
+};
 pub use membership::{
     AbortReason, AuthorityToken, DurableVoterRecord, EpochMint, GrantRecord, GroupMembership,
     GroupTime, IntendedMember, LeaseAck, LeaseRequest, LeaseRequestKind, LeaseTerms, LeaseView,
