@@ -1,5 +1,9 @@
 # N04 host execution and big-endian compilation, 2026-11-07
 
+Historical evidence for the matching `acb7a3d` source. The current judge also requires the additive realtime boundary
+test and observation, so this transcript alone no longer qualifies current N04. Use the
+[current boundary evidence](../20261107-192261a/README.md) to replay the current judge.
+
 Tested source bytes: `acb7a3dd46e47fbd8e2dec51b43eae8ac5c0122d`.
 The native capture began before that commit was published and reported its parent as dirty. The native, strict-Clippy and both cross-check source-content receipts independently match all 12 changed blobs below; the source bytes establish identity.
 
@@ -36,7 +40,7 @@ RCH_REQUIRE_REMOTE=1 rch exec --worker <worker> --source-content-receipt -- env 
 
 ## Transcript sanitization and replay
 
-The transcript retains every test, result and `N04-OBSERVED` line verbatim, including stdout that arrived before Cargo's `Finished`/`Running` stderr headers. ANSI formatting, RCH orchestration frames/full private source manifests and private filesystem prefixes are removed; worker target prefixes become `target`, source prefixes become `<workspace>`, and compiler source paths become `<rust-sysroot>`. No outcome or observation is fabricated or rewritten. The complete sanitized transcript independently passes the same existing judge:
+The transcript retains every test, result and `N04-OBSERVED` line verbatim, including stdout that arrived before Cargo's `Finished`/`Running` stderr headers. ANSI formatting, RCH orchestration frames/full private source manifests and private filesystem prefixes are removed; worker target prefixes become `target`, source prefixes become `<workspace>`, and compiler source paths become `<rust-sysroot>`. No outcome or observation is fabricated or rewritten. The complete sanitized transcript independently passed this command with the matching `acb7a3d` judge; the current judge requires the additional boundary evidence linked above:
 
 ```sh
 scripts/e2e/n04 --tier full --judge toolchain/results/n04/20261107-acb7a3d/host-tests.log
