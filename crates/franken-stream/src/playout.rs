@@ -686,6 +686,19 @@ pub struct PlayoutEngine {
 }
 
 impl PlayoutEngine {
+    /// Read-only gate for the explicitly selected N06 host-development shape.
+    /// Other profiles/latency transitions retain their existing N04 behavior.
+    pub fn matches_fec_timeline(&self, epoch: u64, origin_ns: u64) -> bool {
+        self.profile == PlayoutProfile::MUSIC
+            && self.cfg.work_ns == 1_000_000
+            && self.cfg.lead_ns == 1_000_000
+            && self.cfg.tolerance_ns == 0
+            && self.epoch == Some(epoch)
+            && self.origin == origin_ns
+            && self.first_block.is_multiple_of(4)
+            && self.pending.is_none()
+            && self.net_shift == 0
+    }
     /// Allocates the slots (the only allocation this type ever makes).
     ///
     /// # Errors

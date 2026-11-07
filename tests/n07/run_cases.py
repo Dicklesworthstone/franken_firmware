@@ -80,8 +80,16 @@ CARRIER_PORT_TESTS = [C + name for name in (
     "n07_every_media_lane_attempt_counts_against_the_pump_cap_probes_and_refusals_included",
     "n07_the_cached_datagram_and_every_other_retained_byte_is_accounted_and_bounded",
     "n07_a_move_onto_a_family_with_more_header_overhead_is_checked_against_the_path_mtu",
-    "n07_retained_allocation_stays_in_the_report_when_only_the_logical_length_shrinks")]
-LINK_TESTS = [L + name for name in (
+    "n07_retained_allocation_stays_in_the_report_when_only_the_logical_length_shrinks",
+    "n07_two_groups_draw_on_one_interface_bucket_and_one_work_cap",
+    "n07_a_group_is_admitted_against_the_budget_every_group_shares_and_leaving_returns_it",
+    "n07_the_aggregate_cap_is_the_interfaces_and_the_longest_queue_pays_in_whichever_group_it_is",
+    "n07_advancing_one_groups_epoch_fences_only_that_group_and_a_stale_submit_is_refused_by_group",
+    "n07_a_report_is_checked_with_the_key_of_the_stream_it_names_and_credits_only_that_streams_peer",
+    "n07_a_source_restart_takes_a_fresh_stream_and_a_newer_epoch_and_touches_nothing_else",
+    "n07_a_receiver_follows_a_source_restart_reports_the_new_stream_from_zero_and_refuses_the_old",
+    "n07_group_membership_is_bounded_and_each_refusal_changes_nothing")]
+LINK_TESTS =[L + name for name in (
     "n07_the_ownership_matrix_is_consistent_and_claims_nothing_e04_does_not_know",
     "n07_every_profile_stays_unqualified_and_wireless_is_tracked_as_required",
     "n07_an_interface_cycle_on_the_same_address_resumes_without_a_rebind",
@@ -158,14 +166,17 @@ CASES = [
     {"id": "N07-U01", "scenario": None, "tests": UNIT_TESTS,
      "what": "unit: payload sizing, the pacer's deadlines, the report codec, the limit bounds, address policy"},
     {"id": "N07-U02", "scenario": None, "tests": CARRIER_PORT_TESTS,
-     "what": "unit over an in-memory port: N01 signing, report attribution, send faults and retries, control and media budgets, window credit, retransmission probes, the sequence budget and long-outage recovery against a genuine N01 receiver, the held datagram in every queue bound, rebind, media sink, discards, MTU fence"},
+     "what": "unit over an in-memory port: N01 signing, report attribution, send faults and retries, control and media budgets, window credit, retransmission probes, the sequence budget and long-outage recovery against a genuine N01 receiver, the held datagram in every queue bound, rebind, media sink, discards, MTU fence, several streams on one interface under one bucket, one admission sum, one work cap and one aggregate cap, reports routed by stream, a source restart on sender and receiver"},
     {"id": "N07-U03", "scenario": None, "tests": LINK_TESTS,
      "what": "unit and seeded property: link lifecycle, backoff, address families, lease guard (also across an outage), WAN decoupling, identity directory"},
     {"id": "N07-E09", "scenario": None, "tests": OWNERSHIP_TESTS,
      "what": "the ownership matrix carries E04's seven radio duties and blockers verbatim and claims nothing E04 does not know"},
     {"id": "N07-E10", "scenario": None, "tests": PORT_TESTS,
      "what": "the P02 port over the platform datagram boundary on a simulated host kernel, and the carrier gate (host-only evidence)"},
-] + [{"id": cid, "scenario": None, "speaker": world, "tests": [P + test], "what": what} for cid, world, test, what in SPEAKER_WORLDS]
+] + [{"id": cid, "scenario": None, "speaker": world, "tests": [P + test], "what": what} for cid, world, test, what in SPEAKER_WORLDS] + [
+    {"id": "N07-E22", "scenario": None,
+     "tests": [P + "n07_s9_a_source_restart_under_a_new_stream_identity_is_followed_through_the_real_endpoint"],
+     "what": "a source restart under a new stream identity (fresh id, newer epoch) is followed through the real endpoint, loopback sockets and N04: the old queue is dropped, an old-stream datagram is refused, audio resumes muted, credit restarts"}]
 TEST_LINE = re.compile(r"^test (\S+) \.\.\. (ok|FAILED|ignored)\s*$", re.M)
 OBSERVED = re.compile(r"^N07-OBSERVED (\{.*\})\s*$", re.M)
 

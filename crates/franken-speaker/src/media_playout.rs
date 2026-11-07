@@ -59,13 +59,15 @@ use franken_stream::playout::{
     PlayoutConfig, PlayoutEngine, PlayoutProfile, PlayoutStats, Poll,
     StartReject as EngineStartReject,
 };
-use franken_stream::{ReceiverCounters, StreamError, StreamReceiver};
+use franken_stream::{ReceiverCounters, StreamError, StreamId, StreamReceiver};
 
 use crate::clock_view::ClockViewBridge;
 
 /// Why a datagram did not reach the playout engine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MediaRefusal {
+    /// Selected experimental N06 framing/repair refused it; baseline N01 is unchanged.
+    Fec(franken_stream::fec::Refusal),
     /// The stream receiver refused it (structure, MAC, stream, epoch, replay window, feature). Nothing but its counters
     /// changed, and the engine never saw it.
     Stream(StreamError),
@@ -76,6 +78,55 @@ pub enum MediaRefusal {
     /// The platform's reported resolution is coarser than the group clock is configured for. Not a clock failure; the
     /// datagram was not consumed from the replay window.
     Resolution(ResolutionMismatch),
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AuthenticatedFormat {
+    N01Media,
+    N06Source,
+    N06Retransmit,
+    N06RepairSymbol,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AuthenticatedIngress {
+    pub stream: u64,
+    pub origin_ns: u64,
+    pub admission: Option<Admission>,
+    pub sequence: u64,
+    pub source_epoch: u64,
+    pub wire_bytes: usize,
+    pub format: AuthenticatedFormat,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct IngressIdentity {
+    pub stream: u64,
+    pub epoch: u64,
+    pub origin_ns: u64,
+    pub format: AuthenticatedFormat,
+    pub sequence: u64,
+}
+impl AuthenticatedIngress {
+    pub fn identity(&self) -> IngressIdentity {
+        IngressIdentity {
+            stream: self.stream,
+            epoch: self.source_epoch,
+            origin_ns: self.origin_ns,
+            format: self.format,
+            sequence: self.sequence,
+        }
+    }
+    pub fn credit_key(&self) -> IngressIdentity {
+        self.identity()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostFecAdmitError {
+    Profile(franken_stream::fec::Refusal),
+    Binding,
+    AlreadySelected,
+    Memory(MediaAdmitError),
+    Capacity { required: usize, available: usize },
+    Allocation { requested: usize },
 }
 
 /// The platform reports a monotonic resolution coarser than the group clock's configuration assumes.
@@ -112,6 +163,7 @@ impl LocalTimeRefusal {
 /// Why a start was not admitted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartRefusal {
+    Fec(franken_stream::fec::Refusal),
     /// The platform clock failed; the group clock was told.
     Clock(ClockError),
     /// The platform's reported resolution is coarser than the group clock is configured for. The engine was not touched.
@@ -264,6 +316,8 @@ pub(crate) fn synthetic_ledger(stream_and_jitter_bytes: u64) -> MemoryBudgetLedg
 /// One speaker's media path for one stream: the receiver, the playout engine and the clock view that joins them.
 #[derive(Debug)]
 pub struct MediaPlayout {
+    /// Empty on the baseline path. Capacity is at most one and is budgeted beside this path.
+    fec: Vec<franken_stream::fec::Receiver>,
     receiver: StreamReceiver,
     engine: PlayoutEngine,
     bridge: ClockViewBridge,
@@ -297,6 +351,7 @@ impl MediaPlayout {
     ) -> Result<Self, MediaAdmitError> {
         let held = resident_elsewhere_bytes.saturating_add(Self::inline_bytes());
         Ok(Self {
+            fec: Vec::new(),
             receiver,
             engine: admit_engine(profile, config, ledger, held)?,
             bridge: ClockViewBridge::default(),
@@ -316,7 +371,99 @@ impl MediaPlayout {
     /// `resident_elsewhere_bytes` a replacement candidate must be admitted beside.
     #[must_use]
     pub fn resident_bytes(&self) -> u64 {
-        engine_resident_bytes(&self.engine).saturating_add(Self::inline_bytes())
+        engine_resident_bytes(&self.engine)
+            .saturating_add(Self::inline_bytes())
+            .saturating_add(
+                (self.fec.capacity() * franken_stream::fec::Receiver::resident_bytes()) as u64,
+            )
+    }
+    /// Explicit HOST-ONLY DEVELOPMENT selection after an admitted MUSIC start.
+    /// No packet can select a profile or allocate its backing state. This does
+    /// not admit board RAM/WCET or paced N06 transmission. One existing N04 queue.
+    pub fn enable_host_fec(
+        &mut self,
+        config: franken_stream::fec::SessionConfig,
+        ledger: &MemoryBudgetLedger,
+        resident_elsewhere_bytes: u64,
+    ) -> Result<(), HostFecAdmitError> {
+        config.metadata(0).map_err(HostFecAdmitError::Profile)?;
+        if !self
+            .engine
+            .matches_fec_timeline(config.epoch, config.presentation_origin_ns)
+            || self.engine.snapshot().queued != 0
+        {
+            return Err(HostFecAdmitError::Binding);
+        }
+        if !self.fec.is_empty() {
+            return Err(HostFecAdmitError::AlreadySelected);
+        }
+        let required = if self.fec.capacity() == 0 {
+            franken_stream::fec::Receiver::resident_bytes()
+        } else {
+            0
+        };
+        let available =
+            stream_room(ledger, resident_elsewhere_bytes).map_err(HostFecAdmitError::Memory)?;
+        let held = usize::try_from(self.resident_bytes()).unwrap_or(usize::MAX);
+        let total = held.saturating_add(required);
+        if total > available {
+            return Err(HostFecAdmitError::Capacity {
+                required: total,
+                available,
+            });
+        }
+        if self.fec.capacity() == 0 {
+            self.fec
+                .try_reserve_exact(1)
+                .map_err(|_| HostFecAdmitError::Allocation {
+                    requested: required,
+                })?;
+        }
+        let origin = config.presentation_origin_ns;
+        let mut fec =
+            franken_stream::fec::Receiver::new(config).map_err(HostFecAdmitError::Profile)?;
+        fec.rebind(&self.engine, origin)
+            .map_err(HostFecAdmitError::Profile)?;
+        self.fec.push(fec);
+        Ok(())
+    }
+    pub fn host_fec_status(&self) -> Option<franken_stream::fec::Status> {
+        self.fec.first().map(|fec| fec.status())
+    }
+    /// Whether the explicit host-development FEC selection is active (a cheap form of `host_fec_status().is_some()`).
+    #[must_use]
+    pub fn host_fec_selected(&self) -> bool {
+        !self.fec.is_empty()
+    }
+    /// The presentation origin the selected FEC receiver is bound to, if one is selected.
+    #[must_use]
+    pub fn host_fec_origin(&self) -> Option<u64> {
+        self.fec
+            .first()
+            .map(franken_stream::fec::Receiver::origin_ns)
+    }
+    pub fn host_fec_identity(&self) -> Option<(u64, u64, u64)> {
+        self.fec
+            .first()
+            .map(franken_stream::fec::Receiver::identity)
+    }
+    /// The group time until which a selected FEC receiver would answer the next datagram [`franken_stream::fec::Refusal::Protected`]
+    /// (render protection), if it would. A pure query for the carrier, which leaves a datagram in the socket while this is `Some`.
+    /// It reports no fault, counts nothing and consumes nothing: `None` when FEC is not selected (no clock is read, so the baseline
+    /// is untouched), when the platform clock cannot be read, when the group clock is muted or its view unusable (ingest classifies
+    /// and counts those), and when nothing is deferred.
+    pub fn host_fec_deferral<O: KernelOps>(
+        &mut self,
+        platform: &mut PlatformLayer<O>,
+        clock: &mut GroupClock,
+    ) -> Option<u64> {
+        let fec = self.fec.first()?;
+        let local = platform.now_ns().ok()?;
+        if matches!(clock.output(local), Output::Muted(_)) {
+            return None;
+        }
+        let view = self.bridge.at_local(clock, local);
+        fec.deferral(&self.engine, view)
     }
 
     /// Turn the engine's diagnostics on (or restart them) under the same ledger line: the ring is charged beside this path's own bytes
@@ -352,6 +499,9 @@ impl MediaPlayout {
             configured_ns: clock.config().timer_resolution_ns,
         };
         if mismatch.reported_ns > mismatch.configured_ns {
+            for fec in &mut self.fec {
+                fec.cancel();
+            }
             if !self.resolution_refused {
                 clock.report_clock_fault();
                 self.resolution_refused = true;
@@ -361,6 +511,9 @@ impl MediaPlayout {
         }
         self.resolution_refused = false;
         platform.now_ns().map_err(|error| {
+            for fec in &mut self.fec {
+                fec.cancel();
+            }
             clock.report_clock_fault();
             self.clock_faults = self.clock_faults.saturating_add(1);
             LocalTimeRefusal::Clock(error)
@@ -379,16 +532,131 @@ impl MediaPlayout {
         clock: &mut GroupClock,
         datagram: &[u8],
     ) -> Result<Admission, MediaRefusal> {
+        if !self.fec.is_empty() {
+            return Err(MediaRefusal::Fec(
+                franken_stream::fec::Refusal::TypedIngressRequired,
+            ));
+        }
+        self.ingest_authenticated(platform, clock, datagram)?
+            .admission
+            .ok_or(MediaRefusal::NotMedia)
+    }
+    /// One authentication/admission, returning its typed sequence for carrier
+    /// credit/report. A selected N06 datagram is never parsed as an N01 header.
+    pub fn ingest_authenticated<O: KernelOps>(
+        &mut self,
+        platform: &mut PlatformLayer<O>,
+        clock: &mut GroupClock,
+        datagram: &[u8],
+    ) -> Result<AuthenticatedIngress, MediaRefusal> {
         let local_ns = self
             .local_ns(platform, clock)
             .map_err(LocalTimeRefusal::for_ingest)?;
+        if let Some(fec) = self.fec.first_mut() {
+            if matches!(clock.output(local_ns), Output::Muted(_)) {
+                fec.cancel();
+                return Err(MediaRefusal::Fec(franken_stream::fec::Refusal::Clock));
+            }
+            let view = self.bridge.at_local(clock, local_ns);
+            let event = fec
+                .ingest(&mut self.engine, view, datagram)
+                .map_err(MediaRefusal::Fec)?;
+            let format = match event.kind {
+                franken_stream::fec::IngressKind::Source => AuthenticatedFormat::N06Source,
+                franken_stream::fec::IngressKind::Retransmit => AuthenticatedFormat::N06Retransmit,
+                franken_stream::fec::IngressKind::RepairSymbol => {
+                    AuthenticatedFormat::N06RepairSymbol
+                }
+            };
+            return Ok(AuthenticatedIngress {
+                stream: event.stream,
+                origin_ns: event.origin_ns,
+                admission: event.admission,
+                sequence: event.sequence,
+                source_epoch: event.epoch,
+                wire_bytes: datagram.len(),
+                format,
+            });
+        }
         let packet = self
             .receiver
             .accept(datagram)
             .map_err(MediaRefusal::Stream)?;
         let media = MediaPacket::from_authenticated(&packet).ok_or(MediaRefusal::NotMedia)?;
         let view = self.bridge.at_local(clock, local_ns);
-        Ok(self.engine.on_packet(view, &media))
+        Ok(AuthenticatedIngress {
+            stream: packet.stream_id.get(),
+            origin_ns: 0, // N01 sequences do not restart inside an epoch.
+            admission: Some(self.engine.on_packet(view, &media)),
+            sequence: packet.seq,
+            source_epoch: packet.session_epoch,
+            wire_bytes: datagram.len(),
+            format: AuthenticatedFormat::N01Media,
+        })
+    }
+    pub fn poll_host_fec<O: KernelOps>(
+        &mut self,
+        platform: &mut PlatformLayer<O>,
+        clock: &mut GroupClock,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<franken_stream::fec::DecodeState, MediaRefusal> {
+        let local = self
+            .local_ns(platform, clock)
+            .map_err(LocalTimeRefusal::for_ingest)?;
+        if matches!(clock.output(local), Output::Muted(_)) {
+            for fec in &mut self.fec {
+                fec.cancel();
+            }
+            return Err(MediaRefusal::Fec(franken_stream::fec::Refusal::Clock));
+        }
+        let view = self.bridge.at_local(clock, local);
+        let state = self
+            .fec
+            .first_mut()
+            .ok_or(MediaRefusal::NotMedia)?
+            .poll(&mut self.engine, view, cancelled)
+            .map_err(MediaRefusal::Fec)?;
+        if state != franken_stream::fec::DecodeState::Ready {
+            return Ok(state);
+        }
+        // The decode completed AFTER the first reading. Publication must use a
+        // new platform/N03 view, not the timestamp captured before its CPU work.
+        let finish = self
+            .local_ns(platform, clock)
+            .map_err(LocalTimeRefusal::for_ingest)?;
+        if matches!(clock.output(finish), Output::Muted(_)) {
+            for fec in &mut self.fec {
+                fec.cancel();
+            }
+            return Err(MediaRefusal::Fec(franken_stream::fec::Refusal::Clock));
+        }
+        let finish_view = self.bridge.at_local(clock, finish);
+        self.fec
+            .first_mut()
+            .ok_or(MediaRefusal::NotMedia)?
+            .publish(&mut self.engine, finish_view, cancelled)
+            .map_err(MediaRefusal::Fec)
+    }
+    pub fn host_fec_feedback<O: KernelOps>(
+        &mut self,
+        platform: &mut PlatformLayer<O>,
+        clock: &mut GroupClock,
+    ) -> Result<Option<franken_stream::fec::Feedback>, MediaRefusal> {
+        let local = self
+            .local_ns(platform, clock)
+            .map_err(LocalTimeRefusal::for_ingest)?;
+        if matches!(clock.output(local), Output::Muted(_)) {
+            for fec in &mut self.fec {
+                fec.cancel();
+            }
+            return Err(MediaRefusal::Fec(franken_stream::fec::Refusal::Clock));
+        }
+        let view = self.bridge.at_local(clock, local);
+        self.fec
+            .first_mut()
+            .ok_or(MediaRefusal::NotMedia)?
+            .feedback(&self.engine, view)
+            .map_err(MediaRefusal::Fec)
     }
 
     /// Advance the group clock and, unless it is muted, take at most one block's decision from the engine. The clock's
@@ -414,15 +682,36 @@ impl MediaPlayout {
             }
         };
         let release = match clock.tick(local_ns) {
-            Output::Muted(reason) => return Ok(Preparation::Refused(reason)),
+            Output::Muted(reason) => {
+                for fec in &mut self.fec {
+                    fec.cancel();
+                }
+                return Ok(Preparation::Refused(reason));
+            }
             Output::Armed { starts_in_ns } => Release::Armed { starts_in_ns },
             Output::Audible => Release::Audible,
         };
         let view = self.bridge.at_local(clock, local_ns);
+        if self
+            .fec
+            .first_mut()
+            .is_some_and(|fec| fec.observe_clock(view).is_err())
+        {
+            return Ok(Preparation::TimingUnavailable);
+        }
         if !view.usable {
             return Ok(Preparation::TimingUnavailable);
         }
-        match self.engine.decide(view, out) {
+        let view = if self.fec.is_empty() {
+            view
+        } else {
+            franken_stream::fec::profile_view(view)
+        };
+        let result = self.engine.decide(view, out);
+        if let Some(fec) = self.fec.first_mut() {
+            fec.note_decision(view, &result);
+        }
+        match result {
             Poll::Decision(decision)
                 if matches!(decision.outcome, Outcome::Real | Outcome::Concealed { .. }) =>
             {
@@ -457,6 +746,20 @@ impl MediaPlayout {
         let local_ns = self
             .local_ns(platform, clock)
             .map_err(LocalTimeRefusal::for_start)?;
+        let fec_origin = if let Some(fec) = self.fec.first() {
+            if !anchor_frame.is_multiple_of(1024) {
+                return Err(StartRefusal::Fec(franken_stream::fec::Refusal::Shape));
+            }
+            let origin = sched
+                .start_group_ns
+                .checked_sub(franken_stream::playout::frames_to_ns(anchor_frame))
+                .ok_or(StartRefusal::Fec(franken_stream::fec::Refusal::Shape))?;
+            fec.validate_rebind(sched.epoch, origin)
+                .map_err(StartRefusal::Fec)?;
+            Some(origin)
+        } else {
+            None
+        };
         clock
             .plan_start(sched, local_ns)
             .map_err(StartRefusal::Admission)?;
@@ -466,6 +769,13 @@ impl MediaPlayout {
         let plan = clock
             .admit(sched, local_ns)
             .map_err(StartRefusal::Admission)?;
+        if let Some(fec) = self.fec.first_mut() {
+            fec.rebind(
+                &self.engine,
+                fec_origin.expect("selected FEC origin prevalidated"),
+            )
+            .map_err(StartRefusal::Fec)?;
+        }
         self.bridge.rebind(clock);
         Ok(plan)
     }
@@ -484,8 +794,27 @@ impl MediaPlayout {
         leader: u64,
     ) -> Result<(), GroupClockError> {
         clock.begin_epoch(epoch, leader)?;
+        for fec in &mut self.fec {
+            fec.stop();
+        }
+        self.fec.clear();
         self.receiver.advance_epoch(epoch);
         Ok(())
+    }
+
+    /// Bind the media path to another stream: a source restart under a fresh stream id and a strictly newer epoch, announced by
+    /// the caller's trusted control path (the media path invents neither). The receiver's replay window restarts at `epoch` for
+    /// the new identity and a packet of the previous stream is refused as a wrong stream; the key is the receiver's own and does
+    /// not change. A selected N06 session names the old stream, so it is stopped and cleared (the owner selects it again for the
+    /// new stream with [`Self::enable_host_fec`]); the clear is unconditional, so a repeated bind of the same stream also ends the
+    /// selection and the owner makes the call once per restart. The group clock and the engine are not touched:
+    /// [`Self::begin_epoch`] and [`Self::admit_start`] stay the control path's calls for those.
+    pub fn bind_stream(&mut self, stream_id: StreamId, epoch: u64) {
+        for fec in &mut self.fec {
+            fec.stop();
+        }
+        self.fec.clear();
+        self.receiver.bind_stream(stream_id, epoch);
     }
 
     /// The receiver's per-reason counters.
@@ -541,6 +870,8 @@ mod tests {
     struct TestKernel {
         now_ns: Rc<Cell<u64>>,
         errno: Rc<Cell<isize>>,
+        reads: Rc<Cell<u64>>,
+        fail_read: Rc<Cell<Option<u64>>>,
     }
 
     impl KernelOps for TestKernel {
@@ -551,6 +882,11 @@ mod tests {
             None
         }
         fn clock_gettime_monotonic(&mut self, out: &mut Timespec) -> isize {
+            let read = self.reads.get() + 1;
+            self.reads.set(read);
+            if self.fail_read.get() == Some(read) {
+                return -ENOSYS_PPC;
+            }
             let failure = self.errno.get();
             if failure != 0 {
                 return failure;
@@ -596,6 +932,8 @@ mod tests {
     struct Rig {
         time: Rc<Cell<u64>>,
         errno: Rc<Cell<isize>>,
+        reads: Rc<Cell<u64>>,
+        fail_read: Rc<Cell<Option<u64>>>,
         platform: PlatformLayer<TestKernel>,
         clock: GroupClock,
         media: MediaPlayout,
@@ -612,9 +950,13 @@ mod tests {
         fn with_resolution(resolution_ns: Option<u64>) -> Self {
             let time = Rc::new(Cell::new(0));
             let errno = Rc::new(Cell::new(0));
+            let reads = Rc::new(Cell::new(0));
+            let fail_read = Rc::new(Cell::new(None));
             let kernel = TestKernel {
                 now_ns: Rc::clone(&time),
                 errno: Rc::clone(&errno),
+                reads: Rc::clone(&reads),
+                fail_read: Rc::clone(&fail_read),
             };
             let mut matrix = guest_evidence::for_abi(Abi::PowerPc32).matrix();
             if let Some(resolution_ns) = resolution_ns {
@@ -643,6 +985,8 @@ mod tests {
             Self {
                 time,
                 errno,
+                reads,
+                fail_read,
                 platform,
                 clock,
                 media,
@@ -1593,5 +1937,628 @@ mod tests {
             5,
             "no refusal after the swap"
         );
+    }
+    fn selected_fec_rig() -> (Rig, franken_stream::fec::SessionConfig) {
+        use franken_stream::fec;
+        let mut rig = Rig::new();
+        rig.media = MediaPlayout::new(
+            receiver(),
+            PlayoutProfile::MUSIC,
+            PlayoutConfig {
+                work_ns: 1_000_000,
+                lead_ns: 1_000_000,
+                tolerance_ns: 0,
+            },
+            &synthetic_ledger(2 * 1024 * 1024),
+            0,
+        )
+        .unwrap();
+        rig.lock(0, OLD_TIMELINE_NS);
+        rig.at(50_000_000);
+        let start = rig.group_at(50_000_000) + 500_000_000;
+        rig.admit(start, 0).unwrap();
+        let config = fec::SessionConfig {
+            stream: stream_id(),
+            epoch: 1,
+            presentation_origin_ns: start,
+            key: key(),
+        };
+        let bytes = rig.media.resident_bytes() + fec::Receiver::resident_bytes() as u64;
+        rig.media
+            .enable_host_fec(config.clone(), &synthetic_ledger(bytes), 0)
+            .unwrap();
+        (rig, config)
+    }
+
+    fn fec_prepare_block(
+        rig: &mut Rig,
+        cfg: &franken_stream::fec::SessionConfig,
+        block: u64,
+    ) -> (Outcome, [u8; 1024]) {
+        let presentation = cfg.presentation_origin_ns + frames_to_ns(block * 256);
+        let mut local = rig.local_of(presentation - 2_500_000, rig.time.get());
+        for _ in 0..8 {
+            let uncertainty = rig.clock.report(local).uncertainty_ns.unwrap().max(500_000);
+            let cutoff = franken_stream::playout::consume_by(
+                presentation,
+                1_000_000,
+                1_000_000,
+                uncertainty,
+            );
+            let group = rig.group_at(local);
+            if group >= cutoff {
+                break;
+            }
+            local += cutoff - group;
+        }
+        rig.at(local);
+        let mut out = [0; 1024];
+        let outcome = match rig.prepare(&mut out).unwrap() {
+            Preparation::Prepared(block) => block.decision.outcome,
+            Preparation::Quiet {
+                poll: Poll::Decision(decision),
+                ..
+            } => decision.outcome,
+            other => panic!("missing real N04 decision: {other:?}"),
+        };
+        assert_eq!(rig.media.engine.snapshot().cursor, block + 1);
+        (outcome, out)
+    }
+
+    #[test]
+    fn n06_media_relock_catches_up_absolute_window_without_restarting_the_healthy_group() {
+        use franken_stream::fec::{self, BYTES, K, N};
+        use std::sync::atomic::AtomicBool;
+        let (mut joining, cfg) = selected_fec_rig();
+        let (mut healthy, healthy_cfg) = selected_fec_rig();
+        assert_eq!(
+            joining.media.host_fec_identity(),
+            healthy.media.host_fec_identity()
+        );
+        assert_eq!(
+            cfg.presentation_origin_ns,
+            healthy_cfg.presentation_origin_ns
+        );
+        let source: [[u8; BYTES]; K] = std::array::from_fn(|i| [i as u8 + 31; BYTES]);
+        let digest = fec::content_digest(&cfg.metadata(0).unwrap(), &source);
+        for rig in [&mut joining, &mut healthy] {
+            rig.at(70_000_000);
+            for (esi, payload) in source.iter().enumerate() {
+                let wire = fec::sign_symbol(&cfg, 0, esi, 0, digest, payload).unwrap();
+                assert_eq!(
+                    rig.media
+                        .ingest_authenticated(&mut rig.platform, &mut rig.clock, &wire)
+                        .unwrap()
+                        .admission,
+                    Some(Admission::Admitted)
+                );
+            }
+            assert_eq!(fec_prepare_block(rig, &cfg, 0), (Outcome::Real, source[0]));
+        }
+        let identity = joining.media.host_fec_identity();
+        joining.errno.set(-ENOSYS_PPC);
+        joining.at(600_000_000); // The original presentation origin has passed.
+        assert_eq!(
+            joining.media.poll_host_fec(
+                &mut joining.platform,
+                &mut joining.clock,
+                &AtomicBool::new(false)
+            ),
+            Err(MediaRefusal::Clock(ClockError::Absent))
+        );
+        joining.errno.set(0);
+        joining.lock(650_000_000, OLD_TIMELINE_NS + 650_000_000);
+        joining.at(700_000_000);
+        let window = 32_u64;
+        let anchor_frame = window * 1024;
+        let anchor_presentation = cfg.presentation_origin_ns + frames_to_ns(anchor_frame);
+        let healthy_before = healthy.media.engine.snapshot();
+        joining.admit(anchor_presentation, anchor_frame).unwrap();
+        assert_eq!(joining.media.engine.snapshot().cursor, window * 4);
+        assert_eq!(joining.media.host_fec_identity(), identity);
+        assert_eq!(healthy.media.engine.snapshot(), healthy_before);
+        assert_eq!(healthy.media.host_fec_identity(), identity);
+        assert!(
+            joining
+                .admit(anchor_presentation, anchor_frame + 256)
+                .is_err()
+        );
+        assert_eq!(joining.media.host_fec_identity(), identity);
+        for block in 1..40 {
+            let _ = fec_prepare_block(&mut healthy, &cfg, block);
+        }
+
+        let source: [[u8; BYTES]; K] = std::array::from_fn(|i| [i as u8 + 91; BYTES]);
+        let digest = fec::content_digest(&cfg.metadata(window).unwrap(), &source);
+        healthy.at(760_000_000);
+        joining.at(760_000_000);
+        // Healthy members keep ordinary originals. The relocking member receives
+        // the SAME original stream's absolute-window equations, never re-signed window0.
+        for (esi, payload) in source.iter().enumerate() {
+            let wire = fec::sign_symbol(&cfg, window, esi, 0, digest, payload).unwrap();
+            assert_eq!(
+                healthy
+                    .media
+                    .ingest_authenticated(&mut healthy.platform, &mut healthy.clock, &wire)
+                    .unwrap()
+                    .admission,
+                Some(Admission::Admitted)
+            );
+        }
+        for esi in 2..N {
+            let wire = fec::sign_symbol(
+                &cfg,
+                window,
+                esi,
+                if esi < K { 0 } else { 2 },
+                digest,
+                &fec::encode_symbol(&source, esi).unwrap(),
+            )
+            .unwrap();
+            let event = joining
+                .media
+                .ingest_authenticated(&mut joining.platform, &mut joining.clock, &wire)
+                .unwrap();
+            assert_eq!(
+                event.credit_key(),
+                IngressIdentity {
+                    stream: cfg.stream.get(),
+                    epoch: cfg.epoch,
+                    origin_ns: cfg.presentation_origin_ns,
+                    format: if esi < K {
+                        AuthenticatedFormat::N06Source
+                    } else {
+                        AuthenticatedFormat::N06RepairSymbol
+                    },
+                    sequence: window * 8 + esi as u64
+                }
+            );
+        }
+        let mut ready = false;
+        for step in 0..1000 {
+            joining.at(820_000_000 + step * 30_000);
+            match joining
+                .media
+                .poll_host_fec(
+                    &mut joining.platform,
+                    &mut joining.clock,
+                    &AtomicBool::new(false),
+                )
+                .unwrap()
+            {
+                fec::DecodeState::Pending => {}
+                fec::DecodeState::Ready => {
+                    ready = true;
+                    break;
+                }
+                other => panic!("absolute-window relock state {other:?}"),
+            }
+        }
+        assert!(ready);
+        assert_eq!(
+            joining.media.host_fec_status().unwrap().counters.recovered,
+            2
+        );
+        for block in 40..window * 4 {
+            let _ = fec_prepare_block(&mut healthy, &cfg, block);
+        }
+        let mut output = Vec::new();
+        for slot in 0..2 {
+            let block = window * 4 + slot;
+            for (member, rig) in [("healthy", &mut healthy), ("relocked", &mut joining)] {
+                let (outcome, bytes) = fec_prepare_block(rig, &cfg, block);
+                assert_eq!((outcome, bytes), (Outcome::Real, source[slot as usize]));
+                // Reuse the existing digest dependency: zero probe metadata and
+                // four copies of the ACTUAL output. Python derives it separately.
+                let hash: String = fec::content_digest(&[0; 64], &[bytes; K])
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect();
+                output.push(serde_json::json!({"member":member,"block":block,"outcome":outcome.code(),"pcm_probe_sha256":hash}));
+            }
+        }
+        assert_eq!(healthy.media.host_fec_identity(), identity);
+        assert_eq!(joining.media.host_fec_identity(), identity);
+        println!(
+            "N06-RELOCK {}",
+            serde_json::json!({"schema":"n06.relock.v1","profile":fec::PROFILE,"origin_before":cfg.presentation_origin_ns,"origin_after":joining.media.host_fec_origin(),"healthy_origin":healthy.media.host_fec_origin(),"epoch":cfg.epoch,"window":window,"anchor_frame":anchor_frame,"joined_cursor":joining.media.engine.snapshot().cursor,"healthy_cursor":healthy.media.engine.snapshot().cursor,"output":output})
+        );
+    }
+
+    #[test]
+    fn n06_media_ready_second_platform_read_fault_retires_without_publication() {
+        use franken_stream::fec::{self, BYTES, K, N};
+        use std::sync::atomic::AtomicBool;
+        let (mut rig, cfg) = selected_fec_rig();
+        let source: [[u8; BYTES]; K] = std::array::from_fn(|i| [i as u8 + 3; BYTES]);
+        let digest = fec::content_digest(&cfg.metadata(0).unwrap(), &source);
+        rig.at(70_000_000);
+        for esi in 2..N {
+            let wire = fec::sign_symbol(
+                &cfg,
+                0,
+                esi,
+                if esi < K { 0 } else { 2 },
+                digest,
+                &fec::encode_symbol(&source, esi).unwrap(),
+            )
+            .unwrap();
+            rig.media
+                .ingest_authenticated(&mut rig.platform, &mut rig.clock, &wire)
+                .unwrap();
+        }
+        let mut faulted = false;
+        for step in 0..1000 {
+            rig.at(130_000_000 + step * 30_000);
+            let before = rig.reads.get();
+            rig.fail_read.set(Some(before + 2));
+            match rig.media.poll_host_fec(
+                &mut rig.platform,
+                &mut rig.clock,
+                &AtomicBool::new(false),
+            ) {
+                Ok(fec::DecodeState::Pending) => assert_eq!(rig.reads.get(), before + 1),
+                Err(MediaRefusal::Clock(ClockError::Absent)) => {
+                    assert_eq!(rig.reads.get(), before + 2);
+                    faulted = true;
+                    break;
+                }
+                other => panic!("second-read mutation must be observable: {other:?}"),
+            }
+        }
+        assert!(
+            faulted,
+            "the actual Ready path must request its second platform reading"
+        );
+        assert_eq!(rig.media.host_fec_status().unwrap().counters.recovered, 0);
+        assert_eq!(rig.media.host_fec_status().unwrap().reserved_work, 0);
+        assert_eq!(rig.media.engine_stats().repairs_seen, 0);
+        assert_eq!(rig.media.engine.snapshot().queued, 2);
+        let mut out = [0xee; BYTES];
+        assert_eq!(
+            rig.prepare(&mut out),
+            Ok(Preparation::Refused(MuteReason::ClockFault))
+        );
+        assert_eq!(out, [0; BYTES]);
+        println!(
+            "N06-FRESH-CLOCK {}",
+            serde_json::json!({"schema":"n06.fresh-clock.v1","profile":fec::PROFILE,"faulted":faulted,"recovered":rig.media.host_fec_status().unwrap().counters.recovered,"queued":rig.media.engine.snapshot().queued,"repairs_seen":rig.media.engine_stats().repairs_seen,"clock_faults":rig.media.clock_faults()})
+        );
+    }
+
+    #[test]
+    fn n06_media_consumer_selects_budgeted_fec_and_returns_authenticated_typed_sequence() {
+        use franken_stream::fec::{self, BYTES, K, N};
+        use std::sync::atomic::AtomicBool;
+        let mut rig = Rig::new();
+        rig.media = MediaPlayout::new(
+            receiver(),
+            PlayoutProfile::MUSIC,
+            PlayoutConfig {
+                work_ns: 1_000_000,
+                lead_ns: 1_000_000,
+                tolerance_ns: 0,
+            },
+            &synthetic_ledger(2 * 1024 * 1024),
+            0,
+        )
+        .unwrap();
+        rig.lock(0, OLD_TIMELINE_NS);
+        rig.at(50_000_000);
+        let start = rig.group_at(50_000_000) + 500_000_000;
+        rig.admit(start, 0).unwrap();
+        let config = fec::SessionConfig {
+            stream: stream_id(),
+            epoch: 1,
+            presentation_origin_ns: start,
+            key: key(),
+        };
+        let before = rig.media.engine.snapshot();
+        let held = rig.media.resident_bytes();
+        let need = fec::Receiver::resident_bytes() as u64;
+        assert!(matches!(
+            rig.media
+                .enable_host_fec(config.clone(), &synthetic_ledger(held + need - 1), 0),
+            Err(HostFecAdmitError::Capacity { .. })
+        ));
+        assert_eq!(rig.media.engine.snapshot(), before);
+        assert!(rig.media.host_fec_status().is_none());
+        rig.media
+            .enable_host_fec(config.clone(), &synthetic_ledger(held + need), 0)
+            .unwrap();
+        assert_eq!(rig.media.resident_bytes(), held + need);
+        let source: [[u8; BYTES]; K] = std::array::from_fn(|i| [i as u8 + 1; BYTES]);
+        let digest = fec::content_digest(&config.metadata(0).unwrap(), &source);
+        rig.at(70_000_000);
+        let legacy_wire = fec::sign_symbol(&config, 0, 2, 0, digest, &source[2]).unwrap();
+        let before_auth = rig.media.host_fec_status().unwrap().counters.auth_work;
+        assert_eq!(
+            rig.ingest(&legacy_wire),
+            Err(MediaRefusal::Fec(fec::Refusal::TypedIngressRequired))
+        );
+        assert_eq!(
+            rig.media.host_fec_status().unwrap().counters.auth_work,
+            before_auth
+        );
+        let mut last_sequence = 0;
+        for esi in 2..N {
+            let wire = fec::sign_symbol(
+                &config,
+                0,
+                esi,
+                if esi < K { 0 } else { 2 },
+                digest,
+                &fec::encode_symbol(&source, esi).unwrap(),
+            )
+            .unwrap();
+            let event = rig
+                .media
+                .ingest_authenticated(&mut rig.platform, &mut rig.clock, &wire)
+                .unwrap();
+            last_sequence = event.sequence;
+            assert_eq!(
+                event.admission,
+                if esi < K {
+                    Some(Admission::Admitted)
+                } else {
+                    None
+                }
+            );
+            assert_eq!(event.sequence, esi as u64);
+            assert_eq!(event.source_epoch, 1);
+            assert_eq!(event.wire_bytes, fec::DATAGRAM);
+            assert_eq!(
+                event.format,
+                if esi < K {
+                    AuthenticatedFormat::N06Source
+                } else {
+                    AuthenticatedFormat::N06RepairSymbol
+                }
+            );
+        }
+        assert_eq!(
+            rig.media.receiver_counters().datagrams_seen,
+            0,
+            "selected input must not be authenticated twice as N01"
+        );
+        let mut completed = false;
+        for step in 0..1000 {
+            rig.at(130_000_000 + step * 30_000);
+            let state = rig
+                .media
+                .poll_host_fec(&mut rig.platform, &mut rig.clock, &AtomicBool::new(false))
+                .unwrap();
+            if state == fec::DecodeState::Ready {
+                completed = true;
+                break;
+            }
+            assert_eq!(state, fec::DecodeState::Pending);
+        }
+        assert!(completed);
+        assert_eq!(rig.media.host_fec_status().unwrap().counters.recovered, 2);
+        // The real platform/N03 bridge finds the N04 cutoff, then the existing
+        // consumer prepares the authenticated recovered block for downstream.
+        let presentation_local = rig.local_of(start, 160_000_000);
+        let uncertainty = rig
+            .clock
+            .report(presentation_local)
+            .uncertainty_ns
+            .unwrap()
+            .max(500_000);
+        let target = franken_stream::playout::consume_by(start, 1_000_000, 1_000_000, uncertainty);
+        let mut local = rig.local_of(target, presentation_local);
+        for _ in 0..8 {
+            let uncertainty = rig.clock.report(local).uncertainty_ns.unwrap().max(500_000);
+            let cutoff =
+                franken_stream::playout::consume_by(start, 1_000_000, 1_000_000, uncertainty);
+            let now = rig.group_at(local);
+            if now >= cutoff {
+                break;
+            }
+            local += cutoff - now;
+        }
+        rig.at(local);
+        let mut out = [0; BYTES];
+        let Preparation::Prepared(block) = rig.prepare(&mut out).unwrap() else {
+            panic!("selected N06 did not reach existing prepared consumer")
+        };
+        assert_eq!(block.decision.outcome, Outcome::Real);
+        assert_eq!(out, source[0]);
+        assert_eq!(rig.media.engine.snapshot().cursor, 1);
+        println!(
+            "N06-CONSUMER {}",
+            serde_json::json!({"schema":"n06.consumer.v1","profile":fec::PROFILE,"status":rig.media.host_fec_status().unwrap(),"cursor":rig.media.engine.snapshot().cursor,"typed_sequence":last_sequence,"authentication_once":rig.media.receiver_counters().datagrams_seen==0})
+        );
+    }
+
+    #[test]
+    fn n06_media_clock_fault_mute_relock_and_readmission_resume_real_recovery() {
+        use franken_stream::fec::{self, BYTES, K, N};
+        use std::sync::atomic::AtomicBool;
+        let mut rig = Rig::new();
+        rig.media = MediaPlayout::new(
+            receiver(),
+            PlayoutProfile::MUSIC,
+            PlayoutConfig {
+                work_ns: 1_000_000,
+                lead_ns: 1_000_000,
+                tolerance_ns: 0,
+            },
+            &synthetic_ledger(2 * 1024 * 1024),
+            0,
+        )
+        .unwrap();
+        rig.lock(0, OLD_TIMELINE_NS);
+        rig.at(50_000_000);
+        let start = rig.group_at(50_000_000) + 500_000_000;
+        rig.admit(start, 0).unwrap();
+        let mut config = fec::SessionConfig {
+            stream: stream_id(),
+            epoch: 1,
+            presentation_origin_ns: start,
+            key: key(),
+        };
+        let capacity = rig.media.resident_bytes() + fec::Receiver::resident_bytes() as u64;
+        rig.media
+            .enable_host_fec(config.clone(), &synthetic_ledger(capacity), 0)
+            .unwrap();
+        let source: [[u8; BYTES]; K] = std::array::from_fn(|i| [i as u8 + 11; BYTES]);
+        rig.at(70_000_000);
+        let digest = fec::content_digest(&config.metadata(0).unwrap(), &source);
+        for esi in 2..N {
+            let wire = fec::sign_symbol(
+                &config,
+                0,
+                esi,
+                if esi < K { 0 } else { 2 },
+                digest,
+                &fec::encode_symbol(&source, esi).unwrap(),
+            )
+            .unwrap();
+            rig.media
+                .ingest_authenticated(&mut rig.platform, &mut rig.clock, &wire)
+                .unwrap();
+        }
+        rig.at(130_000_000);
+        assert_eq!(
+            rig.media
+                .poll_host_fec(&mut rig.platform, &mut rig.clock, &AtomicBool::new(false)),
+            Ok(fec::DecodeState::Pending)
+        );
+        let work = rig.media.host_fec_status().unwrap().counters.decode_work;
+        let auth = rig.media.host_fec_status().unwrap().counters.auth_work;
+        rig.errno.set(-ENOSYS_PPC);
+        rig.at(140_000_000);
+        assert_eq!(
+            rig.media
+                .poll_host_fec(&mut rig.platform, &mut rig.clock, &AtomicBool::new(false)),
+            Err(MediaRefusal::Clock(ClockError::Absent))
+        );
+        rig.errno.set(0);
+        rig.at(150_000_000);
+        let wire = fec::sign_symbol(&config, 0, 0, 0, digest, &source[0]).unwrap();
+        assert_eq!(
+            rig.media
+                .ingest_authenticated(&mut rig.platform, &mut rig.clock, &wire),
+            Err(MediaRefusal::Fec(fec::Refusal::Clock))
+        );
+        assert_eq!(
+            rig.media
+                .poll_host_fec(&mut rig.platform, &mut rig.clock, &AtomicBool::new(false)),
+            Err(MediaRefusal::Fec(fec::Refusal::Clock))
+        );
+        assert_eq!(
+            rig.media.host_fec_status().unwrap().counters.decode_work,
+            work
+        );
+        assert_eq!(
+            rig.media.host_fec_status().unwrap().counters.auth_work,
+            auth
+        );
+        assert_eq!(rig.media.host_fec_status().unwrap().counters.recovered, 0);
+        assert_eq!(rig.media.host_fec_status().unwrap().reserved_work, 0);
+        assert_eq!(rig.media.engine.snapshot().cursor, 0);
+        let mut out = [0xee; BYTES];
+        assert_eq!(
+            rig.prepare(&mut out),
+            Ok(Preparation::Refused(MuteReason::ClockFault))
+        );
+        assert_eq!(out, [0; BYTES]);
+
+        rig.lock(150_000_000, OLD_TIMELINE_NS + 150_000_000);
+        rig.at(200_000_000);
+        assert_eq!(
+            rig.prepare(&mut out),
+            Ok(Preparation::Refused(MuteReason::NotAdmitted))
+        );
+        let new_start = rig.group_at(200_000_000) + 500_000_000;
+        rig.admit(new_start, 0).unwrap();
+        config.presentation_origin_ns = new_start;
+        let digest = fec::content_digest(&config.metadata(0).unwrap(), &source);
+        rig.at(220_000_000);
+        for esi in 2..N {
+            let wire = fec::sign_symbol(
+                &config,
+                0,
+                esi,
+                if esi < K { 0 } else { 2 },
+                digest,
+                &fec::encode_symbol(&source, esi).unwrap(),
+            )
+            .unwrap();
+            rig.media
+                .ingest_authenticated(&mut rig.platform, &mut rig.clock, &wire)
+                .unwrap();
+        }
+        let mut ready = false;
+        for step in 0..1000 {
+            rig.at(280_000_000 + step * 30_000);
+            match rig
+                .media
+                .poll_host_fec(&mut rig.platform, &mut rig.clock, &AtomicBool::new(false))
+                .unwrap()
+            {
+                fec::DecodeState::Pending => {}
+                fec::DecodeState::Ready => {
+                    ready = true;
+                    break;
+                }
+                other => panic!("unexpected resumed state {other:?}"),
+            }
+        }
+        assert!(ready);
+        assert_eq!(rig.media.host_fec_status().unwrap().counters.recovered, 2);
+        let mut local = rig.local_of(new_start - 2_500_000, 320_000_000);
+        for _ in 0..8 {
+            let uncertainty = rig.clock.report(local).uncertainty_ns.unwrap().max(500_000);
+            let cutoff =
+                franken_stream::playout::consume_by(new_start, 1_000_000, 1_000_000, uncertainty);
+            let now = rig.group_at(local);
+            if now >= cutoff {
+                break;
+            }
+            local += cutoff - now;
+        }
+        rig.at(local);
+        let Preparation::Prepared(block) = rig.prepare(&mut out).unwrap() else {
+            panic!("relocked FEC did not reach N04 output")
+        };
+        assert_eq!(block.decision.outcome, Outcome::Real);
+        assert_eq!(out, source[0]);
+        assert_eq!(rig.media.engine.snapshot().cursor, 1);
+    }
+
+    #[test]
+    fn n06_media_baseline_remains_n01_and_unselected_fec_cannot_change_it() {
+        use franken_stream::fec;
+        let (mut rig, start, _) = admitted_rig(500_000_000);
+        let config = fec::SessionConfig {
+            stream: stream_id(),
+            epoch: 1,
+            presentation_origin_ns: start,
+            key: key(),
+        };
+        let source = [[1; fec::BYTES]; fec::K];
+        let wire = fec::sign_symbol(
+            &config,
+            0,
+            2,
+            0,
+            fec::content_digest(&config.metadata(0).unwrap(), &source),
+            &source[2],
+        )
+        .unwrap();
+        let before = rig.media.engine.snapshot();
+        assert!(matches!(rig.ingest(&wire), Err(MediaRefusal::Stream(_))));
+        assert_eq!(rig.media.engine.snapshot(), before);
+        let plain = rig.packet(0, 0, start, 1);
+        let event = rig
+            .media
+            .ingest_authenticated(&mut rig.platform, &mut rig.clock, &plain)
+            .unwrap();
+        assert_eq!(event.sequence, 0);
+        assert_eq!(event.format, AuthenticatedFormat::N01Media);
+        assert_eq!(event.admission, Some(Admission::Admitted));
+        assert!(rig.media.host_fec_status().is_none());
     }
 }

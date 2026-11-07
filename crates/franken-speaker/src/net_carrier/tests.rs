@@ -2303,6 +2303,158 @@ impl World {
                 .expect("the restart is admitted");
         }
     }
+
+    /// `restart`, for a source that restarts under a new stream identity: the sender's group moves to `stream_id` and `epoch`, and
+    /// every room follows through `MediaEndpoint::restart_stream` between the clock's epoch and its start, as the control path
+    /// would call them.
+    fn restart_stream(&mut self, stream_id: StreamId, epoch: u64) {
+        let local = self.time.get();
+        let group = self.group_now();
+        self.sender
+            .carrier_mut()
+            .restart_group(franken_stream::carrier::PRIMARY_GROUP, stream_id, epoch)
+            .expect("a fresh stream under a strictly newer epoch");
+        self.epoch = epoch;
+        self.anchor_block = self.next_block;
+        self.start_group = group + 500 * MS;
+        for room in &mut self.rooms {
+            let leader = room.clock.leader();
+            room.endpoint
+                .media_mut()
+                .begin_epoch(&mut room.clock, epoch, leader)
+                .expect("a newer epoch");
+            room.endpoint.restart_stream(stream_id, epoch);
+            room.lock(local - 50 * MS, group - 50 * MS);
+            room.endpoint
+                .admit_start(
+                    &mut room.platform,
+                    &mut room.clock,
+                    StartSchedule {
+                        epoch,
+                        start_group_ns: self.start_group,
+                    },
+                    self.anchor_block * BLOCK_FRAMES,
+                )
+                .expect("the restart is admitted");
+        }
+    }
+}
+
+#[test]
+fn n07_s9_a_source_restart_under_a_new_stream_identity_is_followed_through_the_real_endpoint() {
+    let blocks = 160;
+    let new_stream = StreamId::new(0x0700_0000_0000_0043).expect("nonzero stream id");
+    let mut world = World::new(Plan::new(2, blocks));
+    world.run_to_group(world.pts(40));
+    let queued: Vec<u64> = world
+        .rooms
+        .iter()
+        .map(|room| {
+            world
+                .sender
+                .carrier()
+                .peer_view(room.peer)
+                .expect("peer")
+                .queued_packets as u64
+        })
+        .collect();
+    let old_next = world.next_block;
+    for room in &world.rooms {
+        let view = world.sender.carrier().peer_view(room.peer).expect("peer");
+        assert!(view.reported_next > 0, "credit stood before the restart");
+    }
+
+    // the source restarts under a fresh stream and a newer epoch, and every room follows
+    world.restart_stream(new_stream, 2);
+    let group = world
+        .sender
+        .carrier()
+        .group_view(franken_stream::carrier::PRIMARY_GROUP)
+        .expect("the primary group");
+    assert_eq!((group.stream_id, group.epoch), (new_stream.get(), 2));
+    for (room, was_queued) in world.rooms.iter().zip(&queued) {
+        let view = world.sender.carrier().peer_view(room.peer).expect("peer");
+        assert_eq!(
+            view.counters.media_dropped_fenced_packets, *was_queued,
+            "everything queued under the old stream was dropped, never sent"
+        );
+        assert_eq!(
+            (view.sent_next, view.reported_next),
+            (0, 0),
+            "numbering and credit start again"
+        );
+        let carrier = room.endpoint.carrier();
+        assert_eq!(
+            (carrier.stream_id(), carrier.consumed_next()),
+            (new_stream, 0)
+        );
+    }
+    // a datagram of the old stream, authentic and signed with the right key, reaches a room that follows the new one
+    let mut old_signer = franken_stream::StreamSender::new(key(), stream(), 1);
+    let planted = old_signer.send(world.frame(old_next)).expect("signed");
+    let socket = UdpSocket::bind((loopback(), 0)).expect("a socket");
+    socket
+        .send_to(&planted, world.rooms[0].media_addr)
+        .expect("planted");
+    world.rooms[0].expect_media += 1;
+    world.run_to_group(world.pts(blocks - 1));
+
+    let n01 = world.rooms[0].endpoint.media().receiver_counters();
+    assert_eq!(
+        n01.rejected_wrong_stream, 1,
+        "the planted datagram is refused as the old stream's"
+    );
+    assert_eq!(world.rooms[0].endpoint.verdicts().refused, 1);
+    for (room, was_queued) in world.rooms.iter().zip(&queued) {
+        let summary = check_room(room, world.tag, blocks);
+        let real = real_blocks(room);
+        let lost_from = old_next - was_queued;
+        for block in lost_from..world.anchor_block {
+            assert!(
+                !real.contains(&block),
+                "room {}: block {block} was queued under the old stream and must not be heard",
+                room.peer
+            );
+        }
+        let after: Vec<&Heard> = room
+            .heard
+            .iter()
+            .filter(|h| h.outcome == Outcome::Real && h.block >= world.anchor_block)
+            .collect();
+        assert!(
+            after.len() >= 20,
+            "room {}: audio resumed under the new stream",
+            room.peer
+        );
+        assert!(
+            after[0].armed,
+            "the restarted stream's first block is prepared while armed"
+        );
+        assert!(
+            real.iter().any(|b| *b < lost_from),
+            "audio before the restart was heard"
+        );
+        let n01 = room.endpoint.media().receiver_counters();
+        assert_eq!(
+            (
+                n01.rejected_replay,
+                n01.rejected_future_sequence,
+                n01.rejected_authentication
+            ),
+            (0, 0, 0),
+            "sequence numbers restart at 0 under the new stream without a replay"
+        );
+        assert!(summary.max_run <= PlayoutProfile::MUSIC.max_conceal_blocks);
+        // credit under the new stream flowed: the sender's report position moved off zero, and no report was a bad tag
+        let view = world.sender.carrier().peer_view(room.peer).expect("peer");
+        assert!(
+            view.reported_next > 0,
+            "room {}: the new stream earned credit",
+            room.peer
+        );
+    }
+    assert_eq!(world.sender.carrier().stats().reports_bad_tag, 0);
+    assert_conserved(&world, "S9");
 }
 
 #[test]
@@ -2430,7 +2582,7 @@ fn n07_s5_an_epoch_restart_fences_stale_sends_stale_packets_and_stale_reports() 
         serde_json::json!({
             "queued_at_restart": queued,
             "anchor_block": world.anchor_block,
-            "new_stream_identity": "not exercised: MediaPlayout has no bind_stream",
+            "new_stream_identity": "not exercised by this world: see n07_s9",
         }),
     );
 }

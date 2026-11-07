@@ -11,8 +11,12 @@
 //!   the source port is the advertised one. Because `recvfrom` names the sender, a report is held to its peer's registered
 //!   control address, and a report that also names its peer is attributed by number.
 //! * **N01.** Frames are signed at send time by the carrier's per-peer `StreamSender`; the receiving side hands each raw
-//!   datagram to [`MediaPlayout::ingest`], which owns the one `StreamReceiver` admission (MAC, stream, epoch, replay
-//!   window). The carrier's own admission is not run in this mode, so nothing is admitted twice.
+//!   datagram to [`MediaPlayout::ingest_authenticated`], which owns the one admission (MAC, stream, epoch, replay
+//!   window) and returns the authenticated sequence, epoch and format credit is given under. The carrier's own admission is
+//!   not run in this mode, so nothing is admitted twice. With the explicit host-development N06 hybrid selected the same call
+//!   admits the 1152-byte N06 wire instead (never parsed as an N01 header), and its refusals, deferrals and buffered repair
+//!   symbols are mapped to the same three verdicts; see `PlayoutSink`. This receiving side drives no paced FEC sender and
+//!   negotiates no peer format: the selection is the local trusted control call `MediaPlayout::enable_host_fec`.
 //! * **N04.** [`MediaEndpoint`] ends in [`MediaPlayout::prepare`]: authenticated PCM prepared for a scheduled downstream sink
 //!   while the group clock allows it. Preparing is not playing, and nothing here drives a DAC. A catch-up after an outage is
 //!   muted by the engine itself (bounded concealment, then silence, then fresh blocks only): the carrier never replays queued
@@ -46,19 +50,25 @@ use franken_platform::ops::KernelOps;
 use franken_platform::socket::{
     DatagramSocket, SocketError, bind_v4, bind_v6, open_datagram_socket,
 };
+use franken_stream::StreamId;
 use franken_stream::carrier::{
     CarrierError, CarrierReceiver, CarrierSender, DatagramPort, Lane, MediaSink, PollReport,
     PortFault, Received, SinkVerdict,
 };
+use franken_stream::fec::{self, DecodeState, Feedback};
 use franken_stream::link::{
     Announced, DirectoryError, LinkAction, LinkEvent, LinkManager, LinkState, PeerDirectory,
     TransportReason,
 };
 use franken_stream::playout::{Admission, BLOCK_PAYLOAD_BYTES};
 use serde::Serialize;
+use std::sync::atomic::AtomicBool;
 
 use crate::SpeakerReadinessState;
-use crate::media_playout::{MediaPlayout, MediaRefusal, Preparation, StartRefusal};
+use crate::media_playout::{
+    AuthenticatedFormat, AuthenticatedIngress, MediaPlayout, MediaRefusal, Preparation,
+    StartRefusal,
+};
 
 // ----------------------------------------------------------------------------------------------------- fault classification
 
@@ -315,6 +325,19 @@ pub struct EngineVerdicts {
     pub refused: u64,
     /// The platform clock failed first: not consumed from the replay window, no credit.
     pub backpressure: u64,
+    /// Authenticated, but its epoch or format is not the one this endpoint selected: no credit.
+    pub credit_refused: u64,
+    /// Selected N06 ingress that authenticated and was credited, by what it was: a source symbol, a retransmitted source
+    /// symbol, or a repair symbol buffered for the decoder (no engine verdict exists for it).
+    pub fec_source: u64,
+    pub fec_retransmit: u64,
+    pub fec_repair_buffered: u64,
+    /// Polls that stopped reading media because the selected FEC receiver would have deferred the next datagram. Nothing was
+    /// read, so nothing was lost: the datagrams stayed in the port's receive queue.
+    pub fec_deferred_polls: u64,
+    /// A datagram read and then deferred after all (render protection began between the readiness check and its offer):
+    /// dropped and counted as backpressure, no credit.
+    pub fec_deferred_dropped: u64,
 }
 
 impl EngineVerdicts {
@@ -330,33 +353,136 @@ impl EngineVerdicts {
     }
 }
 
+/// The media path as the carrier's sink. It takes the datagram's identity from [`MediaPlayout::ingest_authenticated`], the
+/// authenticated sequence, epoch and format the media path itself returns, and never reads a sequence number out of the raw
+/// bytes: a selected N06 datagram has no N01 header, so a byte-offset read of it would be a constant, not a sequence.
+///
+/// Credit follows one rule for every format: an authenticated datagram of this endpoint's stream, epoch, FEC origin generation
+/// and selected format family is consumed at its own authenticated sequence, whatever the engine then decided (late, duplicate, too far ahead) and even if
+/// it is only buffered (an N06 repair symbol has no engine verdict). The carrier keeps the highest, so credit is monotone.
+/// For a selected N06 stream the bound on what can be credited is the FEC receiver's authenticated window range
+/// `[current - 6, current + 1]` (at most 64 buffered symbols, fixed state): a window outside it is refused before any state
+/// changes and earns nothing.
 struct PlayoutSink<'a, O: KernelOps> {
     media: &'a mut MediaPlayout,
     platform: &'a mut PlatformLayer<O>,
     clock: &'a mut GroupClock,
     verdicts: &'a mut EngineVerdicts,
+    /// The carrier's epoch when this poll began: the only epoch whose authenticated media may earn credit.
+    epoch: u64,
+    /// The carrier's stream id (as a number) when this poll began: the only stream whose media may earn credit.
+    stream: u64,
+    /// The FEC origin generation this endpoint is crediting (0 with no N06 selected, as an N01 event carries none): the only
+    /// origin whose authenticated media may earn credit.
+    origin: u64,
+    /// Whether the media path had the N06 hybrid selected when this poll began (a control call cannot change it mid-poll).
+    fec_selected: bool,
+}
+
+impl<O: KernelOps> PlayoutSink<'_, O> {
+    fn backpressure(&mut self) -> SinkVerdict {
+        self.verdicts.backpressure = self.verdicts.backpressure.saturating_add(1);
+        SinkVerdict::Backpressure
+    }
+
+    fn refused(&mut self) -> SinkVerdict {
+        self.verdicts.refused = self.verdicts.refused.saturating_add(1);
+        SinkVerdict::Refused
+    }
+
+    /// A refusal from the selected N06 path. "Cannot take it now" (the clock, the shared work ledger, a window being decoded,
+    /// render protection) is backpressure; everything else (shape, identity, epoch, duplicate, storm, conflict, ...) is a refusal.
+    /// Neither earns credit. A pre-authentication refusal carries no authenticated sequence, so none could be credited anyway.
+    fn fec_refusal(&mut self, refusal: fec::Refusal) -> SinkVerdict {
+        match refusal {
+            fec::Refusal::Protected { .. } => {
+                self.verdicts.fec_deferred_dropped =
+                    self.verdicts.fec_deferred_dropped.saturating_add(1);
+                self.backpressure()
+            }
+            fec::Refusal::Clock | fec::Refusal::Work | fec::Refusal::Busy => self.backpressure(),
+            _ => self.refused(),
+        }
+    }
+
+    fn credit(&mut self, event: &AuthenticatedIngress) -> SinkVerdict {
+        let family = match event.format {
+            AuthenticatedFormat::N01Media => !self.fec_selected,
+            AuthenticatedFormat::N06Source
+            | AuthenticatedFormat::N06Retransmit
+            | AuthenticatedFormat::N06RepairSymbol => self.fec_selected,
+        };
+        if event.stream != self.stream
+            || event.source_epoch != self.epoch
+            || event.origin_ns != self.origin
+            || !family
+        {
+            self.verdicts.credit_refused = self.verdicts.credit_refused.saturating_add(1);
+            return SinkVerdict::Refused;
+        }
+        match event.format {
+            AuthenticatedFormat::N01Media => {}
+            AuthenticatedFormat::N06Source => {
+                self.verdicts.fec_source = self.verdicts.fec_source.saturating_add(1);
+            }
+            AuthenticatedFormat::N06Retransmit => {
+                self.verdicts.fec_retransmit = self.verdicts.fec_retransmit.saturating_add(1);
+            }
+            AuthenticatedFormat::N06RepairSymbol => {
+                self.verdicts.fec_repair_buffered =
+                    self.verdicts.fec_repair_buffered.saturating_add(1);
+            }
+        }
+        if let Some(admission) = event.admission {
+            self.verdicts.record(admission);
+        }
+        SinkVerdict::Admitted {
+            seq: event.sequence,
+        }
+    }
 }
 
 impl<O: KernelOps> MediaSink for PlayoutSink<'_, O> {
     fn offer(&mut self, datagram: &[u8]) -> SinkVerdict {
-        match self.media.ingest(self.platform, self.clock, datagram) {
-            // The datagram was authentic and left the replay window, whatever the engine then decided (late, duplicate,
-            // off the timeline): from the sender's side it is consumed, and the window must keep moving on a stale stream.
-            Ok(admission) => {
-                self.verdicts.record(admission);
-                match franken_stream::untrusted_sequence(datagram) {
-                    Ok(seq) => SinkVerdict::Admitted { seq },
-                    Err(_) => SinkVerdict::Refused,
-                }
-            }
-            Err(MediaRefusal::Clock(_) | MediaRefusal::Resolution(_)) => {
-                self.verdicts.backpressure = self.verdicts.backpressure.saturating_add(1);
-                SinkVerdict::Backpressure
-            }
-            Err(MediaRefusal::Stream(_) | MediaRefusal::NotMedia) => {
-                self.verdicts.refused = self.verdicts.refused.saturating_add(1);
-                SinkVerdict::Refused
-            }
+        match self
+            .media
+            .ingest_authenticated(self.platform, self.clock, datagram)
+        {
+            // The datagram was authentic and left the replay window (N01) or was stored (N06), whatever the engine then
+            // decided (late, duplicate, off the timeline): from the sender's side it is consumed, and the window must keep
+            // moving on a stale stream.
+            Ok(event) => self.credit(&event),
+            Err(MediaRefusal::Clock(_) | MediaRefusal::Resolution(_)) => self.backpressure(),
+            Err(MediaRefusal::Stream(_) | MediaRefusal::NotMedia) => self.refused(),
+            Err(MediaRefusal::Fec(refusal)) => self.fec_refusal(refusal),
+        }
+    }
+
+    /// Render protection of a selected N06 receiver is a question about the clock, not about a datagram, so it is asked before
+    /// a datagram is read: while it holds, the media loop stops and the datagrams wait in the port (see [`MediaSink::ready`]).
+    /// They wait in the socket's receive buffer, which the kernel bounds and overflows by dropping, so this is a limit and not a
+    /// retry queue. With no N06 selected this is `true` without reading any clock, so the baseline's kernel calls are unchanged.
+    fn ready(&mut self) -> bool {
+        if !self.fec_selected {
+            return true;
+        }
+        if self
+            .media
+            .host_fec_deferral(self.platform, self.clock)
+            .is_some()
+        {
+            self.verdicts.fec_deferred_polls = self.verdicts.fec_deferred_polls.saturating_add(1);
+            return false;
+        }
+        true
+    }
+
+    /// The selected N06 wire is longer than N01's largest datagram; with it selected the carrier must read that much.
+    fn max_datagram_bytes(&self) -> usize {
+        if self.fec_selected {
+            fec::DATAGRAM
+        } else {
+            franken_stream::MAX_DATAGRAM_BYTES
         }
     }
 }
@@ -367,6 +493,8 @@ pub struct MediaEndpoint<P: DatagramPort> {
     carrier: CarrierReceiver<P>,
     media: MediaPlayout,
     verdicts: EngineVerdicts,
+    /// The FEC origin generation credit is being held under, if the N06 hybrid has been selected. A change restarts credit.
+    credit_origin: Option<u64>,
 }
 
 impl<P: DatagramPort> MediaEndpoint<P> {
@@ -376,7 +504,22 @@ impl<P: DatagramPort> MediaEndpoint<P> {
             carrier,
             media,
             verdicts: EngineVerdicts::default(),
+            credit_origin: None,
         }
+    }
+
+    /// Hold credit under the FEC origin generation the media path is bound to now. The generation is the presentation origin: a
+    /// start that moves it begins a new window numbering, so credit starts again from zero, once, whichever call admitted the
+    /// start (this endpoint's `admit_start`, or the media path reached through `media_mut`). The first generation, and a
+    /// generation after FEC was deselected, start from whatever credit stands (an epoch change already reset it).
+    fn note_generation(&mut self) {
+        let origin = self.media.host_fec_origin();
+        if let (Some(held), Some(now)) = (self.credit_origin, origin)
+            && held != now
+        {
+            self.carrier.restart_credit();
+        }
+        self.credit_origin = origin;
     }
 
     #[must_use]
@@ -402,19 +545,59 @@ impl<P: DatagramPort> MediaEndpoint<P> {
         &self.verdicts
     }
 
-    /// Read what has arrived: control into the inbox, media into the playout engine through [`MediaPlayout::ingest`].
+    /// Read what has arrived: control into the inbox, media into the playout engine through
+    /// [`MediaPlayout::ingest_authenticated`], which returns the authenticated identity credit is given under. With the N06
+    /// hybrid selected, media is read only while the receiver is not in render protection, and the datagrams that wait stay in
+    /// the port's receive queue (`EngineVerdicts::fec_deferred_polls`).
     pub fn poll<O: KernelOps>(
         &mut self,
         platform: &mut PlatformLayer<O>,
         clock: &mut GroupClock,
     ) -> PollReport {
+        self.note_generation();
+        let epoch = self.carrier.epoch();
+        let stream = self.carrier.stream_id().get();
+        let origin = self.credit_origin.unwrap_or(0);
+        let fec_selected = self.media.host_fec_selected();
         let mut sink = PlayoutSink {
             media: &mut self.media,
             platform,
             clock,
             verdicts: &mut self.verdicts,
+            epoch,
+            stream,
+            origin,
+            fec_selected,
         };
         self.carrier.poll_into(&mut sink)
+    }
+
+    /// Drive the selected N06 decoder one bounded step and publish a finished recovery; see [`MediaPlayout::poll_host_fec`]. The
+    /// caller owns the cancellation token and the schedule.
+    ///
+    /// # Errors
+    /// [`MediaRefusal`], including `Fec(Protected { .. })` when render protection defers the step (retry after it).
+    pub fn poll_fec<O: KernelOps>(
+        &mut self,
+        platform: &mut PlatformLayer<O>,
+        clock: &mut GroupClock,
+        cancelled: &AtomicBool,
+    ) -> Result<DecodeState, MediaRefusal> {
+        self.media.poll_host_fec(platform, clock, cancelled)
+    }
+
+    /// The aggregate tail request for the earliest window that still needs one, if any; see [`MediaPlayout::host_fec_feedback`].
+    /// The returned bytes go to the sender over the reliable control lane: this endpoint sends nothing and there is no paced
+    /// FEC sender yet.
+    ///
+    /// # Errors
+    /// [`MediaRefusal`].
+    pub fn fec_feedback<O: KernelOps>(
+        &mut self,
+        platform: &mut PlatformLayer<O>,
+        clock: &mut GroupClock,
+    ) -> Result<Option<Feedback>, MediaRefusal> {
+        self.media.host_fec_feedback(platform, clock)
     }
 
     /// Prepare at most one block of PCM for a scheduled downstream sink; see [`MediaPlayout::prepare`].
@@ -432,6 +615,10 @@ impl<P: DatagramPort> MediaEndpoint<P> {
 
     /// Admit a start the control path scheduled; see [`MediaPlayout::admit_start`].
     ///
+    /// With the N06 hybrid selected, a start inside the same epoch that moves its presentation origin begins a new window
+    /// numbering (`window * 8 + esi` restarts from zero), so credit starts again from zero with it: credit is held under the
+    /// stream, the epoch, the origin generation and the format. A refused start changes neither.
+    ///
     /// # Errors
     /// [`StartRefusal`].
     pub fn admit_start<O: KernelOps>(
@@ -441,7 +628,24 @@ impl<P: DatagramPort> MediaEndpoint<P> {
         sched: franken_clock::group::StartSchedule,
         anchor_frame: u64,
     ) -> Result<franken_clock::group::StartPlan, StartRefusal> {
-        self.media.admit_start(platform, clock, sched, anchor_frame)
+        let plan = self
+            .media
+            .admit_start(platform, clock, sched, anchor_frame)?;
+        self.note_generation();
+        Ok(plan)
+    }
+
+    /// Follow a source restart announced by the control path (see `CarrierSender::restart_group`): a fresh stream identity under
+    /// the same key and a strictly newer epoch. Two calls, with nothing between them, so no poll sees one without the other: the
+    /// media path binds the new stream ([`MediaPlayout::bind_stream`]: its replay window restarts at `epoch`, the old stream's
+    /// datagrams are refused as a wrong stream, and a selected N06 session, which names the old stream, ends with the bind: the
+    /// owner selects it again for the new stream with `enable_host_fec`), then the carrier follows
+    /// ([`CarrierReceiver::restart_stream`]: its reports name the new stream from position 0 and the old stream's backlog is
+    /// dropped). The group clock and the engine are the control path's calls, as for an epoch restart: `MediaPlayout::begin_epoch`
+    /// and [`Self::admit_start`].
+    pub fn restart_stream(&mut self, stream_id: StreamId, epoch: u64) {
+        self.media.bind_stream(stream_id, epoch);
+        self.carrier.restart_stream(stream_id, epoch);
     }
 
     /// Send the authenticated consumption report to the sender.
@@ -627,5 +831,7 @@ pub fn readiness_for(reason: TransportReason) -> SpeakerReadinessState {
     }
 }
 
+#[cfg(test)]
+mod fec_tests;
 #[cfg(test)]
 mod tests;

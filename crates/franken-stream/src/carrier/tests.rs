@@ -2159,3 +2159,623 @@ fn n07_an_aggregate_full_of_held_datagrams_refuses_the_newcomer_and_loses_nothin
         .expect("queued");
     assert_eq!(report.queued, 2);
 }
+
+// ---- several streams on one interface -------------------------------------------------------------------------------------
+
+fn other_key() -> StreamKey {
+    StreamKey::from_bytes([0x48; 32])
+}
+
+fn other_stream() -> StreamId {
+    StreamId::new(0x0700_0000_0000_0002).expect("nonzero stream id")
+}
+
+fn third_stream() -> StreamId {
+    StreamId::new(0x0700_0000_0000_0003).expect("nonzero stream id")
+}
+
+fn fourth_stream() -> StreamId {
+    StreamId::new(0x0700_0000_0000_0004).expect("nonzero stream id")
+}
+
+/// The second group's epoch: not the primary group's, so a check that confuses the two is caught.
+const SECOND_EPOCH: u64 = 5;
+
+/// Two streams on one interface over one script port: the primary group (key, stream 1, epoch 1) with peer 7, and a second group
+/// (another key, stream 2, epoch 5) with peer 8.
+fn two_group_sender(limits: CarrierLimits) -> (CarrierSender<ScriptPort>, GroupId) {
+    let mut sender =
+        CarrierSender::with_port(key(), stream(), 1, limits, ScriptPort::new()).expect("sender");
+    let second = sender
+        .add_group(other_key(), other_stream(), SECOND_EPOCH)
+        .expect("a second group");
+    sender
+        .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+        .expect("peer 7");
+    sender
+        .add_peer_in_group(
+            second,
+            8,
+            addr("127.0.0.1:42003"),
+            addr("127.0.0.1:42004"),
+            1500,
+        )
+        .expect("peer 8");
+    (sender, second)
+}
+
+/// One block for each group's peers at `now_ns`: `index` is the block number.
+fn submit_both(sender: &mut CarrierSender<ScriptPort>, second: GroupId, index: u64, now_ns: u64) {
+    sender
+        .submit_media(1, &long_block(index, now_ns), now_ns)
+        .expect("queued for the primary group");
+    sender
+        .submit_group_media(second, SECOND_EPOCH, &long_block(index, now_ns), now_ns)
+        .expect("queued for the second group");
+}
+
+fn view(sender: &CarrierSender<ScriptPort>, id: u32) -> PeerView {
+    sender.peer_view(id).expect("a peer")
+}
+
+/// Give the sender one report datagram as it arrived, and apply it. Returns how many reports moved a peer.
+fn feed(sender: &mut CarrierSender<ScriptPort>, report: &[u8]) -> u32 {
+    sender
+        .port
+        .inbound_control
+        .push_back((report.to_vec(), None));
+    sender.poll_reports()
+}
+
+#[test]
+fn n07_two_groups_draw_on_one_interface_bucket_and_one_work_cap() {
+    // a bucket that affords exactly three datagrams, however many groups ask for them: a bucket for each group would send four
+    let cost = (MAX_DATAGRAM_BYTES + IPV4_UDP_OVERHEAD_BYTES) as u64;
+    let limits = CarrierLimits {
+        pace_bytes_per_sec: 1_000_000,
+        pace_burst_bytes: 3 * cost,
+        ..CarrierLimits::baseline()
+    };
+    let (mut sender, second) = two_group_sender(limits);
+    for index in 0..2 {
+        submit_both(&mut sender, second, index, 0);
+    }
+    let report = sender.pump(0);
+    assert_eq!((report.media_sent, report.pace_limited), (3, true));
+    let (seven, eight) = (addr("127.0.0.1:42001"), addr("127.0.0.1:42003"));
+    let sent_to = |sender: &CarrierSender<ScriptPort>, to: SocketAddr| {
+        sender
+            .port
+            .sent
+            .iter()
+            .filter(|(lane, _, dest)| *lane == Lane::Media && *dest == to)
+            .count()
+    };
+    assert_eq!(
+        (sent_to(&sender, seven), sent_to(&sender, eight)),
+        (2, 1),
+        "round robin over peers, whatever group they are in: 7, 8, 7"
+    );
+    assert_eq!(
+        report.next_send_ns,
+        Some(cost * 1_000),
+        "one bucket, one deadline"
+    );
+    // the instant it affords one more, the peer that is still waiting gets it
+    let later = sender.pump(cost * 1_000);
+    assert_eq!(later.media_sent, 1);
+    assert_eq!(sent_to(&sender, eight), 2);
+
+    // one bound on a pump's media-lane attempts for the whole interface, not one for each group
+    let capped = CarrierLimits {
+        max_sends_per_pump: 2,
+        pace_burst_bytes: 65_536,
+        ..CarrierLimits::baseline()
+    };
+    let (mut sender, second) = two_group_sender(capped);
+    for index in 0..2 {
+        submit_both(&mut sender, second, index, 0);
+    }
+    let first = sender.pump(0);
+    assert_eq!((first.media_sent, first.send_cap_hit), (2, true));
+    assert_eq!(
+        sender.pump(0).media_sent,
+        2,
+        "the cap is per pump, so the rest goes in the next"
+    );
+}
+
+#[test]
+fn n07_a_group_is_admitted_against_the_budget_every_group_shares_and_leaving_returns_it() {
+    let base = CarrierLimits::baseline();
+    // the pacing budget carries two peers
+    let limits = CarrierLimits {
+        pace_bytes_per_sec: 2 * base.peer_load_bytes_per_sec,
+        ..base.clone()
+    };
+    let (mut sender, second) = two_group_sender(limits);
+    let third = sender
+        .add_group(other_key(), third_stream(), 9)
+        .expect("a third group, which holds no budget until it has a peer");
+    sender
+        .submit_group_media(second, SECOND_EPOCH, &long_block(0, 0), 0)
+        .expect("queued");
+    let playing = |sender: &CarrierSender<ScriptPort>| (sender.peer_view(7), sender.peer_view(8));
+    let before = playing(&sender);
+    // a third peer is refused whichever group asks, and the two that are playing are exactly as they were
+    let refused = sender.add_peer_in_group(
+        third,
+        9,
+        addr("127.0.0.1:42005"),
+        addr("127.0.0.1:42006"),
+        1500,
+    );
+    assert_eq!(
+        refused,
+        Err(CarrierError::OverBudget {
+            peer: 9,
+            needed: 3 * base.peer_load_bytes_per_sec,
+            budget: 2 * base.peer_load_bytes_per_sec,
+        })
+    );
+    assert_eq!(sender.stats().admissions_rejected, 1);
+    assert_eq!(sender.peer_ids(), vec![7, 8]);
+    assert_eq!(playing(&sender), before);
+    // the second group leaves: what its peer had queued is counted, and the budget it held is the third group's
+    sender
+        .remove_group(second)
+        .expect("the second group leaves");
+    assert_eq!(sender.stats().removed_peer_dropped_packets, 1);
+    assert_eq!(sender.group_ids(), vec![PRIMARY_GROUP, third]);
+    assert_eq!(sender.peer_ids(), vec![7]);
+    sender
+        .add_peer_in_group(
+            third,
+            9,
+            addr("127.0.0.1:42005"),
+            addr("127.0.0.1:42006"),
+            1500,
+        )
+        .expect("the budget the second group held is free");
+    assert_eq!(sender.peer_ids(), vec![7, 9]);
+}
+
+#[test]
+fn n07_the_aggregate_cap_is_the_interfaces_and_the_longest_queue_pays_in_whichever_group_it_is() {
+    let limits = CarrierLimits {
+        aggregate_queue_packets: 4,
+        ..CarrierLimits::baseline()
+    };
+    let (mut sender, second) = two_group_sender(limits);
+    for index in 0..4 {
+        sender
+            .submit_media(1, &long_block(index, 0), 0)
+            .expect("queued");
+    }
+    assert_eq!(
+        (
+            view(&sender, 7).queued_packets,
+            view(&sender, 8).queued_packets
+        ),
+        (4, 0)
+    );
+    // the second group's frame finds the interface full: the longest queue, which is the other group's, gives up its oldest
+    let report = sender
+        .submit_group_media(second, SECOND_EPOCH, &long_block(9, 0), 0)
+        .expect("queued");
+    assert_eq!((report.queued, report.evicted), (1, 1));
+    assert_eq!(
+        (
+            view(&sender, 7).queued_packets,
+            view(&sender, 8).queued_packets
+        ),
+        (3, 1)
+    );
+    let dropped = |sender: &CarrierSender<ScriptPort>, id: u32| {
+        view(sender, id).counters.media_dropped_aggregate_packets
+    };
+    assert_eq!((dropped(&sender, 7), dropped(&sender, 8)), (1, 0));
+    // bounded over a long run that alternates groups, with neither peer starved of room
+    for index in 10..60 {
+        submit_both(&mut sender, second, index, 0);
+        let total = view(&sender, 7).queued_packets + view(&sender, 8).queued_packets;
+        assert!(total <= 4, "aggregate {total} packets");
+    }
+    assert!(view(&sender, 7).queued_packets > 0 && view(&sender, 8).queued_packets > 0);
+}
+
+#[test]
+fn n07_advancing_one_groups_epoch_fences_only_that_group_and_a_stale_submit_is_refused_by_group() {
+    let (mut sender, second) = two_group_sender(CarrierLimits::baseline());
+    for index in 0..2 {
+        submit_both(&mut sender, second, index, 0);
+    }
+    assert_eq!(sender.pump(0).media_sent, 4);
+    submit_both(&mut sender, second, 2, 0);
+    let (a_before, b_before) = (view(&sender, 7), view(&sender, 8));
+    assert_eq!(
+        (
+            a_before.sent_next,
+            a_before.queued_packets,
+            b_before.sent_next,
+            b_before.queued_packets
+        ),
+        (2, 1, 2, 1)
+    );
+    sender
+        .advance_group_epoch(second, SECOND_EPOCH + 1)
+        .expect("the second group moves");
+    // the first group is exactly as it was; the second group's peer lost its queue, counted, and numbers again from 0
+    assert_eq!(view(&sender, 7), a_before);
+    let b = view(&sender, 8);
+    assert_eq!(
+        (b.queued_packets, b.sent_next, b.reported_next, b.in_flight),
+        (0, 0, 0, 0)
+    );
+    assert_eq!(b.counters.media_dropped_fenced_packets, 1);
+    assert_eq!(
+        (
+            sender.epoch(),
+            sender.group_view(second).expect("a group").epoch
+        ),
+        (1, SECOND_EPOCH + 1)
+    );
+    // a submit under the epoch a group left, or under another group's epoch, or for no group, is refused and queues nothing
+    assert_eq!(
+        sender.submit_group_media(second, SECOND_EPOCH, &long_block(3, 0), 0),
+        Err(CarrierError::StaleEpoch {
+            submitted: SECOND_EPOCH,
+            current: SECOND_EPOCH + 1
+        })
+    );
+    assert_eq!(
+        sender.submit_media(SECOND_EPOCH, &long_block(3, 0), 0),
+        Err(CarrierError::StaleEpoch {
+            submitted: SECOND_EPOCH,
+            current: 1
+        })
+    );
+    assert_eq!(
+        sender.submit_group_media(99, 1, &long_block(3, 0), 0),
+        Err(CarrierError::UnknownGroup(99))
+    );
+    assert_eq!(sender.stats().stale_submits, 2);
+    assert!(matches!(
+        sender.advance_group_epoch(second, SECOND_EPOCH + 1),
+        Err(CarrierError::Stream(StreamError::EpochNotAdvancing { .. }))
+    ));
+    assert_eq!(
+        sender.advance_group_epoch(99, 7),
+        Err(CarrierError::UnknownGroup(99))
+    );
+    // the permitted positives: the second group sends again from 0 under its new epoch, the first carries on from 2
+    let now = 1_000_000;
+    sender
+        .submit_group_media(second, SECOND_EPOCH + 1, &long_block(4, now), now)
+        .expect("queued");
+    sender
+        .submit_media(1, &long_block(3, now), now)
+        .expect("queued");
+    let from = sender.port.sent.len();
+    sender.pump(now);
+    let mut first_rx = StreamReceiver::new(key(), stream(), 1);
+    let mut second_rx = StreamReceiver::new(other_key(), other_stream(), SECOND_EPOCH + 1);
+    let (mut first_seqs, mut second_seqs) = (Vec::new(), Vec::new());
+    for (_, wire, to) in &sender.port.sent[from..] {
+        if *to == addr("127.0.0.1:42003") {
+            second_seqs.push(
+                second_rx
+                    .accept(wire)
+                    .expect("the second group's N01 receiver")
+                    .seq,
+            );
+        } else {
+            first_seqs.push(
+                first_rx
+                    .accept(wire)
+                    .expect("the first group's N01 receiver")
+                    .seq,
+            );
+        }
+    }
+    assert_eq!((first_seqs, second_seqs), (vec![2, 3], vec![0]));
+}
+
+#[test]
+fn n07_a_report_is_checked_with_the_key_of_the_stream_it_names_and_credits_only_that_streams_peer()
+{
+    let (mut sender, second) = two_group_sender(CarrierLimits::baseline());
+    for index in 0..2 {
+        submit_both(&mut sender, second, index, 0);
+    }
+    assert_eq!(sender.pump(0).media_sent, 4);
+    let reported = |sender: &CarrierSender<ScriptPort>, id: u32| view(sender, id).reported_next;
+
+    // peer 7 under the second group's stream and key, and peer 8 under the first's: neither is a member, nothing is credited
+    let a_as_b = encode_report(&other_key(), other_stream(), SECOND_EPOCH, 2, 7);
+    assert_eq!(feed(&mut sender, &a_as_b), 0);
+    let b_as_a = encode_report(&key(), stream(), 1, 2, 8);
+    assert_eq!(feed(&mut sender, &b_as_a), 0);
+    assert_eq!(sender.stats().reports_unknown_source, 2);
+    assert_eq!((reported(&sender, 7), reported(&sender, 8)), (0, 0));
+    // the first stream's identity under the second group's key: the tag is checked with the first group's key and fails
+    let wrong_key = encode_report(&other_key(), stream(), 1, 2, 7);
+    assert_eq!(feed(&mut sender, &wrong_key), 0);
+    assert_eq!(sender.stats().reports_bad_tag, 1);
+    // a stream no group carries, signed with the primary key (authentic, so a wrong stream), or with the second group's (a bad tag)
+    let unknown_primary = encode_report(&key(), third_stream(), 1, 2, 7);
+    assert_eq!(feed(&mut sender, &unknown_primary), 0);
+    assert_eq!(sender.stats().reports_wrong_stream, 1);
+    let unknown_other = encode_report(&other_key(), third_stream(), 1, 2, 8);
+    assert_eq!(feed(&mut sender, &unknown_other), 0);
+    assert_eq!(sender.stats().reports_bad_tag, 2);
+    // the second group's stream under the first group's epoch is stale, and a position beyond what was sent is invalid
+    let stale = encode_report(&other_key(), other_stream(), 1, 2, 8);
+    assert_eq!(feed(&mut sender, &stale), 0);
+    assert_eq!(sender.stats().reports_stale_epoch, 1);
+    let beyond = encode_report(&other_key(), other_stream(), SECOND_EPOCH, 3, 8);
+    assert_eq!(feed(&mut sender, &beyond), 0);
+    assert_eq!(sender.stats().reports_invalid, 1);
+    assert_eq!((reported(&sender, 7), reported(&sender, 8)), (0, 0));
+
+    // the permitted positives: each group's genuine report credits its own peer and nobody else's
+    let genuine_b = encode_report(&other_key(), other_stream(), SECOND_EPOCH, 2, 8);
+    assert_eq!(feed(&mut sender, &genuine_b), 1);
+    assert_eq!((reported(&sender, 7), reported(&sender, 8)), (0, 2));
+    let genuine_a = encode_report(&key(), stream(), 1, 2, 7);
+    assert_eq!(feed(&mut sender, &genuine_a), 1);
+    assert_eq!((reported(&sender, 7), reported(&sender, 8)), (2, 2));
+    assert_eq!(sender.stats().control_datagrams_in, 9);
+}
+
+#[test]
+fn n07_a_source_restart_takes_a_fresh_stream_and_a_newer_epoch_and_touches_nothing_else() {
+    let (mut sender, second) = two_group_sender(CarrierLimits::baseline());
+    for index in 0..2 {
+        submit_both(&mut sender, second, index, 0);
+    }
+    assert_eq!(sender.pump(0).media_sent, 4);
+    // peer 7's receiver consumed both and reported, so the restart has a position and a credit to forget
+    let seven = addr("127.0.0.1:42001");
+    let old_wires: Vec<Vec<u8>> = sender
+        .port
+        .sent
+        .iter()
+        .filter(|(_, _, to)| *to == seven)
+        .map(|(_, wire, _)| wire.clone())
+        .collect();
+    let mut receiver = real_receiver();
+    assert_eq!(deliver(&mut receiver, &old_wires).len(), 2);
+    let old_report = report_of(&mut receiver);
+    assert_eq!(feed(&mut sender, &old_report), 1);
+    assert_eq!(view(&sender, 7).reported_next, 2);
+    sender
+        .submit_media(1, &long_block(2, 0), 0)
+        .expect("one block still queued at the restart");
+    let (b_before, second_before) = (view(&sender, 8), sender.group_view(second));
+
+    sender
+        .restart_group(PRIMARY_GROUP, third_stream(), 2)
+        .expect("a fresh stream under a newer epoch");
+    let a = view(&sender, 7);
+    assert_eq!(
+        (a.queued_packets, a.sent_next, a.reported_next, a.in_flight),
+        (0, 0, 0, 0)
+    );
+    assert_eq!(a.counters.media_dropped_fenced_packets, 1);
+    let primary = sender.group_view(PRIMARY_GROUP).expect("a group");
+    assert_eq!(
+        (primary.stream_id, primary.epoch),
+        (third_stream().get(), 2)
+    );
+    assert_eq!(
+        (view(&sender, 8), sender.group_view(second)),
+        (b_before, second_before),
+        "the other group is exactly as it was"
+    );
+    // the old stream's report earns nothing, and a submit under the old epoch is stale
+    assert_eq!(feed(&mut sender, &old_report), 0);
+    assert_eq!(sender.stats().reports_wrong_stream, 1);
+    assert_eq!(view(&sender, 7).reported_next, 0);
+    assert_eq!(
+        sender.submit_media(1, &long_block(3, 0), 0),
+        Err(CarrierError::StaleEpoch {
+            submitted: 1,
+            current: 2
+        })
+    );
+    // numbering restarted under the new stream: a receiver bound to it admits 0 and 1, and refuses an old-stream wire as a wrong stream
+    let now = 1_000_000;
+    for index in 3..5 {
+        sender
+            .submit_media(2, &long_block(index, now), now)
+            .expect("queued under the new epoch");
+    }
+    let from = sender.port.sent.len();
+    sender.pump(now);
+    let mut bound = StreamReceiver::new(key(), third_stream(), 2);
+    let seqs: Vec<u64> = wires_since(&sender, from)
+        .iter()
+        .map(|wire| {
+            bound
+                .accept(wire)
+                .expect("admitted under the new stream")
+                .seq
+        })
+        .collect();
+    assert_eq!(seqs, vec![0, 1]);
+    assert!(matches!(
+        bound.accept(&old_wires[0]),
+        Err(StreamError::WrongStream { .. })
+    ));
+
+    // a refusal changes nothing: another group's identity, its own, a stream with no newer epoch, a group that is not there
+    let held = (
+        sender.group_view(PRIMARY_GROUP),
+        sender.peer_view(7),
+        sender.stats().epoch_advances,
+    );
+    assert_eq!(
+        sender.restart_group(PRIMARY_GROUP, other_stream(), 3),
+        Err(CarrierError::StreamIdInUse(other_stream().get()))
+    );
+    assert_eq!(
+        sender.restart_group(PRIMARY_GROUP, third_stream(), 3),
+        Err(CarrierError::StreamIdInUse(third_stream().get()))
+    );
+    assert!(matches!(
+        sender.restart_group(PRIMARY_GROUP, fourth_stream(), 2),
+        Err(CarrierError::Stream(StreamError::EpochNotAdvancing {
+            requested: 2,
+            current: 2
+        }))
+    ));
+    assert_eq!(
+        sender.restart_group(77, fourth_stream(), 9),
+        Err(CarrierError::UnknownGroup(77))
+    );
+    assert_eq!(
+        (
+            sender.group_view(PRIMARY_GROUP),
+            sender.peer_view(7),
+            sender.stats().epoch_advances
+        ),
+        held
+    );
+    // the permitted positive: a fresh identity under a newer epoch is taken again, and a peer fenced for its path stays fenced
+    assert_eq!(sender.set_path_mtu(7, 1000), Ok(PathOutcome::Fenced));
+    sender
+        .restart_group(PRIMARY_GROUP, fourth_stream(), 3)
+        .expect("a second restart");
+    assert_eq!(
+        sender.group_view(PRIMARY_GROUP).expect("a group").stream_id,
+        fourth_stream().get()
+    );
+    assert_eq!(view(&sender, 7).fence, Some(FenceReason::PathMtuTooSmall));
+}
+
+#[test]
+fn n07_a_receiver_follows_a_source_restart_reports_the_new_stream_from_zero_and_refuses_the_old() {
+    let (media, control) = (addr("127.0.0.1:42001"), addr("127.0.0.1:42002"));
+    let mut sender = sender_over(ScriptPort::new());
+    sender.add_peer(7, media, control, 1500).expect("peer 7");
+    let mut receiver = real_receiver();
+    for index in 0..4 {
+        sender
+            .submit_media(1, &full_block(index, 0), 0)
+            .expect("queued");
+    }
+    assert_eq!(sender.pump(0).media_sent, 4);
+    let old_wires = wires_since(&sender, 0);
+    assert_eq!(deliver(&mut receiver, &old_wires[..3]).len(), 3);
+    assert_eq!(receiver.consumed_next(), 3);
+    // a fourth datagram of the old stream is read but not yet taken: the restart drops it
+    receiver
+        .port
+        .inbound_media
+        .push_back((old_wires[3].clone(), None));
+    receiver.poll();
+    assert_eq!(receiver.inbound_len(), 1);
+
+    sender
+        .restart_group(PRIMARY_GROUP, third_stream(), 2)
+        .expect("a fresh stream under a newer epoch");
+    receiver.restart_stream(third_stream(), 2);
+    assert_eq!((receiver.inbound_len(), receiver.consumed_next()), (0, 0));
+    // the old stream's datagrams are refused as a wrong stream, and nothing is taken from them
+    let before = receiver.stream_counters().rejected_wrong_stream;
+    assert!(deliver(&mut receiver, &old_wires).is_empty());
+    assert_eq!(receiver.stream_counters().rejected_wrong_stream, before + 4);
+    // the new stream's first datagram is admitted from 0 under the new epoch
+    let now = 1_000_000;
+    sender
+        .submit_media(2, &full_block(5, now), now)
+        .expect("queued under the new epoch");
+    let from = sender.port.sent.len();
+    sender.pump(now);
+    let packets = deliver(&mut receiver, &wires_since(&sender, from));
+    assert_eq!(packets.len(), 1);
+    assert_eq!(
+        (
+            packets[0].seq,
+            packets[0].stream_id,
+            packets[0].session_epoch
+        ),
+        (0, third_stream(), 2)
+    );
+    // the receiver's report names the new stream at its own position, and the restarted peer takes it as credit
+    let report = report_of(&mut receiver);
+    assert_eq!(
+        parse_report(&key(), &report),
+        Ok(Report {
+            stream_id: third_stream().get(),
+            epoch: 2,
+            consumed_next: 1,
+            peer: 7
+        })
+    );
+    assert_eq!(feed(&mut sender, &report), 1);
+    assert_eq!(view(&sender, 7).reported_next, 1);
+}
+
+#[test]
+fn n07_group_membership_is_bounded_and_each_refusal_changes_nothing() {
+    let limits = CarrierLimits {
+        max_peers: 2,
+        ..CarrierLimits::baseline()
+    };
+    let mut sender =
+        CarrierSender::with_port(key(), stream(), 1, limits, ScriptPort::new()).expect("sender");
+    // a stream identity is one group's: the primary's cannot be reused, and neither can another's
+    assert_eq!(
+        sender.add_group(other_key(), stream(), 3),
+        Err(CarrierError::StreamIdInUse(stream().get()))
+    );
+    let second = sender
+        .add_group(other_key(), other_stream(), 3)
+        .expect("a second group");
+    assert_eq!(
+        sender.add_group(key(), other_stream(), 4),
+        Err(CarrierError::StreamIdInUse(other_stream().get()))
+    );
+    // the groups are bounded by the peer cap, because each group that matters holds a peer
+    assert_eq!(
+        sender.add_group(key(), third_stream(), 4),
+        Err(CarrierError::TooManyGroups { max: 2 })
+    );
+    assert_eq!(sender.group_ids(), vec![PRIMARY_GROUP, second]);
+    // the primary group is fixed, and a group that is not there is refused wherever it is named
+    assert_eq!(
+        sender.remove_group(PRIMARY_GROUP),
+        Err(CarrierError::PrimaryGroupIsFixed)
+    );
+    assert_eq!(sender.remove_group(40), Err(CarrierError::UnknownGroup(40)));
+    let (media, control) = (addr("127.0.0.1:42001"), addr("127.0.0.1:42002"));
+    assert_eq!(
+        sender.add_peer_in_group(40, 7, media, control, 1500),
+        Err(CarrierError::UnknownGroup(40))
+    );
+    // a peer id is the interface's: the same id in another group is a duplicate
+    sender.add_peer(7, media, control, 1500).expect("peer 7");
+    assert_eq!(
+        sender.add_peer_in_group(
+            second,
+            7,
+            addr("127.0.0.1:42003"),
+            addr("127.0.0.1:42004"),
+            1500
+        ),
+        Err(CarrierError::DuplicatePeer(7))
+    );
+    assert_eq!(sender.stats().admissions_rejected, 2);
+    assert_eq!(sender.peer_ids(), vec![7]);
+    // leaving gives the room back, and a group id is never reused
+    sender
+        .remove_group(second)
+        .expect("the second group leaves");
+    let third = sender
+        .add_group(key(), third_stream(), 4)
+        .expect("room again");
+    assert!(third > second);
+    assert_eq!(sender.group_ids(), vec![PRIMARY_GROUP, third]);
+}

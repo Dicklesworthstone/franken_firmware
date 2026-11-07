@@ -21,6 +21,12 @@
 //!   report, which moves the sequence budget (see [`SEQ_AHEAD_LIMIT`]). It renders nothing.
 //! * **Prioritised.** Control datagrams travel on a second socket, are sent ahead of media in every pump, and are
 //!   limited per pump, so neither side can starve the other.
+//! * **Grouped.** One sender owns one interface and may carry several streams on it (a group is a key, a stream identity
+//!   and an epoch, with its own peers). Every group's peers draw on the same bucket, the same control share, the same
+//!   aggregate caps, the same per-pump work bounds and the same admission sum: those bounds are the interface's, not a
+//!   group's, and a second sender over the same interface would have its own, which is why groups live here. Peers are
+//!   served round robin as peers, so a group's share of a saturated interface follows its member count. Repair traffic of
+//!   a future paced N06 sender is not charged here yet.
 //!
 //! A pump never blocks: sockets are non-blocking and a would-block is counted, not waited on.
 
@@ -74,6 +80,11 @@ const _: () = assert!(SEQ_AHEAD_LIMIT < crate::MAX_FORWARD_SEQ_GAP);
 /// Attempts at one signed datagram before it is dropped. A sequence number is allocated when a frame is signed and is never
 /// reused, so a transport that refuses is retried with the same bytes, and a datagram that cannot go costs one number.
 pub const SEND_RETRY_ATTEMPTS: u8 = 3;
+/// A stream the sender carries on its interface. Ids are handed out by [`CarrierSender::add_group`] and never reused.
+pub type GroupId = u32;
+/// The group a sender is built with. It is the one [`CarrierSender::add_peer`], [`CarrierSender::submit_media`] and
+/// [`CarrierSender::advance_epoch`] mean, and it is never removed.
+pub const PRIMARY_GROUP: GroupId = 0;
 
 /// The largest N01 payload that fits one datagram of a path with this MTU, in whole frames, or `None` when not even
 /// one frame fits. The path must carry the IP and UDP headers, the N01 header and its tag.
@@ -123,6 +134,14 @@ pub enum CarrierError {
     ControlTooLarge { len: usize },
     #[error("the control queue of peer {0} is full")]
     ControlQueueFull(u32),
+    #[error("group {0} is not known")]
+    UnknownGroup(GroupId),
+    #[error("the carrier already has its {max} groups")]
+    TooManyGroups { max: usize },
+    #[error("stream id {0} is already carried by a group on this interface")]
+    StreamIdInUse(u64),
+    #[error("the primary group is the one the sender was built with and cannot be removed")]
+    PrimaryGroupIsFixed,
     #[error(transparent)]
     Stream(#[from] StreamError),
 }
@@ -146,6 +165,10 @@ impl CarrierError {
             Self::BadPayload { .. } => "BAD_PAYLOAD",
             Self::ControlTooLarge { .. } => "CONTROL_TOO_LARGE",
             Self::ControlQueueFull(_) => "CONTROL_QUEUE_FULL",
+            Self::UnknownGroup(_) => "UNKNOWN_GROUP",
+            Self::TooManyGroups { .. } => "TOO_MANY_GROUPS",
+            Self::StreamIdInUse(_) => "STREAM_ID_IN_USE",
+            Self::PrimaryGroupIsFixed => "PRIMARY_GROUP_IS_FIXED",
             Self::Stream(err) => err.code(),
         }
     }
@@ -425,6 +448,18 @@ impl CarrierLimits {
         }
     }
 
+    /// The peer table at its bound: `max_peers` slots, each the size of one peer's fixed state (its counters, addresses, key,
+    /// queue headers and options, all inline; the queues' slot arrays and payloads are not in it, see [`RetainedBytes`]). The
+    /// sender allocates the table once, at this size, when it is built, and admitting a peer fills a slot without allocating, so
+    /// [`CarrierSender::peer_table_bytes`] is this figure from construction on, however few peers are admitted. It is struct
+    /// state, not payload or sequence allocation, so it is reported and bounded apart from [`Self::max_retained_bytes`].
+    /// Saturating, like that figure.
+    #[must_use]
+    pub fn max_peer_table_bytes(&self) -> usize {
+        self.max_peers
+            .saturating_mul(std::mem::size_of::<PeerState>())
+    }
+
     pub fn validate(&self) -> Result<(), CarrierError> {
         let bad = |why: &'static str| -> Result<(), CarrierError> {
             Err(CarrierError::InvalidLimits(why))
@@ -647,6 +682,26 @@ pub struct PeerView {
     pub counters: PeerCounters,
 }
 
+/// A read-only view of one group: the stream it carries and what its peers hold. The queue figures are sums over its peers; the
+/// caps they are held to are the interface's ([`CarrierLimits`]), shared with every other group.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GroupView {
+    pub group: GroupId,
+    pub stream_id: u64,
+    pub epoch: u64,
+    pub peers: usize,
+    pub queued_packets: usize,
+    pub queued_bytes: usize,
+}
+
+/// What one stream on the interface is: the key that signs it and its reports, its identity and its epoch.
+struct GroupState {
+    id: GroupId,
+    key: StreamKey,
+    stream_id: StreamId,
+    epoch: u64,
+}
+
 struct QueuedFrame {
     frame: OutboundFrame,
     wire_len: usize,
@@ -673,6 +728,8 @@ struct SentDatagram {
 
 struct PeerState {
     id: u32,
+    /// The stream this peer is a member of.
+    group: GroupId,
     media_addr: SocketAddr,
     control_addr: SocketAddr,
     ipv6: bool,
@@ -768,6 +825,16 @@ impl PeerState {
         if !self.waiting(window) {
             self.probe_due_ns = None;
         }
+    }
+
+    /// Number again from 0 under a new epoch or a new stream: everything queued or held is dropped (counted as fenced), and no
+    /// count, report position, probe or retained datagram of the old numbering survives. The peer's address, path and an MTU
+    /// fence are not part of the numbering and are kept.
+    fn restart_numbering(&mut self) {
+        self.purge_all(DropKind::Fenced);
+        self.sent_next = 0;
+        self.reported_next = 0;
+        self.forget_in_flight();
     }
 
     /// A new epoch restarts every count: nothing from the old one can be reported or retried.
@@ -932,12 +999,14 @@ fn parse_report(key: &StreamKey, wire: &[u8]) -> Result<Report, ReportError> {
 }
 
 /// The sending half: queues frames per peer, paces them out, sends control ahead of media, and reads receiver reports.
+///
+/// It owns one interface: one port, one bucket, one set of caps and one admission sum, shared by every group (stream) it
+/// carries. `groups[0]` is the primary group, built with the sender, and is never removed.
 pub struct CarrierSender<P: DatagramPort = HostUdp> {
     limits: CarrierLimits,
     port: P,
-    key: StreamKey,
-    stream_id: StreamId,
-    epoch: u64,
+    groups: Vec<GroupState>,
+    next_group: GroupId,
     peers: Vec<PeerState>,
     link_up: bool,
     pacer: Pacer,
@@ -1000,13 +1069,19 @@ impl<P: DatagramPort> CarrierSender<P> {
             (limits.pace_bytes_per_sec / CONTROL_SHARE_DIVISOR).max(1),
             limits.control_per_pump as u64 * (MAX_CONTROL_BYTES + IPV6_UDP_OVERHEAD_BYTES) as u64,
         );
+        // the peer table is allocated once, at its bound (`validate` holds `max_peers` to 64), so admitting a peer never grows it
+        let peers = Vec::with_capacity(limits.max_peers);
         Ok(Self {
             limits,
             port,
-            key,
-            stream_id,
-            epoch,
-            peers: Vec::new(),
+            groups: vec![GroupState {
+                id: PRIMARY_GROUP,
+                key,
+                stream_id,
+                epoch,
+            }],
+            next_group: PRIMARY_GROUP + 1,
+            peers,
             link_up: true,
             pacer,
             control_pacer,
@@ -1082,9 +1157,37 @@ impl<P: DatagramPort> CarrierSender<P> {
         ))
     }
 
+    /// The primary group's epoch (see [`Self::group_view`] for the others).
     #[must_use]
-    pub const fn epoch(&self) -> u64 {
-        self.epoch
+    pub fn epoch(&self) -> u64 {
+        self.groups[0].epoch
+    }
+
+    /// The ids of the groups this interface carries, primary first.
+    #[must_use]
+    pub fn group_ids(&self) -> Vec<GroupId> {
+        self.groups.iter().map(|g| g.id).collect()
+    }
+
+    #[must_use]
+    pub fn group_view(&self, group: GroupId) -> Option<GroupView> {
+        let state = self.groups.iter().find(|g| g.id == group)?;
+        let members = || self.peers.iter().filter(move |p| p.group == group);
+        Some(GroupView {
+            group,
+            stream_id: state.stream_id.get(),
+            epoch: state.epoch,
+            peers: members().count(),
+            queued_packets: members().map(PeerState::queued_packets).sum(),
+            queued_bytes: members().map(PeerState::queued_bytes).sum(),
+        })
+    }
+
+    fn group_index(&self, group: GroupId) -> Result<usize, CarrierError> {
+        self.groups
+            .iter()
+            .position(|g| g.id == group)
+            .ok_or(CarrierError::UnknownGroup(group))
     }
 
     #[must_use]
@@ -1105,6 +1208,17 @@ impl<P: DatagramPort> CarrierSender<P> {
             out.queue_slots += peer.media_q.capacity() + peer.control_q.capacity();
         }
         out
+    }
+
+    /// Bytes allocated for the peer table: its slots (`capacity`) times the size of one peer's fixed state. Reported apart from
+    /// [`Self::retained_bytes`] because it is a table of structs, not payload or sequence allocation. The table is allocated once,
+    /// at `max_peers`, when the sender is built, so this equals [`CarrierLimits::max_peer_table_bytes`] and does not move with
+    /// admissions, removals or epochs; the slots no peer fills are allocated and are counted here all the same.
+    #[must_use]
+    pub fn peer_table_bytes(&self) -> usize {
+        self.peers
+            .capacity()
+            .saturating_mul(std::mem::size_of::<PeerState>())
     }
 
     #[must_use]
@@ -1147,7 +1261,22 @@ impl<P: DatagramPort> CarrierSender<P> {
         control_addr: SocketAddr,
         path_mtu: usize,
     ) -> Result<(), CarrierError> {
-        let result = self.admit(id, media_addr, control_addr, path_mtu);
+        self.add_peer_in_group(PRIMARY_GROUP, id, media_addr, control_addr, path_mtu)
+    }
+
+    /// Admit a peer as a member of `group`. The checks are [`Self::add_peer`]'s and the budgets they test are the interface's: the
+    /// peer count and the pacing sum cover every group, so a group added later is admitted against what the groups already
+    /// playing hold, and a refusal leaves all of them exactly as they were. A peer id names one peer on the interface (a
+    /// report carries it), so a speaker that is a member of two groups is two peers.
+    pub fn add_peer_in_group(
+        &mut self,
+        group: GroupId,
+        id: u32,
+        media_addr: SocketAddr,
+        control_addr: SocketAddr,
+        path_mtu: usize,
+    ) -> Result<(), CarrierError> {
+        let result = self.admit(group, id, media_addr, control_addr, path_mtu);
         if result.is_err() {
             self.stats.admissions_rejected += 1;
         }
@@ -1156,11 +1285,13 @@ impl<P: DatagramPort> CarrierSender<P> {
 
     fn admit(
         &mut self,
+        group: GroupId,
         id: u32,
         media_addr: SocketAddr,
         control_addr: SocketAddr,
         path_mtu: usize,
     ) -> Result<(), CarrierError> {
+        let gi = self.group_index(group)?;
         if self.peers.iter().any(|p| p.id == id) {
             return Err(CarrierError::DuplicatePeer(id));
         }
@@ -1191,14 +1322,17 @@ impl<P: DatagramPort> CarrierSender<P> {
                 budget: self.limits.pace_bytes_per_sec,
             });
         }
+        let state = &self.groups[gi];
+        let sender = StreamSender::new(state.key.clone(), state.stream_id, state.epoch);
         self.peers.push(PeerState {
             id,
+            group,
             media_addr,
             control_addr,
             ipv6,
             path_mtu,
             fence: None,
-            sender: StreamSender::new(self.key.clone(), self.stream_id, self.epoch),
+            sender,
             media_q: VecDeque::new(),
             media_q_bytes: 0,
             control_q: VecDeque::new(),
@@ -1293,20 +1427,125 @@ impl<P: DatagramPort> CarrierSender<P> {
     /// Move to a strictly newer epoch. Everything queued under the old epoch is dropped, never sent, and every
     /// peer's sequence and consumed position start again from zero.
     pub fn advance_epoch(&mut self, new_epoch: u64) -> Result<(), CarrierError> {
-        if new_epoch <= self.epoch {
+        self.advance_group_epoch(PRIMARY_GROUP, new_epoch)
+    }
+
+    /// [`Self::advance_epoch`] for one group: only that group's peers are fenced and renumbered; the other groups on the
+    /// interface keep their queues, numbers and epochs.
+    pub fn advance_group_epoch(
+        &mut self,
+        group: GroupId,
+        new_epoch: u64,
+    ) -> Result<(), CarrierError> {
+        let gi = self.group_index(group)?;
+        let current = self.groups[gi].epoch;
+        if new_epoch <= current {
             return Err(CarrierError::Stream(StreamError::EpochNotAdvancing {
                 requested: new_epoch,
-                current: self.epoch,
+                current,
             }));
         }
-        for peer in &mut self.peers {
+        for peer in self.peers.iter_mut().filter(|p| p.group == group) {
             peer.sender.advance_epoch(new_epoch)?;
-            peer.purge_all(DropKind::Fenced);
-            peer.sent_next = 0;
-            peer.reported_next = 0;
-            peer.forget_in_flight();
+            peer.restart_numbering();
         }
-        self.epoch = new_epoch;
+        self.groups[gi].epoch = new_epoch;
+        self.stats.epoch_advances += 1;
+        Ok(())
+    }
+
+    /// Carry another stream on this interface, with its own key, stream identity and epoch, and no peers yet. Its peers are
+    /// admitted with [`Self::add_peer_in_group`] against the interface's budgets, not against a budget of its own. The stream
+    /// identity must differ from every group's here (a report names it, and it selects the key the report is checked with),
+    /// and the number of groups is bounded by `max_peers`: a group without a peer holds nothing, and each peer is a member of
+    /// one.
+    ///
+    /// # Errors
+    /// [`CarrierError::StreamIdInUse`], [`CarrierError::TooManyGroups`]. Nothing changes.
+    pub fn add_group(
+        &mut self,
+        key: StreamKey,
+        stream_id: StreamId,
+        epoch: u64,
+    ) -> Result<GroupId, CarrierError> {
+        if self.groups.iter().any(|g| g.stream_id == stream_id) {
+            return Err(CarrierError::StreamIdInUse(stream_id.get()));
+        }
+        if self.groups.len() >= self.limits.max_peers {
+            return Err(CarrierError::TooManyGroups {
+                max: self.limits.max_peers,
+            });
+        }
+        let id = self.next_group;
+        self.next_group = id.saturating_add(1);
+        self.groups.push(GroupState {
+            id,
+            key,
+            stream_id,
+            epoch,
+        });
+        Ok(id)
+    }
+
+    /// A group leaves the interface with its peers. What they still had queued is counted as a removed peer's is, and the
+    /// interface's budgets are theirs to the other groups again. Nothing of another group changes.
+    ///
+    /// # Errors
+    /// [`CarrierError::PrimaryGroupIsFixed`], [`CarrierError::UnknownGroup`].
+    pub fn remove_group(&mut self, group: GroupId) -> Result<(), CarrierError> {
+        if group == PRIMARY_GROUP {
+            return Err(CarrierError::PrimaryGroupIsFixed);
+        }
+        let gi = self.group_index(group)?;
+        let stats = &mut self.stats;
+        self.peers.retain(|gone| {
+            if gone.group != group {
+                return true;
+            }
+            stats.removed_peer_dropped_packets +=
+                gone.media_q.len() as u64 + u64::from(gone.held.is_some());
+            stats.removed_peer_dropped_bytes += gone.media_q_bytes as u64
+                + gone.held.as_ref().map_or(0, |held| held.wire_len as u64);
+            false
+        });
+        self.groups.remove(gi);
+        Ok(())
+    }
+
+    /// A source restart: the group carries a new stream. Policy: the restart is **a fresh stream identity and a strictly newer
+    /// epoch**, both announced by the control plane (the carrier makes up neither), and the identity must differ from every
+    /// group's on this interface, the group's own included. Everything the group's peers had queued, held, retained for a probe
+    /// or in flight is dropped (counted as fenced) and never sent; their numbering starts again at 0 under the new stream;
+    /// their addresses, paths and an MTU fence stay. A report that names the old stream is refused as a wrong stream, and a
+    /// submit under the old epoch is refused as stale. No other group is touched. The key is the group's: a rekey is a new
+    /// group, not a restart.
+    ///
+    /// # Errors
+    /// [`CarrierError::UnknownGroup`], [`CarrierError::StreamIdInUse`], or the epoch does not advance. Nothing changes.
+    pub fn restart_group(
+        &mut self,
+        group: GroupId,
+        new_stream_id: StreamId,
+        new_epoch: u64,
+    ) -> Result<(), CarrierError> {
+        let gi = self.group_index(group)?;
+        if self.groups.iter().any(|g| g.stream_id == new_stream_id) {
+            return Err(CarrierError::StreamIdInUse(new_stream_id.get()));
+        }
+        let current = self.groups[gi].epoch;
+        if new_epoch <= current {
+            return Err(CarrierError::Stream(StreamError::EpochNotAdvancing {
+                requested: new_epoch,
+                current,
+            }));
+        }
+        let key = self.groups[gi].key.clone();
+        for peer in self.peers.iter_mut().filter(|p| p.group == group) {
+            peer.sender = StreamSender::new(key.clone(), new_stream_id, new_epoch);
+            peer.restart_numbering();
+        }
+        self.groups[gi].stream_id = new_stream_id;
+        self.groups[gi].epoch = new_epoch;
         self.stats.epoch_advances += 1;
         Ok(())
     }
@@ -1344,11 +1583,25 @@ impl<P: DatagramPort> CarrierSender<P> {
         frame: &OutboundFrame,
         now_ns: u64,
     ) -> Result<SubmitReport, CarrierError> {
-        if epoch != self.epoch {
+        self.submit_group_media(PRIMARY_GROUP, epoch, frame, now_ns)
+    }
+
+    /// [`Self::submit_media`] for one group: the frame is queued for that group's peers only, under that group's epoch. The
+    /// caps it meets are the interface's: under aggregate pressure the victim is the longest queue on the interface, in
+    /// whatever group, so a slow peer's backlog gives way first and cannot take the room of the rest, in its group or another.
+    pub fn submit_group_media(
+        &mut self,
+        group: GroupId,
+        epoch: u64,
+        frame: &OutboundFrame,
+        now_ns: u64,
+    ) -> Result<SubmitReport, CarrierError> {
+        let current = self.groups[self.group_index(group)?].epoch;
+        if epoch != current {
             self.stats.stale_submits += 1;
             return Err(CarrierError::StaleEpoch {
                 submitted: epoch,
-                current: self.epoch,
+                current,
             });
         }
         let len = frame.payload.len();
@@ -1358,6 +1611,9 @@ impl<P: DatagramPort> CarrierSender<P> {
         let wire_len = WIRE_OVERHEAD_BYTES + len;
         let mut report = SubmitReport::default();
         for idx in 0..self.peers.len() {
+            if self.peers[idx].group != group {
+                continue;
+            }
             self.peers[idx].counters.media_submitted_packets += 1;
             self.peers[idx].counters.media_submitted_bytes += wire_len as u64;
             if self.peers[idx].fence.is_some() {
@@ -1489,21 +1745,41 @@ impl<P: DatagramPort> CarrierSender<P> {
     /// The peer a report belongs to. A report that names a peer is attributed by that number, and, when the port can say
     /// where the datagram came from, only if it came from that peer's registered control address. A report that names
     /// no peer (0) needs the source address, so a port that cannot give one cannot attribute it: refused, never guessed.
-    fn attribute(&self, peer: u32, from: Option<SocketAddr>) -> Option<usize> {
+    fn attribute(&self, group: GroupId, peer: u32, from: Option<SocketAddr>) -> Option<usize> {
+        let member = |p: &PeerState| p.group == group;
         match (peer, from) {
-            (0, Some(addr)) => self.peers.iter().position(|p| p.control_addr == addr),
+            (0, Some(addr)) => self
+                .peers
+                .iter()
+                .position(|p| member(p) && p.control_addr == addr),
             (0, None) => None,
             (id, Some(addr)) => self
                 .peers
                 .iter()
-                .position(|p| p.id == id && p.control_addr == addr),
-            (id, None) => self.peers.iter().position(|p| p.id == id),
+                .position(|p| member(p) && p.id == id && p.control_addr == addr),
+            (id, None) => self.peers.iter().position(|p| member(p) && p.id == id),
         }
+    }
+
+    /// The group a report belongs to: the one whose stream identity it names. The identity is read before the tag is checked,
+    /// and only to choose which key checks the tag, so a forged one gets a bad tag and moves nothing. A report that names no
+    /// group here is checked against the primary group's key, as a report always was: it is then refused as a wrong stream if
+    /// authentic, or as a bad tag if not.
+    fn report_group(&self, datagram: &[u8]) -> usize {
+        if datagram.len() != REPORT_LEN_BYTES {
+            return 0;
+        }
+        let named = be_u64(datagram, 8);
+        self.groups
+            .iter()
+            .position(|g| g.stream_id.get() == named)
+            .unwrap_or(0)
     }
 
     fn on_control_datagram(&mut self, datagram: &[u8], from: Option<SocketAddr>) -> bool {
         self.stats.control_datagrams_in += 1;
-        let report = match parse_report(&self.key, datagram) {
+        let gi = self.report_group(datagram);
+        let report = match parse_report(&self.groups[gi].key, datagram) {
             Ok(report) => report,
             Err(ReportError::Malformed) => {
                 self.stats.reports_malformed += 1;
@@ -1514,15 +1790,16 @@ impl<P: DatagramPort> CarrierSender<P> {
                 return false;
             }
         };
-        if report.stream_id != self.stream_id.get() {
+        if report.stream_id != self.groups[gi].stream_id.get() {
             self.stats.reports_wrong_stream += 1;
             return false;
         }
-        if report.epoch != self.epoch {
+        if report.epoch != self.groups[gi].epoch {
             self.stats.reports_stale_epoch += 1;
             return false;
         }
-        let Some(idx) = self.attribute(report.peer, from) else {
+        let group = self.groups[gi].id;
+        let Some(idx) = self.attribute(group, report.peer, from) else {
             self.stats.reports_unknown_source += 1;
             return false;
         };
@@ -1901,7 +2178,31 @@ pub enum SinkVerdict {
 /// A consumer of raw media datagrams that authenticates them itself. See [`CarrierReceiver::poll_into`].
 pub trait MediaSink {
     fn offer(&mut self, datagram: &[u8]) -> SinkVerdict;
+
+    /// Whether the sink can take a datagram now. [`CarrierReceiver::poll_into`] asks before each media read, inside the
+    /// `max_reads_per_poll` loop (the per-poll work cap is unchanged), and when this is `false` it stops reading media for this
+    /// poll, before any `recv`: nothing is read, counted or dropped by a `false` answer, so `media_read`, the sink verdict
+    /// counters and the judge's identities keep their meaning. A sink that cannot say answers `true` (the default).
+    ///
+    /// The datagrams that wait are held by the port's socket receive buffer, which the kernel bounds and overflows by dropping.
+    /// That is a limit, not a promise to retain and retry forever: a datagram that waits earns no credit until it is read, so
+    /// the sender's window stalls and its probes (copies of its newest datagram) arrive later, as replays or as late.
+    fn ready(&mut self) -> bool {
+        true
+    }
+
+    /// The largest datagram, in bytes, this sink can be offered (the default is N01's [`MAX_DATAGRAM_BYTES`]). The carrier reads
+    /// into a buffer one byte larger, so a longer datagram arrives as oversize and is the sink's structure check to refuse; a
+    /// sink whose wire is longer than N01's (the selected N06 hybrid is 1152 bytes) must say so, or every one of its datagrams
+    /// would be cut and refused. Values outside `MAX_DATAGRAM_BYTES..=MAX_SINK_DATAGRAM_BYTES` are clamped into it.
+    fn max_datagram_bytes(&self) -> usize {
+        MAX_DATAGRAM_BYTES
+    }
 }
+
+/// The largest datagram any [`MediaSink`] may declare through [`MediaSink::max_datagram_bytes`]: the selected N06 hybrid's wire.
+pub const MAX_SINK_DATAGRAM_BYTES: usize = crate::fec::DATAGRAM;
+const _: () = assert!(MAX_SINK_DATAGRAM_BYTES >= MAX_DATAGRAM_BYTES);
 
 /// What the sink did with the datagrams [`CarrierReceiver::poll_into`] offered it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -2057,6 +2358,30 @@ impl<P: DatagramPort> CarrierReceiver<P> {
         self.consumed_next
     }
 
+    /// The epoch this receiver's reports name, and the only one whose authenticated media may earn credit. A read-only getter:
+    /// it holds no state of its own.
+    #[must_use]
+    pub const fn epoch(&self) -> u64 {
+        self.receiver.active_epoch()
+    }
+
+    /// The stream this receiver's reports name, and the only one whose authenticated media may earn credit. A read-only getter.
+    #[must_use]
+    pub const fn stream_id(&self) -> StreamId {
+        self.stream_id
+    }
+
+    /// A new numbering began inside the current epoch (a stream whose sequence numbers restart from zero at a new origin): the
+    /// consumed position starts again from zero, so reports name the new numbering. An epoch change does the same through
+    /// [`Self::advance_epoch`]. The inbound queue is not touched.
+    ///
+    /// This can only lower this receiver's own `consumed_next`. It never invents credit: the sender keeps the highest
+    /// `reported_next` it has seen, so a lower report is inert, and a report can never claim a number the sender has not
+    /// allocated. Its only caller is a start that changes the FEC origin within an epoch (`MediaEndpoint::admit_start`).
+    pub fn restart_credit(&mut self) {
+        self.consumed_next = 0;
+    }
+
     #[must_use]
     pub fn inbound_len(&self) -> usize {
         self.inbound.len()
@@ -2066,6 +2391,18 @@ impl<P: DatagramPort> CarrierReceiver<P> {
     /// is kept.
     pub fn advance_epoch(&mut self, epoch: u64) {
         self.receiver.advance_epoch(epoch);
+        self.inbound.clear();
+        self.consumed_next = 0;
+    }
+
+    /// Follow a source restart announced by the control channel (see [`CarrierSender::restart_group`]): a new stream identity
+    /// under the same key, and a newer epoch. N01's receiver resets its replay window for the new identity and refuses the old
+    /// stream's packets as a wrong stream; this receiver's reports now name the new identity at position 0, and nothing held
+    /// from the old stream is kept. Control datagrams already received are not stream state and stay. Binding the identity
+    /// already bound only advances the epoch (as N01 documents), and the position and the backlog are reset all the same.
+    pub fn restart_stream(&mut self, stream_id: StreamId, epoch: u64) {
+        self.receiver.bind_stream(stream_id, epoch);
+        self.stream_id = stream_id;
         self.inbound.clear();
         self.consumed_next = 0;
     }
@@ -2153,11 +2490,19 @@ impl<P: DatagramPort> CarrierReceiver<P> {
     pub fn poll_into<S: MediaSink + ?Sized>(&mut self, sink: &mut S) -> PollReport {
         let mut report = PollReport::default();
         self.read_control(&mut report);
-        let mut media_buf = [0u8; MAX_DATAGRAM_BYTES + 1];
+        let read_len = sink
+            .max_datagram_bytes()
+            .clamp(MAX_DATAGRAM_BYTES, MAX_SINK_DATAGRAM_BYTES)
+            + 1;
+        let mut media_buf = [0u8; MAX_SINK_DATAGRAM_BYTES + 1];
         for _ in 0..self.limits.max_reads_per_poll {
-            match self.port.recv(Lane::Media, &mut media_buf) {
+            // A sink that cannot take a datagram now leaves the rest where they are: in the port's bounded receive queue.
+            if !sink.ready() {
+                break;
+            }
+            match self.port.recv(Lane::Media, &mut media_buf[..read_len]) {
                 Ok(got) => {
-                    let len = got.len.min(media_buf.len());
+                    let len = got.len.min(read_len);
                     report.media_read += 1;
                     self.stats.media_read += 1;
                     match sink.offer(&media_buf[..len]) {
