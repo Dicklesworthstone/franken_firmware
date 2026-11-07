@@ -1,0 +1,28 @@
+[package]
+name = "n06-fec-profile"
+version = "0.1.0"
+edition = "2024"
+license-file = "../../LICENSE"
+publish = false
+
+# Thin generation/reference qualification ONLY; production has no Asupersync edge.
+[workspace]
+
+[dependencies]
+franken-stream = { path = "../../crates/franken-stream" }
+asupersync = { git = "https://github.com/Dicklesworthstone/asupersync", rev = "14032b8f2c832ee7ef1946404f5efb18162af045", default-features = false }
+raptorq = "=2.0.1"
+serde_json = "1.0"
+
+[dev-dependencies]
+franken-alloc-probe = { path = "../../crates/franken-alloc-probe" }
+
+[profile.dev]
+opt-level = 3
+debug = 0
+[profile.test]
+opt-level = 3
+debug = 0
+
+[lints.rust]
+unsafe_code = "forbid"

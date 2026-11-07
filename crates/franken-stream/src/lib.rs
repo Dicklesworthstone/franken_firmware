@@ -23,6 +23,7 @@ use sha2::Sha256;
 use std::collections::BTreeMap;
 
 pub mod carrier; // N07 (`ffw-ybr`)
+pub mod fec;
 pub mod link; // N07 (`ffw-ybr`)
 mod negotiation;
 pub mod playout; // N04 (`ffw-nx0`)

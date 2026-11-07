@@ -22,6 +22,7 @@ members = [
 exclude = [
     "toolchain/src/ffw-hello-init",
     "toolchain/n05-repair-study",
+    "toolchain/n06-fec-profile",
 ]
 
 [workspace.package]
