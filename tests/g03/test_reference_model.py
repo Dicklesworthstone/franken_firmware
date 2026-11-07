@@ -175,6 +175,7 @@ class Contract(unittest.TestCase):
     def test_the_contract_says_what_is_open(self):
         text = CONTRACT.read_text(encoding="utf-8")
         for phrase in ("**OPEN**", "No stand-in is presented", "pub mod fsonos;", "Policy qualification",
+                       "no independent Python model of the policy table",
                        "19/19 tests", "Grouping, native tailnet and physical-device qualification remain open",
                        "a plain-SOAP retry applies twice", "Command Outcome Unknown", "ReapplyOnRetry",
                        "SuccessAfterRetention"):

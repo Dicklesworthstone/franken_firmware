@@ -149,3 +149,12 @@ conservative actual-client gate output is not a verdict on the separate
 G03 remains open for its original acceptance and G01/G02 prerequisites.
 These host results establish no physical playback, provider, native tailnet,
 guest-kernel, thermal, acoustic or fleet-wide reliability qualification.
+
+An independent publication review also found a stale global "no client has
+run" diagnostic in the existing judge. Its detail now says that this judge
+does not qualify the separate isolated client execution, while retaining
+the OPEN gate. The policy-model limitation is explicit again. The reviewer
+reproduced the old/new phrase-test distinction and passed 85/85 Python tests;
+the central rerun likewise passed 85/85 and the judge passed 46/46 cases,
+162/162 named Rust tests and 93 critical events with zero drops. No Rust,
+matrix, vector or invariant changed in this diagnostic correction.

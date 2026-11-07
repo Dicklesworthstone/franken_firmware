@@ -623,7 +623,9 @@ class Entry(unittest.TestCase):
             self.assertEqual(code, 0, out)
             self.assertIn("QUALIFIED", out)
             self.assertNotIn("NOT QUALIFIED", out)
-            self.assertIn("OPEN     actual_fsonos_client: no actual fsonos controller has been run against this endpoint", out)
+            self.assertIn("OPEN     actual_fsonos_client: this judge does not qualify actual-client integration", out)
+            self.assertIn("toolchain/results/g03/20261107-eventing/RUN.md", out)
+            self.assertNotIn("no actual fsonos controller has been run", out)
             self.assertIn("the actual-client gate stays OPEN", out)
             self.assertNotIn("RETAINED", out)
         code, out, _ = self.run_main(["--tier", "full"])          # blocked runs say it too

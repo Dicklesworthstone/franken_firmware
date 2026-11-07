@@ -82,8 +82,9 @@ FSONOS_REL = "crates/franken-control/src/fsonos"
 LIB_REL = "crates/franken-control/src/lib.rs"
 OPEN_GATES = [
     {"item": "actual_fsonos_client", "status": "OPEN",
-     "detail": "no actual fsonos controller has been run against this endpoint; the vectors are hand-written and the model is "
-               "independent, neither is a client (docs/contracts/g03.md section 11.1)"},
+     "detail": "this judge does not qualify actual-client integration; separate isolated runs and remaining acceptance "
+               "are recorded in docs/contracts/g03.md section 11.1 and toolchain/results/g03/20261107-eventing/RUN.md; "
+               "hand-written vectors and the independent model are not a client"},
     {"item": "network_and_time", "status": "not exercised",
      "detail": "the adapter opens no socket and reads no clock, so listener behaviour, timeouts and real subscription expiry "
                "are not exercised here"},
