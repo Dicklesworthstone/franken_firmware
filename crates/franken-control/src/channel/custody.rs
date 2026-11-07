@@ -1672,4 +1672,335 @@ mod tests {
             assert_eq!(queued, want, "{name}");
         }
     }
+
+    // ------------------------------------------------------------------------------ the identity cap, on both sides
+    //
+    // `MAX_PEERS` (the directory) and the journal's credential entries (`Limits::standard`) both count distinct identities,
+    // live and revoked together, and both are sixteen. The expectations for the journal's half were worked out before the
+    // Rust ran, with U01's independent Python journal (`tests/u01/reference.py`, the device limits, these record bytes):
+    // sixteen identities and the revision mark fit; the seventeenth is `namespace_full`; a revocation keeps its slot; a
+    // version at or below the tombstone is `revoked`; one version up re-admits in place; `reset_pairing` revokes all and
+    // keeps every slot; another kind of credential holds a slot like a peer does.
+
+    /// The `i`-th identity of the maximum profile: the local user first, then controllers.
+    fn profile_name(i: usize) -> String {
+        if i == 0 {
+            "local".to_string()
+        } else {
+            format!("ctl-{i:02}")
+        }
+    }
+
+    fn profile_role(i: usize) -> PeerRole {
+        if i == 0 {
+            PeerRole::LocalUser
+        } else {
+            PeerRole::Controller
+        }
+    }
+
+    /// Admit the `i`-th identity of the maximum profile at `version`, stored before it is live.
+    fn admit_at<St: Storage>(
+        directory: &mut EphemeralPeers,
+        journal: &mut Journal<St>,
+        i: usize,
+        version: u64,
+    ) -> Result<(), CustodyError> {
+        let name = profile_name(i);
+        admit_durably(
+            directory,
+            journal,
+            &id(&name),
+            profile_role(i),
+            &test_key(&name),
+            Some(EPOCH),
+            version,
+        )
+    }
+
+    /// Admit identities `0..count` of the maximum profile at version 1. Each must be within the cap.
+    fn admit_profile<St: Storage>(
+        directory: &mut EphemeralPeers,
+        journal: &mut Journal<St>,
+        count: usize,
+    ) {
+        for i in 0..count {
+            assert_eq!(
+                admit_at(directory, journal, i, 1),
+                Ok(()),
+                "identity {i} ({}) is within the cap",
+                profile_name(i)
+            );
+        }
+    }
+
+    /// The process comes back: what survived on `medium` is the whole new medium.
+    fn reopened(medium: &MemStorage) -> MemStorage {
+        MemStorage::from_image(limits().segment_bytes, medium.durable())
+    }
+
+    #[test]
+    fn sixteen_identities_are_stored_and_restored_together_and_the_seventeenth_is_refused_before_any_write()
+     {
+        let mut medium = blank_medium();
+        {
+            let (mut journal, _) = Journal::open(&mut medium, limits()).unwrap();
+            let mut directory = EphemeralPeers::new();
+            admit_profile(&mut directory, &mut journal, MAX_PEERS);
+            // The revision mark lives in the same journal, beside the sixteen credentials.
+            journal.raise_mark(HIGH_WATER_KEY, 7).unwrap();
+            assert_eq!(journal.state().credentials.len(), MAX_PEERS);
+            // The seventeenth is refused by the directory, first, and the journal is not touched.
+            let frames = journal.frames_written();
+            assert_eq!(
+                admit_at(&mut directory, &mut journal, MAX_PEERS, 1),
+                Err(CustodyError::Admit(AdmitError::Full))
+            );
+            assert_eq!(journal.frames_written(), frames);
+            assert_eq!(directory.version_of(&id(&profile_name(MAX_PEERS))), None);
+            assert!(
+                journal
+                    .credential(&credential_id(&id(&profile_name(MAX_PEERS))))
+                    .is_none()
+            );
+        }
+        // After a restart all sixteen are back with their stored version, and so is the mark.
+        let mut reborn = reopened(&medium);
+        let opened = Journal::open(&mut reborn, limits());
+        let mut directory = EphemeralPeers::new();
+        assert_eq!(
+            restore_peers(&mut directory, &opened),
+            Ok(Restored::Peers {
+                live: MAX_PEERS,
+                revoked: 0,
+                skipped: 0
+            })
+        );
+        for i in 0..MAX_PEERS {
+            assert_eq!(
+                directory.version_of(&id(&profile_name(i))),
+                Some(1),
+                "{}",
+                profile_name(i)
+            );
+        }
+        let (mut journal, _) = opened.unwrap();
+        assert_eq!(journal.state().marks.get(HIGH_WATER_KEY), Some(&7));
+        // The cap is still the cap: the seventeenth is refused again, and nothing is written for it.
+        let frames = journal.frames_written();
+        assert_eq!(
+            admit_at(&mut directory, &mut journal, MAX_PEERS, 1),
+            Err(CustodyError::Admit(AdmitError::Full))
+        );
+        assert_eq!(journal.frames_written(), frames);
+    }
+
+    #[test]
+    fn a_revoked_identity_keeps_its_slot_on_both_sides_and_comes_back_only_one_version_up() {
+        let (revoked, extra) = (3, MAX_PEERS);
+        let mut medium = blank_medium();
+        {
+            let (mut journal, _) = Journal::open(&mut medium, limits()).unwrap();
+            let mut directory = EphemeralPeers::new();
+            admit_profile(&mut directory, &mut journal, MAX_PEERS);
+            assert_eq!(
+                revoke_durably(&mut directory, &mut journal, &id(&profile_name(revoked))),
+                Ok(Revoked::Durable)
+            );
+            // The slot is kept: a new identity is still refused, and nothing is written for it.
+            let frames = journal.frames_written();
+            assert_eq!(
+                admit_at(&mut directory, &mut journal, extra, 1),
+                Err(CustodyError::Admit(AdmitError::Full))
+            );
+            assert_eq!(journal.frames_written(), frames);
+        }
+        let mut reborn = reopened(&medium);
+        {
+            let opened = Journal::open(&mut reborn, limits());
+            let mut directory = EphemeralPeers::new();
+            assert_eq!(
+                restore_peers(&mut directory, &opened),
+                Ok(Restored::Peers {
+                    live: MAX_PEERS - 1,
+                    revoked: 1,
+                    skipped: 0
+                })
+            );
+            let (mut journal, _) = opened.unwrap();
+            // Nonresurrection: the admission it had before is refused, at the same version, after the restart.
+            let frames = journal.frames_written();
+            assert_eq!(
+                admit_at(&mut directory, &mut journal, revoked, 1),
+                Err(CustodyError::Admit(AdmitError::Resurrection {
+                    tombstone: 1,
+                    offered: 1
+                }))
+            );
+            assert_eq!(
+                admit_at(&mut directory, &mut journal, extra, 1),
+                Err(CustodyError::Admit(AdmitError::Full))
+            );
+            assert_eq!(journal.frames_written(), frames);
+            // One version up it is admitted again, in the slot it kept, so it fits at the cap on both sides.
+            assert_eq!(admit_at(&mut directory, &mut journal, revoked, 2), Ok(()));
+            assert_eq!(directory.version_of(&id(&profile_name(revoked))), Some(2));
+            assert_eq!(journal.state().credentials.len(), MAX_PEERS);
+        }
+        let mut third = reopened(&reborn);
+        let opened = Journal::open(&mut third, limits());
+        let mut directory = EphemeralPeers::new();
+        assert_eq!(
+            restore_peers(&mut directory, &opened),
+            Ok(Restored::Peers {
+                live: MAX_PEERS,
+                revoked: 0,
+                skipped: 0
+            })
+        );
+        assert_eq!(directory.version_of(&id(&profile_name(revoked))), Some(2));
+    }
+
+    #[test]
+    fn a_pairing_reset_at_the_cap_keeps_every_slot_so_only_known_identities_return_one_version_up()
+    {
+        let (known, never_seen) = (5, MAX_PEERS);
+        let mut medium = blank_medium();
+        {
+            let (mut journal, _) = Journal::open(&mut medium, limits()).unwrap();
+            let mut directory = EphemeralPeers::new();
+            admit_profile(&mut directory, &mut journal, MAX_PEERS);
+            journal.reset_pairing().unwrap();
+            assert_eq!(journal.state().credentials.len(), MAX_PEERS);
+        }
+        let mut reborn = reopened(&medium);
+        let opened = Journal::open(&mut reborn, limits());
+        let mut directory = EphemeralPeers::new();
+        assert_eq!(
+            restore_peers(&mut directory, &opened),
+            Ok(Restored::Peers {
+                live: 0,
+                revoked: MAX_PEERS,
+                skipped: 0
+            })
+        );
+        for i in 0..MAX_PEERS {
+            assert_eq!(
+                directory.version_of(&id(&profile_name(i))),
+                None,
+                "{}",
+                profile_name(i)
+            );
+        }
+        let (mut journal, _) = opened.unwrap();
+        // A label that was never seen has no slot to come back to, and nothing is written for it.
+        let frames = journal.frames_written();
+        assert_eq!(
+            admit_at(&mut directory, &mut journal, never_seen, 1),
+            Err(CustodyError::Admit(AdmitError::Full))
+        );
+        // The old admission of a known label is the resurrection it is.
+        assert_eq!(
+            admit_at(&mut directory, &mut journal, known, 1),
+            Err(CustodyError::Admit(AdmitError::Resurrection {
+                tombstone: 1,
+                offered: 1
+            }))
+        );
+        assert_eq!(journal.frames_written(), frames);
+        // A known label returns one version up, in its own slot.
+        assert_eq!(admit_at(&mut directory, &mut journal, known, 2), Ok(()));
+        assert_eq!(directory.version_of(&id(&profile_name(known))), Some(2));
+    }
+
+    #[test]
+    fn a_slot_held_by_another_kind_of_credential_leaves_one_fewer_for_peers_and_the_journal_refuses_the_last()
+     {
+        let mut medium = blank_medium();
+        {
+            let (mut journal, _) = Journal::open(&mut medium, limits()).unwrap();
+            let mut directory = EphemeralPeers::new();
+            // Not a control peer's, so the directory never counts it, but it takes one of the journal's sixteen slots.
+            journal.install(b"spotify-token", 1, b"not a peer").unwrap();
+            admit_profile(&mut directory, &mut journal, MAX_PEERS - 1);
+            // The directory has room for one more identity and the journal has none: the journal's refusal is the
+            // last word, and neither side changed.
+            let frames = journal.frames_written();
+            let last = MAX_PEERS - 1;
+            assert_eq!(
+                admit_at(&mut directory, &mut journal, last, 1),
+                Err(CustodyError::Journal(JournalError::NamespaceFull))
+            );
+            assert_eq!(journal.frames_written(), frames);
+            assert_eq!(directory.version_of(&id(&profile_name(last))), None);
+            assert_eq!(directory.key_slots(), MAX_PEERS - 1);
+        }
+        // The other fifteen survive a restart; the other kind of credential is not counted among the peers.
+        let mut reborn = reopened(&medium);
+        let opened = Journal::open(&mut reborn, limits());
+        let mut directory = EphemeralPeers::new();
+        assert_eq!(
+            restore_peers(&mut directory, &opened),
+            Ok(Restored::Peers {
+                live: MAX_PEERS - 1,
+                revoked: 0,
+                skipped: 0
+            })
+        );
+        assert_eq!(directory.key_slots(), MAX_PEERS - 1);
+    }
+
+    #[test]
+    fn a_journal_with_more_control_peers_than_a_directory_knows_is_refused_whole_and_admits_nobody()
+    {
+        // A journal configured for one credential more than `MAX_PEERS`: a configuration the directory cannot match.
+        let mut big = limits();
+        big.credentials.entries = MAX_PEERS + 1;
+        let stored = |count: usize| {
+            let mut medium = MemStorage::new(big.segment_bytes);
+            {
+                let (mut journal, _) = Journal::open(&mut medium, big.clone()).unwrap();
+                for i in 0..count {
+                    let name = profile_name(i);
+                    let record = encode_record(profile_role(i), None, &test_key(&name));
+                    journal
+                        .install(&credential_id(&id(&name)), 1, &record)
+                        .unwrap();
+                }
+            }
+            MemStorage::from_image(big.segment_bytes, medium.durable())
+        };
+
+        // Seventeen identities: refused whole, nothing admitted, no key stored.
+        let mut reborn = stored(MAX_PEERS + 1);
+        let opened = Journal::open(&mut reborn, big.clone());
+        let mut directory = EphemeralPeers::new();
+        assert_eq!(
+            restore_peers(&mut directory, &opened),
+            Err(RestoreFailed::TooMany { max: MAX_PEERS })
+        );
+        for i in 0..=MAX_PEERS {
+            assert_eq!(
+                directory.version_of(&id(&profile_name(i))),
+                None,
+                "{}",
+                profile_name(i)
+            );
+        }
+        assert_eq!(directory.key_slots(), 0);
+
+        // The permitted positive, on the very same configuration: sixteen identities restore in full.
+        let mut reborn = stored(MAX_PEERS);
+        let opened = Journal::open(&mut reborn, big.clone());
+        let mut directory = EphemeralPeers::new();
+        assert_eq!(
+            restore_peers(&mut directory, &opened),
+            Ok(Restored::Peers {
+                live: MAX_PEERS,
+                revoked: 0,
+                skipped: 0
+            })
+        );
+        assert_eq!(directory.key_slots(), MAX_PEERS);
+    }
 }

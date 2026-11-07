@@ -68,4 +68,3 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; fini
 
 p01-forbid-clippy-ovhb
     Finished `dev` profile [unoptimized] target(s) in 35.15s
-

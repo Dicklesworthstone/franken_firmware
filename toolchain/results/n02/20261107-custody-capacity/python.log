@@ -1,0 +1,7 @@
+........................................................................
+----------------------------------------------------------------------
+Ran 72 tests in 0.173s
+
+OK
+N02 generated vectors: PASS (5 auth vectors, 13 tampers)
+N02 log vectors: PASS (7 pseudonyms, 4 golden lines, 6 acknowledgement lines, 9 submit lines, 3 closing records)

@@ -1,0 +1,26 @@
+n02-capacity-native
+    Finished `test` profile [unoptimized] target(s) in 11.81s
+running 19 tests
+test channel::custody::tests::a_failed_admission_store_leaves_the_directory_unchanged_and_an_owner_that_admits_first_is_caught ... ok
+test channel::custody::tests::a_journal_with_more_control_peers_than_a_directory_knows_is_refused_whole_and_admits_nobody ... ok
+test channel::custody::tests::a_pairing_reset_at_the_cap_keeps_every_slot_so_only_known_identities_return_one_version_up ... ok
+test channel::custody::tests::a_rebind_or_a_revocation_the_journal_has_not_seen_is_refused_or_reported_and_changes_nothing ... ok
+test channel::custody::tests::a_rebind_written_as_two_commits_is_caught_by_the_cut_sweep ... ok
+test channel::custody::tests::a_revocation_whose_store_failed_is_dead_now_returns_after_a_restart_and_the_retry_completes_it ... ok
+test channel::custody::tests::a_revoked_identity_keeps_its_slot_on_both_sides_and_comes_back_only_one_version_up ... ok
+test channel::custody::tests::a_slot_held_by_another_kind_of_credential_leaves_one_fewer_for_peers_and_the_journal_refuses_the_last ... ok
+test channel::custody::tests::an_unreadable_journal_restores_an_empty_directory_and_says_so ... ok
+test channel::custody::tests::each_planted_custody_fault_fails_the_round_trip_judge_by_name ... ok
+test channel::custody::tests::every_cut_of_a_rebind_store_leaves_the_old_binding_or_the_new_one ... ok
+test channel::custody::tests::every_cut_of_a_revocation_store_leaves_the_peer_live_or_revoked_and_never_unknown ... ok
+test channel::custody::tests::every_cut_of_an_admission_store_leaves_the_peer_unknown_or_admitted ... ok
+test channel::custody::tests::peers_admitted_revoked_and_rebound_through_custody_come_back_after_a_process_death ... ok
+test channel::custody::tests::records_of_another_kind_and_records_that_cannot_be_read_are_skipped_and_counted ... ok
+test channel::custody::tests::sixteen_identities_are_stored_and_restored_together_and_the_seventeenth_is_refused_before_any_write ... ok
+test channel::custody::tests::the_credentials_and_the_revision_mark_share_one_journal_and_both_come_back ... ok
+test channel::custody::tests::the_record_bytes_are_the_ones_a_person_wrote_and_the_decoder_is_strict ... ok
+test channel::custody::tests::the_smallest_journal_refuses_every_admission_and_a_label_that_does_not_fit_is_refused_and_nothing_changes ... ok
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 480 filtered out; finished in 1.09s
+
+n02-capacity-clippy
+    Finished `dev` profile [unoptimized] target(s) in 10.74s

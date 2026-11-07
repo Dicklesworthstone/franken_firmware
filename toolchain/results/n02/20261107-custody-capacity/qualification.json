@@ -1,0 +1,98 @@
+{
+  "schema": "ffw.n02.custody_capacity.v1",
+  "baseline": "ce11c39",
+  "scope": "five new regression tests; production above cfg(test) unchanged",
+  "native": {
+    "passed": 19,
+    "failed": 0,
+    "ignored": 0,
+    "new_cases": 5
+  },
+  "gates": [
+    {
+      "name": "n02-capacity-native",
+      "command": [
+        "rch",
+        "exec",
+        "--source-content-receipt",
+        "--worker",
+        "hz4",
+        "--",
+        "cargo",
+        "+nightly-2026-08-31",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "franken-control",
+        "--lib",
+        "channel::custody::",
+        "-j1",
+        "--",
+        "--show-output",
+        "--test-threads=1"
+      ],
+      "source_receipt_root": "10a7e43221713dc1779efbcdf5070d5be574b5ef146f1c3b3547845d045fdb42",
+      "synced_files": 1258,
+      "all_synced_files_matched": true,
+      "custody_source_sha256": "ce3acde798f9c30236c62c5b4a146bec2350f1db274e12170743074b2d1e7c82",
+      "terminal_custody": {
+        "exit": 0,
+        "state": "finished",
+        "ack": true,
+        "wrapper": false,
+        "owner": "absent",
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "staging_released": true,
+        "retired": true
+      }
+    },
+    {
+      "name": "n02-capacity-clippy",
+      "command": [
+        "rch",
+        "exec",
+        "--source-content-receipt",
+        "--worker",
+        "ovh-b",
+        "--",
+        "cargo",
+        "+nightly-2026-08-31",
+        "clippy",
+        "--locked",
+        "--offline",
+        "-p",
+        "franken-control",
+        "--all-targets",
+        "-j1",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "source_receipt_root": "186ee9354f42db62132021204cc284f2b95ca29df0953b84ff652a091fec6d13",
+      "synced_files": 1258,
+      "all_synced_files_matched": true,
+      "custody_source_sha256": "ce3acde798f9c30236c62c5b4a146bec2350f1db274e12170743074b2d1e7c82",
+      "terminal_custody": {
+        "exit": 0,
+        "state": "finished",
+        "ack": true,
+        "wrapper": false,
+        "owner": "absent",
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "staging_released": true,
+        "retired": true
+      }
+    }
+  ],
+  "not_admitted": [
+    "durable relative-command idempotency",
+    "pairing generation reclamation",
+    "physical flash behavior",
+    "whole N02 acceptance"
+  ]
+}

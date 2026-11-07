@@ -874,7 +874,12 @@
       "scenario_inapplicable": "These are properties of the peer directory over U01's journal on an in-memory medium with fault injection, judged by Rust tests through the channel; the Python scenario model has no journal and nothing to say about them. The independent evidence is the Python mirror of the judges over U01's independent Python journal (its expected cut counts are the ones the Rust asserts) and the hand-written record bytes.",
       "rust_tests": [
         "an_unreadable_journal_restores_an_empty_directory_and_says_so",
-        "records_of_another_kind_and_records_that_cannot_be_read_are_skipped_and_counted"
+        "records_of_another_kind_and_records_that_cannot_be_read_are_skipped_and_counted",
+        "sixteen_identities_are_stored_and_restored_together_and_the_seventeenth_is_refused_before_any_write",
+        "a_revoked_identity_keeps_its_slot_on_both_sides_and_comes_back_only_one_version_up",
+        "a_pairing_reset_at_the_cap_keeps_every_slot_so_only_known_identities_return_one_version_up",
+        "a_slot_held_by_another_kind_of_credential_leaves_one_fewer_for_peers_and_the_journal_refuses_the_last",
+        "a_journal_with_more_control_peers_than_a_directory_knows_is_refused_whole_and_admits_nobody"
       ]
     },
     {
