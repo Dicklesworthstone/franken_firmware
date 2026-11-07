@@ -43,8 +43,9 @@ contamination, unsupported-target and scan controls).
 target gets `serial`, with `curve25519_dalek_bits` taken from `target_pointer_width` (32 on PPC/MIPS). The `serial` directory has no
 `unsafe`. `constants.rs:85` is the `RISTRETTO_BASEPOINT_TABLE` cast, behind `precomputed-tables`, which `ed25519-dalek`'s `fast` feature would
 turn on and this graph does not. `fiat` is reached only by an explicit `--cfg curve25519_dalek_backend="fiat"`; the lock-only entry is not
-evidence of it. **Consequence: a host test on an x86_64 worker runs the SIMD backend, not the backend a PPC/MIPS image runs.** Host vector
-agreement is therefore not target arithmetic evidence.
+evidence of it. **Consequence: an x86_64 host build compiles a SIMD-capable backend, while runtime selection depends on CPU features and may
+choose Serial.** Neither outcome establishes the 32-bit serial arithmetic used by a PPC/MIPS build. Host vector agreement is therefore not
+target arithmetic evidence.
 
 **`subtle 2.6.1`: two unconditional sites, linked on every target.** `lib.rs:225`, `read_volatile(&input)` in `black_box<T: Copy>` (an
 owned, live, aligned `Copy` value; `core_hint_black_box` is not enabled), and `lib.rs:564`, a cast of an `i8` that came from a valid
