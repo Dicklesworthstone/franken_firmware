@@ -33,6 +33,7 @@ import hashlib
 import io
 import json
 import os
+import posixpath
 import re
 import stat
 import subprocess
@@ -55,7 +56,10 @@ SCHEMA = "ffw.e06.audit.v1"
 DEFAULT_TARGETS = {"mips": "mips-unknown-linux-musl", "powerpc": "powerpc-unknown-linux-musl"}
 SEVERITIES = ("blocker", "review", "info")
 REFERENCE_PLATFORMS = {"host"}
-CODE_KINDS = {"lib", "rlib", "dylib", "cdylib", "staticlib", "proc-macro", "bin"}
+LIB_KINDS = {"lib", "rlib", "dylib", "cdylib", "staticlib", "proc-macro"}
+CODE_KINDS = LIB_KINDS | {"bin"}
+# The paths cargo gives a binary without a [[bin]] path: src/main.rs, src/bin/NAME.rs and src/bin/NAME/main.rs.
+BIN_DISCOVERED = re.compile(r"src/(?:main\.rs|bin/[^/]+\.rs|bin/[^/]+/main\.rs)")
 SKIP_DIRS = {"tests", "benches", "examples", "target", ".git"}
 # Build dependencies that bring native code; autocfg only probes the compiler, so it is listed apart.
 NATIVE_TOOLING_DEPS = {"cc", "cmake", "pkg-config", "bindgen", "vcpkg", "make", "bindgen-cli"}
@@ -242,6 +246,53 @@ def _rs_files(root: str, package_root: str) -> List[str]:
     return out
 
 
+class SnapshotReader:
+    """Reads a package's files from the bytes of a VERIFIED ``.crate`` archive instead of from the cache directory.
+
+    ``files`` maps a path relative to the package root (``/`` separators) to the bytes the archive holds for it, as ``verify_registry_source``
+    read them after the checksum matched the lock. Anything the scan asks for that is not in that snapshot is simply unreadable (``None`` /
+    absent): there is no fallback to the directory, so nothing written to the cache after verification can reach the result. It offers the three
+    things ``scan_package`` and ``_license`` use (``read``, ``rs_files``, ``exists``) with the semantics of ``_read`` and ``_rs_files``."""
+
+    def __init__(self, root: str, files: Dict[str, bytes]):
+        self.root, self.files = os.path.normpath(root), files
+
+    def _rel(self, path: str) -> Optional[str]:
+        rel = os.path.relpath(os.path.normpath(path), self.root).replace(os.sep, "/")
+        return None if rel == ".." or rel.startswith("../") else rel
+
+    def read(self, path: str) -> Optional[str]:
+        """The file's text exactly as ``_read`` would give it for the same bytes: the SAME decoder and the same universal-newline translation
+        (a lone CR or a CRLF becomes LF), so a line comment that ends in a bare CR, a BOM or an invalid byte scan identically either way."""
+        rel = self._rel(path)
+        data = self.files.get(rel) if rel is not None else None
+        if data is None:
+            return None
+        with io.TextIOWrapper(io.BytesIO(data), encoding="utf-8", errors="replace") as text:
+            return text.read()
+
+    def exists(self, path: str) -> bool:
+        rel = self._rel(path)
+        return rel is not None and rel in self.files
+
+    def rs_files(self, root: str, package_root: str) -> List[str]:
+        """Every .rs file under ``root``; when ``root`` is the package root, tests/benches/examples are skipped (as ``_rs_files``)."""
+        top = self._rel(root)
+        if top is None:
+            return []
+        prefix = "" if top == "." else top + "/"
+        at_package_root = os.path.normpath(root) == os.path.normpath(package_root)
+        out: List[str] = []
+        for rel in sorted(self.files):
+            if not rel.startswith(prefix) or not rel.endswith(".rs"):
+                continue
+            parts = rel[len(prefix):].split("/")
+            if at_package_root and len(parts) > 1 and parts[0] in SKIP_DIRS:
+                continue
+            out.append(os.path.join(self.root, *rel.split("/")))
+        return out
+
+
 def _source_kind(pkg: dict, workspace_root: str) -> str:
     src = pkg.get("source")
     if src is None:
@@ -254,12 +305,13 @@ def _source_kind(pkg: dict, workspace_root: str) -> str:
     return "other"
 
 
-def _license(pkg: dict) -> Dict[str, Any]:
+def _license(pkg: dict, reader: Optional[SnapshotReader] = None) -> Dict[str, Any]:
     expr, lfile = pkg.get("license"), pkg.get("license_file")
     if expr:
         return {"status": "declared", "expression": expr, "file": lfile}
     if lfile:
-        exists = os.path.exists(os.path.join(os.path.dirname(pkg["manifest_path"]), lfile))
+        license_path = os.path.join(os.path.dirname(pkg["manifest_path"]), lfile)
+        exists = reader.exists(license_path) if reader is not None else os.path.exists(license_path)
         return {"status": "file-only" if exists else "file-missing", "expression": None, "file": lfile}
     return {"status": "missing", "expression": None, "file": None}
 
@@ -359,11 +411,12 @@ def classify_platform(meta: dict, scope: Optional[Sequence[str]] = None) -> Dict
 
 # ------------------------------------------------------------------------------------------------ per-package scan
 
-def _manifest_lint(pkg: dict, workspace_root: str) -> Dict[str, Optional[str]]:
-    """The unsafe_code level the MANIFEST lint table sets for this package, and where it came from."""
+def _manifest_lint(pkg: dict, workspace_root: str, reader: Optional[SnapshotReader] = None) -> Dict[str, Optional[str]]:
+    """The unsafe_code level the MANIFEST lint table sets for this package, and where it came from. With a ``reader`` the package's own
+    manifest comes from the verified snapshot (the workspace manifest, when ``lints.workspace`` asks for it, is the repository's and is read as always)."""
     if tomllib is None:
         return {"level": None, "source": None}
-    text = _read(pkg["manifest_path"])
+    text = (reader.read if reader is not None else _read)(pkg["manifest_path"])
     if text is None:
         return {"level": None, "source": None}
     try:
@@ -387,14 +440,17 @@ def _manifest_lint(pkg: dict, workspace_root: str) -> Dict[str, Optional[str]]:
     return {"level": own, "source": "package" if own else None}
 
 
-def scan_package(pkg: dict, workspace_root: str) -> Dict[str, Any]:
-    """Platform-independent facts read from the package's own files."""
+def scan_package(pkg: dict, workspace_root: str, reader: Optional[SnapshotReader] = None) -> Dict[str, Any]:
+    """Platform-independent facts read from the package's own files. With a ``reader`` they are read from the verified archive snapshot and
+    never from the directory; without one, from the directory as always."""
+    read = reader.read if reader is not None else _read
+    rs_files = reader.rs_files if reader is not None else _rs_files
     mdir = os.path.dirname(pkg["manifest_path"])
     code_roots = [t for t in pkg["targets"] if set(t["kind"]) & CODE_KINDS]
     build_targets = [t for t in pkg["targets"] if "custom-build" in t["kind"]]
     files: List[str] = []
     for t in code_roots:
-        for f in _rs_files(os.path.dirname(t["src_path"]), mdir):
+        for f in rs_files(os.path.dirname(t["src_path"]), mdir):
             if f not in files:
                 files.append(f)
     per_file: Dict[str, int] = {}
@@ -405,7 +461,7 @@ def scan_package(pkg: dict, workspace_root: str) -> Dict[str, Any]:
                      code_roots[0]["src_path"] if code_roots else None)
     attr_lints: List[Tuple[str, str, Optional[Any]]] = []
     for path in files:
-        text = _read(path)
+        text = read(path)
         if text is None:
             continue
         scanned += 1
@@ -421,7 +477,7 @@ def scan_package(pkg: dict, workspace_root: str) -> Dict[str, Any]:
                              "link_directives": [], "spawns_process": False, "native_tooling_paths": [],
                              "scanned": False}
     for t in build_targets:
-        text = _read(t["src_path"])
+        text = read(t["src_path"])
         if text is None:
             continue
         build["scanned"] = True
@@ -439,7 +495,7 @@ def scan_package(pkg: dict, workspace_root: str) -> Dict[str, Any]:
         if lint == "unsafe_code" and level in ("forbid", "deny"):
             declared.append({"mechanism": "crate-attribute" if cond is None else "crate-attribute (conditional)",
                              "level": level, "condition": None if cond is None else rustscan.cfg_text(cond)})
-    manifest_lint = _manifest_lint(pkg, workspace_root)
+    manifest_lint = _manifest_lint(pkg, workspace_root, reader)
     if manifest_lint["level"] in ("forbid", "deny"):
         declared.append({"mechanism": "manifest-lint (%s)" % manifest_lint["source"], "level": manifest_lint["level"],
                          "condition": None})
@@ -575,8 +631,14 @@ def _plain_file(path: str) -> Optional[Any]:
     return None
 
 
-def verify_registry_source(pkg: dict, checksum: str) -> Tuple[Optional[Dict[str, Any]], Optional[Tuple[str, str]]]:
+def verify_registry_source(pkg: dict, checksum: str, snapshot: Optional[Dict[str, bytes]] = None
+                           ) -> Tuple[Optional[Dict[str, Any]], Optional[Tuple[str, str]]]:
     """(facts, None) when the cargo-cache source of a registry package is exactly what the lock pins, else (None, (kind, why)).
+
+    When a ``snapshot`` dict is passed, each file the verification compares is also stored in it (path relative to the package root ->
+    the archive's bytes, which the extracted file just equalled). That dict is the attested copy of the source: a caller that analyzes it
+    instead of re-opening the directory cannot be shown anything written to the cache after the comparison. It is meaningful only when
+    the call returned no problem.
 
     The ``.crate`` archive cargo cached beside the extracted directory must hash to the lock's checksum, and that directory
     must hold exactly the archive's files, byte for byte (cargo's own ``.cargo-ok`` marker aside) and nothing else: no symbolic
@@ -669,9 +731,145 @@ def verify_registry_source(pkg: dict, checksum: str) -> Tuple[Optional[Dict[str,
                     data = member_stream.read()
                 if on_disk_bytes != data:
                     return None, (differs, "%s in the extracted source differs from the archive" % rel)
+                if snapshot is not None:
+                    snapshot[rel] = data
     except (tarfile.TarError, OSError, EOFError, zlib.error):
         return None, (differs, "the cached .crate archive is not a readable gzip tar")
     return {"archive_sha256": digest, "files_in_archive": len(files), "files_compared": len(files)}, None
+
+
+def _manifest_build_dependencies(manifest: dict) -> Set[str]:
+    """Names of the packages a manifest build-depends on, renames resolved (``package = "real"``), target-specific tables included."""
+    names: Set[str] = set()
+
+    def collect(table: Any) -> None:
+        for key, spec in (table or {}).items():
+            names.add(str(spec.get("package", key)) if isinstance(spec, dict) else str(key))
+    for key in ("build-dependencies", "build_dependencies"):
+        collect(manifest.get(key))
+    for target in (manifest.get("target") or {}).values():
+        if isinstance(target, dict):
+            for key in ("build-dependencies", "build_dependencies"):
+                collect(target.get(key))
+    return names
+
+
+def _bind_manifest(pkg: dict, files: Dict[str, bytes]) -> Optional[str]:
+    """Why cargo's metadata for ``pkg`` cannot be bound to the attested snapshot, or None when it can.
+
+    ``cargo metadata`` read the extracted directory BEFORE ``verify_registry_source`` compared it with the archive, so the fields the inventory
+    takes from the metadata (name, version, licence, licence file, ``links``, the build-dependency names that mark native tooling) and the code
+    targets the scan reads (the library's path and crate types, which include proc-macro, the build script, the binaries) are checked here against
+    the manifest and files the verified archive holds (``_target_mismatch``). A disagreement means the metadata did not describe this snapshot,
+    and the entry is refused rather than recorded half from one and half from the other."""
+    if tomllib is None:
+        return "this Python has no tomllib, so the metadata cannot be checked against the attested manifest"
+    raw = files.get("Cargo.toml")
+    if raw is None:
+        return "the archive holds no Cargo.toml"
+    try:
+        manifest = tomllib.loads(raw.decode("utf-8"))
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError):
+        return "the attested Cargo.toml cannot be parsed"
+    package = manifest.get("package")
+    if not isinstance(package, dict):
+        return "the attested Cargo.toml has no [package] table"
+    for label, attested, seen in (("name", package.get("name"), pkg.get("name")), ("version", package.get("version"), pkg.get("version")),
+                                  ("license", package.get("license"), pkg.get("license")),
+                                  ("license-file", package.get("license-file"), pkg.get("license_file")),
+                                  ("links", package.get("links"), pkg.get("links"))):
+        if attested != seen:
+            return "cargo reported %s %r, the attested manifest says %r" % (label, str(seen)[:60], str(attested)[:60])
+    metadata_build = {d["name"] for d in pkg.get("dependencies", []) if d.get("kind") == "build"}
+    if metadata_build != _manifest_build_dependencies(manifest):
+        return "cargo's build-dependencies differ from the attested manifest's"
+    return _target_mismatch(pkg, manifest, package, files)
+
+
+def _plain_relative(path: Any) -> Optional[str]:
+    """A manifest path as a normalised archive-relative name (``/`` separators), or None when it is not a plain relative path inside the package."""
+    if not isinstance(path, str) or not path or path.startswith("/") or "\\" in path:
+        return None
+    rel = posixpath.normpath(path)
+    return None if rel in (".", "..") or rel.startswith("../") else rel
+
+
+def _target_mismatch(pkg: dict, manifest: dict, package: dict, files: Dict[str, bytes]) -> Optional[str]:
+    """Why the code targets cargo reported are not the ones the attested manifest and archive declare, or None.
+
+    The scan reads the directory of every code target's source and takes the crate-root attributes from the library, so the SOURCE PATH and the
+    KIND cargo reported decide what is scanned and which root is trusted: a library moved to another archive file (one that forbids unsafe, or one
+    in a subdirectory that holds none of the code), a library of another kind, or a build script elsewhere would each give a record that no
+    attested file produced. The library and the build script are therefore bound exactly (the path and the crate types the manifest declares,
+    or the ones cargo discovers for it: ``src/lib.rs``, ``build.rs``), in both directions: a target cargo reported that the manifest does not
+    declare is refused, and so is one the manifest declares that cargo did not report. A binary the manifest names with an explicit ``path`` is
+    bound the same way (it must be reported at exactly that path); every reported binary must also be a file of the archive at a path the
+    manifest names or cargo discovers (``src/main.rs``, ``src/bin/*.rs``, ``src/bin/*/main.rs``). A binary at a DEFAULT path that cargo omitted is
+    not caught: its default locations are under ``src/``, which the scan reads only when the library is there too (with no library at all the
+    record shows ``unscanned``)."""
+    root = os.path.normpath(os.path.dirname(pkg["manifest_path"]))
+
+    def rel_of(target: dict) -> Optional[str]:
+        rel = os.path.relpath(os.path.normpath(target["src_path"]), root).replace(os.sep, "/")
+        return None if rel == ".." or rel.startswith("../") else rel
+
+    lib_table = manifest.get("lib") if isinstance(manifest.get("lib"), dict) else None
+    lib_path: Optional[str] = None
+    lib_kinds: List[str] = []
+    if lib_table is not None or ("src/lib.rs" in files and package.get("autolib") is not False):
+        table = lib_table or {}
+        lib_path = _plain_relative(table["path"]) if "path" in table else "src/lib.rs"
+        if lib_path is None:
+            return "the attested [lib] path is not a plain relative path"
+        types = table.get("crate-type", table.get("crate_type", ["lib"]))
+        if table.get("proc-macro", table.get("proc_macro", False)) is True:
+            types = ["proc-macro"]
+        if not isinstance(types, list) or not all(isinstance(kind, str) for kind in types):
+            return "the attested [lib] crate-type is not a list of names"
+        lib_kinds = sorted(types)
+    libs = [t for t in pkg["targets"] if set(t["kind"]) & LIB_KINDS]
+    if lib_path is None and libs:
+        return "cargo reported a library the attested manifest does not declare"
+    if lib_path is not None:
+        if len(libs) != 1:
+            return "the attested manifest declares one library and cargo reported %d" % len(libs)
+        if rel_of(libs[0]) != lib_path:
+            return "cargo reports the library at %s, the attested manifest at %s" % (str(rel_of(libs[0]))[:60], lib_path[:60])
+        if sorted(libs[0]["kind"]) != lib_kinds:
+            return "cargo reports the library as %s, the attested manifest as %s" % (sorted(libs[0]["kind"]), lib_kinds)
+
+    build_key = package.get("build")
+    if isinstance(build_key, str):
+        build_path = _plain_relative(build_key)
+        if build_path is None:
+            return "the attested build script path is not a plain relative path"
+    else:
+        build_path = "build.rs" if build_key is not False and "build.rs" in files else None
+    builds = [t for t in pkg["targets"] if "custom-build" in t["kind"]]
+    if build_path is None and builds:
+        return "cargo reported a build script the attested manifest does not declare"
+    if build_path is not None and (len(builds) != 1 or rel_of(builds[0]) != build_path):
+        return "the attested manifest declares the build script %s, cargo reported %s" % (
+            build_path[:60], [str(rel_of(t))[:60] for t in builds])
+
+    named = {_plain_relative(entry.get("path")) for entry in (manifest.get("bin") or []) if isinstance(entry, dict)}
+    reported_bins = {rel_of(t) for t in pkg["targets"] if "bin" in t["kind"]}
+    for entry in (manifest.get("bin") or []):
+        if isinstance(entry, dict) and "path" in entry:
+            declared = _plain_relative(entry["path"])
+            if declared is None:
+                return "the attested [[bin]] path is not a plain relative path"
+            if declared not in reported_bins:
+                return "the attested manifest declares the binary %s and cargo did not report it" % declared[:60]
+    for t in pkg["targets"]:
+        if set(t["kind"]) & (CODE_KINDS | {"custom-build"}):
+            rel = rel_of(t)
+            if rel is None or rel not in files:
+                return "the %s target's source (%s) is not a file of the attested archive" % (t.get("name", "?"), str(rel)[:60])
+            if "bin" in t["kind"] and rel not in named and not BIN_DISCOVERED.fullmatch(rel):
+                return "the %s binary's source (%s) is neither named by the attested manifest nor a path cargo discovers" % (
+                    t.get("name", "?"), rel[:60])
+    return None
 
 
 def inventory_unlinked(unused: Sequence[Tuple[str, str, Optional[str]]], lock: Dict[Tuple[str, str, Optional[str]], dict],
@@ -681,7 +879,10 @@ def inventory_unlinked(unused: Sequence[Tuple[str, str, Optional[str]]], lock: D
     platform, for instance): ``unused`` are their lock keys.  Returns ``(items, notes)``.
 
     Each item is ``{"pid", "rec"}``: a package record with the same fields as any other, built from the SAME source scan and
-    from that source's own manifest, but only after ``verify_registry_source`` proved the source is the one the lock pins.
+    from that source's own manifest, but only after ``verify_registry_source`` proved the source is the one the lock pins, and
+    from the attested snapshot it returned (``SnapshotReader``), never from the cache directory again: what is written there after
+    the comparison cannot change the record. Cargo's metadata, read before the comparison, is checked against that snapshot
+    (``_bind_manifest``); where it disagrees the entry is a blocker, not a half-and-half record.
     Its role on every platform is ``absent`` and it carries an ``unlinked`` object: it is not marked linked, host-only or
     reachable anywhere, and the label is derived from the graphs of this run alone, so an entry a later graph links is an
     ordinary record there.  A notes tuple is ``(kind, severity, package, detail)``.  An entry whose source is missing,
@@ -714,18 +915,25 @@ def inventory_unlinked(unused: Sequence[Tuple[str, str, Optional[str]]], lock: D
             notes.append(("lock-entry-not-located", "blocker", label,
                           "locked, linked on no platform, and its source cannot be located: %s (nothing is inventoried for it)" % why))
             continue
-        facts, problem = verify_registry_source(pkg, checksum)
+        snapshot: Dict[str, bytes] = {}
+        facts, problem = verify_registry_source(pkg, checksum, snapshot)
+        if problem is None:
+            unbound = _bind_manifest(pkg, snapshot)
+            problem = None if unbound is None else ("lock-entry-source-differs", "cargo's metadata does not describe the attested archive (%s)" % unbound)
         if problem is not None:
             notes.append((problem[0], "blocker", label,
                           "locked, linked on no platform; %s (nothing is inventoried for it)" % problem[1]))
             continue
-        scan = scan_package(pkg, workspace_root)
+        # From here on nothing is read from the cache directory: the scan, the manifest lint and the licence file all come from the attested
+        # bytes, so a file written to the cache after the comparison cannot change what is recorded.
+        reader = SnapshotReader(os.path.dirname(pkg["manifest_path"]), snapshot)
+        scan = scan_package(pkg, workspace_root, reader)
         rec_key = label if label not in taken else "%s[%s]" % (label, os.path.basename(os.path.dirname(pkg["manifest_path"])))
         taken.add(rec_key)
         rec = {
             "name": name, "version": version, "key": rec_key, "source_kind": "registry",
             "pin": {"source": source, "checksum": checksum, "in_lock": True},
-            "license": _license(pkg), "target_kinds": scan["target_kinds"], "links": pkg.get("links"),
+            "license": _license(pkg, reader), "target_kinds": scan["target_kinds"], "links": pkg.get("links"),
             "build_script": scan["build_script"], "unsafe": scan["unsafe"], "uses_float": scan["uses_float"],
             "references_alloc": scan["uses_alloc"], "scanned_files": scan["scanned_files"],
             "platforms": {k: {"role": "absent"} for k in platform_keys},

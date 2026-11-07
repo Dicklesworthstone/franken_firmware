@@ -1,0 +1,27 @@
+{
+  "audit": {
+    "counts": {
+      "blocker": 0,
+      "info": 57,
+      "review": 23
+    },
+    "exit_status": 3,
+    "sha256": "841f3b166997e002220f363b7b472f61db1290c4db608da0bb642ee164102a5b"
+  },
+  "base_revision": "2f62b3f1cb6a028e0b127c5aa7ced52d51646eaf",
+  "patch_sha256": "c4543e2c15f50c8c1b6f86e03823d01f1c58428b687af31bd083302e0e644d20",
+  "source_inputs": {
+    "Cargo.lock": "39e70649d690a342c74157bada974cfabaf76bfbbcb4dc05a33fa0af6181c58c",
+    "docs/contracts/e06.md": "52b925fb8bd878573ebf2518462364ed7e4ea71d7eb87a4132d864b622f9239a",
+    "scripts/e06/audit.py": "aa126d4615f93966845f749eb7a2e89beda8f129a538f5558128f3db7c25e240",
+    "tests/e06/test_audit.py": "4e5e9c44f86f7e36720b5af452db7697870845e78e5614789a6fe44f68efe3d1"
+  },
+  "source_review": "TealSeal AM10972; independent concrete reproducers; no compiler",
+  "suite_log_sha256": "27331c2da6ce06e2b75ce289d98f2f54a35226420dbbed788680cd4827d3f2ce",
+  "tests": {
+    "failed": 0,
+    "passed": 377,
+    "skipped": 0,
+    "warnings_as_errors": true
+  }
+}

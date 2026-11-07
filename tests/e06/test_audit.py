@@ -778,18 +778,25 @@ class UnlinkedLockedPackageTests(Base):
     MANIFEST = '[package]\nname = "gated-sys"\nversion = "0.2.0"\nlicense = "MIT OR Apache-2.0"\n'
 
     def world(self, *, lock_checksum=None, archive=True, tamper=None, source=None, listed=True, listing="resolved",
-              extra_tar=None, checksum_line=True, write_src=True, not_on_disk=(), replace=None):
+              extra_tar=None, checksum_line=True, write_src=True, not_on_disk=(), replace=None,
+              manifest=None, extra_files=None, metadata_edit=None, after_verify=None):
         """(report, lock_text, sha256 of the archive). A cargo-shaped registry cache holding one crate that the lock names and
         no platform links, beside the small clean graph. Every call builds its own cache directory. ``write_src=False`` leaves
-        the extracted directory out; ``not_on_disk`` leaves named files out of it (the archive still holds them)."""
+        the extracted directory out; ``not_on_disk`` leaves named files out of it (the archive still holds them). ``manifest`` and
+        ``extra_files`` change what the archive (and the directory) hold; ``metadata_edit`` edits the listing cargo is imagined to have
+        produced; ``after_verify`` is called with the extracted directory right after the verification returns, i.e. it writes into the
+        cache in the window the snapshot closes."""
         self.fx = small_fixture(self.root, self.outside)
         reg = os.path.join(tempfile.mkdtemp(prefix="cargo-home-", dir=self.outside), "registry")
         src = os.path.join(reg, "src", self.INDEX, "gated-sys-0.2.0")
-        files = {"Cargo.toml": self.MANIFEST, "src/lib.rs": self.LIB}
+        self.src = src
+        files = {"Cargo.toml": manifest or self.MANIFEST, "src/lib.rs": self.LIB}
+        files.update(extra_files or {})
         if write_src:
             os.makedirs(os.path.join(src, "src"))
             for rel, text in files.items():
                 if rel not in not_on_disk:
+                    os.makedirs(os.path.dirname(os.path.join(src, rel)), exist_ok=True)
                     with open(os.path.join(src, rel), "w") as fh:
                         fh.write(text)
             with open(os.path.join(src, ".cargo-ok"), "w") as fh:
@@ -818,9 +825,21 @@ class UnlinkedLockedPackageTests(Base):
                        "license": "MIT OR Apache-2.0", "license_file": None, "links": None, "dependencies": [],
                        "manifest_path": os.path.join(src, "Cargo.toml"),
                        "targets": [{"kind": ["lib"], "name": "gated_sys", "src_path": os.path.join(src, "src", "lib.rs")}]}
+        if metadata_edit:
+            metadata_edit(pkg_listing)
+        self.pkg_listing = pkg_listing
         locked = AU.LockedSources(listing, {"packages": [pkg_listing] if listed else []} if listing == "resolved" else None,
                                   "" if listing == "resolved" else "cargo exited 101")
-        return AU.analyze(platforms(self.fx, replace=replace), lock, self.fx.root, locked=locked), lock, sha
+        if after_verify is None:
+            return AU.analyze(platforms(self.fx, replace=replace), lock, self.fx.root, locked=locked), lock, sha
+        real_verify = AU.verify_registry_source
+
+        def verify_then_write(listed_pkg, checksum, snapshot=None):
+            result = real_verify(listed_pkg, checksum, snapshot)
+            after_verify(os.path.dirname(listed_pkg["manifest_path"]))
+            return result
+        with mock.patch.object(AU, "verify_registry_source", verify_then_write):
+            return AU.analyze(platforms(self.fx, replace=replace), lock, self.fx.root, locked=locked), lock, sha
 
     def pins(self, report, plat):
         return {r["package"]: r for r in report["pins"][plat]["rows"]}
@@ -989,6 +1008,261 @@ class UnlinkedLockedPackageTests(Base):
         self.assertIn(("lock_package_not_pinned", self.KEY), found)
         refused, bad_lock, _ = self.world(lock_checksum="00" * 32)           # an entry whose source cannot be proved gives it nothing to accept
         self.assertNotEqual(inventory.judge(refused, bad_lock.encode())[0], "pass")
+
+
+    # -- the verify -> scan window: the scan reads the attested snapshot, never the directory again
+    LICENSE_FILE_MANIFEST = '[package]\nname = "gated-sys"\nversion = "0.2.0"\nlicense-file = "LICENSE.md"\n'
+
+    @staticmethod
+    def planted(root):
+        """What a writer to the cache could do right after the comparison: more unsafe, an extra source file, a lint, a licence file."""
+        with open(os.path.join(root, "src", "lib.rs"), "a") as fh:
+            fh.write("pub fn planted() { unsafe { core::hint::unreachable_unchecked() } }\n")
+        with open(os.path.join(root, "src", "extra.rs"), "w") as fh:
+            fh.write("pub fn more() { unsafe { core::ptr::null::<u8>().read() } }\n")
+        with open(os.path.join(root, "Cargo.toml"), "a") as fh:
+            fh.write('[lints.rust]\nunsafe_code = "forbid"\n')
+        with open(os.path.join(root, "LICENSE.md"), "w") as fh:
+            fh.write("planted\n")
+
+    def test_a_stable_source_gives_the_same_facts_from_the_snapshot_as_from_the_directory(self):
+        report, _, sha = self.world()
+        rec = pkg(report, self.KEY)
+        disk = AU.scan_package(self.pkg_listing, self.fx.root)              # the same scan, reading the directory
+        for key, want in (("unsafe", disk["unsafe"]), ("build_script", disk["build_script"]), ("uses_float", disk["uses_float"]),
+                          ("references_alloc", disk["uses_alloc"]), ("scanned_files", disk["scanned_files"]), ("target_kinds", disk["target_kinds"])):
+            self.assertEqual(rec[key], want, key)
+        self.assertEqual(rec["license"], AU._license(self.pkg_listing))
+        self.assertEqual(rec["unsafe"]["tokens"], 1)
+
+    def test_what_is_written_to_the_cache_after_the_comparison_cannot_change_the_recorded_facts(self):
+        report, _, sha = self.world(after_verify=self.planted)
+        with open(os.path.join(self.src, "src", "lib.rs")) as fh:
+            self.assertIn("planted", fh.read())                              # the plant is live: the directory really changed
+        self.assertTrue(os.path.exists(os.path.join(self.src, "src", "extra.rs")))
+        rec = pkg(report, self.KEY)
+        self.assertEqual((rec["unsafe"]["status"], rec["unsafe"]["tokens"], sorted(rec["unsafe"]["files"])), ("present", 1, ["src/lib.rs"]))
+        self.assertEqual(rec["scanned_files"], 1)
+        self.assertEqual(rec["unsafe"]["declared"], [])                      # the lint written afterwards is not the attested manifest's
+        self.assertEqual(rec["unlinked"]["source_verified"], {"archive_sha256": sha, "files_in_archive": 2, "files_compared": 2})
+        self.assertEqual(kinds(report, "blocker"), [])
+        first, _, _ = self.world()                                           # and the same record as when nothing was written
+        self.assertEqual(rec, pkg(first, self.KEY))
+
+    def test_the_licence_file_is_judged_from_the_snapshot_so_one_written_afterwards_does_not_appear(self):
+        def file_license(listing):
+            listing["license"], listing["license_file"] = None, "LICENSE.md"
+        report, _, _ = self.world(manifest=self.LICENSE_FILE_MANIFEST, metadata_edit=file_license, after_verify=self.planted)
+        self.assertTrue(os.path.exists(os.path.join(self.src, "LICENSE.md")))      # written after the comparison, present on disk
+        rec = pkg(report, self.KEY)
+        self.assertEqual((rec["license"]["status"], rec["license"]["file"]), ("file-missing", "LICENSE.md"))    # the archive holds none
+        held, _, _ = self.world(manifest=self.LICENSE_FILE_MANIFEST, extra_files={"LICENSE.md": "terms\n"}, metadata_edit=file_license)
+        self.assertEqual(pkg(held, self.KEY)["license"]["status"], "file-only")  # the permitted positive: the archive holds it
+
+    def test_nothing_in_the_cache_is_reopened_walked_or_read_by_path_after_the_comparison(self):
+        started = []
+
+        def arm(root):
+            def guard(real, what):
+                def guarded(target=None, *rest, **named):
+                    if str(target).startswith(root):
+                        raise AssertionError("the cache was %s: %s" % (what, target))
+                    return real(target, *rest, **named)
+                return guarded
+            for patcher in (mock.patch.object(AU, "_read", side_effect=AssertionError("the scan read a path")),
+                            mock.patch.object(AU, "_rs_files", side_effect=AssertionError("the scan walked the directory")),
+                            mock.patch.object(os, "walk", side_effect=AssertionError("the cache was walked")),
+                            mock.patch.object(builtins, "open", guard(builtins.open, "reopened")),
+                            mock.patch.object(os, "open", guard(os.open, "reopened by descriptor")),
+                            mock.patch.object(os, "scandir", guard(os.scandir, "listed")),
+                            mock.patch.object(os, "listdir", guard(os.listdir, "listed"))):
+                patcher.start()
+                started.append(patcher)
+        try:
+            report, _, _ = self.world(after_verify=arm)
+        finally:
+            for patcher in reversed(started):
+                patcher.stop()
+        self.assertIn("unlinked", pkg(report, self.KEY))
+
+    def test_cargos_metadata_that_does_not_describe_the_attested_manifest_is_refused_not_mixed_in(self):
+        def edit(field, value):
+            def apply(listing):
+                listing[field] = value
+            return apply
+
+        def another_source(listing):
+            listing["targets"].append({"kind": ["bin"], "name": "x", "src_path": os.path.join(os.path.dirname(listing["manifest_path"]), "src", "missing.rs")})
+        cases = (("a different licence expression", {"metadata_edit": edit("license", "GPL-3.0-only")}),
+                 ("a licence file the manifest does not name", {"metadata_edit": edit("license_file", "COPYING")}),
+                 ("a links key the manifest does not have", {"metadata_edit": edit("links", "z")}),
+                 ("a build dependency the manifest does not have",
+                  {"metadata_edit": lambda listing: listing["dependencies"].append({"name": "cc", "kind": "build"})}),
+                 ("a proc-macro library the manifest does not declare",
+                  {"metadata_edit": lambda listing: listing["targets"][0].update(kind=["proc-macro"])}),
+                 ("a target whose source is not in the archive", {"metadata_edit": another_source}),
+                 ("another package name in the attested manifest", {"manifest": self.MANIFEST.replace('name = "gated-sys"', 'name = "other-sys"')}),
+                 ("another version in the attested manifest", {"manifest": self.MANIFEST.replace('"0.2.0"', '"0.3.0"')}))
+        for label, opt in cases:
+            with self.subTest(label):
+                report = self.refused("lock-entry-source-differs", **opt)
+                self.assertIn("does not describe the attested archive", find(report, "lock-entry-source-differs")[0]["detail"])
+
+    def test_a_richer_manifest_that_cargos_metadata_matches_is_bound_and_inventoried(self):
+        manifest = (self.MANIFEST + '[build-dependencies]\nfoo = { package = "cc", version = "1" }\n'
+                    "[target.'cfg(unix)'.build-dependencies]\npkg-config = \"0.3\"\n")
+
+        def listing_for(listing):
+            listing["dependencies"] += [{"name": "cc", "kind": "build"}, {"name": "pkg-config", "kind": "build", "target": "cfg(unix)"},
+                                        {"name": "serde", "kind": "dev"}]           # a dev-dependency is not a build dependency
+            listing["targets"].append({"kind": ["custom-build"], "name": "build-script-build",
+                                       "src_path": os.path.join(os.path.dirname(listing["manifest_path"]), "build.rs")})
+        report, _, _ = self.world(manifest=manifest, extra_files={"build.rs": "fn main() {}\n"}, metadata_edit=listing_for)
+        rec = pkg(report, self.KEY)
+        self.assertTrue(rec["build_script"]["present"])
+        self.assertEqual(rec["build_script"]["native_tooling_deps"], ["cc", "pkg-config"])
+        self.assertEqual(kinds(report, "blocker"), [])
+
+    # -- the library, the build script and the binaries cargo reports are the attested manifest's, not merely files of the archive
+    def at(self, listing, rel):
+        return os.path.join(os.path.dirname(listing["manifest_path"]), *rel.split("/"))
+
+    TOOL_BIN = '[[bin]]\nname = "tool"\npath = "tools/tool.rs"\n'
+    TOOL_FILES = {"tools/tool.rs": "fn main() {\n    unsafe { core::hint::unreachable_unchecked() }\n}\n"}
+
+    def test_a_code_target_that_the_attested_manifest_does_not_declare_is_refused_not_scanned(self):
+        def retarget(rel=None, **fields):
+            def apply(listing):
+                if rel is not None:
+                    listing["targets"][0]["src_path"] = self.at(listing, rel)
+                listing["targets"][0].update(fields)
+            return apply
+
+        def add(kind, name, rel):
+            return lambda listing: listing["targets"].append({"kind": kind, "name": name, "src_path": self.at(listing, rel)})
+        build = {"build.rs": "fn main() {}\n", "other.rs": "fn main() {}\n"}
+        cases = (
+            ("the library moved to another archive file, one that forbids unsafe",
+             {"extra_files": {"src/other.rs": "#![forbid(unsafe_code)]\n"}, "metadata_edit": retarget("src/other.rs")},
+             "cargo reports the library at src/other.rs, the attested manifest at src/lib.rs"),
+            ("the library moved into a subdirectory that holds none of the code",
+             {"extra_files": {"src/sub/inner.rs": "pub fn f() {}\n"}, "metadata_edit": retarget("src/sub/inner.rs")},
+             "cargo reports the library at src/sub/inner.rs"),
+            ("the library reported as a cdylib", {"metadata_edit": retarget(kind=["cdylib"])},
+             "cargo reports the library as ['cdylib'], the attested manifest as ['lib']"),
+            ("the library reported as a binary", {"metadata_edit": retarget(kind=["bin"])}, "declares one library and cargo reported 0"),
+            ("no library although src/lib.rs is in the archive", {"metadata_edit": lambda listing: listing["targets"].clear()},
+             "declares one library and cargo reported 0"),
+            ("a library although the manifest turns library discovery off", {"manifest": self.MANIFEST + "autolib = false\n"},
+             "a library the attested manifest does not declare"),
+            ("a build script elsewhere than build.rs", {"extra_files": build, "metadata_edit": add(["custom-build"], "build-script-build", "other.rs")},
+             "declares the build script build.rs, cargo reported ['other.rs']"),
+            ("no build script although build.rs is in the archive", {"extra_files": build},
+             "declares the build script build.rs, cargo reported []"),
+            ("a build script although the manifest says build = false",
+             {"manifest": self.MANIFEST + "build = false\n", "extra_files": build,
+              "metadata_edit": add(["custom-build"], "build-script-build", "build.rs")},
+             "a build script the attested manifest does not declare"),
+            ("a library the manifest names at a path the archive does not hold",
+             {"manifest": self.MANIFEST + '[lib]\npath = "src/gone.rs"\n', "metadata_edit": retarget("src/gone.rs")},
+             "is not a file of the attested archive"),
+            ("a binary at a path nobody names or discovers",
+             {"extra_files": {"src/helper.rs": "fn main() {}\n"}, "metadata_edit": add(["bin"], "helper", "src/helper.rs")},
+             "neither named by the attested manifest nor a path cargo discovers"),
+            ("a binary the manifest names by path, left out of the metadata",
+             {"manifest": self.MANIFEST + self.TOOL_BIN, "extra_files": self.TOOL_FILES},
+             "declares the binary tools/tool.rs and cargo did not report it"),
+            ("a binary the manifest names by path, reported at a discovered path instead",
+             {"manifest": self.MANIFEST + self.TOOL_BIN, "extra_files": dict(self.TOOL_FILES, **{"src/main.rs": "fn main() {}\n"}),
+              "metadata_edit": add(["bin"], "tool", "src/main.rs")},
+             "declares the binary tools/tool.rs and cargo did not report it"),
+            ("a binary the manifest names by path, reported as an example (not a code target) at that file",
+             {"manifest": self.MANIFEST + self.TOOL_BIN, "extra_files": self.TOOL_FILES,
+              "metadata_edit": add(["example"], "tool", "tools/tool.rs")},
+             "declares the binary tools/tool.rs and cargo did not report it"),
+            ("a binary the manifest names by a path that is not a plain relative one",
+             {"manifest": self.MANIFEST + '[[bin]]\nname = "tool"\npath = "../tool.rs"\n'},
+             "the attested [[bin]] path is not a plain relative path"))
+        for label, opt, why in cases:
+            with self.subTest(label):
+                report = self.refused("lock-entry-source-differs", **opt)
+                self.assertIn("does not describe the attested archive", find(report, "lock-entry-source-differs")[0]["detail"])
+                self.assertIn(why, find(report, "lock-entry-source-differs")[0]["detail"])
+
+    def test_a_library_build_script_and_binaries_that_the_attested_manifest_declares_are_bound_and_inventoried(self):
+        manifest = (self.MANIFEST + 'build = "x.rs"\n[lib]\npath = "src/mylib.rs"\ncrate-type = ["cdylib", "rlib"]\n'
+                    '[[bin]]\nname = "tool"\npath = "tools/tool.rs"\n')
+
+        def listing_for(listing):
+            listing["targets"] = [{"kind": ["cdylib", "rlib"], "name": "gated_sys", "src_path": self.at(listing, "src/mylib.rs")},
+                                  {"kind": ["bin"], "name": "tool", "src_path": self.at(listing, "tools/tool.rs")},
+                                  {"kind": ["bin"], "name": "aux", "src_path": self.at(listing, "src/bin/aux.rs")},    # discovered, not named
+                                  {"kind": ["custom-build"], "name": "build-script-build", "src_path": self.at(listing, "x.rs")}]
+        files = {"src/mylib.rs": "pub fn f() {}\n", "tools/tool.rs": "fn main() {}\n", "src/bin/aux.rs": "fn main() {}\n", "x.rs": "fn main() {}\n"}
+        report, _, _ = self.world(manifest=manifest, extra_files=files, metadata_edit=listing_for)
+        rec = pkg(report, self.KEY)
+        self.assertEqual(kinds(report, "blocker"), [])
+        self.assertEqual(rec["target_kinds"], ["bin", "cdylib", "custom-build", "rlib"])
+        self.assertTrue(rec["build_script"]["present"])
+        macro, _, _ = self.world(manifest=self.MANIFEST + "[lib]\nproc-macro = true\n",
+                                 metadata_edit=lambda listing: listing["targets"][0].update(kind=["proc-macro"]))
+        self.assertEqual(kinds(macro, "blocker"), [])
+        self.assertEqual(pkg(macro, self.KEY)["target_kinds"], ["proc-macro"])
+        off, _, _ = self.world(manifest=self.MANIFEST + "autolib = false\nbuild = false\n", extra_files={"build.rs": "fn main() {}\n"},
+                               metadata_edit=lambda listing: listing["targets"].clear())
+        self.assertEqual(kinds(off, "blocker"), [])                           # discovery off and nothing reported: the same thing declared twice
+
+    def test_a_binary_the_manifest_names_by_path_outside_src_is_scanned_when_cargo_reports_it(self):
+        report, _, _ = self.world(manifest=self.MANIFEST + self.TOOL_BIN, extra_files=self.TOOL_FILES,
+                                  metadata_edit=lambda listing: listing["targets"].append(
+                                      {"kind": ["bin"], "name": "tool", "src_path": self.at(listing, "tools/tool.rs")}))
+        rec = pkg(report, self.KEY)
+        self.assertEqual(kinds(report, "blocker"), [])
+        self.assertEqual((rec["unsafe"]["tokens"], rec["unsafe"]["files"]), (2, {"src/lib.rs": 1, "tools/tool.rs": 1}))
+        self.assertEqual(rec["target_kinds"], ["bin", "lib"])
+
+    # -- the text the snapshot gives is the text the directory reader gives for the same bytes
+    TEXT_VECTORS = (b"fn a() {} // c\r unsafe { }\n", b"a\r\nb\r\nc\r", b"\r\r\n\n", b"\xef\xbb\xbffn a() {}\n", b"fn \xff\xfe() {}\n",
+                    b"x\xe2\x82", b"", b"no newline at all")
+
+    def test_the_snapshot_text_is_the_directory_readers_text_for_newlines_a_bom_and_invalid_bytes(self):
+        base = tempfile.mkdtemp(dir=self.outside)
+        root = os.path.join(base, "pkg-1.0.0")
+        os.makedirs(root)
+        for index, data in enumerate(self.TEXT_VECTORS):
+            with self.subTest(vector=data):
+                path = os.path.join(root, "v%d.rs" % index)
+                with open(path, "wb") as fh:
+                    fh.write(data)
+                reader = AU.SnapshotReader(root, {"v%d.rs" % index: data})
+                self.assertEqual(reader.read(path), AU._read(path))
+
+    def test_a_lone_carriage_return_ends_a_line_comment_in_the_snapshot_scan_as_it_does_in_the_directory_scan(self):
+        lib = "pub fn a() {} // note\r unsafe { core::hint::unreachable_unchecked() }\n"      # the CR ends the comment: the unsafe block is code
+        report, _, _ = self.world(extra_files={"src/lib.rs": lib})
+        rec = pkg(report, self.KEY)
+        disk = AU.scan_package(self.pkg_listing, self.fx.root)
+        self.assertEqual((disk["unsafe"]["tokens"], disk["unsafe"]["files"]), (1, {"src/lib.rs": 1}))
+        self.assertEqual((rec["unsafe"]["tokens"], rec["unsafe"]["files"]), (1, {"src/lib.rs": 1}))
+        self.assertEqual(rec["unsafe"], disk["unsafe"])
+
+    def test_the_snapshot_reader_lists_and_reads_exactly_what_the_directory_reader_does(self):
+        base = tempfile.mkdtemp(dir=self.outside)
+        root = os.path.join(base, "pkg-1.0.0")
+        tree = {"src/a.rs": "a", "src/sub/b.rs": "b", "src/tests/inner.rs": "i", "tests/t.rs": "t", "examples/e.rs": "e", "benches/x.rs": "x",
+                "build.rs": "fn main() {}", "src/readme.md": "m", "root.rs": "r"}
+        for rel, text in tree.items():
+            os.makedirs(os.path.dirname(os.path.join(root, rel)), exist_ok=True)
+            with open(os.path.join(root, rel), "w") as fh:
+                fh.write(text)
+        reader = AU.SnapshotReader(root, {rel: text.encode() for rel, text in tree.items()})
+        for top in (root, os.path.join(root, "src"), os.path.join(root, "src", "sub")):
+            self.assertEqual(sorted(reader.rs_files(top, root)), sorted(AU._rs_files(top, root)), top)
+        self.assertEqual(reader.read(os.path.join(root, "src", "a.rs")), AU._read(os.path.join(root, "src", "a.rs")))
+        self.assertIsNone(reader.read(os.path.join(root, "src", "none.rs")))
+        self.assertIsNone(reader.read(os.path.join(base, "elsewhere.rs")))      # outside the package: nothing
+        self.assertTrue(reader.exists(os.path.join(root, "build.rs")))
+        self.assertFalse(reader.exists(os.path.join(root, "src", "none.rs")))
 
 
 class RegistrySourceVerifierTests(Base):
