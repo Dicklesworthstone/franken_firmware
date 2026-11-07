@@ -1,0 +1,27 @@
+    Finished `test` profile [unoptimized] target(s) in 39m 56s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 6 tests
+test a_restarted_device_keeps_its_identity_and_a_different_identity_is_a_different_device ... ok
+test a_tailnet_connection_is_refused_the_description_and_control_that_the_local_link_gets ... ok
+test malformed_searches_get_no_answer_and_the_clients_own_search_still_finds_the_device ... ok
+test only_the_zone_player_answer_is_a_player_for_the_client_and_other_services_are_silent ... ok
+test the_confined_client_refuses_any_host_or_url_but_the_fixture_player ... ok
+test the_real_client_finds_reads_and_cross_checks_the_device_over_loopback ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.77s
+running 5 tests
+test a_restarted_shim_never_honours_an_old_sid_before_or_after_a_fresh_subscription ... ok
+test a_shim_not_started_eventing_still_grants_the_subscription_and_delivers_nothing ... ok
+test a_stalled_callback_is_bounded_and_counted_while_control_keeps_answering ... ok
+test a_subscribe_naming_any_other_callback_is_answered_412_and_never_contacted ... ok
+test the_real_client_subscribes_and_a_real_listener_receives_ordered_events ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.48s
+running 5 tests
+test the_real_client_is_refused_on_an_unauthenticated_tailnet_connection ... ok
+test the_real_client_reads_and_sets_volume_and_mute_on_the_real_endpoint_over_loopback ... ok
+test the_real_client_reports_each_refusal_as_the_error_it_is_and_nothing_changes ... ok
+test the_test_client_can_reach_only_the_fixture_player_and_has_no_discovery ... ok
+test with_no_listener_the_real_client_reports_a_network_error_and_never_a_success ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

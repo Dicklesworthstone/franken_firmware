@@ -40,6 +40,7 @@ use franken_control::channel::request::{ControlCommand, RequestBody};
 use franken_control::contracts::secret_store::{
     Generation, SecretError, SecretHandle, SecretMeta, SecretStore, SecretValue,
 };
+use franken_control::fsonos::gena::INCARNATION_BYTES;
 use franken_control::fsonos::{
     Context, Endpoint, EndpointConfig, Handled, HttpRequest, Ingress, LegacyBridge, Service,
 };
@@ -58,8 +59,16 @@ const PANEL_PEER: &str = "panel";
 /// The identities the two ingresses speak as. Synthetic labels.
 const BRIDGE_PEER: &str = "legacy-bridge";
 const TAILNET_PEER: &str = "tailnet-controller";
-/// Makes this incarnation's event subscription ids differ from another's. Nothing subscribes here.
+/// The fixture value of the event subscription nonce, for the harness and its goldens: nothing subscribes there. A plane that a
+/// controller can subscribe to takes its nonce from the host for each boot instead ([`ControlPlane::with_incarnation`]); a constant
+/// makes the ids of two boots collide.
 const SUBSCRIPTION_NONCE: u32 = 0x5151_0001;
+
+/// What keys a plane's event subscription ids: the fixture nonce (today's ids, byte for byte) or a boot's ten incarnation bytes.
+enum Keying {
+    Fixture(u32),
+    Boot([u8; INCARNATION_BYTES]),
+}
 /// The reference runs apply their absolute sets under numbers of their own: above the bring-up's small ones and the fencing
 /// probe's (`1_000_000..`), below the channel's own base (`1 << 32`). The session remembers which numbers it applied (a set), so
 /// the order between these ranges does not matter, only that they do not collide.
@@ -459,6 +468,31 @@ impl ControlPlane {
         member_id: &str,
         now_ns: u64,
     ) -> Result<Self, String> {
+        let keying = Keying::Fixture(SUBSCRIPTION_NONCE);
+        Self::build(session, member_id, now_ns, keying)
+    }
+
+    /// [`ControlPlane::new`] for one boot whose event subscription ids must differ from every other boot's. `incarnation` is the
+    /// first ten bytes of every id this boot hands out (less the six bits a version-4 UUID fixes: 74 bits remain), and it is the
+    /// only thing that makes an id of this boot differ from the same-numbered id of an earlier boot (the table's 48-bit counter
+    /// starts again at 1). `new` keeps the fixture nonce and its ids byte for byte, which is right for a harness that never
+    /// subscribes and wrong for anything a controller can subscribe to across a restart; the loopback shim passes ten bytes it
+    /// read from the host once, at startup (`fsonos_loopback::host_incarnation`).
+    pub(crate) fn with_incarnation(
+        session: &UnifiedGroupSession,
+        member_id: &str,
+        now_ns: u64,
+        incarnation: [u8; INCARNATION_BYTES],
+    ) -> Result<Self, String> {
+        Self::build(session, member_id, now_ns, Keying::Boot(incarnation))
+    }
+
+    fn build(
+        session: &UnifiedGroupSession,
+        member_id: &str,
+        now_ns: u64,
+        keying: Keying,
+    ) -> Result<Self, String> {
         let epoch = session.current_epoch;
         let bridge_peer = PeerId::parse(BRIDGE_PEER).map_err(|e| format!("bridge peer id: {e}"))?;
         let tailnet_peer =
@@ -488,13 +522,12 @@ impl ControlPlane {
             .install_lease(session, AuthorityToken::issue(session, u64::MAX), now_ns)
             .map_err(|e| format!("group lease: {e}"))?;
         let bridge = LegacyBridge::new(bridge_peer, fixture_key(BRIDGE_PEER));
-        let endpoint = Endpoint::new(
-            EndpointConfig::provisional(member_id),
-            bridge,
-            SUBSCRIPTION_NONCE,
-            1,
-        )
-        .map_err(|e| format!("endpoint: {e}"))?;
+        let config = EndpointConfig::provisional(member_id);
+        let built = match keying {
+            Keying::Fixture(nonce) => Endpoint::new(config, bridge, nonce, 1),
+            Keying::Boot(bytes) => Endpoint::with_incarnation(config, bridge, bytes, 1),
+        };
+        let endpoint = built.map_err(|e| format!("endpoint: {e}"))?;
         // The campaign fixture has no journal and fixture keys: it steps with the plain, volatile development step on purpose,
         // and says so here.
         Ok(Self {

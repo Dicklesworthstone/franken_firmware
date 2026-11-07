@@ -72,7 +72,10 @@ use crate::channel::pipeline::{
 use crate::channel::request::{ControlCommand, ControlRequest, RequestBody, RequestError};
 
 use super::actions::{self, Cmd, Plan, Read};
-use super::gena::{GenaConfig, GenaError, Notification, SubscribeHeaders, SubscriptionTable};
+use super::gena::{
+    GenaConfig, GenaError, INCARNATION_BYTES, Notification, SubscribeHeaders, SubscriptionTable,
+    legacy_incarnation,
+};
 use super::soap::{Fault, Service, SoapCall, fault_envelope, parse_call, response_envelope};
 use super::state::{Directory, EventState, TransportState};
 use super::xml::XmlLimits;
@@ -250,12 +253,30 @@ pub struct Endpoint {
 }
 
 impl Endpoint {
-    /// `subscription_nonce` makes this incarnation's subscription ids differ from the last one's.
-    /// `first_legacy_seq` is the first command number the bridge uses; at least 1.
+    /// `subscription_nonce` makes this incarnation's subscription ids differ from the last one's, unless the owner hands the same
+    /// nonce to every boot. The 32-bit form of [`Endpoint::with_incarnation`]: its ids read exactly
+    /// `uuid:<nonce>-0000-4000-8000-<counter>`. `first_legacy_seq` is the first command number the bridge uses; at least 1.
     pub fn new(
         config: EndpointConfig,
         bridge: LegacyBridge,
         subscription_nonce: u32,
+        first_legacy_seq: u64,
+    ) -> Result<Self, EndpointError> {
+        Self::with_incarnation(
+            config,
+            bridge,
+            legacy_incarnation(subscription_nonce),
+            first_legacy_seq,
+        )
+    }
+
+    /// [`Endpoint::new`] with a boot incarnation of [`INCARNATION_BYTES`] bytes in place of the 32-bit nonce: ten bytes the owner draws
+    /// afresh for every boot, 74 of whose 80 bits show in every subscription id (see [`SubscriptionTable::with_incarnation`]). A
+    /// namespace that tells one boot's ids from another's, not authentication.
+    pub fn with_incarnation(
+        config: EndpointConfig,
+        bridge: LegacyBridge,
+        incarnation: [u8; INCARNATION_BYTES],
         first_legacy_seq: u64,
     ) -> Result<Self, EndpointError> {
         let probe = RequestBody::new(
@@ -280,7 +301,7 @@ impl Endpoint {
         if config.gena.max_subscriptions == 0 {
             return Err(EndpointError::Zero("max_subscriptions"));
         }
-        let gena = SubscriptionTable::new(config.gena, subscription_nonce);
+        let gena = SubscriptionTable::with_incarnation(config.gena, incarnation);
         Ok(Self {
             config,
             bridge,
@@ -2189,6 +2210,57 @@ mod tests {
         ("NT", "upnp:event"),
         ("TIMEOUT", "Second-300"),
     ];
+
+    #[test]
+    fn the_endpoint_takes_a_wide_boot_incarnation_and_its_nonce_constructor_keeps_the_old_ids() {
+        let bridge = || LegacyBridge::new(PeerId::parse(BRIDGE).unwrap(), test_key(BRIDGE));
+        let config = || EndpointConfig::provisional("kitchen");
+        let first_id = |rig: &mut Rig| {
+            rig.event("SUBSCRIBE", RC, &SUB).response.headers[0]
+                .1
+                .clone()
+        };
+        let mut rig = Rig::new();
+
+        // The 32-bit constructor: exactly the id it always gave.
+        rig.endpoint = Endpoint::new(config(), bridge(), 0x0a0b_0c0d, 1).unwrap();
+        assert_eq!(
+            first_id(&mut rig),
+            "uuid:0a0b0c0d-0000-4000-8000-000000000001"
+        );
+        // The wide constructor given that nonce's own mapping: the same id.
+        let legacy = legacy_incarnation(0x0a0b_0c0d);
+        rig.endpoint = Endpoint::with_incarnation(config(), bridge(), legacy, 1).unwrap();
+        assert_eq!(
+            first_id(&mut rig),
+            "uuid:0a0b0c0d-0000-4000-8000-000000000001"
+        );
+        // A wide incarnation reaches the id, with the version and variant digits the shape's own.
+        let wide = [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x11, 0x22];
+        rig.endpoint = Endpoint::with_incarnation(config(), bridge(), wide, 1).unwrap();
+        assert_eq!(
+            first_id(&mut rig),
+            "uuid:12345678-9abc-4ef0-9122-000000000001"
+        );
+        // Two boots with different incarnations do not share their first id.
+        rig.endpoint =
+            Endpoint::with_incarnation(config(), bridge(), [9; INCARNATION_BYTES], 1).unwrap();
+        assert_ne!(
+            first_id(&mut rig),
+            "uuid:12345678-9abc-4ef0-9122-000000000001"
+        );
+
+        // What the constructor always refused, the wide one refuses too.
+        assert_eq!(
+            Endpoint::with_incarnation(config(), bridge(), wide, 0).err(),
+            Some(EndpointError::Zero("first_legacy_seq"))
+        );
+        assert_eq!(
+            Endpoint::with_incarnation(EndpointConfig::provisional("Kitchen"), bridge(), wide, 1)
+                .err(),
+            Some(EndpointError::MemberId)
+        );
+    }
 
     #[test]
     fn a_local_subscribe_answers_with_sid_and_timeout_and_the_full_initial_state() {

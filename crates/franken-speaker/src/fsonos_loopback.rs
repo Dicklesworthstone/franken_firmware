@@ -19,9 +19,13 @@
 //! answers `M-SEARCH` with the core's own answers, and the shim serves the core's device description at its path to the local link
 //! only. The topology answer then carries the served member's location and room. [`FsonosLoopback::start`] opens neither, as before.
 //!
-//! What it is not: no outbound announcement of any kind, no GENA delivery (a `Handled` that asks for `NOTIFY` messages is answered
-//! and the messages are not sent), no TLS, no keep-alive and no tailnet. It is evidence for the discovery, description, HTTP and SOAP
-//! path an actual client takes and says nothing about a speaker, a board or the real LAN. The client side lives outside this
+//! **Eventing is opt in** ([`FsonosLoopback::start_eventing`], and the `callback` module): the `NOTIFY` messages a `Handled` asks for
+//! are offered, after the answer is written, to a bounded queue and delivered by a separate thread to ONE explicitly allowed
+//! loopback callback, and every one is counted. [`FsonosLoopback::start`] and [`FsonosLoopback::start_discoverable`] deliver nothing.
+//!
+//! What it is not: no outbound announcement of any kind, no delivery to any address but the one allowed, no TLS, no keep-alive and
+//! no tailnet. It is evidence for the discovery, description, HTTP, SOAP and event path an actual client
+//! takes and says nothing about a speaker, a board or the real LAN. The client side lives outside this
 //! workspace (`tests/g03/fsonos-client`) because it needs the sibling `frankensonos` checkout, transferred by RCH's multi-root
 //! closure.
 //!
@@ -35,21 +39,26 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use franken_control::fsonos::gena::INCARNATION_BYTES;
 use franken_control::fsonos::ssdp::{DESCRIPTION_CONTENT_TYPE, DESCRIPTION_PATH, Device};
-use franken_control::fsonos::{HttpRequest, Ingress};
+use franken_control::fsonos::{HttpRequest, Ingress, Notification};
 use franken_session::{
     ChannelRole, FencedControlCommand, GroupCommandPayload, UnifiedGroupSession,
 };
 
 use crate::control_adapter::ControlPlane;
 
+mod callback;
 mod discovery;
+mod incarnation;
 
+pub use callback::{CallbackLimits, CallbackReport, CallbackStop, CallbackTarget};
 use discovery::Responder;
 pub use discovery::{
     DiscoveryIdentity, DiscoveryLimits, DiscoveryReport, DiscoveryStop, FIXTURE_DEVICE_UUID,
     FIXTURE_OTHER_UUID, FIXTURE_ROOM, PLAYER_PORT,
 };
+pub use incarnation::{IncarnationError, host_incarnation};
 
 /// The member the fixture session's endpoint is: what `GetVolume` and `GetMute` read and `SetVolume` and `SetMute` change.
 pub const FIXTURE_MEMBER: &str = "kitchen";
@@ -265,6 +274,14 @@ struct Described {
     room: String,
 }
 
+/// What a shim does beyond SOAP, built before the worker thread starts and moved into it.
+struct Extras {
+    described: Option<Described>,
+    outbox: Option<callback::Outbox>,
+    /// This boot's incarnation, ten bytes read from the host before anything was bound.
+    incarnation: [u8; INCARNATION_BYTES],
+}
+
 // ---- the public handle -----------------------------------------------------------------------------------------------
 
 /// A running shim. Dropping it stops and joins it.
@@ -274,21 +291,62 @@ pub struct FsonosLoopback {
     worker: Option<JoinHandle<()>>,
     join_budget: Duration,
     responder: Option<Responder>,
+    deliverer: Option<callback::Deliverer>,
 }
 
 impl FsonosLoopback {
     /// Bind `127.0.0.1:0`, build the real control plane over `session` for `member_id` inside a worker thread, and start serving.
     ///
     /// # Errors
-    /// If the limits are unusable, the listener cannot be bound or is not on loopback, the worker cannot start, or the control
-    /// plane cannot be built (the reason names a label or an error kind, never a request).
+    /// If the limits are unusable, the host cannot give this boot an incarnation (`incarnation: <word>`, from
+    /// [`IncarnationError::code`]; checked first, before anything is bound), the listener cannot be bound or is not on loopback,
+    /// the worker cannot start, or the control plane cannot be built (the reason names a label or an error kind, never a request).
+    ///
+    /// Every boot takes ten bytes of host entropy ([`host_incarnation`]) as the first ten bytes of its event subscription ids, so
+    /// an id of one boot is not the id of any subscription of another, except with probability 2^-74 (the 74 bits the UUID
+    /// version and variant leave). That is a boot namespace for refusing stale ids, not authentication.
     pub fn start(
         session: UnifiedGroupSession,
         member_id: &str,
         policy: Policy,
         limits: LoopbackLimits,
     ) -> Result<Self, String> {
-        Self::start_inner(session, member_id, policy, limits, None)
+        Self::start_inner(
+            session,
+            member_id,
+            policy,
+            limits,
+            None,
+            None,
+            host_incarnation,
+        )
+    }
+
+    /// [`FsonosLoopback::start`] with eventing: the `NOTIFY` messages the core asks for are delivered to `target`, the one allowed
+    /// loopback callback, by a separate bounded thread ([`FsonosLoopback::callback_report`] counts every one). A local-link
+    /// `SUBSCRIBE` naming any other callback is answered 412 by the shim before the core is called, and counted; a notification for
+    /// any other callback, which that check should keep out of the queue, is refused with no contact as well.
+    ///
+    /// # Errors
+    /// As [`FsonosLoopback::start`], and if the callback limits are unusable or the delivery thread cannot start. Nothing is left
+    /// running on an error.
+    pub fn start_eventing(
+        session: UnifiedGroupSession,
+        member_id: &str,
+        policy: Policy,
+        limits: LoopbackLimits,
+        target: CallbackTarget,
+        callbacks: CallbackLimits,
+    ) -> Result<Self, String> {
+        Self::start_inner(
+            session,
+            member_id,
+            policy,
+            limits,
+            None,
+            Some((target, callbacks)),
+            host_incarnation,
+        )
     }
 
     /// [`FsonosLoopback::start`] for the device `identity` names, with discovery: a loopback-only UDP responder answering
@@ -306,32 +364,79 @@ impl FsonosLoopback {
         limits: LoopbackLimits,
         discovery: DiscoveryLimits,
     ) -> Result<Self, String> {
-        if !discovery.usable() {
-            return Err("the discovery limits are unusable".to_string());
-        }
-        let described = Described {
-            device: identity.device()?,
-            room: identity.room.clone(),
-        };
+        let described = Self::describe(identity, discovery)?;
         Self::start_inner(
             session,
             &identity.uuid,
             policy,
             limits,
             Some((described, discovery)),
+            None,
+            host_incarnation,
         )
     }
 
+    /// [`FsonosLoopback::start_discoverable`] and [`FsonosLoopback::start_eventing`] on ONE shim: the same listener, worker, control
+    /// plane and session answer the search, serve the description, take a client's SOAP and `SUBSCRIBE` requests and deliver the
+    /// events the core produces to `target`, the one allowed loopback callback. Nothing is duplicated: this is the constructor
+    /// behind the other two with both of its options set, so the identity and limits checks, the order they run in, the loopback
+    /// confinement of the responder and of the callback, and the cleanup on an error are the ones those constructors run.
+    ///
+    /// # Errors
+    /// As both constructors: the discovery limits, then the identity, are checked first (the one check `start_discoverable` runs),
+    /// then the loopback limits, the host's incarnation, the bind and the callback limits, as `start_inner` checks them for both. The
+    /// first problem is the one named. Nothing is left running on an error.
+    pub fn start_discoverable_eventing(
+        session: UnifiedGroupSession,
+        identity: &DiscoveryIdentity,
+        policy: Policy,
+        limits: LoopbackLimits,
+        discovery: DiscoveryLimits,
+        target: CallbackTarget,
+        callbacks: CallbackLimits,
+    ) -> Result<Self, String> {
+        let described = Self::describe(identity, discovery)?;
+        Self::start_inner(
+            session,
+            &identity.uuid,
+            policy,
+            limits,
+            Some((described, discovery)),
+            Some((target, callbacks)),
+            host_incarnation,
+        )
+    }
+
+    /// What a discoverable shim serves, if its limits are usable and the core accepts `identity`. `start_discoverable` and
+    /// `start_discoverable_eventing` both ask it, so neither can be laxer than the other.
+    fn describe(
+        identity: &DiscoveryIdentity,
+        discovery: DiscoveryLimits,
+    ) -> Result<Described, String> {
+        if !discovery.usable() {
+            return Err("the discovery limits are unusable".to_string());
+        }
+        Ok(Described {
+            device: identity.device()?,
+            room: identity.room.clone(),
+        })
+    }
+
+    /// `boot` is where this boot's incarnation comes from: the host (`host_incarnation`) in every public constructor. It is asked
+    /// once, before anything is bound, and its failure is the startup's.
     fn start_inner(
         session: UnifiedGroupSession,
         member_id: &str,
         policy: Policy,
         limits: LoopbackLimits,
         discovery: Option<(Described, DiscoveryLimits)>,
+        events: Option<(CallbackTarget, CallbackLimits)>,
+        boot: impl FnOnce() -> Result<[u8; INCARNATION_BYTES], IncarnationError>,
     ) -> Result<Self, String> {
         if !limits.usable() {
             return Err("the loopback limits are unusable".to_string());
         }
+        let incarnation = boot().map_err(|error| format!("incarnation: {}", error.code()))?;
         let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
             .map_err(|error| format!("bind: {}", error.kind()))?;
         let addr = listener
@@ -352,10 +457,23 @@ impl FsonosLoopback {
         let member = member_id.to_string();
         let cfg = Config { limits, policy };
         let for_worker = shared.clone();
-        let served = discovery.as_ref().map(|(described, _)| described.clone());
+        let described = discovery.as_ref().map(|(described, _)| described.clone());
+        // On an error below the delivery thread is dropped with this function, which stops and joins it.
+        let (deliverer, outbox) = match events {
+            Some((target, callbacks)) => {
+                let (deliverer, outbox) = callback::Deliverer::start(target, callbacks)?;
+                (Some(deliverer), Some(outbox))
+            }
+            None => (None, None),
+        };
+        let extras = Extras {
+            described,
+            outbox,
+            incarnation,
+        };
         let worker = thread::Builder::new()
             .name("g03-fsonos-loopback".to_string())
-            .spawn(move || worker_main(&listener, for_worker, &member, cfg, served, &ready_tx))
+            .spawn(move || worker_main(&listener, for_worker, &member, cfg, extras, &ready_tx))
             .map_err(|error| format!("spawn: {}", error.kind()))?;
         match ready_rx.recv_timeout(STARTUP) {
             Ok(Ok(())) => {
@@ -368,6 +486,7 @@ impl FsonosLoopback {
                         .saturating_add(JOIN_SLACK)
                         .min(JOIN_CAP),
                     responder: None,
+                    deliverer,
                 };
                 if let Some((described, discovery_limits)) = discovery {
                     // On an error `server` is dropped here, which stops and joins its worker: nothing is left running.
@@ -418,13 +537,28 @@ impl FsonosLoopback {
         self.responder.as_ref().map(Responder::report)
     }
 
+    /// What the callback delivery did so far (it stays readable after the shim is shut down). `None` unless started eventing.
+    #[must_use]
+    pub fn callback_report(&self) -> Option<CallbackReport> {
+        self.deliverer.as_ref().map(callback::Deliverer::report)
+    }
+
     /// Stop, join within the deadline, and return the final report.
     pub fn stop(mut self) -> LoopbackReport {
         self.shutdown();
         self.report()
     }
 
+    /// Stop everything this handle started: the HTTP worker and the responder first, then the delivery thread, so a notification
+    /// the worker offered in its last request is still counted before the thread is told to stop.
     fn shutdown(&mut self) {
+        self.stop_serving();
+        if let Some(deliverer) = self.deliverer.as_mut() {
+            deliverer.stop();
+        }
+    }
+
+    fn stop_serving(&mut self) {
         self.shared.stop.store(true, Ordering::SeqCst);
         if let Some(responder) = self.responder.as_mut() {
             responder.stop(self.join_budget);
@@ -460,12 +594,12 @@ fn worker_main(
     shared: Shared,
     member: &str,
     cfg: Config,
-    described: Option<Described>,
+    extras: Extras,
     ready: &mpsc::Sender<Result<(), String>>,
 ) {
     let built = {
         let session = shared.session();
-        ControlPlane::new(&session, member, START_NS)
+        ControlPlane::with_incarnation(&session, member, START_NS, extras.incarnation)
     };
     let mut plane = match built {
         Ok(plane) => plane,
@@ -476,7 +610,7 @@ fn worker_main(
     };
     // What the group session does not hold, the topology answer reads from the endpoint's directory: where the served member's
     // description lives, and its room. Only that member is entered; any other member is listed without a location.
-    let device = described.map(|described| {
+    let device = extras.described.map(|described| {
         let directory = plane.directory_mut();
         directory
             .locations
@@ -493,6 +627,7 @@ fn worker_main(
         shared,
         cfg,
         device,
+        outbox: extras.outbox,
     };
     let cause = worker.run(listener);
     worker.shared.note(|report| report.stopped_by = cause);
@@ -507,6 +642,8 @@ struct Worker {
     cfg: Config,
     /// The device whose description this worker serves; `None` unless the shim was started discoverable.
     device: Option<Device>,
+    /// Where this worker offers the core's notifications; `None` unless the shim was started eventing.
+    outbox: Option<callback::Outbox>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -590,6 +727,9 @@ impl Worker {
                 Err(_) => (Outcome::Dropped, 0),
             };
         }
+        if self.names_another_callback(request) {
+            return self.refuse(stream, 412, deadline);
+        }
         let headers: Vec<(&str, &str)> = request
             .head
             .headers
@@ -610,15 +750,51 @@ impl Worker {
             self.plane.handle_request(&mut session, self.now_ns, &http)
         };
         let response = &handled.response;
-        let Some(bytes) =
-            render_response(response.status, &response.headers, response.body.as_bytes())
-        else {
+        let body = response.body.as_bytes();
+        let framed = render_response(response.status, &response.headers, body);
+        let outcome = match framed {
+            Some(bytes) => match send(stream, &bytes, &self.cfg.limits, deadline) {
+                Ok(()) => (Outcome::Served, to_u64(bytes.len())),
+                Err(_) => (Outcome::Dropped, 0),
+            },
             // The endpoint's answer cannot be framed safely (a header with a line break): say so, forward nothing of it.
-            return self.refuse(stream, 500, deadline);
+            None => self.refuse(stream, 500, deadline),
         };
-        match send(stream, &bytes, &self.cfg.limits, deadline) {
-            Ok(()) => (Outcome::Served, to_u64(bytes.len())),
-            Err(_) => (Outcome::Dropped, 0),
+        // Events go out after the answer, never before it: a controller learns its SID from the SUBSCRIBE answer first. They are
+        // the core's, so they are offered whatever became of the write; the delivery thread does the sending, off this path.
+        self.offer(&handled.notifications);
+        outcome
+    }
+
+    /// Whether this is a local-link `SUBSCRIBE` on a shim started eventing that names a callback other than the allowed one. The
+    /// core would grant it (its only rule is that the callback names the peer's own address) and nothing could ever be delivered, so
+    /// the shim answers the core's own 412 for a bad callback without calling it, and counts it. A renewal or an unsubscribe carries
+    /// no callback and passes through; so does every request on a shim not started eventing, and every tailnet connection (the
+    /// core refuses those itself).
+    fn names_another_callback(&self, request: &Request) -> bool {
+        let Some(outbox) = &self.outbox else {
+            return false;
+        };
+        if self.cfg.policy != Policy::LocalLink || request.head.method != "SUBSCRIBE" {
+            return false;
+        }
+        let another = request
+            .head
+            .headers
+            .iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case("callback"))
+            .any(|(_, value)| !outbox.allows(value));
+        if another {
+            outbox.note_subscribe_refused();
+        }
+        another
+    }
+
+    /// Hand the notifications the core produced to the delivery queue, if this shim was started eventing. Never blocks. Without
+    /// a queue they are dropped, as they always were.
+    fn offer(&self, notifications: &[Notification]) {
+        if let Some(outbox) = &self.outbox {
+            outbox.offer(notifications);
         }
     }
 
@@ -861,6 +1037,7 @@ fn reason(status: u16) -> &'static str {
         404 => "Not Found",
         405 => "Method Not Allowed",
         408 => "Request Timeout",
+        412 => "Precondition Failed",
         413 => "Payload Too Large",
         431 => "Request Header Fields Too Large",
         500 => "Internal Server Error",

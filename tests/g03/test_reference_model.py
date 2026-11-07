@@ -174,10 +174,12 @@ class Contract(unittest.TestCase):
 
     def test_the_contract_says_what_is_open(self):
         text = CONTRACT.read_text(encoding="utf-8")
-        for phrase in ("**OPEN**", "No stand-in is presented", "pub mod fsonos;", "No server-level model",
+        for phrase in ("**OPEN**", "No stand-in is presented", "pub mod fsonos;", "Policy qualification",
+                       "19/19 tests", "Grouping, native tailnet and physical-device qualification remain open",
                        "a plain-SOAP retry applies twice", "Command Outcome Unknown", "ReapplyOnRetry",
                        "SuccessAfterRetention"):
             self.assertIn(phrase, text)
+        self.assertNotIn("actual-client execution UNRUN", text)
 
     def test_ordering_in_the_matrix_is_by_measured_use(self):
         counts = [c for _, _, c, _, _ in rust_matrix()]

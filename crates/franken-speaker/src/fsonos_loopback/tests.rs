@@ -3,6 +3,7 @@
 //! shim's own count of what it did.
 
 use std::net::UdpSocket;
+use std::path::Path;
 
 use franken_control::fsonos::Service;
 use franken_control::fsonos::ssdp::DEVICE_TYPE;
@@ -832,4 +833,434 @@ fn stopping_the_shim_stops_the_responder_and_neither_answers_afterwards() {
     assert_eq!(report.stopped_by, DiscoveryStop::Requested);
     assert!(ask(&server, DEVICE_TYPE).is_empty());
     assert!(TcpStream::connect_timeout(&http_addr, WAIT).is_err());
+}
+
+// ---- the boot incarnation: a stale subscription id is not honoured after a restart, even after a fresh subscription --------
+
+/// The `SID` of the subscription granted to a new `SUBSCRIBE` for the RenderingControl events, sent to the shim at `addr`.
+fn new_subscription(addr: SocketAddr) -> String {
+    let callback = format!("<http://{}:4000/RenderingControl>", Ipv4Addr::LOCALHOST);
+    let headers = [
+        ("CALLBACK", callback.as_str()),
+        ("NT", "upnp:event"),
+        ("TIMEOUT", "Second-300"),
+    ];
+    let path = Service::RenderingControl.event_path();
+    let request = http("SUBSCRIBE", path, &headers, b"");
+    let wire = exchange(addr, &request).expect("an answer");
+    assert_eq!(wire.status, 200);
+    wire.header("sid").expect("a SID").to_string()
+}
+
+/// The whole answer to a renewal (`SUBSCRIBE` with a `SID`) or an unsubscribe, sent to the shim at `addr`.
+fn event_answer(addr: SocketAddr, method: &str, headers: &[(&str, &str)]) -> Wire {
+    let path = Service::RenderingControl.event_path();
+    let request = http(method, path, headers, b"");
+    exchange(addr, &request).expect("an answer")
+}
+
+/// Whether `sid` is `uuid:` and a lowercase 8-4-4-4-12 hex UUID with version 4, a variant of 8, 9, a or b, and the counter at 1.
+fn is_boot_sid(sid: &str) -> bool {
+    let Some(rest) = sid.strip_prefix("uuid:") else {
+        return false;
+    };
+    let groups: Vec<&str> = rest.split('-').collect();
+    let widths = [8, 4, 4, 4, 12];
+    let hex = |group: &str, width: usize| {
+        let lower = |byte: u8| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte);
+        group.len() == width && group.bytes().all(lower)
+    };
+    if groups.len() != widths.len() || !groups.iter().zip(widths).all(|(g, w)| hex(g, w)) {
+        return false;
+    }
+    let version = groups[2].starts_with('4');
+    let variant = matches!(groups[3].as_bytes()[0], b'8' | b'9' | b'a' | b'b');
+    version && variant && groups[4] == "000000000001"
+}
+
+#[test]
+fn a_restarted_shim_never_honours_an_old_sid_even_after_a_fresh_subscription() {
+    let first = start();
+    let old = new_subscription(first.addr());
+    drop(first);
+
+    let second = start();
+    let addr = second.addr();
+    let fresh = new_subscription(addr);
+    // Two boots, two incarnations: the first id of the second boot is not the first id of the first (they share a namespace with
+    // probability 2^-74). Each is a UUID-shaped id whose counter is the 48-bit 1.
+    assert_ne!(old, fresh, "two boots handed out the same subscription id");
+    for sid in [&old, &fresh] {
+        assert!(is_boot_sid(sid), "{sid}");
+    }
+
+    // The counterexample a constant nonce allows, retried AFTER the fresh subscription: the old id must change nothing.
+    let gone = event_answer(addr, "UNSUBSCRIBE", &[("SID", old.as_str())]);
+    assert_eq!(gone.status, 412);
+    let timeout = ("TIMEOUT", "Second-900");
+    let stale = event_answer(addr, "SUBSCRIBE", &[("SID", old.as_str()), timeout]);
+    assert_eq!(stale.status, 412);
+
+    // The permitted counterpart: the fresh subscription is untouched. Its own SID renews (the new time is granted), and only its
+    // own unsubscribe removes it.
+    let renewed = event_answer(addr, "SUBSCRIBE", &[("SID", fresh.as_str()), timeout]);
+    assert_eq!(renewed.status, 200);
+    assert_eq!(renewed.header("sid"), Some(fresh.as_str()));
+    assert_eq!(renewed.header("timeout"), Some("Second-900"));
+    let ended = event_answer(addr, "UNSUBSCRIBE", &[("SID", fresh.as_str())]);
+    assert_eq!(ended.status, 200);
+    let again = event_answer(addr, "UNSUBSCRIBE", &[("SID", fresh.as_str())]);
+    assert_eq!(again.status, 412);
+}
+
+/// A shim whose boot incarnation is whatever `boot` hands it. Only the plant below uses a given value.
+fn start_with_boot(
+    boot: impl FnOnce() -> Result<[u8; INCARNATION_BYTES], IncarnationError>,
+) -> FsonosLoopback {
+    let session = fixture_session().expect("the fixture session builds");
+    let policy = Policy::LocalLink;
+    FsonosLoopback::start_inner(session, FIXTURE_MEMBER, policy, quick(), None, None, boot)
+        .expect("the shim starts")
+}
+
+#[test]
+fn plant_two_boots_handed_the_same_bytes_let_a_stale_sid_remove_the_new_subscription() {
+    // PLANT, not a feature: both boots are handed the SAME ten bytes through the `boot` seam, which is what one constant nonce did.
+    // It reproduces the defect, so the restart test above is shown able to fail: the first ids are equal, and the stale unsubscribe
+    // of the old boot removes the subscription the new boot has just granted.
+    let same = || Ok([7, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    let first = start_with_boot(same);
+    let old = new_subscription(first.addr());
+    drop(first);
+
+    let second = start_with_boot(same);
+    let addr = second.addr();
+    let fresh = new_subscription(addr);
+    assert_eq!(
+        old, fresh,
+        "one incarnation gives every boot the same first id"
+    );
+    let stale = event_answer(addr, "UNSUBSCRIBE", &[("SID", old.as_str())]);
+    assert_eq!(
+        stale.status, 200,
+        "the stale id removed the new subscription"
+    );
+    let gone = event_answer(addr, "UNSUBSCRIBE", &[("SID", fresh.as_str())]);
+    assert_eq!(gone.status, 412);
+}
+
+/// The `SID` the core grants a local-link `SUBSCRIBE` made straight to `plane`.
+fn granted_sid(plane: &mut ControlPlane, session: &mut UnifiedGroupSession) -> String {
+    let callback = format!("<http://{}:4000/RenderingControl>", Ipv4Addr::LOCALHOST);
+    let headers = [
+        ("CALLBACK", callback.as_str()),
+        ("NT", "upnp:event"),
+        ("TIMEOUT", "Second-300"),
+    ];
+    let request = HttpRequest {
+        method: "SUBSCRIBE",
+        path: Service::RenderingControl.event_path(),
+        peer_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+        ingress: Ingress::LocalLegacy,
+        headers: &headers,
+        body: b"",
+    };
+    let handled = plane.handle_request(session, START_NS, &request);
+    assert_eq!(handled.response.status, 200);
+    let sid = handled
+        .response
+        .headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("sid"))
+        .map(|(_, value)| value.clone());
+    sid.expect("a SID")
+}
+
+#[test]
+fn the_boot_key_is_the_only_input_that_makes_two_boots_ids_differ() {
+    // CONTROL, not a feature: the fixture constructor gives every boot the same nonce, so the first id of two boots is the same
+    // string, and a stale id of one is a valid id of the other. This is the defect the incarnation closes.
+    let mut one = fixture_session().expect("a session");
+    let mut two = fixture_session().expect("a session");
+    let mut plane_one = ControlPlane::new(&one, FIXTURE_MEMBER, START_NS).expect("a plane");
+    let mut plane_two = ControlPlane::new(&two, FIXTURE_MEMBER, START_NS).expect("a plane");
+    let sid_one = granted_sid(&mut plane_one, &mut one);
+    let sid_two = granted_sid(&mut plane_two, &mut two);
+    assert_eq!(sid_one, sid_two, "the fixture nonce is constant");
+    // The legacy constructor's ids are today's, byte for byte: nonce, four zero hex digits, the fixed version and variant groups,
+    // and the 48-bit counter at 1.
+    assert_eq!(sid_one, "uuid:51510001-0000-4000-8000-000000000001");
+
+    // With an incarnation as input the same first id differs, and the same incarnation repeats it: the input, and nothing the
+    // endpoint adds, decides. (These values are controls for the plumbing; the shim's own value comes from the host.)
+    let member = FIXTURE_MEMBER;
+    let mut a = ControlPlane::with_incarnation(&one, member, START_NS, [1; 10]).expect("a plane");
+    let mut b = ControlPlane::with_incarnation(&two, member, START_NS, [2; 10]).expect("a plane");
+    let mut c = ControlPlane::with_incarnation(&two, member, START_NS, [2; 10]).expect("a plane");
+    let sid_a = granted_sid(&mut a, &mut one);
+    let sid_b = granted_sid(&mut b, &mut two);
+    let sid_c = granted_sid(&mut c, &mut two);
+    assert_ne!(sid_a, sid_b);
+    assert_eq!(sid_b, sid_c);
+}
+
+#[test]
+fn the_host_incarnation_comes_from_the_host_and_differs_between_reads() {
+    // Two reads of the host entropy are equal with probability 2^-80; a failure here is that, or an entropy device that is not one.
+    let first = host_incarnation().expect("the host gives an incarnation");
+    let second = host_incarnation().expect("the host gives an incarnation");
+    assert_ne!(first, second, "two reads gave the same incarnation");
+}
+
+#[test]
+fn a_boot_that_cannot_get_an_incarnation_fails_typed_and_starts_nothing() {
+    let session = fixture_session().expect("the fixture session builds");
+    let failing = || Err(IncarnationError::Short);
+    let started = FsonosLoopback::start_inner(
+        session,
+        FIXTURE_MEMBER,
+        Policy::LocalLink,
+        quick(),
+        None,
+        None,
+        failing,
+    );
+    let Err(reason) = started else {
+        panic!("a boot without an incarnation started");
+    };
+    assert_eq!(reason, "incarnation: entropy_short");
+
+    // The device itself failing is typed the same way, by what went wrong.
+    let missing = incarnation::incarnation_from(Path::new("/nonexistent/entropy"));
+    assert_eq!(
+        missing,
+        Err(IncarnationError::Unavailable(io::ErrorKind::NotFound))
+    );
+    assert_eq!(IncarnationError::Short.code(), "entropy_short");
+    assert_eq!(missing.unwrap_err().code(), "entropy_unavailable");
+
+    // The permitted counterpart: with the host's incarnation the same start succeeds.
+    assert!(start_with(Policy::LocalLink, quick()).stop().reconciled());
+}
+
+#[cfg(unix)]
+#[test]
+fn an_entropy_device_that_ends_early_is_short_and_one_that_cannot_be_read_is_unavailable() {
+    let empty = incarnation::incarnation_from(Path::new("/dev/null"));
+    assert_eq!(empty, Err(IncarnationError::Short));
+    let directory = incarnation::incarnation_from(Path::new("/"));
+    assert!(matches!(directory, Err(IncarnationError::Unavailable(_))));
+    // A device that answers with ten identical bytes (`/dev/zero` is one) is not entropy, and is refused as such.
+    let zeros = incarnation::incarnation_from(Path::new("/dev/zero"));
+    assert_eq!(zeros, Err(IncarnationError::Degenerate));
+    assert_eq!(IncarnationError::Degenerate.code(), "entropy_degenerate");
+    // The permitted counterpart: the real device gives ten bytes.
+    assert!(incarnation::incarnation_from(Path::new("/dev/urandom")).is_ok());
+}
+
+// ---- discovery and eventing on one shim ---------------------------------------------------------------------------------------
+
+/// A callback destination for a shim that is only asked to GRANT subscriptions: a loopback port that was bound and let go, so a
+/// delivery to it is refused at once and counted as failed. Nothing listens, and nothing here needs an event to arrive; the actual
+/// client test (`tests/g03/fsonos-client/tests/composed.rs`) is where an `EventSink` hears them.
+fn closed_target() -> CallbackTarget {
+    let any = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
+    let addr = TcpListener::bind(any)
+        .and_then(|listener| listener.local_addr())
+        .expect("a loopback port");
+    CallbackTarget::new(addr, "/RenderingControl").expect("an allowed target")
+}
+
+/// Every argument of `start_discoverable_eventing` with a valid value, for a test to change the one it is about.
+struct ComposeArgs {
+    identity: DiscoveryIdentity,
+    policy: Policy,
+    limits: LoopbackLimits,
+    discovery: DiscoveryLimits,
+    callbacks: CallbackLimits,
+    target: CallbackTarget,
+}
+
+impl ComposeArgs {
+    fn new() -> Self {
+        Self {
+            identity: DiscoveryIdentity::fixture(),
+            policy: Policy::LocalLink,
+            limits: quick(),
+            discovery: DiscoveryLimits::standard(),
+            callbacks: CallbackLimits::standard(),
+            target: closed_target(),
+        }
+    }
+
+    fn start(self) -> Result<FsonosLoopback, String> {
+        FsonosLoopback::start_discoverable_eventing(
+            discovery_session(),
+            &self.identity,
+            self.policy,
+            self.limits,
+            self.discovery,
+            self.target,
+            self.callbacks,
+        )
+    }
+}
+
+fn start_composed(change: impl FnOnce(&mut ComposeArgs)) -> Result<FsonosLoopback, String> {
+    let mut setup = ComposeArgs::new();
+    change(&mut setup);
+    setup.start()
+}
+
+#[test]
+fn a_composed_start_that_the_core_or_any_limits_refuse_fails_and_a_valid_one_starts() {
+    // The permitted counterpart: both features are on the one shim, on loopback sockets of its own.
+    let both = start_composed(|_| {}).expect("a composed start");
+    assert!(both.addr().ip().is_loopback());
+    assert!(both.discovery_addr().is_some_and(|a| a.ip().is_loopback()));
+    assert!(both.callback_report().is_some());
+    drop(both);
+
+    let refusals = [
+        (
+            "discovery limits",
+            start_composed(|s| s.discovery.max_datagrams = 0),
+            "discovery limits",
+        ),
+        (
+            "callback limits",
+            start_composed(|s| s.callbacks.queue = 0),
+            "callback limits",
+        ),
+        (
+            "loopback limits",
+            start_composed(|s| s.limits.lifetime = Duration::ZERO),
+            "loopback limits",
+        ),
+        (
+            "a malformed id",
+            start_composed(|s| s.identity.uuid = "not-a-uuid".to_string()),
+            "bad_uuid",
+        ),
+    ];
+    for (label, started, word) in refusals {
+        let Err(error) = started else {
+            panic!("{label}: a refusal was expected");
+        };
+        assert!(error.contains(word), "{label}: {error}");
+    }
+
+    // The checks run in the order `start_discoverable` runs its own: with both sets of limits unusable, the discovery limits are
+    // the ones named.
+    let both_unusable = start_composed(|s| {
+        s.discovery.max_datagrams = 0;
+        s.callbacks.queue = 0;
+    });
+    let Err(error) = both_unusable else {
+        panic!("both unusable");
+    };
+    assert!(error.contains("discovery limits"), "{error}");
+
+    // A refusal leaves nothing behind that a valid start cannot get past.
+    assert!(start_composed(|_| {}).is_ok());
+}
+
+#[test]
+fn a_composed_shim_describes_serves_and_subscribes_on_one_endpoint_and_counts_each() {
+    let setup = ComposeArgs::new();
+    let allowed = format!("<{}>", setup.target.url());
+    let server = setup.start().expect("a composed start");
+    let addr = server.addr();
+
+    // Discovery: the search is answered by the responder of this shim.
+    assert_eq!(ask(&server, DEVICE_TYPE).len(), 1);
+
+    // The description is the core's document, answered by the shim itself.
+    let get = http("GET", DESCRIPTION_PATH, &[], b"");
+    let described = exchange(addr, &get).expect("an answer");
+    assert_eq!(described.status, 200);
+    let udn = format!("<UDN>uuid:{FIXTURE_DEVICE_UUID}</UDN>");
+    assert!(described.body.contains(&udn));
+
+    // Control on the same endpoint reads the live session of the member the identity names.
+    let read = post(RC, "GetVolume", &MASTER);
+    let volume = exchange(addr, &read).expect("an answer");
+    assert_eq!(volume.status, 200);
+    assert!(volume.body.contains("<CurrentVolume>50</CurrentVolume>"));
+
+    // Events: a callback other than the allowed one is the shim's 412 before the core is called, and counted; the allowed one is
+    // granted by the core, and its first event is offered to the delivery queue.
+    let other = format!("<http://{}:4000/RenderingControl>", Ipv4Addr::LOCALHOST);
+    let path = RC.event_path();
+    let subscribe = |callback: &str| {
+        let headers = [
+            ("CALLBACK", callback),
+            ("NT", "upnp:event"),
+            ("TIMEOUT", "Second-300"),
+        ];
+        exchange(addr, &http("SUBSCRIBE", path, &headers, b"")).expect("an answer")
+    };
+    assert_eq!(subscribe(other.as_str()).status, 412);
+    let granted = subscribe(allowed.as_str());
+    assert_eq!(granted.status, 200);
+    assert!(
+        granted
+            .header("sid")
+            .is_some_and(|sid| sid.starts_with("uuid:"))
+    );
+    wait_until("the first event to be offered", || {
+        let report = server.callback_report();
+        report.is_some_and(|report| report.offered == 1)
+    });
+    let sent = server.callback_report().expect("an eventing shim");
+    assert_eq!(sent.offered, 1);
+    assert_eq!(sent.subscribes_refused, 1);
+
+    wait_until("the search to be counted", || received(&server) == 1);
+    let heard = server.discovery_report().expect("a responder");
+    assert_eq!(heard.answered, 1);
+    assert!(heard.reconciled());
+
+    // The shim's own count: the description once, two requests the endpoint answered (the read and the granted subscribe), and the
+    // one refusal, a 412 that never reached the endpoint.
+    let report = server.stop();
+    assert_eq!(report.accepted, 4);
+    assert_eq!(report.described, 1);
+    assert_eq!(report.served, 2);
+    assert_eq!(report.refused_statuses, [412]);
+    assert!(report.reconciled());
+}
+
+#[test]
+fn a_composed_tailnet_shim_describes_nothing_grants_nothing_and_offers_nothing() {
+    // The permitted counterpart: the same server on the local link describes itself.
+    let local = start_composed(|_| {}).expect("a composed start");
+    let get = http("GET", DESCRIPTION_PATH, &[], b"");
+    assert_eq!(exchange(local.addr(), &get).expect("an answer").status, 200);
+    drop(local);
+
+    let mut setup = ComposeArgs::new();
+    setup.policy = Policy::UnauthenticatedTailnet;
+    let allowed = format!("<{}>", setup.target.url());
+    let server = setup.start().expect("a composed start");
+    let addr = server.addr();
+    assert_eq!(exchange(addr, &get).expect("an answer").status, 405);
+
+    // The shim's callback check applies to the local link only: on the tailnet the endpoint's own refusal is the answer, whichever
+    // callback is named, and nothing is counted as a refused subscribe or offered.
+    let other = format!("<http://{}:4000/RenderingControl>", Ipv4Addr::LOCALHOST);
+    let path = RC.event_path();
+    for callback in [allowed.as_str(), other.as_str()] {
+        let headers = [("CALLBACK", callback), ("NT", "upnp:event")];
+        let wire = exchange(addr, &http("SUBSCRIBE", path, &headers, b"")).expect("an answer");
+        assert_eq!(wire.status, 401);
+    }
+    let sent = server.callback_report().expect("an eventing shim");
+    assert_eq!(sent.offered, 0);
+    assert_eq!(sent.subscribes_refused, 0);
+    let report = server.stop();
+    assert_eq!(report.described, 0);
+    assert_eq!(report.served, 3);
+    assert!(report.refused_statuses.is_empty());
+    assert!(report.reconciled());
 }

@@ -136,7 +136,8 @@ class Contract(unittest.TestCase):
         doc = CONTRACT.read_text(encoding="utf-8")
         self.assertIn("## 13. SSDP discovery and the device description", doc)
         section = " ".join(doc.split("## 13. SSDP discovery and the device description")[1].split())
-        for phrase in ("ContentDirectory", "no `SCPDURL`", "was run against a real controller", "the `fsonos` client accepts this description",
+        for phrase in ("ContentDirectory", "no `SCPDURL`", "no physical controller, speaker or LAN was contacted",
+                       "client accepted the implemented description subset", "other clients remain unqualified",
                        "IPv6 is not supported", "unicast `M-SEARCH` without an `MX` is refused"):
             self.assertIn(phrase, section)
         self.assertNotIn("**not started** (slice 2)", doc, "the status table still says SSDP is not started")

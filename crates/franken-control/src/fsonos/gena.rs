@@ -11,6 +11,9 @@
 //!
 //! * **The table** holds at most `max_subscriptions`; the next subscribe is `TableFull`. An expired
 //!   subscription is removed the next time anything touches the table, and frees its place.
+//! * **The ids** are `uuid:` and a version-4, variant-1 UUID shape: the first ten bytes are the boot's incarnation (the owner's, 74 of
+//!   its 80 bits show; see [`SubscriptionTable::with_incarnation`]) and the last six are a 48-bit counter. After the counter's last
+//!   value the next subscribe is `IdsExhausted` (503); an id is never written in more digits than the shape holds.
 //! * **The callback** must be exactly one `http://` URL whose host is an IP literal **equal to the
 //!   address the request came from** (no name to resolve, no userinfo, a real port). UPnP lets a
 //!   subscriber name another host; this endpoint does not, so it cannot be made to send notifications
@@ -88,6 +91,9 @@ pub enum GenaError {
     /// HTTP 503: the table is full.
     #[error("the subscription table is full")]
     TableFull,
+    /// HTTP 503: this incarnation has issued every id its 48-bit counter holds.
+    #[error("the subscription ids of this incarnation are used up")]
+    IdsExhausted,
 }
 
 impl GenaError {
@@ -97,7 +103,7 @@ impl GenaError {
             Self::BadRequest(_) => 400,
             Self::PreconditionFailed => 412,
             Self::NotSupported => 501,
-            Self::TableFull => 503,
+            Self::TableFull | Self::IdsExhausted => 503,
         }
     }
 }
@@ -202,11 +208,40 @@ enum Var {
 
 const NS_PER_SEC: u64 = 1_000_000_000;
 
+/// How many bytes of a boot's incarnation an id carries: the first ten bytes of the UUID it is shaped as.
+pub const INCARNATION_BYTES: usize = 10;
+
+/// The largest subscription counter an id can carry: the last six bytes of the UUID, 48 bits. The id after it is refused
+/// ([`GenaError::IdsExhausted`]) instead of being written in a thirteenth digit.
+const COUNTER_MAX: u64 = (1 << 48) - 1;
+
+/// The incarnation the 32-bit nonce of [`SubscriptionTable::new`] stands for: its four bytes, big-endian, then six zero bytes.
+/// With the version and variant bits every id sets, an id built from it reads `<nonce>-0000-4000-8000-<counter>`, exactly as it
+/// always has.
+#[must_use]
+pub const fn legacy_incarnation(nonce: u32) -> [u8; INCARNATION_BYTES] {
+    let n = nonce.to_be_bytes();
+    [n[0], n[1], n[2], n[3], 0, 0, 0, 0, 0, 0]
+}
+
+/// The id of subscription number `counter` of `incarnation`. The UUID's first ten bytes are the incarnation, except the four version
+/// bits (set to `4`) and the two variant bits (set to `10`); the last six bytes are the counter. So 74 of the incarnation's 80 bits
+/// show, and two incarnations that differ only in the six fixed bits give the same id.
+fn sid_of(incarnation: &[u8; INCARNATION_BYTES], counter: u64) -> String {
+    let mut b = *incarnation;
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    format!(
+        "uuid:{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{counter:012x}",
+        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9]
+    )
+}
+
 /// The bounded table of subscriptions.
 #[derive(Debug)]
 pub struct SubscriptionTable {
     config: GenaConfig,
-    nonce: u32,
+    incarnation: [u8; INCARNATION_BYTES],
     counter: u64,
     entries: Vec<Entry>,
     expired_total: u64,
@@ -214,12 +249,23 @@ pub struct SubscriptionTable {
 
 impl SubscriptionTable {
     /// `nonce` makes this table's subscription ids differ from another table's, so a controller that
-    /// reconnects to a restarted endpoint cannot renew an old id by accident.
+    /// reconnects to a restarted endpoint cannot renew an old id by accident, unless the owner hands the same nonce to every
+    /// boot. This is the 32-bit form of [`SubscriptionTable::with_incarnation`]: its ids read exactly
+    /// `uuid:<nonce>-0000-4000-8000-<counter>`.
     #[must_use]
     pub fn new(config: GenaConfig, nonce: u32) -> Self {
+        Self::with_incarnation(config, legacy_incarnation(nonce))
+    }
+
+    /// A table whose ids carry the boot's `incarnation`: ten bytes the owner draws afresh for every boot (a device from its
+    /// entropy provider). 74 of the 80 bits show in the id (four version bits and two variant bits are the shape's own), so two
+    /// boots share a first id with probability 2^-74 when the bytes are uniform. That is a namespace for telling one boot's ids from
+    /// another's, not impossible uniqueness and not authentication: an id is not a secret.
+    #[must_use]
+    pub fn with_incarnation(config: GenaConfig, incarnation: [u8; INCARNATION_BYTES]) -> Self {
         Self {
             config,
-            nonce,
+            incarnation,
             counter: 0,
             entries: Vec::new(),
             expired_total: 0,
@@ -273,12 +319,12 @@ impl SubscriptionTable {
         Ok(secs.clamp(self.config.min_timeout_secs, self.config.max_timeout_secs))
     }
 
-    fn next_sid(&mut self) -> String {
+    fn next_sid(&mut self) -> Result<String, GenaError> {
+        if self.counter >= COUNTER_MAX {
+            return Err(GenaError::IdsExhausted);
+        }
         self.counter += 1;
-        format!(
-            "uuid:{:08x}-0000-4000-8000-{:012x}",
-            self.nonce, self.counter
-        )
+        Ok(sid_of(&self.incarnation, self.counter))
     }
 
     /// A new subscription. `peer` is the address the request came from; the callback must name it.
@@ -306,7 +352,7 @@ impl SubscriptionTable {
         if self.entries.len() >= self.config.max_subscriptions {
             return Err(GenaError::TableFull);
         }
-        let sid = self.next_sid();
+        let sid = self.next_sid()?;
         let initial = Notification {
             sid: sid.clone(),
             service,
@@ -1177,6 +1223,141 @@ mod tests {
             initial.seq, 0,
             "a reconnecting controller gets the full state again"
         );
+    }
+
+    /// The shape every id has: `uuid:` and a version-4, variant-1 UUID in lowercase hexadecimal.
+    fn has_the_uuid_shape(sid: &str) -> bool {
+        let Some(uuid) = sid.strip_prefix("uuid:") else {
+            return false;
+        };
+        let bytes = uuid.as_bytes();
+        let dashes = [8_usize, 13, 18, 23];
+        bytes.len() == 36
+            && bytes.iter().enumerate().all(|(index, byte)| {
+                if dashes.contains(&index) {
+                    *byte == b'-'
+                } else {
+                    matches!(byte, b'0'..=b'9' | b'a'..=b'f')
+                }
+            })
+            && bytes[14] == b'4'
+            && matches!(bytes[19], b'8' | b'9' | b'a' | b'b')
+    }
+
+    fn wide_table(incarnation: [u8; INCARNATION_BYTES]) -> SubscriptionTable {
+        SubscriptionTable::with_incarnation(GenaConfig::provisional(), incarnation)
+    }
+
+    fn next_id(t: &mut SubscriptionTable) -> String {
+        subscribe(t, 0, Service::RenderingControl).0.sid
+    }
+
+    #[test]
+    fn the_nonce_constructor_gives_exactly_the_ids_it_always_gave() {
+        for nonce in [0_u32, 1, 0x5a5a_0001, 0x0a0b_0c0d, 0xdead_beef, u32::MAX] {
+            let mut old_way = SubscriptionTable::new(GenaConfig::provisional(), nonce);
+            let mut wide_way = wide_table(legacy_incarnation(nonce));
+            for counter in 1..=3_u64 {
+                let expected = format!("uuid:{nonce:08x}-0000-4000-8000-{counter:012x}");
+                assert_eq!(next_id(&mut old_way), expected);
+                assert_eq!(next_id(&mut wide_way), expected);
+            }
+        }
+        assert_eq!(
+            legacy_incarnation(0x0102_0304),
+            [1, 2, 3, 4, 0, 0, 0, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn a_wide_incarnation_fills_the_first_ten_bytes_and_only_the_version_and_variant_bits_are_set()
+    {
+        let mixed = [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x11, 0x22];
+        let cases: [([u8; INCARNATION_BYTES], &str); 3] = [
+            ([0x00; 10], "uuid:00000000-0000-4000-8000-000000000001"),
+            ([0xff; 10], "uuid:ffffffff-ffff-4fff-bfff-000000000001"),
+            (mixed, "uuid:12345678-9abc-4ef0-9122-000000000001"),
+        ];
+        for (incarnation, expected) in cases {
+            let sid = next_id(&mut wide_table(incarnation));
+            assert_eq!(sid, expected);
+            assert!(has_the_uuid_shape(&sid), "{sid}");
+        }
+        // Every shape holds for inputs of every kind, not only the three above.
+        for seed in 0..=255_u8 {
+            let mut bytes = [0_u8; INCARNATION_BYTES];
+            for (index, byte) in bytes.iter_mut().enumerate() {
+                let step = u8::try_from(index).unwrap_or(0);
+                *byte = seed.wrapping_mul(31).wrapping_add(step.wrapping_mul(97));
+            }
+            let sid = next_id(&mut wide_table(bytes));
+            assert!(has_the_uuid_shape(&sid), "{sid}");
+        }
+    }
+
+    #[test]
+    fn exactly_seventy_four_of_the_eighty_incarnation_bits_change_the_id() {
+        let base = [0xa5, 0x5a, 0x3c, 0xc3, 0x0f, 0xf0, 0x69, 0x96, 0x1e, 0xe1];
+        let reference = next_id(&mut wide_table(base));
+        let (mut changed, mut same) = (0_u32, 0_u32);
+        for byte in 0..INCARNATION_BYTES {
+            for bit in 0..8 {
+                let mut flipped = base;
+                flipped[byte] ^= 1 << bit;
+                if next_id(&mut wide_table(flipped)) == reference {
+                    same += 1;
+                } else {
+                    changed += 1;
+                }
+            }
+        }
+        // The six that do not: byte 6's high nibble (the version) and byte 8's top two bits (the variant).
+        assert_eq!((changed, same), (74, 6));
+    }
+
+    #[test]
+    fn the_counter_is_the_last_six_bytes_and_a_different_incarnation_does_not_share_ids() {
+        let mut one = wide_table([1; INCARNATION_BYTES]);
+        let mut two = wide_table([2; INCARNATION_BYTES]);
+        let mut again = wide_table([1; INCARNATION_BYTES]);
+        for counter in 1..=4_u64 {
+            let a = next_id(&mut one);
+            assert!(a.ends_with(&format!("-{counter:012x}")), "{a}");
+            let b = next_id(&mut two);
+            let c = next_id(&mut again);
+            assert_ne!(a, b);
+            // The control: the same incarnation repeats its ids, so the incarnation is the only thing that separates two boots.
+            assert_eq!(a, c);
+        }
+    }
+
+    #[test]
+    fn the_counter_is_refused_before_it_would_outgrow_its_six_bytes() {
+        let mut t = wide_table([7; INCARNATION_BYTES]);
+        t.counter = COUNTER_MAX - 1;
+        // The last id the shape holds is granted.
+        let (last, _) = subscribe(&mut t, 0, Service::RenderingControl);
+        assert!(last.sid.ends_with("-ffffffffffff"), "{}", last.sid);
+        assert!(has_the_uuid_shape(&last.sid), "{}", last.sid);
+        // The next one is refused, with the fixed word and status, and nothing is written for it.
+        let again = t.subscribe(
+            0,
+            Service::RenderingControl,
+            peer(),
+            &headers(CALLBACK, Some("Second-300")),
+            &state(),
+        );
+        assert_eq!(again.err(), Some(GenaError::IdsExhausted));
+        assert_eq!(GenaError::IdsExhausted.http_status(), 503);
+        assert_eq!((t.len(), t.counter), (1, COUNTER_MAX));
+        // The permitted counterpart: the subscription that was granted still renews.
+        let renewed = t.renew(
+            0,
+            Service::RenderingControl,
+            &last.sid,
+            &SubscribeHeaders::default(),
+        );
+        assert!(renewed.is_ok());
     }
 
     #[test]

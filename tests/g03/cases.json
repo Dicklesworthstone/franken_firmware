@@ -363,11 +363,17 @@
     },
     {
       "id": "G03-I21",
-      "statement": "Subscription ids are unique for a table's life and differ between incarnations, so an id from before a restart is a 412.",
+      "statement": "Subscription ids are unique for a table's life and differ between incarnations, so an id from before a restart is a 412. An id is a version-4, variant-1 UUID whose first ten bytes are the boot's incarnation (74 of 80 bits show) and whose last six are a 48-bit counter; the 32-bit nonce constructor keeps exactly the old ids; the counter is refused before it outgrows its six bytes.",
       "vectors": [],
       "rust_tests": [
         "gena::ids_are_unique_for_the_life_of_a_table_and_differ_between_tables",
-        "gena::after_a_restart_an_old_id_is_a_412_and_a_fresh_subscription_works"
+        "gena::after_a_restart_an_old_id_is_a_412_and_a_fresh_subscription_works",
+        "gena::the_nonce_constructor_gives_exactly_the_ids_it_always_gave",
+        "gena::a_wide_incarnation_fills_the_first_ten_bytes_and_only_the_version_and_variant_bits_are_set",
+        "gena::exactly_seventy_four_of_the_eighty_incarnation_bits_change_the_id",
+        "gena::the_counter_is_the_last_six_bytes_and_a_different_incarnation_does_not_share_ids",
+        "gena::the_counter_is_refused_before_it_would_outgrow_its_six_bytes",
+        "server::the_endpoint_takes_a_wide_boot_incarnation_and_its_nonce_constructor_keeps_the_old_ids"
       ]
     },
     {
