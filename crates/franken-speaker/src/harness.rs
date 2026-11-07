@@ -4228,7 +4228,7 @@ mod tests {
         for j in 0..total {
             let usable = outage.is_none_or(|(from, until)| !(from..until).contains(&j));
             while next < arrivals.len() && arrivals[next].0 <= decision_ns(j) {
-                let (arrival, blk, copy, previous_epoch) = arrivals[next];
+                let (arrival, blk, _, previous_epoch) = arrivals[next];
                 next += 1;
                 // A raw datagram is authenticated by its generation's receiver when it arrives, unless the generation is retired (its
                 // receiver is gone: refused, and the arrival ledger records nothing from unauthenticated data). The second datagram of a
