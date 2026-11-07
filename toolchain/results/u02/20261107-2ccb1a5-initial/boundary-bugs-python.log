@@ -1,0 +1,4 @@
+source revision 2ccb1a5
+BASELINE missing-digest AB actual: {'mode': 'ab_slots', 'ab': 'proven_by_external_receipt', 'vendor_acceptance': 'not_claimed'}
+BASELINE empty-group absent-target actual: {'decision': 'admit', 'code': 'ok', 'conflicts': [], 'assumed': []}
+Expected safe boundaries: no proven A/B without usable receipt digest; refuse absent group target. This baseline deliberately demonstrates bugs, not a passing test.

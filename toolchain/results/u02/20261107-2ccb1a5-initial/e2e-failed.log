@@ -1,0 +1,11 @@
+PASS    U02-E-001  the vectors are exactly what the generator writes -- u02 vectors: up to date
+PASS    U02-E-002  reference, oracle, pins, paired positives, Rust-source agreement, contract -- OK
+PASS    U02-E-003  every planted defect is caught, the control is green -- 47 planted defects: 46 caught by the vectors, the rest by the crash test; the control is green after each
+PASS    U02-E-004  the Ed25519 oracle against OpenSSL -- signatures byte-equal to OpenSSL, verdicts equal on flipped bits
+PASS    U02-E-005  the by-name judge catches planted failures -- self-test: 9 planted or control logs judged as intended
+FAIL    U02-E-006  the Rust tests of franken-update, by test name, from a central log -- U02 rust tests by name: 28 ok, 1 failed, 0 blocked of 29 required -> NOT QUALIFIED; FAIL    every_refusal_a_vector_names_is_a_stable_code_of_the_crate: FAILED
+U02 cases: total=6 passed=5 failed=1 blocked=0
+diag run=u02-full-1afcb41764a29599: evidence COMPLETE; events=13 critical=13 dropped=0 critical_lost=0 bytes=5276 sha256=e7fea60cc6ab
+RETAINED FOR REPLAY. First fail case: U02-E-006: U02 rust tests by name: 28 ok, 1 failed, 0 blocked of 29 required -> NOT QUALIFIED; FAIL    every_refusal_a_vector_names_is_a_stable_code_of_the_crate: FAILED
+  replay: scripts/e2e/u02 --tier full --judge LOG
+U02 e2e tier=full: NOT QUALIFIED
