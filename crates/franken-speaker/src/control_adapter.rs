@@ -371,7 +371,7 @@ fn sent_of(handled: &Handled) -> Sent {
     }
 }
 
-fn envelope(service: Service, action: &str, args: &[(&str, &str)]) -> String {
+pub(crate) fn envelope(service: Service, action: &str, args: &[(&str, &str)]) -> String {
     let args: String = args
         .iter()
         .map(|(name, value)| format!("<{name}>{value}</{name}>"))
@@ -689,6 +689,57 @@ impl ControlPlane {
         seq
     }
 
+    /// One request exactly as a transport read it, handled by the real endpoint over this plane's channel and stepper, and the
+    /// endpoint's answer unchanged. [`Self::dispatch`] builds the harness's own requests and keeps a summary of the answer; a
+    /// socket transport ([`crate::fsonos_loopback`]) hands in what it read from the wire and writes the whole answer back.
+    pub(crate) fn handle_request(
+        &mut self,
+        session: &mut UnifiedGroupSession,
+        now_ns: u64,
+        request: &HttpRequest<'_>,
+    ) -> Handled {
+        match &mut self.stepper {
+            PlaneStepper::Volatile(stepper) => {
+                let mut ctx = Context {
+                    channel: &mut self.channel,
+                    session,
+                    stepper,
+                    now_ns,
+                };
+                self.endpoint.handle(&mut ctx, request)
+            }
+            PlaneStepper::Durable(stepper) => {
+                let mut ctx = Context {
+                    channel: &mut self.channel,
+                    session,
+                    stepper: &mut **stepper,
+                    now_ns,
+                };
+                self.endpoint.handle(&mut ctx, request)
+            }
+            #[cfg(unix)]
+            PlaneStepper::DurableFile(stepper) => {
+                let mut ctx = Context {
+                    channel: &mut self.channel,
+                    session,
+                    stepper: &mut **stepper,
+                    now_ns,
+                };
+                self.endpoint.handle(&mut ctx, request)
+            }
+            #[cfg(unix)]
+            PlaneStepper::DurableFaulting(stepper) => {
+                let mut ctx = Context {
+                    channel: &mut self.channel,
+                    session,
+                    stepper: &mut **stepper,
+                    now_ns,
+                };
+                self.endpoint.handle(&mut ctx, request)
+            }
+        }
+    }
+
     fn dispatch(
         &mut self,
         session: &mut UnifiedGroupSession,
@@ -706,46 +757,7 @@ impl ControlPlane {
             headers,
             body: body.as_bytes(),
         };
-        let handled = match &mut self.stepper {
-            PlaneStepper::Volatile(stepper) => {
-                let mut ctx = Context {
-                    channel: &mut self.channel,
-                    session,
-                    stepper,
-                    now_ns,
-                };
-                self.endpoint.handle(&mut ctx, &request)
-            }
-            PlaneStepper::Durable(stepper) => {
-                let mut ctx = Context {
-                    channel: &mut self.channel,
-                    session,
-                    stepper: &mut **stepper,
-                    now_ns,
-                };
-                self.endpoint.handle(&mut ctx, &request)
-            }
-            #[cfg(unix)]
-            PlaneStepper::DurableFile(stepper) => {
-                let mut ctx = Context {
-                    channel: &mut self.channel,
-                    session,
-                    stepper: &mut **stepper,
-                    now_ns,
-                };
-                self.endpoint.handle(&mut ctx, &request)
-            }
-            #[cfg(unix)]
-            PlaneStepper::DurableFaulting(stepper) => {
-                let mut ctx = Context {
-                    channel: &mut self.channel,
-                    session,
-                    stepper: &mut **stepper,
-                    now_ns,
-                };
-                self.endpoint.handle(&mut ctx, &request)
-            }
-        };
+        let handled = self.handle_request(session, now_ns, &request);
         sent_of(&handled)
     }
 

@@ -37,6 +37,11 @@ mod clock_log;
 #[cfg(any(test, feature = "harness"))]
 mod control_adapter;
 
+// The bounded loopback transport for an actual `fsonos` client (G03, `docs/contracts/g03.md` section 11.1): one listener on 127.0.0.1,
+// the real endpoint behind it. Harness and test builds only, like the control plane it drives.
+#[cfg(any(test, feature = "harness"))]
+pub mod fsonos_loopback;
+
 // A regular-file `Storage` for the harness control plane, and the process-restart driver that runs the durable plane over it
 // (`--control-restart`). Harness and test builds on unix only; neither is compiled into a device build.
 #[cfg(all(unix, any(test, feature = "harness")))]

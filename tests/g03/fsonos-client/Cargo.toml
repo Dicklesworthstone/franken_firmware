@@ -1,0 +1,18 @@
+# The REAL fsonos client library against the REAL G03 endpoint, over a bounded loopback socket (docs/contracts/g03.md section 11 item 1).
+#
+# This package is its own workspace root and is NOT a member of the firmware workspace: it needs the sibling `frankensonos` checkout
+# (transferred by RCH's multi-root closure), the toolchain that checkout pins, and registry access to resolve the client's
+# own dependencies. Nothing in the firmware workspace depends on it. It is built and run only by a central loopback run that records
+# both checkouts' revisions (see the contract). The relative path assumes the two repositories are siblings.
+[package]
+name = "g03-fsonos-client-loopback"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Integration test only: the real fsonos-proto client against the real G03 endpoint over 127.0.0.1."
+
+[workspace]
+
+[dev-dependencies]
+franken-speaker = { path = "../../../crates/franken-speaker", features = ["harness"] }
+fsonos-proto = { path = "../../../../frankensonos/crates/fsonos-proto" }

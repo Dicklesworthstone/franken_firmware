@@ -1,0 +1,4 @@
+[toolchain]
+# The toolchain the frankensonos checkout pins (its fsonos-proto declares rust-version 1.100, newer than the firmware workspace's own
+# pin), so the nearest toolchain file for this package is this one. Keep it equal to frankensonos/rust-toolchain.toml.
+channel = "nightly-2026-08-31"
