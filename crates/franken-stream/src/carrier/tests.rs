@@ -2724,8 +2724,12 @@ fn n07_group_membership_is_bounded_and_each_refusal_changes_nothing() {
         max_peers: 2,
         ..CarrierLimits::baseline()
     };
+    let table = limits.max_group_table_bytes();
     let mut sender =
         CarrierSender::with_port(key(), stream(), 1, limits, ScriptPort::new()).expect("sender");
+    // the group table is allocated at its bound when the sender is built, with the primary group in it
+    assert!(table > 0);
+    assert_eq!(sender.group_table_bytes(), table);
     // a stream identity is one group's: the primary's cannot be reused, and neither can another's
     assert_eq!(
         sender.add_group(other_key(), stream(), 3),
@@ -2778,4 +2782,6 @@ fn n07_group_membership_is_bounded_and_each_refusal_changes_nothing() {
         .expect("room again");
     assert!(third > second);
     assert_eq!(sender.group_ids(), vec![PRIMARY_GROUP, third]);
+    // groups came, were refused and left, and the table neither grew nor shrank
+    assert_eq!(sender.group_table_bytes(), table);
 }

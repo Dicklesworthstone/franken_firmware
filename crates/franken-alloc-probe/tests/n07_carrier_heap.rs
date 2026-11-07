@@ -14,13 +14,16 @@
 //! `CarrierLimits::max_retained_bytes()` (queued wire bytes under the peer and aggregate caps, one cached datagram per peer, the
 //! unreported list at its allocated bound, full control queues) for the payload and sequence allocations; the queue slot arrays,
 //! which that figure leaves out because they are struct-sized, as slots times the size of a slot, with the slot count bounded by
-//! twice the queue caps (a growing queue may reserve up to twice its length); and the peer table, which is struct state and not
-//! payload: the sender allocates it once, at `max_peers` slots, when it is built, so its bound is
-//! `CarrierLimits::max_peer_table_bytes()` and the sender's own `peer_table_bytes()` must equal it from construction on, with
-//! one peer admitted or eight (the slots no peer fills are allocated and are counted; the equality assumes the toolchain's
-//! `Vec::with_capacity` allocates exactly the request, and if it ever allocated more the check fails and prints both figures
-//! rather than widening the bound). Admission is held to allocate exactly the table and the peer's unreported list and nothing
-//! else. The measured figures only have to fit. The report is held to the
+//! twice the queue caps (a growing queue may reserve up to twice its length); and the two tables, which are struct state and not
+//! payload: the sender allocates the peer table and the group table once each, at `max_peers` slots, when it is built, so their
+//! bound is `CarrierLimits::max_peer_table_bytes()` plus `CarrierLimits::max_group_table_bytes()` and the sender's own
+//! `peer_table_bytes()` plus `group_table_bytes()` must equal it from construction on, with one peer admitted or eight (the
+//! slots no peer or group fills are allocated and are counted; the equality assumes the toolchain's `Vec::with_capacity`
+//! allocates exactly the request, and if it ever allocated more the check fails and prints both figures rather than widening the
+//! bound). Admission is held to allocate exactly the two tables and the peer's unreported list and nothing else; the first
+//! native run of this test found 56 bytes more, the primary group's one-slot allocation, which the report did not name, and the
+//! group table (preallocated and reported, with this check unchanged) is the fix, not a wider tolerance. The measured figures
+//! only have to fit. The report is held to the
 //! heap too: it may only name bytes that are live, and the heap may not exceed what it names plus the slots and the table.
 //!
 //! **Slacks, stated and not hidden.** A rebind and a move there and back may leave the level up to one datagram (1104 B) away
@@ -33,6 +36,12 @@
 //! vacuous. A port that keeps every datagram it is handed (a real retained-growth plant, through the real carrier) is caught
 //! by the growth check; every other check is shown to fail on a synthetic edit of a passing run, one at a time, so none is
 //! carried by another.
+//!
+//! **Groups.** A second kind of run builds a sender at a peer cap that is not a power of two (3 and 5, where a registry grown by
+//! pushing would hold more slots than the cap), adds groups up to the cap, is refused the one past it, loses one and takes
+//! another back, each call in its own window. Building holds exactly the two tables, the group table is its bound at the start
+//! and at the end, and no group call allocates, not even for an instant. Each of those checks fails on a synthetic edit of the
+//! passing run, one at a time.
 //!
 //! **What this is not.** Host heap only, in the bytes the program asked for (not what the system allocator reserved, and not
 //! fragmentation); inline sizes are those of the platform the test runs on. Nothing here ran on a board or a guest; it is not a
@@ -47,8 +56,9 @@ use std::rc::Rc;
 
 use franken_alloc_probe::{CountingAllocator, heap_is_tracked, measure_heap};
 use franken_stream::carrier::{
-    CarrierLimits, CarrierReceiver, CarrierSender, DatagramPort, Lane, MAX_CONTROL_BYTES,
-    MAX_WINDOW_PACKETS, PortFault, Received, ReceiverLimits, RetainedBytes, SEQ_AHEAD_LIMIT,
+    CarrierError, CarrierLimits, CarrierReceiver, CarrierSender, DatagramPort, Lane,
+    MAX_CONTROL_BYTES, MAX_WINDOW_PACKETS, PortFault, Received, ReceiverLimits, RetainedBytes,
+    SEQ_AHEAD_LIMIT,
 };
 use franken_stream::{
     AuthenticatedStreamPacket, MAX_DATAGRAM_BYTES, MAX_PAYLOAD_BYTES, OutboundFrame, StreamId,
@@ -252,7 +262,8 @@ impl Meter {
 struct Checkpoint {
     level: isize,
     report: RetainedBytes,
-    /// The peer table in bytes, by the sender's own report (see `CarrierSender::peer_table_bytes`).
+    /// The peer table and the group table in bytes, by the sender's own reports (see `CarrierSender::peer_table_bytes` and
+    /// `CarrierSender::group_table_bytes`).
     table: usize,
 }
 
@@ -373,7 +384,10 @@ impl Rig {
         Checkpoint {
             level: self.meter.level,
             report: self.sender.retained_bytes(),
-            table: self.sender.peer_table_bytes(),
+            table: self
+                .sender
+                .peer_table_bytes()
+                .saturating_add(self.sender.group_table_bytes()),
         }
     }
 }
@@ -439,7 +453,7 @@ struct Run {
     sender_high: isize,
     call_peak: usize,
     first_pump_peak: usize,
-    /// What the heap held after construction and admission beyond the peer table and the unreported lists: nothing, since those
+    /// What the heap held after construction and admission beyond the two tables and the unreported lists: nothing, since those
     /// are all the two allocate.
     admission_extra: isize,
     /// The sender's level after each round's credit clear.
@@ -550,7 +564,7 @@ struct Bounds {
     first_pump: usize,
     /// The most slots the two queues of all peers may have allocated.
     queue_slots: usize,
-    /// The peer table at its bound, from the limits alone: the sender allocates all of it when it is built.
+    /// The peer table and the group table at their bounds, from the limits alone: the sender allocates all of both when it is built.
     table: usize,
     /// The largest the report's total may be.
     total: usize,
@@ -560,6 +574,13 @@ struct Bounds {
     rx_call: usize,
 }
 
+/// The two tables at their bounds, from the limits alone: the peer table and the group table, each `max_peers` slots.
+fn tables(limits: &CarrierLimits) -> usize {
+    limits
+        .max_peer_table_bytes()
+        .saturating_add(limits.max_group_table_bytes())
+}
+
 fn bounds(plan: &Plan) -> Bounds {
     let limits = &plan.limits;
     let mut admitted = limits.clone();
@@ -567,8 +588,8 @@ fn bounds(plan: &Plan) -> Bounds {
     let accounted = admitted.max_retained_bytes();
     let queue_slots = plan.peers * 2 * (limits.peer_queue_packets + limits.control_queue_packets);
     let slots = queue_slots * MEDIA_SLOT.max(CONTROL_SLOT);
-    // the configured peer cap, not the admitted count: the table is allocated at the cap whatever is admitted
-    let table = limits.max_peer_table_bytes();
+    // the configured peer cap, not the admitted count: the tables are allocated at the cap whatever is admitted
+    let table = tables(limits);
     let unreported_each = plan.window_effective() * size_of::<u64>();
     let rl = ReceiverLimits::baseline();
     let rx_each =
@@ -583,7 +604,7 @@ fn bounds(plan: &Plan) -> Bounds {
                 .saturating_add(table),
         )
         .unwrap_or(isize::MAX),
-        // the call that builds the sender allocates the whole table at once
+        // the call that builds the sender allocates both tables at once
         call: (CALL_UNITS + plan.peers) * MAX_DATAGRAM_BYTES + 2 * slots + unreported_each + table,
         first_pump: (CALL_UNITS + plan.peers) * MAX_DATAGRAM_BYTES,
         queue_slots,
@@ -609,7 +630,8 @@ fn failures(run: &Run, plan: &Plan, b: &Bounds) -> Vec<&'static str> {
     if run.first_pump_peak < MAX_DATAGRAM_BYTES || run.first_pump_peak > b.first_pump {
         bad.push("ENCODE");
     }
-    // admission allocates the table and the unreported lists and nothing else (the slots no peer fills are still in the level)
+    // admission allocates the two tables and the unreported lists and nothing else (the slots no peer or group fills are still in
+    // the level)
     if run.admission_extra != 0 {
         bad.push("ADMIT");
     }
@@ -707,6 +729,108 @@ fn failures(run: &Run, plan: &Plan, b: &Bounds) -> Vec<&'static str> {
     bad
 }
 
+// ---------------------------------------------------------------------------------------------------------------- the groups
+
+/// A sender that carries as many groups as its cap allows, is refused the one past it, loses one and takes another: the heap each
+/// call held, and the group table the sender reported right after it was built and at the end.
+#[derive(Debug, Clone)]
+struct GroupRun {
+    max_peers: usize,
+    /// The heap the call that built the sender left behind.
+    built_level: isize,
+    /// Both tables at their bounds, and the group table alone, from the limits.
+    tables: usize,
+    bound: usize,
+    table_built: usize,
+    table_end: usize,
+    /// The net heap and the peak above the start of each group call, in order: the groups added up to the cap, the one past it,
+    /// a removal, and the add-back.
+    calls: Vec<(isize, usize)>,
+    /// Whether the call past the cap was refused as past the cap, and how many groups the sender carried at the end.
+    refused: bool,
+    groups_end: usize,
+}
+
+fn measured<R>(calls: &mut Vec<(isize, usize)>, f: impl FnOnce() -> R) -> R {
+    let (result, window) = measure_heap(f);
+    calls.push((window.net_bytes, window.peak_above_start));
+    result
+}
+
+fn group_stream(n: usize) -> StreamId {
+    StreamId::new(0x0700_0000_0000_2000 + u64::try_from(n).expect("a small count"))
+        .expect("a nonzero stream id")
+}
+
+fn group_run(max_peers: usize) -> GroupRun {
+    let limits = CarrierLimits {
+        max_peers,
+        ..CarrierLimits::baseline()
+    };
+    let wire = Wire {
+        routes: Vec::new(),
+        send_control: Ring::new(1),
+        recv_media: Ring::new(1),
+        recv_control: Ring::new(1),
+        hoard: None,
+        local: SocketAddr::new(LOOPBACK, 41_000),
+    };
+    let (built, window) =
+        measure_heap(|| CarrierSender::with_port(key(), stream(), 1, limits.clone(), wire));
+    let mut sender = built.expect("a sender");
+    let table_built = sender.group_table_bytes();
+    let mut calls = Vec::new();
+    let mut added = Vec::new();
+    // the primary group holds one slot, so the cap allows `max_peers - 1` more
+    for n in 1..max_peers {
+        let (group_key, id) = (key(), group_stream(n));
+        let group = measured(&mut calls, || sender.add_group(group_key, id, 3));
+        added.push(group.expect("a group within the cap"));
+    }
+    let (group_key, id) = (key(), group_stream(max_peers));
+    let refused = matches!(
+        measured(&mut calls, || sender.add_group(group_key, id, 3)),
+        Err(CarrierError::TooManyGroups { max }) if max == max_peers
+    );
+    let gone = *added.first().expect("a cap with room for a second group");
+    measured(&mut calls, || sender.remove_group(gone)).expect("a group leaves");
+    let (group_key, id) = (key(), group_stream(0));
+    measured(&mut calls, || sender.add_group(group_key, id, 3)).expect("room again");
+    GroupRun {
+        max_peers,
+        built_level: window.net_bytes,
+        tables: tables(&limits),
+        bound: limits.max_group_table_bytes(),
+        table_built,
+        table_end: sender.group_table_bytes(),
+        calls,
+        refused,
+        groups_end: sender.group_ids().len(),
+    }
+}
+
+/// The names of the checks a group run breaks; empty if it breaks none.
+fn group_failures(run: &GroupRun) -> Vec<&'static str> {
+    let mut bad = Vec::new();
+    // building the sender allocates the two tables and nothing else: no peer is admitted, so no list exists yet
+    if run.built_level != isize::try_from(run.tables).unwrap_or(isize::MAX) {
+        bad.push("G-BUILD");
+    }
+    // the group table is its bound from construction on and at the end, whether one slot is filled or all of them
+    if run.table_built != run.bound || run.table_end != run.bound {
+        bad.push("G-TABLE");
+    }
+    // adding a group, a refusal past the cap, a removal and an add-back allocate nothing, not even for an instant
+    if run.calls.iter().any(|&(net, peak)| net != 0 || peak != 0) {
+        bad.push("G-ALLOC");
+    }
+    // every call was made and measured, the cap was reached, and the one past it was refused as such
+    if run.calls.len() != run.max_peers + 2 || !run.refused || run.groups_end != run.max_peers {
+        bad.push("G-CAP");
+    }
+    bad
+}
+
 // ----------------------------------------------------------------------------------------------------------------- the tests
 
 #[test]
@@ -730,10 +854,10 @@ fn n07_the_carrier_heap_at_ordinary_caps_fits_the_bound_written_from_them() {
     // the ordinary case: the per-peer cap binds, and the list is the window of 16
     assert_eq!(plan.queued_frames(), plan.limits.peer_queue_packets);
     assert_eq!(run.filled.report.unreported, 16 * size_of::<u64>());
-    // one peer of eight: the peer table is allocated at the configured cap whatever is admitted, so the spare slots exist, are
-    // reported, and are in the level (the level holds at least the table before a single list or datagram is counted)
+    // one peer of eight: the tables are allocated at the configured cap whatever is admitted, so the spare slots exist, are
+    // reported, and are in the level (the level holds at least the tables before a single list or datagram is counted)
     assert!(plan.peers < plan.limits.max_peers);
-    assert_eq!(run.admitted.table, plan.limits.max_peer_table_bytes());
+    assert_eq!(run.admitted.table, tables(&plan.limits));
     assert!(run.admitted.level >= isize::try_from(run.admitted.table).expect("fits"));
 }
 
@@ -750,7 +874,7 @@ fn n07_the_carrier_heap_at_the_peer_aggregate_and_window_caps_fits_the_bound_wri
     // the boundary: eight peers, the aggregate packet cap binding before the per-peer caps added up, the list at the
     // sequence budget under a window of 4096, and a receiver held until its inbound queue was full and refusing
     assert_eq!(plan.peers, plan.limits.max_peers);
-    assert_eq!(run.admitted.table, plan.limits.max_peer_table_bytes());
+    assert_eq!(run.admitted.table, tables(&plan.limits));
     assert!(plan.queued_frames() < plan.peers * plan.limits.peer_queue_packets);
     assert_eq!(
         run.filled.report.unreported,
@@ -811,19 +935,21 @@ fn n07_each_heap_check_fails_on_its_own_synthetic_edit_of_a_passing_run() {
     check("TABLE", &|r: &mut Run| r.admitted.table = b.table + 1);
     check("TABLE", &|r: &mut Run| r.filled.table = b.table - 1);
     check("REPORT-LIVE", &|r: &mut Run| r.filled.level = 0);
-    // the control for the spare peer-table slots: a measurement that did not see them (the level without the slots no peer
-    // fills) cannot hold the table the sender reports, and is caught; so the spare allocation stays charged
+    // the control for the spare table slots (one peer and the one group fill a slot of each table): a measurement that did not
+    // see them (the level without the slots no peer or group fills) cannot hold the tables the sender reports, and is caught; so
+    // the spare allocation stays charged
     let spare =
         isize::try_from(b.table / plan.limits.max_peers * (plan.limits.max_peers - plan.peers))
             .expect("fits");
-    assert!(
-        spare > 0,
-        "the ordinary plan leaves peer-table slots unfilled"
-    );
+    assert!(spare > 0, "the ordinary plan leaves table slots unfilled");
     check("REPORT-LIVE", &|r: &mut Run| r.admitted.level -= spare);
     check("REPORT-COVERS", &|r: &mut Run| {
         r.filled.level += beyond_total
     });
+    // and at the one checkpoint where no queued frame's over-count can hide a byte: admission, where the level is exactly the
+    // tables and the lists, so a single byte more than the report names is caught (the 56 the first native run found was
+    // hidden everywhere else)
+    check("REPORT-COVERS", &|r: &mut Run| r.admitted.level += 1);
     check("SLOTS", &|r: &mut Run| {
         r.filled.report.queue_slots = b.queue_slots + 1;
     });
@@ -837,4 +963,49 @@ fn n07_each_heap_check_fails_on_its_own_synthetic_edit_of_a_passing_run() {
     check("MOVE", &|r: &mut Run| r.moved.level += one_more);
     check("EPOCH", &|r: &mut Run| r.restarted.report.cached = 1);
     check("RX", &|r: &mut Run| r.rx_inbound += 1);
+}
+
+#[test]
+fn n07_groups_come_and_go_without_moving_the_heap_at_peer_caps_that_are_not_powers_of_two() {
+    assert!(heap_is_tracked());
+    for max_peers in [3, 5] {
+        let run = group_run(max_peers);
+        assert_eq!(group_failures(&run), Vec::<&str>::new(), "{run:#?}");
+        // the group table is a real allocation of its own, and the cap is reached and passed
+        assert!(run.bound > 0);
+        assert_eq!(run.groups_end, max_peers);
+    }
+}
+
+#[test]
+fn n07_each_group_heap_check_fails_on_its_own_synthetic_edit_of_a_passing_run() {
+    assert!(heap_is_tracked());
+    let base = group_run(5);
+    assert_eq!(group_failures(&base), Vec::<&str>::new());
+    let check = |name: &'static str, plant: &dyn Fn(&mut GroupRun)| {
+        let mut run = base.clone();
+        plant(&mut run);
+        let bad = group_failures(&run);
+        assert!(bad.contains(&name), "{name} was not caught: {bad:?}");
+    };
+    // a build that holds one byte more or less than the two tables (the first native run's was a registry of one slot, built
+    // beside a table that did not count it)
+    check("G-BUILD", &|r: &mut GroupRun| r.built_level += 1);
+    check("G-BUILD", &|r: &mut GroupRun| r.built_level -= 1);
+    // a group table that is not its bound at the start, or that moved by the end
+    check("G-TABLE", &|r: &mut GroupRun| r.table_built = r.bound + 1);
+    check("G-TABLE", &|r: &mut GroupRun| r.table_built = r.bound - 1);
+    check("G-TABLE", &|r: &mut GroupRun| r.table_end = r.bound + 1);
+    // a group call that kept a byte, or that held one for an instant: an add, the refusal, the removal, the add-back
+    check("G-ALLOC", &|r: &mut GroupRun| r.calls[0].0 = 1);
+    check("G-ALLOC", &|r: &mut GroupRun| r.calls[0].1 = 1);
+    check("G-ALLOC", &|r: &mut GroupRun| r.calls[4].0 = 1);
+    check("G-ALLOC", &|r: &mut GroupRun| r.calls[5].0 = -1);
+    check("G-ALLOC", &|r: &mut GroupRun| r.calls[6].1 = 1);
+    // a call that was never measured, a past-the-cap call that was not refused as such, a cap that was not reached
+    check("G-CAP", &|r: &mut GroupRun| {
+        r.calls.pop();
+    });
+    check("G-CAP", &|r: &mut GroupRun| r.refused = false);
+    check("G-CAP", &|r: &mut GroupRun| r.groups_end -= 1);
 }

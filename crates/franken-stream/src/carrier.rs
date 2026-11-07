@@ -460,6 +460,17 @@ impl CarrierLimits {
             .saturating_mul(std::mem::size_of::<PeerState>())
     }
 
+    /// The group table at its bound: `max_peers` slots (the bound on groups), each the size of one group's state (its key, stream
+    /// identity, epoch and id). Like the peer table it is allocated once, at this size, when the sender is built, with the
+    /// primary group in the first slot, so adding or removing a group never allocates and [`CarrierSender::group_table_bytes`] is
+    /// this figure from construction on. It is struct state, not payload or sequence allocation, so it is reported and bounded
+    /// apart from [`Self::max_retained_bytes`]. Saturating, like that figure.
+    #[must_use]
+    pub fn max_group_table_bytes(&self) -> usize {
+        self.max_peers
+            .saturating_mul(std::mem::size_of::<GroupState>())
+    }
+
     pub fn validate(&self) -> Result<(), CarrierError> {
         let bad = |why: &'static str| -> Result<(), CarrierError> {
             Err(CarrierError::InvalidLimits(why))
@@ -1071,15 +1082,18 @@ impl<P: DatagramPort> CarrierSender<P> {
         );
         // the peer table is allocated once, at its bound (`validate` holds `max_peers` to 64), so admitting a peer never grows it
         let peers = Vec::with_capacity(limits.max_peers);
+        // the group table likewise: groups are bounded by `max_peers` (`add_group` refuses the one past it), so it never grows
+        let mut groups = Vec::with_capacity(limits.max_peers);
+        groups.push(GroupState {
+            id: PRIMARY_GROUP,
+            key,
+            stream_id,
+            epoch,
+        });
         Ok(Self {
             limits,
             port,
-            groups: vec![GroupState {
-                id: PRIMARY_GROUP,
-                key,
-                stream_id,
-                epoch,
-            }],
+            groups,
             next_group: PRIMARY_GROUP + 1,
             peers,
             link_up: true,
@@ -1219,6 +1233,17 @@ impl<P: DatagramPort> CarrierSender<P> {
         self.peers
             .capacity()
             .saturating_mul(std::mem::size_of::<PeerState>())
+    }
+
+    /// Bytes allocated for the group table: its slots (`capacity`) times the size of one group's state. Reported apart from
+    /// [`Self::retained_bytes`] for the same reason as the peer table. It is allocated once, at `max_peers`, when the sender is
+    /// built (the primary group fills the first slot), so this equals [`CarrierLimits::max_group_table_bytes`] and does not move
+    /// as groups come and go; the slots no group fills are allocated and are counted here all the same.
+    #[must_use]
+    pub fn group_table_bytes(&self) -> usize {
+        self.groups
+            .capacity()
+            .saturating_mul(std::mem::size_of::<GroupState>())
     }
 
     #[must_use]
@@ -1457,8 +1482,8 @@ impl<P: DatagramPort> CarrierSender<P> {
     /// Carry another stream on this interface, with its own key, stream identity and epoch, and no peers yet. Its peers are
     /// admitted with [`Self::add_peer_in_group`] against the interface's budgets, not against a budget of its own. The stream
     /// identity must differ from every group's here (a report names it, and it selects the key the report is checked with),
-    /// and the number of groups is bounded by `max_peers`: a group without a peer holds nothing, and each peer is a member of
-    /// one.
+    /// and the number of groups is bounded by `max_peers`: a group without a peer holds only its slot of the group table
+    /// ([`Self::group_table_bytes`], allocated when the sender is built), and each peer is a member of one.
     ///
     /// # Errors
     /// [`CarrierError::StreamIdInUse`], [`CarrierError::TooManyGroups`]. Nothing changes.
