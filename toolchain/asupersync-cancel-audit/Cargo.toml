@@ -1,0 +1,52 @@
+# Focused cancellation-audit harness (P05 / ffw-ipz). Runs asupersync's ORIGINAL tests/runtime_abort_vs_cancel_semantics_audit.rs, byte for
+# byte, against the pinned asupersync built as a NORMAL dependency, so none of asupersync's ~300 dev-dependencies are compiled.
+# It is a test-build fan-out repair for one lane, not a replacement for the broad all-target, lint, big-endian or resource gates.
+# Why each line below is what it is: README.md. What proves it: scripts/audit_check.py and provenance/.
+
+# A standalone workspace, so no parent workspace adopts this package.
+[workspace]
+
+[package]
+name = "asupersync-cancel-audit"
+version = "0.0.0"
+edition = "2024"
+publish = false
+build = "build.rs"
+# Off, because tests/runtime_abort_vs_cancel_semantics_audit.rs must NOT be compiled as a target of its own: it reads the asupersync
+# source tree through CARGO_MANIFEST_DIR, which only tests/cancel_audit.rs redirects.
+autotests = false
+autobins = false
+autoexamples = false
+autobenches = false
+
+# The pin is a git revision, so Cargo fetches and stores an immutable copy; there is no scratch clone of asupersync.
+# default-features = false plus the full list is the SAME feature set as `cargo test -p asupersync` has on the original lane:
+# the package's four defaults, plus what its dev-dependency asupersync-conformance asks of asupersync (Cargo unifies them) and the
+# optional dependencies those pull in. The line must stay on one line: build.rs and audit_check.py read it.
+[dependencies]
+asupersync = { git = "https://github.com/Dicklesworthstone/asupersync", rev = "14032b8f2c832ee7ef1946404f5efb18162af045", default-features = false, features = ["fuzz", "metrics", "native-runtime", "nightly-outcome-try", "proc-macros", "runtime-core", "test-internals", "tracing-integration"] }
+
+# The audit prints diagnostics with serde_json::json! and uses no other crate that is not asupersync or std. sha2 is for the guard.
+[dev-dependencies]
+serde_json = "1.0"
+sha2 = "0.10"
+
+[build-dependencies]
+serde_json = "1.0"
+sha2 = "0.10"
+
+[[test]]
+name = "cancel_audit"
+path = "tests/cancel_audit.rs"
+
+[[test]]
+name = "provenance_guard"
+path = "tests/provenance_guard.rs"
+
+# The lint table of the asupersync package, so the audit compiles under the same rules (the original lane adds -D warnings).
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)', 'cfg(fuzzing)', 'cfg(feature, values("quic", "http3", "wasm-browser-preview", "simd-intrinsics", "messaging-fabric", "obligation-cleanup-e2e"))'] }
+unsafe_code = "deny"
+missing_docs = "allow"
+unused = { level = "warn", priority = -1 }
+unused_doc_comments = "allow"

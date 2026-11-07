@@ -1,0 +1,54 @@
+{
+  "asupersync": {
+    "git": "https://github.com/Dicklesworthstone/asupersync",
+    "rev": "14032b8f2c832ee7ef1946404f5efb18162af045",
+    "version": "0.6.2"
+  },
+  "feature_sources": {
+    "conformance": [
+      "fuzz",
+      "metrics",
+      "test-internals",
+      "tracing-integration"
+    ],
+    "default": [
+      "native-runtime",
+      "nightly-outcome-try",
+      "proc-macros",
+      "runtime-core"
+    ]
+  },
+  "features": [
+    "fuzz",
+    "metrics",
+    "native-runtime",
+    "nightly-outcome-try",
+    "proc-macros",
+    "runtime-core",
+    "test-internals",
+    "tracing-integration"
+  ],
+  "harness_files": {
+    "tests/runtime_abort_vs_cancel_semantics_audit.rs": "5f13a1bae7085304fe33083b4560e07f753995962e57dc72a53ebb569fa1c841",
+    "tests/runtime_abort_vs_cancel_semantics_audit/stream_cancellation.rs": "daf75da8c73ad7d61391ae7c8f017ed704d7898e0e1d28b11295588a860c2d6a"
+  },
+  "original_command": "cargo +nightly-2026-08-31 test -p asupersync --locked --test runtime_abort_vs_cancel_semantics_audit -j1 -- --nocapture",
+  "original_env": {
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "RUSTFLAGS": "-D warnings -C debuginfo=0"
+  },
+  "pinned_files": {
+    "Cargo.lock": "cc9afababd890b89e85af603a1494f415bd2778b49f1d9cdae08543de79fbd65",
+    "Cargo.toml": "a51c01970b36a3a8654c1076b8f0a18c2749effaa2470d41a9c2644660a98b43",
+    "conformance/Cargo.toml": "d90a65190b6a344ea4d752528f8191d361a8071d09f948e446220df1688a81cc"
+  },
+  "schema": 1,
+  "tests": {
+    "audit": 46,
+    "stream_cancellation": 2,
+    "total": 48
+  },
+  "toolchain_channel": "nightly-2026-08-31",
+  "toolchain_file_sha256": "99838b6a25561af2c5b180941bb81adad3ef25f22ae297a6f7ddec2caa151c6f"
+}
