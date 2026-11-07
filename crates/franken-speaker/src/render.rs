@@ -678,6 +678,15 @@ impl<B: DeviceBackend> RenderLoop<B> {
         self.in_flight
     }
 
+    /// Whether a block has started rendering and has not ended: audio it carries has been pulled from the
+    /// source and is not yet in the device. A cancel, a fault or a recovery drops such a block WITHOUT an
+    /// outcome, so the cumulative block counters never balance again afterwards; this is the loop's own
+    /// state, not a counter equality.
+    #[must_use]
+    pub const fn block_in_progress(&self) -> bool {
+        self.busy.is_some()
+    }
+
     /// Read-only view of the HAL session.
     #[must_use]
     pub const fn session(&self) -> &HalSession<B> {
@@ -1658,6 +1667,25 @@ mod tests {
             c,
             FakeCall::Start | FakeCall::SubmitRetained { .. } | FakeCall::SetMute(false)
         )));
+    }
+
+    #[test]
+    fn a_block_is_in_progress_from_its_start_to_its_end_and_a_cancel_drops_it_without_an_outcome() {
+        let (mut l, _probe, _) = started();
+        let (mut src, mut t) = (ToneSource::new(), timing(1, &[], &[]));
+        assert!(!l.block_in_progress());
+        run(&mut l, &mut src, &mut t, 1); // block 0 starts and ends one tick later
+        assert!(l.block_in_progress());
+        run(&mut l, &mut src, &mut t, 1);
+        assert!(!l.block_in_progress());
+        run(&mut l, &mut src, &mut t, 3); // block 1 starts on tick 5
+        assert!(l.block_in_progress());
+        // A cancel drops the block in flight with no outcome: the cumulative counters never balance again,
+        // which is why the loop's own state is the accessor and not a counter equality.
+        l.cancel().unwrap();
+        assert!(!l.block_in_progress());
+        let c = l.counters();
+        assert_eq!((c.blocks_started, c.blocks_on_time), (2, 1));
     }
 
     #[test]

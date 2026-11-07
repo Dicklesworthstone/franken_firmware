@@ -25,6 +25,7 @@ pub mod clock_view;
 pub mod guest_evidence;
 pub mod media_playout;
 pub mod net_carrier;
+pub mod output_fence;
 pub mod platform_start;
 pub mod render;
 pub mod render_log;

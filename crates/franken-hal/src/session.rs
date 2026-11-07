@@ -423,6 +423,8 @@ pub struct HalSession<B: DeviceBackend> {
     slots: Option<SlotTable>,
     backend: B,
     session_id: u64,
+    /// How many flushes and resets the device has acknowledged since this session opened.
+    generation: u64,
     phase: SessionPhase,
     amp: Amp,
     abi: AbiKind,
@@ -520,6 +522,7 @@ impl<B: DeviceBackend> HalSession<B> {
             slots: None,
             backend,
             session_id: u64::from(session_id),
+            generation: 0,
             phase: SessionPhase::Closed,
             // The session has not touched the device, so it has not unmuted it.
             amp: Amp::Muted,
@@ -629,6 +632,23 @@ impl<B: DeviceBackend> HalSession<B> {
     #[must_use]
     pub const fn irrevocable_until_frames(&self) -> u64 {
         self.accepted_frames
+    }
+
+    /// This session's identity: unique in the process and never reused, because the ids that name sessions
+    /// never wrap (a session that cannot get one is refused at open). A frame count means nothing without
+    /// the session that counted it.
+    #[must_use]
+    pub const fn session_id(&self) -> u64 {
+        self.session_id
+    }
+
+    /// How many flushes and resets the device has acknowledged since this session opened. Frames the
+    /// session accepted before an acknowledgment were flushed by it, not played: the frame counters keep
+    /// counting across it, so this number is what separates the audio before the flush from the audio
+    /// after it. It advances only on an acknowledgment, never on a request, a fault or a timeout.
+    #[must_use]
+    pub const fn generation(&self) -> u64 {
+        self.generation
     }
 
     #[must_use]
@@ -1143,6 +1163,7 @@ impl<B: DeviceBackend> HalSession<B> {
                     self.phase = SessionPhase::Prepared;
                     self.stop_requested = false;
                     self.primed_silence_blocks = 0;
+                    self.generation = self.generation.saturating_add(1);
                     self.emit(SessionEventKind::StopAcknowledged);
                 } else {
                     self.note_anomaly(report);
@@ -1330,6 +1351,7 @@ impl<B: DeviceBackend> HalSession<B> {
                 self.saturated_reported = false;
                 self.primed_silence_blocks = 0;
                 self.phase = SessionPhase::Prepared;
+                self.generation = self.generation.saturating_add(1);
                 self.emit(SessionEventKind::ResetAcknowledged);
                 Ok(())
             }
@@ -2033,6 +2055,59 @@ mod tests {
             SessionError::Slots(SlotError::LeakBudgetExhausted)
         );
         assert_eq!(next.phase(), SessionPhase::Closed);
+    }
+
+    #[test]
+    fn a_session_names_itself_and_counts_the_flushes_the_device_acknowledged() {
+        let (mut s, _probe, _) = running(FakeConfig::retained());
+        let (other, _other_probe, _) = session(FakeConfig::retained());
+        assert_ne!(
+            s.session_id(),
+            other.session_id(),
+            "two sessions never share an id"
+        );
+        assert_eq!(s.generation(), 0);
+        let _t = token(&mut s);
+        assert_eq!(s.irrevocable_until_frames(), 4);
+        assert_eq!(
+            s.drain(10),
+            Ok(DrainOutcome::Acknowledged { waited_ticks: 1 })
+        );
+        // The acknowledgment starts a new generation; the frame counters carry on across it.
+        assert_eq!(s.generation(), 1);
+        assert_eq!(s.irrevocable_until_frames(), 4);
+        assert_eq!(s.receipt().discarded_frames, 4);
+    }
+
+    #[test]
+    fn a_drain_that_times_out_does_not_advance_the_generation_but_an_acknowledged_reset_does() {
+        let mut cfg = FakeConfig::retained();
+        cfg.flush_ack_delay_ticks = None;
+        let (mut s, probe, _) = running(cfg);
+        probe.set_lose_completions(true);
+        let _t = token(&mut s);
+        assert_eq!(s.drain(3), Ok(DrainOutcome::TimedOut { waited_ticks: 3 }));
+        assert_eq!(s.phase(), SessionPhase::Faulted);
+        assert_eq!(s.generation(), 0, "no acknowledgment, no new generation");
+        // The permitted counterpart: the device acknowledges the reset.
+        s.reset_device().unwrap();
+        assert_eq!(s.generation(), 1);
+    }
+
+    #[test]
+    fn a_reset_the_device_does_not_acknowledge_leaves_the_generation_alone() {
+        let mut cfg = FakeConfig::retained();
+        cfg.reset_ack = false;
+        cfg.flush_ack_delay_ticks = None;
+        let (mut s, probe, _) = running(cfg);
+        probe.set_lose_completions(true);
+        let _t = token(&mut s);
+        assert_eq!(s.drain(1), Ok(DrainOutcome::TimedOut { waited_ticks: 1 }));
+        assert_eq!(
+            s.reset_device().err().unwrap(),
+            SessionError::ResetNotAcknowledged
+        );
+        assert_eq!(s.generation(), 0);
     }
 
     #[test]
