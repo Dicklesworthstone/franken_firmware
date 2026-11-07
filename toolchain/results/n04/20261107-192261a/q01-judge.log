@@ -1,0 +1,48 @@
+META-CASES     PASS   28 cases cover all 138 unit tests of the harness, the control adapter and the playout adapter, each once
+META-CONTRACT  PASS   the limit-1 table parses: 10 cells for 5 members; every fleet member is named
+META-RECEIPTS  PASS   2 receipt(s) verify and back all 10 measured cells
+META-DIGEST    PASS   the independent digest of 400 blocks of 2-channel silence is 5755000421370241829, the value measured centrally in b40
+
+Q01-C01  PASS     3 tests ok
+Q01-C02  PASS     2 tests ok
+Q01-C03  PASS     6 tests ok
+Q01-C04  PASS     5 tests ok
+Q01-C05  PASS     4 tests ok
+Q01-C06  PASS     2 tests ok
+Q01-C07  PASS     4 tests ok
+Q01-C08  PASS     2 tests ok
+Q01-C09  PASS     1 tests ok
+Q01-C10  PASS     3 tests ok
+Q01-C11  PASS     23 tests ok
+Q01-C12  PASS     6 tests ok
+Q01-C13  PASS     11 tests ok
+Q01-C14  PASS     22 tests ok
+Q01-C15  PASS     7 tests ok
+Q01-C16  PASS     6 tests ok
+Q01-C17  PASS     5 tests ok
+Q01-C18  PASS     3 tests ok
+Q01-C19  PASS     3 tests ok
+Q01-C20  PASS     3 tests ok
+Q01-C21  PASS     1 tests ok
+Q01-C22  PASS     2 tests ok
+Q01-C23  PASS     6 tests ok
+Q01-C24  PASS     1 tests ok
+Q01-C25  PASS     3 tests ok
+Q01-C26  PASS     2 tests ok
+Q01-M01  PASS     1 tests ok
+Q01-M02  PASS     1 tests ok
+cases: 28 passed, 0 failed, 0 blocked
+
+measured (campaign seed 0x20261104, 250 blocks):
+  member             source        audible  non-zero  digest
+  spk-bedroom-s1     asymmetric        247       250  14882135446442400487
+  spk-den-s3         asymmetric        247       250  7020733849592968225
+  spk-kitchen-s12    asymmetric        249       250  6208605296387421463
+  spk-living-sub     asymmetric        247       250  3680294967966717223
+  spk-office-s5      asymmetric        248       250  3395001398779469239
+  spk-bedroom-s1     opposed           247         0  247748116559446821  (silence)
+  spk-den-s3         opposed           247       250  9573472251582023752
+  spk-kitchen-s12    opposed           249         0  247748116559446821  (silence)
+  spk-living-sub     opposed           247         0  13238091106517201701  (silence)
+  spk-office-s5      opposed           248       250  6168898010249488482
+not measured here: any real board, device, provider account, network or kernel (every campaign is a simulation); the absolute level of any block (the DSP applies gain before the crossover filters); concealment quality
