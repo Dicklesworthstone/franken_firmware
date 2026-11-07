@@ -689,6 +689,12 @@ impl ControlPlane {
         seq
     }
 
+    /// The endpoint's directory: what the topology answer reads that the group session does not hold (where a member's device
+    /// description lives, and its room name). A transport that serves a description fills it for the member it serves.
+    pub(crate) fn directory_mut(&mut self) -> &mut franken_control::fsonos::Directory {
+        self.endpoint.directory_mut()
+    }
+
     /// One request exactly as a transport read it, handled by the real endpoint over this plane's channel and stepper, and the
     /// endpoint's answer unchanged. [`Self::dispatch`] builds the harness's own requests and keeps a summary of the answer; a
     /// socket transport ([`crate::fsonos_loopback`]) hands in what it read from the wire and writes the whole answer back.

@@ -218,8 +218,9 @@ class Device:
             "<service><serviceType>%s</serviceType><serviceId>urn:upnp-org:serviceId:%s</serviceId><controlURL>%s</controlURL><eventSubURL>%s</eventSubURL></service>"
             % (urn, n, ctl, ev) for n, urn, ctl, ev in services(self.opt))
         return ('<?xml version="1.0"?>\n<root xmlns="urn:schemas-upnp-org:device-1-0"><specVersion><major>1</major><minor>0</minor></specVersion><device>'
-                "<deviceType>%s</deviceType><friendlyName>%s</friendlyName><manufacturer>FrankenFirmware</manufacturer><modelName>franken-speaker</modelName>"
-                "<UDN>%s</UDN><serviceList>%s</serviceList></device></root>") % (DEVICE_TYPE, name, self.udn, body)
+                "<deviceType>%s</deviceType><friendlyName>%s</friendlyName><roomName>%s</roomName><manufacturer>FrankenFirmware</manufacturer>"
+                "<modelName>franken-speaker</modelName><UDN>%s</UDN><serviceList>%s</serviceList></device></root>"
+                ) % (DEVICE_TYPE, name, name, self.udn, body)
 
 
 def delay_ms(mx: int, entropy: int, opt: Options = Options()) -> int:
@@ -271,6 +272,8 @@ def check_all(opt: Options = Options()) -> List[str]:
     hostile = Device(dict(v["device"], name=v["description_hostile"]["name"]), opt).description()
     if "<friendlyName>%s</friendlyName>" % v["description_hostile"]["friendly_name_xml"] not in hostile:
         failures.append("description_hostile")
+    if "<roomName>%s</roomName>" % v["description_hostile"]["friendly_name_xml"] not in hostile:
+        failures.append("description_hostile_room")
     for case in v["delay"]:
         if delay_ms(case["mx"], case["entropy"], opt) != case["expect"]:
             failures.append("delay %r" % case)

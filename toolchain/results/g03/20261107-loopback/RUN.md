@@ -121,3 +121,58 @@ staging-release is null on this failed execution, not claimed true.
 
 The separate five-case actual-client package remains UNRUN. A second attempt
 on `hz2` also received a pre-Cargo disk-reservation refusal, exit 120.
+
+## Discovery transport and actual-client compilation follow-up
+
+Base `6458ff2`, with discovery patch `11aa3c88315b429b96163181229d8452cdab4895adec754466eb80b6a908d314`,
+UDP write-timeout correction `3866cb84f0bbbf451f43982113d283aba2f2cdbec3a4dd9709a7ec46ba1556da`,
+and source-derived GET-405 test correction `8e4e92ac943b12066141d1fe25f10704cba31cb64b32f7b5c881a8eabceb0340`.
+The last correction preserves the endpoint's behavior: unknown GET methods
+receive 405; an unauthenticated control POST remains 401. No core authorization
+rule changed. The only description-vector change adds the escaped `roomName`
+which the real client's parser reads.
+
+All compiler commands below used strict remote execution, one build slot,
+`CARGO_INCREMENTAL=0`, `CARGO_PROFILE_DEV_DEBUG=0` and
+`CARGO_PROFILE_TEST_DEBUG=0`; no admission floor or fallback changed.
+
+```sh
+RCH_REQUIRE_REMOTE=1 rch exec --source-content-receipt --worker ts1 -- cargo +nightly-2026-08-31 test --locked --offline -j1 --no-fail-fast -p franken-stream -p franken-speaker -- --show-output --test-threads=1
+RCH_REQUIRE_REMOTE=1 rch exec --source-content-receipt --worker ovh-b -- cargo +nightly-2026-08-31 clippy --locked -j1 -p franken-control -p franken-stream -p franken-speaker --features franken-speaker/harness --all-targets -- -D warnings
+RCH_REQUIRE_REMOTE=1 rch exec --source-content-receipt --worker ovh-b -- cargo +nightly-2026-08-31 clippy --locked --manifest-path tests/g03/fsonos-client/Cargo.toml --tests -j1 -- -D warnings
+python3 -B -m unittest discover -s tests/g03 -p 'test_*.py'
+```
+
+Native build `30099060530610602`: **633 passed / 0 failed / 1 existing ignored
+D03 soak**, across 14 result groups. This includes **20 HTTP and 11 UDP shim
+tests**, **42 carrier unit tests** and **15 link unit tests**. Both strict
+Clippy commands passed with no Rust diagnostics (builds `30099060530610601`
+and `30099060530610614`). G03 Python passed **85/85**; touched Rust formatting
+and Python compilation passed. `native-discovery.txt` retains selected original
+verdicts and observations, without machine paths. The N07 judge also reproduces
+**25/25 cases, zero metadata failures** from that excerpt.
+
+The first two captures matched **1,361/1,361** files before this status/evidence
+update. The actual-client capture matched **1,418/1,418** across four roots:
+FrankenFirmware 1,361, the sibling workspace manifest inputs 4, `fsonos-proto`
+49 and `fsonos-types` 4. The sibling revision was
+`71da04327c596db61858f79ad4851bd6c143767d`. All three jobs were finished,
+exit zero acknowledged, wrapper dead, owner absent, all five release flags true.
+
+| Capture | Complete raw-log SHA-256 | Primary source root |
+|---|---|---|
+| Native | `cbb31fdddda4a7567349bbddfb856846c7b28ebea8312828eebd3c0371f96ab6` | `7adb8cf4024d67d14cd4fbf18532d9a4d5717af579426aabc9a27b82fe2d4723` |
+| Workspace Clippy | `89698baea1f5c22922bbf7666935e5edbc90b450be69c9a1faad1ae7004fcfb6` | `fe37b02a600ee6b4970c6fd90b8581b8074789e3c98d6c69d4a6967ef53ba2f4` |
+| Actual-client Clippy | `61e8757f934b46ff6c5e7deec6cef75bed3c6d8a70ca318f2752b9b4a7bb95cf` | `ec07eaafaba4cb0c18d58af8349906d87257b0ced9e4806721f2795182ae6667` |
+
+The standalone lockfile was generated offline as metadata, without compiling
+locally. It pins 241 packages, including the real client's published Asupersync
+0.5.0 dependency; it does not substitute the mutable local Asupersync 0.6.2.
+Lockfile SHA-256: `c1ccda353f0519580e1e32587a20082f67982e4ac50607f5e5d1fa113307f93a`.
+
+**Actual-client execution remains NOT RUN.** Its first strict-Clippy attempt on
+TS1 was refused for active-project exclusion before Cargo. A later native test
+attempt was refused for disk headroom (26 GiB available versus 40 GiB required),
+also before Cargo. Eleven compiled tests are not eleven passing tests. The
+new adapter remains loopback-only and harness-only; GENA delivery, real-client
+group/reconnect qualification, radio behavior and board playback remain open.

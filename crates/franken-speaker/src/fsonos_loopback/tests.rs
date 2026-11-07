@@ -2,7 +2,10 @@
 //! `tests/g03/fsonos-client`. Each refusal here is paired with the permitted request that follows it, and every test ends with the
 //! shim's own count of what it did.
 
+use std::net::UdpSocket;
+
 use franken_control::fsonos::Service;
+use franken_control::fsonos::ssdp::DEVICE_TYPE;
 
 use super::*;
 use crate::control_adapter::envelope;
@@ -607,4 +610,226 @@ fn an_answer_is_framed_with_its_own_length_and_a_line_break_cannot_split_it() {
         String::from_utf8(bare).expect("ASCII"),
         "HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
     );
+}
+
+// ---- discovery: the description, the topology entry and the responder beside the HTTP shim -------------------------------------
+
+const WAIT: Duration = Duration::from_millis(300);
+
+fn discovery_session() -> UnifiedGroupSession {
+    let (first, second) = (FIXTURE_DEVICE_UUID, FIXTURE_OTHER_UUID);
+    fixture_session_for(first, second).expect("a session")
+}
+
+fn try_start(
+    identity: &DiscoveryIdentity,
+    discovery: DiscoveryLimits,
+) -> Result<FsonosLoopback, String> {
+    let session = discovery_session();
+    FsonosLoopback::start_discoverable(session, identity, Policy::LocalLink, quick(), discovery)
+}
+
+fn discoverable(policy: Policy) -> FsonosLoopback {
+    let identity = DiscoveryIdentity::fixture();
+    let discovery = DiscoveryLimits::standard();
+    FsonosLoopback::start_discoverable(discovery_session(), &identity, policy, quick(), discovery)
+        .expect("the discoverable shim starts")
+}
+
+fn fixture_device() -> Device {
+    DiscoveryIdentity::fixture().device().expect("accepted")
+}
+
+/// A raw UDP search for `target` sent to the responder, and every datagram it answers with (bounded in time and in number).
+fn ask(server: &FsonosLoopback, target: &str) -> Vec<String> {
+    let to = server.discovery_addr().expect("a discoverable shim");
+    let any = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
+    let socket = UdpSocket::bind(any).expect("a client socket");
+    let wait = Some(WAIT);
+    socket.set_read_timeout(wait).expect("a read timeout");
+    let head = "M-SEARCH * HTTP/1.1\r\nHOST: x\r\n";
+    let man = "\"ssdp:discover\"";
+    let bytes = format!("{head}MAN: {man}\r\nMX: 1\r\nST: {target}\r\n\r\n").into_bytes();
+    socket.send_to(&bytes, to).expect("sent");
+    let mut out = Vec::new();
+    let mut buf = [0_u8; 2048];
+    while out.len() < 32 {
+        match socket.recv_from(&mut buf) {
+            Ok((n, _)) => out.push(String::from_utf8_lossy(&buf[..n]).into_owned()),
+            Err(_) => break,
+        }
+    }
+    out
+}
+
+fn received(server: &FsonosLoopback) -> u32 {
+    match server.discovery_report() {
+        Some(report) => report.received,
+        None => 0,
+    }
+}
+
+#[test]
+fn the_description_is_the_cores_document_served_to_the_local_link_and_nothing_else_changes() {
+    let server = discoverable(Policy::LocalLink);
+    let device = fixture_device();
+    let get = http("GET", DESCRIPTION_PATH, &[], b"");
+    let wire = exchange(server.addr(), &get).expect("an answer");
+    assert_eq!(wire.status, 200);
+    let kind = wire.header("content-type");
+    assert_eq!(kind, Some(DESCRIPTION_CONTENT_TYPE));
+    let length = wire.header("content-length").expect("a length");
+    assert_eq!(length, wire.body.len().to_string());
+    assert_eq!(wire.body, device.description_xml());
+    // Independent of the core's builder: the room label the actual client reads is on the wire as its own element.
+    let room = format!("<roomName>{FIXTURE_ROOM}</roomName>");
+    assert!(wire.body.contains(&room));
+
+    // The paired refusals: another path and another method are the endpoint's, not the description's.
+    let other = http("GET", "/xml/other.xml", &[], b"");
+    let wire = exchange(server.addr(), &other).expect("an answer");
+    assert_ne!(wire.status, 200);
+    assert!(!wire.body.contains("<UDN>"));
+    let posted = http("POST", DESCRIPTION_PATH, &[], b"x");
+    let wire = exchange(server.addr(), &posted).expect("an answer");
+    assert_ne!(wire.status, 200);
+    assert!(!wire.body.contains("<UDN>"));
+
+    let report = server.stop();
+    assert_eq!(report.described, 1);
+    assert_eq!(report.served, 2);
+    assert!(report.reconciled());
+}
+
+#[test]
+fn a_tailnet_connection_is_not_given_the_description_and_a_plain_shim_has_none_to_give() {
+    let tailnet = discoverable(Policy::UnauthenticatedTailnet);
+    let get = http("GET", DESCRIPTION_PATH, &[], b"");
+    let wire = exchange(tailnet.addr(), &get).expect("an answer");
+    // The endpoint speaks POST, SUBSCRIBE and UNSUBSCRIBE and answers every other method with its bare 405, whatever the ingress (a
+    // control POST from the same connection is the 401). What matters here is that the document is not given.
+    assert_eq!(wire.status, 405);
+    assert!(wire.body.is_empty());
+    let report = tailnet.stop();
+    assert_eq!(report.described, 0);
+    assert_eq!(report.served, 1);
+
+    let plain = start();
+    assert_eq!(plain.discovery_addr(), None);
+    assert_eq!(plain.discovery_report(), None);
+    let wire = exchange(plain.addr(), &get).expect("an answer");
+    assert_ne!(wire.status, 200);
+    assert!(!wire.body.contains("<UDN>"));
+    assert_eq!(plain.stop().described, 0);
+}
+
+#[test]
+fn the_topology_names_the_served_member_and_leaves_its_neighbour_without_a_location() {
+    let server = discoverable(Policy::LocalLink);
+    let location = fixture_device().location();
+    let zones = post(Service::ZoneGroupTopology, "GetZoneGroupState", &[]);
+    let wire = exchange(server.addr(), &zones).expect("an answer");
+    assert_eq!(wire.status, 200);
+    assert!(wire.body.contains(FIXTURE_DEVICE_UUID));
+    assert!(wire.body.contains(FIXTURE_OTHER_UUID));
+    assert!(wire.body.contains(FIXTURE_ROOM));
+    // Exactly one location in the whole document: the neighbour has none to show.
+    assert_eq!(wire.body.matches(location.as_str()).count(), 1);
+
+    // The permitted counterpart above; a shim not started discoverable lists no location at all.
+    let plain = start();
+    let wire = exchange(plain.addr(), &zones).expect("an answer");
+    assert_eq!(wire.status, 200);
+    assert!(!wire.body.contains(location.as_str()));
+}
+
+#[test]
+fn a_discoverable_start_that_the_core_or_the_limits_refuse_fails_and_a_valid_one_starts() {
+    let valid = DiscoveryIdentity::fixture();
+    let standard = DiscoveryLimits::standard();
+    assert!(try_start(&valid, standard).is_ok());
+
+    let unusable = DiscoveryLimits {
+        max_datagrams: 0,
+        ..standard
+    };
+    let Err(error) = try_start(&valid, unusable) else {
+        panic!("unusable discovery limits are refused");
+    };
+    assert!(error.contains("discovery limits"));
+
+    let bad_id = DiscoveryIdentity {
+        uuid: "not-a-uuid".to_string(),
+        room: FIXTURE_ROOM.to_string(),
+    };
+    let Err(error) = try_start(&bad_id, standard) else {
+        panic!("a malformed id is refused");
+    };
+    assert!(error.contains("bad_uuid"));
+}
+
+#[test]
+fn the_answer_the_description_and_the_topology_name_one_device_at_one_location() {
+    let server = discoverable(Policy::LocalLink);
+    let location = fixture_device().location();
+
+    let answers = ask(&server, DEVICE_TYPE);
+    assert_eq!(answers.len(), 1);
+    assert!(answers[0].contains(&format!("LOCATION: {location}")));
+    let usn = format!("USN: uuid:{FIXTURE_DEVICE_UUID}::{DEVICE_TYPE}");
+    assert!(answers[0].contains(&usn));
+
+    let get = http("GET", DESCRIPTION_PATH, &[], b"");
+    let described = exchange(server.addr(), &get).expect("an answer");
+    let udn = format!("<UDN>uuid:{FIXTURE_DEVICE_UUID}</UDN>");
+    assert!(described.body.contains(&udn));
+
+    let zones = post(Service::ZoneGroupTopology, "GetZoneGroupState", &[]);
+    let topology = exchange(server.addr(), &zones).expect("an answer");
+    assert!(topology.body.contains(location.as_str()));
+    assert!(topology.body.contains(FIXTURE_DEVICE_UUID));
+
+    wait_until("counted", || received(&server) == 1);
+    let report = server.discovery_report().expect("a responder");
+    assert_eq!(report.answered, 1);
+    assert_eq!(report.replies_sent, 1);
+    assert!(report.reconciled());
+}
+
+#[test]
+fn a_restart_with_the_same_identity_answers_the_same_and_another_identity_answers_differently() {
+    let first = discoverable(Policy::LocalLink);
+    let before = ask(&first, DEVICE_TYPE);
+    assert_eq!(before.len(), 1);
+    drop(first);
+
+    // Same identity, new sockets: the answer carries no port, boot counter or household, so it is the same bytes.
+    let second = discoverable(Policy::LocalLink);
+    assert_eq!(ask(&second, DEVICE_TYPE), before);
+    drop(second);
+
+    let other = DiscoveryIdentity {
+        uuid: FIXTURE_OTHER_UUID.to_string(),
+        room: "Den".to_string(),
+    };
+    let third = try_start(&other, DiscoveryLimits::standard()).expect("starts");
+    let after = ask(&third, DEVICE_TYPE);
+    assert_eq!(after.len(), 1);
+    assert_ne!(after, before);
+    let usn = format!("USN: uuid:{FIXTURE_OTHER_UUID}::");
+    assert!(after[0].contains(&usn));
+}
+
+#[test]
+fn stopping_the_shim_stops_the_responder_and_neither_answers_afterwards() {
+    let mut server = discoverable(Policy::LocalLink);
+    assert_eq!(ask(&server, DEVICE_TYPE).len(), 1);
+    let http_addr = server.addr();
+    assert!(TcpStream::connect_timeout(&http_addr, WAIT).is_ok());
+
+    server.shutdown();
+    let report = server.discovery_report().expect("a responder");
+    assert_eq!(report.stopped_by, DiscoveryStop::Requested);
+    assert!(ask(&server, DEVICE_TYPE).is_empty());
+    assert!(TcpStream::connect_timeout(&http_addr, WAIT).is_err());
 }

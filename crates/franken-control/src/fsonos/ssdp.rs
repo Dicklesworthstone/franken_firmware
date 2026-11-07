@@ -481,7 +481,8 @@ impl Device {
     }
 
     /// The device description document: the service list is exactly [`SERVICES`], with the control and
-    /// event paths the request handler serves. The friendly name goes through the escaper.
+    /// event paths the request handler serves. The friendly name goes through the escaper, and is also the `roomName` a controller
+    /// reads (the `fsonos` client reads that element, not `friendlyName`, for a player's room label).
     #[must_use]
     pub fn description_xml(&self) -> String {
         let mut out = String::from(
@@ -490,8 +491,11 @@ impl Device {
         out.push_str("<deviceType>");
         out.push_str(DEVICE_TYPE);
         out.push_str("</deviceType><friendlyName>");
-        out.push_str(&escape(&self.name, Escape::Text));
-        out.push_str("</friendlyName><manufacturer>FrankenFirmware</manufacturer><modelName>franken-speaker</modelName><UDN>");
+        let name = escape(&self.name, Escape::Text);
+        out.push_str(&name);
+        out.push_str("</friendlyName><roomName>");
+        out.push_str(&name);
+        out.push_str("</roomName><manufacturer>FrankenFirmware</manufacturer><modelName>franken-speaker</modelName><UDN>");
         out.push_str(&escape(&self.udn(), Escape::Text));
         out.push_str("</UDN><serviceList>");
         for service in SERVICES {
@@ -739,6 +743,7 @@ mod tests {
         let mut service_types = Vec::new();
         let mut control_urls = Vec::new();
         let mut name = String::new();
+        let mut room = String::new();
         while let Some(event) = reader.next_event().unwrap() {
             match event {
                 Event::Start { name, .. } => path.push(name),
@@ -749,6 +754,7 @@ mod tests {
                     Some("serviceType") => service_types.push(text),
                     Some("controlURL") => control_urls.push(text),
                     Some("friendlyName") => name = text,
+                    Some("roomName") => room = text,
                     _ => {}
                 },
             }
@@ -762,12 +768,18 @@ mod tests {
             .collect();
         assert_eq!(control_urls, paths);
         assert_eq!(name, "Test Room");
+        // the room label the `fsonos` client reads is the same name, as its own element
+        assert_eq!(room, "Test Room");
         // a hostile friendly name cannot break out of its element
         let hostile =
             Device::new(d.uuid.as_str(), [192, 0, 2, 10], 1400, "<x>&\"'</x>", 1800).unwrap();
         let hostile_doc = hostile.description_xml();
         assert!(hostile_doc.contains(&format!(
             "<friendlyName>{}</friendlyName>",
+            v["description_hostile"]["friendly_name_xml"].as_str().unwrap()
+        )));
+        assert!(hostile_doc.contains(&format!(
+            "<roomName>{}</roomName>",
             v["description_hostile"]["friendly_name_xml"].as_str().unwrap()
         )));
         assert!(!hostile_doc.contains("<x>"));

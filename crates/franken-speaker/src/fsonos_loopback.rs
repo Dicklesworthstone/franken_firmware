@@ -15,10 +15,15 @@
 //! * **It never invents an answer.** A request it cannot read it refuses itself with a bare status and no body, counts the refusal
 //!   and does not call the endpoint. Nothing the peer sent is echoed or logged: the report holds counts and statuses only.
 //!
-//! What it is not: no SSDP, no device-description route, no GENA delivery (a `Handled` that asks for `NOTIFY` messages is answered
-//! and the messages are not sent), no TLS, no keep-alive and no tailnet. It is evidence for the HTTP and SOAP path an actual client
-//! takes and says nothing about a speaker, a board or the real LAN. The client side lives outside this workspace
-//! (`tests/g03/fsonos-client`) because it needs the sibling `frankensonos` checkout, transferred by RCH's multi-root closure.
+//! **Discovery is opt in** ([`FsonosLoopback::start_discoverable`], and the `discovery` module): a second loopback-only UDP socket
+//! answers `M-SEARCH` with the core's own answers, and the shim serves the core's device description at its path to the local link
+//! only. The topology answer then carries the served member's location and room. [`FsonosLoopback::start`] opens neither, as before.
+//!
+//! What it is not: no outbound announcement of any kind, no GENA delivery (a `Handled` that asks for `NOTIFY` messages is answered
+//! and the messages are not sent), no TLS, no keep-alive and no tailnet. It is evidence for the discovery, description, HTTP and SOAP
+//! path an actual client takes and says nothing about a speaker, a board or the real LAN. The client side lives outside this
+//! workspace (`tests/g03/fsonos-client`) because it needs the sibling `frankensonos` checkout, transferred by RCH's multi-root
+//! closure.
 //!
 //! The control plane is built inside the worker thread and never leaves it: one of its stepper variants holds an `Rc`, so the
 //! plane is not `Send`. Only the group session (for inspection) and the report are shared.
@@ -30,12 +35,21 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use franken_control::fsonos::ssdp::{DESCRIPTION_CONTENT_TYPE, DESCRIPTION_PATH, Device};
 use franken_control::fsonos::{HttpRequest, Ingress};
 use franken_session::{
     ChannelRole, FencedControlCommand, GroupCommandPayload, UnifiedGroupSession,
 };
 
 use crate::control_adapter::ControlPlane;
+
+mod discovery;
+
+use discovery::Responder;
+pub use discovery::{
+    DiscoveryIdentity, DiscoveryLimits, DiscoveryReport, DiscoveryStop, FIXTURE_DEVICE_UUID,
+    FIXTURE_OTHER_UUID, FIXTURE_ROOM, PLAYER_PORT,
+};
 
 /// The member the fixture session's endpoint is: what `GetVolume` and `GetMute` read and `SetVolume` and `SetMute` change.
 pub const FIXTURE_MEMBER: &str = "kitchen";
@@ -146,6 +160,9 @@ pub struct LoopbackReport {
     pub accepted: u32,
     /// Requests the endpoint answered and whose answer was written completely.
     pub served: u32,
+    /// Requests for the device description that the shim answered itself, from the core's own document, without calling the endpoint.
+    /// Always zero unless the shim was started discoverable.
+    pub described: u32,
     /// Requests the shim answered itself with a bare error status, without calling the endpoint (or whose endpoint answer it
     /// refused to forward).
     pub refused: u32,
@@ -159,12 +176,14 @@ pub struct LoopbackReport {
 }
 
 impl LoopbackReport {
-    /// Every accepted connection ended in exactly one of served, refused or dropped. True once the worker is idle or stopped.
+    /// Every accepted connection ended in exactly one of served, described, refused or dropped. True once the worker is idle or
+    /// stopped.
     #[must_use]
     pub fn reconciled(&self) -> bool {
         self.accepted
             == self
                 .served
+                .saturating_add(self.described)
                 .saturating_add(self.refused)
                 .saturating_add(self.dropped)
     }
@@ -175,6 +194,15 @@ impl LoopbackReport {
 /// # Errors
 /// If a fixture board is missing or a member does not admit.
 pub fn fixture_session() -> Result<UnifiedGroupSession, String> {
+    fixture_session_for(FIXTURE_MEMBER, "den")
+}
+
+/// [`fixture_session`] with the two members' ids chosen by the caller: the first is the endpoint's member and the second its
+/// neighbour. The discoverable fixture names them by device id, so the topology's `UUID` is the description's `UDN`.
+///
+/// # Errors
+/// If a fixture board is missing or a member does not admit.
+pub fn fixture_session_for(first: &str, second: &str) -> Result<UnifiedGroupSession, String> {
     let catalog = franken_board_profile::synthetic_test_fixture_catalog();
     let board = |model: &str| {
         catalog
@@ -184,7 +212,7 @@ pub fn fixture_session() -> Result<UnifiedGroupSession, String> {
             .ok_or_else(|| format!("no fixture board {model}"))
     };
     let mut session = UnifiedGroupSession::new("grp", "coord", FIXTURE_EPOCH);
-    for (seq, member, model) in [(1_u64, FIXTURE_MEMBER, "S5"), (2, "den", "S12")] {
+    for (seq, member, model) in [(1_u64, first, "S5"), (2, second, "S12")] {
         session
             .apply_command(FencedControlCommand {
                 epoch: FIXTURE_EPOCH,
@@ -230,6 +258,13 @@ struct Config {
     policy: Policy,
 }
 
+/// What a discoverable shim serves besides SOAP: the core's device, and the room name its topology entry carries.
+#[derive(Clone)]
+struct Described {
+    device: Device,
+    room: String,
+}
+
 // ---- the public handle -----------------------------------------------------------------------------------------------
 
 /// A running shim. Dropping it stops and joins it.
@@ -238,6 +273,7 @@ pub struct FsonosLoopback {
     shared: Shared,
     worker: Option<JoinHandle<()>>,
     join_budget: Duration,
+    responder: Option<Responder>,
 }
 
 impl FsonosLoopback {
@@ -251,6 +287,47 @@ impl FsonosLoopback {
         member_id: &str,
         policy: Policy,
         limits: LoopbackLimits,
+    ) -> Result<Self, String> {
+        Self::start_inner(session, member_id, policy, limits, None)
+    }
+
+    /// [`FsonosLoopback::start`] for the device `identity` names, with discovery: a loopback-only UDP responder answering
+    /// `M-SEARCH` for it ([`FsonosLoopback::discovery_addr`]), the core's device description served at its path to the local link,
+    /// and the served member's location and room in the topology answer. The identity's id is the endpoint's member id, so `session`
+    /// must hold a member of that id for the volume and mute actions to have something to read.
+    ///
+    /// # Errors
+    /// As [`FsonosLoopback::start`], and if the discovery limits are unusable, the identity is refused by the core (a malformed id,
+    /// an empty or over-long room name) or the UDP socket cannot be bound or started. Nothing is left running on an error.
+    pub fn start_discoverable(
+        session: UnifiedGroupSession,
+        identity: &DiscoveryIdentity,
+        policy: Policy,
+        limits: LoopbackLimits,
+        discovery: DiscoveryLimits,
+    ) -> Result<Self, String> {
+        if !discovery.usable() {
+            return Err("the discovery limits are unusable".to_string());
+        }
+        let described = Described {
+            device: identity.device()?,
+            room: identity.room.clone(),
+        };
+        Self::start_inner(
+            session,
+            &identity.uuid,
+            policy,
+            limits,
+            Some((described, discovery)),
+        )
+    }
+
+    fn start_inner(
+        session: UnifiedGroupSession,
+        member_id: &str,
+        policy: Policy,
+        limits: LoopbackLimits,
+        discovery: Option<(Described, DiscoveryLimits)>,
     ) -> Result<Self, String> {
         if !limits.usable() {
             return Err("the loopback limits are unusable".to_string());
@@ -275,20 +352,30 @@ impl FsonosLoopback {
         let member = member_id.to_string();
         let cfg = Config { limits, policy };
         let for_worker = shared.clone();
+        let served = discovery.as_ref().map(|(described, _)| described.clone());
         let worker = thread::Builder::new()
             .name("g03-fsonos-loopback".to_string())
-            .spawn(move || worker_main(&listener, for_worker, &member, cfg, &ready_tx))
+            .spawn(move || worker_main(&listener, for_worker, &member, cfg, served, &ready_tx))
             .map_err(|error| format!("spawn: {}", error.kind()))?;
         match ready_rx.recv_timeout(STARTUP) {
-            Ok(Ok(())) => Ok(Self {
-                addr,
-                shared,
-                worker: Some(worker),
-                join_budget: limits
-                    .request_deadline
-                    .saturating_add(JOIN_SLACK)
-                    .min(JOIN_CAP),
-            }),
+            Ok(Ok(())) => {
+                let mut server = Self {
+                    addr,
+                    shared,
+                    worker: Some(worker),
+                    join_budget: limits
+                        .request_deadline
+                        .saturating_add(JOIN_SLACK)
+                        .min(JOIN_CAP),
+                    responder: None,
+                };
+                if let Some((described, discovery_limits)) = discovery {
+                    // On an error `server` is dropped here, which stops and joins its worker: nothing is left running.
+                    let responder = Responder::start(described.device, discovery_limits)?;
+                    server.responder = Some(responder);
+                }
+                Ok(server)
+            }
             Ok(Err(reason)) => {
                 let _ = worker.join();
                 Err(reason)
@@ -318,6 +405,19 @@ impl FsonosLoopback {
         self.shared.report().clone()
     }
 
+    /// Where the SSDP responder listens: always `127.0.0.1` and an ephemeral UDP port. `None` unless the shim was started
+    /// discoverable. This is the only address a client may be given as its search target.
+    #[must_use]
+    pub fn discovery_addr(&self) -> Option<SocketAddr> {
+        self.responder.as_ref().map(Responder::addr)
+    }
+
+    /// What the SSDP responder did so far (it stays readable after the shim is stopped). `None` unless discoverable.
+    #[must_use]
+    pub fn discovery_report(&self) -> Option<DiscoveryReport> {
+        self.responder.as_ref().map(Responder::report)
+    }
+
     /// Stop, join within the deadline, and return the final report.
     pub fn stop(mut self) -> LoopbackReport {
         self.shutdown();
@@ -326,6 +426,9 @@ impl FsonosLoopback {
 
     fn shutdown(&mut self) {
         self.shared.stop.store(true, Ordering::SeqCst);
+        if let Some(responder) = self.responder.as_mut() {
+            responder.stop(self.join_budget);
+        }
         let Some(worker) = self.worker.take() else {
             return;
         };
@@ -357,25 +460,39 @@ fn worker_main(
     shared: Shared,
     member: &str,
     cfg: Config,
+    described: Option<Described>,
     ready: &mpsc::Sender<Result<(), String>>,
 ) {
     let built = {
         let session = shared.session();
         ControlPlane::new(&session, member, START_NS)
     };
-    let plane = match built {
+    let mut plane = match built {
         Ok(plane) => plane,
         Err(reason) => {
             let _ = ready.send(Err(reason));
             return;
         }
     };
+    // What the group session does not hold, the topology answer reads from the endpoint's directory: where the served member's
+    // description lives, and its room. Only that member is entered; any other member is listed without a location.
+    let device = described.map(|described| {
+        let directory = plane.directory_mut();
+        directory
+            .locations
+            .insert(member.to_string(), described.device.location());
+        directory
+            .zone_names
+            .insert(member.to_string(), described.room);
+        described.device
+    });
     let _ = ready.send(Ok(()));
     let mut worker = Worker {
         plane,
         now_ns: START_NS,
         shared,
         cfg,
+        device,
     };
     let cause = worker.run(listener);
     worker.shared.note(|report| report.stopped_by = cause);
@@ -388,11 +505,15 @@ struct Worker {
     now_ns: u64,
     shared: Shared,
     cfg: Config,
+    /// The device whose description this worker serves; `None` unless the shim was started discoverable.
+    device: Option<Device>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Outcome {
     Served,
+    /// The device description, answered by the shim from the core's document.
+    Described,
     Refused(u16),
     Dropped,
 }
@@ -444,6 +565,7 @@ impl Worker {
             report.bytes_out = report.bytes_out.saturating_add(bytes_out);
             match outcome {
                 Outcome::Served => report.served = report.served.saturating_add(1),
+                Outcome::Described => report.described = report.described.saturating_add(1),
                 Outcome::Refused(status) => {
                     report.refused = report.refused.saturating_add(1);
                     report.refused_statuses.push(status);
@@ -462,6 +584,12 @@ impl Worker {
         request: &Request,
         deadline: Instant,
     ) -> (Outcome, u64) {
+        if let Some(bytes) = self.description_for(request) {
+            return match send(stream, &bytes, &self.cfg.limits, deadline) {
+                Ok(()) => (Outcome::Described, to_u64(bytes.len())),
+                Err(_) => (Outcome::Dropped, 0),
+            };
+        }
         let headers: Vec<(&str, &str)> = request
             .head
             .headers
@@ -492,6 +620,23 @@ impl Worker {
             Ok(()) => (Outcome::Served, to_u64(bytes.len())),
             Err(_) => (Outcome::Dropped, 0),
         }
+    }
+
+    /// The device description as the core builds it, framed for the wire, when `request` is the one GET for it on the local link.
+    /// `None` for everything else: another path or method, a shim not started discoverable, and any connection judged as the
+    /// tailnet, all of which go to the endpoint and are answered (or refused) as before.
+    fn description_for(&self, request: &Request) -> Option<Vec<u8>> {
+        let device = self.device.as_ref()?;
+        if self.cfg.policy != Policy::LocalLink
+            || request.head.method != "GET"
+            || request.head.target != DESCRIPTION_PATH
+        {
+            return None;
+        }
+        let name = "Content-Type".to_string();
+        let value = DESCRIPTION_CONTENT_TYPE.to_string();
+        let body = device.description_xml();
+        render_response(200, &[(name, value)], body.as_bytes())
     }
 
     /// Answer with a bare status and no body, without calling the endpoint.

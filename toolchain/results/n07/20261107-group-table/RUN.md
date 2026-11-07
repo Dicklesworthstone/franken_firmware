@@ -64,3 +64,9 @@ the two new assertions there have compile/Clippy proof only at publication.
 This record qualifies host requested-allocation accounting, not board RSS,
 old-kernel execution, physical radio behavior or playback. N07 remains open
 for its original acceptance and prerequisites.
+
+Follow-up: the discovery/stream batch recorded in
+`toolchain/results/g03/20261107-loopback/RUN.md` executes the stream unit
+binary, including all 42 carrier and 15 link tests, and its exported log
+passes all 25 N07 judge cases. The three code hashes above are unchanged;
+the two group-table assertions now have native execution proof as well.
