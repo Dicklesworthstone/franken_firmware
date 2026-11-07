@@ -746,7 +746,12 @@ mod tests {
         let target = fresh(&scratch, "target.img", &lim);
         let image = bytes_of(&target);
         let link = scratch.path("link.img");
-        std::os::unix::fs::symlink(&target, &link).expect("symlink");
+        std::os::unix::fs::symlink(
+            fs::canonicalize(&target).expect("the target resolves"),
+            &link,
+        )
+        .expect("symlink");
+        assert_eq!(bytes_of(&link), image, "the link must reach the real image");
         assert_eq!(
             FileMedium::open_existing(&link, &lim).err(),
             Some(FileError::NotRegularFile)
