@@ -1,0 +1,17 @@
+First native execution: 21 tests passed, exit 0.
+First independent full judge: exit 3, three passed and nine blocked.
+The existing shared D01 verifier deliberately rejects ambiguous open-prefix
+statuses in a sorted serial --nocapture section. It was not weakened.
+
+N05-CLEAN: blocked (missing required Rust case: n05_hybrid_tail_uses_only_the_observed_prefix_not_future_deliveries)
+N05-INDEPENDENT: blocked (missing required Rust case: n05_hybrid_tail_uses_only_the_observed_prefix_not_future_deliveries)
+N05-BURST: blocked (missing required Rust case: n05_hybrid_tail_uses_only_the_observed_prefix_not_future_deliveries)
+N05-CODING-WINDOW-OUTAGE: blocked (missing required Rust case: n05_hybrid_tail_uses_only_the_observed_prefix_not_future_deliveries)
+N05-POSITIVE-RECOVERY: blocked (missing required Rust case: n05_hybrid_tail_uses_only_the_observed_prefix_not_future_deliveries)
+N05-LATE-REPAIR: blocked (missing required Rust case: n05_render_work_is_protected_through_the_permitted_end_boundary)
+N05-PARTIAL-SALVAGE: blocked (missing required Rust case: n05_render_work_is_protected_through_the_permitted_end_boundary)
+N05-WORK-EXHAUSTED: blocked (missing required Rust case: n05_inline_overrun_control_exposes_why_work_admission_matters)
+N05-CANCELLED: blocked (missing required Rust case: n05_hybrid_tail_uses_only_the_observed_prefix_not_future_deliveries)
+N05-DECODE-MEMORY: passed
+N05-MALFORMED-SYMBOLS: passed
+N05-LATE-DECODED-BEFORE-DAC: passed

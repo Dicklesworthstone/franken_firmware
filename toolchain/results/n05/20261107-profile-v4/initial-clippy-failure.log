@@ -1,0 +1,12 @@
+Observed strict remote Clippy, exit 101; sanitized excerpt.
+
+error: very complex type used. Consider factoring parts into `type` definitions
+   --> src/model.rs:677:14
+    |
+677 |     collect: fn(u64, &[(u64, CodingSymbol)]) -> Vec<CodingSymbol>,
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `-D clippy::type-complexity` implied by `-D warnings`
+
+The final source names the identical callback type SymbolCollector.
+No lint suppression, changed assertion or runtime behavior was introduced.

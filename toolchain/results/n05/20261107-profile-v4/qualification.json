@@ -1,0 +1,93 @@
+{
+  "board_kernel_provider_acoustic_24hour_qualified": false,
+  "captured_sources_verified": 1221,
+  "date": "2026-11-07",
+  "documentation_only_followup": {
+    "execution_sha256": "4e0cc62035d3c2e908c8d4aae233c1c7274aa98413a074581fda8aa6ce2e54c0",
+    "path": "docs/contracts/n05.md",
+    "published_sha256": "6bed44c82c53520b9f47efbd68b3377c06f73cddee460f5d7b6277131c9ce3fa",
+    "runtime_test_vector_manifest_changes": false
+  },
+  "heap": {
+    "conservative_upper_bound_bytes": 146540,
+    "limit_bytes": 1048576,
+    "observed_subsets": 163,
+    "rank_deficient_subsets": 0,
+    "recovered_subsets": 163
+  },
+  "initial_judge_usage_exit": 2,
+  "initial_native_judge": {
+    "blocked": 9,
+    "exit": 3,
+    "passed": 3,
+    "reason": "shared D01 serial open-prefix attribution guard retained unchanged"
+  },
+  "judge": {
+    "blocked": 0,
+    "diagnostics_dropped": 0,
+    "expected": 12,
+    "failed": 0,
+    "passed": 12
+  },
+  "native": {
+    "failed": 0,
+    "ignored": 0,
+    "passed": 21,
+    "worker_observations": 37
+  },
+  "private_raw_log_sha256": {
+    "final_clippy": "abb4c4cc1546bbb587ba55a4bcd39bbedaf91282d73d5e67677165bbab770ee9",
+    "final_judge": "474741e5f7a53864ea18774f84585f0a3a1da75f59b2fc1e96477bb2e809a78e",
+    "final_native": "fb905861b655f79abea4c9811e59ac8a309f701d8eeecc9454f17c772ce0d970",
+    "first_blocked_judge": "7b3584f01c6ff3bc13609a73b1f88b37c206cd6a82d97bffe24f9ee8cf5e7b33",
+    "first_native": "6b8ca8be84ce4ccce1a204b4f73e2d2ce625f32113254855070845095a8a9d09",
+    "initial_clippy_failure": "a7ff5f733d30b0a47c93fda91dff1ceffd242df7b2c7a06712eed3de06dfaf75"
+  },
+  "production_fec_profile_admitted": false,
+  "profile": "n05.rfc6330.k4-r4.v4",
+  "receipt_roots": {
+    "final_clippy": "099783b4572d2e582332e7c2dc747e10f2cc748f17aa15cae559d0060bb88636",
+    "final_native": "34ce5cb009c188fd3c6eeabb3889e9a88a7f7a170b9e89e7d14469f61f42201c",
+    "first_native": "275b465d37e5b18125598cc8358f6552d56a88c27954f00357240240718f5a2a"
+  },
+  "recipe": "n05.host-test-o3-d0.v1",
+  "schema": "ffw.n05.offline_qualification.v1",
+  "seed": 6221061,
+  "selected_execution_source_sha256": {
+    "Cargo.lock": "fe219a8abdf919c3a14bade5b9ef686c4bbbdbb547435032f94ca451f3a404ba",
+    "Cargo.toml": "aaa18ac81f7c5988682724f95df89202d222f395e08326ebc3661a815bfa99e6",
+    "crates/franken-alloc-probe/src/lib.rs": "c1c9d5aa6057c76d1077882643e52ff0bf5f59e1577317f754d6aa2ae19fe606",
+    "crates/franken-dsp/src/lib.rs": "d1b0cf80d7f79414dad1f7c46b8d26e5d8340da3c7b12c0d08fd940b1d192109",
+    "crates/franken-stream/src/lib.rs": "af49c5652cce27967972bb009ea0ee48b5e45c79e52f3edfa40c8bbec6fd8eed",
+    "crates/franken-stream/src/playout.rs": "ab9d6fa8249435fc7f3ad52bc14abeb57207ce0f1fdad782696e43132d2b7bc8",
+    "scripts/e2e/n05": "a93c45eca65e6d6e30097cea777d9af33c15db7c2fa88b0775924254c5d80ade",
+    "tests/n05/capture.py": "ef138e6617f121aad75c4dcf9bd4d5e7c27063b306ae09485007cc7cb4b0d950",
+    "tests/n05/oracle.py": "1a490a6c160df53e3dccf457bc08b80f5536e3159584eb336287d472bc114927",
+    "tests/n05/remote.py": "134726e5a431ef5b349c50abe2e29a8b1f28d97cb7f0711e36d0597bac4b58a2",
+    "tests/n05/run_cases.py": "2cca771df4a68398af8b39134c53b6974a10ff0b89d3037aede255f2680b4077",
+    "tests/n05/test_capture.py": "6d60e522fed4ad6362c3522c0947bfa0fc730fb9a2a5a853f8d02fc1d1695600",
+    "tests/n05/test_oracle.py": "61cc31626bc32af6a30f072174da885f0fc4f88c961ce3d26374f737d3a09948",
+    "tests/n05/test_remote.py": "54620e6944e6ea9cd874f6c0b3217199d40ef9f02cc0938243ea9c85bc5ec46f",
+    "toolchain/n05-repair-study/Cargo.lock": "32b39da066a53a3f5c0e48b874a543af44c5fbf5a872ce0c1f55f5fe9757646e",
+    "toolchain/n05-repair-study/Cargo.toml": "d9198a92500d53ad3f54725294f0b3197909d91fdd72f45e656338815ce5cce2",
+    "toolchain/n05-repair-study/build.rs": "2185f9f30d212fa30ab61109b548a05fad656e0aaee977f8f3cec49a5832a65c",
+    "toolchain/n05-repair-study/src/lib.rs": "c7dc2bbd50119f189a63cc60d8203991d16ad570699b86ba65f6115441730efe",
+    "toolchain/n05-repair-study/src/main.rs": "96ba991d998a60af0155a6ce661ac3a547a29387bb50b4dac11811c4dbb1c0a2",
+    "toolchain/n05-repair-study/src/model.rs": "e692023abe76f0c52dbc7745a397e5b587f995aadd613eb37e22ae4088465c2c",
+    "toolchain/n05-repair-study/src/tests.rs": "751fec7b1dcce7a9e9b6c9358fbf931652841581bf74e84657d1961330434c82",
+    "toolchain/n05-repair-study/tests/n05_decode_memory.rs": "10850e4685e7ea2f0842db145979c61203a1bc1f0d0f70b9ccad475b69c13d1d",
+    "toolchain/n05-repair-study/tests/n05_remote_observations.rs": "fda7276ef03831dc57fbb8091a6c1df130bca593551d605329b677bc98cc05a0"
+  },
+  "source_base": "be74079e0325ab2b7358f56889d774958fe00f4c",
+  "source_mismatches_at_verification": 0,
+  "terminal_custody": {
+    "acknowledged": true,
+    "owner_presence": "absent",
+    "pair_released": true,
+    "retired": true,
+    "sources_released": true,
+    "staging_released": true,
+    "tree_retired": true,
+    "wrapper_alive": false
+  }
+}

@@ -1,0 +1,13 @@
+N05-CLEAN: passed
+N05-INDEPENDENT: passed
+N05-BURST: passed
+N05-CODING-WINDOW-OUTAGE: passed
+N05-POSITIVE-RECOVERY: passed
+N05-LATE-REPAIR: passed
+N05-PARTIAL-SALVAGE: passed
+N05-WORK-EXHAUSTED: passed
+N05-CANCELLED: passed
+N05-DECODE-MEMORY: passed
+N05-MALFORMED-SYMBOLS: passed
+N05-LATE-DECODED-BEFORE-DAC: passed
+{"blocked": 0, "build_recipe": "n05.host-test-o3-d0.v1", "central_log_sha256": "34ad502f894ba9c946d752aea764edb8970fce4df6bd28d60ccb522d8cc595dc", "diagnostics_dropped": 0, "evidence_class": "offline-host-synthetic", "expected": 12, "failed": 0, "mode": "central-log-judge", "not_run": 0, "observed_build_profile": {"cargo_profile": "debug", "debug": "false", "opt_level": "3", "recipe": "n05.host-test-o3-d0.v1"}, "passed": 12, "profile_admission": "pending", "schema": "n05.receipt.v1", "seed": 6221061, "worker_sha256": "32ca59ebcb5f0ba94f7fa2fe0e1efdda7fbf808eefc1fa527768c4ee337d1a23"}

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Offline N05: --judge consumes the remote Cargo log and executes no local Rust.
+# The standalone research Cargo integration test collects actual worker observations on RCH.
+# Direct --worker mode is restricted to admitted Linux hosts. Never invokes Cargo/network.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+exec python3 -B "$ROOT/tests/n05/run_cases.py" "$@"
