@@ -36,7 +36,23 @@
 //!   Absolute changes are safe to repeat. **Relative changes are accepted, and a retry applies again**:
 //!   plain SOAP carries nothing to tell a retry from a new request, so each request is a new step.
 //!   The result is clamped to 0..=100 and the resulting volume is returned, as the action specifies.
-//!   Only the tailnet route, whose command id is the command number, is deduplicated.
+//!   Only the tailnet route, whose command id is the command number, is deduplicated, and only the
+//!   authenticated routes (the tailnet, the panel) have a durable floor written for them: the bridge is
+//!   declared to the channel as an identity whose retries carry no stable number
+//!   ([`ControlChannel::declare_unstable_retry_ids`]), so a LAN host sending relative changes as fast as the
+//!   rate limit allows causes no journal write beyond the group's mark. If the channel holds a floor for the
+//!   bridge from before, the bridge's numbers resume above it.
+//!
+//! # Durable or not is the owner's decision, and it is explicit
+//!
+//! [`Context`] holds the [`Stepper`] the owner built: a durable one steps through the journal (N02
+//! `step_then_store`), and the plain development one stores nothing. There is no request field, header or default
+//! that picks between them. A step that cannot be made durable is rolled back. Unsafe changes stay unapplied and
+//! their requests receive a fixed-words fault. Local-user stop and mute-on are re-applied to the live session:
+//! their actual outcomes are delivered, their live changes are published, and their own requests receive success.
+//! No rolled-back effect is reported as committed. The first such failure latches the channel's
+//! durable path failed ([`Durability`]); while it is latched the local user's stop and mute-on still work and every
+//! other command is refused with another fixed-words fault, until the owner reopens the journal.
 //!
 //! A command is *queued*, then *stepped*; the response says what happened, and "queued but not applied
 //! yet" is a fault that says so, never a success.
@@ -51,7 +67,7 @@ use franken_session::UnifiedGroupSession;
 
 use crate::channel::peer::{AuthProof, PeerAuthority, PeerId, compute_proof};
 use crate::channel::pipeline::{
-    ControlChannel, Outcome, Refusal, Rejection, Settlement, SubmitResult,
+    ControlChannel, Durability, Outcome, Refusal, Rejection, Settlement, Stepper, SubmitResult,
 };
 use crate::channel::request::{ControlCommand, ControlRequest, RequestBody, RequestError};
 
@@ -138,9 +154,13 @@ impl Handled {
 }
 
 /// What a request is handled against. The session is the channel's to change, not this module's.
+///
+/// `stepper` is how the channel is stepped and whether that is durable. The owner builds it; the caller names it
+/// explicitly, with no default, so a production owner cannot get the volatile step by leaving something out.
 pub struct Context<'a, A: PeerAuthority> {
     pub channel: &'a mut ControlChannel<A>,
     pub session: &'a mut UnifiedGroupSession,
+    pub stepper: &'a mut dyn Stepper<A>,
     pub now_ns: u64,
 }
 
@@ -427,6 +447,11 @@ impl Endpoint {
         cmd: Cmd,
     ) -> Handled {
         let legacy = request.ingress == Ingress::LocalLegacy;
+        if legacy && !self.bind_bridge(ctx) {
+            return Handled::of(HttpResponse::fault(Fault::ActionFailed(
+                "legacy commands are unavailable; use the authenticated route",
+            )));
+        }
         let built = if legacy {
             self.legacy_request(ctx, cmd)
         } else {
@@ -461,6 +486,20 @@ impl Endpoint {
             notifications,
             settled_others,
         }
+    }
+
+    /// Tell the channel, from the identity this endpoint was configured with, that the bridge's retries carry no stable
+    /// number (so no floor is written for it), and start its numbers above any floor the channel already holds for it.
+    /// Nothing in a request reaches this. `false` if the channel cannot take one more such identity: the bridge then
+    /// does not run, rather than run with floors written for every request.
+    fn bind_bridge<A: PeerAuthority>(&mut self, ctx: &mut Context<'_, A>) -> bool {
+        if !ctx.channel.declare_unstable_retry_ids(&self.bridge.peer) {
+            return false;
+        }
+        if let Some(floor) = ctx.channel.seq_floor(&self.bridge.peer) {
+            self.legacy_seq = self.legacy_seq.max(floor.saturating_add(1));
+        }
+        true
     }
 
     fn legacy_request<A: PeerAuthority>(
@@ -537,7 +576,32 @@ impl Endpoint {
             SubmitResult::Queued { .. } | SubmitResult::AlreadyQueued { .. } => {
                 let mut found = None;
                 for _ in 0..self.config.step_rounds {
-                    for settlement in ctx.channel.step(ctx.now_ns, ctx.session) {
+                    let settled = match ctx.stepper.step(ctx.channel, ctx.now_ns, ctx.session) {
+                        Ok(settled) => settled,
+                        // The round was rolled back whole. Its outcomes, other peers' included, were never made
+                        // durable and are not reported; the rounds before it stand. The one thing that stands from
+                        // the failed round is what only silences: the local user's stop and mute-on were applied to the
+                        // live session (`StoreFailed::applied`), took effect, and are reported to the owner like any
+                        // other peer's settlement. Do not try again: each attempt would stage, write and fail once more.
+                        Err(failed) => {
+                            // If this request's own command was one of them (a local-user peer's mute-on or stop came by this
+                            // route), it did take effect: answer it with its real outcome, and report only the others.
+                            for settlement in failed.applied {
+                                if settlement.peer == *peer && settlement.seq == seq {
+                                    found = Some(settlement.outcome);
+                                } else {
+                                    others.push(settlement);
+                                }
+                            }
+                            if found.is_none() {
+                                return Err(Fault::ActionFailed(
+                                    "the change could not be stored; it was not applied",
+                                ));
+                            }
+                            break;
+                        }
+                    };
+                    for settlement in settled {
                         if settlement.peer == *peer && settlement.seq == seq {
                             found = Some(settlement.outcome);
                         } else {
@@ -553,6 +617,14 @@ impl Endpoint {
                 ))?
             }
         };
+        // A command refused because the durable path is latched failed is not an internal fault of the session: say so.
+        if matches!(outcome, Outcome::Refused(Refusal::InternalFault))
+            && matches!(ctx.channel.durability(), Durability::Failed { .. })
+        {
+            return Err(Fault::ActionFailed(
+                "the change cannot be stored right now; it was not applied; only the device itself can stop or mute",
+            ));
+        }
         outcome_result(&outcome)
     }
 
@@ -886,13 +958,18 @@ fn command_response(call: &SoapCall, cmd: Cmd, state: &EventState) -> String {
 
 #[cfg(test)]
 mod tests {
+    use franken_journal::{Journal, Limits, MemStorage, Namespace};
     use franken_session::{AuthorityToken, ChannelRole, FencedControlCommand, GroupCommandPayload};
 
     use super::*;
     use crate::channel::limiter::RateLimit;
     use crate::channel::peer::PeerRole;
     use crate::channel::peer::ephemeral::{EphemeralPeers, test_key};
-    use crate::channel::pipeline::ChannelConfig;
+    use crate::channel::pipeline::{
+        ChannelConfig, DevelopmentVolatile, Durable, SEQ_FLOORS_KEY, restore_from_open,
+        restore_seq_floors_from_open,
+    };
+    use crate::channel::seqfloor::SeqFloors;
 
     const EPOCH: u64 = 10;
     const LEASE_EXPIRY_NS: u64 = 1_000_000_000_000;
@@ -932,6 +1009,8 @@ mod tests {
         channel_config: ChannelConfig,
         session: UnifiedGroupSession,
         now: u64,
+        /// The journal a durable rig steps through; none for the development rig.
+        journal: Option<Journal<MemStorage>>,
     }
 
     /// The peers every rig admits: the legacy bridge and one tailnet controller, both bound to `EPOCH`.
@@ -981,7 +1060,59 @@ mod tests {
                 channel_config,
                 session,
                 now: 0,
+                journal: None,
             }
+        }
+
+        /// A rig whose steps are durable: they go through a journal on an in-memory medium.
+        fn durable() -> Self {
+            let mut rig = Self::new();
+            let limits = Limits::standard();
+            let (journal, _) =
+                Journal::open(MemStorage::new(limits.segment_bytes), limits).unwrap();
+            rig.journal = Some(journal);
+            rig
+        }
+
+        /// A process restart over the same group: the journal's durable bytes are all that survive of the channel
+        /// and the endpoint, and the session (the audible group) carries on.
+        fn restart_process(&mut self) {
+            let limits = Limits::standard();
+            let image = self.journal.as_ref().unwrap().storage().durable().to_vec();
+            let opened =
+                Journal::open(MemStorage::from_image(limits.segment_bytes, &image), limits);
+            let mut channel = ControlChannel::new(admitted_peers(), self.channel_config).unwrap();
+            restore_from_open(&mut channel, &opened).unwrap();
+            restore_seq_floors_from_open(&mut channel, &opened).unwrap();
+            let token = AuthorityToken::issue(&self.session, LEASE_EXPIRY_NS);
+            channel
+                .install_lease(&self.session, token, self.now)
+                .unwrap();
+            self.channel = channel;
+            self.journal = opened.ok().map(|(journal, _)| journal);
+            let bridge = LegacyBridge::new(PeerId::parse(BRIDGE).unwrap(), test_key(BRIDGE));
+            self.endpoint = Endpoint::new(
+                EndpointConfig::provisional("kitchen"),
+                bridge,
+                0x0a0b_0c0d,
+                1,
+            )
+            .unwrap();
+        }
+
+        /// Cut the medium's power at storage operation `n` (an absolute count), keeping `k` unsynced bytes.
+        fn arm_cut(&mut self, n: usize, k: usize) {
+            let storage = self.journal.as_mut().unwrap().storage_mut();
+            storage.cut_after_ops = Some(n);
+            storage.cut_budget = k;
+        }
+
+        fn ops_done(&self) -> usize {
+            self.journal.as_ref().unwrap().storage().ops_done()
+        }
+
+        fn frames(&self) -> u64 {
+            self.journal.as_ref().unwrap().frames_written()
         }
 
         /// A new channel on the same session: an empty ledger, no floors, no lease until the owner obtains
@@ -996,12 +1127,28 @@ mod tests {
         }
 
         fn handle(&mut self, request: &HttpRequest<'_>) -> Handled {
-            let mut ctx = Context {
-                channel: &mut self.channel,
-                session: &mut self.session,
-                now_ns: self.now,
-            };
-            self.endpoint.handle(&mut ctx, request)
+            match self.journal.as_mut() {
+                Some(journal) => {
+                    let mut stepper = Durable::new(journal);
+                    let mut ctx = Context {
+                        channel: &mut self.channel,
+                        session: &mut self.session,
+                        stepper: &mut stepper,
+                        now_ns: self.now,
+                    };
+                    self.endpoint.handle(&mut ctx, request)
+                }
+                None => {
+                    let mut stepper = DevelopmentVolatile;
+                    let mut ctx = Context {
+                        channel: &mut self.channel,
+                        session: &mut self.session,
+                        stepper: &mut stepper,
+                        now_ns: self.now,
+                    };
+                    self.endpoint.handle(&mut ctx, request)
+                }
+            }
         }
 
         fn soap(
@@ -2305,5 +2452,316 @@ mod tests {
                 .body
                 .contains("<CurrentTransportState>PLAYING</CurrentTransportState>")
         );
+    }
+
+    // ---- the durable step: what a request can and cannot get from a journal that fails -------------
+
+    const REL5: [(&str, &str); 3] = [MASTER[0], MASTER[1], ("Adjustment", "5")];
+
+    fn relative_command(delta: i8) -> ControlCommand {
+        ControlCommand::AdjustMemberVolume {
+            member_id: "kitchen".to_string(),
+            delta,
+        }
+    }
+
+    fn signed_request(
+        peer: &str,
+        seq: u64,
+        revision: Option<u64>,
+        command: ControlCommand,
+    ) -> ControlRequest {
+        let body =
+            RequestBody::new(PeerId::parse(peer).unwrap(), seq, EPOCH, revision, command).unwrap();
+        let proof = compute_proof(&test_key(peer), &body.signing_bytes());
+        ControlRequest::new(body, proof)
+    }
+
+    fn tailnet_absolute_once(rig: &mut Rig) -> Handled {
+        let headers = tailnet_headers(CTL, CTL, 1, EPOCH, Some(2), set_volume_command(35));
+        tail(rig, "SetVolume", &set_volume("35"), &headers)
+    }
+
+    fn tailnet_relative_once(rig: &mut Rig) -> Handled {
+        let headers = tailnet_headers(CTL, CTL, 1, EPOCH, Some(2), relative_command(5));
+        tail(rig, "SetRelativeVolume", &REL5, &headers)
+    }
+
+    /// Another controller's command is already waiting when the bridge's request drives the step.
+    fn two_peers_once(rig: &mut Rig) -> Handled {
+        let waiting = signed_request(CTL, 1, Some(2), set_volume_command(35));
+        assert!(matches!(
+            rig.channel.submit(rig.now, waiting),
+            SubmitResult::Queued { .. }
+        ));
+        rig.legacy(RC, "SetVolume", &set_volume("30"))
+    }
+
+    /// Run `call` once, uncut, on an identical durable rig to learn where its last storage operation falls. The same
+    /// call on a fresh rig numbers its operations the same way.
+    fn last_operation_of(call: fn(&mut Rig) -> Handled) -> usize {
+        let mut twin = Rig::durable();
+        call(&mut twin);
+        twin.ops_done() - 1
+    }
+
+    #[test]
+    fn a_tailnet_set_that_cannot_be_stored_is_not_applied_publishes_nothing_and_reports_no_ones_outcome()
+     {
+        let last = last_operation_of(tailnet_absolute_once);
+        let mut rig = Rig::durable();
+        let initial = rig.event("SUBSCRIBE", RC, &SUB);
+        assert_eq!(initial.notifications.len(), 1);
+        let revision = rig.session.state_revision;
+        rig.arm_cut(last, 0);
+        let h = tailnet_absolute_once(&mut rig);
+        assert_eq!(
+            (h.response.status, fault_code(&h).as_deref()),
+            (500, Some("501"))
+        );
+        assert!(
+            h.response.body.contains("could not be stored"),
+            "{}",
+            h.response.body
+        );
+        assert!(h.notifications.is_empty() && h.settled_others.is_empty());
+        assert_eq!(
+            (rig.session.state_revision, rig.member("kitchen").0),
+            (revision, 50)
+        );
+        // The subscriber is up to date with the session as it stands: there is nothing left to tell it.
+        assert!(rig.endpoint.publish(rig.now, &rig.session).is_empty());
+        assert_eq!(rig.channel.stats().committed, 0);
+        assert!(matches!(
+            rig.channel.durability(),
+            Durability::Failed { .. }
+        ));
+    }
+
+    #[test]
+    fn a_tailnet_relative_step_that_cannot_be_stored_is_not_applied_and_its_retry_is_unknown_never_ok()
+     {
+        let last = last_operation_of(tailnet_relative_once);
+        let mut rig = Rig::durable();
+        rig.arm_cut(last, 0);
+        let h = tailnet_relative_once(&mut rig);
+        assert_eq!(
+            (h.response.status, fault_code(&h).as_deref()),
+            (500, Some("501"))
+        );
+        assert!(h.response.body.contains("could not be stored"));
+        assert_eq!(rig.member("kitchen").0, 50);
+        assert_eq!(rig.channel.stats().committed, 0);
+        // Its floor was made durable before the step, so the retry is unknown: never applied, never reported done.
+        let retry = tailnet_relative_once(&mut rig);
+        assert_eq!(fault_code(&retry).as_deref(), Some("801"));
+        assert_eq!(rig.member("kitchen").0, 50);
+    }
+
+    #[test]
+    fn when_a_round_with_two_peers_commands_cannot_be_stored_neither_peers_retry_is_answered_from_the_ledger()
+     {
+        let last = last_operation_of(two_peers_once);
+        let mut rig = Rig::durable();
+        rig.arm_cut(last, 0);
+        let h = two_peers_once(&mut rig);
+        assert_eq!(
+            (h.response.status, fault_code(&h).as_deref()),
+            (500, Some("501"))
+        );
+        assert!(h.response.body.contains("could not be stored"));
+        // The other peer's outcome from the failed round is not reported to this request's caller...
+        assert!(h.settled_others.is_empty());
+        assert_eq!(rig.member("kitchen").0, 50);
+        // ...and is not in the ledger, so the other peer's retry is not answered with a result it never got.
+        let retry = signed_request(CTL, 1, Some(2), set_volume_command(35));
+        assert!(
+            !matches!(rig.channel.submit(rig.now, retry), SubmitResult::Settled(_)),
+            "a withheld outcome was answered to a retry"
+        );
+    }
+
+    /// A local-user-role peer reaches the tailnet route with a mute-on.
+    fn local_mute_once(rig: &mut Rig) -> Handled {
+        let panel = PeerId::parse("panel").unwrap();
+        rig.channel
+            .authority_mut()
+            .admit(&panel, PeerRole::LocalUser, &test_key("panel"), None, 1)
+            .unwrap();
+        let command = ControlCommand::SetMemberMute {
+            member_id: "kitchen".to_string(),
+            muted: true,
+        };
+        let headers = tailnet_headers("panel", "panel", 1, EPOCH, None, command);
+        tail(
+            rig,
+            "SetMute",
+            &[MASTER[0], MASTER[1], ("DesiredMute", "1")],
+            &headers,
+        )
+    }
+
+    #[test]
+    fn a_request_whose_own_local_mute_on_took_effect_despite_the_failed_store_is_answered_ok() {
+        let last = last_operation_of(local_mute_once);
+        let mut rig = Rig::durable();
+        rig.arm_cut(last, 0);
+        let h = local_mute_once(&mut rig);
+        // The mark could not be stored, and the mute-on was applied to the live session anyway: the requester is told so.
+        assert_eq!(h.response.status, 200, "{}", h.response.body);
+        assert!(rig.member("kitchen").1, "the member was not muted");
+        assert!(h.settled_others.is_empty());
+        assert!(matches!(
+            rig.channel.durability(),
+            Durability::Failed { .. }
+        ));
+        // The permitted contrast: a controller's volume set in the same state is refused, in fixed words.
+        let refused = rig.legacy(RC, "SetVolume", &set_volume("30"));
+        assert_eq!(
+            (refused.response.status, fault_code(&refused).as_deref()),
+            (500, Some("501"))
+        );
+        assert_eq!(rig.member("kitchen").0, 50);
+    }
+
+    #[test]
+    fn once_the_durable_path_is_latched_commands_are_refused_in_fixed_words_and_reads_still_work() {
+        let last = last_operation_of(tailnet_absolute_once);
+        let mut rig = Rig::durable();
+        rig.arm_cut(last, 0);
+        let _ = tailnet_absolute_once(&mut rig);
+        let (ops, frames) = (rig.ops_done(), rig.frames());
+        // Refused, and nothing is staged or written to refuse it.
+        let h = rig.legacy(RC, "SetVolume", &set_volume("30"));
+        assert_eq!(
+            (h.response.status, fault_code(&h).as_deref()),
+            (500, Some("501"))
+        );
+        assert!(
+            h.response.body.contains("cannot be stored right now"),
+            "{}",
+            h.response.body
+        );
+        assert_eq!((rig.ops_done(), rig.frames()), (ops, frames));
+        assert_eq!(rig.member("kitchen").0, 50);
+        // Reads are untouched.
+        assert_eq!(rig.legacy(RC, "GetVolume", &MASTER).response.status, 200);
+    }
+
+    #[test]
+    fn after_a_process_restart_a_legacy_relative_applies_once_and_a_tailnet_duplicate_is_unknown() {
+        let mut rig = Rig::durable();
+        assert_eq!(tailnet_relative_once(&mut rig).response.status, 200);
+        assert_eq!(rig.member("kitchen").0, 55);
+        assert_eq!(
+            rig.legacy(RC, "SetRelativeVolume", &REL5).response.status,
+            200
+        );
+        assert_eq!(rig.member("kitchen").0, 60);
+        rig.restart_process();
+        // The bridge starts again at number 1 and holds no floor: its relative change is a new command, applied once.
+        let h = rig.legacy(RC, "SetRelativeVolume", &REL5);
+        assert_eq!(h.response.status, 200, "{}", h.response.body);
+        assert_eq!(rig.member("kitchen").0, 65);
+        // The tailnet's pre-restart number is unknown. It is never applied again and never reported as done.
+        let duplicate = tailnet_relative_once(&mut rig);
+        assert_eq!(fault_code(&duplicate).as_deref(), Some("801"));
+        assert_eq!(rig.member("kitchen").0, 65);
+    }
+
+    #[test]
+    fn sixty_legacy_relative_changes_write_no_floor_and_one_tailnet_relative_change_writes_one() {
+        let mut rig = Rig::durable();
+        let before = rig.frames();
+        for i in 0..60 {
+            let delta = if i % 2 == 0 { "1" } else { "-1" };
+            let args = [MASTER[0], MASTER[1], ("Adjustment", delta)];
+            assert_eq!(
+                rig.legacy(RC, "SetRelativeVolume", &args).response.status,
+                200
+            );
+        }
+        // One frame per step (the group's mark) and none for a floor.
+        assert_eq!(rig.frames() - before, 60);
+        assert_eq!(
+            rig.journal
+                .as_ref()
+                .unwrap()
+                .state()
+                .records
+                .get(SEQ_FLOORS_KEY),
+            None
+        );
+        let after = rig.frames();
+        let revision = rig.session.state_revision;
+        let headers = tailnet_headers(CTL, CTL, 1, EPOCH, Some(revision), relative_command(5));
+        assert_eq!(
+            tail(&mut rig, "SetRelativeVolume", &REL5, &headers)
+                .response
+                .status,
+            200
+        );
+        // The floor, then the mark.
+        assert_eq!(rig.frames() - after, 2);
+        assert!(
+            rig.journal
+                .as_ref()
+                .unwrap()
+                .state()
+                .records
+                .contains_key(SEQ_FLOORS_KEY)
+        );
+    }
+
+    #[test]
+    fn the_plain_soap_retry_pin_holds_with_the_journal_on() {
+        let mut rig = Rig::durable();
+        rig.legacy(RC, "SetRelativeVolume", &REL5);
+        rig.legacy(RC, "SetRelativeVolume", &REL5);
+        assert_eq!(rig.member("kitchen").0, 60, "applied twice");
+        assert_eq!(rig.channel.stats().committed, 2);
+    }
+
+    #[test]
+    fn a_floor_the_channel_holds_for_the_bridge_from_before_is_resumed_above_and_not_reported_unknown()
+     {
+        let mut rig = Rig::durable();
+        let bridge = PeerId::parse(BRIDGE).unwrap();
+        let table = SeqFloors::new().raised(&bridge, 7).unwrap();
+        rig.journal
+            .as_mut()
+            .unwrap()
+            .put(Namespace::Records, SEQ_FLOORS_KEY, &table.encode())
+            .unwrap();
+        rig.restart_process();
+        assert_eq!(rig.channel.seq_floor(&bridge), Some(7));
+        let h = rig.legacy(RC, "SetRelativeVolume", &REL5);
+        assert_eq!(h.response.status, 200, "{}", h.response.body);
+        assert_eq!(rig.member("kitchen").0, 55);
+        // It used number 8, and the next is 9.
+        assert_eq!(rig.endpoint.legacy_seq, 9);
+    }
+
+    #[test]
+    fn a_bridge_the_channel_cannot_declare_does_not_run_rather_than_run_with_a_floor_per_request() {
+        let mut rig = Rig::durable();
+        for i in 0..16 {
+            let other = PeerId::parse(&format!("other-{i:02}")).unwrap();
+            assert!(rig.channel.declare_unstable_retry_ids(&other));
+        }
+        let before = rig.frames();
+        let h = rig.legacy(RC, "SetRelativeVolume", &REL5);
+        assert_eq!(
+            (h.response.status, fault_code(&h).as_deref()),
+            (500, Some("501"))
+        );
+        assert!(
+            h.response.body.contains("unavailable"),
+            "{}",
+            h.response.body
+        );
+        assert_eq!((rig.member("kitchen").0, rig.frames()), (50, before));
+        // The permitted positive: the authenticated route is not affected.
+        assert_eq!(tailnet_relative_once(&mut rig).response.status, 200);
     }
 }

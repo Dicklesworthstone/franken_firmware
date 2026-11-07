@@ -1,0 +1,84 @@
+[
+  {
+    "command_exit_code": 101,
+    "errors": [
+      "error: no matching package named `symphonia-codec-aac` found"
+    ],
+    "failed_tests": [],
+    "phase": "n02-cumulative3-native",
+    "raw_log_sha256": "05de25b1026caf6ef31f0632ba3b88e8e6cf7b436e1783cc1d91a78396edc9b8",
+    "receipt_root": "c6f11f8150a919ee18f47ba6241ad36bdf22ae1e3097f7f4eb27ed86982a9ff4",
+    "result_lines": []
+  },
+  {
+    "command_exit_code": 101,
+    "errors": [
+      "error: doc list item without indentation",
+      "error: large size difference between variants",
+      "error: using `chunks_exact` with a constant chunk size",
+      "error: could not compile `franken-control` (lib) due to 3 previous errors"
+    ],
+    "failed_tests": [],
+    "phase": "n02-cumulative3-clippy",
+    "raw_log_sha256": "aabfc39659bba55ae3903e6e360d2066b0de2336b229c4b2a1efa097940543e6",
+    "receipt_root": "fabd80bee66b1a38b771845a6932fed88301cf575cfb43907061793e0182b375",
+    "result_lines": []
+  },
+  {
+    "command_exit_code": 103,
+    "errors": [],
+    "failed_tests": [],
+    "phase": "n02-cumulative4-native",
+    "raw_log_sha256": "99aec1d7061c5c94e2b9a3ebdd61f3e77ae2a386632c60f161e2f433c8bcc7db",
+    "receipt_root": null,
+    "result_lines": []
+  },
+  {
+    "command_exit_code": 101,
+    "errors": [
+      "error: unnecessary use of `get(SEQ_FLOORS_KEY)",
+      "error: unnecessary use of `get(SEQ_FLOORS_KEY)",
+      "error: could not compile `franken-control` (lib test) due to 2 previous errors"
+    ],
+    "failed_tests": [],
+    "phase": "n02-cumulative4-clippy",
+    "raw_log_sha256": "d6036c9102c31eadc4ee39f7521750ea3ff1287d356c14a60b1729b1f758a92e",
+    "receipt_root": "31bd6f705d63ecc9aa8a0fe7b5c60e9f0b2c692acadbdba98646a17d63e3ef4d",
+    "result_lines": []
+  },
+  {
+    "command_exit_code": 101,
+    "errors": [
+      "error: test failed, to rerun pass `-p franken-control --lib`",
+      "error: 1 target failed:"
+    ],
+    "failed_tests": [
+      "test channel::pipeline::persist::tests::an_owner_that_forgot_to_restore_has_its_outcomes_withheld_by_the_journal ... FAILED"
+    ],
+    "phase": "control-hal-first-native",
+    "raw_log_sha256": "fad28a2135bd7407ad92b5850b0ff8e43e7e8639e0e28b6a6f0f9705463d8e2b",
+    "receipt_root": "af7b42a69dfd38815123fbadbec3063ae3c592d360bb7139a6bdd098f008ac96",
+    "result_lines": [
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.00s",
+      "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+      "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+      "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+      "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+      "test result: FAILED. 560 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.46s",
+      "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s",
+      "test result: ok. 151 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.82s",
+      "test result: ok. 326 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 60.49s",
+      "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.51s",
+      "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s",
+      "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s",
+      "test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  }
+]

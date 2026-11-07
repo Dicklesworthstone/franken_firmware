@@ -17,6 +17,9 @@
 //!    recorded outcome is answered with *that outcome* and is never applied again. The same number
 //!    with different content is refused. A number the ledger has forgotten is answered
 //!    [`SubmitResult::OutOfWindow`]: unknown, and not applied.
+//!    4c. **A relative command at or below its identity's durable floor** ([`seqfloor`](super::seqfloor)) is answered
+//!    [`SubmitResult::OutOfWindow`] too: the channel began to apply a relative command with that number, possibly in
+//!    an earlier run, and cannot say how it ended. Only relative commands use this table.
 //! 5. **Bounded enqueue** into the ordinary or the priority lane. A full lane refuses.
 //!
 //! # Step: apply, with the authority re-checked
@@ -60,7 +63,7 @@
 //! the session gives the channel a sequence space of its own, a membership change needs a new epoch
 //! after that many channel commits. `docs/contracts/n02.md` states this as an open dependency.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use franken_session::{
     AuthorityToken, FencedControlCommand, GroupCommandPayload, GroupMembership, GroupTime,
@@ -72,8 +75,10 @@ use super::ledger::{LedgerError, Lookup, OutcomeLedger};
 use super::limiter::{RateLimit, TokenBucket};
 use super::peer::{AuthFailure, Authenticated, PeerAuthority, PeerId, PeerRole};
 use super::request::{ControlCommand, ControlRequest, Lane, RequestBody};
+use super::seqfloor::SeqFloors;
 
 mod ack;
+mod boot;
 mod persist;
 #[cfg(test)]
 mod profile;
@@ -81,9 +86,12 @@ mod restart;
 mod submit_log;
 
 pub use ack::AckOutcome;
+pub use boot::{Booted, DurableBoot, Limits, Storage, boot_durable, reopen_durable};
 pub use persist::{
-    Cause, HIGH_WATER_KEY, REFUSING_FLOOR, Restored, StoreFailed, restore_from_open,
-    step_then_store, store_high_water,
+    Cause, DevelopmentVolatile, Durable, FloorCause, HIGH_WATER_KEY, LatchedStepper,
+    MemoryJournalStepper, OwnedDurable, REFUSING_FLOOR, RamMedium, Reopened, Restored,
+    RestoredFloors, SEQ_FLOORS_KEY, Stepper, StoreFailed, reopen_from_open, restore_from_open,
+    restore_seq_floors_from_open, step_then_store, store_high_water,
 };
 pub use restart::HighWaterError;
 pub use submit_log::MAX_PENDING_REJECTS;
@@ -424,6 +432,7 @@ pub struct Diagnostics {
     pub committed_revision: u64,
 }
 
+#[derive(Clone)]
 struct Queued {
     auth: Authenticated,
     request: ControlRequest,
@@ -461,6 +470,53 @@ fn bump(counter: &mut u64) {
     *counter = counter.saturating_add(1);
 }
 
+/// Where a relative command's duplicate-suppression record is made durable **before** the command takes effect
+/// ([`ControlChannel::step_reserving`]).
+pub trait FloorStore {
+    /// Make `packed` durable: an encoded [`SeqFloors`] that already covers the command about to run. On `Err` the
+    /// store must not rely on anything it wrote, and the command is not run.
+    fn store(&mut self, packed: &[u8]) -> Result<(), FloorNotStored>;
+}
+
+/// A [`FloorStore`] could not make its record durable. The code is the store's own stable word for why (the journal's
+/// error code), bounded, and kept for the operator's log; it is never shown to the sender.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FloorNotStored {
+    pub code: &'static str,
+}
+
+/// Whether the channel can still make its steps durable ([`ControlChannel::durability`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Durability {
+    Healthy,
+    /// A store failed, or the journal is poisoned: what the medium holds is no longer known. Latched until the owner
+    /// reopens the journal and says so ([`reopen_from_open`]). While latched no step is staged or written; the local
+    /// user's stop and mute-on are applied to the live session, a cancel still withdraws, and every other command is
+    /// refused (`Refusal::InternalFault`, cause `durability_failed`, not recorded, so it can be sent again after the
+    /// reopen).
+    Failed {
+        code: &'static str,
+    },
+}
+
+/// Why the refusal being settled is a store matter. Read, and cleared, by `settle`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StoreCause {
+    /// The command's floor could not be made durable (the code says why). Recorded: send under a new number.
+    Reservation(&'static str),
+    /// The durable path is latched failed. Not recorded.
+    Degraded,
+}
+
+/// What plain [`ControlChannel::step`] passes: a store that is never asked, because it is never given.
+struct NoFloorStore;
+
+impl FloorStore for NoFloorStore {
+    fn store(&mut self, _packed: &[u8]) -> Result<(), FloorNotStored> {
+        Ok(())
+    }
+}
+
 /// The channel. Generic over the [`PeerAuthority`] that decides who may speak.
 pub struct ControlChannel<A: PeerAuthority> {
     authority: A,
@@ -468,6 +524,21 @@ pub struct ControlChannel<A: PeerAuthority> {
     ordinary: VecDeque<Queued>,
     priority: VecDeque<Queued>,
     ledger: OutcomeLedger<RequestBody, Outcome>,
+    /// The highest relative-command number the channel has begun to apply for each identity, restored at boot and
+    /// made durable before each relative effect when the owner steps with a [`FloorStore`].
+    seq_floors: SeqFloors,
+    /// Identities whose retries carry no stable number (the legacy SOAP bridge composes a fresh number for every
+    /// request, so a floor could never match a retry). They are never given a floor: no write, and no promise.
+    /// Bounded by the number of identities the table can hold.
+    unstable_retry: BTreeSet<PeerId>,
+    durability: Durability,
+    /// Set where a refusal is made for a store reason, taken by `settle`.
+    store_cause: Option<StoreCause>,
+    /// While a durable step is open the facts it gathers wait here instead of going to the log.
+    defer_facts: bool,
+    /// The local user's stop and mute-on that the open durable step applied (to its copy of the session). If the step
+    /// cannot be made durable they are applied again, to the live session: see `apply_silencing_live`.
+    silenced: Vec<Queued>,
     buckets: BTreeMap<(PeerId, Lane), TokenBucket>,
     next_session_seq: u64,
     /// The session's `state_revision` at this incarnation's first `step`. A volume or mute command
@@ -505,6 +576,12 @@ impl<A: PeerAuthority> ControlChannel<A> {
             ordinary: VecDeque::new(),
             priority: VecDeque::new(),
             ledger,
+            seq_floors: SeqFloors::new(),
+            unstable_retry: BTreeSet::new(),
+            durability: Durability::Healthy,
+            store_cause: None,
+            defer_facts: false,
+            silenced: Vec::new(),
             buckets: BTreeMap::new(),
             last_internal_fault: None,
             log: None,
@@ -613,6 +690,39 @@ impl<A: PeerAuthority> ControlChannel<A> {
     #[must_use]
     pub fn last_internal_fault(&self) -> Option<&SessionError> {
         self.last_internal_fault.as_ref()
+    }
+
+    /// Whether the durable path is intact. `Failed` is latched by `step_then_store` on the first store that fails, and
+    /// cleared only by [`reopen_from_open`]. The owner should raise an alarm: the group is controllable at the device
+    /// (stop, mute) and nowhere else.
+    #[must_use]
+    pub fn durability(&self) -> Durability {
+        self.durability
+    }
+
+    /// Declare that `peer` sends requests whose retries carry no stable number, so no floor can mean anything for it.
+    /// The channel then reserves nothing for its relative commands (no journal write, no `OutOfWindow` after a
+    /// restart), and does not pretend to deduplicate them. This is the owner's configuration of the channel, made
+    /// from the identity it admitted; no request can ask for it. Returns `false` if the table of such identities is
+    /// full.
+    pub fn declare_unstable_retry_ids(&mut self, peer: &PeerId) -> bool {
+        if self.unstable_retry.contains(peer) {
+            return true;
+        }
+        if self.unstable_retry.len() >= super::seqfloor::MAX_ENTRIES {
+            return false;
+        }
+        self.unstable_retry.insert(peer.clone())
+    }
+
+    /// The highest relative-command number the channel has begun to apply for `peer`, if it has one on record. `None`
+    /// if there is none, or if the floors could not be read (then every relative command is refused anyway).
+    #[must_use]
+    pub fn seq_floor(&self, peer: &PeerId) -> Option<u64> {
+        if self.seq_floors.is_refusing() {
+            return None;
+        }
+        self.seq_floors.floor_of(peer)
     }
 
     #[must_use]
@@ -790,6 +900,16 @@ impl<A: PeerAuthority> ControlChannel<A> {
             Looked::Unseen => {}
         }
 
+        // 4c. A relative command at or below its identity's durable floor: the channel began to apply a relative
+        // command with that number (this run or an earlier one) and cannot say how it ended. Unknown, never again.
+        if body.command().is_relative()
+            && let Some(floor) = self.seq_floors.floor_of(body.peer())
+            && body.seq() <= floor
+        {
+            bump(&mut self.stats.out_of_window);
+            return SubmitResult::OutOfWindow { floor };
+        }
+
         // 5. Bounded enqueue.
         if !self.has_room(lane, auth.role) {
             bump(&mut self.stats.rejected_queue_full);
@@ -839,14 +959,20 @@ impl<A: PeerAuthority> ControlChannel<A> {
         }
         let peer = body.peer().clone();
         let seq = body.seq();
+        let store_cause = self.store_cause.take();
+        let degraded = store_cause == Some(StoreCause::Degraded);
         // A refusal for want of a live lease says nothing about the command, only about the moment:
-        // it took no effect, so recording it would make a resend after renewal come back refused.
-        let transient = matches!(
-            outcome,
-            Outcome::Refused(Refusal::NoLease | Refusal::Lease(_))
-        );
+        // it took no effect, so recording it would make a resend after renewal come back refused. The same is true
+        // of a refusal because the durable path is latched failed.
+        let transient = degraded
+            || matches!(
+                outcome,
+                Outcome::Refused(Refusal::NoLease | Refusal::Lease(_))
+            );
         let member = member_named(body.command());
-        let mut critical = matches!(outcome, Outcome::Refused(Refusal::InternalFault));
+        // A latched path refuses everything it does not silence; that is one critical event (the latch), not one
+        // per refusal, so a flood of refusals cannot fill the log's critical room.
+        let mut critical = matches!(outcome, Outcome::Refused(Refusal::InternalFault)) && !degraded;
         if !transient
             && !self
                 .ledger
@@ -856,7 +982,11 @@ impl<A: PeerAuthority> ControlChannel<A> {
             critical = true;
         }
         if self.log.is_some() {
-            let cause = self.cause_of(&outcome);
+            let cause = match store_cause {
+                Some(StoreCause::Reservation(code)) => Some(format!("store_{code}")),
+                Some(StoreCause::Degraded) => Some("durability_failed".to_string()),
+                None => self.cause_of(&outcome),
+            };
             let queue_depth = self.ordinary.len() + self.priority.len();
             self.facts.push(Fact {
                 peer: peer.clone(),
@@ -927,7 +1057,41 @@ impl<A: PeerAuthority> ControlChannel<A> {
     /// Apply what has been accepted: expire stale entries, then at most `max_per_step` commands,
     /// priority first (the local user's before any remote peer's). Returns what reached a terminal
     /// outcome.
+    ///
+    /// This persists nothing: a relative command takes effect with no durable record that it did. An owner that
+    /// keeps a journal steps with [`ControlChannel::step_reserving`] (or, better, `step_then_store`).
     pub fn step(&mut self, now_ns: u64, session: &mut UnifiedGroupSession) -> Vec<Settlement> {
+        self.step_inner::<NoFloorStore>(now_ns, session, None)
+    }
+
+    /// Whether any command is waiting to be applied (or to expire). A step with none has nothing to stage.
+    fn has_work(&self) -> bool {
+        !self.ordinary.is_empty() || !self.priority.is_empty()
+    }
+
+    /// [`ControlChannel::step`], with each **relative** command's duplicate-suppression record made durable first.
+    ///
+    /// Immediately before a relative command is applied to the session, after every check that could refuse it for
+    /// a reason that leaves it free to be sent again, `store` is asked to make the identity's raised floor durable.
+    /// If it cannot, the command is **not applied** and settles `Refused(InternalFault)` (recorded; the sender uses
+    /// a new number). If it can, whatever happens next (a crash before the effect, after it, or before the owner
+    /// delivers the outcome), the command is at or below a durable floor, so a retry is answered
+    /// `OutOfWindow` and never applied a second time. Absolute and stop commands use no store.
+    pub fn step_reserving<S: FloorStore>(
+        &mut self,
+        now_ns: u64,
+        session: &mut UnifiedGroupSession,
+        store: &mut S,
+    ) -> Vec<Settlement> {
+        self.step_inner(now_ns, session, Some(store))
+    }
+
+    fn step_inner<S: FloorStore>(
+        &mut self,
+        now_ns: u64,
+        session: &mut UnifiedGroupSession,
+        mut store: Option<&mut S>,
+    ) -> Vec<Settlement> {
         self.ledger.expire(now_ns);
         let floor = *self
             .revision_floor
@@ -938,7 +1102,24 @@ impl<A: PeerAuthority> ControlChannel<A> {
             let Some(item) = self.pop_priority().or_else(|| self.ordinary.pop_front()) else {
                 break;
             };
-            let outcome = self.execute(&item, now_ns, floor, session, &mut settled);
+            let outcome = if matches!(self.durability, Durability::Failed { .. }) {
+                self.execute_degraded(&item, now_ns, floor, session, &mut settled)
+            } else {
+                self.execute(
+                    &item,
+                    now_ns,
+                    floor,
+                    session,
+                    store.as_deref_mut(),
+                    &mut settled,
+                )
+            };
+            if self.defer_facts
+                && matches!(outcome, Outcome::Committed { .. })
+                && Self::silences_locally(&item)
+            {
+                self.silenced.push(item.clone());
+            }
             let times = Settled {
                 now_ns,
                 accepted_ns: item.accepted_ns,
@@ -946,22 +1127,191 @@ impl<A: PeerAuthority> ControlChannel<A> {
             };
             self.settle(item.request.body().clone(), outcome, times, &mut settled);
         }
-        // The requests turned away since the last step were turned away first.
-        self.flush_log(session);
+        // Outside a durable step: the requests turned away since the last step were turned away first. Inside one they
+        // were written before it began (`begin_step`), against the session as it stood, and `session` here is a copy
+        // that may never be made real.
+        if !self.defer_facts {
+            self.flush_log(session);
+            self.emit_facts(now_ns, session);
+        }
+        settled
+    }
+
+    /// Whether `item` is the local user's stop or mute-on: the commands that only silence.
+    fn silences_locally(item: &Queued) -> bool {
+        item.auth.role == PeerRole::LocalUser
+            && matches!(
+                item.request.body().command(),
+                ControlCommand::StopGroupPlayback { .. }
+                    | ControlCommand::SetMemberMute { muted: true, .. }
+            )
+    }
+
+    fn emit_facts(&mut self, now_ns: u64, session: &UnifiedGroupSession) {
         if let Some(log) = self.log.as_mut() {
             for fact in self.facts.drain(..) {
                 log.emit(&fact, now_ns, session.current_epoch, &session.group_id);
             }
         }
-        settled
     }
 
-    fn execute(
+    /// Open a durable step: expire what is due (that is not part of the step), then keep everything the step does to
+    /// the ledger, the counters and the log facts so that [`ControlChannel::rollback_step`] can take it back. Returns
+    /// the counters as they are now.
+    ///
+    /// The requests turned away at `submit` since the last step are written first, against `session`, the live
+    /// session as it stands before the step: they are real evidence and a failed step must neither lose them nor stamp
+    /// them with a revision the session never reached.
+    fn begin_step(&mut self, now_ns: u64, session: &UnifiedGroupSession) -> ChannelStats {
+        self.flush_log(session);
+        self.ledger.expire(now_ns);
+        self.ledger.begin();
+        self.defer_facts = true;
+        self.silenced.clear();
+        self.stats
+    }
+
+    /// The open step is durable and stands: its log facts are written.
+    fn commit_step(&mut self, now_ns: u64, session: &UnifiedGroupSession) {
+        self.ledger.commit();
+        self.defer_facts = false;
+        self.silenced.clear();
+        self.emit_facts(now_ns, session);
+    }
+
+    /// The open step could not be made durable and its effect was dropped. Take back what it did to the ledger
+    /// (its outcomes are `Unseen` again, and what it evicted is back, with the floors it had raised undone), the
+    /// counters, and its log facts, so nothing says "committed" about an effect that never happened. One critical
+    /// record says that a store failed and names the first command it took back. Floors made durable during the step
+    /// stay: they are on the medium and only ever refuse more.
+    fn rollback_step(
+        &mut self,
+        before: ChannelStats,
+        now_ns: u64,
+        session: &UnifiedGroupSession,
+        withheld: &[Settlement],
+        code: &'static str,
+    ) {
+        self.ledger.rollback();
+        self.stats = before;
+        self.defer_facts = false;
+        self.facts.clear();
+        let queue_depth = self.ordinary.len() + self.priority.len();
+        // Name the first command that stays withheld. A local stop or mute-on the step held is about to be applied to the live
+        // session (`apply_silencing_live`) and will be logged as applied, so it must not also be named here as refused. If only
+        // such commands were in the step the record still exists (the fault is never invisible) and names the first peer with
+        // number 0, which no command has.
+        let silenced = |s: &Settlement| {
+            self.silenced
+                .iter()
+                .any(|q| q.request.body().peer() == &s.peer && q.request.body().seq() == s.seq)
+        };
+        let named = withheld
+            .iter()
+            .find(|s| !silenced(s))
+            .map(|s| (s.peer.clone(), s.seq))
+            .or_else(|| withheld.first().map(|s| (s.peer.clone(), 0)));
+        if let (Some((peer, seq)), Some(log)) = (named, self.log.as_mut()) {
+            let fact = Fact {
+                peer,
+                seq,
+                member: None,
+                outcome: Outcome::Refused(Refusal::InternalFault),
+                cause: Some(format!("store_failed_{code}")),
+                revision: session.state_revision,
+                queue_depth,
+                waited_ns: 0,
+                critical: true,
+            };
+            log.emit(&fact, now_ns, session.current_epoch, &session.group_id);
+        }
+    }
+
+    /// Latch the durable path failed. Nothing is staged or written until the owner reopens the journal.
+    fn latch_durability(&mut self, code: &'static str) {
+        self.durability = Durability::Failed { code };
+    }
+
+    /// The one exception to "nothing a step did is visible until its mark is durable": the local user's stop and mute-on
+    /// that the rolled-back step applied are applied again, now to the live session, in the order they ran. Silence is
+    /// never withdrawn for want of a disk, and it is the first accepted command that discovers the fault, not the
+    /// second. They are judged afresh (the peer must still be current, the command must still apply), recorded and
+    /// logged like any applied command, and returned to be delivered: they took effect. Their mark is not stored. Nothing
+    /// else the step did is applied: a volume increase, a relative step or an unmute that came with them stays
+    /// withheld. Call after `rollback_step` and `latch_durability`.
+    fn apply_silencing_live(
+        &mut self,
+        now_ns: u64,
+        session: &mut UnifiedGroupSession,
+    ) -> Vec<Settlement> {
+        let items = std::mem::take(&mut self.silenced);
+        let floor = self.revision_floor.unwrap_or(session.state_revision);
+        let mut applied = Vec::new();
+        for item in items {
+            let outcome =
+                self.execute::<NoFloorStore>(&item, now_ns, floor, session, None, &mut applied);
+            let times = Settled {
+                now_ns,
+                accepted_ns: item.accepted_ns,
+                revision: session.state_revision,
+            };
+            self.settle(item.request.body().clone(), outcome, times, &mut applied);
+        }
+        self.emit_facts(now_ns, session);
+        applied
+    }
+
+    /// What a step does while the durable path is latched: no command is staged and nothing is written. The local
+    /// user's stop and mute-on apply to the live session (silencing is never withdrawn for want of a disk), a cancel
+    /// still withdraws, and every other command is refused without being recorded. Louder is not allowed: no
+    /// command that raises volume, relative or absolute, gets through.
+    ///
+    /// The legacy bridge is a controller, so its stop is refused here like any other controller's.
+    fn execute_degraded(
         &mut self,
         item: &Queued,
         now_ns: u64,
         floor: u64,
         session: &mut UnifiedGroupSession,
+        out: &mut Vec<Settlement>,
+    ) -> Outcome {
+        let command = item.request.body().command();
+        if Self::silences_locally(item) || matches!(command, ControlCommand::Cancel { .. }) {
+            return self.execute::<NoFloorStore>(item, now_ns, floor, session, None, out);
+        }
+        self.store_cause = Some(StoreCause::Degraded);
+        Outcome::Refused(Refusal::InternalFault)
+    }
+
+    /// Make `peer`'s floor at least `seq` durable through `store`, then in memory. On `Err`, with nothing changed in
+    /// memory, the code says why: the table cannot take it, or the store could not make it durable.
+    fn reserve_floor<S: FloorStore>(
+        &mut self,
+        peer: &PeerId,
+        seq: u64,
+        store: &mut S,
+    ) -> Result<(), &'static str> {
+        let Some(next) = self.seq_floors.raised(peer, seq) else {
+            return Err(if self.seq_floors.is_refusing() {
+                "floors_unreadable"
+            } else {
+                "floors_full"
+            });
+        };
+        store
+            .store(&next.encode())
+            .map_err(|refused| refused.code)?;
+        self.seq_floors = next;
+        Ok(())
+    }
+
+    fn execute<S: FloorStore>(
+        &mut self,
+        item: &Queued,
+        now_ns: u64,
+        floor: u64,
+        session: &mut UnifiedGroupSession,
+        store: Option<&mut S>,
         out: &mut Vec<Settlement>,
     ) -> Outcome {
         // The authority behind this command must still stand.
@@ -1064,6 +1414,21 @@ impl<A: PeerAuthority> ControlChannel<A> {
             // Handled above; present so the match is total without a panic.
             ControlCommand::Cancel { .. } => return Outcome::Refused(Refusal::NotCancellable),
         };
+
+        // A relative command is the one kind that must never be applied twice, so its duplicate-suppression record is
+        // made durable BEFORE the effect, here and not earlier (a refusal above leaves the command free to be sent
+        // again) and not after (a crash between the effect and a later store would leave an effect nobody remembers).
+        // If it cannot be made durable the command is not applied: this is nothing the sender did, so it is told to
+        // read the state and use a new number, and no session error is reported as the cause.
+        if body.command().is_relative()
+            && !self.unstable_retry.contains(body.peer())
+            && let Some(store) = store
+            && let Err(code) = self.reserve_floor(body.peer(), body.seq(), store)
+        {
+            self.last_internal_fault = None;
+            self.store_cause = Some(StoreCause::Reservation(code));
+            return Outcome::Refused(Refusal::InternalFault);
+        }
 
         // The larger of the next counter value and base + revision. The revision only ever grows, so a
         // restarted channel lands above everything its predecessor used; the counter keeps a refused

@@ -221,7 +221,9 @@
         "control_adapter::tests::a_tailnet_step_composed_against_an_older_revision_is_refused_and_remembered",
         "control_adapter::tests::a_tailnet_request_signed_with_a_key_that_is_not_admitted_changes_nothing",
         "control_adapter::tests::a_relative_step_clamps_and_a_clamped_step_still_moves_the_revision",
-        "control_adapter::tests::a_group_step_moves_the_group_volume_and_not_the_member"
+        "control_adapter::tests::a_group_step_moves_the_group_volume_and_not_the_member",
+        "control_adapter::tests::a_durable_plane_boots_restores_and_applies_a_tailnet_step_once_across_a_restart",
+        "control_adapter::tests::the_volatile_fixture_is_volatile_and_has_no_medium"
       ]
     },
     {

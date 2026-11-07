@@ -35,6 +35,7 @@ pub mod peer;
 pub mod pipeline;
 pub mod reply;
 pub mod request;
+pub mod seqfloor;
 pub mod wire;
 
 #[cfg(test)]

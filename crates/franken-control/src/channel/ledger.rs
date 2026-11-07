@@ -68,6 +68,18 @@ pub enum Lookup<'a, B, O> {
     Unseen,
 }
 
+/// One thing a step did to the ledger, kept only while a step is open so it can be undone exactly.
+enum Undo<B, O> {
+    /// An entry the step recorded.
+    Inserted((PeerId, u64)),
+    /// An entry the step evicted to make room (or because it had aged out), with the peer's floor as it was.
+    Evicted {
+        key: (PeerId, u64),
+        entry: Entry<B, O>,
+        floor_before: Option<u64>,
+    },
+}
+
 /// Outcomes by `(peer, seq)`, bounded by count and age.
 pub struct OutcomeLedger<B, O> {
     entries: BTreeMap<(PeerId, u64), Entry<B, O>>,
@@ -76,6 +88,8 @@ pub struct OutcomeLedger<B, O> {
     capacity: usize,
     retention_ns: u64,
     clock_ns: u64,
+    /// What the open step has done so far, if a step is open ([`OutcomeLedger::begin`]).
+    undo: Option<Vec<Undo<B, O>>>,
 }
 
 impl<B, O> OutcomeLedger<B, O> {
@@ -94,6 +108,7 @@ impl<B, O> OutcomeLedger<B, O> {
             capacity,
             retention_ns,
             clock_ns: 0,
+            undo: None,
         })
     }
 
@@ -127,10 +142,18 @@ impl<B, O> OutcomeLedger<B, O> {
         let Some(key) = self.order.pop_front() else {
             return;
         };
-        if self.entries.remove(&key).is_some() {
-            let (peer, seq) = key;
+        if let Some(entry) = self.entries.remove(&key) {
+            let (peer, seq) = key.clone();
+            let floor_before = self.floors.get(&peer).copied();
             let floor = self.floors.entry(peer).or_insert(seq);
             *floor = (*floor).max(seq);
+            if let Some(undo) = self.undo.as_mut() {
+                undo.push(Undo::Evicted {
+                    key,
+                    entry,
+                    floor_before,
+                });
+            }
         }
     }
 
@@ -183,6 +206,9 @@ impl<B, O> OutcomeLedger<B, O> {
                 return false;
             }
         }
+        if let Some(undo) = self.undo.as_mut() {
+            undo.push(Undo::Inserted(key.clone()));
+        }
         self.order.push_back(key.clone());
         self.entries.insert(
             key,
@@ -220,6 +246,57 @@ impl<B, O> OutcomeLedger<B, O> {
             .values()
             .filter(|entry| entry.acked_ns.is_none())
             .count()
+    }
+
+    /// Open a step: from now until [`OutcomeLedger::commit`] or [`OutcomeLedger::rollback`], everything `record` does
+    /// (the entries it adds, and the older ones it evicts, with the floors that raises) is kept so it can be undone.
+    /// Expiry by age before the step is not part of it; do that first.
+    pub fn begin(&mut self) {
+        self.undo = Some(Vec::new());
+    }
+
+    /// The open step stands. What it recorded and evicted is final.
+    pub fn commit(&mut self) {
+        self.undo = None;
+    }
+
+    /// Undo the open step exactly: its entries are gone (`Unseen` again, no floor raised), and every entry it evicted
+    /// is back, in its place in the eviction order, with the peer's floor as it was. Without an open step this does
+    /// nothing.
+    ///
+    /// This is for an owner that has *not delivered* a step's outcomes because it could not make the step durable and
+    /// has rolled the step's effect back: until it does this, a retry would be answered with a result the client was
+    /// never given, and the older outcomes the step pushed out would answer `OutOfWindow` for no reason.
+    pub fn rollback(&mut self) {
+        let Some(mut undo) = self.undo.take() else {
+            return;
+        };
+        while let Some(done) = undo.pop() {
+            match done {
+                Undo::Inserted(key) => {
+                    self.entries.remove(&key);
+                    if let Some(position) = self.order.iter().rposition(|queued| *queued == key) {
+                        let _ = self.order.remove(position);
+                    }
+                }
+                Undo::Evicted {
+                    key,
+                    entry,
+                    floor_before,
+                } => {
+                    match floor_before {
+                        Some(floor) => {
+                            self.floors.insert(key.0.clone(), floor);
+                        }
+                        None => {
+                            self.floors.remove(&key.0);
+                        }
+                    }
+                    self.order.push_front(key.clone());
+                    self.entries.insert(key, entry);
+                }
+            }
+        }
     }
 }
 
@@ -488,5 +565,91 @@ mod tests {
         assert!(l.record(a.clone(), 3, "z", 3, 0));
         assert_eq!(l.len(), 2);
         assert_eq!(l.unacked(), 2, "the evicted entry no longer counts");
+    }
+
+    #[test]
+    fn a_rolled_back_step_is_unseen_again_and_raises_no_floor() {
+        let mut l = ledger(8, 1_000_000);
+        let a = id("a");
+        assert!(l.record(a.clone(), 1, "x", 1, 0));
+        l.begin();
+        assert!(l.record(a.clone(), 2, "y", 2, 0));
+        assert_eq!(settled(&l, &a, 2), Some(("y", 2)));
+        l.rollback();
+        // Not eviction: no floor, so a retry is a first application, and the number can be recorded afresh.
+        assert_eq!(l.lookup(&a, 2), Lookup::Unseen);
+        assert_eq!(l.floor(&a), None);
+        assert_eq!(
+            settled(&l, &a, 1),
+            Some(("x", 1)),
+            "what was recorded before the step is untouched"
+        );
+        assert!(l.record(a.clone(), 2, "again", 3, 0));
+        assert_eq!(settled(&l, &a, 2), Some(("again", 3)));
+        // With no open step there is nothing to undo.
+        l.rollback();
+        assert_eq!(settled(&l, &a, 2), Some(("again", 3)));
+    }
+
+    #[test]
+    fn a_rolled_back_step_gives_back_what_it_evicted_with_the_floor_and_the_order() {
+        // Full at capacity 3 with two peers. The step records two outcomes and so evicts the two oldest.
+        let mut l = ledger(3, 1_000_000);
+        let (a, b) = (id("a"), id("b"));
+        assert!(l.record(a.clone(), 1, "a1", 1, 0));
+        assert!(l.record(b.clone(), 1, "b1", 2, 0));
+        assert!(l.record(a.clone(), 2, "a2", 3, 0));
+        l.begin();
+        assert!(l.record(b.clone(), 2, "b2", 4, 0));
+        assert!(l.record(a.clone(), 3, "a3", 5, 0));
+        assert_eq!(l.lookup(&a, 1), Lookup::OutOfWindow { floor: 1 });
+        assert_eq!(l.lookup(&b, 1), Lookup::OutOfWindow { floor: 1 });
+        l.rollback();
+        // Every previously settled outcome answers as it did, and no floor was left behind.
+        assert_eq!(settled(&l, &a, 1), Some(("a1", 1)));
+        assert_eq!(settled(&l, &b, 1), Some(("b1", 2)));
+        assert_eq!(settled(&l, &a, 2), Some(("a2", 3)));
+        assert_eq!((l.floor(&a), l.floor(&b)), (None, None));
+        assert_eq!(l.lookup(&b, 2), Lookup::Unseen);
+        assert_eq!(l.lookup(&a, 3), Lookup::Unseen);
+        assert_eq!(l.len(), 3);
+        // The eviction order is as it was: the next record evicts a1 first, then b1.
+        assert!(l.record(b.clone(), 3, "b3", 6, 0));
+        assert_eq!(l.lookup(&a, 1), Lookup::OutOfWindow { floor: 1 });
+        assert_eq!(settled(&l, &b, 1), Some(("b1", 2)));
+        assert!(l.record(a.clone(), 4, "a4", 7, 0));
+        assert_eq!(l.lookup(&b, 1), Lookup::OutOfWindow { floor: 1 });
+    }
+
+    #[test]
+    fn a_committed_step_is_final() {
+        let mut l = ledger(2, 1_000_000);
+        let a = id("a");
+        assert!(l.record(a.clone(), 1, "x", 1, 0));
+        assert!(l.record(a.clone(), 2, "y", 2, 0));
+        l.begin();
+        assert!(l.record(a.clone(), 3, "z", 3, 0));
+        l.commit();
+        l.rollback();
+        assert_eq!(l.lookup(&a, 1), Lookup::OutOfWindow { floor: 1 });
+        assert_eq!(settled(&l, &a, 3), Some(("z", 3)));
+        assert_eq!(l.len(), 2);
+    }
+
+    #[test]
+    fn a_floor_that_was_already_there_is_restored_to_its_old_value() {
+        let mut l = ledger(2, 1_000_000);
+        let a = id("a");
+        assert!(l.record(a.clone(), 1, "x", 1, 0));
+        assert!(l.record(a.clone(), 2, "y", 2, 0));
+        assert!(l.record(a.clone(), 3, "z", 3, 0));
+        assert_eq!(l.floor(&a), Some(1));
+        l.begin();
+        assert!(l.record(a.clone(), 4, "w", 4, 0));
+        assert_eq!(l.floor(&a), Some(2));
+        l.rollback();
+        assert_eq!(l.floor(&a), Some(1));
+        assert_eq!(settled(&l, &a, 2), Some(("y", 2)));
+        assert_eq!(l.lookup(&a, 4), Lookup::Unseen);
     }
 }

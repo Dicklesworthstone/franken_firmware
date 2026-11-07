@@ -726,7 +726,7 @@
     },
     {
       "id": "INV-HEAP-BOUND",
-      "claim": "Through the real endpoint, channel and peer directory, over the six-thousand-operation flood, the host heap the channel holds stays within a bound written from its caps: one handle call peaks at most UNIT_COPIES request-sized units above where it started, one step at most max_per_step + 1 times that, and the live heap after every operation is under the sum of its stored records, per-peer rows and log ring; it does not grow with the requests already served, and the bound shrinks with the caps; a channel whose authority keeps every message it verifies breaks the retained bound by name, one that takes a large scratch buffer per message breaks the datagram peak by name, and each check is judged alone on synthetic runs. Host heap only: not the stack, a thread census, a device or a guest.",
+      "claim": "Through the real endpoint, channel and peer directory, over the six-thousand-operation flood, the host heap the channel holds stays within a bound written from its caps: one handle call peaks at most UNIT_COPIES request-sized units above where it started, one step at most max_per_step + 1 times that, and the live heap after every operation is under the sum of its stored records, per-peer rows and log ring; it does not grow with the requests already served, and the bound shrinks with the caps; a channel whose authority keeps every message it verifies breaks the retained bound by name, one that takes a large scratch buffer per message breaks the datagram peak by name, and each check is judged alone on synthetic runs. Host heap only: not the stack, a thread census, a device or a guest. The durable step is also measured with relative commands: sixteen admitted identities each send relative commands, each accepted by one durable step (a floor reservation, the 226-byte floors record, a copy of the session, the mark), over a journal loaded to the device limits so that it compacts a full snapshot repeatedly; the floors and the mark are restored from the medium through the restore calls and equal what the running channel held; the step is judged against the formula written from the caps with no allowance for the session copy or the compaction, and its components are printed.",
       "scenarios": [],
       "scenario_inapplicable": "This is a property of the host heap under load, measured by a counting global allocator in franken-alloc-probe (the workspace forbids unsafe in franken-control); the Python scenario model has no allocator and nothing to say about it.",
       "rust_tests": [
@@ -735,7 +735,8 @@
         "the_same_bound_written_from_small_caps_is_smaller_and_a_small_channel_fits_it",
         "a_channel_that_retains_every_request_breaks_the_retained_bound_by_name",
         "a_channel_that_allocates_a_large_scratch_per_request_breaks_the_datagram_peak_by_name",
-        "the_verdict_judges_each_check_on_its_own_and_lets_the_exact_bound_through"
+        "the_verdict_judges_each_check_on_its_own_and_lets_the_exact_bound_through",
+        "the_durable_step_with_sixteen_identities_reserving_floors_over_a_full_journal_is_measured"
       ]
     },
     {
@@ -772,6 +773,120 @@
         "an_unreadable_journal_refuses_remote_commands_and_does_not_start_from_zero",
         "an_owner_that_ignores_an_unreadable_journal_fails_the_refusal_judge_by_name",
         "the_refusal_floor_is_never_stored"
+      ]
+    },
+    {
+      "id": "INV-RELATIVE-ONCE",
+      "claim": "A relative command's identity floor (the highest number the channel has begun to apply for it) is made durable in the record n02.seq before the command's effect, and a retry at or below a floor is answered OutOfWindow at submit and never applied. With the power cut at every storage operation and byte budget of a relative command's two stores (its floor, then the mark), for the local user (whose commands the revision checks never reach) and for a controller, the recovered floor is exactly the old one or the new one; the duplicate of every delivered command is unknown after the restart (OutOfWindow, never queued); a command that was not delivered is unknown if its floor was recorded and applies exactly once if it was not; a duplicate with a bad proof is Unauthenticated, not OutOfWindow. An owner that steps without reserving, one that delivers before it stores, one that leaves a withheld outcome in the ledger, and one that steps the live session instead of a copy each fail the sweep by name (ADMITTED, LAUNDERED, NOT-STAGED).",
+      "rust_tests": [
+        "a_delivered_relative_command_is_unknown_after_a_channel_restart_and_the_next_one_applies_once",
+        "every_cut_of_a_relative_commands_stores_applies_it_at_most_once_for_the_local_user",
+        "every_cut_of_a_relative_commands_stores_applies_it_at_most_once_for_a_controller",
+        "each_planted_owner_fault_fails_the_relative_command_sweep_by_name",
+        "a_store_failure_after_the_floor_is_durable_withholds_the_result_and_makes_the_retry_unknown",
+        "an_absolute_command_withheld_by_a_store_failure_applies_once_when_retried_after_a_restart",
+        "a_duplicate_with_a_bad_proof_is_unauthenticated_and_not_answered_from_the_floor"
+      ],
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the channel over U01's journal on an in-memory medium with fault injection (and of the transaction around it), judged by Rust tests; the Python scenario model has no journal and nothing to say about them."
+    },
+    {
+      "id": "INV-STEP-TRANSACTION",
+      "claim": "A durable step is a transaction. It runs on a copy of the session, and the copy replaces the session only after the mark is durable. If the store fails, the ledger gives back what the step recorded and every older outcome it evicted (with the floors it had raised), the counters are restored, the log facts it gathered are dropped, one critical record says a store failed, and the retry is later logged exactly once. An idle poll, and a step that cannot have moved the mark (every command refused), stage nothing and do not call the journal, so a journal poisoned from outside fails a pure refusal never and a step that needs the mark always. A rejection waiting in the log when a durable step begins is written once, before the step, against the live session's revision (never the copy's), whether the store then fails or succeeds.",
+      "rust_tests": [
+        "a_failed_step_leaves_the_counters_the_log_and_every_older_outcome_as_they_were",
+        "a_retry_after_a_failed_step_and_a_reopen_is_logged_exactly_once",
+        "an_idle_poll_and_a_pure_refusal_do_not_touch_the_journal_even_when_it_is_poisoned",
+        "a_rolled_back_step_is_unseen_again_and_raises_no_floor",
+        "a_rolled_back_step_gives_back_what_it_evicted_with_the_floor_and_the_order",
+        "a_committed_step_is_final",
+        "a_floor_that_was_already_there_is_restored_to_its_old_value",
+        "a_rejection_pending_before_a_failed_step_is_logged_once_against_the_live_revision",
+        "the_same_pending_rejection_with_a_successful_store_is_logged_once_before_the_step_it_preceded"
+      ],
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the channel over U01's journal on an in-memory medium with fault injection (and of the transaction around it), judged by Rust tests; the Python scenario model has no journal and nothing to say about them."
+    },
+    {
+      "id": "INV-DURABILITY-LATCH",
+      "claim": "The first store that fails latches the channel's durable path failed. While latched nothing is staged and no journal call is made; the local user's stop and mute-on are applied to the live session, a cancel still withdraws, and every other command (relative or absolute, from any role, a controller's stop included) is refused as InternalFault with the cause durability_failed and is not recorded, so the same request can be sent again; nothing that raises volume gets through. Only reopen_from_open clears the latch: the channel then offers at least the mark the medium holds (a write the medium took despite the error does not lock it out as MarkRegressed) and keeps the larger of each identity's floor; a medium that cannot be opened leaves the latch. The first accepted local stop or mute-on that itself discovers the failure (also when another writer poisoned the journal) is applied to the live session and delivered (StoreFailed::applied) while a co-queued volume increase, relative step or unmute stays unapplied and withheld; a revoked or forged mute-on is not applied. The one critical record of a failed step names a command that stays withheld, never a silence that is then applied (a step of only silences still writes it, naming number 0).",
+      "rust_tests": [
+        "a_latched_path_still_silences_for_the_local_user_and_refuses_everything_else_without_touching_the_journal",
+        "reopening_the_journal_clears_the_latch_and_what_was_refused_while_it_held_can_be_sent_again",
+        "a_write_the_medium_took_despite_the_error_does_not_lock_the_channel_out_after_a_reopen",
+        "the_first_local_mute_on_that_discovers_a_failed_store_still_silences_the_live_session",
+        "the_first_local_stop_that_discovers_a_failed_store_still_stops_the_live_session",
+        "a_journal_poisoned_from_outside_before_the_first_local_mute_on_does_not_lose_it",
+        "a_revoked_or_forged_local_mute_on_is_not_applied_by_the_first_failure",
+        "a_failed_step_names_a_withheld_command_in_its_one_critical_record_and_not_a_silence_it_then_applies",
+        "a_step_of_only_a_local_mute_on_and_a_failing_store_still_writes_one_critical_record",
+        "an_owner_that_forgot_to_restore_still_gets_the_first_local_mute_on_applied_and_nothing_else"
+      ],
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the channel over U01's journal on an in-memory medium with fault injection (and of the transaction around it), judged by Rust tests; the Python scenario model has no journal and nothing to say about them."
+    },
+    {
+      "id": "INV-FLOOR-SCOPE",
+      "claim": "Only relative commands of an identity with a stable retry number reserve a floor. An identity declared with declare_unstable_retry_ids (the legacy bridge, which composes a fresh number per request) gets none: forty of its relative commands write one frame each (the mark) and no n02.seq record, and its duplicate after a restart is not answered OutOfWindow (no dedup is claimed); a stable identity's relative command writes the floor and then the mark. Absolute and stop commands record nothing. A floor that cannot be stored refuses the relative command untouched (InternalFault, cause store_<code>, recorded: send it under a new number) while a local absolute set and a stop still commit; a malformed record refuses every relative command for the run and leaves the others working; floors offered after the first step are an error; plain step reserves nothing.",
+      "rust_tests": [
+        "an_identity_with_unstable_retry_numbers_gets_no_floor_and_a_stable_one_gets_exactly_one",
+        "a_floor_that_cannot_be_stored_refuses_the_relative_command_untouched_and_other_commands_keep_working",
+        "a_malformed_floor_record_refuses_relative_commands_for_the_run_and_leaves_the_rest_working",
+        "a_plain_step_reserves_nothing_and_floors_offered_after_the_first_step_are_an_error",
+        "absolute_and_stop_commands_write_no_floor_record"
+      ],
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the channel over U01's journal on an in-memory medium with fault injection (and of the transaction around it), judged by Rust tests; the Python scenario model has no journal and nothing to say about them."
+    },
+    {
+      "id": "INV-FLOOR-RECORD",
+      "claim": "The floors are one record in the Records namespace, 2 + 14n bytes (226 for sixteen identities), canonical, and the decoder refuses everything else by name; sixteen identities fit the device journal and come back in full after a restart, a seventeenth is refused rather than evicting one, the smallest configuration holds two and refuses a third without poisoning the journal, the key fits both configurations, and merging two tables keeps the larger floors and refuses when the union does not fit. The record is the fourth and last of the device journal's four record slots.",
+      "rust_tests": [
+        "the_tags_are_the_ones_sha256_gives",
+        "the_record_bytes_are_the_ones_a_person_wrote",
+        "a_floor_is_found_by_its_identity_and_only_by_it",
+        "a_floor_only_goes_up_and_the_original_table_is_not_changed",
+        "sixteen_identities_fit_in_226_bytes_and_a_seventeenth_does_not",
+        "the_decoder_refuses_everything_that_is_not_the_record_by_name",
+        "a_table_that_could_not_be_read_refuses_every_relative_number_and_raises_nothing",
+        "merging_keeps_each_identitys_larger_floor_and_never_lowers_either_side",
+        "merging_with_a_table_that_could_not_be_read_or_that_overflows_refuses",
+        "sixteen_identities_make_a_record_the_standard_journal_holds_and_a_restart_restores_in_full",
+        "the_smallest_journal_holds_two_identities_and_refuses_a_third_without_poisoning",
+        "the_key_and_the_value_fit_the_smallest_and_the_device_configuration"
+      ],
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the channel over U01's journal on an in-memory medium with fault injection (and of the transaction around it), judged by Rust tests; the Python scenario model has no journal and nothing to say about them."
+    },
+    {
+      "id": "INV-STEPPER-EXPLICIT",
+      "claim": "The plain development stepper and the in-memory journal stepper are named in no production file but the file that defines them, the one that re-exports them and the Q01 harness, so a production owner must write the name of a non-durable stepper to get one. A source scan over every crate's production sources shows it, and shows that it reads the production part only and sees a name there.",
+      "rust_tests": [
+        "the_scan_reads_the_production_part_only_and_notices_a_name_there",
+        "no_production_file_but_the_harness_names_a_non_durable_stepper"
+      ],
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the channel over U01's journal on an in-memory medium with fault injection (and of the transaction around it), judged by Rust tests; the Python scenario model has no journal and nothing to say about them."
+    },
+    {
+      "id": "INV-DURABLE-BOOT",
+      "claim": "boot_durable opens the journal, restores the revision mark and the relative-command floors and returns the stepper in one call, before the channel's first step: a blank medium boots with nothing to restore; a journal holding a mark and floors gives both to the channel and a restored floor is in force at once; a medium that cannot be opened boots latched and refusing; a journal with no valid state boots durable but refusing for the run; a channel that has already stepped is refused; and what a booted stepper stores is what the next boot over the same medium restores. The speaker's Virtual House control plane has a durable constructor over it (its campaign fixture stays volatile and says so): a restart over the same medium answers a delivered tailnet step 801 and applies a bridge step once. A latched owner is reopened in one call (reopen_durable): a medium that opens clears the latch and the new stepper stores again; one that cannot be opened leaves the latch; a journal ahead of the session is offered at its mark with its floors in force. A latched boot returns a stepper through which the local user's stop and mute-on work and a controller's command is refused, and which latches a channel that is not latched rather than step it volatilely.",
+      "scenarios": [],
+      "scenario_inapplicable": "These are properties of the owner's boot over U01's journal on an in-memory medium, judged by Rust tests; the Python scenario model has no journal.",
+      "rust_tests": [
+        "a_blank_medium_boots_durable_with_nothing_to_restore",
+        "one_call_restores_the_mark_and_the_floors_a_journal_holds",
+        "a_medium_that_cannot_be_opened_boots_latched_and_refusing",
+        "a_medium_with_no_valid_state_boots_durable_but_refusing_for_the_run",
+        "a_channel_that_has_already_stepped_cannot_be_booted",
+        "what_a_booted_stepper_stores_is_what_the_next_boot_restores",
+        "a_durable_plane_boots_restores_and_applies_a_tailnet_step_once_across_a_restart",
+        "the_volatile_fixture_is_volatile_and_has_no_medium",
+        "a_latched_owner_is_reopened_in_one_call_and_steps_durably_again",
+        "a_medium_that_still_cannot_be_opened_leaves_the_latch_where_it_was",
+        "a_reopen_over_a_journal_that_is_ahead_of_the_session_offers_the_larger_mark_and_keeps_its_floors",
+        "a_latched_boot_returns_a_stepper_through_which_the_local_user_can_still_silence_and_nothing_else_works",
+        "the_latched_stepper_never_lets_a_healthy_channel_step_as_if_it_were_durable"
       ]
     },
     {

@@ -32,7 +32,10 @@ use std::net::{IpAddr, Ipv4Addr};
 
 use franken_control::channel::limiter::RateLimit;
 use franken_control::channel::peer::{PeerDirectory, PeerId, PeerRole, compute_proof};
-use franken_control::channel::pipeline::{ChannelConfig, ControlChannel};
+use franken_control::channel::pipeline::{
+    Booted, ChannelConfig, ControlChannel, DevelopmentVolatile, Limits, OwnedDurable, RamMedium,
+    Restored, RestoredFloors, boot_durable,
+};
 use franken_control::channel::request::{ControlCommand, RequestBody};
 use franken_control::contracts::secret_store::{
     Generation, SecretError, SecretHandle, SecretMeta, SecretStore, SecretValue,
@@ -408,10 +411,23 @@ struct TailnetRequest<'a> {
     delta: i8,
 }
 
+/// How the plane's channel is stepped. [`ControlPlane::new`] is the campaign fixture and is volatile on purpose, and says so by
+/// naming the development stepper; [`ControlPlane::new_durable`] boots a journal and holds the stepper that stores into it.
+enum PlaneStepper {
+    Volatile(DevelopmentVolatile),
+    // Built by `new_durable`, which the campaign does not call (it is the volatile fixture) and the tests do.
+    // This retained box allocates size_of::<OwnedDurable<RamMedium>>() during initialization, in addition to
+    // the temporary Booted::Durable box. Both may coexist until its fields move and the temporary is freed;
+    // neither allocation is inside a measured channel step/datagram window. Nested journal allocations are separate.
+    #[cfg_attr(not(test), allow(dead_code))]
+    Durable(Box<OwnedDurable<RamMedium>>),
+}
+
 /// The real endpoint, channel and peer directory, and the two identities that reach them.
 pub(crate) struct ControlPlane {
     endpoint: Endpoint,
     channel: ControlChannel<PeerDirectory<HarnessKeys>>,
+    stepper: PlaneStepper,
     member_id: String,
     tailnet_peer: PeerId,
     tailnet_key: Vec<u8>,
@@ -462,14 +478,57 @@ impl ControlPlane {
             1,
         )
         .map_err(|e| format!("endpoint: {e}"))?;
+        // The campaign fixture has no journal and fixture keys: it steps with the plain, volatile development step on purpose,
+        // and says so here.
         Ok(Self {
             endpoint,
             channel,
+            stepper: PlaneStepper::Volatile(DevelopmentVolatile),
             member_id: member_id.to_string(),
             tailnet_peer,
             tailnet_key: fixture_key(TAILNET_PEER),
             next_tailnet_seq: 1,
         })
+    }
+
+    /// [`ControlPlane::new`], but durable: the journal on `medium` is opened and the channel is given the revision mark and
+    /// the relative-command floors it holds ([`boot_durable`], before the channel's first step), and every step from then on
+    /// is made durable before it is reported ([`OwnedDurable`]). Returns what was restored, for the caller's log. The medium
+    /// is RAM: no file-backed or flash-backed storage exists in this tree, and the prototype's restart is a plane built over
+    /// the same medium ([`ControlPlane::into_medium`]).
+    ///
+    /// # Errors
+    /// If the plane cannot be built, the channel has already stepped, or the medium cannot be opened (a plane that is latched
+    /// failed from its first step is not a plane this harness can run).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn new_durable(
+        session: &UnifiedGroupSession,
+        member_id: &str,
+        now_ns: u64,
+        medium: RamMedium,
+    ) -> Result<(Self, Restored, RestoredFloors), String> {
+        let mut plane = Self::new(session, member_id, now_ns)?;
+        match boot_durable(&mut plane.channel, medium, Limits::standard())
+            .map_err(|e| format!("durable boot: {e}"))?
+        {
+            Booted::Durable(boot) => {
+                plane.stepper = PlaneStepper::Durable(Box::new(boot.stepper));
+                Ok((plane, boot.mark, boot.floors))
+            }
+            Booted::Latched { code, .. } => Err(format!(
+                "durable boot: the medium could not be opened ({code})"
+            )),
+        }
+    }
+
+    /// The medium a durable plane stores into, given back when the plane is dropped: what a restart is built over. `None` for
+    /// the volatile fixture, which stores nothing.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn into_medium(self) -> Option<RamMedium> {
+        match self.stepper {
+            PlaneStepper::Durable(stepper) => Some(stepper.into_journal().into_storage()),
+            PlaneStepper::Volatile(_) => None,
+        }
     }
 
     /// The next command number the tailnet controller has not used.
@@ -496,12 +555,26 @@ impl ControlPlane {
             headers,
             body: body.as_bytes(),
         };
-        let mut ctx = Context {
-            channel: &mut self.channel,
-            session,
-            now_ns,
+        let handled = match &mut self.stepper {
+            PlaneStepper::Volatile(stepper) => {
+                let mut ctx = Context {
+                    channel: &mut self.channel,
+                    session,
+                    stepper,
+                    now_ns,
+                };
+                self.endpoint.handle(&mut ctx, &request)
+            }
+            PlaneStepper::Durable(stepper) => {
+                let mut ctx = Context {
+                    channel: &mut self.channel,
+                    session,
+                    stepper: &mut **stepper,
+                    now_ns,
+                };
+                self.endpoint.handle(&mut ctx, &request)
+            }
         };
-        let handled = self.endpoint.handle(&mut ctx, &request);
         sent_of(&handled)
     }
 
@@ -1218,6 +1291,50 @@ mod tests {
         plane
             .send_tailnet(session, NOW_NS, seq, revision, Target::Member, delta)
             .expect("the request builds")
+    }
+
+    fn blank_medium() -> RamMedium {
+        RamMedium::new(Limits::standard().segment_bytes)
+    }
+
+    #[test]
+    fn a_durable_plane_boots_restores_and_applies_a_tailnet_step_once_across_a_restart() {
+        let mut session = fixture_session();
+        let (mut plane, mark, floors) =
+            ControlPlane::new_durable(&session, KITCHEN, NOW_NS, blank_medium()).expect("a plane");
+        assert_eq!(
+            (mark, floors),
+            (Restored::FreshMedium, RestoredFloors::Nothing)
+        );
+        let start = session.state_revision;
+        let seq = plane.tailnet_seq();
+        assert_eq!(
+            tailnet(&mut plane, &mut session, seq, start, 10),
+            Sent::applied(60)
+        );
+        // The bridge's relative step is a new command each time; it applies, and it leaves no floor behind.
+        assert_eq!(legacy(&mut plane, &mut session, 5), Sent::applied(65));
+        let revision = session.state_revision;
+        // The process restarts over the same medium (the session, the audible group, carries on).
+        let medium = plane.into_medium().expect("a durable plane has a medium");
+        let (mut again, mark, floors) =
+            ControlPlane::new_durable(&session, KITCHEN, NOW_NS, medium).expect("a plane");
+        assert_eq!(mark, Restored::Mark(revision));
+        assert_eq!(floors, RestoredFloors::Table { identities: 1 });
+        // The tailnet duplicate of the delivered step is unknown (801) and is not applied again.
+        let unknown = tailnet(&mut again, &mut session, seq, start, 10);
+        assert_eq!(unknown.new_volume, None);
+        assert_eq!(unknown.fault_code, Some(801));
+        assert_eq!(member_volume(&session), 65);
+        // The bridge restarts at number 1 and holds no floor: its next step is a new command and applies once.
+        assert_eq!(legacy(&mut again, &mut session, 5), Sent::applied(70));
+        assert_eq!(member_volume(&session), 70);
+    }
+
+    #[test]
+    fn the_volatile_fixture_is_volatile_and_has_no_medium() {
+        let (plane, _session) = plane_and_session();
+        assert!(plane.into_medium().is_none());
     }
 
     #[test]

@@ -1,0 +1,7 @@
+Extract from the preserved first native run (full raw hash and counts in history.json):
+test channel::pipeline::persist::tests::an_owner_that_forgot_to_restore_has_its_outcomes_withheld_by_the_journal ... FAILED
+panicked at crates/franken-control/src/channel/pipeline/persist.rs:1623:9:
+assertion `left == right` failed
+  left: 0
+ right: 1
+test result: FAILED. 560 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.46s

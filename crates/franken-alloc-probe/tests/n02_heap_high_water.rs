@@ -5,11 +5,15 @@
 //! **What is measured.** Six thousand datagrams (the operation mix of the cap census in `pipeline/profile.rs`: forged requests
 //! from identities nobody admitted, ordinary commands from two controllers, priority commands from the local user,
 //! acknowledgements, a `step` every seventh operation, ten milliseconds of simulated time per operation) go through the real
-//! `Endpoint::handle` into the real `ControlChannel` over the real `PeerDirectory`, with a log enabled. Three figures come out:
+//! `Endpoint::handle` into the real `ControlChannel` over the real `PeerDirectory`, with a log enabled. **Every `step` is the
+//! product's step**: `step_then_store` over a journal (on a medium in RAM), so the figure includes the copy of the session the
+//! step runs on, the ledger's undo, the floor and mark frames and the journal's compaction. (The earlier figures were taken
+//! over the plain `step`, which no durable owner runs; they are history.) Three figures come out:
 //!
 //! * the **datagram peak**: the most live heap one `handle` call held above where it started (decode, the clone the endpoint
 //!   submits, the bytes the proof covers, the log line of a refusal, the signed reply and its bytes);
-//! * the **step peak**: the same for one `step` (up to `max_per_step` commands applied, settled, recorded and logged);
+//! * the **step peak**: the same for one durable `step` (up to `max_per_step` commands applied, settled, recorded and
+//!   logged, on a copy of the session, with their frames written);
 //! * the **retained level**: the live heap after every operation, relative to just before the first one.
 //!
 //! **The bound is written from the caps, not read off the run.** `Bounds::of` computes it from the configuration's queue,
@@ -31,7 +35,19 @@
 //! fragmentation); the inline sizes are those of the platform the test runs on, so a 32-bit target's are smaller, and nothing
 //! here ran on a board or a guest. Not the stack. Not the thread, lock and atomic census (that is the source scan in
 //! `profile.rs`). Not a latency or CPU figure. The group is the two-member fixture; a larger group makes `step` allocate more
-//! inside the session, and the step bound does not cover that. The numbers are as provisional as the caps they come from.
+//! inside the session. **The step bound is still the formula written from the caps before any step cloned a session; it makes no
+//! allowance for the copy a durable step runs on or for the journal's compaction, and no estimate of either is admitted here.**
+//! The durable-step figures are reported with their components (`N02-HEAP-DURABLE-OBSERVED`) and judged against that unchanged
+//! formula; a figure over it is a finding about the formula, to be read, and is never answered by retuning a number after the
+//! run. The numbers are as provisional as the caps they come from. The RAM medium is not a flash part: nothing here says
+//! anything about wear, and the write rate is not admitted by this test.
+//!
+//! **The relative path.** The flood above is absolute commands and mutes; it never reserves a floor. The second flood
+//! ([`the_durable_step_with_sixteen_identities_reserving_floors_over_a_full_journal_is_measured`]) issues **relative** commands
+//! from sixteen admitted identities, one accepted step each, over a journal loaded to the device limits, so that the floors
+//! record grows to its sixteen-identity size (226 bytes) and every step writes it and the mark, and the journal compacts a
+//! snapshot of the largest size its limits allow again and again. It then restores the floors and the mark from the medium
+//! through the restore calls and compares them with what the running channel held.
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::hint::black_box;
@@ -45,7 +61,10 @@ use franken_control::channel::peer::{
     AuthFailure, AuthProof, Authenticated, MAX_PEER_ID_LEN, MAX_PEERS, MAX_PROOF_LEN,
     PeerAuthority, PeerDirectory, PeerId, PeerRole, ReplySigner, compute_proof,
 };
-use franken_control::channel::pipeline::{ChannelConfig, ControlChannel, MAX_PENDING_REJECTS};
+use franken_control::channel::pipeline::{
+    ChannelConfig, ControlChannel, MAX_PENDING_REJECTS, MemoryJournalStepper, Outcome, Restored,
+    RestoredFloors, Stepper, restore_from_open, restore_seq_floors_from_open,
+};
 use franken_control::channel::request::{
     AckBody, AckRequest, ControlCommand, ControlRequest, MAX_MEMBER_ID_LEN, RequestBody,
 };
@@ -426,6 +445,8 @@ fn flood<A: PeerAuthority + ReplySigner>(authority: A, caps: &Caps) -> Run {
         .install_lease(&session, AuthorityToken::issue(&session, 1_000_000 * MS), 0)
         .expect("a lease");
     let mut endpoint = Endpoint::new();
+    // The journal the steps go through is made before the baseline: its memory is fixed, and it is not the channel's.
+    let mut stepper = MemoryJournalStepper::new();
     // The sample list is made before the baseline, so recording a sample never allocates.
     let mut run = Run::with_capacity(caps.ops);
     let baseline = live_bytes();
@@ -458,7 +479,11 @@ fn flood<A: PeerAuthority + ReplySigner>(authority: A, caps: &Caps) -> Run {
         drop(handled);
         drop(bytes);
         if i % 7 == 0 {
-            let (settled, window) = measure_heap(|| channel.step(now, &mut session));
+            let (settled, window) = measure_heap(|| {
+                stepper
+                    .step(&mut channel, now, &mut session)
+                    .expect("a step over a healthy journal")
+            });
             run.step_peak = run.step_peak.max(window.peak_above_start);
             drop(settled);
         }
@@ -729,4 +754,180 @@ fn the_verdict_judges_each_check_on_its_own_and_lets_the_exact_bound_through() {
     let mut spike = flat();
     spike[350] = level(bounds.retained) - 1;
     assert_eq!(verdict(&run(spike, 0, 0), &bounds), Ok(()));
+}
+
+// ----------------------------------------------------------------------------------------- the relative path, sixteen identities
+
+/// The sixteen identities of the full directory: fifteen controllers bound to the epoch and the local user.
+fn directory_of_sixteen() -> (PeerDirectory<MapStore>, Vec<String>) {
+    let mut peers = PeerDirectory::with_store(MapStore::default());
+    let mut names = Vec::new();
+    for i in 0..MAX_PEERS - 1 {
+        let name = format!("ctl-{i:02}");
+        let id = PeerId::parse(&name).expect("a peer id");
+        peers
+            .admit(&id, PeerRole::Controller, &key(&name), Some(EPOCH), 1)
+            .expect("an admission");
+        names.push(name);
+    }
+    let panel = PeerId::parse("panel").expect("a peer id");
+    peers
+        .admit(&panel, PeerRole::LocalUser, &key("panel"), None, 1)
+        .expect("an admission");
+    names.push("panel".to_string());
+    assert_eq!(names.len(), MAX_PEERS);
+    (peers, names)
+}
+
+/// What the relative flood saw, with the components a reader needs to judge it.
+struct DurableRun {
+    run: Run,
+    rounds: u64,
+    identities: usize,
+    floor_record_bytes: usize,
+    compactions: u64,
+    frames: u64,
+    /// The heap a copy of the saturated session holds above where the copy started, measured in this binary.
+    session_copy_peak: usize,
+    restored_identities: usize,
+}
+
+/// `rounds` times, each of the sixteen identities sends one relative command at the revision the session has now, the endpoint
+/// handles it and one durable step applies it (so it reserves its floor, writes the floors record, applies on a copy of the
+/// session, writes the mark and commits), all over a journal loaded to the device limits. Everything is measured as in `flood`.
+fn relative_floor_flood(caps: &Caps, rounds: u64) -> DurableRun {
+    let (authority, names) = directory_of_sixteen();
+    let mut session = saturated_session();
+    let mut channel = ControlChannel::new(authority, caps.config).expect("a valid configuration");
+    channel.enable_log(ChannelLog::new(
+        LogConfig::new("run-1", "heap", caps.log_records, caps.log_bytes).expect("a log"),
+        LogKey::new([7; 32]),
+    ));
+    channel
+        .install_lease(&session, AuthorityToken::issue(&session, 1_000_000 * MS), 0)
+        .expect("a lease");
+    let mut endpoint = Endpoint::new();
+    // The journal is loaded before the baseline: its memory is fixed and it is not the channel's. It starts with every namespace
+    // full, so each compaction writes the largest snapshot the limits allow.
+    let mut stepper = MemoryJournalStepper::at_device_limits_occupancy();
+    let mut run = Run::with_capacity(rounds * u64::try_from(names.len()).expect("fits"));
+    // The component the staged step adds to the plain one, measured here and printed: the copy of the session.
+    let (copy, window) = measure_heap(|| session.clone());
+    let session_copy_peak = window.peak_above_start;
+    drop(copy);
+    let baseline = live_bytes();
+    let mut now = 0u64;
+    for round in 0..rounds {
+        for (index, name) in names.iter().enumerate() {
+            now += 10 * MS;
+            let seq = round + 1;
+            let delta = if (round + u64::try_from(index).expect("fits")) % 2 == 0 {
+                1
+            } else {
+                -1
+            };
+            let command = ControlCommand::AdjustGroupVolume { delta };
+            let bytes = request(name, seq, Some(session.state_revision), command);
+            let (handled, window) =
+                measure_heap(|| endpoint.handle(&mut channel, now, &session, &bytes));
+            run.datagram_peak = run.datagram_peak.max(window.peak_above_start);
+            assert!(
+                matches!(&handled, Handled::Request { reply: Some(_), .. }),
+                "{name} round {round}: unexpected {handled:?}"
+            );
+            drop(handled);
+            drop(bytes);
+            let (settled, window) = measure_heap(|| {
+                stepper
+                    .step(&mut channel, now, &mut session)
+                    .expect("a step over a healthy journal")
+            });
+            run.step_peak = run.step_peak.max(window.peak_above_start);
+            assert!(
+                settled.len() == 1 && matches!(settled[0].outcome, Outcome::Committed { .. }),
+                "{name} round {round}: the relative command did not commit: {settled:?}"
+            );
+            drop(settled);
+            run.retained.push(live_bytes() - baseline);
+            let seen = channel.diagnostics(&session);
+            run.ledger_len = run.ledger_len.max(seen.ledger_len);
+            run.ordinary_pending = run.ordinary_pending.max(seen.ordinary_pending);
+        }
+    }
+    // What the running channel holds is what the medium holds, and a restart restores exactly that.
+    let held = channel.seq_floors().encode();
+    assert_eq!(stepper.stored_floors(), Some(held.as_slice()));
+    assert_eq!(stepper.stored_mark(), Some(session.state_revision));
+    let (fresh_authority, _) = directory_of_sixteen();
+    let mut fresh =
+        ControlChannel::new(fresh_authority, caps.config).expect("a valid configuration");
+    let opened = stepper.reopen();
+    assert_eq!(
+        restore_from_open(&mut fresh, &opened),
+        Ok(Restored::Mark(session.state_revision))
+    );
+    let restored_identities = match restore_seq_floors_from_open(&mut fresh, &opened) {
+        Ok(RestoredFloors::Table { identities }) => identities,
+        other => panic!("the floors were not restored: {other:?}"),
+    };
+    assert_eq!(fresh.seq_floors(), channel.seq_floors());
+    DurableRun {
+        run,
+        rounds,
+        identities: channel.seq_floors().len(),
+        floor_record_bytes: held.len(),
+        compactions: stepper.compactions(),
+        frames: stepper.frames_written(),
+        session_copy_peak,
+        restored_identities,
+    }
+}
+
+#[test]
+fn the_durable_step_with_sixteen_identities_reserving_floors_over_a_full_journal_is_measured() {
+    assert!(heap_is_tracked(), "the counting allocator is not installed");
+    let caps = caps_provisional();
+    let bounds = Bounds::of(&caps);
+    let seen = relative_floor_flood(&caps, 40);
+    let run = &seen.run;
+    let n = run.retained.len();
+    println!(
+        "N02-HEAP-DURABLE-OBSERVED {{\"rounds\":{},\"steps\":{n},\"identities\":{},\"restored_identities\":{},\"floor_record_bytes\":{},\"frames\":{},\"compactions\":{},\"datagram_peak\":{},\"step_peak\":{},\"session_copy_peak\":{},\"step_peak_minus_session_copy\":{},\"retained_highest\":{},\"retained_floor_third\":{},\"retained_floor_fourth\":{},\"bound_datagram\":{},\"bound_step\":{},\"bound_retained\":{}}}",
+        seen.rounds,
+        seen.identities,
+        seen.restored_identities,
+        seen.floor_record_bytes,
+        seen.frames,
+        seen.compactions,
+        run.datagram_peak,
+        run.step_peak,
+        seen.session_copy_peak,
+        run.step_peak.saturating_sub(seen.session_copy_peak),
+        run.highest(),
+        floor_of(&run.retained[n / 2..3 * n / 4]),
+        floor_of(&run.retained[3 * n / 4..]),
+        bounds.datagram,
+        bounds.step,
+        bounds.retained,
+    );
+    // The traffic is what the test says it is: the floors record is full, it came back whole from the medium, the journal
+    // compacted a full snapshot more than once, and every step was measured.
+    assert_eq!(seen.identities, MAX_PEERS);
+    assert_eq!(seen.restored_identities, MAX_PEERS);
+    assert_eq!(seen.floor_record_bytes, 226);
+    assert!(
+        seen.compactions > 1,
+        "the journal never compacted: {}",
+        seen.compactions
+    );
+    assert!(
+        run.step_peak > 0 && run.datagram_peak > 0,
+        "nothing was measured"
+    );
+    assert!(
+        seen.session_copy_peak > 0,
+        "copying the saturated session allocated nothing, so the copy was not measured"
+    );
+    // The judgement is the same one every flood gets, against the formula written from the caps. A red here is a finding.
+    assert_eq!(verdict(run, &bounds), Ok(()));
 }

@@ -468,6 +468,23 @@
       ]
     },
     {
+      "id": "G03-I30",
+      "statement": "The handler is stepped through the stepper its owner put in the Context, never by default: a step that cannot be made durable is rolled back whole, so the request is answered with the fixed-words fault that says the change was not applied, the session and the subscriber are as they were, no other peer's outcome from that round is reported or answered to a retry, and a relative tailnet step whose floor is already durable is answered 801 on retry and never 200. The first failure latches the durable path: later commands are refused in fixed words without a journal call, and reads still work. The legacy bridge is declared to the channel as an identity with no stable retry number, so sixty legacy relative changes write no floor and one tailnet relative change writes exactly one; the bridge's numbers resume above any floor the channel holds for it, a bridge the channel cannot declare does not run, a legacy relative after a process restart applies once with 200 while a tailnet duplicate of a pre-restart number is 801, and the plain-SOAP retry pin holds with the journal on. A request whose own local-user mute-on took effect despite the failed store is answered 200, not 'not applied'.",
+      "vectors": [],
+      "rust_tests": [
+        "server::a_tailnet_set_that_cannot_be_stored_is_not_applied_publishes_nothing_and_reports_no_ones_outcome",
+        "server::a_tailnet_relative_step_that_cannot_be_stored_is_not_applied_and_its_retry_is_unknown_never_ok",
+        "server::when_a_round_with_two_peers_commands_cannot_be_stored_neither_peers_retry_is_answered_from_the_ledger",
+        "server::once_the_durable_path_is_latched_commands_are_refused_in_fixed_words_and_reads_still_work",
+        "server::after_a_process_restart_a_legacy_relative_applies_once_and_a_tailnet_duplicate_is_unknown",
+        "server::sixty_legacy_relative_changes_write_no_floor_and_one_tailnet_relative_change_writes_one",
+        "server::the_plain_soap_retry_pin_holds_with_the_journal_on",
+        "server::a_floor_the_channel_holds_for_the_bridge_from_before_is_resumed_above_and_not_reported_unknown",
+        "server::a_bridge_the_channel_cannot_declare_does_not_run_rather_than_run_with_a_floor_per_request",
+        "server::a_request_whose_own_local_mute_on_took_effect_despite_the_failed_store_is_answered_ok"
+      ]
+    },
+    {
       "id": "G03-S01",
       "statement": "An M-SEARCH is parsed under hard bounds (size, printable ASCII, CRLF only, the empty-line terminator, header count and length, no folding, no duplicate HOST/MAN/MX/ST, MAN exactly \"ssdp:discover\", MX 1 to 120 answered as at most 5, a visible bounded ST); a datagram that breaks one is refused with a fixed word, a valid search is accepted, and another device's NOTIFY or a response is not a search. Truncation and corruption never panic.",
       "vectors": [],

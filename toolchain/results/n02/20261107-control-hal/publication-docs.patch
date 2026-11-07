@@ -1,0 +1,31 @@
+--- a/crates/franken-control/src/fsonos/server.rs
++++ b/crates/franken-control/src/fsonos/server.rs
+@@ -47,9 +47,10 @@
+ //!
+ //! [`Context`] holds the [`Stepper`] the owner built: a durable one steps through the journal (N02
+ //! `step_then_store`), and the plain development one stores nothing. There is no request field, header or default
+-//! that picks between them. A step that cannot be made durable is rolled back whole: the session is as it was, no
+-//! other peer's outcome from that round is reported, no event is published for it, and the request is answered with
+-//! a fixed-words fault that says the change was **not applied**. The first such failure latches the channel's
++//! that picks between them. A step that cannot be made durable is rolled back. Unsafe changes stay unapplied and
++//! their requests receive a fixed-words fault. Local-user stop and mute-on are re-applied to the live session:
++//! their actual outcomes are delivered, their live changes are published, and their own requests receive success.
++//! No rolled-back effect is reported as committed. The first such failure latches the channel's
+ //! durable path failed ([`Durability`]); while it is latched the local user's stop and mute-on still work and every
+ //! other command is refused with another fixed-words fault, until the owner reopens the journal.
+ //!
+--- a/docs/contracts/g03.md
++++ b/docs/contracts/g03.md
+@@ -298,8 +298,10 @@
+   take the local user's silence with it"), took effect, and are reported in `settled_others` like any settlement. If the
+   request's own command was one of them (a local-user-role peer's mute-on or stop that came by this route), it is answered
+   with its real outcome (`200`) and not with "not applied";
+-* answers with the fixed-words fault `ActionFailed("the change could not be stored; it was not applied")`;
+-* publishes nothing: the session is as it was, so the subscribers are already up to date;
++* answers a request whose own command was withheld with the fixed-words fault
++  `ActionFailed("the change could not be stored; it was not applied")`;
++* publishes actual live state changes, including any local stop or mute-on that applied. A rolled-back effect
++  publishes nothing; when the live session is unchanged the subscribers are already up to date;
+ * leaves the channel latched. Until the owner reopens the journal a command is answered
+   `ActionFailed("the change cannot be stored right now; it was not applied; only the device itself can stop or mute")` without a journal call, and reads are
+   unaffected. (A stop from the bridge is a controller's and is refused with the rest; the person at the device is

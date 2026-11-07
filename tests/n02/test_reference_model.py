@@ -25,6 +25,8 @@ CHANNEL_SRC = ref.ROOT / "crates" / "franken-control" / "src" / "channel"
 LOGFILE_SRC = ref.ROOT / "crates" / "franken-control" / "src" / "logfile.rs"
 # The counting allocator is an `unsafe impl`, which the workspace forbids in franken-control, so the heap tests live in the probe crate.
 PROBE_TESTS = ref.ROOT / "crates" / "franken-alloc-probe" / "tests"
+CONTROL_TESTS = ref.ROOT / "crates" / "franken-control" / "tests"  # the stepper scan is an integration test of the crate
+SPEAKER_PLANE = ref.ROOT / "crates" / "franken-speaker" / "src" / "control_adapter.rs"  # the durable control plane's tests
 HEAP_TEST = PROBE_TESTS / "n02_heap_high_water.rs"
 CONTRACT = ref.ROOT / "docs" / "contracts" / "n02.md"
 CASES =Path(__file__).resolve().parent / "cases.json"
@@ -670,7 +672,7 @@ class Mapping(unittest.TestCase):
         # The file sink (logfile.rs) is outside channel/ on purpose: the runtime-profile scan forbids the filesystem
         # in the channel's sources. Its tests are named by the same invariants, so it is read as well.
         # The heap tests (INV-HEAP-BOUND and the probe's own figure) are in franken-alloc-probe/tests, for the same kind of reason.
-        sources = sorted(CHANNEL_SRC.rglob("*.rs")) + [LOGFILE_SRC] + sorted(PROBE_TESTS.glob("*.rs"))
+        sources = sorted(CHANNEL_SRC.rglob("*.rs")) + [LOGFILE_SRC] + sorted(PROBE_TESTS.glob("*.rs")) + sorted(CONTROL_TESTS.glob("*.rs")) + [SPEAKER_PLANE]
         source = "\n".join(p.read_text(encoding="utf-8") for p in sources)
         names = {n for i in self.cases()["invariants"] for n in i["rust_tests"]}
         for group in self.cases()["other_rust_checks"].values():

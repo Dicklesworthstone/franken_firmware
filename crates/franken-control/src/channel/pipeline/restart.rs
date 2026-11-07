@@ -35,8 +35,9 @@
 
 use franken_session::UnifiedGroupSession;
 
-use super::ControlChannel;
+use super::{ControlChannel, Durability};
 use crate::channel::peer::PeerAuthority;
+use crate::channel::seqfloor::SeqFloors;
 
 /// A high-water mark could not be restored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -62,6 +63,37 @@ impl<A: PeerAuthority> ControlChannel<A> {
     #[must_use]
     pub fn high_water(&self, session: &UnifiedGroupSession) -> u64 {
         session.state_revision.max(self.restored_high_water)
+    }
+
+    /// Hand the channel the stored relative-command floors ([`SeqFloors`]), before its first `step`: from then on a
+    /// relative command at or below its identity's floor is answered `OutOfWindow` and never applied. The last call
+    /// before the first `step` wins; after it the call is refused, because a floor offered late would not cover what
+    /// the channel has already begun to apply.
+    pub fn restore_seq_floors(&mut self, floors: SeqFloors) -> Result<(), HighWaterError> {
+        if self.revision_floor.is_some() {
+            return Err(HighWaterError::AlreadyRunning);
+        }
+        self.seq_floors = floors;
+        Ok(())
+    }
+
+    /// The relative-command floors in force now: what was restored, raised by every relative command that began to
+    /// apply since.
+    #[must_use]
+    pub fn seq_floors(&self) -> &SeqFloors {
+        &self.seq_floors
+    }
+
+    /// The owner reopened the journal after a store failed (`reopen_from_open`): take what the medium holds, never
+    /// lower than what the channel knew, and clear the latch. The mark can be ahead of the session (the failed write
+    /// took, or the medium kept the new image), so the channel offers at least that; the revision floor stays, because
+    /// the rolled-back step revealed no revision to any client.
+    pub(super) fn reopen_durable(&mut self, mark: Option<u64>, floors: &SeqFloors) {
+        if let Some(mark) = mark {
+            self.restored_high_water = self.restored_high_water.max(mark);
+        }
+        self.seq_floors = self.seq_floors.merged(floors);
+        self.durability = Durability::Healthy;
     }
 }
 
