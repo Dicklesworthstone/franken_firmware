@@ -1,0 +1,51 @@
+{
+  "schema": "ffw.e06.bounded_lock_inventory.v1",
+  "baseline": "8807e97",
+  "scope": "producer source verification for all locked registry packages, including unlinked packages; no overall dependency admission",
+  "tests": {
+    "full_existing_e06_suite": {
+      "run": 365,
+      "failed": 0,
+      "skipped": 0,
+      "observed_warning": "preexisting unclosed plan fixture file in tests/e06/test_evidence.py"
+    },
+    "after_handle_fix_evidence_suite_warnings_as_errors": {
+      "run": 19,
+      "failed": 0,
+      "skipped": 0
+    },
+    "independent_focused_source_review_tests": {
+      "run": 31,
+      "failed": 0,
+      "skipped": 0
+    },
+    "py_compile": "pass",
+    "diff_check": "pass"
+  },
+  "independent_review": "GrayMeadow10723 source GO for producer only",
+  "controls": [
+    "regular cached archive positive versus symlink/FIFO/device/directory refusals",
+    "exact byte/inflate/member/tree limits versus one-over and early-stop",
+    "duplicate/path/sparse/special-member refusals and closed streams",
+    "complete locked-package inventory versus missing lock-wide metadata",
+    "existing P01 consumer unchanged"
+  ],
+  "input_sha256": {
+    "scripts/e06/audit.py": "4b45cef34608f1e7240d586d3542112138239c5a14d22a79fa18ac57d8f79273",
+    "tests/e06/test_audit.py": "82c70062f3a7007f779e6d20dcbbe357c2073bcf25b84b6226f02ab5db6ef1bf",
+    "tests/e06/test_live.py": "1d2838571f8dced8bd3b2a691ae339a878a868f99652a276531f50e9d54c2a48",
+    "tests/e06/test_evidence.py": "cf2ac5605b7f5b8ad2ccf1e64b63f79dcd9902defbea229035d5cf4f180e2079",
+    "docs/contracts/e06.md": "7e1b5eac76fa054473090660b04391a8d6609ff1cfe812322f0a326eea08353d"
+  },
+  "audit_scopes": {
+    "audit-n02-heap-lock-inventoried-39e70649d690": "historical fe32efe",
+    "audit-n07-datagram-seam-lock-39e70649d690": "historical committed90606cc"
+  },
+  "limitations": [
+    "source scanner reopens verified extracted paths; stable-cache assumption required across verification and scan",
+    "40001tree entries is a deliberately conservative admission cap, not a theorem for all valid archives",
+    "special-file and watchdog tests require Unix",
+    "historical audit scopes do not qualify subsequent source edits or current uncommitted N07 code",
+    "no guest/crypto/timing/resource/hardware qualification"
+  ]
+}

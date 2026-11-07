@@ -272,7 +272,9 @@ class UpstreamEvidenceTests(unittest.TestCase):
             self.assertEqual((problems, len(plan)), ([], count), path)
             self.assertTrue(all(fragment in ln and ln.endswith(" -Z build-std=std,panic_abort -j 2") for ln in lines), path)
             self.assertEqual({p["target"] for p in plan}, {"mips-unknown-linux-musl", "powerpc-unknown-linux-musl"}, path)
-        self.assertEqual({p["crate"] for p in self.CK.parse_plan(open(os.path.join(LIBC, "plan-runtime-crates.txt")).read().splitlines())[0]},
+        with open(os.path.join(LIBC, "plan-runtime-crates.txt"), encoding="utf-8") as fh:
+            libc_plan = self.CK.parse_plan(fh.read().splitlines())[0]
+        self.assertEqual({p["crate"] for p in libc_plan},
                          {"frankenlibc-core", "frankenlibc-abi", "frankenlibc-membrane"})
 
     def test_the_contract_states_the_same_upstream_numbers_as_the_inventories(self):

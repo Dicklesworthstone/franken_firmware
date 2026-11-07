@@ -4,7 +4,9 @@
 Reads the resolver (``cargo metadata --locked --offline --filter-platform <triple>``), ``Cargo.lock`` and the
 dependency sources already in the local registry cache, and reports FACTS per package and per target:
 
-* pin: exact version, source and checksum from Cargo.lock, plus the features cargo enabled per target;
+* pin: exact version, source and checksum from Cargo.lock, plus the features cargo enabled per target.  A lock entry that no
+  platform graph links (a gated dependency inactive everywhere) is still pinned and inventoried, from its cargo source after
+  the cached archive is proved to be the locked one, and labelled ``unlinked``; a source that cannot be proved is a blocker;
 * native code signals: ``links``, a build script, native build tooling, link directives in the script;
 * unsafe: counted from the crate's OWN source tokens, and which mechanism (crate attribute, manifest lint,
   workspace lint) declares forbid/deny.  A parent crate's ``forbid(unsafe_code)`` is not an input to any
@@ -26,12 +28,17 @@ not something a compiler target spec can establish.
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
+import io
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
+import tarfile
+import zlib
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 try:
@@ -99,11 +106,30 @@ _UNKNOWN_TARGET = re.compile(r"could not find specification for target|error loa
                              r"unknown target triple", re.I)
 
 
-def run_cargo_metadata(manifest: str, triple: str, timeout: float = 180.0,
+class LockedSources:
+    """Cargo's own listing of every package the lock resolves, with no platform filter.  A platform-filtered read omits the
+    lock entries that no platform graph links (a gated dependency that is inactive everywhere), so this is the one place
+    their registry cache paths can be found.  ``outcome`` is ``resolved`` or a resolver failure; ``metadata`` is None unless
+    resolved."""
+
+    def __init__(self, outcome: str, metadata: Optional[dict] = None, detail: str = ""):
+        self.outcome, self.metadata, self.detail = outcome, metadata, detail
+
+
+class PlatformList(list):
+    """The platform inputs, plus the lock-wide source listing that ``gather`` read beside them.  A plain list in every other
+    respect, so code that only iterates the platforms is unchanged."""
+
+    locked: Optional[LockedSources] = None
+
+
+def run_cargo_metadata(manifest: str, triple: Optional[str], timeout: float = 180.0,
                        cargo_args: Sequence[str] = ()) -> Tuple[str, Optional[dict], str]:
-    """(outcome, metadata, detail).  A resolver read, not a build: --locked --offline, one target filter.  ``cargo_args``
-    is only ever the feature selection built by ``feature_args`` (never free text)."""
-    cmd = ["cargo", "metadata", "--format-version", "1", "--locked", "--offline", "--filter-platform", triple,
+    """(outcome, metadata, detail).  A resolver read, not a build: --locked --offline, one target filter (none when
+    ``triple`` is None: the lock-wide listing).  ``cargo_args`` is only ever the feature selection built by
+    ``feature_args`` (never free text)."""
+    cmd = ["cargo", "metadata", "--format-version", "1", "--locked", "--offline",
+           *(["--filter-platform", triple] if triple is not None else []),
            "--manifest-path", manifest, *cargo_args]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
@@ -488,16 +514,257 @@ class _Findings:
         return sorted(out, key=lambda f: (order[f["severity"]], f["kind"], f["package"] or "", f["detail"]))
 
 
+# ------------------------------------------------------------------------------------------------ locked, linked nowhere
+
+CRATE_READ_LIMIT = 64 << 20            # bytes of the cached .crate archive itself: a registry crate is small
+INFLATE_LIMIT = 64 << 20               # bytes the archive may inflate to (the whole tar stream, so also all its members together)
+MAX_ARCHIVE_MEMBERS = 20000            # entries, files and directories, in one archive
+# Chosen conservative cap on extracted entries of every kind (files, directories, marker). This is an admission limit,
+# not a theorem about every valid archive: one archived filename can imply several parent directories.
+MAX_TREE_ENTRIES = 2 * MAX_ARCHIVE_MEMBERS + 1
+EXTRACTION_MARKERS = {".cargo-ok"}     # the one file cargo itself writes beside an extracted crate
+
+
+def _list_tree(root: str) -> Tuple[Optional[Set[str]], Optional[str]]:
+    """(plain files of the extracted tree by relative name, None) or (None, why). By name and type only: nothing is opened.
+
+    A lazy, iterative ``scandir`` traversal that counts EVERY entry (file, directory, marker) as it is produced and stops at the first one over
+    ``MAX_TREE_ENTRIES``; it never lists a whole directory at once (``os.walk`` does) and never recurses, so a directory of a million entries, a
+    thousand nested empty directories or a storm of extra files costs at most the cap before it is refused. A symbolic link of any kind, a
+    device, a pipe or any other special file is refused where it stands, before the rest is read."""
+    files: Set[str] = set()
+    pending = [root]
+    count = 0
+    try:
+        while pending:
+            with os.scandir(pending.pop()) as entries:
+                for entry in entries:
+                    count += 1
+                    if count > MAX_TREE_ENTRIES:
+                        return None, "the extracted source holds more than %d entries" % MAX_TREE_ENTRIES
+                    rel = os.path.relpath(entry.path, root).replace(os.sep, "/")
+                    if entry.is_symlink():
+                        return None, ("the extracted source holds a symbolic link to a directory" if entry.is_dir()
+                                      else "%s in the extracted source is a symbolic link" % rel)
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(entry.path)
+                    elif entry.is_file(follow_symlinks=False):
+                        files.add(rel)
+                    else:
+                        return None, "%s in the extracted source is not a plain file" % rel
+    except OSError:
+        return None, "the extracted source cannot be listed"
+    return files, None
+
+
+def _plain_file(path: str) -> Optional[Any]:
+    """The regular file at ``path`` opened for reading, or None. Never through a symbolic link (``O_NOFOLLOW`` where the system has it, a
+    link test everywhere), and never a device, pipe or directory: that is checked on the open descriptor, which is opened without blocking."""
+    if os.path.islink(path):
+        return None
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0))
+    except OSError:
+        return None
+    try:
+        if stat.S_ISREG(os.fstat(fd).st_mode):
+            return os.fdopen(fd, "rb")
+    except OSError:
+        pass
+    os.close(fd)
+    return None
+
+
+def verify_registry_source(pkg: dict, checksum: str) -> Tuple[Optional[Dict[str, Any]], Optional[Tuple[str, str]]]:
+    """(facts, None) when the cargo-cache source of a registry package is exactly what the lock pins, else (None, (kind, why)).
+
+    The ``.crate`` archive cargo cached beside the extracted directory must hash to the lock's checksum, and that directory
+    must hold exactly the archive's files, byte for byte (cargo's own ``.cargo-ok`` marker aside) and nothing else: no symbolic
+    link anywhere in it, no device or pipe, no extra or missing file. Only then is anything read from it; for one that cannot be
+    proved this way nothing is invented.
+
+    Every step is bounded before it reads on: the archive's own size, the extracted tree's entry count (files, directories and the
+    marker, enumerated lazily and stopped at the cap), the archive's inflation (read with a size, never all at once), its entry
+    count, its member names (a duplicate is refused) and their declared sizes. The tar is parsed header by header, never
+    listed whole, and every stream opened here is closed. The cached archive and every extracted file are opened by the one plain-file opener."""
+    differs = "lock-entry-source-differs"
+    root = os.path.dirname(pkg.get("manifest_path") or "")
+    index_dir = os.path.dirname(root)
+    src_dir = os.path.dirname(index_dir)
+    registry = os.path.dirname(src_dir)
+    if (os.path.basename(src_dir) != "src" or os.path.basename(registry) != "registry" or not os.path.isdir(root)
+            or os.path.basename(root) != "%s-%s" % (pkg["name"], pkg["version"])):
+        return None, ("lock-entry-source-missing", "its source is not a directory of cargo's registry cache")
+    if os.path.islink(root):
+        return None, (differs, "the extracted source directory is a symbolic link")
+    crate = os.path.join(registry, "cache", os.path.basename(index_dir), os.path.basename(root) + ".crate")
+    # The archive is as mutable an input as the tree: it is opened by the same plain-file opener (no link followed, no blocking on a pipe,
+    # regular by the descriptor's own type), never by a blocking open that a pipe in its place could hang before the size cap applies.
+    handle = _plain_file(crate)
+    if handle is None:
+        if not os.path.lexists(crate):
+            return None, ("lock-entry-source-missing", "the cached .crate archive is not there, so the source cannot be tied to the lock checksum")
+        return None, (differs, "the cached .crate archive is not a plain file (a link, pipe, device or directory)")
+    try:
+        with handle:
+            blob = handle.read(CRATE_READ_LIMIT + 1)
+    except OSError:
+        return None, ("lock-entry-source-missing", "the cached .crate archive cannot be read, so the source cannot be tied to the lock checksum")
+    if len(blob) > CRATE_READ_LIMIT:
+        return None, (differs, "the cached .crate archive is larger than the %d-byte read limit" % CRATE_READ_LIMIT)
+    digest = hashlib.sha256(blob).hexdigest()
+    if digest != checksum.lower():
+        return None, ("lock-entry-checksum-mismatch",
+                      "the cached .crate archive hashes to %s..., the lock pins %s..." % (digest[:16], checksum[:16]))
+
+    # 1. The extracted tree, by name and type only (nothing is opened): no link of any kind, no special file.
+    on_disk, why = _list_tree(root)                                   # lazy, counted and capped; see _list_tree
+    if on_disk is None:
+        return None, (differs, why or "the extracted source cannot be listed")
+
+    # 2. The archive: inflated with a bound, then read header by header with a bound on count, names and declared sizes.
+    try:
+        with gzip.GzipFile(fileobj=io.BytesIO(blob), mode="rb") as stream:
+            tar_bytes = stream.read(INFLATE_LIMIT + 1)
+        if len(tar_bytes) > INFLATE_LIMIT:
+            return None, (differs, "the cached .crate archive inflates to more than the %d-byte limit" % INFLATE_LIMIT)
+        prefix = os.path.basename(root) + "/"
+        with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:") as archive:
+            files: List[tarfile.TarInfo] = []
+            names: Set[str] = set()
+            total = 0
+            for member in archive:                                     # one header at a time; no member's data is read here
+                if len(names) >= MAX_ARCHIVE_MEMBERS:
+                    return None, (differs, "the archive holds more than %d entries" % MAX_ARCHIVE_MEMBERS)
+                key = member.name.rstrip("/")
+                if key in names:
+                    return None, (differs, "the archive names %r more than once" % member.name[:60])
+                names.add(key)
+                parts = member.name.split("/")
+                if ".." in parts or "" in parts[:-1] or not (key == prefix[:-1] or key.startswith(prefix)):
+                    return None, (differs, "the archive holds an entry outside the crate (%r)" % member.name[:60])
+                if member.type == tarfile.DIRTYPE:
+                    continue
+                if member.type not in (tarfile.REGTYPE, tarfile.AREGTYPE) or key == prefix[:-1]:
+                    return None, (differs, "the archive holds an entry that is not a plain file of the crate (%r)" % member.name[:60])
+                total += member.size
+                if total > INFLATE_LIMIT or member.offset_data + member.size > len(tar_bytes):
+                    return None, (differs, "the archive declares a member larger than the %d-byte limit or than the data it holds" % INFLATE_LIMIT)
+                files.append(member)
+            expected = {m.name[len(prefix):] for m in files}
+            for rel in sorted(on_disk - expected - EXTRACTION_MARKERS):
+                return None, (differs, "%s is in the extracted source but not in the archive" % rel)
+            for rel in sorted(expected - on_disk):
+                return None, (differs, "%s is in the archive but not in the extracted source" % rel)
+
+            # 3. Contents, only now: every file opened without following a link, every stream closed.
+            for member in files:
+                rel = member.name[len(prefix):]
+                handle = _plain_file(os.path.join(root, rel))
+                if handle is None:
+                    return None, (differs, "%s is in the archive but is not a plain file of the extracted source" % rel)
+                with handle:
+                    on_disk_bytes = handle.read(member.size + 1)
+                with archive.extractfile(member) as member_stream:     # type: ignore[union-attr]
+                    data = member_stream.read()
+                if on_disk_bytes != data:
+                    return None, (differs, "%s in the extracted source differs from the archive" % rel)
+    except (tarfile.TarError, OSError, EOFError, zlib.error):
+        return None, (differs, "the cached .crate archive is not a readable gzip tar")
+    return {"archive_sha256": digest, "files_in_archive": len(files), "files_compared": len(files)}, None
+
+
+def inventory_unlinked(unused: Sequence[Tuple[str, str, Optional[str]]], lock: Dict[Tuple[str, str, Optional[str]], dict],
+                       locked: LockedSources, workspace_root: str, platform_keys: Sequence[str], taken: Set[str]
+                       ) -> Tuple[List[Dict[str, Any]], List[Tuple[str, str, str, str]]]:
+    """Inventory the Cargo.lock entries that no resolved platform graph links (a gated dependency inactive on every audited
+    platform, for instance): ``unused`` are their lock keys.  Returns ``(items, notes)``.
+
+    Each item is ``{"pid", "rec"}``: a package record with the same fields as any other, built from the SAME source scan and
+    from that source's own manifest, but only after ``verify_registry_source`` proved the source is the one the lock pins.
+    Its role on every platform is ``absent`` and it carries an ``unlinked`` object: it is not marked linked, host-only or
+    reachable anywhere, and the label is derived from the graphs of this run alone, so an entry a later graph links is an
+    ordinary record there.  A notes tuple is ``(kind, severity, package, detail)``.  An entry whose source is missing,
+    differs from its checksum or cannot be located is a BLOCKER and gets no record at all: nothing is fabricated for it."""
+    index: Dict[Tuple[str, str, Optional[str]], dict] = {}
+    if locked.outcome == "resolved" and locked.metadata:
+        for p in locked.metadata.get("packages", []):
+            index.setdefault((p["name"], p["version"], p.get("source")), p)
+    items: List[Dict[str, Any]] = []
+    notes: List[Tuple[str, str, str, str]] = []
+    taken = set(taken)
+    for key3 in unused:
+        name, version, source = key3
+        label = "%s@%s" % (name, version)
+        if source is None:
+            continue                                  # a workspace or path entry: not an external pin
+        if not source.startswith(("registry+", "sparse+")):
+            notes.append(("lock-entry-unsupported-source", "blocker", label,
+                          "locked, linked on no platform, from a %s source: only a registry crate can be tied to its lock checksum "
+                          "from the cargo cache" % source.split("+", 1)[0]))
+            continue
+        checksum = lock[key3].get("checksum")
+        if not checksum:
+            notes.append(("lock-missing-checksum", "blocker", label, "registry package has no checksum in Cargo.lock"))
+            continue
+        pkg = index.get(key3)
+        if pkg is None:
+            why = ("cargo's lock-wide listing could not be read (%s: %s)" % (locked.outcome, locked.detail or "no detail")
+                   if locked.outcome != "resolved" else "cargo's lock-wide listing does not name it")
+            notes.append(("lock-entry-not-located", "blocker", label,
+                          "locked, linked on no platform, and its source cannot be located: %s (nothing is inventoried for it)" % why))
+            continue
+        facts, problem = verify_registry_source(pkg, checksum)
+        if problem is not None:
+            notes.append((problem[0], "blocker", label,
+                          "locked, linked on no platform; %s (nothing is inventoried for it)" % problem[1]))
+            continue
+        scan = scan_package(pkg, workspace_root)
+        rec_key = label if label not in taken else "%s[%s]" % (label, os.path.basename(os.path.dirname(pkg["manifest_path"])))
+        taken.add(rec_key)
+        rec = {
+            "name": name, "version": version, "key": rec_key, "source_kind": "registry",
+            "pin": {"source": source, "checksum": checksum, "in_lock": True},
+            "license": _license(pkg), "target_kinds": scan["target_kinds"], "links": pkg.get("links"),
+            "build_script": scan["build_script"], "unsafe": scan["unsafe"], "uses_float": scan["uses_float"],
+            "references_alloc": scan["uses_alloc"], "scanned_files": scan["scanned_files"],
+            "platforms": {k: {"role": "absent"} for k in platform_keys},
+            "gated_dependencies": [], "declared_features": None,
+            "unlinked": {"reason": "in Cargo.lock and in no resolved platform graph (the host and each audited target)",
+                         "source_verified": facts},
+        }
+        items.append({"pid": pkg["id"], "rec": rec})
+        u, lic, b = scan["unsafe"], rec["license"], scan["build_script"]
+        notes.append(("unlinked-locked-package", "info", rec_key,
+                      "locked and linked on no audited platform, so nothing here links, builds or reaches it; read from its cargo source, "
+                      "whose archive sha256 equals the lock's and whose %d files equal the archive's: license %s; %s; build script %s%s"
+                      % (facts["files_compared"] if facts else 0,
+                         lic["expression"] or lic["file"] or "none declared",
+                         ("%d unsafe token(s) in %s" % (u["tokens"], ", ".join(u["files"])) if u["status"] == "present"
+                          else "no unsafe token" if u["status"] == "none" else "unsafe %s" % u["status"]),
+                         "present" if b["present"] else "absent",
+                         "; links = %r" % pkg["links"] if pkg.get("links") else "")))
+    return items, notes
+
+
 def analyze(platforms: Sequence[PlatformInput], lock_text: str, workspace_root: str,
             unsafe_allowed: Iterable[str] = DEFAULT_UNSAFE_ALLOWED, build_results: Optional[List[dict]] = None,
             candidates: Optional[List[Dict[str, Any]]] = None, jobs: Optional[int] = None,
             subject: str = "own", cargo_args: Sequence[str] = (), lock_origin: str = "repository",
-            plan_crates: Optional[Sequence[str]] = None, scope_crates: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+            plan_crates: Optional[Sequence[str]] = None, scope_crates: Optional[Sequence[str]] = None,
+            locked: Optional[LockedSources] = None) -> Dict[str, Any]:
     """The audit.  Pure with respect to its arguments (it reads source files named by the metadata).
 
     ``subject`` is ``own`` (this project's workspace, held to its P01 unsafe rule) or ``upstream`` (a third party's
     pinned revision, audited read-only: its crates' unsafe is a fact to review, never a violation of a rule it never
-    agreed to).  ``lock_origin`` is ``repository`` (a committed Cargo.lock) or ``generated-offline``."""
+    agreed to).  ``lock_origin`` is ``repository`` (a committed Cargo.lock) or ``generated-offline``.
+
+    ``locked`` is the lock-wide source listing (``gather`` attaches it to the platform list it returns).  With it, every
+    registry entry of an ``own`` workspace's Cargo.lock that NO platform graph links is inventoried from its verified cargo
+    source (see ``inventory_unlinked``); without it each such entry is a blocker (``lock-entry-not-located``) and gets no record or pin.
+    An ``upstream`` or scoped audit is unchanged, and so is any audit with no unused registry entry."""
+    if locked is None:
+        locked = getattr(platforms, "locked", None)
     allowed = set(unsafe_allowed)
     findings = _Findings()
     lock = parse_lock(lock_text)
@@ -778,6 +1045,21 @@ def analyze(platforms: Sequence[PlatformInput], lock_text: str, workspace_root: 
                          "%s has max-atomic-width %s: classify each shared u64 by semantics (contract E03 section 4)"
                          % (p.triple, p.target_spec["max-atomic-width"]))
 
+    # --- the lock entries that no platform graph links: inventoried from their verified cargo source, or a blocker
+    resolved_keys = {(all_pkgs[pid]["name"], all_pkgs[pid]["version"], all_pkgs[pid].get("source")) for pid in in_graph}
+    unused_lock = sorted("%s@%s" % (n, v) for (n, v, s) in lock if (n, v, s) not in resolved_keys)
+    unlinked: List[Dict[str, Any]] = []
+    if unused_lock and subject == "own" and reach is None and all(p.outcome == "resolved" for p in platforms):
+        # An own, unscoped audit owes a record and a pin for EVERY locked registry entry. Without the lock-wide listing their sources cannot
+        # be located, and that is a blocker for each of them, never a quiet pass over a report that lacks them. "Linked on no platform" is only
+        # a claim once EVERY audited platform resolved: when one did not, the audit is already blocked for that and says no more about the lock.
+        sources = locked if locked is not None else LockedSources("missing", None, "no lock-wide source listing was supplied to the audit")
+        unused_keys = sorted((k for k in lock if k not in resolved_keys), key=lambda k: (k[0], k[1], k[2] or ""))
+        unlinked, notes = inventory_unlinked(unused_keys, lock, sources, workspace_root, list(graphs),
+                                             {r["key"] for r in records.values()})
+        for kind, severity, package, detail in notes:
+            findings.add(kind, severity, package, None, detail)
+
     # --- pins
     pins: Dict[str, Any] = {}
     for key, g in graphs.items():
@@ -787,9 +1069,12 @@ def analyze(platforms: Sequence[PlatformInput], lock_text: str, workspace_root: 
             rows.append({"package": rec["key"], "source": rec["pin"]["source"] or rec["source_kind"],
                          "checksum": rec["pin"]["checksum"], "role": rec["platforms"][key]["role"],
                          "features": rec["platforms"][key]["features"]})
+        if unlinked:
+            # Locked here, resolved for no platform: a row of its own role, never one of the graph's roles.
+            rows += [{"package": u["rec"]["key"], "source": u["rec"]["pin"]["source"], "checksum": u["rec"]["pin"]["checksum"],
+                      "role": "unlinked", "features": []} for u in unlinked]
+            rows.sort(key=lambda r: r["package"])
         pins[key] = {"rows": rows, "digest": _sha256(json.dumps(rows, sort_keys=True))}
-    resolved_keys = {(all_pkgs[pid]["name"], all_pkgs[pid]["version"], all_pkgs[pid].get("source")) for pid in in_graph}
-    unused_lock = sorted("%s@%s" % (n, v) for (n, v, s) in lock if (n, v, s) not in resolved_keys)
     if unused_lock:
         findings.add("lock-unused-entries", "info", None, None,
                      "%d Cargo.lock entr%s not in %s: %s" % (
@@ -861,6 +1146,12 @@ def analyze(platforms: Sequence[PlatformInput], lock_text: str, workspace_root: 
                          "not planned, because they do not declare %s: %s (name crates with --plan-crates to plan others)"
                          % (", ".join(requested_features), ", ".join(left_out)))
     checks = fold_build_results(plan, build_results, findings)
+
+    # The unlinked entries join the package list last: every graph-derived pass above (roles, findings, the build plan,
+    # the candidates) has already run over the graphs alone, so nothing in them can see an entry that is in no graph.
+    for u in unlinked:
+        records[u["pid"]] = u["rec"]
+        names[u["pid"]] = u["rec"]["key"]
 
     flist = findings.all()
     counts = {s: sum(1 for f in flist if f["severity"] == s) for s in SEVERITIES}
@@ -983,11 +1274,15 @@ def gather(manifest: str, targets: Dict[str, str], host: Optional[str],
     root = os.path.dirname(os.path.abspath(manifest))
     triples = dict(targets)
     triples["host"] = host or host_triple() or "host"
-    platforms = []
+    platforms = PlatformList()
     for key, triple in sorted(triples.items()):
         outcome, meta, detail = run_cargo_metadata(manifest, triple, cargo_args=cargo_args)
         spec_outcome, spec = capture_target_spec(triple)
         platforms.append(PlatformInput(key, triple, outcome, detail, meta, spec, spec_outcome))
+    if any(p.outcome == "resolved" for p in platforms):
+        # The same resolver read with no platform filter: the only listing that locates a lock entry no platform links.
+        outcome, meta, detail = run_cargo_metadata(manifest, None, cargo_args=cargo_args)
+        platforms.locked = LockedSources(outcome, meta, detail)
     workspace_root = next((p.metadata["workspace_root"] for p in platforms if p.metadata), root)   # type: ignore[index]
     lock_path = os.path.join(workspace_root, "Cargo.lock")
     return platforms, _read(lock_path) or "", workspace_root
@@ -1014,6 +1309,7 @@ def inventory(report: Dict[str, Any], subject_name: str, subject_rev: str) -> Di
             "native_tooling": sorted(set(p["build_script"]["native_tooling_deps"])),
             "link_directives": len(p["build_script"]["link_directives"]), "references_alloc": p["references_alloc"],
             "uses_float": bool(p.get("uses_float")),
+            **({"unlinked": True} if p.get("unlinked") else {}),        # locked, linked on no platform (see inventory_unlinked)
             "declared_features": p.get("declared_features"),
             # A package absent from a platform's graph has only {"role": "absent"}: no std mode, no features.
             "platforms": {k: {"role": v["role"], "std": v.get("std"), "effective_std": v.get("effective_std"),

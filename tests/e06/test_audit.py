@@ -5,12 +5,20 @@ Three fixtures: a SMALL clean graph (every package class once, nothing to review
 unpinned and missing lock data, ...: each must be reported distinctly) and small purpose-built graphs for platform
 outcomes, floating point, the build plan and report hygiene.
 """
+import builtins
+import contextlib
+import gzip
+import hashlib
 import importlib.util
+import io
 import json
 import os
+import signal
 import sys
+import tarfile
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -341,7 +349,9 @@ class ContaminatedGraphTests(Base):
     def test_with_only_review_items_left_the_exit_code_is_three_not_zero(self):
         for c in self.fx.crates.values():
             if c.name in ("nochecksum", "notinlock", "git-unpinned", "ext-path", "core2", "nopolicy"):
-                c.in_lock = c.in_lock                                       # noqa: PLW0127 - keep, then drop the edges
+                # They leave the lock with their edges. A locked registry entry that no graph links must still be pinned and
+                # inventoried (see UnlinkedLockedPackageTests), so one with no checksum or a git source would be a blocker here.
+                c.in_lock = False
         app = self.fx.crates["app@0.1.0"]
         drop = {"nochecksum", "notinlock", "git-unpinned", "ext-path", "core2", "nopolicy"}
         app.deps = [d for d in app.deps if d.name not in drop]
@@ -753,6 +763,648 @@ class ReportHygieneTests(Base):
         self.assertIn("REVIEW   unsafe-in-dependency", out)
         self.assertNotIn("INFO", out)
         self.assertIn("Cargo.lock sha256=", out)
+
+
+# ------------------------------------------------------------------------------------------------ locked, linked nowhere
+
+class UnlinkedLockedPackageTests(Base):
+    """A Cargo.lock entry that no platform graph links (a gated dependency inactive everywhere) is still pinned and inventoried,
+    from its cargo source, once the cached archive is proved to be the locked one. Expected facts are written here, from the
+    source text each world writes, not read back from the analyzer. Every refusal is paired with the permitted positive."""
+
+    INDEX = "index.crates.io-test"
+    KEY = "gated-sys@0.2.0"
+    LIB = "pub fn read(x: &u8) -> u8 {\n    unsafe { core::ptr::read(x) }\n}\n"
+    MANIFEST = '[package]\nname = "gated-sys"\nversion = "0.2.0"\nlicense = "MIT OR Apache-2.0"\n'
+
+    def world(self, *, lock_checksum=None, archive=True, tamper=None, source=None, listed=True, listing="resolved",
+              extra_tar=None, checksum_line=True, write_src=True, not_on_disk=(), replace=None):
+        """(report, lock_text, sha256 of the archive). A cargo-shaped registry cache holding one crate that the lock names and
+        no platform links, beside the small clean graph. Every call builds its own cache directory. ``write_src=False`` leaves
+        the extracted directory out; ``not_on_disk`` leaves named files out of it (the archive still holds them)."""
+        self.fx = small_fixture(self.root, self.outside)
+        reg = os.path.join(tempfile.mkdtemp(prefix="cargo-home-", dir=self.outside), "registry")
+        src = os.path.join(reg, "src", self.INDEX, "gated-sys-0.2.0")
+        files = {"Cargo.toml": self.MANIFEST, "src/lib.rs": self.LIB}
+        if write_src:
+            os.makedirs(os.path.join(src, "src"))
+            for rel, text in files.items():
+                if rel not in not_on_disk:
+                    with open(os.path.join(src, rel), "w") as fh:
+                        fh.write(text)
+            with open(os.path.join(src, ".cargo-ok"), "w") as fh:
+                fh.write('{"v":1}')
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            for rel, text in files.items():
+                data = text.encode()
+                info = tarfile.TarInfo("gated-sys-0.2.0/" + rel)
+                info.size = len(data)
+                tf.addfile(info, io.BytesIO(data))
+            if extra_tar:
+                extra_tar(tf)
+        blob = buf.getvalue()
+        sha = hashlib.sha256(blob).hexdigest()
+        if archive:
+            os.makedirs(os.path.join(reg, "cache", self.INDEX))
+            with open(os.path.join(reg, "cache", self.INDEX, "gated-sys-0.2.0.crate"), "wb") as fh:
+                fh.write(blob)
+        if tamper:
+            tamper(src)
+        src_id = source or FX.REGISTRY
+        lock = self.fx.lock_text() + '[[package]]\nname = "gated-sys"\nversion = "0.2.0"\nsource = "%s"\n%s\n' % (
+            src_id, ('checksum = "%s"\n' % (lock_checksum or sha)) if checksum_line else "")
+        pkg_listing = {"id": src_id + "#gated-sys@0.2.0", "name": "gated-sys", "version": "0.2.0", "source": src_id,
+                       "license": "MIT OR Apache-2.0", "license_file": None, "links": None, "dependencies": [],
+                       "manifest_path": os.path.join(src, "Cargo.toml"),
+                       "targets": [{"kind": ["lib"], "name": "gated_sys", "src_path": os.path.join(src, "src", "lib.rs")}]}
+        locked = AU.LockedSources(listing, {"packages": [pkg_listing] if listed else []} if listing == "resolved" else None,
+                                  "" if listing == "resolved" else "cargo exited 101")
+        return AU.analyze(platforms(self.fx, replace=replace), lock, self.fx.root, locked=locked), lock, sha
+
+    def pins(self, report, plat):
+        return {r["package"]: r for r in report["pins"][plat]["rows"]}
+
+    # -- the permitted positive: the entry is inventoried, labelled, and reaches nothing
+    def test_a_locked_package_that_no_platform_links_is_inventoried_from_its_verified_source(self):
+        report, lock, sha = self.world()
+        rec = pkg(report, self.KEY)
+        self.assertEqual((rec["source_kind"], rec["pin"]), ("registry", {"source": FX.REGISTRY, "checksum": sha, "in_lock": True}))
+        self.assertEqual((rec["license"]["status"], rec["license"]["expression"]), ("declared", "MIT OR Apache-2.0"))
+        self.assertEqual((rec["unsafe"]["status"], rec["unsafe"]["tokens"], sorted(rec["unsafe"]["files"])),
+                         ("present", 1, ["src/lib.rs"]))
+        self.assertEqual(rec["unlinked"]["source_verified"], {"archive_sha256": sha, "files_in_archive": 2, "files_compared": 2})
+        self.assertEqual({k: v["role"] for k, v in rec["platforms"].items()},
+                         {"host": "absent", "mips": "absent", "powerpc": "absent"})
+        for plat in KEYS:
+            row = self.pins(report, plat)[self.KEY]
+            self.assertEqual((row["source"], row["checksum"], row["role"]), (FX.REGISTRY, sha, "unlinked"), plat)
+            self.assertNotIn(self.KEY, report["summary"]["linked"][plat])
+            self.assertNotIn(self.KEY, report["summary"]["host_only"][plat])
+        note = find(report, "unlinked-locked-package", self.KEY)
+        self.assertEqual([f["severity"] for f in note], ["info"])
+        self.assertIn("1 unsafe token(s) in src/lib.rs", note[0]["detail"])
+        self.assertIn(self.KEY, find(report, "lock-unused-entries")[0]["detail"])           # the information note stays
+        self.assertEqual(kinds(report, "blocker"), [])
+        self.assertNotEqual(AU.exit_code(report), 1)
+        self.assertNotIn(self.outside, json.dumps(report))
+
+    def test_without_the_lock_wide_listing_an_own_audit_with_an_unused_entry_is_blocked_and_the_rest_of_the_report_is_unchanged(self):
+        report, lock, _ = self.world()
+        before = AU.analyze(platforms(self.fx), lock, self.fx.root)     # the library default: no lock-wide listing supplied
+        self.assertEqual([(f["kind"], f["package"], f["severity"]) for f in before["findings"] if f["severity"] == "blocker"],
+                         [("lock-entry-not-located", self.KEY, "blocker")])
+        self.assertIn("no lock-wide source listing was supplied", find(before, "lock-entry-not-located")[0]["detail"])
+        self.assertEqual(AU.exit_code(before), 1)
+        self.assertEqual([p for p in before["packages"] if p["key"] == self.KEY], [], "a record was fabricated")
+        self.assertNotIn(self.KEY, self.pins(before, "mips"))
+        self.assertEqual([p["key"] for p in report["packages"] if "unlinked" in p], [self.KEY])
+        self.assertEqual([p for p in report["packages"] if "unlinked" not in p], before["packages"])
+        self.assertEqual([f for f in report["findings"] if f["kind"] != "unlinked-locked-package"],
+                         [f for f in before["findings"] if f["kind"] != "lock-entry-not-located"])
+        self.assertEqual(report["summary"]["linked"], before["summary"]["linked"])
+        self.assertEqual(report["summary"]["host_only"], before["summary"]["host_only"])
+
+    def test_the_missing_listing_blocks_nothing_when_no_entry_is_unused_and_not_an_upstream_or_scoped_audit(self):
+        clean = small_fixture(self.root, self.outside)                  # the permitted positive: every locked entry is linked, no listing needed
+        report = AU.analyze(platforms(clean), clean.lock_text(), clean.root)
+        self.assertEqual(kinds(report, "blocker"), [])
+        self.assertEqual(find(report, "lock-unused-entries"), [])
+        _, lock, _ = self.world()                                       # an unused registry entry now exists in the lock
+        upstream = AU.analyze(platforms(self.fx), lock, self.fx.root, subject="upstream")
+        scoped = AU.analyze(platforms(self.fx), lock, self.fx.root, scope_crates=["app"])
+        for label, other in (("upstream", upstream), ("scoped", scoped)):
+            self.assertEqual(find(other, "lock-entry-not-located"), [], label)
+            self.assertEqual(find(other, "unlinked-locked-package"), [], label)
+            self.assertEqual([f["severity"] for f in find(other, "lock-unused-entries")], ["info"], label)
+
+    # -- refusals: the source cannot be proved to be the locked one, so nothing is inventoried for it
+    def refused(self, kind, **opt):
+        report, _, _ = self.world(**opt)
+        self.assertEqual([f["package"] for f in find(report, kind)], [self.KEY], kind)
+        self.assertEqual(find(report, kind)[0]["severity"], "blocker")
+        self.assertEqual(find(report, "unlinked-locked-package"), [], "an unproved entry is not reported as inventoried")
+        self.assertEqual([p for p in report["packages"] if p["key"] == self.KEY], [], "a record was fabricated")
+        for plat in KEYS:
+            self.assertNotIn(self.KEY, self.pins(report, plat), "a pin row was fabricated")
+        self.assertEqual(AU.exit_code(report), 1)
+        self.assertNotIn(self.outside, json.dumps(report))
+        return report
+
+    def test_a_cached_archive_that_does_not_match_the_lock_checksum_is_refused(self):
+        report = self.refused("lock-entry-checksum-mismatch", lock_checksum="00" * 32)
+        self.assertIn("hashes to", find(report, "lock-entry-checksum-mismatch")[0]["detail"])
+
+    def test_a_missing_cached_archive_or_source_directory_is_refused(self):
+        self.refused("lock-entry-source-missing", archive=False)
+        self.refused("lock-entry-source-missing", write_src=False)
+
+    def test_an_extracted_source_that_differs_from_its_archive_is_refused(self):
+        def edit(src):
+            with open(os.path.join(src, "src", "lib.rs"), "a") as fh:
+                fh.write("// planted\n")
+
+        def extra(src):
+            with open(os.path.join(src, "src", "planted.rs"), "w") as fh:
+                fh.write("pub fn p() {}\n")
+        for label, opt in (("edited file", {"tamper": edit}), ("extra file", {"tamper": extra}),
+                           ("file missing", {"not_on_disk": ("src/lib.rs",)})):
+            with self.subTest(label):
+                self.refused("lock-entry-source-differs", **opt)
+
+    def test_an_archive_with_a_path_that_escapes_the_crate_or_a_member_that_is_not_a_plain_file_is_refused(self):
+        def escape(tf):
+            info = tarfile.TarInfo("gated-sys-0.2.0/../escape.rs")
+            info.size = 1
+            tf.addfile(info, io.BytesIO(b"x"))
+
+        def link(tf):                              # an empty file and a symbolic link to it: every byte comparison below passes on both
+            tf.addfile(tarfile.TarInfo("gated-sys-0.2.0/src/empty.rs"))
+            info = tarfile.TarInfo("gated-sys-0.2.0/src/link.rs")
+            info.type, info.linkname = tarfile.SYMTYPE, "empty.rs"
+            tf.addfile(info)
+        def escape_on_disk(src):                  # the file sits where the hostile name points, so only the name check can refuse it
+            with open(os.path.join(os.path.dirname(src), "escape.rs"), "w") as fh:
+                fh.write("x")
+
+        def link_on_disk(src):                    # both are empty files on disk, so only the member-type check can refuse the archive
+            for name in ("empty.rs", "link.rs"):
+                with open(os.path.join(src, "src", name), "w"):
+                    pass
+        for label, extra_tar, tamper in (("parent traversal", escape, escape_on_disk), ("symbolic link", link, link_on_disk)):
+            with self.subTest(label):
+                self.refused("lock-entry-source-differs", extra_tar=extra_tar, tamper=tamper)
+
+    def test_an_entry_the_lock_wide_listing_does_not_name_or_could_not_be_read_is_blocked_not_invented(self):
+        self.refused("lock-entry-not-located", listed=False)
+        report = self.refused("lock-entry-not-located", listing="resolver-failed")
+        self.assertIn("resolver-failed", find(report, "lock-entry-not-located")[0]["detail"])
+
+    def test_a_git_sourced_or_checksumless_entry_cannot_be_tied_to_a_checksum_and_is_blocked(self):
+        self.refused("lock-entry-unsupported-source", source="git+https://example.invalid/gated-sys#" + HEX40)
+        self.refused("lock-missing-checksum", checksum_line=False)
+
+    def test_a_platform_that_did_not_resolve_leaves_the_audit_blocked_for_that_alone_and_claims_nothing_about_unlinked_entries(self):
+        failed = {"mips": AU.PlatformInput("mips", TRIPLES["mips"], "resolver-failed", "cargo could not resolve it")}
+        report, _, _ = self.world(replace=failed)
+        self.assertEqual(kinds(report, "blocker"), ["resolver-failed"])         # the entry might be linked on the platform that failed
+        self.assertEqual(find(report, "unlinked-locked-package"), [])
+        self.assertEqual([p for p in report["packages"] if p["key"] == self.KEY], [])
+        ok, _, _ = self.world()                                                  # the permitted positive: all three resolve
+        self.assertIn("unlinked", pkg(ok, self.KEY))
+
+    # -- activation: the label belongs to this run's graphs alone
+    def test_a_package_a_later_graph_links_gets_an_ordinary_linked_record_and_inherits_nothing(self):
+        report, lock, sha = self.world()
+        self.assertIn("unlinked", pkg(report, self.KEY))                     # unlinked in this graph
+        fx = small_fixture(self.root + "-b", self.outside)
+        fx.crates["app@0.1.0"].deps.append(Dep("gated-sys", only={"mips"}))
+        fx.add(Crate("gated-sys", "0.2.0", src=self.LIB, license="MIT OR Apache-2.0"))
+        fx.write()
+        stale = AU.LockedSources("resolved", {"packages": [{"id": FX.REGISTRY + "#gated-sys@0.2.0", "name": "gated-sys",
+                                                            "version": "0.2.0", "source": FX.REGISTRY}]})
+        again = AU.analyze(platforms(fx), fx.lock_text(), fx.root, locked=stale)    # the listing still names the entry
+        rec = pkg(again, self.KEY)
+        self.assertNotIn("unlinked", rec)                                    # nothing carried over
+        self.assertEqual({k: v["role"] for k, v in rec["platforms"].items()},
+                         {"host": "absent", "mips": "linked", "powerpc": "absent"})
+        self.assertEqual(find(again, "unlinked-locked-package"), [])
+        self.assertEqual(find(again, "lock-unused-entries"), [])
+        self.assertEqual(self.pins(again, "mips")[self.KEY]["role"], "linked")
+        self.assertNotIn(self.KEY, self.pins(again, "host"))
+        flagged = find(again, "unsafe-in-dependency", self.KEY)               # linked on a big-endian target: a review item like any other
+        self.assertEqual([f["severity"] for f in flagged], ["review"])
+        self.assertEqual(flagged[0]["platforms"], ["mips"])
+
+    # -- the consumer contract (P01-BLK-005's judge, loaded as it is, unchanged)
+    def test_the_p01_inventory_judge_passes_the_inventoried_audit_and_fails_the_one_without_it(self):
+        spec = importlib.util.spec_from_file_location("ffw_p01_inventory", os.path.join(ROOT, "tests", "p01", "inventory.py"))
+        inventory = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(inventory)
+        report, lock, _ = self.world()
+        self.assertEqual(inventory.judge(report, lock.encode())[0], "pass")
+        without = AU.analyze(platforms(self.fx), lock, self.fx.root)
+        verdict, found, _ = inventory.judge(without, lock.encode())
+        self.assertEqual(verdict, "fail")
+        self.assertIn(("lock_package_not_pinned", self.KEY), found)
+        refused, bad_lock, _ = self.world(lock_checksum="00" * 32)           # an entry whose source cannot be proved gives it nothing to accept
+        self.assertNotEqual(inventory.judge(refused, bad_lock.encode())[0], "pass")
+
+
+class RegistrySourceVerifierTests(Base):
+    """``verify_registry_source`` on its own: the cached archive is proved to be the locked one and the extracted directory to equal it, with
+    every step bounded before it reads on. Each refusal is paired with the permitted positive (the plain cache); the caps are patched down
+    for the over-limit cases so no fixture is large. The exact-bound cases pass at the cap and fail one over."""
+
+    INDEX = "index.crates.io-test"
+    LIB = "pub fn read(x: &u8) -> u8 {\n    unsafe { core::ptr::read(x) }\n}\n"
+    MANIFEST = '[package]\nname = "gated-sys"\nversion = "0.2.0"\nlicense = "MIT OR Apache-2.0"\n'
+    DIFFERS = "lock-entry-source-differs"
+
+    def cache(self, *, extra_tar=None, tamper=None, not_on_disk=(), marker="file", root_link=False, blob_override=None, raw_tar=None,
+              archive="file"):
+        """(pkg, sha256 of the archive, archive bytes): a cargo-shaped registry cache in a fresh directory, holding two files. ``archive`` is
+        what stands where the cached .crate belongs: the file, a link to a file with the same bytes, a pipe, a directory, or nothing."""
+        files = {"Cargo.toml": self.MANIFEST, "src/lib.rs": self.LIB}
+        reg = os.path.join(tempfile.mkdtemp(prefix="cargo-home-", dir=self.outside), "registry")
+        src = os.path.join(reg, "src", self.INDEX, "gated-sys-0.2.0")
+        real = src if not root_link else os.path.join(reg, "elsewhere", "gated-sys-0.2.0")
+        os.makedirs(os.path.join(real, "src"))
+        for rel, text in files.items():
+            if rel not in not_on_disk:
+                with open(os.path.join(real, rel), "w") as fh:
+                    fh.write(text)
+        if marker == "file":
+            with open(os.path.join(real, ".cargo-ok"), "w") as fh:
+                fh.write('{"v":1}')
+        elif marker == "link":                                        # a link to a file with exactly the marker's bytes
+            target = os.path.join(tempfile.mkdtemp(dir=self.outside), "marker")
+            with open(target, "w") as fh:
+                fh.write('{"v":1}')
+            os.symlink(target, os.path.join(real, ".cargo-ok"))
+        if root_link:
+            os.makedirs(os.path.dirname(src))
+            os.symlink(real, src)
+        if blob_override is not None:
+            blob = blob_override
+        elif raw_tar is not None:
+            blob = gzip.compress(raw_tar)
+        else:
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+                for rel, text in files.items():
+                    data = text.encode()
+                    info = tarfile.TarInfo("gated-sys-0.2.0/" + rel)
+                    info.size = len(data)
+                    tf.addfile(info, io.BytesIO(data))
+                if extra_tar:
+                    extra_tar(tf)
+            blob = buf.getvalue()
+        os.makedirs(os.path.join(reg, "cache", self.INDEX))
+        crate = os.path.join(reg, "cache", self.INDEX, "gated-sys-0.2.0.crate")
+        if archive == "file":
+            with open(crate, "wb") as fh:
+                fh.write(blob)
+        elif archive == "link":                                      # the checksum would match if the link were followed
+            target = os.path.join(tempfile.mkdtemp(dir=self.outside), "archive.crate")
+            with open(target, "wb") as fh:
+                fh.write(blob)
+            os.symlink(target, crate)
+        elif archive == "pipe":
+            os.mkfifo(crate)
+        elif archive == "directory":
+            os.mkdir(crate)
+        if tamper:
+            tamper(src)
+        pkg_listing = {"name": "gated-sys", "version": "0.2.0", "manifest_path": os.path.join(src, "Cargo.toml")}
+        return pkg_listing, hashlib.sha256(blob).hexdigest(), blob
+
+    def refused(self, why, *, expect=None, **opt):
+        pkg_listing, sha, _ = self.cache(**opt)
+        facts, problem = AU.verify_registry_source(pkg_listing, sha)
+        self.assertIsNone(facts, why)
+        self.assertEqual(problem[0], expect or self.DIFFERS, (why, problem))
+        return problem[1]
+
+    @staticmethod
+    def dir_members(count):
+        def add(tf):
+            for i in range(count):
+                info = tarfile.TarInfo("gated-sys-0.2.0/d%d" % i)
+                info.type = tarfile.DIRTYPE
+                tf.addfile(info)
+        return add
+
+    # -- the permitted positive, and what it must not use or leave open
+    def test_the_plain_cache_verifies_with_a_bounded_inflate_no_whole_listing_and_every_stream_closed(self):
+        pkg_listing, sha, _ = self.cache()
+        streams, handles, sizes, opened = [], [], [], []
+        real_extract, real_plain, real_read, real_open = tarfile.TarFile.extractfile, AU._plain_file, gzip.GzipFile.read, os.open
+
+        def spy_extract(tf, member):
+            streams.append(real_extract(tf, member))
+            return streams[-1]
+
+        def spy_plain(path):
+            handles.append(real_plain(path))
+            return handles[-1]
+
+        def spy_read(gz, size=-1):
+            sizes.append(size)
+            return real_read(gz, size)
+
+        def spy_open(path, flags, *rest, **named):
+            opened.append((path, flags))
+            return real_open(path, flags, *rest, **named)
+        with mock.patch.object(builtins, "open", side_effect=AssertionError("a blocking builtin open")), \
+                mock.patch.object(os, "open", spy_open), \
+                mock.patch.object(tarfile.TarFile, "getmembers", side_effect=AssertionError("the whole archive was listed")), \
+                mock.patch.object(gzip, "decompress", side_effect=AssertionError("an unbounded inflate")), \
+                mock.patch.object(tarfile.TarFile, "extractfile", spy_extract), mock.patch.object(AU, "_plain_file", spy_plain), \
+                mock.patch.object(gzip.GzipFile, "read", spy_read):
+            facts, problem = AU.verify_registry_source(pkg_listing, sha)
+        self.assertIsNone(problem)
+        self.assertEqual(facts, {"archive_sha256": sha, "files_in_archive": 2, "files_compared": 2})
+        self.assertEqual(sizes, [AU.INFLATE_LIMIT + 1])                  # one read, with a size, one over the cap
+        self.assertEqual((len(streams), len(handles)), (2, 3))          # two members read; the archive and the two files opened
+        self.assertTrue(all(s.closed for s in streams), "an archive member stream was left open")
+        self.assertTrue(all(h.closed for h in handles), "the archive or an extracted file was left open")
+        self.assertEqual(len(opened), 3)
+        self.assertTrue(opened[0][0].endswith("gated-sys-0.2.0.crate"), "the archive is the first thing opened")
+        want = os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
+        self.assertTrue(all(flags & want == want for _, flags in opened), "something was opened that could block or follow a link")
+
+    def test_the_marker_is_optional_and_a_cache_without_it_verifies(self):
+        pkg_listing, sha, _ = self.cache(marker="none")
+        self.assertIsNone(AU.verify_registry_source(pkg_listing, sha)[1])
+
+    # -- bounds, each at the cap (permitted) and one over (refused)
+    def test_the_archive_size_cap_admits_exactly_its_size_and_refuses_one_byte_over(self):
+        pkg_listing, sha, blob = self.cache()
+        with mock.patch.object(AU, "CRATE_READ_LIMIT", len(blob)):
+            self.assertIsNone(AU.verify_registry_source(pkg_listing, sha)[1])
+        with mock.patch.object(AU, "CRATE_READ_LIMIT", len(blob) - 1):
+            facts, problem = AU.verify_registry_source(pkg_listing, sha)
+        self.assertEqual((facts, problem[0]), (None, self.DIFFERS))
+        self.assertIn("larger than", problem[1])
+
+    def test_the_inflation_cap_admits_exactly_the_inflated_size_and_refuses_one_byte_over(self):
+        pkg_listing, sha, blob = self.cache()
+        inflated = len(gzip.decompress(blob))                          # the test knows the size; the verifier must not inflate unbounded
+        with mock.patch.object(AU, "INFLATE_LIMIT", inflated):
+            self.assertIsNone(AU.verify_registry_source(pkg_listing, sha)[1])
+        with mock.patch.object(AU, "INFLATE_LIMIT", inflated - 1):
+            facts, problem = AU.verify_registry_source(pkg_listing, sha)
+        self.assertEqual((facts, problem[0]), (None, self.DIFFERS))
+        self.assertIn("inflates to more than", problem[1])
+
+    def test_a_decompression_bomb_is_stopped_by_the_bounded_read_before_any_tar_is_parsed(self):
+        bomb = gzip.compress(b"\0" * 400_000)                          # tiny to store, 400 kB inflated, against a 100 kB cap
+        pkg_listing, sha, _ = self.cache(blob_override=bomb)
+        sizes, real_read = [], gzip.GzipFile.read
+
+        def spy_read(gz, size=-1):
+            sizes.append(size)
+            return real_read(gz, size)
+        with mock.patch.object(AU, "INFLATE_LIMIT", 100_000), mock.patch.object(gzip.GzipFile, "read", spy_read), \
+                mock.patch.object(tarfile, "open", side_effect=AssertionError("a bomb reached the tar parser")):
+            facts, problem = AU.verify_registry_source(pkg_listing, sha)
+        self.assertEqual((facts, problem[0]), (None, self.DIFFERS))
+        self.assertIn("inflates to more than", problem[1])
+        self.assertEqual(sizes, [100_001])                              # never asked for more than one byte over the cap
+
+    def test_the_entry_cap_admits_exactly_its_count_and_refuses_one_over_before_any_data_is_read(self):
+        pkg_listing, sha, _ = self.cache(extra_tar=self.dir_members(6))          # 2 files + 6 directories = 8 entries
+        with mock.patch.object(AU, "MAX_ARCHIVE_MEMBERS", 8):
+            self.assertIsNone(AU.verify_registry_source(pkg_listing, sha)[1])
+        with mock.patch.object(AU, "MAX_ARCHIVE_MEMBERS", 7), \
+                mock.patch.object(tarfile.TarFile, "extractfile", side_effect=AssertionError("data was read before the count was checked")):
+            facts, problem = AU.verify_registry_source(pkg_listing, sha)
+        self.assertEqual((facts, problem[0]), (None, self.DIFFERS))
+        self.assertIn("more than 7 entries", problem[1])
+
+    def test_a_compressed_header_storm_is_stopped_by_the_inflation_cap_and_the_entry_cap_in_turn(self):
+        pkg_listing, sha, blob = self.cache(extra_tar=self.dir_members(300))     # 300 headers of 512 bytes: ~150 kB inflated, ~a few hundred bytes stored
+        self.assertLess(len(blob), 5_000)
+        with mock.patch.object(AU, "INFLATE_LIMIT", 50_000), mock.patch.object(tarfile, "open", side_effect=AssertionError("the storm was parsed")):
+            facts, problem = AU.verify_registry_source(pkg_listing, sha)
+        self.assertIn("inflates to more than", problem[1])
+        with mock.patch.object(AU, "MAX_ARCHIVE_MEMBERS", 50):
+            facts, problem = AU.verify_registry_source(pkg_listing, sha)
+        self.assertEqual((facts, problem[0]), (None, self.DIFFERS))
+        self.assertIn("more than 50 entries", problem[1])
+
+    def test_a_member_that_declares_more_than_the_archive_holds_is_refused(self):
+        def block(name, body=None, declared=None):
+            info = tarfile.TarInfo(name)
+            info.size = len(body) if body is not None else declared
+            header = info.tobuf(tarfile.USTAR_FORMAT, "utf-8", "surrogateescape")
+            return header + (body + b"\0" * (-len(body) % 512) if body is not None else b"")
+        tail = b"\0" * 1024
+        good = block("gated-sys-0.2.0/Cargo.toml", self.MANIFEST.encode()) + block("gated-sys-0.2.0/src/lib.rs", self.LIB.encode())
+        pkg_listing, sha, _ = self.cache(raw_tar=good + tail)                    # the permitted positive of this raw form
+        self.assertIsNone(AU.verify_registry_source(pkg_listing, sha)[1])
+        for label, declared in (("beyond the cap", 10 ** 9), ("beyond the data", 4096)):
+            with self.subTest(label):
+                why = self.refused(label, raw_tar=good + block("gated-sys-0.2.0/src/big.rs", declared=declared) + tail)
+                self.assertIn("declares a member larger", why)
+
+    # -- the cached archive itself is as mutable as the tree: what stands in its place is refused by type, and never opened blocking
+    def test_a_cached_archive_that_is_a_pipe_a_link_or_a_directory_is_refused_by_type_before_any_blocking_open_or_read(self):
+        for kind in ("pipe", "link", "directory"):
+            with self.subTest(kind):
+                if kind == "pipe" and not hasattr(os, "mkfifo"):
+                    self.skipTest("no named pipes on this platform")
+                pkg_listing, sha, _ = self.cache(archive=kind)
+                with self.watchdog(), mock.patch.object(builtins, "open", side_effect=AssertionError("a blocking builtin open")), \
+                        mock.patch.object(gzip, "GzipFile", side_effect=AssertionError("a non-file archive was inflated")):
+                    facts, problem = AU.verify_registry_source(pkg_listing, sha)
+                self.assertEqual((facts, problem[0]), (None, self.DIFFERS), kind)
+                self.assertIn("the cached .crate archive is not a plain file", problem[1])
+        pkg_listing, sha, _ = self.cache(archive="none")                  # absent stays the other kind of refusal
+        facts, problem = AU.verify_registry_source(pkg_listing, sha)
+        self.assertEqual((facts, problem[0]), (None, "lock-entry-source-missing"))
+        regular, sha, _ = self.cache()                                  # and the plain archive is the permitted positive
+        self.assertIsNone(AU.verify_registry_source(regular, sha)[1])
+
+    # -- the extracted tree is enumerated lazily and counted, every entry kind, against a finite cap (the disk side of the same bounds)
+    @staticmethod
+    def counting_scandir(seen):
+        """A stand-in for os.scandir that records each entry the caller actually pulls, so 'stopped early' is observable."""
+        real = os.scandir
+
+        class Counting:
+            def __init__(self, target):
+                self._it = real(target)
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                entry = next(self._it)
+                seen.append(entry.name)
+                return entry
+
+            def __enter__(self):
+                self._it.__enter__()
+                return self
+
+            def __exit__(self, *exc):
+                return self._it.__exit__(*exc)
+        return Counting
+
+    @staticmethod
+    def nested_empty_dirs(depth):
+        def make(src):
+            os.makedirs(os.path.join(src, *["d%d" % i for i in range(depth)]))
+        return make
+
+    @staticmethod
+    def extra_files(count):
+        def make(src):
+            for i in range(count):
+                with open(os.path.join(src, "src", "extra%03d.rs" % i), "w"):
+                    pass
+        return make
+
+    def test_the_tree_entry_cap_counts_files_directories_and_the_marker_and_admits_exactly_its_count(self):
+        # Cargo.toml, src, src/lib.rs and .cargo-ok = 4 entries; three nested empty directories (not extra files: the archive need not list them) make 7
+        pkg_listing, sha, _ = self.cache(tamper=self.nested_empty_dirs(3))
+        with mock.patch.object(AU, "MAX_TREE_ENTRIES", 7):
+            facts, problem = AU.verify_registry_source(pkg_listing, sha)
+        self.assertIsNone(problem)
+        self.assertEqual(facts["files_compared"], 2)
+        with mock.patch.object(AU, "MAX_TREE_ENTRIES", 6):
+            facts, problem = AU.verify_registry_source(pkg_listing, sha)
+        self.assertEqual((facts, problem[0]), (None, self.DIFFERS))
+        self.assertIn("the extracted source holds more than 6 entries", problem[1])
+        # the marker is an entry: with it the plain cache is 4 and a cap of 3 refuses; without it the same cache is 3 and a cap of 3 admits
+        with_marker, sha_a, _ = self.cache()
+        without_marker, sha_b, _ = self.cache(marker="none")
+        with mock.patch.object(AU, "MAX_TREE_ENTRIES", 3):
+            self.assertEqual(AU.verify_registry_source(with_marker, sha_a)[1][0], self.DIFFERS)
+            self.assertIsNone(AU.verify_registry_source(without_marker, sha_b)[1])
+
+    def test_an_extra_file_storm_and_a_nested_directory_storm_are_refused_at_the_cap_having_pulled_only_one_entry_past_it(self):
+        for label, opt in (("flat storm of extra files", {"tamper": self.extra_files(50)}),
+                           ("nested storm of empty directories", {"tamper": self.nested_empty_dirs(40)})):
+            with self.subTest(label):
+                pkg_listing, sha, _ = self.cache(**opt)
+                seen, opened = [], []
+                real_open = os.open
+
+                def spy_open(target, flags, *rest, **named):
+                    opened.append(target)
+                    return real_open(target, flags, *rest, **named)
+                with mock.patch.object(AU, "MAX_TREE_ENTRIES", 10), mock.patch.object(os, "scandir", self.counting_scandir(seen)), \
+                        mock.patch.object(os, "open", spy_open), mock.patch.object(tarfile, "open", side_effect=AssertionError("the archive was parsed")):
+                    facts, problem = AU.verify_registry_source(pkg_listing, sha)
+                self.assertEqual((facts, problem[0]), (None, self.DIFFERS))
+                self.assertIn("the extracted source holds more than 10 entries", problem[1])
+                self.assertEqual(len(seen), 11, "the traversal pulled more than one entry past the cap")      # cap + 1, then it stopped
+                self.assertEqual(len(opened), 1, "a file of the tree was opened before the tree was proved finite")     # only the archive
+        regular, sha, _ = self.cache()                                  # the permitted positive under the production cap
+        self.assertIsNone(AU.verify_registry_source(regular, sha)[1])
+
+    def test_the_tree_is_listed_by_a_lazy_iterative_scan_never_by_os_walk(self):
+        pkg_listing, sha, _ = self.cache(tamper=self.nested_empty_dirs(5))
+        with mock.patch.object(os, "walk", side_effect=AssertionError("os.walk lists a whole directory at once")):
+            self.assertIsNone(AU.verify_registry_source(pkg_listing, sha)[1])
+        self.assertEqual(AU.MAX_TREE_ENTRIES, 2 * AU.MAX_ARCHIVE_MEMBERS + 1)          # the documented relation, pinned
+
+    # -- duplicates and entries that are not plain files
+    def test_an_archive_that_names_a_file_twice_is_refused_before_anything_is_compared(self):
+        def twice(tf):
+            data = self.LIB.encode()
+            info = tarfile.TarInfo("gated-sys-0.2.0/src/lib.rs")           # same name, same bytes: the files on disk match it
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+        pkg_listing, sha, _ = self.cache(extra_tar=twice)
+        with mock.patch.object(tarfile.TarFile, "extractfile", side_effect=AssertionError("data was read before the duplicate was seen")):
+            facts, problem = AU.verify_registry_source(pkg_listing, sha)
+        self.assertEqual((facts, problem[0]), (None, self.DIFFERS))
+        self.assertIn("more than once", problem[1])
+
+    def test_an_archive_member_that_is_a_hard_link_or_a_contiguous_file_is_refused_though_its_bytes_match(self):
+        def hard(tf):
+            info = tarfile.TarInfo("gated-sys-0.2.0/src/hard.rs")
+            info.type, info.linkname = tarfile.LNKTYPE, "gated-sys-0.2.0/src/lib.rs"
+            tf.addfile(info)
+
+        def contiguous(tf):
+            data = self.LIB.encode()
+            info = tarfile.TarInfo("gated-sys-0.2.0/src/cont.rs")
+            info.type, info.size = tarfile.CONTTYPE, len(data)
+            tf.addfile(info, io.BytesIO(data))
+
+        def copy(name):
+            def write(src):
+                with open(os.path.join(src, "src", name), "w") as fh:
+                    fh.write(self.LIB)
+            return write
+        for label, extra_tar, tamper in (("hard link", hard, copy("hard.rs")), ("contiguous file", contiguous, copy("cont.rs"))):
+            with self.subTest(label):
+                self.assertIn("not a plain file", self.refused(label, extra_tar=extra_tar, tamper=tamper))
+
+    # -- links and special files in the extracted tree: refused by name and type, before any content is read
+    def test_a_file_symbolic_link_to_byte_identical_content_is_refused_so_the_byte_comparison_cannot_mask_it(self):
+        def link_lib(src):
+            target = os.path.join(tempfile.mkdtemp(dir=self.outside), "lib.rs")
+            with open(target, "w") as fh:
+                fh.write(self.LIB)                                        # exactly the archive's bytes, outside the crate
+            os.symlink(target, os.path.join(src, "src", "lib.rs"))
+        why = self.refused("file link", not_on_disk=("src/lib.rs",), tamper=link_lib)
+        self.assertIn("src/lib.rs in the extracted source is a symbolic link", why)
+
+    def test_a_symbolic_link_marker_a_linked_directory_and_a_linked_root_are_refused_too(self):
+        def link_dir(src):
+            os.symlink(tempfile.mkdtemp(dir=self.outside), os.path.join(src, "src", "sub"))
+        self.assertIn(".cargo-ok in the extracted source is a symbolic link", self.refused("marker link", marker="link"))
+        self.assertIn("symbolic link to a directory", self.refused("directory link", tamper=link_dir))
+        self.assertIn("directory is a symbolic link", self.refused("root link", root_link=True))
+
+    @contextlib.contextmanager
+    def watchdog(self, seconds=10):
+        """Fail, instead of hanging, if a named pipe is ever opened for reading without the no-block flag. A no-op where SIGALRM does not exist."""
+        if not hasattr(signal, "SIGALRM"):
+            yield
+            return
+
+        def boom(signum, frame):
+            raise AssertionError("blocked on a special file")
+        previous = signal.signal(signal.SIGALRM, boom)
+        signal.alarm(seconds)
+        try:
+            yield
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, previous)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "no named pipes on this platform")
+    def test_a_named_pipe_in_the_extracted_tree_is_refused_without_opening_it(self):
+        def pipe(src):
+            os.mkfifo(os.path.join(src, "src", "pipe"))
+        with self.watchdog():
+            self.assertIn("not a plain file", self.refused("pipe", tamper=pipe))
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "no named pipes on this platform")
+    def test_a_named_pipe_standing_for_an_archive_file_is_refused_by_type_before_any_path_is_opened(self):
+        def pipe_for_lib(src):                                          # the archive names src/lib.rs; on disk that name is a pipe
+            os.mkfifo(os.path.join(src, "src", "lib.rs"))
+        pkg_listing, sha, _ = self.cache(not_on_disk=("src/lib.rs",), tamper=pipe_for_lib)
+        real_open = os.open
+
+        def guarded(target, flags, *rest, **named):                     # the archive is opened first, plainly; the extracted tree not before its types are known
+            if os.sep.join(("", "src", self.INDEX, "")) in target:
+                raise AssertionError("a path of the extracted tree was opened before its type was known")
+            return real_open(target, flags, *rest, **named)
+        with self.watchdog(), mock.patch.object(os, "open", guarded):
+            facts, problem = AU.verify_registry_source(pkg_listing, sha)
+        self.assertEqual((facts, problem[0]), (None, self.DIFFERS))
+        self.assertIn("src/lib.rs in the extracted source is not a plain file", problem[1])
+        regular, sha, _ = self.cache()                                  # the permitted positive: the same name as a real file opens and verifies
+        self.assertIsNone(AU.verify_registry_source(regular, sha)[1])
+
+    def test_the_plain_file_opener_follows_no_link_and_opens_no_directory_or_pipe(self):
+        base = tempfile.mkdtemp(dir=self.outside)
+        real, link, sub = (os.path.join(base, n) for n in ("real", "link", "sub"))
+        with open(real, "w") as fh:
+            fh.write("same bytes")
+        os.symlink(real, link)
+        os.mkdir(sub)
+        handle = AU._plain_file(real)                                      # the permitted positive
+        with handle:
+            self.assertEqual(handle.read(), b"same bytes")
+        self.assertTrue(handle.closed)
+        for label, path in (("link to identical content", link), ("directory", sub), ("missing", os.path.join(base, "none"))):
+            with self.subTest(label):
+                self.assertIsNone(AU._plain_file(path))
+        if os.path.exists("/dev/null"):                                    # a character device: it reads as empty and is not a file
+            self.assertIsNone(AU._plain_file("/dev/null"))
+        if hasattr(os, "mkfifo"):
+            os.mkfifo(os.path.join(base, "pipe"))
+            with self.watchdog():                                          # opened without blocking and refused on the descriptor's type
+                self.assertIsNone(AU._plain_file(os.path.join(base, "pipe")))
 
 
 if __name__ == "__main__":

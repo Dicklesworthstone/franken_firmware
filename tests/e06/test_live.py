@@ -373,7 +373,41 @@ class ThisRepositorysWorkspaceTests(unittest.TestCase):
         bad = [p["key"] for p in self.report["packages"]
                if p["source_kind"] == "registry" and not (p["pin"]["in_lock"] and p["pin"]["checksum"])]
         self.assertEqual(bad, [])
-        self.assertEqual([f for f in self.report["findings"] if f["kind"].startswith(("lock-", "unpinned", "external"))], [])
+        # Every `lock-`/`unpinned`/`external` finding is still refused except the information note that NAMES the lock entries no
+        # platform graph links. That note stays (it is the fact), and the next test holds it to account: each entry it names has
+        # to be inventoried with its own checksum, licence and unsafe facts, so the note can no longer stand in for them.
+        self.assertEqual([f for f in self.report["findings"]
+                          if f["kind"].startswith(("lock-", "unpinned", "external")) and f["kind"] != "lock-unused-entries"], [])
+        self.assertEqual({f["severity"] for f in find(self.report, "lock-unused-entries")} - {"info"}, set())
+
+    def test_every_lock_entry_is_pinned_with_its_facts_and_the_unlinked_ones_are_labelled_and_reach_no_platform(self):
+        import tomllib
+        with open(os.path.join(self._export.name, "Cargo.lock"), "rb") as fh:
+            locked = tomllib.load(fh)["package"]
+        records = {p["key"]: p for p in self.report["packages"]}
+        for entry in locked:
+            if "source" not in entry:
+                continue                                           # a workspace member: recorded in `packages`, not a pin
+            key = "%s@%s" % (entry["name"], entry["version"])
+            rec = records.get(key)
+            self.assertIsNotNone(rec, "%s is in Cargo.lock but has no package record" % key)
+            self.assertEqual((rec["pin"]["source"], rec["pin"]["checksum"]), (entry["source"], entry["checksum"]), key)
+            self.assertIn("license", rec, key)
+            self.assertIn("unsafe", rec, key)
+            # a platform's rows hold what that platform resolves (an x86_64-only crate has none on the big-endian targets), so the
+            # entry has to be pinned on at least one; the entries no platform resolves are pinned on all three, checked below
+            self.assertTrue(any(key in [r["package"] for r in self.report["pins"][plat]["rows"]] for plat in ("host", "mips", "powerpc")),
+                            "%s is in Cargo.lock but pinned on no platform" % key)
+        named = [f for f in find(self.report, "unlinked-locked-package")]
+        for f in named:
+            rec = records[f["package"]]
+            self.assertIn("unlinked", rec, f["package"])
+            self.assertEqual({v["role"] for v in rec["platforms"].values()}, {"absent"}, "%s is reachable on a platform" % f["package"])
+            self.assertEqual({r["role"] for plat in ("host", "mips", "powerpc") for r in self.report["pins"][plat]["rows"]
+                              if r["package"] == f["package"]}, {"unlinked"})
+            self.assertEqual(f["severity"], "info")
+        self.assertEqual(sorted(p["key"] for p in self.report["packages"] if "unlinked" in p), sorted(f["package"] for f in named))
+        self.assertEqual([f for f in self.report["findings"] if f["severity"] == "blocker"], [])
 
     def test_the_two_big_endian_targets_link_the_same_packages(self):
         s = self.report["summary"]["linked"]
