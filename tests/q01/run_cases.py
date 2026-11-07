@@ -5,7 +5,7 @@
 
 Offline, standard library only; it builds and boots nothing and never invokes cargo.
 
-* META  - always. cases.json is well formed and every unit test of franken-speaker's harness and control adapter is in exactly one
+* META  - always. cases.json is well formed and every unit test of franken-speaker's harness, control adapter and playout adapter is in exactly one
           case (so a test added or removed without the table noticing fails here); the contract's limit-1 table parses; the
           independent digest of silence reproduces the value measured centrally (b40: 400 blocks, 2 channels).
 * JUDGE - with ``--judge LOG``: the output of the centrally run ``cargo test -p franken-speaker --features harness --lib --locked --
@@ -48,6 +48,7 @@ CONTRACT = os.path.join(REPO, "docs", "contracts", "q01.md")
 RUST_SOURCES = [
     ("crates/franken-speaker/src/harness.rs", "harness::tests::"),
     ("crates/franken-speaker/src/control_adapter.rs", "control_adapter::tests::"),
+    ("crates/franken-speaker/src/playout_adapter.rs", "playout_adapter::tests::"),
 ]
 RECEIPT_SCHEMA = "ffw.q01.measurement.v1"
 RECEIPT_DIR = os.path.join(HERE, "receipts")
@@ -411,7 +412,7 @@ def meta_results() -> List[Result]:
             problem = "unit tests that no case covers: %r" % sorted(set(names) - set(mapped))[:5]
         elif len(mapped) != len(set(mapped)):
             problem = "a test is in two cases"
-        note("META-CASES", problem, "%d cases cover all %d unit tests of the harness and the control adapter, each once" % (len(cases), len(names)))
+        note("META-CASES", problem, "%d cases cover all %d unit tests of the harness, the control adapter and the playout adapter, each once" % (len(cases), len(names)))
     except (OSError, ValueError, KeyError) as error:
         note("META-CASES", "cannot load the case table or the sources: %s" % error, "")
     try:

@@ -1,7 +1,7 @@
 {
   "schema": "ffw.q01.cases.v1",
   "bead": "ffw-gmq",
-  "notes": "Every unit test of franken-speaker's harness and control adapter is in exactly one case. A case passes only when each of its tests reports ok in a centrally run `cargo test -- --nocapture` log; the measurement cases also need their records to re-derive in the judge. A case with no observation in the log is blocked, never passed.",
+  "notes": "Every unit test of franken-speaker's harness, control adapter and playout adapter is in exactly one case. A case passes only when each of its tests reports ok in a centrally run `cargo test -- --nocapture` log; the measurement cases also need their records to re-derive in the judge. A case with no observation in the log is blocked, never passed.",
   "cases": [
     {
       "id": "Q01-C01",
@@ -119,13 +119,31 @@
       "id": "Q01-C11",
       "group": "playout",
       "class": "negative",
-      "what": "the real N04 engine decides every block as the seeded schedule says; a late block, a reordered pair, a previous-epoch datagram and a clock leap each move exactly what they should and nothing else",
+      "what": "the real N04 engine decides every block as the seeded schedule says; a late block, a reordered pair, a previous-epoch datagram and a clock leap each move exactly what they should and nothing else; the adapter's own controls: on-time and reordered blocks play their sent bytes, a duplicate plays once, a missing block and a long loss are concealed by the contract's rule, a late or stale packet is refused and changes nothing, an unusable or leaped clock is never latched, and the oracle trips on a send time stamped as an arrival time",
       "tests": [
         "harness::tests::the_real_playout_engine_decides_every_block_as_the_seeded_schedule_says_it_must",
         "harness::tests::a_late_block_in_the_whole_campaign_is_refused_as_late_and_concealed_and_nothing_else_moves",
         "harness::tests::a_reordered_pair_in_the_whole_campaign_changes_the_arrival_order_and_nothing_else",
         "harness::tests::a_previous_epoch_datagram_in_the_whole_campaign_is_refused_twice_and_nothing_else_moves",
-        "harness::tests::a_clock_leap_in_the_whole_campaign_blinds_the_engine_until_the_relock_and_it_catches_up_as_overdue"
+        "harness::tests::a_clock_leap_in_the_whole_campaign_blinds_the_engine_until_the_relock_and_it_catches_up_as_overdue",
+        "playout_adapter::tests::on_time_blocks_play_exactly_the_bytes_that_were_sent",
+        "playout_adapter::tests::blocks_that_arrive_out_of_order_still_play_in_block_order",
+        "playout_adapter::tests::a_duplicate_is_refused_and_plays_once",
+        "playout_adapter::tests::a_missing_block_is_concealed_by_the_contracts_rule_and_the_independent_expectation_agrees",
+        "playout_adapter::tests::a_long_loss_conceals_a_bounded_number_of_blocks_and_then_mutes",
+        "playout_adapter::tests::a_block_after_its_cutoff_is_late_and_concealed_even_though_it_arrives_before_presentation",
+        "playout_adapter::tests::an_old_block_that_arrives_after_its_decision_is_refused_and_changes_nothing",
+        "playout_adapter::tests::a_packet_from_another_stream_epoch_is_refused_and_its_block_is_not_played",
+        "playout_adapter::tests::the_oracle_trips_on_an_integration_that_stamps_the_send_time_as_the_arrival_time",
+        "playout_adapter::tests::a_real_block_whose_bytes_are_not_the_ones_sent_is_a_campaign_error",
+        "playout_adapter::tests::a_clock_that_cannot_be_used_renders_a_silent_position_and_the_engine_catches_up_as_overdue",
+        "playout_adapter::tests::the_reading_never_falls_and_every_clamp_is_counted",
+        "playout_adapter::tests::finishing_a_run_with_an_undecided_block_is_an_error",
+        "playout_adapter::tests::the_pump_sends_each_block_once_in_order_with_exactly_the_schedules_decisions",
+        "playout_adapter::tests::a_planted_late_packet_is_late_its_block_is_concealed_and_the_control_without_the_plant_is_clean",
+        "playout_adapter::tests::a_planted_swap_reverses_one_pair_of_arrivals_and_every_block_still_plays_its_own_bytes",
+        "playout_adapter::tests::a_planted_previous_epoch_datagram_is_refused_by_the_receiver_and_by_the_engine_and_changes_nothing_else",
+        "playout_adapter::tests::a_leaped_node_clock_does_not_latch_a_reading_the_clock_does_not_stand_behind"
       ]
     },
     {
@@ -146,23 +164,49 @@
       "id": "Q01-C13",
       "group": "source replacement",
       "class": "positive",
-      "what": "two real adapters racing to replace the source admit exactly one in either order and the house cuts over at one frame; the program each block carried is read from the bytes that sounded",
+      "what": "two real adapters racing to replace the source admit exactly one in either order and the house cuts over at one frame; the program each block carried is read from the bytes that sounded; each stream generation has its own engine, an old-stream datagram still in flight at the commit is authenticated on arrival by the old generation's own receiver copy and played (the rebound receiver alone would refuse it), rapid generations are capped only by the ledger, and a fresh trusted group epoch resumes with a new stream without relabeling any old queued generation",
       "tests": [
         "harness::tests::each_source_epoch_publishes_its_own_audio_and_epoch_one_is_the_campaigns_original_signal",
         "harness::tests::the_cutover_the_model_restates_is_where_the_pump_stands_93_blocks_ahead",
         "harness::tests::a_campaign_with_no_source_change_has_one_program_and_the_nominal_counts",
-        "harness::tests::two_adapters_racing_to_replace_the_source_admit_exactly_one_in_either_order_and_the_house_cuts_over_at_one_frame"
+        "harness::tests::two_adapters_racing_to_replace_the_source_admit_exactly_one_in_either_order_and_the_house_cuts_over_at_one_frame",
+        "playout_adapter::tests::an_old_stream_datagram_still_in_flight_at_the_commit_is_authenticated_on_arrival_by_the_old_generation_and_played",
+        "playout_adapter::tests::the_rebound_receiver_alone_would_refuse_the_old_tail_so_the_positive_control_needs_the_old_generations_receiver",
+        "playout_adapter::tests::rapid_generations_each_keep_their_own_receiver_copy_while_they_owe_a_tail_and_only_the_ledger_caps_them",
+        "playout_adapter::tests::a_fresh_group_epoch_can_resume_with_a_new_stream_without_relabeling_any_old_queued_generation",
+        "playout_adapter::tests::a_new_stream_has_its_own_engine_that_holds_its_blocks_while_the_old_tail_drains",
+        "playout_adapter::tests::every_block_plays_the_bytes_of_the_stream_that_owns_its_position",
+        "playout_adapter::tests::one_engine_rebound_at_the_cutover_would_discard_the_new_streams_queued_blocks"
       ]
     },
     {
       "id": "Q01-C14",
       "group": "source replacement",
       "class": "negative",
-      "what": "a replaced adapter that keeps publishing is refused by the gate; a datagram of the replaced stream is refused by the rebound receiver; a planted source fault with no source change is an error",
+      "what": "a replaced adapter that keeps publishing is refused by the gate; a datagram of the replaced stream is refused by the rebound receiver; a planted source fault with no source change is an error; arrival-time refusals are made by the layer that owns the check (N01 replay, MAC, the generation's interval, a retired or unknown stream), an authentic out-of-interval datagram cannot poison a replay window, a trusted group-epoch change fences every stale generation, and a source change the ledger cannot fund is refused whole with the old stream still authenticating and only the selected expected refusal accepted",
       "tests": [
         "harness::tests::a_replaced_adapter_that_keeps_publishing_is_refused_by_the_gate_and_its_audio_never_sounds",
         "harness::tests::a_datagram_of_the_replaced_stream_after_the_rebind_is_refused_by_the_receiver_and_changes_nothing_else",
-        "harness::tests::a_planted_source_fault_without_a_source_change_and_a_change_outside_the_campaign_are_errors"
+        "harness::tests::a_planted_source_fault_without_a_source_change_and_a_change_outside_the_campaign_are_errors",
+        "playout_adapter::tests::an_authentic_old_stream_datagram_past_the_cutover_that_arrives_first_cannot_poison_the_replay_window_of_the_tail_still_owed",
+        "playout_adapter::tests::a_tampered_high_sequence_datagram_fails_its_mac_is_counted_by_n01_and_leaves_the_tail_playable",
+        "playout_adapter::tests::an_authentic_next_stream_datagram_below_its_first_block_that_arrives_first_cannot_poison_the_node_receivers_replay_window",
+        "playout_adapter::tests::a_trusted_group_epoch_change_fences_all_queued_generations_and_the_delayed_tail",
+        "playout_adapter::tests::a_group_epoch_change_leaves_retired_history_alone_and_fences_the_still_live_generation",
+        "playout_adapter::tests::a_single_initial_generation_is_fenced_without_new_arrivals_and_a_prepared_candidate_cannot_change_its_epoch_at_commit",
+        "playout_adapter::tests::a_duplicate_a_post_cutover_old_datagram_and_damaged_ones_are_refused_by_the_layer_that_owns_the_check",
+        "playout_adapter::tests::a_datagram_for_a_retired_generation_is_refused_and_a_generation_keeps_its_receiver_only_while_it_owes_a_tail",
+        "playout_adapter::tests::a_refused_next_stream_leaves_raw_old_traffic_authenticating_on_the_receiver_that_was_never_rebound",
+        "playout_adapter::tests::a_refused_next_stream_leaves_the_playing_one_deciding_real_blocks_and_a_funded_one_still_opens",
+        "playout_adapter::tests::a_packet_of_a_retired_stream_is_refused_and_a_packet_of_an_unknown_stream_is_an_error",
+        "playout_adapter::tests::a_source_change_that_does_not_fit_beside_the_playing_stream_is_refused_and_the_member_is_unchanged",
+        "playout_adapter::tests::a_stream_cannot_be_opened_twice_at_the_same_block_or_before_the_latest_one",
+        "playout_adapter::tests::the_publish_gate_decides_whose_frame_is_sent_and_a_refused_adapter_is_counted_by_the_code",
+        "playout_adapter::tests::a_planted_datagram_of_the_replaced_stream_is_refused_by_the_receiver_and_changes_nothing_else",
+        "harness::tests::a_later_member_that_cannot_be_funded_leaves_every_member_the_arbiter_and_the_program_unchanged",
+        "harness::tests::a_source_change_the_ledger_cannot_fund_is_refused_whole_and_the_old_stream_still_authenticates",
+        "harness::tests::an_expected_capacity_refusal_at_the_source_change_leaves_the_house_playing_the_old_source_as_with_no_change",
+        "harness::tests::an_expected_refusal_that_does_not_happen_or_names_nobody_fails_and_only_the_selected_variant_is_accepted"
       ]
     },
     {

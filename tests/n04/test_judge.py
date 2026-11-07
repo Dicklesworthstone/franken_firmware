@@ -546,6 +546,31 @@ class JudgeTests(unittest.TestCase):
                 self.assertIn(("franken_speaker", full_name, True), rc.derive_rust_tests())
         self.assertIn(("franken_speaker", full_name, False), rc.derive_rust_tests())
 
+    def test_a_same_named_test_outside_mod_tests_is_not_the_cargo_test(self):
+        name = "a_fresh_group_epoch_can_resume_with_a_new_stream_without_relabeling_any_old_queued_generation"
+        inside = "#[cfg(test)]\nmod tests {\n    #[test]\n    fn %s() {}\n}\n" % name
+        decoy = "#[test]\nfn %s() {}\n" % name
+        # Positive: declared inside the module it is found once, and its ignore attribute is read.
+        self.assertEqual(rc.arrival_tests_in(inside), [(name, False)])
+        self.assertEqual(rc.arrival_tests_in(inside.replace("    #[test]\n", "    #[test]\n    #[ignore]\n")), [(name, True)])
+        # Outside the module (before it, or with no module at all) the same declaration is not found.
+        self.assertEqual(rc.arrival_tests_in(decoy + "#[cfg(test)]\nmod tests {\n}\n"), [])
+        self.assertEqual(rc.arrival_tests_in(decoy), [])
+        # At the META level: the real source with the real test renamed inside the module and a decoy of its name put before the module fails the map.
+        with open(os.path.join(rc.REPO, rc.ARRIVAL_SOURCE), encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertEqual(source.count("fn " + name), 1)
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "playout_adapter.rs")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(decoy + source.replace("fn " + name, "fn removed_" + name))
+            with mock.patch.object(rc, "ARRIVAL_SOURCE", path):
+                meta = {result.case_id: result for result in rc.meta_results(VEC, "")}
+            self.assertEqual(meta["N04-META-MAP-COMPLETE"].status, "fail")
+            self.assertIn(name, meta["N04-META-MAP-COMPLETE"].detail)
+        meta = {result.case_id: result for result in rc.meta_results(VEC, "")}
+        self.assertEqual(meta["N04-META-MAP-COMPLETE"].status, "pass", meta["N04-META-MAP-COMPLETE"].detail)
+
     def test_the_probe_binary_is_attributed_by_its_own_header_in_both_layouts(self):
         for layout in ("classic", "rch"):
             with self.subTest(layout=layout):

@@ -19,8 +19,8 @@ every Rust-backed case is blocked.
 
 The suite runs only through the centralized RCH path:
 
-    RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-stream -- --nocapture
-    RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p franken-stream --all-targets -- -D warnings
+    RCH_REQUIRE_REMOTE=1 rch exec -- cargo +1.99.0 test --locked --no-fail-fast -p franken-stream -p franken-alloc-probe -p franken-speaker --features franken-speaker/harness -j1 -- --nocapture
+    RCH_REQUIRE_REMOTE=1 rch exec -- cargo +1.99.0 clippy --locked -p franken-stream -p franken-alloc-probe -p franken-speaker --all-targets --features franken-speaker/harness -j1 -- -D warnings
 
 Exit codes: 0 qualified, 1 a case failed (or a pass rests on a diagnostic log that lost critical evidence), 3 only blocked cases stand in
 the way, 4 ``--tier soak`` (NOT RUN, never a pass), 2 usage/malformed/refused input.
@@ -704,6 +704,19 @@ def load_vectors() -> Tuple[Optional[dict], str]:
         return json.load(handle), ""
 
 
+ARRIVAL_MODULE = re.compile(r"^mod tests\s*\{", re.M)
+
+
+def arrival_tests_in(source: str) -> List[Tuple[str, bool]]:
+    """(name, ignored) of every required arrival control declared INSIDE the file's top-level ``mod tests {``. A same-named ``#[test]`` outside
+    it is not the cargo test ``playout_adapter::tests::<name>``, and a file with no such module yields nothing (the map then reports it missing)."""
+    opener = ARRIVAL_MODULE.search(source)
+    if opener is None:
+        return []
+    required = {name for names in ARRIVAL_TESTS_BY_CASE.values() for name in names}
+    return [(name, "ignore" in attrs) for attrs, name in ARRIVAL_TEST_FN.findall(source[opener.end():]) if name in required]
+
+
 def derive_rust_tests() -> List[Tuple[str, str, bool]]:
     """Every ``n04_`` test, including macro-made ones, and the explicitly named arrival-consumer controls."""
     found: List[Tuple[str, str, bool]] = []
@@ -721,10 +734,8 @@ def derive_rust_tests() -> List[Tuple[str, str, bool]]:
     if os.path.isfile(arrival_path):
         with open(arrival_path, encoding="utf-8") as handle:
             arrival_source = handle.read()
-        required = {name for names in ARRIVAL_TESTS_BY_CASE.values() for name in names}
-        for attrs, name in ARRIVAL_TEST_FN.findall(arrival_source):
-            if name in required:
-                found.append(("franken_speaker", "playout_adapter::tests::" + name, "ignore" in attrs))
+        for name, ignored in arrival_tests_in(arrival_source):
+            found.append(("franken_speaker", "playout_adapter::tests::" + name, ignored))
     return found
 
 

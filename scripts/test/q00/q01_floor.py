@@ -3,7 +3,7 @@
 
 A run-suite manifest lists its own cases and its own ``required_cases``, so a case dropped from BOTH passes every check that reads only the
 manifest. This module derives the floor from two other sources: ``tests/q01/cases.json`` (the case table the standalone judge also uses) and
-the unit tests actually present in the Rust sources of ``franken-speaker``'s harness and control adapter. A test that no case covers, a case
+the unit tests actually present in the Rust sources of ``franken-speaker``'s harness, control adapter and playout adapter. A test that no case covers, a case
 that names a test that is gone, or a test in two cases is a floor violation, so the registry cannot shrink or drift unnoticed.
 
     q01_floor.py emit  --expected E.json --required R.json

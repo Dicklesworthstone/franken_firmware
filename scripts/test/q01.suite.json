@@ -340,7 +340,7 @@
       "env_inherit": [
         "FFW_Q01_LOG"
       ],
-      "description": "[playout, negative] the real N04 engine decides every block as the seeded schedule says; a late block, a reordered pair, a previous-epoch datagram and a clock leap each move exactly what they should and nothing else"
+      "description": "[playout, negative] the real N04 engine decides every block as the seeded schedule says; a late block, a reordered pair, a previous-epoch datagram and a clock leap each move exactly what they should and nothing else; the adapter's own controls: on-time and reordered blocks play their sent bytes, a duplicate plays once, a missing block and a long loss are concealed by the contract's rule, a late or stale packet is refused and changes nothing, an unusable or leaped clock is never latched, and the oracle trips on a send time stamped as an arrival time"
     },
     {
       "id": "Q01-C12",
@@ -392,7 +392,7 @@
       "env_inherit": [
         "FFW_Q01_LOG"
       ],
-      "description": "[source replacement, positive] two real adapters racing to replace the source admit exactly one in either order and the house cuts over at one frame; the program each block carried is read from the bytes that sounded"
+      "description": "[source replacement, positive] two real adapters racing to replace the source admit exactly one in either order and the house cuts over at one frame; the program each block carried is read from the bytes that sounded; each stream generation has its own engine, an old-stream datagram still in flight at the commit is authenticated on arrival by the old generation's own receiver copy and played (the rebound receiver alone would refuse it), rapid generations are capped only by the ledger, and a fresh trusted group epoch resumes with a new stream without relabeling any old queued generation"
     },
     {
       "id": "Q01-C14",
@@ -418,7 +418,7 @@
       "env_inherit": [
         "FFW_Q01_LOG"
       ],
-      "description": "[source replacement, negative] a replaced adapter that keeps publishing is refused by the gate; a datagram of the replaced stream is refused by the rebound receiver; a planted source fault with no source change is an error"
+      "description": "[source replacement, negative] a replaced adapter that keeps publishing is refused by the gate; a datagram of the replaced stream is refused by the rebound receiver; a planted source fault with no source change is an error; arrival-time refusals are made by the layer that owns the check (N01 replay, MAC, the generation's interval, a retired or unknown stream), an authentic out-of-interval datagram cannot poison a replay window, a trusted group-epoch change fences every stale generation, and a source change the ledger cannot fund is refused whole with the old stream still authenticating and only the selected expected refusal accepted"
     },
     {
       "id": "Q01-C15",

@@ -13,6 +13,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
@@ -156,6 +157,66 @@ class TestsAndCases(unittest.TestCase):
     def test_a_failed_measurement_test_fails_even_with_good_records(self):
         results, *_ = judge(self.s.text(fail={"harness::tests::q01_measure_what_every_member_renders_under_each_source"}))
         self.assertEqual(list(failing(results)), ["Q01-M01"])
+
+
+class PlayoutAdapterCases(unittest.TestCase):
+    """The playout adapter's unit tests are in the source map and each is required by exactly one case. Q01's parser reads test NAMES from the
+    one binary `cargo test -p franken-speaker --lib` runs, so a wrong binary shows up here as a wrong MODULE PATH: the same function name under
+    another path does not stand in for `playout_adapter::tests::<name>`. Synthetic logs: they say nothing about the Rust."""
+
+    PREFIX = "playout_adapter::tests::"
+
+    def setUp(self):
+        self.s = Synthetic()
+        self.owner = {t: c["id"] for c in self.s.cases for t in c["tests"] if t.startswith(self.PREFIX)}
+        self.assertEqual(set(r.status for r in judge(self.s.text())[0]), {"pass"})  # the unplanted control
+
+    def statuses(self, text):
+        return {r.case: r.status for r in judge(text)[0]}
+
+    def test_the_playout_adapter_is_in_the_source_map_and_each_of_its_tests_is_in_exactly_one_case(self):
+        self.assertIn(("crates/franken-speaker/src/playout_adapter.rs", self.PREFIX), rc.RUST_SOURCES)
+        in_source = {n for n in rc.rust_test_names() if n.startswith(self.PREFIX)}
+        self.assertEqual(set(self.owner), in_source)
+        self.assertEqual(sum(1 for c in self.s.cases for t in c["tests"] if t.startswith(self.PREFIX)), len(in_source))
+        # The source-replacement positives stay required beside the refusals.
+        for name in ("an_old_stream_datagram_still_in_flight_at_the_commit_is_authenticated_on_arrival_by_the_old_generation_and_played",
+                     "a_fresh_group_epoch_can_resume_with_a_new_stream_without_relabeling_any_old_queued_generation"):
+            self.assertEqual(self.owner[self.PREFIX + name], "Q01-C13")
+
+    def test_a_missing_ignored_or_failed_playout_adapter_test_never_passes_its_case(self):
+        for test, case_id in sorted(self.owner.items()):
+            with self.subTest(test=test):
+                missing = self.statuses(self.s.text(drop={test}))
+                self.assertEqual(missing[case_id], "blocked")
+                self.assertEqual({c for c, s in missing.items() if s != "pass"}, {case_id})
+                ignored = self.statuses(self.s.text(drop={test}) + "test %s ... ignored\n" % test)
+                self.assertEqual(ignored[case_id], "blocked")
+                results = judge(self.s.text(fail={test}))[0]
+                self.assertEqual(list(failing(results)), [case_id])
+                self.assertIn(test, failing(results)[case_id])
+
+    def test_the_same_function_name_under_another_module_path_is_not_the_playout_adapter_test(self):
+        for test, case_id in sorted(self.owner.items()):
+            name = test[len(self.PREFIX):]
+            with self.subTest(test=test):
+                decoys = "test tests::%s ... ok\ntest harness::tests::%s ... ok\n" % (name, name)
+                self.assertEqual(self.statuses(self.s.text(drop={test}) + decoys)[case_id], "blocked")
+
+    def test_a_new_unmapped_or_a_vanished_playout_adapter_test_fails_the_meta_check_by_name(self):
+        real = rc.rust_test_names()
+        fake = self.PREFIX + "a_new_test_no_case_covers"
+        with mock.patch.object(rc, "rust_test_names", lambda *_: real + [fake]):
+            meta = {r.case: r for r in rc.meta_results()}
+        self.assertEqual(meta["META-CASES"].status, "fail")
+        self.assertIn(fake, meta["META-CASES"].detail)
+        gone = sorted(self.owner)[0]
+        with mock.patch.object(rc, "rust_test_names", lambda *_: [n for n in real if n != gone]):
+            meta = {r.case: r for r in rc.meta_results()}
+        self.assertEqual(meta["META-CASES"].status, "fail")
+        self.assertIn(gone, meta["META-CASES"].detail)
+        # and the repository as it is passes (the positive beside both refusals)
+        self.assertEqual({r.case: r.status for r in rc.meta_results()}["META-CASES"], "pass")
 
 
 class MemberRecords(unittest.TestCase):

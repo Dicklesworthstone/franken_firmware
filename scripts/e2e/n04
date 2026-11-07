@@ -12,9 +12,12 @@
 #   scripts/e2e/n04 --list                       planned case ids
 #   scripts/e2e/n04 --write-vectors              regenerate tests/n04/vectors.json (Python reference only)
 #
-# The Rust suite runs only through the centralized RCH path; this script never invokes cargo:
-#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo test -p franken-stream -- --nocapture
-#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo clippy -p franken-stream --all-targets -- -D warnings
+# The Rust suite runs only through the centralized RCH path; this script never invokes cargo. The judge needs ALL THREE binaries from one
+# batch: franken-stream (engine, worlds, route hint, paired trace), franken-alloc-probe, and franken-speaker (the arrival-consumer controls of
+# playout_adapter::tests, named in ARRIVAL_TESTS_BY_CASE). A case whose binary is missing from the logs stays blocked, never passed.
+# --no-fail-fast keeps one failing binary from hiding the results of the others:
+#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo +1.99.0 test --locked --no-fail-fast -p franken-stream -p franken-alloc-probe -p franken-speaker --features franken-speaker/harness -j1 -- --nocapture
+#   RCH_REQUIRE_REMOTE=1 rch exec -- cargo +1.99.0 clippy --locked -p franken-stream -p franken-alloc-probe -p franken-speaker --all-targets --features franken-speaker/harness -j1 -- -D warnings
 # (the module is wired into franken-stream/src/lib.rs only after the first green compile: docs/contracts/n04.md section 11)
 #
 # Exit 0 only when every case passed, none is blocked and the diagnostic log is complete; 1 on a failed case or a log that lost critical
