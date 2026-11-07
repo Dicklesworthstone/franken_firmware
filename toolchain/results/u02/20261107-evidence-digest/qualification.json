@@ -2,6 +2,13 @@
   "schema": "ffw.u02.offline_qualification.v1",
   "date": "2026-11-07",
   "source_base": "55837734fd82f1c4d502884d6fbf930e2a7c0f54",
+  "qualified_source_revision": "73fb62a49466007e2aee6422d65f3ed5f7dd6b2c",
+  "documentation_only_followup": {
+    "path": "docs/contracts/u02.md",
+    "execution_sha256": "4b45b8003f0ca8d175c1fd7f04c6fa90b923e05e88b0fa461cf05fe12f627616",
+    "published_sha256": "3ee384f50049e5cb7926a0c39cfb5b908b9a0436a5af778ff0405760e07518b4",
+    "runtime_test_vector_manifest_changes": false
+  },
   "execution": "native Linux through strictly remote RCH",
   "hardware_qualified": false,
   "target_guest_execution": false,

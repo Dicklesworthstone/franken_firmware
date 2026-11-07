@@ -72,6 +72,11 @@ tree when verified. Each completed with terminal acknowledgement, no live
 wrapper or owner, and source/tree/pair/staging release confirmed. The selected
 source hashes and receipt roots are in `qualification.json`.
 
+The execution source witnesses bind commit `73fb62a`. A subsequent documentation-only
+change refreshes the contract's stale qualification paragraph; its separate published
+digest is recorded without replacing the captured execution digest. No runtime,
+test, vector or manifest bytes changed for that documentation correction.
+
 The previous initial native failure remains in the earlier committed
 `20261107-2ccb1a5-initial` results. The helper compile failure and the causal
 failure here are retained separately. No failed result was converted to a pass.
