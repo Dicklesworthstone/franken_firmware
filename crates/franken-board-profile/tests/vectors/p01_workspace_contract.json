@@ -253,7 +253,9 @@
       "dev_deps": [
         "franken-board-profile",
         "franken-clock",
+        "franken-control",
         "franken-dsp",
+        "franken-session",
         "franken-stream"
       ]
     },

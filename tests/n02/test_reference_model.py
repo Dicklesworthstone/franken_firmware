@@ -23,6 +23,9 @@ import reference as ref  # noqa: E402
 
 CHANNEL_SRC = ref.ROOT / "crates" / "franken-control" / "src" / "channel"
 LOGFILE_SRC = ref.ROOT / "crates" / "franken-control" / "src" / "logfile.rs"
+# The counting allocator is an `unsafe impl`, which the workspace forbids in franken-control, so the heap tests live in the probe crate.
+PROBE_TESTS = ref.ROOT / "crates" / "franken-alloc-probe" / "tests"
+HEAP_TEST = PROBE_TESTS / "n02_heap_high_water.rs"
 CONTRACT = ref.ROOT / "docs" / "contracts" / "n02.md"
 CASES =Path(__file__).resolve().parent / "cases.json"
 
@@ -666,7 +669,8 @@ class Mapping(unittest.TestCase):
     def test_every_named_rust_test_exists(self):
         # The file sink (logfile.rs) is outside channel/ on purpose: the runtime-profile scan forbids the filesystem
         # in the channel's sources. Its tests are named by the same invariants, so it is read as well.
-        sources = sorted(CHANNEL_SRC.rglob("*.rs")) + [LOGFILE_SRC]
+        # The heap tests (INV-HEAP-BOUND and the probe's own figure) are in franken-alloc-probe/tests, for the same kind of reason.
+        sources = sorted(CHANNEL_SRC.rglob("*.rs")) + [LOGFILE_SRC] + sorted(PROBE_TESTS.glob("*.rs"))
         source = "\n".join(p.read_text(encoding="utf-8") for p in sources)
         names = {n for i in self.cases()["invariants"] for n in i["rust_tests"]}
         for group in self.cases()["other_rust_checks"].values():
@@ -690,6 +694,104 @@ class Mapping(unittest.TestCase):
             kind = "LocalUser" if role == "local" else "Controller"
             bound_text = "None" if bound is None else f"Some({'EPOCH' if bound == 10 else bound})"
             self.assertRegex(source, rf'\("{name}", PeerRole::{kind}, {re.escape(bound_text)}\)')
+
+
+SIMPLE_ARITHMETIC = re.compile(r"^[0-9_ *+]+$")
+
+
+def rust_usize_constant(text, name):
+    """The value of `const NAME: usize = <digits, `_`, `*`, `+`>;` in `text`; anything else is refused rather than evaluated."""
+    match = re.search(rf"\bconst {re.escape(name)}: usize = ([^;]+);", text)
+    if not match:
+        raise AssertionError(f"no `const {name}: usize` in the text")
+    expression = match.group(1).strip()
+    if not SIMPLE_ARITHMETIC.match(expression):
+        raise AssertionError(f"`const {name}` is not plain arithmetic: {expression}")
+    return eval(expression.replace("_", ""), {"__builtins__": {}}, {})  # noqa: S307 (digits, `*`, `+` and spaces only)
+
+
+def heap_bound_problems(rust, contract, sources):
+    """What differs between the heap test, the contract's constants table and the source caps; an empty list if nothing."""
+    out = []
+    caps = {
+        "MAX_PEER_ID_LEN": rust_usize_constant(sources["peer.rs"], "MAX_PEER_ID_LEN"),
+        "MAX_PROOF_LEN": rust_usize_constant(sources["peer.rs"], "MAX_PROOF_LEN"),
+        "MAX_MEMBER_ID_LEN": rust_usize_constant(sources["request.rs"], "MAX_MEMBER_ID_LEN"),
+    }
+    # The heap one authenticated request can own, written from the three field limits; the contract states the sum.
+    request_heap = 2 * caps["MAX_PEER_ID_LEN"] + caps["MAX_MEMBER_ID_LEN"] + caps["MAX_PROOF_LEN"]
+    if "const REQUEST_HEAP: usize = 2 * MAX_PEER_ID_LEN + MAX_MEMBER_ID_LEN + MAX_PROOF_LEN;" not in rust:
+        out.append("REQUEST_HEAP is not 2 * MAX_PEER_ID_LEN + MAX_MEMBER_ID_LEN + MAX_PROOF_LEN in the heap test")
+    table = dict(re.findall(r"^\| `([A-Z_]+)` \| (\d+) \|", contract, re.M))
+    if table.get("REQUEST_HEAP") != str(request_heap):
+        out.append(f"the contract says REQUEST_HEAP is {table.get('REQUEST_HEAP')}, the field limits give {request_heap}")
+    for name in ("RECORD_EXTRA", "ROW_EXTRA", "LOG_ROW", "FIXED_SLACK", "UNIT_COPIES", "SCRATCH"):
+        if name not in table:
+            out.append(f"the contract's constants table has no {name}")
+        elif str(rust_usize_constant(rust, name)) != table[name]:
+            out.append(f"{name}: the contract says {table[name]}, the heap test has {rust_usize_constant(rust, name)}")
+    # The caps the test imports and the session window it fills.
+    if "pub use submit_log::MAX_PENDING_REJECTS;" not in sources["pipeline.rs"]:
+        out.append("pipeline.rs no longer re-exports MAX_PENDING_REJECTS, which the heap test imports")
+    if rust_usize_constant(sources["session"], "COMMAND_DEDUP_WINDOW") != 1024:
+        out.append("COMMAND_DEDUP_WINDOW is not 1024; the contract's reading of the session's steady state needs a look")
+    # The bound is a function of the caps: the body of Bounds::of holds no number but 1, 2 and 3 (a unit, a doubling and the
+    # three per-peer tables), and names each cap it is written from.
+    body = re.search(r"fn of\(caps: &Caps\) -> Self \{(.*?)\n    \}\n\}", rust, re.S)
+    if not body:
+        return out + ["no Bounds::of in the heap test"]
+    code = "\n".join(re.sub(r"//.*$", "", line) for line in body.group(1).splitlines())
+    code = re.sub(r"\s+", " ", code)                      # rustfmt may break a long sum over lines
+    stray = sorted({n for n in re.findall(r"(?<![A-Za-z_0-9.])(\d[\d_]*)(?![A-Za-z_0-9])", code) if n not in {"1", "2", "3"}})
+    if stray:
+        out.append(f"Bounds::of holds literals other than 1, 2 and 3: {stray}")
+    for needed in ("cfg.ordinary_capacity + cfg.priority_shared_capacity + cfg.priority_local_reserved", "cfg.ledger_capacity",
+                   "MAX_PENDING_REJECTS", "3 * MAX_PEERS", "caps.log_bytes", "caps.log_records", "cfg.max_per_step + 1",
+                   "UNIT_COPIES * unit()", "2 * record()"):
+        if needed not in code:
+            out.append(f"Bounds::of does not use {needed}")
+    return out
+
+
+class HeapBound(unittest.TestCase):
+    """INV-HEAP-BOUND: the bound the Rust heap test checks is the one the contract states, and it is written from the caps."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.rust = HEAP_TEST.read_text(encoding="utf-8")
+        cls.contract = CONTRACT.read_text(encoding="utf-8")
+        cls.sources = {
+            "peer.rs": (CHANNEL_SRC / "peer.rs").read_text(encoding="utf-8"),
+            "request.rs": (CHANNEL_SRC / "request.rs").read_text(encoding="utf-8"),
+            "pipeline.rs": (CHANNEL_SRC / "pipeline.rs").read_text(encoding="utf-8"),
+            "session": (ref.ROOT / "crates" / "franken-session" / "src" / "lib.rs").read_text(encoding="utf-8"),
+        }
+
+    def test_the_contract_and_the_heap_test_state_the_same_constants_and_the_field_limits_give_the_request_heap(self):
+        self.assertEqual(heap_bound_problems(self.rust, self.contract, self.sources), [])
+
+    def test_the_contract_names_the_checks_the_plants_and_what_is_not_claimed(self):
+        text = re.sub(r"\s+", " ", self.contract.lower())          # the contract wraps lines inside a phrase
+        for phrase in ("INV-HEAP-BOUND", "datagram peak", "step peak", "retained level", "HEAP: retained", "HEAP: a datagram peaked",
+                       "host heap only", "36 native host tests",
+                       "checks have only synthetic plants", "HEAP: a step peaked"):
+            self.assertTrue(phrase.lower() in text, phrase)
+
+    def test_each_planted_difference_is_reported(self):
+        base = heap_bound_problems(self.rust, self.contract, self.sources)
+        self.assertEqual(base, [])
+        plants = [
+            ("a literal bound", self.rust.replace("datagram: UNIT_COPIES * unit(),", "datagram: 65_536,", 1), self.contract, "literals"),
+            ("a cap dropped", self.rust.replace("cfg.ledger_capacity + MAX_PENDING_REJECTS", "MAX_PENDING_REJECTS", 1), self.contract, "cfg.ledger_capacity"),
+            ("a constant changed", self.rust.replace("const UNIT_COPIES: usize = 24;", "const UNIT_COPIES: usize = 25;", 1), self.contract, "UNIT_COPIES"),
+            ("a request heap that is not the field limits", self.rust.replace("2 * MAX_PEER_ID_LEN + MAX_MEMBER_ID_LEN + MAX_PROOF_LEN;", "MAX_PEER_ID_LEN + MAX_MEMBER_ID_LEN + MAX_PROOF_LEN;", 1), self.contract, "REQUEST_HEAP"),
+            ("a contract number that moved", self.rust, self.contract.replace("| `UNIT_COPIES` | 24 |", "| `UNIT_COPIES` | 12 |", 1), "UNIT_COPIES"),
+            ("a contract request heap that moved", self.rust, self.contract.replace("| `REQUEST_HEAP` | 192 |", "| `REQUEST_HEAP` | 160 |", 1), "REQUEST_HEAP"),
+        ]
+        for name, rust, contract, word in plants:
+            self.assertTrue(rust != self.rust or contract != self.contract, name)
+            problems = heap_bound_problems(rust, contract, self.sources)
+            self.assertTrue(any(word in line for line in problems), f"{name}: {problems}")
 
 
 if __name__ == "__main__":

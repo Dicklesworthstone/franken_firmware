@@ -20,3 +20,5 @@ franken-clock.workspace = true
 franken-board-profile.workspace = true
 franken-dsp.workspace = true
 franken-stream.workspace = true
+franken-session.workspace = true
+franken-control.workspace = true

@@ -1,0 +1,53 @@
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test a_block_held_across_the_window_is_net_growth_and_a_dropped_one_is_only_a_peak ... ok
+test a_nested_window_that_unwinds_does_not_lose_a_peak_the_enclosing_window_already_reached ... ok
+test a_nested_window_that_unwinds_hands_its_own_peak_to_the_enclosing_window ... ok
+test a_realloc_that_grows_is_counted_at_its_new_size ... ok
+test a_request_the_probe_refuses_holds_no_memory_and_the_next_request_still_counts ... ok
+test a_structure_that_keeps_what_it_is_given_grows_and_one_that_does_not_is_flat ... ok
+test a_window_inside_a_window_leaves_the_outer_peak_intact ... ok
+test a_window_starts_its_own_high_water_mark_and_does_not_inherit_an_earlier_one ... ok
+test a_window_that_only_frees_has_a_peak_of_zero_and_negative_growth ... ok
+test an_outer_window_keeps_a_peak_it_reached_before_the_inner_window_opened ... ok
+test the_heap_figure_is_live_in_this_binary ... ok
+test the_same_nested_window_returning_normally_keeps_the_enclosing_peak_and_reports_its_own ... ok
+test windows_measure_exactly_after_a_nested_window_has_unwound_and_been_caught ... ok
+---- a_nested_window_that_unwinds_does_not_lose_a_peak_the_enclosing_window_already_reached stdout ----
+thread 'a_nested_window_that_unwinds_does_not_lose_a_peak_the_enclosing_window_already_reached' (3024410) panicked at crates/franken-alloc-probe/tests/heap_probe.rs:29:5:
+planted: a nested measure_heap window unwinds
+---- a_nested_window_that_unwinds_hands_its_own_peak_to_the_enclosing_window stdout ----
+planted: a nested measure_heap window unwinds
+planted: a nested measure_heap window unwinds
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test latency_and_event_operations_do_not_allocate_but_control_serialization_does ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test a_channel_that_allocates_a_large_scratch_per_request_breaks_the_datagram_peak_by_name ... ok
+test a_channel_that_retains_every_request_breaks_the_retained_bound_by_name ... ok
+test the_heap_probe_is_installed_and_the_flood_measures_something_at_every_cap ... ok
+test the_real_channel_stays_within_the_heap_bound_and_the_heap_does_not_grow_with_the_requests_served ... ok
+test the_same_bound_written_from_small_caps_is_smaller_and_a_small_channel_fits_it ... ok
+test the_verdict_judges_each_check_on_its_own_and_lets_the_exact_bound_through ... ok
+N02-HEAP-OBSERVED {"run":"provisional","ops":6000,"datagram_peak":2900,"step_peak":8008,"retained_highest":58219,"retained_floor_third":53150,"retained_floor_fourth":53150,"ledger_len":64,"ordinary_pending":16,"bound_datagram":12528,"bound_step":62640,"bound_retained":152544,"growth_slack":1696}
+N02-HEAP-OBSERVED {"run":"small","ops":2000,"datagram_peak":1694,"step_peak":4787,"retained_highest":9537,"retained_floor_third":8893,"retained_floor_fourth":8893,"ledger_len":8,"ordinary_pending":4,"bound_datagram":12528,"bound_step":37584,"bound_retained":59232,"growth_slack":1696}
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.61s
+test n04_log_config_labels_fault_and_clone_are_inline_even_at_the_label_limit ... ok
+test n04_log_rate_admission_and_refusal_do_not_allocate ... ok
+test n04_playout_engine_allocator_failure_is_a_typed_refusal_and_the_permitted_allocation_succeeds ... ok
+test n04_playout_engine_consume_path_does_not_allocate_after_construction ... ok
+test n04_playout_engine_refused_capacity_allocates_nothing ... ok
+test n04_playout_log_replacement_survives_an_allocator_failure_with_its_records ... ok
+test n04_untrusted_route_hint_is_allocation_free_for_permitted_and_refused_wire ... ok
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test protection_error_and_fault_paths_do_not_allocate ... ok
+test protection_render_into_does_not_allocate ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test a_real_protected_render_followed_by_its_report_does_not_allocate ... ok
+test emit_the_adapters_and_pop_do_not_allocate_even_when_the_ring_is_full_or_the_consumer_is_gone ... ok
+test the_counter_is_installed_and_building_the_ring_is_where_allocation_lives ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test control_path_construction_is_where_allocation_lives ... ok
+test convert_ring_convert_sink_pipeline_does_not_allocate ... ok
+test error_paths_alone_do_not_allocate ... ok
+test the_counter_is_installed_and_really_counts ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

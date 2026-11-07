@@ -725,6 +725,20 @@
       ]
     },
     {
+      "id": "INV-HEAP-BOUND",
+      "claim": "Through the real endpoint, channel and peer directory, over the six-thousand-operation flood, the host heap the channel holds stays within a bound written from its caps: one handle call peaks at most UNIT_COPIES request-sized units above where it started, one step at most max_per_step + 1 times that, and the live heap after every operation is under the sum of its stored records, per-peer rows and log ring; it does not grow with the requests already served, and the bound shrinks with the caps; a channel whose authority keeps every message it verifies breaks the retained bound by name, one that takes a large scratch buffer per message breaks the datagram peak by name, and each check is judged alone on synthetic runs. Host heap only: not the stack, a thread census, a device or a guest.",
+      "scenarios": [],
+      "scenario_inapplicable": "This is a property of the host heap under load, measured by a counting global allocator in franken-alloc-probe (the workspace forbids unsafe in franken-control); the Python scenario model has no allocator and nothing to say about it.",
+      "rust_tests": [
+        "the_heap_probe_is_installed_and_the_flood_measures_something_at_every_cap",
+        "the_real_channel_stays_within_the_heap_bound_and_the_heap_does_not_grow_with_the_requests_served",
+        "the_same_bound_written_from_small_caps_is_smaller_and_a_small_channel_fits_it",
+        "a_channel_that_retains_every_request_breaks_the_retained_bound_by_name",
+        "a_channel_that_allocates_a_large_scratch_per_request_breaks_the_datagram_peak_by_name",
+        "the_verdict_judges_each_check_on_its_own_and_lets_the_exact_bound_through"
+      ]
+    },
+    {
       "id": "INV-MARK-ROUND-TRIP",
       "claim": "The revision high-water mark is stored on U01's journal after each step and read back at boot: after a process death, only the durable bytes survive, a held-back copy is refused exactly as StaleRevision, a fresh command applies and the journal then holds the new mark; an owner that never restores, and one whose first process never stored, admit the copy and the judge catches each by name.",
       "scenarios": [],
@@ -1076,6 +1090,21 @@
       "drain_empties_the_log_and_keeps_its_counters",
       "the_summary_names_the_run_and_the_counts_and_nothing_else",
       "a_command_with_no_member_has_an_empty_member_id"
+    ],
+    "heap_probe": [
+      "the_heap_figure_is_live_in_this_binary",
+      "a_block_held_across_the_window_is_net_growth_and_a_dropped_one_is_only_a_peak",
+      "a_window_that_only_frees_has_a_peak_of_zero_and_negative_growth",
+      "a_realloc_that_grows_is_counted_at_its_new_size",
+      "a_window_inside_a_window_leaves_the_outer_peak_intact",
+      "a_structure_that_keeps_what_it_is_given_grows_and_one_that_does_not_is_flat",
+      "a_window_starts_its_own_high_water_mark_and_does_not_inherit_an_earlier_one",
+      "an_outer_window_keeps_a_peak_it_reached_before_the_inner_window_opened",
+      "a_request_the_probe_refuses_holds_no_memory_and_the_next_request_still_counts",
+      "a_nested_window_that_unwinds_does_not_lose_a_peak_the_enclosing_window_already_reached",
+      "a_nested_window_that_unwinds_hands_its_own_peak_to_the_enclosing_window",
+      "the_same_nested_window_returning_normally_keeps_the_enclosing_peak_and_reports_its_own",
+      "windows_measure_exactly_after_a_nested_window_has_unwound_and_been_caught"
     ]
   }
 }

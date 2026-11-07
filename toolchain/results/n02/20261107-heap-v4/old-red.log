@@ -1,0 +1,22 @@
+test a_block_held_across_the_window_is_net_growth_and_a_dropped_one_is_only_a_peak ... ok
+test a_nested_window_that_unwinds_does_not_lose_a_peak_the_enclosing_window_already_reached ... FAILED
+test a_nested_window_that_unwinds_hands_its_own_peak_to_the_enclosing_window ... ok
+test a_realloc_that_grows_is_counted_at_its_new_size ... ok
+test a_request_the_probe_refuses_holds_no_memory_and_the_next_request_still_counts ... ok
+test a_structure_that_keeps_what_it_is_given_grows_and_one_that_does_not_is_flat ... ok
+test a_window_inside_a_window_leaves_the_outer_peak_intact ... ok
+test a_window_starts_its_own_high_water_mark_and_does_not_inherit_an_earlier_one ... ok
+test a_window_that_only_frees_has_a_peak_of_zero_and_negative_growth ... ok
+test an_outer_window_keeps_a_peak_it_reached_before_the_inner_window_opened ... ok
+test the_heap_figure_is_live_in_this_binary ... ok
+test the_same_nested_window_returning_normally_keeps_the_enclosing_peak_and_reports_its_own ... ok
+test windows_measure_exactly_after_a_nested_window_has_unwound_and_been_caught ... ok
+---- a_nested_window_that_unwinds_hands_its_own_peak_to_the_enclosing_window stdout ----
+planted: a nested measure_heap window unwinds
+planted: a nested measure_heap window unwinds
+---- a_nested_window_that_unwinds_does_not_lose_a_peak_the_enclosing_window_already_reached stdout ----
+thread 'a_nested_window_that_unwinds_does_not_lose_a_peak_the_enclosing_window_already_reached' (2953686) panicked at crates/franken-alloc-probe/tests/heap_probe.rs:29:5:
+planted: a nested measure_heap window unwinds
+thread 'a_nested_window_that_unwinds_does_not_lose_a_peak_the_enclosing_window_already_reached' (2953686) panicked at crates/franken-alloc-probe/tests/heap_probe.rs:207:5:
+an unwound nested window must give back the peak it displaced: HeapWindow { net_bytes: 436, peak_above_start: 1654 }
+test result: FAILED. 12 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

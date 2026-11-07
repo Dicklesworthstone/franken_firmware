@@ -1,7 +1,7 @@
 {
  "schema": "ffw.p01.vectors.v1",
  "base": "p01_workspace_contract.json",
- "base_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+ "base_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
  "vectors": [
   {
    "id": "P01-V-001",
@@ -15,7 +15,7 @@
    "title": "the contract digest is the pinned canonical-JSON SHA-256",
    "kind": "digest",
    "ops": [],
-   "expect_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e"
+   "expect_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e"
   },
   {
    "id": "P01-V-003",
@@ -3344,7 +3344,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3368,7 +3368,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": true,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3399,7 +3399,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": true,
      "isa_revision": "",
      "fp_abi": ""
@@ -3430,7 +3430,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "hard"
@@ -3461,7 +3461,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": false,
      "isa_revision": "mips32r1",
      "fp_abi": "soft"
@@ -3492,7 +3492,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3527,7 +3527,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": "soft"
@@ -3558,7 +3558,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": false,
      "isa_revision": "ppc",
      "fp_abi": "hard"
@@ -3588,7 +3588,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "159ced9a02aca643c1c41c18f0f50939940d6921b6126e1ab062777e70a10b88",
+     "contract_digest": "a5a7cb78f66f702278392019bc730cfaf712a7959b6fd96f379429603a01c356",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3612,7 +3612,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": true,
      "isa_revision": "",
      "fp_abi": ""
@@ -3636,7 +3636,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3650,7 +3650,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3674,7 +3674,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3688,7 +3688,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3719,7 +3719,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": false,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3745,7 +3745,7 @@
      "elf_machine": 8,
      "elf_class": 2,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3771,7 +3771,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3785,7 +3785,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3816,7 +3816,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3873,7 +3873,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -3899,7 +3899,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3925,7 +3925,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3939,7 +3939,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -3970,7 +3970,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -4006,7 +4006,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -4038,7 +4038,7 @@
      "elf_machine": 8,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "f47577d71d112958cd4ef133694ca2dfdf849cb7213ca18cc4edc0f01880176e",
+     "contract_digest": "bb528fc15e09392a631eface7136e46dca4c042b4a4867e19ce7d9f70a396609",
      "elf_dynamic": false,
      "isa_revision": "mips32r2",
      "fp_abi": "soft"
@@ -4064,7 +4064,7 @@
      "elf_machine": 20,
      "elf_class": 1,
      "elf_big_endian": true,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""
@@ -4090,7 +4090,7 @@
      "elf_machine": 0,
      "elf_class": 0,
      "elf_big_endian": false,
-     "contract_digest": "deb964640c80c20606b2c9d5baaccd1be37d7e77c083879ad2ae9277ecb0118e",
+     "contract_digest": "a912c55d56d1597d80a7a94feca43d2245fe26f7398ad820dcc759b52bb0129e",
      "elf_dynamic": false,
      "isa_revision": "",
      "fp_abi": ""

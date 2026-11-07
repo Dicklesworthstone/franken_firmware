@@ -1,0 +1,94 @@
+{
+  "scope": "host requested-allocation accounting for a two-member control-channel fixture; not a full N02 admission",
+  "base_revision": "8cd35b9d7c93cc171fa1e75e52f040b715c9ed30",
+  "toolchain": "nightly-2026-08-31",
+  "test_profile": {
+    "opt_level": 0,
+    "debug": 0,
+    "test_threads": 1
+  },
+  "rust_tests": {
+    "passed": 36,
+    "failed": 0,
+    "ignored": 0,
+    "heap_probe": 13,
+    "control_channel_heap": 6
+  },
+  "causal_old_allocator": {
+    "passed": 12,
+    "failed": 1,
+    "failed_case": "a_nested_window_that_unwinds_does_not_lose_a_peak_the_enclosing_window_already_reached",
+    "allocator_sha256": "9b6e70ae95cedf979135e97b42b934a2690eb459e5c1a64e359eecdd9038b510",
+    "expected_earlier_peak_bytes": 4194304,
+    "observed_understated_peak_bytes": 1654
+  },
+  "python_tests": {
+    "passed": 72,
+    "failed": 0
+  },
+  "p01_vectors": 137,
+  "production_or_board_profile_admitted": false,
+  "direct_local_compiler_results_excluded": true,
+  "source_inputs": {
+    "Cargo.lock": "39e70649d690a342c74157bada974cfabaf76bfbbcb4dc05a33fa0af6181c58c",
+    "crates/franken-alloc-probe/Cargo.toml": "380540e7af5d2809bf125048c39696b46518f647444457d5acdaa6f888f83c08",
+    "crates/franken-alloc-probe/src/lib.rs": "927842d7e660cd7c122ec9e0e64d07dc380ee3db776817ae176a731fd76e02c7",
+    "crates/franken-alloc-probe/tests/heap_probe.rs": "5635040685997a37ffe2cbf394c0f80a848d93ffc1c5297961081b195579870d",
+    "crates/franken-alloc-probe/tests/n02_heap_high_water.rs": "29777ed1b72d0ab247b00e295ea5b0f74852869a85742dbeda4674a198c4fcd9",
+    "crates/franken-board-profile/tests/vectors/p01_contract_vectors.json": "3bf22b9643c414b70d0289f99ae482098dbc1a9f572a5682c88e9713a7e0120f",
+    "crates/franken-board-profile/tests/vectors/p01_workspace_contract.json": "ad1d13dd53905e01440b6fd1274fc309729152b35ebb40d393d04c3951890a76",
+    "docs/contracts/n02.md": "d1c1080dfeeb3c1659145289e59807f14d8f656ba62385bc3fbd1220811245a2",
+    "tests/n02/cases.json": "33eb8e581bcdae7869349c5402baba5e01e2b18696d487b4c4db8c185aedaa0a",
+    "tests/n02/test_reference_model.py": "7b2477afd0e4d8255899c585d639a1b5ba358fd2a5d3245b955cd585997fee0b"
+  },
+  "records": {
+    "native": {
+      "raw_log_sha256": "93310751e53bc57d1da04ea8b59181b9fb82109d113ae80586176e1255724251",
+      "receipt_root": "5135ee3f143f9e433b7b71ed79b292696dd52775beeaf8059db716ffceb430a5",
+      "command_exit_code": 0,
+      "source_files": 1229,
+      "source_mismatches_at_capture_review": [],
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "owner_presence": "absent",
+      "sources_released": true,
+      "tree_retired": true,
+      "pair_released": true,
+      "staging_released": true,
+      "retired": true,
+      "public_log_sha256": "8100537c7170dabbe8c7c5ca6e0d4cdc2923ccf58a0cf78eab6c13af9cd264b7"
+    },
+    "clippy": {
+      "raw_log_sha256": "5e834a2e332264549849f68dd5597423dab604c8865fc8075682f4c4533c18b7",
+      "receipt_root": "fa9e93bb751e078db86bae04d5abca6f665f03ca2631bfa41d37fa208dec770d",
+      "command_exit_code": 0,
+      "source_files": 1229,
+      "source_mismatches_at_capture_review": [],
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "owner_presence": "absent",
+      "sources_released": true,
+      "tree_retired": true,
+      "pair_released": true,
+      "staging_released": true,
+      "retired": true
+    },
+    "old_red": {
+      "raw_log_sha256": "cb4ff0b38092bc4969699abac1d067a370c9159c7510a53a4de03407df993792",
+      "receipt_root": "c51dea82b7104024948005cf3fd2e99a523ad1226053fea8cda49fb4abbfad44",
+      "command_exit_code": 101,
+      "source_files": 1229,
+      "source_mismatches_at_capture_review": [],
+      "terminal_acknowledged": true,
+      "wrapper_alive": false,
+      "owner_presence": "absent",
+      "sources_released": true,
+      "tree_retired": true,
+      "pair_released": true,
+      "staging_released": null,
+      "retired": true,
+      "public_log_sha256": "91e35a0e9dd1ecf2192fa29689fbd46242e6408e9342d4aacdaddea07634bd72"
+    }
+  },
+  "publication_note": "These evidence files were added after the captures. The ten listed runtime, test, vector, manifest and contract inputs match both final captures. Earlier N05 evidence remains historical to its recorded source hashes."
+}
