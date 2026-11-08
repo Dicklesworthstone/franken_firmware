@@ -1,7 +1,7 @@
 //! Runs asupersync's ORIGINAL `runtime_abort_vs_cancel_semantics_audit.rs`, and its `stream_cancellation` helper, unchanged.
 //!
 //! Both files below are the pinned bytes (build.rs refuses the build otherwise); nothing in them is edited, filtered, ignored or
-//! reordered, and all of their `#[test]`s run (46 in the audit, 2 in the helper).
+//! reordered, and all of their `#[test]`s run (48 in the audit, 2 in the helper).
 //!
 //! There is exactly one interposition, and it is the macro below. In the asupersync package `env!("CARGO_MANIFEST_DIR")` is the
 //! asupersync source root, and the audit's structural pins read `src/**` and `tests/*` beneath it. In this package asupersync is a

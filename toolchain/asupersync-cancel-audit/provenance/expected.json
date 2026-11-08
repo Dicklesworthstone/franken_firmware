@@ -1,7 +1,7 @@
 {
   "asupersync": {
     "git": "https://github.com/Dicklesworthstone/asupersync",
-    "rev": "14032b8f2c832ee7ef1946404f5efb18162af045",
+    "rev": "460306de2aa4169510873716018ade44fdb01534",
     "version": "0.6.2"
   },
   "feature_sources": {
@@ -29,7 +29,7 @@
     "tracing-integration"
   ],
   "harness_files": {
-    "tests/runtime_abort_vs_cancel_semantics_audit.rs": "5f13a1bae7085304fe33083b4560e07f753995962e57dc72a53ebb569fa1c841",
+    "tests/runtime_abort_vs_cancel_semantics_audit.rs": "83c620459150469003c4038988c70598477d469a5c60add01028ba76c06e9d39",
     "tests/runtime_abort_vs_cancel_semantics_audit/stream_cancellation.rs": "daf75da8c73ad7d61391ae7c8f017ed704d7898e0e1d28b11295588a860c2d6a"
   },
   "original_command": "cargo +nightly-2026-08-31 test -p asupersync --locked --test runtime_abort_vs_cancel_semantics_audit -j1 -- --nocapture",
@@ -45,9 +45,9 @@
   },
   "schema": 1,
   "tests": {
-    "audit": 46,
+    "audit": 48,
     "stream_cancellation": 2,
-    "total": 48
+    "total": 50
   },
   "toolchain_channel": "nightly-2026-08-31",
   "toolchain_file_sha256": "99838b6a25561af2c5b180941bb81adad3ef25f22ae297a6f7ddec2caa151c6f"

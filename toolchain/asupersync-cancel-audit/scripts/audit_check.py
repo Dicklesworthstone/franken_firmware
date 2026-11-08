@@ -278,7 +278,7 @@ def main():
     sub = parser.add_subparsers(dest="cmd", required=True)
     d = sub.add_parser("derive")
     d.add_argument("--repo", required=True)
-    d.add_argument("--rev", default="14032b8f2c832ee7ef1946404f5efb18162af045")
+    d.add_argument("--rev", default="460306de2aa4169510873716018ade44fdb01534")
     d.add_argument("--out", type=Path, default=EXPECTED)
     sub.add_parser("static")
     l = sub.add_parser("lock")

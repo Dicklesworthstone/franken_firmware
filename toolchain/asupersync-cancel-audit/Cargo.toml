@@ -24,7 +24,7 @@ autobenches = false
 # the package's four defaults, plus what its dev-dependency asupersync-conformance asks of asupersync (Cargo unifies them) and the
 # optional dependencies those pull in. The line must stay on one line: build.rs and audit_check.py read it.
 [dependencies]
-asupersync = { git = "https://github.com/Dicklesworthstone/asupersync", rev = "14032b8f2c832ee7ef1946404f5efb18162af045", default-features = false, features = ["fuzz", "metrics", "native-runtime", "nightly-outcome-try", "proc-macros", "runtime-core", "test-internals", "tracing-integration"] }
+asupersync = { git = "https://github.com/Dicklesworthstone/asupersync", rev = "460306de2aa4169510873716018ade44fdb01534", default-features = false, features = ["fuzz", "metrics", "native-runtime", "nightly-outcome-try", "proc-macros", "runtime-core", "test-internals", "tracing-integration"] }
 
 # The audit prints diagnostics with serde_json::json! and uses no other crate that is not asupersync or std. sha2 is for the guard.
 [dev-dependencies]
