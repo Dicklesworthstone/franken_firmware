@@ -6,7 +6,7 @@ The implementation is committed upstream through
 `460306de2aa4169510873716018ade44fdb01534`, including the tracked consumer lock.
 [profile-io-code-inputs.sha256](profile-io-code-inputs.sha256) identifies its 24
 owned inputs, including profile byte-budget selection/audit and truthful I/O
-refusal diagnostics. The final native and compiler checks remain in progress;
+refusal diagnostics. The final native run and clean compiler-source qualification remain pending;
 the commits themselves do not establish qualification.
 The successful lint command recorded source revision
 `e1a27c7ba89fb785e84c20f4216c6554a527b9a3`; the subsequent `460306de` commit only
@@ -16,10 +16,10 @@ tracks the already-captured nested lockfile. The captured code bytes match the
 | Current check | Observed result | Scope |
 | --- | --- | --- |
 | Strict primary all-target Clippy, build `30099060530610861` | Exit 0, no diagnostics | Captured integrated snapshot; 20,912 files matched before later peer edits; all 24 owned inputs still match |
-| Standalone default all-target compiler check | In progress | Same code inputs |
+| Standalone default all-target compiler check, build `30099060530610894` | Compiler exit 0; wrapper exit 1; same-ID recovery exit 0 | Five peer source deltas prevented the source receipt; not a clean qualification |
 | 196 focused unit cases | In progress | Original 122 plus profile, blocking-placement and resolver cases |
 | 23 public integration cases | Not yet run | Allocator 4, stdio 15, retirement 4 |
-| Current 15-file remote format attempt | Exit 103 before execution; 0 files checked | Worker namespace initialization did not complete |
+| Current 15-file remote format attempts | First exited 103; staged retry exited 120 before starting | Zero files checked; namespace deadline, then physical disk admission refusal |
 
 [profile-io-clippy.txt](profile-io-clippy.txt) retains the actual successful
 lint terminal lines. Its content root is
@@ -33,6 +33,21 @@ review found five unrelated peer edits outside that capture; it still matched
 all 24 owned inputs. This is qualification of the captured snapshot, not a claim
 that the subsequently changing whole checkout passed. Peer changes are
 preserved and require their own qualification.
+
+The standalone compiler check finished in 30 minutes 42 seconds without
+diagnostics, but the post-command source comparison found five changed peer
+files. The original wrapper returned 1 and emitted no source receipt.
+Supported recovery of that same job returned 0 with terminal acknowledgment;
+the wrapper is dead, its owner absent, and all source/output custody retired.
+The five local peer files remained byte-identical across recovery. Recovery
+does not retroactively provide the missing receipt, and this result remains
+distinct from the earlier clean Clippy qualification. The sequential driver
+stopped on the wrapper failure, so its public integration tests did not start.
+[default-check.txt](default-check.txt) retains these separate outcomes.
+The format-only retry also ran no formatter: the worker's physical disk
+reservation gate refused it before start. [profile-io-format.txt](profile-io-format.txt)
+records that refusal without counting script text printed in the command log
+as executed test output. No resource floor, reservation or peer file was changed.
 
 The preceding public retirement experiment passed four tests with 100 trials
 each. Multithreaded runtimes were initially nonquiescent in 18/100 embedded and

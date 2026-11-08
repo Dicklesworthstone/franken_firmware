@@ -1,0 +1,17 @@
+Captured command: cargo +nightly-2026-08-31 check --locked --all-targets --keep-going -j1
+Worker alias: vmi1152480; build 30099060530610894
+Finished `dev` profile [unoptimized] target(s) in 30m 42s
+Remote command finished: exit=0 in 1852241ms
+Compiler diagnostics observed: 0 errors, 0 warnings. No tests were executed.
+Original caller exit: 1. Completion unconfirmed; ownership retained for recovery.
+Post-command source comparison: five deltas, no source-content receipt emitted:
+  docs/WASM.md
+  packages/browser/src/index.ts
+  scripts/test_browser_artifact_transactions.mjs
+  src/database/pool.rs
+  src/database/pool_inline_tests.rs
+Same-ID supported recovery: status=recovered, exit_code=0, terminal_acknowledged=true.
+Settled custody: wrapper dead, owner absent; sources_released, tree_retired, pair_released, retired and project output phase all true.
+Peer preservation: all five local hashes matched immediately before and after recovery.
+Qualification: compiler execution succeeded; original source-fidelity qualification failed. Recovery is not a substitute for a source receipt.
+Complete original capture SHA-256: 64ffa031d8ad98c9a319cca0cae9d9aa0ebbd051b744df0d9e4d0f64d4ae77e5

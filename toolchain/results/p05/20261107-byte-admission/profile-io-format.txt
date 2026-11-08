@@ -1,0 +1,10 @@
+Current 15-file format qualification: NOT RUN.
+First attempt: CLI 103 before worker namespace initialization completed; zero files checked.
+Second attempt: strict remote NON-compilation Python job on vmi1152480, with the reviewed 15-file SHA-256 before/after checker and actual rustfmt --check as its intended payload.
+Second caller exit: 120, RCH-E330, remote_build_disk_budget_exceeded: admission.
+Physical gate: started=false; growth_bytes=0; max_growth_bytes=21474836480; min_free_bytes=10737418240; free_bytes=37864062976.
+Reason: free space cannot cover active build reservations and protected floor.
+Executed FFW_FORMAT markers: 0. The command's printed script is not executed output.
+Files checked: 0. No formatter pass, file-change claim, Cargo dependency closure or whole-project format qualification.
+No global settings, budget floors, reservations or peer files were modified to bypass the refusal.
+Complete second capture SHA-256: 82321fd29c3e76099b2367b7a39505dce6c8db49f22592a65bf8df7e928a4988
