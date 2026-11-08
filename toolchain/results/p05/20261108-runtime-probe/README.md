@@ -224,8 +224,8 @@ while the captured process is still running.
 
 The fresh-eyes Python candidate passed **50/50 checker/capture tests** in
 7.179 seconds and **313/313 existing regressions** in 18.160 seconds, both
-exit 0. Final Python compilation, Rust formatting and whitespace checks
-also returned 0. Those results do not qualify the changed Rust source.
+exit 0. Final Python compilation, Rust formatting and source whitespace
+checks also returned 0. Those results do not qualify the changed Rust source.
 All 19 original Rust test names are retained alongside six new cases.
 All 25 subsequently passed in the bounded native run below. Full P05/P03
 acceptance, actual BE execution and resource qualification remain open.
@@ -296,6 +296,10 @@ released sources and staging, and retired tree/pair.
   [analysis receipt](native-analysis.json) retains the correct
   `supplied_transcript_analysis` evidence class. Execution custody comes
   from the separate capture records and RCH job, not from this analysis.
+
+The raw test stdout preserves libtest's trailing empty line. Git's
+blank-at-EOF check reports that line; source whitespace checks pass. The
+capture bytes and their recorded hashes remain unchanged.
 
 An independent reviewer read the retrieved bytes, checked all frozen names
 and hashes, and reran the Python analyzer against the actual ELF. That is
