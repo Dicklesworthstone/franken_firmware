@@ -9,10 +9,23 @@
 #   scripts/e2e/t01 --receipts DIR                      keep the shared Q00 JSONL diagnostic log and a JSON receipt under DIR (without it the log is kept in a fresh temp directory
 #                                                       whose path is printed; a log that lost critical evidence is NOT QUALIFIED)
 #   scripts/e2e/t01 --list                              the planned cases of the tier
+#   scripts/e2e/t01 --x02 run --arch mips|powerpc --elf E --supervisor S --log-dir D [--receipt R] [--timeout 180] [--revision REV]
+#                                                       boot an already-built T01 core-probe ELF in the existing E07 speaker-smoke guest slot (the P05 runtime machinery, imported)
+#                                                       and judge its T01X02 transcript; no compilation. Exit 0 pass, 1 fail, 3 blocked, 2 usage. Needs the QEMU kernels like `p05 --runtime run`
+#   scripts/e2e/t01 --x02 analyze --log L [--arch A [--supervisor S] [--elf E]] [--receipt R]
+#                                                       judge a supplied transcript (supplied_transcript_analysis: it proves nothing about the ELF that printed it)
 #
 # Exit 0 only when every case passed, none is blocked and the diagnostic log is complete; 1 on a failed case or a log that lost critical evidence; 3 when the only non-passes are
 # blocked cases (reported, never counted as passed); 4 for --tier soak; 2 on usage errors. The default run exits 3 on purpose: the exact legacy-ISA build (T01-X01) and the on-target
 # memory/CPU figures (T01-X02) need a central build and guests that do not exist, and a pass of the rest says nothing about a target.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+if [ "${1:-}" = "--x02" ]; then
+  shift
+  case "${1:-}" in
+    run|analyze) ;;
+    *) printf '%s\n' 'usage: scripts/e2e/t01 --x02 run|analyze [arguments]' >&2; exit 2 ;;
+  esac
+  exec python3 -B "$ROOT/tests/t01/x02_judge.py" "$@"
+fi
 exec python3 -B "$ROOT/tests/t01/run_cases.py" "$@"

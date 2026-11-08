@@ -735,15 +735,17 @@ class Runner(unittest.TestCase):
             self.assertEqual(full["T01-P02-workspace-edges"][0], "failed")
             self.assertEqual(full["T01-P03-awslc-targets"][0], "blocked")                      # that tree was not supplied
 
-    def test_a_receipt_nobody_can_judge_yet_is_still_blocked(self):
+    def test_a_build_receipt_nobody_can_judge_yet_is_still_blocked_and_a_foreign_measurement_file_now_fails_by_name(self):
         with tempfile.TemporaryDirectory() as tmp:
             write(tmp, "toolchain/results/tailscale/builds/x.json", "{}\n")
             write(tmp, "toolchain/results/tailscale/measurements/x.json", "{}\n")
             self.assertEqual(rc.case_build(tmp).status, "blocked")
             self.assertIn("no judge for it yet", rc.case_build(tmp).detail)
-            self.assertEqual(rc.case_resources(tmp).status, "blocked")
-            self.assertIn("no judge for it yet", rc.case_resources(tmp).detail)
+            self.assertEqual(rc.case_resources(tmp).status, "failed")                          # X02 has a judge now: a file that is not its receipt is a failure, named
+            self.assertIn("x.json", rc.case_resources(tmp).detail)
+            self.assertIn("schema", rc.case_resources(tmp).detail)
             self.assertEqual(rc.case_build(os.path.join(tmp, "empty")).status, "blocked")
+            self.assertEqual(rc.case_resources(os.path.join(tmp, "empty")).status, "blocked")  # and no receipt at all is still blocked
 
     def test_the_native_requirement_case_reports_each_planted_weakening(self):
         data = rc.inputs()
@@ -1308,7 +1310,8 @@ class BuildRecord(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             self.repo_with(tmp, {"1.log": self.core_ppc, "2.log": self.core_mips, "3.log": self.whole_ppc, "4.log": self.relabel(self.whole_ppc)})
             write(tmp, "toolchain/results/tailscale/measurements/x.json", "{}\n")
-            self.assertIn("no judge for it yet", rc.case_resources(tmp).detail)
+            self.assertEqual(rc.case_resources(tmp).status, "failed")                           # a foreign measurement file fails the X02 case, by name
+            self.assertIn("x.json", rc.case_resources(tmp).detail)
             self.assertEqual(rc.case_build(tmp, data).status, "passed")                         # and a measurement file does not touch the compile verdict
 
     def test_the_historical_receipts_are_kept_byte_for_byte_and_still_say_blocked(self):

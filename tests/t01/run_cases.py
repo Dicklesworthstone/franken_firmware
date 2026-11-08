@@ -17,7 +17,9 @@ Tiers (explicit):
          under toolchain/results/tailscale/builds/ (and any ``--build-log LOG``): the contract's TWO COMPILE-ONLY ``cargo check`` attempts on EACH legacy target, the seven core crates and
          the whole library, held against pinned inputs. It PASSES only when all four attempts built; otherwise it is BLOCKED with every attempt accounted for (built, stopped at a named
          crate with its classified cause, or not recorded), and FAILED by any record that does not hold. A stop is kept and named, never read as a pass nor as an ISA finding it does not
-         show. T01-X02 (on-target memory and CPU) is BLOCKED until a measurement receipt exists; a compile record never satisfies it, nor a runtime, enrollment or native-endpoint claim.
+         show. T01-X02 (on-target memory and CPU) is BLOCKED until a measurement receipt exists, and judges the receipts under toolchain/results/tailscale/measurements/ that ``scripts/e2e/t01 --x02`` writes: it
+         PASSES only when EACH legacy target has a captured guest run (never a supplied transcript analysis) with every phase ok, no UNKNOWN reading and the ELF, kernel and initramfs hashes; a malformed or
+         other-schema receipt, or a captured run that did not pass, FAILS by name. A compile record never satisfies it, nor a runtime, enrollment or native-endpoint claim; a pass is harness-guest figures only.
   soak   selectable, says why nothing runs, exits 4. It is never a pass.
 
 Every decided case writes a CRITICAL begin and end event through the shared Q00 sink (``case_log.py``); a run whose log lost critical evidence is NOT QUALIFIED. A run that is not a pass
@@ -43,6 +45,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 import t01lib as L  # noqa: E402
+import x02_judge as X  # noqa: E402  (judges the X02 guest-run receipts; stdlib only, the P05 guest layer is loaded lazily by its own commands)
 
 TIERS = ("smoke", "full", "soak")
 RUN_TIERS = ("smoke", "full")
@@ -60,7 +63,7 @@ CONTRACT_PHRASES = (
     "absent budget is pending, not pass",
     "T04 is provisional development admission",
 )
-JUDGED_ARTIFACTS = ("tests/t01/run_cases.py", "tests/t01/t01lib.py", "tests/t01/case_log.py", "tests/t01/cases.json", "docs/tailscale/profiles.json", "docs/tailscale/feasibility.md", CONTRACT,
+JUDGED_ARTIFACTS = ("tests/t01/run_cases.py", "tests/t01/x02_judge.py", "tests/t01/t01lib.py","tests/t01/case_log.py", "tests/t01/cases.json", "docs/tailscale/profiles.json", "docs/tailscale/feasibility.md", CONTRACT,
                     "tests/tailscale-fixtures/evidence/ledger.json", "tests/tailscale-fixtures/synthetic/identity.json", "tests/tailscale-fixtures/synthetic/netmap.json",
                     "tests/tailscale-fixtures/synthetic/derp_map.json", "tests/tailscale-fixtures/synthetic/key_expiry.json", "tests/tailscale-fixtures/x01/consumer.lock", "tests/tailscale-fixtures/x01/x01-cc/zig-cc-mips-be-ccrs",
                     "tests/tailscale-fixtures/x01/x01-cc/zig-cc-mips-be-ccrs-v2", "scripts/test/test_support/diagnostics.py")
@@ -411,10 +414,51 @@ def case_build(repo: str, data: Optional[Dict[str, Any]] = None, build_logs: Any
     return Result(X01_ID, "passed", "all four required attempts built; %s: %s" % (bound, "; ".join(lines)), "central")
 
 
+X02_ID = "T01-X02-target-resources"
+X02_BOUND = ("harness guests only (Debian 4.19 MIPS Malta, Debian 4.9 PowerPC g3beige), not the Sonos 2.6.35 / 2.6.14 kernels or a board, so the figures are indicative; ticks are raw /proc clock "
+             "ticks; no tunnel, enrollment, interop or native-endpoint result; the native requirement and the closure of T01 are untouched")
+
+
 def case_resources(repo: str) -> Result:
-    if not receipt_files("measurements", repo):
-        return blocked("T01-X02-target-resources", "central", "no measurement receipt under toolchain/results/tailscale/measurements/: " + MEASUREMENT_BLOCKER)
-    return blocked("T01-X02-target-resources", "central", "a measurement receipt exists but this runner has no judge for it yet: add one with the first real receipt, do not read it as a pass")
+    """Judge the X02 receipts under toolchain/results/tailscale/measurements/ (written by `scripts/e2e/t01 --x02 run|analyze`, judged by x02_judge.judge_receipt, which re-judges the facts
+    a receipt records and never trusts its own `result`). No receipt: BLOCKED. FAILED by any receipt that is malformed, has another schema, or records a captured run that did not pass.
+    A supplied_transcript_analysis is never execution evidence. PASSES only when EACH legacy target (mips and powerpc) has a captured guest run with every phase ok, no UNKNOWN
+    reading and its ELF, kernel and initramfs hashes; otherwise BLOCKED with each target accounted for, so one target can never read as both."""
+    files = receipt_files("measurements", repo)
+    if not files:
+        return blocked(X02_ID, "central", "no measurement receipt under toolchain/results/tailscale/measurements/: " + MEASUREMENT_BLOCKER)
+    problems: List[str] = []
+    notes: List[str] = []
+    passed: Dict[str, List[Any]] = {}
+    for path in files:
+        name = os.path.basename(path)
+        try:
+            text = L.read_bounded_file(path, X.MAX_RECEIPT_BYTES).decode("utf-8")
+        except (L.SourceRefused, OSError, UnicodeDecodeError) as err:
+            problems.append("%s: %s" % (name, failure_detail(err) if isinstance(err, (OSError, UnicodeDecodeError)) else str(err)))
+            continue
+        verdict = X.judge_receipt(text)
+        if verdict.state == "failed":
+            problems += ["%s: %s" % (name, p) for p in verdict.problems]
+        elif verdict.state == "passed":
+            passed.setdefault(verdict.arch, []).append((name, verdict.resources))
+        elif verdict.state == "blocked":
+            notes.append("%s (%s) is blocked: %s" % (name, verdict.arch, "; ".join(verdict.problems)))
+        else:
+            notes.append("%s is a supplied transcript analysis, not a guest run" % name)
+    if problems:
+        return judged(X02_ID, "central", problems)
+    lines = []
+    for arch in X.ARCHES:
+        if arch not in passed:
+            lines.append("%s: NOT RECORDED as a passed captured guest run" % arch)
+            continue
+        name, figures = passed[arch][-1]
+        earlier = " (+%d earlier passed)" % (len(passed[arch]) - 1) if len(passed[arch]) > 1 else ""
+        lines.append("%s: PASSED, VmHWM %d kB, VmRSS %d kB, utime %d, stime %d ticks, from %s%s" % (arch, figures["VmHWM"], figures["VmRSS"], figures["utime"], figures["stime"], name, earlier))
+    if all(arch in passed for arch in X.ARCHES):
+        return Result(X02_ID, "passed", "a captured guest run with every phase ok and every reading known on each legacy target; %s: %s" % (X02_BOUND, "; ".join(lines)), "central")
+    return blocked(X02_ID, "central", "INCOMPLETE; one target is partial evidence only; %s: %s" % (X02_BOUND, "; ".join(lines + notes)))
 
 
 SMOKE_CASES = (case_ledger, case_profile, case_classification, case_cell_rules, case_matrix, case_budget, case_fixtures, case_native_requirement)
@@ -435,7 +479,7 @@ DESCRIPTIONS = {
     "T01-P04-mio-reactor": "mio 1.2.1 creates its epoll instance with epoll_create1 and has no epoll_create fallback (needs --sources)",
     "T01-P05-ledger-vs-sources": "every ledger excerpt cut from a supplied source file is re-cut from that file (needs --sources)",
     "T01-X01-legacy-isa-build": "the legacy-ISA COMPILE-ONLY checks, the seven core crates AND the whole library on each target (captured cargo check logs; PASSES only when all four built, else BLOCKED with every attempt accounted for)",
-    "T01-X02-target-resources": "memory and CPU measurements on the target (needs a measurement receipt; BLOCKED until one exists)",
+    "T01-X02-target-resources": "memory and CPU measurements on the target (judged X02 guest-run receipts; PASSES only with a captured run on EACH legacy target, else BLOCKED; indicative, harness guests only)",
 }
 
 
