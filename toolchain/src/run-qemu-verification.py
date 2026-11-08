@@ -9,8 +9,10 @@ Covers:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
+import math
 import os
 import pathlib
 import re
@@ -333,24 +335,35 @@ def build_manifest(
 
 
 def capture_guest(command: list[str], env: dict[str, str], timeout: float,
-                  max_bytes: int = 8 * 1024 * 1024) -> dict[str, Any]:
+                  max_bytes: int = 8 * 1024 * 1024,
+                  capture_paths: dict[str, pathlib.Path] | None = None) -> dict[str, Any]:
     """Bound both runtime and retained bytes; kill only our process group.
 
     Timeout/output-limit prefixes remain diagnostic evidence, never a pass.
     Separate byte streams preserve CRLF and invalid UTF-8 without pretending
     their concatenation establishes ordering between stdout and stderr.
+    Optional exclusive-create capture files are flushed with each retained
+    chunk, so an interrupted supervisor still leaves its bounded raw evidence.
     """
-    if timeout <= 0 or max_bytes <= 0:
+    if not math.isfinite(timeout) or timeout <= 0 or max_bytes <= 0:
         raise ValueError("positive capture limits required")
+    if capture_paths is not None and set(capture_paths) != {"stdout", "stderr"}:
+        raise ValueError("capture_paths must name both stdout and stderr")
     streams = {"stdout": bytearray(), "stderr": bytearray()}
     reason = None
-    proc = subprocess.Popen(command, env=env, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, start_new_session=True)
-    deadline = time.monotonic() + timeout
-    with selectors.DefaultSelector() as selector:
-        selector.register(proc.stdout, selectors.EVENT_READ, "stdout")
-        selector.register(proc.stderr, selectors.EVENT_READ, "stderr")
+    with contextlib.ExitStack() as stack:
+        files = {
+            name: stack.enter_context(path.open("xb"))
+            for name, path in (capture_paths or {}).items()
+        }
+        proc = subprocess.Popen(command, env=env, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                start_new_session=True)
         try:
+            deadline = time.monotonic() + timeout
+            selector = stack.enter_context(selectors.DefaultSelector())
+            selector.register(proc.stdout, selectors.EVENT_READ, "stdout")
+            selector.register(proc.stderr, selectors.EVENT_READ, "stderr")
             while selector.get_map():
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -362,7 +375,11 @@ def capture_guest(command: list[str], env: dict[str, str], timeout: float,
                         selector.unregister(key.fileobj)
                         continue
                     available = max_bytes - sum(map(len, streams.values()))
-                    streams[key.data].extend(chunk[:available])
+                    retained = chunk[:available]
+                    streams[key.data].extend(retained)
+                    if key.data in files:
+                        files[key.data].write(retained)
+                        files[key.data].flush()
                     if len(chunk) > available:
                         reason = "output_limit"
                         break

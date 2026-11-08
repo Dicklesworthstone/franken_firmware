@@ -11,6 +11,8 @@
 #   scripts/e2e/p05 --tier full --case P05-DIR-002 [--receipts DIR]     replay one case
 #   scripts/e2e/p05 --list                           list the selected cases
 #   scripts/e2e/p05 --workspace-suite [ARGS]         the earlier workspace suite for this bead, unchanged
+#   scripts/e2e/p05 --runtime analyze [ARGS]         judge the real runtime's transcript (not atomic-cell evidence)
+#   scripts/e2e/p05 --runtime run [ARGS]             boot already-built BE runtime + E07 supervisor; no compilation
 #
 # What this does and does not show. The Python runner re-derives the checker corpus, the directed scripts
 # and the seeded sweeps with an independent model, shows each deliberately weakened rule and each planted
@@ -33,6 +35,14 @@
 # Asupersync cross-checks through scripts/test/run-workspace-verification.py p05) for anyone who relied on it.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+if [ "${1:-}" = "--runtime" ]; then
+  shift
+  case "${1:-}" in
+    run|analyze) RUNTIME_COMMAND="$1-runtime"; shift ;;
+    *) printf '%s\n' 'usage: scripts/e2e/p05 --runtime run|analyze [runtime arguments]' >&2; exit 2 ;;
+  esac
+  exec python3 -B "$ROOT/toolchain/src/measure-p05-target.py" "$RUNTIME_COMMAND" "$@"
+fi
 if [ "${1:-}" = "--workspace-suite" ]; then
   shift
   exec python3 "$ROOT/scripts/test/run-workspace-verification.py" p05 "$@"

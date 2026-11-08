@@ -80,3 +80,90 @@ This probe predates the separate process-module feature change at
 Asupersync `e30c91fd7593dd1396314c83a28afbbaf8890e98`. It does not verify
 that new slim feature graph. Neither `runtime-core` nor `native-runtime`
 removes dependencies at the probe's pin, and no size reduction is claimed.
+
+## Runtime capture path
+
+The existing P05 entry point now exposes the real runtime separately from
+the atomic-cell analyzer. The Rust probe and its 19 tests are unchanged;
+none has executed in this record.
+
+A direct `/init` installation of this probe would neither mount `/proc` nor
+bring loopback up. It also parks after `END` as PID 1. The runtime runner
+therefore reuses the existing `ffw-hello-init` supervisor, built with
+**`speaker-smoke` only**. The supervisor mounts proc, brings loopback up,
+launches and reaps the runtime as a child, then completes its normal probe
+summary and reboot. The temporary slot is `/franken-speaker --catalog`;
+`p05-runtime` ignores argv. This is a research harness slot, not production
+speaker integration. Enabling `speaker-platform` would invoke another child
+and is rejected by the transcript checks.
+
+Build the runtime and matching supervisor ELFs through strict RCH first.
+With the existing kernel cache in `FFW_BUILD_DIR`, boot already-built bytes:
+
+```sh
+scripts/e2e/p05 --runtime run --arch mips \
+  --elf "$FFW_RUNTIME_ELF" --supervisor "$FFW_SUPERVISOR_ELF" \
+  --log-dir "$FFW_FRESH_LOG_DIR" --receipt "$FFW_NEW_RECEIPT"
+```
+
+Use `--arch powerpc` for the matching PowerPC pair. The QEMU machines,
+CPUs, consoles and 64 MiB guest memory follow the existing boot scripts;
+`-nic none` disables emulated LAN interfaces. This does not test 32 MiB fit.
+Capture retains at most 1 MiB across stdout/stderr and has a finite timeout
+(180 seconds by default). Separate raw files are flushed as chunks arrive,
+including on timeout or output overflow. Existing log files and receipts
+are never overwritten. Both ELF hashes are checked against the packaged
+archive; the archive's bytes are independently read back.
+
+The checker requires all 13 named phases, ten complete census samples and
+matching `END` totals, with independent checks of the printed phase facts.
+It checks the child's byte count, FNV and exit status, then applies the
+unchanged strict bootstrap checker to the supervisor envelope. Missing
+reboot, contradictory details, unsupported/partial/unknown observations,
+timeouts and nonzero exits remain failures. Atomic-cell markers cannot
+satisfy this path.
+
+For a separately captured native **standalone executable** transcript:
+
+```sh
+scripts/e2e/p05 --runtime analyze --arch x86_64 \
+  --elf "$FFW_RUNTIME_ELF" --log "$FFW_RAW_TRANSCRIPT" \
+  --receipt "$FFW_NEW_RECEIPT"
+```
+
+The native Rust test calls `run_probe()` and checks its report directly; it
+does not print `END`. Use the standalone binary for this transcript command.
+Analysis checks supplied bytes, not execution custody or process exit:
+retain the original RCH terminal result and artifact/source receipt too.
+Receipts distinguish captured guest execution from supplied transcript
+analysis and hash raw bytes, including CRLF. A source revision supplied on
+the command line is an operator claim, not compiler attestation.
+
+## Runner regression results
+
+The Python-only runner change passed:
+
+- 35 new checker, packaging and capture tests: exit 0, 6.549 seconds.
+- 313 existing serial, atomic-cell, initramfs, speaker-smoke and
+  platform-smoke tests: exit 0, 13.953 seconds.
+- `python3 -m py_compile` on the three touched Python files, `bash -n` on
+  `scripts/e2e/p05`, and `git diff --check`: exit 0.
+
+Reproduce the tests:
+
+```sh
+python3 -B -m unittest discover -s toolchain/tests -p test_measure_p05_runtime.py -v
+PYTHONPATH=toolchain/tests python3 -B -m unittest -v \
+  test_serial_validator test_measure_p05_target test_initramfs_archive \
+  test_speaker_smoke test_platform_smoke
+```
+
+Transcript/ELF fixtures test the checker; actual bounded Python subprocesses
+test capture behavior. The packaging tests substitute a clearly labeled
+synthetic driver and exercise the real archive/capture plumbing. **No QEMU
+guest or Asupersync runtime ran in these tests.** Independent source review
+caught and confirmed corrections to phase-detail validation and raw-byte
+hashing; source review is not runtime qualification. P05/P03 stay open.
+The capture regressions also verify that selector-setup failures reap the
+actual owned subprocess and close its pipes, and that raw output is readable
+while the captured process is still running.

@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Judge P05's semantic 64-bit cells on the big-endian MIPS32 device target, under QEMU.
+"""Judge P05's atomic-cell and real Asupersync runtime transcripts independently.
+
+The original prepare/run/analyze commands below concern atomic cells only.
+run-runtime/analyze-runtime cover toolchain/src/p05-runtime instead. The BE
+runtime runs as the existing E07 speaker-smoke supervisor's child, after proc
+mounting and loopback setup; its /franken-speaker --catalog alias is explicit,
+and its main ignores argv. These modes compile nothing and never qualify the
+production firmware or physical audio. See RUNTIME_SCOPE for their proof boundary.
 
 Bead ffw-ipz, the open item `P05-EXT-GUEST`. The guest (`toolchain/src/p05-target`, PID 1 of the existing Debian/Malta guest)
 compiles the FROZEN `crates/franken-atomic` source files unchanged and prints `FFW_P05T_*` lines; this script runs it and JUDGES
@@ -38,6 +45,8 @@ import functools
 import hashlib
 import importlib.util
 import json
+import math
+import os
 import pathlib
 import re
 import secrets
@@ -82,6 +91,11 @@ def _load(path: pathlib.Path, name: str) -> Any:
 
 class MeasurementError(Exception):
     """The transcript cannot be trusted; the message says why."""
+
+
+@functools.lru_cache(maxsize=1)
+def boot_runner() -> Any:
+    return _load(HERE / "run-qemu-verification.py", "p05_boot_runner")
 
 
 def reference(repo: pathlib.Path = REPO) -> Any:
@@ -732,12 +746,308 @@ def write_receipt(path: pathlib.Path, report: dict[str, Any], elf: dict[str, Any
     path.write_text(json.dumps(body, indent=1, sort_keys=True) + "\n", encoding="utf-8")
 
 
+# ---- the real Asupersync runtime consumer (distinct from the atomic-cell guest above) ---------------------------------------
+
+RUNTIME_PHASES = (
+    "PROFILE_ACCEPT", "PROFILE_REFUSES_ZERO_WORKERS", "PROFILE_REFUSES_UNBOUNDED_QUEUE",
+    "PROFILE_REFUSES_OVER_BUDGET", "REACTOR", "RUNTIME_AUDIT", "SPAWN_JOIN", "ABORT_TIMER_PARKED",
+    "ABORT_BLIND_VALUE", "TIMER_WAKE", "UDP_LOOPBACK", "BLOCKING_POOL", "DRAIN",
+)
+RUNTIME_CENSUS = (
+    "start", "after_build", "after_spawn_join", "after_abort_timer_parked", "after_abort_blind_value",
+    "after_timer_wake", "after_udp", "after_blocking_pool", "after_drain", "after_runtime_drop",
+)
+RUNTIME_ORDER = (
+    "BEGIN", "CENSUS", *RUNTIME_PHASES[:6], "CENSUS",
+    *(tag for phase in RUNTIME_PHASES[6:] for tag in (phase, "CENSUS")), "CENSUS", "END",
+)
+RUNTIME_ARCHES = {"mips": (1, 2, 8, 32), "powerpc": (1, 2, 20, 32), "x86_64": (2, 1, 62, 64)}
+RUNTIME_SCHEMA = "ffw.p05.runtime_receipt.v1"
+RUNTIME_SCOPE = (
+    "A runtime transcript is distinct from the atomic-cell guest. Native execution does not qualify BE execution. "
+    "A supplied ELF hash binds bytes, not their compiler/source provenance. The supplied revision is an operator claim, "
+    "not an attestation. Analysis only validates supplied transcript bytes; command exit and execution custody require "
+    "the original execution receipt. This runner compiles nothing. Synthetic checker tests are not runtime or QEMU proof. "
+    "A guest pass covers the named phases under the recorded QEMU kernel, not stock kernels, 32 MiB memory fit, "
+    "physical drivers/audio, provider integrations, or completion of P05/P03."
+)
+
+
+def runtime_elf(path: pathlib.Path, arch: str) -> dict[str, Any]:
+    """Header/byte identity only; actual loading, static linkage and source custody need their own evidence."""
+    data = path.read_bytes()
+    cls, endian, machine, bits = RUNTIME_ARCHES[arch]
+    if len(data) < (52 if cls == 1 else 64) or data[:4] != b"\x7fELF":
+        raise MeasurementError("runtime/supervisor ELF header is absent or truncated")
+    actual_machine = int.from_bytes(data[18:20], "big" if data[5] == 2 else "little")
+    if (data[4], data[5], actual_machine) != (cls, endian, machine):
+        raise MeasurementError(f"ELF class/endian/machine {(data[4], data[5], actual_machine)} does not match {arch}")
+    return {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data), "arch": arch, "pointer_bits": bits,
+            "source_provenance": "not_attested_by_this_runner"}
+
+
+def runtime_phase_problems(name: str, pairs: dict[str, str], detail: str) -> list[str]:
+    """Hand-stated observable predicates, independent of the probe's status bit and summary."""
+    exact = {
+        "PROFILE_ACCEPT": {"violations": "0", "worst_case_stack_bytes": "2621440", "budget": "2621440"},
+        **{name: {"named_violation": "true", "builder_refused": "true"} for name in (
+            "PROFILE_REFUSES_ZERO_WORKERS", "PROFILE_REFUSES_UNBOUNDED_QUEUE", "PROFILE_REFUSES_OVER_BUDGET")},
+        "REACTOR": {"kind": "platform"},
+        "RUNTIME_AUDIT": {"audit_ok": "true", "workers": "2/2", "blocking_threads": "1/1",
+                          "global_queue": "256/256", "blocking_queue": "1/1"},
+        "SPAWN_JOIN": {"children": "8", "joined": "8", "sum": "140", "expected": "140"},
+        "ABORT_TIMER_PARKED": {"parked": "true", "join_result": "Ok", "expected_join_result": "Ok"},
+        "ABORT_BLIND_VALUE": {"join_result": "Cancelled", "expected_join_result": "Cancelled", "ok_value": "None"},
+        "TIMER_WAKE": {"wanted_ms": "50"},
+        "UDP_LOOPBACK": {"bytes": "19", "payload_equal": "true", "peer_is_sender": "true"},
+        "BLOCKING_POOL": {"idle_threads": "0", "first_admitted": "true", "first_started": "true",
+                          "second_admitted": "true", "third_refused": "Some(Saturated)",
+                          "active_threads_while_held": "1", "pending_while_held": "1",
+                          "first_finished": "true", "second_finished": "true", "ran": "2"},
+        "DRAIN": {"tasks_spawned": "4/4", "tasks_parked_before_drain": "4", "bound_ms": "5000"},
+    }
+    problems = [f"{name}.{key}={pairs.get(key, 'missing')} expected={value}"
+                for key, value in exact.get(name, {}).items() if pairs.get(key) != value]
+    if name == "ABORT_TIMER_PARKED":
+        before, after, elapsed = (_int(pairs.get(key)) for key in (
+            "pending_timers_before", "pending_timers_after", "abort_to_join_ms"))
+        if before is None or before < 1 or after is None or after < 0 or after + 1 != before:
+            problems.append("ABORT_TIMER_PARKED: exactly one registered timer must retire")
+        if elapsed is None or not 0 <= elapsed < 1000:
+            problems.append("ABORT_TIMER_PARKED: missing/out-of-bound abort latency")
+    if name == "TIMER_WAKE":
+        elapsed = _int(pairs.get("slept_ms"))
+        if elapsed is None or not 45 <= elapsed < 5000:
+            problems.append("TIMER_WAKE: wake is earlier than tolerance or outside the bound")
+    if name == "DRAIN":
+        snapshot = re.search(r"\bsnapshot_before_drain=\(admitted=(\d+) unfinished=(\d+) timers_pending=(\d+)\)", detail)
+        if snapshot is None or tuple(map(int, snapshot.groups()[:2])) != (4, 4) or int(snapshot[3]) < 4:
+            problems.append("DRAIN: four admitted tasks must still be parked on live timers")
+        elapsed = _int(pairs.get("elapsed_ms"))
+        if elapsed is None or not 0 <= elapsed < 5000:
+            problems.append("DRAIN: missing/out-of-bound drain latency")
+    return problems
+
+
+def judge_runtime(text: str, arch: str, elf: dict[str, Any] | None, *, supervised: bool = False) -> dict[str, Any]:
+    """Judge exact phase/census identity, order and observed tallies; never accept an END total by itself."""
+    gates, rows, malformed, semantic_errors = [], [], [], []
+    for line in text.replace("\r\n", "\n").splitlines():
+        if "FFW_P05_RUNTIME:" not in line:
+            continue
+        match = re.fullmatch(r"FFW_P05_RUNTIME:([A-Z_]+) (.+)", line)
+        if not match:
+            malformed.append("malformed_or_echoed_runtime_marker")
+            continue
+        try:
+            detail, separator, repeat = match[2].partition(" repeat: ") if match[1] == "DRAIN" else (match[2], "", "")
+            pairs = parse_pairs(detail)
+            if match[1] in RUNTIME_PHASES:
+                semantic_errors.extend(runtime_phase_problems(match[1], pairs, detail))
+            if match[1] == "DRAIN":
+                repeated = parse_pairs(repeat)
+                for report in (pairs, repeated):
+                    if report.get("outcome") != "Quiescent" or any(report.get(key) != "0" for key in (
+                            "live_tasks", "pending_obligations", "live_regions", "queued_finalizers", "pending_spawns")) or (
+                            report.get("pending_obligation_posts") != "false"):
+                        malformed.append("drain_counts_or_outcome_not_quiescent")
+                if not separator:
+                    malformed.append("missing_repeat_drain_report")
+            rows.append((match[1], pairs))
+        except MeasurementError as error:
+            malformed.append(str(error))
+    if any(token in text for token in ("\ufffd", "FFW_PANIC", "Kernel panic - not syncing")):
+        malformed.append("invalid_utf8_or_guest_panic")
+    if any(line.startswith("FFW_") and not line.startswith("FFW_P05_RUNTIME:") for line in text.splitlines()):
+        malformed.append("unexpected_child_marker")
+    names = [name for name, _ in rows]
+    # DRAIN contains separately named snapshots and a repeated report: those detail keys are allowed there.
+    # Its runtime result is still required, and the complete stdout bytes are retained by the caller.
+    gates.append(_gate("P05R-TRANSCRIPT", "all 25 runtime markers in the declared order",
+                       malformed + ([] if tuple(names) == RUNTIME_ORDER else [f"observed marker order: {names}"])))
+    begin = rows[0][1] if rows and rows[0][0] == "BEGIN" else {}
+    _, endian, _, bits = RUNTIME_ARCHES[arch]
+    pid = _int(begin.get("pid"))
+    env_errors = []
+    if begin.get("status") != "start" or begin.get("arch") != arch or begin.get("endian") != (
+            "big" if endian == 2 else "little") or begin.get("pointer_bits") != str(bits):
+        env_errors.append("BEGIN platform identity does not match selected architecture")
+    if pid is None or pid < (2 if supervised else 1):
+        env_errors.append("missing/invalid PID (a supervised runtime must be a child, not PID 1)")
+    if elf is None or elf.get("arch") != arch:
+        env_errors.append("missing or mismatched runtime ELF")
+    gates.append(_gate("P05R-ENV", "runtime BEGIN and supplied ELF agree", env_errors))
+    ops = [(name, pairs) for name, pairs in rows if name not in ("BEGIN", "END")]
+    statuses = {status: sum(p.get("status") == status for _, p in ops)
+                for status in ("ok", "failed", "unsupported", "partial", "unknown")}
+    phase_errors = semantic_errors + [f"{name}: status={pairs.get('status', 'missing')}" for name, pairs in ops
+                                      if pairs.get("status") != "ok"]
+    gates.append(_gate("P05R-PHASES", "every required operation actually reports ok", phase_errors))
+    census_errors, phases = [], []
+    for name, pairs in ops:
+        if name != "CENSUS":
+            continue
+        phases.append(pairs.get("phase"))
+        numbers = [_int(pairs.get(key)) for key in ("threads_task_dir_before", "threads_task_dir_after", "threads_status",
+                                                   "vm_rss_kb", "vm_hwm_kb", "mem_available_kb")]
+        if any(n is None or n < 0 for n in numbers):
+            census_errors.append(f"{pairs.get('phase')}: unreadable or negative census figure")
+        elif not (numbers[0] == numbers[1] == numbers[2] and numbers[0] > 0 and numbers[4] >= numbers[3]):
+            census_errors.append(f"{pairs.get('phase')}: inconsistent thread or memory readings")
+        if pairs.get("task_dir_stable") != "true" or pairs.get("sources_agree") != "true":
+            census_errors.append(f"{pairs.get('phase')}: incomplete census")
+    if tuple(phases) != RUNTIME_CENSUS:
+        census_errors.append(f"observed census phases: {phases}")
+    gates.append(_gate("P05R-CENSUS", "ten complete, consistent census samples", census_errors))
+    end = rows[-1][1] if rows and rows[-1][0] == "END" else {}
+    expected_end = {"status": "done", "ops": "23", "ok": "23", "failed": "0", "unsupported": "0", "partial": "0",
+                    "unknown": "0", "census_samples": "10"}
+    tally_errors = [] if end == expected_end and len(ops) == 23 and statuses == {
+        "ok": 23, "failed": 0, "unsupported": 0, "partial": 0, "unknown": 0} else [f"END={end}; observed={statuses}"]
+    gates.append(_gate("P05R-END", "END matches independently counted operations", tally_errors))
+    return {"ok": all(g.status == "passed" for g in gates), "gates": gates, "observed_statuses": statuses}
+
+
+def runtime_envelope(text: str, arch: str) -> tuple[str, list[Gate]]:
+    """Only the bounded, hash-checked child region is excluded from the unchanged strict bootstrap judge."""
+    boot = boot_runner()
+    speaker = boot.speaker_expect
+    child, error = speaker.stdout_region(text)
+    if error:
+        return "", [Gate("P05R-SUPERVISOR", "complete smoke-slot child envelope", "failed", error)]
+    lines = text.replace("\r\n", "\n").splitlines()
+    start = next(i for i, line in enumerate(lines) if line.strip().startswith("FFW_SPEAKER_BEGIN "))
+    end = next(i for i, line in enumerate(lines) if line.strip().startswith("FFW_SPEAKER_EXIT "))
+    errors = []
+    exit_match = speaker.EXIT_OK.fullmatch(lines[end])
+    if lines[start] != speaker.BEGIN_LINE or exit_match is None:
+        errors.append("wrong child path/argv or child did not exit zero")
+    elif int(exit_match[1]) != len(child) or int(exit_match[2], 16) != speaker.fnv1a64(child):
+        errors.append("child stdout size/hash mismatch")
+    if not any(line == "FFW_PROBE:LOOPBACK_UP status=PASS rc=0" for line in lines[:start]):
+        errors.append("loopback was not observed UP before the runtime started")
+    # Keep every supervisor marker outside this one region, including any unexpected FFW_* line.
+    envelope = "\n".join(lines[:start] + lines[end + 1:]) + "\n"
+    tag, errno = ("mips-be", "89") if arch == "mips" else ("powerpc-be", "38")
+    checked = boot.verify_serial_output("mips" if arch == "mips" else "ppc",
+        f"FFW_HELLO arch={tag} endian=0x01020304 pid=1 ptr_bits=32",
+        f"FFW_TEST:ERR_ENOSYS status=PASS errno={errno}", envelope, f"{arch}-unknown-linux-musl")
+    if checked["status"] != "PASS":
+        errors.append(f"bootstrap: {json.dumps(checked, sort_keys=True)}")
+    # Summary/reboot before the child would otherwise survive removal of the region.
+    if any(line.startswith("FFW_MARKER:TEST_SUCCESS") or line == "FFW_MARKER:REBOOT_REQUEST" for line in lines[:end]):
+        errors.append("supervisor summary/reboot precedes child completion")
+    return child.decode("utf-8"), [_gate("P05R-SUPERVISOR", "bootstrap setup, child hash/exit and ordered reboot", errors)]
+
+
+def run_runtime(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
+    """Reuse E07's speaker-smoke child slot; the existing supervisor mounts proc and brings loopback up.
+
+    The slot's `/franken-speaker --catalog` alias is deliberate: p05-runtime's main ignores argv.
+    Do not enable speaker-platform: that would invoke this runtime twice. No compiler runs here.
+    """
+    if not math.isfinite(args.timeout) or args.timeout <= 0:
+        raise MeasurementError("a finite positive timeout is required")
+    if args.log_dir.exists() and any(args.log_dir.iterdir()):
+        raise MeasurementError("log directory must be fresh; no existing evidence is overwritten")
+    args.log_dir.mkdir(parents=True, exist_ok=True)
+    boot = boot_runner()
+    build_dir = boot.mkinitramfs.resolve_default_build_dir(REPO)
+    is_mips = args.arch == "mips"
+    kernel = build_dir / ("kernels/xm/boot/" + KERNEL_NAME if is_mips else
+                          "kernels/x/boot/vmlinux-4.9.0-0.bpo.6-powerpc")
+    kernel_sha256 = hashlib.sha256(kernel.read_bytes()).hexdigest()
+    archive = args.log_dir / "runtime.cpio.gz"
+    image = boot.mkinitramfs.build(args.supervisor, archive,
+                                 [("franken-speaker", 0o100755, args.elf.read_bytes())])
+    env = dict(os.environ, FFW_BUILD_DIR=str(build_dir), FFW_INITRAMFS=str(archive.resolve()))
+    # Match the existing boot scripts' machine/CPU/console, with NICs explicitly disabled.
+    # The guest's own loopback remains available; no emulated NIC can contact a real LAN.
+    qemu = "qemu-system-mips" if is_mips else "qemu-system-ppc"
+    command = [qemu, "-M", "malta" if is_mips else "g3beige", "-cpu", "24Kf" if is_mips else "G3",
+               "-m", "64M", "-nographic", "-no-reboot", "-nic", "none", "-kernel", str(kernel), "-initrd", str(archive),
+               "-append", "console=" + ("ttyS0" if is_mips else "ttyPZ0") + ",38400 rdinit=/init panic=-1"]
+    capture = boot.capture_guest(command, env, args.timeout, max_bytes=1024 * 1024,
+        capture_paths={"stdout": args.log_dir / "runtime.serial.log", "stderr": args.log_dir / "qemu.stderr.log"})
+    # Keep failures and partial output too. Natural QEMU exit follows the supervisor's reboot;
+    # a runtime END alone never triggers termination or earns success.
+    return capture["stdout"].decode("utf-8", "replace"), {
+        "command": command, "qemu": boot.cmd_version(["qemu-system-mips" if is_mips else "qemu-system-ppc", "--version"]),
+        "kernel_sha256": kernel_sha256, "initramfs": image, "exit_code": capture["returncode"],
+        "stop_reason": capture["stop_reason"], "stderr_sha256": hashlib.sha256(capture["stderr"]).hexdigest(),
+        "stdout_sha256": hashlib.sha256(capture["stdout"]).hexdigest(),
+        "stderr_bytes": len(capture["stderr"]), "scope": "E07 supervisor child, not runtime as PID 1"}
+
+
+def runtime_main(args: argparse.Namespace) -> int:
+    if args.command == "analyze-runtime" and args.log is None:
+        print("BLOCKED: no runtime transcript supplied (atomic-cell evidence is not runtime evidence)")
+        return 3
+    if args.arch != "x86_64" and args.supervisor is None:
+        raise MeasurementError("BE runtime evidence requires the matching E07 speaker-smoke supervisor ELF")
+    if args.arch == "x86_64" and args.supervisor is not None:
+        raise MeasurementError("native analysis does not use the BE bootstrap supervisor")
+    elf = runtime_elf(args.elf, args.arch) if args.elf else None
+    supervisor = runtime_elf(args.supervisor, args.arch) if args.supervisor else None
+    meta = None
+    if args.command == "run-runtime":
+        text, meta = run_runtime(args)
+        transcript_sha256 = meta["stdout_sha256"]
+    else:
+        raw = args.log.read_bytes()
+        text = raw.decode("utf-8", "replace")
+        transcript_sha256 = hashlib.sha256(raw).hexdigest()
+    child, extra = runtime_envelope(text, args.arch) if supervisor is not None else (text, [])
+    report = judge_runtime(child, args.arch, elf, supervised=supervisor is not None)
+    report["gates"].extend(extra)
+    if meta is not None:
+        capture_errors = []
+        if meta["exit_code"] != 0 or meta["stop_reason"] is not None:
+            capture_errors.append(f"exit={meta['exit_code']} stop_reason={meta['stop_reason']}")
+        if meta["initramfs"]["init_sha256"] != supervisor["sha256"]:
+            capture_errors.append("supervisor bytes changed before packaging")
+        # Check the child's own initramfs membership independently of the transcript.
+        packaged = meta["initramfs"]["extra_files"]
+        if packaged.get("franken-speaker", {}).get("sha256") != elf["sha256"]:
+            capture_errors.append("runtime bytes changed before packaging")
+        report["gates"].append(_gate("P05R-CAPTURE", "bounded complete capture and packaged ELF identity", capture_errors))
+    report["ok"] = all(g.status == "passed" for g in report["gates"])
+    for gate in report["gates"]:
+        print(f"{gate.status.upper()} {gate.gate_id}: {gate.title}" + (f" — {gate.detail}" if gate.detail else ""))
+    print("PASSED" if report["ok"] else "NOT PASSED")
+    print(RUNTIME_SCOPE)
+    if args.receipt:
+        body = {"schema": RUNTIME_SCHEMA, "result": "passed" if report["ok"] else "not_passed", "arch": args.arch,
+                "evidence_kind": "captured_guest_execution" if meta is not None else "supplied_transcript_analysis",
+                "revision_claim": args.revision, "elf": elf, "supervisor_elf": supervisor, "execution": meta,
+                "transcript_sha256": transcript_sha256, "gates": [vars(g) for g in report["gates"]],
+                "scope": RUNTIME_SCOPE}
+        with args.receipt.open("x", encoding="utf-8") as handle:
+            json.dump(body, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+    return exit_code(report)
+
+
 # ---- command line ------------------------------------------------------------------------------------------------------------
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
+    for name in ("run-runtime", "analyze-runtime"):
+        p = sub.add_parser(name, help="real Asupersync runtime; distinct from the atomic-cell guest")
+        p.add_argument("--arch", choices=tuple(RUNTIME_ARCHES) if name == "analyze-runtime" else ("mips", "powerpc"),
+                       required=True)
+        p.add_argument("--elf", type=pathlib.Path, required=(name == "run-runtime"))
+        p.add_argument("--supervisor", type=pathlib.Path, required=(name == "run-runtime"),
+                       help="matching ffw-hello-init built with speaker-smoke only; mounts proc and brings lo up")
+        p.add_argument("--receipt", type=pathlib.Path)
+        p.add_argument("--revision", help="operator-supplied source claim; not build attestation")
+        if name == "run-runtime":
+            p.add_argument("--log-dir", type=pathlib.Path, required=True)
+            p.add_argument("--timeout", type=float, default=180.0)
+        else:
+            p.add_argument("--log", type=pathlib.Path)
     p = sub.add_parser("prepare")
     p.add_argument("--work-dir", type=pathlib.Path, required=True)
     for name in ("run", "analyze"):
@@ -756,6 +1066,8 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--seed", type=int)
     args = parser.parse_args(argv)
     try:
+        if args.command in ("run-runtime", "analyze-runtime"):
+            return runtime_main(args)
         if args.command == "prepare":
             print(prepare(args.work_dir))
             return 0
