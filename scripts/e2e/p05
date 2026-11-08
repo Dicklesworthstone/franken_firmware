@@ -13,6 +13,14 @@
 #   scripts/e2e/p05 --workspace-suite [ARGS]         the earlier workspace suite for this bead, unchanged
 #   scripts/e2e/p05 --runtime analyze [ARGS]         judge the real runtime's transcript (not atomic-cell evidence)
 #   scripts/e2e/p05 --runtime run [ARGS]             boot already-built BE runtime + E07 supervisor; no compilation
+#   scripts/e2e/p05 --runtime run|analyze [ARGS] --profile single-owner
+#                                                    the probe's second run (one scheduler worker through LegacyProfile). It has one
+#                                                    declared unsupported row (CALLER_DRIVEN_CURRENT_THREAD), so an accepted run is
+#                                                    recorded as accepted_with_declared_unsupported, never PASSED, with command-line
+#                                                    exit 4 (0 full pass, 1 failed, 2 usage or error, 3 blocked). The default profile is
+#                                                    threaded and unchanged. See docs/contracts/p05.md, "The runtime probe and its
+#                                                    single-owner profile". The flag exists only where measure-p05-target.py has the
+#                                                    --profile option; an older checkout rejects it as an unrecognized argument.
 #
 # What this does and does not show. The Python runner re-derives the checker corpus, the directed scripts
 # and the seeded sweeps with an independent model, shows each deliberately weakened rule and each planted

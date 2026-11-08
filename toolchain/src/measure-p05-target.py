@@ -8,6 +8,12 @@ mounting and loopback setup; its /franken-speaker --catalog alias is explicit,
 and its main ignores argv. These modes compile nothing and never qualify the
 production firmware or physical audio. See RUNTIME_SCOPE for their proof boundary.
 
+--profile single-owner judges the probe's second run (one scheduler worker through LegacyProfile). The unchanged supervisor cannot
+pass it an argument, so the runner packs a marker file the probe reads. That run has one declared unsupported row, the caller-driven
+mode; the probe exits 0 only for exactly that row, so the supervisor's own accounting is the ordinary one (status=0, TEST_SUCCESS)
+and the supervisor envelope is the UNMODIFIED standard one: no line of the log is changed before the strict verifier reads it. The
+result is "accepted_with_declared_unsupported" (command-line exit 4), never a plain pass.
+
 Bead ffw-ipz, the open item `P05-EXT-GUEST`. The guest (`toolchain/src/p05-target`, PID 1 of the existing Debian/Malta guest)
 compiles the FROZEN `crates/franken-atomic` source files unchanged and prints `FFW_P05T_*` lines; this script runs it and JUDGES
 the transcript. The question answered is narrow: does the same source behave on a 32-bit big-endian guest exactly as the
@@ -762,6 +768,47 @@ RUNTIME_ORDER = (
     "BEGIN", "CENSUS", *RUNTIME_PHASES[:6], "CENSUS",
     *(tag for phase in RUNTIME_PHASES[6:] for tag in (phase, "CENSUS")), "CENSUS", "END",
 )
+RUNTIME_THREADED = "threaded"
+RUNTIME_SINGLE_OWNER = "single-owner"
+RUNTIME_PROFILES = (RUNTIME_THREADED, RUNTIME_SINGLE_OWNER)
+# The single-owner profile, written out row by row from the probe's second run (toolchain/src/p05-runtime `run_probe_for` with
+# `Topology::SingleOwner`), not derived from the threaded tuples above.
+SINGLE_OWNER_DECLARED_UNSUPPORTED = "CALLER_DRIVEN_CURRENT_THREAD"
+SINGLE_OWNER_PHASES = (
+    "SINGLE_OWNER_PROFILE", "PROFILE_ACCEPT", "PROFILE_REFUSES_ZERO_WORKERS", "PROFILE_REFUSES_UNBOUNDED_QUEUE",
+    "PROFILE_REFUSES_OVER_BUDGET", "REACTOR", "RUNTIME_AUDIT", "SINGLE_OWNER_RUNTIME", SINGLE_OWNER_DECLARED_UNSUPPORTED,
+    "SPAWN_JOIN", "ABORT_TIMER_PARKED", "ABORT_BLIND_VALUE", "TIMER_WAKE", "UDP_LOOPBACK", "BLOCKING_POOL",
+    "SINGLE_OWNER_BLOCKING_OFFLOAD", "DRAIN", "BYTE_BUDGET_REFUSAL", "FIRST_USE_BACKGROUND", "RUNTIME_USABLE_AFTER_REFUSAL",
+)
+SINGLE_OWNER_CENSUS = (
+    "start", "after_build", "after_single_owner_threads", "after_spawn_join", "after_abort_timer_parked",
+    "after_abort_blind_value", "after_timer_wake", "after_udp", "after_blocking_pool", "after_blocking_offload",
+    "after_drain", "after_runtime_drop", "after_byte_budget",
+)
+SINGLE_OWNER_ORDER = (
+    "BEGIN", "CENSUS",
+    "SINGLE_OWNER_PROFILE", "PROFILE_ACCEPT", "PROFILE_REFUSES_ZERO_WORKERS", "PROFILE_REFUSES_UNBOUNDED_QUEUE",
+    "PROFILE_REFUSES_OVER_BUDGET", "REACTOR", "RUNTIME_AUDIT", "CENSUS",
+    "SINGLE_OWNER_RUNTIME", SINGLE_OWNER_DECLARED_UNSUPPORTED, "CENSUS",
+    "SPAWN_JOIN", "CENSUS", "ABORT_TIMER_PARKED", "CENSUS", "ABORT_BLIND_VALUE", "CENSUS", "TIMER_WAKE", "CENSUS",
+    "UDP_LOOPBACK", "CENSUS", "BLOCKING_POOL", "CENSUS", "SINGLE_OWNER_BLOCKING_OFFLOAD", "CENSUS",
+    "DRAIN", "CENSUS", "CENSUS",
+    "BYTE_BUDGET_REFUSAL", "FIRST_USE_BACKGROUND", "RUNTIME_USABLE_AFTER_REFUSAL", "CENSUS",
+    "END",
+)
+# Per profile: the phases whose fields are judged, the exact marker order, the census phases, and the END tallies.
+RUNTIME_SHAPES = {
+    RUNTIME_THREADED: {"phases": RUNTIME_PHASES, "order": RUNTIME_ORDER, "census": RUNTIME_CENSUS,
+                       "ops": 23, "ok": 23, "unsupported": 0, "census_samples": 10},
+    RUNTIME_SINGLE_OWNER: {"phases": SINGLE_OWNER_PHASES, "order": SINGLE_OWNER_ORDER, "census": SINGLE_OWNER_CENSUS,
+                           "ops": 33, "ok": 32, "unsupported": 1, "census_samples": 13},
+}
+# The initramfs file that selects the single-owner run (the probe reads `/ffw_p05_profile`, as the other guests read `/ffw_seed`).
+SINGLE_OWNER_MARKER_NAME = "ffw_p05_profile"
+SINGLE_OWNER_MARKER_BYTES = b"single-owner\n"
+# Command-line exit for a single-owner run that is accepted WITH its one declared unsupported row. Not 0 (that is a full pass), not 1
+# (failed), 2 (usage or error) or 3 (blocked).
+EXIT_ACCEPTED_WITH_DECLARED_UNSUPPORTED = 4
 RUNTIME_ARCHES = {"mips": (1, 2, 8, 32), "powerpc": (1, 2, 20, 32), "x86_64": (2, 1, 62, 64)}
 RUNTIME_SCHEMA = "ffw.p05.runtime_receipt.v1"
 RUNTIME_CAPTURE_BYTES = 1024 * 1024
@@ -772,6 +819,12 @@ RUNTIME_SCOPE = (
     "the original execution receipt. This runner compiles nothing. Synthetic checker tests are not runtime or QEMU proof. "
     "A guest pass covers the named phases under the recorded QEMU kernel, not stock kernels, 32 MiB memory fit, "
     "physical drivers/audio, provider integrations, or completion of P05/P03."
+)
+SINGLE_OWNER_SCOPE = (
+    "This is the single-owner run: one scheduler worker through LegacyProfile, selected by an initramfs marker because the "
+    "unchanged supervisor passes the probe no argument. LegacyProfile cannot build the caller-driven current-thread mode at the "
+    "pinned revision, so that row is DECLARED unsupported, not passed: the result is accepted with exactly that one row, never a "
+    "full pass. The probe exits 0 only for exactly that row, so the supervisor log is the ordinary one and is judged unmodified."
 )
 
 
@@ -831,7 +884,7 @@ def runtime_elf(path: pathlib.Path, arch: str) -> dict[str, Any]:
             "source_provenance": "not_attested_by_this_runner"}
 
 
-def runtime_phase_problems(name: str, pairs: dict[str, str], detail: str) -> list[str]:
+def runtime_phase_problems(name: str, pairs: dict[str, str], detail: str, profile: str = RUNTIME_THREADED) -> list[str]:
     """Hand-stated observable predicates, independent of the probe's status bit and summary."""
     exact = {
         "PROFILE_ACCEPT": {"violations": "0", "worst_case_stack_bytes": "2621440", "budget": "2621440"},
@@ -851,8 +904,47 @@ def runtime_phase_problems(name: str, pairs: dict[str, str], detail: str) -> lis
                           "first_finished": "true", "second_finished": "true", "ran": "2"},
         "DRAIN": {"tasks_spawned": "4/4", "tasks_parked_before_drain": "4", "bound_ms": "5000"},
     }
+    if profile == RUNTIME_SINGLE_OWNER:
+        # One scheduler worker: the caps differ from the threaded profile only in the worker count, so the stack figure
+        # (1 MiB worker + 0.5 MiB blocking thread) and the carried/stated workers differ; every other shared row is the same.
+        exact = {
+            **exact,
+            "PROFILE_ACCEPT": {"violations": "0", "worst_case_stack_bytes": "1572864", "budget": "1572864"},
+            "RUNTIME_AUDIT": {"audit_ok": "true", "workers": "1/1", "blocking_threads": "1/1",
+                              "global_queue": "256/256", "blocking_queue": "1/1"},
+            "SINGLE_OWNER_PROFILE": {"claimed": "single_owner", "stated_worker_threads": "1", "required_worker_threads": "1"},
+            "SINGLE_OWNER_RUNTIME": {"carried_workers": "1", "stated_workers": "1", "audit_ok": "true",
+                                     "children_joined": "8", "task_threads": "1", "tasks_on_caller_thread": "false"},
+            # `reason_source` says the reason is a declaration from reading the pinned source, not an observation.
+            SINGLE_OWNER_DECLARED_UNSUPPORTED: {"reason": "profile_builder_cannot_build_caller_driven_mode",
+                                                "reason_source": "static_source_reading",
+                                                "observed_tasks_on_caller_thread": "false"},
+            "SINGLE_OWNER_BLOCKING_OFFLOAD": {"held_admitted": "true", "held_started": "true", "async_phase": "ok",
+                                              "held_job_unfinished_during_async": "true",
+                                              "held_job_finished_after_release": "true"},
+            "BYTE_BUDGET_REFUSAL": {"audit_ok": "true", "policy": "BoundedBytes", "reactor": "none", "budget_bytes": "4096",
+                                    "declared_heap_bytes": "4097", "refusal": "Some(ChargeTooLarge)",
+                                    "expected_refusal": "Some(ChargeTooLarge)", "pool_threads_after_refusal": "0",
+                                    "refused_job_ran": "false"},
+            "FIRST_USE_BACKGROUND": {"pool_threads_before_first_job": "0", "pool_threads_while_job_runs": "1",
+                                     "job_started": "true", "job_finished": "true"},
+            "RUNTIME_USABLE_AFTER_REFUSAL": {"spawn_join": "ok", "outcome": "Quiescent", "live_tasks": "0",
+                                             "pending_obligations": "0", "live_regions": "0", "queued_finalizers": "0",
+                                             "pending_spawns": "0", "pending_obligation_posts": "false"},
+        }
     problems = [f"{name}.{key}={pairs.get(key, 'missing')} expected={value}"
                 for key, value in exact.get(name, {}).items() if pairs.get(key) != value]
+    if profile == RUNTIME_SINGLE_OWNER:
+        if name == SINGLE_OWNER_DECLARED_UNSUPPORTED and not pairs.get("evidence", "").startswith("asupersync_"):
+            problems.append(f"{name}: the pinned-source evidence is missing")
+        if name == "SINGLE_OWNER_BLOCKING_OFFLOAD" and not re.search(
+                r"\basync_detail=\(children=8 joined=8 sum=140 expected=140\)", detail):
+            problems.append(f"{name}: the async phase that ran beside the held blocking job did not join all 8 children")
+        if name == "FIRST_USE_BACKGROUND":
+            before, during = (runtime_uint(pairs.get(key)) for key in ("os_threads_before", "os_threads_during"))
+            if before is None or during is None or not before < during:
+                problems.append(f"{name}: no OS thread appeared (os_threads_before={pairs.get('os_threads_before', 'missing')}"
+                                f" os_threads_during={pairs.get('os_threads_during', 'missing')})")
     if name == "ABORT_TIMER_PARKED":
         before, after, elapsed = (runtime_uint(pairs.get(key)) for key in (
             "pending_timers_before", "pending_timers_after", "abort_to_join_ms"))
@@ -875,8 +967,17 @@ def runtime_phase_problems(name: str, pairs: dict[str, str], detail: str) -> lis
     return problems
 
 
-def judge_runtime(text: str, arch: str, elf: dict[str, Any] | None, *, supervised: bool = False) -> dict[str, Any]:
-    """Judge exact phase/census identity, order and observed tallies; never accept an END total by itself."""
+def judge_runtime(text: str, arch: str, elf: dict[str, Any] | None, *, supervised: bool = False,
+                  profile: str = RUNTIME_THREADED) -> dict[str, Any]:
+    """Judge exact phase/census identity, order and observed tallies; never accept an END total by itself.
+
+    `profile` selects which of the probe's two runs the transcript must be (default: the threaded run, unchanged). The
+    single-owner profile has exactly one declared unsupported row, and `ok` then means "accepted with that one row", never a
+    full pass: the caller reads `report["declared_unsupported"]`."""
+    if profile not in RUNTIME_SHAPES:
+        raise MeasurementError(f"unknown runtime profile {profile!r}")
+    shape = RUNTIME_SHAPES[profile]
+    single_owner = profile == RUNTIME_SINGLE_OWNER
     gates, rows, malformed, semantic_errors = [], [], [], []
     if runtime_has_nonserial(text.replace("\r\n", "\n")):
         malformed.append("non_serial_control_character_or_line_separator")
@@ -890,8 +991,8 @@ def judge_runtime(text: str, arch: str, elf: dict[str, Any] | None, *, supervise
         try:
             detail, separator, repeat = match[2].partition(" repeat: ") if match[1] == "DRAIN" else (match[2], "", "")
             pairs = parse_pairs(detail)
-            if match[1] in RUNTIME_PHASES:
-                semantic_errors.extend(runtime_phase_problems(match[1], pairs, detail))
+            if match[1] in shape["phases"]:
+                semantic_errors.extend(runtime_phase_problems(match[1], pairs, detail, profile))
             if match[1] == "DRAIN":
                 repeated = parse_pairs(repeat)
                 for report in (pairs, repeated):
@@ -911,8 +1012,8 @@ def judge_runtime(text: str, arch: str, elf: dict[str, Any] | None, *, supervise
     names = [name for name, _ in rows]
     # DRAIN contains separately named snapshots and a repeated report: those detail keys are allowed there.
     # Its runtime result is still required, and the complete stdout bytes are retained by the caller.
-    gates.append(_gate("P05R-TRANSCRIPT", "all 25 runtime markers in the declared order",
-                       malformed + ([] if tuple(names) == RUNTIME_ORDER else [f"observed marker order: {names}"])))
+    gates.append(_gate("P05R-TRANSCRIPT", f"all {len(shape['order'])} runtime markers in the declared order",
+                       malformed + ([] if tuple(names) == shape["order"] else [f"observed marker order: {names}"])))
     begin = rows[0][1] if rows and rows[0][0] == "BEGIN" else {}
     _, endian, _, bits = RUNTIME_ARCHES[arch]
     pid = runtime_uint(begin.get("pid"))
@@ -920,6 +1021,8 @@ def judge_runtime(text: str, arch: str, elf: dict[str, Any] | None, *, supervise
     if begin.get("status") != "start" or begin.get("arch") != arch or begin.get("endian") != (
             "big" if endian == 2 else "little") or begin.get("pointer_bits") != str(bits):
         env_errors.append("BEGIN platform identity does not match selected architecture")
+    if begin.get("topology") != ("single_owner" if single_owner else None):
+        env_errors.append(f"BEGIN topology={begin.get('topology', 'absent')} does not match the {profile} profile")
     if pid is None or pid < (2 if supervised else 1):
         env_errors.append("missing/invalid PID (a supervised runtime must be a child, not PID 1)")
     if elf is None or elf.get("arch") != arch:
@@ -928,9 +1031,21 @@ def judge_runtime(text: str, arch: str, elf: dict[str, Any] | None, *, supervise
     ops = [(name, pairs) for name, pairs in rows if name not in ("BEGIN", "END")]
     statuses = {status: sum(p.get("status") == status for _, p in ops)
                 for status in ("ok", "failed", "unsupported", "partial", "unknown")}
+    declared = SINGLE_OWNER_DECLARED_UNSUPPORTED if single_owner else None
     phase_errors = semantic_errors + [f"{name}: status={pairs.get('status', 'missing')}" for name, pairs in ops
-                                      if pairs.get("status") != "ok"]
-    gates.append(_gate("P05R-PHASES", "every required operation actually reports ok", phase_errors))
+                                      if name != declared and pairs.get("status") != "ok"]
+    if single_owner:
+        declared_rows = [pairs for name, pairs in ops if name == declared]
+        if len(declared_rows) != 1 or declared_rows[0].get("status") != "unsupported":
+            phase_errors.append(f"{declared}: must be exactly one row with status=unsupported "
+                                f"(observed {[row.get('status', 'missing') for row in declared_rows]})")
+    gates.append(_gate("P05R-PHASES", "every required operation reports ok, except the one declared unsupported row"
+                       if single_owner else "every required operation actually reports ok", phase_errors))
+    if single_owner:
+        unsupported_names = [name for name, pairs in ops if pairs.get("status") == "unsupported"]
+        gates.append(_gate("P05R-DECLARED", "exactly one unsupported row, the declared caller-driven mode",
+                           [] if unsupported_names == [declared] else
+                           [f"unsupported rows {unsupported_names}; only [{declared!r}] is declared"]))
     witness_errors, missing_witnesses = [], []
     for phase, wanted in (("ABORT_TIMER_PARKED", 1), ("DRAIN", 4)):
         found = [pairs for name, pairs in ops if name == phase]
@@ -955,17 +1070,23 @@ def judge_runtime(text: str, arch: str, elf: dict[str, Any] | None, *, supervise
             census_errors.append(f"{pairs.get('phase')}: inconsistent thread or memory readings")
         if pairs.get("task_dir_stable") != "true" or pairs.get("sources_agree") != "true":
             census_errors.append(f"{pairs.get('phase')}: incomplete census")
-    if tuple(phases) != RUNTIME_CENSUS:
+    if tuple(phases) != shape["census"]:
         census_errors.append(f"observed census phases: {phases}")
-    gates.append(_gate("P05R-CENSUS", "ten complete, consistent census samples", census_errors))
+    gates.append(_gate("P05R-CENSUS", f"{'thirteen' if single_owner else 'ten'} complete, consistent census samples",
+                       census_errors))
     end = rows[-1][1] if rows and rows[-1][0] == "END" else {}
-    expected_end = {"status": "done", "ops": "23", "ok": "23", "failed": "0", "unsupported": "0", "partial": "0",
-                    "unknown": "0", "census_samples": "10"}
-    tally_errors = [] if end == expected_end and len(ops) == 23 and statuses == {
-        "ok": 23, "failed": 0, "unsupported": 0, "partial": 0, "unknown": 0} else [f"END={end}; observed={statuses}"]
+    expected_end = {"status": "done", "ops": str(shape["ops"]), "ok": str(shape["ok"]), "failed": "0",
+                    "unsupported": str(shape["unsupported"]), "partial": "0", "unknown": "0",
+                    "census_samples": str(shape["census_samples"])}
+    tally_errors = [] if end == expected_end and len(ops) == shape["ops"] and statuses == {
+        "ok": shape["ok"], "failed": 0, "unsupported": shape["unsupported"], "partial": 0, "unknown": 0
+    } else [f"END={end}; observed={statuses}"]
     gates.append(_gate("P05R-END", "END matches independently counted operations", tally_errors))
-    return {"ok": all(g.status == "passed" for g in gates), "blocked": any(g.status == "blocked" for g in gates),
-            "gates": gates, "observed_statuses": statuses}
+    result = {"ok": all(g.status == "passed" for g in gates), "blocked": any(g.status == "blocked" for g in gates),
+              "gates": gates, "observed_statuses": statuses, "profile": profile}
+    if single_owner:
+        result["declared_unsupported"] = [declared]
+    return result
 
 
 def runtime_envelope(text: str, arch: str) -> tuple[str, list[Gate]]:
@@ -1013,9 +1134,12 @@ def run_runtime(args: argparse.Namespace, expected_elf: dict[str, Any],
                 expected_supervisor: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """Reuse E07's speaker-smoke child slot; the existing supervisor mounts proc and brings loopback up.
 
-    The slot's `/franken-speaker --catalog` alias is deliberate: p05-runtime's main ignores argv.
-    Do not enable speaker-platform: that would invoke this runtime twice. No compiler runs here.
+    The slot's `/franken-speaker --catalog` alias is deliberate: the default run ignores argv. The single-owner run is selected by
+    a marker file packed into the initramfs (`ffw_p05_profile`), because the unchanged supervisor cannot pass an argument; the
+    threaded run packs no marker. Do not enable speaker-platform: that would invoke this runtime twice. No compiler runs here.
     """
+    profile = getattr(args, "profile", RUNTIME_THREADED)
+    single_owner = profile == RUNTIME_SINGLE_OWNER
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         raise MeasurementError("a finite positive timeout is required")
     if args.log_dir.exists() and any(args.log_dir.iterdir()):
@@ -1037,12 +1161,16 @@ def run_runtime(args: argparse.Namespace, expected_elf: dict[str, Any],
     _, kernel_identity = runtime_file_identity(kernel_snapshot)
     kernel_sha256 = kernel_identity["sha256"]
     archive = args.log_dir / "runtime.cpio.gz"
-    image = boot.mkinitramfs.build(args.supervisor, archive,
-                                 [("franken-speaker", 0o100755, args.elf.read_bytes())], exclusive=True)
+    extras = [("franken-speaker", 0o100755, args.elf.read_bytes())]
+    if single_owner:
+        extras.append((SINGLE_OWNER_MARKER_NAME, S_IFREG_644, SINGLE_OWNER_MARKER_BYTES))
+    image = boot.mkinitramfs.build(args.supervisor, archive, extras, exclusive=True)
     if image["init_sha256"] != expected_supervisor["sha256"]:
         raise MeasurementError("supervisor bytes changed before packaging; guest not launched")
     if image["extra_files"]["franken-speaker"]["sha256"] != expected_elf["sha256"]:
         raise MeasurementError("runtime bytes changed before packaging; guest not launched")
+    if (SINGLE_OWNER_MARKER_NAME in image["extra_files"]) != single_owner:
+        raise MeasurementError("the profile marker must be packed for the single-owner run and for no other; guest not launched")
     env = dict(os.environ, FFW_BUILD_DIR=str(build_dir), FFW_INITRAMFS=str(archive.resolve()))
     # Match the existing boot scripts' machine/CPU/console, with NICs explicitly disabled.
     # The guest's own loopback remains available; no emulated NIC can contact a real LAN.
@@ -1066,7 +1194,8 @@ def run_runtime(args: argparse.Namespace, expected_elf: dict[str, Any],
         "inputs_after_capture": inputs_after_capture,
         "stop_reason": capture["stop_reason"], "stderr_sha256": hashlib.sha256(capture["stderr"]).hexdigest(),
         "stdout_sha256": hashlib.sha256(capture["stdout"]).hexdigest(),
-        "stderr_bytes": len(capture["stderr"]), "scope": "E07 supervisor child, not runtime as PID 1"}
+        "stderr_bytes": len(capture["stderr"]), "scope": "E07 supervisor child, not runtime as PID 1",
+        "profile": profile}
 
 
 def runtime_main(args: argparse.Namespace) -> int:
@@ -1094,8 +1223,10 @@ def runtime_main(args: argparse.Namespace) -> int:
             raise MeasurementError("runtime transcript exceeds the bounded capture size")
         text = raw.decode("utf-8", "replace")
         transcript_sha256 = hashlib.sha256(raw).hexdigest()
+    profile = getattr(args, "profile", RUNTIME_THREADED)
+    single_owner = profile == RUNTIME_SINGLE_OWNER
     child, extra = runtime_envelope(text, args.arch) if supervisor is not None else (text, [])
-    report = judge_runtime(child, args.arch, elf, supervised=supervisor is not None)
+    report = judge_runtime(child, args.arch, elf, supervised=supervisor is not None, profile=profile)
     report["gates"].extend(extra)
     if meta is not None:
         capture_errors = []
@@ -1107,27 +1238,43 @@ def runtime_main(args: argparse.Namespace) -> int:
         packaged = meta["initramfs"]["extra_files"]
         if packaged.get("franken-speaker", {}).get("sha256") != elf["sha256"]:
             capture_errors.append("runtime bytes changed before packaging")
+        # The profile marker is part of the packaged identity: present with exactly the selecting bytes for the single-owner
+        # run, absent for every other run.
+        marker = packaged.get(SINGLE_OWNER_MARKER_NAME)
+        if single_owner and (marker is None or marker.get("sha256") != hashlib.sha256(SINGLE_OWNER_MARKER_BYTES).hexdigest()):
+            capture_errors.append("the single-owner marker is missing from the initramfs or its bytes differ")
+        if not single_owner and marker is not None:
+            capture_errors.append("an unexpected profile marker was packaged for a run that did not select a profile")
         for name, expected in (("kernel", meta["kernel_sha256"]), ("initramfs", meta["initramfs"]["archive_sha256"])):
             if meta["inputs_after_capture"][name] != expected:
                 capture_errors.append(f"{name} capture input changed or became unreadable during execution")
         report["gates"].append(_gate("P05R-CAPTURE", "bounded complete capture and packaged ELF identity", capture_errors))
     report["ok"] = all(g.status == "passed" for g in report["gates"])
-    outcome = "passed" if report["ok"] else "blocked" if exit_code(report) == 3 else "not_passed"
+    # The single-owner run is never a plain pass: its one unsupported row is declared, so an accepted run is named for that.
+    accepted = "accepted_with_declared_unsupported" if single_owner else "passed"
+    outcome = accepted if report["ok"] else "blocked" if exit_code(report) == 3 else "not_passed"
+    scope = RUNTIME_SCOPE + (" " + SINGLE_OWNER_SCOPE if single_owner else "")
     if args.receipt:
         body = {"schema": RUNTIME_SCHEMA, "result": outcome, "arch": args.arch,
                 "evidence_kind": "captured_guest_execution" if meta is not None else "supplied_transcript_analysis",
                 "revision_claim": args.revision, "elf": elf, "supervisor_elf": supervisor, "execution": meta,
                 "transcript_sha256": transcript_sha256, "gates": [vars(g) for g in report["gates"]],
-                "scope": RUNTIME_SCOPE}
+                "scope": scope}
+        if single_owner:
+            body["profile"] = profile
+            body["declared_unsupported"] = report["declared_unsupported"]
         with args.receipt.open("x", encoding="utf-8") as handle:
             json.dump(body, handle, indent=2, sort_keys=True)
             handle.write("\n")
     # Do not publish a green result if persisting its requested receipt failed.
     for gate in report["gates"]:
         print(f"{gate.status.upper()} {gate.gate_id}: {gate.title}" + (f" — {gate.detail}" if gate.detail else ""))
-    print("PASSED" if report["ok"] else "BLOCKED" if outcome == "blocked" else "NOT PASSED")
-    print(RUNTIME_SCOPE)
-    return exit_code(report)
+    if single_owner and report["ok"]:
+        print("ACCEPTED WITH DECLARED UNSUPPORTED: " + ", ".join(report["declared_unsupported"]) + " (not a full pass)")
+    else:
+        print("PASSED" if report["ok"] else "BLOCKED" if outcome == "blocked" else "NOT PASSED")
+    print(scope)
+    return EXIT_ACCEPTED_WITH_DECLARED_UNSUPPORTED if single_owner and report["ok"] else exit_code(report)
 
 
 # ---- command line ------------------------------------------------------------------------------------------------------------
@@ -1145,6 +1292,9 @@ def main(argv: list[str] | None = None) -> int:
                        help="matching ffw-hello-init built with speaker-smoke only; mounts proc and brings lo up")
         p.add_argument("--receipt", type=pathlib.Path)
         p.add_argument("--revision", help="operator-supplied source claim; not build attestation")
+        p.add_argument("--profile", choices=RUNTIME_PROFILES, default=RUNTIME_THREADED,
+                       help="which run the probe made: threaded (default) or single-owner, which has one declared "
+                            "unsupported row and is accepted, never passed (command-line exit 4)")
         if name == "run-runtime":
             p.add_argument("--log-dir", type=pathlib.Path, required=True)
             p.add_argument("--timeout", type=float, default=180.0)

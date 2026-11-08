@@ -710,5 +710,475 @@ class RuntimePackagingTests(unittest.TestCase):
         self.assertEqual(archive.read_bytes(), original)
 
 
+# ---- the single-owner profile (the probe's second run: one scheduler worker through LegacyProfile) -----------------------------
+
+SO = M.RUNTIME_SINGLE_OWNER
+DECLARED = "CALLER_DRIVEN_CURRENT_THREAD"
+DEFAULT_APPEND = {"mips": "console=ttyS0,38400 rdinit=/init panic=-1", "powerpc": "console=ttyPZ0,38400 rdinit=/init panic=-1"}
+
+
+def single_owner_fixture(arch="mips", *, cleanup=True):
+    """Handwritten row-by-row single-owner transcript. Deliberately not built from the judge's expected-order tables."""
+    def c(phase):
+        return (f"FFW_P05_RUNTIME:CENSUS status=ok phase={phase} threads_task_dir_before=4 threads_task_dir_after=4 "
+                "task_dir_stable=true threads_status=4 sources_agree=true vm_rss_kb=5000 vm_hwm_kb=6000 mem_available_kb=9000")
+
+    bits, endian = (64, "little") if arch == "x86_64" else (32, "big")
+    drain = ("outcome=Quiescent expected_outcome=Quiescent live_tasks=0 pending_obligations=0 live_regions=0 "
+             "expected_live_regions=0 queued_finalizers=0 pending_spawns=0 pending_obligation_posts=false")
+    abort_cleanup = " cleanup_resumed=1 cleanup_unique=1 cleanup_cancelled=1 cleanup_before_deadline=1" if cleanup else ""
+    drain_cleanup = " cleanup_resumed=4 cleanup_unique=4 cleanup_cancelled=4 cleanup_before_deadline=4" if cleanup else ""
+    return "\n".join([
+        f"FFW_P05_RUNTIME:BEGIN status=start pid=17 arch={arch} endian={endian} pointer_bits={bits} threads_available_to_std=1 topology=single_owner",
+        c("start"),
+        "FFW_P05_RUNTIME:SINGLE_OWNER_PROFILE status=ok claimed=single_owner stated_worker_threads=1 required_worker_threads=1",
+        "FFW_P05_RUNTIME:PROFILE_ACCEPT status=ok violations=0 worst_case_stack_bytes=1572864 budget=1572864",
+        "FFW_P05_RUNTIME:PROFILE_REFUSES_ZERO_WORKERS status=ok named_violation=true builder_refused=true",
+        "FFW_P05_RUNTIME:PROFILE_REFUSES_UNBOUNDED_QUEUE status=ok named_violation=true builder_refused=true",
+        "FFW_P05_RUNTIME:PROFILE_REFUSES_OVER_BUDGET status=ok named_violation=true builder_refused=true",
+        "FFW_P05_RUNTIME:REACTOR status=ok kind=platform",
+        "FFW_P05_RUNTIME:RUNTIME_AUDIT status=ok audit_ok=true workers=1/1 blocking_threads=1/1 global_queue=256/256 blocking_queue=1/1 (carried/stated)",
+        c("after_build"),
+        "FFW_P05_RUNTIME:SINGLE_OWNER_RUNTIME status=ok carried_workers=1 stated_workers=1 audit_ok=true children_joined=8 task_threads=1 tasks_on_caller_thread=false",
+        "FFW_P05_RUNTIME:CALLER_DRIVEN_CURRENT_THREAD status=unsupported reason=profile_builder_cannot_build_caller_driven_mode reason_source=static_source_reading evidence=asupersync_460306de:src/runtime/legacy_profile.rs:406,src/runtime/builder.rs:3911-3914 observed_tasks_on_caller_thread=false",
+        c("after_single_owner_threads"),
+        "FFW_P05_RUNTIME:SPAWN_JOIN status=ok children=8 joined=8 sum=140 expected=140",
+        c("after_spawn_join"),
+        "FFW_P05_RUNTIME:ABORT_TIMER_PARKED status=ok parked=true pending_timers_before=1 pending_timers_after=0 abort_to_join_ms=2 join_result=Ok expected_join_result=Ok threads_during_task_dir=4 threads_during_status=4" + abort_cleanup,
+        c("after_abort_timer_parked"),
+        "FFW_P05_RUNTIME:ABORT_BLIND_VALUE status=ok join_result=Cancelled expected_join_result=Cancelled ok_value=None",
+        c("after_abort_blind_value"),
+        "FFW_P05_RUNTIME:TIMER_WAKE status=ok wanted_ms=50 slept_ms=50",
+        c("after_timer_wake"),
+        "FFW_P05_RUNTIME:UDP_LOOPBACK status=ok bytes=19 payload_equal=true peer_is_sender=true",
+        c("after_udp"),
+        "FFW_P05_RUNTIME:BLOCKING_POOL status=ok idle_threads=0 first_admitted=true first_started=true second_admitted=true third_refused=Some(Saturated) active_threads_while_held=1 pending_while_held=1 threads_held_task_dir=5 threads_held_status=5 first_finished=true second_finished=true ran=2",
+        c("after_blocking_pool"),
+        "FFW_P05_RUNTIME:SINGLE_OWNER_BLOCKING_OFFLOAD status=ok held_admitted=true held_started=true async_phase=ok held_job_unfinished_during_async=true held_job_finished_after_release=true async_detail=(children=8 joined=8 sum=140 expected=140)",
+        c("after_blocking_offload"),
+        "FFW_P05_RUNTIME:DRAIN status=ok tasks_spawned=4/4 tasks_parked_before_drain=4 snapshot_before_drain=(admitted=4 unfinished=4 timers_pending=4) " + drain + " elapsed_ms=2 bound_ms=5000" + drain_cleanup + " repeat: " + drain,
+        c("after_drain"), c("after_runtime_drop"),
+        "FFW_P05_RUNTIME:BYTE_BUDGET_REFUSAL status=ok audit_ok=true policy=BoundedBytes { max_queued: 1, max_live_bytes: 4096 } reactor=none budget_bytes=4096 declared_heap_bytes=4097 refusal=Some(ChargeTooLarge) expected_refusal=Some(ChargeTooLarge) pool_threads_after_refusal=0 refused_job_ran=false",
+        "FFW_P05_RUNTIME:FIRST_USE_BACKGROUND status=ok pool_threads_before_first_job=0 pool_threads_while_job_runs=1 job_started=true job_finished=true os_threads_before=4 os_threads_during=5",
+        "FFW_P05_RUNTIME:RUNTIME_USABLE_AFTER_REFUSAL status=ok spawn_join=ok " + drain,
+        c("after_byte_budget"),
+        "FFW_P05_RUNTIME:END status=done ops=33 ok=32 failed=0 unsupported=1 partial=0 unknown=0 census_samples=13",
+    ]) + "\n"
+
+
+def wrapped_single_owner(child, arch="mips", *, status=0, summary="FFW_MARKER:TEST_SUCCESS failures=0"):
+    """The unchanged supervisor's view of the single-owner child. The probe exits 0 for exactly its one declared unsupported
+    row, so this is the ordinary view (status=0, TEST_SUCCESS); `status` and `summary` exist only to plant deviations, such as the
+    old exit-2 accounting (status=2, TEST_FAILURE failures=1), which this profile must refuse."""
+    base = serial_fixture.POSITIVE
+    if arch == "powerpc":
+        base = base.replace("arch=mips-be", "arch=powerpc-be").replace("mips-unknown", "powerpc-unknown")
+        base = base.replace("errno=89", "errno=38")
+    data = child.encode()
+    region = ("FFW_SPEAKER_BEGIN path=/franken-speaker argv=--catalog\n" + child +
+              f"FFW_SPEAKER_EXIT status={status} stdout_bytes={len(data)} stdout_fnv1a64={fnv(data):016x}\n")
+    return base.replace("FFW_MARKER:TEST_SUCCESS failures=0", region + summary)
+
+
+class SingleOwnerTranscriptTests(unittest.TestCase):
+    def judge(self, text, arch="mips", supervised=False):
+        return M.judge_runtime(text, arch, {"arch": arch}, supervised=supervised, profile=SO)
+
+    @staticmethod
+    def failed(report):
+        return {g.gate_id for g in report["gates"] if g.status == "failed"}
+
+    def test_exact_complete_fixture_is_accepted_with_one_declared_unsupported_row_for_each_architecture(self):
+        for arch in ("mips", "powerpc", "x86_64"):
+            with self.subTest(arch=arch):
+                report = self.judge(single_owner_fixture(arch), arch)
+                self.assertTrue(report["ok"], report)
+                self.assertEqual(report["observed_statuses"], dict(ok=32, failed=0, unsupported=1, partial=0, unknown=0))
+                self.assertEqual(report["declared_unsupported"], [DECLARED])
+                self.assertEqual(report["profile"], SO)
+                self.assertIn("P05R-DECLARED", [g.gate_id for g in report["gates"]])
+
+    def test_the_two_profiles_refuse_each_others_transcripts(self):
+        single, threaded = single_owner_fixture(), fixture()
+        plain = lambda text: M.judge_runtime(text, "mips", {"arch": "mips"})["ok"]  # noqa: E731 - the default profile
+        self.assertTrue(plain(threaded))
+        self.assertTrue(self.judge(single)["ok"])
+        self.assertFalse(plain(single))
+        self.assertFalse(M.judge_runtime(single, "mips", {"arch": "mips"}, profile=M.RUNTIME_THREADED)["ok"])
+        self.assertFalse(self.judge(threaded)["ok"])
+        # A topology claim can be neither added to the threaded run nor removed from the single-owner one.
+        self.assertFalse(plain(threaded.replace("threads_available_to_std=1", "threads_available_to_std=1 topology=single_owner", 1)))
+        self.assertFalse(self.judge(single.replace(" topology=single_owner", "", 1))["ok"])
+        self.assertFalse(self.judge(single.replace("topology=single_owner", "topology=threaded", 1))["ok"])
+
+    def test_an_ok_caller_driven_row_is_refused_and_so_is_every_other_non_unsupported_status(self):
+        good = single_owner_fixture()
+        self.assertTrue(self.judge(good)["ok"])
+        for status in ("ok", "failed", "partial", "unknown"):
+            with self.subTest(status=status):
+                report = self.judge(good.replace(f"{DECLARED} status=unsupported", f"{DECLARED} status={status}"))
+                self.assertFalse(report["ok"])
+                self.assertIn("P05R-PHASES", self.failed(report))
+                self.assertEqual(M.exit_code(report), 1)
+
+    def test_workers_two_over_two_is_refused_wherever_the_count_appears(self):
+        good = single_owner_fixture()
+        self.assertTrue(self.judge(good)["ok"])
+        for old, new in (
+            ("workers=1/1", "workers=2/2"),
+            ("carried_workers=1", "carried_workers=2"),
+            ("stated_workers=1", "stated_workers=2"),
+            ("stated_worker_threads=1", "stated_worker_threads=2"),
+            ("worst_case_stack_bytes=1572864 budget=1572864", "worst_case_stack_bytes=2621440 budget=2621440"),
+            ("task_threads=1", "task_threads=2"),
+        ):
+            with self.subTest(plant=new):
+                self.assertFalse(self.judge(good.replace(old, new, 1))["ok"])
+
+    def test_every_row_is_required_exactly_once_and_no_adjacent_pair_may_swap(self):
+        good = single_owner_fixture().splitlines(keepends=True)
+        self.assertEqual(len(good), 35)
+        self.assertTrue(self.judge("".join(good))["ok"])
+        for index in range(len(good)):
+            with self.subTest(missing=index):
+                self.assertFalse(self.judge("".join(good[:index] + good[index + 1:]))["ok"])
+            with self.subTest(duplicate=index):
+                self.assertFalse(self.judge("".join(good[:index] + [good[index]] + good[index:]))["ok"])
+        for index in range(len(good) - 1):
+            changed = good.copy()
+            changed[index:index + 2] = reversed(changed[index:index + 2])
+            with self.subTest(swap=index):
+                self.assertFalse(self.judge("".join(changed))["ok"])
+
+    def test_exit_two_caused_by_a_different_unsupported_row_is_refused(self):
+        good = single_owner_fixture()
+        self.assertTrue(self.judge(good)["ok"])
+        both = good.replace("UDP_LOOPBACK status=ok", "UDP_LOOPBACK status=unsupported").replace(
+            "ok=32 failed=0 unsupported=1", "ok=31 failed=0 unsupported=2")
+        swapped = good.replace(f"{DECLARED} status=unsupported", f"{DECLARED} status=ok").replace(
+            "UDP_LOOPBACK status=ok", "UDP_LOOPBACK status=unsupported")
+        for name, text in (("declared plus a second unsupported row", both), ("a different row instead of the declared one", swapped)):
+            with self.subTest(case=name):
+                report = self.judge(text)
+                self.assertFalse(report["ok"])
+                self.assertTrue({"P05R-PHASES", "P05R-DECLARED"} <= self.failed(report), self.failed(report))
+
+    def test_required_fields_of_the_new_rows_cannot_be_missing_or_contradicted(self):
+        required = {
+            "SINGLE_OWNER_PROFILE": "claimed stated_worker_threads required_worker_threads",
+            "SINGLE_OWNER_RUNTIME": "carried_workers stated_workers audit_ok children_joined task_threads tasks_on_caller_thread",
+            DECLARED: "reason reason_source evidence observed_tasks_on_caller_thread",
+            "SINGLE_OWNER_BLOCKING_OFFLOAD": "held_admitted held_started async_phase held_job_unfinished_during_async held_job_finished_after_release",
+            "BYTE_BUDGET_REFUSAL": "audit_ok policy reactor budget_bytes declared_heap_bytes refusal expected_refusal pool_threads_after_refusal refused_job_ran",
+            "FIRST_USE_BACKGROUND": "pool_threads_before_first_job pool_threads_while_job_runs job_started job_finished os_threads_before os_threads_during",
+            "RUNTIME_USABLE_AFTER_REFUSAL": "spawn_join outcome live_tasks pending_obligations live_regions queued_finalizers pending_spawns pending_obligation_posts",
+        }
+        good = single_owner_fixture()
+        self.assertTrue(self.judge(good)["ok"])
+        for name, keys in required.items():
+            original = next(line for line in good.splitlines() if line.startswith(f"FFW_P05_RUNTIME:{name} "))
+            for key in keys.split():
+                token = re.search(r"\b" + key + r"=\S+", original)[0]
+                for replacement in ("", key + "=contradiction"):
+                    with self.subTest(name=name, key=key, replacement=replacement):
+                        self.assertFalse(self.judge(good.replace(original, original.replace(token, replacement, 1)))["ok"])
+
+    def test_first_use_needs_a_visible_os_thread_and_the_offload_needs_all_eight_children(self):
+        good = single_owner_fixture()
+        self.assertTrue(self.judge(good.replace("os_threads_during=5", "os_threads_during=6"))["ok"])
+        for planted in ("os_threads_during=4", "os_threads_during=3"):
+            with self.subTest(planted=planted):
+                self.assertFalse(self.judge(good.replace("os_threads_during=5", planted))["ok"])
+        offload = "async_detail=(children=8 joined=8 sum=140 expected=140)"
+        self.assertTrue(offload in good)
+        for planted in ("async_detail=(children=8 joined=7 sum=140 expected=140)", "async_detail=(children=8 joined=8 sum=139 expected=140)"):
+            with self.subTest(planted=planted):
+                self.assertFalse(self.judge(good.replace(offload, planted))["ok"])
+
+    def test_cleanup_and_census_checks_still_apply_in_the_single_owner_profile(self):
+        good = single_owner_fixture()
+        legacy = self.judge(single_owner_fixture(cleanup=False))
+        self.assertFalse(legacy["ok"])
+        self.assertEqual(M.exit_code(legacy), 3)
+        for wanted in (1, 4):
+            for key in ("cleanup_resumed", "cleanup_unique", "cleanup_cancelled", "cleanup_before_deadline"):
+                with self.subTest(wanted=wanted, field=key):
+                    report = self.judge(good.replace(f"{key}={wanted}", f"{key}=0", 1))
+                    self.assertFalse(report["ok"])
+                    self.assertEqual(M.exit_code(report), 1)
+        for old, new in (
+            ("phase=after_byte_budget", "phase=after_drain"),
+            ("phase=after_single_owner_threads", "phase=after_build"),
+            ("threads_status=4", "threads_status=0"),
+            ("task_dir_stable=true", "task_dir_stable=false"),
+        ):
+            with self.subTest(plant=new):
+                self.assertFalse(self.judge(good.replace(old, new, 1))["ok"])
+
+    def test_no_failed_partial_unsupported_or_unknown_row_can_hide_in_the_single_owner_profile(self):
+        good = single_owner_fixture()
+        self.assertTrue(self.judge(good)["ok"])
+        for status in ("failed", "unsupported", "partial", "unknown"):
+            for name in M.SINGLE_OWNER_PHASES:
+                if name == DECLARED:
+                    continue
+                with self.subTest(status=status, name=name):
+                    text = good.replace(f"{name} status=ok", f"{name} status={status}")
+                    self.assertNotEqual(text, good)
+                    report = self.judge(text)
+                    self.assertFalse(report["ok"])
+                    # The END totals also give a changed row away, so assert the per-row gate itself caught it.
+                    self.assertIn("P05R-PHASES", self.failed(report))
+
+    def test_an_unknown_profile_is_an_error_and_never_a_pass(self):
+        with self.assertRaises(M.MeasurementError):
+            M.judge_runtime(single_owner_fixture(), "mips", {"arch": "mips"}, profile="threadless")
+
+
+class SingleOwnerEnvelopeTests(unittest.TestCase):
+    """The single-owner profile uses the UNMODIFIED standard supervisor envelope: status=0 and TEST_SUCCESS, nothing rewritten."""
+    def verdict(self, text, arch="mips", profile=SO):
+        child, gates = M.runtime_envelope(text, arch)
+        report = M.judge_runtime(child, arch, {"arch": arch}, supervised=True, profile=profile)
+        return all(g.status == "passed" for g in gates) and report["ok"]
+
+    def test_unchanged_bootstrap_supervises_the_single_owner_child_for_both_be_targets(self):
+        for arch in ("mips", "powerpc"):
+            with self.subTest(arch=arch):
+                self.assertTrue(self.verdict(wrapped_single_owner(single_owner_fixture(arch), arch), arch))
+
+    def test_each_profile_accepts_its_own_supervised_transcript_and_refuses_the_others(self):
+        single, threaded = wrapped_single_owner(single_owner_fixture()), wrapped(fixture())
+        self.assertTrue(self.verdict(single, profile=SO))
+        self.assertTrue(self.verdict(threaded, profile=M.RUNTIME_THREADED))
+        self.assertFalse(self.verdict(single, profile=M.RUNTIME_THREADED))
+        self.assertFalse(self.verdict(threaded, profile=SO))
+
+    def test_exit_two_or_a_failure_summary_is_a_fail_for_the_single_owner_profile(self):
+        """Planted negatives. There is no accepted non-zero child exit: the old exit-2 accounting is red, in every form."""
+        child = single_owner_fixture()
+        good = wrapped_single_owner(child)
+        self.assertTrue(self.verdict(good), "control: the ordinary supervisor view of the single-owner child")
+        plants = {
+            "the old accounting: status=2 with TEST_FAILURE failures=1":
+                wrapped_single_owner(child, status=2, summary="FFW_MARKER:TEST_FAILURE failures=1"),
+            "status=2 under a success summary": wrapped_single_owner(child, status=2),
+            "status=0 under a failure summary": wrapped_single_owner(child, summary="FFW_MARKER:TEST_FAILURE failures=1"),
+            "status=1": wrapped_single_owner(child, status=1),
+            "status=3": wrapped_single_owner(child, status=3),
+            "two failures": wrapped_single_owner(child, status=2, summary="FFW_MARKER:TEST_FAILURE failures=2"),
+            "no summary": wrapped_single_owner(child, summary=""),
+            "both summaries": wrapped_single_owner(
+                child, summary="FFW_MARKER:TEST_SUCCESS failures=0\nFFW_MARKER:TEST_FAILURE failures=1"),
+            "killed by a signal": good.replace("status=0 stdout_bytes", "signal=11 stdout_bytes", 1),
+            "wrong byte count": good.replace("stdout_bytes=", "stdout_bytes=9", 1),
+            "wrong hash": good.replace("stdout_fnv1a64=", "stdout_fnv1a64=f", 1),
+            "wrong path": good.replace("FFW_SPEAKER_BEGIN path=", "FFW_SPEAKER_BEGIN path=/wrong", 1),
+        }
+        for name, text in plants.items():
+            with self.subTest(plant=name):
+                self.assertFalse(self.verdict(text))
+        for name in ("the old accounting: status=2 with TEST_FAILURE failures=1", "status=2 under a success summary"):
+            child_text, gates = M.runtime_envelope(plants[name], "mips")
+            self.assertEqual([g.status for g in gates], ["failed"], name)
+
+    def test_the_strict_verifier_reads_the_log_unmodified_and_the_bootstrap_stays_strict(self):
+        good = wrapped_single_owner(single_owner_fixture())
+        boot = M.boot_runner()
+        seen = []
+        original = boot.verify_serial_output
+
+        def recording(arch, hello, enosys, raw_log, *args, **kwargs):
+            seen.append(raw_log)
+            return original(arch, hello, enosys, raw_log, *args, **kwargs)
+
+        with patch.object(boot, "verify_serial_output", side_effect=recording):
+            _, gates = M.runtime_envelope(good, "mips")
+        self.assertEqual([g.status for g in gates], ["passed"])
+        # What the verifier saw is exactly the log with the child's region cut out: every other line, byte for byte.
+        lines = good.splitlines()
+        begin = next(i for i, line in enumerate(lines) if line.startswith("FFW_SPEAKER_BEGIN "))
+        exit_line = next(i for i, line in enumerate(lines) if line.startswith("FFW_SPEAKER_EXIT "))
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0].rstrip("\n").split("\n"), lines[:begin] + lines[exit_line + 1:])
+        self.assertIn("FFW_MARKER:TEST_SUCCESS failures=0", seen[0])
+        self.assertNotIn("TEST_FAILURE", seen[0])
+        for old, new in (
+            ("FFW_MARKER:REBOOT_REQUEST", ""),
+            ("FFW_PROBE:LOOPBACK_UP status=PASS rc=0", "FFW_PROBE:LOOPBACK_UP status=FAIL rc=-1"),
+            ("FFW_RUSTC release=", "FFW_UNKNOWN release="),
+            ("FFW_MARKER:REBOOT_REQUEST", "FFW_PLATFORM_STEP_BEGIN unexpected=1\nFFW_MARKER:REBOOT_REQUEST"),
+            ("TEST_SUCCESS failures=0", "TEST_SUCCESS failures=1"),
+        ):
+            with self.subTest(plant=new):
+                self.assertFalse(self.verdict(good.replace(old, new, 1)))
+        self.assertFalse(self.verdict(good + "FFW_P05_RUNTIME:END status=done\n"))
+
+
+class SingleOwnerRunTests(unittest.TestCase):
+    """Real archive and subprocess plumbing with synthetic bytes, explicitly not a QEMU execution."""
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="ffw-p05-single-owner-test-"))
+        self.boot = M.boot_runner()
+
+    def invoke(self, *extra, arch="mips", transcript=None, drop_marker=False, qemu_exit=0, marker_bytes=None, add_marker=False):
+        elf, supervisor = self.root / "runtime.elf", self.root / "supervisor.elf"
+        elf.write_bytes(elf_fixture(arch) + b"SYNTHETIC CHILD; NOT EXECUTABLE")
+        supervisor.write_bytes(elf_fixture(arch) + b"SYNTHETIC SUPERVISOR; NOT EXECUTABLE")
+        kernel = self.root / ("kernels/xm/boot/" + M.KERNEL_NAME if arch == "mips" else
+                              "kernels/x/boot/vmlinux-4.9.0-0.bpo.6-powerpc")
+        kernel.parent.mkdir(parents=True, exist_ok=True)
+        kernel.write_bytes(b"SYNTHETIC KERNEL; NOT EXECUTABLE")
+        logs, receipt = self.root / "logs", self.root / "receipt.json"
+        text = transcript if transcript is not None else wrapped_single_owner(single_owner_fixture(arch), arch)
+        seen = {}
+        original_capture, original_build = self.boot.capture_guest, self.boot.mkinitramfs.build
+
+        def synthetic_capture(command, env, timeout, **kwargs):
+            seen["command"] = command
+            archive = gzip.decompress(Path(env["FFW_INITRAMFS"]).read_bytes())
+            seen["members"] = {entry["name"]: entry for entry in self.boot.mkinitramfs.parse_cpio_bytes(archive)}
+            code = "import sys;sys.stdout.write(" + repr(text) + ");sys.stdout.flush();raise SystemExit(" + str(qemu_exit) + ")"
+            return original_capture([sys.executable, "-c", code], env, timeout, **kwargs)
+
+        def build(init_path, out_path, extra_files=(), **kwargs):
+            files = []
+            for item in extra_files:
+                if item[0] == M.SINGLE_OWNER_MARKER_NAME:
+                    if drop_marker:
+                        continue
+                    if marker_bytes is not None:
+                        item = (item[0], item[1], marker_bytes)
+                files.append(item)
+            if add_marker:
+                files.append((M.SINGLE_OWNER_MARKER_NAME, 0o100644, b"single-owner\n"))
+            return original_build(init_path, out_path, files, **kwargs)
+
+        args = ["run-runtime", "--arch", arch, "--elf", str(elf), "--supervisor", str(supervisor),
+                "--log-dir", str(logs), "--receipt", str(receipt), "--timeout", "2", *extra]
+        output = io.StringIO()
+        with patch.dict(os.environ, {"FFW_BUILD_DIR": str(self.root)}), patch.object(
+                self.boot, "capture_guest", side_effect=synthetic_capture), patch.object(
+                self.boot, "cmd_version", return_value="SYNTHETIC; NO QEMU RAN"), patch.object(
+                self.boot.mkinitramfs, "build", side_effect=build), contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+            result = M.main(args)
+        return result, (json.loads(receipt.read_text()) if receipt.exists() else None), output.getvalue(), seen, logs
+
+    def test_the_run_packs_the_marker_and_the_receipt_says_accepted_with_a_declared_unsupported_row(self):
+        for arch in ("mips", "powerpc"):
+            with self.subTest(arch=arch):
+                self.setUp()
+                result, receipt, output, seen, logs = self.invoke("--profile", SO, arch=arch)
+                self.assertEqual(result, M.EXIT_ACCEPTED_WITH_DECLARED_UNSUPPORTED)
+                self.assertEqual(result, 4)
+                self.assertEqual(receipt["result"], "accepted_with_declared_unsupported")
+                self.assertNotEqual(receipt["result"], "passed")
+                self.assertEqual((receipt["profile"], receipt["declared_unsupported"]), (SO, [DECLARED]))
+                self.assertEqual(receipt["execution"]["profile"], SO)
+                marker = seen["members"]["ffw_p05_profile"]
+                self.assertEqual((marker["data"], marker["mode"]), (b"single-owner\n", 0o100644))
+                packed = receipt["execution"]["initramfs"]["extra_files"]["ffw_p05_profile"]
+                self.assertEqual(packed["sha256"], hashlib.sha256(b"single-owner\n").hexdigest())
+                self.assertIn("franken-speaker", seen["members"])
+                self.assertEqual(seen["command"][seen["command"].index("-append") + 1], DEFAULT_APPEND[arch],
+                                 "the kernel command line is the default one: the marker is the only difference")
+                lines = output.splitlines()
+                self.assertNotIn("PASSED", lines)
+                self.assertTrue(any(line.startswith("ACCEPTED WITH DECLARED UNSUPPORTED: " + DECLARED) for line in lines))
+                self.assertIn("never a full pass", receipt["scope"])
+
+    def test_the_default_run_packs_no_marker_and_keeps_its_plain_pass(self):
+        result, receipt, output, seen, _ = self.invoke(transcript=wrapped(fixture()))
+        self.assertEqual(result, 0)
+        self.assertEqual(receipt["result"], "passed")
+        self.assertNotIn("ffw_p05_profile", seen["members"])
+        self.assertNotIn("ffw_p05_profile", receipt["execution"]["initramfs"]["extra_files"])
+        self.assertEqual(receipt["execution"]["profile"], M.RUNTIME_THREADED)
+        self.assertIn("PASSED", output.splitlines())
+        self.assertNotIn("declared_unsupported", receipt)
+
+    def test_the_wrong_profile_for_the_transcript_is_red_in_both_directions(self):
+        result, receipt, output, _, _ = self.invoke()  # single-owner transcript, default (threaded) profile
+        self.assertEqual(result, 1)
+        self.assertEqual(receipt["result"], "not_passed")
+        self.assertNotIn("ACCEPTED", output)
+        self.setUp()
+        result, receipt, output, _, _ = self.invoke("--profile", SO, transcript=wrapped(fixture()))
+        self.assertEqual(result, 1)
+        self.assertEqual(receipt["result"], "not_passed")
+        self.assertNotIn("ACCEPTED", output)
+
+    def test_a_missing_marker_in_the_archive_stops_before_the_guest_is_launched(self):
+        result, receipt, _, seen, logs = self.invoke("--profile", SO, drop_marker=True)
+        self.assertEqual(result, 2)
+        self.assertIsNone(receipt)
+        self.assertNotIn("command", seen)
+        self.assertFalse((logs / "runtime.serial.log").exists())
+
+    def test_the_old_exit_two_accounting_is_red_end_to_end_for_the_single_owner_profile(self):
+        old = wrapped_single_owner(single_owner_fixture(), status=2, summary="FFW_MARKER:TEST_FAILURE failures=1")
+        result, receipt, output, _, _ = self.invoke("--profile", SO, transcript=old)
+        self.assertEqual(result, 1)
+        self.assertEqual(receipt["result"], "not_passed")
+        self.assertIn("P05R-SUPERVISOR", [g["gate_id"] for g in receipt["gates"] if g["status"] == "failed"])
+        self.assertNotIn("ACCEPTED", output)
+
+    def test_a_marker_with_other_bytes_is_red_and_never_accepted(self):
+        result, receipt, output, seen, _ = self.invoke("--profile", SO, marker_bytes=b"threaded\n")
+        self.assertEqual(result, 1)
+        self.assertEqual(receipt["result"], "not_passed")
+        self.assertEqual(seen["members"]["ffw_p05_profile"]["data"], b"threaded\n")
+        failed = [g for g in receipt["gates"] if g["status"] == "failed"]
+        self.assertEqual([g["gate_id"] for g in failed], ["P05R-CAPTURE"])
+        self.assertIn("single-owner marker", failed[0]["detail"])
+        self.assertNotIn("ACCEPTED", output)
+
+    def test_a_marker_in_a_default_run_stops_before_the_guest_is_launched(self):
+        result, receipt, _, seen, logs = self.invoke(transcript=wrapped(fixture()), add_marker=True)
+        self.assertEqual(result, 2)
+        self.assertIsNone(receipt)
+        self.assertNotIn("command", seen)
+        self.assertFalse((logs / "runtime.serial.log").exists())
+
+    def test_a_nonzero_qemu_exit_is_red_even_for_the_declared_single_owner_transcript(self):
+        result, receipt, output, _, _ = self.invoke("--profile", SO, qemu_exit=7)
+        self.assertEqual(result, 1)
+        self.assertEqual(receipt["result"], "not_passed")
+        self.assertIn("P05R-CAPTURE", [g["gate_id"] for g in receipt["gates"] if g["status"] == "failed"])
+        self.assertNotIn("ACCEPTED", output)
+
+    def test_analysis_of_the_saved_log_agrees_with_the_run_and_is_never_a_plain_pass(self):
+        result, run_receipt, _, _, logs = self.invoke("--profile", SO)
+        self.assertEqual(result, 4)
+        analysis = ["analyze-runtime", "--arch", "mips", "--elf", str(self.root / "runtime.elf"),
+                    "--supervisor", str(self.root / "supervisor.elf"), "--log", str(logs / "runtime.serial.log")]
+        accepted = self.root / "analysis.json"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(M.main(analysis + ["--profile", SO, "--receipt", str(accepted)]), 4)
+            self.assertEqual(M.main(analysis), 1, "the default profile refuses the single-owner transcript")
+        body = json.loads(accepted.read_text())
+        self.assertEqual(body["result"], "accepted_with_declared_unsupported")
+        self.assertEqual(body["transcript_sha256"], run_receipt["transcript_sha256"])
+
+    def test_native_analysis_of_a_single_owner_transcript_is_accepted_with_the_declared_row_only(self):
+        log, elf, receipt = self.root / "native.log", self.root / "native.elf", self.root / "native.json"
+        log.write_text(single_owner_fixture("x86_64"))
+        elf.write_bytes(elf_fixture("x86_64"))
+        args = ["analyze-runtime", "--arch", "x86_64", "--elf", str(elf), "--log", str(log)]
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(M.main(args + ["--profile", SO, "--receipt", str(receipt)]), 4)
+            self.assertEqual(M.main(args), 1)
+        self.assertEqual(json.loads(receipt.read_text())["result"], "accepted_with_declared_unsupported")
+
+    def test_the_public_p05_entrypoint_accepts_the_profile_argument_and_refuses_an_unknown_one(self):
+        script = HERE.parents[1] / "scripts/e2e/p05"
+        accepted = subprocess.run([str(script), "--runtime", "analyze", "--arch", "x86_64", "--profile", SO],
+                                  capture_output=True, text=True, timeout=10)
+        self.assertEqual(accepted.returncode, 3, accepted.stdout + accepted.stderr)  # no log: BLOCKED, as before
+        refused = subprocess.run([str(script), "--runtime", "analyze", "--arch", "x86_64", "--profile", "threadless"],
+                                 capture_output=True, text=True, timeout=10)
+        self.assertEqual(refused.returncode, 2, refused.stdout + refused.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

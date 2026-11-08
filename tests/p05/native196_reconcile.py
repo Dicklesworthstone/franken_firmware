@@ -10,6 +10,12 @@ Anything else prints each problem and exits 1. A missing name, a duplicate (in o
 a `FAILED` or `ignored` test, a truncated log with no summary line, and a conflicting or unattributable result are each a problem.
 Exit 0 only for `complete`; 2 for a usage error.
 
+The registry is chosen by its digest, never by a flag. `--registry FILE` takes a file whose sha256 is one of the two pinned ones: the 196
+names (the default) or the 38 native tests of the P05 runtime probe, `native_runtime38_names.txt` (`94be74e6...`); any other file, either
+of them with one byte changed or reordered included, is a usage error (exit 2) and nothing is reconciled. For the 38 the binary a run may
+come from is the probe's (`ffw_p05_runtime`), not Asupersync's, and results are credited by libtest's own totals when `--nocapture` makes
+them unattributable (see `credit_by_closure`). The 196 path is unchanged: it never credits an interrupted result.
+
 Reuse, not a fork. The result parser is D01's `Logs` (tests/d01/run_cases.py): it already reads libtest output under `--nocapture`, where
 another line can land between `test <name> ... ` and its `ok`. The failure and terminal-line patterns are `audit_check.py`'s
 `TERMINAL_FAILURES` and `ANSI` (toolchain/asupersync-cancel-audit/scripts/audit_check.py), the same code that judges the 50-name audit record.
@@ -30,6 +36,15 @@ Asupersync repository root, with W an eligible worker. The base is the frozen re
         runtime::blocking_pool::admission::tests:: io::stdio::tests:: cx::scoped_race::tests:: cx::scoped_timeout::tests:: \\
         cx::scoped_first_ok::tests:: cx::scoped_quorum::tests:: runtime::legacy_profile::tests:: runtime::spawn_blocking::tests:: \\
         net::resolve::tests:: --test-threads=1
+
+The 38 native tests of the P05 runtime probe (one test binary, `ffw_p05_runtime`) are reconciled the same way, from the repository root, on
+the log of the central `cargo test` run for that package and the exit status of that command, taken from outside the log. `--nocapture` may
+be used: the probe's transcript tests print between `test <name> ... ` and their `ok`, which the 196 path would refuse; for this registry
+only, libtest's own totals credit them (`credit_by_closure`):
+
+    python3 tests/p05/native196_reconcile.py --registry tests/p05/native_runtime38_names.txt --run LOG EXIT_STATUS
+
+A reconcile says which names ran once and `ok`. It decides nothing else about the run.
 """
 from __future__ import annotations
 
@@ -47,6 +62,29 @@ HERE = Path(__file__).resolve().parent
 REGISTRY_FILE = HERE / "native196_names.txt"
 REGISTRY_SHA256 = "47c760584d089e3143d6e6a9d79baaf35125a3c52296cf87798b70d73726126f"
 LIB_STEMS = (None, "asupersync")    # stdout alone carries no `Running` header (cargo prints it on stderr), so the stem may be None
+RUNTIME38_FILE = HERE / "native_runtime38_names.txt"
+RUNTIME38_SHA256 = "94be74e65f47711951368d6776a4516699d761333338db5057f881867c679ba1"
+RUNTIME38_STEMS = (None, "ffw_p05_runtime")     # the probe's own test binary (package `ffw-p05-runtime`), never Asupersync's
+
+
+@dataclass(frozen=True)
+class Pinned:
+    """A registry the command line accepts: found by the digest of its bytes, with what is true of that registry alone."""
+    label: str              # printed before COMPLETE / INCOMPLETE
+    sha256: str
+    size: int
+    stems: tuple            # the test binaries a run may be attributed to
+    serial_closure: bool    # credit results `--nocapture` made unattributable, by libtest's own totals (credit_by_closure)
+
+
+PINNED = (
+    Pinned("native196", REGISTRY_SHA256, 196, LIB_STEMS, False),
+    Pinned("native_runtime38", RUNTIME38_SHA256, 38, RUNTIME38_STEMS, True),
+)
+
+# D01's note for a sorted (one-test-thread) section whose interrupted results it declined to attribute.
+SERIAL_NOTE = re.compile(r": a section of (\d+) tests reports in sorted order, which is how libtest runs with one test thread; "
+                         r"(\d+) result\(s\) found only by the open-prefix rule were not attributed$")
 
 RESULT = re.compile(r"test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored; (\d+) measured; (\d+) filtered out")
 PREFIX = re.compile(r"(?<![A-Za-z0-9_:])test ([A-Za-z_][A-Za-z0-9_:]*) \.\.\. ")
@@ -75,14 +113,32 @@ def load_reused(repo: Path):
     return d01, audit
 
 
-def load_registry(path: Path = REGISTRY_FILE, expected_sha256: str | None = REGISTRY_SHA256) -> list:
-    data = path.read_bytes()
-    if expected_sha256 is not None and hashlib.sha256(data).hexdigest() != expected_sha256:
-        raise ValueError(f"{path.name}: sha256 {hashlib.sha256(data).hexdigest()} is not the frozen {expected_sha256}")
+def _names(path: Path, data: bytes) -> list:
     names = [line for line in data.decode("utf-8").splitlines() if line.strip()]
     if len(set(names)) != len(names):
         raise ValueError(f"{path.name}: duplicate names in the registry")
     return names
+
+
+def load_registry(path: Path = REGISTRY_FILE, expected_sha256: str | None = REGISTRY_SHA256) -> list:
+    data = path.read_bytes()
+    if expected_sha256 is not None and hashlib.sha256(data).hexdigest() != expected_sha256:
+        raise ValueError(f"{path.name}: sha256 {hashlib.sha256(data).hexdigest()} is not the frozen {expected_sha256}")
+    return _names(path, data)
+
+
+def load_pinned(path: Path = REGISTRY_FILE) -> tuple:
+    """(names, Pinned) for a registry file whose bytes hash to one of the pinned digests; ValueError for any other file."""
+    data = path.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    for pinned in PINNED:
+        if digest == pinned.sha256:
+            names = _names(path, data)
+            if len(names) != pinned.size:
+                raise ValueError(f"{path.name}: {len(names)} names, but the pinned {pinned.label} registry has {pinned.size}")
+            return names, pinned
+    known = ", ".join(f"{pinned.label} {pinned.sha256}" for pinned in PINNED)
+    raise ValueError(f"{path.name}: sha256 {digest} is not a pinned registry ({known})")
 
 
 @dataclass
@@ -107,7 +163,42 @@ class Report:
         return not self.problems
 
 
-def analyse_run(run: Run, d01, audit, report: Report):
+def credit_by_closure(problems: list, statuses: dict, counts: Counter, summary: dict) -> int:
+    """Credit the results `--nocapture` made unattributable, from libtest's own totals, or credit none. Returns how many were credited.
+
+    With `--nocapture --test-threads=1` a test that prints puts its output between `test <name> ... ` and its `ok`, and D01 will not guess
+    which later line is the token in a sorted, one-thread log: it drops those results and says so. This does not guess either. It credits a
+    name only when libtest's own figures close around it, all of these at once, and otherwise changes nothing:
+      * the run's only problem is D01's note that it did not attribute K results (any other problem means the run is not trusted);
+      * the log has one `running N tests` section and one `test result: ok.` line with failed, ignored and measured all 0;
+      * the K names are exactly the names that have a `test <name> ... ` prefix but no attributed result, each prefix once;
+      * N == passed == (results D01 attributed) + K, i.e. every test libtest started is accounted for as passed.
+    A test that started and failed or was ignored would make `failed`/`ignored` nonzero or show its own token, so it cannot be among the K.
+    The credit is the name's prefix plus libtest's totals; it is not a reading of the interrupted line, and the run line says how many."""
+    serial = [p for p in problems if SERIAL_NOTE.search(p)]
+    if len(serial) != 1 or len(problems) != 1:
+        return 0
+    interrupted = sorted(name for name in counts if name not in statuses)
+    k = int(SERIAL_NOTE.search(serial[0]).group(2))
+    passed = summary.get("passed")
+    closed = (
+        k > 0
+        and k == len(interrupted)
+        and all(counts[name] == 1 for name in interrupted)
+        and summary["results"] == 1
+        and len(summary["declared"]) == 1
+        and (summary.get("failed"), summary.get("ignored"), summary.get("measured")) == (0, 0, 0)
+        and summary["declared"][0] == passed == len(statuses) + k
+    )
+    if not closed:
+        return 0
+    problems.clear()
+    for name in interrupted:
+        statuses[name] = "ok"
+    return k
+
+
+def analyse_run(run: Run, d01, audit, report: Report, size: int = 196, stems: tuple = LIB_STEMS, serial_closure: bool = False):
     """Problems for one run, plus (name -> status) for every name the run reports and the run's raw `test <name> ...` counts."""
     label = run.label
     raw = run.path.read_text(encoding="utf-8", errors="replace")
@@ -142,7 +233,7 @@ def analyse_run(run: Run, d01, audit, report: Report):
             problems.append(f"{label}: `test result: {verdict}.`")
         for what, value in (("failed", failed), ("ignored", ignored), ("measured", measured)):
             if value:
-                problems.append(f"{label}: {value} {what}; every one of the 196 must be `ok`, none ignored")
+                problems.append(f"{label}: {value} {what}; every one of the {size} must be `ok`, none ignored")
         if len(declared) == 1 and declared[0] != passed + failed + ignored + measured:
             problems.append(f"{label}: announced {declared[0]} tests, accounted for {passed + failed + ignored + measured}")
 
@@ -161,16 +252,22 @@ def analyse_run(run: Run, d01, audit, report: Report):
         problems.append(f"{label}: conflicting results for {key[1]}")
     statuses = {}
     for (stem, name), status in logs.tests.items():
-        if stem not in LIB_STEMS:
-            problems.append(f"{label}: {name} was reported by binary `{stem}`, not the library test binary")
+        if stem not in stems:
+            which = "library" if stems == LIB_STEMS else "probe"
+            problems.append(f"{label}: {name} was reported by binary `{stem}`, not the {which} test binary")
         statuses[name] = status
     for name in sorted(logs.ambiguous_names):
         problems.append(f"{label}: {name} was reported more than once in this log")
     counts = Counter(PREFIX.findall(text))
+    if serial_closure:
+        credited = credit_by_closure(problems, statuses, counts, summary)
+        if credited:
+            summary["credited_by_closure"] = credited
     return problems, statuses, counts, summary, passed
 
 
-def reconcile(registry: list, runs: list, repo: Path | None = None) -> Report:
+def reconcile(registry: list, runs: list, repo: Path | None = None, pinned: Pinned | None = None) -> Report:
+    """`pinned` says what is true of this registry (binary stems, closure); None is the 196 behaviour, exactly as before."""
     d01, audit = load_reused(find_repo(repo))
     report = Report(registry=len(registry))
     wanted = set(registry)
@@ -178,7 +275,8 @@ def reconcile(registry: list, runs: list, repo: Path | None = None) -> Report:
     occurrences = Counter()
     total_passed = 0
     for run in runs:
-        problems, statuses, counts, summary, passed = analyse_run(run, d01, audit, report)
+        problems, statuses, counts, summary, passed = analyse_run(
+            run, d01, audit, report, len(registry), pinned.stems if pinned else LIB_STEMS, bool(pinned and pinned.serial_closure))
         report.problems += problems
         report.runs.append((run.label, summary))
         total_passed += passed
@@ -214,21 +312,22 @@ def main(argv=None) -> int:
     ap.add_argument("--repo", type=Path)
     args = ap.parse_args(argv)
     try:
-        registry = load_registry(args.registry)
+        registry, pinned = load_pinned(args.registry)
         runs = [Run(Path(path), int(code)) for path, code in args.run]
     except (ValueError, OSError) as error:
         print(f"native196: usage/input error: {error}")
         return 2
-    report = reconcile(registry, runs, args.repo)
+    report = reconcile(registry, runs, args.repo, pinned)
     for label, summary in report.runs:
+        credited = f" credited_by_closure={summary['credited_by_closure']}" if "credited_by_closure" in summary else ""
         print(f"  {label}: declared={summary['declared']} result_lines={summary['results']} "
               f"passed={summary.get('passed')} failed={summary.get('failed')} ignored={summary.get('ignored')} "
-              f"measured={summary.get('measured')} filtered_out={summary['filtered_out']}")
+              f"measured={summary.get('measured')} filtered_out={summary['filtered_out']}{credited}")
     if report.complete:
-        print(f"native196: COMPLETE: {report.ok_names}/{report.registry} names `ok` exactly once across {len(report.runs)} run(s); "
+        print(f"{pinned.label}: COMPLETE: {report.ok_names}/{report.registry} names `ok` exactly once across {len(report.runs)} run(s); "
               f"filtered out and ignored are accounted for in the lines above")
         return 0
-    print(f"native196: INCOMPLETE: {report.ok_names}/{report.registry} names `ok`; {len(report.problems)} problem(s)")
+    print(f"{pinned.label}: INCOMPLETE: {report.ok_names}/{report.registry} names `ok`; {len(report.problems)} problem(s)")
     for problem in report.problems:
         print(f"  - {problem}")
     return 1

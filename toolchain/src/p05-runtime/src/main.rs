@@ -16,17 +16,26 @@
 //! address that is not loopback is refused. No `unsafe` (the crate forbids it); as PID 1 the probe parks after END instead of calling
 //! `reboot`, and the supervisor that owns the QEMU process ends it. What this does not show: it is not a memory-fit result, not a
 //! throughput or latency figure, and not the cancellation audit; the stack sizes below are requested sizes, not measurements.
+//!
+//! Topologies. By default the probe builds the threaded profile (two scheduler workers) and its transcript is unchanged. Run with the
+//! argument `--profile=single-owner` it builds the single-owner profile instead: the same bounded `LegacyProfile` with exactly one
+//! scheduler worker, built and audited by the same path, so one thread polls every task. Its transcript has more rows and is not the
+//! one the default judge reads. The caller-driven mode (`RuntimeBuilder::current_thread()`) is not something `LegacyProfile` can
+//! build at the pinned revision, so that row is printed `unsupported` and is never counted as `ok`.
 #![forbid(unsafe_code)]
 
+use std::collections::HashSet;
 use std::fmt::Display;
 use std::fs;
 use std::future::Future;
 use std::io::Write;
 use std::net::SocketAddr;
+use std::num::NonZeroUsize;
 use std::pin::pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::task::{Poll, Waker};
+use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 
 use asupersync::cx::Cx;
@@ -114,6 +123,29 @@ enum Verdict {
     Unknown(String),
 }
 
+impl Verdict {
+    /// The status word a marker prints for this verdict.
+    fn status(&self) -> &'static str {
+        match self {
+            Self::Pass(_) => "ok",
+            Self::Fail(_) => "failed",
+            Self::Unsupported(_) => "unsupported",
+            Self::Partial(_) => "partial",
+            Self::Unknown(_) => "unknown",
+        }
+    }
+
+    fn detail(&self) -> &str {
+        match self {
+            Self::Pass(detail)
+            | Self::Fail(detail)
+            | Self::Unsupported(detail)
+            | Self::Partial(detail)
+            | Self::Unknown(detail) => detail.as_str(),
+        }
+    }
+}
+
 /// `ops == ok + failed + unsupported + partial + unknown` always; `census_samples` is how many of those operations were CENSUS lines.
 #[derive(Default)]
 struct Report {
@@ -126,6 +158,8 @@ struct Report {
     census_samples: u32,
     /// The name of every recorded operation, in order, so a caller can check WHICH phases ran and not only how many.
     names: Vec<String>,
+    /// The name and detail of every operation recorded `unsupported`, in order, so an exit code can tell WHICH row it was.
+    unsupported_rows: Vec<(String, String)>,
 }
 
 impl Report {
@@ -146,6 +180,8 @@ impl Report {
             }
             Verdict::Unsupported(detail) => {
                 self.unsupported += 1;
+                self.unsupported_rows
+                    .push((name.to_string(), detail.clone()));
                 ("unsupported", detail)
             }
             Verdict::Partial(detail) => {
@@ -182,6 +218,29 @@ impl Report {
             2
         } else {
             0
+        }
+    }
+
+    /// The single-owner run's exit code. It is 0 only when every operation passed except exactly one: the declared row,
+    /// `CALLER_DRIVEN_CURRENT_THREAD`, recorded `unsupported` with the pin's stated reason, in a run of the declared size (33
+    /// operations, 32 ok). The transcript still carries that row; the exit code only stops calling a declared gap a crash. Any other
+    /// result is nonzero: a second unsupported row, a failed, partial or unknown row, a different tally, or a run in which the
+    /// declared row is missing or ok get the ordinary code, or 1 if that would have been 0.
+    fn single_owner_exit_code(&self) -> i32 {
+        let declared_only = self.failed == 0
+            && self.partial == 0
+            && self.unknown == 0
+            && self.ops == SINGLE_OWNER_OPS
+            && self.ok == SINGLE_OWNER_OPS - 1
+            && self.unsupported == 1
+            && matches!(
+                self.unsupported_rows.as_slice(),
+                [(name, detail)] if name == CALLER_DRIVEN_ROW && detail.starts_with(CALLER_DRIVEN_REASON)
+            );
+        if declared_only {
+            0
+        } else {
+            self.exit_code().max(1)
         }
     }
 }
@@ -349,9 +408,71 @@ fn profile() -> Option<LegacyProfile> {
         .map(|budget| LegacyProfile::new(stated, budget))
 }
 
+/// Which scheduler topology a probe run builds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Topology {
+    /// The default: the profile of `caps()`, two scheduler workers.
+    Threaded,
+    /// The profile of `single_owner_caps()`: the same bounds with exactly one scheduler worker.
+    SingleOwner,
+}
+
+/// The `caps()` bounds with exactly one scheduler worker and nothing else changed, so the single-owner run is the same profile with
+/// the one worker count different.
+fn single_owner_caps() -> LegacyCaps {
+    LegacyCaps {
+        worker_threads: 1,
+        ..caps()
+    }
+}
+
+fn single_owner_profile() -> Option<LegacyProfile> {
+    let stated = single_owner_caps();
+    stated
+        .worst_case_stack_bytes()
+        .map(|budget| LegacyProfile::new(stated, budget))
+}
+
+/// Why a profile that claims the single-owner topology was refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SingleOwnerRefusal {
+    /// The caps are not an acceptable profile at all. Zero workers lands here: the runtime would raise it to one, so it is not a
+    /// stated single worker.
+    Invalid(Vec<CapViolation>),
+    /// The profile states more than one scheduler worker.
+    MoreThanOneWorker(usize),
+}
+
+impl SingleOwnerRefusal {
+    fn detail(&self) -> String {
+        match self {
+            Self::Invalid(violations) => format!(
+                "claimed=single_owner refused=invalid_profile violations={} first={:?}",
+                violations.len(),
+                violations.first()
+            ),
+            Self::MoreThanOneWorker(workers) => format!(
+                "claimed=single_owner refused=more_than_one_worker stated_worker_threads={workers} required_worker_threads=1"
+            ),
+        }
+    }
+}
+
+/// A profile may claim the single-owner topology only if it is an acceptable profile that states exactly one scheduler worker. Pure.
+fn single_owner_claim(profile: &LegacyProfile) -> Result<(), SingleOwnerRefusal> {
+    let violations = profile.violations();
+    if !violations.is_empty() {
+        return Err(SingleOwnerRefusal::Invalid(violations));
+    }
+    match profile.caps().worker_threads {
+        1 => Ok(()),
+        workers => Err(SingleOwnerRefusal::MoreThanOneWorker(workers)),
+    }
+}
+
 /// The profile accepts the caps it was given and refuses, by name, the ones that leave something unbounded or over budget.
-fn profile_phase(report: &mut Report) {
-    let Some(good) = profile() else {
+fn profile_phase(report: &mut Report, stated: Option<LegacyProfile>) {
+    let Some(good) = stated else {
         report.record(
             "PROFILE_ACCEPT",
             Verdict::Fail("worst_case_stack_bytes=overflow".to_string()),
@@ -487,6 +608,15 @@ fn build_phase(report: &mut Report, profile: &LegacyProfile) -> Option<(Runtime,
 fn run_async<F>(runtime: &Runtime, phase: F) -> Verdict
 where
     F: Future<Output = Verdict> + Send + 'static,
+{
+    runtime.block_on(runtime.handle().spawn(phase))
+}
+
+/// `run_async` for a phase that returns an observation instead of a verdict, so a judge can read it.
+fn run_async_value<T, F>(runtime: &Runtime, phase: F) -> T
+where
+    T: Send + 'static,
+    F: Future<Output = T> + Send + 'static,
 {
     runtime.block_on(runtime.handle().spawn(phase))
 }
@@ -1148,9 +1278,362 @@ fn drain_detail(report: &RootDrainReport) -> String {
     )
 }
 
+// ---- the single-owner run ---------------------------------------------------------------------------------------------------
+
+/// The argument that selects the single-owner run. Anything else, including the `--catalog` alias a supervisor passes, runs the default.
+const SINGLE_OWNER_ARG: &str = "--profile=single-owner";
+
+/// The row that is the one declared gap of the single-owner run, and the start of its `unsupported` detail (the reason, which the
+/// judge pins too). A single-owner run is 20 phases plus 13 census samples, which is the size its exit code is defined for.
+const CALLER_DRIVEN_ROW: &str = "CALLER_DRIVEN_CURRENT_THREAD";
+const CALLER_DRIVEN_REASON: &str = "reason=profile_builder_cannot_build_caller_driven_mode";
+const SINGLE_OWNER_OPS: u32 = 33;
+
+/// Why the caller-driven mode is not run here, with where the pinned source shows it (Asupersync 460306de): the profile's builder
+/// starts from `RuntimeBuilder::new()` and the mode's flag is private to the `current_thread()` constructor. This is a DECLARATION
+/// from reading that source (`reason_source=static_source_reading`), not an observation: the one runtime observation next to it,
+/// `observed_tasks_on_caller_thread`, can only contradict it, and nothing checks the file and line citations.
+const CALLER_DRIVEN_UNSUPPORTED: &str = "reason=profile_builder_cannot_build_caller_driven_mode reason_source=static_source_reading evidence=asupersync_460306de:src/runtime/legacy_profile.rs:406,src/runtime/builder.rs:3911-3914";
+
+/// The blocking pool's live-byte budget in the byte-budget run: small, so a declared charge over it is refused as too large.
+const BYTE_BUDGET: NonZeroUsize = match NonZeroUsize::new(4096) {
+    Some(bytes) => bytes,
+    None => panic!("the byte budget is nonzero"),
+};
+/// The heap an in-budget job declares, well inside `BYTE_BUDGET`.
+const BYTE_BUDGET_JOB_HEAP: usize = 64;
+
+/// Whether the arguments select the single-owner run: only the exact argument does.
+fn single_owner_requested(args: impl IntoIterator<Item = std::ffi::OsString>) -> bool {
+    args.into_iter().any(|arg| arg == SINGLE_OWNER_ARG)
+}
+
+/// The marker file the guest runner packs into the initramfs for a single-owner run, the way the other guests read their `/ffw_seed`.
+/// The supervisor starts this probe with a fixed argv and an empty environment and is not changed for this, so a file is the one input
+/// the runner can still vary. No such file, or any other content, is the default run.
+const SINGLE_OWNER_MARKER: &str = "/ffw_p05_profile";
+/// The marker's whole content, with at most one trailing newline, that selects the single-owner run.
+const SINGLE_OWNER_MARKER_WORD: &[u8] = b"single-owner";
+/// A marker is read no further than one byte past this: a longer one is not the word.
+const MARKER_READ_LIMIT: usize = 64;
+
+/// At most `MARKER_READ_LIMIT + 1` bytes of `source`, so an endless or huge file costs a bounded read. A read error is no marker.
+fn read_bounded(source: impl std::io::Read) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let mut limited = std::io::Read::take(
+        source,
+        u64::try_from(MARKER_READ_LIMIT + 1).unwrap_or(u64::MAX),
+    );
+    match std::io::Read::read_to_end(&mut limited, &mut bytes) {
+        Ok(_) => bytes,
+        Err(_) => Vec::new(),
+    }
+}
+
+fn read_single_owner_marker() -> Option<Vec<u8>> {
+    std::fs::File::open(SINGLE_OWNER_MARKER)
+        .ok()
+        .map(read_bounded)
+}
+
+/// Whether marker contents select the single-owner run: exactly the word, with at most one trailing newline. A missing marker and
+/// anything else, including a longer or differently cased word, select the default run. Pure.
+fn marker_selects_single_owner(contents: Option<&[u8]>) -> bool {
+    let Some(bytes) = contents else {
+        return false;
+    };
+    bytes.strip_suffix(b"\n").unwrap_or(bytes) == SINGLE_OWNER_MARKER_WORD
+}
+
+/// The single-owner run is selected by the exact argument or by the marker, and by nothing else.
+fn single_owner_selected(
+    args: impl IntoIterator<Item = std::ffi::OsString>,
+    marker: Option<&[u8]>,
+) -> bool {
+    single_owner_requested(args) || marker_selects_single_owner(marker)
+}
+
+/// Which threads polled the tasks of one phase.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TaskThreads {
+    /// Children that ran to completion and were joined.
+    joined: usize,
+    /// Distinct OS threads among the phase's own task and its children.
+    distinct: usize,
+    /// Whether the thread that called `block_on` was one of them (the caller-driven mode would make it so).
+    on_caller: bool,
+}
+
+/// Spawn `CHILDREN` children and record the thread each finished on, together with the thread of this phase's own task. `caller` is the
+/// thread that called `block_on`.
+async fn task_threads_phase(caller: ThreadId) -> Result<TaskThreads, String> {
+    let Some(cx) = Cx::current() else {
+        return Err("no_current_cx".to_string());
+    };
+    let mut seen = HashSet::new();
+    seen.insert(std::thread::current().id());
+    let mut handles = Vec::new();
+    for _ in 0..CHILDREN {
+        match cx.spawn(move |_child| async move {
+            yield_now().await;
+            std::thread::current().id()
+        }) {
+            Ok(handle) => handles.push(handle),
+            Err(error) => {
+                return Err(format!("spawn_refused={error:?} after={}", handles.len()));
+            }
+        }
+    }
+    let mut joined = 0_usize;
+    for mut handle in handles {
+        if !finished_within!(handle, PHASE_LIMIT) {
+            return Err(format!(
+                "child_not_finished_within_{}s joined={joined}",
+                PHASE_LIMIT.as_secs()
+            ));
+        }
+        match handle.join(&cx).await {
+            Ok(thread) => {
+                joined += 1;
+                seen.insert(thread);
+            }
+            Err(error) => return Err(format!("join_error={error:?} joined={joined}")),
+        }
+    }
+    Ok(TaskThreads {
+        joined,
+        distinct: seen.len(),
+        on_caller: seen.contains(&caller),
+    })
+}
+
+fn task_threads_detail(observed: &Result<TaskThreads, String>) -> String {
+    match observed {
+        Ok(seen) => format!(
+            "children_joined={} task_threads={} tasks_on_caller_thread={}",
+            seen.joined, seen.distinct, seen.on_caller
+        ),
+        Err(why) => format!("observation_failed={why}"),
+    }
+}
+
+/// The single-owner runtime row. Pure, so every branch is tested with made-up readings. It passes only if the runtime CARRIES one worker
+/// (the audit against the stated caps said so) and every child joined, with the phase's tasks seen on exactly one OS thread. Only
+/// that one phase's nine tasks are thread-checked: the UDP, drain and abort phases are not, so this is not "the whole run was on one
+/// thread". `carried_workers` is configuration read from the runtime, not an observation.
+fn judge_single_owner_runtime(
+    carried_workers: usize,
+    audit_ok: bool,
+    observed: &Result<TaskThreads, String>,
+) -> Verdict {
+    let detail = format!(
+        "carried_workers={carried_workers} stated_workers=1 audit_ok={audit_ok} {}",
+        task_threads_detail(observed)
+    );
+    match observed {
+        Ok(seen)
+            if carried_workers == 1
+                && audit_ok
+                && seen.joined == CHILDREN
+                && seen.distinct == 1 =>
+        {
+            Verdict::Pass(detail)
+        }
+        _ => Verdict::Fail(detail),
+    }
+}
+
+/// The caller-driven mode is not something `LegacyProfile` can build at the pin, so this probe does not run its phases in it: that is
+/// `unsupported`, never `ok`. If tasks were nevertheless seen on the thread that called `block_on`, the stated reason is wrong and that
+/// is a failure to read, not a pass. If nothing could be observed it is `unknown`.
+fn caller_driven_verdict(tasks_on_caller: Option<bool>) -> Verdict {
+    match tasks_on_caller {
+        Some(false) => Verdict::Unsupported(format!(
+            "{CALLER_DRIVEN_UNSUPPORTED} observed_tasks_on_caller_thread=false"
+        )),
+        Some(true) => Verdict::Fail(format!(
+            "caller_driven_mode_observed_on_a_legacy_profile_runtime observed_tasks_on_caller_thread=true contradicts {CALLER_DRIVEN_UNSUPPORTED}"
+        )),
+        None => Verdict::Unknown("task_thread_observation_unavailable".to_string()),
+    }
+}
+
+/// A blocking job is held on the pool's only thread while async work runs to completion on the runtime's one worker: offloaded blocking
+/// work does not starve a single scheduler thread. (Blocking ON that worker would starve it; this probe never does that.)
+fn blocking_offload_phase(report: &mut Report, runtime: &Runtime) {
+    let Some(pool) = runtime.blocking_handle() else {
+        report.record(
+            "SINGLE_OWNER_BLOCKING_OFFLOAD",
+            Verdict::Unsupported("runtime_has_no_blocking_pool".to_string()),
+        );
+        return;
+    };
+    let (gate, running) = (Arc::new(Gate::default()), Arc::new(AtomicUsize::new(0)));
+    let held = pool.try_spawn(gated_job(&gate, &running));
+    let started = wait_until(Duration::from_secs(5), || {
+        running.load(Ordering::SeqCst) == 1
+    });
+    let during = run_async(runtime, spawn_join_phase());
+    let held_still = held
+        .as_ref()
+        .is_ok_and(|task| !task.wait_timeout(Duration::from_millis(1)));
+    // Opened whatever happened above, so a failed phase never leaves the pool's thread waiting.
+    gate.release();
+    let done = finished(&held, Instant::now() + Duration::from_secs(5));
+    let detail = format!(
+        "held_admitted={} held_started={started} async_phase={} held_job_unfinished_during_async={held_still} held_job_finished_after_release={done} async_detail=({})",
+        held.is_ok(),
+        during.status(),
+        during.detail()
+    );
+    let ok = held.is_ok() && started && matches!(during, Verdict::Pass(_)) && held_still && done;
+    report.record(
+        "SINGLE_OWNER_BLOCKING_OFFLOAD",
+        if ok {
+            Verdict::Pass(detail)
+        } else {
+            Verdict::Fail(detail)
+        },
+    );
+}
+
+/// Judge the first use of the blocking pool. Pure. `idle` is the pool's threads before any accepted job and `active` while the first
+/// accepted job ran. The pool's counters decide pass or fail; the OS thread counts (`before`, `during`, from stable `/proc/self/task`
+/// readings) must show a thread appearing when they can be read, and a count that cannot be read is `partial`, never `ok`.
+fn judge_first_use(
+    idle: usize,
+    active: usize,
+    started: bool,
+    finished: bool,
+    before: Option<usize>,
+    during: Option<usize>,
+) -> Verdict {
+    let detail = format!(
+        "pool_threads_before_first_job={idle} pool_threads_while_job_runs={active} job_started={started} job_finished={finished} os_threads_before={} os_threads_during={}",
+        show(before),
+        show(during)
+    );
+    if idle != 0 || active != 1 || !started || !finished {
+        return Verdict::Fail(detail);
+    }
+    // The pool's counters decide pass or fail. A count that did not grow is an unstable observation (an unrelated thread may have
+    // exited between the two readings), so it is `partial`, never `ok` and never a failure of the pool.
+    match (before, during) {
+        (Some(before), Some(during)) if during > before => Verdict::Pass(detail),
+        (Some(_), Some(_)) => Verdict::Partial(format!(
+            "{detail} reason=os_thread_count_did_not_grow_unstable_observation"
+        )),
+        _ => Verdict::Partial(format!("{detail} reason=os_thread_count_unreadable")),
+    }
+}
+
+/// A fresh single-owner runtime, built WITHOUT a platform reactor (`reactor=none`; the refusal and first-use logic need none), whose
+/// blocking pool is also bounded in bytes. A charge over the pool's whole budget is refused and starts no thread; the first accepted
+/// job starts the pool's one thread; and the same runtime then still runs async work and drains.
+fn byte_budget_phases(report: &mut Report, single_owner: LegacyProfile) {
+    let profile = single_owner.with_blocking_live_bytes(BYTE_BUDGET);
+    let builder = match profile.builder() {
+        Ok(builder) => builder.enable_platform_reactor(false),
+        Err(error) => {
+            report.record(
+                "BYTE_BUDGET_REFUSAL",
+                Verdict::Fail(format!("builder_error={error:?}")),
+            );
+            return;
+        }
+    };
+    let runtime = match builder.build() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            report.record(
+                "BYTE_BUDGET_REFUSAL",
+                Verdict::Fail(format!("build_error={error:?}")),
+            );
+            return;
+        }
+    };
+    let audit = profile.audit(&runtime);
+    let Some(pool) = runtime.blocking_handle() else {
+        report.record(
+            "BYTE_BUDGET_REFUSAL",
+            Verdict::Unsupported("runtime_has_no_blocking_pool".to_string()),
+        );
+        return;
+    };
+    let policy = pool.admission_policy();
+    let idle = pool.active_threads();
+
+    // The refusal: a declared charge over the pool's whole budget can never be admitted, so it is refused with that kind and its job
+    // never runs and no pool thread is started for it.
+    let ran = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&ran);
+    let declared = BYTE_BUDGET.get() + 1;
+    let refused = pool.try_spawn_charged(move || flag.store(true, Ordering::SeqCst), declared);
+    let refusal = refused.err().map(|error| error.kind());
+    let threads_after_refusal = pool.active_threads();
+    let refused_job_ran = ran.load(Ordering::SeqCst);
+    let detail = format!(
+        "audit_ok={} policy={policy:?} reactor=none budget_bytes={} declared_heap_bytes={declared} refusal={refusal:?} expected_refusal=Some(ChargeTooLarge) pool_threads_after_refusal={threads_after_refusal} refused_job_ran={refused_job_ran}",
+        audit.is_ok(),
+        BYTE_BUDGET.get()
+    );
+    let refusal_ok = audit.is_ok()
+        && refusal == Some(BlockingSpawnErrorKind::ChargeTooLarge)
+        && threads_after_refusal == 0
+        && !refused_job_ran;
+    report.record(
+        "BYTE_BUDGET_REFUSAL",
+        if refusal_ok {
+            Verdict::Pass(detail)
+        } else {
+            Verdict::Fail(format!("{detail} audit={audit:?}"))
+        },
+    );
+
+    // First use: the first accepted job (charged, in budget) starts the pool's one thread.
+    let (gate, running) = (Arc::new(Gate::default()), Arc::new(AtomicUsize::new(0)));
+    // Read right before the submission, so the only thing between the two thread readings is this one job.
+    let before = census();
+    let first = pool.try_spawn_charged(gated_job(&gate, &running), BYTE_BUDGET_JOB_HEAP);
+    let started = wait_until(Duration::from_secs(5), || {
+        running.load(Ordering::SeqCst) == 1
+    });
+    let active = pool.active_threads();
+    let during = census();
+    gate.release();
+    let first_finished = finished(&first, Instant::now() + Duration::from_secs(5));
+    let first_refusal = first.as_ref().err().map(|error| error.kind());
+    let verdict = match first_refusal {
+        Some(kind) => Verdict::Fail(format!("first_job_refused={kind:?}")),
+        None => judge_first_use(
+            idle,
+            active,
+            started,
+            first_finished,
+            before.stable_task_dir(),
+            during.stable_task_dir(),
+        ),
+    };
+    report.record("FIRST_USE_BACKGROUND", verdict);
+
+    // Still usable: the refusal changed nothing, so the same runtime runs async work and drains to quiescence.
+    let usable = run_async(&runtime, spawn_join_phase());
+    let drained = runtime.shutdown_drained(Duration::from_secs(5));
+    let detail = format!("spawn_join={} {}", usable.status(), drain_detail(&drained));
+    let ok = matches!(usable, Verdict::Pass(_)) && drain_succeeded(&drained);
+    report.record(
+        "RUNTIME_USABLE_AFTER_REFUSAL",
+        if ok {
+            Verdict::Pass(detail)
+        } else {
+            Verdict::Fail(format!("{detail} spawn_join_detail=({})", usable.detail()))
+        },
+    );
+}
+
 // ---- main -------------------------------------------------------------------------------------------------------------------
 
-fn finish(report: &Report) -> ! {
+fn finish(report: &Report, code: i32) -> ! {
     emit(&report.end());
     // As PID 1 there is nothing to return to and no `reboot` without `unsafe`: park, and the supervisor that owns the QEMU process
     // ends it once it has read END.
@@ -1159,20 +1642,39 @@ fn finish(report: &Report) -> ! {
             std::thread::park();
         }
     }
-    std::process::exit(report.exit_code());
+    std::process::exit(code);
 }
 
 fn main() {
+    let marker = read_single_owner_marker();
+    if single_owner_selected(std::env::args_os().skip(1), marker.as_deref()) {
+        let report = run_single_owner_probe();
+        let code = report.single_owner_exit_code();
+        finish(&report, code)
+    }
     let report = run_probe();
-    finish(&report)
+    let code = report.exit_code();
+    finish(&report, code)
 }
 
 /// Every phase, in order, and the report of what happened. `main` calls it and then `finish`, unchanged (END, PID 1 parking, the exit
 /// code); the native test calls it directly, so the REAL phases run under `cargo test`, not a stand-in. A failure to set up returns
 /// the report so far, never an exit.
 fn run_probe() -> Report {
+    run_probe_for(Topology::Threaded, profile())
+}
+
+/// The same phases against the single-owner profile (one scheduler worker), plus the rows that are about that topology.
+fn run_single_owner_probe() -> Report {
+    run_probe_for(Topology::SingleOwner, single_owner_profile())
+}
+
+/// The one body both runs share. `stated` is the profile the run builds its runtime from. A run that claims the single-owner topology
+/// refuses a profile that does not state exactly one worker before it builds anything; the default run's rows and output are unchanged.
+fn run_probe_for(topology: Topology, stated: Option<LegacyProfile>) -> Report {
+    let single_owner = topology == Topology::SingleOwner;
     let mut report = Report::default();
-    let begin = format!(
+    let mut begin = format!(
         "pid={} arch={} endian={} pointer_bits={} threads_available_to_std={}",
         std::process::id(),
         std::env::consts::ARCH,
@@ -1188,17 +1690,58 @@ fn run_probe() -> Report {
                 .map(std::num::NonZeroUsize::get)
         )
     );
+    if single_owner {
+        begin.push_str(" topology=single_owner");
+    }
     emit(&line("BEGIN", "start", &begin));
     sample(&mut report, "start");
 
-    profile_phase(&mut report);
-    let Some(stated) = profile() else {
+    if single_owner {
+        match stated.as_ref().map(single_owner_claim) {
+            Some(Ok(())) => report.record(
+                "SINGLE_OWNER_PROFILE",
+                Verdict::Pass(
+                    "claimed=single_owner stated_worker_threads=1 required_worker_threads=1"
+                        .to_string(),
+                ),
+            ),
+            Some(Err(refusal)) => {
+                report.record("SINGLE_OWNER_PROFILE", Verdict::Fail(refusal.detail()));
+                return report;
+            }
+            None => {
+                report.record(
+                    "SINGLE_OWNER_PROFILE",
+                    Verdict::Fail("worst_case_stack_bytes=overflow".to_string()),
+                );
+                return report;
+            }
+        }
+    }
+
+    profile_phase(&mut report, stated);
+    let Some(stated) = stated else {
         return report;
     };
     let Some((runtime, reactor)) = build_phase(&mut report, &stated) else {
         return report;
     };
     sample(&mut report, "after_build");
+
+    if single_owner {
+        let caller = std::thread::current().id();
+        let observed = run_async_value(&runtime, task_threads_phase(caller));
+        let carried = LegacyCaps::of_runtime(&runtime).worker_threads;
+        report.record(
+            "SINGLE_OWNER_RUNTIME",
+            judge_single_owner_runtime(carried, stated.audit(&runtime).is_ok(), &observed),
+        );
+        report.record(
+            CALLER_DRIVEN_ROW,
+            caller_driven_verdict(observed.as_ref().ok().map(|seen| seen.on_caller)),
+        );
+        sample(&mut report, "after_single_owner_threads");
+    }
 
     report.record("SPAWN_JOIN", run_async(&runtime, spawn_join_phase()));
     sample(&mut report, "after_spawn_join");
@@ -1225,10 +1768,18 @@ fn run_probe() -> Report {
     sample(&mut report, "after_udp");
     blocking_phase(&mut report, &runtime);
     sample(&mut report, "after_blocking_pool");
+    if single_owner {
+        blocking_offload_phase(&mut report, &runtime);
+        sample(&mut report, "after_blocking_offload");
+    }
     drain_phase(&mut report, &runtime);
     sample(&mut report, "after_drain");
     drop(runtime);
     sample(&mut report, "after_runtime_drop");
+    if single_owner {
+        byte_budget_phases(&mut report, stated);
+        sample(&mut report, "after_byte_budget");
+    }
     report
 }
 
@@ -1830,5 +2381,427 @@ mod tests {
                 .violations()
                 .contains(&CapViolation::BlockingQueueUnbounded)
         );
+    }
+
+    // ---- the single-owner run -------------------------------------------------------------------------------------------------
+
+    /// The REAL single-owner phases under `cargo test`, through the same body as `run_probe`, with the same needs as
+    /// `native_runtime_exercises_all_phases_and_drains` (a platform reactor, loopback UDP, a readable /proc, `--test-threads=1`).
+    /// Exactly one row is not `ok`: the caller-driven mode, which `LegacyProfile` cannot build. It must be there, typed `unsupported`
+    /// (the tally leaves no other row for it to be). The generic code says so (2), and the single-owner run's own code, which treats
+    /// exactly this declared row as a gap and not a crash, is 0.
+    #[test]
+    fn single_owner_runtime_exercises_the_supported_phases_and_types_the_unsupported_one() {
+        const PHASES: [&str; 20] = [
+            "SINGLE_OWNER_PROFILE",
+            "PROFILE_ACCEPT",
+            "PROFILE_REFUSES_ZERO_WORKERS",
+            "PROFILE_REFUSES_UNBOUNDED_QUEUE",
+            "PROFILE_REFUSES_OVER_BUDGET",
+            "REACTOR",
+            "RUNTIME_AUDIT",
+            "SINGLE_OWNER_RUNTIME",
+            "CALLER_DRIVEN_CURRENT_THREAD",
+            "SPAWN_JOIN",
+            "ABORT_TIMER_PARKED",
+            "ABORT_BLIND_VALUE",
+            "TIMER_WAKE",
+            "UDP_LOOPBACK",
+            "BLOCKING_POOL",
+            "SINGLE_OWNER_BLOCKING_OFFLOAD",
+            "DRAIN",
+            "BYTE_BUDGET_REFUSAL",
+            "FIRST_USE_BACKGROUND",
+            "RUNTIME_USABLE_AFTER_REFUSAL",
+        ];
+        let report = run_single_owner_probe();
+        let summary = report.end();
+        emit(&summary);
+        let phases: Vec<&str> = report
+            .names
+            .iter()
+            .map(String::as_str)
+            .filter(|name| *name != "CENSUS")
+            .collect();
+        assert_eq!(phases, PHASES, "{summary}");
+        assert_eq!(report.census_samples, 13, "{summary}");
+        assert_eq!(report.ops, 33, "{summary}");
+        let tally = (
+            report.ok,
+            report.failed,
+            report.unsupported,
+            report.partial,
+            report.unknown,
+        );
+        assert_eq!(tally, (32, 0, 1, 0, 0), "{summary}");
+        assert_eq!(report.exit_code(), 2, "{summary}");
+        assert_eq!(report.single_owner_exit_code(), 0, "{summary}");
+    }
+
+    /// The single-owner exit code. Control: exactly the declared row unsupported (32 ok) is 0. Every planted deviation from it, one
+    /// at a time, is nonzero, and none of them is 0 by way of the generic code either.
+    #[test]
+    fn the_single_owner_exit_code_is_zero_only_for_exactly_the_declared_unsupported_row() {
+        let declared = || caller_driven_verdict(Some(false));
+        let unsupported = |why: &str| Verdict::Unsupported(format!("{why} observed=1"));
+        // `rows` ok operations plus the given extra rows, recorded in order; the caller picks the total.
+        let build = |ok_rows: u32, extra: Vec<(&str, Verdict)>| {
+            let mut report = Report::default();
+            for index in 0..ok_rows {
+                report.record(&format!("ROW{index}"), Verdict::Pass("x=1".to_string()));
+            }
+            for (name, verdict) in extra {
+                report.record(name, verdict);
+            }
+            report
+        };
+        let control = build(32, vec![(CALLER_DRIVEN_ROW, declared())]);
+        assert_eq!((control.ops, control.ok, control.unsupported), (33, 32, 1));
+        assert_eq!(control.single_owner_exit_code(), 0);
+        assert_eq!(control.exit_code(), 2, "the generic code is unchanged");
+
+        let planted: Vec<(&str, Report)> = vec![
+            (
+                "a second unsupported row",
+                build(
+                    31,
+                    vec![
+                        ("OTHER", unsupported("reason=other")),
+                        (CALLER_DRIVEN_ROW, declared()),
+                    ],
+                ),
+            ),
+            (
+                "a failed row",
+                build(
+                    31,
+                    vec![
+                        ("OTHER", Verdict::Fail("x=0".to_string())),
+                        (CALLER_DRIVEN_ROW, declared()),
+                    ],
+                ),
+            ),
+            (
+                "a partial row",
+                build(
+                    31,
+                    vec![
+                        ("OTHER", Verdict::Partial("x=0".to_string())),
+                        (CALLER_DRIVEN_ROW, declared()),
+                    ],
+                ),
+            ),
+            (
+                "an unknown row",
+                build(
+                    31,
+                    vec![
+                        ("OTHER", Verdict::Unknown("x=0".to_string())),
+                        (CALLER_DRIVEN_ROW, declared()),
+                    ],
+                ),
+            ),
+            (
+                "the declared row failed (tasks seen on the caller)",
+                build(
+                    32,
+                    vec![(CALLER_DRIVEN_ROW, caller_driven_verdict(Some(true)))],
+                ),
+            ),
+            (
+                "the declared row ok, so nothing is declared",
+                build(
+                    32,
+                    vec![(CALLER_DRIVEN_ROW, Verdict::Pass("x=1".to_string()))],
+                ),
+            ),
+            (
+                "the declared row unknown",
+                build(32, vec![(CALLER_DRIVEN_ROW, caller_driven_verdict(None))]),
+            ),
+            (
+                "a different row is the only unsupported one",
+                build(32, vec![("UDP_LOOPBACK", unsupported("reason=no_reactor"))]),
+            ),
+            (
+                "the declared row with another reason",
+                build(
+                    32,
+                    vec![(CALLER_DRIVEN_ROW, unsupported("reason=something_else"))],
+                ),
+            ),
+            (
+                "a run of the wrong size",
+                build(10, vec![(CALLER_DRIVEN_ROW, declared())]),
+            ),
+            ("a run with no rows at all", build(0, vec![])),
+        ];
+        for (name, report) in &planted {
+            assert_ne!(report.single_owner_exit_code(), 0, "{name}");
+        }
+    }
+
+    #[test]
+    fn the_declared_reason_is_the_start_of_the_caller_driven_detail_the_exit_code_looks_for() {
+        assert!(CALLER_DRIVEN_UNSUPPORTED.starts_with(CALLER_DRIVEN_REASON));
+        let detail = caller_driven_verdict(Some(false));
+        assert!(detail.detail().starts_with(CALLER_DRIVEN_REASON));
+        assert!(
+            detail
+                .detail()
+                .contains("reason_source=static_source_reading"),
+            "the row is a declaration from the source, and says so"
+        );
+        assert_eq!(detail.status(), "unsupported");
+        assert_eq!(CALLER_DRIVEN_ROW, "CALLER_DRIVEN_CURRENT_THREAD");
+        assert_eq!(
+            SINGLE_OWNER_OPS,
+            20 + 13,
+            "20 phases plus 13 census samples"
+        );
+    }
+
+    /// The planted negative, in its pure form. A profile that claims the single-owner topology but states worker threads beyond the
+    /// one is refused by name, zero workers is refused as an invalid profile, and the one-worker profile is accepted: the worker count
+    /// is the only difference between the planted cases and the control.
+    #[test]
+    fn a_profile_that_claims_single_owner_but_has_worker_threads_is_refused() {
+        let single = single_owner_profile().expect("the stated caps do not overflow");
+        assert_eq!(single_owner_claim(&single), Ok(()));
+        assert_eq!(single.caps().worker_threads, 1);
+        assert_eq!(
+            LegacyCaps {
+                worker_threads: 2,
+                ..single.caps()
+            },
+            caps(),
+            "the two profiles differ only in the worker count"
+        );
+        let threaded = profile().expect("the stated caps do not overflow");
+        assert_eq!(
+            single_owner_claim(&threaded),
+            Err(SingleOwnerRefusal::MoreThanOneWorker(2))
+        );
+        for workers in [2_usize, 3, 64] {
+            let many = LegacyProfile::new(
+                LegacyCaps {
+                    worker_threads: workers,
+                    ..single_owner_caps()
+                },
+                u64::MAX,
+            );
+            assert_eq!(
+                single_owner_claim(&many),
+                Err(SingleOwnerRefusal::MoreThanOneWorker(workers))
+            );
+        }
+        let none = LegacyProfile::new(
+            LegacyCaps {
+                worker_threads: 0,
+                ..single_owner_caps()
+            },
+            u64::MAX,
+        );
+        match single_owner_claim(&none) {
+            Err(SingleOwnerRefusal::Invalid(violations)) => {
+                assert!(violations.contains(&CapViolation::NoWorkers));
+            }
+            other => panic!("zero workers is not a stated single worker: {other:?}"),
+        }
+        let control = LegacyProfile::new(single_owner_caps(), u64::MAX);
+        assert_eq!(single_owner_claim(&control), Ok(()));
+    }
+
+    /// The planted negative through the probe itself: the single-owner run handed the two-worker profile stops at the claim, with a
+    /// failed row, before any phase runs or any runtime is built.
+    #[test]
+    fn the_single_owner_run_refuses_a_threaded_profile_before_building_a_runtime() {
+        let report = run_probe_for(Topology::SingleOwner, profile());
+        let phases: Vec<&str> = report.names.iter().map(String::as_str).collect();
+        assert_eq!(phases, ["CENSUS", "SINGLE_OWNER_PROFILE"]);
+        assert_eq!(report.failed, 1);
+        assert_eq!(report.exit_code(), 1);
+    }
+
+    #[test]
+    fn the_caller_driven_mode_is_unsupported_unknown_or_failed_and_never_ok() {
+        let unsupported = caller_driven_verdict(Some(false));
+        assert_eq!(word(&unsupported), "unsupported");
+        assert_eq!(unsupported.status(), "unsupported");
+        assert!(unsupported.detail().contains("legacy_profile.rs:406"));
+        assert!(unsupported.detail().contains("builder.rs:3911"));
+        assert_eq!(word(&caller_driven_verdict(Some(true))), "fail");
+        assert_eq!(word(&caller_driven_verdict(None)), "unknown");
+        for observed in [Some(false), Some(true), None] {
+            assert_ne!(word(&caller_driven_verdict(observed)), "pass");
+        }
+    }
+
+    #[test]
+    fn the_single_owner_runtime_row_passes_only_for_one_carried_worker_and_one_task_thread() {
+        let seen =
+            |joined: usize, distinct: usize, on_caller: bool| -> Result<TaskThreads, String> {
+                Ok(TaskThreads {
+                    joined,
+                    distinct,
+                    on_caller,
+                })
+            };
+        let good = judge_single_owner_runtime(1, true, &seen(CHILDREN, 1, false));
+        assert_eq!(word(&good), "pass", "{}", good.detail());
+        for (carried, audit_ok, observed) in [
+            (2, true, seen(CHILDREN, 1, false)),
+            (1, false, seen(CHILDREN, 1, false)),
+            (1, true, seen(CHILDREN, 2, false)),
+            (1, true, seen(CHILDREN - 1, 1, false)),
+            (1, true, Err("no_current_cx".to_string())),
+        ] {
+            let verdict = judge_single_owner_runtime(carried, audit_ok, &observed);
+            assert_eq!(word(&verdict), "fail", "{}", verdict.detail());
+        }
+    }
+
+    #[test]
+    fn first_use_of_the_blocking_pool_is_judged_from_its_counters_and_the_os_thread_count() {
+        let good = judge_first_use(0, 1, true, true, Some(3), Some(4));
+        assert_eq!(word(&good), "pass", "{}", good.detail());
+        for planted in [
+            judge_first_use(1, 1, true, true, Some(3), Some(4)),
+            judge_first_use(0, 0, true, true, Some(3), Some(4)),
+            judge_first_use(0, 2, true, true, Some(3), Some(4)),
+            judge_first_use(0, 1, false, true, Some(3), Some(4)),
+            judge_first_use(0, 1, true, false, Some(3), Some(4)),
+        ] {
+            assert_eq!(word(&planted), "fail", "{}", planted.detail());
+        }
+        // The pool's counters are right but the OS thread count did not grow (or could not be read): an unstable observation, so
+        // `partial`, never `pass` and never a pool failure. (These two were `fail` before; they are still not ok.)
+        for unstable in [
+            judge_first_use(0, 1, true, true, Some(4), Some(4)),
+            judge_first_use(0, 1, true, true, Some(5), Some(4)),
+            judge_first_use(0, 1, true, true, None, Some(4)),
+            judge_first_use(0, 1, true, true, Some(3), None),
+        ] {
+            assert_eq!(word(&unstable), "partial", "{}", unstable.detail());
+            assert_ne!(word(&unstable), "pass");
+        }
+        // A wrong pool counter stays a failure whatever the thread counts say.
+        for wrong_pool in [
+            judge_first_use(1, 1, true, true, Some(4), Some(4)),
+            judge_first_use(0, 0, true, true, Some(5), Some(4)),
+        ] {
+            assert_eq!(word(&wrong_pool), "fail", "{}", wrong_pool.detail());
+        }
+    }
+
+    /// The byte-budget rows alone, on a fresh runtime: the oversized charge is refused as too large and starts no thread, the first
+    /// in-budget job starts the pool's thread, and the same runtime then runs async work and drains.
+    #[test]
+    fn the_byte_budget_run_refuses_an_oversized_charge_and_leaves_the_runtime_usable() {
+        let mut report = Report::default();
+        let single = single_owner_profile().expect("the stated caps do not overflow");
+        byte_budget_phases(&mut report, single);
+        let summary = report.end();
+        emit(&summary);
+        assert_eq!(
+            report.names,
+            [
+                "BYTE_BUDGET_REFUSAL",
+                "FIRST_USE_BACKGROUND",
+                "RUNTIME_USABLE_AFTER_REFUSAL"
+            ],
+            "{summary}"
+        );
+        let tally = (
+            report.ok,
+            report.failed,
+            report.unsupported,
+            report.partial,
+            report.unknown,
+        );
+        assert_eq!(tally, (3, 0, 0, 0, 0), "{summary}");
+    }
+
+    #[test]
+    fn only_the_exact_single_owner_argument_selects_the_single_owner_run() {
+        let args = |list: &[&str]| -> Vec<std::ffi::OsString> {
+            list.iter()
+                .map(|item| std::ffi::OsString::from(*item))
+                .collect()
+        };
+        assert!(single_owner_requested(args(&["--profile=single-owner"])));
+        assert!(single_owner_requested(args(&[
+            "--catalog",
+            "--profile=single-owner"
+        ])));
+        assert!(!single_owner_requested(args(&[])));
+        assert!(!single_owner_requested(args(&["--catalog"])));
+        assert!(!single_owner_requested(args(&["--profile=single-owner-x"])));
+        assert!(!single_owner_requested(args(&["--profile=threaded"])));
+    }
+
+    #[test]
+    fn the_marker_selects_the_single_owner_run_only_when_it_is_exactly_the_word() {
+        assert!(marker_selects_single_owner(Some(b"single-owner")));
+        assert!(marker_selects_single_owner(Some(b"single-owner\n")));
+        assert!(!marker_selects_single_owner(None));
+        let refused: &[&[u8]] = &[
+            b"",
+            b"\n",
+            b"single-owner\n\n",
+            b"single-owner ",
+            b" single-owner",
+            b"Single-owner",
+            b"single-owner-x",
+            b"threaded",
+            b"--profile=single-owner",
+            b"single-owner\0",
+        ];
+        for contents in refused {
+            assert!(
+                !marker_selects_single_owner(Some(contents)),
+                "{contents:?} must not select the single-owner run"
+            );
+        }
+    }
+
+    #[test]
+    fn the_marker_read_is_bounded_and_an_oversized_marker_is_not_the_word() {
+        let endless = read_bounded(std::io::repeat(b'x'));
+        assert_eq!(endless.len(), MARKER_READ_LIMIT + 1);
+        assert!(!marker_selects_single_owner(Some(&endless)));
+        let short = read_bounded(&b"single-owner\n"[..]);
+        assert_eq!(short, b"single-owner\n");
+        assert!(marker_selects_single_owner(Some(&short)));
+        let mut long = b"single-owner".to_vec();
+        long.extend(std::iter::repeat_n(b' ', 1000));
+        let clipped = read_bounded(&long[..]);
+        assert_eq!(clipped.len(), MARKER_READ_LIMIT + 1);
+        assert!(!marker_selects_single_owner(Some(&clipped)));
+    }
+
+    #[test]
+    fn the_argument_or_the_marker_selects_the_single_owner_run_and_the_supervisors_argv_alone_does_not()
+     {
+        let args = |list: &[&str]| -> Vec<std::ffi::OsString> {
+            list.iter()
+                .map(|item| std::ffi::OsString::from(*item))
+                .collect()
+        };
+        // What the unchanged supervisor really passes: `--catalog`, and no marker unless the runner packed one.
+        assert!(!single_owner_selected(args(&["--catalog"]), None));
+        assert!(!single_owner_selected(args(&[]), None));
+        assert!(single_owner_selected(
+            args(&["--catalog"]),
+            Some(b"single-owner\n")
+        ));
+        assert!(single_owner_selected(
+            args(&["--profile=single-owner"]),
+            None
+        ));
+        assert!(!single_owner_selected(
+            args(&["--catalog"]),
+            Some(b"threaded\n")
+        ));
     }
 }

@@ -70,9 +70,18 @@ Result = Tuple[str, str]
 OPTIONS: Dict[str, Optional[str]] = {"central_log": None, "upstream_clone": None, "guest_elf": None}
 
 # What the documentation must contain (checked by P05-META-005).
+DOC_RUNTIME_HEADING = "## The runtime probe and its single-owner profile"
 DOC_HEADINGS = ("## No-claim line", "## Inputs", "## Replacement map: 64-bit atomics", "## Module areas",
                 "## Gated dependencies that are inactive on the big-endian targets",
-                "## Semantics of the replacement", "## Evidence and its limits", "## Open items")
+                "## Semantics of the replacement", "## Evidence and its limits",
+                DOC_RUNTIME_HEADING, "## Open items")
+# The single-owner profile's contract text: a declared unsupported row that is a declaration and never a pass, how it is selected
+# and judged, and where its native test names are listed. Each must stay INSIDE that section (P05-META-005): a mention elsewhere,
+# such as the open-items bullet, does not stand in for it.
+DOC_RUNTIME_TERMS =("--profile single-owner", "/ffw_p05_profile", "CALLER_DRIVEN_CURRENT_THREAD",
+                     "reason_source=static_source_reading", "declaration, not a pass", "accepted_with_declared_unsupported",
+                     "never `PASSED`", "the command-line exit is 4", "FIRST_USE_BACKGROUND",
+                     "tests/p05/native_runtime38_names.txt")
 DOC_CLASSES = ("Identifier or generation counter", "Timestamp or deadline", "Statistic or event count",
                "Flag word", "Owner-local state", "Test-only use", "Signed gauge")
 DOC_NO_CLAIM = "does not make Asupersync compile on the big-endian MIPS or PowerPC targets"
@@ -402,9 +411,20 @@ def fixture_numbers() -> List[Tuple[str, int]]:
             ("direct std imports outside src", sum(v["direct_std_import_files"] for v in d["outside_src"].values()))]
 
 
+def runtime_section(doc_text: str) -> str:
+    """The single-owner profile section: from its heading to the next `## ` heading, or "" when the heading is missing."""
+    start = doc_text.find(DOC_RUNTIME_HEADING)
+    if start < 0:
+        return ""
+    end = doc_text.find("\n## ", start + len(DOC_RUNTIME_HEADING))
+    return doc_text[start:] if end < 0 else doc_text[start:end]
+
+
 def doc_problems(doc_text: str) -> List[str]:
     problems = [f"missing heading {h!r}" for h in DOC_HEADINGS if h not in doc_text]
     problems += [f"missing classification {k!r}" for k in DOC_CLASSES if k not in doc_text]
+    section = runtime_section(doc_text)
+    problems += [f"missing single-owner profile term {t!r}" for t in DOC_RUNTIME_TERMS if t not in section]
     if DOC_NO_CLAIM not in doc_text:
         problems.append("the no-claim line is missing")
     # Each number is cited in a "Pinned facts" table row: `| label | value | ... |`. A bare substring test
