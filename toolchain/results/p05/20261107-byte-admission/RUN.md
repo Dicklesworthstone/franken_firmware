@@ -2,9 +2,64 @@
 
 ## Current source status
 
-The frozen source identified by [lint-fixed-code-inputs.sha256](lint-fixed-code-inputs.sha256)
-has the following results. Upstream Rust changes remain uncommitted until the
-required native runs finish.
+The implementation is committed upstream through
+`460306de2aa4169510873716018ade44fdb01534`, including the tracked consumer lock.
+[profile-io-code-inputs.sha256](profile-io-code-inputs.sha256) identifies its 24
+owned inputs, including profile byte-budget selection/audit and truthful I/O
+refusal diagnostics. The final native and compiler checks remain in progress;
+the commits themselves do not establish qualification.
+The successful lint command recorded source revision
+`e1a27c7ba89fb785e84c20f4216c6554a527b9a3`; the subsequent `460306de` commit only
+tracks the already-captured nested lockfile. The captured code bytes match the
+24 current input witnesses.
+
+| Current check | Observed result | Scope |
+| --- | --- | --- |
+| Strict primary all-target Clippy, build `30099060530610861` | Exit 0, no diagnostics | Captured integrated snapshot; 20,912 files matched before later peer edits; all 24 owned inputs still match |
+| Standalone default all-target compiler check | In progress | Same code inputs |
+| 196 focused unit cases | In progress | Original 122 plus profile, blocking-placement and resolver cases |
+| 23 public integration cases | Not yet run | Allocator 4, stdio 15, retirement 4 |
+| Current 15-file remote format attempt | Exit 103 before execution; 0 files checked | Worker namespace initialization did not complete |
+
+[profile-io-clippy.txt](profile-io-clippy.txt) retains the actual successful
+lint terminal lines. Its content root is
+`25c7a84d60b22b8915ddac76d48ba82c2e5f2ceb246a5f564365fc56225d456c`;
+receipt root is
+`687d3c8cdabeb1523eb7932e2a0b3e546b11df8b6abfa6703c88edd1fbbe3394`.
+Terminal acknowledgment, wrapper termination, absent owner and all five
+source/output retirement checks were verified.
+The complete comparison matched at 03:52 UTC on November 8. A later independent
+review found five unrelated peer edits outside that capture; it still matched
+all 24 owned inputs. This is qualification of the captured snapshot, not a claim
+that the subsequently changing whole checkout passed. Peer changes are
+preserved and require their own qualification.
+
+The preceding public retirement experiment passed four tests with 100 trials
+each. Multithreaded runtimes were initially nonquiescent in 18/100 embedded and
+10/100 sharded trials, then settled without cancellation or shutdown. All 400
+trials finished without active tasks, heuristic or confirmed obligation leaks,
+or draining regions. Current-thread trials had 0/100 initial nonquiescence in
+each configuration. [retirement-native.txt](retirement-native.txt) preserves
+the observations; [retirement-code-inputs.sha256](retirement-code-inputs.sha256)
+identifies that earlier source epoch. It predates the profile/I/O integration
+and the unit fixture correction, and does not replace the current 196 cases.
+Reported observation durations include diagnostic overhead, not isolated
+retirement latency. The exact false clause in the original unit failure was
+not recorded and remains unknown.
+
+The fixture now follows the documented eventual whole-runtime retirement
+contract under a yield-only watchdog, retaining the authority, placement and
+completion assertions and adding leak checks. This intentionally corrects the
+previous immediate-return assumption; it is not described as an unchanged
+assertion. The earlier 121/122 failure remains below. The refreshed immutable
+cancellation consumer has separate [compile/lint evidence](../20261108-cancel-consumer/RUN.md)
+and no native-execution credit yet. Original P05/P03 requirements remain open.
+
+## Earlier qualification before profile/I/O integration
+
+The source identified by [lint-fixed-code-inputs.sha256](lint-fixed-code-inputs.sha256)
+had the following results. These are historical epochs, retained with their
+failures and narrower qualification boundaries.
 
 | Required check | Observed result | Scope |
 | --- | --- | --- |

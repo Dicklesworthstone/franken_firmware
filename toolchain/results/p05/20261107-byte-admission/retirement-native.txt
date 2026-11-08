@@ -1,0 +1,15 @@
+Actual public retirement probe build30099060530610854: exit0,4tests/400trials.
+This predates the profile/I-O integration and unit fixture correction.
+Full private capture SHA-256: e5f9bcb136501b892aea250abd2a4f8474bcc2ff0d9facfbdaba970053ea6e42
+
+SCOPED_TIMEOUT_RETIREMENT current_thread=true sharded=false trials=100 initially_nonquiescent=0 longest_observation_ns=1734158
+SCOPED_TIMEOUT_RETIREMENT current_thread=true sharded=true trials=100 initially_nonquiescent=0 longest_observation_ns=1076542
+SCOPED_TIMEOUT_RETIREMENT_PENDING current_thread=false sharded=false trial=0 quiescent_now=false active=[] obligations=[] confirmed_leaks=[] draining_regions=0
+SCOPED_TIMEOUT_RETIREMENT_PENDING current_thread=false sharded=false trial=2 quiescent_now=false active=[] obligations=[] confirmed_leaks=[] draining_regions=0
+SCOPED_TIMEOUT_RETIREMENT_PENDING current_thread=false sharded=false trial=3 quiescent_now=false active=[] obligations=[] confirmed_leaks=[] draining_regions=0
+SCOPED_TIMEOUT_RETIREMENT current_thread=false sharded=false trials=100 initially_nonquiescent=18 longest_observation_ns=756693
+SCOPED_TIMEOUT_RETIREMENT_PENDING current_thread=false sharded=true trial=14 quiescent_now=false active=[] obligations=[] confirmed_leaks=[] draining_regions=0
+SCOPED_TIMEOUT_RETIREMENT_PENDING current_thread=false sharded=true trial=17 quiescent_now=false active=[] obligations=[] confirmed_leaks=[] draining_regions=0
+SCOPED_TIMEOUT_RETIREMENT_PENDING current_thread=false sharded=true trial=18 quiescent_now=false active=[] obligations=[] confirmed_leaks=[] draining_regions=0
+SCOPED_TIMEOUT_RETIREMENT current_thread=false sharded=true trials=100 initially_nonquiescent=10 longest_observation_ns=1473377
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.12s
