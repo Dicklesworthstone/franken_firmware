@@ -38,6 +38,7 @@ INVARIANTS: Dict[str, str] = {
     "G02-INV-ROLES": "stereo, left, right and sub map onto the admitted layout; a role the board lacks is refused by name",
     "G02-INV-MISSING-MEMBERS": "absent members are skipped and rejoin from a fresh snapshot; unknown and duplicate members are refused",
     "G02-INV-UI-VIEW": "the desired volume, the bounded target and the applied gain are reported separately, with the effective mute reason",
+    "G02-INV-REJOIN-KEEPS-OWN": "a rejoin never restores a volume older than the member's own state, and never undoes a local mute, a fault mute or a fault ceiling",
 }
 
 EXTERNAL: Dict[str, List[str]] = {
@@ -224,6 +225,34 @@ def member_cases() -> List[dict]:
         ["G02-INV-RECONNECT-SILENT", "G02-INV-MUTE-PRIORITY"],
         setup + [C(1, "set_volume", 95), C(2, "set_trim", 800), ["local_mute", True],
                  ["reconnect", EPOCH, 9, 20, False], ["local_mute", False], ["join"]])
+    REJOIN = ["G02-INV-REJOIN-KEEPS-OWN"]
+    add(20, "a snapshot older than what the member has applied is refused with nothing changed, a retry stays a duplicate, and an equal or newer snapshot is taken",
+        REJOIN + ["G02-INV-RECONNECT-SILENT", "G02-INV-AUTHORITY"],
+        setup + [C(1, "set_volume", 80), C(2, "set_volume", 30), ["reconnect", EPOCH, 1, 80, False],
+                 C(2, "set_volume", 30), C(2, "set_volume", 95), C(3, "set_volume", 35),
+                 ["reconnect", EPOCH, 3, 35, False], ["join"], ["reconnect", EPOCH, 9, 60, False], ["join"],
+                 ["reconnect", EPOCH, 8, 99, False], C(9, "set_volume", 99), C(10, "set_volume", 45)])
+    add(21, "a newer epoch's snapshot is taken at any revision and an older epoch's is refused at any revision",
+        REJOIN + ["G02-INV-AUTHORITY"],
+        setup + [C(1, "set_volume", 80), C(5, "adjust_volume", -10), ["reconnect", EPOCH + 1, 1, 60, False], ["join"],
+                 ["cmd", EPOCH + 1, 2, ["set_volume", 40]], ["reconnect", EPOCH + 1, 1, 90, False],
+                 ["reconnect", EPOCH, 99, 90, False], ["cmd", EPOCH + 1, 3, ["set_volume", 41]]])
+    add(22, "a rejoin cannot clear a fault mute, the join cannot, a group unmute cannot; the board returning to Active does, and leaves the room's own mute",
+        REJOIN + ["G02-INV-MUTE-PRIORITY"],
+        setup + [C(1, "set_volume", 80), ["board", "fail_muted"], ["reconnect", EPOCH, 3, 60, False], ["join"],
+                 C(4, "set_group_mute", False), ["board", "active"], ["local_mute", True],
+                 ["reconnect", EPOCH, 6, 40, False], ["board", "fail_muted"], ["join"], ["board", "active"],
+                 ["join"], ["local_mute", False]])
+    add(23, "a rejoin keeps the fault ceiling: the ramp fades out, comes back to the ceiling and not the group's volume, and only removing it goes higher",
+        REJOIN + ["G02-INV-BOUND-BEFORE-RAMP", "G02-INV-RECONNECT-SILENT"],
+        setup + [["fault_ceiling", 0.25], C(1, "set_volume", 100), ["sync"], ["ramp", 600],
+                 ["reconnect", EPOCH, 3, 80, False], ["sync"], ["ramp", 600], ["join"], ["sync"], ["ramp", 600],
+                 ["fault_ceiling", None], ["sync"], ["ramp", 600]],
+        board="active")
+    add(24, "a restarted member rejoining on a fail-muted board stays silent and does not arm the stored volume (the same steps as G02-MBR-013 on a board that is not Active)",
+        REJOIN + ["G02-INV-RECONNECT-SILENT", "G02-INV-MUTE-PRIORITY"],
+        [["sync"], ["ramp", 300], ["reconnect", EPOCH, 1, 20, False], ["join"], ["sync"], ["ramp", 600]],
+        board="fail_muted", start={"restore": {"volume": 95, "trim": 1000, "local_mute": False}})
     return out
 
 

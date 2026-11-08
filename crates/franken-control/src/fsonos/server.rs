@@ -8,16 +8,17 @@
 //!
 //! # Policy: who may do what
 //!
-//! | ingress | reads (`Get*`) | events | commands |
-//! |---|---|---|---|
-//! | [`Ingress::LocalLegacy`] | yes | yes | yes, as the local legacy bridge, unless switched off |
-//! | [`Ingress::Tailnet`] | no (401) | no (401) | only with a valid command authorization |
+//! | ingress | reads (`Get*`) | events | commands | acknowledgements |
+//! |---|---|---|---|---|
+//! | [`Ingress::LocalLegacy`] | yes | yes | yes, as the local legacy bridge, unless switched off | no (404): it has no command ids |
+//! | [`Ingress::Tailnet`] | no (401) | no (401) | only with a valid command authorization | only with a valid acknowledgement authorization |
 //!
 //! Plain UPnP has no authentication, so the local legacy ingress is for a link the owner has decided to
 //! trust as a LAN; the transport must not bind it to the tailnet interface, and a request that arrives
 //! on the tailnet is judged as one. The tailnet ingress accepts nothing that is not an authenticated
-//! command: an unauthenticated tailnet peer gets `401` for a read, an event subscription, a deferred
-//! action and an unknown action alike, so it learns nothing about the matrix.
+//! command or the authenticated acknowledgement of one: an unauthenticated tailnet peer gets `401` for a
+//! read, an event subscription, a deferred action and an unknown action alike, so it learns nothing about
+//! the matrix.
 //!
 //! # Every command is an N02 command
 //!
@@ -57,6 +58,20 @@
 //! A command is *queued*, then *stepped*; the response says what happened, and "queued but not applied
 //! yet" is a fault that says so, never a success.
 //!
+//! # Acknowledgements
+//!
+//! A command's sender can say it saw the outcome (N02 section 7): `POST` [`ACK_PATH`] on the tailnet with
+//! `X-Franken-Peer`, `X-Franken-Seq` (the command's number), `X-Franken-Epoch` (the epoch it was issued
+//! under) and `X-Franken-Proof`, a hex HMAC over [`AckBody::signing_bytes`], and an empty body. The handler
+//! gives the channel exactly that and nothing else: [`ControlChannel::acknowledge`] reads the session and
+//! writes one flag on one ledger entry, so an acknowledgement applies nothing, steps nothing and publishes
+//! nothing. The answer is the channel's typed outcome as one fixed word in `X-FRANKEN-ACK`: `200` when the
+//! entry was completed (`on_time`, `late`, `superseded`) or already was (`duplicate`, so repeating an
+//! acknowledgement whose answer was lost is harmless), and `409` when nothing was completed (`not_settled`,
+//! `unknown`, `out_of_window`, `mismatch`). An acknowledgement that does not authenticate, and any malformed
+//! one, is the same `401` with no body as everywhere else on the tailnet. The local legacy link carries no
+//! command ids, so there is nothing on it to acknowledge: the path is `404` there.
+//!
 //! # Faults say fixed words
 //!
 //! No fault, header or body carries text the peer sent. A fault is a [`Fault`] with a fixed reason.
@@ -67,9 +82,12 @@ use franken_session::UnifiedGroupSession;
 
 use crate::channel::peer::{AuthProof, PeerAuthority, PeerId, compute_proof};
 use crate::channel::pipeline::{
-    ControlChannel, Durability, Outcome, Refusal, Rejection, Settlement, Stepper, SubmitResult,
+    AckOutcome, ControlChannel, Durability, Outcome, Refusal, Rejection, Settlement, Stepper,
+    SubmitResult,
 };
-use crate::channel::request::{ControlCommand, ControlRequest, RequestBody, RequestError};
+use crate::channel::request::{
+    AckBody, AckRequest, ControlCommand, ControlRequest, RequestBody, RequestError,
+};
 
 use super::actions::{self, Cmd, Plan, Read};
 use super::gena::{
@@ -81,6 +99,12 @@ use super::state::{Directory, EventState, TransportState};
 use super::xml::XmlLimits;
 
 const CONTENT_TYPE: &str = "text/xml; charset=\"utf-8\"";
+
+/// The route on which a tailnet peer acknowledges the outcome of one of its commands.
+pub const ACK_PATH: &str = "/ffw/ack";
+
+/// The response header that carries an acknowledgement's typed outcome, as one fixed word.
+const H_ACK: &str = "X-FRANKEN-ACK";
 
 /// Which way a request arrived. The transport decides; this module only obeys it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -237,6 +261,18 @@ pub(crate) enum Defect {
     ReapplyOnRetry,
     /// Answer a command whose outcome the channel no longer knows with a success.
     SuccessAfterRetention,
+    /// Answer every well formed acknowledgement `200 on_time` without giving it to the channel.
+    AckSwallowed,
+    /// Give the channel's refusal of an acknowledgement a success status (the word stays honest).
+    AckAlwaysOk,
+    /// Call a late acknowledgement `on_time`.
+    AckWordCollapsed,
+    /// Step the channel and publish after an acknowledgement that completed its entry.
+    AckDrivesChannel,
+    /// Answer an acknowledgement with a bad proof differently from every other authentication failure.
+    AckUnauthenticatedTold,
+    /// Serve the acknowledgement route on the local legacy link too.
+    AckOnLegacy,
 }
 
 /// The G03 endpoint: GENA state, the directory of room facts, and the legacy bridge.
@@ -358,6 +394,64 @@ impl Endpoint {
         (peer, seq, submitted)
     }
 
+    /// The acknowledgement route with one of its planted defects, for a well formed request. `None` when no
+    /// defect of this route is planted (or the request is not well formed), so the real handler answers.
+    #[cfg(test)]
+    fn plant_ack<A: PeerAuthority>(
+        &mut self,
+        ctx: &mut Context<'_, A>,
+        request: &HttpRequest<'_>,
+    ) -> Option<Handled> {
+        let defect = self.defect?;
+        if matches!(
+            defect,
+            Defect::ReapplyOnRetry | Defect::SuccessAfterRetention
+        ) {
+            return None;
+        }
+        if request.ingress != Ingress::Tailnet && defect != Defect::AckOnLegacy {
+            return None;
+        }
+        let ack = tailnet_acknowledgement(request.headers, request.body).ok()?;
+        let outcome = if defect == Defect::AckSwallowed {
+            AckOutcome::OnTime { age_ns: 0 }
+        } else {
+            ctx.channel.acknowledge(ctx.now_ns, ctx.session, &ack)
+        };
+        let mut response = ack_response(outcome);
+        match (defect, outcome) {
+            (Defect::AckAlwaysOk, _) if response.status == 409 => response.status = 200,
+            (Defect::AckWordCollapsed, AckOutcome::Late { .. }) => {
+                response.headers = vec![(H_ACK.to_string(), "on_time".to_string())];
+            }
+            (
+                Defect::AckUnauthenticatedTold,
+                AckOutcome::Unauthenticated(crate::channel::peer::AuthFailure::BadProof),
+            ) => response = HttpResponse::empty(403),
+            _ => {}
+        }
+        let mut handled = Handled::of(response);
+        let completed = matches!(
+            outcome,
+            AckOutcome::OnTime { .. } | AckOutcome::Late { .. } | AckOutcome::Superseded { .. }
+        );
+        if defect == Defect::AckDrivesChannel && completed {
+            handled.settled_others = ctx.channel.step(ctx.now_ns, ctx.session);
+            handled.notifications = self.publish(ctx.now_ns, ctx.session);
+        }
+        Some(handled)
+    }
+
+    #[cfg(not(test))]
+    #[allow(clippy::unused_self)]
+    const fn plant_ack<A: PeerAuthority>(
+        &mut self,
+        _ctx: &mut Context<'_, A>,
+        _request: &HttpRequest<'_>,
+    ) -> Option<Handled> {
+        None
+    }
+
     /// What the transport the owner runs reports as the transport state. The session has no source.
     pub fn set_transport(&mut self, transport: TransportState) {
         self.transport = transport;
@@ -401,6 +495,9 @@ impl Endpoint {
         request: &HttpRequest<'_>,
     ) -> Handled {
         match request.method {
+            "POST" if request.path == ACK_PATH => self
+                .plant_ack(ctx, request)
+                .unwrap_or_else(|| acknowledge(ctx, request)),
             "POST" => self.control(ctx, request),
             "SUBSCRIBE" => self.subscribe(ctx, request),
             "UNSUBSCRIBE" => self.unsubscribe(ctx, request),
@@ -733,6 +830,43 @@ fn gena_failure(error: GenaError) -> HttpResponse {
     HttpResponse::empty(error.http_status())
 }
 
+/// `POST` [`ACK_PATH`]: a tailnet peer says it saw the outcome of one of its commands. The channel is given
+/// the acknowledgement and decides; nothing is stepped, published or written here.
+fn acknowledge<A: PeerAuthority>(ctx: &mut Context<'_, A>, request: &HttpRequest<'_>) -> Handled {
+    // The local legacy link has no command ids, so there is nothing on it to acknowledge.
+    if request.ingress != Ingress::Tailnet {
+        return Handled::of(HttpResponse::empty(404));
+    }
+    let ack = match tailnet_acknowledgement(request.headers, request.body) {
+        Ok(ack) => ack,
+        Err(fault) => return Handled::of(HttpResponse::fault(fault)),
+    };
+    let outcome = ctx.channel.acknowledge(ctx.now_ns, ctx.session, &ack);
+    Handled::of(ack_response(outcome))
+}
+
+/// What the channel made of an acknowledgement, as a status and one fixed word. The numbers in the typed
+/// outcome (an age, a floor, an epoch) stay in the channel's log. An acknowledgement that did not
+/// authenticate is the same plain `401` as every other tailnet authentication failure.
+fn ack_response(outcome: AckOutcome) -> HttpResponse {
+    let (status, word) = match outcome {
+        AckOutcome::OnTime { .. } => (200, "on_time"),
+        AckOutcome::Late { .. } => (200, "late"),
+        AckOutcome::Superseded { .. } => (200, "superseded"),
+        AckOutcome::Duplicate => (200, "duplicate"),
+        AckOutcome::NotSettled => (409, "not_settled"),
+        AckOutcome::Unknown => (409, "unknown"),
+        AckOutcome::OutOfWindow { .. } => (409, "out_of_window"),
+        AckOutcome::Mismatch { .. } => (409, "mismatch"),
+        AckOutcome::Unauthenticated(_) => return HttpResponse::fault(Fault::Unauthenticated),
+    };
+    HttpResponse {
+        status,
+        headers: vec![(H_ACK.to_string(), word.to_string())],
+        body: String::new(),
+    }
+}
+
 // ---- headers ----------------------------------------------------------------------------------
 
 /// A header that was sent more than once. Which value counts would be a guess, so the request is
@@ -827,6 +961,13 @@ fn auth_number(headers: &[(&str, &str)], name: &str) -> Result<u64, Fault> {
     decimal(auth_header(headers, name)?).ok_or(Fault::Unauthenticated)
 }
 
+/// The proof header: hex, once, of a length `AuthProof` accepts. Anything else is the same answer.
+fn auth_proof(headers: &[(&str, &str)]) -> Result<AuthProof, Fault> {
+    hex(auth_header(headers, H_PROOF)?)
+        .and_then(|bytes| AuthProof::new(bytes).ok())
+        .ok_or(Fault::Unauthenticated)
+}
+
 /// Read the authorization. Any problem at all is the same answer, `Unauthenticated`, so a caller who
 /// has no valid authorization learns nothing about which part was wrong.
 fn tailnet_authorization(headers: &[(&str, &str)], cmd: Cmd) -> Result<TailnetAuth, Fault> {
@@ -838,9 +979,7 @@ fn tailnet_authorization(headers: &[(&str, &str)], cmd: Cmd) -> Result<TailnetAu
         Ok(None) => None,
         Err(Duplicate) => return Err(Fault::Unauthenticated),
     };
-    let proof = hex(auth_header(headers, H_PROOF)?)
-        .and_then(|bytes| AuthProof::new(bytes).ok())
-        .ok_or(Fault::Unauthenticated)?;
+    let proof = auth_proof(headers)?;
     let (stop_now_ns, stop_dma_tail_ns) = if matches!(cmd, Cmd::Stop) {
         (
             auth_number(headers, H_STOP_NOW)?,
@@ -858,6 +997,21 @@ fn tailnet_authorization(headers: &[(&str, &str)], cmd: Cmd) -> Result<TailnetAu
         stop_now_ns,
         stop_dma_tail_ns,
     })
+}
+
+/// Read an acknowledgement: the peer, the command's number, the epoch it was issued under and a proof over
+/// those, and an empty body. Any problem at all is the same answer, `Unauthenticated`, so a caller who has no
+/// valid authorization learns nothing about which part was wrong.
+fn tailnet_acknowledgement(headers: &[(&str, &str)], body: &[u8]) -> Result<AckRequest, Fault> {
+    if !body.is_empty() {
+        return Err(Fault::Unauthenticated);
+    }
+    let peer = PeerId::parse(auth_header(headers, H_PEER)?).map_err(|_| Fault::Unauthenticated)?;
+    let seq = auth_number(headers, H_SEQ)?;
+    let epoch = auth_number(headers, H_EPOCH)?;
+    let proof = auth_proof(headers)?;
+    let body = AckBody::new(peer, seq, epoch).map_err(|_| Fault::Unauthenticated)?;
+    Ok(AckRequest::new(body, proof))
 }
 
 // ---- faults -----------------------------------------------------------------------------------
@@ -2201,6 +2355,595 @@ mod tests {
         other.endpoint.plant(Defect::SuccessAfterRetention);
         assert_eq!(judge_one_effect(&mut other), Ok(()));
         assert_eq!(judge_unknown_after_retention(&mut Rig::new()), Ok(()));
+    }
+
+    // ---- acknowledgements (N02 section 7), through the adapter ---------------------------------
+    //
+    // An acknowledgement is the sender saying it saw the outcome of one of its commands. As for row 8, each
+    // check is a plain function over a rig, so it can be shown to pass the real adapter and to fail an
+    // adapter with one planted defect. A failure begins with a tag that says why.
+
+    /// What a tailnet client sends to acknowledge command `seq`, issued under `epoch`: the identity headers
+    /// of a command and a proof over the acknowledgement's own bytes, made with `key_of`'s key.
+    fn ack_headers(peer: &str, key_of: &str, seq: u64, epoch: u64) -> Vec<(String, String)> {
+        let body = AckBody::new(PeerId::parse(peer).unwrap(), seq, epoch).unwrap();
+        let proof = compute_proof(&test_key(key_of), &body.signing_bytes());
+        vec![
+            ("X-Franken-Peer".to_string(), peer.to_string()),
+            ("X-Franken-Seq".to_string(), seq.to_string()),
+            ("X-Franken-Epoch".to_string(), epoch.to_string()),
+            ("X-Franken-Proof".to_string(), hex_of(proof.as_bytes())),
+        ]
+    }
+
+    /// `POST` [`ACK_PATH`] on `ingress` with exactly these headers and this body.
+    fn ack_with(
+        rig: &mut Rig,
+        ingress: Ingress,
+        headers: &[(String, String)],
+        body: &[u8],
+    ) -> Handled {
+        let headers = borrowed(headers);
+        rig.handle(&HttpRequest {
+            method: "POST",
+            path: ACK_PATH,
+            peer_ip: LAN.parse().unwrap(),
+            ingress,
+            headers: &headers,
+            body,
+        })
+    }
+
+    /// A tailnet acknowledgement of `CTL`'s command `seq`, issued under `epoch`, signed by `CTL`.
+    fn ack(rig: &mut Rig, seq: u64, epoch: u64) -> Handled {
+        ack_with(
+            rig,
+            Ingress::Tailnet,
+            &ack_headers(CTL, CTL, seq, epoch),
+            b"",
+        )
+    }
+
+    fn ack_word(h: &Handled) -> Option<&str> {
+        h.response
+            .headers
+            .iter()
+            .find(|(name, _)| name == H_ACK)
+            .map(|(_, word)| word.as_str())
+    }
+
+    /// The status and the word of an acknowledgement's answer, to compare in one go.
+    fn ack_answer(h: &Handled) -> (u16, Option<&str>) {
+        (h.response.status, ack_word(h))
+    }
+
+    /// `CTL`'s command `seq` sets the kitchen to `volume`, composed from the current revision. It must commit.
+    fn commit_volume(rig: &mut Rig, seq: u64, volume: u8) -> Result<(), String> {
+        let revision = Some(rig.session.state_revision);
+        let headers = tailnet_headers(CTL, CTL, seq, EPOCH, revision, set_volume_command(volume));
+        let text = volume.to_string();
+        let h = tail(rig, "SetVolume", &set_volume(&text), &headers);
+        if h.response.status == 200 && rig.member("kitchen").0 == volume {
+            Ok(())
+        } else {
+            Err(format!(
+                "ACK-SETUP: command {seq} was not applied ({})",
+                h.response.status
+            ))
+        }
+    }
+
+    /// `CTL`'s command `seq` is accepted by the channel and not stepped: it waits in the queue.
+    fn queue_volume(rig: &mut Rig, seq: u64, volume: u8) -> Result<(), String> {
+        let body = RequestBody::new(
+            PeerId::parse(CTL).unwrap(),
+            seq,
+            EPOCH,
+            Some(rig.session.state_revision),
+            set_volume_command(volume),
+        )
+        .unwrap();
+        let proof = compute_proof(&test_key(CTL), &body.signing_bytes());
+        match rig
+            .channel
+            .submit(rig.now, ControlRequest::new(body, proof))
+        {
+            SubmitResult::Queued { .. } => Ok(()),
+            other => Err(format!(
+                "ACK-SETUP: command {seq} was not queued: {other:?}"
+            )),
+        }
+    }
+
+    /// The group moves to epoch 11 (a newer issuer is adopted), the owner installs the lease for it, and the
+    /// controller's key is rebound, as N02's own acknowledgement tests do.
+    fn move_to_epoch_11(rig: &mut Rig) {
+        rig.session
+            .apply_command(FencedControlCommand {
+                epoch: 11,
+                command_seq: 5,
+                payload: GroupCommandPayload::MarkMemberClockLocked {
+                    member_id: "kitchen".to_string(),
+                },
+            })
+            .expect("a newer epoch is adopted");
+        let token = AuthorityToken::issue(&rig.session, LEASE_EXPIRY_NS);
+        rig.channel
+            .install_lease(&rig.session, token, rig.now)
+            .unwrap();
+        rig.channel
+            .authority_mut()
+            .rebind(&PeerId::parse(CTL).unwrap(), Some(11));
+    }
+
+    fn group_json(rig: &Rig) -> serde_json::Value {
+        serde_json::to_value(&rig.session).expect("the session serializes")
+    }
+
+    /// A command commits and is acknowledged exactly at the budget (on time, `200`), the same acknowledgement
+    /// again is a duplicate (`200`), and each reached the channel. Failures begin `ACK-NOT-CARRIED` (the
+    /// channel was never told) or `ACK-WORD` (the adapter said the wrong word).
+    fn judge_ack_is_carried(rig: &mut Rig) -> Result<(), String> {
+        let headers = tailnet_headers(CTL, CTL, 1, EPOCH, Some(2), set_volume_command(35));
+        let committed = tail(rig, "SetVolume", &set_volume("35"), &headers);
+        if committed.response.status != 200 || rig.member("kitchen").0 != 35 {
+            return Err("ACK-SETUP: the command did not commit".to_string());
+        }
+        if rig.channel.unacked() != 1 {
+            return Err("ACK-SETUP: the outcome is not waiting to be acknowledged".to_string());
+        }
+        rig.now = 2_000 * MS; // exactly the budget after the outcome: on time
+        let first = ack(rig, 1, EPOCH);
+        if ack_answer(&first) != (200, Some("on_time")) {
+            return Err(format!(
+                "ACK-WORD: the first acknowledgement was answered {:?}",
+                ack_answer(&first)
+            ));
+        }
+        let stats = *rig.channel.stats();
+        if stats.acks_received != 1 || stats.acks_on_time != 1 || rig.channel.unacked() != 0 {
+            return Err(format!(
+                "ACK-NOT-CARRIED: the channel did not complete the entry ({stats:?})"
+            ));
+        }
+        let again = ack(rig, 1, EPOCH);
+        if ack_answer(&again) != (200, Some("duplicate")) || rig.channel.stats().acks_duplicate != 1
+        {
+            return Err(format!(
+                "ACK-WORD: the repeated acknowledgement was answered {:?}",
+                ack_answer(&again)
+            ));
+        }
+        Ok(())
+    }
+
+    /// A late acknowledgement and one for a command issued under an epoch the group has left both complete
+    /// their entries, and each says so by name (`200`). Failures begin `ACK-WORD` or `ACK-NOT-CARRIED`.
+    fn judge_ack_late_and_superseded(rig: &mut Rig) -> Result<(), String> {
+        commit_volume(rig, 1, 35)?;
+        rig.now = 2_001 * MS; // one millisecond over the budget
+        let late = ack(rig, 1, EPOCH);
+        if ack_answer(&late) != (200, Some("late")) {
+            return Err(format!(
+                "ACK-WORD: the late acknowledgement was answered {:?}",
+                ack_answer(&late)
+            ));
+        }
+        commit_volume(rig, 2, 60)?;
+        move_to_epoch_11(rig);
+        rig.now = 2_500 * MS;
+        let superseded = ack(rig, 2, EPOCH);
+        if ack_answer(&superseded) != (200, Some("superseded")) {
+            return Err(format!(
+                "ACK-WORD: the superseded acknowledgement was answered {:?}",
+                ack_answer(&superseded)
+            ));
+        }
+        let stats = *rig.channel.stats();
+        if (stats.acks_received, stats.acks_late, stats.acks_superseded) != (2, 1, 1) {
+            return Err(format!(
+                "ACK-NOT-CARRIED: the channel's counts differ ({stats:?})"
+            ));
+        }
+        Ok(())
+    }
+
+    /// An acknowledgement that completes nothing (a number never seen, another epoch, a command still waiting,
+    /// a number the channel has forgotten) is a `409` with its word, never a success. Failures begin
+    /// `FALSE-ACK-SUCCESS` (a success status), `ACK-WORD` or `ACK-NOT-CARRIED`.
+    fn judge_ack_that_completed_nothing_is_never_a_success(rig: &mut Rig) -> Result<(), String> {
+        commit_volume(rig, 1, 35)?;
+        queue_volume(rig, 2, 60)?;
+        let mut answers = vec![
+            ("unknown", ack(rig, 9, EPOCH)),
+            ("mismatch", ack(rig, 1, EPOCH + 1)),
+            ("not_settled", ack(rig, 2, EPOCH)),
+        ];
+        rig.now = 31_000 * MS; // retention is 30 s in this configuration
+        answers.push(("out_of_window", ack(rig, 1, EPOCH)));
+        for (word, answer) in &answers {
+            if answer.response.status != 409 {
+                return Err(format!(
+                    "FALSE-ACK-SUCCESS: `{word}` was answered {}",
+                    answer.response.status
+                ));
+            }
+            if ack_word(answer) != Some(*word) {
+                return Err(format!(
+                    "ACK-WORD: `{word}` was answered {:?}",
+                    ack_word(answer)
+                ));
+            }
+        }
+        let stats = *rig.channel.stats();
+        let counts = (
+            stats.acks_received,
+            stats.acks_unknown,
+            stats.acks_mismatch,
+            stats.acks_not_settled,
+            stats.acks_out_of_window,
+        );
+        if counts != (4, 1, 1, 1, 1) {
+            return Err(format!(
+                "ACK-NOT-CARRIED: the channel's counts differ ({stats:?})"
+            ));
+        }
+        Ok(())
+    }
+
+    /// With a subscriber and a command waiting in the queue, an acknowledgement that completes its entry
+    /// steps nothing, publishes nothing and changes neither the group, the queue nor the ledger. Failures
+    /// begin `ACK-DROVE-THE-CHANNEL` (or `ACK-WORD`).
+    fn judge_ack_is_inert(rig: &mut Rig) -> Result<(), String> {
+        if rig.event("SUBSCRIBE", RC, &SUB).response.status != 200 {
+            return Err("ACK-SETUP: the subscription was refused".to_string());
+        }
+        commit_volume(rig, 1, 35)?;
+        queue_volume(rig, 2, 60)?;
+        let before = (group_json(rig), rig.channel.diagnostics(&rig.session));
+        let answered = ack(rig, 1, EPOCH);
+        if ack_answer(&answered) != (200, Some("on_time")) {
+            return Err(format!(
+                "ACK-WORD: the acknowledgement was answered {:?}",
+                ack_answer(&answered)
+            ));
+        }
+        if !answered.notifications.is_empty() || !answered.settled_others.is_empty() {
+            return Err(
+                "ACK-DROVE-THE-CHANNEL: the acknowledgement stepped or published".to_string(),
+            );
+        }
+        let after = (group_json(rig), rig.channel.diagnostics(&rig.session));
+        if before.0 != after.0
+            || before.1.ordinary_pending != after.1.ordinary_pending
+            || before.1.ledger_len != after.1.ledger_len
+            || before.1.stats.committed != after.1.stats.committed
+        {
+            return Err(
+                "ACK-DROVE-THE-CHANNEL: the group, the queue or the ledger moved".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    /// The acknowledgement route is the tailnet's alone and is silent to a caller who cannot prove who it is:
+    /// the local link answers `404` and never reaches the channel, and every authentication failure is the
+    /// answer a request with no authorization gets. Failures begin `ACK-ON-LEGACY` or `ACK-ORACLE`.
+    fn judge_ack_is_tailnet_only_and_silent(rig: &mut Rig) -> Result<(), String> {
+        commit_volume(rig, 1, 35)?;
+        let good = ack_headers(CTL, CTL, 1, EPOCH);
+        let legacy = ack_with(rig, Ingress::LocalLegacy, &good, b"");
+        if legacy.response.status != 404 || rig.channel.stats().acks_received != 0 {
+            return Err(format!(
+                "ACK-ON-LEGACY: the local link answered {}",
+                legacy.response.status
+            ));
+        }
+        let silent = ack_with(rig, Ingress::Tailnet, &[], b"");
+        if silent.response != HttpResponse::empty(401) {
+            return Err("ACK-SETUP: a request with no authorization is not a bare 401".to_string());
+        }
+        let mut other_number = good.clone();
+        for (name, value) in &mut other_number {
+            if name.eq_ignore_ascii_case(H_SEQ) {
+                *value = "2".to_string();
+            }
+        }
+        if !rig
+            .channel
+            .authority_mut()
+            .revoke(&PeerId::parse(BRIDGE).unwrap())
+        {
+            return Err("ACK-SETUP: the bridge was not admitted".to_string());
+        }
+        let strangers = [
+            (
+                "a proof made with another peer's key",
+                ack_headers(CTL, BRIDGE, 1, EPOCH),
+            ),
+            ("a proof for another number", other_number),
+            (
+                "a peer the channel never admitted",
+                ack_headers("ghost", "ghost", 1, EPOCH),
+            ),
+            (
+                "a peer that was revoked",
+                ack_headers(BRIDGE, BRIDGE, 1, EPOCH),
+            ),
+        ];
+        for (why, headers) in &strangers {
+            let h = ack_with(rig, Ingress::Tailnet, headers, b"");
+            if h.response != silent.response {
+                return Err(format!(
+                    "ACK-ORACLE: {why} was answered {}, not as a request with no authorization",
+                    h.response.status
+                ));
+            }
+        }
+        let stats = *rig.channel.stats();
+        if stats.acks_received != 4 || stats.acks_rejected_unauthenticated != 4 {
+            return Err(format!(
+                "ACK-ORACLE: the channel's counts differ ({stats:?})"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_acknowledgement_reaches_the_channel_and_is_answered_with_its_typed_outcome() {
+        let mut rig = Rig::new();
+        assert_eq!(judge_ack_is_carried(&mut rig), Ok(()));
+        // Acknowledging does not make the adapter forget the command: its retry is still one effect.
+        let revision = rig.session.state_revision;
+        let headers = tailnet_headers(CTL, CTL, 1, EPOCH, Some(2), set_volume_command(35));
+        let retry = tail(&mut rig, "SetVolume", &set_volume("35"), &headers);
+        assert_eq!(retry.response.status, 200);
+        assert_eq!(rig.session.state_revision, revision);
+        assert_eq!(rig.channel.stats().committed, 1);
+        assert_eq!(
+            rig.channel.stats().acks_accounted(),
+            rig.channel.stats().acks_received
+        );
+    }
+
+    #[test]
+    fn a_late_or_superseded_acknowledgement_still_completes_its_entry_and_says_which() {
+        let mut rig = Rig::new();
+        assert_eq!(judge_ack_late_and_superseded(&mut rig), Ok(()));
+        assert_eq!(rig.channel.unacked(), 0);
+    }
+
+    #[test]
+    fn an_acknowledgement_that_completed_nothing_is_a_409_with_its_word_and_changes_nothing() {
+        let mut rig = Rig::new();
+        assert_eq!(
+            judge_ack_that_completed_nothing_is_never_a_success(&mut rig),
+            Ok(())
+        );
+        // The refusals did not touch the command that was waiting: it is still waiting, and its entry
+        // for command 1 was never completed by them.
+        assert_eq!(rig.channel.diagnostics(&rig.session).ordinary_pending, 1);
+        assert_eq!(rig.channel.unacked(), 0, "command 1's entry has aged out");
+    }
+
+    #[test]
+    fn an_acknowledgement_is_inert_and_a_waiting_command_still_applies_afterwards() {
+        let mut rig = Rig::new();
+        assert_eq!(judge_ack_is_inert(&mut rig), Ok(()));
+        // Positive control: the waiting command was neither lost nor applied early.
+        assert_eq!(rig.member("kitchen").0, 35);
+        let settled = rig.channel.step(rig.now, &mut rig.session);
+        assert!(
+            settled.iter().any(|s| s.seq == 2),
+            "the waiting command settled at the next step"
+        );
+        assert_eq!(rig.member("kitchen").0, 60);
+    }
+
+    #[test]
+    fn acknowledgements_are_tailnet_only_and_every_authentication_failure_is_the_same_401() {
+        let mut rig = Rig::new();
+        assert_eq!(judge_ack_is_tailnet_only_and_silent(&mut rig), Ok(()));
+        // Positive control: none of the failed acknowledgements consumed the entry; the genuine one is
+        // still on time.
+        let genuine = ack(&mut rig, 1, EPOCH);
+        assert_eq!(ack_answer(&genuine), (200, Some("on_time")));
+    }
+
+    #[test]
+    fn every_acknowledgement_header_problem_is_the_same_401_with_no_body() {
+        let mut rig = Rig::new();
+        commit_volume(&mut rig, 1, 35).unwrap();
+        let good = ack_headers(CTL, CTL, 1, EPOCH);
+        let without = |name: &str| -> Vec<(String, String)> {
+            good.iter()
+                .filter(|(k, _)| !k.eq_ignore_ascii_case(name))
+                .cloned()
+                .collect()
+        };
+        let replaced = |name: &str, value: &str| -> Vec<(String, String)> {
+            good.iter()
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        if k.eq_ignore_ascii_case(name) {
+                            value.to_string()
+                        } else {
+                            v.clone()
+                        },
+                    )
+                })
+                .collect()
+        };
+        let long_proof = "ab".repeat(65);
+        let mut duplicate = good.clone();
+        duplicate.push(("x-franken-seq".to_string(), "1".to_string()));
+        let cases = [
+            without("X-Franken-Peer"),
+            without("X-Franken-Seq"),
+            without("X-Franken-Epoch"),
+            without("X-Franken-Proof"),
+            replaced("X-Franken-Peer", "Not A Peer"),
+            replaced("X-Franken-Seq", "abc"),
+            replaced("X-Franken-Seq", "-1"),
+            replaced("X-Franken-Seq", "0"),
+            replaced("X-Franken-Epoch", "1e3"),
+            replaced("X-Franken-Proof", "zz"),
+            replaced("X-Franken-Proof", "abc"),
+            replaced("X-Franken-Proof", ""),
+            replaced("X-Franken-Proof", long_proof.as_str()),
+            duplicate,
+            Vec::new(),
+        ];
+        for (i, headers) in cases.iter().enumerate() {
+            let h = ack_with(&mut rig, Ingress::Tailnet, headers, b"");
+            assert_eq!(h.response, HttpResponse::empty(401), "case {i}");
+        }
+        // The acknowledgement is the headers alone: a body makes it something else, and is refused.
+        let h = ack_with(&mut rig, Ingress::Tailnet, &good, b"x");
+        assert_eq!(h.response, HttpResponse::empty(401));
+        assert_eq!(
+            rig.channel.stats().acks_received,
+            0,
+            "none of these reached the channel"
+        );
+        // Permitted positive: the same headers without the problem are accepted.
+        let h = ack_with(&mut rig, Ingress::Tailnet, &good, b"");
+        assert_eq!(ack_answer(&h), (200, Some("on_time")));
+    }
+
+    #[test]
+    fn the_acknowledgement_route_is_a_post_route_of_its_own() {
+        let mut rig = Rig::new();
+        // It is no SOAP control or event path, so nothing else can reach it by accident.
+        assert_eq!(Service::from_control_path(ACK_PATH), None);
+        assert_eq!(Service::from_event_path(ACK_PATH), None);
+        assert_eq!(rig.bare("GET", ACK_PATH).response.status, 405);
+        assert_eq!(rig.bare("SUBSCRIBE", ACK_PATH).response.status, 404);
+        assert_eq!(rig.bare("UNSUBSCRIBE", ACK_PATH).response.status, 404);
+        // A POST with no headers on the local link is the route's own 404, not a SOAP fault.
+        let h = rig.bare("POST", ACK_PATH);
+        assert_eq!(h.response, HttpResponse::empty(404));
+    }
+
+    #[test]
+    fn the_planted_adapter_that_swallows_acknowledgements_fails_the_carried_judge() {
+        let mut broken = Rig::new();
+        broken.endpoint.plant(Defect::AckSwallowed);
+        let verdict = judge_ack_is_carried(&mut broken);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|e| e.starts_with("ACK-NOT-CARRIED")),
+            "the planted defect was not caught for the right reason: {verdict:?}"
+        );
+        // It also answers a refusal with a success, so the refusal judge sees it from its own side.
+        let mut other = Rig::new();
+        other.endpoint.plant(Defect::AckSwallowed);
+        let verdict = judge_ack_that_completed_nothing_is_never_a_success(&mut other);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|e| e.starts_with("FALSE-ACK-SUCCESS")),
+            "{verdict:?}"
+        );
+        // Remove-the-plant control.
+        assert_eq!(judge_ack_is_carried(&mut Rig::new()), Ok(()));
+    }
+
+    #[test]
+    fn the_planted_adapter_that_turns_a_refusal_into_a_success_fails_the_refusal_judge() {
+        let mut broken = Rig::new();
+        broken.endpoint.plant(Defect::AckAlwaysOk);
+        let verdict = judge_ack_that_completed_nothing_is_never_a_success(&mut broken);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|e| e.starts_with("FALSE-ACK-SUCCESS")),
+            "the planted defect was not caught for the right reason: {verdict:?}"
+        );
+        // It leaves a completed acknowledgement alone, so the carried judge is satisfied.
+        let mut other = Rig::new();
+        other.endpoint.plant(Defect::AckAlwaysOk);
+        assert_eq!(judge_ack_is_carried(&mut other), Ok(()));
+        assert_eq!(
+            judge_ack_that_completed_nothing_is_never_a_success(&mut Rig::new()),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn the_planted_adapter_that_calls_a_late_acknowledgement_on_time_fails_the_word_judge() {
+        let mut broken = Rig::new();
+        broken.endpoint.plant(Defect::AckWordCollapsed);
+        let verdict = judge_ack_late_and_superseded(&mut broken);
+        assert!(
+            verdict.as_ref().is_err_and(|e| e.starts_with("ACK-WORD")),
+            "the planted defect was not caught for the right reason: {verdict:?}"
+        );
+        // It leaves an on-time acknowledgement alone, so the carried judge is satisfied.
+        let mut other = Rig::new();
+        other.endpoint.plant(Defect::AckWordCollapsed);
+        assert_eq!(judge_ack_is_carried(&mut other), Ok(()));
+        assert_eq!(judge_ack_late_and_superseded(&mut Rig::new()), Ok(()));
+    }
+
+    #[test]
+    fn the_planted_adapter_that_steps_the_channel_after_an_acknowledgement_fails_the_inert_judge() {
+        let mut broken = Rig::new();
+        broken.endpoint.plant(Defect::AckDrivesChannel);
+        let verdict = judge_ack_is_inert(&mut broken);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|e| e.starts_with("ACK-DROVE-THE-CHANNEL")),
+            "the planted defect was not caught for the right reason: {verdict:?}"
+        );
+        // With nothing waiting there is nothing for it to drive, so the other completing judges pass.
+        let mut other = Rig::new();
+        other.endpoint.plant(Defect::AckDrivesChannel);
+        assert_eq!(judge_ack_is_carried(&mut other), Ok(()));
+        let mut another = Rig::new();
+        another.endpoint.plant(Defect::AckDrivesChannel);
+        assert_eq!(judge_ack_late_and_superseded(&mut another), Ok(()));
+        assert_eq!(judge_ack_is_inert(&mut Rig::new()), Ok(()));
+    }
+
+    #[test]
+    fn the_planted_adapter_that_tells_a_bad_proof_apart_fails_the_silence_judge() {
+        let mut broken = Rig::new();
+        broken.endpoint.plant(Defect::AckUnauthenticatedTold);
+        let verdict = judge_ack_is_tailnet_only_and_silent(&mut broken);
+        assert!(
+            verdict.as_ref().is_err_and(|e| e.starts_with("ACK-ORACLE")),
+            "the planted defect was not caught for the right reason: {verdict:?}"
+        );
+        // It leaves a genuine acknowledgement alone, so the carried judge is satisfied.
+        let mut other = Rig::new();
+        other.endpoint.plant(Defect::AckUnauthenticatedTold);
+        assert_eq!(judge_ack_is_carried(&mut other), Ok(()));
+        assert_eq!(
+            judge_ack_is_tailnet_only_and_silent(&mut Rig::new()),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn the_planted_adapter_that_serves_acknowledgements_on_the_local_link_fails_the_silence_judge()
+    {
+        let mut broken = Rig::new();
+        broken.endpoint.plant(Defect::AckOnLegacy);
+        let verdict = judge_ack_is_tailnet_only_and_silent(&mut broken);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|e| e.starts_with("ACK-ON-LEGACY")),
+            "the planted defect was not caught for the right reason: {verdict:?}"
+        );
+        // It leaves the tailnet route alone, so the carried judge is satisfied.
+        let mut other = Rig::new();
+        other.endpoint.plant(Defect::AckOnLegacy);
+        assert_eq!(judge_ack_is_carried(&mut other), Ok(()));
     }
 
     // ---- GENA through the endpoint -----------------------------------------------------------

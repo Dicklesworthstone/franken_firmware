@@ -643,6 +643,85 @@ class LogVectors(unittest.TestCase):
         for g in self.vectors()["golden_lines"]:
             self.assertEqual("cause" in json.loads(g["line"]), g["fact"]["cause"] is not None, g["id"])
 
+    FAMILIES = {"step": "golden_lines", "ack": "ack_golden_lines", "submit": "submit_golden_lines", "summary": "summary_golden_lines"}
+
+    def fault_problems(self, v):
+        """What is wrong with the lines under an injected fault label: an empty list if nothing."""
+        out = []
+        entries = v["fault_golden_lines"]
+        if {e["family"] for e in entries} != set(self.FAMILIES):
+            out.append("the fault lines do not cover every kind of record")
+        with_cause = set()
+        for e in entries:
+            base = next(g for g in v[self.FAMILIES[e["family"]]] if g["id"] == e["base"])
+            record = json.loads(e["line"])
+            keys = list(record)
+            expected_tail = ["fault"] + (["cause"] if "cause" in json.loads(base["line"]) else [])
+            if keys[: len(self.FIELD_ORDER)] != self.FIELD_ORDER or keys[len(self.FIELD_ORDER):] != expected_tail:
+                out.append(f"{e['id']}: the fault is not between latency_us and the cause: {keys[len(self.FIELD_ORDER):]}")
+            if record.get("fault") != e["fault"] or not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", e["fault"]):
+                out.append(f"{e['id']}: the label is not the one named, or not in the label alphabet")
+            if e["line"].replace(',"fault":' + json.dumps(e["fault"]), "", 1) != base["line"]:
+                out.append(f"{e['id']}: removing the fault does not give the base line")
+            if len(e["line"]) > 1024:
+                out.append(f"{e['id']}: longer than the line cap")
+            if "cause" in record:
+                with_cause.add(e["family"])
+        if with_cause != set(self.FAMILIES):
+            out.append("a kind of record has no fault line where the label has to precede a cause")
+        for key in self.FAMILIES.values():
+            for g in v[key]:
+                if '"fault"' in g["line"]:
+                    out.append(f"{g['id']}: a line with no fault names one")
+        return out
+
+    def test_fault_lines_cover_every_kind_put_the_label_before_the_cause_and_are_the_base_line_plus_the_label(self):
+        self.assertEqual(self.fault_problems(self.vectors()), [])
+
+    def test_each_planted_fault_line_difference_is_reported(self):
+        import copy
+        v = self.vectors()
+        self.assertEqual(self.fault_problems(v), [])           # the real file first, so a report below is the check seeing the plant
+
+        def planted(change):
+            w = copy.deepcopy(v)
+            change(w)
+            return self.fault_problems(w)
+
+        def reorder(w):                                         # the label after the cause
+            e = next(x for x in w["fault_golden_lines"] if x["id"] == "N02-F002")
+            record = json.loads(e["line"])
+            cause = record.pop("cause")
+            record["cause"] = cause
+            fault = record.pop("fault")
+            record["fault"] = fault
+            e["line"] = json.dumps(record, separators=(",", ":"))
+
+        def drop_label(w):                                      # a record that forgot its label
+            e = next(x for x in w["fault_golden_lines"] if x["id"] == "N02-F003")
+            e["line"] = e["line"].replace(',"fault":' + json.dumps(e["fault"]), "", 1)
+
+        def wrong_label(w):                                     # a label other than the one named
+            e = next(x for x in w["fault_golden_lines"] if x["id"] == "N02-F005")
+            e["line"] = e["line"].replace(e["fault"], "another-fault")
+
+        def leak_into_a_base_line(w):                           # a run under no fault whose line names one
+            g = w["golden_lines"][0]
+            record = json.loads(g["line"])
+            record["fault"] = "x"
+            g["line"] = json.dumps(record, separators=(",", ":"))
+
+        def lose_a_family(w):
+            w["fault_golden_lines"] = [e for e in w["fault_golden_lines"] if e["family"] != "summary"]
+
+        for name, change, word in [("the label after the cause", reorder, "between latency_us"),
+                                   ("a record that forgot its label", drop_label, "N02-F003"),
+                                   ("another label", wrong_label, "N02-F005"),
+                                   ("a base line that names a fault", leak_into_a_base_line, "no fault names one"),
+                                   ("a kind of record uncovered", lose_a_family, "cover every kind")]:
+            problems = planted(change)
+            self.assertTrue(any(word in line for line in problems), f"{name}: {problems}")
+
 
 class Mapping(unittest.TestCase):
     def cases(self):

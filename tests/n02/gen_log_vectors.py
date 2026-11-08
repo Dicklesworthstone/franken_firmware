@@ -17,7 +17,10 @@ and not with the code under test:
 * nine complete JSONL lines for requests turned away at `submit`, the same way: the Rust builds each from the
   `submit` result named in the fact and must produce the same bytes;
 * three complete JSONL lines for the record that closes a run's file (`n02.log.summary`): the Rust builds each from the
-  counts the fact names (the log's and the file sink's) and must produce the same bytes.
+  counts the fact names (the log's and the file sink's) and must produce the same bytes;
+* eight lines under an **injected fault label** (the shared schema's `fault`): two for each kind of record above, each the
+  line of a base fact already listed, rendered with the label. The `fault` pair sits after `latency_us` and before `cause`,
+  and removing it gives the base line byte for byte, so a log that is told no fault is exactly what it was.
 
 The facts (what settled, when, and what the record should say) are written by hand here. Only the
 pseudonyms are computed.
@@ -160,7 +163,7 @@ SUMMARY_FACTS = [
 ]
 
 
-def summary_line_for(fact):
+def summary_line_for(fact, fault=None):
     stats, sink = fact["stats"], fact["sink"]
     message = ("emitted=%d stored=%d dropped=%d drained=%d written=%d sink_dropped=%d critical_lost=%d critical_held=%d "
                "critical_sink_dropped=%d") % (stats["emitted"], stats["stored"], stats["dropped"], stats["drained"],
@@ -181,12 +184,14 @@ def summary_line_for(fact):
         "queue_depth": stats["stored"],
         "latency_us": 0,
     }
+    if fault:
+        record["fault"] = fault
     if stats["critical_lost"] or stats["critical_held"] or sink["critical_dropped"]:
         record["cause"] = "evidence_incomplete"
     return json.dumps(record, separators=(",", ":"))
 
 
-def submit_line_for(fact, kind, message):
+def submit_line_for(fact, kind, message, fault=None):
     record = {
         "schema_version": "ffw.log.v1",
         "timestamp_mono_ns": fact["now_ns"],
@@ -202,12 +207,14 @@ def submit_line_for(fact, kind, message):
         "queue_depth": fact["queue_depth"],
         "latency_us": 0,
     }
+    if fault:
+        record["fault"] = fault
     if fact["cause"]:
         record["cause"] = fact["cause"]
     return json.dumps(record, separators=(",", ":"))
 
 
-def ack_line_for(fact, kind, message):
+def ack_line_for(fact, kind, message, fault=None):
     record = {
         "schema_version": "ffw.log.v1",
         "timestamp_mono_ns": fact["now_ns"],
@@ -223,12 +230,14 @@ def ack_line_for(fact, kind, message):
         "queue_depth": fact["queue_depth"],
         "latency_us": fact["age_ns"] // 1000,
     }
+    if fault:
+        record["fault"] = fault
     if fact["cause"]:
         record["cause"] = fact["cause"]
     return json.dumps(record, separators=(",", ":"))
 
 
-def line_for(fact, kind, message):
+def line_for(fact, kind, message, fault=None):
     record = {
         "schema_version": "ffw.log.v1",
         "timestamp_mono_ns": fact["now_ns"],
@@ -244,17 +253,55 @@ def line_for(fact, kind, message):
         "queue_depth": fact["queue_depth"],
         "latency_us": fact["waited_ns"] // 1000,
     }
+    if fault:
+        record["fault"] = fault
     if fact["cause"]:
         record["cause"] = fact["cause"]
     return json.dumps(record, separators=(",", ":"))
+
+
+# (id, record family, base fact id, fault label). The line is the base fact's line with the label: two per family, one
+# whose base has a cause (so the label's place before it is pinned) and one without; the second summary uses every
+# character the label alphabet allows.
+FAULT_LABEL = "drop-ack-after-commit"
+FAULT_LINES = [
+    ("N02-F001", "step", "N02-L001", FAULT_LABEL),
+    ("N02-F002", "step", "N02-L002", FAULT_LABEL),
+    ("N02-F003", "ack", "N02-A002", FAULT_LABEL),
+    ("N02-F004", "ack", "N02-A004", FAULT_LABEL),
+    ("N02-F005", "submit", "N02-S005", FAULT_LABEL),
+    ("N02-F006", "submit", "N02-S001", FAULT_LABEL),
+    ("N02-F007", "summary", "N02-C001", FAULT_LABEL),
+    ("N02-F008", "summary", "N02-C002", "a.b_c-d0"),
+]
+
+
+def fault_golden_lines():
+    out = []
+    for fid, family, base, label in FAULT_LINES:
+        if family == "step":
+            entry = next(f for f in FACTS if f[0] == base)
+            line = line_for(entry[2], entry[3], entry[4], label)
+        elif family == "ack":
+            entry = next(f for f in ACK_FACTS if f[0] == base)
+            line = ack_line_for(entry[2], entry[3], entry[4], label)
+        elif family == "submit":
+            entry = next(f for f in SUBMIT_FACTS if f[0] == base)
+            line = submit_line_for(entry[2], entry[3], entry[4], label)
+        else:
+            entry = next(f for f in SUMMARY_FACTS if f[0] == base)
+            line = summary_line_for(entry[2], label)
+        out.append({"id": fid, "what": f"{entry[1]}, under the fault `{label}`", "family": family, "base": base,
+                    "fault": label, "line": line})
+    return out
 
 
 def build():
     return {
         "schema": "ffw.n02.log-vectors.v1",
         "notes": [
-            "Generated by tests/n02/gen_log_vectors.py: pseudonyms, the four golden lines, the six acknowledgement lines and the nine lines of requests turned away at submit and the three closing records are computed with hashlib/json, not with the Rust under test.",
-            "Replayed by crates/franken-control/src/channel/diag.rs (tests `pseudonyms_and_golden_lines_match_the_independent_vectors`, `acknowledgement_lines_match_the_independent_vectors`, `submit_lines_match_the_independent_vectors` and `the_closing_record_is_a_valid_ffw_log_v1_event_and_matches_the_independent_vectors`).",
+            "Generated by tests/n02/gen_log_vectors.py: pseudonyms, the four golden lines, the six acknowledgement lines and the nine lines of requests turned away at submit and the three closing records, and the eight lines under an injected fault label, are computed with hashlib/json, not with the Rust under test.",
+            "Replayed by crates/franken-control/src/channel/diag.rs (tests `pseudonyms_and_golden_lines_match_the_independent_vectors`, `acknowledgement_lines_match_the_independent_vectors`, `submit_lines_match_the_independent_vectors`, `the_closing_record_is_a_valid_ffw_log_v1_event_and_matches_the_independent_vectors` and `fault_lines_match_the_independent_vectors`).",
             "The key is a test fixture, not a secret.",
         ],
         "run_id": RUN,
@@ -277,6 +324,7 @@ def build():
             {"id": fid, "what": what, "fact": fact, "line": summary_line_for(fact)}
             for fid, what, fact in SUMMARY_FACTS
         ],
+        "fault_golden_lines": fault_golden_lines(),
     }
 
 
@@ -300,7 +348,7 @@ def main(argv=None):
     if not path.exists() or path.read_text(encoding="utf-8") != text:
         print(f"{path} differs from the generator's output; run --write", file=sys.stderr)
         return 1
-    print(f"N02 log vectors: PASS ({len(IDS)} pseudonyms, {len(FACTS)} golden lines, {len(ACK_FACTS)} acknowledgement lines, {len(SUBMIT_FACTS)} submit lines, {len(SUMMARY_FACTS)} closing records)")
+    print(f"N02 log vectors: PASS ({len(IDS)} pseudonyms, {len(FACTS)} golden lines, {len(ACK_FACTS)} acknowledgement lines, {len(SUBMIT_FACTS)} submit lines, {len(SUMMARY_FACTS)} closing records, {len(FAULT_LINES)} fault lines)")
     return 0
 
 

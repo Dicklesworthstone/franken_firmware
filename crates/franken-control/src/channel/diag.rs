@@ -9,7 +9,7 @@
 //! {"schema_version":"ffw.log.v1","timestamp_mono_ns":..,"run_id":..,"case_id":..,
 //!  "correlation_id":"p-<peer pseudonym>#<seq>","member_id":"p-.."|"","group_id":"p-..",
 //!  "source_epoch":..,"state_revision":..,"event_kind":"n02.step.<outcome>","message":..,
-//!  "queue_depth":..,"latency_us":..,"cause":..?}
+//!  "queue_depth":..,"latency_us":..,"fault":..?,"cause":..?}
 //! ```
 //!
 //! # What reaches a record, and what never does
@@ -35,6 +35,16 @@
 //! `emitted == len + dropped`.
 //!
 //! Timestamps are the `now_ns` the owner gives `step`, clamped never to go backwards.
+//!
+//! # The injected fault label
+//!
+//! The shared schema has a `fault` field: the injected fault (or fault-schedule entry) in force when the event was
+//! emitted. A harness that runs the channel under one names it with [`LogConfig::with_fault`], and then **every** record
+//! the log writes carries it, between `latency_us` and `cause`: the record of a settled command, an acknowledgement, a
+//! request turned away at `submit`, and the closing record. It is a label the harness chooses, validated to the same
+//! alphabet and length as `run_id` and `case_id`, so nothing a peer supplied can reach it. A log that is told no fault
+//! writes records with no `fault` key, byte for byte as before. The channel injects no fault and never decides that one
+//! is in force: the label only says what the run was under.
 //!
 //! # Acknowledgement records
 //!
@@ -143,6 +153,8 @@ pub struct LogConfig {
     case_id: String,
     max_records: usize,
     max_bytes: usize,
+    /// The injected fault schedule entry the run is under, if the harness named one (see the module documentation).
+    fault: Option<String>,
 }
 
 fn valid_label(raw: &str) -> bool {
@@ -184,7 +196,21 @@ impl LogConfig {
             case_id: case_id.to_string(),
             max_records,
             max_bytes,
+            fault: None,
         })
+    }
+
+    /// Say that the run is under the injected fault `fault`: every record the log writes then carries it as its `fault`.
+    /// A label chosen by the harness, held to the alphabet and length of `run_id` and `case_id`.
+    ///
+    /// # Errors
+    /// [`LogError::InvalidLabel`] naming the field `fault`.
+    pub fn with_fault(mut self, fault: &str) -> Result<Self, LogError> {
+        if !valid_label(fault) {
+            return Err(LogError::InvalidLabel { field: "fault" });
+        }
+        self.fault = Some(fault.to_string());
+        Ok(self)
     }
 }
 
@@ -255,6 +281,9 @@ struct Record<'a> {
     message: String,
     queue_depth: usize,
     latency_us: u64,
+    /// Between `latency_us` and `cause`, where the shared `DiagnosticEvent` writes it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fault: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     cause: Option<String>,
 }
@@ -370,6 +399,8 @@ pub struct SinkCounts {
 pub struct ChannelLog {
     run_id: String,
     case_id: String,
+    /// The injected fault the run is under, carried by every record.
+    fault: Option<String>,
     key: LogKey,
     max_records: usize,
     max_bytes: usize,
@@ -416,6 +447,7 @@ impl ChannelLog {
         Self {
             run_id: config.run_id,
             case_id: config.case_id,
+            fault: config.fault,
             key,
             max_records: config.max_records,
             max_bytes: config.max_bytes,
@@ -573,6 +605,7 @@ impl ChannelLog {
             ),
             queue_depth: stats.stored,
             latency_us: 0,
+            fault: self.fault.as_deref(),
             cause: incomplete.then(|| "evidence_incomplete".to_string()),
         };
         serde_json::to_string(&record).ok()
@@ -774,6 +807,7 @@ impl ChannelLog {
                 message,
                 queue_depth: fact.queue_depth,
                 latency_us: fact.waited_ns / 1_000,
+                fault: self.fault.as_deref(),
                 cause: fact.cause.clone(),
             };
             serde_json::to_string(&record)
@@ -809,6 +843,7 @@ impl ChannelLog {
                 message,
                 queue_depth: fact.queue_depth,
                 latency_us: age_ns / 1_000,
+                fault: self.fault.as_deref(),
                 cause: cause.map(str::to_string),
             };
             serde_json::to_string(&record)
@@ -851,6 +886,7 @@ impl ChannelLog {
                 message: fact.message.clone(),
                 queue_depth: fact.queue_depth,
                 latency_us: 0,
+                fault: self.fault.as_deref(),
                 cause: fact.cause.map(str::to_string),
             };
             serde_json::to_string(&record)
@@ -2189,5 +2225,349 @@ mod tests {
         // Draining empties the log, including the acknowledgement share.
         assert_eq!(l.drain().len(), 4);
         assert_eq!((l.stats().stored, l.stats().ack_stored), (0, 0));
+    }
+
+    // ------------------------------------------------------------------------------------------- the injected fault label
+
+    const FAULT: &str = "drop-ack-after-commit";
+
+    fn fault_log(fault: Option<&str>) -> ChannelLog {
+        let mut config = LogConfig::new("run-1", "case-1", 32, 65_536).unwrap();
+        if let Some(label) = fault {
+            config = config.with_fault(label).unwrap();
+        }
+        ChannelLog::new(config, LogKey::new(KEY))
+    }
+
+    /// One record of every kind the log writes, in a fixed order: a settled command, an acknowledgement, a request turned
+    /// away at `submit`, and the closing record.
+    fn one_of_each(log: &mut ChannelLog) -> Vec<String> {
+        log.emit(&committed(1), 1_000_000, 10, "grp");
+        log.emit_ack(&ack_fact(1), 2_000_000, 10, "grp");
+        log.emit_reject(&reject_fact(1), 10, 3, "grp");
+        let closing = log
+            .closing_line(&SinkCounts::default(), 3_000_000)
+            .expect("the closing record serializes");
+        let mut lines: Vec<String> = log.lines().map(str::to_string).collect();
+        lines.push(closing);
+        lines
+    }
+
+    /// `Ok` when every line carries exactly `expected` as its `fault` (and none carries one when `expected` is `None`);
+    /// otherwise a verdict that starts `MISSING-FAULT`, `WRONG-FAULT` or `UNEXPECTED-FAULT` and names the record.
+    fn judge_fault_labels(lines: &[String], expected: Option<&str>) -> Result<(), String> {
+        for (index, line) in lines.iter().enumerate() {
+            let event: DiagnosticEvent = serde_json::from_str(line)
+                .map_err(|e| format!("setup: record {index} is not a shared event: {e}"))?;
+            match (event.fault.as_deref(), expected) {
+                (None, Some(want)) => {
+                    return Err(format!(
+                        "MISSING-FAULT: record {index} has no fault, the run is under `{want}`"
+                    ));
+                }
+                (Some(got), Some(want)) if got != want => {
+                    return Err(format!(
+                        "WRONG-FAULT: record {index} names `{got}`, the run is under `{want}`"
+                    ));
+                }
+                (Some(got), None) => {
+                    return Err(format!(
+                        "UNEXPECTED-FAULT: record {index} names `{got}` in a run under no fault"
+                    ));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_fault_label_is_held_to_the_label_alphabet_and_length() {
+        let base = LogConfig::new("run", "case", 1, 1).unwrap();
+        for ok in [
+            "drop-ack-after-commit",
+            "a",
+            "0",
+            "a.b_c-d",
+            &"x".repeat(MAX_LABEL_LEN),
+        ] {
+            assert!(base.clone().with_fault(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "",
+            "Fault",
+            "has space",
+            "-lead",
+            "a\"b",
+            "line\nbreak",
+            &"x".repeat(MAX_LABEL_LEN + 1),
+        ] {
+            assert_eq!(
+                base.clone().with_fault(bad),
+                Err(LogError::InvalidLabel { field: "fault" }),
+                "{bad:?}"
+            );
+        }
+        // A log told no fault has none.
+        assert_eq!(base.fault, None);
+    }
+
+    #[test]
+    fn every_kind_of_record_carries_the_fault_when_one_is_set_and_none_carries_it_when_not() {
+        let mut faulted = fault_log(Some(FAULT));
+        let lines = one_of_each(&mut faulted);
+        assert_eq!(lines.len(), 4);
+        assert_eq!(judge_fault_labels(&lines, Some(FAULT)), Ok(()));
+        for line in &lines {
+            let event: DiagnosticEvent = serde_json::from_str(line).expect("a shared-schema event");
+            assert_eq!(
+                serde_json::to_string(&event).unwrap(),
+                *line,
+                "byte-identical round trip"
+            );
+            assert!(line.len() <= MAX_LINE_BYTES);
+            assert_eq!(
+                redact_sensitive_text(line),
+                *line,
+                "nothing sensitive-looking in {line}"
+            );
+        }
+        // Told no fault, the same four records carry no key, and each is the faulted one with the pair removed.
+        let mut plain = fault_log(None);
+        let plain_lines = one_of_each(&mut plain);
+        assert_eq!(judge_fault_labels(&plain_lines, None), Ok(()));
+        let pair = format!(",\"fault\":\"{FAULT}\"");
+        for (with, without) in lines.iter().zip(&plain_lines) {
+            assert!(!without.contains("\"fault\""), "{without}");
+            assert_eq!(&with.replacen(&pair, "", 1), without);
+        }
+    }
+
+    #[test]
+    fn the_fault_judge_names_a_missing_a_wrong_and_an_unexpected_label() {
+        let mut faulted = fault_log(Some(FAULT));
+        let lines = one_of_each(&mut faulted);
+        let mut plain = fault_log(None);
+        let plain_lines = one_of_each(&mut plain);
+        // The faithful logs pass first, so each verdict below is the judge seeing the plant.
+        assert_eq!(judge_fault_labels(&lines, Some(FAULT)), Ok(()));
+        assert_eq!(judge_fault_labels(&plain_lines, None), Ok(()));
+        // A log that was never told the fault, judged as if the run were under it.
+        let verdict = judge_fault_labels(&plain_lines, Some(FAULT));
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|e| e.starts_with("MISSING-FAULT: record 0")),
+            "{verdict:?}"
+        );
+        // A log under another fault.
+        let mut other = fault_log(Some("another-fault"));
+        let other_lines = one_of_each(&mut other);
+        let verdict = judge_fault_labels(&other_lines, Some(FAULT));
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|e| e.starts_with("WRONG-FAULT: record 0")),
+            "{verdict:?}"
+        );
+        // One kind of record that forgets the label: the request turned away at `submit` (record 2) loses it.
+        let pair = format!(",\"fault\":\"{FAULT}\"");
+        let mut forgetful = lines.clone();
+        forgetful[2] = forgetful[2].replacen(&pair, "", 1);
+        let verdict = judge_fault_labels(&forgetful, Some(FAULT));
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|e| e.starts_with("MISSING-FAULT: record 2")),
+            "{verdict:?}"
+        );
+        // A run under no fault whose records name one.
+        let verdict = judge_fault_labels(&lines, None);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|e| e.starts_with("UNEXPECTED-FAULT: record 0")),
+            "{verdict:?}"
+        );
+    }
+
+    #[test]
+    fn a_fault_label_at_its_limit_does_not_push_any_record_past_the_line_cap() {
+        let long = "x".repeat(MAX_LABEL_LEN);
+        let config = LogConfig::new(&long, &long, 32, 65_536)
+            .unwrap()
+            .with_fault(&long)
+            .unwrap();
+        let mut l = ChannelLog::new(config, LogKey::new(KEY));
+        let mut worst = fact(
+            u64::MAX,
+            Outcome::Refused(Refusal::Session(SessionError::UnknownMember {
+                member_id: "nowhere".to_string(),
+            })),
+            false,
+        );
+        worst.cause = Some("unknown_member".to_string());
+        worst.revision = u64::MAX;
+        worst.queue_depth = usize::MAX;
+        worst.waited_ns = u64::MAX;
+        l.emit(&worst, u64::MAX, u64::MAX, "grp");
+        l.emit_ack(
+            &AckFact {
+                peer: PeerId::parse("ctl-a").unwrap(),
+                seq: u64::MAX,
+                outcome: AckOutcome::Unauthenticated(AuthFailure::UnknownPeer),
+                revision: u64::MAX,
+                queue_depth: usize::MAX,
+            },
+            u64::MAX,
+            u64::MAX,
+            "grp",
+        );
+        let turned_away = RejectFact::new(
+            PeerId::parse("ctl-a").unwrap(),
+            u64::MAX,
+            u64::MAX,
+            usize::MAX,
+            &SubmitResult::Rejected(Rejection::Unauthenticated(AuthFailure::UnknownPeer)),
+        )
+        .unwrap();
+        l.emit_reject(&turned_away, u64::MAX, u64::MAX, "grp");
+        let closing = l
+            .closing_line(
+                &SinkCounts {
+                    written: u64::MAX,
+                    dropped: u64::MAX,
+                    critical_dropped: u64::MAX,
+                },
+                u64::MAX,
+            )
+            .expect("the closing record serializes");
+        let stats = l.stats();
+        assert_eq!(
+            (stats.emitted, stats.stored, stats.dropped),
+            (3, 3, 0),
+            "no record was dropped for length"
+        );
+        for line in l.lines().chain(std::iter::once(closing.as_str())) {
+            assert!(line.len() <= MAX_LINE_BYTES, "{} bytes: {line}", line.len());
+            assert!(line.contains(&format!("\"fault\":\"{long}\"")), "{line}");
+        }
+    }
+
+    #[test]
+    fn fault_lines_match_the_independent_vectors() {
+        fn family_key(family: &str) -> &'static str {
+            match family {
+                "step" => "golden_lines",
+                "ack" => "ack_golden_lines",
+                "submit" => "submit_golden_lines",
+                "summary" => "summary_golden_lines",
+                other => panic!("unknown record family `{other}` in the vectors"),
+            }
+        }
+        let doc: serde_json::Value = serde_json::from_str(VECTORS_JSON).expect("vectors parse");
+        let text = |v: &serde_json::Value, key: &str| v[key].as_str().expect(key).to_string();
+        let num = |v: &serde_json::Value, key: &str| v[key].as_u64().expect(key);
+        let key_hex = text(&doc, "pseudonym_key_hex");
+        let key: [u8; 32] = (0..key_hex.len() / 2)
+            .map(|i| u8::from_str_radix(&key_hex[2 * i..2 * i + 2], 16).expect("hex"))
+            .collect::<Vec<u8>>()
+            .try_into()
+            .expect("a 32-byte key");
+        let entries = doc["fault_golden_lines"]
+            .as_array()
+            .expect("fault_golden_lines");
+        assert_eq!(entries.len(), 8);
+        for entry in entries {
+            let (id, family, fault) = (
+                text(entry, "id"),
+                text(entry, "family"),
+                text(entry, "fault"),
+            );
+            let base = doc[family_key(&family)]
+                .as_array()
+                .expect("an array of base facts")
+                .iter()
+                .find(|g| g["id"] == entry["base"])
+                .unwrap_or_else(|| panic!("{id}: its base fact is not in the vectors"));
+            let f = &base["fact"];
+            let mut l = ChannelLog::new(
+                LogConfig::new(&text(&doc, "run_id"), &text(&doc, "case_id"), 16, 65_536)
+                    .unwrap()
+                    .with_fault(&fault)
+                    .unwrap(),
+                LogKey::new(key),
+            );
+            let line = match family.as_str() {
+                "step" => {
+                    let fact = Fact {
+                        peer: PeerId::parse(&text(f, "peer")).unwrap(),
+                        seq: num(f, "seq"),
+                        member: f["member"].as_str().map(str::to_string),
+                        outcome: outcome_for(&text(f, "outcome"), num(f, "revision")),
+                        cause: f["cause"].as_str().map(str::to_string),
+                        revision: num(f, "revision"),
+                        queue_depth: usize::try_from(num(f, "queue_depth")).unwrap(),
+                        waited_ns: num(f, "waited_ns"),
+                        critical: false,
+                    };
+                    l.emit(&fact, num(f, "now_ns"), num(f, "epoch"), &text(f, "group"));
+                    l.lines().next().unwrap().to_string()
+                }
+                "ack" => {
+                    let fact = AckFact {
+                        peer: PeerId::parse(&text(f, "peer")).unwrap(),
+                        seq: num(f, "seq"),
+                        outcome: ack_outcome_for(&f["outcome"]),
+                        revision: num(f, "revision"),
+                        queue_depth: usize::try_from(num(f, "queue_depth")).unwrap(),
+                    };
+                    l.emit_ack(&fact, num(f, "now_ns"), num(f, "epoch"), &text(f, "group"));
+                    l.lines().next().unwrap().to_string()
+                }
+                "submit" => {
+                    let fact = RejectFact::new(
+                        PeerId::parse(&text(f, "peer")).unwrap(),
+                        num(f, "seq"),
+                        num(f, "now_ns"),
+                        usize::try_from(num(f, "queue_depth")).unwrap(),
+                        &submit_result_for(&f["result"]),
+                    )
+                    .expect("the vector names a request that was turned away");
+                    l.emit_reject(
+                        &fact,
+                        num(f, "epoch"),
+                        num(f, "revision"),
+                        &text(f, "group"),
+                    );
+                    l.lines().next().unwrap().to_string()
+                }
+                "summary" => {
+                    let s = &f["stats"];
+                    let stats = LogStats {
+                        emitted: num(s, "emitted"),
+                        stored: usize::try_from(num(s, "stored")).unwrap(),
+                        dropped: num(s, "dropped"),
+                        drained: num(s, "drained"),
+                        critical_lost: num(s, "critical_lost"),
+                        critical_held: usize::try_from(num(s, "critical_held")).unwrap(),
+                        ..LogStats::default()
+                    };
+                    let sink = SinkCounts {
+                        written: num(&f["sink"], "written"),
+                        dropped: num(&f["sink"], "dropped"),
+                        critical_dropped: num(&f["sink"], "critical_dropped"),
+                    };
+                    l.closing_line_for(&stats, &sink, num(f, "now_ns"))
+                        .expect("the record serializes")
+                }
+                other => panic!("unknown record family `{other}` in the vectors"),
+            };
+            assert_eq!(line, text(entry, "line"), "{id}");
+            // It is an ordinary event of the shared schema, it names the fault, and it round-trips exactly.
+            let event: DiagnosticEvent = serde_json::from_str(&line).expect("a valid event");
+            assert_eq!(event.fault.as_deref(), Some(fault.as_str()), "{id}");
+            assert_eq!(serde_json::to_string(&event).unwrap(), line, "{id}");
+        }
     }
 }

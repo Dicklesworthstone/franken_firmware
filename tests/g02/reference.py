@@ -45,6 +45,10 @@ BUGS = (
     "ramp_restarts",
     "local_trim_unmutes",
     "invalid_consumes_revision",
+    "reconnect_accepts_older_revision",
+    "reconnect_clears_local",
+    "reconnect_clears_fault",
+    "reconnect_drops_fault_ceiling",
 )
 
 
@@ -252,6 +256,9 @@ class Member:
             return "volume_out_of_range"
         if self.epoch is not None and epoch < self.epoch:
             return "stale_epoch"
+        # A snapshot from the member's own epoch that is older than what it has applied is a stale volume too.
+        if self.epoch == epoch and revision < self.last_rev and "reconnect_accepts_older_revision" not in self.bugs:
+            return "stale_revision"
         self.adopt(epoch, revision, volume, group_mute)
         return "ok"
 
@@ -262,6 +269,12 @@ class Member:
         self.flags["group"] = group_mute
         if "reconnect_no_join_mute" not in self.bugs:
             self.flags["join"] = True
+        if "reconnect_clears_local" in self.bugs:
+            self.flags["local"] = False
+        if "reconnect_clears_fault" in self.bugs:
+            self.flags["fault"] = False
+        if "reconnect_drops_fault_ceiling" in self.bugs:
+            self.fc = None
 
     def complete_join(self) -> None:
         self.flags["join"] = False

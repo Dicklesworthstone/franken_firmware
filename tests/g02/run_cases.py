@@ -66,6 +66,7 @@ d01.RUST_SOURCES = [
     ("crates/franken-dsp/src/volume/outcome_tests.rs", "franken_dsp", "volume::outcome_tests::"),
     ("crates/franken-dsp/src/volume/progress_tests.rs", "franken_dsp", "volume::progress_tests::"),
     ("crates/franken-dsp/src/volume/local_mute_tests.rs", "franken_dsp", "volume::local_mute_tests::"),
+    ("crates/franken-dsp/src/volume/rejoin_tests.rs", "franken_dsp", "volume::rejoin_tests::"),
     ("crates/franken-speaker/src/button_adapter/tests.rs", "franken_speaker", "button_adapter::tests::"),
     ("crates/franken-dsp/tests/g02_vectors.rs", "g02_vectors", ""),
 ]
@@ -198,10 +199,16 @@ def member_properties(case: dict, obs: dict) -> Optional[str]:
     fixed_ceiling = None
     if not any(op[0] in ("ceiling", "fault_ceiling") for op in ops):
         fixed_ceiling = _numeric_ceiling(case["ceiling"])
+    protection, fault = _numeric_ceiling(case["ceiling"]), None
     prev = _initial_member(case)
     for index, (op, entry) in enumerate(zip(ops, trace)):
         name, result = op[0], entry["result"]
         where = f"op {index} {name}"
+        if name == "ceiling":
+            protection = _numeric_ceiling(op[1])
+        elif name == "fault_ceiling":
+            fault = None if op[1] is None else _numeric_ceiling(op[1])
+        bound = protection if fault is None else min(protection, fault)
         before = (prev["desired"], prev["trim"], prev["revision"], prev["epoch"], prev["mute"])
         # -- always
         if entry["desired"] > 100 or entry["trim"] > 2000:
@@ -212,8 +219,8 @@ def member_properties(case: dict, obs: dict) -> Optional[str]:
             return f"{where}: bounded gain {entry['unmuted']!r} is outside 0..1"
         if entry["epoch"] is None and entry["unmuted"] != 0.0:
             return f"{where}: no declared authority but the bounded gain is {entry['unmuted']!r}"
-        if fixed_ceiling is not None and entry["unmuted"] > fixed_ceiling + TOLERANCE:
-            return f"{where}: bounded gain {entry['unmuted']!r} exceeds the ceiling {fixed_ceiling!r}"
+        if entry["unmuted"] > bound + TOLERANCE:
+            return f"{where}: bounded gain {entry['unmuted']!r} exceeds the tighter ceiling {bound!r}"
         # -- commands: a refusal changes nothing; an acceptance advances the revision once; a replay does not apply
         if name == "cmd":
             kind = op[3][0]
@@ -241,13 +248,23 @@ def member_properties(case: dict, obs: dict) -> Optional[str]:
             if (op[1] != "active") != (entry["mute"] == "fault"):
                 return f"{where}: board status {op[1]!r} but the mute is {entry['mute']!r}"
         if name == "reconnect":
+            # a snapshot from the member's own epoch that is older than what it has applied is a stale volume
+            rolls_back = prev["epoch"] == op[1] and op[2] < prev["revision"]
             if result == "ok":
                 if (entry["desired"], entry["epoch"], entry["revision"]) != (op[3], op[1], op[2]):
                     return f"{where}: did not take the group's snapshot {op[1:4]}: {_state_key(entry)}"
                 if entry["mute"] is None or entry["gain"] != 0.0:
                     return f"{where}: a reconnect must leave the member silent, not {entry['mute']!r} / {entry['gain']!r}"
-            elif _state_key(entry) != before:
-                return f"{where}: refused with {result} but the state changed"
+                if rolls_back:
+                    return (f"{where}: took a snapshot at revision {op[2]} of epoch {op[1]} "
+                            f"after applying revision {prev['revision']}")
+                if prev["mute"] in ("fault", "local") and entry["mute"] != prev["mute"]:
+                    return f"{where}: a rejoin changed the {prev['mute']} mute into {entry['mute']!r}"
+            else:
+                if _state_key(entry) != before:
+                    return f"{where}: refused with {result} but the state changed"
+                if result == "stale_revision" and not rolls_back:
+                    return f"{where}: refused as stale_revision but revision {op[2]} is not older than the member's {prev['revision']}"
         # -- the board
         dsp = entry.get("dsp")
         if dsp is not None:

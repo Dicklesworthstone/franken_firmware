@@ -111,7 +111,7 @@ class ReferenceAndVectors(Base):
         covered = {i for c in self.doc["cases"] for i in c["invariants"]}
         external = {k for k, v in self.doc["external"].items() if v}
         self.assertEqual(set(self.doc["invariants"]) - covered - external, set())
-        self.assertEqual(len(ids), 45)
+        self.assertEqual(len(ids), 50)
 
     def test_the_tolerance_is_not_widened(self) -> None:
         # f32 is emulated operation by operation, so one ulp near 1.0 (1.2e-7) is the most that can differ.
@@ -154,12 +154,12 @@ class ContractMatchesVectors(Base):
                     self.assertIn(name.split("::", 1)[1], self.text)
 
     def test_the_contract_states_the_plan_and_the_limits(self) -> None:
-        self.assertIn("115 cases: 4 meta, 45 vectors and 66 Rust tests", self.text)
+        self.assertIn("126 cases: 4 meta, 50 vectors and 72 Rust tests", self.text)
         self.assertIn("Numerical tests do not prove physical behavior", self.text)
         self.assertIn("second implementation of this contract by the same author", self.text)
         self.assertIn("scripts/e2e/g02 --tier full --judge", self.text)
         planned = len(runner.run("full", None)[0])
-        self.assertEqual(planned, 115)
+        self.assertEqual(planned, 126)
 
 
 class HandDerivedPins(Base):
@@ -279,6 +279,48 @@ class HandDerivedPins(Base):
         final = [e for op, e in zip(self.cases["G02-MBR-013"]["ops"], r) if op[0] == "ramp"][-1]
         self.assertLessEqual(final["max_applied"], 0.2 + 1e-7)                      # the stored 95 was never audible
 
+    def test_a_rejoin_keeps_its_own_state_and_refuses_a_stale_snapshot_by_hand(self) -> None:
+        def rows(case_id: str, op_name: str) -> List[dict]:
+            return [e for op, e in zip(self.cases[case_id]["ops"], self.trace(case_id)) if op[0] == op_name]
+
+        # 020: the member has applied revisions 1 (volume 80) and 2 (volume 30). A snapshot at revision 1 carries the stale 80.
+        # It is refused and the member stays at 30 / revision 2. A snapshot AT revision 2 is the same state and is taken (35),
+        # a newer one (revision 9, volume 60) is taken, and one at revision 8 is old again, relative to the member's latest.
+        r = rows("G02-MBR-020", "reconnect")
+        self.assertEqual([e["result"] for e in r], ["stale_revision", "ok", "ok", "stale_revision"])
+        self.assertEqual([(e["desired"], e["revision"]) for e in r], [(30, 2), (35, 3), (60, 9), (60, 9)])
+        self.assertEqual([e["mute"] for e in r], [None, "join", "join", None])        # a refusal does not even start a join
+        c = rows("G02-MBR-020", "cmd")
+        self.assertEqual([e["result"] for e in c], ["ok", "ok", "ok", "revision_conflict", "ok", "stale_revision", "ok"])
+        self.assertTrue(c[2]["duplicate"])                                          # the retry of revision 2 is still a duplicate
+        self.assertEqual([e["desired"] for e in c], [80, 30, 30, 30, 35, 60, 45])
+        # 021: a newer epoch's snapshot is taken at revision 1 although the member was at revision 5; inside the new epoch
+        # revision 1 is old again; an older epoch is refused as an old epoch however high its revision.
+        r = rows("G02-MBR-021", "reconnect")
+        self.assertEqual([e["result"] for e in r], ["ok", "stale_revision", "stale_epoch"])
+        self.assertEqual([(e["epoch"], e["revision"], e["desired"]) for e in r], [(8, 1, 60), (8, 2, 40), (8, 2, 40)])
+        # 022: fault, then local, then join, then group: the reason follows the priority through the whole sequence.
+        # board fail_muted, reconnect, join, group unmute -> fault; board active -> none; local mute on -> local;
+        # reconnect -> local; board fail_muted, join -> fault; board active -> local; join -> local; local off -> none.
+        mutes = [e["mute"] for e in self.trace("G02-MBR-022")][3:]
+        self.assertEqual(mutes, ["fault"] * 4 + [None, "local", "local", "fault", "fault", "local", "local", None])
+        # 023: a group at 100 plays the 0.25 ceiling; the rejoin to a group at 80 fades out, the join brings it back to the
+        # ceiling and not to 0.8, and only removing the ceiling reaches 0.8. The bounded target is 0.25 during the rejoin.
+        ramps = rows("G02-MBR-023", "ramp")
+        for got, want in zip((e["dsp"]["applied"] for e in ramps), (0.25, 0.0, 0.25, 0.8)):
+            self.assertAlmostEqual(got, want, places=6)
+        self.assertLessEqual(max(e["max_applied"] for e in ramps[:3]), 0.25 + 1e-7)
+        reconnect = rows("G02-MBR-023", "reconnect")[0]
+        self.assertEqual((reconnect["desired"], reconnect["mute"], reconnect["gain"]), (80, "join", 0.0))
+        self.assertAlmostEqual(reconnect["unmuted"], 0.25, places=7)
+        # 024: the restart rejoins a group at 20 on a board that is not Active: fault-muted throughout, silent throughout,
+        # holding the group's 20 (target 0.2) and never the stored 95.
+        t = self.trace("G02-MBR-024")
+        self.assertEqual({e["mute"] for e in t}, {"fault"})
+        self.assertEqual({e["max_applied"] for op, e in zip(self.cases["G02-MBR-024"]["ops"], t) if op[0] == "ramp"}, {0.0})
+        self.assertEqual(t[-1]["desired"], 20)
+        self.assertAlmostEqual(t[-1]["unmuted"], 0.2, places=7)
+
     def test_group_by_hand(self) -> None:
         t = self.trace("G02-GRP-001")
         ops = self.cases["G02-GRP-001"]["ops"]
@@ -301,8 +343,29 @@ class PairedNegativesAndPositives(Base):
         self.assertEqual((live[-1]["mute"], live[-1]["dsp"]["muted"]), (None, False))
         self.assertGreater(live[-1]["dsp"]["applied"], 0.0)
 
+    def test_a_restart_is_silent_on_a_board_that_is_not_active_and_audible_only_to_the_groups_volume_on_a_live_one(self) -> None:
+        failed, live = self.trace("G02-MBR-024"), self.trace("G02-MBR-013")
+        self.assertEqual(self.cases["G02-MBR-024"]["ops"], self.cases["G02-MBR-013"]["ops"])
+        self.assertEqual(self.cases["G02-MBR-024"]["start"], self.cases["G02-MBR-013"]["start"])
+        self.assertEqual((self.cases["G02-MBR-024"]["board"], self.cases["G02-MBR-013"]["board"]), ("fail_muted", "active"))
+        self.assertEqual((failed[-1]["mute"], failed[-1]["dsp"]["applied"], failed[-1]["max_applied"]), ("fault", 0.0, 0.0))
+        self.assertEqual(live[-1]["mute"], None)
+        self.assertAlmostEqual(live[-1]["dsp"]["applied"], 0.2, places=6)             # the group's 20, never the stored 95
+
+    def test_the_stale_snapshot_is_refused_beside_the_equal_newer_and_new_epoch_ones_that_are_taken(self) -> None:
+        for case_id in ("G02-MBR-020", "G02-MBR-021"):
+            results = [e["result"] for op, e in zip(self.cases[case_id]["ops"], self.trace(case_id)) if op[0] == "reconnect"]
+            self.assertIn("stale_revision", results)
+            self.assertIn("ok", results)
+        # the same snapshot revision is refused or taken depending only on the member's revision: 8 after 9, 9 after 9
+        t = self.trace("G02-MBR-020")
+        ops = self.cases["G02-MBR-020"]["ops"]
+        by = [(op[2], e["result"]) for op, e in zip(ops, t) if op[0] == "reconnect"]
+        self.assertEqual(by, [(1, "stale_revision"), (3, "ok"), (9, "ok"), (8, "stale_revision")])
+
     def test_refusals_are_followed_by_accepted_commands(self) -> None:
-        for case_id in ("G02-MBR-007", "G02-MBR-008", "G02-MBR-009", "G02-MBR-010", "G02-MBR-016", "G02-GRP-002", "G02-GRP-004"):
+        for case_id in ("G02-MBR-007", "G02-MBR-008", "G02-MBR-009", "G02-MBR-010", "G02-MBR-016", "G02-MBR-020", "G02-MBR-021",
+                        "G02-GRP-002", "G02-GRP-004"):
             results = [e["result"] for e in self.trace(case_id)]
             first_refusal = next(i for i, r in enumerate(results) if r not in ("ok",))
             self.assertIn("ok", results[first_refusal + 1:], f"{case_id}: nothing legitimate after the first refusal")
@@ -346,6 +409,31 @@ class PlantedDefects(Base):
                 failed = self.judge_all(frozenset({bug}), neutralize_model=True)
                 self.assertTrue(failed, f"{bug} is invisible to the model-independent properties")
 
+    REJOIN_PLANTS = {
+        # the plant -> the cases that must fail while it is in: the check each one exercises
+        "reconnect_accepts_older_revision": {"G02-MBR-020", "G02-MBR-021"},   # a snapshot older than the member's own revision
+        "reconnect_clears_local": {"G02-MBR-019", "G02-MBR-022"},             # a rejoin must not undo a local mute
+        "reconnect_clears_fault": {"G02-MBR-022", "G02-MBR-024"},             # a rejoin must not undo a fault mute
+        "reconnect_drops_fault_ceiling": {"G02-MBR-023"},                     # a rejoin must not lift a fault ceiling
+    }
+
+    def test_each_rejoin_plant_fails_the_cases_that_exercise_its_check_and_its_removal_restores_green(self) -> None:
+        for bug, expected in self.REJOIN_PLANTS.items():
+            self.assertIn(bug, ref.BUGS)
+            with self.subTest(bug=bug):
+                with_model = set(self.judge_all(frozenset({bug})))
+                alone = set(self.judge_all(frozenset({bug}), neutralize_model=True))
+                self.assertTrue(expected <= with_model, f"{bug}: {sorted(expected - with_model)} did not fail with the model")
+                self.assertTrue(expected <= alone, f"{bug}: {sorted(expected - alone)} did not fail on the properties alone")
+                self.assertEqual(self.judge_all(frozenset()), [], f"{bug}: the control is not green")
+
+    def test_the_rejoin_plants_do_not_fail_cases_that_never_rejoin(self) -> None:
+        rejoining = {c["id"] for c in self.doc["cases"] if any(op[0] in ("reconnect", "rejoin") for op in c.get("ops", []))}
+        for bug in self.REJOIN_PLANTS:
+            with self.subTest(bug=bug):
+                stray = set(self.judge_all(frozenset({bug}))) - rejoining
+                self.assertEqual(stray, set(), f"{bug} fails a case that never rejoins")
+
     def test_two_defects_together_are_still_caught(self) -> None:
         self.assertTrue(self.judge_all(frozenset({"reconnect_keeps_stored", "fault_ignored"})))
 
@@ -356,7 +444,7 @@ class JudgeBehavior(Base):
         self.assertEqual(self.by(results, "failed"), [])
         self.assertEqual(self.by(results, "blocked"), [])
         self.assertEqual(runner.exit_code(results), 0)
-        self.assertEqual(len(results), 4 + 45 + len(runner.derive_rust_tests()))
+        self.assertEqual(len(results), 4 + 50 + len(runner.derive_rust_tests()))
 
     def test_no_log_blocks_everything_rust_backed(self) -> None:
         results, _ = runner.run("full", None)

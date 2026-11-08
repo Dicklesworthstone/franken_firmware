@@ -19,7 +19,9 @@
 //!   produced then), never applied, or too old to say. Asking changes nothing, and `apply` answers exactly
 //!   as before: an older replay is still `stale_revision`.
 //! * **Reconnect.** A (re)joining member starts muted and takes the group's *current* snapshot, so a
-//!   stored high volume is never audible and the first ramp starts from silence.
+//!   stored high volume is never audible and the first ramp starts from silence. A rejoin keeps the
+//!   room's own local mute, fault mute and fault ceiling, and a snapshot older than what the member
+//!   has applied in its own epoch is refused, so a late snapshot cannot put back a replaced volume.
 //! * **Roles.** `Stereo`/`Left`/`Right`/`Sub` map onto the admitted channel layout as an input remap;
 //!   a role a board lacks is refused by name.
 //!
@@ -37,6 +39,8 @@ mod outcome_tests;
 mod progress;
 #[cfg(test)]
 mod progress_tests;
+#[cfg(test)]
+mod rejoin_tests;
 #[cfg(test)]
 mod tests;
 
@@ -578,8 +582,14 @@ impl MemberVolume {
     }
 
     /// Rejoin the group. The member goes join-muted and takes the group's *current* volume and
-    /// mute from `snapshot`, never its own stored values. Local mute and trim are kept. Refused if
-    /// the snapshot's epoch is older than the member's.
+    /// mute from `snapshot`, never its own stored values. The room's own state is kept: its trim, its
+    /// local mute, its fault mute (only the board returning to `Active` clears that) and its fault
+    /// ceiling. Refused, with nothing changed, if the volume is out of range, if the snapshot's epoch
+    /// is older than the member's, or if it is from the member's own epoch but older than the last
+    /// revision the member has applied: a delayed snapshot is not the group's *current* state, and
+    /// taking it would put back a volume the group has since replaced and reopen the revisions
+    /// between the two. A snapshot at the member's own revision is the same state again and is taken;
+    /// a newer epoch numbers its revisions afresh, so its revision is not compared.
     pub fn reconnect(&mut self, snapshot: GroupSnapshot) -> Result<(), VolumeError> {
         if snapshot.master_volume > MAX_VOLUME {
             return Err(VolumeError::VolumeOutOfRange {
@@ -594,11 +604,18 @@ impl MemberVolume {
                 current,
             });
         }
+        if self.epoch == Some(snapshot.epoch) && snapshot.revision < self.last_revision {
+            return Err(VolumeError::StaleRevision {
+                revision: snapshot.revision,
+                last: self.last_revision,
+            });
+        }
         self.adopt(snapshot);
         Ok(())
     }
 
-    /// Take a snapshot that has already been validated (`master_volume <= 100`, epoch not older).
+    /// Take a snapshot that has already been validated (`master_volume <= 100`, epoch not older, and
+    /// not a rollback within the member's own epoch).
     fn adopt(&mut self, snapshot: GroupSnapshot) {
         self.epoch = Some(snapshot.epoch);
         self.last_revision = snapshot.revision;

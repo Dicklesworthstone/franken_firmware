@@ -491,6 +491,40 @@
       ]
     },
     {
+      "id": "G03-I31",
+      "statement": "A tailnet peer acknowledges the outcome of its own command at POST /ffw/ack (N02 section 7): the adapter gives the channel the number, the epoch and the proof and answers the channel's typed outcome as one fixed word, 200 for an entry it completed (on_time, late, superseded) or one already completed (duplicate) and 409 for one it did not (not_settled, unknown, out_of_window, mismatch), so a refusal is never a success; an adapter that does not carry it, that gives a refusal a success status, or that calls a late acknowledgement on time fails the judges while the real adapter passes them; the words are the words N02 logs for the same outcomes.",
+      "vectors": [],
+      "rust_tests": [
+        "server::an_acknowledgement_reaches_the_channel_and_is_answered_with_its_typed_outcome",
+        "server::a_late_or_superseded_acknowledgement_still_completes_its_entry_and_says_which",
+        "server::an_acknowledgement_that_completed_nothing_is_a_409_with_its_word_and_changes_nothing",
+        "server::the_planted_adapter_that_swallows_acknowledgements_fails_the_carried_judge",
+        "server::the_planted_adapter_that_turns_a_refusal_into_a_success_fails_the_refusal_judge",
+        "server::the_planted_adapter_that_calls_a_late_acknowledgement_on_time_fails_the_word_judge"
+      ]
+    },
+    {
+      "id": "G03-I32",
+      "statement": "An acknowledgement is inert through the adapter: with a subscriber and a command waiting in the queue, one that completes its entry steps nothing, publishes nothing and changes neither the group, the queue nor the ledger, and the waiting command still applies at the next step; an adapter that steps the channel after an acknowledgement fails the judge while the real adapter passes it.",
+      "vectors": [],
+      "rust_tests": [
+        "server::an_acknowledgement_is_inert_and_a_waiting_command_still_applies_afterwards",
+        "server::the_planted_adapter_that_steps_the_channel_after_an_acknowledgement_fails_the_inert_judge"
+      ]
+    },
+    {
+      "id": "G03-I33",
+      "statement": "The acknowledgement route is the tailnet's alone and is silent to a caller who cannot prove who it is: the local legacy link has no command ids, so the path is 404 there and never reaches the channel; a missing, duplicated or malformed header, a body, a bad proof, a proof for another number, an unknown peer and a revoked peer are all the same empty 401; the route is POST only and is no SOAP or event path; an adapter that serves it on the local link, or tells a bad proof apart from other failures, fails the judge while the real adapter passes it.",
+      "vectors": [],
+      "rust_tests": [
+        "server::acknowledgements_are_tailnet_only_and_every_authentication_failure_is_the_same_401",
+        "server::every_acknowledgement_header_problem_is_the_same_401_with_no_body",
+        "server::the_acknowledgement_route_is_a_post_route_of_its_own",
+        "server::the_planted_adapter_that_tells_a_bad_proof_apart_fails_the_silence_judge",
+        "server::the_planted_adapter_that_serves_acknowledgements_on_the_local_link_fails_the_silence_judge"
+      ]
+    },
+    {
       "id": "G03-S01",
       "statement": "An M-SEARCH is parsed under hard bounds (size, printable ASCII, CRLF only, the empty-line terminator, header count and length, no folding, no duplicate HOST/MAN/MX/ST, MAN exactly \"ssdp:discover\", MX 1 to 120 answered as at most 5, a visible bounded ST); a datagram that breaks one is refused with a fixed word, a valid search is accepted, and another device's NOTIFY or a response is not a search. Truncation and corruption never panic.",
       "vectors": [],

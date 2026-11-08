@@ -187,6 +187,81 @@ class Contract(unittest.TestCase):
         self.assertEqual(counts, sorted(counts, reverse=True))
 
 
+class Acknowledgements(unittest.TestCase):
+    """The acknowledgement route (contract section 9.2): the contract table, the Rust mapping and the words N02 logs agree.
+    They do not run the Rust."""
+
+    COMPLETED = {"OnTime", "Late", "Superseded", "Duplicate"}
+    PLANTS = {"AckSwallowed": "ACK-NOT-CARRIED", "AckAlwaysOk": "FALSE-ACK-SUCCESS", "AckWordCollapsed": "ACK-WORD",
+              "AckDrivesChannel": "ACK-DROVE-THE-CHANNEL", "AckUnauthenticatedTold": "ACK-ORACLE", "AckOnLegacy": "ACK-ON-LEGACY"}
+
+    @staticmethod
+    def function(text, signature):
+        """The text of the function that starts at `signature`, up to its closing brace in column 0."""
+        start = text[text.index(signature):]
+        return start[:start.index("\n}\n")]
+
+    def server(self):
+        return (FSONOS / "server.rs").read_text(encoding="utf-8")
+
+    def rust_mapping(self):
+        block = self.function(production_of(self.server()), "fn ack_response(")
+        return {variant: (int(status), word) for variant, status, word in
+                re.findall(r'AckOutcome::(\w+)(?:\s*\{ \.\. \})? => \((\d+), "(\w+)"\)', block)}
+
+    def doc_mapping(self):
+        text = CONTRACT.read_text(encoding="utf-8")
+        section = text[text.index("### 9.2"):text.index("## 10. Verification")]
+        return {variant: (int(status), word) for variant, status, word in
+                re.findall(r"^\| `(\w+)` \| (\d{3}) \| `(\w+)` \|", section, flags=re.M)}
+
+    def n02_words(self):
+        """The word N02's log uses for each outcome, read from the channel's own vocabulary (diag.rs)."""
+        text = (FSONOS.parent / "channel" / "diag.rs").read_text(encoding="utf-8")
+        block = self.function(text, "fn describe_ack(")
+        return {variant: word.removeprefix("rejected.") for variant, word in
+                re.findall(r'AckOutcome::(\w+)[^=]*=> \(\s*"([a-z_.]+)"', block)}
+
+    def test_the_contract_table_is_the_rust_mapping(self):
+        rust = self.rust_mapping()
+        self.assertEqual(len(rust), 8, "every outcome but the unauthenticated one has a status and a word")
+        self.assertEqual(self.doc_mapping(), rust)
+
+    def test_only_an_outcome_that_completed_an_entry_or_repeats_one_is_a_success(self):
+        for variant, (status, _) in self.rust_mapping().items():
+            self.assertEqual(status, 200 if variant in self.COMPLETED else 409, variant)
+
+    def test_every_word_is_the_word_n02_logs_for_that_outcome(self):
+        n02 = self.n02_words()
+        self.assertEqual(n02.pop("Unauthenticated"), "unauthenticated", "the one outcome with no word here is the 401")
+        self.assertEqual({v: w for v, (_, w) in self.rust_mapping().items()}, n02)
+
+    def test_the_handler_is_tailnet_only_and_gives_the_channel_nothing_but_the_acknowledgement(self):
+        handler = self.function(production_of(self.server()), "fn acknowledge<")
+        self.assertIn("Ingress::Tailnet", handler)
+        self.assertIn("channel.acknowledge(", handler)
+        for forbidden in (".step(", ".publish(", ".submit(", "apply_command", "self."):
+            self.assertNotIn(forbidden, handler)
+
+    def test_the_authentication_failure_is_the_bare_401_every_tailnet_failure_is(self):
+        mapping = self.function(production_of(self.server()), "fn ack_response(")
+        self.assertIn("AckOutcome::Unauthenticated(_) => return HttpResponse::fault(Fault::Unauthenticated)", mapping)
+
+    def test_each_planted_defect_is_planted_in_a_test_and_its_tag_is_in_the_contract(self):
+        server, contract = self.server(), CONTRACT.read_text(encoding="utf-8")
+        for plant, tag in self.PLANTS.items():
+            self.assertEqual(server.count(f"broken.endpoint.plant(Defect::{plant});"), 1, plant)
+            self.assertIn(f'"{tag}', server, tag)
+            self.assertIn(f"`{plant}`", contract, plant)
+            self.assertIn(f"`{tag}`", contract, tag)
+
+    def test_the_contract_says_what_the_route_is_not(self):
+        text = CONTRACT.read_text(encoding="utf-8")
+        for phrase in ("G03's own acceptance criteria do not name acknowledgements", "this is a host simulation",
+                       "read by no client", "written, not compiled, not linted and not run", "`POST /ffw/ack`"):
+            self.assertIn(phrase, text)
+
+
 class Boundaries(unittest.TestCase):
     def sources(self):
         """Every adapter file except replay.rs, which is test code from its first line."""
