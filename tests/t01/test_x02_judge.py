@@ -12,6 +12,7 @@ import io
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -381,8 +382,12 @@ def fixture_meta(elf_path, sup_path, serial, **over):
     """What measure-p05-target.run_runtime returns for a clean run, with the hashes of the two ELF files actually on disk."""
     elf_sha = hashlib.sha256(pathlib.Path(elf_path).read_bytes()).hexdigest()
     sup_sha = hashlib.sha256(pathlib.Path(sup_path).read_bytes()).hexdigest()
-    meta = {"command": ["qemu-system-mips", "..."], "qemu": "fixture", "kernel_sha256": KERNEL_SHA,
-            "initramfs": {"init_sha256": sup_sha, "archive_sha256": ARCHIVE_SHA, "extra_files": {"franken-speaker": {"sha256": elf_sha}}},
+    logs = pathlib.Path(elf_path).parent  # absolute paths, as the P05 layer records them: the receipt writer has to rewrite every one
+    meta = {"command": ["qemu-system-mips", "-M", "malta", "-kernel", str(logs / "vmlinux.runtime-snapshot"), "-initrd", str(logs / "runtime.cpio.gz"),
+                        "-append", "console=ttyS0,38400 rdinit=/init panic=-1"],
+            "qemu": "fixture", "kernel_sha256": KERNEL_SHA,
+            "initramfs": {"init_sha256": sup_sha, "archive_sha256": ARCHIVE_SHA, "extra_files": {"franken-speaker": {"sha256": elf_sha}},
+                          "init_path": str(sup_path), "out_path": str(logs / "runtime.cpio.gz")},
             "exit_code": 0, "inputs_after_capture": {"kernel": KERNEL_SHA, "initramfs": ARCHIVE_SHA}, "stop_reason": None,
             "stderr_sha256": hashlib.sha256(b"").hexdigest(), "stdout_sha256": hashlib.sha256(serial.encode()).hexdigest(), "stderr_bytes": 0,
             "scope": "fixture"}
@@ -615,6 +620,115 @@ class Cli(unittest.TestCase):
 
 
 DELETE = object()  # `planted` deletes the field instead of replacing it
+
+
+class ReceiptPaths(unittest.TestCase):
+    """The writer: no absolute host path survives into a receipt, and the hashes of the rewritten paths still bind the files they named."""
+
+    FORBIDDEN = ("/Users/", "/home/", "/private/tmp/", "/var/folders/")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="ffw-t01-x02-paths-")
+        self.addCleanup(self.tmp.cleanup)
+        self.work = pathlib.Path(self.tmp.name)
+
+    def produce(self, arch="mips", revision=None, over=None, serial=None):
+        """`run` with the guest replaced; returns (exit code, stderr, receipt path). `over(elf, sup)` returns meta overrides."""
+        elf, sup = self.work / f"probe.{arch}", self.work / f"sup.{arch}"
+        elf.write_bytes(elf_header(arch) + b"probe")
+        sup.write_bytes(elf_header(arch) + b"supervisor")
+        serial = wrapped(GOOD, arch) if serial is None else serial
+        receipt = self.work / f"receipt.{arch}.json"
+        extra = over(elf, sup) if over else {}
+
+        def fake(p05, namespace, elf_identity, sup_identity):
+            return serial, fixture_meta(elf, sup, serial, **extra)
+
+        argv = ["run", "--arch", arch, "--elf", str(elf), "--supervisor", str(sup), "--log-dir", str(self.work / f"logs.{arch}"), "--receipt", str(receipt)]
+        if revision is not None:
+            argv += ["--revision", revision]
+        err = io.StringIO()
+        with mock.patch.object(J, "capture_guest_run", fake), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = J.main(argv)
+        return code, err.getvalue(), receipt
+
+    def test_a_run_receipt_carries_no_absolute_path_and_its_hashes_still_bind_the_files(self):
+        kernel, archive = self.work / "vmlinux.runtime-snapshot", self.work / "runtime.cpio.gz"
+        kernel.write_bytes(b"kernel bytes " * 100)
+        archive.write_bytes(b"archive bytes " * 100)
+        kernel_sha, archive_sha = hashlib.sha256(kernel.read_bytes()).hexdigest(), hashlib.sha256(archive.read_bytes()).hexdigest()
+        script = J.HERE / "x02_judge.py"
+
+        def over(elf, sup):
+            return {"kernel_sha256": kernel_sha, "inputs_after_capture": {"kernel": kernel_sha, "initramfs": archive_sha},
+                    "command": ["qemu-system-mips", "-kernel", str(kernel), "-initrd", str(archive), "-append", "console=ttyS0,38400 rdinit=/init panic=-1"],
+                    "initramfs": {"init_sha256": hashlib.sha256(sup.read_bytes()).hexdigest(), "archive_sha256": archive_sha,
+                                  "extra_files": {"franken-speaker": {"sha256": hashlib.sha256(elf.read_bytes()).hexdigest()}},
+                                  "init_path": str(sup), "out_path": str(archive)},
+                    "harness": str(script)}  # a path inside the repository
+
+        code, err, path = self.produce(over=over)
+        self.assertEqual(code, 0, err)
+        text = path.read_text()
+        for prefix in self.FORBIDDEN + (str(self.work), os.path.realpath(self.work), str(J.REPO) + "/"):
+            self.assertNotIn(prefix, text)
+        self.assertIsNone(J.ABSOLUTE_PATH.search(text))
+        body = json.loads(text)
+        execution = body["execution"]
+        self.assertEqual(execution["command"][1:6], ["-kernel", "<outside-repo>/vmlinux.runtime-snapshot", "-initrd", "<outside-repo>/runtime.cpio.gz", "-append"])
+        self.assertEqual(execution["command"][-1], "console=ttyS0,38400 rdinit=/init panic=-1")  # the guest's own command line is untouched
+        self.assertEqual((execution["initramfs"]["init_path"], execution["initramfs"]["out_path"]), ("<outside-repo>/sup.mips", "<outside-repo>/runtime.cpio.gz"))
+        self.assertEqual(execution["harness"], "tests/t01/x02_judge.py")  # under the repository: repo-relative
+        bound = {entry["path"]: entry["sha256"] for entry in body["path_hashes"]}
+        self.assertEqual(bound["<outside-repo>/vmlinux.runtime-snapshot"], kernel_sha)
+        self.assertEqual(bound["<outside-repo>/vmlinux.runtime-snapshot"], execution["kernel_sha256"])  # the file's hash is the receipt's own kernel hash
+        self.assertEqual(bound["<outside-repo>/runtime.cpio.gz"], archive_sha)
+        self.assertEqual(bound["<outside-repo>/runtime.cpio.gz"], execution["initramfs"]["archive_sha256"])
+        self.assertEqual(bound["<outside-repo>/sup.mips"], body["supervisor_elf"]["sha256"])
+        self.assertEqual(bound["tests/t01/x02_judge.py"], hashlib.sha256(script.read_bytes()).hexdigest())
+        self.assertEqual(J.judge_receipt(text).problems, [])  # and the consumer reads it
+        self.assertEqual(J.judge_receipt(text).state, "passed")
+
+    def test_the_scrub_rewrites_every_host_root_and_leaves_lookalikes_alone(self):
+        seen = []
+        rewritten = {"/Users/a/b": "<outside-repo>/b", "-kernel=/home/x/k": "-kernel=<outside-repo>/k", "'/private/tmp/x/y.log'": "'<outside-repo>/y.log'",
+                     "(/tmp/z)": "(<outside-repo>/z)", "/var/folders/ab/T/q": "<outside-repo>/q", "see /Users/a and /Users/b": "see <outside-repo>/a and <outside-repo>/b",
+                     "/Volumes/d/x": "<outside-repo>/x", "/root/x": "<outside-repo>/x", "/mnt/x": "<outside-repo>/x", "/srv/x": "<outside-repo>/x",
+                     "/data/x": "<outside-repo>/x", "/bulk/x": "<outside-repo>/x", "/tmp": "<outside-repo>/tmp", "a,/Users/q/r;b": "a,<outside-repo>/r;b",
+                     str(J.REPO): ".", str(J.REPO / "tests" / "t01"): "tests/t01", str(J.REPO / "tests" / "t01" / ".." / "t01" / "x"): "tests/t01/x"}
+        for text, want in rewritten.items():
+            with self.subTest(text=text):
+                self.assertEqual(J._scrub(text, seen), want)
+        for text in ("8/8", "x25519=2/2", "rdinit=/init", "console=ttyS0,38400 rdinit=/init panic=-1", "toolchain/var/x", "usr/home/x", "a/tmp/b", "/init", "2026-11-08",
+                     "<outside-repo>/x", "tests/t01/x02_judge.py", "https://example.invalid/Users/x", "~/home/x", "/usr/bin/qemu-system-mips"):
+            with self.subTest(text=text):
+                self.assertEqual(J._scrub(text, []), text)
+        self.assertEqual(J._scrub({"/Users/k/a": ["/home/x/y", 3, None, {"n": "/tmp/q"}]}, []), {"<outside-repo>/a": ["<outside-repo>/y", 3, None, {"n": "<outside-repo>/q"}]})
+
+    def test_the_writer_refuses_to_write_a_receipt_in_which_a_path_survives(self):
+        code, err, path = self.produce()
+        self.assertEqual(code, 0, err)
+        path.unlink()
+        with mock.patch.object(J, "_scrub", lambda value, seen: value):  # the scrub is gone: the guard behind it must still hold
+            code, err, path = self.produce()
+        self.assertEqual(code, 2)
+        self.assertIn("refusing to write a receipt that still carries an absolute path", err)
+        self.assertFalse(path.exists())
+
+    def test_a_revision_claim_that_is_a_path_is_rewritten_too(self):
+        code, err, path = self.produce(revision="/Users/someone/work/rev1")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(path.read_text())["revision_claim"], "<outside-repo>/rev1")
+
+    def test_an_analysis_receipt_carries_no_path_either(self):
+        log, receipt = self.work / "transcript.log", self.work / "analysis.json"
+        log.write_text(GOOD)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(J.main(["analyze", "--log", str(log), "--arch", "mips", "--receipt", str(receipt)]), 0)
+        text = receipt.read_text()
+        self.assertIsNone(J.ABSOLUTE_PATH.search(text))
+        self.assertNotIn(str(self.work), text)
+        self.assertEqual(json.loads(text)["path_hashes"], [])
 
 
 class Consumer(unittest.TestCase):
@@ -900,6 +1014,59 @@ class Consumer(unittest.TestCase):
         self.pair(powerpc=self.planted(blocked_receipt, ("gates", index, "status"), "passed"))
         self.assert_fails_naming("powerpc.json", "X02-RESOURCES is recorded passed but its facts judge blocked")
 
+    def test_a_receipt_carrying_an_absolute_host_path_fails_by_name_and_never_repeats_it(self):
+        good = self.real("mips")
+        self.assertIn("rdinit=/init", json.dumps(good))  # a guest path that merely looks absolute is not a host path and stays
+        self.pair(mips=good)
+        self.assertEqual(self.case().status, "passed")
+        secret = "zebra-secret-user"
+        plants = {
+            "a command argument": (("execution", "command"), lambda c: c + ["-drive", f"file=/Users/{secret}/disk.img"]),
+            "the supervisor path": (("execution", "initramfs", "init_path"), f"/private/tmp/claude-501/{secret}/sup"),
+            "the archive path": (("execution", "initramfs", "out_path"), f"/var/folders/ab/{secret}/T/runtime.cpio.gz"),
+            "the revision claim": (("revision_claim",), f"built in /home/{secret}/work"),
+            "a gate detail": (("gates", 0, "detail"), f"see /tmp/{secret}/log"),
+            "the scope text": (("scope",), f"measured at /Volumes/{secret}/x"),
+            "a verdict fact": (("verdict", "phases", 0, "facts"), {"path": f"/root/{secret}"}),
+            "a path_hashes label": (("path_hashes",), [{"path": f"/mnt/{secret}/x", "sha256": None}]),
+            "a bare root": (("revision_claim",), "/tmp"), "a worker data mount": (("revision_claim",), f"/data/{secret}"),
+            "a quoted path": (("revision_claim",), f"'/Users/{secret}'"), "an assignment": (("revision_claim",), f"root=/home/{secret}"),
+        }
+        for label, (path, value) in plants.items():
+            with self.subTest(label=label):
+                self.put("mips.json", self.planted(good, path, value))
+                try:
+                    result = self.case()
+                    self.assertEqual(result.status, "failed", result.detail)
+                    self.assertIn("mips.json", result.detail)
+                    self.assertIn("absolute path under /", result.detail)
+                    self.assertNotIn(secret, result.detail)  # the report says where, never the path itself
+                finally:
+                    self.put("mips.json", good)
+        keyed = json.loads(json.dumps(good))
+        keyed[f"/Users/{secret}/key"] = 1
+        self.put("mips.json", keyed)
+        self.assert_fails_naming("mips.json", "absolute path under /Users/ at the receipt.<key>")
+        self.pair(mips=good, powerpc=self.planted(self.analysis("powerpc"), ("revision_claim",), f"/home/{secret}"))  # an analysis receipt is held to it too
+        self.assert_fails_naming("powerpc.json", "absolute path under /home/")
+        self.pair()
+        self.assertEqual(self.case().status, "passed")  # remove the plants: green again
+
+    def test_path_hashes_must_be_relative_paths_with_a_lowercase_sha256_or_null(self):
+        good = self.real("mips")
+        self.assertTrue(good["path_hashes"])
+        for label, value in {"not a list": {}, "an entry that is not an object": ["x"], "a missing sha256": [{"path": "a"}], "an extra key": [{"path": "a", "sha256": None, "x": 1}],
+                             "uppercase sha256": [{"path": "a", "sha256": "A" * 64}], "short sha256": [{"path": "a", "sha256": "abc"}], "a numeric sha256": [{"path": "a", "sha256": 1}],
+                             "an empty path": [{"path": "", "sha256": None}], "a parent segment": [{"path": "../a", "sha256": None}],
+                             "a path that is not text": [{"path": 1, "sha256": None}]}.items():
+            with self.subTest(label=label):
+                self.pair(mips=self.planted(good, ("path_hashes",), value))
+                self.assert_fails_naming("mips.json", "path_hashes is malformed")
+        self.pair(mips=self.planted(good, ("path_hashes",), []))  # an empty list is fine: it only lists what was rewritten
+        self.assertEqual(self.case().status, "passed")
+        self.pair(mips=good)
+        self.assertEqual(self.case().status, "passed")
+
     def test_declared_blocked_or_not_passed_must_agree_with_the_facts(self):
         good = self.real("mips")
         for result_word in ("blocked", "not_passed"):
@@ -913,6 +1080,45 @@ class Consumer(unittest.TestCase):
         self.assertEqual(rc.FULL_IDS[-1], "T01-X02-target-resources")
         self.assertIn("EACH legacy target", rc.DESCRIPTIONS["T01-X02-target-resources"])
         self.assertIn("tests/t01/x02_judge.py", rc.JUDGED_ARTIFACTS)  # the run's receipt records the sha256 of the judge it used
+
+
+class ContractText(unittest.TestCase):
+    """docs/contracts/t01.md describes X02 in the code's own words: the strings below are read from the code, so the contract cannot drift from it unnoticed."""
+
+    def setUp(self):
+        with open(os.path.join(REPO, "docs", "contracts", "t01.md"), encoding="utf-8") as handle:
+            self.text = handle.read()
+
+    def test_the_x02_block_names_what_exists(self):
+        for needle in (J.GRAMMAR, J.RECEIPT_SCHEMA, J.OUTSIDE_REPO, "path_hashes", "scripts/e2e/t01 --x02 run|analyze", "tests/t01/x02_judge.py", "toolchain/src/t01-core-probe/",
+                       "T01-X02-target-resources", "supplied_transcript_analysis", "captured_guest_execution", "**eight phases**", "known-answer module `kat.rs`",
+                       "T01X02 PHASE <NAME> ok|fail <k=v ...>", "T01X02 VmHWM <uint>|UNKNOWN", "T01X02 END ok=<n> fail=<n> unknown=<n>", "each** legacy target (mips and powerpc)"):
+            self.assertIn(needle, self.text)
+        start = self.text.index("**eight phases**")  # CRYPTO_KAT is named earlier, in the acceptance table; the order that counts is the probe bullet's
+        positions = [self.text.index(f"`{name}`", start) for name in J.EXPECTED_PHASES]
+        self.assertEqual(positions, sorted(positions), "the contract lists the phases in the judge's order")
+
+    def test_the_no_claims_are_the_codes_own_sentences_verbatim(self):
+        self.assertIn(J.SCOPE, self.text)
+        self.assertIn(rc.X02_BOUND, self.text)
+
+    def test_the_contract_still_says_nothing_was_run_in_a_guest(self):
+        for needle in ("has not been made", "INCOMPLETE and pending", "no crypto probe was run", "none of it has been run in a guest"):
+            self.assertIn(needle, self.text)
+        self.assertGreaterEqual(self.text.lower().count("no probe has been run in a guest"), 3)  # said in the acceptance table, the X02 block and section 10
+        for stale in ("T01-X02 is BLOCKED until a measurement receipt exists", "a guest run was made", "the probe was run in a guest"):
+            self.assertNotIn(stale, self.text)
+
+    def test_the_judges_phase_table_equals_the_probe_source_when_the_source_is_present(self):
+        source = os.path.join(REPO, "toolchain", "src", "t01-core-probe", "src", "main.rs")
+        if not os.path.isfile(source):
+            self.skipTest("the probe source is not in this tree")
+        with open(source, encoding="utf-8") as handle:
+            match = re.search(r"const PHASES: \[&str; (\d+)\] = \[(.*?)\];", handle.read(), re.S)
+        self.assertIsNotNone(match, "main.rs no longer declares `const PHASES`")
+        names = re.findall(r'"([A-Za-z0-9_]+)"', match[2])
+        self.assertEqual(int(match[1]), len(names))
+        self.assertEqual(tuple(names), J.EXPECTED_PHASES, "the judge's phase table must equal what the built probe prints")
 
 
 if __name__ == "__main__":

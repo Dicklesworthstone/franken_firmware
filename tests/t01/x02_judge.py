@@ -287,6 +287,25 @@ def _strict_json(text: str) -> Any:
     return json.loads(text, object_pairs_hook=pairs, parse_constant=constant)
 
 
+def _absolute_path_in(node: Any, where: str = "the receipt") -> tuple[str, str] | None:
+    """Where, and under which root directory, the first absolute host path in any string or key of `node` sits. The path itself is never repeated."""
+    if isinstance(node, str):
+        match = ABSOLUTE_PATH.search(node)
+        return (where, match.group(0).split("/")[1]) if match else None
+    if isinstance(node, list):
+        for index, item in enumerate(node):
+            hit = _absolute_path_in(item, f"{where}[{index}]")
+            if hit:
+                return hit
+    if isinstance(node, dict):
+        for key, item in node.items():
+            hit = _absolute_path_in(key, f"{where}.<key>") if isinstance(key, str) else None
+            hit = hit or _absolute_path_in(item, f"{where}.{str(key)[:30]}")
+            if hit:
+                return hit
+    return None
+
+
 def _rebuild(verdict: dict[str, Any]) -> tuple[list[str], list[str]]:
     """The T01X02 lines a receipt's recorded verdict stands for, and what is malformed about it."""
     lines: list[str] = []
@@ -338,6 +357,14 @@ def judge_receipt(text: str) -> ReceiptJudgement:
     for key, want in (("schema", RECEIPT_SCHEMA), ("grammar", GRAMMAR)):
         if body.get(key) != want:
             return failed(f"{key} {str(body.get(key))[:50]!r} is not {want}")
+    found = _absolute_path_in(body)
+    if found is not None:
+        return failed(f"the receipt carries an absolute path under /{found[1]}/ at {found[0]}; a committed receipt holds repo-relative or {OUTSIDE_REPO} paths only")
+    hashes = body.get("path_hashes")
+    if hashes is not None and not (isinstance(hashes, list) and all(
+            isinstance(entry, dict) and set(entry) == {"path", "sha256"} and isinstance(entry["path"], str) and entry["path"] and not entry["path"].startswith("/")
+            and ".." not in entry["path"].split("/") and (entry["sha256"] is None or _is_sha(entry["sha256"])) for entry in hashes)):
+        return failed("path_hashes is malformed (each entry is a relative path and a lowercase sha256 or null)")
     kind, declared, arch = body.get("evidence_kind"), body.get("result"), body.get("arch")
     if kind not in RECEIPT_KINDS:
         return failed(f"evidence_kind {str(kind)[:50]!r} is not one of {', '.join(RECEIPT_KINDS)}")
@@ -459,6 +486,58 @@ def _read_bounded(path: pathlib.Path) -> bytes:
     return raw
 
 
+# ---- receipt path hygiene --------------------------------------------------------------------------------------------------------------------------------
+# A receipt meant for toolchain/results/tailscale/measurements/ is committed, so it must not carry the home directory, the scratch directory or a worker mount of whoever
+# ran the guest. The P05 layer records absolute paths (the QEMU command line, the initramfs build record); the writer rewrites them here, in the receipt only: a path
+# under the repository becomes repo-relative, any other becomes `<outside-repo>/<basename>`, and each rewritten path is listed in `path_hashes` with the sha256 of the
+# file it named, so the receipt still binds the bytes. The writer refuses to write a receipt in which an absolute path survives; the consumer refuses to read one.
+
+PATH_ROOTS = ("Users", "home", "private", "var", "tmp", "root", "Volumes", "mnt", "srv", "data", "bulk")
+ABSOLUTE_PATH = re.compile(rf"(?<![A-Za-z0-9_.~-])/(?:{'|'.join(PATH_ROOTS)})(?=/|[\s\"'<>,;)=]|$)(?:/[^\s\"'<>,;)=]*)?")
+OUTSIDE_REPO = "<outside-repo>"
+HASH_CAP = 512 * 1024 * 1024
+
+
+def _file_sha256(path: str) -> str | None:
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) > HASH_CAP:
+            return None
+        digest = hashlib.sha256()
+        with open(path, "rb") as source:
+            while chunk := source.read(1 << 20):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def _relocate(path: str, seen: list[dict[str, Any]]) -> str:
+    clean = os.path.normpath(path)
+    label = None
+    for base in dict.fromkeys((REPO.as_posix(), REPO.resolve().as_posix())):
+        if clean == base:
+            label = "."
+        elif clean.startswith(base + "/"):
+            label = clean[len(base) + 1:]
+    if label is None:
+        label = f"{OUTSIDE_REPO}/{os.path.basename(clean) or 'root'}"
+    entry = {"path": label, "sha256": _file_sha256(path)}
+    if entry not in seen:
+        seen.append(entry)
+    return label
+
+
+def _scrub(value: Any, seen: list[dict[str, Any]]) -> Any:
+    """`value` with every absolute host path in any string (and any key) rewritten; `seen` collects the path/sha256 pairs."""
+    if isinstance(value, str):
+        return ABSOLUTE_PATH.sub(lambda match: _relocate(match.group(0), seen), value)
+    if isinstance(value, list):
+        return [_scrub(item, seen) for item in value]
+    if isinstance(value, dict):
+        return {(_scrub(key, seen) if isinstance(key, str) else key): _scrub(item, seen) for key, item in value.items()}
+    return value
+
+
 def _finish(args: argparse.Namespace, gates: list[Gate], verdict: Verdict | None, kind: str, elf: dict[str, Any] | None,
             supervisor: dict[str, Any] | None, meta: dict[str, Any] | None, transcript_sha256: str, child_sha256: str | None) -> int:
     code = exit_code(gates)
@@ -469,6 +548,12 @@ def _finish(args: argparse.Namespace, gates: list[Gate], verdict: Verdict | None
                 "transcript_sha256": transcript_sha256, "child_sha256": child_sha256,
                 "verdict": verdict.to_json() if verdict is not None else None, "gates": [dataclasses.asdict(g) for g in gates],
                 "scope": SCOPE}
+        seen: list[dict[str, Any]] = []
+        body = _scrub(body, seen)
+        body["path_hashes"] = seen
+        leftover = ABSOLUTE_PATH.search(json.dumps(body))
+        if leftover is not None:
+            raise X02Error("refusing to write a receipt that still carries an absolute path under /" + leftover.group(0).split("/")[1] + "/; nothing was written")
         with args.receipt.open("x", encoding="utf-8") as handle:  # exclusive: an existing receipt is never overwritten
             json.dump(body, handle, indent=2, sort_keys=True)
             handle.write("\n")

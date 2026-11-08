@@ -1625,7 +1625,7 @@ class BuildRecord(unittest.TestCase):
         with open(os.path.join(REPO, "docs", "contracts", "t01.md"), encoding="utf-8") as handle:
             contract = handle.read()
         for stale in ("This is the first thing a central build would answer", "until an actual selected Cargo graph and build (T01-X01)", "the mandatory legacy-ISA build (T01-X01)",
-                      "while the mandatory T01-X01 build", "BLOCKED until all four built"):
+                      "while the mandatory T01-X01 build", "BLOCKED until all four built", "T01-X02 is BLOCKED until a measurement receipt exists"):
             self.assertNotIn(stale, study + contract)
         for said in ("so whether the crypto passes on big-endian 32-bit stays unknown", "stays **unqualified**", "built as type-checks only"):
             self.assertIn(said, study)
