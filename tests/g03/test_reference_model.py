@@ -105,6 +105,14 @@ class Mutants(unittest.TestCase):
         failures = ref.check_all(ref.Options(unicode_fold_infinite=True), vectors)
         self.assertEqual({f[0] for f in failures}, {"gena-second-infinite-is-the-upnp-unbounded-request"})
 
+    def test_a_renewal_that_runs_on_after_a_refused_timeout_is_caught_by_its_own_scenario_alone(self):
+        # The unbroken model passes it (Baseline); a model that still extends the subscription when it refuses the
+        # TIMEOUT fails the scenario written for it and no other.
+        vectors = ref.load()
+        self.assertEqual(ref.check_all(ref.Options(), vectors), [])
+        failures = ref.check_all(ref.Options(renew_bad_timeout_extends=True), vectors)
+        self.assertEqual({f[0] for f in failures}, {"gena-a-renewal-with-a-bad-timeout-changes-nothing"})
+
     def test_a_refusal_that_uses_up_a_sid_is_caught_by_the_second_infinite_scenario_alone(self):
         vectors = ref.load()
         failures = ref.check_all(ref.Options(sid_taken_before_timeout=True), vectors)
@@ -187,13 +195,38 @@ class Contract(unittest.TestCase):
         self.assertEqual(counts, sorted(counts, reverse=True))
 
 
+def check_plants(case, plants):
+    """Each planted defect is planted once, in a test that runs the judge built for it and expects its tag; that
+    judge's own message carries the tag (the tag appearing in some other judge would not do); and the contract
+    names the plant and the tag."""
+    server = (FSONOS / "server.rs").read_text(encoding="utf-8")
+    contract = CONTRACT.read_text(encoding="utf-8")
+    for plant, (judge, tag) in plants.items():
+        planted = f"broken.endpoint.plant(Defect::{plant});"
+        case.assertEqual(server.count(planted), 1, plant)
+        at = server.index(planted)
+        test = server[server.rindex("#[test]", 0, at):server.index("#[test]", at)]
+        case.assertIn(f"{judge}(&mut broken)", test, plant)
+        case.assertIn(f'starts_with("{tag}")', test, plant)
+        start = server.index(f"fn {judge}(")
+        case.assertIn(f'"{tag}: ', server[start:server.index("\n    }\n", start)], f"{judge} carries {tag}")
+        case.assertIn(f"`{plant}`", contract, plant)
+        case.assertIn(f"`{tag}`", contract, tag)
+
+
 class Acknowledgements(unittest.TestCase):
     """The acknowledgement route (contract section 9.2): the contract table, the Rust mapping and the words N02 logs agree.
     They do not run the Rust."""
 
     COMPLETED = {"OnTime", "Late", "Superseded", "Duplicate"}
-    PLANTS = {"AckSwallowed": "ACK-NOT-CARRIED", "AckAlwaysOk": "FALSE-ACK-SUCCESS", "AckWordCollapsed": "ACK-WORD",
-              "AckDrivesChannel": "ACK-DROVE-THE-CHANNEL", "AckUnauthenticatedTold": "ACK-ORACLE", "AckOnLegacy": "ACK-ON-LEGACY"}
+    PLANTS = {
+        "AckSwallowed": ("judge_ack_is_carried", "ACK-NOT-CARRIED"),
+        "AckAlwaysOk": ("judge_ack_that_completed_nothing_is_never_a_success", "FALSE-ACK-SUCCESS"),
+        "AckWordCollapsed": ("judge_ack_late_and_superseded", "ACK-WORD"),
+        "AckDrivesChannel": ("judge_ack_is_inert", "ACK-DROVE-THE-CHANNEL"),
+        "AckUnauthenticatedTold": ("judge_ack_is_tailnet_only_and_silent", "ACK-ORACLE"),
+        "AckOnLegacy": ("judge_ack_is_tailnet_only_and_silent", "ACK-ON-LEGACY"),
+    }
 
     @staticmethod
     def function(text, signature):
@@ -222,6 +255,22 @@ class Acknowledgements(unittest.TestCase):
         return {variant: word.removeprefix("rejected.") for variant, word in
                 re.findall(r'AckOutcome::(\w+)[^=]*=> \(\s*"([a-z_.]+)"', block)}
 
+    def test_a_plant_for_another_route_leaves_the_acknowledgement_route_to_the_real_handler(self):
+        server = self.server()
+        enum = server[server.index("pub(crate) enum Defect {"):]
+        variants = re.findall(r"^    ([A-Z]\w+),", enum[:enum.index("\n}\n")], flags=re.M)
+        self.assertTrue(set(self.PLANTS) <= set(variants), "every acknowledgement plant is a variant of Defect")
+        others = [v for v in variants if v not in self.PLANTS]
+        self.assertTrue(others, "a check over no other plants would pass for anything")
+        at = server.index("fn plant_ack<A: PeerAuthority>(")
+        self.assertTrue(server[:at].rstrip().endswith("#[cfg(test)]"), "the first plant_ack is the test-build hook")
+        hook = server[at:]
+        early = hook[hook.index("let defect = self.defect?;"):hook.index("return None;")]
+        for variant in others:
+            self.assertIn(f"Defect::{variant}", early, f"{variant} plants another route, and an acknowledgement must reach the real handler while it is planted")
+        for variant in self.PLANTS:
+            self.assertNotIn(f"Defect::{variant}", early, f"{variant} is this route's own plant and must not be turned away")
+
     def test_the_contract_table_is_the_rust_mapping(self):
         rust = self.rust_mapping()
         self.assertEqual(len(rust), 8, "every outcome but the unauthenticated one has a status and a word")
@@ -247,19 +296,64 @@ class Acknowledgements(unittest.TestCase):
         mapping = self.function(production_of(self.server()), "fn ack_response(")
         self.assertIn("AckOutcome::Unauthenticated(_) => return HttpResponse::fault(Fault::Unauthenticated)", mapping)
 
-    def test_each_planted_defect_is_planted_in_a_test_and_its_tag_is_in_the_contract(self):
-        server, contract = self.server(), CONTRACT.read_text(encoding="utf-8")
-        for plant, tag in self.PLANTS.items():
-            self.assertEqual(server.count(f"broken.endpoint.plant(Defect::{plant});"), 1, plant)
-            self.assertIn(f'"{tag}', server, tag)
-            self.assertIn(f"`{plant}`", contract, plant)
-            self.assertIn(f"`{tag}`", contract, tag)
+    def test_each_planted_defect_is_caught_by_the_judge_built_for_it_and_named_in_the_contract(self):
+        check_plants(self, self.PLANTS)
 
     def test_the_contract_says_what_the_route_is_not(self):
         text = CONTRACT.read_text(encoding="utf-8")
         for phrase in ("G03's own acceptance criteria do not name acknowledgements", "this is a host simulation",
                        "read by no client", "written, not compiled, not linted and not run", "`POST /ffw/ack`"):
             self.assertIn(phrase, text)
+
+
+class TopologyEvents(unittest.TestCase):
+    """Topology events through the endpoint (contract section 7.1). They do not run the Rust."""
+
+    PLANTS = {
+        "TopologyNeverEvented": ("judge_membership_change_is_announced", "TOPOLOGY-NOT-ANNOUNCED"),
+        "TopologyDocDiffersFromRead": ("judge_membership_change_is_announced", "TOPOLOGY-STALE"),
+    }
+
+    def server(self):
+        return (FSONOS / "server.rs").read_text(encoding="utf-8")
+
+    @staticmethod
+    def function(text, signature):
+        start = text[text.index(signature):]
+        return start[:start.index("\n    }\n")]
+
+    def test_each_planted_defect_is_caught_by_the_judge_built_for_it_and_named_in_the_contract(self):
+        check_plants(self, self.PLANTS)
+
+    def test_a_rename_is_recorded_in_the_directory_and_then_announced_by_publish_and_no_place_function_remains(self):
+        server = self.server()
+        judge = self.function(server, "fn judge_rename_is_announced_through_the_endpoint(")
+        recorded, announced = judge.index("record_in_directory("), judge.index(".publish(")
+        self.assertLess(recorded, announced)
+        self.assertNotIn(".place(", judge)
+        self.assertNotIn("pub fn place(", production_of(server))
+        self.assertNotIn("PlaceSilent", server)
+
+    def test_the_wire_form_of_a_name_escaped_twice_is_what_an_independent_escaper_makes(self):
+        from xml.sax.saxutils import escape
+        server = self.server()
+        literal = re.search(r'const RENAMED_MEMBER_ON_THE_WIRE: &str =\s*"((?:[^"\\]|\\.)*)";', server)
+        self.assertTrue(literal, "the golden constant is missing")
+        golden = literal.group(1).replace('\\"', '"')
+        name = "Patio & <Den>"
+        self.assertIn(f'record_in_directory(rig, "kitchen", "192.0.2.10", "{name}")', server, "the test renames to the name this check recomputes")
+        member = ('<ZoneGroupMember UUID="kitchen" Location="http://192.0.2.10:1400/xml/device_description.xml" '
+                  f'ZoneName="{escape(name, {chr(34): "&quot;"})}" Invisible="0" SWGen="1"/>')
+        self.assertEqual(golden, escape(member))
+        # The member element is the one the Rust builds: same attributes in the same order.
+        state = (FSONOS / "state.rs").read_text(encoding="utf-8")
+        self.assertIn('<ZoneGroupMember UUID=\\"{}\\" Location=\\"{}\\" ZoneName=\\"{}\\" Invisible=\\"0\\" SWGen=\\"{}\\"/>', state)
+
+    def test_the_announcement_is_made_by_publish_and_publish_alone_builds_the_event_state(self):
+        text = production_of(self.server())
+        publish = self.function(text, "pub fn publish(")
+        self.assertIn("self.state(session)", publish)
+        self.assertIn("self.gena.publish(", publish)
 
 
 class Boundaries(unittest.TestCase):

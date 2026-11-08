@@ -473,6 +473,7 @@ mod tests {
     use super::*;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::UnixListener;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -523,6 +524,34 @@ mod tests {
         let path = scratch.path(name);
         drop(FileMedium::create_new(&path, lim).expect("a new file"));
         path
+    }
+
+    /// `sockaddr_un.sun_path`: 108 bytes on Linux, 104 on macOS and the BSDs. `bind` takes a spelling one byte shorter than this (the
+    /// terminating NUL needs the last byte). The limit is on the path as it is SPELLED, not on where it resolves, so an absolute
+    /// spelling under a long `TMPDIR` can be over it while a relative spelling of the same place is not.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    const SUN_PATH_BYTES: usize = 108;
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    const SUN_PATH_BYTES: usize = 104;
+
+    /// Why a fixture socket could not be bound, by name, so a failing test says which.
+    #[derive(Debug, PartialEq, Eq)]
+    enum SocketPathError {
+        /// The spelling is `len` bytes and `bind` takes at most `limit`; nothing was asked of the operating system.
+        TooLong { len: usize, limit: usize },
+        /// `bind` refused for another reason.
+        Refused(ErrorKind),
+    }
+
+    /// Bind a Unix socket at `path`. A spelling over the limit is the named error `TooLong`, checked before `bind` is asked, instead of
+    /// an `expect` panic that reads as a failure of whatever the test was about.
+    fn bind_socket(path: &Path) -> Result<UnixListener, SocketPathError> {
+        let len = path.as_os_str().len();
+        let limit = SUN_PATH_BYTES - 1;
+        if len > limit {
+            return Err(SocketPathError::TooLong { len, limit });
+        }
+        UnixListener::bind(path).map_err(|error| SocketPathError::Refused(error.kind()))
     }
 
     #[test]
@@ -758,8 +787,7 @@ mod tests {
         );
 
         let socket_path = scratch.path("s");
-        let _listener =
-            std::os::unix::net::UnixListener::bind(&socket_path).expect("a socket file");
+        let _listener = bind_socket(&socket_path).expect("a socket file");
         assert_eq!(
             FileMedium::open_existing(&socket_path, &lim).err(),
             Some(FileError::NotRegularFile)
@@ -780,6 +808,44 @@ mod tests {
         // paired: an ordinary file with one link opens
         let plain = fresh(&scratch, "plain.img", &lim);
         FileMedium::open_existing(&plain, &lim).expect("a regular file with one link opens");
+    }
+
+    #[test]
+    fn a_socket_spelling_binds_up_to_the_sun_path_limit_and_past_it_is_a_named_error_not_a_panic() {
+        let limit = SUN_PATH_BYTES - 1;
+
+        // A fresh relative scratch has a short spelling whatever the absolute working directory or TMPDIR is, so a fixture socket
+        // fits. Fill the spelling to exactly the limit, and it binds.
+        let scratch = Scratch::in_directory(Path::new("."));
+        let room = limit - scratch.dir.as_os_str().len() - 1; // minus the separator
+        let at_limit = scratch.path(&"s".repeat(room));
+        assert_eq!(at_limit.as_os_str().len(), limit);
+        let listener = bind_socket(&at_limit).expect("a spelling of exactly the limit binds");
+        assert!(at_limit.exists(), "the socket file was made");
+        drop(listener);
+
+        // One byte more is a named error and nothing is made. `bind` itself returns an error for it too (it does not panic), so the
+        // limit used above is the platform's and not only this helper's assumption.
+        let past = scratch.path(&"t".repeat(room + 1));
+        assert_eq!(past.as_os_str().len(), limit + 1);
+        let refused = SocketPathError::TooLong {
+            len: limit + 1,
+            limit,
+        };
+        assert_eq!(bind_socket(&past).err(), Some(refused));
+        assert!(UnixListener::bind(&past).is_err());
+        assert!(!past.exists(), "a refused spelling makes no file");
+
+        // The failure seen on a worker: an absolute fixture path under a base as long as `sun_path` is over the limit, and says so by
+        // name. Nothing is created: the spelling is judged before the operating system is asked.
+        let deep = Path::new("/").join("x".repeat(SUN_PATH_BYTES)).join("s");
+        assert_eq!(
+            bind_socket(&deep).err(),
+            Some(SocketPathError::TooLong {
+                len: deep.as_os_str().len(),
+                limit,
+            })
+        );
     }
 
     #[test]

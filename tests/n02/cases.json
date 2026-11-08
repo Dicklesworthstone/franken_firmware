@@ -14,7 +14,8 @@
         "N02-S011",
         "N02-S014",
         "N02-S019",
-        "N02-S033"
+        "N02-S033",
+        "N02-S043"
       ],
       "rust_tests": [
         "a_forged_or_unknown_or_revoked_peer_changes_nothing",
@@ -104,7 +105,8 @@
       "id": "INV-WINDOW-COUNT",
       "claim": "When the ledger is full the oldest outcome is forgotten explicitly, and newer ones are still answered.",
       "scenarios": [
-        "N02-S004"
+        "N02-S004",
+        "N02-S039"
       ],
       "rust_tests": [
         "a_full_ledger_forgets_the_oldest_and_says_so",
@@ -311,7 +313,8 @@
       "claim": "Cancel withdraws a waiting ordinary command of the same peer before it commits, and changes nothing after, for another peer, or against a stop.",
       "scenarios": [
         "N02-S017",
-        "N02-S034"
+        "N02-S034",
+        "N02-S047"
       ],
       "rust_tests": [
         "a_cancel_withdraws_a_waiting_command_and_the_retry_is_told_so",
@@ -608,45 +611,70 @@
     {
       "id": "INV-ACK-ONCE",
       "claim": "An on-time acknowledgement completes its ledger entry exactly once, a second is a duplicate, and acknowledging does not change how long an outcome is remembered.",
-      "scenarios": [],
-      "scenario_inapplicable": "Acknowledgements are judged by the Rust tests in pipeline/ack.rs. The Python model has no acknowledgement operation and the golden scenario file has no `ack` step, so there is no independent expected output for them.",
+      "scenarios": [
+        "N02-S036",
+        "N02-S037",
+        "N02-S038",
+        "N02-S045"
+      ],
       "rust_tests": [
         "an_on_time_ack_completes_exactly_once",
         "the_budget_boundary_is_exact",
         "an_ack_does_not_change_how_long_an_outcome_is_remembered",
         "marking_acknowledged_is_first_once_then_already_and_absent_when_unknown",
-        "an_acknowledged_entry_is_remembered_exactly_as_long_as_an_unacknowledged_one"
+        "an_acknowledged_entry_is_remembered_exactly_as_long_as_an_unacknowledged_one",
+        "every_golden_scenario_matches_the_channel"
       ]
     },
     {
       "id": "INV-ACK-INERT",
       "claim": "An acknowledgement writes nothing: it never applies, re-applies or resurrects a command and never extends the lease, however late it is, before or after an epoch or lease change, and for a withdrawn or superseded command.",
-      "scenarios": [],
-      "scenario_inapplicable": "Acknowledgements are judged by the Rust tests in pipeline/ack.rs. The Python model has no acknowledgement operation and the golden scenario file has no `ack` step, so there is no independent expected output for them.",
+      "scenarios": [
+        "N02-S040",
+        "N02-S041",
+        "N02-S042",
+        "N02-S043",
+        "N02-S044",
+        "N02-S045",
+        "N02-S046",
+        "N02-S047"
+      ],
       "rust_tests": [
         "an_ack_after_the_epoch_moved_is_superseded_and_leaves_the_group_and_the_lease_alone",
         "a_late_ack_after_the_lease_lapsed_extends_nothing",
         "an_ack_for_a_withdrawn_command_resurrects_nothing",
         "an_ack_at_the_retention_boundary_is_out_of_window_and_changes_nothing",
         "the_honest_channel_passes_both_judges",
-        "the_planted_channel_that_applies_a_late_acks_result_fails_the_inertness_judge"
+        "the_planted_channel_that_applies_a_late_acks_result_fails_the_inertness_judge",
+        "every_golden_scenario_matches_the_channel"
       ]
     },
     {
       "id": "INV-ACK-NEVER-GATES",
       "claim": "Nothing waits for an acknowledgement: with acknowledgements pending, the local stop is the first settlement of the first step after it is accepted.",
-      "scenarios": [],
-      "scenario_inapplicable": "Acknowledgements are judged by the Rust tests in pipeline/ack.rs. The Python model has no acknowledgement operation and the golden scenario file has no `ack` step, so there is no independent expected output for them.",
+      "scenarios": [
+        "N02-S044"
+      ],
       "rust_tests": [
         "the_local_stop_takes_effect_at_the_first_step_even_with_acks_pending",
-        "the_planted_channel_whose_stop_waits_behind_pending_acks_fails_the_stop_judge"
+        "the_planted_channel_whose_stop_waits_behind_pending_acks_fails_the_stop_judge",
+        "every_golden_scenario_matches_the_channel"
       ]
     },
     {
       "id": "INV-ACK-TYPED",
       "claim": "Every acknowledgement is counted in exactly one typed bucket, on both sides of the budget and of the retention, and one that does not authenticate or does not match the recorded command changes nothing.",
-      "scenarios": [],
-      "scenario_inapplicable": "Acknowledgements are judged by the Rust tests in pipeline/ack.rs. The Python model has no acknowledgement operation and the golden scenario file has no `ack` step, so there is no independent expected output for them.",
+      "scenarios": [
+        "N02-S036",
+        "N02-S037",
+        "N02-S038",
+        "N02-S039",
+        "N02-S040",
+        "N02-S041",
+        "N02-S042",
+        "N02-S043",
+        "N02-S046"
+      ],
       "rust_tests": [
         "every_ack_is_counted_in_exactly_one_bucket",
         "a_late_ack_inside_retention_is_recorded_typed_and_counted",
@@ -656,7 +684,9 @@
         "an_acknowledgement_is_signed_over_fixed_bytes_that_no_request_proof_can_stand_in_for",
         "an_acknowledgement_needs_a_command_number",
         "eviction_for_capacity_forgets_the_unacknowledged_count_with_the_entry",
-        "marking_a_forgotten_entry_is_absent_even_at_the_instant_it_expires"
+        "marking_a_forgotten_entry_is_absent_even_at_the_instant_it_expires",
+        "every_golden_scenario_matches_the_channel",
+        "the_replay_notices_a_wrong_acknowledgement_expectation"
       ]
     },
     {
@@ -1215,7 +1245,8 @@
     "replay": [
       "every_golden_scenario_matches_the_channel",
       "the_replay_notices_a_wrong_expectation",
-      "scenario_ids_are_unique_and_every_operation_is_known"
+      "scenario_ids_are_unique_and_every_operation_is_known",
+      "the_replay_notices_a_wrong_acknowledgement_expectation"
     ],
     "restart": [
       "after_a_restart_late_absolute_and_relative_copies_are_refused_and_a_fresh_command_applies",
@@ -1249,6 +1280,7 @@
       "a_geometry_the_journal_cannot_use_or_a_file_cannot_bound_is_refused_before_anything_is_made",
       "a_file_that_is_not_this_format_is_refused_by_name_and_never_changed",
       "what_is_not_a_regular_file_with_one_link_is_refused_and_untouched",
+      "a_socket_spelling_binds_up_to_the_sun_path_limit_and_past_it_is_a_named_error_not_a_panic",
       "a_second_open_is_refused_while_the_first_lives_and_allowed_after",
       "a_file_the_owner_cannot_write_is_denied_and_unchanged",
       "offsets_are_checked_before_any_write_and_programming_only_clears_bits",

@@ -72,6 +72,16 @@
 //! one, is the same `401` with no body as everywhere else on the tailnet. The local legacy link carries no
 //! command ids, so there is nothing on it to acknowledge: the path is `404` there.
 //!
+//! # Topology events
+//!
+//! The `ZoneGroupState` document is built from the live session and the [`Directory`] each time it is asked
+//! for, and an event carries exactly the document a read would give at that moment. What makes a subscriber
+//! hear of a change is the owner telling the endpoint: [`Endpoint::publish`] after it changed the session (a
+//! member admitted or removed, the group moved to a new epoch) and also after it changed the [`Directory`] through
+//! [`Endpoint::directory_mut`] (where a member is, what its room is called), since the directory is part of the document. Only the topology
+//! subscribers are told of a change to the document; the other services hear nothing unless their own variables
+//! moved.
+//!
 //! # Faults say fixed words
 //!
 //! No fault, header or body carries text the peer sent. A fault is a [`Fault`] with a fixed reason.
@@ -273,6 +283,10 @@ pub(crate) enum Defect {
     AckUnauthenticatedTold,
     /// Serve the acknowledgement route on the local legacy link too.
     AckOnLegacy,
+    /// Never send a topology subscriber an event, whatever the document did.
+    TopologyNeverEvented,
+    /// Send the topology event a document that is not the one a read gives.
+    TopologyDocDiffersFromRead,
 }
 
 /// The G03 endpoint: GENA state, the directory of room facts, and the legacy bridge.
@@ -405,7 +419,10 @@ impl Endpoint {
         let defect = self.defect?;
         if matches!(
             defect,
-            Defect::ReapplyOnRetry | Defect::SuccessAfterRetention
+            Defect::ReapplyOnRetry
+                | Defect::SuccessAfterRetention
+                | Defect::TopologyNeverEvented
+                | Defect::TopologyDocDiffersFromRead
         ) {
             return None;
         }
@@ -472,11 +489,46 @@ impl Endpoint {
     }
 
     /// Bring every subscriber up to the session as it is now. The owner calls this after anything it
-    /// did to the session itself (a local change, a membership change), and it is called for it after
-    /// every command this module drives.
+    /// did to the session itself (a local change, a membership change, a move to a new epoch, a change to the
+    /// directory made through [`Endpoint::directory_mut`]), and it is called for it after every command this module drives.
     pub fn publish(&mut self, now_ns: u64, session: &UnifiedGroupSession) -> Vec<Notification> {
-        let state = self.state(session);
-        self.gena.publish(now_ns, &state)
+        let state = self.plant_topology_state(self.state(session));
+        let sent = self.gena.publish(now_ns, &state);
+        self.plant_topology_sent(sent)
+    }
+
+    /// The event state with the planted `TopologyDocDiffersFromRead` defect applied (tests only): the document an
+    /// event carries is not the one a read gives. Unchanged otherwise, and always outside test builds.
+    #[cfg(test)]
+    fn plant_topology_state(&self, mut state: EventState) -> EventState {
+        if self.defect == Some(Defect::TopologyDocDiffersFromRead) {
+            state.zone_group_state = state
+                .zone_group_state
+                .replace("ID=\"grp:", "ID=\"stale:grp:");
+        }
+        state
+    }
+
+    #[cfg(not(test))]
+    #[allow(clippy::unused_self)]
+    const fn plant_topology_state(&self, state: EventState) -> EventState {
+        state
+    }
+
+    /// The events with the planted `TopologyNeverEvented` defect applied (tests only): the topology subscribers
+    /// are never told. Unchanged otherwise, and always outside test builds.
+    #[cfg(test)]
+    fn plant_topology_sent(&self, mut sent: Vec<Notification>) -> Vec<Notification> {
+        if self.defect == Some(Defect::TopologyNeverEvented) {
+            sent.retain(|n| n.service != Service::ZoneGroupTopology);
+        }
+        sent
+    }
+
+    #[cfg(not(test))]
+    #[allow(clippy::unused_self)]
+    const fn plant_topology_sent(&self, sent: Vec<Notification>) -> Vec<Notification> {
+        sent
     }
 
     fn state(&self, session: &UnifiedGroupSession) -> EventState {
@@ -1145,6 +1197,7 @@ mod tests {
         restore_seq_floors_from_open,
     };
     use crate::channel::seqfloor::SeqFloors;
+    use crate::fsonos::xml::{Event, XmlReader};
 
     const EPOCH: u64 = 10;
     const LEASE_EXPIRY_NS: u64 = 1_000_000_000_000;
@@ -2946,6 +2999,328 @@ mod tests {
         assert_eq!(judge_ack_is_carried(&mut other), Ok(()));
     }
 
+    // ---- topology events: the live session and the directory, through the endpoint -------------
+    //
+    // Until here the topology event was only shown inside the subscription table, against a document written by
+    // hand. These go through the endpoint from a real session: the owner changes it and tells the endpoint, and a
+    // controller subscribed to the topology hears the document a read would give at that moment. As before, each
+    // check is a plain function over a rig, so it can be shown to pass the real endpoint and to fail one with a
+    // planted defect, and a failure begins with a tag that says why.
+
+    /// One member of the rig's group as the wire shows it after the owner renamed the kitchen: the document's
+    /// attribute is escaped (`&amp; &lt;Den&gt;`) and the whole document is then escaped again as the text of the
+    /// `ZoneGroupState` property, so the `&` of the first layer is `&amp;amp;` here. Written by hand; a Python check
+    /// recomputes it with an escaper of its own.
+    const RENAMED_MEMBER_ON_THE_WIRE: &str = "&lt;ZoneGroupMember UUID=\"kitchen\" Location=\"http://192.0.2.10:1400/xml/device_description.xml\" ZoneName=\"Patio &amp;amp; &amp;lt;Den&amp;gt;\" Invisible=\"0\" SWGen=\"1\"/&gt;";
+
+    /// The decoded text of every element of a body, by name, using the bounded reader (a SOAP response or an
+    /// event). The property wrappers carry no text of their own.
+    fn texts(body: &str) -> Vec<(String, String)> {
+        let mut reader = XmlReader::new(
+            body.as_bytes(),
+            XmlLimits {
+                max_bytes: 32 * 1024,
+                max_value_len: 16 * 1024,
+                ..XmlLimits::soap_request()
+            },
+        )
+        .expect("within bounds");
+        let mut out = Vec::new();
+        let mut current: Option<String> = None;
+        while let Some(event) = reader.next_event().expect("well formed") {
+            match event {
+                Event::Start { name, .. } if name != "e:propertyset" && name != "e:property" => {
+                    current = Some(name);
+                }
+                Event::Text(text) => {
+                    if let Some(name) = current.take() {
+                        out.push((name, text));
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    fn text_of(body: &str, name: &str) -> Option<String> {
+        texts(body)
+            .into_iter()
+            .find(|(element, _)| element == name)
+            .map(|(_, text)| text)
+    }
+
+    /// The document a read gives now.
+    fn read_topology(rig: &mut Rig) -> String {
+        let h = rig.legacy(ZGT, "GetZoneGroupState", &[]);
+        text_of(&h.response.body, "ZoneGroupState").expect("the read carries the document")
+    }
+
+    /// Subscribe to the four evented services on the local link, in the order RC, GRC, AVT, ZGT, and return
+    /// their ids.
+    fn subscribe_all(rig: &mut Rig) -> [String; 4] {
+        [RC, GRC, AVT, ZGT].map(|service| {
+            rig.event("SUBSCRIBE", service, &SUB).response.headers[0]
+                .1
+                .clone()
+        })
+    }
+
+    fn fixture_board() -> franken_board_profile::BoardProfile {
+        franken_board_profile::synthetic_test_fixture_catalog()
+            .into_iter()
+            .find(|p| p.model_number == "S5")
+            .expect("fixture model")
+    }
+
+    /// The owner admits `member` to the group (the session only; the endpoint is not told).
+    fn admit(rig: &mut Rig, member: &str, command_seq: u64) {
+        rig.session
+            .apply_command(FencedControlCommand {
+                epoch: EPOCH,
+                command_seq,
+                payload: GroupCommandPayload::AdmitMember {
+                    member_id: member.to_string(),
+                    board: fixture_board(),
+                    role: ChannelRole::Stereo,
+                },
+            })
+            .expect("the member is admitted");
+    }
+
+    fn remove(rig: &mut Rig, member: &str, command_seq: u64) {
+        rig.session
+            .apply_command(FencedControlCommand {
+                epoch: EPOCH,
+                command_seq,
+                payload: GroupCommandPayload::RemoveMember {
+                    member_id: member.to_string(),
+                },
+            })
+            .expect("the member is removed");
+    }
+
+    /// What the owner records for a member in the directory (two maps it fills): where its description is and what its room
+    /// is called. The endpoint is not told; the owner calls `publish` afterwards, as the loopback shim's owner does.
+    fn record_in_directory(rig: &mut Rig, member: &str, address: &str, room: &str) {
+        let directory = rig.endpoint.directory_mut();
+        let location = format!("http://{address}:1400/xml/device_description.xml");
+        directory.locations.insert(member.to_string(), location);
+        directory
+            .zone_names
+            .insert(member.to_string(), room.to_string());
+    }
+
+    /// The owner admits a member and tells the endpoint. The topology subscriber is told, and the document it is
+    /// given is the one a read gives now. Returns the events, so a test can also say who else was and was not
+    /// told. Failures begin `TOPOLOGY-NOT-ANNOUNCED` (the subscriber was not told) or `TOPOLOGY-STALE` (the
+    /// event's document is not the read's).
+    fn judge_membership_change_is_announced(rig: &mut Rig) -> Result<Vec<Notification>, String> {
+        let sids = subscribe_all(rig);
+        admit(rig, "porch", 5);
+        let events = rig.endpoint.publish(rig.now, &rig.session);
+        let Some(told) = events.iter().find(|n| n.sid == sids[3]) else {
+            return Err("TOPOLOGY-NOT-ANNOUNCED: the topology subscriber was not told".to_string());
+        };
+        let announced = text_of(&told.body, "ZoneGroupState");
+        let read = read_topology(rig);
+        if announced.as_deref() != Some(read.as_str()) {
+            return Err(
+                "TOPOLOGY-STALE: the event's document is not the one a read gives now".to_string(),
+            );
+        }
+        Ok(events)
+    }
+
+    /// The owner renames the kitchen in the endpoint's directory and publishes. One event is sent, to the topology subscriber. Returns
+    /// the events. Failures begin `TOPOLOGY-NOT-ANNOUNCED`.
+    fn judge_rename_is_announced_through_the_endpoint(
+        rig: &mut Rig,
+    ) -> Result<Vec<Notification>, String> {
+        let sids = subscribe_all(rig);
+        record_in_directory(rig, "kitchen", "192.0.2.10", "Patio & <Den>");
+        let events = rig.endpoint.publish(rig.now, &rig.session);
+        if events.len() != 1 || events[0].sid != sids[3] {
+            return Err(format!(
+                "TOPOLOGY-NOT-ANNOUNCED: {} events for a rename",
+                events.len()
+            ));
+        }
+        Ok(events)
+    }
+
+    #[test]
+    fn a_membership_change_is_announced_to_the_topology_subscriber_with_the_document_a_read_gives_and_to_no_one_else()
+     {
+        let mut rig = Rig::new();
+        let events = judge_membership_change_is_announced(&mut rig).unwrap();
+        assert_eq!(events.len(), 1, "no other service had anything to say");
+        assert_eq!(events[0].seq, 1);
+        let doc = text_of(&events[0].body, "ZoneGroupState").unwrap();
+        for member in ["kitchen", "den", "porch"] {
+            assert!(doc.contains(&format!("UUID=\"{member}\"")), "{member}");
+        }
+        assert_eq!(
+            text_of(&events[0].body, "FrankenStateRevision"),
+            Some(rig.session.state_revision.to_string())
+        );
+        assert_eq!(
+            text_of(&events[0].body, "FrankenEpoch"),
+            Some(EPOCH.to_string())
+        );
+        // Nothing has changed since: a second publish says nothing to anyone.
+        assert!(rig.endpoint.publish(rig.now, &rig.session).is_empty());
+    }
+
+    #[test]
+    fn a_member_leaving_is_announced_and_an_endpoint_that_left_is_told_nothing_false() {
+        let mut rig = Rig::new();
+        let sids = subscribe_all(&mut rig);
+        remove(&mut rig, "den", 5);
+        let events = rig.endpoint.publish(rig.now, &rig.session);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].sid, sids[3]);
+        let doc = text_of(&events[0].body, "ZoneGroupState").unwrap();
+        assert!(doc.contains("UUID=\"kitchen\"") && !doc.contains("UUID=\"den\""));
+        // The endpoint's own member leaves too: the topology says so, and RenderingControl has no volume to
+        // report, so its subscriber is told nothing rather than something false.
+        remove(&mut rig, "kitchen", 6);
+        let events = rig.endpoint.publish(rig.now, &rig.session);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].sid, sids[3]);
+        assert!(
+            !text_of(&events[0].body, "ZoneGroupState")
+                .unwrap()
+                .contains("kitchen")
+        );
+        let read = rig.legacy(RC, "GetVolume", &MASTER);
+        assert_eq!(fault_code(&read).as_deref(), Some("501"));
+    }
+
+    #[test]
+    fn a_group_that_moves_to_a_new_epoch_is_announced_as_a_new_group_and_wakes_no_one_else() {
+        let mut rig = Rig::new();
+        let sids = subscribe_all(&mut rig);
+        rig.session
+            .apply_command(FencedControlCommand {
+                epoch: 11,
+                command_seq: 3,
+                payload: GroupCommandPayload::MarkMemberClockLocked {
+                    member_id: "kitchen".to_string(),
+                },
+            })
+            .expect("a newer epoch is adopted");
+        let events = rig.endpoint.publish(rig.now, &rig.session);
+        assert_eq!(events.len(), 1, "the epoch rides along; it wakes nobody");
+        assert_eq!(events[0].sid, sids[3]);
+        let doc = text_of(&events[0].body, "ZoneGroupState").unwrap();
+        assert!(doc.contains("ID=\"grp:11\"") && !doc.contains("grp:10"));
+        assert_eq!(
+            text_of(&events[0].body, "FrankenEpoch"),
+            Some("11".to_string())
+        );
+    }
+
+    #[test]
+    fn a_late_subscriber_is_told_the_new_document_at_once_and_neither_is_told_it_twice() {
+        let mut rig = Rig::new();
+        let early = rig.event("SUBSCRIBE", ZGT, &SUB);
+        let early_sid = early.response.headers[0].1.clone();
+        assert_eq!(early.notifications[0].seq, 0);
+        admit(&mut rig, "porch", 5);
+        let events = rig.endpoint.publish(rig.now, &rig.session);
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            (events[0].sid.as_str(), events[0].seq),
+            (early_sid.as_str(), 1)
+        );
+        let late = rig.event("SUBSCRIBE", ZGT, &SUB);
+        assert_eq!(late.notifications.len(), 1);
+        assert_eq!(late.notifications[0].seq, 0);
+        let doc = text_of(&late.notifications[0].body, "ZoneGroupState").unwrap();
+        assert!(doc.contains("UUID=\"porch\""), "told everything at once");
+        assert!(rig.endpoint.publish(rig.now, &rig.session).is_empty());
+    }
+
+    #[test]
+    fn a_room_renamed_through_the_endpoint_is_announced_with_the_name_escaped_twice_and_no_one_else_hears()
+     {
+        let mut rig = Rig::new();
+        let events = judge_rename_is_announced_through_the_endpoint(&mut rig).unwrap();
+        assert_eq!(events[0].seq, 1);
+        let wire = &events[0].body;
+        assert!(wire.contains(RENAMED_MEMBER_ON_THE_WIRE), "{wire}");
+        // Decoded once the controller reads the document, and decoded again the name; markup in the name never
+        // becomes markup.
+        let doc = text_of(wire, "ZoneGroupState").unwrap();
+        assert!(
+            doc.contains("ZoneName=\"Patio &amp; &lt;Den&gt;\""),
+            "{doc}"
+        );
+        assert!(!doc.contains("<Den>"));
+        assert_eq!(doc, read_topology(&mut rig));
+    }
+
+    #[test]
+    fn a_directory_change_made_without_publishing_is_carried_by_the_next_publish_and_not_lost() {
+        let mut rig = Rig::new();
+        let sids = subscribe_all(&mut rig);
+        record_in_directory(&mut rig, "kitchen", "192.0.2.10", "Patio");
+        // The owner did not call `publish`, so nobody has been told. The next command's publish brings each
+        // subscriber up to date, each with what changed for it.
+        let h = rig.legacy(RC, "SetVolume", &set_volume("30"));
+        assert_eq!(h.notifications.len(), 2);
+        let told = |sid: &str| h.notifications.iter().find(|n| n.sid == sid);
+        assert!(told(&sids[0]).is_some_and(|n| n.body.contains("val=\"30\"")));
+        let doc = text_of(&told(&sids[3]).unwrap().body, "ZoneGroupState").unwrap();
+        assert!(doc.contains("ZoneName=\"Patio\""));
+        assert!(told(&sids[1]).is_none() && told(&sids[2]).is_none());
+    }
+
+    #[test]
+    fn the_planted_endpoint_that_never_announces_topology_fails_the_membership_judge() {
+        let mut broken = Rig::new();
+        broken.endpoint.plant(Defect::TopologyNeverEvented);
+        let verdict = judge_membership_change_is_announced(&mut broken);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|e| e.starts_with("TOPOLOGY-NOT-ANNOUNCED")),
+            "the planted defect was not caught for the right reason: {verdict:?}"
+        );
+        // A rename is announced by the same publish, so the rename judge sees it too.
+        let mut other = Rig::new();
+        other.endpoint.plant(Defect::TopologyNeverEvented);
+        let verdict = judge_rename_is_announced_through_the_endpoint(&mut other);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|e| e.starts_with("TOPOLOGY-NOT-ANNOUNCED")),
+            "{verdict:?}"
+        );
+        // Remove-the-plant control.
+        assert!(judge_membership_change_is_announced(&mut Rig::new()).is_ok());
+    }
+
+    #[test]
+    fn the_planted_endpoint_that_announces_another_document_than_a_read_gives_fails_the_membership_judge()
+     {
+        let mut broken = Rig::new();
+        broken.endpoint.plant(Defect::TopologyDocDiffersFromRead);
+        let verdict = judge_membership_change_is_announced(&mut broken);
+        assert!(
+            verdict
+                .as_ref()
+                .is_err_and(|e| e.starts_with("TOPOLOGY-STALE")),
+            "the planted defect was not caught for the right reason: {verdict:?}"
+        );
+        // It still announces, so the rename judge, which asks only whether the subscriber was told, passes.
+        let mut other = Rig::new();
+        other.endpoint.plant(Defect::TopologyDocDiffersFromRead);
+        assert!(judge_rename_is_announced_through_the_endpoint(&mut other).is_ok());
+        assert!(judge_membership_change_is_announced(&mut Rig::new()).is_ok());
+    }
+
     // ---- GENA through the endpoint -----------------------------------------------------------
 
     const SUB: [(&str, &str); 3] = [
@@ -3202,6 +3577,38 @@ mod tests {
         assert_eq!(again.response.status, 200);
         assert_ne!(again.response.headers[0].1, sid);
         assert_eq!(again.notifications[0].seq, 0);
+    }
+
+    #[test]
+    fn a_renewal_with_a_refused_timeout_is_a_400_and_the_subscription_stands_as_it_was() {
+        let sec = 1_000_000_000u64;
+        let mut rig = Rig::new();
+        let sid = rig.event("SUBSCRIBE", RC, &SUB).response.headers[0]
+            .1
+            .clone();
+        // The permitted positive: a renewal at 10 s runs 300 s from there.
+        rig.now = 10 * sec;
+        let ok = rig.event(
+            "SUBSCRIBE",
+            RC,
+            &[("SID", sid.as_str()), ("TIMEOUT", "Second-300")],
+        );
+        assert_eq!(ok.response.status, 200);
+        // A renewal whose TIMEOUT is refused is a 400 with nothing in it, and it neither extends the
+        // subscription nor drops it.
+        rig.now = 20 * sec;
+        for bad in ["Second-infinitely", "Seconds-infinite", "Second-infinite5"] {
+            let h = rig.event("SUBSCRIBE", RC, &[("SID", sid.as_str()), ("TIMEOUT", bad)]);
+            assert_eq!(h.response.status, 400, "{bad}");
+            assert!(
+                h.response.body.is_empty() && h.notifications.is_empty(),
+                "{bad}"
+            );
+        }
+        assert_eq!(rig.endpoint.expire_subscriptions(310 * sec - 1), 0);
+        assert_eq!(rig.endpoint.subscriptions().len(), 1);
+        assert_eq!(rig.endpoint.expire_subscriptions(310 * sec), 1);
+        assert!(rig.endpoint.subscriptions().is_empty());
     }
 
     #[test]

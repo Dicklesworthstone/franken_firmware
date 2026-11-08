@@ -6,6 +6,7 @@
     "Start state of every scenario: group epoch 10, state revision 2, members kitchen and den at volume 50 and unmuted, group master volume 50, nothing stopped.",
     "Peers: ctl-a and ctl-b (remote controllers, keys bound to epoch 10), panel (the local user, not epoch-bound), rogue (a remote controller whose key is bound to epoch 900).",
     "Times are in milliseconds. A rate limit [burst, interval_ms] allows `burst` actions at once and one more per interval.",
+    "An `ack` step is an acknowledgement of a command by its sender: `at_ms`, `peer`, `seq`, `epoch` (the epoch the command was issued under) and optionally `proof: forged`. Its `expect` is one of on_time:<age_ms>, late:<age_ms>:<over_by_ms>, superseded:<recorded_epoch>:<current_epoch>, duplicate, not_settled, unknown, out_of_window:<floor>, mismatch:<recorded_epoch>, unauthenticated:<unknown_peer|revoked|bad_proof>. The age is the acknowledgement's time minus the time of the step that settled the command; the budget is `ack_budget_ms`.",
     "These are host-simulation vectors for a message-handling state machine. They say nothing about a network, a real MAC, or a board."
   ],
   "base_config": {
@@ -20,7 +21,8 @@
     "priority_rate": [100000, 1],
     "session_seq_base": 1000,
     "lease_ms": 1000000,
-    "lease_margin_ms": 0
+    "lease_margin_ms": 0,
+    "ack_budget_ms": 2000
   },
   "signing_vectors": [
     {
@@ -617,6 +619,169 @@
         {"op": "step", "at_ms": 901, "expect": ["ctl-a#3=refused:lease:authority_expired"]}
       ],
       "final": {"revision": 4, "epoch": 10, "group_volume": 61, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S036",
+      "title": "an acknowledgement inside the budget completes the entry once; the second is a duplicate",
+      "invariants": ["INV-ACK-ONCE", "INV-ACK-TYPED"],
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 61}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=committed:3"]},
+        {"op": "ack", "at_ms": 1500, "peer": "ctl-a", "seq": 1, "epoch": 10, "expect": "on_time:1500"},
+        {"op": "ack", "at_ms": 1600, "peer": "ctl-a", "seq": 1, "epoch": 10, "expect": "duplicate"}
+      ],
+      "final": {"revision": 3, "epoch": 10, "group_volume": 61, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S037",
+      "title": "the budget boundary is exact: age equal to the 2000 ms budget is on time, one millisecond over is late and says by how much",
+      "invariants": ["INV-ACK-TYPED", "INV-ACK-ONCE"],
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 61}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 2, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 62}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=committed:3", "ctl-a#2=committed:4"]},
+        {"op": "ack", "at_ms": 2000, "peer": "ctl-a", "seq": 1, "epoch": 10, "expect": "on_time:2000"},
+        {"op": "ack", "at_ms": 2001, "peer": "ctl-a", "seq": 2, "epoch": 10, "expect": "late:2001:1"}
+      ],
+      "final": {"revision": 4, "epoch": 10, "group_volume": 62, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S038",
+      "title": "the retention boundary is exact: one millisecond short of it a first acknowledgement is late, at it the outcome is forgotten and even an earlier acknowledgement is no longer known",
+      "invariants": ["INV-ACK-TYPED", "INV-ACK-ONCE"],
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 61}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 2, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 62}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=committed:3", "ctl-a#2=committed:4"]},
+        {"op": "ack", "at_ms": 29999, "peer": "ctl-a", "seq": 1, "epoch": 10, "expect": "late:29999:27999"},
+        {"op": "ack", "at_ms": 30000, "peer": "ctl-a", "seq": 2, "epoch": 10, "expect": "out_of_window:2"},
+        {"op": "ack", "at_ms": 30001, "peer": "ctl-a", "seq": 1, "epoch": 10, "expect": "out_of_window:2"}
+      ],
+      "final": {"revision": 4, "epoch": 10, "group_volume": 62, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S039",
+      "title": "an outcome evicted for want of ledger room is forgotten: its acknowledgement says out of window with the floor, a newer one is on time",
+      "invariants": ["INV-ACK-TYPED", "INV-WINDOW-COUNT"],
+      "config": {"ledger_capacity": 2},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 61}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 2, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 62}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 3, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 63}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=committed:3", "ctl-a#2=committed:4", "ctl-a#3=committed:5"]},
+        {"op": "ack", "at_ms": 100, "peer": "ctl-a", "seq": 1, "epoch": 10, "expect": "out_of_window:1"},
+        {"op": "ack", "at_ms": 100, "peer": "ctl-a", "seq": 3, "epoch": 10, "expect": "on_time:100"}
+      ],
+      "final": {"revision": 5, "epoch": 10, "group_volume": 63, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S040",
+      "title": "an acknowledgement for a command still waiting in a queue is not settled and changes nothing; once settled it is acknowledged normally",
+      "invariants": ["INV-ACK-TYPED", "INV-ACK-INERT"],
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 61}, "expect": "queued:ordinary"},
+        {"op": "ack", "at_ms": 10, "peer": "ctl-a", "seq": 1, "epoch": 10, "expect": "not_settled"},
+        {"op": "step", "at_ms": 20, "expect": ["ctl-a#1=committed:3"]},
+        {"op": "ack", "at_ms": 30, "peer": "ctl-a", "seq": 1, "epoch": 10, "expect": "on_time:10"}
+      ],
+      "final": {"revision": 3, "epoch": 10, "group_volume": 61, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S041",
+      "title": "an acknowledgement for a number never seen is unknown, and one naming another epoch than the command was issued under is a mismatch that changes nothing",
+      "invariants": ["INV-ACK-TYPED", "INV-ACK-INERT"],
+      "steps": [
+        {"op": "ack", "at_ms": 0, "peer": "ctl-a", "seq": 9, "epoch": 10, "expect": "unknown"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 61}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=committed:3"]},
+        {"op": "ack", "at_ms": 100, "peer": "ctl-a", "seq": 1, "epoch": 11, "expect": "mismatch:10"},
+        {"op": "ack", "at_ms": 200, "peer": "ctl-a", "seq": 1, "epoch": 10, "expect": "on_time:200"}
+      ],
+      "final": {"revision": 3, "epoch": 10, "group_volume": 61, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S042",
+      "title": "an acknowledgement after the group moved to a newer epoch is superseded, whether on time or past the budget, and a second is a duplicate",
+      "invariants": ["INV-ACK-TYPED", "INV-ACK-INERT"],
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 61}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 2, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 62}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=committed:3", "ctl-a#2=committed:4"]},
+        {"op": "session_epoch", "epoch": 11},
+        {"op": "ack", "at_ms": 100, "peer": "ctl-a", "seq": 1, "epoch": 10, "expect": "superseded:10:11"},
+        {"op": "ack", "at_ms": 150, "peer": "ctl-a", "seq": 1, "epoch": 10, "expect": "duplicate"},
+        {"op": "ack", "at_ms": 5000, "peer": "ctl-a", "seq": 2, "epoch": 10, "expect": "superseded:10:11"}
+      ],
+      "final": {"revision": 5, "epoch": 11, "group_volume": 62, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S043",
+      "title": "an acknowledgement that does not authenticate (a forged proof, a stranger, a revoked peer) changes nothing: the genuine one is still on time",
+      "invariants": ["INV-ACK-TYPED", "INV-ACK-INERT", "INV-AUTH-FIRST"],
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 61}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-b", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 62}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=committed:3", "ctl-b#1=committed:4"]},
+        {"op": "ack", "at_ms": 100, "peer": "ctl-a", "seq": 1, "epoch": 10, "proof": "forged", "expect": "unauthenticated:bad_proof"},
+        {"op": "ack", "at_ms": 110, "peer": "stranger", "seq": 1, "epoch": 10, "expect": "unauthenticated:unknown_peer"},
+        {"op": "revoke", "peer": "ctl-b"},
+        {"op": "ack", "at_ms": 120, "peer": "ctl-b", "seq": 1, "epoch": 10, "expect": "unauthenticated:revoked"},
+        {"op": "ack", "at_ms": 200, "peer": "ctl-a", "seq": 1, "epoch": 10, "expect": "on_time:200"}
+      ],
+      "final": {"revision": 4, "epoch": 10, "group_volume": 62, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S044",
+      "title": "unacknowledged outcomes never delay a stop: with four pending the local stop is the first settlement of the first step after it is accepted",
+      "invariants": ["INV-ACK-NEVER-GATES", "INV-ACK-INERT"],
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 61}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 2, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 62}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 3, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 63}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 4, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 64}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=committed:3", "ctl-a#2=committed:4", "ctl-a#3=committed:5", "ctl-a#4=committed:6"]},
+        {"op": "ack", "at_ms": 5, "peer": "ctl-a", "seq": 1, "epoch": 10, "expect": "on_time:5"},
+        {"op": "submit", "at_ms": 10, "peer": "panel", "seq": 1, "epoch": 0, "rev": null, "cmd": {"kind": "stop", "now_ns": 1000, "tail_ns": 500}, "expect": "queued:priority"},
+        {"op": "step", "at_ms": 10, "expect": ["panel#1=committed:7"]}
+      ],
+      "final": {"revision": 7, "epoch": 10, "group_volume": 64, "kitchen": 50, "den": 50, "muted": [], "stopped": true}
+    },
+    {
+      "id": "N02-S045",
+      "title": "an acknowledged outcome is remembered as long as an unacknowledged one: a retry of the acknowledged command is still answered from the ledger",
+      "invariants": ["INV-ACK-INERT", "INV-ACK-ONCE"],
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 61}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=committed:3"]},
+        {"op": "ack", "at_ms": 10, "peer": "ctl-a", "seq": 1, "epoch": 10, "expect": "on_time:10"},
+        {"op": "submit", "at_ms": 20, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 61}, "expect": "settled:committed:3"}
+      ],
+      "final": {"revision": 3, "epoch": 10, "group_volume": 61, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S046",
+      "title": "a command refused only for want of a lease is not remembered, so an acknowledgement of it is unknown",
+      "invariants": ["INV-ACK-TYPED", "INV-ACK-INERT"],
+      "config": {"lease": "none"},
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 60}, "expect": "queued:ordinary"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=refused:no_lease"]},
+        {"op": "ack", "at_ms": 10, "peer": "ctl-a", "seq": 1, "epoch": 10, "expect": "unknown"}
+      ],
+      "final": {"revision": 2, "epoch": 10, "group_volume": 50, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
+    },
+    {
+      "id": "N02-S047",
+      "title": "an acknowledgement for a withdrawn command completes its entry and resurrects nothing: the retry is still answered withdrawn",
+      "invariants": ["INV-ACK-INERT", "INV-CANCEL"],
+      "steps": [
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 60}, "expect": "queued:ordinary"},
+        {"op": "submit", "at_ms": 0, "peer": "ctl-a", "seq": 2, "epoch": 10, "rev": null, "cmd": {"kind": "cancel", "target_seq": 1}, "expect": "queued:priority"},
+        {"op": "step", "at_ms": 0, "expect": ["ctl-a#1=withdrawn", "ctl-a#2=cancel_applied:1"]},
+        {"op": "ack", "at_ms": 50, "peer": "ctl-a", "seq": 1, "epoch": 10, "expect": "on_time:50"},
+        {"op": "submit", "at_ms": 60, "peer": "ctl-a", "seq": 1, "epoch": 10, "rev": 2, "cmd": {"kind": "set_group_volume", "volume": 60}, "expect": "settled:withdrawn"}
+      ],
+      "final": {"revision": 2, "epoch": 10, "group_volume": 50, "kitchen": 50, "den": 50, "muted": [], "stopped": false}
     }
   ]
 }

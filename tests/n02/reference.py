@@ -8,7 +8,9 @@ deliberately built differently from the Rust:
   Rust uses a token bucket with a refill loop; tests/n02/test_reference_model.py checks that the two
   formulations agree on random schedules;
 * the outcome memory is one ordered list of records plus a floor table, with lookups done by scan;
-* "stopped" is a flag on the model, where the Rust reads each member's lifecycle back.
+* "stopped" is a flag on the model, where the Rust reads each member's lifecycle back;
+* an acknowledgement is decided from the contract's table (section 7), by scanning the record list and the floor table, and
+  its age is read off the model's own clock where the Rust asks its ledger.
 
 It replays crates/franken-control/tests/vectors/n02_scenarios.json, whose expectations were worked
 out by hand before either implementation produced them, and checks the signing-bytes vectors with
@@ -180,6 +182,12 @@ class Model:
             ],
             0,
         )
+        # every acknowledgement lands in exactly one of these (section 7)
+        self.ack_stats = dict.fromkeys(
+            ["received", "unauthenticated", "out_of_window", "not_settled", "unknown", "mismatch", "duplicate",
+             "superseded", "late", "on_time"],
+            0,
+        )
 
     # -- session -------------------------------------------------------------
 
@@ -292,8 +300,78 @@ class Model:
             self._forget(self.records[0])
         self.records.append(
             {"peer": item["peer"], "seq": item["seq"], "body": body_of(item), "outcome": outcome,
-             "at": self.clock}
+             "at": self.clock, "acked": False}
         )
+
+    # -- acknowledgements ----------------------------------------------------
+    #
+    # An acknowledgement is the sender saying it saw the outcome of one of its commands. It is checked like every other message
+    # (who is calling first), then against what the outcome memory knows, and it changes nothing but one flag on one record.
+    # The small hooks below are the places a deliberately broken variant overrides (tests/n02/test_reference_model.py).
+
+    def _ack_age_out(self, now):
+        self._age_out(now)
+
+    def _ack_floor(self, peer, seq):
+        """The floor if the number is forgotten (aged out or evicted), else None."""
+        if peer in self.floors and seq <= self.floors[peer]:
+            return self.floors[peer]
+        return None
+
+    def _ack_waiting(self, peer, seq):
+        return any(q["peer"] == peer and q["seq"] == seq for lane in self.queues.values() for q in lane)
+
+    def _ack_epoch_matches(self, recorded_epoch, epoch):
+        return recorded_epoch == epoch
+
+    def _ack_already(self, record):
+        return record["acked"]
+
+    def _ack_class(self, age, recorded_epoch):
+        """How a first acknowledgement is typed: a command issued under an epoch the group has left is superseded, whatever
+        its age; else past the budget is late (the budget itself is on time); else on time."""
+        if recorded_epoch < self.epoch:
+            return f"superseded:{recorded_epoch}:{self.epoch}"
+        over = age - self.cfg["ack_budget_ms"]
+        if over > 0:
+            return f"late:{age}:{over}"
+        return f"on_time:{age}"
+
+    def ack(self, now, peer, seq, epoch, forged=False):
+        stats = self.ack_stats
+        stats["received"] += 1
+        # 1. who is calling, before the memory is read
+        if peer not in self.peers:
+            stats["unauthenticated"] += 1
+            return "unauthenticated:" + ("revoked" if peer in self.revoked else "unknown_peer")
+        if forged:
+            stats["unauthenticated"] += 1
+            return "unauthenticated:bad_proof"
+        # 2. what the memory knows: forget what has aged out, then look
+        self._ack_age_out(now)
+        record = self._find(peer, seq)
+        if record is None:
+            floor = self._ack_floor(peer, seq)
+            if floor is not None:
+                stats["out_of_window"] += 1
+                return f"out_of_window:{floor}"
+            if self._ack_waiting(peer, seq):
+                stats["not_settled"] += 1
+                return "not_settled"
+            stats["unknown"] += 1
+            return "unknown"
+        recorded_epoch = record["body"][2]
+        if not self._ack_epoch_matches(recorded_epoch, epoch):
+            stats["mismatch"] += 1
+            return f"mismatch:{recorded_epoch}"
+        if self._ack_already(record):
+            stats["duplicate"] += 1
+            return "duplicate"
+        # 3. mark the record: this is the whole effect
+        record["acked"] = True
+        result = self._ack_class(self.clock - record["at"], recorded_epoch)
+        stats[result.split(":")[0]] += 1
+        return result
 
     # -- submit --------------------------------------------------------------
 
@@ -495,6 +573,9 @@ class Model:
     def accounted(self):
         return sum(v for k, v in self.stats.items() if k != "received")
 
+    def ack_accounted(self):
+        return sum(v for k, v in self.ack_stats.items() if k != "received")
+
 
 def body_of(item):
     """What identifies a request for the purpose of telling a retry from a different request."""
@@ -533,7 +614,7 @@ def foreign_token(model, flaw, at_ms):
 
 def run_step(model, step):
     """Perform one scenario step on `model`. Returns what it produced, to be compared with the step's
-    `expect`: a string for a submit or a lease operation, a list for a step, or None."""
+    `expect`: a string for a submit, an acknowledgement or a lease operation, a list for a step, or None."""
     op = step["op"]
     if op == "submit":
         got = None
@@ -547,6 +628,8 @@ def run_step(model, step):
         return got
     if op == "step":
         return model.step(step["at_ms"])
+    if op == "ack":
+        return model.ack(step["at_ms"], step["peer"], step["seq"], step["epoch"], forged=step.get("proof") == "forged")
     if op == "session_epoch":
         model.force_epoch(step["epoch"])
     elif op == "rebind":
@@ -580,6 +663,9 @@ def replay(doc, scenario, model_class=Model):
             if why:
                 problems.append(f"{where}: the Rust body constructor refuses this request ({why})")
                 continue
+        if step["op"] == "ack" and step["seq"] < 1:
+            problems.append(f"{where}: the Rust acknowledgement constructor refuses a zero number")
+            continue
         try:
             got = run_step(model, step)
         except ValueError as error:
@@ -591,6 +677,8 @@ def replay(doc, scenario, model_class=Model):
         problems.append(f"{scenario['id']} final: expected {scenario['final']!r}, got {model.final()!r}")
     if model.accounted() != model.stats["received"]:
         problems.append(f"{scenario['id']} accounting: {model.stats!r}")
+    if model.ack_accounted() != model.ack_stats["received"]:
+        problems.append(f"{scenario['id']} acknowledgement accounting: {model.ack_stats!r}")
     return problems
 
 

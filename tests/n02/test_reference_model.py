@@ -83,7 +83,7 @@ class Scenarios(unittest.TestCase):
             self.assertIn("final", s)
             for step in s["steps"]:
                 self.assertIn(step["op"], {"submit", "step", "session_epoch", "rebind", "revoke", "restart", "external_command",
-                                           "lease", "foreign_lease", "advance_epoch"})
+                                           "lease", "foreign_lease", "advance_epoch", "ack"})
 
     def test_the_replay_reports_a_wrong_expectation(self):
         d = doc()
@@ -102,6 +102,7 @@ class Scenarios(unittest.TestCase):
                 for step in s["steps"]:
                     ref.run_step(model, step)
                 self.assertEqual(model.accounted(), model.stats["received"])
+                self.assertEqual(model.ack_accounted(), model.ack_stats["received"])
 
 
 # Deliberately broken channels. Each must be caught by the vectors; the unbroken model must pass them
@@ -259,6 +260,93 @@ class NoExpiry(ref.Model):
             self.cfg = saved
 
 
+class AckBudgetInclusive(ref.Model):
+    """Calls a first acknowledgement late when its age equals the budget, not only when it exceeds it."""
+
+    def _ack_class(self, age, recorded_epoch):
+        if recorded_epoch < self.epoch:
+            return super()._ack_class(age, recorded_epoch)
+        over = age - self.cfg["ack_budget_ms"]
+        return f"late:{age}:{over}" if over >= 0 else f"on_time:{age}"
+
+
+class AckLateBeforeSuperseded(ref.Model):
+    """Types a first acknowledgement past the budget as late even when the group has moved to a newer epoch."""
+
+    def _ack_class(self, age, recorded_epoch):
+        over = age - self.cfg["ack_budget_ms"]
+        if over > 0:
+            return f"late:{age}:{over}"
+        return super()._ack_class(age, recorded_epoch)
+
+
+class AckRetentionOffByOne(ref.Model):
+    """Forgets an outcome one millisecond after its retention instead of at it, so an acknowledgement at the boundary finds it."""
+
+    def _ack_age_out(self, now):
+        self.clock = max(self.clock, now)
+        while self.records and self.clock - self.records[0]["at"] > self.cfg["retention_ms"]:
+            self._forget(self.records[0])
+
+
+class AckDuplicateAsFirst(ref.Model):
+    """Does not remember that an entry was acknowledged, so a second acknowledgement completes it again."""
+
+    def _ack_already(self, record):
+        return False
+
+
+class AckMismatchIgnored(ref.Model):
+    """Accepts an acknowledgement naming another epoch than the command was issued under."""
+
+    def _ack_epoch_matches(self, recorded_epoch, epoch):
+        return True
+
+
+class AckUnauthConsumes(ref.Model):
+    """Lets an acknowledgement that fails authentication mark the entry, so the genuine one finds it already acknowledged."""
+
+    def ack(self, now, peer, seq, epoch, forged=False):
+        if forged:
+            record = self._find(peer, seq)
+            if record:
+                record["acked"] = True
+        return super().ack(now, peer, seq, epoch, forged)
+
+
+class AckGatesStop(ref.Model):
+    """Holds priority work back while any outcome is unacknowledged: a stop waits for acknowledgements."""
+
+    def _next(self):
+        if any(not record["acked"] for record in self.records):
+            return self.queues["ordinary"].pop(0) if self.queues["ordinary"] else None
+        return super()._next()
+
+
+class AckReleasesEntry(ref.Model):
+    """Drops an entry as soon as it is acknowledged, so its retention is shortened and a retry is no longer answered."""
+
+    def ack(self, now, peer, seq, epoch, forged=False):
+        result = super().ack(now, peer, seq, epoch, forged)
+        if result.split(":")[0] in ("on_time", "late", "superseded"):
+            self.records.remove(self._find(peer, seq))
+        return result
+
+
+class AckNotSettledAsUnknown(ref.Model):
+    """Does not look at the queues: a command still waiting is reported as never seen."""
+
+    def _ack_waiting(self, peer, seq):
+        return False
+
+
+class AckForgottenAsUnknown(ref.Model):
+    """Does not consult the floor table: a forgotten number is reported as never seen."""
+
+    def _ack_floor(self, peer, seq):
+        return None
+
+
 class Mutations(unittest.TestCase):
     def failing(self, model_class):
         d = doc()
@@ -288,10 +376,58 @@ class Mutations(unittest.TestCase):
             LeaseIgnoresExpiry: "N02-S031",
             IgnoresMargin: "N02-S035",
             NoExpiry: "N02-S016",
+            AckBudgetInclusive: "N02-S037",
+            AckLateBeforeSuperseded: "N02-S042",
+            AckRetentionOffByOne: "N02-S038",
+            AckDuplicateAsFirst: "N02-S036",
+            AckMismatchIgnored: "N02-S041",
+            AckUnauthConsumes: "N02-S043",
+            AckGatesStop: "N02-S044",
+            AckReleasesEntry: "N02-S045",
+            AckNotSettledAsUnknown: "N02-S040",
+            AckForgottenAsUnknown: "N02-S039",
         }
         for broken, sid in expected.items():
             with self.subTest(broken.__name__):
                 self.assertIn(sid, self.failing(broken))
+
+
+class AckScenarios(unittest.TestCase):
+    """The slow-acknowledgement half of acceptance row 15: golden scenarios for the nine typed outcomes, judged by the model."""
+
+    KINDS = {"on_time", "late", "superseded", "duplicate", "not_settled", "unknown", "out_of_window", "mismatch",
+             "unauthenticated"}
+
+    def acks(self):
+        return [(s["id"], st) for s in doc()["scenarios"] for st in s["steps"] if st["op"] == "ack"]
+
+    def test_every_typed_outcome_is_expected_by_some_scenario(self):
+        self.assertEqual({st["expect"].split(":")[0] for _, st in self.acks()}, self.KINDS)
+
+    def test_both_sides_of_each_boundary_and_each_authentication_failure_are_pinned(self):
+        expects = {st["expect"] for _, st in self.acks()}
+        for needed in ("on_time:2000", "late:2001:1", "late:29999:27999", "out_of_window:2", "superseded:10:11",
+                       "unauthenticated:bad_proof", "unauthenticated:unknown_peer", "unauthenticated:revoked"):
+            self.assertIn(needed, expects)
+
+    def test_a_forged_proof_is_set_only_where_the_expectation_is_a_bad_proof(self):
+        for sid, st in self.acks():
+            self.assertEqual(st.get("proof") == "forged", st["expect"] == "unauthenticated:bad_proof", sid)
+
+    def test_the_budget_in_the_file_is_the_one_the_rust_channel_starts_from(self):
+        source = (CHANNEL_SRC / "pipeline.rs").read_text(encoding="utf-8")
+        match = re.search(r"ack_budget_ns: ([0-9_]+) \* MS,", source)
+        self.assertTrue(match, "no ack_budget_ns in ChannelConfig::provisional")
+        self.assertEqual(int(match.group(1).replace("_", "")), doc()["base_config"]["ack_budget_ms"])
+
+    def test_the_boundaries_are_exact_in_the_unbroken_model_and_a_broken_one_moves_them(self):
+        d = doc()
+        s = scenario(d, "N02-S037")
+        self.assertEqual(ref.replay(d, s), [])
+        self.assertTrue(ref.replay(d, s, AckBudgetInclusive))
+        s = scenario(d, "N02-S038")
+        self.assertEqual(ref.replay(d, s), [])
+        self.assertTrue(ref.replay(d, s, AckRetentionOffByOne))
 
 
 class Limiter(unittest.TestCase):

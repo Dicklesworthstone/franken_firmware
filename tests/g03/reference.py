@@ -78,6 +78,7 @@ class Options:
     forget_late_subscriber: bool = False  # a new subscriber is not told the current state
     unbounded_table: bool = False        # no cap on subscriptions
     renew_from_old_expiry: bool = False  # a renewal extends the old expiry rather than starting at now
+    renew_bad_timeout_extends: bool = False  # a renewal whose TIMEOUT is refused still runs from now, at the default
     text_escape_only_angle: bool = False  # escape < and > but not &
     keep_control_characters: bool = False  # write a control character instead of U+FFFD
 
@@ -558,7 +559,14 @@ class Gena:
         if (callback is not None or nt is not None) and not self.opts.renewal_takes_callback:
             raise Fault(400)
         self.expire(now)
-        secs = self.timeout(timeout)
+        try:
+            secs = self.timeout(timeout)
+        except Fault:
+            if self.opts.renew_bad_timeout_extends:
+                for e in self.entries:
+                    if e["sid"] == sid and e["service"] == service:
+                        e["expires"] = now + self.config["default_timeout_secs"] * NS
+            raise
         for e in self.entries:
             if e["sid"] == sid and e["service"] == service:
                 base = e["expires"] if self.opts.renew_from_old_expiry else now

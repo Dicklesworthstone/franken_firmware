@@ -280,11 +280,12 @@
     },
     {
       "id": "G03-I15",
-      "statement": "A renewal runs from now and keeps the id; a renewal naming a callback or NT is refused; an unknown, expired or other-service id is 412.",
+      "statement": "A renewal runs from now and keeps the id; a renewal naming a callback or NT is refused; a renewal whose TIMEOUT is refused is a 400 and the subscription stands exactly as it was, neither extended nor dropped; an unknown, expired or other-service id is 412.",
       "vectors": [
         "gena-expiry-and-renewal",
         "gena-renewal-rules",
-        "gena-second-infinite-is-the-upnp-unbounded-request"
+        "gena-second-infinite-is-the-upnp-unbounded-request",
+        "gena-a-renewal-with-a-bad-timeout-changes-nothing"
       ],
       "rust_tests": [
         "gena::a_renewal_runs_from_now_and_keeps_the_id",
@@ -292,7 +293,8 @@
         "gena::a_stale_or_unknown_or_other_service_id_is_a_412",
         "server::renew_and_unsubscribe_follow_the_rules",
         "gena::second_infinite_expires_at_the_default_and_a_renewal_with_it_runs_from_now",
-        "server::a_lapsed_second_infinite_grant_is_a_412_on_renewal_and_a_fresh_subscribe_gets_a_new_id"
+        "server::a_lapsed_second_infinite_grant_is_a_412_on_renewal_and_a_fresh_subscribe_gets_a_new_id",
+        "server::a_renewal_with_a_refused_timeout_is_a_400_and_the_subscription_stands_as_it_was"
       ]
     },
     {
@@ -522,6 +524,28 @@
         "server::the_acknowledgement_route_is_a_post_route_of_its_own",
         "server::the_planted_adapter_that_tells_a_bad_proof_apart_fails_the_silence_judge",
         "server::the_planted_adapter_that_serves_acknowledgements_on_the_local_link_fails_the_silence_judge"
+      ]
+    },
+    {
+      "id": "G03-I34",
+      "statement": "A change to the group made to the live session reaches a topology subscriber through the endpoint as the document a read gives at that moment, with the session's revision and epoch, and reaches no other service: a member admitted, a member removed (an endpoint that left says nothing false), a move to a new epoch (a new group id); a late subscriber is told the new document at once and neither is told it twice; an endpoint that never announces it, or announces another document than a read gives, fails the judge while the real one passes.",
+      "vectors": [],
+      "rust_tests": [
+        "server::a_membership_change_is_announced_to_the_topology_subscriber_with_the_document_a_read_gives_and_to_no_one_else",
+        "server::a_member_leaving_is_announced_and_an_endpoint_that_left_is_told_nothing_false",
+        "server::a_group_that_moves_to_a_new_epoch_is_announced_as_a_new_group_and_wakes_no_one_else",
+        "server::a_late_subscriber_is_told_the_new_document_at_once_and_neither_is_told_it_twice",
+        "server::the_planted_endpoint_that_never_announces_topology_fails_the_membership_judge",
+        "server::the_planted_endpoint_that_announces_another_document_than_a_read_gives_fails_the_membership_judge"
+      ]
+    },
+    {
+      "id": "G03-I35",
+      "statement": "A room renamed, or a member's location changed, in the endpoint's directory and then published is announced to the topology subscribers and no one else, with the name escaped once in the document and again as the text of the property (the wire form is pinned), so markup in a name never becomes markup; a directory change made without publishing is carried by the next publish and not lost.",
+      "vectors": [],
+      "rust_tests": [
+        "server::a_room_renamed_through_the_endpoint_is_announced_with_the_name_escaped_twice_and_no_one_else_hears",
+        "server::a_directory_change_made_without_publishing_is_carried_by_the_next_publish_and_not_lost"
       ]
     },
     {

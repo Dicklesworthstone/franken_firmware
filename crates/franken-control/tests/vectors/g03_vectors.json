@@ -297,6 +297,18 @@
          {"op": "expire", "at_ns": 299999999999, "expect": {"removed": 0}}
        ]},
 
+      {"id": "gena-a-renewal-with-a-bad-timeout-changes-nothing",
+       "steps": [
+         {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.10:3400/n>", "nt": "upnp:event", "timeout": "Second-300", "state": {}, "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": 300, "initial": {"seq": 0, "vars": ["Volume=50", "Mute=0"], "revision": 2, "epoch": 10}}}},
+         {"op": "renew", "at_s": 10, "service": "RenderingControl", "sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": "Second-300", "expect": {"ok": {"sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": 300}}},
+         {"op": "renew", "at_s": 20, "service": "RenderingControl", "sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": "Second-infinitely", "expect": {"err": 400}},
+         {"op": "renew", "at_s": 20, "service": "RenderingControl", "sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": "Seconds-infinite", "expect": {"err": 400}},
+         {"op": "renew", "at_s": 20, "service": "RenderingControl", "sid": "uuid:5a5a0001-0000-4000-8000-000000000001", "timeout": "Second-infinite5", "expect": {"err": 400}},
+         {"op": "expire", "at_ns": 309999999999, "expect": {"removed": 0}},
+         {"op": "expire", "at_ns": 310000000000, "expect": {"removed": 1}},
+         {"op": "len", "expect": {"len": 0}}
+       ]},
+
       {"id": "gena-callback-policy",
        "steps": [
          {"op": "subscribe", "at_s": 0, "service": "RenderingControl", "peer": "192.0.2.10", "callback": "<http://192.0.2.99:3400/n>", "nt": "upnp:event", "timeout": null, "state": {}, "expect": {"err": 412}},

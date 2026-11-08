@@ -20,9 +20,10 @@ use super::limiter::RateLimit;
 use super::peer::ephemeral::{EphemeralPeers, test_key};
 use super::peer::{AuthFailure, AuthProof, PeerAuthority, PeerId, PeerRole, compute_proof};
 use super::pipeline::{
-    ChannelConfig, ControlChannel, Outcome, Refusal, Rejection, Settlement, SubmitResult,
+    AckOutcome, ChannelConfig, ControlChannel, Outcome, Refusal, Rejection, Settlement,
+    SubmitResult,
 };
-use super::request::{ControlCommand, ControlRequest, Lane, RequestBody};
+use super::request::{AckBody, AckRequest, ControlCommand, ControlRequest, Lane, RequestBody};
 use super::testkit::fixture_session;
 
 const VECTORS_JSON: &str = include_str!("../../tests/vectors/n02_scenarios.json");
@@ -113,6 +114,23 @@ fn request_from(step: &Value) -> ControlRequest {
     ControlRequest::new(body, proof)
 }
 
+/// An acknowledgement as its sender composes it: signed with the key it holds, or with a wrong one if the step says `forged`.
+fn ack_from(step: &Value) -> AckRequest {
+    let body = AckBody::new(
+        id(text(step, "peer")),
+        number(step, "seq"),
+        number(step, "epoch"),
+    )
+    .expect("scenario acknowledgements are well formed");
+    let key = if step["proof"].as_str() == Some("forged") {
+        b"not-the-peers-key-0123456789".to_vec()
+    } else {
+        test_key(text(step, "peer"))
+    };
+    let proof = compute_proof(&key, &body.signing_bytes());
+    AckRequest::new(body, proof)
+}
+
 fn rate(v: &Value) -> RateLimit {
     RateLimit::new(
         u32::try_from(v[0].as_u64().expect("burst")).expect("burst fits"),
@@ -135,7 +153,7 @@ fn config_from(doc: &Value, scenario: &Value) -> ChannelConfig {
         ordinary_rate: rate(&config["ordinary_rate"]),
         priority_rate: rate(&config["priority_rate"]),
         lease_margin_ns: number(&config, "lease_margin_ms") * MS,
-        ack_budget_ns: ChannelConfig::provisional().ack_budget_ns,
+        ack_budget_ns: number(&config, "ack_budget_ms") * MS,
         session_seq_base: number(&config, "session_seq_base"),
     }
 }
@@ -204,6 +222,36 @@ fn show_submit(result: &SubmitResult) -> String {
             Rejection::QueueFull { lane } => format!("rejected:queue_full:{}", lane_name(*lane)),
             Rejection::IdReuse => "rejected:id_reuse".to_string(),
         },
+    }
+}
+
+/// A scenario time or age in whole milliseconds; the file's acknowledgements are whole-millisecond.
+fn whole_ms(ns: u64) -> u64 {
+    assert_eq!(ns % MS, 0, "scenario times are whole milliseconds");
+    ns / MS
+}
+
+/// What `acknowledge` said, in the file's words (see the `ack` note in the scenario file).
+fn show_ack(outcome: AckOutcome) -> String {
+    match outcome {
+        AckOutcome::OnTime { age_ns } => format!("on_time:{}", whole_ms(age_ns)),
+        AckOutcome::Late { age_ns, over_by_ns } => {
+            format!("late:{}:{}", whole_ms(age_ns), whole_ms(over_by_ns))
+        }
+        AckOutcome::Superseded { epoch, current } => format!("superseded:{epoch}:{current}"),
+        AckOutcome::Duplicate => "duplicate".to_string(),
+        AckOutcome::NotSettled => "not_settled".to_string(),
+        AckOutcome::Unknown => "unknown".to_string(),
+        AckOutcome::OutOfWindow { floor } => format!("out_of_window:{floor}"),
+        AckOutcome::Mismatch { recorded_epoch } => format!("mismatch:{recorded_epoch}"),
+        AckOutcome::Unauthenticated(failure) => format!(
+            "unauthenticated:{}",
+            match failure {
+                AuthFailure::UnknownPeer => "unknown_peer",
+                AuthFailure::Revoked => "revoked",
+                AuthFailure::BadProof => "bad_proof",
+            }
+        ),
     }
 }
 
@@ -403,6 +451,17 @@ fn replay(doc: &Value, scenario: &Value) -> Vec<String> {
                     "{where_}: the peer must be admitted"
                 );
             }
+            "ack" => {
+                // The sender says it saw the outcome of one of its commands. The session is only read.
+                let now = number(step, "at_ms") * MS;
+                let got = show_ack(channel.acknowledge(now, &session, &ack_from(step)));
+                if got != text(step, "expect") {
+                    problems.push(format!(
+                        "{where_}: expected {:?}, got {got:?}",
+                        text(step, "expect")
+                    ));
+                }
+            }
             other => problems.push(format!("{where_}: unknown op `{other}`")),
         }
     }
@@ -417,6 +476,11 @@ fn replay(doc: &Value, scenario: &Value) -> Vec<String> {
     let stats = channel.stats();
     if stats.accounted() != stats.received {
         problems.push(format!("{scenario_id} accounting: {stats:?}"));
+    }
+    if stats.acks_accounted() != stats.acks_received {
+        problems.push(format!(
+            "{scenario_id} acknowledgement accounting: {stats:?}"
+        ));
     }
     if stats.ledger_record_failures != 0 {
         problems.push(format!("{scenario_id} ledger record failures: {stats:?}"));
@@ -524,6 +588,35 @@ fn the_replay_notices_a_wrong_expectation() {
 }
 
 #[test]
+fn the_replay_notices_a_wrong_acknowledgement_expectation() {
+    // The acknowledgement step must be able to fail too: the scenario matches first, then one expectation is altered.
+    let doc = doc();
+    let scenario = doc["scenarios"]
+        .as_array()
+        .expect("scenarios")
+        .iter()
+        .find(|s| text(s, "id") == "N02-S036")
+        .expect("the first acknowledgement scenario is in the file")
+        .clone();
+    assert_eq!(replay(&doc, &scenario), Vec::<String>::new());
+    let mut altered = scenario;
+    let step = altered["steps"]
+        .as_array_mut()
+        .expect("steps")
+        .iter_mut()
+        .find(|st| text(st, "op") == "ack")
+        .expect("the scenario has an acknowledgement step");
+    step["expect"] = json!("late:1500:0");
+    let problems = replay(&doc, &altered);
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.contains("(ack)") && p.contains("expected \"late:1500:0\"")),
+        "{problems:?}"
+    );
+}
+
+#[test]
 fn scenario_ids_are_unique_and_every_operation_is_known() {
     let doc = doc();
     let mut seen = std::collections::BTreeSet::new();
@@ -547,7 +640,8 @@ fn scenario_ids_are_unique_and_every_operation_is_known() {
                     "external_command",
                     "lease",
                     "foreign_lease",
-                    "advance_epoch"
+                    "advance_epoch",
+                    "ack"
                 ]
                 .contains(&text(step, "op")),
                 "unknown op in {}",
