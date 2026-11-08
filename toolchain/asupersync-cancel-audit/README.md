@@ -43,8 +43,9 @@ new qualification.
 Cargo has re-resolved the consumer lock to the current pin: only the five Asupersync-family Git source identities changed;
 all registry versions, checksums and dependency lists stayed the same. The 50 original tests and 14 provenance controls have
 **not run** in this harness at the current pin. A copied audit file retains one formatting hunk from upstream; preserving its
-exact bytes is part of the provenance contract. No compile or cancellation result is claimed for this refreshed consumer yet,
-and the broader P05 bead remains open.
+exact bytes is part of the provenance contract. The refreshed consumer passes strict-remote test-target compilation and strict
+Clippy for its library and both registered tests; see [the qualification record](../results/p05/20261108-cancel-consumer/RUN.md).
+Native execution of the 50 audit tests and 14 guard controls remains pending, and the broader P05 bead remains open.
 
 ```
 python3 scripts/audit_check.py static

@@ -1,0 +1,245 @@
+Selected actual output: build 30099060530610821 (98-case run)
+Operational wrapper exit: 137; RCH disk monitor unavailable after tests.
+This is NOT a clean RCH pass or a final source-content receipt.
+Complete private capture SHA-256: 2484d15c2ed984f8ac75ac1d83c88b33c3d9ab473c1dae55d610b5977296e620
+
+    Finished `test` profile [unoptimized] target(s) in 51m 45s
+test cx::scoped_race::tests::scoped_race_drop_before_late_admission_closes_both_published_regions ... ok
+test cx::scoped_race::tests::scoped_race_future_is_send_with_non_sync_results ... ok
+test cx::scoped_race::tests::scoped_race_masked_owner_cancel_drains_both_without_acknowledging_owner ... ok
+test cx::scoped_race::tests::scoped_race_missing_gateway_refuses_before_either_factory_runs ... ok
+test cx::scoped_race::tests::scoped_race_owner_cancel_during_drain_strengthens_without_replacing_winner ... ok
+test cx::scoped_race::tests::scoped_race_preserves_spawn_only_capabilities_without_timer_authority ... ok
+test cx::scoped_race::tests::scoped_race_refuses_parent_limit_fallback_without_running_user_factories ... ok
+test cx::scoped_race::tests::scoped_race_retains_task_and_descendant_finalizer_panics_as_separate_receipts ... ok
+test cx::scoped_race::tests::scoped_race_second_submission_refusal_drains_the_first_late_admission ... ok
+test cx::scoped_race::tests::scoped_race_unpolled_and_already_cancelled_calls_start_neither_factory ... ok
+test cx::scoped_timeout::tests::scoped_timeout_cancels_whole_region_before_join_and_waits_for_grandchild_cleanup ... ok
+test cx::scoped_timeout::tests::scoped_timeout_drop_before_late_admission_closes_the_published_region ... ok
+test cx::scoped_timeout::tests::scoped_timeout_drop_drains_started_descendants_and_unpolled_drop_starts_nothing ... ok
+test cx::scoped_timeout::tests::scoped_timeout_keeps_success_typed_error_and_task_panic_as_task_facts ... ok
+test cx::scoped_timeout::tests::scoped_timeout_masked_owner_cancel_drains_without_acknowledging_owner ... ok
+test cx::scoped_timeout::tests::scoped_timeout_nested_race_context_cannot_escape_while_owner_stays_open_or_after_close ... ok
+test cx::scoped_timeout::tests::scoped_timeout_never_uses_foreign_ambient_time_and_disarms_after_drain ... ok
+test cx::scoped_timeout::tests::scoped_timeout_post_publication_notifier_panics_preserve_normal_drain_and_unwind_drop ... ok
+test cx::scoped_timeout::tests::scoped_timeout_preserves_real_descendant_finalizer_failure_separately ... ok
+test cx::scoped_timeout::tests::scoped_timeout_preserves_typed_spawn_and_time_authority ... ok
+test cx::scoped_timeout::tests::scoped_timeout_publication_handoff_never_notifies_under_the_admission_lock ... ok
+test cx::scoped_timeout::tests::scoped_timeout_queued_spawn_is_refused_when_close_precedes_authoritative_admission ... ok
+test cx::scoped_timeout::tests::scoped_timeout_refuses_missing_or_denied_time_before_any_admission ... ok
+test cx::scoped_timeout::tests::scoped_timeout_refuses_parent_limit_fallback_without_running_user_factory ... ok
+test cx::scoped_timeout::tests::scoped_timeout_strict_authority_uses_checked_parent_target_without_placement_escape ... ok
+test cx::scoped_timeout::tests::scoped_timeout_submission_notifier_unwind_retains_late_region_cleanup ... ok
+test cx::scoped_timeout::tests::scoped_timeout_zero_and_saturated_duration_use_exact_owner_deadlines ... ok
+test io::stdio::tests::a_byte_bounded_pool_refuses_a_write_that_does_not_fit_and_still_takes_a_zero_heap_flush ... ok
+test io::stdio::tests::a_byte_bounded_pool_takes_a_short_write_of_the_room_beyond_the_jobs_measured_storage ... ok
+test io::stdio::tests::a_flush_that_no_longer_fits_beside_pinned_bytes_is_refused_for_good_not_told_to_wait ... ok
+test io::stdio::tests::a_pool_whose_original_limit_never_held_a_write_stays_invalid_input_with_bytes_pinned ... ok
+test io::stdio::tests::a_serialized_multi_chunk_write_all_and_flush_complete_on_a_pool_that_holds_one_write_job ... ok
+test io::stdio::tests::a_write_copies_its_input_only_after_the_pool_has_reserved_room_for_it ... ok
+test io::stdio::tests::a_writer_told_its_job_is_done_finds_the_jobs_bytes_back_and_can_start_the_next_chunk ... ok
+test io::stdio::tests::abandoned_stdio_waiter_does_not_keep_its_task_alive ... ok
+test io::stdio::tests::accepted_pool_write_survives_drop_while_still_queued ... ok
+test io::stdio::tests::accepted_thread_write_runs_even_when_its_unpolled_handle_is_dropped ... ok
+test io::stdio::tests::an_accepted_write_survives_dropping_the_writer_and_the_wait_leaves_no_waker_behind ... ok
+test io::stdio::tests::cancelled_read_wait_preserves_the_handles_in_flight_bytes ... ok
+test io::stdio::tests::pinned_bytes_shrink_the_write_clamp_and_a_write_with_no_room_left_is_a_pool_fault ... ok
+test io::stdio::tests::pools_that_do_not_bound_bytes_keep_the_full_write_chunk ... ok
+test io::stdio::tests::replaced_stdio_waiter_may_complete_the_operation_reentrantly ... ok
+test io::stdio::tests::saturated_pool_writes_refuse_bytes_before_accepting_them ... ok
+test io::stdio::tests::standard_stream_io_never_runs_inline_after_pool_shutdown ... ok
+test io::stdio::tests::standard_stream_io_runs_off_worker_with_and_without_a_pool ... ok
+test io::stdio::tests::the_next_chunk_is_admitted_once_the_previous_job_has_fully_retired ... ok
+test io::stdio::tests::the_write_storage_the_clamp_measures_is_what_the_pool_charges ... ok
+test runtime::blocking_pool::admission::tests::a_byte_pool_admits_small_jobs_keeps_the_two_components_apart_and_returns_both_after_release ... ok
+test runtime::blocking_pool::admission::tests::a_byte_pool_refuses_every_uncharged_entry_point_unrun_and_never_inline ... ok
+test runtime::blocking_pool::admission::tests::a_factory_error_reports_fixed_text_for_any_factory_type_and_never_the_payloads ... ok
+test runtime::blocking_pool::admission::tests::a_factory_is_not_called_for_a_full_queue_or_full_bytes_and_is_admitted_once_there_is_room ... ok
+test runtime::blocking_pool::admission::tests::a_factory_that_hands_its_vec_to_a_secondary_payload_pins_the_reservation_and_frees_its_slot ... ok
+test runtime::blocking_pool::admission::tests::a_factory_that_panics_with_the_vec_it_allocated_has_it_destroyed_before_the_credit_returns ... ok
+test runtime::blocking_pool::admission::tests::a_forbidden_pool_refuses_every_entry_point_unrun_and_starts_no_thread ... ok
+test runtime::blocking_pool::admission::tests::a_large_inline_capture_with_zero_declared_heap_cannot_enter_a_small_pool ... ok
+test runtime::blocking_pool::admission::tests::a_panicking_charged_job_releases_its_reservation_and_the_pool_keeps_admitting ... ok
+test runtime::blocking_pool::admission::tests::a_parked_submitter_is_woken_by_a_failed_build_and_admitted_when_nothing_was_pinned ... ok
+test runtime::blocking_pool::admission::tests::a_parked_submitter_is_woken_by_a_pinning_build_and_resolves_with_the_terminal_reason ... ok
+test runtime::blocking_pool::admission::tests::a_pin_refuses_what_can_never_fit_again_and_still_admits_what_does ... ok
+test runtime::blocking_pool::admission::tests::a_pool_that_closes_while_the_payload_is_built_destroys_it_and_orphans_no_slot ... ok
+test runtime::blocking_pool::admission::tests::a_pool_with_pinned_bytes_shuts_down_and_still_says_why_a_job_cannot_fit ... ok
+test runtime::blocking_pool::admission::tests::a_registered_waker_is_replaced_cleared_and_woken_outside_the_completion_lock ... ok
+test runtime::blocking_pool::admission::tests::a_reservation_outlives_the_closure_and_cancelling_the_handle_releases_nothing ... ok
+test runtime::blocking_pool::admission::tests::a_run_payload_that_moves_a_vec_on_leaves_it_freed_or_pinned ... ok
+test runtime::blocking_pool::admission::tests::a_run_payload_that_moves_inline_storage_on_leaves_it_freed_or_pinned ... ok
+test runtime::blocking_pool::admission::tests::a_skipped_payload_that_moves_a_vec_on_leaves_it_freed_or_pinned ... ok
+test runtime::blocking_pool::admission::tests::a_skipped_tasks_capture_panic_is_freed_or_contained_and_the_worker_goes_on ... ok
+test runtime::blocking_pool::admission::tests::a_stranded_drain_reports_both_tasks_when_the_first_capture_panics_with_a_pathological_payload ... ok
+test runtime::blocking_pool::admission::tests::a_stranded_payload_that_moves_a_vec_on_leaves_it_freed_or_pinned ... ok
+test runtime::blocking_pool::admission::tests::a_stranded_queue_returns_each_reservation_only_after_its_closure_is_dropped ... ok
+test runtime::blocking_pool::admission::tests::a_stranded_task_is_reported_done_only_after_its_closure_is_dropped_and_its_bytes_are_back ... ok
+test runtime::blocking_pool::admission::tests::a_task_is_reported_done_only_after_its_closure_is_dropped_and_its_bytes_are_back ... ok
+test runtime::blocking_pool::admission::tests::a_waiting_charged_submission_reserves_nothing_and_is_admitted_when_the_closure_is_gone ... ok
+test runtime::blocking_pool::admission::tests::a_waker_that_panics_has_its_payload_freed_or_contained_and_the_worker_goes_on ... ok
+test runtime::blocking_pool::admission::tests::a_worker_frees_an_ordinary_panic_payload_and_survives_one_whose_destructor_panics ... ok
+test runtime::blocking_pool::admission::tests::an_impossible_total_is_refused_for_good_and_exactly_the_limit_is_admitted ... ok
+test runtime::blocking_pool::admission::tests::an_ordinary_payload_that_owns_a_vec_frees_it_and_the_reservation_returns ... ok
+test runtime::blocking_pool::admission::tests::bounded_cohort_queue_keeps_priority_selection ... ok
+test runtime::blocking_pool::admission::tests::concurrent_charged_submitters_never_exceed_the_limit_and_every_admitted_job_runs_and_releases ... ok
+test runtime::blocking_pool::admission::tests::concurrent_cohort_submissions_share_one_hard_queue_bound ... ok
+test runtime::blocking_pool::admission::tests::drained_cancellation_retains_waiting_captures_until_a_blocking_worker_retires_them ... ok
+test runtime::blocking_pool::admission::tests::dropping_a_waiting_charged_submission_reserves_and_releases_nothing ... ok
+test runtime::blocking_pool::admission::tests::dropping_a_waiting_submission_removes_registration_and_retires_work_outside_locks ... ok
+test runtime::blocking_pool::admission::tests::one_jobs_capacity_is_reused_by_every_factory_admission_in_turn_on_a_lazily_staffed_pool ... ok
+test runtime::blocking_pool::admission::tests::only_the_forbidden_policy_is_forbidden ... ok
+test runtime::blocking_pool::admission::tests::ordinary_async_blocking_waits_for_capacity_without_inline_or_fallback_execution ... ok
+test runtime::blocking_pool::admission::tests::other_policies_keep_their_slot_bound_ignore_the_declaration_and_a_forbidden_pool_never_builds ... ok
+test runtime::blocking_pool::admission::tests::pinning_wakes_a_parked_submitter_and_it_resolves_with_the_terminal_reason ... ok
+test runtime::blocking_pool::admission::tests::refusal_recovers_work_and_running_jobs_do_not_consume_queue_capacity ... ok
+test runtime::blocking_pool::admission::tests::shutdown_does_not_wait_for_a_factory_in_flight_and_its_late_job_is_destroyed_unrun ... ok
+test runtime::blocking_pool::admission::tests::shutdown_wakes_waiting_submission_and_returns_its_uninvoked_work ... ok
+test runtime::blocking_pool::admission::tests::the_byte_policy_keeps_the_job_count_bound_and_other_policies_ignore_a_declared_charge ... ok
+test runtime::blocking_pool::admission::tests::the_byte_refusals_say_whether_waiting_can_help ... ok
+test runtime::blocking_pool::admission::tests::the_bytes_and_the_slot_are_already_held_while_the_factory_builds_the_payload ... ok
+test runtime::blocking_pool::admission::tests::the_pool_charges_an_inline_capture_the_submitter_never_declared ... ok
+test runtime::blocking_pool::admission::tests::the_queue_slot_is_reserved_before_the_payload_and_a_rolled_back_build_returns_it ... ok
+test runtime::blocking_pool::admission::tests::the_value_returning_compatibility_sink_refuses_on_a_byte_pool_and_never_runs_inline ... ok
+test runtime::blocking_pool::admission::tests::waiting_submission_parks_and_resumes_after_dequeue ... ok
+test result: ok. 98 passed; 0 failed; 0 ignored; 0 measured; 27283 filtered out; finished in 4.19s
+
+RCH-E330: remote_build_disk_budget_exceeded: monitor_unavailable;
+detail: disk probe or scan deadline reached.
+The zero free_bytes in that failure denotes an unavailable probe,
+not a successful observation that the disk has no free space.
+Same-ID recovery retained exit 137. Terminal ACK, dead wrapper, absent owner
+and source/tree/pair/recovery retirement were observed; project output phase false.
+
+
+Selected actual output: build 30099060530610835 (same corrected source, 122-case run)
+Remote command and wrapper exit: 101; actual test failure, not a pass.
+Complete private capture SHA-256: 7dee9ce357e32e2a1e5579a4a615722c95312cfde95dd3bf9fbbc75308f6152e
+All 20,911 captured source files matched before any edits; terminal ACK, dead wrapper, absent owner and four source/tree/pair/recovery retirement flags verified. Project output phase remained false on exit 101.
+
+test cx::scoped_first_ok::tests::native::scoped_first_ok_native_fallback_waits_for_genuinely_parked_descendant_cleanup ... ok
+test cx::scoped_first_ok::tests::native::scoped_first_ok_native_owner_cancel_wakes_body_and_descendant_then_keeps_late_value ... ok
+test cx::scoped_first_ok::tests::scoped_first_ok_body_panic_and_descendant_finalizer_panic_are_independent_facts ... ok
+test cx::scoped_first_ok::tests::scoped_first_ok_close_unavailable_stops_fallback_without_losing_body_error ... ok
+test cx::scoped_first_ok::tests::scoped_first_ok_drains_grandchild_and_finalizer_before_pulling_fallback ... ok
+test cx::scoped_first_ok::tests::scoped_first_ok_drop_before_late_admission_closes_region_and_invokes_no_factory ... ok
+test cx::scoped_first_ok::tests::scoped_first_ok_drops_unused_factory_resources_before_joining_or_closing_selected_attempt ... ok
+test cx::scoped_first_ok::tests::scoped_first_ok_empty_needs_no_runtime_and_missing_runtime_invokes_nothing ... ok
+test cx::scoped_first_ok::tests::scoped_first_ok_later_submission_failure_keeps_previous_typed_error ... ok
+test cx::scoped_first_ok::tests::scoped_first_ok_masked_owner_cancellation_preserves_acknowledged_late_result ... ok
+test cx::scoped_first_ok::tests::scoped_first_ok_never_pulls_unused_generator_tail_or_precancelled_input ... ok
+test cx::scoped_first_ok::tests::scoped_first_ok_owner_cancel_during_cleanup_preserves_selection_and_blocks_fallback ... ok
+test cx::scoped_first_ok::tests::scoped_first_ok_preserves_ordered_errors_and_short_circuits_after_success ... ok
+test cx::scoped_first_ok::tests::scoped_first_ok_preserves_spawn_only_capability_and_nonclone_nonunpin_results ... ok
+test cx::scoped_first_ok::tests::scoped_first_ok_refuses_parent_fallback_and_retains_async_admission_failure ... ok
+test cx::scoped_quorum::tests::scoped_quorum_drop_before_late_publication_closes_every_owned_slot ... ok
+test cx::scoped_quorum::tests::scoped_quorum_keeps_input_order_ties_errors_and_unselected_successes ... ok
+test cx::scoped_quorum::tests::scoped_quorum_keeps_selected_success_and_real_descendant_finalizer_panic ... ok
+test cx::scoped_quorum::tests::scoped_quorum_masked_precancel_keeps_exact_reason_without_starting_work ... ok
+test cx::scoped_quorum::tests::scoped_quorum_native_closes_winner_and_joining_loser_subtrees_before_return ... ok
+test cx::scoped_quorum::tests::scoped_quorum_partial_admission_refusal_retains_the_successful_prefix ... ok
+test cx::scoped_quorum::tests::scoped_quorum_preserves_spawn_only_caps_and_accepts_the_exact_branch_bound ... ok
+test cx::scoped_quorum::tests::scoped_quorum_refuses_parent_placement_without_invoking_a_factory ... ok
+test cx::scoped_quorum::tests::scoped_quorum_validates_bounds_before_invoking_or_submitting_factories ... ok
+test cx::scoped_race::tests::scoped_race_drop_before_late_admission_closes_both_published_regions ... ok
+test cx::scoped_race::tests::scoped_race_future_is_send_with_non_sync_results ... ok
+test cx::scoped_race::tests::scoped_race_masked_owner_cancel_drains_both_without_acknowledging_owner ... ok
+test cx::scoped_race::tests::scoped_race_missing_gateway_refuses_before_either_factory_runs ... ok
+test cx::scoped_race::tests::scoped_race_owner_cancel_during_drain_strengthens_without_replacing_winner ... ok
+test cx::scoped_race::tests::scoped_race_preserves_spawn_only_capabilities_without_timer_authority ... ok
+test cx::scoped_race::tests::scoped_race_refuses_parent_limit_fallback_without_running_user_factories ... ok
+test cx::scoped_race::tests::scoped_race_retains_task_and_descendant_finalizer_panics_as_separate_receipts ... ok
+test cx::scoped_race::tests::scoped_race_second_submission_refusal_drains_the_first_late_admission ... ok
+test cx::scoped_race::tests::scoped_race_unpolled_and_already_cancelled_calls_start_neither_factory ... ok
+test cx::scoped_timeout::tests::scoped_timeout_cancels_whole_region_before_join_and_waits_for_grandchild_cleanup ... ok
+test cx::scoped_timeout::tests::scoped_timeout_drop_before_late_admission_closes_the_published_region ... ok
+test cx::scoped_timeout::tests::scoped_timeout_drop_drains_started_descendants_and_unpolled_drop_starts_nothing ... ok
+test cx::scoped_timeout::tests::scoped_timeout_keeps_success_typed_error_and_task_panic_as_task_facts ... ok
+test cx::scoped_timeout::tests::scoped_timeout_masked_owner_cancel_drains_without_acknowledging_owner ... ok
+test cx::scoped_timeout::tests::scoped_timeout_nested_race_context_cannot_escape_while_owner_stays_open_or_after_close ... ok
+test cx::scoped_timeout::tests::scoped_timeout_never_uses_foreign_ambient_time_and_disarms_after_drain ... ok
+test cx::scoped_timeout::tests::scoped_timeout_post_publication_notifier_panics_preserve_normal_drain_and_unwind_drop ... ok
+test cx::scoped_timeout::tests::scoped_timeout_preserves_real_descendant_finalizer_failure_separately ... ok
+test cx::scoped_timeout::tests::scoped_timeout_preserves_typed_spawn_and_time_authority ... ok
+test cx::scoped_timeout::tests::scoped_timeout_publication_handoff_never_notifies_under_the_admission_lock ... ok
+test cx::scoped_timeout::tests::scoped_timeout_queued_spawn_is_refused_when_close_precedes_authoritative_admission ... ok
+test cx::scoped_timeout::tests::scoped_timeout_refuses_missing_or_denied_time_before_any_admission ... ok
+test cx::scoped_timeout::tests::scoped_timeout_refuses_parent_limit_fallback_without_running_user_factory ... ok
+test cx::scoped_timeout::tests::scoped_timeout_strict_authority_uses_checked_parent_target_without_placement_escape ... FAILED
+test cx::scoped_timeout::tests::scoped_timeout_submission_notifier_unwind_retains_late_region_cleanup ... ok
+test cx::scoped_timeout::tests::scoped_timeout_zero_and_saturated_duration_use_exact_owner_deadlines ... ok
+test io::stdio::tests::a_byte_bounded_pool_refuses_a_write_that_does_not_fit_and_still_takes_a_zero_heap_flush ... ok
+test io::stdio::tests::a_byte_bounded_pool_takes_a_short_write_of_the_room_beyond_the_jobs_measured_storage ... ok
+test io::stdio::tests::a_flush_that_no_longer_fits_beside_pinned_bytes_is_refused_for_good_not_told_to_wait ... ok
+test io::stdio::tests::a_pool_whose_original_limit_never_held_a_write_stays_invalid_input_with_bytes_pinned ... ok
+test io::stdio::tests::a_serialized_multi_chunk_write_all_and_flush_complete_on_a_pool_that_holds_one_write_job ... ok
+test io::stdio::tests::a_write_copies_its_input_only_after_the_pool_has_reserved_room_for_it ... ok
+test io::stdio::tests::a_writer_told_its_job_is_done_finds_the_jobs_bytes_back_and_can_start_the_next_chunk ... ok
+test io::stdio::tests::abandoned_stdio_waiter_does_not_keep_its_task_alive ... ok
+test io::stdio::tests::accepted_pool_write_survives_drop_while_still_queued ... ok
+test io::stdio::tests::accepted_thread_write_runs_even_when_its_unpolled_handle_is_dropped ... ok
+test io::stdio::tests::an_accepted_write_survives_dropping_the_writer_and_the_wait_leaves_no_waker_behind ... ok
+test io::stdio::tests::cancelled_read_wait_preserves_the_handles_in_flight_bytes ... ok
+test io::stdio::tests::pinned_bytes_shrink_the_write_clamp_and_a_write_with_no_room_left_is_a_pool_fault ... ok
+test io::stdio::tests::pools_that_do_not_bound_bytes_keep_the_full_write_chunk ... ok
+test io::stdio::tests::replaced_stdio_waiter_may_complete_the_operation_reentrantly ... ok
+test io::stdio::tests::saturated_pool_writes_refuse_bytes_before_accepting_them ... ok
+test io::stdio::tests::standard_stream_io_never_runs_inline_after_pool_shutdown ... ok
+test io::stdio::tests::standard_stream_io_runs_off_worker_with_and_without_a_pool ... ok
+test io::stdio::tests::the_next_chunk_is_admitted_once_the_previous_job_has_fully_retired ... ok
+test io::stdio::tests::the_write_storage_the_clamp_measures_is_what_the_pool_charges ... ok
+test runtime::blocking_pool::admission::tests::a_byte_pool_admits_small_jobs_keeps_the_two_components_apart_and_returns_both_after_release ... ok
+test runtime::blocking_pool::admission::tests::a_byte_pool_refuses_every_uncharged_entry_point_unrun_and_never_inline ... ok
+test runtime::blocking_pool::admission::tests::a_factory_error_reports_fixed_text_for_any_factory_type_and_never_the_payloads ... ok
+test runtime::blocking_pool::admission::tests::a_factory_is_not_called_for_a_full_queue_or_full_bytes_and_is_admitted_once_there_is_room ... ok
+test runtime::blocking_pool::admission::tests::a_factory_that_hands_its_vec_to_a_secondary_payload_pins_the_reservation_and_frees_its_slot ... ok
+test runtime::blocking_pool::admission::tests::a_factory_that_panics_with_the_vec_it_allocated_has_it_destroyed_before_the_credit_returns ... ok
+test runtime::blocking_pool::admission::tests::a_forbidden_pool_refuses_every_entry_point_unrun_and_starts_no_thread ... ok
+test runtime::blocking_pool::admission::tests::a_large_inline_capture_with_zero_declared_heap_cannot_enter_a_small_pool ... ok
+test runtime::blocking_pool::admission::tests::a_panicking_charged_job_releases_its_reservation_and_the_pool_keeps_admitting ... ok
+test runtime::blocking_pool::admission::tests::a_parked_submitter_is_woken_by_a_failed_build_and_admitted_when_nothing_was_pinned ... ok
+test runtime::blocking_pool::admission::tests::a_parked_submitter_is_woken_by_a_pinning_build_and_resolves_with_the_terminal_reason ... ok
+test runtime::blocking_pool::admission::tests::a_pin_refuses_what_can_never_fit_again_and_still_admits_what_does ... ok
+test runtime::blocking_pool::admission::tests::a_pool_that_closes_while_the_payload_is_built_destroys_it_and_orphans_no_slot ... ok
+test runtime::blocking_pool::admission::tests::a_pool_with_pinned_bytes_shuts_down_and_still_says_why_a_job_cannot_fit ... ok
+test runtime::blocking_pool::admission::tests::a_registered_waker_is_replaced_cleared_and_woken_outside_the_completion_lock ... ok
+test runtime::blocking_pool::admission::tests::a_reservation_outlives_the_closure_and_cancelling_the_handle_releases_nothing ... ok
+test runtime::blocking_pool::admission::tests::a_run_payload_that_moves_a_vec_on_leaves_it_freed_or_pinned ... ok
+test runtime::blocking_pool::admission::tests::a_run_payload_that_moves_inline_storage_on_leaves_it_freed_or_pinned ... ok
+test runtime::blocking_pool::admission::tests::a_skipped_payload_that_moves_a_vec_on_leaves_it_freed_or_pinned ... ok
+test runtime::blocking_pool::admission::tests::a_skipped_tasks_capture_panic_is_freed_or_contained_and_the_worker_goes_on ... ok
+test runtime::blocking_pool::admission::tests::a_stranded_drain_reports_both_tasks_when_the_first_capture_panics_with_a_pathological_payload ... ok
+test runtime::blocking_pool::admission::tests::a_stranded_payload_that_moves_a_vec_on_leaves_it_freed_or_pinned ... ok
+test runtime::blocking_pool::admission::tests::a_stranded_queue_returns_each_reservation_only_after_its_closure_is_dropped ... ok
+test runtime::blocking_pool::admission::tests::a_stranded_task_is_reported_done_only_after_its_closure_is_dropped_and_its_bytes_are_back ... ok
+test runtime::blocking_pool::admission::tests::a_task_is_reported_done_only_after_its_closure_is_dropped_and_its_bytes_are_back ... ok
+test runtime::blocking_pool::admission::tests::a_waiting_charged_submission_reserves_nothing_and_is_admitted_when_the_closure_is_gone ... ok
+test runtime::blocking_pool::admission::tests::a_waker_that_panics_has_its_payload_freed_or_contained_and_the_worker_goes_on ... ok
+test runtime::blocking_pool::admission::tests::a_worker_frees_an_ordinary_panic_payload_and_survives_one_whose_destructor_panics ... ok
+test runtime::blocking_pool::admission::tests::an_impossible_total_is_refused_for_good_and_exactly_the_limit_is_admitted ... ok
+test runtime::blocking_pool::admission::tests::an_ordinary_payload_that_owns_a_vec_frees_it_and_the_reservation_returns ... ok
+test runtime::blocking_pool::admission::tests::bounded_cohort_queue_keeps_priority_selection ... ok
+test runtime::blocking_pool::admission::tests::concurrent_charged_submitters_never_exceed_the_limit_and_every_admitted_job_runs_and_releases ... ok
+test runtime::blocking_pool::admission::tests::concurrent_cohort_submissions_share_one_hard_queue_bound ... ok
+test runtime::blocking_pool::admission::tests::drained_cancellation_retains_waiting_captures_until_a_blocking_worker_retires_them ... ok
+test runtime::blocking_pool::admission::tests::dropping_a_waiting_charged_submission_reserves_and_releases_nothing ... ok
+test runtime::blocking_pool::admission::tests::dropping_a_waiting_submission_removes_registration_and_retires_work_outside_locks ... ok
+test runtime::blocking_pool::admission::tests::one_jobs_capacity_is_reused_by_every_factory_admission_in_turn_on_a_lazily_staffed_pool ... ok
+test runtime::blocking_pool::admission::tests::only_the_forbidden_policy_is_forbidden ... ok
+test runtime::blocking_pool::admission::tests::ordinary_async_blocking_waits_for_capacity_without_inline_or_fallback_execution ... ok
+test runtime::blocking_pool::admission::tests::other_policies_keep_their_slot_bound_ignore_the_declaration_and_a_forbidden_pool_never_builds ... ok
+test runtime::blocking_pool::admission::tests::pinning_wakes_a_parked_submitter_and_it_resolves_with_the_terminal_reason ... ok
+test runtime::blocking_pool::admission::tests::refusal_recovers_work_and_running_jobs_do_not_consume_queue_capacity ... ok
+test runtime::blocking_pool::admission::tests::shutdown_does_not_wait_for_a_factory_in_flight_and_its_late_job_is_destroyed_unrun ... ok
+test runtime::blocking_pool::admission::tests::shutdown_wakes_waiting_submission_and_returns_its_uninvoked_work ... ok
+test runtime::blocking_pool::admission::tests::the_byte_policy_keeps_the_job_count_bound_and_other_policies_ignore_a_declared_charge ... ok
+test runtime::blocking_pool::admission::tests::the_byte_refusals_say_whether_waiting_can_help ... ok
+test runtime::blocking_pool::admission::tests::the_bytes_and_the_slot_are_already_held_while_the_factory_builds_the_payload ... ok
+test runtime::blocking_pool::admission::tests::the_pool_charges_an_inline_capture_the_submitter_never_declared ... ok
+test runtime::blocking_pool::admission::tests::the_queue_slot_is_reserved_before_the_payload_and_a_rolled_back_build_returns_it ... ok
+test runtime::blocking_pool::admission::tests::the_value_returning_compatibility_sink_refuses_on_a_byte_pool_and_never_runs_inline ... ok
+test runtime::blocking_pool::admission::tests::waiting_submission_parks_and_resumes_after_dequeue ... ok
+
+test result: FAILED. 121 passed; 1 failed; 0 ignored; 0 measured; 27259 filtered out; finished in 1.38s
+thread 'cx::scoped_timeout::tests::scoped_timeout_strict_authority_uses_checked_parent_target_without_placement_escape' (4075495) panicked at src/cx/scoped_timeout_inline_tests.rs:794:9:
+assertion failed: runtime.is_quiescent()

@@ -1,0 +1,12 @@
+Selected actual terminal output; compilation and lint only.
+Native audit50 and guard14 did NOT execute.
+
+test-target compiler check
+Build 30099060530610881; actual exit 0; full private capture SHA-256 d1dd26d96e507c75686ddfc0a2bbd4d03bb37ce1a7d63a230c2ff3e3be92abe9
+    Finished `dev` profile [unoptimized] target(s) in 4m 54s
+  2026-11-08T03:45:02.605956Z  INFO rch::hook::transfer_orchestration: Remote command finished: exit=0 in 298514ms
+
+strict Clippy library plus both registered tests
+Build 30099060530610893; actual exit 0; full private capture SHA-256 c2085d21650ca771a338a63fc64d77f7e8161a48ae0ade5c6d56523151295d18
+    Finished `dev` profile [unoptimized] target(s) in 2.26s
+  2026-11-08T03:47:02.206229Z  INFO rch::hook::transfer_orchestration: Remote command finished: exit=0 in 6703ms

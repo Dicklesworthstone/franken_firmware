@@ -1,0 +1,21 @@
+    Finished `test` profile [unoptimized] target(s) in 11m 35s
+running 4 tests
+test the_canary_flags_a_release_inside_the_closure_allocation_and_passes_one_after_it ... ok
+test the_reservation_follows_the_free_when_a_worker_skips_a_cancelled_job ... ok
+test the_reservation_follows_the_free_when_the_job_panics ... ok
+test the_reservation_follows_the_free_when_the_job_runs ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+running 11 tests
+test a_factory_is_refused_unrun_for_a_full_queue_or_full_bytes_and_runs_once_when_there_is_room ... ok
+test a_factory_that_panics_with_its_vec_stays_charged_and_a_smaller_factory_still_runs ... ok
+test a_serialized_multi_chunk_write_and_flush_complete_on_a_pool_that_holds_one_write_job ... ok
+test a_stderr_write_completes_only_after_its_job_has_returned_its_bytes ... ok
+test a_stderr_write_is_refused_while_the_queue_is_full_and_written_when_there_is_room ... ok
+test a_stderr_write_tells_a_pool_too_small_for_any_write_from_one_whose_room_was_pinned ... ok
+test settle_gives_up_on_a_writer_that_keeps_returning_pending_and_keeps_waking - should panic ... ok
+test settle_refuses_a_ready_result_that_arrives_after_its_deadline ... ok
+test the_pool_holds_the_payloads_bytes_before_the_factory_copies_into_them ... ok
+test the_recorder_sees_a_wake_made_from_inside_the_jobs_own_closure ... ok
+test transferred_panic_heap_stays_charged_wakes_an_impossible_waiter_and_allows_smaller_work ... ok
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.61s
+[RCH] remote vmi1149989 (769.2s)

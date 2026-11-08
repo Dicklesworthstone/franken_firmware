@@ -1,0 +1,15 @@
+Selected actual remote formatting output; these were non-compilation RCH jobs.
+Input hashes were checked before and after formatting; this is not a Cargo-closure receipt.
+
+Build 30099060530610829
+Full private capture SHA-256: 042385600d12f330b83843b1e445c3821d3b8741899bce9be4997a6c93dc9ec0
+FORMAT_INPUT_HASHES:before:10
+rustfmt 1.10.0-nightly (9085017724 2026-08-30)
+FORMAT_INPUT_HASHES:after:10
+OWNED_RUSTFMT_EXIT:0
+
+Build 30099060530610830
+Full private capture SHA-256: 1f8f5c923644a37df88cb23c0319738c53388876ccff976cbb0f867e160a766f
+FORMAT_INPUT_HASHES:before:3
+FORMAT_INPUT_HASHES:after:3
+OWNED_RUSTFMT_EXIT:0
