@@ -17,7 +17,7 @@ tracks the already-captured nested lockfile. The captured code bytes match the
 | --- | --- | --- |
 | Strict primary all-target Clippy, build `30099060530610861` | Exit 0, no diagnostics | Captured integrated snapshot; 20,912 files matched before later peer edits; all 24 owned inputs still match |
 | Standalone default all-target compiler check, build `30099060530610894` | Compiler exit 0; wrapper exit 1; same-ID recovery exit 0 | Five peer source deltas prevented the source receipt; not a clean qualification |
-| 196 focused unit cases | In progress | Original 122 plus profile, blocking-placement and resolver cases |
+| 196 focused unit cases, build `30099060530610860` | Compilation ended with remote exit 137; 0/196 executed | Wrapper exit 1 after 78 source deltas; same-ID recovery exit 0 acknowledges the failed result, not a pass |
 | 23 public integration cases | Not yet run | Allocator 4, stdio 15, retirement 4 |
 | Current 15-file remote format attempts | First exited 103; staged retry exited 120 before starting | Zero files checked; namespace deadline, then physical disk admission refusal |
 
@@ -48,6 +48,17 @@ The format-only retry also ran no formatter: the worker's physical disk
 reservation gate refused it before start. [profile-io-format.txt](profile-io-format.txt)
 records that refusal without counting script text printed in the command log
 as executed test output. No resource floor, reservation or peer file was changed.
+
+The 196-case attempt ended on November 8 at 05:15 UTC after 7,214,169 ms
+(about two hours), before compilation completed. No test result or source
+receipt was emitted. The exact cause of the kill is not established by the
+capture. Supported recovery acknowledged remote exit 137 and retired the
+source tree and pair; its project output phase remains incomplete.
+[native196.txt](native196.txt) retains the separate command, wrapper and
+recovery outcomes. The 196 named cases and the 23 public cases remain
+unexecuted at this integrated epoch. An independent downstream runtime probe
+is being compiled separately; a compiler result cannot replace their native
+execution or the original P05/P03 acceptance conditions.
 
 The preceding public retirement experiment passed four tests with 100 trials
 each. Multithreaded runtimes were initially nonquiescent in 18/100 embedded and

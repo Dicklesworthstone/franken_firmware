@@ -1,0 +1,48 @@
+P05 integrated native196 attempt — captured 2026-11-08
+
+Remote build: 30099060530610860
+Wrapper: rchw-1e421904-0ea4-44bc-8645-2edf713e4e5b
+Worker: trj
+Captured upstream source revision: e1a27c7ba89fb785e84c20f4216c6554a527b9a3
+
+Predeclared required cases: 196
+Executed named cases: 0
+Observed test-result summaries: 0
+Observed completed-compilation summaries: 0
+Original wrapper exit: 1
+Remote command exit: 137
+Remote command elapsed: 7214169 ms
+Last terminal timestamp: 2026-11-08T05:15:09Z
+Source-content receipt: absent
+Post-command source barrier: 78 remote deltas reported
+Kill cause: unverified; elapsed time alone does not identify it
+
+Observed terminal excerpts:
+  Compiling raptorq v2.0.1
+  Remote command finished: exit=137 in 7214169ms
+  Invocation requires recovery before release; retaining build 30099060530610860 ownership
+  remote execution completion is unconfirmed; automatic replay is unsafe:
+  source-content rsync barrier detected 78 remote delta(s)
+
+Supported same-ID recovery:
+  rch jobs recover rchw-1e421904-0ea4-44bc-8645-2edf713e4e5b --timeout-secs 60 --json
+  Recovery command exit: 0
+  Recovered remote exit: 137
+  Terminal acknowledged: true
+  Wrapper alive: false
+  Owner presence: absent
+  Source authority released: true
+  Source tree retired: true
+  Source pair released: true
+  Retirement complete: true
+  Project output phase complete: false
+  Recovery warned that the daemon's earlier completion was 130; delivery retained 137.
+
+Complete private capture SHA-256:
+  cc7919b1f26e234b91aa9eb6e7c45325c495717b5e93517c7277f188d8d61d9b
+Predeclared case-name file SHA-256:
+  47c760584d089e3143d6e6a9d79baaf35125a3c52296cf87798b70d73726126f
+
+This is a failed compilation attempt, not a test failure or a passing native
+qualification. Recovery settles custody; it does not execute the 196 cases,
+repair the missing source receipt, or complete the project output phase.
