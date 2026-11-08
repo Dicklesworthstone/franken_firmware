@@ -9,8 +9,8 @@ controls have not executed in this consumer at this pin.** The first native
 attempt exited 103 before execution because no worker slot was available.
 P05/P03 remain open.
 
-The copied main audit contains 48 tests plus two unchanged helper tests. All 48
-previous names remain; the two additions check atomic-ordering type identity
+The copied main audit contains 48 tests plus two unchanged helper tests. All 46
+previous main-audit names and both helper names remain; the two additions check atomic-ordering type identity
 and reject weakened publication orderings. The copied files match immutable
 upstream bytes. All 14 existing guard tests remain. The eight-feature selection
 is unchanged. Cargo resolved the lock with only five Git references changed;
