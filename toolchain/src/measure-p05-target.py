@@ -51,6 +51,7 @@ import pathlib
 import re
 import secrets
 import shutil
+import stat
 import struct
 import subprocess
 import sys
@@ -763,6 +764,7 @@ RUNTIME_ORDER = (
 )
 RUNTIME_ARCHES = {"mips": (1, 2, 8, 32), "powerpc": (1, 2, 20, 32), "x86_64": (2, 1, 62, 64)}
 RUNTIME_SCHEMA = "ffw.p05.runtime_receipt.v1"
+RUNTIME_CAPTURE_BYTES = 1024 * 1024
 RUNTIME_SCOPE = (
     "A runtime transcript is distinct from the atomic-cell guest. Native execution does not qualify BE execution. "
     "A supplied ELF hash binds bytes, not their compiler/source provenance. The supplied revision is an operator claim, "
@@ -773,16 +775,59 @@ RUNTIME_SCOPE = (
 )
 
 
+def runtime_file_identity(path: pathlib.Path) -> tuple[bytes, dict[str, Any]]:
+    """Read a regular artifact once with bounded memory; detect a concurrent size/timestamp change."""
+    if not path.is_file():
+        raise MeasurementError("a regular artifact file is required")
+    with path.open("rb") as source:
+        before = os.fstat(source.fileno())
+        if not stat.S_ISREG(before.st_mode):
+            raise MeasurementError("a regular artifact file is required")
+        remaining = before.st_size
+        header = source.read(min(64, remaining))
+        remaining -= len(header)
+        digest = hashlib.sha256(header)
+        while remaining:
+            chunk = source.read(min(1024 * 1024, remaining))
+            if not chunk:
+                raise MeasurementError("artifact was truncated while reading")
+            digest.update(chunk)
+            remaining -= len(chunk)
+        after = os.fstat(source.fileno())
+        if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+                after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+            raise MeasurementError("artifact changed while reading")
+    return header, {"sha256": digest.hexdigest(), "bytes": before.st_size}
+
+
+def runtime_uint(value: str | None) -> int | None:
+    """Canonical ASCII decimal emitted by the probe, never Unicode digits, signs or Python underscores."""
+    if value is None or len(value) > 20 or re.fullmatch(r"0|[1-9][0-9]*", value) is None:
+        return None
+    number = int(value)
+    return number if number <= (1 << 64) - 1 else None
+
+
+def runtime_lines(text: str) -> list[str]:
+    # splitlines() also treats VT/FF/Unicode separators as newlines; the serial contract permits LF/CRLF only.
+    return text.replace("\r\n", "\n").split("\n")
+
+
+def runtime_has_nonserial(text: str) -> bool:
+    """Inspect text already normalized exactly once; normalizing again would hide CR-CR-LF."""
+    return re.search(r"[\x00-\x08\x0b-\x1f\x7f\x85\u2028\u2029]", text) is not None
+
+
 def runtime_elf(path: pathlib.Path, arch: str) -> dict[str, Any]:
     """Header/byte identity only; actual loading, static linkage and source custody need their own evidence."""
-    data = path.read_bytes()
+    data, identity = runtime_file_identity(path)
     cls, endian, machine, bits = RUNTIME_ARCHES[arch]
     if len(data) < (52 if cls == 1 else 64) or data[:4] != b"\x7fELF":
         raise MeasurementError("runtime/supervisor ELF header is absent or truncated")
     actual_machine = int.from_bytes(data[18:20], "big" if data[5] == 2 else "little")
     if (data[4], data[5], actual_machine) != (cls, endian, machine):
         raise MeasurementError(f"ELF class/endian/machine {(data[4], data[5], actual_machine)} does not match {arch}")
-    return {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data), "arch": arch, "pointer_bits": bits,
+    return {**identity, "arch": arch, "pointer_bits": bits,
             "source_provenance": "not_attested_by_this_runner"}
 
 
@@ -809,21 +854,22 @@ def runtime_phase_problems(name: str, pairs: dict[str, str], detail: str) -> lis
     problems = [f"{name}.{key}={pairs.get(key, 'missing')} expected={value}"
                 for key, value in exact.get(name, {}).items() if pairs.get(key) != value]
     if name == "ABORT_TIMER_PARKED":
-        before, after, elapsed = (_int(pairs.get(key)) for key in (
+        before, after, elapsed = (runtime_uint(pairs.get(key)) for key in (
             "pending_timers_before", "pending_timers_after", "abort_to_join_ms"))
         if before is None or before < 1 or after is None or after < 0 or after + 1 != before:
             problems.append("ABORT_TIMER_PARKED: exactly one registered timer must retire")
         if elapsed is None or not 0 <= elapsed < 1000:
             problems.append("ABORT_TIMER_PARKED: missing/out-of-bound abort latency")
     if name == "TIMER_WAKE":
-        elapsed = _int(pairs.get("slept_ms"))
+        elapsed = runtime_uint(pairs.get("slept_ms"))
         if elapsed is None or not 45 <= elapsed < 5000:
             problems.append("TIMER_WAKE: wake is earlier than tolerance or outside the bound")
     if name == "DRAIN":
-        snapshot = re.search(r"\bsnapshot_before_drain=\(admitted=(\d+) unfinished=(\d+) timers_pending=(\d+)\)", detail)
-        if snapshot is None or tuple(map(int, snapshot.groups()[:2])) != (4, 4) or int(snapshot[3]) < 4:
+        snapshot = re.search(r"\bsnapshot_before_drain=\(admitted=([0-9]+) unfinished=([0-9]+) timers_pending=([0-9]+)\)", detail)
+        snapshot_values = tuple(runtime_uint(value) for value in snapshot.groups()) if snapshot else ()
+        if len(snapshot_values) != 3 or snapshot_values[:2] != (4, 4) or snapshot_values[2] is None or snapshot_values[2] < 4:
             problems.append("DRAIN: four admitted tasks must still be parked on live timers")
-        elapsed = _int(pairs.get("elapsed_ms"))
+        elapsed = runtime_uint(pairs.get("elapsed_ms"))
         if elapsed is None or not 0 <= elapsed < 5000:
             problems.append("DRAIN: missing/out-of-bound drain latency")
     return problems
@@ -832,7 +878,9 @@ def runtime_phase_problems(name: str, pairs: dict[str, str], detail: str) -> lis
 def judge_runtime(text: str, arch: str, elf: dict[str, Any] | None, *, supervised: bool = False) -> dict[str, Any]:
     """Judge exact phase/census identity, order and observed tallies; never accept an END total by itself."""
     gates, rows, malformed, semantic_errors = [], [], [], []
-    for line in text.replace("\r\n", "\n").splitlines():
+    if runtime_has_nonserial(text.replace("\r\n", "\n")):
+        malformed.append("non_serial_control_character_or_line_separator")
+    for line in runtime_lines(text):
         if "FFW_P05_RUNTIME:" not in line:
             continue
         match = re.fullmatch(r"FFW_P05_RUNTIME:([A-Z_]+) (.+)", line)
@@ -858,7 +906,7 @@ def judge_runtime(text: str, arch: str, elf: dict[str, Any] | None, *, supervise
             malformed.append(str(error))
     if any(token in text for token in ("\ufffd", "FFW_PANIC", "Kernel panic - not syncing")):
         malformed.append("invalid_utf8_or_guest_panic")
-    if any(line.startswith("FFW_") and not line.startswith("FFW_P05_RUNTIME:") for line in text.splitlines()):
+    if any(line.startswith("FFW_") and not line.startswith("FFW_P05_RUNTIME:") for line in runtime_lines(text)):
         malformed.append("unexpected_child_marker")
     names = [name for name, _ in rows]
     # DRAIN contains separately named snapshots and a repeated report: those detail keys are allowed there.
@@ -867,7 +915,7 @@ def judge_runtime(text: str, arch: str, elf: dict[str, Any] | None, *, supervise
                        malformed + ([] if tuple(names) == RUNTIME_ORDER else [f"observed marker order: {names}"])))
     begin = rows[0][1] if rows and rows[0][0] == "BEGIN" else {}
     _, endian, _, bits = RUNTIME_ARCHES[arch]
-    pid = _int(begin.get("pid"))
+    pid = runtime_uint(begin.get("pid"))
     env_errors = []
     if begin.get("status") != "start" or begin.get("arch") != arch or begin.get("endian") != (
             "big" if endian == 2 else "little") or begin.get("pointer_bits") != str(bits):
@@ -883,12 +931,23 @@ def judge_runtime(text: str, arch: str, elf: dict[str, Any] | None, *, supervise
     phase_errors = semantic_errors + [f"{name}: status={pairs.get('status', 'missing')}" for name, pairs in ops
                                       if pairs.get("status") != "ok"]
     gates.append(_gate("P05R-PHASES", "every required operation actually reports ok", phase_errors))
+    witness_errors, missing_witnesses = [], []
+    for phase, wanted in (("ABORT_TIMER_PARKED", 1), ("DRAIN", 4)):
+        found = [pairs for name, pairs in ops if name == phase]
+        fields = ("cleanup_resumed", "cleanup_unique", "cleanup_cancelled", "cleanup_before_deadline")
+        if len(found) != 1 or all(key not in found[0] for key in fields):
+            missing_witnesses.append(f"{phase}: child-side cleanup witnesses absent")
+        elif any(found[0].get(key) != str(wanted) for key in fields):
+            witness_errors.append(f"{phase}: expected {wanted} unique children resumed under cancellation before natural expiry")
+    gates.append(Gate("P05R-CLEANUP", "child-side cancellation cleanup is actually observed",
+                      "failed" if witness_errors else "blocked" if missing_witnesses else "passed",
+                      "; ".join(witness_errors + missing_witnesses)))
     census_errors, phases = [], []
     for name, pairs in ops:
         if name != "CENSUS":
             continue
         phases.append(pairs.get("phase"))
-        numbers = [_int(pairs.get(key)) for key in ("threads_task_dir_before", "threads_task_dir_after", "threads_status",
+        numbers = [runtime_uint(pairs.get(key)) for key in ("threads_task_dir_before", "threads_task_dir_after", "threads_status",
                                                    "vm_rss_kb", "vm_hwm_kb", "mem_available_kb")]
         if any(n is None or n < 0 for n in numbers):
             census_errors.append(f"{pairs.get('phase')}: unreadable or negative census figure")
@@ -905,17 +964,24 @@ def judge_runtime(text: str, arch: str, elf: dict[str, Any] | None, *, supervise
     tally_errors = [] if end == expected_end and len(ops) == 23 and statuses == {
         "ok": 23, "failed": 0, "unsupported": 0, "partial": 0, "unknown": 0} else [f"END={end}; observed={statuses}"]
     gates.append(_gate("P05R-END", "END matches independently counted operations", tally_errors))
-    return {"ok": all(g.status == "passed" for g in gates), "gates": gates, "observed_statuses": statuses}
+    return {"ok": all(g.status == "passed" for g in gates), "blocked": any(g.status == "blocked" for g in gates),
+            "gates": gates, "observed_statuses": statuses}
 
 
 def runtime_envelope(text: str, arch: str) -> tuple[str, list[Gate]]:
     """Only the bounded, hash-checked child region is excluded from the unchanged strict bootstrap judge."""
+    lines = runtime_lines(text)
+    starts = [i for i, line in enumerate(lines) if line == "FFW_MARKER:USERSPACE_START"]
+    # OpenBIOS emits bare CR in its preamble. Keep that preamble, but never let the legacy splitlines()
+    # parser manufacture protocol boundaries from controls or Unicode separators in userspace evidence.
+    if len(starts) != 1 or runtime_has_nonserial("\n".join(lines[starts[0]:])):
+        return "", [Gate("P05R-SUPERVISOR", "strict userspace serial framing", "failed",
+                         "missing/duplicate standalone userspace start or invalid protocol line separator/control")]
     boot = boot_runner()
     speaker = boot.speaker_expect
     child, error = speaker.stdout_region(text)
     if error:
         return "", [Gate("P05R-SUPERVISOR", "complete smoke-slot child envelope", "failed", error)]
-    lines = text.replace("\r\n", "\n").splitlines()
     start = next(i for i, line in enumerate(lines) if line.strip().startswith("FFW_SPEAKER_BEGIN "))
     end = next(i for i, line in enumerate(lines) if line.strip().startswith("FFW_SPEAKER_EXIT "))
     errors = []
@@ -937,10 +1003,14 @@ def runtime_envelope(text: str, arch: str) -> tuple[str, list[Gate]]:
     # Summary/reboot before the child would otherwise survive removal of the region.
     if any(line.startswith("FFW_MARKER:TEST_SUCCESS") or line == "FFW_MARKER:REBOOT_REQUEST" for line in lines[:end]):
         errors.append("supervisor summary/reboot precedes child completion")
+    if any(line.strip().startswith("FFW_") and line.strip() not in (
+            "FFW_MARKER:TEST_SUCCESS failures=0", "FFW_MARKER:REBOOT_REQUEST") for line in lines[end + 1:]):
+        errors.append("supervisor probes/setup must all precede the runtime child")
     return child.decode("utf-8"), [_gate("P05R-SUPERVISOR", "bootstrap setup, child hash/exit and ordered reboot", errors)]
 
 
-def run_runtime(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
+def run_runtime(args: argparse.Namespace, expected_elf: dict[str, Any],
+                expected_supervisor: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """Reuse E07's speaker-smoke child slot; the existing supervisor mounts proc and brings loopback up.
 
     The slot's `/franken-speaker --catalog` alias is deliberate: p05-runtime's main ignores argv.
@@ -956,24 +1026,44 @@ def run_runtime(args: argparse.Namespace) -> tuple[str, dict[str, Any]]:
     is_mips = args.arch == "mips"
     kernel = build_dir / ("kernels/xm/boot/" + KERNEL_NAME if is_mips else
                           "kernels/x/boot/vmlinux-4.9.0-0.bpo.6-powerpc")
-    kernel_sha256 = hashlib.sha256(kernel.read_bytes()).hexdigest()
+    if not kernel.is_file():
+        raise MeasurementError("runtime kernel must be a readable regular file")
+    # The snapshot is also an exclusive output-name claim: concurrent invocations cannot share this directory.
+    # Its name matches the existing vmlinux* Git ignore rule; no kernel bytes enter the public source tree.
+    kernel_snapshot = args.log_dir / "vmlinux.runtime-snapshot"
+    with kernel.open("rb") as source, kernel_snapshot.open("xb") as output:
+        shutil.copyfileobj(source, output, 1024 * 1024)
+    kernel_snapshot.chmod(0o400)
+    _, kernel_identity = runtime_file_identity(kernel_snapshot)
+    kernel_sha256 = kernel_identity["sha256"]
     archive = args.log_dir / "runtime.cpio.gz"
     image = boot.mkinitramfs.build(args.supervisor, archive,
-                                 [("franken-speaker", 0o100755, args.elf.read_bytes())])
+                                 [("franken-speaker", 0o100755, args.elf.read_bytes())], exclusive=True)
+    if image["init_sha256"] != expected_supervisor["sha256"]:
+        raise MeasurementError("supervisor bytes changed before packaging; guest not launched")
+    if image["extra_files"]["franken-speaker"]["sha256"] != expected_elf["sha256"]:
+        raise MeasurementError("runtime bytes changed before packaging; guest not launched")
     env = dict(os.environ, FFW_BUILD_DIR=str(build_dir), FFW_INITRAMFS=str(archive.resolve()))
     # Match the existing boot scripts' machine/CPU/console, with NICs explicitly disabled.
     # The guest's own loopback remains available; no emulated NIC can contact a real LAN.
     qemu = "qemu-system-mips" if is_mips else "qemu-system-ppc"
     command = [qemu, "-M", "malta" if is_mips else "g3beige", "-cpu", "24Kf" if is_mips else "G3",
-               "-m", "64M", "-nographic", "-no-reboot", "-nic", "none", "-kernel", str(kernel), "-initrd", str(archive),
+               "-m", "64M", "-nographic", "-no-reboot", "-nic", "none", "-kernel", str(kernel_snapshot), "-initrd", str(archive),
                "-append", "console=" + ("ttyS0" if is_mips else "ttyPZ0") + ",38400 rdinit=/init panic=-1"]
-    capture = boot.capture_guest(command, env, args.timeout, max_bytes=1024 * 1024,
+    capture = boot.capture_guest(command, env, args.timeout, max_bytes=RUNTIME_CAPTURE_BYTES,
         capture_paths={"stdout": args.log_dir / "runtime.serial.log", "stderr": args.log_dir / "qemu.stderr.log"})
+    inputs_after_capture = {}
+    for name, path in (("kernel", kernel_snapshot), ("initramfs", archive)):
+        try:
+            inputs_after_capture[name] = runtime_file_identity(path)[1]["sha256"]
+        except (OSError, MeasurementError):
+            inputs_after_capture[name] = None
     # Keep failures and partial output too. Natural QEMU exit follows the supervisor's reboot;
     # a runtime END alone never triggers termination or earns success.
     return capture["stdout"].decode("utf-8", "replace"), {
         "command": command, "qemu": boot.cmd_version(["qemu-system-mips" if is_mips else "qemu-system-ppc", "--version"]),
         "kernel_sha256": kernel_sha256, "initramfs": image, "exit_code": capture["returncode"],
+        "inputs_after_capture": inputs_after_capture,
         "stop_reason": capture["stop_reason"], "stderr_sha256": hashlib.sha256(capture["stderr"]).hexdigest(),
         "stdout_sha256": hashlib.sha256(capture["stdout"]).hexdigest(),
         "stderr_bytes": len(capture["stderr"]), "scope": "E07 supervisor child, not runtime as PID 1"}
@@ -983,6 +1073,8 @@ def runtime_main(args: argparse.Namespace) -> int:
     if args.command == "analyze-runtime" and args.log is None:
         print("BLOCKED: no runtime transcript supplied (atomic-cell evidence is not runtime evidence)")
         return 3
+    if args.receipt is not None and os.path.lexists(args.receipt):
+        raise MeasurementError("receipt already exists; no analysis or guest execution started")
     if args.arch != "x86_64" and args.supervisor is None:
         raise MeasurementError("BE runtime evidence requires the matching E07 speaker-smoke supervisor ELF")
     if args.arch == "x86_64" and args.supervisor is not None:
@@ -991,10 +1083,15 @@ def runtime_main(args: argparse.Namespace) -> int:
     supervisor = runtime_elf(args.supervisor, args.arch) if args.supervisor else None
     meta = None
     if args.command == "run-runtime":
-        text, meta = run_runtime(args)
+        text, meta = run_runtime(args, elf, supervisor)
         transcript_sha256 = meta["stdout_sha256"]
     else:
-        raw = args.log.read_bytes()
+        if not args.log.is_file():
+            raise MeasurementError("a regular runtime transcript file is required")
+        with args.log.open("rb") as source:
+            raw = source.read(RUNTIME_CAPTURE_BYTES + 1)
+        if len(raw) > RUNTIME_CAPTURE_BYTES:
+            raise MeasurementError("runtime transcript exceeds the bounded capture size")
         text = raw.decode("utf-8", "replace")
         transcript_sha256 = hashlib.sha256(raw).hexdigest()
     child, extra = runtime_envelope(text, args.arch) if supervisor is not None else (text, [])
@@ -1010,14 +1107,14 @@ def runtime_main(args: argparse.Namespace) -> int:
         packaged = meta["initramfs"]["extra_files"]
         if packaged.get("franken-speaker", {}).get("sha256") != elf["sha256"]:
             capture_errors.append("runtime bytes changed before packaging")
+        for name, expected in (("kernel", meta["kernel_sha256"]), ("initramfs", meta["initramfs"]["archive_sha256"])):
+            if meta["inputs_after_capture"][name] != expected:
+                capture_errors.append(f"{name} capture input changed or became unreadable during execution")
         report["gates"].append(_gate("P05R-CAPTURE", "bounded complete capture and packaged ELF identity", capture_errors))
     report["ok"] = all(g.status == "passed" for g in report["gates"])
-    for gate in report["gates"]:
-        print(f"{gate.status.upper()} {gate.gate_id}: {gate.title}" + (f" — {gate.detail}" if gate.detail else ""))
-    print("PASSED" if report["ok"] else "NOT PASSED")
-    print(RUNTIME_SCOPE)
+    outcome = "passed" if report["ok"] else "blocked" if exit_code(report) == 3 else "not_passed"
     if args.receipt:
-        body = {"schema": RUNTIME_SCHEMA, "result": "passed" if report["ok"] else "not_passed", "arch": args.arch,
+        body = {"schema": RUNTIME_SCHEMA, "result": outcome, "arch": args.arch,
                 "evidence_kind": "captured_guest_execution" if meta is not None else "supplied_transcript_analysis",
                 "revision_claim": args.revision, "elf": elf, "supervisor_elf": supervisor, "execution": meta,
                 "transcript_sha256": transcript_sha256, "gates": [vars(g) for g in report["gates"]],
@@ -1025,6 +1122,11 @@ def runtime_main(args: argparse.Namespace) -> int:
         with args.receipt.open("x", encoding="utf-8") as handle:
             json.dump(body, handle, indent=2, sort_keys=True)
             handle.write("\n")
+    # Do not publish a green result if persisting its requested receipt failed.
+    for gate in report["gates"]:
+        print(f"{gate.status.upper()} {gate.gate_id}: {gate.title}" + (f" — {gate.detail}" if gate.detail else ""))
+    print("PASSED" if report["ok"] else "BLOCKED" if outcome == "blocked" else "NOT PASSED")
+    print(RUNTIME_SCOPE)
     return exit_code(report)
 
 

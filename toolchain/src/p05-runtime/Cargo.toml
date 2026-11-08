@@ -6,12 +6,12 @@ publish = false
 
 # P05's real runtime probe (ffw-ipz): the pinned Asupersync runtime, built under its OWN bounded `LegacyProfile`, running spawn, cancel,
 # timer wake, loopback UDP, the bounded blocking pool and a root drain, and printing `FFW_P05_RUNTIME:*` markers for what actually
-# happened. The same source is meant to run natively on a host and as PID 1 in the big-endian full-system QEMU guest; the existing
-# `p05-target` probe next door covers `franken-atomic` only and runs no Asupersync code. Consumer: whatever judges the markers; this
-# package judges nothing but its own counters. It is built only for that measurement and never ships.
+# happened. The same source is meant to run natively on a host and as an E07-supervised child in the big-endian full-system QEMU guest;
+# the existing `p05-target` probe next door covers `franken-atomic` only and runs no Asupersync code. This package checks its phase
+# predicates; `measure-p05-target.py` independently checks its transcript and capture. It is built only for measurement and never ships.
 #
 # Its own workspace root, like `p05-target`, so the application workspace, its lockfile and the P01 workspace contract are not touched.
-# The lockfile is generated centrally from real Cargo metadata; none is written here.
+# The committed lockfile was generated centrally by the official Cargo resolver.
 [workspace]
 
 # The SAME Asupersync revision and Git source `toolchain/asupersync-cancel-audit` pins (the owned API pin), with default features OFF.
@@ -21,8 +21,8 @@ publish = false
 [dependencies]
 asupersync = { git = "https://github.com/Dicklesworthstone/asupersync", rev = "460306de2aa4169510873716018ade44fdb01534", default-features = false, features = ["native-runtime", "runtime-core"] }
 
-# The device speaker's release profile, copied from the workspace root because a profile is read from the workspace root and this
-# package is its own. `panic = "abort"` is deliberate: a guest that panics ends the transcript without its END line, and a judge must
+# The release profile mirrors the speaker workspace; this is not evidence of memory fit. A profile is read from the workspace root
+# and this package is its own. `panic = "abort"` is deliberate: a guest that panics ends the transcript without its END line, and a judge must
 # refuse a transcript with no END.
 [profile.release]
 opt-level = "z"

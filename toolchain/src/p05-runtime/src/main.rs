@@ -55,15 +55,39 @@ macro_rules! finished_within {
     ($child:expr, $limit:expr) => {{
         let started = Instant::now();
         loop {
-            if $child.is_finished() {
-                break true;
-            }
             if started.elapsed() >= $limit {
                 break false;
+            }
+            if $child.is_finished() {
+                break true;
             }
             yield_now().await;
         }
     }};
+}
+
+/// Probe watchdog independent of Asupersync's timer driver. A pending operation requeues its poll;
+/// the outer process supervisor remains the final bound if the scheduler itself stops progressing.
+async fn wall_clock_timeout<F: Future>(future: F, limit: Duration) -> Option<F::Output> {
+    let started = Instant::now();
+    let mut future = pin!(future);
+    std::future::poll_fn(|cx| {
+        if started.elapsed() >= limit {
+            return Poll::Ready(None);
+        }
+        let polled = future.as_mut().poll(cx);
+        if started.elapsed() >= limit {
+            return Poll::Ready(None);
+        }
+        match polled {
+            Poll::Ready(value) => Poll::Ready(Some(value)),
+            Poll::Pending => {
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+        }
+    })
+    .await
 }
 
 // ---- markers and counters ---------------------------------------------------------------------------------------------------
@@ -164,8 +188,8 @@ impl Report {
 
 // ---- the census -------------------------------------------------------------------------------------------------------------
 
-/// One reading of the process. The thread directory is counted BEFORE and AFTER the status file is read, so a thread that started or
-/// ended during the sample is seen as a change and not mistaken for two sources disagreeing.
+/// One reading of the process. Counts before and after the status read can detect disagreement, but cannot prove thread identities
+/// stayed fixed or exclude a transient thread between samples. Unreadable entries invalidate a count instead of producing a partial one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Census {
     task_dir_before: Option<usize>,
@@ -200,9 +224,13 @@ fn show<T: Display>(value: Option<T>) -> String {
 }
 
 fn task_dir_count() -> Option<usize> {
-    fs::read_dir("/proc/self/task")
-        .ok()
-        .map(|entries| entries.filter(Result::is_ok).count())
+    count_readable_entries(fs::read_dir("/proc/self/task").ok()?)
+}
+
+fn count_readable_entries<T, E>(entries: impl IntoIterator<Item = Result<T, E>>) -> Option<usize> {
+    entries.into_iter().try_fold(0_usize, |count, entry| {
+        entry.ok().and_then(|_| count.checked_add(1))
+    })
 }
 
 fn census() -> Census {
@@ -504,6 +532,42 @@ async fn spawn_join_phase() -> Verdict {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SleepCleanup {
+    child_id: usize,
+    cancel_requested: bool,
+    before_deadline: bool,
+}
+
+fn cleanup_counts(samples: &[SleepCleanup]) -> (usize, usize, usize, usize) {
+    (
+        samples.len(),
+        samples
+            .iter()
+            .enumerate()
+            .filter(|(index, sample)| {
+                samples[..*index]
+                    .iter()
+                    .all(|earlier| earlier.child_id != sample.child_id)
+            })
+            .count(),
+        samples
+            .iter()
+            .filter(|sample| sample.cancel_requested)
+            .count(),
+        samples
+            .iter()
+            .filter(|sample| sample.before_deadline)
+            .count(),
+    )
+}
+
+fn cleanup_succeeded(samples: &[SleepCleanup], wanted: usize) -> bool {
+    wanted > 0
+        && cleanup_counts(samples) == (wanted, wanted, wanted, wanted)
+        && (0..wanted).all(|id| samples.iter().any(|sample| sample.child_id == id))
+}
+
 /// Abort a child parked on a 10 s timer: it must finish well inside a second and leave no timer registered.
 async fn abort_timer_phase() -> Verdict {
     let Some(cx) = Cx::current() else {
@@ -514,7 +578,10 @@ async fn abort_timer_phase() -> Verdict {
     };
     let parked = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&parked);
+    let cleanup = Arc::new(Mutex::new(Vec::with_capacity(1)));
+    let child_cleanup = Arc::clone(&cleanup);
     let spawned = cx.spawn(move |child_cx| async move {
+        let armed = Instant::now();
         let mut sleeper = pin!(sleep(child_cx.now(), LONG));
         std::future::poll_fn(|poll_cx| {
             let polled = sleeper.as_mut().poll(poll_cx);
@@ -524,6 +591,14 @@ async fn abort_timer_phase() -> Verdict {
             polled
         })
         .await;
+        child_cleanup
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(SleepCleanup {
+                child_id: 0,
+                cancel_requested: child_cx.is_cancel_requested(),
+                before_deadline: armed.elapsed() < LONG,
+            });
     });
     let mut child = match spawned {
         Ok(child) => child,
@@ -535,8 +610,8 @@ async fn abort_timer_phase() -> Verdict {
     }
     let during = census();
     let pending_before = timer.pending_count();
-    child.abort();
     let t0 = Instant::now();
+    child.abort();
     if !finished_within!(child, PHASE_LIMIT) {
         return Verdict::Fail(format!(
             "aborted_child_not_finished_within_{}s pending_timers_before={pending_before}",
@@ -546,6 +621,8 @@ async fn abort_timer_phase() -> Verdict {
     let joined = child.join(&cx).await;
     let elapsed = t0.elapsed();
     let pending_after = timer.pending_count();
+    let cleanup = cleanup.lock().unwrap_or_else(PoisonError::into_inner);
+    let witnessed = cleanup_counts(&cleanup);
     // The contract, as the pinned audit asserts it for this very child
     // (`abort_and_join_complete_promptly_for_a_timer_parked_native_child`, `assert_eq!(result, Ok(()))`): `Sleep` has no error
     // output, so the cancellation it acknowledged completes the wait and the child's own result is preserved. Exactly `Ok(())`,
@@ -554,17 +631,22 @@ async fn abort_timer_phase() -> Verdict {
     // runtime has two workers, so a `Cancelled` here is a finding to read, and the oracle is not loosened to accept it.
     let preserved = matches!(joined, Ok(()));
     let detail = format!(
-        "parked={} pending_timers_before={pending_before} pending_timers_after={pending_after} abort_to_join_ms={} join_result={} expected_join_result=Ok threads_during_task_dir={} threads_during_status={}",
+        "parked={} pending_timers_before={pending_before} pending_timers_after={pending_after} abort_to_join_ms={} join_result={} expected_join_result=Ok threads_during_task_dir={} threads_during_status={} cleanup_resumed={} cleanup_unique={} cleanup_cancelled={} cleanup_before_deadline={}",
         parked.load(Ordering::Acquire),
         elapsed.as_millis(),
         join_kind(&joined),
         show(during.stable_task_dir()),
-        show(during.status_threads)
+        show(during.status_threads),
+        witnessed.0,
+        witnessed.1,
+        witnessed.2,
+        witnessed.3,
     );
     let ok = parked.load(Ordering::Acquire)
         && pending_before >= 1
-        && pending_after + 1 == pending_before
+        && pending_after.checked_add(1) == Some(pending_before)
         && preserved
+        && cleanup_succeeded(&cleanup, 1)
         && elapsed < Duration::from_secs(1);
     if ok {
         Verdict::Pass(detail)
@@ -589,11 +671,17 @@ fn join_kind<T>(joined: &Result<T, JoinError>) -> &'static str {
 /// `ordinary_spawn_keeps_cancellation_dominant_for_cancellation_blind_late_values`). The value is released only AFTER `abort()`, on
 /// any worker, so the order is fixed by this code and not by which worker polls first.
 async fn abort_blind_phase() -> Verdict {
+    abort_blind_with_start_signal(true, Duration::from_secs(2)).await
+}
+
+async fn abort_blind_with_start_signal(publish_start: bool, start_limit: Duration) -> Verdict {
     let Some(cx) = Cx::current() else {
         return Verdict::Fail("no_current_cx".to_string());
     };
     let released = Arc::new(AtomicBool::new(false));
     let slot: Arc<Mutex<Option<Waker>>> = Arc::new(Mutex::new(None));
+    let started_signal = Arc::new(AtomicBool::new(false));
+    let child_started = Arc::clone(&started_signal);
     let (child_released, child_slot) = (Arc::clone(&released), Arc::clone(&slot));
     let spawned = cx.spawn(move |_child_cx| async move {
         std::future::poll_fn(|poll_cx| {
@@ -602,7 +690,16 @@ async fn abort_blind_phase() -> Verdict {
             }
             *child_slot.lock().unwrap_or_else(PoisonError::into_inner) =
                 Some(poll_cx.waker().clone());
-            Poll::Pending
+            if publish_start {
+                child_started.store(true, Ordering::Release);
+            }
+            // Release can race with first registration, including the setup-failure cleanup.
+            // Recheck after storing the waker so that no pending poll loses its release wake.
+            if child_released.load(Ordering::Acquire) {
+                Poll::Ready(42_u32)
+            } else {
+                Poll::Pending
+            }
         })
         .await
     });
@@ -610,20 +707,12 @@ async fn abort_blind_phase() -> Verdict {
         Ok(child) => child,
         Err(error) => return Verdict::Fail(format!("spawn_refused={error:?}")),
     };
-    let has_waker = || {
-        slot.lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .is_some()
-    };
     let started = Instant::now();
-    while !has_waker() && started.elapsed() < Duration::from_secs(2) {
+    while !started_signal.load(Ordering::Acquire) && started.elapsed() < start_limit {
         yield_now().await;
     }
-    if !has_waker() {
-        child.abort();
-        let _ = child.join(&cx).await;
-        return Verdict::Fail("blind_child_never_polled".to_string());
-    }
+    let start_observed = started_signal.load(Ordering::Acquire);
+    // Setup failure must use the same release/wake/bounded-join cleanup as the normal path.
     child.abort();
     released.store(true, Ordering::Release);
     let waker = slot.lock().unwrap_or_else(PoisonError::into_inner).take();
@@ -637,6 +726,12 @@ async fn abort_blind_phase() -> Verdict {
         ));
     }
     let joined = child.join(&cx).await;
+    if !start_observed {
+        return Verdict::Fail(format!(
+            "blind_child_start_signal_missing cleanup_completed=true join_result={}",
+            join_kind(&joined)
+        ));
+    }
     let detail = format!(
         "join_result={} expected_join_result=Cancelled ok_value={:?}",
         join_kind(&joined),
@@ -719,19 +814,33 @@ async fn udp_phase() -> Verdict {
         Ok(child) => child,
         Err(error) => return Verdict::Fail(format!("spawn_refused={error:?}")),
     };
-    if let Err(error) = sender.send_to(UDP_PAYLOAD, to).await {
+    let send = wall_clock_timeout(sender.send_to(UDP_PAYLOAD, to), Duration::from_secs(3)).await;
+    let send_failure = match send {
+        Some(Ok(bytes)) if bytes == UDP_PAYLOAD.len() => None,
+        Some(Ok(bytes)) => Some(format!(
+            "short_send bytes={bytes} expected={}",
+            UDP_PAYLOAD.len()
+        )),
+        Some(Err(error)) => Some(format!("send_error_kind={:?}", error.kind())),
+        None => Some("send_timeout_after_3s".to_string()),
+    };
+    if let Some(failure) = send_failure {
         child.abort();
-        let _ = child.join(&cx).await;
-        return Verdict::Fail(format!("send_error_kind={:?}", error.kind()));
+        let cleanup = finished_within!(child, PHASE_LIMIT);
+        if cleanup {
+            let _ = child.join(&cx).await;
+        }
+        return Verdict::Fail(format!("{failure} receiver_cleanup_completed={cleanup}"));
     }
-    let started = Instant::now();
-    while !child.is_finished() && started.elapsed() < Duration::from_secs(3) {
-        sleep(cx.now(), Duration::from_millis(5)).await;
-    }
-    if !child.is_finished() {
+    if !finished_within!(child, Duration::from_secs(3)) {
         child.abort();
-        let _ = child.join(&cx).await;
-        return Verdict::Fail("receive_timeout_after_3s receiver_aborted=true".to_string());
+        let cleanup = finished_within!(child, PHASE_LIMIT);
+        if cleanup {
+            let _ = child.join(&cx).await;
+        }
+        return Verdict::Fail(format!(
+            "receive_timeout_after_3s receiver_aborted=true receiver_cleanup_completed={cleanup}"
+        ));
     }
     match child.join(&cx).await {
         Ok(Ok((bytes, peer))) => {
@@ -820,8 +929,9 @@ fn blocking_phase(report: &mut Report, runtime: &Runtime) {
     let third_kind = third.err().map(|refused| refused.kind());
     let (active, pending) = (pool.active_threads(), pool.pending_count());
     let held = census();
+    let deadline = Instant::now() + Duration::from_secs(5);
     gate.release();
-    let done = (finished(&first), finished(&second));
+    let done = (finished(&first, deadline), finished(&second, deadline));
     let detail = format!(
         "idle_threads={idle_threads} first_admitted={} first_started={started} second_admitted={} third_refused={third_kind:?} active_threads_while_held={active} pending_while_held={pending} threads_held_task_dir={} threads_held_status={} first_finished={} second_finished={} ran={}",
         first.is_ok(),
@@ -852,10 +962,11 @@ fn blocking_phase(report: &mut Report, runtime: &Runtime) {
 }
 
 /// Whether a submission was admitted AND its task completed within five seconds of the gate opening.
-fn finished<E>(submitted: &Result<BlockingTaskHandle, E>) -> bool {
-    submitted
-        .as_ref()
-        .is_ok_and(|task| task.wait_timeout(Duration::from_secs(5)))
+fn finished<E>(submitted: &Result<BlockingTaskHandle, E>, deadline: Instant) -> bool {
+    submitted.as_ref().is_ok_and(|task| {
+        task.wait_timeout(deadline.saturating_duration_since(Instant::now()))
+            && Instant::now() < deadline
+    })
 }
 
 // ---- drain ------------------------------------------------------------------------------------------------------------------
@@ -867,12 +978,14 @@ fn drain_phase(report: &mut Report, runtime: &Runtime) {
     let mut tasks = Vec::new();
     // Each task counts itself the first time its sleep is polled to `Pending`, i.e. when it is really parked on the timer.
     let entered = Arc::new(AtomicUsize::new(0));
+    let cleanup = Arc::new(Mutex::new(Vec::with_capacity(DRAIN_TASKS)));
     // The runtime's timer driver, handed out by the tasks (a driver handle is only reachable from a task's `Cx`), so the main thread
     // can count the pending timers.
     let timer_slot = Arc::new(Mutex::new(None));
-    for _ in 0..DRAIN_TASKS {
+    for child_id in 0..DRAIN_TASKS {
         let counter = Arc::clone(&entered);
         let slot = Arc::clone(&timer_slot);
+        let child_cleanup = Arc::clone(&cleanup);
         let parked = handle.try_spawn(async move {
             let Some(cx) = Cx::current() else {
                 return;
@@ -880,6 +993,7 @@ fn drain_phase(report: &mut Report, runtime: &Runtime) {
             if let Some(timer) = cx.timer_driver() {
                 *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(timer);
             }
+            let armed = Instant::now();
             let mut sleeper = pin!(sleep(cx.now(), LONG));
             let mut counted = false;
             std::future::poll_fn(|poll_cx| {
@@ -891,6 +1005,14 @@ fn drain_phase(report: &mut Report, runtime: &Runtime) {
                 polled
             })
             .await;
+            child_cleanup
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(SleepCleanup {
+                    child_id,
+                    cancel_requested: cx.is_cancel_requested(),
+                    before_deadline: armed.elapsed() < LONG,
+                });
         });
         if let Ok(task) = parked {
             spawned += 1;
@@ -938,17 +1060,24 @@ fn drain_phase(report: &mut Report, runtime: &Runtime) {
     // Draining a root that is already closed is itself pinned (`handle_drain_of_an_already_closed_root_preserves_bounded_teardown`):
     // the same success, with nothing live.
     let again = runtime.shutdown_drained(Duration::ZERO);
+    let cleanup = cleanup.lock().unwrap_or_else(PoisonError::into_inner);
+    let witnessed = cleanup_counts(&cleanup);
     let detail = format!(
-        "tasks_spawned={spawned}/{DRAIN_TASKS} tasks_parked_before_drain={parked_count} snapshot_before_drain=({}) {} elapsed_ms={} bound_ms={} repeat: {}",
+        "tasks_spawned={spawned}/{DRAIN_TASKS} tasks_parked_before_drain={parked_count} snapshot_before_drain=({}) {} elapsed_ms={} bound_ms={} cleanup_resumed={} cleanup_unique={} cleanup_cancelled={} cleanup_before_deadline={} repeat: {}",
         snapshot.detail(),
         drain_detail(&drained),
         drained.elapsed.as_millis(),
         bound.as_millis(),
+        witnessed.0,
+        witnessed.1,
+        witnessed.2,
+        witnessed.3,
         drain_detail(&again)
     );
     let ok = spawned == DRAIN_TASKS
         && parked_count == DRAIN_TASKS
         && drain_succeeded(&drained)
+        && cleanup_succeeded(&cleanup, DRAIN_TASKS)
         && drained.elapsed < bound
         && drain_succeeded(&again);
     report.record(
@@ -1103,11 +1232,161 @@ fn run_probe() -> Report {
     report
 }
 
-// ---- host tests of the helpers (the runtime phases are exercised by running the program, not by these) ----------------------
+// ---- native helper tests and real-runtime cases; the standalone program produces one clean transcript ---------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::task::{Context, Wake};
+
+    #[derive(Default)]
+    struct CountWake(AtomicUsize);
+
+    impl Wake for CountWake {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn runtime_for_test() -> Runtime {
+        profile()
+            .expect("bounded profile")
+            .builder()
+            .expect("valid caps")
+            .enable_platform_reactor(false)
+            .build()
+            .expect("runtime build")
+    }
+
+    #[test]
+    fn directory_iteration_errors_are_unknown_instead_of_a_partial_known_count() {
+        assert_eq!(count_readable_entries([Ok::<_, ()>(()), Ok(())]), Some(2));
+        assert_eq!(count_readable_entries([Ok(()), Err(()), Ok(())]), None);
+        assert_eq!(count_readable_entries([Err::<(), _>(())]), None);
+        assert_eq!(
+            count_readable_entries(std::iter::empty::<Result<(), ()>>()),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn wall_watchdog_requeues_pending_work_and_expires_without_a_runtime_timer() {
+        let wakes = Arc::new(CountWake::default());
+        let waker = Waker::from(Arc::clone(&wakes));
+        let mut cx = Context::from_waker(&waker);
+        let mut ready = pin!(wall_clock_timeout(async { 42_u32 }, Duration::from_secs(1)));
+        assert_eq!(ready.as_mut().poll(&mut cx), Poll::Ready(Some(42)));
+        let mut pending = pin!(wall_clock_timeout(
+            std::future::pending::<u32>(),
+            Duration::from_millis(30)
+        ));
+        assert!(pending.as_mut().poll(&mut cx).is_pending());
+        assert!(wakes.0.load(Ordering::SeqCst) >= 1);
+        std::thread::sleep(Duration::from_millis(40));
+        assert_eq!(pending.as_mut().poll(&mut cx), Poll::Ready(None));
+    }
+
+    #[test]
+    fn wall_watchdog_rejects_a_ready_result_observed_after_the_deadline() {
+        let wakes = Arc::new(CountWake::default());
+        let waker = Waker::from(wakes);
+        let mut cx = Context::from_waker(&waker);
+        let late = std::future::poll_fn(|_| {
+            std::thread::sleep(Duration::from_millis(30));
+            Poll::Ready(7_u32)
+        });
+        let mut future = pin!(wall_clock_timeout(late, Duration::from_millis(10)));
+        assert_eq!(future.as_mut().poll(&mut cx), Poll::Ready(None));
+    }
+
+    #[test]
+    fn child_cleanup_must_resume_unique_children_under_cancellation_before_natural_expiry() {
+        for wanted in [1, DRAIN_TASKS] {
+            let valid: Vec<_> = (0..wanted)
+                .map(|child_id| SleepCleanup {
+                    child_id,
+                    cancel_requested: true,
+                    before_deadline: true,
+                })
+                .collect();
+            assert!(cleanup_succeeded(&valid, wanted));
+            assert!(
+                !cleanup_succeeded(&[], wanted),
+                "forced drop is not child cleanup"
+            );
+            let mut late = valid.clone();
+            late[0].before_deadline = false;
+            assert!(
+                !cleanup_succeeded(&late, wanted),
+                "natural expiry or a late continuation cannot pass"
+            );
+            let mut not_cancelled = valid.clone();
+            not_cancelled[0].cancel_requested = false;
+            assert!(!cleanup_succeeded(&not_cancelled, wanted));
+            let mut wrong_child = valid.clone();
+            wrong_child[0].child_id = wanted;
+            assert!(!cleanup_succeeded(&wrong_child, wanted));
+            if wanted > 1 {
+                let duplicate = vec![valid[0]; wanted];
+                assert!(
+                    !cleanup_succeeded(&duplicate, wanted),
+                    "repeated callbacks cannot replace a missing child"
+                );
+                assert!(!cleanup_succeeded(&valid[..wanted - 1], wanted));
+            }
+        }
+        assert!(!cleanup_succeeded(&[], 0));
+    }
+
+    #[test]
+    fn missing_blind_child_start_signal_still_releases_and_retires_the_real_child() {
+        let runtime = runtime_for_test();
+        // Only the start observation is withheld. The real future still registers its real task waker.
+        let negative = run_async(
+            &runtime,
+            abort_blind_with_start_signal(false, Duration::from_millis(20)),
+        );
+        let positive = run_async(&runtime, abort_blind_phase());
+        let drained = runtime.shutdown_drained(Duration::from_secs(5));
+        assert!(matches!(positive, Verdict::Pass(_)));
+        let Verdict::Fail(detail) = negative else {
+            panic!("a missing observation must remain a failure");
+        };
+        assert!(
+            detail.contains("blind_child_start_signal_missing cleanup_completed=true"),
+            "{detail}"
+        );
+        assert!(detail.contains("join_result=Cancelled"), "{detail}");
+        assert!(drain_succeeded(&drained), "{}", drain_detail(&drained));
+    }
+
+    #[test]
+    fn blocking_completion_uses_the_shared_deadline_instead_of_readmitting_an_expired_wait() {
+        let runtime = runtime_for_test();
+        let pool = runtime.blocking_handle().expect("bounded blocking pool");
+        let first = pool.try_spawn(|| {});
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let first_done = finished(&first, deadline);
+        std::thread::sleep(Duration::from_millis(1100));
+        let second = pool.try_spawn(|| std::thread::sleep(Duration::from_millis(150)));
+        let second_done = finished(&second, deadline);
+        let second_retired = second
+            .as_ref()
+            .is_ok_and(|task| task.wait_timeout(Duration::from_secs(5)));
+        assert!(first_done);
+        assert!(
+            !second_done,
+            "a fresh five-second wait would incorrectly accept this job"
+        );
+        assert!(
+            second_retired,
+            "the deliberate late job must still be cleaned up"
+        );
+    }
 
     const STATUS: &str =
         "Name:\tffw\nThreads:\t7\nVmPeak:\t  9000 kB\nVmHWM:\t  4321 kB\nVmRSS:\t  4000 kB\n";
@@ -1170,6 +1449,7 @@ mod tests {
         ];
         let report = run_probe();
         let summary = report.end();
+        emit(&summary);
         let phases: Vec<&str> = report
             .names
             .iter()

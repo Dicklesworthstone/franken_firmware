@@ -368,11 +368,15 @@ def build(
     init_path: str | os.PathLike[str],
     out_path: str | os.PathLike[str],
     extra_files: Iterable[tuple[str, int, bytes]] = (),
+    *,
+    exclusive: bool = False,
 ) -> dict[str, Any]:
     """Build a deterministic `.cpio.gz` initramfs from `init_path` and verify it independently.
 
     `extra_files` are `(name, mode, bytes)` regular files packed after `init`.
-    New archives always provide the legacy entropy device, including with no extra files."""
+    New archives always provide the legacy entropy device, including with no extra files.
+    `exclusive=True` refuses to replace an existing output, including one created by a competing writer.
+    """
     init_p = pathlib.Path(init_path)
     out_p = pathlib.Path(out_path)
     if not init_p.is_file():
@@ -389,7 +393,8 @@ def build(
         receipt["extra_files"] = verify_extra_files(gz_bytes, extras)
 
     out_p.parent.mkdir(parents=True, exist_ok=True)
-    out_p.write_bytes(gz_bytes)
+    with out_p.open("xb" if exclusive else "wb") as output:
+        output.write(gz_bytes)
     receipt["init_path"] = str(init_p)
     receipt["out_path"] = str(out_p)
     return receipt

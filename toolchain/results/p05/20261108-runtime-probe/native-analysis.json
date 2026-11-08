@@ -1,0 +1,56 @@
+{
+  "arch": "x86_64",
+  "elf": {
+    "arch": "x86_64",
+    "bytes": 18022040,
+    "pointer_bits": 64,
+    "sha256": "fe3b20f7cea5385472b34d132cab2a81cf275c340c7c10a9d0e659513964eacd",
+    "source_provenance": "not_attested_by_this_runner"
+  },
+  "evidence_kind": "supplied_transcript_analysis",
+  "execution": null,
+  "gates": [
+    {
+      "detail": "",
+      "gate_id": "P05R-TRANSCRIPT",
+      "status": "passed",
+      "title": "all 25 runtime markers in the declared order"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-ENV",
+      "status": "passed",
+      "title": "runtime BEGIN and supplied ELF agree"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-PHASES",
+      "status": "passed",
+      "title": "every required operation actually reports ok"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-CLEANUP",
+      "status": "passed",
+      "title": "child-side cancellation cleanup is actually observed"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-CENSUS",
+      "status": "passed",
+      "title": "ten complete, consistent census samples"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-END",
+      "status": "passed",
+      "title": "END matches independently counted operations"
+    }
+  ],
+  "result": "passed",
+  "revision_claim": "src-sha256:518ea6fb815f75b828c8fcfcb339962e856641107196261938bd996e0380a90d",
+  "schema": "ffw.p05.runtime_receipt.v1",
+  "scope": "A runtime transcript is distinct from the atomic-cell guest. Native execution does not qualify BE execution. A supplied ELF hash binds bytes, not their compiler/source provenance. The supplied revision is an operator claim, not an attestation. Analysis only validates supplied transcript bytes; command exit and execution custody require the original execution receipt. This runner compiles nothing. Synthetic checker tests are not runtime or QEMU proof. A guest pass covers the named phases under the recorded QEMU kernel, not stock kernels, 32 MiB memory fit, physical drivers/audio, provider integrations, or completion of P05/P03.",
+  "supervisor_elf": null,
+  "transcript_sha256": "fbfcf471c9be1bc5a6de7f61c8251976fd983f510223ac30c9678db7ca71ae9b"
+}
