@@ -13,6 +13,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -853,21 +854,21 @@ class RunnerPlatformTests(unittest.TestCase):
     PROVIDER_ARGV = ("--speaker-platform", "--platform-controls", "--entropy-provider", "legacy-dev-random-test-environment")
 
     def provider_captures(self, mips=None, ppc=None):
-        """The provider run of each guest: MIPS degraded (`not_seeded`), PowerPC green, unless a case gives its own."""
-        return [self.capture(mips if mips is not None else provider_text("mips", *PROVIDER_BASELINES["mips degraded"][1:])),
+        """The provider run of each guest: MIPS green (a blocking read that returned), PowerPC green, unless a case gives its own."""
+        return [self.capture(mips if mips is not None else provider_text("mips", *PROVIDER_BASELINES["mips green"][1:])),
                 self.capture(ppc if ppc is not None else provider_text("ppc", *PROVIDER_BASELINES["ppc green"][1:]))]
 
     def test_a_provider_run_records_its_provider_and_every_control_caught(self):
         result, receipt = self.run_main(self.provider_captures(), self.argv(*self.PROVIDER_ARGV))
         self.assertEqual((result, receipt["status"]), (0, "PASS"))
         step = receipt["platform_step"]
-        self.assertEqual(step["verdicts"], {"mips": "degraded", "ppc": "green"})
+        self.assertEqual(step["verdicts"], {"mips": "green", "ppc": "green"})
         self.assertEqual((step["feature"], step["provider"], step["provider_feature"]),
                          ("speaker-platform", PROV, "speaker-platform-legacy-test-env"))
         self.assertEqual(step["argv"], ["/franken-speaker", "--platform-startup", PROV_ARG])
         scripts = {name: VERIFIER.sha256_file(VERIFIER.SCRIPT_DIR / name) for name in ("boot-mips.sh", "boot-ppc.sh")}
         self.assertEqual(step["entropy_injection_checked"], scripts)
-        for arch, verdict in (("mips", "degraded"), ("ppc", "green")):
+        for arch, verdict in (("mips", "green"), ("ppc", "green")):
             guest = receipt["guests"][arch]
             self.assertEqual((guest["status"], guest["validation_errors"]), ("PASS", []), arch)
             platform = guest["platform"]
@@ -884,16 +885,24 @@ class RunnerPlatformTests(unittest.TestCase):
                 self.assertTrue(control["caught"], (arch, name, control))
             self.assertEqual(guest["build_manifest"].get("features"),
                              ["speaker-smoke", "speaker-platform", "speaker-platform-legacy-test-env"])
-        self.assertEqual(receipt["guests"]["mips"]["platform"]["degraded_because"], "entropy:not_seeded")
+        self.assertIn("blocks until the pool is ready", receipt["guests"]["mips"]["platform"]["claim"])      # the receipt says which kind of read it saw
+        self.assertIn("EAGAIN", receipt["guests"]["ppc"]["platform"]["claim"])
 
-    def test_a_pool_that_has_not_credited_is_degraded_on_both_guests_and_never_green(self):
+    def test_an_unseeded_pool_is_degraded_on_powerpc_and_red_on_mips_and_never_green(self):
         both = self.provider_captures(ppc=provider_text("ppc", *PROVIDER_BASELINES["ppc degraded"][1:]))
         result, receipt = self.run_main(both, self.argv(*self.PROVIDER_ARGV))
         self.assertEqual((result, receipt["status"]), (0, "PASS"))
-        self.assertEqual(receipt["platform_step"]["verdicts"], {"mips": "degraded", "ppc": "degraded"})
-        for arch in ("mips", "ppc"):
-            self.assertNotEqual(receipt["guests"][arch]["platform"]["verdict"], "green", arch)
-            self.assertFalse(receipt["guests"][arch]["platform"]["started"], arch)
+        self.assertEqual(receipt["platform_step"]["verdicts"], {"mips": "green", "ppc": "degraded"})
+        self.assertNotEqual(receipt["guests"]["ppc"]["platform"]["verdict"], "green")
+        self.assertFalse(receipt["guests"]["ppc"]["platform"]["started"])
+        # The MIPS kernel cannot give that refusal: a MIPS transcript that says so fails the run, with both problems named.
+        refused = provider_text("mips", legacy("legacy_test_environment_not_seeded_mips"), 3)
+        result, receipt = self.run_main(self.provider_captures(mips=refused), self.argv(*self.PROVIDER_ARGV))
+        self.assertEqual((result, receipt["status"]), (1, "FAIL"))
+        mips = receipt["guests"]["mips"]
+        self.assertEqual((mips["platform"]["verdict"], mips["validation_errors"][:2]), ("red", MIPS_NOT_SEEDED_RED))   # the controls are then not run
+        self.assertTrue(all(e.startswith("platform_control_not_run:") for e in mips["validation_errors"][2:]))
+        self.assertNotIn("degraded_because", mips["platform"])
 
     def test_a_missing_device_node_fails_the_provider_run_by_name(self):
         absent = provider_text("mips", legacy("legacy_device_absent_mips"), 3)
@@ -1394,12 +1403,21 @@ def ppc_not_seeded_provider_lines():
     return replaced(lines, 5, "FFW_PLATFORM:END started=0 refused=entropy:not_seeded")
 
 
-# The provider baselines: (guest, lines, the guest's exit status). The first of each kind must itself pass.
+def mips_provider_green_lines():
+    """The six lines the MIPS guest of run 2a405e88 printed for the provider step (a blocking `/dev/random` read that returned): the committed MIPS vector
+    with the ENTROPY line the vectors file shows for a pass and `END started=1`. `MipsProviderGreenIsTheRetainedTranscript` ties it to the serial log."""
+    lines = replaced(legacy("legacy_test_environment_not_seeded_mips"), 3, legacy("legacy_test_environment_all_pass_powerpc")[3])
+    return replaced(lines, 5, "FFW_PLATFORM:END started=1")
+
+
+# The provider baselines: (guest, lines, the guest's exit status). The first of each kind must itself pass. MIPS has no degraded baseline: its 4.19.249
+# kernel blocks the read until the pool is ready and then returns bytes, so it cannot refuse `not_seeded` (p02.md, "The harness kernels do not answer alike").
 PROVIDER_BASELINES = {
     "ppc green": ("ppc", legacy("legacy_test_environment_all_pass_powerpc"), 0),
-    "mips degraded": ("mips", legacy("legacy_test_environment_not_seeded_mips"), 3),
+    "mips green": ("mips", mips_provider_green_lines(), 0),
     "ppc degraded": ("ppc", ppc_not_seeded_provider_lines(), 3),
 }
+MIPS_NOT_SEEDED_RED = ["platform_not_started:entropy:not_seeded", "platform_unreachable_refusal:entropy:not_seeded"]
 
 
 def provider_block(lines, status, provider=PROV):
@@ -1418,7 +1436,7 @@ def pverify(text, arch):
 # What the contract and the policy give each legacy example, for the run that selected the test-environment provider.
 PROVIDER_EXPECTED = {
     ("legacy_test_environment_all_pass_powerpc", "ppc"): ("green", []),
-    ("legacy_test_environment_not_seeded_mips", "mips"): ("degraded", []),
+    ("legacy_test_environment_not_seeded_mips", "mips"): ("red", ["platform_not_started:entropy:not_seeded", "platform_unreachable_refusal:entropy:not_seeded"]),
     ("legacy_evidence_qualified_unavailable_powerpc", "ppc"): ("red", ["platform_value:ENTROPY:provider=legacy_dev_random"]),
     ("legacy_device_absent_mips", "mips"): ("red", ["platform_not_started:entropy:absent"]),
     ("legacy_selected_with_a_simulated_backend_refused", "ppc"): ("red", ["platform_backend_simulated"]),
@@ -1437,12 +1455,15 @@ class LegacyProviderJudgeTests(unittest.TestCase):
             self.assertEqual(record["provider"], PROV, name)
             self.assertIn("test environment", record["claim"], name)
 
-    def test_the_degraded_cell_for_a_provider_run_is_not_seeded_on_either_guest_and_nothing_else(self):
-        # Both guests: a pool that has not credited yet is what a first /dev/random read reports. No positive is shown.
-        for arch, lines in (("mips", PROVIDER_BASELINES["mips degraded"][1]), ("ppc", PROVIDER_BASELINES["ppc degraded"][1])):
-            record = pjudge(lines, arch)
-            self.assertEqual((record["verdict"], record["problems"], record["started"]), ("degraded", [], False), arch)
-            self.assertEqual(record["degraded_because"], "entropy:not_seeded", arch)
+    def test_the_degraded_cell_for_a_provider_run_is_not_seeded_on_powerpc_and_nothing_else(self):
+        # PowerPC only: its 4.9 kernel answers a nonblocking /dev/random read with EAGAIN while the pool is empty. No positive is shown.
+        record = pjudge(PROVIDER_BASELINES["ppc degraded"][1], "ppc")
+        self.assertEqual((record["verdict"], record["problems"], record["started"]), ("degraded", [], False))
+        self.assertEqual(record["degraded_because"], "entropy:not_seeded")
+        # MIPS cannot give that refusal (its 4.19.249 kernel blocks the read, then returns bytes): the same transcript is red, with both problems named.
+        record = pjudge(legacy("legacy_test_environment_not_seeded_mips"), "mips")
+        self.assertEqual((record["verdict"], record["problems"], record["started"]), ("red", MIPS_NOT_SEEDED_RED, False))
+        self.assertNotIn("degraded_because", record)
         # The control: the same shape without a provider is still red on PowerPC under the default judge (E03 seeded its pool).
         plain = replaced(replaced(lines_of("powerpc_all_pass"), 3, "FFW_PLATFORM:ENTROPY status=REFUSED provenance=kernel reason=not_seeded"),
                          5, "FFW_PLATFORM:END started=0 refused=entropy:not_seeded")
@@ -1505,11 +1526,13 @@ class LegacyProviderJudgeTests(unittest.TestCase):
             self.assertEqual((record["verdict"], record["problems"]), ("red", problems), label)
 
     def test_the_texts_do_not_say_that_no_read_was_ever_observed(self):
-        # BrightLion's one-shot (6575) read /dev/random on PowerPC and got not_seeded: the true statement is that no SEEDED read exists.
+        # BrightLion's one-shot (6575) read /dev/random on PowerPC and got not_seeded, and run 2a405e88's MIPS guest read bytes after its blocking read
+        # returned: the true statement is that no SEEDED NONBLOCKING read exists.
         for label, path in (("platform_expect.py", Path(P.__file__)), ("SPEAKER_SMOKE.md", REPO / "toolchain" / "SPEAKER_SMOKE.md")):
             text = " ".join(path.read_text(encoding="utf-8").replace("# ", " ").split())
             self.assertNotRegex(text, r"(?i)\bno `/dev/random` read has been observed", label)
-            self.assertRegex(text, r"(?i)\bno seeded `/dev/random` read has been observed in any guest", label)
+            self.assertNotRegex(text, r"(?i)\bno seeded `/dev/random` read has been observed", label)       # the MIPS start of run 2a405e88 did read bytes
+            self.assertRegex(text, r"(?i)\bno seeded nonblocking `/dev/random` read has been observed in any guest", label)
 
     def test_a_provider_the_judge_does_not_know_raises_like_an_unknown_guest(self):
         for provider in ("legacy_dev_random", "urandom", "", "LEGACY_DEV_RANDOM_TEST_ENVIRONMENT"):
@@ -1611,7 +1634,7 @@ class LegacyProviderVerifierTests(unittest.TestCase):
 
     def test_run_platform_controls_catches_every_plant_of_a_provider_run_and_a_blind_judge_is_not_credited(self):
         cfg = {"hello": base.HELLO, "enosys": base.ENOSYS, "triple": base.MIPS_TRIPLE}
-        text = provider_text("mips", *PROVIDER_BASELINES["mips degraded"][1:])
+        text = provider_text("mips", *PROVIDER_BASELINES["mips green"][1:])
         controls = VERIFIER.run_platform_controls(text, "mips", cfg, SPEAKER, PROVIDER_PLATFORM)
         self.assertEqual(sorted(controls), sorted(P.plants_for(PROV)))
         for name, record in controls.items():
@@ -1628,6 +1651,335 @@ class LegacyProviderVerifierTests(unittest.TestCase):
         for plant in ("provider_missing", "provider_other", "provider_unknown"):
             with self.assertRaises(ValueError, msg=plant):
                 P.plant_transcript(good_text("ppc"), plant)                    # a default transcript has no provider= to change
+
+
+RUN_2A405E88 = REPO / "toolchain" / "results" / "runs" / "2a405e88bb10497b98b85abeae7dffaf"
+
+
+class LegacyProviderKernelSemanticsTests(unittest.TestCase):
+    """The harness kernels do not answer a `/dev/random` read alike (docs/contracts/p02.md, "The harness kernels do not answer alike"): the PowerPC 4.9.88
+    kernel answers `EAGAIN` while its blocking pool is empty, the MIPS 4.19.249 kernel ignores `O_NONBLOCK` and blocks the read until the pool is ready,
+    then returns bytes. The judge classifies each accordingly; a kernel-source reading, not a measurement of the read."""
+
+    # What the judge held before this fix: MIPS "refuses not_seeded", degraded like PowerPC.
+    OLD_CELLS = frozenset({("mips", "entropy", "not_seeded"), ("ppc", "entropy", "not_seeded")})
+
+    def honest_classification(self):
+        """Every part of the honest classification; raises AssertionError when any is false."""
+        green = pjudge(mips_provider_green_lines(), "mips")
+        self.assertEqual((green["verdict"], green["problems"], green["started"]), ("green", [], True))
+        self.assertIn("blocks until the pool is ready and then returns bytes", green["claim"])
+        self.assertIn("not an observation of nonblocking semantics", green["claim"])
+        refused = pjudge(legacy("legacy_test_environment_not_seeded_mips"), "mips")
+        self.assertEqual((refused["verdict"], refused["problems"], refused["started"]), ("red", MIPS_NOT_SEEDED_RED, False))
+        self.assertNotIn("degraded_because", refused)
+        ppc = pjudge(PROVIDER_BASELINES["ppc degraded"][1], "ppc")
+        self.assertEqual((ppc["verdict"], ppc["problems"], ppc["degraded_because"]), ("degraded", [], "entropy:not_seeded"))
+        self.assertIn("EAGAIN", ppc["claim"])
+        self.assertNotIn("blocks until", ppc["claim"])
+        self.assertEqual(P.DEGRADED_PROVIDER, frozenset({("ppc", "entropy", "not_seeded")}))
+        self.assertEqual(P.UNREACHABLE_PROVIDER_REFUSAL, frozenset({("mips", "entropy", "not_seeded")}))
+
+    def test_the_honest_classification_holds(self):
+        self.honest_classification()
+
+    def test_the_old_expectation_that_mips_refuses_not_seeded_is_refuted(self):
+        refused = pjudge(legacy("legacy_test_environment_not_seeded_mips"), "mips")
+        with self.assertRaises(AssertionError):
+            self.assertEqual(refused["verdict"], "degraded")               # the old expectation, stated directly, fails
+        self.assertEqual(refused["verdict"], "red")
+
+    def test_each_old_expectation_planted_back_fails_the_honest_test_and_removing_the_plant_restores_it(self):
+        self.honest_classification()                                         # the control: the unplanted judge passes
+        plants = {
+            "MIPS not_seeded degraded again": patch.object(P, "DEGRADED_PROVIDER", self.OLD_CELLS),
+            "the unreachable cell dropped": patch.object(P, "UNREACHABLE_PROVIDER_REFUSAL", frozenset()),
+            "the MIPS claim says the old thing": patch.dict(P.PROVIDER_READ, {"mips": "this guest's kernel answers a nonblocking /dev/random read with "
+                                                                                  "EAGAIN while its pool is empty"}),
+            "the PowerPC claim says it blocks": patch.dict(P.PROVIDER_READ, {"ppc": "this guest's kernel blocks until the pool is ready"}),
+        }
+        for label, plant in plants.items():
+            with plant:
+                with self.assertRaises(AssertionError, msg=label):
+                    self.honest_classification()
+            self.honest_classification()                                     # and with the plant removed it is green again
+        # With the old cells planted, the OLD expectation passes, which is exactly why the honest test must fail.
+        with patch.object(P, "DEGRADED_PROVIDER", self.OLD_CELLS):
+            self.assertEqual(pjudge(legacy("legacy_test_environment_not_seeded_mips"), "mips")["verdict"], "degraded")
+
+    def test_the_default_run_is_untouched(self):
+        self.assertEqual(P.DEGRADED, frozenset({("mips", "entropy", "not_seeded")}))
+        self.assertEqual(judge(lines_of("mips_entropy_not_seeded"), "mips")["verdict"], "degraded")
+
+    REVISIT = ("Revisit this cell if the MIPS harness kernel image (`kernel_sha256` `3803357e`) is replaced, or if a provider-side wait bound is added")
+    # (document, phrase, exactly once): every phrase the texts must carry. `exactly once` means a second copy elsewhere could not keep the pin green
+    # after the sentence it guards is deleted.
+    TEXT_NEEDLES = (
+        ("contract", "The harness kernels do not answer alike", False), ("contract", "random_read_iter", False), ("contract", "wait_for_random_bytes", False),
+        ("contract", "it has no deadline", False), ("contract", "blocks until the pool is ready and then returns bytes", False),
+        ("contract", "platform_unreachable_refusal:entropy:not_seeded", False), ("contract", "no wait bound", False), ("contract", "_random_read", False),
+        ("contract", "red on the MIPS guest", False),
+        ("smoke", "blocks until the pool is ready and then returns", False), ("smoke", "platform_unreachable_refusal:entropy:not_seeded", False),
+        ("smoke", "no wait bound", False), ("smoke", "not established", False), ("smoke", "timed_out", False),
+        # review of v1 (YellowLantern F1/F2/F3/F4): the statements that no test pinned
+        ("contract", "a reading of kernel source and of the booted image, not a measurement of the read", True),
+        ("contract", "and do not agree with this one", True), ("smoke", "and they do not agree with the retained one", True),
+        ("contract", "every committed MIPS boot capture that carries the `GETRANDOM` probe", True),
+        ("contract", "Six other committed MIPS runs carry the earlier seven-probe set", True),
+        # review of v1a (CrimsonMouse 16264): the count is over the committed tree, and a "capture" is a serial log or a stdout capture
+        ("contract", "`22637af0` keeps no serial log", True), ("contract", "so a \"capture\" here means either file", True),
+        ("contract", "is not committed and is not counted", True), ("contract", "Which MIPS runs committed at `bc32b0a` carry that line", False),
+        # review of v1b (CrimsonMouse 16294): the totals are scoped to a revision, and the check is soundness only
+        ("contract", "Of the MIPS runs committed at `bc32b0a`, twelve in all", True), ("contract", "it does not require this list to stay complete", True),
+        ("contract", "a MIPS run committed after `bc32b0a` is not counted here", True),
+        ("contract", REVISIT, True), ("smoke", REVISIT, True), ("judge", REVISIT, True),
+        ("contract", "One hypothesis, not a finding and not measured", True), ("smoke", "One hypothesis, not a finding and not measured", True),
+    )
+    TEXT_STALE = ("`not_seeded` is `degraded` on both guests", "degraded on both guests", "degraded on both guests:", "is not stable from run to run",
+                  "credits by itself (the 4.19 MIPS guest", "every committed MIPS run prints",
+                  # v1a's wording, which counted working-tree files (an ignored log, and a missed stdout-capture run) instead of the committed tree
+                  "every committed MIPS boot log that carries", "the other seven MIPS logs that reach userspace", "runs `1412ac47`, `570cd370`, `2a405e88` and `f0a91e7b`",
+                  # v1b's wording: an unscoped total, and a check that required the list to be complete
+                  "There are twelve committed MIPS runs", "re-derives every number and id below from the tracked files", "Which committed MIPS runs carry that line")
+
+    @staticmethod
+    def pinned_texts():
+        def flat(text):
+            return " ".join(text.replace("**", "").replace("# ", " ").split())
+        return {"contract": flat((REPO / "docs" / "contracts" / "p02.md").read_text(encoding="utf-8")),
+                "smoke": flat((REPO / "toolchain" / "SPEAKER_SMOKE.md").read_text(encoding="utf-8")),
+                "judge": flat(Path(P.__file__).read_text(encoding="utf-8"))}
+
+    def check_texts(self, texts):
+        """Every needle present (once, where it says so) and no stale phrase anywhere; raises AssertionError otherwise."""
+        for doc, needle, once in self.TEXT_NEEDLES:
+            self.assertIn(needle, texts[doc], (doc, needle))
+            if once:
+                self.assertEqual(texts[doc].count(needle), 1, (doc, needle))
+        for stale in self.TEXT_STALE:
+            for doc, text in texts.items():
+                self.assertNotIn(stale, text, (doc, stale))
+
+    def test_the_texts_say_what_the_kernels_do_and_that_no_wait_bound_exists(self):
+        self.check_texts(self.pinned_texts())
+
+    def test_each_pinned_phrase_is_needed_deleting_it_fails_and_restoring_it_passes(self):
+        texts = self.pinned_texts()
+        self.check_texts(texts)                                              # the control: the real texts pass
+        for doc, needle, once in self.TEXT_NEEDLES:
+            deleted = dict(texts, **{doc: texts[doc].replace(needle, "")})   # the plant: the phrase is gone from that document
+            with self.assertRaises(AssertionError, msg=(doc, needle)):
+                self.check_texts(deleted)
+            self.check_texts(dict(deleted, **{doc: texts[doc]}))             # and with the plant removed it passes again
+            if once:                                                         # a second copy elsewhere in the same document must fail too
+                doubled = dict(texts, **{doc: texts[doc] + " " + needle})
+                with self.assertRaises(AssertionError, msg=("twice", doc, needle)):
+                    self.check_texts(doubled)
+        for stale in self.TEXT_STALE:                                        # the old wording planted back into each document
+            for doc in texts:
+                with self.assertRaises(AssertionError, msg=(doc, stale)):
+                    self.check_texts(dict(texts, **{doc: texts[doc] + " " + stale}))
+
+    NUMBER_WORDS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen",
+                    "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty")
+
+    @staticmethod
+    def short_id(run):
+        dated = re.match(r"\d{8}-\d{4}", run)
+        return dated[0] if dated else run[:8]
+
+    @staticmethod
+    def tracked_mips_captures(runs_root=None):
+        """{run directory: [capture file names]}: the MIPS boot captures (serial log, stdout capture, control-boot stdout captures) git TRACKS under
+        toolchain/results/runs. `git ls-files` decides, so an ignored local log is never counted; a tree without .git (an export) is all tracked files.
+        `runs_root` names a COPY of the runs directory (a test's own tree): every file in it counts and git is not asked."""
+        root = REPO / "toolchain" / "results" / "runs"
+        if runs_root is not None:
+            listed = [f"toolchain/results/runs/{path.relative_to(runs_root)}" for path in Path(runs_root).rglob("*") if path.is_file()]
+        else:
+            try:
+                listed = subprocess.run(["git", "ls-files", "-z", "--", "toolchain/results/runs"], cwd=REPO, capture_output=True, timeout=30, check=True
+                                        ).stdout.decode("utf-8").split("\0")
+            except (OSError, subprocess.SubprocessError):
+                listed = [str(path.relative_to(REPO)) for path in root.rglob("*") if path.is_file()]
+        captures = {}
+        for rel in listed:
+            parts = rel.split("/")
+            if len(parts) == 5 and re.fullmatch(r"boot-mips-(?:serial\.log|stdout\.bin|control-[a-z_]+-stdout\.bin)", parts[-1]):
+                captures.setdefault(parts[3], []).append(parts[-1])
+        return {run: sorted(names) for run, names in sorted(captures.items())}
+
+    @staticmethod
+    def read_tracked_capture(run, name):
+        return (REPO / "toolchain" / "results" / "runs" / run / name).read_bytes().decode("utf-8", errors="replace")
+
+    def classify_mips_runs(self, captures, read=None):
+        """{short id: {"kind": "with_probe" | "seven" | "none", "serial": bool}} for the given MIPS runs: whether their captures carry the GETRANDOM probe
+        (the 25-probe set), only the earlier seven-probe set, or no probe at all. `read(run, name)` returns a capture's text (the tracked file by default).
+        The quantified claim is checked here, on EVERY capture it is given: a capture that carries the probe prints exactly `status=UNSEEDED rc=-11`."""
+        read = read or self.read_tracked_capture
+        out = {}
+        for run, names in captures.items():
+            kinds = set()
+            for name in names:
+                text = read(run, name)
+                if "FFW_PROBE:GETRANDOM" in text:
+                    self.assertEqual(re.findall(r"FFW_PROBE:GETRANDOM[^\r\n]*", text), ["FFW_PROBE:GETRANDOM status=UNSEEDED rc=-11"], (run, name))
+                    kinds.add("with_probe")
+                else:
+                    kinds.add("seven" if "FFW_PROBE:" in text else "none")
+            self.assertEqual(len(kinds), 1, f"the captures of run {run} disagree ({sorted(kinds)}): the paragraph needs its own sentence for it")
+            out[self.short_id(run)] = {"kind": kinds.pop(), "serial": "boot-mips-serial.log" in names}
+        return out
+
+    def listed_mips_runs(self, contract):
+        """The ids and the number words the contract paragraph states, parsed from its exact phrases (which the needles pin)."""
+        text = contract.lower()
+
+        def found(pattern):
+            match = re.search(pattern, text)
+            self.assertIsNotNone(match, pattern)
+            return match
+
+        def ids(group):
+            return re.findall(r"`([^`]+)`", group)
+
+        def number(word):
+            self.assertIn(word, self.NUMBER_WORDS, word)
+            return self.NUMBER_WORDS.index(word)
+
+        probe = found(r"committed at `bc32b0a`, (\w+) in all, (\w+) carry the `getrandom` probe: ([^;]*);")
+        seven = found(r"(\w+) other committed mips runs carry the earlier seven-probe set, which has no such line: ([^.]*)\.")
+        none = found(r"(`[^`]+`) never reaches userspace")
+        serial = found(r"only (\w+) of the (\w+) keep a `boot-mips-serial\.log` \(([^)]*)\)")
+        return {"stated": {"total": number(probe[1]), "probe": number(probe[2]), "seven": number(seven[1]), "serial": number(serial[1]), "serial_of": number(serial[2])},
+                "with_probe": ids(probe[3]), "seven": ids(seven[2]), "none": ids(none[1]), "serial": ids(serial[3])}
+
+    def check_listed(self, contract, classified):
+        """Soundness only: every run the paragraph lists is classified as it says, and the paragraph's own arithmetic holds. It does not ask that the
+        paragraph list every run, so a MIPS run committed later cannot fail it."""
+        listed = self.listed_mips_runs(contract)
+        for category in ("with_probe", "seven", "none"):
+            for run in listed[category]:
+                self.assertIn(run, classified, f"{run} is listed but is not a tracked MIPS run")
+                self.assertEqual(classified[run]["kind"], category, run)
+        for run in listed["serial"]:
+            self.assertIn(run, classified, f"{run} is listed but is not a tracked MIPS run")
+            self.assertTrue(classified[run]["serial"], f"{run} is listed as keeping a serial log and does not")
+        stated, every = listed["stated"], listed["with_probe"] + listed["seven"] + listed["none"]
+        self.assertEqual((stated["probe"], stated["seven"], stated["serial"]), (len(listed["with_probe"]), len(listed["seven"]), len(listed["serial"])))
+        self.assertEqual((stated["total"], stated["serial_of"]), (len(every), len(every)))
+        self.assertEqual(len(set(every)), len(every), "a run is listed twice")
+
+    def test_every_listed_mips_run_is_classified_as_the_contract_states_and_every_tracked_probe_line_is_unseeded(self):
+        classified = self.classify_mips_runs(self.tracked_mips_captures())      # also checks the quantified claim on every tracked capture
+        self.check_listed(self.pinned_texts()["contract"], classified)
+
+    def test_a_wrong_list_or_a_count_over_uncommitted_files_fails_the_soundness_check_and_the_control_passes(self):
+        contract = self.pinned_texts()["contract"]
+        classified = self.classify_mips_runs(self.tracked_mips_captures())
+        self.check_listed(contract, classified)                                   # the control: the real paragraph is sound
+        probe_list = "`1412ac47`, `22637af0`, `2a405e88`, `570cd370` and `f0a91e7b`; every capture"
+        doc_plants = {                                                            # (old, new) edits of the paragraph
+            "v1a's four-run list (says five, lists four)": [(probe_list, "`1412ac47`, `570cd370`, `2a405e88` and `f0a91e7b`; every capture")],
+            "a working-tree log counted as a seventh seven-probe run": [
+                ("`6e4d408c` and `d0b4edb6`.", "`6e4d408c`, `d0b4edb6` and `toplevel`."), ("Six other committed", "Seven other committed"),
+                ("twelve in all", "thirteen in all"), ("of the twelve keep", "of the thirteen keep")],
+            "an id nobody committed in the probe list": [(probe_list, "`1412ac47`, `22637af0`, `2a405e88`, `570cd370` and `deadbeef`; every capture")],
+            "a run listed twice": [("`6e4d408c` and `d0b4edb6`.", "`6e4d408c` and `5e6b9868`.")],
+            # a count word that disagrees with its own list while the total still adds up: only the per-list arithmetic can see these
+            "the probe count says six while five are listed": [("twelve in all, five carry", "twelve in all, six carry")],
+            "the seven-probe count says five while six are listed": [("Six other committed", "Five other committed")],
+            "the serial-log count says six while five are listed": [("Only five of the twelve", "Only six of the twelve")],
+            "a serial log claimed for a stdout-only run": [("(`1412ac47`, `20261104-2208`,", "(`1412ac47`, `22637af0`,")],
+        }
+        for label, edits in doc_plants.items():
+            planted = contract
+            for old, new in edits:
+                self.assertEqual(planted.count(old), 1, (label, old))
+                planted = planted.replace(old, new)
+            with self.assertRaises(AssertionError, msg=label):
+                self.check_listed(planted, classified)
+            self.check_listed(contract, classified)                               # and with the plant removed it passes again
+        class_plants = {                                                          # the same paragraph against a tree that says otherwise
+            "the no-userspace run called a probe run": ("44a32b95", "kind", "with_probe"),
+            "a seven-probe run moved to the probe list": ("20261104-2158", "kind", "with_probe"),
+            "a probe run moved to the seven-probe list": ("2a405e88", "kind", "seven"),
+            "a listed serial log that the tree does not have": ("2a405e88", "serial", False),
+        }
+        for label, (run, key, value) in class_plants.items():
+            with self.assertRaises(AssertionError, msg=label):
+                self.check_listed(contract, {**classified, run: {**classified[run], key: value}})
+            self.check_listed(contract, classified)
+
+    def test_a_synthetic_thirteenth_run_passes_with_the_unseeded_line_fails_with_another_status_and_does_not_make_the_list_incomplete(self):
+        contract = self.pinned_texts()["contract"]
+        captures = self.tracked_mips_captures()
+        carrying = self.read_tracked_capture("2a405e88bb10497b98b85abeae7dffaf", "boot-mips-stdout.bin")
+        unseeded = "FFW_PROBE:GETRANDOM status=UNSEEDED rc=-11"
+        self.assertIn(unseeded, carrying)
+
+        def with_a_thirteenth(text, names=("boot-mips-stdout.bin",), second=None):
+            extended = {**captures, "feedface0013": list(names)}
+
+            def read(run, name):
+                if run != "feedface0013":
+                    return self.read_tracked_capture(run, name)
+                return text if second is None or name == names[0] else second
+
+            return self.classify_mips_runs(extended, read)
+
+        # Passes: a new committed run that carries the probe and prints UNSEEDED. The paragraph does not list it and stays sound.
+        classified = with_a_thirteenth(carrying)
+        self.assertEqual(classified["feedface"], {"kind": "with_probe", "serial": False})
+        self.check_listed(contract, classified)
+        # Fails: the same run printing another status, or the line twice, contradicts the quantified claim.
+        for other in ("FFW_PROBE:GETRANDOM status=PASS rc=16", "FFW_PROBE:GETRANDOM status=UNSEEDED rc=0", "FFW_PROBE:GETRANDOM status=UNSEEDED"):
+            with self.assertRaises(AssertionError, msg=other):
+                with_a_thirteenth(carrying.replace(unseeded, other))
+        with self.assertRaises(AssertionError, msg="the line printed twice"):
+            with_a_thirteenth(carrying.replace(unseeded, unseeded + "\n" + unseeded))
+        # Another new run without the probe is simply another run; two captures of one run that disagree need their own sentence.
+        self.assertEqual(with_a_thirteenth(carrying.replace(unseeded, "FFW_PROBE:CLOCK status=PASS"))["feedface"]["kind"], "seven")
+        self.assertEqual(with_a_thirteenth("nothing here")["feedface"]["kind"], "none")
+        with self.assertRaises(AssertionError, msg="captures that disagree"):
+            with_a_thirteenth(carrying, names=("boot-mips-stdout.bin", "boot-mips-serial.log"), second="FFW_PROBE:CLOCK status=PASS")
+        self.check_listed(contract, with_a_thirteenth(carrying))                  # the control, restored
+
+    def test_in_a_copy_of_the_runs_tree_a_thirteenth_run_with_the_unseeded_line_passes_and_one_with_another_status_fails(self):
+        contract = self.pinned_texts()["contract"]
+        unseeded = b"FFW_PROBE:GETRANDOM status=UNSEEDED rc=-11"
+        with tempfile.TemporaryDirectory() as tmp:
+            copy = Path(tmp) / "runs"                                             # a copy of the tracked MIPS captures, as files
+            tracked = self.tracked_mips_captures()
+            for run, names in tracked.items():
+                for name in names:
+                    target = copy / run / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes((REPO / "toolchain" / "results" / "runs" / run / name).read_bytes())
+            carrying = (copy / "2a405e88bb10497b98b85abeae7dffaf" / "boot-mips-stdout.bin").read_bytes()
+            self.assertIn(unseeded, carrying)
+            thirteenth = copy / "feedface0013" / "boot-mips-stdout.bin"            # the synthetic thirteenth committed run
+            thirteenth.parent.mkdir()
+
+            def judge_the_copy():
+                captures = self.tracked_mips_captures(runs_root=copy)
+                self.assertEqual(len(captures), len(tracked) + 1)
+                return self.classify_mips_runs(captures, lambda run, name: (copy / run / name).read_bytes().decode("utf-8", errors="replace"))
+
+            thirteenth.write_bytes(carrying)                                      # carries the probe and prints UNSEEDED: passes
+            self.check_listed(contract, judge_the_copy())
+            thirteenth.write_bytes(carrying.replace(unseeded, b"FFW_PROBE:GETRANDOM status=PASS rc=16"))     # a different status: fails
+            with self.assertRaises(AssertionError):
+                judge_the_copy()
+            thirteenth.write_bytes(carrying)                                      # the control, restored: passes again
+            self.check_listed(contract, judge_the_copy())
+
+    def test_the_baselines_are_the_transcripts_the_retained_run_printed(self):
+        for arch, expected in (("mips", mips_provider_green_lines()), ("ppc", PROVIDER_BASELINES["ppc degraded"][1])):
+            log = (RUN_2A405E88 / f"boot-{arch}-serial.log").read_bytes().decode("utf-8", errors="replace").replace("\r\n", "\n")
+            printed = [line for line in log.split("\n") if line.startswith("FFW_PLATFORM:")]
+            self.assertEqual(printed, expected, arch)
 
 
 class EntropyInjectionGuardTests(unittest.TestCase):

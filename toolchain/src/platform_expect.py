@@ -41,9 +41,14 @@ guest step runs `/franken-speaker --platform-startup --entropy-provider=legacy-d
 arguments, and the ENTROPY line, and only it, carries `provider=<name>` between `provenance=` and `reason=` on PASS, REFUSED and NOT_RUN
 alike (docs/contracts/p02.md, "The legacy provider"). The default judge still rejects that token, and a provider run rejects a line
 without it, so neither kind of run can pass as the other. A started provider run is a harness-guest observation of the real adapter
-reading `/dev/random`: never device evidence, never a stock kernel. `not_seeded` is `degraded` on both guests (no seeded `/dev/random` read
-has been observed in any guest, so a pool that has not credited yet is the information such a run gives, and it shows no positive);
-`absent` (no device node), `unavailable` and every other reason are red.
+reading `/dev/random`: never device evidence, never a stock kernel. The two harness kernels do NOT answer that read alike (the sources and the booted
+binaries, docs/contracts/p02.md, "The harness kernels do not answer alike"): the PowerPC guest's 4.9 kernel is the old blocking pool, whose
+`O_NONBLOCK` read answers `EAGAIN` while the pool has nothing to give, so `not_seeded` is a real answer there and is `degraded` (it shows no
+positive); by source reading, the MIPS guest's 4.19.249 kernel ignores `O_NONBLOCK` on `/dev/random`: the read waits until the pool is ready and then returns bytes,
+so a MIPS start is a blocking read that succeeded, and a MIPS `not_seeded` is a refusal that kernel cannot give, which is red. No seeded
+nonblocking `/dev/random` read has been observed in any guest (PowerPC's reads answered `EAGAIN`; the one MIPS start, run 2a405e88, waited inside
+the kernel), so a PowerPC refusal is the information such a run gives, and it shows no positive. `absent` (no device node), `unavailable` and
+every other reason are red on both.
 
 What this does not establish
 ----------------------------
@@ -122,12 +127,30 @@ GUEST_ABI = {"mips": ("mips32", "harness-mips-4.19"), "ppc": ("powerpc32", "harn
 # on the MIPS guest in the E03 run, and one run per guest does not say the pool stays unseeded. PowerPC's was seeded.
 DEGRADED = frozenset({("mips", "entropy", "not_seeded")})
 
-# The same table for a run that selected the legacy provider. No seeded `/dev/random` read has been observed in any guest, so a pool that has
-# not credited yet (`not_seeded`) is what such a run reports on either guest: neither green nor red, and no positive. Every other reason is red
+# The same table for a run that selected the legacy provider. Only the PowerPC guest can report `not_seeded` for it: its 4.9.88 kernel answers a
+# nonblocking `/dev/random` read with `EAGAIN` while the blocking pool is empty (`_random_read`, drivers/char/random.c at v4.9.88 lines 1702-1735;
+# the booted vmlinux has `_random_read`/`blocking_pool`). That is neither green nor red, and no positive. Every other reason is red
 # (a missing device node is `absent`, a qualified-but-untried provider is `unavailable`).
-DEGRADED_PROVIDER = frozenset({("mips", "entropy", "not_seeded"), ("ppc", "entropy", "not_seeded")})
+DEGRADED_PROVIDER = frozenset({("ppc", "entropy", "not_seeded")})
+
+# A refusal a harness kernel cannot give. The MIPS guest's 4.19.249 kernel has `random_read_iter` call `wait_for_random_bytes()` unconditionally and
+# never tests `O_NONBLOCK` (drivers/char/random.c at v4.19.249 lines 1293-1300; the booted vmlinux, sha256 3803357e..., disassembles to exactly
+# that), so its `/dev/random` read waits for the pool and then succeeds: it has no `EAGAIN` to turn into `not_seeded`. A transcript that says so
+# was not produced by that kernel's read, and is red with this extra named problem beside the usual one. The cell is keyed on the guest but is a
+# property of that kernel image, not of MIPS. Revisit this cell if the MIPS harness kernel image (`kernel_sha256` `3803357e`) is replaced, or if a
+# provider-side wait bound is added (the refusal would then be the provider's own timeout, not an `EAGAIN` from the kernel).
+UNREACHABLE_PROVIDER_REFUSAL = frozenset({("mips", "entropy", "not_seeded")})
+
 PROVIDER_CLAIM = ("explicit legacy /dev/random provider in an admitted test environment (a harness guest): a started run is an observation "
                   "of the real adapter on that guest's kernel and says nothing about a device or a stock kernel; a refusal shows no positive")
+
+# What a `/dev/random` read does on each harness guest's kernel, appended to the claim so a receipt says which kind of read it observed.
+PROVIDER_READ = {
+    "mips": ("by source reading, this guest's kernel (Debian 4.19.249) ignores O_NONBLOCK on /dev/random: the read blocks until the pool is ready and then returns "
+             "bytes, so a start is a blocking read that succeeded and not an observation of nonblocking semantics; it cannot answer not_seeded"),
+    "ppc": ("by source reading, this guest's kernel (Debian 4.9.88) answers a nonblocking /dev/random read with EAGAIN while its blocking pool is empty: a start is a "
+            "read that returned bytes, a refusal is that answer"),
+}
 
 
 class PlatformGrammarError(Exception):
@@ -307,7 +330,7 @@ def judge_output(data: bytes, arch: str, ctx: dict[str, Any], provider: str | No
         "verdict": "red", "problems": problems, "lines": [], "outcomes": {}, "started": None, "kernel_release": None,
     }
     if provider is not None:
-        record["provider"], record["claim"] = provider, PROVIDER_CLAIM
+        record["provider"], record["claim"] = provider, f"{PROVIDER_CLAIM}; {PROVIDER_READ[arch]}"
     if not data:
         problems.append("platform_empty_output")
         return record
@@ -397,6 +420,9 @@ def judge_output(data: bytes, arch: str, ctx: dict[str, Any], provider: str | No
     else:
         problems.extend(f"platform_not_started:{cap}:{outcome[cap]['reason']}" for cap in CAPABILITIES
                         if outcome[cap]["status"] == "REFUSED")
+        if provider is not None:
+            problems.extend(f"platform_unreachable_refusal:{cap}:{outcome[cap]['reason']}" for cap in CAPABILITIES
+                            if outcome[cap]["status"] == "REFUSED" and (arch, cap, outcome[cap]["reason"]) in UNREACHABLE_PROVIDER_REFUSAL)
     return record
 
 

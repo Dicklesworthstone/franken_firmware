@@ -154,16 +154,24 @@ between `provenance=` and `reason=` on PASS, REFUSED and NOT_RUN alike. The defa
 
 | run | verdict |
 |---|---|
-| `ENTROPY PASS` with the provider, `END started=1`, exit 0 | green: the real adapter read a credited pool in a harness guest. Not a device or stock-kernel claim |
-| `ENTROPY REFUSED ... reason=not_seeded` with the provider, `END started=0`, exit 3, the other three `PASS` | degraded on **both** guests: no seeded `/dev/random` read has been observed in any guest, so a pool that has not credited yet is the information, and it shows no positive |
+| `ENTROPY PASS` with the provider, `END started=1`, exit 0 | green: the real adapter read bytes in a harness guest. Not a device or stock-kernel claim. On the 4.19 MIPS guest that read **blocks until the pool is ready and then returns** (by source reading, the kernel ignores `O_NONBLOCK` on `/dev/random`), so a MIPS start is a blocking read that succeeded, not an observation of nonblocking semantics |
+| `ENTROPY REFUSED ... reason=not_seeded` with the provider, `END started=0`, exit 3, the other three `PASS`, on the **PowerPC** guest | degraded: its 4.9 kernel answers a nonblocking `/dev/random` read with `EAGAIN` while the blocking pool is empty. No seeded nonblocking `/dev/random` read has been observed in any guest, so a pool that has not credited yet is the information, and it shows no positive |
+| the same refusal on the **MIPS** guest | red: `platform_not_started:entropy:not_seeded` and `platform_unreachable_refusal:entropy:not_seeded`. By source reading, the 4.19.249 kernel has no `EAGAIN` to give on that read, so a transcript that says so was not produced by it. Revisit this cell if the MIPS harness kernel image (`kernel_sha256` `3803357e`) is replaced, or if a provider-side wait bound is added |
 | any other reason (`absent` = no `/dev/random` node, `unavailable`, `failed`, ...), a wrong or unknown `provider=` value, a missing token | red, each named (`platform_not_started:entropy:<reason>`, `platform_value:ENTROPY:provider=<v>`, `platform_provider_missing:ENTROPY`) |
 
 Plants (`--platform-controls` adds these to the five above): the token removed, `provider=legacy_dev_random`, `provider=urandom`.
 The runner also refuses a provider run when one of the two boot scripts names an RNG device or a `random.*=` kernel parameter, and
 records the scripts' SHA-256 in the receipt. This is a static text check of those two scripts: it does not show that the pool was not
 credited some other way, and the contract forbids a pre-seed, an injected backend and `/dev/urandom` as substitutes.
-**Not shown by any of this:** a `PASS` needs a guest whose pool credits by itself (the 4.19 MIPS guest did so only after 76 to 258 s in
-single scratch runs); until a transcript shows one, the positive path of the legacy provider is unproven and the refusal earns no credit.
+**What is and is not shown.** The retained run `toolchain/results/runs/2a405e88bb10497b98b85abeae7dffaf/` has one MIPS start: a blocking read that
+returned (that guest's userspace took 2.30 s against 0.55 s for the default-provider run `570cd370`; PowerPC's took 0.51 s against 0.49 s). That
+is an inference from boot totals, not a measured read latency. Earlier single scratch runs of the same guest are recorded as crediting only after
+76 to 258 s; those runs are not retained, so they cannot be re-checked, and they do not agree with the retained one. How long the MIPS pool takes
+to become ready is therefore **not established**. One hypothesis, not a finding and not measured: the blocking read runs the kernel's timer-jitter entropy
+generator (`try_to_generate_entropy()`), which a reader polling with `getrandom(GRND_NONBLOCK)` or `/dev/urandom` does not run. The provider has **no wait bound** (it bounds reads and `EINTR` retries, not time): a pool that
+is not ready within the runner's `--timeout` (default 30 s) ends the run as a recorded timeout (`timed_out`, `capture_stop_reason: timeout`), not as a
+named refusal; no reason code exists for it. A seeded start on the PowerPC guest, a second observation on either guest and any stock kernel remain unshown, and the refusal
+earns no credit.
 
 ### Tests
 
