@@ -290,6 +290,14 @@
       "reason": "Host-only N05 repair-comparison study with its own [workspace] table and lockfile, kept off the production lock; listed in the root exclude and never a product artifact. It names no device target and forbids unsafe code in its own lint table and in every crate root, which the tree check reads from the manifest and the source.",
       "unsafe_policy": "forbid",
       "targets": []
+    },
+    {
+      "name": "n06-fec-profile",
+      "path": "toolchain/n06-fec-profile",
+      "owner": "N06",
+      "reason": "Host-only N06 hybrid-FEC generation and differential-qualification study with its own [workspace] table, kept off the production lock (publish = false; the heavy reference libraries have no production edge); listed in the root exclude and never a product artifact. It names no device target and forbids unsafe code in its own lint table and in its crate root, which the tree check reads from the manifest and the source.",
+      "unsafe_policy": "forbid",
+      "targets": []
     }
   ],
   "pending_members": [],
@@ -607,6 +615,16 @@
     {
       "path": "tests/n07",
       "owner": "N07",
+      "kind": "fixture"
+    },
+    {
+      "path": "toolchain/n06-fec-profile",
+      "owner": "N06",
+      "kind": "crate"
+    },
+    {
+      "path": "tests/n06",
+      "owner": "N06",
       "kind": "fixture"
     }
   ],
