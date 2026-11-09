@@ -1,0 +1,120 @@
+  2026-11-09T17:36:46.824767Z  INFO rch::hook: Selected worker: hz4 at ubuntu@<redacted-ip> (2 slots remaining after reservation, speed 48.3)
+    at rch/src/hook.rs:5690 on ThreadId(1)
+
+  2026-11-09T17:36:49.297914Z  INFO rch::hook::transfer_orchestration: Starting remote compilation pipeline for franken_firmware (hash: 8a33e643544d00e2ab725963245752681f4751cf9097090289517a347f1cba53)
+    at rch/src/hook/transfer_orchestration.rs:1571 on ThreadId(1)
+
+  2026-11-09T17:36:49.298029Z  INFO rch::hook::transfer_orchestration: Prepared dependency sync manifest for 1 roots
+    at rch/src/hook/transfer_orchestration.rs:1593 on ThreadId(1)
+
+  2026-11-09T17:36:57.037020Z  INFO rch::hook::transfer_orchestration: Syncing project to worker hz4...
+    at rch/src/hook/transfer_orchestration.rs:1887 on ThreadId(1)
+
+  2026-11-09T17:36:57.037450Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+  2026-11-09T17:36:57.674452Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+  2026-11-09T17:36:57.675460Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+  2026-11-09T17:36:57.675511Z  INFO rch::transfer: Syncing <project-root> -> /data/tmp/rch/source-content-pair-a0874dfb7da61a7b8554f8894b7a76d2/projects/franken_firmware on hz4 (streaming)
+    at rch/src/transfer.rs:7842 on ThreadId(1)
+
+  2026-11-09T17:37:01.804348Z  INFO rch::hook::transfer_orchestration: Sync complete: 1498 files, 7439892 bytes in 3952ms
+    at rch/src/hook/transfer_orchestration.rs:2486 on ThreadId(1)
+
+  2026-11-09T17:37:03.710950Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+  2026-11-09T17:37:08.112070Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+  2026-11-09T17:37:08.685878Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+  2026-11-09T17:37:10.994226Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+  2026-11-09T17:37:15.311198Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+  2026-11-09T17:37:15.813416Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+  2026-11-09T17:37:15.904666Z  INFO rch::hook::transfer_orchestration: Executing command remotely: cargo clippy --locked -j 1 -p franken-hal -p franken-speaker --all-targets --config 'build.build-dir="/data/tmp/rch/franken_firmware/.rch-target-hz4-pool-a0874dfb7da61a7b8554f8894b7a76d2"' --target-dir /data/tmp/rch/franken_firmware/.rch-target-hz4-pool-a0874dfb7da61a7b8554f8894b7a76d2 --config 'env.RCH_BUILD_SOURCE.value="3bf9b2ae84ff696146e103cdaeb2707acb10373b-dirty"' --config 'env.RCH_BUILD_SOURCE.force=true' -- -D warnings
+    at rch/src/hook/transfer_orchestration.rs:2643 on ThreadId(1)
+
+  2026-11-09T17:37:15.926214Z  INFO rch::transfer: Rewriting CARGO_TARGET_DIR for remote execution (worker-scoped path): <project-root>/target -> /data/tmp/rch/franken_firmware/.rch-target-hz4-pool-a0874dfb7da61a7b8554f8894b7a76d2
+    at rch/src/transfer.rs:4911 on ThreadId(1)
+
+    Checking typenum v1.20.1
+    Checking hybrid-array v0.4.15
+    Checking cmov v0.5.4
+    Checking ctutils v0.4.8
+    Checking crypto-common v0.2.2
+    Checking block-buffer v0.12.1
+    Checking const-oid v0.10.2
+    Checking digest v0.11.3
+    Checking serde_core v1.0.229
+    Checking zmij v1.0.23
+    Checking cpufeatures v0.3.1
+    Checking cfg-if v1.0.5
+    Checking memchr v2.8.3
+    Checking itoa v1.0.18
+    Checking serde_json v1.0.154
+    Checking sha2 v0.11.1
+    Checking serde v1.0.229
+    Checking hex v0.4.3
+    Checking thiserror v2.0.21
+    Checking franken-board-profile v0.1.0 (/data/tmp/rch/source-content-pair-a0874dfb7da61a7b8554f8894b7a76d2/projects/franken_firmware/crates/franken-board-profile)
+    Checking hmac v0.13.0
+    Checking franken-atomic v0.1.0 (/data/tmp/rch/source-content-pair-a0874dfb7da61a7b8554f8894b7a76d2/projects/franken_firmware/crates/franken-atomic)
+    Checking franken-platform v0.1.0 (/data/tmp/rch/source-content-pair-a0874dfb7da61a7b8554f8894b7a76d2/projects/franken_firmware/crates/franken-platform)
+    Checking franken-dsp v0.1.0 (/data/tmp/rch/source-content-pair-a0874dfb7da61a7b8554f8894b7a76d2/projects/franken_firmware/crates/franken-dsp)
+    Checking franken-clock v0.1.0 (/data/tmp/rch/source-content-pair-a0874dfb7da61a7b8554f8894b7a76d2/projects/franken_firmware/crates/franken-clock)
+    Checking franken-session v0.1.0 (/data/tmp/rch/source-content-pair-a0874dfb7da61a7b8554f8894b7a76d2/projects/franken_firmware/crates/franken-session)
+    Checking franken-journal v0.1.0 (/data/tmp/rch/source-content-pair-a0874dfb7da61a7b8554f8894b7a76d2/projects/franken_firmware/crates/franken-journal)
+    Checking franken-control v0.1.0 (/data/tmp/rch/source-content-pair-a0874dfb7da61a7b8554f8894b7a76d2/projects/franken_firmware/crates/franken-control)
+    Checking franken-stream v0.1.0 (/data/tmp/rch/source-content-pair-a0874dfb7da61a7b8554f8894b7a76d2/projects/franken_firmware/crates/franken-stream)
+    Checking franken-platform-linux v0.1.0 (/data/tmp/rch/source-content-pair-a0874dfb7da61a7b8554f8894b7a76d2/projects/franken_firmware/crates/franken-platform-linux)
+    Checking franken-hal v0.1.0 (/data/tmp/rch/source-content-pair-a0874dfb7da61a7b8554f8894b7a76d2/projects/franken_firmware/crates/franken-hal)
+    Checking franken-test-support v0.1.0 (/data/tmp/rch/source-content-pair-a0874dfb7da61a7b8554f8894b7a76d2/projects/franken_firmware/crates/franken-test-support)
+    Checking franken-speaker v0.1.0 (/data/tmp/rch/source-content-pair-a0874dfb7da61a7b8554f8894b7a76d2/projects/franken_firmware/crates/franken-speaker)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 25.54s
+
+  2026-11-09T17:37:46.164129Z  INFO rch::hook::transfer_orchestration: Remote command finished: exit=0 in 28817ms
+    at rch/src/hook/transfer_orchestration.rs:2985 on ThreadId(1)
+
+  2026-11-09T17:37:46.164304Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+  2026-11-09T17:37:50.540188Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+  2026-11-09T17:37:50.813937Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+  2026-11-09T17:37:52.554605Z  INFO rch::hook::transfer_orchestration: Retrieving build artifacts...
+    at rch/src/hook/transfer_orchestration.rs:3207 on ThreadId(1)
+
+  2026-11-09T17:37:52.554993Z  INFO rch::transfer: Retrieving artifacts from /data/tmp/rch/source-content-pair-a0874dfb7da61a7b8554f8894b7a76d2/projects/franken_firmware on hz4
+    at rch/src/transfer.rs:8905 on ThreadId(1)
+
+  2026-11-09T17:37:52.555139Z  INFO rch::transfer: Loaded 5 retrieval exclude pattern(s) from .rchignore (total: 14)
+    at rch/src/transfer.rs:5666 on ThreadId(1)
+
+  2026-11-09T17:37:54.658137Z  INFO rch::transfer: Artifact retrieval budget from selected remote files, selected_bytes: 0, total_timeout_ms: 30000
+    at rch/src/transfer.rs:4389 on ThreadId(1)
+
+  2026-11-09T17:37:54.658221Z  INFO rch::transfer: Artifact selection is verified empty; skipping payload connection
+    at rch/src/transfer.rs:8918 on ThreadId(1)
+
+  2026-11-09T17:37:54.658903Z  INFO rch::transfer: Loaded 5 retrieval exclude pattern(s) from .rchignore (total: 14)
+    at rch/src/transfer.rs:5666 on ThreadId(9)
+
+  2026-11-09T17:37:54.679110Z  INFO rch::hook::transfer_orchestration: Artifacts retrieved: 0 files, 44 bytes in 2103ms
+    at rch/src/hook/transfer_orchestration.rs:3272 on ThreadId(1)
+
+[RCH] remote hz4 (70.0s)

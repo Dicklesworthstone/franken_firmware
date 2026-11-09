@@ -1,0 +1,71 @@
+PASS    D04-DEFECT-01          planted_defect  caught by 3 scenario(s)
+PASS    D04-DEFECT-02          planted_defect  caught by 5 scenario(s)
+PASS    D04-DEFECT-03          planted_defect  caught by 2 scenario(s)
+PASS    D04-DEFECT-04          planted_defect  caught by 2 scenario(s)
+PASS    D04-DEFECT-05          planted_defect  caught by 1 scenario(s)
+PASS    D04-DEFECT-06          planted_defect  caught by 3 scenario(s)
+PASS    D04-META-001           meta_files
+PASS    D04-META-002           meta_shared
+PASS    D04-META-003           meta_generated
+PASS    D04-META-004           meta_invariants  25 invariants, 72 named Rust tests, all 58 mapped
+PASS    D04-META-005           meta_hygiene
+PASS    D04-META-006           meta_no_unsafe
+PASS    D04-LOG-001            log_golden  12 lines and the bounded log reproduced
+PASS    D04-META-007           meta_log  15 fields in order
+PASS    D04-LOG-DEFECT-01      log_defect  caught: 12 line(s) against 12 expected; first difference at line 0
+PASS    D04-LOG-DEFECT-02      log_defect  caught: 12 line(s) against 12 expected; first difference at line 4
+PASS    D04-LOG-DEFECT-03      log_defect  caught: 12 line(s) against 12 expected; first difference at line 2
+PASS    D04-LOG-DEFECT-04      log_defect  caught: 12 line(s) against 12 expected; first difference at line 4
+PASS    D04-LOG-DEFECT-05      log_defect  caught: bounded log kept ['block-0', 'block-1', 'block-2'] with {'emitted': 11, 'dropped_ordinary': 8, 'evicted_ordinary': 0, 'lost_critical': 0}, expected ['block-1', 'block-2', 'tick-10'] with {'emitted': 11, 'dropped_ordinary': 7, 'evicted_ordinary': 1, 'lost_critical': 0}
+PASS    D04-REGRESS-001        regress_scenario
+PASS    D04-REGRESS-002        regress_scenario
+PASS    D04-REGRESS-003        regress_scenario
+PASS    D04-REGRESS-004        regress_scenario
+PASS    D04-REGRESS-005        regress_scenario
+PASS    D04-REGRESS-006        regress_scenario
+PASS    D04-REGRESS-007        regress_scenario
+PASS    D04-REGRESS-008        regress_scenario
+PASS    D04-REGRESS-LOG        regress_log  2 runs reproduced
+PASS    D04-REGRESS-DEFECT-01  regress_defect  caught by one_past_half_is_behind, recover_reinstall_rebaseline, regress_across_wrap, regress_by_one, regress_during_drain, regress_while_muted
+PASS    D04-REGRESS-DEFECT-02  regress_defect  caught by one_past_half_is_behind, recover_reinstall_rebaseline, regress_across_wrap, regress_by_one, regress_during_drain, regress_while_muted
+PASS    D04-REGRESS-DEFECT-03  regress_defect  caught by recover_reinstall_rebaseline
+PASS    D04-REGRESS-DEFECT-04  regress_defect  caught by regress_by_one, regress_during_drain
+PASS    D04-REGRESS-DEFECT-05  regress_defect  caught by half_range_is_ahead
+PASS    D04-REGRESS-DEFECT-06  regress_defect  caught by one_past_half_is_behind, recover_reinstall_rebaseline, regress_across_wrap, regress_by_one, regress_during_drain, regress_while_muted
+PASS    D04-REGRESS-DEFECT-07  regress_defect  caught by one_past_half_is_behind, recover_reinstall_rebaseline, regress_across_wrap, regress_by_one, regress_during_drain, regress_while_muted
+PASS    D04-REGRESS-DEFECT-08  regress_defect  caught by log_runs
+PASS    D04-REGRESS-DEFECT-09  regress_defect  caught by log_runs
+PASS    D04-REGRESS-DEFECT-10  regress_defect  caught by log_runs
+PASS    D04-ALLOC-001          alloc_audit  57 functions free of growth beyond the listed calls, 12 required texts, 7 orderings, 1 signatures
+PASS    D04-ALLOC-002          alloc_defect  33 plants, each failing exactly its own check
+PASS    D04-SELFTEST-001       runner_selftest
+PASS    D04-RUST-CENTRAL       central_rust  all 58 required Rust tests ok in the franken_speaker unit-test binary; tests only: clippy, fmt and the two device builds are not judged here and stay in the supervisor's landing census
+BLOCKED D04-EXT-BOARD          blocked  EXT-D04-BOARD-CPU (owner: human-led qualification lane): measured render execution time on each board class against the 25% reserve, the real driver's submission lead and underrun signal (E04 has mapped neither), and a 24-hour clean-network campaign. Render cost here is injected; guest wall-clock results never substitute for board CPU measurements.
+BLOCKED D04-EXT-PROCDEATH      blocked  EXT-D04-PROCESS-DEATH-MUTE (owner: human-led qualification lane): a supervisor and hardware evidence that the amplifier is muted when the render process dies. In-process, only what the dying owner leaves behind can be shown (buffers kept alive, a best-effort mute requested); whether the amplifier muted is not observable here.
+BLOCKED D04-OPEN-P03           blocked  OPEN-D04-P03-RUNTIME (owner: P03 (ffw-q5r) bounded Asupersync profile): the production control runtime: regions for device lifetime and streams, cancellation ownership, pre-admitted task and finalizer capacity, and the render task's separately measured budget. This loop takes its commands through a bounded ControlPort and never waits on it; binding that port to the P03 runtime is open.
+PASS    D04-TIM-001            scenario
+PASS    D04-TIM-002            scenario
+PASS    D04-TIM-003            scenario
+PASS    D04-TIM-004            scenario
+PASS    D04-TIM-005            scenario
+PASS    D04-SRC-001            scenario
+PASS    D04-SRC-002            scenario
+PASS    D04-CAP-001            scenario
+PASS    D04-SUB-001            scenario
+PASS    D04-SUB-002            scenario
+PASS    D04-MIX-001            scenario
+PASS    D04-MIX-002            scenario
+
+D04 full: 57 case(s): 54 passed, 0 failed, 3 blocked -- NOT QUALIFIED
+blocked cases are required invariants nothing here can verify; they are counted, not passed
+replay: scripts/e2e/d04 --tier full --judge <coordinator-scratch>/d04b-test.log
+versions: python 3.15.0; ffw.d04.cases.v1
+judged log sha256 1213ed2b320382409ee475184b7a8146a9c8e3092c59ccfc39f16a32aa769385  d04b-test.log
+artifact sha256 cb92a54836b1d33eea81c3733ea55ad6a0a90f63896c520c4237da85d181c94a  crates/franken-speaker/src/render.rs
+artifact sha256 82b4f638c21df6a050d49de4d7a5ce5391942e1557928e9f90d0a45f4c9f7dd9  crates/franken-speaker/src/render_log.rs
+artifact sha256 65c8c372f183c1eff4255198dacd833387db97134991bd745f82862f3c673c3b  crates/franken-speaker/src/lib.rs
+artifact sha256 a31a59f629d4738f28c09b7b8f64a10a3bf7c21aef9b80f68cf8375c200658a0  tests/d04/cases.json
+artifact sha256 8a6ae6b2dce9b95dbaf358be015ac3abbba646293e8909188181b12488187dab  tests/d04/run_cases.py
+artifact sha256 717a59e0d8777b0da5c7717a15a0c34abb8708cec9a66eac550620b32c90ac69  docs/contracts/d04.md
+artifact sha256 39e70649d690a342c74157bada974cfabaf76bfbbcb4dc05a33fa0af6181c58c  Cargo.lock
+artifact sha256 ff13c9224217a4ccd63320d8b89cc82d7fa64da14a627e499f9f18db4c6602d0  rust-toolchain.toml

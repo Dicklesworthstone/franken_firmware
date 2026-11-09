@@ -1,0 +1,142 @@
+{
+  "schema": "ffw.d04.native_evidence.v1",
+  "source_base": "3bf9b2ae84ff696146e103cdaeb2707acb10373b",
+  "runtime_source_commit": "722aeffb95424c11f8f5459fad96246cc37d11f4",
+  "source_paths": {
+    "crates/franken-hal/src/backend.rs": {
+      "sha256": "f8a7020ee49f0b380e8920af1be94a8c385b4ccb2d2cc48a9226775283240bff",
+      "bytes": 21064
+    },
+    "crates/franken-hal/src/emit.rs": {
+      "sha256": "63d93e220966252ecdb342d7d30b814370f57de692752bb333dbc88e83e192b8",
+      "bytes": 14322
+    },
+    "crates/franken-hal/src/session.rs": {
+      "sha256": "45ce8da8b08024689e1d8af0bbf10dc97bbcf8f8177e2cc65fd8569f1acab860",
+      "bytes": 150567
+    },
+    "crates/franken-hal/src/slots.rs": {
+      "sha256": "d1fad2c907a2ff5573ff5f992bf388b0002f662db1770b8d3a368df72115ff78",
+      "bytes": 28770
+    },
+    "crates/franken-speaker/src/render.rs": {
+      "sha256": "cb92a54836b1d33eea81c3733ea55ad6a0a90f63896c520c4237da85d181c94a",
+      "bytes": 136116
+    },
+    "docs/contracts/d04.md": {
+      "sha256": "717a59e0d8777b0da5c7717a15a0c34abb8708cec9a66eac550620b32c90ac69",
+      "bytes": 31612
+    },
+    "docs/contracts/p04.md": {
+      "sha256": "7d373945b3a39ba5109030c9477be749842156d7f3827640f4130b55ccefa3a3",
+      "bytes": 16544
+    },
+    "tests/d04/alloc_sites.json": {
+      "sha256": "8f5a00bd89327ebb4dd8a40735239ef5cb84f88c77670011e6d2006328caee83",
+      "bytes": 25396
+    },
+    "tests/d04/cases.json": {
+      "sha256": "a31a59f629d4738f28c09b7b8f64a10a3bf7c21aef9b80f68cf8375c200658a0",
+      "bytes": 24954
+    },
+    "tests/d04/run_cases.py": {
+      "sha256": "8a6ae6b2dce9b95dbaf358be015ac3abbba646293e8909188181b12488187dab",
+      "bytes": 41718
+    }
+  },
+  "logs": {
+    "test": {
+      "raw_log_bytes": 70816,
+      "raw_log_sha256": "1213ed2b320382409ee475184b7a8146a9c8e3092c59ccfc39f16a32aa769385",
+      "public_log_sha256": "3cccc1fdba28fa2f1b574fd3eeea287f78dbbc5896fa21b5bd3831d96833a392",
+      "omitted_full_receipt_lines": []
+    },
+    "clippy": {
+      "raw_log_bytes": 267096,
+      "raw_log_sha256": "8e4adcc1bd1e4e26cbba58f6caa1db0344026ed0966717fc838d4d2dd9bdaba7",
+      "public_log_sha256": "c5b19f554f4a1438afbf139a4f981e1c581ed5ec8afe0fedb24e85cf472428bc",
+      "omitted_full_receipt_lines": [
+        {
+          "bytes": 257246,
+          "sha256": "57cd14147178eba3003c67e3822b960fa7317bd0f93559f7a7509a85de764dbd"
+        }
+      ]
+    },
+    "d04-gate": {
+      "raw_log_bytes": 6831,
+      "raw_log_sha256": "b2c40c5511059fac4f1b7a94fa3382591dfd85243e4517a17ccea8d9aedc4453",
+      "public_log_sha256": "796c7488c067e87850d719ad870138d7046b4766823878f2a9d9b93d2ab2bcb8",
+      "omitted_full_receipt_lines": []
+    }
+  },
+  "clippy_source_receipt": {
+    "schema": "rch.source_content_receipt.v1",
+    "build_id": "30101959465763443",
+    "command_sha256": "f4bc4cedba8de93cecdc9d4281961e359f0ed965076592f74141621d2898c639",
+    "command_exit_code": 0,
+    "receipt_root": "d45510aee5f9def86c81f8b491fc268a971ed26695d39e65c903fb65bf386791",
+    "root_count": 1
+  },
+  "qualification": "partial_native_only",
+  "native_library_tests": {
+    "hal": 161,
+    "speaker": 437,
+    "passed": 598,
+    "failed": 0,
+    "ignored": 0
+  },
+  "d04_pipeline": {
+    "planned": 57,
+    "passed": 54,
+    "failed": 0,
+    "blocked": 3,
+    "exit_status": 3
+  },
+  "jobs": {
+    "test": {
+      "identity": {
+        "local_wrapper_id": "rchw-77a9a719-c386-4820-8017-81cd946ca355",
+        "remote_build_id": 30101959465763438
+      },
+      "state": "finished",
+      "phase": "finished",
+      "strict_remote": true,
+      "terminal_acknowledged": true,
+      "exit_code": 0,
+      "recovery": {
+        "returned": 0,
+        "exit_code": 0,
+        "execution_started": true,
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "retired": true,
+        "staging_released": true,
+        "daemon_exit_code": 130
+      },
+      "source_binding_limitation": "Original source-content barrier refused delivery after unrelated P05 paths changed; no original full receipt emitted. Initial ten-file freeze, P05-only reported deltas and unchanged published ten-file hashes reconstruct test source. Same-ID recovery returned command exit0 and released custody. Clippy full receipt independently binds the same ten files."
+    },
+    "clippy": {
+      "identity": {
+        "local_wrapper_id": "rchw-2ef29a16-17e4-4d39-a1bc-25f1b0da9914",
+        "remote_build_id": 30101959465763443
+      },
+      "state": "finished",
+      "phase": "finished",
+      "strict_remote": true,
+      "terminal_acknowledged": true,
+      "exit_code": 0,
+      "recovery": {
+        "returned": 0,
+        "exit_code": 0,
+        "execution_started": true,
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "retired": true,
+        "staging_released": true,
+        "daemon_exit_code": null
+      }
+    }
+  }
+}
