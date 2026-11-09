@@ -693,6 +693,9 @@ def judge_platform_step(raw_log: str, lines: list[str], positions: dict[str, int
            for index, line in enumerate(lines)):
         errors.append("platform_outside_step")
     if exit_at is None:
+        # The guest step never ended: a timeout inside a read (the MIPS legacy read blocks), a crash, or a transcript cut short. The run already fails on the missing
+        # `FFW_PLATFORM_STEP_EXIT` marker; this names it on the platform record too, so a `not_run` verdict with no error is never read as "not judged, and fine".
+        errors.append("platform_step_not_finished" if begin is not None else "platform_step_absent")
         return record
     record["exit_line"] = lines[exit_at]
     record["verdict"] = "red"
@@ -719,7 +722,10 @@ def judge_platform_step(raw_log: str, lines: list[str], positions: dict[str, int
         errors.append("platform_stdout_mismatch:bytes")
     if measured["stdout_fnv1a64"] != reported["stdout_fnv1a64"]:
         errors.append("platform_stdout_mismatch:fnv1a64")
-    judged = platform_expect.judge_output(region, arch, platform["grammar"], provider=platform.get("provider"))
+    # `platform["kernel_sha256"]` is the digest of the kernel image this guest booted (the run loop sets it, and the receipt records the same value). A provider
+    # run is judged against the pinned image for `arch`; without the key the judge refuses (`platform_kernel_sha256_missing`).
+    judged = platform_expect.judge_output(region, arch, platform["grammar"], provider=platform.get("provider"),
+                                          kernel_sha256=platform.get("kernel_sha256"))
     problems = list(judged["problems"])
     if not problems:
         problems.extend(platform_expect.judge_exit_status(judged, status))
@@ -1176,8 +1182,11 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
         with log_path.open("xb") as output:
             output.write(raw_combined)
 
+        # One read of the kernel image: the digest the platform judge keys its provider cells on is the digest the receipt records.
+        kernel_sha256 = sha256_file(cfg["kernel_path"])
+        guest_platform = None if platform_ctx is None else dict(platform_ctx, kernel_sha256=kernel_sha256)
         verification = verify_serial_output(arch, cfg["hello"], cfg["enosys"], combined, cfg["triple"],
-                                            speaker=speaker_ctx, platform=platform_ctx)
+                                            speaker=speaker_ctx, platform=guest_platform)
         elf = inspect_static_elf(bin_path, arch)
         linker = configured_linker(hello_crate, cfg["triple"])
         identity = verification["build_identity"]
@@ -1223,7 +1232,7 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
                 "binary_sha256": sha256_file(bin_path),
                 "binary_bytes": bin_path.stat().st_size,
                 "initramfs_sha256": archive_receipts[arch]["archive_sha256"],
-                "kernel_sha256": sha256_file(cfg["kernel_path"]),
+                "kernel_sha256": kernel_sha256,
                 "serial_log_path": log_path.name,
                 "serial_log_sha256": hashlib.sha256(raw_combined).hexdigest(),
                 "stdout_sha256": hashlib.sha256(stdout).hexdigest(),
@@ -1267,7 +1276,7 @@ def run_verification(args: argparse.Namespace, results_dir: pathlib.Path) -> int
                     baseline_ok = (not capture["stop_reason"] and returncode == 0
                                    and verification["status"] == "PASS")
                     if baseline_ok:
-                        platform_controls = run_platform_controls(combined, arch, cfg, speaker_ctx, platform_ctx)
+                        platform_controls = run_platform_controls(combined, arch, cfg, speaker_ctx, guest_platform)
                     else:
                         platform_controls = {name: {"skipped": "baseline_failed"}
                                              for name in platform_expect.plants_for(platform_ctx["provider"])}

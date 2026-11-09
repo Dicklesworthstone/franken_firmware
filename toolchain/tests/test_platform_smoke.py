@@ -8,6 +8,7 @@ The expected problems are written out by hand from docs/contracts/p02.md and nev
 """
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -702,6 +703,16 @@ class RunnerPlatformTests(unittest.TestCase):
         self.mips_speaker.write_bytes(base.elf32(8) + b"mips-speaker")
         self.ppc_speaker.write_bytes(base.elf32(20) + b"ppc-speaker")
         self.runs = 0
+        self.real_sha256_file = VERIFIER.sha256_file
+        self.kernel_sha = {}                    # guest -> the digest the runner reads for that guest's kernel file; unset means the pinned image
+
+    def sha256_of(self, path):
+        """The synthetic kernel files cannot be the harness images, so for those two files the digest is the test's to set (default: the pinned image of the
+        guest); every other file is hashed for real."""
+        for arch, name in KERNEL_FILES.items():
+            if Path(path).name == name:
+                return self.kernel_sha.get(arch, KERNEL_SHA256[arch])
+        return self.real_sha256_file(path)
 
     @staticmethod
     def capture(text):
@@ -734,6 +745,7 @@ class RunnerPlatformTests(unittest.TestCase):
         with patch.object(VERIFIER.mkinitramfs, "resolve_default_build_dir", return_value=self.root), \
              patch.object(VERIFIER, "capture_guest", side_effect=captures), \
              contextlib.ExitStack() as stack:
+            stack.enter_context(patch.object(VERIFIER, "sha256_file", side_effect=self.sha256_of))
             if build and not real_rch:
                 stack.enter_context(patch.object(VERIFIER.subprocess, "run", side_effect=fake_run))
                 stack.enter_context(patch.object(VERIFIER, "admit_before_build", return_value={"attempts": 1, "recommendation": "offload", "observation": "observed", "worker": "trj", "reason": None}))
@@ -913,6 +925,66 @@ class RunnerPlatformTests(unittest.TestCase):
         self.assertEqual(mips["validation_errors"][0], "platform_not_started:entropy:absent")
         self.assertEqual(mips["platform"]["controls"], {n: {"skipped": "baseline_failed"} for n in P.plants_for(PROV)})
         self.assertEqual(receipt["guests"]["ppc"]["status"], "PASS")
+
+    def test_a_provider_run_is_judged_against_the_digest_its_receipt_records(self):
+        result, receipt = self.run_main(self.provider_captures(), self.argv(*self.PROVIDER_ARGV))
+        self.assertEqual((result, receipt["status"]), (0, "PASS"))
+        for arch in ("mips", "ppc"):
+            self.assertEqual(receipt["guests"][arch]["kernel_sha256"], KERNEL_SHA256[arch], arch)
+        self.assertIn("blocks until the pool is ready", receipt["guests"]["mips"]["platform"]["claim"])
+
+    def test_a_provider_run_on_another_kernel_image_fails_by_name_and_is_not_judged_by_that_guests_cell(self):
+        other = dict(OTHER_KERNEL_SHA256)
+        # The same MIPS and PowerPC green transcripts as the pinned run, booted on other images: red, by name, the receipt names the digest it judged, and the controls do not run.
+        self.kernel_sha = other
+        result, receipt = self.run_main(self.provider_captures(), self.argv(*self.PROVIDER_ARGV))
+        self.assertEqual((result, receipt["status"]), (1, "FAIL"))
+        for arch in ("mips", "ppc"):
+            guest = receipt["guests"][arch]
+            self.assertEqual(guest["kernel_sha256"], other[arch], arch)
+            self.assertEqual((guest["platform"]["verdict"], guest["validation_errors"][0]), ("red", "platform_kernel_not_the_judged_image"), arch)
+            self.assertTrue(all(e.startswith("platform_control_not_run:") for e in guest["validation_errors"][1:]), arch)
+            self.assertNotIn("blocks until", guest["platform"]["claim"], arch)
+            self.assertIn("nothing is claimed", guest["platform"]["claim"], arch)
+        # The PowerPC refusal on another image is not the degraded cell, and the MIPS refusal on another image is not the unreachable cell: the usual problem, beside the image's.
+        self.kernel_sha = other
+        both = self.provider_captures(mips=provider_text("mips", legacy("legacy_test_environment_not_seeded_mips"), 3),
+                                      ppc=provider_text("ppc", *PROVIDER_BASELINES["ppc degraded"][1:]))
+        result, receipt = self.run_main(both, self.argv(*self.PROVIDER_ARGV))
+        self.assertEqual((result, receipt["status"]), (1, "FAIL"))
+        for arch in ("mips", "ppc"):
+            guest = receipt["guests"][arch]
+            self.assertEqual(guest["validation_errors"][:2], ["platform_kernel_not_the_judged_image", "platform_not_started:entropy:not_seeded"], arch)
+            self.assertNotIn("degraded_because", guest["platform"], arch)
+        # The control: the same transcripts on the pinned images are the cells' own verdicts (red for MIPS with both problems, degraded for PowerPC).
+        self.kernel_sha = {}
+        result, receipt = self.run_main(both, self.argv(*self.PROVIDER_ARGV))
+        self.assertEqual(receipt["guests"]["mips"]["validation_errors"][:2], MIPS_NOT_SEEDED_RED)
+        self.assertEqual(receipt["guests"]["ppc"]["platform"]["verdict"], "degraded")
+
+    def test_a_default_run_does_not_look_at_the_kernel_digest(self):
+        self.kernel_sha = dict(OTHER_KERNEL_SHA256)
+        result, receipt = self.run_main(self.captures(), self.argv("--speaker-platform", "--platform-controls"))
+        self.assertEqual((result, receipt["status"]), (0, "PASS"))
+        self.assertEqual(receipt["platform_step"]["verdicts"], {"mips": "degraded", "ppc": "green"})
+
+    def test_a_provider_run_without_a_digest_is_refused_by_name(self):
+        for arch in ("mips", "ppc"):
+            text = provider_text(arch, *PROVIDER_BASELINES[f"{arch} green"][1:])
+            result = verify(text, arch, platform=provider_platform(arch, None))                  # a runner that never set kernel_sha256
+            self.assertEqual((result["status"], result["validation_errors"]), ("FAIL", ["platform_kernel_sha256_missing"]), arch)
+            self.assertEqual(result["platform"]["verdict"], "red", arch)
+            self.assertEqual(pverify(text, arch)["status"], "PASS", arch)                        # the control: the pinned digest passes
+
+    def test_the_runner_reads_the_kernel_image_once_so_the_judged_digest_is_the_recorded_one(self):
+        source = (Path(VERIFIER.__file__)).read_text(encoding="utf-8")
+        needles = ('kernel_sha256 = sha256_file(cfg["kernel_path"])', '"kernel_sha256": kernel_sha256,', 'kernel_sha256=platform.get("kernel_sha256")',
+                   'speaker=speaker_ctx, platform=guest_platform)', 'run_platform_controls(combined, arch, cfg, speaker_ctx, guest_platform)')
+        for needle in needles:
+            self.assertEqual(source.count(needle), 1, needle)
+            self.assertNotEqual(source.replace(needle, ""), source, needle)                      # the plant: the line is gone; it must then be missing
+            self.assertEqual(source.replace(needle, "").count(needle), 0, needle)
+        self.assertEqual(source.count('sha256_file(cfg["kernel_path"])'), 1)                    # no second read that could disagree with the first
 
     def test_a_provider_run_whose_guest_ran_the_default_step_fails_on_both_counts(self):
         result, receipt = self.run_main(self.captures(), self.argv(*self.PROVIDER_ARGV))
@@ -1386,7 +1458,21 @@ PROV_ARG = "--entropy-provider=legacy-dev-random-test-environment"
 LEGACY_FILE = REPO / "crates" / "franken-speaker" / "tests" / "vectors" / "p02_legacy_entropy_markers.json"
 LEGACY_DOC = json.loads(LEGACY_FILE.read_text(encoding="utf-8"))
 LEGACY = LEGACY_DOC["examples"]
-PROVIDER_PLATFORM = {"grammar": GRAMMAR, "provider": PROV}
+# The harness kernel images the provider cells are keyed on: the full sha256 of the vmlinux each guest boots, written out here from the `kernel_sha256` values of run
+# 2a405e88's receipt (`KernelImageKeyTests.test_the_pins_are_the_digests_run_2a405e88_recorded`), not read back from the judge.
+KERNEL_SHA256 = {"mips": "3803357ef7821dbf691c901105fb9b2b00382abf67fce8a4be2a0d592267dc61",
+                 "ppc": "289f40b63ea9aa82743f568ddeaba669a16a859970497dccf7135596da538f98"}
+KERNEL_FILES = {"mips": "vmlinux-4.19.0-21-4kc-malta", "ppc": "vmlinux-4.9.0-0.bpo.6-powerpc"}
+OTHER_KERNEL_SHA256 = {"mips": hashlib.sha256(b"another MIPS kernel image").hexdigest(), "ppc": hashlib.sha256(b"another PowerPC kernel image").hexdigest()}
+UNSET = object()                                # "the pinned digest of that guest", as against an explicit None (no digest)
+
+
+def provider_platform(arch, kernel_sha256=UNSET):
+    """The platform context of a provider run on `arch`: the grammar, the provider, and the digest of the kernel it booted (the pinned image unless a test says
+    otherwise; None leaves the key out, as a runner that forgot it would)."""
+    platform = {"grammar": GRAMMAR, "provider": PROV}
+    digest = KERNEL_SHA256[arch] if kernel_sha256 is UNSET else kernel_sha256
+    return platform if digest is None else dict(platform, kernel_sha256=digest)
 PROV_ENTROPY_NOT_SEEDED = f"FFW_PLATFORM:ENTROPY status=REFUSED provenance=kernel provider={PROV} reason=not_seeded"
 
 
@@ -1394,8 +1480,9 @@ def legacy(name):
     return list(LEGACY[name]["lines"])
 
 
-def pjudge(lines, arch, provider=PROV):
-    return P.judge_output(as_bytes(lines) if isinstance(lines, list) else lines, arch, GRAMMAR, provider=provider)
+def pjudge(lines, arch, provider=PROV, kernel_sha256=UNSET):
+    digest = KERNEL_SHA256[arch] if kernel_sha256 is UNSET else kernel_sha256
+    return P.judge_output(as_bytes(lines) if isinstance(lines, list) else lines, arch, GRAMMAR, provider=provider, kernel_sha256=digest)
 
 
 def ppc_not_seeded_provider_lines():
@@ -1430,7 +1517,7 @@ def provider_text(arch, lines, status):
 
 
 def pverify(text, arch):
-    return verify(text, arch, platform=PROVIDER_PLATFORM)
+    return verify(text, arch, platform=provider_platform(arch))
 
 
 # What the contract and the policy give each legacy example, for the run that selected the test-environment provider.
@@ -1635,7 +1722,7 @@ class LegacyProviderVerifierTests(unittest.TestCase):
     def test_run_platform_controls_catches_every_plant_of_a_provider_run_and_a_blind_judge_is_not_credited(self):
         cfg = {"hello": base.HELLO, "enosys": base.ENOSYS, "triple": base.MIPS_TRIPLE}
         text = provider_text("mips", *PROVIDER_BASELINES["mips green"][1:])
-        controls = VERIFIER.run_platform_controls(text, "mips", cfg, SPEAKER, PROVIDER_PLATFORM)
+        controls = VERIFIER.run_platform_controls(text, "mips", cfg, SPEAKER, provider_platform("mips"))
         self.assertEqual(sorted(controls), sorted(P.plants_for(PROV)))
         for name, record in controls.items():
             self.assertTrue(record["caught"], (name, record))
@@ -1651,6 +1738,135 @@ class LegacyProviderVerifierTests(unittest.TestCase):
         for plant in ("provider_missing", "provider_other", "provider_unknown"):
             with self.assertRaises(ValueError, msg=plant):
                 P.plant_transcript(good_text("ppc"), plant)                    # a default transcript has no provider= to change
+
+
+class PlatformStepNotFinishedTests(unittest.TestCase):
+    """A guest whose platform step never ended (the MIPS legacy read blocks, so a timeout inside it is the expected failure) is not judged green, degraded or red by
+    the child's lines: the run fails, and the platform record names why instead of showing `not_run` with no error."""
+
+    @staticmethod
+    def cuts(text):
+        lines = text.split("\n")
+        begin = next(i for i, line in enumerate(lines) if line.strip().startswith(P.STEP_BEGIN_KEY + " "))
+        return {"before the step": "\n".join(lines[:begin]) + "\n", "right after the step's BEGIN line": "\n".join(lines[:begin + 1]) + "\n",
+                "after three child lines": "\n".join(lines[:begin + 4]) + "\n"}
+
+    def check(self, text, run):
+        complete = run(text)
+        self.assertEqual((complete["status"], complete["validation_errors"]), ("PASS", []))               # the control: the whole step is accepted, with no such error
+        expected = {"before the step": ["platform_step_absent"], "right after the step's BEGIN line": ["platform_step_not_finished"],
+                    "after three child lines": ["platform_outside_step", "platform_step_not_finished"]}
+        for label, cut in self.cuts(text).items():
+            result = run(cut)
+            self.assertEqual(result["status"], "FAIL", label)
+            self.assertEqual(result["validation_errors"], expected[label], label)
+            self.assertEqual((result["platform"]["verdict"], result["platform"]["outcome"]), ("not_run", "not_run"), label)
+
+    def test_a_default_run_whose_step_never_ended_names_it(self):
+        for arch in ("mips", "ppc"):
+            self.check(good_text(arch), lambda text, arch=arch: verify(text, arch))
+
+    def test_a_provider_run_whose_step_never_ended_names_it(self):
+        for label, (arch, lines, status) in PROVIDER_BASELINES.items():
+            self.check(provider_text(arch, lines, status), lambda text, arch=arch: pverify(text, arch))
+
+    def test_the_error_is_made_where_the_step_is_judged_and_nowhere_else(self):
+        source = Path(VERIFIER.__file__).read_text(encoding="utf-8")
+        needle = 'errors.append("platform_step_not_finished" if begin is not None else "platform_step_absent")'
+        self.assertEqual(source.count(needle), 1)
+        self.assertEqual(source.replace(needle, "pass").count("platform_step_not_finished"), 0)          # the plant: with the line gone the name is gone
+
+
+class KernelImageKeyTests(unittest.TestCase):
+    """The provider cells belong to the kernel image they were read from (docs/contracts/p02.md, "The harness kernels do not answer alike"). A provider run is judged
+    against the sha256 of the kernel it booted, the digest its receipt records: the pinned image gets the cells, any other image, no digest or a malformed one is red by
+    name and gets none. A run without a provider ignores the digest."""
+
+    def test_the_pins_are_the_digests_run_2a405e88_recorded(self):
+        receipt = json.loads((RUN_2A405E88 / "e07-e03-verification-receipt.json").read_text(encoding="utf-8"))
+        for arch in ("mips", "ppc"):
+            self.assertEqual(receipt["guests"][arch]["kernel_sha256"], KERNEL_SHA256[arch], arch)
+        self.assertEqual(P.JUDGED_KERNEL_SHA256, KERNEL_SHA256)
+        self.assertNotEqual(KERNEL_SHA256["mips"], KERNEL_SHA256["ppc"])
+        for text in (REPO / "docs" / "contracts" / "p02.md", REPO / "toolchain" / "SPEAKER_SMOKE.md"):
+            body = text.read_text(encoding="utf-8")
+            self.assertIn("`3803357ef7821dbf", body.replace("**", "") + "`3803357ef7821dbf" if text.name == "SPEAKER_SMOKE.md" else body, text.name)
+
+    def honest(self):
+        """Every part of the keying; raises AssertionError when any is false."""
+        mips_green, mips_refused = mips_provider_green_lines(), legacy("legacy_test_environment_not_seeded_mips")
+        ppc_green, ppc_degraded = PROVIDER_BASELINES["ppc green"][1], PROVIDER_BASELINES["ppc degraded"][1]
+        # The pinned image: the cells apply.
+        record = pjudge(mips_green, "mips")
+        self.assertEqual((record["verdict"], record["problems"]), ("green", []))
+        self.assertIn("blocks until the pool is ready", record["claim"])
+        self.assertEqual(pjudge(mips_refused, "mips")["problems"], MIPS_NOT_SEEDED_RED)
+        self.assertEqual(pjudge(ppc_green, "ppc")["verdict"], "green")
+        record = pjudge(ppc_degraded, "ppc")
+        self.assertEqual((record["verdict"], record["problems"], record["degraded_because"]), ("degraded", [], "entropy:not_seeded"))
+        self.assertIn("EAGAIN", record["claim"])
+        # Another image of the same guest, the same lines: no cell, red by name, the usual problem beside it, and no per-kernel statement.
+        other = OTHER_KERNEL_SHA256
+        record = pjudge(mips_refused, "mips", kernel_sha256=other["mips"])
+        self.assertEqual((record["verdict"], record["problems"]),
+                         ("red", ["platform_kernel_not_the_judged_image", "platform_not_started:entropy:not_seeded"]))        # not the MIPS cell's unreachable problem
+        self.assertIn("nothing is claimed", record["claim"])
+        self.assertNotIn("blocks until", record["claim"])
+        self.assertNotIn("by source reading", record["claim"])
+        record = pjudge(ppc_degraded, "ppc", kernel_sha256=other["ppc"])
+        self.assertEqual((record["verdict"], record["problems"]),
+                         ("red", ["platform_kernel_not_the_judged_image", "platform_not_started:entropy:not_seeded"]))        # not the degraded cell
+        self.assertNotIn("degraded_because", record)
+        self.assertNotIn("by source reading", record["claim"])                  # neither guest's per-kernel reading is stated for an image it does not cover
+        for lines, arch in ((mips_green, "mips"), (ppc_green, "ppc")):           # a start on an unjudged image is red too: its claim could not be made
+            record = pjudge(lines, arch, kernel_sha256=other[arch])
+            self.assertEqual((record["verdict"], record["problems"], record["started"]), ("red", ["platform_kernel_not_the_judged_image"], True), arch)
+        # The pin is the guest's own: the other guest's image is not it.
+        self.assertEqual(pjudge(mips_green, "mips", kernel_sha256=KERNEL_SHA256["ppc"])["problems"], ["platform_kernel_not_the_judged_image"])
+        self.assertEqual(pjudge(ppc_green, "ppc", kernel_sha256=KERNEL_SHA256["mips"])["problems"], ["platform_kernel_not_the_judged_image"])
+        # No digest is refused, whatever the transcript says, and the image's problem comes first.
+        for lines, arch in ((mips_green, "mips"), (mips_refused, "mips"), (ppc_green, "ppc"), (ppc_degraded, "ppc")):
+            record = pjudge(lines, arch, kernel_sha256=None)
+            self.assertEqual((record["verdict"], record["problems"][:1]), ("red", ["platform_kernel_sha256_missing"]), arch)
+            self.assertNotIn("degraded_because", record)
+        self.assertEqual(pjudge(b"", "mips", kernel_sha256=None)["problems"], ["platform_kernel_sha256_missing", "platform_empty_output"])
+        # A digest that is not a digest: a prefix, the wrong case, the wrong length, a prefix of the pin, a non-string.
+        pinned = KERNEL_SHA256["mips"]
+        for bad in (pinned[:8], pinned[:16], pinned.upper(), pinned[:-1], pinned + "0", "", "0x" + pinned[2:], 3803357, b"3803357e"):
+            record = pjudge(mips_green, "mips", kernel_sha256=bad)
+            self.assertEqual((record["verdict"], record["problems"]), ("red", ["platform_kernel_sha256_malformed"]), repr(bad))
+        # A run without a provider ignores the digest, and says nothing of a claim.
+        plain = lines_of("mips_entropy_not_seeded")
+        for digest in (None, other["mips"], "not a digest"):
+            record = P.judge_output(as_bytes(plain), "mips", GRAMMAR, kernel_sha256=digest)
+            self.assertEqual((record["verdict"], record["problems"]), ("degraded", []), repr(digest))
+            self.assertNotIn("claim", record)
+
+    def test_the_pinned_image_gets_the_cells_and_any_other_image_no_digest_or_malformed_digest_gets_none(self):
+        self.honest()
+
+    def test_each_plant_that_unkeys_the_cells_fails_the_keying_and_removing_it_restores_it(self):
+        self.honest()                                                           # the control: the real judge passes
+        real_inner = P._judge_output
+        plants = {
+            "the digest is never compared": patch.object(P, "image_problem", return_value=None),
+            "the pins are each other's": patch.dict(P.JUDGED_KERNEL_SHA256, {"mips": KERNEL_SHA256["ppc"], "ppc": KERNEL_SHA256["mips"]}),
+            "a prefix of the digest is accepted": patch.object(P, "_SHA256", re.compile(r"[0-9a-f]{8,64}")),
+            "the cells ignore the image": patch.object(P, "_judge_output", side_effect=lambda data, arch, ctx, provider, image: real_inner(data, arch, ctx, provider, None)),
+            "a missing digest is not refused": patch.object(P, "image_problem", side_effect=lambda arch, digest: None if digest is None else real_image_problem(arch, digest)),
+        }
+        real_image_problem = P.image_problem
+        for label, plant in plants.items():
+            with plant:
+                with self.assertRaises(AssertionError, msg=label):
+                    self.honest()
+            self.honest()                                                       # and with the plant removed it passes again
+
+    def test_the_old_keying_on_the_guest_alone_is_refuted(self):
+        # What the judge did before: the cell followed the guest label. A different MIPS image with the unseeded refusal was then given the unreachable cell.
+        record = pjudge(legacy("legacy_test_environment_not_seeded_mips"), "mips", kernel_sha256=OTHER_KERNEL_SHA256["mips"])
+        self.assertNotIn("platform_unreachable_refusal:entropy:not_seeded", record["problems"])
+        self.assertEqual(record["problems"][0], "platform_kernel_not_the_judged_image")
 
 
 RUN_2A405E88 = REPO / "toolchain" / "results" / "runs" / "2a405e88bb10497b98b85abeae7dffaf"
@@ -1733,6 +1949,10 @@ class LegacyProviderKernelSemanticsTests(unittest.TestCase):
         ("contract", "Of the MIPS runs committed at `bc32b0a`, twelve in all", True), ("contract", "it does not require this list to stay complete", True),
         ("contract", "a MIPS run committed after `bc32b0a` is not counted here", True),
         ("contract", REVISIT, True), ("smoke", REVISIT, True), ("judge", REVISIT, True),
+        # the judge keys the cells on the kernel image's digest (CrimsonMouse 16764): the contract and the smoke doc say the judge enforces it
+        ("contract", "The judge enforces this: a provider run is judged against the sha256 of the kernel it booted", True),
+        ("contract", "platform_kernel_not_the_judged_image", True), ("smoke", "platform_kernel_not_the_judged_image", True),
+        ("judge", "a provider run is judged against the sha256 of the kernel it booted, and a run on any other image", True),
         ("contract", "One hypothesis, not a finding and not measured", True), ("smoke", "One hypothesis, not a finding and not measured", True),
     )
     TEXT_STALE = ("`not_seeded` is `degraded` on both guests", "degraded on both guests", "degraded on both guests:", "is not stable from run to run",

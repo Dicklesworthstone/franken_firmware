@@ -48,7 +48,9 @@ positive); by source reading, the MIPS guest's 4.19.249 kernel ignores `O_NONBLO
 so a MIPS start is a blocking read that succeeded, and a MIPS `not_seeded` is a refusal that kernel cannot give, which is red. No seeded
 nonblocking `/dev/random` read has been observed in any guest (PowerPC's reads answered `EAGAIN`; the one MIPS start, run 2a405e88, waited inside
 the kernel), so a PowerPC refusal is the information such a run gives, and it shows no positive. `absent` (no device node), `unavailable` and
-every other reason are red on both.
+every other reason are red on both. Those cells, and the per-kernel statement in a provider run's claim, belong to the two pinned harness kernel images
+(`JUDGED_KERNEL_SHA256`): a provider run is judged against the sha256 of the kernel it booted, and a run on any other image, or with no usable digest,
+is red with a named problem and gets no cell.
 
 What this does not establish
 ----------------------------
@@ -136,10 +138,33 @@ DEGRADED_PROVIDER = frozenset({("ppc", "entropy", "not_seeded")})
 # A refusal a harness kernel cannot give. The MIPS guest's 4.19.249 kernel has `random_read_iter` call `wait_for_random_bytes()` unconditionally and
 # never tests `O_NONBLOCK` (drivers/char/random.c at v4.19.249 lines 1293-1300; the booted vmlinux, sha256 3803357e..., disassembles to exactly
 # that), so its `/dev/random` read waits for the pool and then succeeds: it has no `EAGAIN` to turn into `not_seeded`. A transcript that says so
-# was not produced by that kernel's read, and is red with this extra named problem beside the usual one. The cell is keyed on the guest but is a
-# property of that kernel image, not of MIPS. Revisit this cell if the MIPS harness kernel image (`kernel_sha256` `3803357e`) is replaced, or if a
+# was not produced by that kernel's read, and is red with this extra named problem beside the usual one. The cell is a property of that kernel
+# image, not of MIPS, so it is applied only to a run whose `kernel_sha256` is the pinned image (`JUDGED_KERNEL_SHA256` below). Revisit this cell if the MIPS harness kernel image (`kernel_sha256` `3803357e`) is replaced, or if a
 # provider-side wait bound is added (the refusal would then be the provider's own timeout, not an `EAGAIN` from the kernel).
 UNREACHABLE_PROVIDER_REFUSAL = frozenset({("mips", "entropy", "not_seeded")})
+
+# The harness kernel images the provider cells above describe: the full sha256 of the vmlinux the runner boots for each guest, as recorded in the
+# `kernel_sha256` of run 2a405e88's receipt (the digests docs/contracts/p02.md names by prefix). A provider run is judged by those cells, and says what
+# PROVIDER_READ says, only when its `kernel_sha256` is exactly the pinned digest of its guest. Any other image (or no digest) gets no special cell: it
+# is red with a named problem, and its claim makes no statement about how its `/dev/random` read behaves.
+JUDGED_KERNEL_SHA256 = {
+    "mips": "3803357ef7821dbf691c901105fb9b2b00382abf67fce8a4be2a0d592267dc61",
+    "ppc": "289f40b63ea9aa82743f568ddeaba669a16a859970497dccf7135596da538f98",
+}
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+def image_problem(arch: str, kernel_sha256: Any) -> str | None:
+    """The named problem with the kernel image a provider run claims to have booted, or None when it is the pinned image for `arch`. No digest, a digest
+    that is not 64 lowercase hex characters (a prefix is not a digest), and a well formed digest that is not the pinned one are three different problems."""
+    if kernel_sha256 is None:
+        return "platform_kernel_sha256_missing"
+    if not isinstance(kernel_sha256, str) or _SHA256.fullmatch(kernel_sha256) is None:
+        return "platform_kernel_sha256_malformed"
+    if kernel_sha256 != JUDGED_KERNEL_SHA256.get(arch):
+        return "platform_kernel_not_the_judged_image"
+    return None
+
 
 PROVIDER_CLAIM = ("explicit legacy /dev/random provider in an admitted test environment (a harness guest): a started run is an observation "
                   "of the real adapter on that guest's kernel and says nothing about a device or a stock kernel; a refusal shows no positive")
@@ -151,6 +176,10 @@ PROVIDER_READ = {
     "ppc": ("by source reading, this guest's kernel (Debian 4.9.88) answers a nonblocking /dev/random read with EAGAIN while its blocking pool is empty: a start is a "
             "read that returned bytes, a refusal is that answer"),
 }
+
+# What the claim says instead of PROVIDER_READ when the run's kernel is not the pinned image.
+PROVIDER_READ_UNJUDGED = ("this run's kernel image is not the one this judge's per-kernel reading of /dev/random covers, so nothing is claimed about whether its "
+                          "nonblocking read answers EAGAIN or waits")
 
 
 class PlatformGrammarError(Exception):
@@ -314,12 +343,28 @@ def _values(name: str, pairs: list[tuple[str, str]], ctx: dict[str, Any]) -> lis
     return problems
 
 
-def judge_output(data: bytes, arch: str, ctx: dict[str, Any], provider: str | None = None) -> dict[str, Any]:
+def judge_output(data: bytes, arch: str, ctx: dict[str, Any], provider: str | None = None, kernel_sha256: str | None = None) -> dict[str, Any]:
     """Judge the child's stdout for the `arch` guest ("mips" or "ppc"). Returns the record that goes in the receipt:
     `verdict` ("green", "degraded" or "red"), `problems` (named; empty unless red), the six lines, what each capability
     reported, whether it started, and the `kernel=` value, which is recorded and never compared. With `provider` (a key of
     `PROVIDERS`) the run is judged as the explicit legacy-provider run: the ENTROPY line must carry that `provider=`, and the record
-    names the provider and its claim; without it the judge is exactly what it was and rejects the token."""
+    names the provider and its claim; without it the judge is exactly what it was and rejects the token.
+
+    A provider run is also judged against the kernel image it booted: `kernel_sha256` must be the pinned digest of `arch` (`JUDGED_KERNEL_SHA256`). The degraded
+    and the unreachable cells, and the per-kernel statement in the claim, belong to that image alone; any other value (none, malformed, another image) is red
+    with the named problem first (`image_problem`), the transcript is still judged without the cells, and a start on an unjudged image is red too. A run
+    without a provider ignores `kernel_sha256`."""
+    image = None if provider is None else image_problem(arch, kernel_sha256)
+    record = _judge_output(data, arch, ctx, provider, image)
+    if image is not None:
+        record["problems"].insert(0, image)
+        record["verdict"] = "red"
+        record.pop("degraded_because", None)
+    return record
+
+
+def _judge_output(data: bytes, arch: str, ctx: dict[str, Any], provider: str | None, image: str | None) -> dict[str, Any]:
+    """`judge_output` for a transcript, with `image` the problem with the kernel image (None for the pinned one, and for a run with no provider)."""
     if arch not in GUEST_ABI:
         raise ValueError(f"unknown guest {arch!r}")
     if provider is not None:
@@ -330,7 +375,7 @@ def judge_output(data: bytes, arch: str, ctx: dict[str, Any], provider: str | No
         "verdict": "red", "problems": problems, "lines": [], "outcomes": {}, "started": None, "kernel_release": None,
     }
     if provider is not None:
-        record["provider"], record["claim"] = provider, f"{PROVIDER_CLAIM}; {PROVIDER_READ[arch]}"
+        record["provider"], record["claim"] = provider, f"{PROVIDER_CLAIM}; {PROVIDER_READ[arch] if image is None else PROVIDER_READ_UNJUDGED}"
     if not data:
         problems.append("platform_empty_output")
         return record
@@ -413,14 +458,14 @@ def judge_output(data: bytes, arch: str, ctx: dict[str, Any], provider: str | No
     # Well formed and self-consistent. Whether it shows the positive path is the policy.
     if every_pass and record["started"]:
         record["verdict"] = "green"
-    elif first is not None and (arch, first[0], first[1]) in (DEGRADED if provider is None else DEGRADED_PROVIDER) and sum(
+    elif first is not None and (arch, first[0], first[1]) in (DEGRADED if provider is None else DEGRADED_PROVIDER if image is None else frozenset()) and sum(
             1 for cap in CAPABILITIES if outcome[cap]["status"] != "PASS") == 1:
         record["verdict"] = "degraded"
         record["degraded_because"] = f"{first[0]}:{first[1]}"
     else:
         problems.extend(f"platform_not_started:{cap}:{outcome[cap]['reason']}" for cap in CAPABILITIES
                         if outcome[cap]["status"] == "REFUSED")
-        if provider is not None:
+        if provider is not None and image is None:
             problems.extend(f"platform_unreachable_refusal:{cap}:{outcome[cap]['reason']}" for cap in CAPABILITIES
                             if outcome[cap]["status"] == "REFUSED" and (arch, cap, outcome[cap]["reason"]) in UNREACHABLE_PROVIDER_REFUSAL)
     return record
