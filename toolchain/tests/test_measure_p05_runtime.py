@@ -157,6 +157,40 @@ class RuntimeTranscriptTests(unittest.TestCase):
             with self.subTest(duplicate=index):
                 self.assertFalse(self.judge("".join(good[:index] + [good[index]] + good[index:]))["ok"])
 
+    def test_phase_gate_requires_each_operation_once_in_every_profile(self):
+        # These fixtures spell out the protocol independently of the judge's shape tables.
+        for profile, make_transcript in ((M.RUNTIME_THREADED, fixture),
+                                         (SO, single_owner_fixture), (CD, caller_driven_fixture)):
+            good = make_transcript().splitlines(keepends=True)
+            positive = M.judge_runtime("".join(good), "mips", {"arch": "mips"}, profile=profile)
+            self.assertTrue(positive["ok"], positive)
+            for index, line in enumerate(good):
+                name = line.split(":", 1)[1].split(" ", 1)[0]
+                if name in ("BEGIN", "END", "CENSUS"):
+                    continue
+                for count, changed in ((0, good[:index] + good[index + 1:]),
+                                       (2, good[:index] + [line] + good[index:])):
+                    with self.subTest(profile=profile, operation=name, observed=count):
+                        report = M.judge_runtime("".join(changed), "mips", {"arch": "mips"}, profile=profile)
+                        phase = next(g for g in report["gates"] if g.gate_id == "P05R-PHASES")
+                        self.assertEqual(phase.status, "failed")
+                        self.assertIn(f"{name}: required operation must appear exactly once (observed {count})",
+                                      phase.detail)
+
+    def test_boot_failure_and_end_only_never_claim_operations_ran(self):
+        for profile, make_transcript in ((M.RUNTIME_THREADED, fixture),
+                                         (SO, single_owner_fixture), (CD, caller_driven_fixture)):
+            for text in ("", "Can't allocate initial device-tree chunk\r\n",
+                         make_transcript().splitlines()[-1] + "\n"):
+                with self.subTest(profile=profile, text=text):
+                    report = M.judge_runtime(text, "mips", {"arch": "mips"}, profile=profile)
+                    phase = next(g for g in report["gates"] if g.gate_id == "P05R-PHASES")
+                    self.assertEqual(phase.status, "failed")
+                    # Diagnostics retain only their first six errors; this shared
+                    # operation is near the beginning of all three profiles.
+                    self.assertIn("PROFILE_ACCEPT: required operation must appear exactly once (observed 0)",
+                                  phase.detail)
+
     def test_each_adjacent_reordering_is_refused(self):
         good = fixture().splitlines(keepends=True)
         for index in range(len(good) - 1):

@@ -1238,6 +1238,12 @@ def judge_runtime(text: str, arch: str, elf: dict[str, Any] | None, *, supervise
     declared = SINGLE_OWNER_DECLARED_UNSUPPORTED if single_owner else None
     phase_errors = semantic_errors + [f"{name}: status={pairs.get('status', 'missing')}" for name, pairs in ops
                                       if name != declared and pairs.get("status") != "ok"]
+    # A pre-Linux boot failure has no operations to contradict. That absence must
+    # fail this gate too, rather than vacuously claiming that every operation ran.
+    for phase in shape["phases"]:
+        count = sum(name == phase for name, _ in ops)
+        if count != 1:
+            phase_errors.append(f"{phase}: required operation must appear exactly once (observed {count})")
     if single_owner:
         declared_rows = [pairs for name, pairs in ops if name == declared]
         if len(declared_rows) != 1 or declared_rows[0].get("status") != "unsupported":
