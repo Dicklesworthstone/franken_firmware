@@ -1,0 +1,70 @@
+--- rchq3 attempt 1/1 2026-11-09T04:10:08Z
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.27
+   Compiling typenum v1.20.1
+   Compiling hybrid-array v0.4.15
+   Compiling syn v3.0.9
+   Compiling cmov v0.5.4
+   Compiling serde_core v1.0.229
+   Compiling ctutils v0.4.8
+   Compiling crypto-common v0.2.2
+   Compiling block-buffer v0.12.1
+   Compiling zmij v1.0.23
+   Compiling const-oid v0.10.2
+   Compiling digest v0.11.3
+   Compiling serde_json v1.0.154
+   Compiling serde v1.0.229
+   Compiling serde_derive v1.0.229
+   Compiling thiserror v2.0.21
+   Compiling memchr v2.8.3
+   Compiling cpufeatures v0.3.1
+   Compiling cfg-if v1.0.5
+   Compiling itoa v1.0.18
+   Compiling sha2 v0.11.1
+   Compiling thiserror-impl v2.0.21
+   Compiling hex v0.4.3
+   Compiling franken-test-support v0.1.0 (<operational-path>)
+   Compiling franken-board-profile v0.1.0 (<operational-path>)
+   Compiling hmac v0.13.0
+   Compiling franken-atomic v0.1.0 (<operational-path>)
+   Compiling franken-platform v0.1.0 (<operational-path>)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 36.33s
+     Running unittests src/lib.rs (<operational-path>)
+error: test failed, to rerun pass `-p franken-platform --lib`
+
+running 6 tests
+test layer::tests::waiting::a_poll_admitted_layer_uses_the_same_backend_for_readiness_and_timeout ... ok
+test layer::tests::a_backend_compiled_for_the_other_abi_is_refused_before_any_kernel_call ... ok
+test wait::tests::finite_wait_and_p06_wire_model_share_the_kernel_layout_and_common_flags ... ok
+test wait::tests::backend_cannot_authorize_its_own_unrequested_readiness_by_editing_events ... FAILED
+test wait::tests::backend_input_edits_are_restored_on_success_and_error_and_never_count_as_readiness ... FAILED
+test wait::tests::zero_timeout_reaches_the_backend_without_becoming_infinite ... ok
+
+failures:
+
+---- wait::tests::backend_cannot_authorize_its_own_unrequested_readiness_by_editing_events stdout ----
+
+thread 'wait::tests::backend_cannot_authorize_its_own_unrequested_readiness_by_editing_events' (1937689) panicked at crates/franken-platform/src/wait.rs:383:13:
+assertion `left == right` failed
+  left: Ok(Ready { ready: 1 })
+ right: Err(UnrequestedEvents { index: 0, events: 4, requested: 1 })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- wait::tests::backend_input_edits_are_restored_on_success_and_error_and_never_count_as_readiness stdout ----
+
+thread 'wait::tests::backend_input_edits_are_restored_on_success_and_error_and_never_count_as_readiness' (1937690) panicked at crates/franken-platform/src/wait.rs:423:21:
+assertion `left == right` failed
+  left: Ok(Ready { ready: 1 })
+ right: Err(InputChanged { index: 0 })
+
+
+failures:
+    wait::tests::backend_cannot_authorize_its_own_unrequested_readiness_by_editing_events
+    wait::tests::backend_input_edits_are_restored_on_success_and_error_and_never_count_as_readiness
+
+test result: FAILED. 4 passed; 2 failed; 0 ignored; 0 measured; 242 filtered out; finished in 0.00s
+
+
+[RCH] remote <worker> failed (exit 101)
+--- rchq3 attempt 1 executed rc=101 (refused_marker=0 executed_marker=1)

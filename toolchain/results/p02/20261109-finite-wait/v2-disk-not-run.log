@@ -1,0 +1,9 @@
+--- rchq3 attempt 1/1 2026-11-09T04:08:33Z
+
+RCH_EXTERNAL_DEADLINE:<attempt-id>_DISK_BUDGET:{"reason":"admission","free_bytes":74214563840,"growth_bytes":0,"max_growth_bytes":32212254720,"min_free_bytes":10737418240,"started":false,"detail":"free space cannot cover active build reservations and protected floor","peak_output_bytes":50794496}
+RCH_EXTERNAL_DEADLINE:<attempt-id>_DISK_BUDGET:{"reason":"admission","free_bytes":74214563840,"growth_bytes":0,"max_growth_bytes":32212254720,"min_free_bytes":10737418240,"started":false,"detail":"free space cannot cover active build reservations and protected floor","peak_output_bytes":50794496}
+  2026-11-09T04:09:53.144257Z  WARN rch::hook: Remote build failed and no higher-capacity worker was available after 1 attempt(s); surfacing exit 120
+    at rch/src/hook.rs:6589 on ThreadId(1)
+
+[RCH] remote <worker> stopped [RCH-E330]: remote_build_disk_budget_exceeded: admission (growth 0 bytes, budget 32212254720 bytes, free 74214563840 bytes, protected 10737418240 bytes); free space cannot cover active build reservations and protected floor
+--- rchq3 attempt 1 NOTRUN-CANDIDATE rc=120 (refusal, no execution marker); NOT re-queued (16870): settle the native ID first

@@ -1,0 +1,46 @@
+--- rchq3 attempt 1/1 2026-11-09T04:13:45Z
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
+    Checking typenum v1.20.1
+    Checking hybrid-array v0.4.15
+   Compiling syn v3.0.9
+    Checking cmov v0.5.4
+   Compiling serde_core v1.0.229
+    Checking ctutils v0.4.8
+    Checking block-buffer v0.12.1
+    Checking crypto-common v0.2.2
+    Checking const-oid v0.10.2
+   Compiling zmij v1.0.23
+    Checking digest v0.11.3
+   Compiling serde_json v1.0.154
+   Compiling serde v1.0.229
+   Compiling serde_derive v1.0.229
+   Compiling thiserror v2.0.21
+    Checking cpufeatures v0.3.1
+    Checking cfg-if v1.0.5
+    Checking memchr v2.8.3
+    Checking itoa v1.0.18
+    Checking sha2 v0.11.1
+   Compiling thiserror-impl v2.0.21
+    Checking hex v0.4.3
+    Checking franken-board-profile v0.1.0 (<operational-path>)
+    Checking hmac v0.13.0
+    Checking franken-atomic v0.1.0 (<operational-path>)
+    Checking franken-platform v0.1.0 (<operational-path>)
+    Checking franken-test-support v0.1.0 (<operational-path>)
+error: this assertion has a constant value
+   --> crates/franken-platform/src/wait.rs:383:9
+    |
+383 |         assert!(MAX_POLL_TIMEOUT_MS <= net::POLL_MAX_FINITE_MS);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: consider moving this into a const block: `const { assert!(..) }`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#assertions_on_constants
+    = note: `-D clippy::assertions-on-constants` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::assertions_on_constants)]`
+
+error: could not compile `franken-platform` (lib test) due to 1 previous error
+
+[RCH] remote <worker> failed (exit 101)
+--- rchq3 attempt 1 executed rc=101 (refused_marker=0 executed_marker=1)

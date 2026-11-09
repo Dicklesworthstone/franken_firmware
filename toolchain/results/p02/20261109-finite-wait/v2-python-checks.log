@@ -1,0 +1,21 @@
+=== full.log (complete captured output) ===
+......................................................................................................................................................................................
+----------------------------------------------------------------------
+Ran 182 tests in 10.129s
+
+OK
+gen_guest_evidence: up to date
+
+=== smoke.log (complete captured output) ===
+  File "<operational-path>", line 59
+    --plan) plan; exit 0 ;;
+          ^
+SyntaxError: unmatched ')'
+
+=== smoke-entrypoint.log (complete captured output) ===
+diag run=p02-smoke-3d23b06b9d05ad24: evidence COMPLETE; events=5 critical=5 dropped=0 critical_lost=0 bytes=2825 sha256=1b7a59915ffa
+P02 e2e tier=smoke: QUALIFIED  planned=2 passed=2 failed=0 blocked=0
+diagnostic log kept: <operational-path>
+
+=== pycompile.log (complete captured output) ===
+
