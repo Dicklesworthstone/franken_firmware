@@ -160,6 +160,10 @@ build for the target at all (`has_no_build_for_target`). That is derived from th
 that target is `incompatible` with `T01-E01` (Go 1.27.3 has no 32-bit linux/ppc port) among the evidence. It admits exactly two rows, the Go client on `ppc32be_stock` and `ppc32be_harness` (nine items each, eighteen
 in all, ten of them scenario items); a tailscale-rs row has a build path on every target, so a figure it lacks stays `pending` with its blocker and cannot be hidden as inapplicable.
 
+`check_profile` also refuses `"state": "measured"` unless the item's `receipt` names a `.json` file directly under `toolchain/results/tailscale/measurements/` that exists as a plain regular file and parses as a JSON
+object (`receipt_problem`; the runner's `T01-META-PROFILE` passes the repository, so a bare string such as `x` or a missing file fails the case). No row is measured today, so nothing changes now; this holds before any
+row is marked measured. It does not judge that the file holds the figure: that is `x02_judge.judge_receipt`'s job, and nothing binds the item's value to the receipt yet.
+
 The blockers say what is missing and nothing more. No linked tailscale-rs client exists on any target (X01 is a type-check); a real tailnet is a provider and needs a separate authorized receipt (the bead's
 evidence rule); no audio path runs beside the component (Q04 and Q06 own that); no peer cap is declared for the tailnet component in any T01 artifact (`docs/SLIM_SPEAKER_PLAN.md`: every profile declares maximum peers;
 `tailnet_ram_cap_bytes` stays null, T04/Q02 allocate it); and tailscale-rs 0.6.1 has no automatic key rotation (`T01-E15` to `T01-E17`), so there is no flow to measure. Where a scenario needs a registered

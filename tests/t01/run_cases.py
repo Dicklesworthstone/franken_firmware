@@ -129,7 +129,7 @@ def case_ledger(data: Dict[str, Any], repo: str) -> Result:
 
 
 def case_profile(data: Dict[str, Any], repo: str) -> Result:
-    return judged("T01-META-PROFILE", "meta", L.check_profile(data["profile"], data["ledger"]))
+    return judged("T01-META-PROFILE", "meta", L.check_profile(data["profile"], data["ledger"], repo))
 
 
 def case_classification(data: Dict[str, Any], repo: str) -> Result:

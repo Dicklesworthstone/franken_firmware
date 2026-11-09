@@ -196,7 +196,36 @@ def has_no_build_for_target(profile, candidate_id, target_id):
                 and NO_GO_PORT_EVIDENCE in platform.get("evidence", []))
 
 
-def check_profile(profile, ledger):
+# A measurement is `measured` only on a receipt: a JSON file directly under this directory (the X02 writer's, scripts/e2e/t01 --x02).
+MEASUREMENT_RECEIPT_DIR = "toolchain/results/tailscale/measurements/"
+
+
+def receipt_problem(receipt, repo=None):
+    """Why a `measured` item's `receipt` does not name a real receipt, or None. It must be a repo-relative path directly under toolchain/results/tailscale/measurements/ ending in .json. Given the
+    repository, the file must also exist as a plain regular file (a symlink, FIFO or oversize file is refused unread) and parse as a JSON object; without it only the form is checked, so a caller that
+    can see the repository (the runner's T01-META-PROFILE does) is what makes a bare string like "x" or a missing file fail. A parseable file is not proof that it holds the figure: judging that
+    is the X02 judge's job (x02_judge.judge_receipt), and nothing here binds the item's value to the receipt."""
+    if not isinstance(receipt, str) or not receipt.startswith(MEASUREMENT_RECEIPT_DIR):
+        return "names %s, not a file under %s" % (repr(receipt)[:60], MEASUREMENT_RECEIPT_DIR)
+    leaf = receipt[len(MEASUREMENT_RECEIPT_DIR):]
+    if not leaf.endswith(".json") or "/" in leaf or "\\" in leaf or leaf.startswith("."):
+        return "names %s, which is not a .json file directly under %s" % (repr(receipt)[:80], MEASUREMENT_RECEIPT_DIR)
+    if repo is None:
+        return None
+    try:
+        data = read_bounded_file(os.path.join(repo, *receipt.split("/")))
+    except (SourceRefused, OSError):
+        return "names %s, a file that does not exist or cannot be read" % receipt
+    try:
+        doc = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return "names %s, a file that does not parse as JSON" % receipt
+    if not isinstance(doc, dict):
+        return "names %s, a file that is not a JSON object" % receipt
+    return None
+
+
+def check_profile(profile, ledger, repo=None):
     problems = []
     ids = {e["id"] for e in ledger.get("entries", [])}
     if profile.get("schema") != "ffw.t01.profile.v1":
@@ -268,6 +297,10 @@ def check_profile(profile, ledger):
         for name, item in m.items():
             if item.get("state") == "measured" and not item.get("receipt"):
                 problems.append("measurement %s/%s is 'measured' without a receipt" % (mid, name))
+            elif item.get("state") == "measured":
+                why = receipt_problem(item["receipt"], repo)
+                if why:
+                    problems.append("measurement %s/%s is 'measured', but its receipt %s" % (mid, name, why))
             if item.get("state") not in ("measured", "pending", "observed_not_a_footprint", "not_applicable"):
                 problems.append("measurement %s/%s: state %r" % (mid, name, item.get("state")))
             if item.get("state") in ("pending", "not_applicable") and not item.get("blocker"):

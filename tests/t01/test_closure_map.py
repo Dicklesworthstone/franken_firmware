@@ -11,6 +11,7 @@ import copy
 import json
 import os
 import sys
+import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -333,6 +334,100 @@ class InapplicableOnlyWhereThereIsNoBuild(unittest.TestCase):
         self.assertFalse(L.has_no_build_for_target({}, "tailscale-go-1.104.5", "ppc32be_stock"))
         problems = self.check(lambda d: d["measurements"].update({"no-slash-key": {"cpu": {"state": "not_applicable", "blocker": "x"}}}))
         self.assertTrue(planted(problems, "no-slash-key/cpu is not_applicable"))
+
+
+class MeasuredNeedsARealReceipt(unittest.TestCase):
+    """A `measured` item is the only way the profile can say a figure exists, so its `receipt` must name a real file: directly under toolchain/results/tailscale/measurements/, existing, a plain regular
+    file, and parsing as a JSON object. No row is measured today, so this must hold before any is. What it does not do: judge that the file holds the figure (that is x02_judge's job)."""
+
+    ROW = "tailscale-rs-0.6.1/mips32be_harness"
+    DIR = "toolchain/results/tailscale/measurements/"
+    REAL = ("x02-v3b-mips-20261108.json", "x02-v3b-powerpc-20261108.json")
+
+    def check(self, receipt, item="cpu", repo=REPO, state="measured"):
+        doc = copy.deepcopy(PROFILE)
+        doc["measurements"][self.ROW][item].update({"state": state, "receipt": receipt})
+        return L.check_profile(doc, LEDGER, repo)
+
+    def test_no_row_is_measured_today_and_the_profile_passes_with_the_repository(self):
+        self.assertEqual([k for k, row in PROFILE["measurements"].items() for i in row.values() if i["state"] == "measured"], [])
+        self.assertEqual(L.check_profile(PROFILE, LEDGER, REPO), [])
+
+    def test_a_real_committed_receipt_is_the_control_for_any_item(self):
+        for name in self.REAL:
+            self.assertTrue(os.path.isfile(os.path.join(REPO, *(self.DIR + name).split("/"))), name)
+            for item in ("build", "binary_bytes", "rss_peak_bytes", "cpu") + L.SCENARIO_ITEMS:
+                self.assertEqual(self.check(self.DIR + name, item), [], (name, item))
+
+    def test_a_receipt_that_names_no_file_is_refused(self):
+        for text in ("x", "measured", "n/a", "see the contract", "receipt", "toolchain/results/tailscale/measurements/", "toolchain/results/tailscale/measurements", ".json", self.DIR + ".json"):
+            problems = self.check(text)
+            self.assertTrue(any("measurement %s/cpu is 'measured', but its receipt names" % self.ROW in p for p in problems), repr(text))
+        for item in ("build", "binary_bytes", "rss_peak_bytes", "cpu") + L.SCENARIO_ITEMS:                                       # whichever item is called measured, not only one
+            self.assertTrue(any("measurement %s/%s is 'measured', but its receipt names" % (self.ROW, item) in p for p in self.check("x", item)), item)
+        self.assertTrue(any("is 'measured' without a receipt" in p for p in self.check("")), "empty")                             # the earlier rule still speaks first
+        self.assertTrue(any("is 'measured' without a receipt" in p for p in self.check(None)), "none")
+        for odd in (7, ["a"], {"path": "x"}):
+            self.assertTrue(any("but its receipt names" in p for p in self.check(odd)), repr(odd))
+        self.assertEqual(self.check(self.DIR + self.REAL[0]), [])                                                                # control: the real receipt, same row and item
+
+    def test_a_receipt_that_names_a_missing_file_is_refused_with_the_repository_and_only_its_form_checked_without(self):
+        missing = self.DIR + "no-such-receipt.json"
+        problems = self.check(missing)
+        self.assertTrue(any("a file that does not exist or cannot be read" in p for p in problems), problems)
+        self.assertEqual(self.check(missing, repo=None), [])                                                                     # the form is right, the file is the repository's to vouch for
+        self.assertEqual(self.check(self.DIR + self.REAL[0]), [])                                                                # control
+
+    def test_a_file_elsewhere_or_off_the_directory_is_refused_even_when_it_exists(self):
+        for path in ("docs/tailscale/profiles.json", "toolchain/results/tailscale/builds/x01-core-powerpc-unknown-linux-musl-20261107.log", "toolchain/results/tailscale/receipts/t01-8cdc69be60fccfa2.json",
+                     self.DIR + "../receipts/t01-8cdc69be60fccfa2.json", self.DIR + "sub/" + self.REAL[0], self.DIR + ".hidden.json", self.DIR + self.REAL[0] + "x", self.DIR + "x02-v3b-mips-20261108.serial.txt",
+                     "/" + self.DIR + self.REAL[0], "./" + self.DIR + self.REAL[0], self.DIR.replace("/", "\\") + self.REAL[0]):
+            self.assertTrue(any("but its receipt names" in p for p in self.check(path)), path)
+
+    def test_a_file_that_is_not_a_plain_json_object_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = os.path.join(tmp, *self.DIR.rstrip("/").split("/"))
+            os.makedirs(directory)
+
+            def put(name, data):
+                with open(os.path.join(directory, name), "wb") as handle:
+                    handle.write(data)
+            put("good.json", b'{"schema": "x"}')
+            put("not-json.json", b"this is not json\n")
+            put("empty.json", b"")
+            put("array.json", b"[1, 2]")
+            put("string.json", b'"receipt"')
+            put("bytes.json", b"\xff\xfe\x00\x00")
+            put("valid-object.txt", b'{"schema": "x"}')                                                                          # parses, but it is not a .json receipt
+            put(".hidden.json", b'{"schema": "x"}')                                                                              # these three exist and parse, so only the form of the name can refuse them
+            put("back\\slash.json", b'{"schema": "x"}')
+            os.makedirs(os.path.join(directory, "sub"))
+            put("sub/nested.json", b'{"schema": "x"}')
+            os.makedirs(os.path.join(directory, "a-directory.json"))
+            os.symlink(os.path.join(directory, "good.json"), os.path.join(directory, "link.json"))
+            self.assertEqual(self.check(self.DIR + "good.json", repo=tmp), [])                                                   # control: a plain file that parses to an object
+            for name, why in (("not-json.json", "does not parse as JSON"), ("empty.json", "does not parse as JSON"), ("bytes.json", "does not parse as JSON"), ("array.json", "is not a JSON object"),
+                              ("string.json", "is not a JSON object"), ("a-directory.json", "does not exist or cannot be read"), ("link.json", "does not exist or cannot be read")):
+                self.assertTrue(any(why in p for p in self.check(self.DIR + name, repo=tmp)), name)
+            for name in ("valid-object.txt", ".hidden.json", "back\\slash.json", "sub/nested.json"):
+                self.assertTrue(any("which is not a .json file directly under" in p for p in self.check(self.DIR + name, repo=tmp)), name)
+            self.assertEqual(self.check(self.DIR + "good.json", repo=tmp), [])                                                   # and the unplanted copy passes again
+
+    def test_the_runners_profile_case_applies_it_with_the_repository(self):
+        data = rc.inputs()
+        self.assertEqual(rc.case_profile(data, REPO).status, "passed")
+        for receipt, status in ((self.DIR + self.REAL[0], "passed"), (self.DIR + "no-such-receipt.json", "failed"), ("x", "failed")):
+            weak = copy.deepcopy(data)
+            weak["profile"]["measurements"][self.ROW]["cpu"].update({"state": "measured", "receipt": receipt})
+            result = rc.case_profile(weak, REPO)
+            self.assertEqual(result.status, status, receipt)
+            if status == "failed":
+                self.assertIn("is 'measured', but its receipt", result.detail)
+
+    def test_a_state_that_is_not_measured_needs_no_receipt(self):
+        self.assertEqual(self.check("x", state="pending"), [])
+        self.assertTrue(any("is not_applicable, but this candidate has a build path" in p for p in self.check("x", state="not_applicable")))     # refused for its own reason, not the receipt's
+        self.assertFalse(any("receipt" in p for p in self.check("x", state="pending")))
 
 
 class ProfileAndStudyAgreeWithTheX02Receipts(unittest.TestCase):
