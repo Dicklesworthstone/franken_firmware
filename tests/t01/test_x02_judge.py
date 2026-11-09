@@ -1102,12 +1102,34 @@ class ContractText(unittest.TestCase):
         self.assertIn(J.SCOPE, self.text)
         self.assertIn(rc.X02_BOUND, self.text)
 
-    def test_the_contract_still_says_nothing_was_run_in_a_guest(self):
-        for needle in ("has not been made", "INCOMPLETE and pending", "no crypto probe was run", "none of it has been run in a guest"):
-            self.assertIn(needle, self.text)
-        self.assertGreaterEqual(self.text.lower().count("no probe has been run in a guest"), 3)  # said in the acceptance table, the X02 block and section 10
-        for stale in ("T01-X02 is BLOCKED until a measurement receipt exists", "a guest run was made", "the probe was run in a guest"):
-            self.assertNotIn(stale, self.text)
+    # Landing set (the two committed guest runs): the contract used to pin "nothing was run in a guest". It now records what ran, and these rules refuse a text that
+    # went back to the old claim or lost the record. One function, so the planted negative runs the very same rules on a changed copy of the text.
+    STALE = ("nothing in it is built or run by this contract", "This contract records no build and no run of it", "none of it has been run in a guest", "no crypto probe was run",
+             "has not been made", "source and tests only, and no probe has been run in a guest", "T01-X02 is BLOCKED until a measurement receipt exists",
+             "nothing built, nothing measured on a target")
+    RECORDED = ("INCOMPLETE and pending", "**What ran**", "wire_bytes=348", "plant=caught", "END ok=8 fail=0 unknown=0", "toolchain/results/tailscale/measurements/",
+                "T01 (`ffw-32a`) stays open", "not the Sonos 2.6.35 / 2.6.14 kernels", "no real board, no network, no peer", "not `tailscaled`, not the whole library",
+                "not a tailnet client, and not the speaker's resource budget")
+
+    @classmethod
+    def contract_problems(cls, text):
+        problems = [f"stale claim still present: {stale}" for stale in cls.STALE if stale in text]
+        if "no probe has been run in a guest" in text.lower():
+            problems.append("stale claim still present: no probe has been run in a guest")
+        problems += [f"the record is missing: {needle}" for needle in cls.RECORDED if needle not in text]
+        return problems
+
+    def test_the_contract_records_what_ran_in_a_guest_and_no_longer_says_nothing_did(self):
+        self.assertEqual(self.contract_problems(self.text), [])
+        old_claim = self.text + "\nNo probe has been run in a guest.\n"                       # planted: the old sentence is back
+        self.assertEqual(self.contract_problems(old_claim), ["stale claim still present: no probe has been run in a guest"])
+        old_status = self.text + "\nStatus: nothing built, nothing measured on a target.\n"    # planted: the old status line is back
+        self.assertEqual(self.contract_problems(old_status), ["stale claim still present: nothing built, nothing measured on a target"])
+        lost = self.text.replace("wire_bytes=348", "wire_bytes=0", 1)                          # planted: the record lost a figure
+        self.assertEqual(self.contract_problems(lost), ["the record is missing: wire_bytes=348"])
+        no_claim = self.text.replace("no real board, no network, no peer", "a board", 1)       # planted: the no-claim paragraph lost its limits
+        self.assertEqual(self.contract_problems(no_claim), ["the record is missing: no real board, no network, no peer"])
+        self.assertEqual(self.contract_problems(self.text), [])                                # control: with the plants removed the real text passes again
 
     def test_the_judges_phase_table_equals_the_probe_source_when_the_source_is_present(self):
         source = os.path.join(REPO, "toolchain", "src", "t01-core-probe", "src", "main.rs")

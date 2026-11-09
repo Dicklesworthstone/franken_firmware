@@ -723,8 +723,9 @@ class Runner(unittest.TestCase):
         smoke = {r.case_id: r.status for r in rc.run("smoke")}
         self.assertEqual(set(smoke.values()), {"passed"})
         full = {r.case_id: r.status for r in rc.run("full")}
-        self.assertEqual({k for k, v in full.items() if v == "blocked"}, set(rc.FULL_IDS) - {"T01-X01-legacy-isa-build"})     # all four attempts have a built record now
-        self.assertEqual({k for k, v in full.items() if v == "passed"}, set(rc.SMOKE_IDS) | {"T01-X01-legacy-isa-build"})
+        done = {"T01-X01-legacy-isa-build", "T01-X02-target-resources"}      # all four X01 attempts have a built record; X02 has a passed guest run on each target (measurements/)
+        self.assertEqual({k for k, v in full.items() if v == "blocked"}, set(rc.FULL_IDS) - done)
+        self.assertEqual({k for k, v in full.items() if v == "passed"}, set(rc.SMOKE_IDS) | done)
 
     def test_a_wrong_source_tree_fails_its_probe_instead_of_passing(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -778,7 +779,7 @@ class TheLogAndReceipt(unittest.TestCase):
             with open(path, encoding="utf-8") as handle:
                 text = handle.read()
             doc = json.loads(text)
-            self.assertEqual((doc["schema"], doc["tier"], doc["exit_code"], doc["counts"]), (rc.RECEIPT_SCHEMA, "full", 3, {"passed": 9, "failed": 0, "blocked": 6}))
+            self.assertEqual((doc["schema"], doc["tier"], doc["exit_code"], doc["counts"]), (rc.RECEIPT_SCHEMA, "full", 3, {"passed": 10, "failed": 0, "blocked": 5}))
             self.assertEqual(set(doc["artifacts"].values()) & {"missing"}, set())
             self.assertEqual(sorted(os.path.splitext(n)[1] for n in os.listdir(tmp)), [".json", ".jsonl"])
             self.assertNotIn(tmp, text)
@@ -1731,9 +1732,10 @@ class TheEntryPoint(unittest.TestCase):
         self.assertIn("evidence COMPLETE", out)
         code, out, _ = self.call()
         self.assertEqual(code, 3, out)
-        self.assertIn("planned=15 passed=9 failed=0 blocked=6", out)
+        self.assertIn("planned=15 passed=10 failed=0 blocked=5", out)
         self.assertNotIn("T01-X01-legacy-isa-build", out)                                  # passed: only blocked and failed cases are printed
-        self.assertIn("BLOCKED  T01-X02-target-resources", out)
+        self.assertNotIn("T01-X02-target-resources", out)                                  # passed too, on the two committed guest receipts under measurements/
+        self.assertIn("BLOCKED  T01-P01-tsrs-source", out)
         code, out, _ = self.call("--tier", "soak")
         self.assertEqual((code, "T01 soak: NOT RUN" in out, "This is not a pass." in out), (4, True, True))
         code, out, _ = self.call("--tier", "full", "--list")

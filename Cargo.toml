@@ -23,6 +23,7 @@ exclude = [
     "toolchain/src/ffw-hello-init",
     "toolchain/n05-repair-study",
     "toolchain/n06-fec-profile",
+    "toolchain/src/t01-core-probe",
 ]
 
 [workspace.package]

@@ -1,0 +1,300 @@
+{
+  "arch": "mips",
+  "child_sha256": "60863fdca7cc739a6093512db3b7a50c00386ec8461cf9ddcc07401b5df04578",
+  "elf": {
+    "arch": "mips",
+    "bytes": 1022968,
+    "pointer_bits": 32,
+    "sha256": "2f6c2bfd94a517649d4d89cde54814d4ff5d212fd0052ee4d7ccaeb1caa60b6a",
+    "source_provenance": "not_attested_by_this_runner"
+  },
+  "evidence_kind": "captured_guest_execution",
+  "execution": {
+    "command": [
+      "qemu-system-mips",
+      "-M",
+      "malta",
+      "-cpu",
+      "24Kf",
+      "-m",
+      "64M",
+      "-nographic",
+      "-no-reboot",
+      "-nic",
+      "none",
+      "-kernel",
+      "<outside-repo>/vmlinux.runtime-snapshot",
+      "-initrd",
+      "<outside-repo>/runtime.cpio.gz",
+      "-append",
+      "console=ttyS0,38400 rdinit=/init panic=-1"
+    ],
+    "exit_code": 0,
+    "initramfs": {
+      "archive_sha256": "2c2bf2f261a43df9c49fbc9f2278f7d102500f6bfb9cc4125bab67f2efbcfdc2",
+      "compressed_bytes": 462532,
+      "devices": {
+        "dev/console": {
+          "mode": "0o20600",
+          "rdev": [
+            5,
+            1
+          ]
+        },
+        "dev/null": {
+          "mode": "0o20666",
+          "rdev": [
+            1,
+            3
+          ]
+        },
+        "dev/random": {
+          "mode": "0o20600",
+          "rdev": [
+            1,
+            8
+          ]
+        },
+        "dev/ttyPZ0": {
+          "mode": "0o20600",
+          "rdev": [
+            204,
+            192
+          ]
+        },
+        "dev/ttyS0": {
+          "mode": "0o20600",
+          "rdev": [
+            4,
+            64
+          ]
+        },
+        "dev/urandom": {
+          "mode": "0o20666",
+          "rdev": [
+            1,
+            9
+          ]
+        },
+        "dev/zero": {
+          "mode": "0o20666",
+          "rdev": [
+            1,
+            5
+          ]
+        }
+      },
+      "entry_count": 15,
+      "extra_files": {
+        "franken-speaker": {
+          "mode": "0o100755",
+          "sha256": "2f6c2bfd94a517649d4d89cde54814d4ff5d212fd0052ee4d7ccaeb1caa60b6a",
+          "size": 1022968
+        }
+      },
+      "init_path": "<outside-repo>/ffw-hello-init",
+      "init_sha256": "94ee93ff2ab1bf4a6469f17db8aedfe971c524c05ebd785567898511a76847fc",
+      "init_size": 30788,
+      "out_path": "<outside-repo>/runtime.cpio.gz",
+      "raw_cpio_sha256": "3f4c5f8441ccf8764e6388a8d482fcbe0bcb305201027a942c327d93784b3bc1",
+      "uncompressed_bytes": 1055744
+    },
+    "inputs_after_capture": {
+      "initramfs": "2c2bf2f261a43df9c49fbc9f2278f7d102500f6bfb9cc4125bab67f2efbcfdc2",
+      "kernel": "3803357ef7821dbf691c901105fb9b2b00382abf67fce8a4be2a0d592267dc61"
+    },
+    "kernel_sha256": "3803357ef7821dbf691c901105fb9b2b00382abf67fce8a4be2a0d592267dc61",
+    "profile": "threaded",
+    "qemu": "QEMU emulator version 11.1.3",
+    "scope": "E07 supervisor child, not runtime as PID 1",
+    "stderr_bytes": 0,
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stdout_sha256": "525eb000094000a56d6421f7d35772cf6cbcc095903201b24664c4a23dfcfd6e",
+    "stop_reason": null
+  },
+  "gates": [
+    {
+      "detail": "",
+      "gate_id": "P05R-SUPERVISOR",
+      "status": "passed",
+      "title": "bootstrap setup, child hash/exit and ordered reboot"
+    },
+    {
+      "detail": "",
+      "gate_id": "X02-FRAMING",
+      "status": "passed",
+      "title": "LF/CRLF framing, markers at line start, only recognized lines"
+    },
+    {
+      "detail": "",
+      "gate_id": "X02-PHASES",
+      "status": "passed",
+      "title": "every expected phase exactly once, in order, all ok"
+    },
+    {
+      "detail": "",
+      "gate_id": "X02-RESOURCES",
+      "status": "passed",
+      "title": "VmHWM, VmRSS, utime, stime each once, canonical, known and consistent"
+    },
+    {
+      "detail": "",
+      "gate_id": "X02-END",
+      "status": "passed",
+      "title": "one final END whose totals equal the judge's own count"
+    },
+    {
+      "detail": "",
+      "gate_id": "X02-CAPTURE",
+      "status": "passed",
+      "title": "bounded complete capture, clean exit and unchanged inputs"
+    }
+  ],
+  "grammar": "ffw.t01.x02_transcript.v1",
+  "path_hashes": [
+    {
+      "path": "<outside-repo>/vmlinux.runtime-snapshot",
+      "sha256": "3803357ef7821dbf691c901105fb9b2b00382abf67fce8a4be2a0d592267dc61"
+    },
+    {
+      "path": "<outside-repo>/runtime.cpio.gz",
+      "sha256": "2c2bf2f261a43df9c49fbc9f2278f7d102500f6bfb9cc4125bab67f2efbcfdc2"
+    },
+    {
+      "path": "<outside-repo>/ffw-hello-init",
+      "sha256": "94ee93ff2ab1bf4a6469f17db8aedfe971c524c05ebd785567898511a76847fc"
+    }
+  ],
+  "result": "passed",
+  "revision_claim": "t01-x02-v3b main.rs c2b2c646 lock cb88a6f5",
+  "schema": "ffw.t01.x02_receipt.v1",
+  "scope": "A pass judges the T01X02 grammar and arithmetic of one transcript. A synthetic transcript tests the judge, not the target. A captured run is one full-system QEMU guest on the harness's Debian kernel, not a Sonos 2.6.14 PowerPC or 2.6.35 MIPS kernel and not a board, so its figures are indicative only. T01-X02 stays pending until a real guest run is judged and the bead owner closes it; this tool closes nothing.",
+  "supervisor_elf": {
+    "arch": "mips",
+    "bytes": 30788,
+    "pointer_bits": 32,
+    "sha256": "94ee93ff2ab1bf4a6469f17db8aedfe971c524c05ebd785567898511a76847fc",
+    "source_provenance": "not_attested_by_this_runner"
+  },
+  "transcript_sha256": "525eb000094000a56d6421f7d35772cf6cbcc095903201b24664c4a23dfcfd6e",
+  "verdict": {
+    "counted": {
+      "fail": 0,
+      "ok": 8,
+      "unknown": 0
+    },
+    "end": {
+      "fail": 0,
+      "ok": 8,
+      "unknown": 0
+    },
+    "grammar": "ffw.t01.x02_transcript.v1",
+    "phases": [
+      {
+        "facts": {
+          "derived": "12",
+          "keys": "12",
+          "nodes": "4"
+        },
+        "name": "TS_KEYS",
+        "status": "ok"
+      },
+      {
+        "facts": {
+          "init_bytes": "96",
+          "resp_bytes": "48",
+          "rng_wait_ms": "1907",
+          "sessions": "2"
+        },
+        "name": "TS_NOISE",
+        "status": "ok"
+      },
+      {
+        "facts": {
+          "bytes": "12",
+          "idle": "yes",
+          "peers": "3",
+          "recv": "3",
+          "refused": "1",
+          "rekeyed": "1",
+          "removed": "1",
+          "sent": "3",
+          "steps": "12",
+          "wire_bytes": "348",
+          "wire_packets": "5"
+        },
+        "name": "TS_TUNNEL",
+        "status": "ok"
+      },
+      {
+        "facts": {
+          "decoded_regions": "3",
+          "encoded_bytes": "1111",
+          "reachable": "2",
+          "refused_garbled": "syntax",
+          "refused_truncated": "eof",
+          "regions": "3",
+          "route_cases": "9",
+          "servers": "3",
+          "wire_bytes": "466"
+        },
+        "name": "TS_CONTROL_SERDE",
+        "status": "ok"
+      },
+      {
+        "facts": {
+          "cases": "12",
+          "clear_checks": "3",
+          "peers": "3",
+          "rules": "3"
+        },
+        "name": "TS_PACKETFILTER_STATE",
+        "status": "ok"
+      },
+      {
+        "facts": {
+          "cmm_bytes": "152",
+          "endpoints": "4",
+          "messages": "3",
+          "ping_bytes": "132",
+          "pong_bytes": "110"
+        },
+        "name": "TS_DISCO_PROTOCOL",
+        "status": "ok"
+      },
+      {
+        "facts": {
+          "bucket_42": "1",
+          "bucket_7": "1",
+          "dropped": "2",
+          "inbound_routed": "0",
+          "offered": "4",
+          "routed": "2",
+          "unnotched_bucket": "7"
+        },
+        "name": "TS_OVERLAY_ROUTER",
+        "status": "ok"
+      },
+      {
+        "facts": {
+          "blake2s": "6/6",
+          "chacha20poly1305": "4/4",
+          "hkdf_blake2s": "3/3",
+          "noise_ik": "8/8",
+          "plant": "caught",
+          "x25519": "7/7",
+          "xchacha20poly1305": "2/2"
+        },
+        "name": "CRYPTO_KAT",
+        "status": "ok"
+      }
+    ],
+    "resources": {
+      "VmHWM": 924,
+      "VmRSS": 904,
+      "stime": 191,
+      "utime": 29
+    },
+    "status": "passed"
+  }
+}

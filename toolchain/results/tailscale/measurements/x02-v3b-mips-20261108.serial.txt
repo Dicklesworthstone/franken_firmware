@@ -1,0 +1,193 @@
+[    0.000000] Linux version 4.19.0-21-4kc-malta (debian-kernel@lists.debian.org) (gcc version 8.3.0 (Debian 8.3.0-6)) #1 SMP Debian 4.19.249-2 (2022-06-30)
+[    0.000000] earlycon: uart8250 at I/O port 0x3f8 (options '38400n8')
+[    0.000000] bootconsole [uart8250] enabled
+[    0.000000] CPU0 revision is: 00019300 (MIPS 24Kc)
+[    0.000000] FPU revision is: 00739300
+[    0.000000] MIPS: machine is mti,malta
+[    0.000000] Software DMA cache coherency enabled
+[    0.000000] Determined physical RAM map:
+[    0.000000]  memory: 03fff000 @ 00000000 (usable)
+[    0.000000] Kernel relocated by 0x(ptrval)
+[    0.000000]  .text @ 0x(ptrval)
+[    0.000000]  .data @ 0x(ptrval)
+[    0.000000]  .bss  @ 0x(ptrval)
+[    0.000000] Initial ramdisk at: 0x83f70000 (462532 bytes)
+[    0.000000] Primary instruction cache 2kB, VIPT, 2-way, linesize 16 bytes.
+[    0.000000] Primary data cache 2kB, 2-way, VIPT, no aliases, linesize 16 bytes
+[    0.000000] Zone ranges:
+[    0.000000]   DMA      [mem 0x0000000000000000-0x0000000000ffffff]
+[    0.000000]   Normal   [mem 0x0000000001000000-0x0000000003ffefff]
+[    0.000000] Movable zone start for each node
+[    0.000000] Early memory node ranges
+[    0.000000]   node   0: [mem 0x0000000000000000-0x0000000003ffefff]
+[    0.000000] Initmem setup node 0 [mem 0x0000000000000000-0x0000000003ffefff]
+[    0.000000] percpu: Embedded 17 pages/cpu s40272 r8192 d21168 u69632
+[    0.000000] Built 1 zonelists, mobility grouping on.  Total pages: 16239
+[    0.000000] Kernel command line: rd_start=0xffffffff83f70000 rd_size=462532 console=ttyS0,38400 rdinit=/init panic=-1
+[    0.000000] Dentry cache hash table entries: 8192 (order: 3, 32768 bytes)
+[    0.000000] Inode-cache hash table entries: 4096 (order: 2, 16384 bytes)
+[    0.000000] Writing ErrCtl register=00000000
+[    0.000000] Readback ErrCtl register=00000000
+[    0.000000] Memory: 51616K/65532K available (7436K kernel code, 547K rwdata, 1616K rodata, 1844K init, 273K bss, 13916K reserved, 0K cma-reserved)
+[    0.000000] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=1, Nodes=1
+[    0.000000] ftrace: allocating 22823 entries in 45 pages
+[    0.000000] rcu: Hierarchical RCU implementation.
+[    0.000000] rcu: 	RCU restricting CPUs from NR_CPUS=2 to nr_cpu_ids=1.
+[    0.000000] rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=1
+[    0.000000] NR_IRQS: 256
+[    0.000000] CPU frequency 320.01 MHz
+[    0.000000] clocksource: MIPS: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 11945174721 ns
+[    0.000103] sched_clock: 32 bits at 160MHz, resolution 6ns, wraps every 13421544444ns
+[    0.002865] Console: colour dummy device 80x25
+[    0.005356] Calibrating delay loop... 
+[    0.133011] 4313.08 BogoMIPS (lpj=8626176)
+[    0.133161] pid_max: default: 32768 minimum: 301
+[    0.133923] Security Framework initialized
+[    0.134062] Yama: disabled by default; enable with sysctl kernel.yama.*
+[    0.135500] AppArmor: AppArmor initialized
+[    0.135830] Mount-cache hash table entries: 1024 (order: 0, 4096 bytes)
+[    0.135920] Mountpoint-cache hash table entries: 1024 (order: 0, 4096 bytes)
+[    0.153016] Performance counters: No available PMU.
+[    0.153580] rcu: Hierarchical SRCU implementation.
+[    0.156539] smp: Bringing up secondary CPUs ...
+[    0.156663] smp: Brought up 1 node, 1 CPU
+[    0.161570] devtmpfs: initialized
+[    0.165446] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[    0.165637] futex hash table entries: 256 (order: 2, 16384 bytes)
+[    0.169698] NET: Registered protocol family 16
+[    0.170803] audit: initializing netlink subsys (disabled)
+[    0.172230] audit: type=2000 audit(1794179899.128:1): state=initialized audit_enabled=0 res=1
+[    0.191252] vgaarb: loaded
+[    0.192047] SCSI subsystem initialized
+[    0.193521] PCI host bridge to bus 0000:00
+[    0.193851] pci_bus 0000:00: root bus resource [mem 0x10000000-0x17ffffff]
+[    0.193963] pci_bus 0000:00: root bus resource [io  0x1000-0x1fffff]
+[    0.194070] pci_bus 0000:00: root bus resource [??? 0x00000000 flags 0x0]
+[    0.194170] pci_bus 0000:00: No busn resource found for root bus, will use [bus 00-ff]
+[    0.197497] pci 0000:00:0a.1: legacy IDE quirk: reg 0x10: [io  0x01f0-0x01f7]
+[    0.197591] pci 0000:00:0a.1: legacy IDE quirk: reg 0x14: [io  0x03f6]
+[    0.197680] pci 0000:00:0a.1: legacy IDE quirk: reg 0x18: [io  0x0170-0x0177]
+[    0.197770] pci 0000:00:0a.1: legacy IDE quirk: reg 0x1c: [io  0x0376]
+[    0.198400] pci 0000:00:0a.3: quirk: [io  0x1000-0x103f] claimed by PIIX4 ACPI
+[    0.198507] pci 0000:00:0a.3: quirk: [io  0x1100-0x110f] claimed by PIIX4 SMB
+[    0.199003] pci 0000:00:12.0: vgaarb: VGA device added: decodes=io+mem,owns=none,locks=none
+[    0.199992] pci 0000:00:12.0: BAR 0: assigned [mem 0x10000000-0x11ffffff pref]
+[    0.200172] pci 0000:00:12.0: BAR 6: assigned [mem 0x12000000-0x1200ffff pref]
+[    0.200281] pci 0000:00:12.0: BAR 1: assigned [mem 0x12010000-0x12010fff]
+[    0.200378] pci 0000:00:0a.2: BAR 4: assigned [io  0x1040-0x105f]
+[    0.200454] pci 0000:00:0a.1: BAR 4: assigned [io  0x1060-0x106f]
+[    0.207133] clocksource: Switched to clocksource MIPS
+[    0.243424] VFS: Disk quotas dquot_6.6.0
+[    0.243631] VFS: Dquot-cache hash table entries: 1024 (order 0, 4096 bytes)
+[    0.245760] AppArmor: AppArmor Filesystem Enabled
+[    0.251402] NET: Registered protocol family 2
+[    0.252029] IP idents hash table entries: 2048 (order: 2, 16384 bytes)
+[    0.255856] tcp_listen_portaddr_hash hash table entries: 512 (order: 0, 6144 bytes)
+[    0.256006] TCP established hash table entries: 1024 (order: 0, 4096 bytes)
+[    0.256156] TCP bind hash table entries: 1024 (order: 1, 8192 bytes)
+[    0.256294] TCP: Hash tables configured (established 1024 bind 1024)
+[    0.257046] UDP hash table entries: 256 (order: 1, 8192 bytes)
+[    0.257204] UDP-Lite hash table entries: 256 (order: 1, 8192 bytes)
+[    0.258160] NET: Registered protocol family 1
+[    0.258373] NET: Registered protocol family 44
+[    0.258912] pci 0000:00:0a.2: enabling device (0000 -> 0001)
+[    0.261724] Unpacking initramfs...
+[    0.277560] Freeing initrd memory: 448K
+[    0.280718] Initialise system trusted keyrings
+[    0.281701] Key type blacklist registered
+[    0.282146] workingset: timestamp_bits=14 max_order=14 bucket_order=0
+[    0.285263] zbud: loaded
+[    1.363896] Key type asymmetric registered
+[    1.364001] Asymmetric key parser 'x509' registered
+[    1.364241] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 252)
+[    1.364623] io scheduler noop registered
+[    1.364687] io scheduler deadline registered
+[    1.364978] io scheduler cfq registered (default)
+[    1.365084] io scheduler mq-deadline registered
+[    1.367572] cirrusfb 0000:00:12.0: enabling device (0000 -> 0002)
+[    1.368092] cirrusfb 0000:00:12.0: Cirrus Logic chipset on PCI bus, RAM (4096 kB) at 0x10000000
+[    1.653901] Console: switching to colour frame buffer device 80x30
+[    1.661017] Serial: 8250/16550 driver, 4 ports, IRQ sharing enabled
+[    1.665167] console [ttyS0] disabled
+[    1.693821] serial8250.0: ttyS0 at I/O 0x3f8 (irq = 4, base_baud = 115200) is a 16550A
+[    1.694806] console [ttyS0] enabled
+[    1.694806] console [ttyS0] enabled
+[    1.695069] bootconsole [uart8250] disabled
+[    1.695069] bootconsole [uart8250] disabled
+[    1.723135] serial8250.0: ttyS1 at I/O 0x2f8 (irq = 3, base_baud = 115200) is a 16550A
+[    1.755693] serial8250.0: ttyS2 at MMIO 0x1f000900 (irq = 20, base_baud = 230400) is a 16550A
+[    1.758292] mousedev: PS/2 mouse device common for all mice
+[    1.761147] rtc_cmos 70.rtc: registered as rtc0
+[    1.761644] rtc_cmos 70.rtc: alarms up to one day, 242 bytes nvram
+[    1.769607] ledtrig-cpu: registered to indicate activity on CPUs
+[    1.770800] NET: Registered protocol family 10
+[    1.783264] Segment Routing with IPv6
+[    1.783584] mip6: Mobile IPv6
+[    1.783699] NET: Registered protocol family 17
+[    1.783987] mpls_gso: MPLS GSO support
+[    1.784743] registered taskstats version 1
+[    1.784810] Loading compiled-in X.509 certificates
+[    1.928971] Loaded X.509 cert 'Debian Secure Boot CA: 6ccece7e4c6c0d1f6149f3dd27dfcc5cbb419ea1'
+[    1.929505] Loaded X.509 cert 'Debian Secure Boot Signer 2021 - linux: 4b6ef5abca669825178e052c84667ccbc0531f8c'
+[    1.929737] Problem parsing in-kernel X.509 certificate list
+[    1.930418] zswap: loaded using pool lzo/zbud
+[    1.931389] AppArmor: AppArmor sha1 policy hashing enabled
+[    1.932438] rtc_cmos 70.rtc: setting system clock to 2026-11-08 23:18:22 UTC (1794179902)
+[    1.971783] Freeing unused kernel memory: 1844K
+[    1.971957] This architecture does not have kernel memory protection.
+[    1.972080] Run /init as init process
+FFW_MARKER:USERSPACE_START
+FFW_HELLO arch=mips-be endian=0x01020304 pid=1 ptr_bits=32
+FFW_BUILD target=mips-unknown-linux-musl rustc=1.100.0-nightly rustc_commit=908501772 linker_flavor=ld.lld libc=none runtime=no_std
+FFW_RUSTC release=1.100.0-nightly commit=90850177249efe0321573c569aec5d12b257f8d6 date=2026-08-30 host=x86_64-unknown-linux-gnu llvm=23.1.0
+FFW_GUEST:CONSOLE_LEVEL status=PASS rc=0
+FFW_KERNEL_VERSION: Linux version 4.19.0-21-4kc-malta (debian-kernel@lists.debian.org) (gcc version 8.3.0 (Debian 8.3.0-6)) #1 SMP Debian 4.19.249-2 (2022-06-30)
+FFW_TEST:ERR_ENOENT status=PASS errno=2
+FFW_TEST:ERR_EBADF status=PASS errno=9
+FFW_TEST:ERR_ENOSYS status=PASS errno=89
+FFW_TEST:POS_FD_SHORT_WRITE status=PASS fd=4
+FFW_PROBE:CLOCK_MONOTONIC status=PASS res_ns=1
+FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096
+FFW_PROBE:NONBLOCK_PIPE status=PASS rc=0
+FFW_PROBE:POLL status=PASS rc=1
+FFW_PROBE:EPOLL status=PASS fd=4
+FFW_PROBE:SOCKET_UDP status=PASS fd=4
+FFW_PROBE:ENTROPY status=PASS fd=4
+FFW_PROBE:ATOMICS_32 status=PASS ok=1
+FFW_PROBE:GETRANDOM status=UNSEEDED rc=-11
+FFW_PROBE:EVENTFD2 status=PASS fd=4
+FFW_PROBE:TIMERFD status=PASS fd=4
+FFW_PROBE:FUTEX status=PASS rc=0
+FFW_PROBE:LOOPBACK_UP status=PASS rc=0
+FFW_PROBE:UDP_LOOPBACK status=PASS rc=24
+FFW_PROBE:ACCEPT4 status=PASS fd=6
+FFW_PROBE:REACTOR_WAKE status=PASS rc=1
+FFW_PROBE:CHARDEV_POLL status=PASS rc=2
+FFW_PROBE:ATOMIC_WIDTH status=PASS bits=32
+FFW_PROBE:ALLOC status=PASS rc=0
+FFW_PROBE:MEM_PEAK status=PASS kb=64
+FFW_PROBE:FS_RENAME status=PASS rc=0
+FFW_PROBE:SIGNAL status=PASS rc=0
+FFW_PROBE:TIMER_SIGNALS status=PASS rc=0
+FFW_PROBE:EINTR_READ status=PASS rc=-4
+probe: run_threads start
+FFW_PROBE:THREADS status=PASS tid=60
+FFW_PROBE:TLS status=PASS tp=305419896
+FFW_SPEAKER_BEGIN path=/franken-speaker argv=--catalog
+T01X02 PHASE TS_KEYS ok nodes=4 keys=12 derived=12
+T01X02 PHASE TS_NOISE ok init_bytes=96 resp_bytes=48 sessions=2 rng_wait_ms=1907
+T01X02 PHASE TS_TUNNEL ok peers=3 rekeyed=1 removed=1 steps=12 idle=yes sent=3 recv=3 bytes=12 wire_packets=5 wire_bytes=348 refused=1
+T01X02 PHASE TS_CONTROL_SERDE ok regions=3 servers=3 reachable=2 route_cases=9 wire_bytes=466 encoded_bytes=1111 decoded_regions=3 refused_truncated=eof refused_garbled=syntax
+T01X02 PHASE TS_PACKETFILTER_STATE ok peers=3 rules=3 cases=12 clear_checks=3
+T01X02 PHASE TS_DISCO_PROTOCOL ok messages=3 ping_bytes=132 pong_bytes=110 cmm_bytes=152 endpoints=4
+T01X02 PHASE TS_OVERLAY_ROUTER ok offered=4 routed=2 dropped=2 bucket_42=1 bucket_7=1 unnotched_bucket=7 inbound_routed=0
+T01X02 PHASE CRYPTO_KAT ok x25519=7/7 chacha20poly1305=4/4 xchacha20poly1305=2/2 blake2s=6/6 hkdf_blake2s=3/3 noise_ik=8/8 plant=caught
+T01X02 VmHWM 924
+T01X02 VmRSS 904
+T01X02 utime 29
+T01X02 stime 191
+T01X02 END ok=8 fail=0 unknown=0
+FFW_SPEAKER_EXIT status=0 stdout_bytes=980 stdout_fnv1a64=66e80cce505c6992
+FFW_MARKER:TEST_SUCCESS failures=0
+FFW_MARKER:REBOOT_REQUEST
+[    4.717922] reboot: Restarting system

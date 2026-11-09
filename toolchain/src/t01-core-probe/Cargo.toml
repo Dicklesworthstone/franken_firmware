@@ -1,0 +1,49 @@
+[package]
+name = "t01-core-probe"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# T01-X02 core-footprint probe (ffw-32a, CrimsonMouse 15299): a LINKED, RUNNABLE binary that drives the seven tailscale-rs core crates through
+# their real public APIs on bounded synthetic inputs and prints `T01X02 PHASE/RES/END` lines. It is a protocol-core footprint only: no network,
+# no async runtime, no enrollment, not a tailnet client, and it says nothing about the fit of a full client. It never ships.
+#
+# Its own workspace root, like `p05-runtime` and `ffw-hello-init`, so the application workspace and its lockfile are not touched. The lockfile is
+# produced centrally by the official Cargo resolver; none is committed here.
+[workspace]
+
+# The SAME pinned tailscale-rs tree as the X01 consumer (commit d34658bbb2eb4593ae6df959aa93e9ee1e0457c6, v0.6.1), the seven core crates and
+# nothing else, default features OFF. The tree is not committed (third-party source); the path below ASSUMES the central sync root holds it
+# as `tailscale-rs/` beside `toolchain/` (the X01 layout). If the sync root differs, change only these seven `path` values.
+[dependencies]
+ts_control_serde = { path = "../../../tailscale-rs/ts_control_serde", default-features = false }
+ts_disco_protocol = { path = "../../../tailscale-rs/ts_disco_protocol", default-features = false }
+ts_keys = { path = "../../../tailscale-rs/ts_keys", default-features = false }
+ts_noise = { path = "../../../tailscale-rs/ts_noise", default-features = false }
+ts_overlay_router = { path = "../../../tailscale-rs/ts_overlay_router", default-features = false }
+ts_packetfilter_state = { path = "../../../tailscale-rs/ts_packetfilter_state", default-features = false }
+ts_tunnel = { path = "../../../tailscale-rs/ts_tunnel", default-features = false }
+
+# v2 additions, each already in the linked graph through the seven (no new crate or version enters the lock), approved by CrimsonMouse in 15589
+# unless marked otherwise:
+# * ts_packet: the packet type `ts_tunnel` and `ts_overlay_router` exchange (a real handshake, a transport round trip, a routed packet).
+# * ts_bart: NOT named in 15589; the route table `ts_overlay_router::outbound::Router::swap` takes, and its `RoutingTable` trait for `insert`.
+#   Without it no route can be installed, so the router could only be shown an empty table. Strike it and the routed-packet part with it if refused.
+# * serde_json: the version `ts_control_serde` resolves (`serde_json = "1"` in the pinned workspace), for the `DerpMap` decode/encode round trip.
+ts_packet = { path = "../../../tailscale-rs/ts_packet", default-features = false }
+ts_bart = { path = "../../../tailscale-rs/ts_bart", default-features = false }
+serde_json = "1"
+
+# `kat.rs` (DarkPeak, CRYPTO_KAT) drives the primitives the core crates call, through the same crates. The specs below are copied from the pinned
+# workspace (`tailscale-rs/Cargo.toml:67,70,83`), where `ts_noise` and `ts_tunnel` take them with `workspace = true`: same versions, same features.
+blake2 = "0.10"
+chacha20poly1305 = "0.10"
+hkdf = { version = "0.12", features = ["std"] }
+
+# The release profile mirrors the p05-runtime probe; it is not evidence of memory fit. `panic = "abort"` is deliberate: a probe that panics
+# ends the transcript without its END line, and a judge must refuse a transcript with no END.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"

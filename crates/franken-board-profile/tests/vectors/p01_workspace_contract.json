@@ -298,6 +298,17 @@
       "reason": "Host-only N06 hybrid-FEC generation and differential-qualification study with its own [workspace] table, kept off the production lock (publish = false; the heavy reference libraries have no production edge); listed in the root exclude and never a product artifact. It names no device target and forbids unsafe code in its own lint table and in its crate root, which the tree check reads from the manifest and the source.",
       "unsafe_policy": "forbid",
       "targets": []
+    },
+    {
+      "name": "t01-core-probe",
+      "path": "toolchain/src/t01-core-probe",
+      "owner": "T01",
+      "reason": "Standalone T01-X02 core-footprint probe: it links the pinned tailscale-rs core crates through their public APIs on bounded synthetic inputs and prints a transcript. It has its own [workspace] table and lockfile, is listed in the root exclude, and is never a product artifact (publish = false; it never ships). Unlike the host-only studies it is also built for the big-endian MIPS and PowerPC device targets (release, build-std) to run in the guest, so it names those targets. Its main.rs holds #![forbid(unsafe_code)] and it has no unsafe construct, but the tree check holds an excluded crate to forbid only when it has no device target, so this record carries bootstrap_probe, the only policy an excluded crate with device targets may declare. It is a linked std probe, not a freestanding startup probe.",
+      "unsafe_policy": "bootstrap_probe",
+      "targets": [
+        "mips_be",
+        "powerpc_be"
+      ]
     }
   ],
   "pending_members": [],
@@ -626,6 +637,11 @@
       "path": "tests/n06",
       "owner": "N06",
       "kind": "fixture"
+    },
+    {
+      "path": "toolchain/src/t01-core-probe",
+      "owner": "T01",
+      "kind": "crate"
     }
   ],
   "test_support_exceptions": [],
