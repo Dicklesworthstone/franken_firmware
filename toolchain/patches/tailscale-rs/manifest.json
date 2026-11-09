@@ -1,0 +1,17 @@
+{
+ "schema": "ffw.t01.tailscale_rs_patches.v1",
+ "header": {
+  "consumer": "The T01 candidate builds that need a patched tailscale-rs tree; they prepare it with toolchain/src/prepare-tailscale-rs.py from the pinned tree and one entry below.",
+  "gate": "No patched tailscale-rs source reaches a build without a digest match: the patch file's sha256, the pinned base tree, the paths the patch writes and the resulting tree's digest must all be the ones recorded here, and the upstream LICENSE and PATENTS stay byte for byte.",
+  "defect": "The tailscale-rs Device::new hang: Runtime::on_start waits in the registry for a ControlRunner that dies before it registers when its control dial fails, so Device::new never returns and its actors never stop.",
+  "retirement": "When the upstream pin moves past a release that carries the fix, delete the patch file and its entry here.",
+  "note": "A patched tree's identity is not the pin. t01lib.judge_build_record compares a synced tailscale-rs/ tree to the pin, so a patched candidate's build record is refused as \"not the pinned tree\", and that refusal is correct. Accepting a patched identity is a separate decision, to be taken once the reviewed patch exists and a patched build is about to be judged; nothing here changes it."
+ },
+ "upstream": {
+  "repo": "tailscale/tailscale-rs",
+  "tag": "v0.6.1",
+  "commit": "d34658bbb2eb4593ae6df959aa93e9ee1e0457c6",
+  "license": "BSD-3-Clause"
+ },
+ "patches": []
+}
