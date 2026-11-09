@@ -720,6 +720,82 @@ class ReceiptPaths(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertEqual(json.loads(path.read_text())["revision_claim"], "<outside-repo>/rev1")
 
+    @staticmethod
+    def with_command(*extra):
+        """`over` for `produce`: the QEMU command line is the fixed prefix and then `extra`."""
+        return lambda elf, sup: {"command": ["qemu-system-mips", "-M", "malta", *extra]}
+
+    def produced(self, **kwargs):
+        """`produce` once more; the receipt of the last call is removed first so the writer does not meet an existing file."""
+        (self.work / "receipt.mips.json").unlink(missing_ok=True)
+        return self.produce(**kwargs)
+
+    def test_the_writer_rewrites_a_host_path_under_any_listed_root_and_refuses_one_under_an_unlisted_root(self):
+        # Rewritten: the roots added beside the original eleven. Before this each was written into the receipt as it was.
+        for root in ("opt", "Library", "Applications", "System", "nix", "run", "media", "net", "export", "workspace", "work", "builds"):
+            with self.subTest(root=root):
+                code, err, path = self.produced(over=self.with_command("-drive", f"file=/{root}/someone/tree/disk.img"))
+                self.assertEqual(code, 0, err)
+                self.assertEqual(json.loads(path.read_text())["execution"]["command"][-1], "file=<outside-repo>/disk.img")
+        # Refused: a root nobody listed. The rewrite cannot bind it to a file, so nothing is written, and the message names the root only.
+        for text in ("/zzz/someone/tree/disk.img", "file=/lost-and-found/someone/disk.img"):
+            with self.subTest(text=text):
+                code, err, path = self.produced(over=self.with_command("-drive", text))
+                self.assertEqual(code, 2)
+                self.assertIn("refusing to write a receipt that still carries an absolute path under /", err)
+                self.assertNotIn("someone", err)
+                self.assertFalse(path.exists())
+        # Control: system and guest paths, the guest's own command line and the rewritten labels are not host paths and are written as they are.
+        keep = ["/usr/bin/qemu-system-mips", "-M", "malta", "-append", "console=ttyS0,38400 rdinit=/init panic=-1", "/proc/self/task", "/dev/ttyS0"]
+        code, err, path = self.produced(over=lambda elf, sup: {"command": keep})
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(path.read_text())["execution"]["command"], keep)
+
+    def test_the_writer_refuses_a_relative_path_that_leaves_the_repository(self):
+        # `--log-dir ../out/run` puts `../out/run/vmlinux.runtime-snapshot` on the command line, and no absolute path is in it.
+        for text in ("../out/someone/run/vmlinux.runtime-snapshot", "../../private-sibling-someone/x", "../.."):
+            with self.subTest(text=text):
+                code, err, path = self.produced(over=self.with_command("-kernel", text))
+                self.assertEqual(code, 2)
+                self.assertIn("relative path that leaves the repository", err)
+                self.assertNotIn("someone", err)
+                self.assertFalse(path.exists())
+        # Control: a path that stays under its directory, or only mentions two dots, is written as it is.
+        keep = ["qemu-system-mips", "-kernel", "src/../x", "-initrd", "./out/run/archive.cpio.gz", "-append", "wait... a..b"]
+        code, err, path = self.produced(over=lambda elf, sup: {"command": keep})
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(path.read_text())["execution"]["command"], keep)
+
+    def test_two_different_files_with_one_basename_do_not_share_one_name_in_the_receipt(self):
+        one, two = self.work / "one", self.work / "two"
+        one.mkdir()
+        two.mkdir()
+        (one / "blob").write_bytes(b"AAAA")
+        (two / "blob").write_bytes(b"BBBB")
+        (one / "kernel.bin").write_bytes(b"KKKK")
+        # Plant: both would be `<outside-repo>/blob` with two different hashes, and the name could not say which file it binds.
+        code, err, path = self.produced(over=self.with_command("-kernel", str(one / "blob"), "-initrd", str(two / "blob")))
+        self.assertEqual(code, 2)
+        self.assertIn("two different files would both be named <outside-repo>/blob", err)
+        self.assertFalse(path.exists())
+        # A path that exists and one that does not, under one name, are as ambiguous.
+        code, err, path = self.produced(over=self.with_command("-kernel", str(one / "blob"), "-initrd", str(self.work / "gone" / "blob")))
+        self.assertEqual(code, 2)
+        self.assertFalse(path.exists())
+        # Control: the same file named twice, and two files under two basenames, are written, each name bound to its own bytes.
+        code, err, path = self.produced(over=self.with_command("-kernel", str(one / "blob"), "-initrd", f"x={one / 'blob'}", "-dtb", str(one / "kernel.bin")))
+        self.assertEqual(code, 0, err)
+        bound = {entry["path"]: entry["sha256"] for entry in json.loads(path.read_text())["path_hashes"]}
+        self.assertEqual(bound["<outside-repo>/blob"], hashlib.sha256(b"AAAA").hexdigest())
+        self.assertEqual(bound["<outside-repo>/kernel.bin"], hashlib.sha256(b"KKKK").hexdigest())
+
+    def test_two_keys_that_the_rewrite_would_make_one_are_refused_and_not_silently_merged(self):
+        with self.assertRaises(J.X02Error) as caught:
+            J._scrub({"/tmp/one/x.bin": 1, "/var/two/x.bin": 2}, [])  # the second entry must not replace the first
+        self.assertIn("would both be keyed '<outside-repo>/x.bin'", str(caught.exception))
+        # Control: the same value under both spellings loses nothing, and distinct names stay distinct.
+        self.assertEqual(J._scrub({"/tmp/one/x.bin": 1, "/var/two/x.bin": 1, "/tmp/one/y.bin": 2}, []), {"<outside-repo>/x.bin": 1, "<outside-repo>/y.bin": 2})
+
     def test_an_analysis_receipt_carries_no_path_either(self):
         log, receipt = self.work / "transcript.log", self.work / "analysis.json"
         log.write_text(GOOD)
@@ -1051,6 +1127,51 @@ class Consumer(unittest.TestCase):
         self.assert_fails_naming("powerpc.json", "absolute path under /home/")
         self.pair()
         self.assertEqual(self.case().status, "passed")  # remove the plants: green again
+
+    def test_a_receipt_with_a_host_path_under_an_unlisted_root_or_a_relative_path_that_leaves_the_repository_fails_by_name_and_never_repeats_it(self):
+        good = self.real("mips")
+        self.pair(mips=good)
+        self.assertEqual(self.case().status, "passed")
+        secret = "zebra-secret-user"
+        absolute = {"an opt tree": (("revision_claim",), f"/opt/{secret}/x"), "a nix path": (("revision_claim",), f"/nix/store/{secret}/bin/q"),
+                    "a workspace": (("revision_claim",), f"built in /workspace/{secret}/tree"), "a build tree": (("scope",), f"measured at /builds/{secret}/x"),
+                    "an unlisted root": (("revision_claim",), f"/zzz/{secret}/x"),
+                    "a command argument": (("execution", "command"), lambda c: c + ["-drive", f"file=/lost-and-found/{secret}/disk.img"])}
+        relative = {"a claim": (("revision_claim",), f"../../{secret}/x"), "a command argument": (("execution", "command"), lambda c: c + ["-kernel", f"../{secret}/vmlinux"]),
+                    "a gate detail": (("gates", 0, "detail"), f"see ../{secret}/log")}
+        for label, (path, value) in {**{f"abs {k}": v for k, v in absolute.items()}, **{f"rel {k}": v for k, v in relative.items()}}.items():
+            with self.subTest(label=label):
+                self.put("mips.json", self.planted(good, path, value))
+                try:
+                    result = self.case()
+                    self.assertEqual(result.status, "failed", result.detail)
+                    self.assertIn("mips.json", result.detail)
+                    self.assertIn("relative path that leaves the repository" if label.startswith("rel ") else "absolute path under /", result.detail)
+                    self.assertNotIn(secret, result.detail)  # the report says where, never the path itself
+                finally:
+                    self.put("mips.json", good)
+        # Control: what is not a host path stays accepted: a system tool path, a guest path, and a relative path that stays under its directory.
+        for text in ("/usr/bin/qemu-system-mips", "/proc/self/task and /dev/ttyS0", "src/../x and ./out/run/archive.cpio.gz", "a..b and wait..."):
+            with self.subTest(text=text):
+                self.pair(mips=self.planted(good, ("revision_claim",), text))
+                self.assertEqual(self.case().status, "passed")
+        self.pair(mips=good)
+        self.assertEqual(self.case().status, "passed")  # remove the plants: green again
+
+    def test_path_hashes_must_not_bind_one_name_to_two_different_hashes(self):
+        good = self.real("mips")
+        entries = [{"path": "<outside-repo>/blob", "sha256": "a" * 64}, {"path": "<outside-repo>/blob", "sha256": "b" * 64}]
+        self.pair(mips=self.planted(good, ("path_hashes",), entries))
+        self.assert_fails_naming("mips.json", "path_hashes binds one name to two different hashes")
+        for label, entries in {"a hash and an absent file": [{"path": "<outside-repo>/blob", "sha256": "a" * 64}, {"path": "<outside-repo>/blob", "sha256": None}]}.items():
+            with self.subTest(label=label):
+                self.pair(mips=self.planted(good, ("path_hashes",), entries))
+                self.assert_fails_naming("mips.json", "path_hashes binds one name to two different hashes")
+        # Control: two names with two hashes, and one name with one hash, are accepted.
+        self.pair(mips=self.planted(good, ("path_hashes",), [{"path": "<outside-repo>/blob", "sha256": "a" * 64}, {"path": "<outside-repo>/other", "sha256": "b" * 64}]))
+        self.assertEqual(self.case().status, "passed")
+        self.pair(mips=good)
+        self.assertEqual(self.case().status, "passed")
 
     def test_path_hashes_must_be_relative_paths_with_a_lowercase_sha256_or_null(self):
         good = self.real("mips")

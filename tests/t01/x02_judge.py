@@ -287,20 +287,23 @@ def _strict_json(text: str) -> Any:
     return json.loads(text, object_pairs_hook=pairs, parse_constant=constant)
 
 
-def _absolute_path_in(node: Any, where: str = "the receipt") -> tuple[str, str] | None:
-    """Where, and under which root directory, the first absolute host path in any string or key of `node` sits. The path itself is never repeated."""
+def _absolute_path_in(node: Any, where: str = "the receipt", relative: bool = False) -> tuple[str, str] | None:
+    """Where, and under which root directory, the first absolute host path in any string or key of `node` sits; with `relative`, where the first relative path
+    that starts by leaving its directory (`../`) sits, with `../` as the root. The path itself is never repeated."""
     if isinstance(node, str):
-        match = ABSOLUTE_PATH.search(node)
-        return (where, match.group(0).split("/")[1]) if match else None
+        match = LEFTOVER_RELATIVE.search(node) if relative else (ABSOLUTE_PATH.search(node) or LEFTOVER_ABSOLUTE.search(node))
+        if match is None:
+            return None
+        return (where, "../" if relative else match.group(0).split("/")[1])
     if isinstance(node, list):
         for index, item in enumerate(node):
-            hit = _absolute_path_in(item, f"{where}[{index}]")
+            hit = _absolute_path_in(item, f"{where}[{index}]", relative)
             if hit:
                 return hit
     if isinstance(node, dict):
         for key, item in node.items():
-            hit = _absolute_path_in(key, f"{where}.<key>") if isinstance(key, str) else None
-            hit = hit or _absolute_path_in(item, f"{where}.{str(key)[:30]}")
+            hit = _absolute_path_in(key, f"{where}.<key>", relative) if isinstance(key, str) else None
+            hit = hit or _absolute_path_in(item, f"{where}.{str(key)[:30]}", relative)
             if hit:
                 return hit
     return None
@@ -365,6 +368,11 @@ def judge_receipt(text: str) -> ReceiptJudgement:
             isinstance(entry, dict) and set(entry) == {"path", "sha256"} and isinstance(entry["path"], str) and entry["path"] and not entry["path"].startswith("/")
             and ".." not in entry["path"].split("/") and (entry["sha256"] is None or _is_sha(entry["sha256"])) for entry in hashes)):
         return failed("path_hashes is malformed (each entry is a relative path and a lowercase sha256 or null)")
+    if hashes is not None and _conflicting_name(hashes) is not None:
+        return failed("path_hashes binds one name to two different hashes; the name could not say which file it stands for")
+    leaving = _absolute_path_in(body, relative=True)  # after the path_hashes check, which names a `..` label itself
+    if leaving is not None:
+        return failed(f"the receipt carries a relative path that leaves the repository at {leaving[0]}; a committed receipt holds repo-relative or {OUTSIDE_REPO} paths only")
     kind, declared, arch = body.get("evidence_kind"), body.get("result"), body.get("arch")
     if kind not in RECEIPT_KINDS:
         return failed(f"evidence_kind {str(kind)[:50]!r} is not one of {', '.join(RECEIPT_KINDS)}")
@@ -492,8 +500,17 @@ def _read_bounded(path: pathlib.Path) -> bytes:
 # under the repository becomes repo-relative, any other becomes `<outside-repo>/<basename>`, and each rewritten path is listed in `path_hashes` with the sha256 of the
 # file it named, so the receipt still binds the bytes. The writer refuses to write a receipt in which an absolute path survives; the consumer refuses to read one.
 
-PATH_ROOTS = ("Users", "home", "private", "var", "tmp", "root", "Volumes", "mnt", "srv", "data", "bulk")
+PATH_ROOTS = ("Users", "home", "private", "var", "tmp", "root", "Volumes", "mnt", "srv", "data", "bulk",
+              # more host roots: a tree under any of these was written into a receipt as it was. `usr` is not one of them on purpose: the system tool path
+              # a system tool path such as the QEMU binary's names nobody and is pinned as left alone (tests: the scrub's lookalikes).
+              "opt", "Library", "Applications", "System", "nix", "run", "media", "net", "export", "workspace", "work", "builds")
 ABSOLUTE_PATH = re.compile(rf"(?<![A-Za-z0-9_.~-])/(?:{'|'.join(PATH_ROOTS)})(?=/|[\s\"'<>,;)=]|$)(?:/[^\s\"'<>,;)=]*)?")
+# What is refused after the rewrite, for the places the root list above does not know: an absolute path of two or more components whose first component
+# is not a system or guest one (`/proc/self/task`, `/dev/ttyS0`, `/usr/bin/...`; a lone `/init` is one component), and a relative path that starts by leaving its
+# directory (`../`). The rewrite cannot bind either to a file, so a receipt that holds one is neither written nor accepted.
+SYSTEM_PATH_ROOTS = ("proc", "sys", "dev", "usr", "bin", "sbin", "lib", "etc")
+LEFTOVER_ABSOLUTE = re.compile(rf"(?<![A-Za-z0-9_.~<>/-])/(?!(?:{'|'.join(SYSTEM_PATH_ROOTS)})/)[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+")
+LEFTOVER_RELATIVE = re.compile(r"(?<![A-Za-z0-9_.~<>/-])\.\./")
 OUTSIDE_REPO = "<outside-repo>"
 HASH_CAP = 512 * 1024 * 1024
 
@@ -534,8 +551,24 @@ def _scrub(value: Any, seen: list[dict[str, Any]]) -> Any:
     if isinstance(value, list):
         return [_scrub(item, seen) for item in value]
     if isinstance(value, dict):
-        return {(_scrub(key, seen) if isinstance(key, str) else key): _scrub(item, seen) for key, item in value.items()}
+        out: dict[Any, Any] = {}
+        for key, item in value.items():
+            new_key, new_item = (_scrub(key, seen) if isinstance(key, str) else key), _scrub(item, seen)
+            if new_key in out and out[new_key] != new_item:  # two entries the rewrite would make one: the second would silently replace the first
+                raise X02Error(f"two different entries would both be keyed {new_key!r} once host paths are rewritten; nothing was written")
+            out[new_key] = new_item
+        return out
     return value
+
+
+def _conflicting_name(entries: list[dict[str, Any]]) -> str | None:
+    """A name in `path_hashes` that binds two different hashes (two files under one new name; it could not say which is which), else None."""
+    named: dict[str, Any] = {}
+    for entry in entries:
+        if entry["path"] in named and named[entry["path"]] != entry["sha256"]:
+            return entry["path"]
+        named[entry["path"]] = entry["sha256"]
+    return None
 
 
 def _finish(args: argparse.Namespace, gates: list[Gate], verdict: Verdict | None, kind: str, elf: dict[str, Any] | None,
@@ -551,9 +584,15 @@ def _finish(args: argparse.Namespace, gates: list[Gate], verdict: Verdict | None
         seen: list[dict[str, Any]] = []
         body = _scrub(body, seen)
         body["path_hashes"] = seen
-        leftover = ABSOLUTE_PATH.search(json.dumps(body))
+        conflict = _conflicting_name(seen)
+        if conflict is not None:
+            raise X02Error(f"two different files would both be named {conflict} in the receipt; nothing was written")
+        dumped = json.dumps(body)
+        leftover = ABSOLUTE_PATH.search(dumped) or LEFTOVER_ABSOLUTE.search(dumped)
         if leftover is not None:
             raise X02Error("refusing to write a receipt that still carries an absolute path under /" + leftover.group(0).split("/")[1] + "/; nothing was written")
+        if LEFTOVER_RELATIVE.search(dumped) is not None:
+            raise X02Error("refusing to write a receipt that still carries a relative path that leaves the repository; nothing was written")
         with args.receipt.open("x", encoding="utf-8") as handle:  # exclusive: an existing receipt is never overwritten
             json.dump(body, handle, indent=2, sort_keys=True)
             handle.write("\n")
