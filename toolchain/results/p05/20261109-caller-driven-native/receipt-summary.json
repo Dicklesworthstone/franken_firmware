@@ -1,0 +1,237 @@
+{
+  "schema": "ffw.p05.native_evidence.v1",
+  "qualification": "native_runtime_probe_only",
+  "pinned_asupersync": "91509bcd8ac1f1cb00417b9b3a6d54875cbfce05",
+  "corrected_source_commit": "97e3584bdb8843e667c6c318edee15b6f16844ef",
+  "jobs": {
+    "native-red": {
+      "identity": {
+        "local_wrapper_id": "rchw-6468c8c3-99d2-4269-ad6d-07eb80bdcc97",
+        "remote_build_id": 30101959465763451
+      },
+      "source_reference": "99b1dde",
+      "source_paths": {
+        "toolchain/src/p05-runtime/src/main.rs": {
+          "sha256": "b57c62268d03141d6adc4630a5f29f274078678e607e84f8c3752342a40b6b85",
+          "byte_count": 159418,
+          "executable": false
+        },
+        "toolchain/src/p05-runtime/Cargo.toml": {
+          "sha256": "c339ae57411aebd2bf7e399ea30bbe192de90139cf826e3e445b4646d4bb37ab",
+          "byte_count": 2782,
+          "executable": false
+        },
+        "toolchain/src/p05-runtime/Cargo.lock": {
+          "sha256": "e2c066aeeed306f3765800f59877d51caa68b19bb48a7bb45bf07ce1c0f36ae6",
+          "byte_count": 42683,
+          "executable": false
+        },
+        "tests/p05/native196_reconcile.py": {
+          "sha256": "f83bdb41f15abeaa791e61ec72441860e325302cd7e3ad22eb5cbef562a76ea6",
+          "byte_count": 19641,
+          "executable": false
+        },
+        "tests/p05/native_runtime45_names.txt": {
+          "sha256": "52f277cd4bdc68e2682795c65ebe060ca25de1aa87216cbc1c4184cc86219703",
+          "byte_count": 3559,
+          "executable": false
+        },
+        "tests/p05/test_native_runtime45.py": {
+          "sha256": "cb18b1a900767dc48c5649e829fe213a2e04879d941c6a55c6e1ee330d20dcd8",
+          "byte_count": 10804,
+          "executable": false
+        }
+      },
+      "source_receipt": {
+        "schema": "rch.source_content_receipt.v1",
+        "build_id": "30101959465763451",
+        "command_sha256": "bb9a03130eeb1bed03d84b400337e839c6388f0b85168d54d3437924030ee9e0",
+        "command_exit_code": 101,
+        "root_count": 1,
+        "receipt_root": "05a8b52846ec982a820fd052904d463cacc73677aa4f52375420ca2bcc212795"
+      },
+      "raw_log_bytes": 306064,
+      "raw_log_sha256": "e8181693e5ebc7c6040f4cf122160a4d75feb42f0ff61e0dbbbf8f5c2e4c9956",
+      "public_log_sha256": "6205ace844e5e22c8ae05a328896ded9dbcdc9690b3c85dc363e79a85de55bf1",
+      "omitted_full_receipt_lines": [
+        {
+          "bytes": 257255,
+          "sha256": "a9bedabfb994c5e070e3b2d9b0640ebe2ac9da83db7dbbc9392d83d9c7ee05d9"
+        }
+      ],
+      "state": "finished",
+      "phase": "finished",
+      "strict_remote": true,
+      "terminal_acknowledged": true,
+      "exit_code": 101,
+      "recovery": {
+        "returned": 101,
+        "exit_code": 101,
+        "execution_started": true,
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "retired": true,
+        "staging_released": null
+      }
+    },
+    "native-green": {
+      "identity": {
+        "local_wrapper_id": "rchw-928889f7-41d7-47e9-820d-19b5d5c9f421",
+        "remote_build_id": 30101959465763468
+      },
+      "source_reference": "97e3584",
+      "source_paths": {
+        "toolchain/src/p05-runtime/src/main.rs": {
+          "sha256": "0eb93f643165b25f1606e21e4f7bcafe87477eada2722850b1ea26cd13eeca9b",
+          "byte_count": 159525,
+          "executable": false
+        },
+        "toolchain/src/p05-runtime/Cargo.toml": {
+          "sha256": "c339ae57411aebd2bf7e399ea30bbe192de90139cf826e3e445b4646d4bb37ab",
+          "byte_count": 2782,
+          "executable": false
+        },
+        "toolchain/src/p05-runtime/Cargo.lock": {
+          "sha256": "e2c066aeeed306f3765800f59877d51caa68b19bb48a7bb45bf07ce1c0f36ae6",
+          "byte_count": 42683,
+          "executable": false
+        },
+        "tests/p05/native196_reconcile.py": {
+          "sha256": "1e6a42151e0ee2e9c3feba8f8394445775f0961bf3ab960f8daae6e0445aba0c",
+          "byte_count": 20583,
+          "executable": false
+        },
+        "tests/p05/native_runtime45_names.txt": {
+          "sha256": "52f277cd4bdc68e2682795c65ebe060ca25de1aa87216cbc1c4184cc86219703",
+          "byte_count": 3559,
+          "executable": false
+        },
+        "tests/p05/test_native_runtime45.py": {
+          "sha256": "78ba3c7e519532e718dc5b3d3d4c75472526d0adb42c6b0db07f38779cefe181",
+          "byte_count": 13439,
+          "executable": false
+        }
+      },
+      "source_receipt": {
+        "schema": "rch.source_content_receipt.v1",
+        "build_id": "30101959465763468",
+        "command_sha256": "bb9a03130eeb1bed03d84b400337e839c6388f0b85168d54d3437924030ee9e0",
+        "command_exit_code": 0,
+        "root_count": 1,
+        "receipt_root": "6a10bc28126f50c943b7ef277ff02e7fe956ee5cde0a56cb7cc728f1b809579d"
+      },
+      "raw_log_bytes": 303433,
+      "raw_log_sha256": "f896c0aec41a2922e71c5b8b6e7574ea630801a6c1848beb37875290cccb45e7",
+      "public_log_sha256": "452ad8f69e0de887004efbe6245465611c605683cb5e450f291a5a2feee418f5",
+      "omitted_full_receipt_lines": [
+        {
+          "bytes": 258175,
+          "sha256": "0f1915b21aad7f5095f448d50a9b89267243baffe24d88775154aa17472639b2"
+        }
+      ],
+      "state": "finished",
+      "phase": "finished",
+      "strict_remote": true,
+      "terminal_acknowledged": true,
+      "exit_code": 0,
+      "recovery": {
+        "returned": 0,
+        "exit_code": 0,
+        "execution_started": true,
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "retired": true,
+        "staging_released": true
+      }
+    },
+    "clippy": {
+      "identity": {
+        "local_wrapper_id": "rchw-cbc5b763-e454-42ff-8269-187f7117935c",
+        "remote_build_id": 30101959465763467
+      },
+      "source_reference": "97e3584",
+      "source_paths": {
+        "toolchain/src/p05-runtime/src/main.rs": {
+          "sha256": "0eb93f643165b25f1606e21e4f7bcafe87477eada2722850b1ea26cd13eeca9b",
+          "byte_count": 159525,
+          "executable": false
+        },
+        "toolchain/src/p05-runtime/Cargo.toml": {
+          "sha256": "c339ae57411aebd2bf7e399ea30bbe192de90139cf826e3e445b4646d4bb37ab",
+          "byte_count": 2782,
+          "executable": false
+        },
+        "toolchain/src/p05-runtime/Cargo.lock": {
+          "sha256": "e2c066aeeed306f3765800f59877d51caa68b19bb48a7bb45bf07ce1c0f36ae6",
+          "byte_count": 42683,
+          "executable": false
+        },
+        "tests/p05/native196_reconcile.py": {
+          "sha256": "1e6a42151e0ee2e9c3feba8f8394445775f0961bf3ab960f8daae6e0445aba0c",
+          "byte_count": 20583,
+          "executable": false
+        },
+        "tests/p05/native_runtime45_names.txt": {
+          "sha256": "52f277cd4bdc68e2682795c65ebe060ca25de1aa87216cbc1c4184cc86219703",
+          "byte_count": 3559,
+          "executable": false
+        },
+        "tests/p05/test_native_runtime45.py": {
+          "sha256": "78ba3c7e519532e718dc5b3d3d4c75472526d0adb42c6b0db07f38779cefe181",
+          "byte_count": 13439,
+          "executable": false
+        }
+      },
+      "source_receipt": {
+        "schema": "rch.source_content_receipt.v1",
+        "build_id": "30101959465763467",
+        "command_sha256": "1babafa7f426aa9b8d5f0531dad7deeeca3c378fee1f9eb20c3da6d65de21321",
+        "command_exit_code": 0,
+        "root_count": 1,
+        "receipt_root": "ca277c6fb07db0430735985765055858d3056ec7abdb6ccdcbd0e2045b2f1f82"
+      },
+      "raw_log_bytes": 265758,
+      "raw_log_sha256": "210c8ee2fe706ac61a9ca77735089293f1af59cf1d139c865e36ba26d8bec9a3",
+      "public_log_sha256": "7739edcc0c9dac4dedc65b7bcd6ad1db6abbfa3f0e53430ee02d7746fcabbf1a",
+      "omitted_full_receipt_lines": [
+        {
+          "bytes": 258168,
+          "sha256": "dc740e170528d88592fa10577b8a05fd24439e386464d8cbf721631182476846"
+        }
+      ],
+      "state": "finished",
+      "phase": "finished",
+      "strict_remote": true,
+      "terminal_acknowledged": true,
+      "exit_code": 0,
+      "recovery": {
+        "returned": 0,
+        "exit_code": 0,
+        "execution_started": true,
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "retired": true,
+        "staging_released": true
+      }
+    }
+  },
+  "reconcile_sha256": "69681624e89b405ce16055601f03dde3d09e182877ea9e316a9c191325fa1dd2",
+  "native_green": {
+    "planned": 45,
+    "passed": 45,
+    "failed": 0,
+    "ignored": 0,
+    "filtered": 0,
+    "credited_by_closure": 9
+  },
+  "native_red": {
+    "planned": 45,
+    "passed": 44,
+    "failed": 1,
+    "ignored": 0,
+    "filtered": 0
+  }
+}

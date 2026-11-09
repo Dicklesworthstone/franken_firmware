@@ -1,0 +1,720 @@
+  2026-11-09T17:39:58.017626Z  INFO rch::hook: Selected worker: vmi1264463 at root@<redacted-ip> (0 slots remaining after reservation, speed 54.7)
+    at rch/src/hook.rs:5690 on ThreadId(1)
+
+  2026-11-09T17:40:00.620975Z  INFO rch::hook::transfer_orchestration: Starting remote compilation pipeline for franken_firmware (hash: 0b157a365279f4d3d96fd87393d806e1405ca5c564b79d30fff473b034349699)
+    at rch/src/hook/transfer_orchestration.rs:1571 on ThreadId(1)
+
+  2026-11-09T17:40:00.621300Z  INFO rch::hook::transfer_orchestration: Prepared dependency sync manifest for 1 roots
+    at rch/src/hook/transfer_orchestration.rs:1593 on ThreadId(1)
+
+  2026-11-09T17:40:09.065486Z  INFO rch::hook::transfer_orchestration: Syncing project to worker vmi1264463...
+    at rch/src/hook/transfer_orchestration.rs:1887 on ThreadId(1)
+
+  2026-11-09T17:40:09.065824Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+  2026-11-09T17:40:09.625737Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+  2026-11-09T17:40:09.626724Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+  2026-11-09T17:40:09.626774Z  INFO rch::transfer: Syncing <project-root> -> /data/tmp/rch/source-content-pair-121b9fdc39ea3f35c5e018d44fbbe078/projects/franken_firmware on vmi1264463 (streaming)
+    at rch/src/transfer.rs:7842 on ThreadId(1)
+
+  2026-11-09T17:40:12.955877Z  INFO rch::hook::transfer_orchestration: Sync complete: 1498 files, 7439941 bytes in 3212ms
+    at rch/src/hook/transfer_orchestration.rs:2486 on ThreadId(1)
+
+  2026-11-09T17:40:14.509912Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+  2026-11-09T17:40:18.846342Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+  2026-11-09T17:40:19.154719Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+  2026-11-09T17:40:21.167397Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+  2026-11-09T17:40:25.537672Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+  2026-11-09T17:40:25.992018Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+  2026-11-09T17:40:26.078994Z  INFO rch::hook::transfer_orchestration: Executing command remotely: env 'CARGO_PROFILE_TEST_DEBUG=0' 'CARGO_PROFILE_DEV_DEBUG=0' 'CARGO_INCREMENTAL=0' cargo +nightly-2026-08-31 test --manifest-path /data/tmp/rch/source-content-pair-121b9fdc39ea3f35c5e018d44fbbe078/projects/franken_firmware/toolchain/src/p05-runtime/Cargo.toml --locked -j 1 --config 'build.build-dir="/data/tmp/rch/franken_firmware/.rch-target-vmi1264463-pool-121b9fdc39ea3f35c5e018d44fbbe078"' --target-dir /data/tmp/rch/franken_firmware/.rch-target-vmi1264463-pool-121b9fdc39ea3f35c5e018d44fbbe078 --config 'env.RCH_BUILD_SOURCE.value="99b1dde16df90698b1b4af13252a27c271252d8b-dirty"' --config 'env.RCH_BUILD_SOURCE.force=true' -- '--test-threads=1' --nocapture
+    at rch/src/hook/transfer_orchestration.rs:2643 on ThreadId(1)
+
+  2026-11-09T17:40:26.098975Z  INFO rch::transfer: Rewriting CARGO_TARGET_DIR for remote execution (worker-scoped path): /tmp/rch_target_p05_runtime -> /data/tmp/rch/franken_firmware/.rch-target-vmi1264463-pool-121b9fdc39ea3f35c5e018d44fbbe078
+    at rch/src/transfer.rs:4911 on ThreadId(1)
+
+    Updating git repository `https://github.com/Dicklesworthstone/asupersync`
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded inout v0.2.6
+  Downloaded smallvec v1.16.5
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.27
+   Compiling libc v0.2.191
+   Compiling cfg-if v1.0.5
+   Compiling typenum v1.20.1
+   Compiling syn v2.0.119
+   Compiling getrandom v0.4.3
+   Compiling hybrid-array v0.4.15
+   Compiling rand_core v0.10.1
+   Compiling zeroize_derive v1.5.0
+   Compiling zeroize v1.9.1
+   Compiling crypto-common v0.2.2
+   Compiling version_check v0.9.5
+   Compiling generic-array v0.14.7
+   Compiling cmov v0.5.4
+   Compiling ctutils v0.4.8
+   Compiling block-buffer v0.12.1
+   Compiling serde_core v1.0.229
+   Compiling syn v3.0.9
+   Compiling cpufeatures v0.3.1
+   Compiling autocfg v1.5.1
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling inout v0.2.6
+   Compiling serde v1.0.229
+   Compiling serde_derive v1.0.229
+   Compiling zerocopy v0.8.63
+   Compiling semver v1.0.28
+   Compiling base64ct v1.8.3
+   Compiling pem-rfc7468 v0.7.0
+   Compiling rustc_version v0.4.1
+   Compiling cipher v0.5.2
+   Compiling universal-hash v0.6.1
+   Compiling getrandom v0.2.17
+   Compiling rustix v1.1.6
+   Compiling bitflags v2.13.2
+   Compiling zmij v1.0.23
+   Compiling const-oid v0.9.6
+   Compiling der v0.7.10
+   Compiling rand_core v0.6.4
+   Compiling curve25519-dalek v4.1.3
+   Compiling signature v2.2.0
+   Compiling num-traits v0.2.19
+   Compiling serde_json v1.0.154
+   Compiling const-oid v0.10.2
+   Compiling cpubits v0.1.1
+   Compiling anyhow v1.0.104
+   Compiling rustversion v1.0.23
+   Compiling cpufeatures v0.2.17
+   Compiling memchr v2.8.3
+   Compiling linux-raw-sys v0.12.1
+   Compiling digest v0.11.3
+   Compiling ppv-lite86 v0.2.21
+   Compiling spki v0.7.3
+   Compiling memoffset v0.9.1
+   Compiling curve25519-dalek-derive v0.1.1
+   Compiling cfg_aliases v0.2.2
+   Compiling parking_lot_core v0.9.12
+   Compiling subtle v2.6.1
+   Compiling itoa v1.0.18
+   Compiling either v1.19.0
+   Compiling crossbeam-utils v0.8.23
+   Compiling itertools v0.14.0
+   Compiling nix v0.31.3
+   Compiling pkcs8 v0.10.2
+   Compiling rand_chacha v0.3.1
+   Compiling sha2 v0.10.9
+   Compiling polyval v0.7.3
+   Compiling ed25519 v2.2.3
+   Compiling aead v0.6.1
+   Compiling errno v0.3.14
+   Compiling virtue-next v0.1.3
+   Compiling scopeguard v1.2.0
+   Compiling thiserror v2.0.21
+   Compiling smallvec v1.16.5
+   Compiling bincode-next v3.1.1
+   Compiling portable-atomic v1.15.0
+   Compiling fastrand v2.5.0
+   Compiling signal-hook v0.4.6
+   Compiling crc32fast v1.5.4
+   Compiling lock_api v0.4.14
+   Compiling bincode_derive-next v3.1.1
+   Compiling signal-hook-registry v1.4.8
+   Compiling ed25519-dalek v2.2.0
+   Compiling ghash v0.6.0
+   Compiling rapidhash v4.5.1
+   Compiling prost-derive v0.14.4
+   Compiling rmp v0.8.15
+   Compiling rand v0.8.8
+   Compiling signatory v0.27.1
+   Compiling franken-evidence v0.6.0 (https://github.com/Dicklesworthstone/asupersync?rev=91509bcd8ac1f1cb00417b9b3a6d54875cbfce05#91509bcd)
+   Compiling aes v0.9.4
+   Compiling poly1305 v0.9.1
+   Compiling ctr v0.10.1
+   Compiling chacha20 v0.10.2
+   Compiling franken-kernel v0.6.0 (https://github.com/Dicklesworthstone/asupersync?rev=91509bcd8ac1f1cb00417b9b3a6d54875cbfce05#91509bcd)
+   Compiling thiserror-impl v2.0.21
+   Compiling pin-project-internal v1.1.13
+   Compiling unty-next v0.1.2
+   Compiling tinyvec v1.13.3
+   Compiling allocator-api2 v0.2.21
+   Compiling bytes v1.12.1
+   Compiling log v0.4.35
+   Compiling futures-core v0.3.34
+   Compiling pin-project-lite v0.2.17
+   Compiling data-encoding v2.11.1
+   Compiling once_cell v1.21.4
+   Compiling parking v2.2.1
+   Compiling futures-io v0.3.34
+   Compiling foldhash v0.2.0
+   Compiling equivalent v1.0.3
+   Compiling asupersync v0.6.2 (https://github.com/Dicklesworthstone/asupersync?rev=91509bcd8ac1f1cb00417b9b3a6d54875cbfce05#91509bcd)
+   Compiling pastey v0.2.3
+   Compiling hashbrown v0.17.1
+   Compiling futures-lite v2.6.1
+   Compiling tempfile v3.27.0
+   Compiling nkeys v0.4.5
+   Compiling prost v0.14.4
+   Compiling unicode-normalization v0.1.26
+   Compiling pin-project v1.1.13
+   Compiling franken-decision v0.6.0 (https://github.com/Dicklesworthstone/asupersync?rev=91509bcd8ac1f1cb00417b9b3a6d54875cbfce05#91509bcd)
+   Compiling chacha20poly1305 v0.11.0
+   Compiling aes-gcm v0.11.1
+   Compiling crossbeam-queue v0.3.14
+   Compiling rmp-serde v1.3.1
+   Compiling parking_lot v0.12.5
+   Compiling sha2 v0.11.1
+   Compiling sha1 v0.11.0
+   Compiling hmac v0.13.0
+   Compiling polling v3.11.0
+   Compiling xattr v1.7.0
+   Compiling sysinfo v0.39.6
+   Compiling socket2 v0.6.5
+   Compiling base64 v0.23.1
+   Compiling hex v0.4.3
+   Compiling slab v0.4.12
+   Compiling ffw-p05-runtime v0.1.0 (/data/tmp/rch/source-content-pair-121b9fdc39ea3f35c5e018d44fbbe078/projects/franken_firmware/toolchain/src/p05-runtime)
+    Finished `test` profile [unoptimized] target(s) in 6m 46s
+     Running unittests src/main.rs (/data/tmp/rch/franken_firmware/.rch-target-vmi1264463-pool-121b9fdc39ea3f35c5e018d44fbbe078/debug/build/ffw-p05-runtime/c7c9f33ccf192fcf/out/ffw_p05_runtime-c7c9f33ccf192fcf)
+
+running 45 tests
+test tests::a_complete_stable_reading_is_the_only_census_that_passes ... ok
+test tests::a_drain_is_triggered_only_when_every_task_is_still_parked_on_a_live_timer ... ok
+test tests::a_field_is_read_by_its_exact_key_and_its_number ... ok
+test tests::a_gate_holds_a_waiter_until_it_is_released ... ok
+test tests::a_join_is_named_by_its_kind ... ok
+test tests::a_marker_line_names_its_operation_and_status ... ok
+test tests::a_missing_key_a_longer_key_and_a_non_number_are_unknown_not_zero ... ok
+test tests::a_partial_or_unknown_result_is_never_counted_as_a_pass ... FFW_P05_RUNTIME:CENSUS status=partial p
+FFW_P05_RUNTIME:CENSUS status=unknown u
+ok
+test tests::a_profile_that_claims_single_owner_but_has_worker_threads_is_refused ... ok
+test tests::a_runtime_that_ignores_the_caller_driven_choice_fails_the_runtime_row_and_the_audit ... ok
+test tests::a_runtime_with_a_thread_of_its_own_runs_handle_spawned_work_by_itself_and_fails_that_row ... FFW_P05_RUNTIME:CALLER_DRIVEN_HANDLE_SPAWN_WAITS status=ok ran_before_block_on=false ran_after_block_on=true ran_on_caller=true
+FFW_P05_RUNTIME:CALLER_DRIVEN_HANDLE_SPAWN_WAITS status=failed ran_before_block_on=true ran_after_block_on=true ran_on_caller=false
+ok
+test tests::a_thread_set_that_changed_during_the_reading_is_partial_not_a_disagreement_and_not_a_pass ... ok
+test tests::a_zero_thread_count_and_a_high_water_mark_below_the_resident_size_fail ... ok
+test tests::blocking_completion_uses_the_shared_deadline_instead_of_readmitting_an_expired_wait ... ok
+test tests::caller_driven_runtime_runs_every_phase_on_the_caller_thread_and_holds_the_thread_count ... FFW_P05_RUNTIME:BEGIN status=start pid=2353503 arch=x86_64 endian=little pointer_bits=64 threads_available_to_std=8 topology=caller_driven
+FFW_P05_RUNTIME:CENSUS status=ok phase=start threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=11052 vm_hwm_kb=11596 mem_available_kb=25561416 os_thread_ceiling=0
+FFW_P05_RUNTIME:CALLER_DRIVEN_PROFILE status=ok claimed=caller_driven stated_worker_threads=1 required_worker_threads=1 blocking_max_threads=0 os_thread_ceiling=0
+FFW_P05_RUNTIME:PROFILE_ACCEPT status=ok violations=0 worst_case_stack_bytes=1048576 budget=1048576
+FFW_P05_RUNTIME:PROFILE_REFUSES_ZERO_WORKERS status=ok named_violation=true builder_refused=true
+FFW_P05_RUNTIME:PROFILE_REFUSES_UNBOUNDED_QUEUE status=ok named_violation=true builder_refused=true
+FFW_P05_RUNTIME:PROFILE_REFUSES_OVER_BUDGET status=ok named_violation=true builder_refused=true
+FFW_P05_RUNTIME:CALLER_DRIVEN_REFUSES_TWO_WORKERS status=ok named_violation=true builder_refused=true stated_worker_threads=2
+FFW_P05_RUNTIME:CALLER_DRIVEN_REFUSES_BLOCKING_THREADS status=ok named_violation=true builder_refused=true stated_blocking_max_threads=1
+FFW_P05_RUNTIME:REACTOR status=ok kind=platform
+FFW_P05_RUNTIME:RUNTIME_AUDIT status=ok audit_ok=true workers=1/1 blocking_threads=0/0 global_queue=256/256 blocking_queue=0/0 (carried/stated)
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_build threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=11820 vm_hwm_kb=11820 mem_available_kb=25561416 os_thread_ceiling=0
+FFW_P05_RUNTIME:CALLER_DRIVEN_RUNTIME status=ok carried_workers=1 stated_workers=1 audit_ok=true os_thread_ceiling=0 children_joined=8 task_threads=1 tasks_on_caller_thread=true threads_during=2 start_threads=2
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_caller_driven_tasks threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=11836 vm_hwm_kb=11836 mem_available_kb=25561416 os_thread_ceiling=0
+FFW_P05_RUNTIME:SPAWN_JOIN status=ok children=8 joined=8 sum=140 expected=140
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_spawn_join threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=11852 vm_hwm_kb=11852 mem_available_kb=25561416 os_thread_ceiling=0
+FFW_P05_RUNTIME:ABORT_TIMER_PARKED status=ok parked=true pending_timers_before=1 pending_timers_after=0 abort_to_join_ms=0 join_result=Ok expected_join_result=Ok threads_during_task_dir=2 threads_during_status=2 cleanup_resumed=1 cleanup_unique=1 cleanup_cancelled=1 cleanup_before_deadline=1
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_abort_timer_parked threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=11856 vm_hwm_kb=11856 mem_available_kb=25561416 os_thread_ceiling=0
+FFW_P05_RUNTIME:ABORT_BLIND_VALUE status=ok join_result=Cancelled expected_join_result=Cancelled ok_value=None
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_abort_blind_value threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=11860 vm_hwm_kb=11860 mem_available_kb=25561416 os_thread_ceiling=0
+FFW_P05_RUNTIME:TIMER_WAKE status=ok wanted_ms=50 slept_ms=50
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_timer_wake threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=11860 vm_hwm_kb=11860 mem_available_kb=25560700 os_thread_ceiling=0
+FFW_P05_RUNTIME:UDP_LOOPBACK status=ok bytes=19 payload_equal=true peer_is_sender=true
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_udp threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=11864 vm_hwm_kb=11864 mem_available_kb=25560700 os_thread_ceiling=0
+FFW_P05_RUNTIME:CALLER_DRIVEN_BLOCKING_REFUSED status=ok policy=Forbidden refusal=Some(Forbidden) expected_refusal=Some(Forbidden) charged_refusal=Some(Forbidden) pool_threads_after_refusal=0 refused_job_ran=false
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_blocking_refused threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=11864 vm_hwm_kb=11864 mem_available_kb=25560700 os_thread_ceiling=0
+FFW_P05_RUNTIME:CALLER_DRIVEN_HANDLE_SPAWN_WAITS status=ok ran_before_block_on=false ran_after_block_on=true ran_on_caller=true
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_handle_spawn threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=11868 vm_hwm_kb=11868 mem_available_kb=25560608 os_thread_ceiling=0
+FFW_P05_RUNTIME:DRAIN status=ok tasks_spawned=4/4 tasks_parked_before_drain=4 snapshot_before_drain=(admitted=4 unfinished=4 timers_pending=4) outcome=Quiescent expected_outcome=Quiescent live_tasks=0 pending_obligations=0 live_regions=0 expected_live_regions=0 queued_finalizers=0 pending_spawns=0 pending_obligation_posts=false elapsed_ms=0 bound_ms=5000 cleanup_resumed=4 cleanup_unique=4 cleanup_cancelled=4 cleanup_before_deadline=4 repeat: outcome=Quiescent expected_outcome=Quiescent live_tasks=0 pending_obligations=0 live_regions=0 expected_live_regions=0 queued_finalizers=0 pending_spawns=0 pending_obligation_posts=false
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_drain threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=11876 vm_hwm_kb=11876 mem_available_kb=25560608 os_thread_ceiling=0
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_runtime_drop threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=11880 vm_hwm_kb=11880 mem_available_kb=25560608 settle=settled settle_threads=2 settle_polls=1 os_thread_ceiling=0
+FFW_P05_RUNTIME:END status=done ops=30 ok=30 failed=0 unsupported=0 partial=0 unknown=0 census_samples=12
+ok
+test tests::child_cleanup_must_resume_unique_children_under_cancellation_before_natural_expiry ... ok
+test tests::directory_iteration_errors_are_unknown_instead_of_a_partial_known_count ... ok
+test tests::first_use_of_the_blocking_pool_is_judged_from_its_counters_and_the_os_thread_count ... ok
+test tests::missing_blind_child_start_signal_still_releases_and_retires_the_real_child ... ok
+test tests::native_runtime_exercises_all_phases_and_drains ... FFW_P05_RUNTIME:BEGIN status=start pid=2353503 arch=x86_64 endian=little pointer_bits=64 threads_available_to_std=8
+FFW_P05_RUNTIME:CENSUS status=ok phase=start threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=11200 vm_hwm_kb=11672 mem_available_kb=25560608
+FFW_P05_RUNTIME:PROFILE_ACCEPT status=ok violations=0 worst_case_stack_bytes=2621440 budget=2621440
+FFW_P05_RUNTIME:PROFILE_REFUSES_ZERO_WORKERS status=ok named_violation=true builder_refused=true
+FFW_P05_RUNTIME:PROFILE_REFUSES_UNBOUNDED_QUEUE status=ok named_violation=true builder_refused=true
+FFW_P05_RUNTIME:PROFILE_REFUSES_OVER_BUDGET status=ok named_violation=true builder_refused=true
+FFW_P05_RUNTIME:REACTOR status=ok kind=platform
+FFW_P05_RUNTIME:RUNTIME_AUDIT status=ok audit_ok=true workers=2/2 blocking_threads=1/1 global_queue=256/256 blocking_queue=1/1 (carried/stated)
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_build threads_task_dir_before=4 threads_task_dir_after=4 task_dir_stable=true threads_status=4 sources_agree=true vm_rss_kb=11992 vm_hwm_kb=11992 mem_available_kb=25560608
+FFW_P05_RUNTIME:SPAWN_JOIN status=ok children=8 joined=8 sum=140 expected=140
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_spawn_join threads_task_dir_before=4 threads_task_dir_after=4 task_dir_stable=true threads_status=4 sources_agree=true vm_rss_kb=12128 vm_hwm_kb=12128 mem_available_kb=25560608
+FFW_P05_RUNTIME:ABORT_TIMER_PARKED status=ok parked=true pending_timers_before=1 pending_timers_after=0 abort_to_join_ms=0 join_result=Ok expected_join_result=Ok threads_during_task_dir=4 threads_during_status=4 cleanup_resumed=1 cleanup_unique=1 cleanup_cancelled=1 cleanup_before_deadline=1
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_abort_timer_parked threads_task_dir_before=4 threads_task_dir_after=4 task_dir_stable=true threads_status=4 sources_agree=true vm_rss_kb=12140 vm_hwm_kb=12140 mem_available_kb=25560608
+FFW_P05_RUNTIME:ABORT_BLIND_VALUE status=ok join_result=Cancelled expected_join_result=Cancelled ok_value=None
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_abort_blind_value threads_task_dir_before=4 threads_task_dir_after=4 task_dir_stable=true threads_status=4 sources_agree=true vm_rss_kb=12144 vm_hwm_kb=12144 mem_available_kb=25560608
+FFW_P05_RUNTIME:TIMER_WAKE status=ok wanted_ms=50 slept_ms=51
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_timer_wake threads_task_dir_before=4 threads_task_dir_after=4 task_dir_stable=true threads_status=4 sources_agree=true vm_rss_kb=12160 vm_hwm_kb=12160 mem_available_kb=25560612
+FFW_P05_RUNTIME:UDP_LOOPBACK status=ok bytes=19 payload_equal=true peer_is_sender=true
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_udp threads_task_dir_before=4 threads_task_dir_after=4 task_dir_stable=true threads_status=4 sources_agree=true vm_rss_kb=12164 vm_hwm_kb=12164 mem_available_kb=25560612
+FFW_P05_RUNTIME:BLOCKING_POOL status=ok idle_threads=0 first_admitted=true first_started=true second_admitted=true third_refused=Some(Saturated) active_threads_while_held=1 pending_while_held=1 threads_held_task_dir=5 threads_held_status=5 first_finished=true second_finished=true ran=2
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_blocking_pool threads_task_dir_before=5 threads_task_dir_after=5 task_dir_stable=true threads_status=5 sources_agree=true vm_rss_kb=12164 vm_hwm_kb=12164 mem_available_kb=25560360
+FFW_P05_RUNTIME:DRAIN status=ok tasks_spawned=4/4 tasks_parked_before_drain=4 snapshot_before_drain=(admitted=4 unfinished=4 timers_pending=4) outcome=Quiescent expected_outcome=Quiescent live_tasks=0 pending_obligations=0 live_regions=0 expected_live_regions=0 queued_finalizers=0 pending_spawns=0 pending_obligation_posts=false elapsed_ms=1 bound_ms=5000 cleanup_resumed=4 cleanup_unique=4 cleanup_cancelled=4 cleanup_before_deadline=4 repeat: outcome=Quiescent expected_outcome=Quiescent live_tasks=0 pending_obligations=0 live_regions=0 expected_live_regions=0 queued_finalizers=0 pending_spawns=0 pending_obligation_posts=false
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_drain threads_task_dir_before=5 threads_task_dir_after=5 task_dir_stable=true threads_status=5 sources_agree=true vm_rss_kb=12168 vm_hwm_kb=12168 mem_available_kb=25560360
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_runtime_drop threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=12008 vm_hwm_kb=12008 mem_available_kb=25560360 settle=settled settle_threads=2 settle_polls=2
+FFW_P05_RUNTIME:END status=done ops=23 ok=23 failed=0 unsupported=0 partial=0 unknown=0 census_samples=10
+ok
+test tests::one_missing_figure_is_partial_and_every_missing_figure_is_unknown_never_zero ... ok
+test tests::only_a_quiescent_report_with_every_count_zero_is_a_successful_drain ... ok
+test tests::only_the_exact_argument_or_marker_selects_the_caller_driven_run_and_single_owner_wins ... ok
+test tests::only_the_exact_single_owner_argument_selects_the_single_owner_run ... ok
+test tests::single_owner_runtime_exercises_the_supported_phases_and_types_the_unsupported_one ... FFW_P05_RUNTIME:BEGIN status=start pid=2353503 arch=x86_64 endian=little pointer_bits=64 threads_available_to_std=8 topology=single_owner
+FFW_P05_RUNTIME:CENSUS status=ok phase=start threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=11288 vm_hwm_kb=11828 mem_available_kb=25560360
+FFW_P05_RUNTIME:SINGLE_OWNER_PROFILE status=ok claimed=single_owner stated_worker_threads=1 required_worker_threads=1
+FFW_P05_RUNTIME:PROFILE_ACCEPT status=ok violations=0 worst_case_stack_bytes=1572864 budget=1572864
+FFW_P05_RUNTIME:PROFILE_REFUSES_ZERO_WORKERS status=ok named_violation=true builder_refused=true
+FFW_P05_RUNTIME:PROFILE_REFUSES_UNBOUNDED_QUEUE status=ok named_violation=true builder_refused=true
+FFW_P05_RUNTIME:PROFILE_REFUSES_OVER_BUDGET status=ok named_violation=true builder_refused=true
+FFW_P05_RUNTIME:REACTOR status=ok kind=platform
+FFW_P05_RUNTIME:RUNTIME_AUDIT status=ok audit_ok=true workers=1/1 blocking_threads=1/1 global_queue=256/256 blocking_queue=1/1 (carried/stated)
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_build threads_task_dir_before=3 threads_task_dir_after=3 task_dir_stable=true threads_status=3 sources_agree=true vm_rss_kb=12016 vm_hwm_kb=12016 mem_available_kb=25560360
+FFW_P05_RUNTIME:SINGLE_OWNER_RUNTIME status=ok carried_workers=1 stated_workers=1 audit_ok=true children_joined=8 task_threads=1 tasks_on_caller_thread=false
+FFW_P05_RUNTIME:CALLER_DRIVEN_CURRENT_THREAD status=unsupported reason=caller_driven_mode_is_the_separate_caller_driven_profile reason_source=profile_split evidence=LegacyProfile::caller_driven observed_tasks_on_caller_thread=false
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_single_owner_threads threads_task_dir_before=3 threads_task_dir_after=3 task_dir_stable=true threads_status=3 sources_agree=true vm_rss_kb=12132 vm_hwm_kb=12132 mem_available_kb=25560360
+FFW_P05_RUNTIME:SPAWN_JOIN status=ok children=8 joined=8 sum=140 expected=140
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_spawn_join threads_task_dir_before=3 threads_task_dir_after=3 task_dir_stable=true threads_status=3 sources_agree=true vm_rss_kb=12132 vm_hwm_kb=12132 mem_available_kb=25560360
+FFW_P05_RUNTIME:ABORT_TIMER_PARKED status=ok parked=true pending_timers_before=1 pending_timers_after=0 abort_to_join_ms=0 join_result=Ok expected_join_result=Ok threads_during_task_dir=3 threads_during_status=3 cleanup_resumed=1 cleanup_unique=1 cleanup_cancelled=1 cleanup_before_deadline=1
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_abort_timer_parked threads_task_dir_before=3 threads_task_dir_after=3 task_dir_stable=true threads_status=3 sources_agree=true vm_rss_kb=12144 vm_hwm_kb=12144 mem_available_kb=25560360
+FFW_P05_RUNTIME:ABORT_BLIND_VALUE status=ok join_result=Cancelled expected_join_result=Cancelled ok_value=None
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_abort_blind_value threads_task_dir_before=3 threads_task_dir_after=3 task_dir_stable=true threads_status=3 sources_agree=true vm_rss_kb=12144 vm_hwm_kb=12144 mem_available_kb=25560360
+FFW_P05_RUNTIME:TIMER_WAKE status=ok wanted_ms=50 slept_ms=50
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_timer_wake threads_task_dir_before=3 threads_task_dir_after=3 task_dir_stable=true threads_status=3 sources_agree=true vm_rss_kb=12144 vm_hwm_kb=12144 mem_available_kb=25560364
+FFW_P05_RUNTIME:UDP_LOOPBACK status=ok bytes=19 payload_equal=true peer_is_sender=true
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_udp threads_task_dir_before=3 threads_task_dir_after=3 task_dir_stable=true threads_status=3 sources_agree=true vm_rss_kb=12144 vm_hwm_kb=12144 mem_available_kb=25560364
+FFW_P05_RUNTIME:BLOCKING_POOL status=ok idle_threads=0 first_admitted=true first_started=true second_admitted=true third_refused=Some(Saturated) active_threads_while_held=1 pending_while_held=1 threads_held_task_dir=4 threads_held_status=4 first_finished=true second_finished=true ran=2
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_blocking_pool threads_task_dir_before=4 threads_task_dir_after=4 task_dir_stable=true threads_status=4 sources_agree=true vm_rss_kb=12144 vm_hwm_kb=12144 mem_available_kb=25560364
+FFW_P05_RUNTIME:SINGLE_OWNER_BLOCKING_OFFLOAD status=ok held_admitted=true held_started=true async_phase=ok held_job_unfinished_during_async=true held_job_finished_after_release=true async_detail=(children=8 joined=8 sum=140 expected=140)
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_blocking_offload threads_task_dir_before=4 threads_task_dir_after=4 task_dir_stable=true threads_status=4 sources_agree=true vm_rss_kb=12144 vm_hwm_kb=12144 mem_available_kb=25560364
+FFW_P05_RUNTIME:DRAIN status=ok tasks_spawned=4/4 tasks_parked_before_drain=4 snapshot_before_drain=(admitted=4 unfinished=4 timers_pending=4) outcome=Quiescent expected_outcome=Quiescent live_tasks=0 pending_obligations=0 live_regions=0 expected_live_regions=0 queued_finalizers=0 pending_spawns=0 pending_obligation_posts=false elapsed_ms=1 bound_ms=5000 cleanup_resumed=4 cleanup_unique=4 cleanup_cancelled=4 cleanup_before_deadline=4 repeat: outcome=Quiescent expected_outcome=Quiescent live_tasks=0 pending_obligations=0 live_regions=0 expected_live_regions=0 queued_finalizers=0 pending_spawns=0 pending_obligation_posts=false
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_drain threads_task_dir_before=4 threads_task_dir_after=4 task_dir_stable=true threads_status=4 sources_agree=true vm_rss_kb=12144 vm_hwm_kb=12144 mem_available_kb=25560364
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_runtime_drop threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=12064 vm_hwm_kb=12064 mem_available_kb=25560364 settle=settled settle_threads=2 settle_polls=1
+FFW_P05_RUNTIME:BYTE_BUDGET_REFUSAL status=ok audit_ok=true policy=BoundedBytes { max_queued: 1, max_live_bytes: 4096 } reactor=none budget_bytes=4096 declared_heap_bytes=4097 refusal=Some(ChargeTooLarge) expected_refusal=Some(ChargeTooLarge) pool_threads_after_refusal=0 refused_job_ran=false
+FFW_P05_RUNTIME:FIRST_USE_BACKGROUND status=ok pool_threads_before_first_job=0 pool_threads_while_job_runs=1 job_started=true job_finished=true os_threads_before=3 os_threads_during=4
+FFW_P05_RUNTIME:RUNTIME_USABLE_AFTER_REFUSAL status=ok spawn_join=ok outcome=Quiescent expected_outcome=Quiescent live_tasks=0 pending_obligations=0 live_regions=0 expected_live_regions=0 queued_finalizers=0 pending_spawns=0 pending_obligation_posts=false
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_byte_budget threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=12128 vm_hwm_kb=12128 mem_available_kb=25560364 settle=settled settle_threads=2 settle_polls=1
+FFW_P05_RUNTIME:END status=done ops=33 ok=32 failed=0 unsupported=1 partial=0 unknown=0 census_samples=13
+ok
+test tests::the_argument_or_the_marker_selects_the_single_owner_run_and_the_supervisors_argv_alone_does_not ... ok
+test tests::the_byte_budget_run_refuses_an_oversized_charge_and_leaves_the_runtime_usable ... FFW_P05_RUNTIME:BYTE_BUDGET_REFUSAL status=ok audit_ok=true policy=BoundedBytes { max_queued: 1, max_live_bytes: 4096 } reactor=none budget_bytes=4096 declared_heap_bytes=4097 refusal=Some(ChargeTooLarge) expected_refusal=Some(ChargeTooLarge) pool_threads_after_refusal=0 refused_job_ran=false
+FFW_P05_RUNTIME:FIRST_USE_BACKGROUND status=ok pool_threads_before_first_job=0 pool_threads_while_job_runs=1 job_started=true job_finished=true os_threads_before=3 os_threads_during=4
+FFW_P05_RUNTIME:RUNTIME_USABLE_AFTER_REFUSAL status=ok spawn_join=ok outcome=Quiescent expected_outcome=Quiescent live_tasks=0 pending_obligations=0 live_regions=0 expected_live_regions=0 queued_finalizers=0 pending_spawns=0 pending_obligation_posts=false
+FFW_P05_RUNTIME:END status=done ops=3 ok=3 failed=0 unsupported=0 partial=0 unknown=0 census_samples=0
+ok
+test tests::the_caller_driven_blocking_and_handle_spawn_rows_are_judged_from_observations ... ok
+test tests::the_caller_driven_mode_is_unsupported_unknown_or_failed_and_never_ok ... FAILED
+test tests::the_caller_driven_profile_row_is_judged_from_the_profile_alone ... ok
+test tests::the_caller_driven_runtime_row_passes_only_for_tasks_on_the_caller_within_the_start_count ... ok
+test tests::the_census_of_a_real_process_never_passes_on_a_disagreement_and_prints_unknown_for_what_it_cannot_read ... ok
+test tests::the_counters_count_what_was_recorded_and_the_exit_code_never_hides_a_failure ... FFW_P05_RUNTIME:A status=ok x=1
+FFW_P05_RUNTIME:B status=unsupported why
+FFW_P05_RUNTIME:C status=partial some
+FFW_P05_RUNTIME:D status=unknown none
+FFW_P05_RUNTIME:E status=failed y=2
+ok
+test tests::the_declared_reason_is_the_start_of_the_caller_driven_detail_the_exit_code_looks_for ... ok
+test tests::the_first_matching_row_wins_and_a_later_bad_row_does_not_hide_it ... ok
+test tests::the_marker_read_is_bounded_and_an_oversized_marker_is_not_the_word ... ok
+test tests::the_marker_selects_the_single_owner_run_only_when_it_is_exactly_the_word ... ok
+test tests::the_probe_profile_is_bounded_and_the_planted_defects_are_refused_by_name ... ok
+test tests::the_single_owner_exit_code_is_zero_only_for_exactly_the_declared_unsupported_row ... FFW_P05_RUNTIME:ROW0 status=ok x=1
+FFW_P05_RUNTIME:ROW1 status=ok x=1
+FFW_P05_RUNTIME:ROW2 status=ok x=1
+FFW_P05_RUNTIME:ROW3 status=ok x=1
+FFW_P05_RUNTIME:ROW4 status=ok x=1
+FFW_P05_RUNTIME:ROW5 status=ok x=1
+FFW_P05_RUNTIME:ROW6 status=ok x=1
+FFW_P05_RUNTIME:ROW7 status=ok x=1
+FFW_P05_RUNTIME:ROW8 status=ok x=1
+FFW_P05_RUNTIME:ROW9 status=ok x=1
+FFW_P05_RUNTIME:ROW10 status=ok x=1
+FFW_P05_RUNTIME:ROW11 status=ok x=1
+FFW_P05_RUNTIME:ROW12 status=ok x=1
+FFW_P05_RUNTIME:ROW13 status=ok x=1
+FFW_P05_RUNTIME:ROW14 status=ok x=1
+FFW_P05_RUNTIME:ROW15 status=ok x=1
+FFW_P05_RUNTIME:ROW16 status=ok x=1
+FFW_P05_RUNTIME:ROW17 status=ok x=1
+FFW_P05_RUNTIME:ROW18 status=ok x=1
+FFW_P05_RUNTIME:ROW19 status=ok x=1
+FFW_P05_RUNTIME:ROW20 status=ok x=1
+FFW_P05_RUNTIME:ROW21 status=ok x=1
+FFW_P05_RUNTIME:ROW22 status=ok x=1
+FFW_P05_RUNTIME:ROW23 status=ok x=1
+FFW_P05_RUNTIME:ROW24 status=ok x=1
+FFW_P05_RUNTIME:ROW25 status=ok x=1
+FFW_P05_RUNTIME:ROW26 status=ok x=1
+FFW_P05_RUNTIME:ROW27 status=ok x=1
+FFW_P05_RUNTIME:ROW28 status=ok x=1
+FFW_P05_RUNTIME:ROW29 status=ok x=1
+FFW_P05_RUNTIME:ROW30 status=ok x=1
+FFW_P05_RUNTIME:ROW31 status=ok x=1
+FFW_P05_RUNTIME:CALLER_DRIVEN_CURRENT_THREAD status=unsupported reason=caller_driven_mode_is_the_separate_caller_driven_profile reason_source=profile_split evidence=LegacyProfile::caller_driven observed_tasks_on_caller_thread=false
+FFW_P05_RUNTIME:ROW0 status=ok x=1
+FFW_P05_RUNTIME:ROW1 status=ok x=1
+FFW_P05_RUNTIME:ROW2 status=ok x=1
+FFW_P05_RUNTIME:ROW3 status=ok x=1
+FFW_P05_RUNTIME:ROW4 status=ok x=1
+FFW_P05_RUNTIME:ROW5 status=ok x=1
+FFW_P05_RUNTIME:ROW6 status=ok x=1
+FFW_P05_RUNTIME:ROW7 status=ok x=1
+FFW_P05_RUNTIME:ROW8 status=ok x=1
+FFW_P05_RUNTIME:ROW9 status=ok x=1
+FFW_P05_RUNTIME:ROW10 status=ok x=1
+FFW_P05_RUNTIME:ROW11 status=ok x=1
+FFW_P05_RUNTIME:ROW12 status=ok x=1
+FFW_P05_RUNTIME:ROW13 status=ok x=1
+FFW_P05_RUNTIME:ROW14 status=ok x=1
+FFW_P05_RUNTIME:ROW15 status=ok x=1
+FFW_P05_RUNTIME:ROW16 status=ok x=1
+FFW_P05_RUNTIME:ROW17 status=ok x=1
+FFW_P05_RUNTIME:ROW18 status=ok x=1
+FFW_P05_RUNTIME:ROW19 status=ok x=1
+FFW_P05_RUNTIME:ROW20 status=ok x=1
+FFW_P05_RUNTIME:ROW21 status=ok x=1
+FFW_P05_RUNTIME:ROW22 status=ok x=1
+FFW_P05_RUNTIME:ROW23 status=ok x=1
+FFW_P05_RUNTIME:ROW24 status=ok x=1
+FFW_P05_RUNTIME:ROW25 status=ok x=1
+FFW_P05_RUNTIME:ROW26 status=ok x=1
+FFW_P05_RUNTIME:ROW27 status=ok x=1
+FFW_P05_RUNTIME:ROW28 status=ok x=1
+FFW_P05_RUNTIME:ROW29 status=ok x=1
+FFW_P05_RUNTIME:ROW30 status=ok x=1
+FFW_P05_RUNTIME:OTHER status=unsupported reason=other observed=1
+FFW_P05_RUNTIME:CALLER_DRIVEN_CURRENT_THREAD status=unsupported reason=caller_driven_mode_is_the_separate_caller_driven_profile reason_source=profile_split evidence=LegacyProfile::caller_driven observed_tasks_on_caller_thread=false
+FFW_P05_RUNTIME:ROW0 status=ok x=1
+FFW_P05_RUNTIME:ROW1 status=ok x=1
+FFW_P05_RUNTIME:ROW2 status=ok x=1
+FFW_P05_RUNTIME:ROW3 status=ok x=1
+FFW_P05_RUNTIME:ROW4 status=ok x=1
+FFW_P05_RUNTIME:ROW5 status=ok x=1
+FFW_P05_RUNTIME:ROW6 status=ok x=1
+FFW_P05_RUNTIME:ROW7 status=ok x=1
+FFW_P05_RUNTIME:ROW8 status=ok x=1
+FFW_P05_RUNTIME:ROW9 status=ok x=1
+FFW_P05_RUNTIME:ROW10 status=ok x=1
+FFW_P05_RUNTIME:ROW11 status=ok x=1
+FFW_P05_RUNTIME:ROW12 status=ok x=1
+FFW_P05_RUNTIME:ROW13 status=ok x=1
+FFW_P05_RUNTIME:ROW14 status=ok x=1
+FFW_P05_RUNTIME:ROW15 status=ok x=1
+FFW_P05_RUNTIME:ROW16 status=ok x=1
+FFW_P05_RUNTIME:ROW17 status=ok x=1
+FFW_P05_RUNTIME:ROW18 status=ok x=1
+FFW_P05_RUNTIME:ROW19 status=ok x=1
+FFW_P05_RUNTIME:ROW20 status=ok x=1
+FFW_P05_RUNTIME:ROW21 status=ok x=1
+FFW_P05_RUNTIME:ROW22 status=ok x=1
+FFW_P05_RUNTIME:ROW23 status=ok x=1
+FFW_P05_RUNTIME:ROW24 status=ok x=1
+FFW_P05_RUNTIME:ROW25 status=ok x=1
+FFW_P05_RUNTIME:ROW26 status=ok x=1
+FFW_P05_RUNTIME:ROW27 status=ok x=1
+FFW_P05_RUNTIME:ROW28 status=ok x=1
+FFW_P05_RUNTIME:ROW29 status=ok x=1
+FFW_P05_RUNTIME:ROW30 status=ok x=1
+FFW_P05_RUNTIME:OTHER status=failed x=0
+FFW_P05_RUNTIME:CALLER_DRIVEN_CURRENT_THREAD status=unsupported reason=caller_driven_mode_is_the_separate_caller_driven_profile reason_source=profile_split evidence=LegacyProfile::caller_driven observed_tasks_on_caller_thread=false
+FFW_P05_RUNTIME:ROW0 status=ok x=1
+FFW_P05_RUNTIME:ROW1 status=ok x=1
+FFW_P05_RUNTIME:ROW2 status=ok x=1
+FFW_P05_RUNTIME:ROW3 status=ok x=1
+FFW_P05_RUNTIME:ROW4 status=ok x=1
+FFW_P05_RUNTIME:ROW5 status=ok x=1
+FFW_P05_RUNTIME:ROW6 status=ok x=1
+FFW_P05_RUNTIME:ROW7 status=ok x=1
+FFW_P05_RUNTIME:ROW8 status=ok x=1
+FFW_P05_RUNTIME:ROW9 status=ok x=1
+FFW_P05_RUNTIME:ROW10 status=ok x=1
+
+FFW_P05_RUNTIME:ROW11 status=ok x=1
+FFW_P05_RUNTIME:ROW12 status=ok x=1
+FFW_P05_RUNTIME:ROW13 status=ok x=1
+FFW_P05_RUNTIME:ROW14 status=ok x=1
+FFW_P05_RUNTIME:ROW15 status=ok x=1
+FFW_P05_RUNTIME:ROW16 status=ok x=1
+FFW_P05_RUNTIME:ROW17 status=ok x=1
+FFW_P05_RUNTIME:ROW18 status=ok x=1
+FFW_P05_RUNTIME:ROW19 status=ok x=1
+FFW_P05_RUNTIME:ROW20 status=ok x=1
+FFW_P05_RUNTIME:ROW21 status=ok x=1
+FFW_P05_RUNTIME:ROW22 status=ok x=1
+FFW_P05_RUNTIME:ROW23 status=ok x=1
+FFW_P05_RUNTIME:ROW24 status=ok x=1
+FFW_P05_RUNTIME:ROW25 status=ok x=1
+FFW_P05_RUNTIME:ROW26 status=ok x=1
+FFW_P05_RUNTIME:ROW27 status=ok x=1
+FFW_P05_RUNTIME:ROW28 status=ok x=1
+FFW_P05_RUNTIME:ROW29 status=ok x=1
+FFW_P05_RUNTIME:ROW30 status=ok x=1
+FFW_P05_RUNTIME:OTHER status=partial x=0
+FFW_P05_RUNTIME:CALLER_DRIVEN_CURRENT_THREAD status=unsupported reason=caller_driven_mode_is_the_separate_caller_driven_profile reason_source=profile_split evidence=LegacyProfile::caller_driven observed_tasks_on_caller_thread=false
+FFW_P05_RUNTIME:ROW0 status=ok x=1
+FFW_P05_RUNTIME:ROW1 status=ok x=1
+FFW_P05_RUNTIME:ROW2 status=ok x=1
+FFW_P05_RUNTIME:ROW3 status=ok x=1
+FFW_P05_RUNTIME:ROW4 status=ok x=1
+FFW_P05_RUNTIME:ROW5 status=ok x=1
+FFW_P05_RUNTIME:ROW6 status=ok x=1
+FFW_P05_RUNTIME:ROW7 status=ok x=1
+FFW_P05_RUNTIME:ROW8 status=ok x=1
+FFW_P05_RUNTIME:ROW9 status=ok x=1
+FFW_P05_RUNTIME:ROW10 status=ok x=1
+FFW_P05_RUNTIME:ROW11 status=ok x=1
+FFW_P05_RUNTIME:ROW12 status=ok x=1
+FFW_P05_RUNTIME:ROW13 status=ok x=1
+FFW_P05_RUNTIME:ROW14 status=ok x=1
+FFW_P05_RUNTIME:ROW15 status=ok x=1
+FFW_P05_RUNTIME:ROW16 status=ok x=1
+FFW_P05_RUNTIME:ROW17 status=ok x=1
+FFW_P05_RUNTIME:ROW18 status=ok x=1
+FFW_P05_RUNTIME:ROW19 status=ok x=1
+FFW_P05_RUNTIME:ROW20 status=ok x=1
+FFW_P05_RUNTIME:ROW21 status=ok x=1
+FFW_P05_RUNTIME:ROW22 status=ok x=1
+FFW_P05_RUNTIME:ROW23 status=ok x=1
+FFW_P05_RUNTIME:ROW24 status=ok x=1
+FFW_P05_RUNTIME:ROW25 status=ok x=1
+FFW_P05_RUNTIME:ROW26 status=ok x=1
+FFW_P05_RUNTIME:ROW27 status=ok x=1
+FFW_P05_RUNTIME:ROW28 status=ok x=1
+FFW_P05_RUNTIME:ROW29 status=ok x=1
+FFW_P05_RUNTIME:ROW30 status=ok x=1
+FFW_P05_RUNTIME:OTHER status=unknown x=0
+FFW_P05_RUNTIME:CALLER_DRIVEN_CURRENT_THREAD status=unsupported reason=caller_driven_mode_is_the_separate_caller_driven_profile reason_source=profile_split evidence=LegacyProfile::caller_driven observed_tasks_on_caller_thread=false
+FFW_P05_RUNTIME:ROW0 status=ok x=1
+FFW_P05_RUNTIME:ROW1 status=ok x=1
+FFW_P05_RUNTIME:ROW2 status=ok x=1
+FFW_P05_RUNTIME:ROW3 status=ok x=1
+FFW_P05_RUNTIME:ROW4 status=ok x=1
+FFW_P05_RUNTIME:ROW5 status=ok x=1
+FFW_P05_RUNTIME:ROW6 status=ok x=1
+FFW_P05_RUNTIME:ROW7 status=ok x=1
+FFW_P05_RUNTIME:ROW8 status=ok x=1
+FFW_P05_RUNTIME:ROW9 status=ok x=1
+FFW_P05_RUNTIME:ROW10 status=ok x=1
+FFW_P05_RUNTIME:ROW11 status=ok x=1
+FFW_P05_RUNTIME:ROW12 status=ok x=1
+FFW_P05_RUNTIME:ROW13 status=ok x=1
+FFW_P05_RUNTIME:ROW14 status=ok x=1
+FFW_P05_RUNTIME:ROW15 status=ok x=1
+FFW_P05_RUNTIME:ROW16 status=ok x=1
+FFW_P05_RUNTIME:ROW17 status=ok x=1
+FFW_P05_RUNTIME:ROW18 status=ok x=1
+FFW_P05_RUNTIME:ROW19 status=ok x=1
+FFW_P05_RUNTIME:ROW20 status=ok x=1
+FFW_P05_RUNTIME:ROW21 status=ok x=1
+FFW_P05_RUNTIME:ROW22 status=ok x=1
+FFW_P05_RUNTIME:ROW23 status=ok x=1
+FFW_P05_RUNTIME:ROW24 status=ok x=1
+FFW_P05_RUNTIME:ROW25 status=ok x=1
+FFW_P05_RUNTIME:ROW26 status=ok x=1
+FFW_P05_RUNTIME:ROW27 status=ok x=1
+FFW_P05_RUNTIME:ROW28 status=ok x=1
+FFW_P05_RUNTIME:ROW29 status=ok x=1
+FFW_P05_RUNTIME:ROW30 status=ok x=1
+FFW_P05_RUNTIME:ROW31 status=ok x=1
+FFW_P05_RUNTIME:CALLER_DRIVEN_CURRENT_THREAD status=failed caller_driven_mode_observed_on_a_legacy_profile_runtime observed_tasks_on_caller_thread=true contradicts reason=caller_driven_mode_is_the_separate_caller_driven_profile reason_source=profile_split evidence=LegacyProfile::caller_driven
+FFW_P05_RUNTIME:ROW0 status=ok x=1
+FFW_P05_RUNTIME:ROW1 status=ok x=1
+FFW_P05_RUNTIME:ROW2 status=ok x=1
+FFW_P05_RUNTIME:ROW3 status=ok x=1
+FFW_P05_RUNTIME:ROW4 status=ok x=1
+FFW_P05_RUNTIME:ROW5 status=ok x=1
+FFW_P05_RUNTIME:ROW6 status=ok x=1
+FFW_P05_RUNTIME:ROW7 status=ok x=1
+FFW_P05_RUNTIME:ROW8 status=ok x=1
+FFW_P05_RUNTIME:ROW9 status=ok x=1
+FFW_P05_RUNTIME:ROW10 status=ok x=1
+thread 'tests::the_caller_driven_mode_is_unsupported_unknown_or_failed_and_never_ok' (2353748) panicked at src/main.rs:3334:9:
+FFW_P05_RUNTIME:ROW11 status=ok x=1
+FFW_P05_RUNTIME:ROW12 status=ok x=1
+FFW_P05_RUNTIME:ROW13 status=ok x=1
+FFW_P05_RUNTIME:ROW14 status=ok x=1
+FFW_P05_RUNTIME:ROW15 status=ok x=1
+FFW_P05_RUNTIME:ROW16 status=ok x=1
+FFW_P05_RUNTIME:ROW17 status=ok x=1
+FFW_P05_RUNTIME:ROW18 status=ok x=1
+FFW_P05_RUNTIME:ROW19 status=ok x=1
+FFW_P05_RUNTIME:ROW20 status=ok x=1
+FFW_P05_RUNTIME:ROW21 status=ok x=1
+FFW_P05_RUNTIME:ROW22 status=ok x=1
+FFW_P05_RUNTIME:ROW23 status=ok x=1
+FFW_P05_RUNTIME:ROW24 status=ok x=1
+FFW_P05_RUNTIME:ROW25 status=ok x=1
+FFW_P05_RUNTIME:ROW26 status=ok x=1
+FFW_P05_RUNTIME:ROW27 status=ok x=1
+FFW_P05_RUNTIME:ROW28 status=ok x=1
+FFW_P05_RUNTIME:ROW29 status=ok x=1
+FFW_P05_RUNTIME:ROW30 status=ok x=1
+FFW_P05_RUNTIME:ROW31 status=ok x=1
+FFW_P05_RUNTIME:CALLER_DRIVEN_CURRENT_THREAD status=ok x=1
+FFW_P05_RUNTIME:ROW0 status=ok x=1
+FFW_P05_RUNTIME:ROW1 status=ok x=1
+FFW_P05_RUNTIME:ROW2 status=ok x=1
+FFW_P05_RUNTIME:ROW3 status=ok x=1
+FFW_P05_RUNTIME:ROW4 status=ok x=1
+FFW_P05_RUNTIME:ROW5 status=ok x=1
+FFW_P05_RUNTIME:ROW6 status=ok x=1
+FFW_P05_RUNTIME:ROW7 status=ok x=1
+FFW_P05_RUNTIME:ROW8 status=ok x=1
+FFW_P05_RUNTIME:ROW9 status=ok x=1
+FFW_P05_RUNTIME:ROW10 status=ok x=1
+FFW_P05_RUNTIME:ROW11 status=ok x=1
+FFW_P05_RUNTIME:ROW12 status=ok x=1
+FFW_P05_RUNTIME:ROW13 status=ok x=1
+FFW_P05_RUNTIME:ROW14 status=ok x=1
+FFW_P05_RUNTIME:ROW15 status=ok x=1
+FFW_P05_RUNTIME:ROW16 status=ok x=1
+FFW_P05_RUNTIME:ROW17 status=ok x=1
+FFW_P05_RUNTIME:ROW18 status=ok x=1
+FFW_P05_RUNTIME:ROW19 status=ok x=1
+FFW_P05_RUNTIME:ROW20 status=ok x=1
+FFW_P05_RUNTIME:ROW21 status=ok x=1
+FFW_P05_RUNTIME:ROW22 status=ok x=1
+FFW_P05_RUNTIME:ROW23 status=ok x=1
+FFW_P05_RUNTIME:ROW24 status=ok x=1
+FFW_P05_RUNTIME:ROW25 status=ok x=1
+FFW_P05_RUNTIME:ROW26 status=ok x=1
+FFW_P05_RUNTIME:ROW27 status=ok x=1
+FFW_P05_RUNTIME:ROW28 status=ok x=1
+FFW_P05_RUNTIME:ROW29 status=ok x=1
+FFW_P05_RUNTIME:ROW30 status=ok x=1
+FFW_P05_RUNTIME:ROW31 status=ok x=1
+FFW_P05_RUNTIME:CALLER_DRIVEN_CURRENT_THREAD status=unknown task_thread_observation_unavailable
+FFW_P05_RUNTIME:ROW0 status=ok x=1
+FFW_P05_RUNTIME:ROW1 status=ok x=1
+FFW_P05_RUNTIME:ROW2 status=ok x=1
+FFW_P05_RUNTIME:ROW3 status=ok x=1
+FFW_P05_RUNTIME:ROW4 status=ok x=1
+FFW_P05_RUNTIME:ROW5 status=ok x=1
+FFW_P05_RUNTIME:ROW6 status=ok x=1
+FFW_P05_RUNTIME:ROW7 status=ok x=1
+FFW_P05_RUNTIME:ROW8 status=ok x=1
+FFW_P05_RUNTIME:ROW9 status=ok x=1
+FFW_P05_RUNTIME:ROW10 status=ok x=1
+FFW_P05_RUNTIME:ROW11 status=ok x=1
+FFW_P05_RUNTIME:ROW12 status=ok x=1
+FFW_P05_RUNTIME:ROW13 status=ok x=1
+FFW_P05_RUNTIME:ROW14 status=ok x=1
+FFW_P05_RUNTIME:ROW15 status=ok x=1
+FFW_P05_RUNTIME:ROW16 status=ok x=1
+FFW_P05_RUNTIME:ROW17 status=ok x=1
+FFW_P05_RUNTIME:ROW18 status=ok x=1
+FFW_P05_RUNTIME:ROW19 status=ok x=1
+FFW_P05_RUNTIME:ROW20 status=ok x=1
+FFW_P05_RUNTIME:ROW21 status=ok x=1
+FFW_P05_RUNTIME:ROW22 status=ok x=1
+FFW_P05_RUNTIME:ROW23 status=ok x=1
+FFW_P05_RUNTIME:ROW24 status=ok x=1
+FFW_P05_RUNTIME:ROW25 status=ok x=1
+FFW_P05_RUNTIME:ROW26 status=ok x=1
+FFW_P05_RUNTIME:ROW27 status=ok x=1
+FFW_P05_RUNTIME:ROW28 status=ok x=1
+FFW_P05_RUNTIME:ROW29 status=ok x=1
+FFW_P05_RUNTIME:ROW30 status=ok x=1
+FFW_P05_RUNTIME:ROW31 status=ok x=1
+FFW_P05_RUNTIME:UDP_LOOPBACK status=unsupported reason=no_reactor observed=1
+FFW_P05_RUNTIME:ROW0 status=ok x=1
+FFW_P05_RUNTIME:ROW1 status=ok x=1
+FFW_P05_RUNTIME:ROW2 status=ok x=1
+FFW_P05_RUNTIME:ROW3 status=ok x=1
+FFW_P05_RUNTIME:ROW4 status=ok x=1
+FFW_P05_RUNTIME:ROW5 status=ok x=1
+FFW_P05_RUNTIME:ROW6 status=ok x=1
+FFW_P05_RUNTIME:ROW7 status=ok x=1
+FFW_P05_RUNTIME:ROW8 status=ok x=1
+FFW_P05_RUNTIME:ROW9 status=ok x=1
+FFW_P05_RUNTIME:ROW10 status=ok x=1
+assertion failed: unsupported.detail().contains("legacy_profile.rs:406")
+FFW_P05_RUNTIME:ROW11 status=ok x=1
+FFW_P05_RUNTIME:ROW12 status=ok x=1
+FFW_P05_RUNTIME:ROW13 status=ok x=1
+FFW_P05_RUNTIME:ROW14 status=ok x=1
+FFW_P05_RUNTIME:ROW15 status=ok x=1
+FFW_P05_RUNTIME:ROW16 status=ok x=1
+FFW_P05_RUNTIME:ROW17 status=ok x=1
+FFW_P05_RUNTIME:ROW18 status=ok x=1
+FFW_P05_RUNTIME:ROW19 status=ok x=1
+FFW_P05_RUNTIME:ROW20 status=ok x=1
+FFW_P05_RUNTIME:ROW21 status=ok x=1
+FFW_P05_RUNTIME:ROW22 status=ok x=1
+FFW_P05_RUNTIME:ROW23 status=ok x=1
+FFW_P05_RUNTIME:ROW24 status=ok x=1
+FFW_P05_RUNTIME:ROW25 status=ok x=1
+FFW_P05_RUNTIME:ROW26 status=ok x=1
+FFW_P05_RUNTIME:ROW27 status=ok x=1
+FFW_P05_RUNTIME:ROW28 status=ok x=1
+FFW_P05_RUNTIME:ROW29 status=ok x=1
+FFW_P05_RUNTIME:ROW30 status=ok x=1
+FFW_P05_RUNTIME:ROW31 status=ok x=1
+FFW_P05_RUNTIME:CALLER_DRIVEN_CURRENT_THREAD status=unsupported reason=something_else observed=1
+FFW_P05_RUNTIME:ROW0 status=ok x=1
+FFW_P05_RUNTIME:ROW1 status=ok x=1
+FFW_P05_RUNTIME:ROW2 status=ok x=1
+FFW_P05_RUNTIME:ROW3 status=ok x=1
+FFW_P05_RUNTIME:ROW4 status=ok x=1
+FFW_P05_RUNTIME:ROW5 status=ok x=1
+FFW_P05_RUNTIME:ROW6 status=ok x=1
+FFW_P05_RUNTIME:ROW7 status=ok x=1
+FFW_P05_RUNTIME:ROW8 status=ok x=1
+FFW_P05_RUNTIME:ROW9 status=ok x=1
+FFW_P05_RUNTIME:CALLER_DRIVEN_CURRENT_THREAD status=unsupported reason=caller_driven_mode_is_the_separate_caller_driven_profile reason_source=profile_split evidence=LegacyProfile::caller_driven observed_tasks_on_caller_thread=false
+ok
+test tests::the_single_owner_run_refuses_a_threaded_profile_before_building_a_runtime ... FFW_P05_RUNTIME:BEGIN status=start pid=2353503 arch=x86_64 endian=little pointer_bits=64 threads_available_to_std=8 topology=single_owner
+FFW_P05_RUNTIME:CENSUS status=ok phase=start threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=12004 vm_hwm_kb=12004 mem_available_kb=25560364
+FFW_P05_RUNTIME:SINGLE_OWNER_PROFILE status=failed claimed=single_owner refused=more_than_one_worker stated_worker_threads=2 required_worker_threads=1
+ok
+test tests::the_single_owner_runtime_row_passes_only_for_one_carried_worker_and_one_task_thread ... ok
+test tests::two_stable_thread_sources_that_disagree_fail_and_do_not_pass ... ok
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `--bin ffw-p05-runtime`
+test tests::wait_until_gives_up_at_its_limit_and_returns_at_once_when_true ... ok
+test tests::wall_watchdog_rejects_a_ready_result_observed_after_the_deadline ... ok
+test tests::wall_watchdog_requeues_pending_work_and_expires_without_a_runtime_timer ... ok
+
+failures:
+
+failures:
+    tests::the_caller_driven_mode_is_unsupported_unknown_or_failed_and_never_ok
+
+test result: FAILED. 44 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.30s
+
+
+  2026-11-09T17:47:21.226729Z  INFO rch::hook::transfer_orchestration: Remote command finished: exit=101 in 413511ms
+    at rch/src/hook/transfer_orchestration.rs:2985 on ThreadId(1)
+
+  2026-11-09T17:47:21.227119Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+  2026-11-09T17:47:26.309867Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+  2026-11-09T17:47:26.972525Z  INFO rch::transfer: Loaded 5 pattern(s) from .rchignore (total: 90)
+    at rch/src/transfer.rs:5096 on ThreadId(1)
+
+[RCH] remote vmi1264463 failed (exit 101)

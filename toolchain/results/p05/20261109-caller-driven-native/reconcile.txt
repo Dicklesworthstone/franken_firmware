@@ -1,0 +1,21 @@
+GREEN
+command: python3 tests/p05/native196_reconcile.py --registry tests/p05/native_runtime45_names.txt --run <retained-green-log> 0
+  p05v3b-test45-r2.log: declared=[45] result_lines=1 passed=45 failed=0 ignored=0 measured=0 filtered_out=0 credited_by_closure=9
+native_runtime45: COMPLETE: 45/45 names `ok` exactly once across 1 run(s); filtered out and ignored are accounted for in the lines above
+reconciler exit: 0
+
+RED CONTROL
+command: python3 tests/p05/native196_reconcile.py --registry tests/p05/native_runtime45_names.txt --run <retained-red-log> 101
+  p05v3b-test45.log: declared=[45] result_lines=1 passed=44 failed=1 ignored=0 measured=0 filtered_out=0
+native_runtime45: INCOMPLETE: 35/45 names `ok`; 10 problem(s)
+  - p05v3b-test45.log: the command exited 101
+  - p05v3b-test45.log: the remote command finished with exit=101
+  - p05v3b-test45.log: cargo: a test binary failed: error: test failed, to rerun pass `--bin ffw-p05-runtime`
+  - p05v3b-test45.log: libtest: a binary reported FAILED: test result: FAILED. 44 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.30s
+  - p05v3b-test45.log: libtest: a test FAILED: test tests::the_caller_driven_mode_is_unsupported_unknown_or_failed_and_never_ok ... FAILED
+  - p05v3b-test45.log: `test result: FAILED.`
+  - p05v3b-test45.log: 1 failed; every one of the 45 must be `ok`, none ignored
+  - p05v3b-test45.log: p05v3b-test45.log: a section of 45 tests reports in sorted order, which is how libtest runs with one test thread; 9 result(s) found only by the open-prefix rule were not attributed
+  - 9 registry name(s) never reported, e.g. ['tests::a_partial_or_unknown_result_is_never_counted_as_a_pass', 'tests::a_runtime_with_a_thread_of_its_own_runs_handle_spawned_work_by_itself_and_fails_that_row', 'tests::caller_driven_runtime_runs_every_phase_on_the_caller_thread_and_holds_the_thread_count']
+  - tests::the_caller_driven_mode_is_unsupported_unknown_or_failed_and_never_ok: FAILED, not `ok`
+reconciler exit: 1
