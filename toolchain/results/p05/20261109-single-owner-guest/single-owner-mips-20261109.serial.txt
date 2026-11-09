@@ -1,0 +1,214 @@
+[    0.000000] Linux version 4.19.0-21-4kc-malta (debian-kernel@lists.debian.org) (gcc version 8.3.0 (Debian 8.3.0-6)) #1 SMP Debian 4.19.249-2 (2022-06-30)
+[    0.000000] earlycon: uart8250 at I/O port 0x3f8 (options '38400n8')
+[    0.000000] bootconsole [uart8250] enabled
+[    0.000000] CPU0 revision is: 00019300 (MIPS 24Kc)
+[    0.000000] FPU revision is: 00739300
+[    0.000000] MIPS: machine is mti,malta
+[    0.000000] Software DMA cache coherency enabled
+[    0.000000] Determined physical RAM map:
+[    0.000000]  memory: 03fff000 @ 00000000 (usable)
+[    0.000000] Kernel relocated by 0x(ptrval)
+[    0.000000]  .text @ 0x(ptrval)
+[    0.000000]  .data @ 0x(ptrval)
+[    0.000000]  .bss  @ 0x(ptrval)
+[    0.000000] Initial ramdisk at: 0x83ee0000 (1083279 bytes)
+[    0.000000] Primary instruction cache 2kB, VIPT, 2-way, linesize 16 bytes.
+[    0.000000] Primary data cache 2kB, 2-way, VIPT, no aliases, linesize 16 bytes
+[    0.000000] Zone ranges:
+[    0.000000]   DMA      [mem 0x0000000000000000-0x0000000000ffffff]
+[    0.000000]   Normal   [mem 0x0000000001000000-0x0000000003ffefff]
+[    0.000000] Movable zone start for each node
+[    0.000000] Early memory node ranges
+[    0.000000]   node   0: [mem 0x0000000000000000-0x0000000003ffefff]
+[    0.000000] Initmem setup node 0 [mem 0x0000000000000000-0x0000000003ffefff]
+[    0.000000] percpu: Embedded 17 pages/cpu s40272 r8192 d21168 u69632
+[    0.000000] Built 1 zonelists, mobility grouping on.  Total pages: 16239
+[    0.000000] Kernel command line: rd_start=0xffffffff83ee0000 rd_size=1083279 console=ttyS0,38400 rdinit=/init panic=-1
+[    0.000000] Dentry cache hash table entries: 8192 (order: 3, 32768 bytes)
+[    0.000000] Inode-cache hash table entries: 4096 (order: 2, 16384 bytes)
+[    0.000000] Writing ErrCtl register=00000000
+[    0.000000] Readback ErrCtl register=00000000
+[    0.000000] Memory: 51008K/65532K available (7436K kernel code, 547K rwdata, 1616K rodata, 1844K init, 273K bss, 14524K reserved, 0K cma-reserved)
+[    0.000000] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=1, Nodes=1
+[    0.000000] ftrace: allocating 22823 entries in 45 pages
+[    0.000000] rcu: Hierarchical RCU implementation.
+[    0.000000] rcu: 	RCU restricting CPUs from NR_CPUS=2 to nr_cpu_ids=1.
+[    0.000000] rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=1
+[    0.000000] NR_IRQS: 256
+[    0.000000] CPU frequency 320.00 MHz
+[    0.000000] clocksource: MIPS: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 11945509189 ns
+[    0.000114] sched_clock: 32 bits at 159MHz, resolution 6ns, wraps every 13421920252ns
+[    0.003298] Console: colour dummy device 80x25
+[    0.006125] Calibrating delay loop... 4034.56 BogoMIPS (lpj=8069120)
+[    0.079155] pid_max: default: 32768 minimum: 301
+[    0.080205] Security Framework initialized
+[    0.080379] Yama: disabled by default; enable with sysctl kernel.yama.*
+[    0.082058] AppArmor: AppArmor initialized
+[    0.082455] Mount-cache hash table entries: 1024 (order: 0, 4096 bytes)
+[    0.082578] Mountpoint-cache hash table entries: 1024 (order: 0, 4096 bytes)
+[    0.104502] Performance counters: No available PMU.
+[    0.105234] rcu: Hierarchical SRCU implementation.
+[    0.109052] smp: Bringing up secondary CPUs ...
+[    0.109167] smp: Brought up 1 node, 1 CPU
+[    0.114398] devtmpfs: initialized
+[    0.119214] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[    0.119429] futex hash table entries: 256 (order: 2, 16384 bytes)
+[    0.124151] NET: Registered protocol family 16
+[    0.125472] audit: initializing netlink subsys (disabled)
+[    0.132964] audit: type=2000 audit(1794183237.096:1): state=initialized audit_enabled=0 res=1
+[    0.149396] vgaarb: loaded
+[    0.150671] SCSI subsystem initialized
+[    0.152351] PCI host bridge to bus 0000:00
+[    0.152724] pci_bus 0000:00: root bus resource [mem 0x10000000-0x17ffffff]
+[    0.152865] pci_bus 0000:00: root bus resource [io  0x1000-0x1fffff]
+[    0.153039] pci_bus 0000:00: root bus resource [??? 0x00000000 flags 0x0]
+[    0.153230] pci_bus 0000:00: No busn resource found for root bus, will use [bus 00-ff]
+[    0.156847] pci 0000:00:0a.1: legacy IDE quirk: reg 0x10: [io  0x01f0-0x01f7]
+[    0.156944] pci 0000:00:0a.1: legacy IDE quirk: reg 0x14: [io  0x03f6]
+[    0.157028] pci 0000:00:0a.1: legacy IDE quirk: reg 0x18: [io  0x0170-0x0177]
+[    0.157108] pci 0000:00:0a.1: legacy IDE quirk: reg 0x1c: [io  0x0376]
+[    0.158005] pci 0000:00:0a.3: quirk: [io  0x1000-0x103f] claimed by PIIX4 ACPI
+[    0.158182] pci 0000:00:0a.3: quirk: [io  0x1100-0x110f] claimed by PIIX4 SMB
+[    0.159106] pci 0000:00:12.0: vgaarb: VGA device added: decodes=io+mem,owns=none,locks=none
+[    0.160197] pci 0000:00:12.0: BAR 0: assigned [mem 0x10000000-0x11ffffff pref]
+[    0.160452] pci 0000:00:12.0: BAR 6: assigned [mem 0x12000000-0x1200ffff pref]
+[    0.160580] pci 0000:00:12.0: BAR 1: assigned [mem 0x12010000-0x12010fff]
+[    0.160681] pci 0000:00:0a.2: BAR 4: assigned [io  0x1040-0x105f]
+[    0.160758] pci 0000:00:0a.1: BAR 4: assigned [io  0x1060-0x106f]
+[    0.169438] clocksource: Switched to clocksource MIPS
+[    0.210778] VFS: Disk quotas dquot_6.6.0
+[    0.210992] VFS: Dquot-cache hash table entries: 1024 (order 0, 4096 bytes)
+[    0.213792] AppArmor: AppArmor Filesystem Enabled
+[    0.222369] NET: Registered protocol family 2
+[    0.223213] IP idents hash table entries: 2048 (order: 2, 16384 bytes)
+[    0.227222] tcp_listen_portaddr_hash hash table entries: 512 (order: 0, 6144 bytes)
+[    0.227463] TCP established hash table entries: 1024 (order: 0, 4096 bytes)
+[    0.227619] TCP bind hash table entries: 1024 (order: 1, 8192 bytes)
+[    0.227795] TCP: Hash tables configured (established 1024 bind 1024)
+[    0.228672] UDP hash table entries: 256 (order: 1, 8192 bytes)
+[    0.228864] UDP-Lite hash table entries: 256 (order: 1, 8192 bytes)
+[    0.230128] NET: Registered protocol family 1
+[    0.230412] NET: Registered protocol family 44
+[    0.231089] pci 0000:00:0a.2: enabling device (0000 -> 0001)
+[    0.236420] Unpacking initramfs...
+[    0.269922] Freeing initrd memory: 1056K
+[    0.273534] Initialise system trusted keyrings
+[    0.274568] Key type blacklist registered
+[    0.275051] workingset: timestamp_bits=14 max_order=14 bucket_order=0
+[    0.278702] zbud: loaded
+[    1.414570] Key type asymmetric registered
+[    1.414694] Asymmetric key parser 'x509' registered
+[    1.414917] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 252)
+[    1.415338] io scheduler noop registered
+[    1.415410] io scheduler deadline registered
+[    1.415732] io scheduler cfq registered (default)
+[    1.415812] io scheduler mq-deadline registered
+[    1.418616] cirrusfb 0000:00:12.0: enabling device (0000 -> 0002)
+[    1.419379] cirrusfb 0000:00:12.0: Cirrus Logic chipset on PCI bus, RAM (4096 kB) at 0x10000000
+[    1.684957] Console: switching to colour frame buffer device 80x30
+[    1.692352] Serial: 8250/16550 driver, 4 ports, IRQ sharing enabled
+[    1.696564] console [ttyS0] disabled
+[    1.721941] serial8250.0: ttyS0 at I/O 0x3f8 (irq = 4, base_baud = 115200) is a 16550A
+[    1.722895] console [ttyS0] enabled
+[    1.722895] console [ttyS0] enabled
+[    1.723128] bootconsole [uart8250] disabled
+[    1.723128] bootconsole [uart8250] disabled
+[    1.750603] serial8250.0: ttyS1 at I/O 0x2f8 (irq = 3, base_baud = 115200) is a 16550A
+[    1.775859] serial8250.0: ttyS2 at MMIO 0x1f000900 (irq = 20, base_baud = 230400) is a 16550A
+[    1.778769] mousedev: PS/2 mouse device common for all mice
+[    1.781513] rtc_cmos 70.rtc: registered as rtc0
+[    1.782063] rtc_cmos 70.rtc: alarms up to one day, 242 bytes nvram
+[    1.783717] ledtrig-cpu: registered to indicate activity on CPUs
+[    1.784778] NET: Registered protocol family 10
+[    1.795866] Segment Routing with IPv6
+[    1.796217] mip6: Mobile IPv6
+[    1.796340] NET: Registered protocol family 17
+[    1.796718] mpls_gso: MPLS GSO support
+[    1.797773] registered taskstats version 1
+[    1.797851] Loading compiled-in X.509 certificates
+[    1.896764] Loaded X.509 cert 'Debian Secure Boot CA: 6ccece7e4c6c0d1f6149f3dd27dfcc5cbb419ea1'
+[    1.897402] Loaded X.509 cert 'Debian Secure Boot Signer 2021 - linux: 4b6ef5abca669825178e052c84667ccbc0531f8c'
+[    1.897541] Problem parsing in-kernel X.509 certificate list
+[    1.898236] zswap: loaded using pool lzo/zbud
+[    1.899033] AppArmor: AppArmor sha1 policy hashing enabled
+[    1.900318] rtc_cmos 70.rtc: setting system clock to 2026-11-09 00:14:00 UTC (1794183240)
+[    1.943062] Freeing unused kernel memory: 1844K
+[    1.943197] This architecture does not have kernel memory protection.
+[    1.943343] Run /init as init process
+FFW_MARKER:USERSPACE_START
+FFW_HELLO arch=mips-be endian=0x01020304 pid=1 ptr_bits=32
+FFW_BUILD target=mips-unknown-linux-musl rustc=1.100.0-nightly rustc_commit=908501772 linker_flavor=ld.lld libc=none runtime=no_std
+FFW_RUSTC release=1.100.0-nightly commit=90850177249efe0321573c569aec5d12b257f8d6 date=2026-08-30 host=x86_64-unknown-linux-gnu llvm=23.1.0
+FFW_GUEST:CONSOLE_LEVEL status=PASS rc=0
+FFW_KERNEL_VERSION: Linux version 4.19.0-21-4kc-malta (debian-kernel@lists.debian.org) (gcc version 8.3.0 (Debian 8.3.0-6)) #1 SMP Debian 4.19.249-2 (2022-06-30)
+FFW_TEST:ERR_ENOENT status=PASS errno=2
+FFW_TEST:ERR_EBADF status=PASS errno=9
+FFW_TEST:ERR_ENOSYS status=PASS errno=89
+FFW_TEST:POS_FD_SHORT_WRITE status=PASS fd=4
+FFW_PROBE:CLOCK_MONOTONIC status=PASS res_ns=1
+FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096
+FFW_PROBE:NONBLOCK_PIPE status=PASS rc=0
+FFW_PROBE:POLL status=PASS rc=1
+FFW_PROBE:EPOLL status=PASS fd=4
+FFW_PROBE:SOCKET_UDP status=PASS fd=4
+FFW_PROBE:ENTROPY status=PASS fd=4
+FFW_PROBE:ATOMICS_32 status=PASS ok=1
+FFW_PROBE:GETRANDOM status=UNSEEDED rc=-11
+FFW_PROBE:EVENTFD2 status=PASS fd=4
+FFW_PROBE:TIMERFD status=PASS fd=4
+FFW_PROBE:FUTEX status=PASS rc=0
+FFW_PROBE:LOOPBACK_UP status=PASS rc=0
+FFW_PROBE:UDP_LOOPBACK status=PASS rc=24
+FFW_PROBE:ACCEPT4 status=PASS fd=6
+FFW_PROBE:REACTOR_WAKE status=PASS rc=1
+FFW_PROBE:CHARDEV_POLL status=PASS rc=2
+FFW_PROBE:ATOMIC_WIDTH status=PASS bits=32
+FFW_PROBE:ALLOC status=PASS rc=0
+FFW_PROBE:MEM_PEAK status=PASS kb=64
+FFW_PROBE:FS_RENAME status=PASS rc=0
+FFW_PROBE:SIGNAL status=PASS rc=0
+FFW_PROBE:TIMER_SIGNALS status=PASS rc=0
+FFW_PROBE:EINTR_READ status=PASS rc=-4
+probe: run_threads start
+FFW_PROBE:THREADS status=PASS tid=60
+FFW_PROBE:TLS status=PASS tp=305419896
+FFW_SPEAKER_BEGIN path=/franken-speaker argv=--catalog
+FFW_P05_RUNTIME:BEGIN status=start pid=61 arch=mips endian=big pointer_bits=32 threads_available_to_std=1 topology=single_owner
+FFW_P05_RUNTIME:CENSUS status=ok phase=start threads_task_dir_before=1 threads_task_dir_after=1 task_dir_stable=true threads_status=1 sources_agree=true vm_rss_kb=1140 vm_hwm_kb=1144 mem_available_kb=45344
+FFW_P05_RUNTIME:SINGLE_OWNER_PROFILE status=ok claimed=single_owner stated_worker_threads=1 required_worker_threads=1
+FFW_P05_RUNTIME:PROFILE_ACCEPT status=ok violations=0 worst_case_stack_bytes=1572864 budget=1572864
+FFW_P05_RUNTIME:PROFILE_REFUSES_ZERO_WORKERS status=ok named_violation=true builder_refused=true
+FFW_P05_RUNTIME:PROFILE_REFUSES_UNBOUNDED_QUEUE status=ok named_violation=true builder_refused=true
+FFW_P05_RUNTIME:PROFILE_REFUSES_OVER_BUDGET status=ok named_violation=true builder_refused=true
+FFW_P05_RUNTIME:REACTOR status=ok kind=platform
+FFW_P05_RUNTIME:RUNTIME_AUDIT status=ok audit_ok=true workers=1/1 blocking_threads=1/1 global_queue=256/256 blocking_queue=1/1 (carried/stated)
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_build threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=2376 vm_hwm_kb=2376 mem_available_kb=44936
+FFW_P05_RUNTIME:SINGLE_OWNER_RUNTIME status=ok carried_workers=1 stated_workers=1 audit_ok=true children_joined=8 task_threads=1 tasks_on_caller_thread=false
+FFW_P05_RUNTIME:CALLER_DRIVEN_CURRENT_THREAD status=unsupported reason=profile_builder_cannot_build_caller_driven_mode reason_source=static_source_reading evidence=asupersync_460306de:src/runtime/legacy_profile.rs:406,src/runtime/builder.rs:3911-3914 observed_tasks_on_caller_thread=false
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_single_owner_threads threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=2572 vm_hwm_kb=2584 mem_available_kb=44864
+FFW_P05_RUNTIME:SPAWN_JOIN status=ok children=8 joined=8 sum=140 expected=140
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_spawn_join threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=2576 vm_hwm_kb=2600 mem_available_kb=44852
+FFW_P05_RUNTIME:ABORT_TIMER_PARKED status=ok parked=true pending_timers_before=1 pending_timers_after=0 abort_to_join_ms=8 join_result=Ok expected_join_result=Ok threads_during_task_dir=2 threads_during_status=2 cleanup_resumed=1 cleanup_unique=1 cleanup_cancelled=1 cleanup_before_deadline=1
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_abort_timer_parked threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=2580 vm_hwm_kb=2600 mem_available_kb=44852
+FFW_P05_RUNTIME:ABORT_BLIND_VALUE status=ok join_result=Cancelled expected_join_result=Cancelled ok_value=None
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_abort_blind_value threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=2580 vm_hwm_kb=2600 mem_available_kb=44852
+FFW_P05_RUNTIME:TIMER_WAKE status=ok wanted_ms=50 slept_ms=51
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_timer_wake threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=2584 vm_hwm_kb=2600 mem_available_kb=44852
+FFW_P05_RUNTIME:UDP_LOOPBACK status=ok bytes=19 payload_equal=true peer_is_sender=true
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_udp threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=2588 vm_hwm_kb=2600 mem_available_kb=44852
+FFW_P05_RUNTIME:BLOCKING_POOL status=ok idle_threads=0 first_admitted=true first_started=true second_admitted=true third_refused=Some(Saturated) active_threads_while_held=1 pending_while_held=1 threads_held_task_dir=3 threads_held_status=3 first_finished=true second_finished=true ran=2
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_blocking_pool threads_task_dir_before=3 threads_task_dir_after=3 task_dir_stable=true threads_status=3 sources_agree=true vm_rss_kb=2592 vm_hwm_kb=2600 mem_available_kb=44836
+FFW_P05_RUNTIME:SINGLE_OWNER_BLOCKING_OFFLOAD status=ok held_admitted=true held_started=true async_phase=ok held_job_unfinished_during_async=true held_job_finished_after_release=true async_detail=(children=8 joined=8 sum=140 expected=140)
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_blocking_offload threads_task_dir_before=3 threads_task_dir_after=3 task_dir_stable=true threads_status=3 sources_agree=true vm_rss_kb=2596 vm_hwm_kb=2632 mem_available_kb=44812
+FFW_P05_RUNTIME:DRAIN status=ok tasks_spawned=4/4 tasks_parked_before_drain=4 snapshot_before_drain=(admitted=4 unfinished=4 timers_pending=4) outcome=Quiescent expected_outcome=Quiescent live_tasks=0 pending_obligations=0 live_regions=0 expected_live_regions=0 queued_finalizers=0 pending_spawns=0 pending_obligation_posts=false elapsed_ms=13 bound_ms=5000 cleanup_resumed=4 cleanup_unique=4 cleanup_cancelled=4 cleanup_before_deadline=4 repeat: outcome=Quiescent expected_outcome=Quiescent live_tasks=0 pending_obligations=0 live_regions=0 expected_live_regions=0 queued_finalizers=0 pending_spawns=0 pending_obligation_posts=false
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_drain threads_task_dir_before=3 threads_task_dir_after=3 task_dir_stable=true threads_status=3 sources_agree=true vm_rss_kb=2604 vm_hwm_kb=2632 mem_available_kb=44812
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_runtime_drop threads_task_dir_before=1 threads_task_dir_after=1 task_dir_stable=true threads_status=1 sources_agree=true vm_rss_kb=2312 vm_hwm_kb=2632 mem_available_kb=45100 settle=settled settle_threads=1 settle_polls=1
+FFW_P05_RUNTIME:BYTE_BUDGET_REFUSAL status=ok audit_ok=true policy=BoundedBytes { max_queued: 1, max_live_bytes: 4096 } reactor=none budget_bytes=4096 declared_heap_bytes=4097 refusal=Some(ChargeTooLarge) expected_refusal=Some(ChargeTooLarge) pool_threads_after_refusal=0 refused_job_ran=false
+FFW_P05_RUNTIME:FIRST_USE_BACKGROUND status=ok pool_threads_before_first_job=0 pool_threads_while_job_runs=1 job_started=true job_finished=true os_threads_before=2 os_threads_during=3
+FFW_P05_RUNTIME:RUNTIME_USABLE_AFTER_REFUSAL status=ok spawn_join=ok outcome=Quiescent expected_outcome=Quiescent live_tasks=0 pending_obligations=0 live_regions=0 expected_live_regions=0 queued_finalizers=0 pending_spawns=0 pending_obligation_posts=false
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_byte_budget threads_task_dir_before=1 threads_task_dir_after=1 task_dir_stable=true threads_status=1 sources_agree=true vm_rss_kb=2312 vm_hwm_kb=2632 mem_available_kb=45116 settle=settled settle_threads=1 settle_polls=2
+FFW_P05_RUNTIME:END status=done ops=33 ok=32 failed=0 unsupported=1 partial=0 unknown=0 census_samples=13
+FFW_SPEAKER_EXIT status=0 stdout_bytes=6833 stdout_fnv1a64=29086428370bd841
+FFW_MARKER:TEST_SUCCESS failures=0
+FFW_MARKER:REBOOT_REQUEST
+[    2.874839] reboot: Restarting system

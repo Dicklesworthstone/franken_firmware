@@ -78,7 +78,7 @@ DOC_HEADINGS = ("## No-claim line", "## Inputs", "## Replacement map: 64-bit ato
 # The single-owner profile's contract text: a declared unsupported row that is a declaration and never a pass, how it is selected
 # and judged, and where its native test names are listed. Each must stay INSIDE that section (P05-META-005): a mention elsewhere,
 # such as the open-items bullet, does not stand in for it.
-DOC_RUNTIME_TERMS =("--profile single-owner", "/ffw_p05_profile", "CALLER_DRIVEN_CURRENT_THREAD",
+DOC_RUNTIME_TERMS = ("--profile single-owner", "/ffw_p05_profile", "CALLER_DRIVEN_CURRENT_THREAD",
                      "reason_source=static_source_reading", "declaration, not a pass", "accepted_with_declared_unsupported",
                      "never `PASSED`", "the command-line exit is 4", "FIRST_USE_BACKGROUND",
                      "tests/p05/native_runtime38_names.txt")

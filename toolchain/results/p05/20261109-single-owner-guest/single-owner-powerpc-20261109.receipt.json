@@ -1,0 +1,205 @@
+{
+  "arch": "powerpc",
+  "declared_unsupported": [
+    "CALLER_DRIVEN_CURRENT_THREAD"
+  ],
+  "elf": {
+    "arch": "powerpc",
+    "bytes": 1895640,
+    "pointer_bits": 32,
+    "sha256": "0338ca6417803500fd2cf7156867ffe6aa109f4def59d6cb761b2b2af8b87e64",
+    "source_provenance": "not_attested_by_this_runner"
+  },
+  "evidence_kind": "captured_guest_execution",
+  "execution": {
+    "command": [
+      "qemu-system-ppc",
+      "-M",
+      "g3beige",
+      "-cpu",
+      "G3",
+      "-m",
+      "64M",
+      "-nographic",
+      "-no-reboot",
+      "-nic",
+      "none",
+      "-kernel",
+      "<outside-repo>/vmlinux.runtime-snapshot",
+      "-initrd",
+      "<outside-repo>/runtime.cpio.gz",
+      "-append",
+      "console=ttyPZ0,38400 rdinit=/init panic=-1"
+    ],
+    "exit_code": 0,
+    "initramfs": {
+      "archive_sha256": "7e7f5fcd7e065cf8409cf98b78c01f6f4990af5f8d3e715da04effea9b80ba4e",
+      "compressed_bytes": 960090,
+      "devices": {
+        "dev/console": {
+          "mode": "0o20600",
+          "rdev": [
+            5,
+            1
+          ]
+        },
+        "dev/null": {
+          "mode": "0o20666",
+          "rdev": [
+            1,
+            3
+          ]
+        },
+        "dev/random": {
+          "mode": "0o20600",
+          "rdev": [
+            1,
+            8
+          ]
+        },
+        "dev/ttyPZ0": {
+          "mode": "0o20600",
+          "rdev": [
+            204,
+            192
+          ]
+        },
+        "dev/ttyS0": {
+          "mode": "0o20600",
+          "rdev": [
+            4,
+            64
+          ]
+        },
+        "dev/urandom": {
+          "mode": "0o20666",
+          "rdev": [
+            1,
+            9
+          ]
+        },
+        "dev/zero": {
+          "mode": "0o20666",
+          "rdev": [
+            1,
+            5
+          ]
+        }
+      },
+      "entry_count": 16,
+      "extra_files": {
+        "ffw_p05_profile": {
+          "mode": "0o100644",
+          "sha256": "8cf1b1f89686634cfdfda642fa9cd9b54af2e7d502c61e7f4412887eb481f85f",
+          "size": 13
+        },
+        "franken-speaker": {
+          "mode": "0o100755",
+          "sha256": "0338ca6417803500fd2cf7156867ffe6aa109f4def59d6cb761b2b2af8b87e64",
+          "size": 1895640
+        }
+      },
+      "init_path": "<outside-repo>/ffw-hello-init",
+      "init_sha256": "faf5f35a17b11047092a907be5e3ae86097d82682fa44bdb0534b46235caf721",
+      "init_size": 27788,
+      "out_path": "<outside-repo>/runtime.cpio.gz",
+      "raw_cpio_sha256": "cecfbfc7628ddd80ccab033e770855e21e924a3862ba72821aeb13b040a942b0",
+      "uncompressed_bytes": 1925632
+    },
+    "inputs_after_capture": {
+      "initramfs": "7e7f5fcd7e065cf8409cf98b78c01f6f4990af5f8d3e715da04effea9b80ba4e",
+      "kernel": "289f40b63ea9aa82743f568ddeaba669a16a859970497dccf7135596da538f98"
+    },
+    "kernel_sha256": "289f40b63ea9aa82743f568ddeaba669a16a859970497dccf7135596da538f98",
+    "profile": "single-owner",
+    "qemu": "QEMU emulator version 11.1.3",
+    "scope": "E07 supervisor child, not runtime as PID 1",
+    "stderr_bytes": 0,
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stdout_sha256": "1c049afeedbec229c499498be4a1ac00f6a7c314031144fec8c7abe03d06d467",
+    "stop_reason": null
+  },
+  "gates": [
+    {
+      "detail": "",
+      "gate_id": "P05R-TRANSCRIPT",
+      "status": "passed",
+      "title": "all 35 runtime markers in the declared order"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-ENV",
+      "status": "passed",
+      "title": "runtime BEGIN and supplied ELF agree"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-PHASES",
+      "status": "passed",
+      "title": "every required operation reports ok, except the one declared unsupported row"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-DECLARED",
+      "status": "passed",
+      "title": "exactly one unsupported row, the declared caller-driven mode"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-CLEANUP",
+      "status": "passed",
+      "title": "child-side cancellation cleanup is actually observed"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-CENSUS",
+      "status": "passed",
+      "title": "thirteen complete, consistent census samples, each runtime drop settled"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-END",
+      "status": "passed",
+      "title": "END matches independently counted operations"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-SUPERVISOR",
+      "status": "passed",
+      "title": "bootstrap setup, child hash/exit and ordered reboot"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-CAPTURE",
+      "status": "passed",
+      "title": "bounded complete capture and packaged ELF identity"
+    }
+  ],
+  "path_hashes": [
+    {
+      "path": "<outside-repo>/vmlinux.runtime-snapshot",
+      "sha256": "289f40b63ea9aa82743f568ddeaba669a16a859970497dccf7135596da538f98"
+    },
+    {
+      "path": "<outside-repo>/runtime.cpio.gz",
+      "sha256": "7e7f5fcd7e065cf8409cf98b78c01f6f4990af5f8d3e715da04effea9b80ba4e"
+    },
+    {
+      "path": "<outside-repo>/ffw-hello-init",
+      "sha256": "faf5f35a17b11047092a907be5e3ae86097d82682fa44bdb0534b46235caf721"
+    }
+  ],
+  "profile": "single-owner",
+  "result": "accepted_with_declared_unsupported",
+  "revision_claim": "3e9c8a0+p05 settle main.rs 5f633712, judge 69fb914a",
+  "schema": "ffw.p05.runtime_receipt.v1",
+  "scope": "A runtime transcript is distinct from the atomic-cell guest. Native execution does not qualify BE execution. A supplied ELF hash binds bytes, not their compiler/source provenance. The supplied revision is an operator claim, not an attestation. Analysis only validates supplied transcript bytes; command exit and execution custody require the original execution receipt. This runner compiles nothing. Synthetic checker tests are not runtime or QEMU proof. A guest pass covers the named phases under the recorded QEMU kernel, not stock kernels, 32 MiB memory fit, physical drivers/audio, provider integrations, or completion of P05/P03. This is the single-owner run: one scheduler worker through LegacyProfile, selected by an initramfs marker because the unchanged supervisor passes the probe no argument. LegacyProfile cannot build the caller-driven current-thread mode at the pinned revision, so that row is DECLARED unsupported, not passed: the result is accepted with exactly that one row, never a full pass. The probe exits 0 only for exactly that row, so the supervisor log is the ordinary one and is judged unmodified.",
+  "supervisor_elf": {
+    "arch": "powerpc",
+    "bytes": 27788,
+    "pointer_bits": 32,
+    "sha256": "faf5f35a17b11047092a907be5e3ae86097d82682fa44bdb0534b46235caf721",
+    "source_provenance": "not_attested_by_this_runner"
+  },
+  "transcript_sha256": "1c049afeedbec229c499498be4a1ac00f6a7c314031144fec8c7abe03d06d467"
+}

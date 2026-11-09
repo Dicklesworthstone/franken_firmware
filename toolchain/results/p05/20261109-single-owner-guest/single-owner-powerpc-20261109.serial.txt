@@ -1,0 +1,260 @@
+
+>> =============================================================
+>> OpenBIOS 1.1 [Jun 29 2026 21:11]
+>> Configuration device id QEMU version 1 machine id 2
+>> CPUs: 1
+>> Memory: 64M
+>> UUID: 00000000-0000-0000-0000-000000000000
+>> CPU type PowerPC,750
+milliseconds isn't unique.
+Welcome to OpenBIOS v1.1 built on Jun 29 2026 21:11
+>> [ppc] Kernel already loaded (0x01000000 + 0x009c1488) (initrd 0x01ac2000 + 0x000ea65a)
+>> [ppc] Kernel command line: console=ttyPZ0,38400 rdinit=/init panic=-1
+>> switching to new context:
+OF stdout device is: /pci@80000000/mac-io@10/escc@13000/ch-a@13020
+Preparing to boot Linux version 4.9.0-0.bpo.6-powerpc (debian-kernel@lists.debian.org) (gcc version 4.9.2 (Debian 4.9.2-10) ) #1 Debian 4.9.88-1+deb9u1~bpo8+1 (2018-05-13)
+Detected machine type: 00000400
+command line: console=ttyS0,9600 console=tty0
+memory layout at init:
+  memory_limit : 00000000 (16 MB aligned)
+  alloc_bottom : 01bad000
+  alloc_top    : 04000000
+  alloc_top_hi : 04000000
+  rmo_top      : 04000000
+  ram_top      : 04000000
+found display   : /pci@80000000/QEMU,VGA@1, opening... done
+copying OF device tree...
+Building dt strings...
+Building dt structure...
+Device tree strings 0x01bae000 -> 0x01bae556
+Device tree struct  0x01baf000 -> 0x01bb6000
+Quiescing Open Firmware ...
+Booting Linux via __start() @ 0x01000000 ...
+Hello World !
+[    0.000000] Total memory = 64MB; using 128kB for hash table (at c3fe0000)
+[    0.000000] Linux version 4.9.0-0.bpo.6-powerpc (debian-kernel@lists.debian.org) (gcc version 4.9.2 (Debian 4.9.2-10) ) #1 Debian 4.9.88-1+deb9u1~bpo8+1 (2018-05-13)
+[    0.000000] Found initrd at 0xc1ac2000:0xc1bac65a
+[    0.000000] Found a Heathrow mac-io controller, rev: 0, mapped at 0xff780000
+[    0.000000] PowerMac motherboard: PowerMac G3 (Silk)
+[    0.000000] boot stdout isn't a display !
+[    0.000000] Using PowerMac machine description
+[    0.000000] bootconsole [udbg0] enabled
+[    0.000000] -----------------------------------------------------
+[    0.000000] Hash_size         = 0x20000
+[    0.000000] phys_mem_size     = 0x4000000
+[    0.000000] dcache_bsize      = 0x20
+[    0.000000] icache_bsize      = 0x20
+[    0.000000] cpu_features      = 0x0000000000220472
+[    0.000000]   possible        = 0x0000000005a6fd7f
+[    0.000000]   always          = 0x0000000000020000
+[    0.000000] cpu_user_features = 0x8c000001 0x00000000
+[    0.000000] mmu_features      = 0x00000001
+[    0.000000] Hash              = 0xc3fe0000
+[    0.000000] Hash_mask         = 0x7ff
+[    0.000000] -----------------------------------------------------
+[    0.000000] Found Grackle (MPC106) PCI host bridge at 0x0000000080000000. Firmware bus number: 0->0
+[    0.000000] PCI host bridge /pci@80000000 (primary) ranges:
+[    0.000000]   IO 0x00000000fe000000..0x00000000fe7fffff -> 0x0000000000000000
+[    0.000000]  MEM 0x00000000fd000000..0x00000000fdffffff -> 0x0000000000000000 
+[    0.000000]  MEM 0x0000000080000000..0x000000008fffffff -> 0x0000000080000000 
+[    0.000000] nvram: OF partition at 0x1800
+[    0.000000] nvram: XP partition at 0x1300
+[    0.000000] nvram: NR partition at 0x1400
+[    0.000000] Zone ranges:
+[    0.000000]   DMA      [mem 0x0000000000000000-0x0000000003ffffff]
+[    0.000000]   Normal   empty
+[    0.000000]   HighMem  empty
+[    0.000000] Movable zone start for each node
+[    0.000000] Early memory node ranges
+[    0.000000]   node   0: [mem 0x0000000000000000-0x0000000003ffffff]
+[    0.000000] Initmem setup node 0 [mem 0x0000000000000000-0x0000000003ffffff]
+[    0.000000] Built 1 zonelists in Zone order, mobility grouping on.  Total pages: 16240
+[    0.000000] Kernel command line: console=ttyPZ0,38400 rdinit=/init panic=-1
+[    0.000000] PID hash table entries: 256 (order: -2, 1024 bytes)
+[    0.000000] Dentry cache hash table entries: 8192 (order: 3, 32768 bytes)
+[    0.000000] Inode-cache hash table entries: 4096 (order: 2, 16384 bytes)
+[    0.000000] Sorting __ex_table...
+[    0.000000] Memory: 53716K/65536K available (5992K kernel code, 556K rwdata, 1592K rodata, 424K init, 1409K bss, 11820K reserved, 0K cma-reserved, 0K highmem)
+[    0.000000] Kernel virtual memory layout:
+[    0.000000]   * 0xfffcf000..0xfffff000  : fixmap
+[    0.000000]   * 0xff800000..0xffc00000  : highmem PTEs
+[    0.000000]   * 0xfef5a000..0xff800000  : early ioremap
+[    0.000000]   * 0xc5000000..0xfef5a000  : vmalloc & ioremap
+[    0.000000] NR_IRQS:512 nr_irqs:512 16
+[    0.000000] irq: Found primary Apple PIC /pci@80000000/mac-io@10 for 64 irqs
+[    0.000000] irq: System has 64 possible interrupts
+[    0.000000] GMT Delta read from XPRAM: 0 minutes, DST: off
+[    0.000323] clocksource: timebase: mask: 0xffffffffffffffff max_cycles: 0x3d42b69c3, max_idle_ns: 440795202449 ns
+[    0.000684] clocksource: timebase mult[3c3c66eb] shift[24] registered
+[    0.004195] Console: colour dummy device 80x25
+[    0.008509] console [ttyPZ0] enabled
+[    0.008509] console [ttyPZ0] enabled
+[    0.008849] bootconsole [udbg0] disabled
+[    0.008849] bootconsole [udbg0] disabled
+[    0.009380] pid_max: default: 32768 minimum: 301
+[    0.010145] Security Framework initialized
+[    0.010272] Yama: disabled by default; enable with sysctl kernel.yama.*
+[    0.011015] AppArmor: AppArmor disabled by boot time parameter
+[    0.011420] Mount-cache hash table entries: 1024 (order: 0, 4096 bytes)
+[    0.011622] Mountpoint-cache hash table entries: 1024 (order: 0, 4096 bytes)
+[    0.018926] ftrace: allocating 20204 entries in 60 pages
+[    0.050168] devtmpfs: initialized
+[    0.055194] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[    0.055461] futex hash table entries: 256 (order: -1, 3072 bytes)
+[    0.058205] NET: Registered protocol family 16
+             
+[    0.063653] PCI: Probing PCI hardware
+[    0.064485] PCI host bridge to bus 0000:00
+[    0.064783] pci_bus 0000:00: root bus resource [io  0x0000-0x7fffff]
+[    0.064905] pci_bus 0000:00: root bus resource [mem 0xfd000000-0xfdffffff] (bus address [0x00000000-0x00ffffff])
+[    0.065030] pci_bus 0000:00: root bus resource [mem 0x80000000-0x8fffffff]
+[    0.065212] pci_bus 0000:00: root bus resource [bus 00-ff]
+[    0.079364] vgaarb: setting as boot device: PCI:0000:00:01.0
+[    0.079525] vgaarb: device added: PCI:0000:00:01.0,decodes=io+mem,owns=io+mem,locks=none
+[    0.079638] vgaarb: loaded
+[    0.079695] vgaarb: bridge control possible 0000:00:01.0
+[    0.080388] SCSI subsystem initialized
+[    0.085133] clocksource: Switched to clocksource timebase
+[    0.109224] VFS: Disk quotas dquot_6.6.0
+[    0.109414] VFS: Dquot-cache hash table entries: 1024 (order 0, 4096 bytes)
+[    0.116431] NET: Registered protocol family 2
+[    0.119341] TCP established hash table entries: 1024 (order: 0, 4096 bytes)
+[    0.119489] TCP bind hash table entries: 1024 (order: 0, 4096 bytes)
+[    0.119651] TCP: Hash tables configured (established 1024 bind 1024)
+[    0.120063] UDP hash table entries: 256 (order: 0, 4096 bytes)
+[    0.120192] UDP-Lite hash table entries: 256 (order: 0, 4096 bytes)
+[    0.121032] NET: Registered protocol family 1
+[    0.124144] Unpacking initramfs...
+[    0.156528] Freeing initrd memory: 936K
+[    0.157244] Thermal assist unit [    0.157398] using timers, 
+[    0.157481] shrink_timer: 500 jiffies
+[    0.159656] audit: initializing netlink subsys (disabled)
+[    0.160223] audit: type=2000 audit(1794183243.124:1): initialized
+[    0.161794] workingset: timestamp_bits=14 max_order=14 bucket_order=0
+[    0.162362] zbud: loaded
+[    0.171605] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 251)
+[    0.172054] io scheduler noop registered
+[    0.172125] io scheduler deadline registered
+[    0.172326] io scheduler cfq registered (default)
+[    0.174656] Using unsupported 800x600 QEMU,VGA at 80000000, depth=32, pitch=3200
+[    0.180578] Console: switching to colour frame buffer device 100x37
+[    0.182641] fb0: Open Firmware frame buffer device on /pci@80000000/QEMU,VGA@1
+[    0.183288] Serial: 8250/16550 driver, 4 ports, IRQ sharing disabled
+[    0.184350] pmac_zilog: 0.6 (Benjamin Herrenschmidt <benh@kernel.crashing.org>)
+[    0.184511] Serial: MPC52xx PSC UART driver
+[    0.184640] Generic non-volatile memory driver v1.1
+[    0.184822] Linux agpgart interface v0.103
+[    0.185388] MacIO PCI driver attached to Heathrow chipset
+[    0.187180] 0.00013020:ch-a: ttyPZ0 at MMIO 0x81093020 (irq = 16, base_baud = 230400) is a Z85c30 ESCC - Serial port
+[    0.187870] 0.00013000:ch-b: ttyPZ1 at MMIO 0x81093000 (irq = 17, base_baud = 230400) is a Z85c30 ESCC - Serial port
+[    0.189205] Macintosh CUDA driver v0.5 for Unified ADB.
+[    0.190797] adb: starting probe task...
+[    0.484866]  [2]: 2 2
+ [3]: 3 3[    0.495263] 
+[    0.546709] ADB keyboard at 2, handler 1
+[    0.546991] Detected ADB keyboard, type [    0.547085] ANSI.
+[    0.547822] input: ADB keyboard as /devices/virtual/input/input0
+[    0.555894] random: fast init done
+[    0.654616] ADB mouse at 3, handler set to 3[    0.654750]  (Mouse Systems A3 Mouse, or compatible)
+[    0.675904] 
+[    0.676345] input: ADB mouse as /devices/virtual/input/input1
+[    0.676620] adb: finished probe task...
+[    1.218147] pata-macio 0.00020000:ata-3: Activating pata-macio chipset Heathrow ATA, Apple bus ID 0
+[    1.220601] scsi host0: pata_macio
+[    1.221884] ata1: PATA max MWDMA2 irq 19
+[    2.278329] pata-macio 0.00021000:ata-3: Activating pata-macio chipset Heathrow ATA, Apple bus ID 1
+[    2.279266] scsi host1: pata_macio
+[    2.279505] ata2: PATA max MWDMA2 irq 22
+[    2.281566] mousedev: PS/2 mouse device common for all mice
+[    2.289348] rtc-generic rtc-generic: rtc core: registered rtc-generic as rtc0
+[    2.289715] ledtrig-cpu: registered to indicate activity on CPUs
+[    2.290466] NET: Registered protocol family 10
+[    2.293905] mip6: Mobile IPv6
+[    2.294128] NET: Registered protocol family 17
+[    2.294296] mpls_gso: MPLS GSO support
+[    2.295545] registered taskstats version 1
+[    2.296038] zswap: loaded using pool lzo/zbud
+[    2.297465] ima: No TPM chip found, activating TPM-bypass!
+[    2.315583] rtc-generic rtc-generic: setting system clock to 2026-11-09 00:14:06 UTC (1794183246)
+[    2.444446] ata2.00: ATAPI: QEMU DVD-ROM, 2.5+, max UDMA/100
+[    2.445527] ata2.00: configured for MWDMA2
+[    2.453794] scsi 1:0:0:0: CD-ROM            QEMU     QEMU DVD-ROM     2.5+ PQ: 0 ANSI: 5
+[    2.486387] Freeing unused kernel memory: 424K
+[    2.486496] This architecture does not have kernel memory protection.
+FFW_MARKER:USERSPACE_START
+FFW_HELLO arch=powerpc-be endian=0x01020304 pid=1 ptr_bits=32
+FFW_BUILD target=powerpc-unknown-linux-musl rustc=1.100.0-nightly rustc_commit=908501772 linker_flavor=ld.lld libc=none runtime=no_std
+FFW_RUSTC release=1.100.0-nightly commit=90850177249efe0321573c569aec5d12b257f8d6 date=2026-08-30 host=x86_64-unknown-linux-gnu llvm=23.1.0
+FFW_GUEST:CONSOLE_LEVEL status=PASS rc=0
+FFW_KERNEL_VERSION: Linux version 4.9.0-0.bpo.6-powerpc (debian-kernel@lists.debian.org) (gcc version 4.9.2 (Debian 4.9.2-10) ) #1 Debian 4.9.88-1+deb9u1~bpo8+1 (2018-05-13)
+FFW_TEST:ERR_ENOENT status=PASS errno=2
+FFW_TEST:ERR_EBADF status=PASS errno=9
+FFW_TEST:ERR_ENOSYS status=PASS errno=38
+FFW_TEST:POS_FD_SHORT_WRITE status=PASS fd=4
+FFW_PROBE:CLOCK_MONOTONIC status=PASS res_ns=1
+FFW_TEST:PARTIAL_WRITE status=PASS bytes=4096
+FFW_PROBE:NONBLOCK_PIPE status=PASS rc=0
+FFW_PROBE:POLL status=PASS rc=1
+FFW_PROBE:EPOLL status=PASS fd=4
+FFW_PROBE:SOCKET_UDP status=PASS fd=4
+FFW_PROBE:ENTROPY status=PASS fd=4
+FFW_PROBE:ATOMICS_32 status=PASS ok=1
+FFW_PROBE:GETRANDOM status=PASS rc=16
+FFW_PROBE:EVENTFD2 status=PASS fd=4
+FFW_PROBE:TIMERFD status=PASS fd=4
+FFW_PROBE:FUTEX status=PASS rc=0
+FFW_PROBE:LOOPBACK_UP status=PASS rc=0
+FFW_PROBE:UDP_LOOPBACK status=PASS rc=24
+FFW_PROBE:ACCEPT4 status=PASS fd=6
+FFW_PROBE:REACTOR_WAKE status=PASS rc=1
+FFW_PROBE:CHARDEV_POLL status=PASS rc=2
+FFW_PROBE:ATOMIC_WIDTH status=PASS bits=32
+FFW_PROBE:ALLOC status=PASS rc=0
+FFW_PROBE:MEM_PEAK status=PASS kb=64
+FFW_PROBE:FS_RENAME status=PASS rc=0
+FFW_PROBE:SIGNAL status=PASS rc=0
+FFW_PROBE:TIMER_SIGNALS status=PASS rc=0
+FFW_PROBE:EINTR_READ status=PASS rc=-4
+probe: run_threads start
+FFW_PROBE:THREADS status=PASS tid=46
+FFW_PROBE:TLS status=PASS tp=305419896
+FFW_SPEAKER_BEGIN path=/franken-speaker argv=--catalog
+FFW_P05_RUNTIME:BEGIN status=start pid=47 arch=powerpc endian=big pointer_bits=32 threads_available_to_std=1 topology=single_owner
+FFW_P05_RUNTIME:CENSUS status=ok phase=start threads_task_dir_before=1 threads_task_dir_after=1 task_dir_stable=true threads_status=1 sources_agree=true vm_rss_kb=928 vm_hwm_kb=932 mem_available_kb=48764
+FFW_P05_RUNTIME:SINGLE_OWNER_PROFILE status=ok claimed=single_owner stated_worker_threads=1 required_worker_threads=1
+FFW_P05_RUNTIME:PROFILE_ACCEPT status=ok violations=0 worst_case_stack_bytes=1572864 budget=1572864
+FFW_P05_RUNTIME:PROFILE_REFUSES_ZERO_WORKERS status=ok named_violation=true builder_refused=true
+FFW_P05_RUNTIME:PROFILE_REFUSES_UNBOUNDED_QUEUE status=ok named_violation=true builder_refused=true
+FFW_P05_RUNTIME:PROFILE_REFUSES_OVER_BUDGET status=ok named_violation=true builder_refused=true
+FFW_P05_RUNTIME:REACTOR status=ok kind=platform
+FFW_P05_RUNTIME:RUNTIME_AUDIT status=ok audit_ok=true workers=1/1 blocking_threads=1/1 global_queue=256/256 blocking_queue=1/1 (carried/stated)
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_build threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=2032 vm_hwm_kb=2032 mem_available_kb=48352
+FFW_P05_RUNTIME:SINGLE_OWNER_RUNTIME status=ok carried_workers=1 stated_workers=1 audit_ok=true children_joined=8 task_threads=1 tasks_on_caller_thread=false
+FFW_P05_RUNTIME:CALLER_DRIVEN_CURRENT_THREAD status=unsupported reason=profile_builder_cannot_build_caller_driven_mode reason_source=static_source_reading evidence=asupersync_460306de:src/runtime/legacy_profile.rs:406,src/runtime/builder.rs:3911-3914 observed_tasks_on_caller_thread=false
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_single_owner_threads threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=2228 vm_hwm_kb=2244 mem_available_kb=48268
+FFW_P05_RUNTIME:SPAWN_JOIN status=ok children=8 joined=8 sum=140 expected=140
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_spawn_join threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=2232 vm_hwm_kb=2256 mem_available_kb=48256
+FFW_P05_RUNTIME:ABORT_TIMER_PARKED status=ok parked=true pending_timers_before=1 pending_timers_after=0 abort_to_join_ms=10 join_result=Ok expected_join_result=Ok threads_during_task_dir=2 threads_during_status=2 cleanup_resumed=1 cleanup_unique=1 cleanup_cancelled=1 cleanup_before_deadline=1
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_abort_timer_parked threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=2240 vm_hwm_kb=2256 mem_available_kb=48256
+FFW_P05_RUNTIME:ABORT_BLIND_VALUE status=ok join_result=Cancelled expected_join_result=Cancelled ok_value=None
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_abort_blind_value threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=2236 vm_hwm_kb=2256 mem_available_kb=48256
+FFW_P05_RUNTIME:TIMER_WAKE status=ok wanted_ms=50 slept_ms=50
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_timer_wake threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=2240 vm_hwm_kb=2256 mem_available_kb=48256
+FFW_P05_RUNTIME:UDP_LOOPBACK status=ok bytes=19 payload_equal=true peer_is_sender=true
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_udp threads_task_dir_before=2 threads_task_dir_after=2 task_dir_stable=true threads_status=2 sources_agree=true vm_rss_kb=2244 vm_hwm_kb=2256 mem_available_kb=48256
+FFW_P05_RUNTIME:BLOCKING_POOL status=ok idle_threads=0 first_admitted=true first_started=true second_admitted=true third_refused=Some(Saturated) active_threads_while_held=1 pending_while_held=1 threads_held_task_dir=3 threads_held_status=3 first_finished=true second_finished=true ran=2
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_blocking_pool threads_task_dir_before=3 threads_task_dir_after=3 task_dir_stable=true threads_status=3 sources_agree=true vm_rss_kb=2248 vm_hwm_kb=2256 mem_available_kb=48248
+FFW_P05_RUNTIME:SINGLE_OWNER_BLOCKING_OFFLOAD status=ok held_admitted=true held_started=true async_phase=ok held_job_unfinished_during_async=true held_job_finished_after_release=true async_detail=(children=8 joined=8 sum=140 expected=140)
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_blocking_offload threads_task_dir_before=3 threads_task_dir_after=3 task_dir_stable=true threads_status=3 sources_agree=true vm_rss_kb=2252 vm_hwm_kb=2292 mem_available_kb=48212
+FFW_P05_RUNTIME:DRAIN status=ok tasks_spawned=4/4 tasks_parked_before_drain=4 snapshot_before_drain=(admitted=4 unfinished=4 timers_pending=4) outcome=Quiescent expected_outcome=Quiescent live_tasks=0 pending_obligations=0 live_regions=0 expected_live_regions=0 queued_finalizers=0 pending_spawns=0 pending_obligation_posts=false elapsed_ms=13 bound_ms=5000 cleanup_resumed=4 cleanup_unique=4 cleanup_cancelled=4 cleanup_before_deadline=4 repeat: outcome=Quiescent expected_outcome=Quiescent live_tasks=0 pending_obligations=0 live_regions=0 expected_live_regions=0 queued_finalizers=0 pending_spawns=0 pending_obligation_posts=false
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_drain threads_task_dir_before=3 threads_task_dir_after=3 task_dir_stable=true threads_status=3 sources_agree=true vm_rss_kb=2260 vm_hwm_kb=2292 mem_available_kb=48212
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_runtime_drop threads_task_dir_before=1 threads_task_dir_after=1 task_dir_stable=true threads_status=1 sources_agree=true vm_rss_kb=1968 vm_hwm_kb=2292 mem_available_kb=48504 settle=settled settle_threads=1 settle_polls=1
+FFW_P05_RUNTIME:BYTE_BUDGET_REFUSAL status=ok audit_ok=true policy=BoundedBytes { max_queued: 1, max_live_bytes: 4096 } reactor=none budget_bytes=4096 declared_heap_bytes=4097 refusal=Some(ChargeTooLarge) expected_refusal=Some(ChargeTooLarge) pool_threads_after_refusal=0 refused_job_ran=false
+FFW_P05_RUNTIME:FIRST_USE_BACKGROUND status=ok pool_threads_before_first_job=0 pool_threads_while_job_runs=1 job_started=true job_finished=true os_threads_before=2 os_threads_during=3
+FFW_P05_RUNTIME:RUNTIME_USABLE_AFTER_REFUSAL status=ok spawn_join=ok outcome=Quiescent expected_outcome=Quiescent live_tasks=0 pending_obligations=0 live_regions=0 expected_live_regions=0 queued_finalizers=0 pending_spawns=0 pending_obligation_posts=false
+FFW_P05_RUNTIME:CENSUS status=ok phase=after_byte_budget threads_task_dir_before=1 threads_task_dir_after=1 task_dir_stable=true threads_status=1 sources_agree=true vm_rss_kb=1968 vm_hwm_kb=2292 mem_available_kb=48504 settle=settled settle_threads=1 settle_polls=1
+FFW_P05_RUNTIME:END status=done ops=33 ok=32 failed=0 unsupported=1 partial=0 unknown=0 census_samples=13
+FFW_SPEAKER_EXIT status=0 stdout_bytes=6835 stdout_fnv1a64=2008935b0f4c958b
+FFW_MARKER:TEST_SUCCESS failures=0
+FFW_MARKER:REBOOT_REQUEST
+[    3.119965] reboot: Restarting system

@@ -785,6 +785,11 @@ SINGLE_OWNER_CENSUS = (
     "after_abort_blind_value", "after_timer_wake", "after_udp", "after_blocking_pool", "after_blocking_offload",
     "after_drain", "after_runtime_drop", "after_byte_budget",
 )
+# The census rows that follow a runtime drop. There the single-owner probe waits, bounded, for the process to be back at the thread
+# count it started with, and prints how the wait ended on the row: `settle`, `settle_threads`, `settle_polls`
+# (toolchain/src/p05-runtime, `settle_threads`). A join returns before the kernel has unlisted the joined thread, so without this
+# a census can read a thread that is still leaving (the first mips run).
+SINGLE_OWNER_SETTLE_ROWS = ("after_runtime_drop", "after_byte_budget")
 SINGLE_OWNER_ORDER = (
     "BEGIN", "CENSUS",
     "SINGLE_OWNER_PROFILE", "PROFILE_ACCEPT", "PROFILE_REFUSES_ZERO_WORKERS", "PROFILE_REFUSES_UNBOUNDED_QUEUE",
@@ -967,6 +972,54 @@ def runtime_phase_problems(name: str, pairs: dict[str, str], detail: str, profil
     return problems
 
 
+def runtime_settle_problems(census_rows: dict[str, dict[str, str]]) -> list[str]:
+    """The single-owner rule for the census rows that follow a runtime drop; `census_rows` maps each row's phase to its pairs.
+
+    Each such row must say `settle=settled`, give a `settle_threads` no larger than this run's own `start` row, and a
+    `settle_polls` of at least 1, and the row's own stable thread count may not be above the start count either. A row that is
+    `ok` while its wait did not settle contradicts itself. The judge reads the probe's report; it cannot see the wait. The pairs may not be
+    absent: a transcript from a probe built before the settle cannot show that the drop was awaited (the same bytes failed once
+    on mips), so it is refused and never read as settled. A missing row is the census phase list's business, not this rule's."""
+    start = census_rows.get("start", {})
+    figures = [runtime_uint(start.get(key)) for key in ("threads_task_dir_before", "threads_task_dir_after", "threads_status")]
+    floor = figures[0] if None not in figures and figures[0] == figures[1] == figures[2] and figures[0] > 0 else None
+    problems = []
+    for phase in SINGLE_OWNER_SETTLE_ROWS:
+        row = census_rows.get(phase)
+        if row is None:
+            continue
+        word = row.get("settle")
+        if word is None:
+            absent = [key for key in ("settle", "settle_threads", "settle_polls") if key not in row]
+            problems.append(f"{phase}: the settle pairs are missing ({', '.join(absent)}); nothing shows the drop was awaited")
+            continue
+        if word != "settled":
+            if row.get("status") == "ok" and word in ("pending", "unmeasured"):
+                problems.append(f"{phase}: status=ok contradicts settle={word}")
+            else:
+                problems.append(f"{phase}: settle={word} is not settled")
+            continue
+        absent = [key for key in ("settle_threads", "settle_polls") if key not in row]
+        if absent:
+            problems.append(f"{phase}: settle=settled without {', '.join(absent)}")
+            continue
+        threads, polls = runtime_uint(row["settle_threads"]), runtime_uint(row["settle_polls"])
+        if threads is None:
+            problems.append(f"{phase}: settle_threads={row['settle_threads']} is not a count")
+        elif floor is None:
+            problems.append(f"{phase}: the start row has no stable thread count to compare settle_threads with")
+        elif threads > floor:
+            problems.append(f"{phase}: settle_threads={threads} is above the start count {floor}")
+        if polls is None or polls < 1:
+            problems.append(f"{phase}: settle_polls={row['settle_polls']} is not at least 1")
+        # The row's own stable count is the figure the printed pairs cannot hide: threads that left after the settle reading
+        # leave it lower than `settle_threads` (harmless), a thread still there leaves it above the start count.
+        own = [runtime_uint(row.get(key)) for key in ("threads_task_dir_before", "threads_task_dir_after", "threads_status")]
+        if floor is not None and None not in own and own[0] == own[1] == own[2] and own[0] > floor:
+            problems.append(f"{phase}: the row shows {own[0]} threads, above the start count {floor}")
+    return problems
+
+
 def judge_runtime(text: str, arch: str, elf: dict[str, Any] | None, *, supervised: bool = False,
                   profile: str = RUNTIME_THREADED) -> dict[str, Any]:
     """Judge exact phase/census identity, order and observed tallies; never accept an END total by itself.
@@ -1057,11 +1110,12 @@ def judge_runtime(text: str, arch: str, elf: dict[str, Any] | None, *, supervise
     gates.append(Gate("P05R-CLEANUP", "child-side cancellation cleanup is actually observed",
                       "failed" if witness_errors else "blocked" if missing_witnesses else "passed",
                       "; ".join(witness_errors + missing_witnesses)))
-    census_errors, phases = [], []
+    census_errors, phases, census_rows = [], [], {}
     for name, pairs in ops:
         if name != "CENSUS":
             continue
         phases.append(pairs.get("phase"))
+        census_rows[pairs.get("phase")] = pairs
         numbers = [runtime_uint(pairs.get(key)) for key in ("threads_task_dir_before", "threads_task_dir_after", "threads_status",
                                                    "vm_rss_kb", "vm_hwm_kb", "mem_available_kb")]
         if any(n is None or n < 0 for n in numbers):
@@ -1072,8 +1126,10 @@ def judge_runtime(text: str, arch: str, elf: dict[str, Any] | None, *, supervise
             census_errors.append(f"{pairs.get('phase')}: incomplete census")
     if tuple(phases) != shape["census"]:
         census_errors.append(f"observed census phases: {phases}")
-    gates.append(_gate("P05R-CENSUS", f"{'thirteen' if single_owner else 'ten'} complete, consistent census samples",
-                       census_errors))
+    if single_owner:
+        census_errors.extend(runtime_settle_problems(census_rows))
+    gates.append(_gate("P05R-CENSUS", f"{'thirteen' if single_owner else 'ten'} complete, consistent census samples"
+                       + (", each runtime drop settled" if single_owner else ""), census_errors))
     end = rows[-1][1] if rows and rows[-1][0] == "END" else {}
     expected_end = {"status": "done", "ops": str(shape["ops"]), "ok": str(shape["ok"]), "failed": "0",
                     "unsupported": str(shape["unsupported"]), "partial": "0", "unknown": "0",
@@ -1198,6 +1254,85 @@ def run_runtime(args: argparse.Namespace, expected_elf: dict[str, Any],
         "profile": profile}
 
 
+# ---- receipt path hygiene --------------------------------------------------------------------------------------------------------
+# A runtime receipt is meant to be committed, so it must not carry the home directory, the scratch directory or a worker mount of
+# whoever ran the guest. The writer rewrites every absolute host path in the receipt (never in the log files): a path under the
+# repository becomes repo-relative, any other becomes `<outside-repo>/<basename>`, and each rewritten path is listed in
+# `path_hashes` with the sha256 of the file it named (null when it cannot be read), so the new names stay bound to the bytes. The
+# hashes the receipt already records (`kernel_sha256`, `initramfs.*_sha256`, ...) are untouched. The writer refuses to write a
+# receipt in which an absolute path survives. This restates the rule of tests/t01/x02_judge.py (and the OUTSIDE_REPO marker of
+# run-qemu-verification.py); it imports nothing from them. It changes no verdict.
+
+RECEIPT_PATH_ROOTS = ("Users", "home", "private", "var", "tmp", "root", "Volumes", "mnt", "srv", "data", "bulk")
+ABSOLUTE_PATH = re.compile(rf"(?<![A-Za-z0-9_.~-])/(?:{'|'.join(RECEIPT_PATH_ROOTS)})(?=/|[\s\"'<>,;)=]|$)(?:/[^\s\"'<>,;)=]*)?")
+OUTSIDE_REPO = "<outside-repo>"
+PATH_HASH_CAP = 512 * 1024 * 1024
+
+
+def path_file_sha256(path: str) -> str | None:
+    """sha256 of the regular file at `path`, or None when it is absent, not a regular file, too large or unreadable."""
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) > PATH_HASH_CAP:
+            return None
+        digest = hashlib.sha256()
+        with open(path, "rb") as source:
+            while chunk := source.read(1 << 20):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def relocate_path(path: str, seen: list[dict[str, Any]]) -> str:
+    """The receipt's name for the host path `path`: repo-relative under the repository, `<outside-repo>/<basename>` elsewhere."""
+    clean = os.path.normpath(path)
+    label = None
+    for base in dict.fromkeys((REPO.as_posix(), REPO.resolve().as_posix())):
+        if clean == base:
+            label = "."
+        elif clean.startswith(base + "/"):
+            label = clean[len(base) + 1:]
+    if label is None:
+        label = f"{OUTSIDE_REPO}/{os.path.basename(clean) or 'root'}"
+    entry = {"path": label, "sha256": path_file_sha256(path)}
+    if entry not in seen:
+        seen.append(entry)
+    return label
+
+
+def scrub_receipt_value(value: Any, seen: list[dict[str, Any]]) -> Any:
+    """`value` with every absolute host path in any string, and in any key, rewritten; `seen` collects the path/sha256 pairs."""
+    if isinstance(value, str):
+        return ABSOLUTE_PATH.sub(lambda match: relocate_path(match.group(0), seen), value)
+    if isinstance(value, list):
+        return [scrub_receipt_value(item, seen) for item in value]
+    if isinstance(value, dict):
+        return {(scrub_receipt_value(key, seen) if isinstance(key, str) else key): scrub_receipt_value(item, seen)
+                for key, item in value.items()}
+    return value
+
+
+def scrub_receipt(body: dict[str, Any]) -> dict[str, Any]:
+    """A copy of the receipt body with host paths rewritten, plus `path_hashes`: each path it now names and the sha256 of its file."""
+    seen: list[dict[str, Any]] = []
+    clean = scrub_receipt_value(body, seen)
+    clean["path_hashes"] = seen
+    return clean
+
+
+def write_runtime_receipt(path: pathlib.Path, body: dict[str, Any]) -> None:
+    """Write the runtime receipt exclusively, after the rewrite. Both `run-runtime` and `analyze-runtime` come through here. If an
+    absolute host path would still be in it, nothing is written."""
+    clean = scrub_receipt(body)
+    leftover = ABSOLUTE_PATH.search(json.dumps(clean))
+    if leftover is not None:
+        raise MeasurementError("refusing to write a receipt that still carries an absolute path under /"
+                               + leftover.group(0).split("/")[1] + "/; nothing was written")
+    with path.open("x", encoding="utf-8") as handle:
+        json.dump(clean, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+
+
 def runtime_main(args: argparse.Namespace) -> int:
     if args.command == "analyze-runtime" and args.log is None:
         print("BLOCKED: no runtime transcript supplied (atomic-cell evidence is not runtime evidence)")
@@ -1263,9 +1398,7 @@ def runtime_main(args: argparse.Namespace) -> int:
         if single_owner:
             body["profile"] = profile
             body["declared_unsupported"] = report["declared_unsupported"]
-        with args.receipt.open("x", encoding="utf-8") as handle:
-            json.dump(body, handle, indent=2, sort_keys=True)
-            handle.write("\n")
+        write_runtime_receipt(args.receipt, body)
     # Do not publish a green result if persisting its requested receipt failed.
     for gate in report["gates"]:
         print(f"{gate.status.upper()} {gate.gate_id}: {gate.title}" + (f" — {gate.detail}" if gate.detail else ""))

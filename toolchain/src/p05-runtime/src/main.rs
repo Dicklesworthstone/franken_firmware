@@ -12,6 +12,12 @@
 //! `/proc/self/task` and `/proc/self/status` (`Threads`, `VmRSS`, `VmHWM`) and `/proc/meminfo` (`MemAvailable`). A figure that cannot
 //! be read, because `/proc` is not mounted or the field is absent, is printed `unknown`. It is never replaced by a guess or a zero.
 //!
+//! Teardown. Dropping a runtime joins every thread it started, but a join is not the kernel's last word: on musl the exiting thread
+//! wakes its joiner before its final `exit` call, so a joined thread can still be listed in `/proc/self/task` for a moment, and a
+//! census taken right after the drop can see the thread set change inside one reading. So after each drop the probe waits, bounded, for
+//! the thread count to be back at what it was before the runtime was built, and prints how that wait ended (`settle=...`) on the census
+//! row that follows. A count that never comes back fails that row; a stable reading of too many threads is not a pass.
+//!
 //! Scope. Loopback only: every socket is bound to `127.0.0.1` through a literal `SocketAddr`, so no name is resolved, and a bound
 //! address that is not loopback is refused. No `unsafe` (the crate forbids it); as PID 1 the probe parks after END instead of calling
 //! `reboot`, and the supervisor that owns the QEMU process ends it. What this does not show: it is not a memory-fit result, not a
@@ -293,7 +299,14 @@ fn count_readable_entries<T, E>(entries: impl IntoIterator<Item = Result<T, E>>)
 }
 
 fn census() -> Census {
+    census_between(|| ())
+}
+
+/// `census`, running `between` after the first `/proc/self/task` reading and before the status reading. A test uses it to move the
+/// thread set between the readings on purpose; `census` itself runs nothing there.
+fn census_between(between: impl FnOnce()) -> Census {
     let task_dir_before = task_dir_count();
+    between();
     let status = fs::read_to_string("/proc/self/status").ok();
     let task_dir_after = task_dir_count();
     let meminfo = fs::read_to_string("/proc/meminfo").ok();
@@ -385,6 +398,103 @@ fn sample(report: &mut Report, phase: &str) -> Census {
     let c = census();
     report.record("CENSUS", judge_census(phase, &c));
     c
+}
+
+// ---- the settle after a drop ------------------------------------------------------------------------------------------------
+
+/// How many readings the settle takes before it gives up, and the pause between them: about five seconds in all.
+const SETTLE_POLLS: u32 = 1000;
+const SETTLE_PAUSE: Duration = Duration::from_millis(5);
+
+/// How the wait for a dropped runtime's threads to leave `/proc/self/task` ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Settle {
+    /// At reading number `polls` the process was down to the thread count it had before the runtime, or below it.
+    Settled { threads: usize, polls: u32 },
+    /// After the last of `polls` readings `threads` were still listed: more than before the runtime.
+    Pending { threads: usize, polls: u32 },
+    /// Nothing was waited for: no thread count was taken before the runtime, or `/proc/self/task` could not be read.
+    Unmeasured,
+}
+
+impl Settle {
+    /// The pairs a census row carries for this outcome.
+    fn detail(self) -> String {
+        let (word, threads, polls) = match self {
+            Self::Settled { threads, polls } => ("settled", threads, polls),
+            Self::Pending { threads, polls } => ("pending", threads, polls),
+            Self::Unmeasured => return "settle=unmeasured".to_string(),
+        };
+        let seen = format!("settle={word} settle_threads={threads}");
+        format!("{seen} settle_polls={polls}")
+    }
+}
+
+/// Wait until `read` shows at most `floor` threads, for at most `max_polls` readings, calling `pause` between them. The readings and
+/// the pause are arguments so that the wait is tested with made-up counts and without sleeping.
+fn settle_with(
+    floor: Option<usize>,
+    max_polls: u32,
+    mut read: impl FnMut() -> Option<usize>,
+    mut pause: impl FnMut(),
+) -> Settle {
+    let Some(floor) = floor else {
+        return Settle::Unmeasured;
+    };
+    let mut listed = 0;
+    for polls in 1..=max_polls {
+        let Some(threads) = read() else {
+            return Settle::Unmeasured;
+        };
+        if threads <= floor {
+            return Settle::Settled { threads, polls };
+        }
+        listed = threads;
+        pause();
+    }
+    if listed == 0 {
+        return Settle::Unmeasured;
+    }
+    Settle::Pending {
+        threads: listed,
+        polls: max_polls,
+    }
+}
+
+fn nap() {
+    std::thread::sleep(SETTLE_PAUSE);
+}
+
+/// After a runtime was dropped: wait, bounded, for the process to be down to `floor` threads again, the count it had before the
+/// runtime was built. The drop has joined every thread the runtime started, but a join is not the kernel's last word. On musl the
+/// exiting thread wakes its joiner before its final `exit` call, so a joined thread can still be listed in `/proc/self/task` for a
+/// moment, and a census taken right then sees the thread set change inside its own reading.
+fn settle_threads(floor: Option<usize>) -> Settle {
+    settle_with(floor, SETTLE_POLLS, task_dir_count, nap)
+}
+
+/// A census verdict with the settle outcome added to its pairs. A runtime whose threads were still listed when the wait gave up is a
+/// failure whatever the reading says, because a stable reading of too many threads would otherwise pass.
+fn settled_verdict(verdict: Verdict, settle: Settle) -> Verdict {
+    let detail = format!("{} {}", verdict.detail(), settle.detail());
+    if matches!(settle, Settle::Pending { .. }) && !matches!(verdict, Verdict::Fail(_)) {
+        let reason = "reason=threads_not_released_after_runtime_drop";
+        return Verdict::Fail(format!("{detail} {reason}"));
+    }
+    match verdict {
+        Verdict::Pass(_) => Verdict::Pass(detail),
+        Verdict::Fail(_) => Verdict::Fail(detail),
+        Verdict::Unsupported(_) => Verdict::Unsupported(detail),
+        Verdict::Partial(_) => Verdict::Partial(detail),
+        Verdict::Unknown(_) => Verdict::Unknown(detail),
+    }
+}
+
+/// `sample` for the reading after a runtime was dropped: the settle outcome goes on the same census row.
+fn sample_settled(report: &mut Report, phase: &str, settle: Settle) {
+    let c = census();
+    let verdict = settled_verdict(judge_census(phase, &c), settle);
+    report.record("CENSUS", verdict);
 }
 
 // ---- the profile ------------------------------------------------------------------------------------------------------------
@@ -1498,8 +1608,9 @@ fn blocking_offload_phase(report: &mut Report, runtime: &Runtime) {
 }
 
 /// Judge the first use of the blocking pool. Pure. `idle` is the pool's threads before any accepted job and `active` while the first
-/// accepted job ran. The pool's counters decide pass or fail; the OS thread counts (`before`, `during`, from stable `/proc/self/task`
-/// readings) must show a thread appearing when they can be read, and a count that cannot be read is `partial`, never `ok`.
+/// accepted job ran. The pool's counters decide pass or fail: a wrong counter is `failed`. The OS thread counts (`before`, `during`,
+/// from stable `/proc/self/task` readings) can only make a run whose counters are right `ok`, by showing a thread appear. A count
+/// that did not grow, or that cannot be read, is `partial`: never `ok`, and never a failure of the pool.
 fn judge_first_use(
     idle: usize,
     active: usize,
@@ -1530,7 +1641,15 @@ fn judge_first_use(
 /// A fresh single-owner runtime, built WITHOUT a platform reactor (`reactor=none`; the refusal and first-use logic need none), whose
 /// blocking pool is also bounded in bytes. A charge over the pool's whole budget is refused and starts no thread; the first accepted
 /// job starts the pool's one thread; and the same runtime then still runs async work and drains.
-fn byte_budget_phases(report: &mut Report, single_owner: LegacyProfile) {
+///
+/// It returns only after that runtime has been dropped and its threads have left `/proc/self/task` (down to `floor`, the thread count
+/// before the runtime existed) or the bounded wait gave up, and it says how the wait ended. The caller prints that on the census row
+/// that follows, so that row is never taken while one of this phase's threads is still being torn down.
+fn byte_budget_phases(
+    report: &mut Report,
+    single_owner: LegacyProfile,
+    floor: Option<usize>,
+) -> Settle {
     let profile = single_owner.with_blocking_live_bytes(BYTE_BUDGET);
     let builder = match profile.builder() {
         Ok(builder) => builder.enable_platform_reactor(false),
@@ -1539,7 +1658,7 @@ fn byte_budget_phases(report: &mut Report, single_owner: LegacyProfile) {
                 "BYTE_BUDGET_REFUSAL",
                 Verdict::Fail(format!("builder_error={error:?}")),
             );
-            return;
+            return Settle::Unmeasured;
         }
     };
     let runtime = match builder.build() {
@@ -1549,10 +1668,17 @@ fn byte_budget_phases(report: &mut Report, single_owner: LegacyProfile) {
                 "BYTE_BUDGET_REFUSAL",
                 Verdict::Fail(format!("build_error={error:?}")),
             );
-            return;
+            return Settle::Unmeasured;
         }
     };
-    let audit = profile.audit(&runtime);
+    byte_budget_rows(report, &profile, &runtime);
+    drop(runtime);
+    settle_threads(floor)
+}
+
+/// The byte-budget rows, on a runtime that the caller built from `profile` and drops afterwards.
+fn byte_budget_rows(report: &mut Report, profile: &LegacyProfile, runtime: &Runtime) {
+    let audit = profile.audit(runtime);
     let Some(pool) = runtime.blocking_handle() else {
         report.record(
             "BYTE_BUDGET_REFUSAL",
@@ -1617,7 +1743,7 @@ fn byte_budget_phases(report: &mut Report, single_owner: LegacyProfile) {
     report.record("FIRST_USE_BACKGROUND", verdict);
 
     // Still usable: the refusal changed nothing, so the same runtime runs async work and drains to quiescence.
-    let usable = run_async(&runtime, spawn_join_phase());
+    let usable = run_async(runtime, spawn_join_phase());
     let drained = runtime.shutdown_drained(Duration::from_secs(5));
     let detail = format!("spawn_join={} {}", usable.status(), drain_detail(&drained));
     let ok = matches!(usable, Verdict::Pass(_)) && drain_succeeded(&drained);
@@ -1694,7 +1820,9 @@ fn run_probe_for(topology: Topology, stated: Option<LegacyProfile>) -> Report {
         begin.push_str(" topology=single_owner");
     }
     emit(&line("BEGIN", "start", &begin));
-    sample(&mut report, "start");
+    // The thread count before any runtime exists: what each drop below waits to get back to.
+    let start = sample(&mut report, "start");
+    let floor = start.stable_task_dir();
 
     if single_owner {
         match stated.as_ref().map(single_owner_claim) {
@@ -1775,10 +1903,11 @@ fn run_probe_for(topology: Topology, stated: Option<LegacyProfile>) -> Report {
     drain_phase(&mut report, &runtime);
     sample(&mut report, "after_drain");
     drop(runtime);
-    sample(&mut report, "after_runtime_drop");
+    let settled = settle_threads(floor);
+    sample_settled(&mut report, "after_runtime_drop", settled);
     if single_owner {
-        byte_budget_phases(&mut report, stated);
-        sample(&mut report, "after_byte_budget");
+        let settled = byte_budget_phases(&mut report, stated, floor);
+        sample_settled(&mut report, "after_byte_budget", settled);
     }
     report
 }
@@ -2089,9 +2218,59 @@ mod tests {
         }
     }
 
+    /// `settle_with` over made-up thread counts: one reading per element of `counts`, and a reading past the end is unreadable.
+    fn settle_after(counts: &[Option<usize>], floor: usize, polls: u32) -> Settle {
+        let mut readings = counts.iter().copied();
+        settle_with(Some(floor), polls, || readings.next().flatten(), || ())
+    }
+
     #[test]
     fn a_complete_stable_reading_is_the_only_census_that_passes() {
         assert_eq!(word(&judge_census("t", &reading())), "pass");
+        // The wait for a dropped runtime's threads ends `Settled` at the first reading that is down to the floor or below it...
+        let settled_pairs = "settle=settled settle_threads=1 settle_polls=3";
+        let settled = settle_after(&[Some(3), Some(2), Some(1)], 1, 5);
+        assert_eq!(settled.detail(), settled_pairs);
+        let below_pairs = "settle=settled settle_threads=0 settle_polls=2";
+        let below = settle_after(&[Some(3), Some(0)], 1, 5);
+        assert_eq!(below.detail(), below_pairs);
+        // ...`Pending` when the readings do not get there within the polls it is given...
+        let stuck_pairs = "settle=pending settle_threads=3 settle_polls=3";
+        let stuck = settle_after(&[Some(3), Some(3), Some(3)], 1, 3);
+        assert_eq!(stuck.detail(), stuck_pairs);
+        let late_pairs = "settle=pending settle_threads=3 settle_polls=2";
+        let late = settle_after(&[Some(3), Some(3), Some(1)], 1, 2);
+        assert_eq!(late.detail(), late_pairs);
+        // ...and `Unmeasured` when there is nothing to compare with or nothing to read, never `Settled`.
+        let nothing_to_read = settle_after(&[Some(3), None], 1, 5);
+        let no_polls = settle_after(&[Some(1)], 1, 0);
+        let no_floor = settle_with(None, 5, || Some(1), || ());
+        for unmeasured in [nothing_to_read, no_polls, no_floor] {
+            assert_eq!(unmeasured.detail(), "settle=unmeasured");
+        }
+        // The settle only adds its outcome to a census verdict. It turns nothing into a pass, and a count that never came back fails
+        // the row even when the reading itself is a complete, stable pass.
+        let with_settled = settled_verdict(judge_census("t", &reading()), settled);
+        assert_eq!(word(&with_settled), "pass");
+        assert!(with_settled.detail().ends_with(settled_pairs));
+        let with_stuck = settled_verdict(judge_census("t", &reading()), stuck);
+        assert_eq!(word(&with_stuck), "fail");
+        let reason = "reason=threads_not_released_after_runtime_drop";
+        assert!(with_stuck.detail().contains(stuck_pairs));
+        assert!(with_stuck.detail().contains(reason));
+        let with_nothing = settled_verdict(judge_census("t", &reading()), nothing_to_read);
+        assert_eq!(word(&with_nothing), "pass");
+        // A reading that is not a pass keeps its own word under a settled wait, and a pending wait fails it.
+        let changed = Census {
+            task_dir_before: Some(3),
+            task_dir_after: Some(2),
+            status_threads: Some(2),
+            ..reading()
+        };
+        let partial = settled_verdict(judge_census("t", &changed), settled);
+        assert_eq!(word(&partial), "partial");
+        let failed = settled_verdict(judge_census("t", &changed), stuck);
+        assert_eq!(word(&failed), "fail");
     }
 
     #[test]
@@ -2188,6 +2367,29 @@ mod tests {
         assert_eq!(word(&judge_census("t", &equal_water)), "pass");
     }
 
+    /// One real census with a helper thread leaving `/proc/self/task` BETWEEN its two directory readings (the plant), or with no
+    /// helper at all (the control). The helper is held on a gate until the first reading was taken, so the plant does not depend on
+    /// timing. Like the native phase tests it needs a readable `/proc/self/task`.
+    fn census_with_a_helper_leaving(plant: bool) -> Census {
+        let floor = task_dir_count();
+        let gate = Arc::new(Gate::default());
+        let held = Arc::clone(&gate);
+        let helper = plant.then(|| std::thread::spawn(move || held.wait()));
+        if helper.is_some() {
+            let listed = wait_until(Duration::from_secs(5), || task_dir_count() > floor);
+            assert!(listed, "the helper thread never appeared");
+        }
+        let reading = census_between(|| {
+            gate.release();
+            let left = wait_until(Duration::from_secs(5), || task_dir_count() == floor);
+            assert!(left, "the helper thread never left");
+        });
+        if let Some(helper) = helper {
+            helper.join().expect("the helper thread ends");
+        }
+        reading
+    }
+
     #[test]
     fn the_census_of_a_real_process_never_passes_on_a_disagreement_and_prints_unknown_for_what_it_cannot_read()
      {
@@ -2212,6 +2414,36 @@ mod tests {
                 .contains("task_dir_stable=unknown threads_status=unknown sources_agree=unknown")
         );
         assert!(unknown.contains("mem_available_kb=unknown"));
+
+        // A thread set that really moves between the two directory readings. Plant: a helper thread leaves while the census is being
+        // read, and the reading must be `partial` for exactly that reason, never a pass. Control: with no helper the same reading passes.
+        let planted = census_with_a_helper_leaving(true);
+        let moving = judge_census("moving", &planted);
+        assert_eq!(word(&moving), "partial", "{}", moving.detail());
+        let moved = "reason=thread_set_changed_during_the_reading";
+        assert!(moving.detail().contains(moved), "{}", moving.detail());
+        assert_eq!(planted.stable_task_dir(), None);
+        let control = census_with_a_helper_leaving(false);
+        let still = judge_census("still", &control);
+        assert_eq!(word(&still), "pass", "{}", still.detail());
+
+        // The settle waits for exactly that. A helper held on a gate keeps the count above the floor, so the wait gives up `Pending`;
+        // once the helper is released and joined the wait ends `Settled`, and the next reading is the count the wait ended on.
+        let floor = task_dir_count();
+        let gate = Arc::new(Gate::default());
+        let held = Arc::clone(&gate);
+        let helper = std::thread::spawn(move || held.wait());
+        let listed = wait_until(Duration::from_secs(5), || task_dir_count() > floor);
+        assert!(listed, "the helper thread never appeared");
+        let stuck = settle_with(floor, 3, task_dir_count, || ());
+        assert!(matches!(stuck, Settle::Pending { .. }), "{stuck:?}");
+        gate.release();
+        helper.join().expect("the helper thread ends");
+        let freed = settle_threads(floor);
+        let Settle::Settled { threads, .. } = freed else {
+            panic!("the helper thread never left /proc/self/task: {freed:?}");
+        };
+        assert_eq!(task_dir_count(), Some(threads));
     }
 
     fn drained() -> RootDrainReport {
@@ -2700,7 +2932,8 @@ mod tests {
     fn the_byte_budget_run_refuses_an_oversized_charge_and_leaves_the_runtime_usable() {
         let mut report = Report::default();
         let single = single_owner_profile().expect("the stated caps do not overflow");
-        byte_budget_phases(&mut report, single);
+        let floor = census().stable_task_dir();
+        let settled = byte_budget_phases(&mut report, single, floor);
         let summary = report.end();
         emit(&summary);
         assert_eq!(
@@ -2720,6 +2953,13 @@ mod tests {
             report.unknown,
         );
         assert_eq!(tally, (3, 0, 0, 0, 0), "{summary}");
+        // The ordering: the phase returns only after its runtime's threads have left `/proc/self/task`, so a reading taken right after
+        // it is the count the wait ended on, which is no more than the count before the runtime existed.
+        let Settle::Settled { threads, .. } = settled else {
+            panic!("runtime threads not settled: {settled:?} {summary}");
+        };
+        assert!(Some(threads) <= floor, "{settled:?} {floor:?}");
+        assert_eq!(task_dir_count(), Some(threads), "{settled:?} {summary}");
     }
 
     #[test]

@@ -537,7 +537,7 @@ class RuntimePackagingTests(unittest.TestCase):
         self.boot = M.boot_runner()
         self.capture = self.boot.capture_guest
 
-    def invoke(self, arch="mips", mode="normal", mutate=None):
+    def invoke(self, arch="mips", mode="normal", mutate=None, writer=None):
         elf, supervisor = self.root / "runtime.elf", self.root / "supervisor.elf"
         elf.write_bytes(elf_fixture(arch) + b"SYNTHETIC CHILD; NOT EXECUTABLE")
         supervisor.write_bytes(elf_fixture(arch) + b"SYNTHETIC SUPERVISOR; NOT EXECUTABLE")
@@ -609,8 +609,10 @@ class RuntimePackagingTests(unittest.TestCase):
                 self.boot, "capture_guest", side_effect=synthetic_capture), patch.object(
                 self.boot, "cmd_version", return_value="SYNTHETIC; NO QEMU RAN"), patch.object(
                 M, "run_runtime", side_effect=changed_source), patch.object(
-                self.boot.mkinitramfs, "build", side_effect=competing_archive), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                self.boot.mkinitramfs, "build", side_effect=competing_archive), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), patch.object(
+                M, "write_runtime_receipt", wraps=writer or M.write_runtime_receipt) as spy:
             result = M.main(args)
+        self.spy = spy  # the receipt writer as called: call_args[0] is (path, the body BEFORE any rewrite)
         self.assertEqual(len(calls), 0 if mutate in ("runtime", "supervisor") or mode in ("archive-race", "kernel-directory") else 1)
         return result, json.loads(receipt.read_text()) if receipt.exists() else None, logs
 
@@ -709,6 +711,171 @@ class RuntimePackagingTests(unittest.TestCase):
             self.boot.mkinitramfs.build(init, archive, exclusive=True)
         self.assertEqual(archive.read_bytes(), original)
 
+    # ---- receipt path hygiene: a path outside the repo is written as <outside-repo>/<basename> (the X02 rule) -----------------------
+    # The rewrite changes no verdict and proves nothing new about the guest; it only lets a receipt be committed.
+
+    @staticmethod
+    def strings(node):
+        """Every string in a JSON value, keys included."""
+        if isinstance(node, str):
+            yield node
+        elif isinstance(node, list):
+            for item in node:
+                yield from RuntimePackagingTests.strings(item)
+        elif isinstance(node, dict):
+            for key, item in node.items():
+                yield from RuntimePackagingTests.strings(key)
+                yield from RuntimePackagingTests.strings(item)
+
+    @staticmethod
+    def sha_entries(node, where=""):
+        """(location, value) of every `*sha256` entry, in order."""
+        if isinstance(node, list):
+            for index, item in enumerate(node):
+                yield from RuntimePackagingTests.sha_entries(item, f"{where}[{index}]")
+        elif isinstance(node, dict):
+            for key, item in node.items():
+                if isinstance(item, (dict, list)):
+                    yield from RuntimePackagingTests.sha_entries(item, f"{where}.{key}")
+                elif key.endswith("sha256"):
+                    yield f"{where}.{key}", item
+
+    def assert_no_host_path(self, receipt):
+        """No string anywhere in `receipt` (keys included) holds a host directory or starts with, or contains, an absolute path."""
+        hosts = [str(self.root), str(self.root.resolve())]
+        if str(Path.home()) not in ("", "/"):
+            hosts.append(str(Path.home()))
+        absolute = re.compile(r"(?<![A-Za-z0-9_.~<>-])/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+")
+        for text in self.strings(receipt):
+            for host in hosts:
+                self.assertNotIn(host, text, "a host directory survived in the receipt")
+            self.assertIsNone(absolute.search(text), "an absolute path survived in the receipt")
+            self.assertFalse(text.startswith("/"), "a string in the receipt starts with an absolute path")
+
+    def assert_portable(self, receipt, logs):
+        """The receipt-hygiene checks on a receipt that a synthetic run-runtime wrote. Raises AssertionError naming what leaked."""
+        self.assert_no_host_path(receipt)
+        execution, command = receipt["execution"], receipt["execution"]["command"]
+        self.assertEqual(execution["initramfs"]["init_path"], "<outside-repo>/supervisor.elf")
+        self.assertEqual(execution["initramfs"]["out_path"], "<outside-repo>/runtime.cpio.gz")
+        self.assertEqual(command[command.index("-kernel") + 1], "<outside-repo>/vmlinux.runtime-snapshot")
+        self.assertEqual(command[command.index("-initrd") + 1], "<outside-repo>/runtime.cpio.gz")
+        # The hashes are the ones of the bytes, and they are the ones the writer was handed: the rewrite touches names only.
+        kernel = hashlib.sha256(b"SYNTHETIC KERNEL; NOT EXECUTABLE").hexdigest()
+        archive = hashlib.sha256((logs / "runtime.cpio.gz").read_bytes()).hexdigest()
+        supervisor = hashlib.sha256((self.root / "supervisor.elf").read_bytes()).hexdigest()
+        self.assertEqual(execution["kernel_sha256"], kernel)
+        self.assertEqual(execution["initramfs"]["archive_sha256"], archive)
+        self.assertEqual(execution["initramfs"]["init_sha256"], supervisor)
+        self.assertEqual(receipt["supervisor_elf"]["sha256"], supervisor)
+        raw = self.spy.call_args[0][1]
+        self.assertIn(str(self.root), json.dumps(raw), "control: the body handed to the writer does carry the host paths")
+        before = dict(self.sha_entries(raw))
+        self.assertGreaterEqual(len(before), 8)
+        self.assertEqual(before, dict(self.sha_entries({k: v for k, v in receipt.items() if k != "path_hashes"})))
+        # And each new name is bound to the bytes of the file it replaced.
+        bound = {(entry["path"], entry["sha256"]) for entry in receipt["path_hashes"]}
+        for name, digest in (("vmlinux.runtime-snapshot", kernel), ("runtime.cpio.gz", archive), ("supervisor.elf", supervisor)):
+            self.assertIn((f"<outside-repo>/{name}", digest), bound)
+
+    @staticmethod
+    def writer_skipping(field):
+        """A copy of the receipt writer that rewrites every path except the value stored under `field`, and does not refuse."""
+        def put_back(clean, original):
+            if isinstance(clean, dict) and isinstance(original, dict):
+                return {key: original[key] if key == field and key in original else put_back(value, original.get(key))
+                        for key, value in clean.items()}
+            if isinstance(clean, list) and isinstance(original, list) and len(clean) == len(original):
+                return [put_back(c, o) for c, o in zip(clean, original)]
+            return clean
+
+        def write(path, body):
+            with path.open("x", encoding="utf-8") as handle:
+                json.dump(put_back(M.scrub_receipt(body), body), handle, indent=2, sort_keys=True)
+                handle.write("\n")
+        return write
+
+    def fresh_root(self):
+        self.root = Path(tempfile.mkdtemp(prefix="ffw-p05-runtime-packing-test-"))
+
+    def test_run_runtime_receipt_has_no_absolute_host_path_and_keeps_every_hash_bound_to_the_new_names(self):
+        result, receipt, logs = self.invoke()
+        self.assertEqual(result, 0)
+        self.assertEqual(self.spy.call_count, 1)
+        self.assertFalse(self.root.resolve().is_relative_to(M.REPO.resolve()), "the temp dir must be outside the repo")
+        self.assert_portable(receipt, logs)
+
+    def test_a_writer_that_skips_the_rewrite_of_one_field_fails_the_check_and_the_real_writer_passes_it(self):
+        for field, leaked in (("init_path", "supervisor.elf"), ("out_path", "runtime.cpio.gz"),
+                              ("command", "vmlinux.runtime-snapshot")):
+            with self.subTest(skipped=field):
+                self.fresh_root()
+                result, receipt, logs = self.invoke(writer=self.writer_skipping(field))
+                self.assertEqual(result, 0, "the plant changes no verdict")
+                with self.assertRaises(AssertionError) as caught:
+                    self.assert_portable(receipt, logs)
+                self.assertIn(leaked, str(caught.exception), "the check names the field that leaked")
+                # Control: remove the plant and the same run, with the real writer, passes the same check.
+                self.fresh_root()
+                result, receipt, logs = self.invoke()
+                self.assertEqual(result, 0)
+                self.assert_portable(receipt, logs)
+
+    def test_the_writer_refuses_a_receipt_in_which_a_path_survives_and_writes_nothing(self):
+        body = {"execution": {"initramfs": {"init_path": "/Users/someone/work/ffw-hello-init"}}}
+        written = self.root / "written.json"
+        M.write_runtime_receipt(written, body)
+        saved = json.loads(written.read_text())
+        self.assertEqual(saved["execution"]["initramfs"]["init_path"], "<outside-repo>/ffw-hello-init")
+        self.assertEqual(saved["path_hashes"], [{"path": "<outside-repo>/ffw-hello-init", "sha256": None}])
+        refused = self.root / "refused.json"
+        with patch.object(M, "scrub_receipt", side_effect=lambda b: {**b, "path_hashes": []}):  # a regressed rewrite
+            with self.assertRaises(M.MeasurementError) as caught:
+                M.write_runtime_receipt(refused, body)
+        self.assertIn("nothing was written", str(caught.exception))
+        self.assertIn("under /Users/", str(caught.exception))
+        self.assertNotIn("someone", str(caught.exception), "the message names the root, never the path")
+        self.assertFalse(refused.exists())
+        with self.assertRaises(FileExistsError):
+            M.write_runtime_receipt(written, body)  # an existing receipt is never overwritten
+
+    def test_the_rewrite_follows_the_x02_rule_for_every_root_and_every_place_a_path_can_sit(self):
+        outside = self.root / "kernel.bin"
+        outside.write_bytes(b"BOUND BYTES")
+        inside = M.REPO / "toolchain/src/measure-p05-target.py"
+        keep = ["rdinit=/init", "/proc/self/task", "src/runtime/builder.rs:3911-3914", "asupersync_460306de:src/runtime/legacy_profile.rs:406",
+                7, None, True]
+        body = {"a": str(outside), "b": [f"-kernel {outside} -initrd /private/tmp/gone/archive.cpio.gz tail"],
+                "/Users/someone/key/other.bin": 1, "n": {"deep": [{"p": str(inside)}]}, "keep": keep}
+        clean = M.scrub_receipt(body)
+        self.assertEqual(clean["a"], "<outside-repo>/kernel.bin")
+        self.assertEqual(clean["b"], ["-kernel <outside-repo>/kernel.bin -initrd <outside-repo>/archive.cpio.gz tail"])
+        self.assertEqual(clean["<outside-repo>/other.bin"], 1, "a path used as a key is rewritten too")
+        self.assertEqual(clean["n"]["deep"][0]["p"], "toolchain/src/measure-p05-target.py", "under the repo: repo-relative")
+        self.assertEqual(clean["keep"], keep, "guest paths, relative paths and non-strings are left alone")
+        bound = {(entry["path"], entry["sha256"]) for entry in clean["path_hashes"]}
+        self.assertIn(("<outside-repo>/kernel.bin", hashlib.sha256(b"BOUND BYTES").hexdigest()), bound)
+        self.assertIn(("<outside-repo>/archive.cpio.gz", None), bound)
+        self.assertIn(("toolchain/src/measure-p05-target.py", hashlib.sha256(inside.read_bytes()).hexdigest()), bound)
+        for root in ("Users", "home", "private", "var", "tmp", "root", "Volumes", "mnt", "srv", "data", "bulk"):
+            with self.subTest(root=root):
+                self.assertEqual(M.scrub_receipt({"p": f"/{root}/a/b.bin"})["p"], "<outside-repo>/b.bin")
+
+    def test_analyze_runtime_writes_through_the_same_writer_and_its_receipt_is_portable(self):
+        result, _, logs = self.invoke()
+        self.assertEqual(result, 0)
+        analyzed = self.root / "analyzed.json"
+        with patch.object(M, "write_runtime_receipt", wraps=M.write_runtime_receipt) as spy, contextlib.redirect_stdout(io.StringIO()):
+            result = M.main(["analyze-runtime", "--arch", "mips", "--elf", str(self.root / "runtime.elf"),
+                "--supervisor", str(self.root / "supervisor.elf"), "--log", str(logs / "runtime.serial.log"),
+                "--receipt", str(analyzed)])
+        self.assertEqual(result, 0)
+        self.assertEqual(spy.call_count, 1, "analyze-runtime has no writer of its own")
+        saved = json.loads(analyzed.read_text())
+        self.assertEqual(saved["evidence_kind"], "supplied_transcript_analysis")
+        self.assertEqual(saved["path_hashes"], [], "an analysis names no host path")
+        self.assert_no_host_path(saved)
+
 
 # ---- the single-owner profile (the probe's second run: one scheduler worker through LegacyProfile) -----------------------------
 
@@ -717,11 +884,19 @@ DECLARED = "CALLER_DRIVEN_CURRENT_THREAD"
 DEFAULT_APPEND = {"mips": "console=ttyS0,38400 rdinit=/init panic=-1", "powerpc": "console=ttyPZ0,38400 rdinit=/init panic=-1"}
 
 
-def single_owner_fixture(arch="mips", *, cleanup=True):
-    """Handwritten row-by-row single-owner transcript. Deliberately not built from the judge's expected-order tables."""
+# What the probe prints on the two census rows that follow a runtime drop (this fixture's start row has 4 threads).
+SETTLE_ROWS = ("after_runtime_drop", "after_byte_budget")
+SETTLE_PAIRS = {"after_runtime_drop": " settle=settled settle_threads=4 settle_polls=1",
+                "after_byte_budget": " settle=settled settle_threads=4 settle_polls=3"}
+
+
+def single_owner_fixture(arch="mips", *, cleanup=True, settle=True):
+    """Handwritten row-by-row single-owner transcript. Deliberately not built from the judge's expected-order tables.
+    `settle=False` is the shape a probe built before the settle printed: the same rows without the settle pairs."""
     def c(phase):
         return (f"FFW_P05_RUNTIME:CENSUS status=ok phase={phase} threads_task_dir_before=4 threads_task_dir_after=4 "
-                "task_dir_stable=true threads_status=4 sources_agree=true vm_rss_kb=5000 vm_hwm_kb=6000 mem_available_kb=9000")
+                "task_dir_stable=true threads_status=4 sources_agree=true vm_rss_kb=5000 vm_hwm_kb=6000 mem_available_kb=9000"
+                + (SETTLE_PAIRS.get(phase, "") if settle else ""))
 
     bits, endian = (64, "little") if arch == "x86_64" else (32, "big")
     drain = ("outcome=Quiescent expected_outcome=Quiescent live_tasks=0 pending_obligations=0 live_regions=0 "
@@ -933,6 +1108,217 @@ class SingleOwnerTranscriptTests(unittest.TestCase):
     def test_an_unknown_profile_is_an_error_and_never_a_pass(self):
         with self.assertRaises(M.MeasurementError):
             M.judge_runtime(single_owner_fixture(), "mips", {"arch": "mips"}, profile="threadless")
+
+
+def census_line(text, phase):
+    return next(line for line in text.splitlines()
+                if line.startswith("FFW_P05_RUNTIME:CENSUS ") and f" phase={phase} " in line)
+
+
+class SingleOwnerSettleTests(unittest.TestCase):
+    """The settle pairs that the single-owner probe prints on the census rows after each runtime drop are judged, not read past.
+
+    Every plant edits one row, is refused by the census gate alone and for a named reason, and is accepted again once the edit is
+    reverted. The threaded profile is judged as before."""
+
+    def judge(self, text, arch="mips"):
+        return M.judge_runtime(text, arch, {"arch": arch}, profile=SO)
+
+    @staticmethod
+    def failed(report):
+        return {g.gate_id for g in report["gates"] if g.status == "failed"}
+
+    @staticmethod
+    def census_detail(report):
+        return next(g.detail for g in report["gates"] if g.gate_id == "P05R-CENSUS")
+
+    def planted(self, good, phase, old, new):
+        """The transcript with `old` replaced by `new` on the census row of `phase`, and that row before and after."""
+        line = census_line(good, phase)
+        self.assertIn(old, line)
+        changed = line.replace(old, new, 1)
+        return good.replace(line, changed), changed, line
+
+    COUNTS = "threads_task_dir_before=4 threads_task_dir_after=4 task_dir_stable=true threads_status=4"
+
+    def counts(self, good, *, start, rows, settle_threads=None):
+        """`good` with the thread count of the start row, of the two rows after a drop, and (if given) their `settle_threads`."""
+        text = good
+        for phase, count in (("start", start), *((phase, rows) for phase in SETTLE_ROWS)):
+            line = census_line(text, phase)
+            self.assertIn(self.COUNTS, line)
+            text = text.replace(line, line.replace(self.COUNTS, self.COUNTS.replace("=4", f"={count}")))
+        if settle_threads is not None:
+            text = text.replace("settle_threads=4", f"settle_threads={settle_threads}")
+        return text
+
+    def plants(self):
+        out = []
+        for phase in SETTLE_ROWS:
+            pairs = SETTLE_PAIRS[phase]
+            polls = pairs.rsplit("=", 1)[1]
+            out += [
+                (f"F1: {phase} shows 5 stable threads, above the start count", phase, self.COUNTS,
+                 self.COUNTS.replace("=4", "=5"), f"{phase}: the row shows 5 threads, above the start count 4"),
+                (f"a: {phase} is ok but pending", phase, "settle=settled", "settle=pending",
+                 f"{phase}: status=ok contradicts settle=pending"),
+                (f"a: {phase} is ok but unmeasured", phase, pairs, " settle=unmeasured",
+                 f"{phase}: status=ok contradicts settle=unmeasured"),
+                (f"b: {phase} settle_threads above the start count", phase, "settle_threads=4", "settle_threads=5",
+                 f"{phase}: settle_threads=5 is above the start count 4"),
+                (f"c: {phase} has no settle pairs", phase, pairs, "",
+                 f"{phase}: the settle pairs are missing (settle, settle_threads, settle_polls)"),
+                (f"c: {phase} lacks the word", phase, " settle=settled", "",
+                 f"{phase}: the settle pairs are missing (settle)"),
+                (f"c: {phase} lacks settle_threads", phase, " settle_threads=4", "",
+                 f"{phase}: settle=settled without settle_threads"),
+                (f"c: {phase} lacks settle_polls", phase, f" settle_polls={polls}", "",
+                 f"{phase}: settle=settled without settle_polls"),
+                (f"d: {phase} settled after zero polls", phase, f"settle_polls={polls}", "settle_polls=0",
+                 f"{phase}: settle_polls=0 is not at least 1"),
+                (f"d: {phase} polls is not a canonical count", phase, f"settle_polls={polls}", "settle_polls=01",
+                 f"{phase}: settle_polls=01 is not at least 1"),
+                (f"{phase} settle_threads is not a count", phase, "settle_threads=4", "settle_threads=four",
+                 f"{phase}: settle_threads=four is not a count"),
+            ]
+        return out
+
+    def test_settled_pairs_within_the_start_count_are_accepted(self):
+        good = single_owner_fixture()
+        for phase in SETTLE_ROWS:
+            self.assertIn(SETTLE_PAIRS[phase], good)
+        for arch in ("mips", "powerpc", "x86_64"):
+            with self.subTest(arch=arch):
+                self.assertTrue(self.judge(single_owner_fixture(arch), arch)["ok"])
+        # Any count from 1 up to the start count, and any number of polls from 1 up to the probe's bound of 1000.
+        for threads, polls in ((4, 1), (3, 2), (1, 1), (1, 1000), (4, 1000)):
+            for phase in SETTLE_ROWS:
+                text, _, _ = self.planted(
+                    good, phase, SETTLE_PAIRS[phase], f" settle=settled settle_threads={threads} settle_polls={polls}")
+                with self.subTest(phase=phase, threads=threads, polls=polls):
+                    report = self.judge(text)
+                    self.assertTrue(report["ok"], self.census_detail(report))
+        # The ceiling is this run's own start row, not a constant. The two rows after a drop show the start count here (so a row count
+        # equal to the start count is accepted), and only `settle_threads` moves against it.
+        for count, threads, accepted in ((4, 4, True), (2, 2, True), (6, 6, True), (2, 4, False), (3, 4, False), (6, 7, False)):
+            text = self.counts(good, start=count, rows=count, settle_threads=threads)
+            with self.subTest(start_threads=count, settle_threads=threads):
+                report = self.judge(text)
+                self.assertEqual(report["ok"], accepted, self.census_detail(report))
+                if not accepted:
+                    self.assertEqual(self.failed(report), {"P05R-CENSUS"})
+                    self.assertIn(f"settle_threads={threads} is above the start count {count}", self.census_detail(report))
+
+    def test_a_row_that_shows_more_threads_than_the_start_is_refused_whatever_the_pairs_claim(self):
+        # The leak shape: start 1, the row shows 2 stable threads, and the pairs still say settled at 1.
+        control = self.counts(single_owner_fixture(), start=1, rows=1, settle_threads=1)
+        self.assertTrue(self.judge(control)["ok"], "control: the row at the start count")
+        for phase in SETTLE_ROWS:
+            with self.subTest(phase=phase):
+                text, changed, original = self.planted(
+                    control, phase, self.COUNTS.replace("=4", "=1"), self.COUNTS.replace("=4", "=2"))
+                self.assertIn(" settle=settled settle_threads=1 ", changed)
+                report = self.judge(text)
+                self.assertFalse(report["ok"])
+                self.assertEqual(self.failed(report), {"P05R-CENSUS"})
+                self.assertEqual(self.census_detail(report), f"{phase}: the row shows 2 threads, above the start count 1")
+                self.assertEqual(M.exit_code(report), 1)
+                self.assertTrue(self.judge(text.replace(changed, original))["ok"], "the plant removed")
+        # Threads that left after the settle reading make the row count LOWER than settle_threads: harmless, accepted. So is a row
+        # count equal to the start count (the default fixture, and start 2 with rows at 2).
+        for rows, threads in ((1, 3), (1, 4), (3, 4), (4, 4)):
+            with self.subTest(start=4, rows=rows, settle_threads=threads):
+                self.assertTrue(self.judge(self.counts(single_owner_fixture(), start=4, rows=rows, settle_threads=threads))["ok"])
+        self.assertTrue(self.judge(self.counts(single_owner_fixture(), start=2, rows=2, settle_threads=2))["ok"])
+        # A row whose own count moved during its reading is the census gate's business (it is refused there), not a second report
+        # from this rule: only a STABLE count above the start count is reported as "the row shows".
+        good = single_owner_fixture()
+        moved = self.COUNTS.replace("before=4", "before=5")
+        text, _, _ = self.planted(good, "after_byte_budget", self.COUNTS, moved)
+        report = self.judge(text)
+        self.assertFalse(report["ok"])
+        self.assertIn("after_byte_budget: inconsistent thread or memory readings", self.census_detail(report))
+        self.assertNotIn("the row shows", self.census_detail(report))
+
+    def test_a_start_row_without_a_stable_positive_thread_count_gives_the_rule_nothing_to_compare_with(self):
+        good = single_owner_fixture()
+        start = census_line(good, "start")
+        for label, moved in (
+            ("zero threads", "threads_task_dir_before=0 threads_task_dir_after=0 task_dir_stable=true threads_status=0"),
+            ("before and after differ", "threads_task_dir_before=3 threads_task_dir_after=4 task_dir_stable=true threads_status=4"),
+            ("the status count differs", "threads_task_dir_before=4 threads_task_dir_after=4 task_dir_stable=true threads_status=3"),
+        ):
+            with self.subTest(start=label):
+                text = good.replace(start, start.replace(self.COUNTS, moved))
+                self.assertNotEqual(text, good)
+                report = self.judge(text)
+                self.assertFalse(report["ok"])
+                detail = self.census_detail(report)
+                for phase in SETTLE_ROWS:
+                    self.assertIn(f"{phase}: the start row has no stable thread count to compare settle_threads with", detail)
+                self.assertNotIn("above the start count", detail)
+        self.assertTrue(self.judge(good)["ok"], "control")
+
+    def test_each_planted_deviation_is_refused_for_its_reason_and_accepted_again_when_removed(self):
+        good = single_owner_fixture()
+        self.assertTrue(self.judge(good)["ok"], "control")
+        plants = self.plants()
+        self.assertEqual(len(plants), 22)
+        for label, phase, old, new, reason in plants:
+            with self.subTest(plant=label):
+                text, changed, original = self.planted(good, phase, old, new)
+                self.assertNotEqual(text, good)
+                report = self.judge(text)
+                self.assertFalse(report["ok"])
+                self.assertEqual(self.failed(report), {"P05R-CENSUS"})
+                self.assertIn(reason, self.census_detail(report))
+                self.assertEqual(M.exit_code(report), 1)
+                restored = text.replace(changed, original)
+                self.assertEqual(restored, good)
+                self.assertTrue(self.judge(restored)["ok"], "the plant removed")
+
+    def test_a_transcript_from_a_probe_built_before_the_settle_is_refused_and_never_read_as_settled(self):
+        before = single_owner_fixture(settle=False)
+        self.assertFalse(any("settle" in line for line in before.splitlines()))
+        report = self.judge(before)
+        self.assertFalse(report["ok"])
+        self.assertEqual(self.failed(report), {"P05R-CENSUS"})
+        self.assertEqual(M.exit_code(report), 1)
+        for phase in SETTLE_ROWS:
+            self.assertIn(f"{phase}: the settle pairs are missing", self.census_detail(report))
+        for arch in ("mips", "powerpc", "x86_64"):
+            with self.subTest(arch=arch):
+                self.assertFalse(self.judge(single_owner_fixture(arch, settle=False), arch)["ok"])
+                self.assertTrue(self.judge(single_owner_fixture(arch), arch)["ok"], "control: the pairs the probe now prints")
+
+    def test_the_row_the_probe_prints_for_a_thread_that_never_left_is_refused_by_two_gates(self):
+        good = single_owner_fixture()
+        leak = ("FFW_P05_RUNTIME:CENSUS status=failed phase=after_byte_budget threads_task_dir_before=5 threads_task_dir_after=5 "
+                "task_dir_stable=true threads_status=5 sources_agree=true vm_rss_kb=5000 vm_hwm_kb=6000 mem_available_kb=9000 "
+                "settle=pending settle_threads=5 settle_polls=1000 reason=threads_not_released_after_runtime_drop")
+        text = good.replace(census_line(good, "after_byte_budget"), leak).replace("ok=32 failed=0", "ok=31 failed=1")
+        report = self.judge(text)
+        self.assertFalse(report["ok"])
+        # The END tallies give a failed row away as well; the two per-row gates are the ones this test is about.
+        self.assertLessEqual({"P05R-PHASES", "P05R-CENSUS"}, self.failed(report))
+        self.assertIn("after_byte_budget: settle=pending is not settled", self.census_detail(report))
+
+    def test_the_gate_title_names_the_settle_for_single_owner_only_and_the_threaded_profile_is_judged_as_before(self):
+        title = lambda report: next(g.title for g in report["gates"] if g.gate_id == "P05R-CENSUS")  # noqa: E731
+        single = self.judge(single_owner_fixture())
+        self.assertEqual(title(single), "thirteen complete, consistent census samples, each runtime drop settled")
+        threaded = fixture()
+        plain = lambda text: M.judge_runtime(text, "mips", {"arch": "mips"})  # noqa: E731 - the default profile
+        self.assertTrue(plain(threaded)["ok"])
+        self.assertEqual(title(plain(threaded)), "ten complete, consistent census samples")
+        # The probe's threaded run now prints the pairs on its after_runtime_drop row too; that row is accepted with them.
+        line = census_line(threaded, "after_runtime_drop")
+        settled = threaded.replace(line, line + " settle=settled settle_threads=4 settle_polls=2")
+        self.assertTrue(plain(settled)["ok"])
+        # Scope, stated by the assignment (16286): the rule reads the single-owner profile only. The threaded settle word is not
+        # judged, exactly as before this rule; this line pins that boundary and is not an endorsement of it.
+        pending = threaded.replace(line, line + " settle=pending settle_threads=9 settle_polls=1000")
+        self.assertTrue(plain(pending)["ok"])
 
 
 class SingleOwnerEnvelopeTests(unittest.TestCase):
