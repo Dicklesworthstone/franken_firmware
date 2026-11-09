@@ -1,0 +1,904 @@
+{
+ "schema": "ffw.d04.alloc_sites.v1",
+ "note": "The allocation audit of the four lifecycle paths (start, cancel, drain, reconnect) and the submit and fault paths they share. It is a text check, not a measurement: it reads the production half of each file (before `#[cfg(test)]`, comments and string literals removed) and requires that a listed function contains no growth-capable call beyond the ones named here, with the reason, and that the storage those calls append to is reserved at admission with the fallible API. It cannot see an allocation inside a callee in another crate, the `poll_event` of a real backend (only the fake's is read here, and no driver's exists yet), or a macro; docs/contracts/d04.md section 'Storage is admitted before Running' says what it does not cover. The plants prove each check can fail, one at a time, each failing exactly its own check. A `signatures` entry holds what has no body to audit, the trait declaration: its text, whitespace collapsed, must be in the file and its `absent` text must not be. A function named in `must_plant` must also have a plant of its own, so that removing the plant is seen.",
+ "files": {
+  "emit": "crates/franken-hal/src/emit.rs",
+  "slots": "crates/franken-hal/src/slots.rs",
+  "session": "crates/franken-hal/src/session.rs",
+  "render": "crates/franken-speaker/src/render.rs",
+  "backend": "crates/franken-hal/src/backend.rs"
+ },
+ "growth_tokens": [
+  ".push(",
+  ".push_back(",
+  ".push_front(",
+  ".insert(",
+  ".extend(",
+  ".extend_from_slice(",
+  "Vec::new(",
+  "vec![",
+  "Vec::with_capacity(",
+  "VecDeque::new(",
+  "VecDeque::with_capacity(",
+  ".clone()",
+  ".to_vec(",
+  ".to_string(",
+  ".to_owned(",
+  "format!(",
+  "String::",
+  "Box::new(",
+  "Arc::new(",
+  "Rc::new(",
+  ".collect(",
+  ".reserve(",
+  ".reserve_exact(",
+  ".resize(",
+  ".append(",
+  ".snapshot("
+ ],
+ "functions": [
+  {
+   "file": "session",
+   "fn": "start",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "session",
+   "fn": "drain",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "session",
+   "fn": "cancel_drain",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "session",
+   "fn": "abort_mute",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "session",
+   "fn": "reset_device",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "session",
+   "fn": "fail_muted",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "session",
+   "fn": "try_mute",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "session",
+   "fn": "emit",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "session",
+   "fn": "note_loss_while_faulted",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "session",
+   "fn": "driver_failed",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "session",
+   "fn": "settle_events",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "session",
+   "fn": "step",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "session",
+   "fn": "poll",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "session",
+   "fn": "apply_event",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "session",
+   "fn": "submit",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "session",
+   "fn": "submit_retained",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "session",
+   "fn": "credit",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "session",
+   "fn": "take_event",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "session",
+   "fn": "prepare_reserving",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "session",
+   "fn": "drop",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "session",
+   "fn": "fail_muted_qualified",
+   "allowed": {
+    ".clone()": 1
+   },
+   "why": "FaultCode owns no heap data (an enum of integers and enums), so its clone allocates nothing"
+  },
+  {
+   "file": "session",
+   "fn": "record_fault",
+   "allowed": {
+    ".push(": 1,
+    ".clone()": 1
+   },
+   "why": "the push is under `len() < MAX_FAULT_RECORDS` (GUARD-FAULTS), into the Vec reserved to MAX_FAULT_RECORDS at open (RES-FAULTS)"
+  },
+  {
+   "file": "slots",
+   "fn": "acquire_free",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "slots",
+   "fn": "release_unaccepted",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "slots",
+   "fn": "complete",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "slots",
+   "fn": "quarantine_slot",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "slots",
+   "fn": "quarantine_all_in_flight",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "slots",
+   "fn": "free_in_flight_after_flush_ack",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "slots",
+   "fn": "release_all_after_reset_ack",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "slots",
+   "fn": "drop",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "slots",
+   "fn": "capacity",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "slots",
+   "fn": "set",
+   "allowed": {
+    ".extend_from_slice(": 1
+   },
+   "why": "within the reservation: acquire_free refuses data longer than the block, and every cell reserved a whole block (RES-SLOT-CELL)"
+  },
+  {
+   "file": "emit",
+   "fn": "push",
+   "allowed": {
+    ".push_back(": 2
+   },
+   "why": "each push_back follows the `len() < cap` test or an eviction, into the queue reserved to cap (GUARD-QUEUE)"
+  },
+  {
+   "file": "emit",
+   "fn": "pop",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "emit",
+   "fn": "emit",
+   "allowed": {
+    ".push(": 1
+   },
+   "why": "CriticalQueue::push, bounded by its reservation"
+  },
+  {
+   "file": "emit",
+   "fn": "take",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "render",
+   "fn": "start",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "render",
+   "fn": "mute",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "render",
+   "fn": "unmute",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "render",
+   "fn": "reconnect",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "render",
+   "fn": "begin_epoch",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "render",
+   "fn": "stop",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "render",
+   "fn": "cancel",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "render",
+   "fn": "begin_stop",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "render",
+   "fn": "recover",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "render",
+   "fn": "fail",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "render",
+   "fn": "set_state",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "render",
+   "fn": "drop_stale_control",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "render",
+   "fn": "service_control",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "render",
+   "fn": "tick",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "render",
+   "fn": "invalidate_presentation_mapping",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "render",
+   "fn": "reinstall_presentation_mapping",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "render",
+   "fn": "set_gain",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "render",
+   "fn": "take_event",
+   "allowed": {},
+   "why": "no growth-capable call"
+  },
+  {
+   "file": "render",
+   "fn": "emit",
+   "allowed": {
+    ".push(": 1
+   },
+   "why": "CriticalQueue::push, bounded by its reservation"
+  },
+  {
+   "file": "render",
+   "fn": "send",
+   "allowed": {
+    ".push_back(": 1
+   },
+   "why": "after the `CONTROL_QUEUE_CAP` test (GUARD-CONTROL), into the queue reserved to that cap (RES-CONTROL)"
+  },
+  {
+   "file": "backend",
+   "fn": "poll_event",
+   "allowed": {},
+   "why": "the fake hands the record it holds over by value into the caller's buffer: no growth-capable call"
+  }
+ ],
+ "contains": [
+  {
+   "id": "RES-SLOT-CELL",
+   "file": "slots",
+   "fn": "reserved",
+   "text": [
+    "try_reserve_exact(bytes)"
+   ],
+   "why": "a slot's storage is reserved at admission with the fallible API"
+  },
+  {
+   "id": "RES-SLOT-TABLE",
+   "file": "slots",
+   "fn": "new_reserving",
+   "text": [
+    "try_reserve_exact(depth)",
+    "StorageCell::reserved(block_bytes)"
+   ],
+   "absent": [
+    "StorageCell::new("
+   ],
+   "why": "the table reserves its slot list and every cell before it exists"
+  },
+  {
+   "id": "RES-EVENT-QUEUE",
+   "file": "emit",
+   "fn": "reserved",
+   "text": [
+    "try_reserve_exact(cap)"
+   ],
+   "why": "the session's event queue is reserved at open"
+  },
+  {
+   "id": "RES-EVENT-QUEUE-SESSION",
+   "file": "emit",
+   "fn": "reserved",
+   "nth": 1,
+   "text": [
+    "CriticalQueue::reserved(cap)?"
+   ],
+   "absent": [
+    "CriticalQueue::new("
+   ],
+   "why": "EventQueue::reserved builds its queue reserved, not lazy"
+  },
+  {
+   "id": "RES-FAULTS",
+   "file": "session",
+   "fn": "open_admitting",
+   "text": [
+    "try_reserve_exact(MAX_FAULT_RECORDS)"
+   ],
+   "why": "the fault records are reserved at open, before any fault can be recorded"
+  },
+  {
+   "id": "RES-SESSION-EVENTS",
+   "file": "session",
+   "fn": "open_admitting",
+   "text": [
+    "EventQueue::reserved(config.event_queue_cap)"
+   ],
+   "absent": [
+    "EventQueue::new("
+   ],
+   "why": "the session's events are reserved at open"
+  },
+  {
+   "id": "RES-LOOP-EVENTS",
+   "file": "render",
+   "fn": "new_reserving",
+   "text": [
+    "CriticalQueue::reserved(RENDER_EVENT_CAP)"
+   ],
+   "absent": [
+    "CriticalQueue::new("
+   ],
+   "why": "the loop's events are reserved at admission"
+  },
+  {
+   "id": "RES-LOOP-CONTROL",
+   "file": "render",
+   "fn": "new_reserving",
+   "text": [
+    "ControlPort::reserved()"
+   ],
+   "absent": [
+    "ControlPort::default()"
+   ],
+   "why": "the control port other tasks send into is reserved at admission"
+  },
+  {
+   "id": "RES-CONTROL",
+   "file": "render",
+   "fn": "reserved",
+   "text": [
+    "try_reserve_exact(CONTROL_QUEUE_CAP)"
+   ],
+   "why": "the control queue is reserved to its cap"
+  },
+  {
+   "id": "BUF-POLL-LENGTH",
+   "file": "session",
+   "fn": "poll",
+   "text": [
+    "if len == EVENT_LEN {",
+    "decode_event(&record)",
+    "expected: EVENT_LEN",
+    "actual: len"
+   ],
+   "why": "a record is decoded only when the device reported exactly EVENT_LEN bytes; any other length is refused by the length it had, never cut to fit and read"
+  },
+  {
+   "id": "BUF-BACKEND-HANDOVER",
+   "file": "backend",
+   "fn": "poll_event",
+   "text": [
+    "*record = queued.head;",
+    "Ok(Some(queued.len))"
+   ],
+   "why": "the fake copies the record it holds into the caller's buffer and reports the length the device had, not the length that fitted"
+  },
+  {
+   "id": "BUF-BACKEND-KEEPS-LENGTH",
+   "file": "backend",
+   "fn": "from_bytes",
+   "text": [
+    "len: bytes.len()",
+    "let mut head = [0u8; EVENT_LEN];"
+   ],
+   "why": "a record a test queues keeps its true length and only its first EVENT_LEN bytes are held, so a long record is never cut and then read"
+  }
+ ],
+ "order": [
+  {
+   "id": "ORD-OPEN-FAULTS",
+   "file": "session",
+   "fn": "open_admitting",
+   "first": "refuse(Reserved::FaultRecords)",
+   "then": "take_session_id(",
+   "why": "the fault records are reserved before the session id is taken, so a refused open uses none"
+  },
+  {
+   "id": "ORD-OPEN-EVENTS",
+   "file": "session",
+   "fn": "open_admitting",
+   "first": "refuse(Reserved::EventQueue)",
+   "then": "take_session_id(",
+   "why": "the event queue is reserved before the session id is taken"
+  },
+  {
+   "id": "ORD-PREPARE",
+   "file": "session",
+   "fn": "prepare_reserving",
+   "first": "SlotTable::new_reserving(",
+   "then": "set_mute(true)",
+   "why": "the slot storage is reserved before the device is asked to mute, so a refusal has touched it with the capabilities query only"
+  },
+  {
+   "id": "GUARD-FAULTS",
+   "file": "session",
+   "fn": "record_fault",
+   "first": "self.faults.len() < MAX_FAULT_RECORDS",
+   "then": ".push(",
+   "why": "a fault record is pushed only below the cap, so the reserved Vec never grows"
+  },
+  {
+   "id": "GUARD-CONTROL",
+   "file": "render",
+   "fn": "send",
+   "first": "CONTROL_QUEUE_CAP",
+   "then": ".push_back(",
+   "why": "a command is queued only below the cap, so the reserved queue never grows"
+  },
+  {
+   "id": "GUARD-QUEUE",
+   "file": "emit",
+   "fn": "push",
+   "first": "self.items.len() < self.cap",
+   "then": ".push_back(",
+   "why": "an event is queued only below the cap, so the reserved queue never grows"
+  },
+  {
+   "id": "ORD-POLL-FRESH",
+   "file": "session",
+   "fn": "poll",
+   "first": "for _ in 0..MAX_EVENTS_PER_POLL {",
+   "then": "let mut record = [0u8; EVENT_LEN];",
+   "why": "the record is made inside the per-event loop, so each event is read into a fresh one and a record the device did not write reads as zeroes, never as the last event"
+  }
+ ],
+ "signatures": [
+  {
+   "id": "SIG-POLL-EVENT",
+   "file": "backend",
+   "text": [
+    "fn poll_event(&mut self, record: &mut [u8; EVENT_LEN]) -> Result<Option<usize>, DriverError>;"
+   ],
+   "absent": [
+    "Result<Option<Vec<u8>>, DriverError>"
+   ],
+   "why": "the trait takes the caller's record and returns the length the device had; a trait that returns a Vec is one allocation per event again"
+  }
+ ],
+ "must_plant": [
+  "FN-backend-poll_event",
+  "FN-session-poll"
+ ],
+ "plants": [
+  {
+   "id": "PLANT-SLOT-CELL",
+   "file": "slots",
+   "old": "storage.try_reserve_exact(bytes)?;",
+   "new": "let _ = bytes;",
+   "fails": [
+    "RES-SLOT-CELL"
+   ]
+  },
+  {
+   "id": "PLANT-SLOT-TABLE-CELLS",
+   "file": "slots",
+   "old": "StorageCell::reserved(block_bytes)",
+   "new": "StorageCell::reserved(0)",
+   "fails": [
+    "RES-SLOT-TABLE"
+   ]
+  },
+  {
+   "id": "PLANT-SLOT-TABLE-LIST",
+   "file": "slots",
+   "old": "slots.try_reserve_exact(depth).map_err(|_| refused(0))?;",
+   "new": "let _ = depth;",
+   "fails": [
+    "RES-SLOT-TABLE"
+   ]
+  },
+  {
+   "id": "PLANT-DROP-COPIES",
+   "file": "slots",
+   "old": "bytes += keep.capacity();",
+   "new": "bytes += keep.snapshot().len();",
+   "fails": [
+    "FN-slots-drop"
+   ]
+  },
+  {
+   "id": "PLANT-SET-GROWS",
+   "file": "slots",
+   "old": "        guard.clear();\n        guard.extend_from_slice(data);\n",
+   "new": "        guard.clear();\n        guard.extend_from_slice(data);\n        guard.extend_from_slice(data);\n",
+   "fails": [
+    "FN-slots-set"
+   ]
+  },
+  {
+   "id": "PLANT-QUEUE-UNRESERVED",
+   "file": "emit",
+   "old": "items.try_reserve_exact(cap)?;",
+   "new": "let _ = cap;",
+   "fails": [
+    "RES-EVENT-QUEUE"
+   ]
+  },
+  {
+   "id": "PLANT-QUEUE-PUSH-UNGUARDED",
+   "file": "emit",
+   "old": "if self.items.len() < self.cap {",
+   "new": "if true {",
+   "fails": [
+    "GUARD-QUEUE"
+   ]
+  },
+  {
+   "id": "PLANT-SESSION-QUEUE-LAZY",
+   "file": "emit",
+   "old": "queue: CriticalQueue::reserved(cap)?,",
+   "new": "queue: CriticalQueue::new(cap),",
+   "fails": [
+    "RES-EVENT-QUEUE-SESSION"
+   ]
+  },
+  {
+   "id": "PLANT-FAULTS-UNRESERVED",
+   "file": "session",
+   "old": "faults.try_reserve_exact(MAX_FAULT_RECORDS).is_err()",
+   "new": "false",
+   "fails": [
+    "RES-FAULTS"
+   ]
+  },
+  {
+   "id": "PLANT-ID-BEFORE-EVENTS",
+   "file": "session",
+   "old": "let events = if refuse(Reserved::EventQueue) {",
+   "new": "let events = if false {",
+   "fails": [
+    "ORD-OPEN-EVENTS"
+   ]
+  },
+  {
+   "id": "PLANT-SESSION-EVENTS-UNRESERVED",
+   "file": "session",
+   "old": "EventQueue::reserved(config.event_queue_cap).ok()",
+   "new": "None::<EventQueue>",
+   "fails": [
+    "RES-SESSION-EVENTS"
+   ]
+  },
+  {
+   "id": "PLANT-FAULT-PUSH-UNGUARDED",
+   "file": "session",
+   "old": "if self.faults.len() < MAX_FAULT_RECORDS {",
+   "new": "if true {",
+   "fails": [
+    "GUARD-FAULTS"
+   ]
+  },
+  {
+   "id": "PLANT-ID-BEFORE-RESERVATION",
+   "file": "session",
+   "old": "if refuse(Reserved::FaultRecords) ||",
+   "new": "if false ||",
+   "fails": [
+    "ORD-OPEN-FAULTS"
+   ]
+  },
+  {
+   "id": "PLANT-ABORT-ALLOCATES",
+   "file": "session",
+   "old": "            Ok(false) => {\n                let _ = self.fail_muted(FaultCode::MuteNotAcknowledged);\n                Ok(AbortReport {",
+   "new": "            Ok(false) => {\n                let _note = format!(\"{:?}\", self.phase);\n                let _ = self.fail_muted(FaultCode::MuteNotAcknowledged);\n                Ok(AbortReport {",
+   "fails": [
+    "FN-session-abort_mute"
+   ]
+  },
+  {
+   "id": "PLANT-PREPARE-MUTES-FIRST",
+   "file": "session",
+   "old": "        // The buffers are reserved before the device is asked to do anything but answer the query above, so a\n        // refusal touches nothing; until the session commits below, the table is only a local.\n        let table = if self.abi == AbiKind::RetainedBuffer {\n            let cap = self.quarantine_cap.min(geometry.ring_depth);\n            let table = SlotTable::new_reserving(\n                geometry.ring_depth,\n                geometry.block_bytes,\n                cap,\n                Arc::clone(&self.ledger),\n                refuse,\n            )\n            .map_err(SessionError::Slots)?;\n            Some(table)\n        } else {\n            None\n        };\n        match self.backend.set_mute(true) {\n            Ok(true) => self.amp = Amp::Muted,\n            Ok(false) => return Err(self.fail_muted(FaultCode::MuteNotAcknowledged)),\n            Err(error) => return Err(self.driver_failed(Op::SetMute, error)),\n        }\n",
+   "new": "        match self.backend.set_mute(true) {\n            Ok(true) => self.amp = Amp::Muted,\n            Ok(false) => return Err(self.fail_muted(FaultCode::MuteNotAcknowledged)),\n            Err(error) => return Err(self.driver_failed(Op::SetMute, error)),\n        }\n        // The buffers are reserved before the device is asked to do anything but answer the query above, so a\n        // refusal touches nothing; until the session commits below, the table is only a local.\n        let table = if self.abi == AbiKind::RetainedBuffer {\n            let cap = self.quarantine_cap.min(geometry.ring_depth);\n            let table = SlotTable::new_reserving(\n                geometry.ring_depth,\n                geometry.block_bytes,\n                cap,\n                Arc::clone(&self.ledger),\n                refuse,\n            )\n            .map_err(SessionError::Slots)?;\n            Some(table)\n        } else {\n            None\n        };\n",
+   "fails": [
+    "ORD-PREPARE"
+   ]
+  },
+  {
+   "id": "PLANT-START-PUSHES",
+   "file": "render",
+   "old": "        self.cancel_mode = false;\n        self.fault = None;\n        self.set_state(RenderState::Running);",
+   "new": "        self.cancel_mode = false;\n        self.fault = None;\n        self.events.push(RenderEvent { tick: 0, kind: RenderEventKind::DriverUnderrun });\n        self.set_state(RenderState::Running);",
+   "fails": [
+    "FN-render-start"
+   ]
+  },
+  {
+   "id": "PLANT-DRAIN-EXTENDS",
+   "file": "session",
+   "old": "        self.settle_events();\n        if self.phase == SessionPhase::Faulted {\n            return Err(SessionError::FaultedDuringDrain);\n        }\n        if let Err(error) = self.backend.request_flush() {\n            return Err(self.driver_failed(Op::RequestFlush, error));\n        }\n        self.phase = SessionPhase::Draining;\n        self.stop_requested = true;\n        let mut waited = 0u64;",
+   "new": "        self.faults.extend(std::iter::empty());\n        self.settle_events();\n        if self.phase == SessionPhase::Faulted {\n            return Err(SessionError::FaultedDuringDrain);\n        }\n        if let Err(error) = self.backend.request_flush() {\n            return Err(self.driver_failed(Op::RequestFlush, error));\n        }\n        self.phase = SessionPhase::Draining;\n        self.stop_requested = true;\n        let mut waited = 0u64;",
+   "fails": [
+    "FN-session-drain"
+   ]
+  },
+  {
+   "id": "PLANT-CANCEL-DRAIN-VECNEW",
+   "file": "session",
+   "old": "        self.require_phase(&[SessionPhase::Draining])?;\n        let _ = self.fail_muted(FaultCode::DrainCancelled);",
+   "new": "        self.require_phase(&[SessionPhase::Draining])?;\n        let _scratch: Vec<u8> = Vec::new();\n        let _ = self.fail_muted(FaultCode::DrainCancelled);",
+   "fails": [
+    "FN-session-cancel_drain"
+   ]
+  },
+  {
+   "id": "PLANT-LOOP-EVENTS-LAZY",
+   "file": "render",
+   "old": "CriticalQueue::reserved(RENDER_EVENT_CAP).ok()",
+   "new": "Some(CriticalQueue::new(RENDER_EVENT_CAP))",
+   "fails": [
+    "RES-LOOP-EVENTS"
+   ]
+  },
+  {
+   "id": "PLANT-LOOP-CONTROL-LAZY",
+   "file": "render",
+   "old": "ControlPort::reserved().ok()",
+   "new": "Some(ControlPort::default())",
+   "fails": [
+    "RES-LOOP-CONTROL"
+   ]
+  },
+  {
+   "id": "PLANT-CONTROL-UNRESERVED",
+   "file": "render",
+   "old": "queue.try_reserve_exact(CONTROL_QUEUE_CAP)?;",
+   "new": "let _ = CONTROL_QUEUE_CAP;",
+   "fails": [
+    "RES-CONTROL"
+   ]
+  },
+  {
+   "id": "PLANT-CONTROL-PUSH-UNGUARDED",
+   "file": "render",
+   "old": "if inner.queue.len() >= CONTROL_QUEUE_CAP {",
+   "new": "if false {",
+   "fails": [
+    "GUARD-CONTROL"
+   ]
+  },
+  {
+   "id": "PLANT-START-ALLOCATES",
+   "file": "render",
+   "old": "        self.set_state(RenderState::Running);\n        Ok(())\n    }\n\n    /// Ramp to silence and keep the timeline.",
+   "new": "        let _scratch = vec![0u8; 8];\n        self.set_state(RenderState::Running);\n        Ok(())\n    }\n\n    /// Ramp to silence and keep the timeline.",
+   "fails": [
+    "FN-render-start"
+   ]
+  },
+  {
+   "id": "PLANT-RECONNECT-ALLOCATES",
+   "file": "render",
+   "old": "        self.dsp.on_source_event(SourceEvent::Reconnect);\n        self.resync_pending = false;",
+   "new": "        self.dsp.on_source_event(SourceEvent::Reconnect);\n        let _scratch = String::new();\n        self.resync_pending = false;",
+   "fails": [
+    "FN-render-begin_epoch"
+   ]
+  },
+  {
+   "id": "PLANT-CANCEL-ALLOCATES",
+   "file": "render",
+   "old": "        self.busy = None;\n        Ok(())\n    }\n\n    fn begin_stop(&mut self) {",
+   "new": "        self.busy = None;\n        let _scratch = vec![0u8; 8];\n        Ok(())\n    }\n\n    fn begin_stop(&mut self) {",
+   "fails": [
+    "FN-render-cancel"
+   ]
+  },
+  {
+   "id": "PLANT-DRAIN-ALLOCATES",
+   "file": "render",
+   "old": "        self.stop_began = self.now;\n        self.stop_tail_trusted = true;",
+   "new": "        self.stop_began = self.now;\n        let _scratch = self.now.to_string();\n        self.stop_tail_trusted = true;",
+   "fails": [
+    "FN-render-begin_stop"
+   ]
+  },
+  {
+   "id": "PLANT-BACKEND-POLL-VEC",
+   "file": "backend",
+   "old": "*record = queued.head;",
+   "new": "let _per_event = queued.head.to_vec();\n            *record = queued.head;",
+   "fails": [
+    "FN-backend-poll_event"
+   ]
+  },
+  {
+   "id": "PLANT-POLL-ALLOCATES",
+   "file": "session",
+   "old": "let len = match self.backend.poll_event(&mut record) {",
+   "new": "let _per_event = record.to_vec();\n            let len = match self.backend.poll_event(&mut record) {",
+   "fails": [
+    "FN-session-poll"
+   ]
+  },
+  {
+   "id": "PLANT-POLL-RECORD-HOISTED",
+   "file": "session",
+   "old": "        for _ in 0..MAX_EVENTS_PER_POLL {\n            // One fixed record on the stack, fresh for each event: the device writes into it and nothing is\n            // allocated. A backend that reports a record it did not write hands back zeroes, which read as an\n            // unknown kind and fault, and never as a repeat of the previous event.\n            let mut record = [0u8; EVENT_LEN];\n",
+   "new": "        let mut record = [0u8; EVENT_LEN];\n        for _ in 0..MAX_EVENTS_PER_POLL {\n",
+   "fails": [
+    "ORD-POLL-FRESH"
+   ]
+  },
+  {
+   "id": "PLANT-POLL-LENGTH-CUT",
+   "file": "session",
+   "old": "let decoded = if len == EVENT_LEN {",
+   "new": "let decoded = if len >= EVENT_LEN {",
+   "fails": [
+    "BUF-POLL-LENGTH"
+   ]
+  },
+  {
+   "id": "PLANT-BACKEND-LENGTH-FITTED",
+   "file": "backend",
+   "old": "return Ok(Some(queued.len));",
+   "new": "return Ok(Some(EVENT_LEN));",
+   "fails": [
+    "BUF-BACKEND-HANDOVER"
+   ]
+  },
+  {
+   "id": "PLANT-BACKEND-RAW-LENGTH-CUT",
+   "file": "backend",
+   "old": "len: bytes.len(),",
+   "new": "len: kept,",
+   "fails": [
+    "BUF-BACKEND-KEEPS-LENGTH"
+   ]
+  },
+  {
+   "id": "PLANT-TRAIT-RETURNS-VEC",
+   "file": "backend",
+   "old": "fn poll_event(&mut self, record: &mut [u8; EVENT_LEN]) -> Result<Option<usize>, DriverError>;",
+   "new": "fn poll_event(&mut self) -> Result<Option<Vec<u8>>, DriverError>;",
+   "fails": [
+    "SIG-POLL-EVENT"
+   ]
+  }
+ ]
+}

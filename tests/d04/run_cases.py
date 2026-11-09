@@ -58,6 +58,10 @@ RENDER_RS = os.path.join(REPO, "crates", "franken-speaker", "src", "render.rs")
 RENDER_LOG_RS = os.path.join(REPO, "crates", "franken-speaker", "src", "render_log.rs")
 SPEAKER_LIB = os.path.join(REPO, "crates", "franken-speaker", "src", "lib.rs")
 SESSION_RS = os.path.join(REPO, "crates", "franken-hal", "src", "session.rs")
+SLOTS_RS = os.path.join(REPO, "crates", "franken-hal", "src", "slots.rs")
+EMIT_RS = os.path.join(REPO, "crates", "franken-hal", "src", "emit.rs")
+BACKEND_RS = os.path.join(REPO, "crates", "franken-hal", "src", "backend.rs")
+ALLOC_SITES = os.path.join(HERE, "alloc_sites.json")
 LOG_GOLDEN = os.path.join(HERE, "log_golden.json")
 REGRESS_GOLDEN = os.path.join(HERE, "regress_golden.json")
 TEST_SUPPORT_RS = os.path.join(REPO, "crates", "franken-test-support", "src", "lib.rs")
@@ -65,7 +69,7 @@ SCHEMA = "ffw.d04.cases.v1"
 TIERS = ("smoke", "full")
 KINDS = ("scenario", "planted_defect", "meta_files", "meta_shared", "meta_generated", "meta_invariants",
          "meta_hygiene", "meta_no_unsafe", "meta_log", "log_golden", "log_defect", "regress_scenario", "regress_log",
-         "regress_defect", "runner_selftest", "blocked", "central_rust")
+         "regress_defect", "alloc_audit", "alloc_defect", "runner_selftest", "blocked", "central_rust")
 PASS, FAIL, BLOCKED = "pass", "fail", "blocked"
 Result = Tuple[str, str]
 
@@ -98,9 +102,12 @@ def render_test_names() -> List[str]:
 
 
 def hal_test_names() -> List[str]:
-    """`session::fn` for every #[test] in crates/franken-hal/src/session.rs. An invariant may name one; they are not
-    all required to be mapped, because the session has its own contract and tests."""
-    return [f"session::{n}" for n in re.findall(r"#\[test\]\s*\n\s*fn\s+(\w+)\s*\(", read(SESSION_RS))]
+    """`session::fn`, `slots::fn` and `emit::fn` for every #[test] in those three files of crates/franken-hal. An invariant may
+    name one; they are not all required to be mapped, because the HAL has its own contract and tests."""
+    out: List[str] = []
+    for prefix, path in (("session", SESSION_RS), ("slots", SLOTS_RS), ("emit", EMIT_RS)):
+        out += [f"{prefix}::{n}" for n in re.findall(r"#\[test\]\s*\n\s*fn\s+(\w+)\s*\(", read(path))]
+    return out
 
 
 def all_rust_tests() -> List[str]:
@@ -163,7 +170,7 @@ def run_planted_defect(c) -> Result:
 # ------------------------------------------------------------------------------------------- meta
 
 def run_meta_files(c) -> Result:
-    needed = [CASES_FILE, SCENARIOS_FILE, DOC_FILE, RENDER_RS, RENDER_LOG_RS, LOG_GOLDEN,
+    needed = [CASES_FILE, SCENARIOS_FILE, DOC_FILE, RENDER_RS, RENDER_LOG_RS, LOG_GOLDEN, ALLOC_SITES, SLOTS_RS, EMIT_RS, BACKEND_RS,
               os.path.join(HERE, "log_reference.py"), REGRESS_GOLDEN, SESSION_RS,
               os.path.join(HERE, "regress_reference.py"),
               os.path.join(HERE, "reference.py"), os.path.join(HERE, "generate.py"),
@@ -218,7 +225,7 @@ def check_invariants(doc: Dict[str, Any], ids: List[str], tests: List[str]) -> L
             problems.append(f"{inv['id']} maps to nothing")
         for name in inv["rust_tests"]:
             if name not in known:
-                problems.append(f"{inv['id']}: no #[test] fn {name} in render.rs, render_log.rs or session.rs")
+                problems.append(f"{inv['id']}: no #[test] fn {name} in render.rs, render_log.rs, session.rs, slots.rs or emit.rs")
         for ref in expand(inv["cases"], ids):
             if ref not in ids:
                 problems.append(f"{inv['id']} names unknown case {ref}")
@@ -244,7 +251,7 @@ def run_meta_invariants(c) -> Result:
 
 
 HYGIENE_FILES = ("cases.json", "scenarios.json", "reference.py", "generate.py", "run_cases.py", "log_golden.json",
-                 "log_reference.py", "regress_golden.json", "regress_reference.py")
+                 "log_reference.py", "regress_golden.json", "regress_reference.py", "alloc_sites.json")
 
 
 def run_meta_hygiene(c) -> Result:
@@ -418,6 +425,112 @@ def run_regress_defect(c) -> Result:
     return PASS, f"caught by {', '.join(caught)}"
 
 
+# ------------------------------------------------------------------------------------------- allocation audit
+
+def _strip_comments(text: str) -> str:
+    return re.sub(r"//[^\n]*", "", text)
+
+
+def _strip_strings(text: str) -> str:
+    return re.sub(r'"(?:[^"\\\n]|\\.)*"', '""', text)
+
+
+def _fn_bodies(prod: str, name: str) -> List[str]:
+    """Every body of a function called `name` in `prod`, braces matched (strings and comments are already gone). A `;` inside brackets, as
+    in a parameter `&mut [u8; N]`, does not end the signature; a `;` outside them does, so a declaration with no body is not a match."""
+    out = []
+    for m in re.finditer(r"\n[ \t]*(?:pub(?:\([a-z]+\))? )?(?:const )?fn %s\b(?:[^{;\[]|\[[^\]]*\])*\{" % re.escape(name), prod):
+        i, depth = m.end(), 1
+        while depth and i < len(prod):
+            depth += (prod[i] == "{") - (prod[i] == "}")
+            i += 1
+        out.append(prod[m.start():i])
+    return out
+
+
+def alloc_problems(sources: Dict[str, str], spec: Dict[str, Any]) -> List[str]:
+    """The ids of the audit checks that fail, in order and without repeats. `sources` maps the file keys of the spec to their text."""
+    prod = {k: _strip_strings(_strip_comments(v.split("#[cfg(test)]")[0])) for k, v in sources.items()}
+    flat = lambda body: re.sub(r"\s+", " ", body)  # noqa: E731  (rustfmt may break a line anywhere)
+    failed: List[str] = []
+
+    def fail(check: str) -> None:
+        if check not in failed:
+            failed.append(check)
+    for f in spec["functions"]:
+        check = f"FN-{f['file']}-{f['fn']}"
+        bodies = _fn_bodies(prod[f["file"]], f["fn"])
+        if len(bodies) != 1:
+            fail(check)
+            continue
+        if any(bodies[0].count(tok) > f["allowed"].get(tok, 0) for tok in spec["growth_tokens"]):
+            fail(check)
+    for c in spec["contains"]:
+        bodies = _fn_bodies(prod[c["file"]], c["fn"])
+        nth = c.get("nth", 0)
+        if nth >= len(bodies) or not all(t in flat(bodies[nth]) for t in c["text"]) or any(t in flat(bodies[nth]) for t in c.get("absent", [])):
+            fail(c["id"])
+    for o in spec["order"]:
+        bodies = _fn_bodies(prod[o["file"]], o["fn"])
+        if len(bodies) != 1:
+            fail(o["id"])
+            continue
+        body = flat(bodies[0])
+        i, j = body.find(o["first"]), body.find(o["then"])
+        if i < 0 or j < 0 or i > j:
+            fail(o["id"])
+    for g in spec.get("signatures", []):
+        text = flat(prod[g["file"]])
+        if not all(t in text for t in g["text"]) or any(t in text for t in g.get("absent", [])):
+            fail(g["id"])
+    return failed
+
+
+def alloc_sources() -> Dict[str, str]:
+    spec = load_json(ALLOC_SITES)
+    return {key: read(os.path.join(REPO, rel)) for key, rel in spec["files"].items()}
+
+
+def run_alloc_audit(c) -> Result:
+    spec = load_json(ALLOC_SITES)
+    if spec.get("schema") != "ffw.d04.alloc_sites.v1":
+        return FAIL, f"alloc_sites.json schema is {spec.get('schema')!r}"
+    failed = alloc_problems(alloc_sources(), spec)
+    if failed:
+        return FAIL, f"allocation audit checks failed: {failed}"
+    return PASS, (f"{len(spec['functions'])} functions free of growth beyond the listed calls, {len(spec['contains'])} required texts, "
+                  f"{len(spec['order'])} orderings, {len(spec.get('signatures', []))} signatures")
+
+
+def run_alloc_defect(c) -> Result:
+    """Each plant is made in a copy of the sources and must fail exactly the checks it names, against a green baseline."""
+    spec = load_json(ALLOC_SITES)
+    sources = alloc_sources()
+    baseline = alloc_problems(sources, spec)
+    if baseline:
+        return FAIL, f"the baseline is not green, so no catch can be credited: {baseline}"
+    wrong = []
+    for p in spec["plants"]:
+        text = sources[p["file"]]
+        if text.count(p["old"]) != 1:
+            wrong.append(f"{p['id']}: its text occurs {text.count(p['old'])} time(s), not once")
+            continue
+        planted = dict(sources, **{p["file"]: text.replace(p["old"], p["new"])})
+        got = alloc_problems(planted, spec)
+        if got != p["fails"]:
+            wrong.append(f"{p['id']}: failed {got}, wanted exactly {p['fails']}")
+    named = spec["contains"] + spec["order"] + spec.get("signatures", [])
+    checks = {f"FN-{f['file']}-{f['fn']}" for f in spec["functions"]} | {x["id"] for x in named}
+    never_planted = sorted([x["id"] for x in named if not any(x["id"] in p["fails"] for p in spec["plants"])]
+                           + [i for i in spec.get("must_plant", []) if not any(i in p["fails"] for p in spec["plants"])])
+    if never_planted:
+        wrong.append(f"no plant for the check(s) {never_planted}")
+    unknown = sorted({i for p in spec["plants"] for i in p["fails"]} - checks)
+    if unknown:
+        wrong.append(f"plants name unknown checks {unknown}")
+    return (PASS, f"{len(spec['plants'])} plants, each failing exactly its own check") if not wrong else (FAIL, "; ".join(wrong))
+
+
 def run_runner_selftest(c) -> Result:
     """The comparisons are not vacuous: a corrupted scenario, a missing Rust test name and an orphan
     case must each be seen."""
@@ -471,6 +584,26 @@ def run_runner_selftest(c) -> Result:
     bad["scenarios"][0]["rust_test"] = "render::a_test_that_does_not_exist"
     if not regress_test_names_exist(bad):
         return FAIL, "a regress scenario naming a missing Rust test was not detected"
+    alloc = load_json(ALLOC_SITES)
+    sources = alloc_sources()
+    if alloc_problems(sources, alloc):
+        return FAIL, "the allocation audit baseline does not pass"
+    bad = copy.deepcopy(alloc)
+    bad["functions"][0]["fn"] = "a_function_that_does_not_exist"
+    if not alloc_problems(sources, bad):
+        return FAIL, "an audit entry naming a missing function was not detected"
+    bad = copy.deepcopy(alloc)
+    bad["order"][0]["first"], bad["order"][0]["then"] = bad["order"][0]["then"], bad["order"][0]["first"]
+    if not alloc_problems(sources, bad):
+        return FAIL, "an audit ordering turned round was not detected"
+    bad = copy.deepcopy(alloc)
+    bad["signatures"][0]["text"] = ["a signature that is not there"]
+    if not alloc_problems(sources, bad):
+        return FAIL, "an audit signature naming text that is not in the file was not detected"
+    bad = copy.deepcopy(alloc)
+    bad["signatures"][0]["absent"] = ["fn poll_event"]
+    if not alloc_problems(sources, bad):
+        return FAIL, "an audit signature forbidding text that is in the file was not detected"
     return PASS, ""
 
 
@@ -577,6 +710,7 @@ RUNNERS: Dict[str, Callable[[Dict[str, Any]], Result]] = {
     "meta_no_unsafe": run_meta_no_unsafe, "runner_selftest": run_runner_selftest, "blocked": run_blocked,
     "central_rust": run_central_rust, "meta_log": run_meta_log, "log_golden": run_log_golden, "log_defect": run_log_defect,
     "regress_scenario": run_regress_scenario, "regress_log": run_regress_log, "regress_defect": run_regress_defect,
+    "alloc_audit": run_alloc_audit, "alloc_defect": run_alloc_defect,
 }
 
 

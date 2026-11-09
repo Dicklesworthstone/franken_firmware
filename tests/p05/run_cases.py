@@ -81,7 +81,8 @@ DOC_HEADINGS = ("## No-claim line", "## Inputs", "## Replacement map: 64-bit ato
 DOC_RUNTIME_TERMS = ("--profile single-owner", "/ffw_p05_profile", "CALLER_DRIVEN_CURRENT_THREAD",
                      "reason_source=static_source_reading", "declaration, not a pass", "accepted_with_declared_unsupported",
                      "never `PASSED`", "the command-line exit is 4", "FIRST_USE_BACKGROUND",
-                     "tests/p05/native_runtime38_names.txt")
+                     "tests/p05/native_runtime38_names.txt", "--profile caller-driven", "os_thread_ceiling=0",
+                     "reason_source=profile_split", "tests/p05/native_runtime45_names.txt")
 DOC_CLASSES = ("Identifier or generation counter", "Timestamp or deadline", "Statistic or event count",
                "Flag word", "Owner-local state", "Test-only use", "Signed gauge")
 DOC_NO_CLAIM = "does not make Asupersync compile on the big-endian MIPS or PowerPC targets"

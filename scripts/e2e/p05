@@ -21,6 +21,12 @@
 #                                                    threaded and unchanged. See docs/contracts/p05.md, "The runtime probe and its
 #                                                    single-owner profile". The flag exists only where measure-p05-target.py has the
 #                                                    --profile option; an older checkout rejects it as an unrecognized argument.
+#   scripts/e2e/p05 --runtime run|analyze [ARGS] --profile caller-driven
+#                                                    the probe's third run: a runtime built with LegacyProfile::caller_driven, driven by
+#                                                    the thread that calls block_on, with no worker, blocking or helper thread. No census
+#                                                    row may show a thread above the starting count and nothing is declared unsupported,
+#                                                    so an accepted run is a plain pass (exit 0). It needs an Asupersync that has that
+#                                                    constructor and a probe built from it. See docs/contracts/p05.md.
 #
 # What this does and does not show. The Python runner re-derives the checker corpus, the directed scripts
 # and the seeded sweeps with an independent model, shows each deliberately weakened rule and each planted

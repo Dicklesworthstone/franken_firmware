@@ -295,6 +295,16 @@
    ]
   },
   {
+   "id": "D04-ALLOC-001",
+   "kind": "alloc_audit",
+   "tier": "smoke"
+  },
+  {
+   "id": "D04-ALLOC-002",
+   "kind": "alloc_defect",
+   "tier": "full"
+  },
+  {
    "id": "D04-SELFTEST-001",
    "kind": "runner_selftest",
    "tier": "full"
@@ -357,6 +367,39 @@
    "cases": [
     "D04-CAP-001",
     "D04-DEFECT-05"
+   ]
+  },
+  {
+   "id": "INV-STORAGE-ADMISSION",
+   "text": "the storage the cleanup path and the render loop append to (slot storage, fault records, session events, render events, control commands) is reserved at admission with the fallible allocation API, so a start, a cancel, a drain, a reconnect, a submit or a fault never grows it; a refused reservation is a typed refusal that starts nothing and uses no session id, and has its own name, distinct from a rejected block, a full ring and an injected admission failure; the audit of the lifecycle functions and its planted removals show the property can fail",
+   "rust_tests": [
+    "render::a_refused_reservation_admits_no_loop_names_which_storage_and_never_reads_as_capacity",
+    "render::the_storage_a_loop_reserved_at_admission_does_not_move_through_start_reconnect_cancel_stop_a_fault_and_a_restart",
+    "session::a_refused_reservation_at_open_is_a_typed_refusal_that_leaves_the_device_and_the_id_alone",
+    "session::a_refused_slot_reservation_at_prepare_admits_no_slots_starts_nothing_and_a_retry_succeeds",
+    "session::the_storage_footprint_is_fixed_at_admission_and_a_fault_flood_and_a_full_cycle_never_grow_it",
+    "slots::every_slot_is_reserved_at_admission_and_no_submit_ever_grows_one",
+    "slots::a_refused_slot_reservation_admits_no_table_and_says_how_far_it_got",
+    "slots::a_reservation_the_allocator_could_never_make_is_a_refusal_not_a_panic",
+    "emit::a_reserved_queue_holds_its_whole_cap_and_no_push_pop_or_eviction_leaves_the_reservation",
+    "emit::a_reservation_nothing_could_satisfy_is_a_refusal_not_a_panic_and_a_small_one_is_made"
+   ],
+   "cases": [
+    "D04-ALLOC-001",
+    "D04-ALLOC-002"
+   ]
+  },
+  {
+   "id": "INV-EVENT-BUFFER",
+   "text": "a device event is read into a record the session owns and passes to the backend, so the backend allocates nothing per event on the cancel and drain paths while events are pending; the backend reports the length the device had and a record of any length but EVENT_LEN is refused by that length, never cut to fit and read; a failed poll with events pending faults the session and the loop muted and grows no reservation; the audit of the backend's poll_event, the session's poll and the trait declaration, and its planted per-call Vec, show the property can fail",
+   "rust_tests": [
+    "session::a_device_record_is_read_into_the_callers_buffer_and_a_wrong_sized_one_is_refused_by_its_true_length",
+    "session::an_abort_and_a_drain_with_events_pending_read_them_into_the_callers_buffer_and_never_grow_the_reservation",
+    "render::a_cancel_with_device_events_pending_and_a_failing_poll_faults_the_loop_muted_and_grows_nothing"
+   ],
+   "cases": [
+    "D04-ALLOC-001",
+    "D04-ALLOC-002"
    ]
   },
   {

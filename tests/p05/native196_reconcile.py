@@ -10,11 +10,13 @@ Anything else prints each problem and exits 1. A missing name, a duplicate (in o
 a `FAILED` or `ignored` test, a truncated log with no summary line, and a conflicting or unattributable result are each a problem.
 Exit 0 only for `complete`; 2 for a usage error.
 
-The registry is chosen by its digest, never by a flag. `--registry FILE` takes a file whose sha256 is one of the two pinned ones: the 196
-names (the default) or the 38 native tests of the P05 runtime probe, `native_runtime38_names.txt` (`94be74e6...`); any other file, either
-of them with one byte changed or reordered included, is a usage error (exit 2) and nothing is reconciled. For the 38 the binary a run may
-come from is the probe's (`ffw_p05_runtime`), not Asupersync's, and results are credited by libtest's own totals when `--nocapture` makes
-them unattributable (see `credit_by_closure`). The 196 path is unchanged: it never credits an interrupted result.
+The registry is chosen by its digest, never by a flag. `--registry FILE` takes a file whose sha256 is one of the three pinned ones: the 196
+names (the default), the 38 native tests of the P05 runtime probe at its single-owner revision, `native_runtime38_names.txt`
+(`94be74e6...`), or the 45 of the probe with its caller-driven profile, `native_runtime45_names.txt` (`52f277cd...`: those 38, unchanged and
+in order, then 7); any other file, any of them with one byte changed or reordered included, is a usage error (exit 2) and nothing is
+reconciled. For the 38 and the 45 the binary a run may come from is the probe's (`ffw_p05_runtime`), not Asupersync's, and results are
+credited by libtest's own totals when `--nocapture` makes them unattributable (see `credit_by_closure`). The 196 path is unchanged: it
+never credits an interrupted result.
 
 Reuse, not a fork. The result parser is D01's `Logs` (tests/d01/run_cases.py): it already reads libtest output under `--nocapture`, where
 another line can land between `test <name> ... ` and its `ok`. The failure and terminal-line patterns are `audit_check.py`'s
@@ -44,6 +46,12 @@ only, libtest's own totals credit them (`credit_by_closure`):
 
     python3 tests/p05/native196_reconcile.py --registry tests/p05/native_runtime38_names.txt --run LOG EXIT_STATUS
 
+A probe that has the caller-driven profile (45 tests, `native_runtime45_names.txt`) is reconciled the same way against its own registry:
+
+    python3 tests/p05/native196_reconcile.py --registry tests/p05/native_runtime45_names.txt --run LOG EXIT_STATUS
+
+A log of one probe is never complete against the other's registry: 38 names are missing from it or 7 are outside it.
+
 A reconcile says which names ran once and `ok`. It decides nothing else about the run.
 """
 from __future__ import annotations
@@ -65,6 +73,8 @@ LIB_STEMS = (None, "asupersync")    # stdout alone carries no `Running` header (
 RUNTIME38_FILE = HERE / "native_runtime38_names.txt"
 RUNTIME38_SHA256 = "94be74e65f47711951368d6776a4516699d761333338db5057f881867c679ba1"
 RUNTIME38_STEMS = (None, "ffw_p05_runtime")     # the probe's own test binary (package `ffw-p05-runtime`), never Asupersync's
+RUNTIME45_FILE = HERE / "native_runtime45_names.txt"
+RUNTIME45_SHA256 = "52f277cd4bdc68e2682795c65ebe060ca25de1aa87216cbc1c4184cc86219703"     # the 38 names above, then the 7 caller-driven ones
 
 
 @dataclass(frozen=True)
@@ -80,6 +90,7 @@ class Pinned:
 PINNED = (
     Pinned("native196", REGISTRY_SHA256, 196, LIB_STEMS, False),
     Pinned("native_runtime38", RUNTIME38_SHA256, 38, RUNTIME38_STEMS, True),
+    Pinned("native_runtime45", RUNTIME45_SHA256, 45, RUNTIME38_STEMS, True),
 )
 
 # D01's note for a sorted (one-test-thread) section whose interrupted results it declined to attribute.
