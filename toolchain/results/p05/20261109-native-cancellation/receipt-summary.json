@@ -1,0 +1,247 @@
+{
+  "status": "ONE_NATIVE_AUDIT_GATE_PASSED_ROOT_REVIEWED",
+  "source": {
+    "public_git_commit": "4f624497ad28944027cc1d8193054ec2a11a210e",
+    "revision_provenance": "Observed execution Bash checked exact HEAD and clean status; canon-audit5.out records launch and completion at the same clean public revision. Root independently confirmed twelve selected hashes.",
+    "root_count": 1,
+    "recorded_root_file_count": 21001,
+    "receipt_root": "2e3c4d48a2be912bf05fb89d5162515b0f0518b7da9cc621c24750873ee23fa3",
+    "root_hash": "d56709013520d41dfc0f353c0c345468c5ce5b960354b99938b9b3106cc54d7e",
+    "content_root": "14c67ad92fd92a8672cf37d4db7612b1a9539a84ab769506a5d41c5c37507c4d",
+    "source_bindings": {
+      "src/runtime/legacy_profile.rs": {
+        "sha256": "e828a2d2f2d1ff80d308b0e857cff7cc5e9877be8be88674b60c49b739b77229",
+        "byte_count": 116129
+      },
+      "src/runtime/builder.rs": {
+        "sha256": "9ec5fcef1162eba64d53b67c12b029c1f32e675e8411943a7cad72c7e144e357",
+        "byte_count": 332775
+      },
+      "src/runtime/current_thread.rs": {
+        "sha256": "f37f616e83a4d9957f028dd70712e12750d91814355b4618a7d0d57e5a415c35",
+        "byte_count": 39940
+      },
+      "src/grpc/client.rs": {
+        "sha256": "060c4e53dc09d3c8bd8ccc32d568367cc7a2ce26d86301a6a398cbf78d78ea58",
+        "byte_count": 169883
+      },
+      "src/messaging/nats_inline_tests.rs": {
+        "sha256": "063bba0632aaf1b8d33488d5646b97000f4bac1345bd5a2349e3e054fd532626",
+        "byte_count": 174367
+      },
+      "src/messaging/redis_tests.rs": {
+        "sha256": "cfe38b144c695ede41fbb858b109231679a4d8f86711747380b144df7d6f8c72",
+        "byte_count": 344547
+      },
+      "src/observability/otel/queued_grpc.rs": {
+        "sha256": "0289583edd1775e5a88384c984cf7bff5ce488866b6b120ba6673072914e255b",
+        "byte_count": 15125
+      },
+      "src/observability/otel/sdk/traces.rs": {
+        "sha256": "cf3816dfccd2f314bce2297426c184836fbf4d56df8960ce74887ea3066c6255",
+        "byte_count": 31228
+      },
+      "src/observability/otel/sdk/metrics_tests.rs": {
+        "sha256": "5eef2fd92455e794faf53314080ac9b43e4f49e9a60b9ceb5d1ab6f594a91cde",
+        "byte_count": 29584
+      },
+      "src/cx/scoped_race_all_inline_tests.rs": {
+        "sha256": "c1a571123e056aca49f99e97453ee339ef18cf88332a2bf3571ca2cfe530caca",
+        "byte_count": 33502
+      },
+      "tests/runtime_abort_vs_cancel_semantics_audit.rs": {
+        "sha256": "83c620459150469003c4038988c70598477d469a5c60add01028ba76c06e9d39",
+        "byte_count": 133685
+      },
+      "tests/runtime_abort_vs_cancel_semantics_audit/stream_cancellation.rs": {
+        "sha256": "daf75da8c73ad7d61391ae7c8f017ed704d7898e0e1d28b11295588a860c2d6a",
+        "byte_count": 8194
+      }
+    }
+  },
+  "command": {
+    "observed_at": "2026-11-09T06:43:09.532Z",
+    "tool_use_id": "toolu_01TC3YpSVNqMki2df57ZzqBf",
+    "observed_bash_input": "cd <operational-path> && [ \"$(git rev-parse HEAD)\" = 4f624497ad28944027cc1d8193054ec2a11a210e ] && [ -z \"$(git status --porcelain)\" ] && echo \"launch $(date -u +%FT%TZ) HEAD 4f624497a clean\" > <operational-path> && bash <operational-path> 1 -- env RCH_REQUIRE_REMOTE=1 RCH_TEST_TIMEOUT_SEC=3600 rch exec --source-content-receipt -- env CARGO_TARGET_DIR=<operational-path> CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 \"RUSTFLAGS=-D warnings -C debuginfo=0\" cargo test -p asupersync --locked -j 1 --test runtime_abort_vs_cancel_semantics_audit -- --nocapture > <operational-path> 2>&1; echo \"audit exit=$? end $(date -u +%FT%TZ) HEAD-after $(git rev-parse --short=9 HEAD) dirty-after $(git status --porcelain | wc -l | tr -d ' ')\" >> <operational-path>",
+    "observed_execution_invocation": "bash <operational-path> 1 -- env RCH_REQUIRE_REMOTE=1 RCH_TEST_TIMEOUT_SEC=3600 rch exec --source-content-receipt -- env CARGO_TARGET_DIR=<operational-path> CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 \"RUSTFLAGS=-D warnings -C debuginfo=0\" cargo test -p asupersync --locked -j 1 --test runtime_abort_vs_cancel_semantics_audit -- --nocapture",
+    "observed_invocation_raw_sha256": "aa505fde33699de1fb157b8881acd463c841101f0f7db8c0c6f1541282fa07c5",
+    "cargo_argv": [
+      "cargo",
+      "test",
+      "-p",
+      "asupersync",
+      "--locked",
+      "-j",
+      "1",
+      "--test",
+      "runtime_abort_vs_cancel_semantics_audit",
+      "--",
+      "--nocapture"
+    ],
+    "unfiltered": true,
+    "provenance": "First item in observed-command input only; second monitoring call supplies no execution evidence. Original spacing and -j 1 are preserved except operational path redaction; command text is not inferred from a digest."
+  },
+  "receipt": {
+    "schema": "rch.source_content_receipt.v1",
+    "build_id": "30100509981410708",
+    "command_sha256": "1803fdea950b679c431e95695b95659387bdcf15138fe69e846675b148c0f98c",
+    "command_exit_code": 0,
+    "raw_log_receipt_equals_full_receipt": true
+  },
+  "results": {
+    "planned_parent_count": 48,
+    "source_parent_test_names": [
+      "abort_repolls_a_mutex_parked_operation_to_graceful_cancellation",
+      "cross_thread_cx_cancel_wakes_a_timer_parked_native_task",
+      "abort_and_join_complete_promptly_for_a_timer_parked_native_child",
+      "a_cancelled_loop_of_sleeps_returns_to_the_scheduler_every_turn",
+      "run_test_preserves_typed_cancellation_from_a_parked_spawn",
+      "abort_repolls_an_explicit_cx_websocket_close_write_to_typed_cancellation",
+      "spawn_blocking_discards_a_late_value_after_wrapper_cancellation",
+      "spawn_blocking_in_discards_a_late_value_after_wrapper_cancellation",
+      "legacy_state_task_panic_after_abort_remains_panicked",
+      "legacy_state_ready_future_drop_panic_is_published_as_join_error",
+      "legacy_state_task_keeps_cancellation_dominant_result_attribution",
+      "acknowledged_cancellation_can_finish_async_cleanup_before_join_completes",
+      "ordinary_spawn_keeps_cancellation_dominant_for_cancellation_blind_late_values",
+      "read_only_cancellation_observation_does_not_reclassify_a_late_value",
+      "local_spawn_abort_preserves_mutex_cancellation_and_waiter_cleanup",
+      "cross_thread_abort_on_multi_worker_runtime_preserves_mutex_cancellation_and_waiter_cleanup",
+      "abort_before_first_poll_keeps_task_level_cancellation_attribution",
+      "local_abort_before_first_poll_keeps_task_level_cancellation_attribution",
+      "cancellation_published_at_the_end_of_pending_repolls_user_code",
+      "terminal_publication_boundary_preserves_panics_as_join_errors",
+      "panic_during_cancel_cleanup_outranks_task_cancellation",
+      "abort_repolls_a_capacity_parked_send_to_graceful_cancellation",
+      "abort_repolls_a_semaphore_parked_acquire_to_graceful_cancellation",
+      "mailbox_and_scope_spawn_paths_classify_before_terminal_publication",
+      "sibling_terminal_handle_publishers_are_cx_independent",
+      "task_handle_abort_publishes_via_same_stable_envelope_as_cancel",
+      "task_handle_abort_strengthens_existing_cancel_reason",
+      "task_handle_abort_defers_panic_isolated_wakers_to_runtime_publication",
+      "task_handle_abort_default_reason_is_user_kind_not_force_kill",
+      "cx_cancel_with_publishes_via_same_stable_envelope_as_abort",
+      "cx_cancel_fast_uses_same_publish_mechanism_minimal_attribution",
+      "no_unsafe_thread_termination_in_abort_or_cancel_paths",
+      "abort_path_uses_weak_handle_to_avoid_keeping_task_alive",
+      "cancel_handlers_run_on_both_abort_and_cancel_via_same_checkpoint_path",
+      "crate_atomic_ordering_is_the_core_ordering_the_publication_pins_name",
+      "stable_publication_pins_reject_relaxed_orderings",
+      "abort_does_not_have_separate_force_kill_method",
+      "abort_with_reason_does_not_call_drop_guard_bypass_machinery",
+      "cross_reference_to_prior_audits",
+      "checked_zero_quota_refuses_before_publication_on_native_current_thread",
+      "checked_zero_quota_refuses_before_publication_on_native_sharded_workers",
+      "checked_owned_permit_cancellation_and_same_poll_reuse_on_native_current_thread",
+      "checked_owned_permit_cancellation_and_same_poll_reuse_on_native_sharded_workers",
+      "checked_other_primitives_refuse_cancel_and_reuse_on_native_current_thread",
+      "checked_other_primitives_refuse_cancel_and_reuse_on_native_sharded_workers",
+      "watch_and_broadcast_cancel_without_producer_on_native_current_thread",
+      "watch_and_broadcast_cancel_without_producer_on_native_sharded_workers",
+      "native_nested_masks_preserve_checkpoint_deferral_and_unwind_restoration"
+    ],
+    "source_included_module": "stream_cancellation",
+    "source_included_test_names": [
+      "channel_streams_cancel_without_producer_on_native_current_thread",
+      "channel_streams_cancel_without_producer_on_native_sharded_workers"
+    ],
+    "selected_total_from_source": 50,
+    "observed_named_passes": 50,
+    "observed_distinct_names": 50,
+    "all_source_names_equal_observed": true,
+    "passed": 50,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered_out": 0,
+    "elapsed_test_seconds": 4.14,
+    "retained_panic_hook_diagnostics": 7,
+    "denominator_note": "The original 48 count covered only parent test functions. Two tests in its included stream_cancellation module were omitted from that predeclared inventory. The unchanged unfiltered command executed all 50; both counts and all names are retained. No selector, expectation or test was changed to obtain this count."
+  },
+  "terminal": {
+    "state": "finished",
+    "phase": "finished",
+    "strict_remote": true,
+    "terminal_acknowledged": true,
+    "command_exit_code": 0,
+    "execution_started": true,
+    "returned": 0,
+    "wrapper_alive": false,
+    "owner_presence": "absent",
+    "sources_released": true,
+    "tree_retired": true,
+    "pair_released": true,
+    "retired": true,
+    "staging_released": true,
+    "exact_unrounded_identity_matches": true
+  },
+  "raw_inputs": {
+    "log": {
+      "basename": "canon-audit5.log",
+      "bytes": 3931275,
+      "sha256": "f3c3682c761201079af69b4146efe924ebfe366dce149b9f3283b7918ae97d1b"
+    },
+    "receipt": {
+      "basename": "ffw-audit708-receipt.json",
+      "bytes": 4078185,
+      "sha256": "68afb8522e95cdd256b37ec5befd5e1dfff776faf70812244e3eb2ce26b02899"
+    },
+    "lease": {
+      "basename": "<wrapper>.json",
+      "bytes": 6146,
+      "sha256": "bec78ef7fc0cf77af28bd5da6c6e6e3ded4f355acfe0894140b13aa0b3f49191"
+    },
+    "observedCommand": {
+      "basename": "ffw-audit708-observed-command.json",
+      "bytes": 2369,
+      "sha256": "deb363f81c9db73a9545e1433117e75b8c32e599adb5b5b055e086ad162aab2d"
+    },
+    "commandOutput": {
+      "basename": "canon-audit5.out",
+      "bytes": 122,
+      "sha256": "2590f0f50574cfdb28e382bd7f7b23dd81a22367616ae7124e72aa3d5335fe9d"
+    },
+    "native_jobs_observation": {
+      "bytes": 32775125,
+      "sha256": "67180b217a0f7fa0dee246df0600d81cc10fda1fa16635a3c726cb8f1f3753cc",
+      "scope": "Read-only native jobs snapshot; only exact audit lease facts are retained here."
+    }
+  },
+  "normalization": {
+    "omitted_lines": 1,
+    "omitted_kind": "Giant source-content receipt payload only",
+    "omitted_line_bytes": 3910063,
+    "omitted_line_sha256": "daf335c62c2656c827b955d82e0898d4796923c325e4260643db29baee5169e6",
+    "audit_log_bytes": 20555,
+    "audit_log_sha256": "ace192192cffe2236420bae03c9b4302f4a4007b2a6f747300d51b5935bc6afb",
+    "other_lines_omitted": 0,
+    "normalizer_truncation": false,
+    "test_name_verdict_lines_preserved": true,
+    "panic_diagnostics_preserved": true,
+    "redactions": "Operational absolute paths, addresses, account and fleet worker labels are pseudonymized; ANSI styling is stripped. Internal test/runtime task identifiers and expected panic messages remain actual output."
+  },
+  "later_source_readback": {
+    "scope": "Later local readback, not the executed snapshot",
+    "matching_selected_files": 11,
+    "differing_selected_files": [
+      {
+        "path": "src/observability/otel/sdk/traces.rs",
+        "receipt_sha256": "cf3816dfccd2f314bce2297426c184836fbf4d56df8960ce74887ea3066c6255",
+        "current_sha256": "1d539a103c6c29db8b2c3eb09461b9532b9b03d550499f11c4b821525f144c29",
+        "matches": false
+      }
+    ],
+    "qualification": "Recorded receipt hashes remain authoritative for this run; later source bytes are not qualified."
+  },
+  "preceding_attempt": {
+    "build_id": "30100509981410702",
+    "result": "REFUSED_BEFORE_CARGO_EXECUTION",
+    "cause": "Installed client clean-overlay namespace comparison",
+    "tests_executed": 0,
+    "raw_log_basename": "canon-audit2.log",
+    "raw_log_bytes": 1092,
+    "raw_log_sha256": "c5fac0c990f64d73144461a7d6e995629c73a5e9a2e31b8b6c219dce25493a2e"
+  },
+  "qualification_limit": "One native cancellation audit gate only. Not full-project or P05 acceptance, P03, big-endian or guest qualification, hardware, service/provider or release proof.",
+  "publication": "Root independently verified the source bindings, fifty test names, terminal custody and privacy before explicit-file publication. This is evidence for one native audit gate only."
+}

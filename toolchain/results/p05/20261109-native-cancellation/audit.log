@@ -1,0 +1,427 @@
+--- rchq3 attempt 1/1 2026-11-09T06:43:09Z
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.26
+   Compiling quote v1.0.47
+   Compiling libc v0.2.190
+   Compiling syn v3.0.6
+   Compiling cfg-if v1.0.5
+   Compiling syn v2.0.119
+   Compiling typenum v1.20.1
+   Compiling memchr v2.8.3
+   Compiling getrandom v0.4.3
+   Compiling rand_core v0.10.1
+   Compiling pin-project-lite v0.2.17
+   Compiling serde_core v1.0.229
+   Compiling bytes v1.12.1
+   Compiling futures-core v0.3.34
+   Compiling once_cell v1.21.4
+   Compiling hybrid-array v0.4.15
+   Compiling zeroize_derive v1.5.0
+   Compiling log v0.4.34
+   Compiling smallvec v1.16.2
+   Compiling itoa v1.0.18
+   Compiling zeroize v1.9.1
+   Compiling crypto-common v0.2.2
+   Compiling tracing-core v0.1.36
+   Compiling socket2 v0.6.5
+   Compiling futures-sink v0.3.34
+   Compiling equivalent v1.0.2
+   Compiling allocator-api2 v0.2.21
+   Compiling autocfg v1.5.1
+   Compiling version_check v0.9.5
+   Compiling foldhash v0.2.0
+   Compiling generic-array v0.14.7
+   Compiling tracing-attributes v0.1.31
+   Compiling tokio-macros v2.7.2
+   Compiling mio v1.2.4
+   Compiling zerocopy v0.8.61
+   Compiling serde v1.0.229
+   Compiling tokio v1.53.2
+   Compiling tracing v0.1.44
+   Compiling zerocopy-derive v0.8.61
+   Compiling serde_derive v1.0.229
+   Compiling slab v0.4.12
+   Compiling hashbrown v0.17.1
+   Compiling futures-io v0.3.34
+   Compiling cmov v0.5.4
+   Compiling ctutils v0.4.7
+   Compiling indexmap v2.14.2
+   Compiling block-buffer v0.12.1
+   Compiling futures-macro v0.3.34
+   Compiling futures-task v0.3.34
+   Compiling futures-util v0.3.34
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling num-traits v0.2.19
+   Compiling crossbeam-utils v0.8.23
+   Compiling cpufeatures v0.3.1
+   Compiling digest v0.10.7
+   Compiling percent-encoding v2.3.2
+   Compiling bitflags v2.13.2
+   Compiling http v1.5.0
+   Compiling fnv v1.0.7
+   Compiling getrandom v0.3.4
+   Compiling cpufeatures v0.2.17
+   Compiling ppv-lite86 v0.2.21
+   Compiling tokio-util v0.7.19
+   Compiling synstructure v0.14.0
+   Compiling parking_lot_core v0.9.12
+   Compiling rustix v1.1.5
+   Compiling regex-syntax v0.8.11
+   Compiling zmij v1.0.23
+   Compiling thiserror v2.0.21
+   Compiling httparse v1.10.1
+   Compiling http-body v1.1.0
+   Compiling tokio-stream v0.1.19
+   Compiling inout v0.2.2
+   Compiling futures-channel v0.3.34
+   Compiling aho-corasick v1.1.5
+   Compiling thiserror-impl v2.0.21
+   Compiling serde_json v1.0.151
+   Compiling scopeguard v1.2.0
+   Compiling linux-raw-sys v0.12.1
+   Compiling atomic-waker v1.1.2
+   Compiling try-lock v0.2.5
+   Compiling want v0.3.2
+   Compiling h2 v0.4.20
+   Compiling lock_api v0.4.14
+   Compiling regex-automata v0.4.18
+   Compiling rand_core v0.9.5
+   Compiling zerofrom-derive v0.1.8
+   Compiling semver v1.0.28
+   Compiling const-oid v0.10.2
+   Compiling tower-service v0.3.3
+   Compiling base64 v0.22.1
+   Compiling base64ct v1.8.3
+   Compiling anyhow v1.0.104
+   Compiling pem-rfc7468 v0.7.0
+   Compiling digest v0.11.3
+   Compiling rustc_version v0.4.1
+   Compiling zerofrom v0.1.8
+   Compiling hyper v1.12.0
+   Compiling parking_lot v0.12.5
+   Compiling cipher v0.5.2
+   Compiling yoke-derive v0.8.4
+   Compiling sha2 v0.10.9
+   Compiling universal-hash v0.6.1
+   Compiling getrandom v0.2.17
+   Compiling fastrand v2.5.0
+   Compiling const-oid v0.9.6
+   Compiling either v1.19.0
+   Compiling stable_deref_trait v1.2.1
+   Compiling parking v2.2.1
+   Compiling yoke v0.8.3
+   Compiling itertools v0.14.0
+   Compiling der v0.7.10
+   Compiling rand_core v0.6.4
+   Compiling hyper-util v0.1.21
+   Compiling curve25519-dalek v4.1.3
+   Compiling rand_chacha v0.9.0
+   Compiling signature v2.2.0
+   Compiling pin-project-internal v1.1.13
+   Compiling sync_wrapper v1.0.2
+   Compiling rustversion v1.0.23
+   Compiling tower-layer v0.3.3
+   Compiling cpubits v0.1.1
+   Compiling tower v0.5.3
+   Compiling pin-project v1.1.13
+   Compiling rand v0.9.5
+   Compiling prost-derive v0.14.4
+   Compiling hyper-timeout v0.5.2
+   Compiling spki v0.7.3
+   Compiling tempfile v3.27.0
+   Compiling regex v1.13.1
+   Compiling http-body-util v0.1.5
+   Compiling crossbeam-queue v0.3.14
+   Compiling memoffset v0.9.1
+   Compiling curve25519-dalek-derive v0.1.1
+   Compiling zerovec-derive v0.11.6
+   Compiling async-trait v0.1.92
+   Compiling subtle v2.6.1
+   Compiling cfg_aliases v0.2.2
+   Compiling crc32fast v1.5.2
+   Compiling nix v0.31.3
+   Compiling tonic v0.14.6
+   Compiling zerovec v0.11.8
+   Compiling pkcs8 v0.10.2
+   Compiling prost v0.14.4
+   Compiling polyval v0.7.3
+   Compiling ed25519 v2.2.3
+   Compiling rand_chacha v0.3.1
+   Compiling sha2 v0.11.0
+   Compiling sha1 v0.11.0
+   Compiling opentelemetry v0.32.0
+   Compiling aead v0.6.1
+   Compiling futures-executor v0.3.34
+   Compiling displaydoc v0.2.7
+   Compiling errno v0.3.14
+   Compiling signal-hook v0.4.5
+   Compiling bincode-next v3.1.1
+   Compiling portable-atomic v1.15.0
+   Compiling virtue-next v0.1.3
+   Compiling lazy_static v1.5.1
+   Compiling sharded-slab v0.1.7
+   Compiling bincode_derive-next v3.1.1
+   Compiling signal-hook-registry v1.4.8
+   Compiling opentelemetry_sdk v0.32.1
+   Compiling rand v0.8.8
+   Compiling ed25519-dalek v2.2.0
+   Compiling ghash v0.6.0
+   Compiling rapidhash v4.5.1
+   Compiling tonic-prost v0.14.6
+   Compiling signatory v0.27.1
+   Compiling aes v0.9.3
+   Compiling poly1305 v0.9.1
+   Compiling chacha20 v0.10.2
+   Compiling ctr v0.10.1
+   Compiling franken-evidence v0.6.0 (<operational-path>)
+   Compiling matchers v0.2.0
+   Compiling const-hex v1.19.3
+   Compiling rmp v0.8.15
+   Compiling franken-kernel v0.6.0 (<operational-path>)
+   Compiling tracing-log v0.2.0
+   Compiling thread_local v1.1.10
+   Compiling derive_arbitrary v1.5.0
+   Compiling nu-ansi-term v0.50.3
+   Compiling data-encoding v2.11.1
+   Compiling unty-next v0.1.2
+   Compiling tinyvec v1.13.3
+   Compiling pastey v0.2.3
+   Compiling asupersync v0.6.2 (<operational-path>)
+   Compiling unicode-normalization v0.1.25
+   Compiling nkeys v0.4.5
+   Compiling tracing-subscriber v0.3.23
+   Compiling arbitrary v1.5.0
+   Compiling franken-decision v0.6.0 (<operational-path>)
+   Compiling rmp-serde v1.3.1
+   Compiling opentelemetry-proto v0.32.0
+   Compiling aes-gcm v0.11.1
+   Compiling chacha20poly1305 v0.11.0
+   Compiling futures-lite v2.6.1
+   Compiling hmac v0.13.0
+   Compiling xattr v1.6.1
+   Compiling polling v3.11.0
+   Compiling sysinfo v0.39.6
+   Compiling visibility v0.1.1
+   Compiling asupersync-macros v0.6.0 (<operational-path>)
+   Compiling base64 v0.23.1
+   Compiling hex v0.4.3
+   Compiling tinystr v0.8.4
+   Compiling litemap v0.8.3
+   Compiling writeable v0.6.4
+   Compiling icu_locale_core v2.3.0
+   Compiling zerotrie v0.2.5
+   Compiling potential_utf v0.1.6
+   Compiling icu_normalizer_data v2.3.0
+   Compiling utf8_iter v1.0.4
+   Compiling icu_properties_data v2.3.0
+   Compiling icu_collections v2.3.0
+   Compiling icu_provider v2.3.1
+   Compiling icu_properties v2.3.0
+   Compiling icu_normalizer v2.3.0
+   Compiling utf8parse v0.2.2
+   Compiling anstyle-parse v1.0.0
+   Compiling idna_adapter v1.2.2
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling colorchoice v1.0.5
+   Compiling crossbeam-epoch v0.9.21
+   Compiling anstyle v1.0.14
+   Compiling anstyle-query v1.1.5
+   Compiling anstream v1.0.0
+   Compiling idna v1.1.0
+   Compiling form_urlencoded v1.2.2
+   Compiling find-msvc-tools v0.1.14
+   Compiling shlex v2.0.1
+   Compiling crossbeam-deque v0.8.8
+   Compiling cc v1.6.0
+   Compiling url v2.5.8
+   Compiling hashbrown v0.16.1
+   Compiling clap_lex v1.1.1
+   Compiling crc-catalog v2.5.0
+   Compiling strsim v0.11.1
+   Compiling heck v0.5.0
+   Compiling rayon-core v1.13.0
+   Compiling clap_derive v4.6.7
+   Compiling clap_builder v4.6.7
+   Compiling crc v3.4.0
+   Compiling hashlink v0.11.1
+   Compiling alloca v0.4.0
+   Compiling event-listener v5.4.2
+   Compiling futures-intrusive v0.5.0
+   Compiling half v2.7.1
+   Compiling ciborium-io v0.2.2
+   Compiling winnow v1.0.4
+   Compiling jiff-core v0.1.1
+   Compiling target-tuple v1.0.2
+   Compiling plotters-backend v0.3.7
+   Compiling prometheus-client v0.25.1
+   Compiling plotters-svg v0.3.7
+   Compiling jiff v0.2.38
+   Compiling toml_parser v1.1.3+spec-1.1.0
+   Compiling ciborium-ll v0.2.2
+   Compiling sqlx-core v0.9.0
+   Compiling clap v4.6.7
+   Compiling itertools v0.13.0
+   Compiling env_filter v2.0.0
+   Compiling num-integer v0.1.47
+   Compiling serde_spanned v1.1.1
+   Compiling toml_datetime v1.1.1+spec-1.1.0
+   Compiling prometheus-client-derive-encode v0.5.1
+   Compiling wait-timeout v0.2.1
+   Compiling same-file v1.0.6
+   Compiling dtoa v1.0.11
+   Compiling adler2 v2.0.1
+   Compiling quick-error v1.2.3
+   Compiling cast v0.3.0
+   Compiling ryu v1.0.23
+   Compiling toml_writer v1.1.2+spec-1.1.0
+   Compiling simd-adler32 v0.3.10
+   Compiling byteorder v1.5.0
+   Compiling iana-time-zone v0.1.65
+   Compiling bit-vec v0.8.0
+   Compiling dotenvy v0.15.7
+   Compiling sqlx-mysql v0.9.0
+   Compiling bit-set v0.8.0
+   Compiling chrono v0.4.45
+   Compiling miniz_oxide v0.9.1
+   Compiling toml v1.1.6+spec-1.1.0
+   Compiling criterion-plot v0.8.2
+   Compiling rusty-fork v0.3.1
+   Compiling walkdir v2.5.0
+   Compiling num-bigint v0.5.1
+   Compiling env_logger v0.11.11
+   Compiling rayon v1.12.0
+   Compiling ciborium v0.2.2
+   Compiling plotters v0.3.7
+   Compiling tinytemplate v1.2.1
+   Compiling rand_xorshift v0.4.0
+   Compiling combine v4.6.8
+   Compiling uuid v1.27.0
+   Compiling console v0.16.6
+   Compiling page_size v0.6.0
+   Compiling urlencoding v2.1.3
+   Compiling arcstr v1.2.0
+   Compiling oorandom v11.1.5
+   Compiling unsafe-libyaml v0.2.11
+   Compiling glob v0.3.4
+   Compiling anes v0.1.6
+   Compiling similar v2.7.0
+   Compiling xxhash-rust v0.8.19
+   Compiling termcolor v1.4.1
+   Compiling sha1_smol v1.0.1
+   Compiling unarray v0.1.4
+   Compiling twox-hash v2.1.5
+   Compiling lz4_flex v0.14.0
+   Compiling proptest v1.11.0
+   Compiling redis v1.7.1
+   Compiling trybuild v1.0.121
+   Compiling insta v1.49.0
+   Compiling criterion v0.8.2
+   Compiling serde_yaml v0.9.34+deprecated
+   Compiling asupersync-conformance v0.6.0 (<operational-path>)
+   Compiling flate2 v1.1.10
+   Compiling sqlx v0.9.0
+   Compiling raptorq v2.0.1
+    Finished `test` profile [unoptimized] target(s) in 11m 59s
+
+running 50 tests
+test abort_does_not_have_separate_force_kill_method ... ok
+test abort_repolls_a_capacity_parked_send_to_graceful_cancellation ... ok
+test acknowledged_cancellation_can_finish_async_cleanup_before_join_completes ... ok
+test abort_and_join_complete_promptly_for_a_timer_parked_native_child ... ok
+test abort_before_first_poll_keeps_task_level_cancellation_attribution ... ok
+test abort_with_reason_does_not_call_drop_guard_bypass_machinery ... ok
+test abort_repolls_a_mutex_parked_operation_to_graceful_cancellation ... ok
+test abort_repolls_a_semaphore_parked_acquire_to_graceful_cancellation ... ok
+test abort_path_uses_weak_handle_to_avoid_keeping_task_alive ... ok
+test cancellation_published_at_the_end_of_pending_repolls_user_code ... ok
+test cancel_handlers_run_on_both_abort_and_cancel_via_same_checkpoint_path ... ok
+test cross_reference_to_prior_audits ... ok
+test crate_atomic_ordering_is_the_core_ordering_the_publication_pins_name ... ok
+test checked_zero_quota_refuses_before_publication_on_native_current_thread ... ok
+test abort_repolls_an_explicit_cx_websocket_close_write_to_typed_cancellation ... ok
+test a_cancelled_loop_of_sleeps_returns_to_the_scheduler_every_turn ... ok
+test cx_cancel_fast_uses_same_publish_mechanism_minimal_attribution ... ok
+test checked_zero_quota_refuses_before_publication_on_native_sharded_workers ... ok
+test cross_thread_abort_on_multi_worker_runtime_preserves_mutex_cancellation_and_waiter_cleanup ... ok
+test checked_owned_permit_cancellation_and_same_poll_reuse_on_native_sharded_workers ... ok
+test checked_owned_permit_cancellation_and_same_poll_reuse_on_native_current_thread ... ok
+test cross_thread_cx_cancel_wakes_a_timer_parked_native_task ... ok
+test legacy_state_ready_future_drop_panic_is_published_as_join_error ... ok
+test local_abort_before_first_poll_keeps_task_level_cancellation_attribution ... ok
+test legacy_state_task_keeps_cancellation_dominant_result_attribution ... ok
+test legacy_state_task_panic_after_abort_remains_panicked ... ok
+test cx_cancel_with_publishes_via_same_stable_envelope_as_abort ... ok
+test local_spawn_abort_preserves_mutex_cancellation_and_waiter_cleanup ... ok
+test panic_during_cancel_cleanup_outranks_task_cancellation ... ok
+2026-11-09T06:56:23.007690Z DEBUG ThreadId(83) asupersync::types::task_context: src/types/task_context.rs:270: task cancel requested task_id=TaskId(2:0) region_id=RegionId(0:0) old_state="Running" new_state="CancelRequested" cancel_kind=User cleanup_poll_quota=1000
+2026-11-09T06:56:23.007799Z  INFO ThreadId(83) asupersync::cx::cx: src/cx/cx.rs:3343: cancel observed at checkpoint - task cancelled task_id=TaskId(2:0) region_id=RegionId(0:0) exhausted_resource=User cancel_reason=Some(CancelReason { kind: User, origin_region: RegionId(0:0), origin_task: None, timestamp: Time(1000000000ns), message: Some("abort"), cause: None, truncated: false, truncated_at_depth: None }) budget_deadline=None budget_poll_quota=4294967295 budget_cost_quota=None
+2026-11-09T06:56:23.007873Z DEBUG ThreadId(83) asupersync::record::task: src/record/task.rs:1503: task finalization done task_id=TaskId(2:0) region_id=RegionId(0:0) old_state="Finalizing" new_state="Completed" outcome_kind="Cancelled" cancel_kind=User finalizer_budget_poll_quota=1000 finalizer_budget_priority=200 duration_us=495 poll_count=1
+test read_only_cancellation_observation_does_not_reclassify_a_late_value ... ok
+test ordinary_spawn_keeps_cancellation_dominant_for_cancellation_blind_late_values ... ok
+test run_test_preserves_typed_cancellation_from_a_parked_spawn ... ok
+test spawn_blocking_discards_a_late_value_after_wrapper_cancellation ... ok
+test stable_publication_pins_reject_relaxed_orderings ... ok
+test no_unsafe_thread_termination_in_abort_or_cancel_paths ... ok
+test spawn_blocking_in_discards_a_late_value_after_wrapper_cancellation ... ok
+test native_nested_masks_preserve_checkpoint_deferral_and_unwind_restoration ... ok
+test task_handle_abort_strengthens_existing_cancel_reason ... ok
+test task_handle_abort_publishes_via_same_stable_envelope_as_cancel ... ok
+test task_handle_abort_defers_panic_isolated_wakers_to_runtime_publication ... ok
+test checked_other_primitives_refuse_cancel_and_reuse_on_native_current_thread ... ok
+test task_handle_abort_default_reason_is_user_kind_not_force_kill ... ok
+test sibling_terminal_handle_publishers_are_cx_independent ... ok
+test terminal_publication_boundary_preserves_panics_as_join_errors ... ok
+test watch_and_broadcast_cancel_without_producer_on_native_sharded_workers ... ok
+test stream_cancellation::channel_streams_cancel_without_producer_on_native_current_thread ... ok
+test watch_and_broadcast_cancel_without_producer_on_native_current_thread ... ok
+test stream_cancellation::channel_streams_cancel_without_producer_on_native_sharded_workers ... ok
+test checked_other_primitives_refuse_cancel_and_reuse_on_native_sharded_workers ... ok
+     Running tests/runtime_abort_vs_cancel_semantics_audit.rs (<operational-path>)
+{"bead_id":"asupersync-bi2462.29","holder":"TaskId(0:0)","limit":0,"physical_slots_reused":2,"published_checked_values":0,"scenario":"native_checked_zero_quota","sharded":false,"typed_refusals":3}
+{"bead_id":"asupersync-bi2462.29","holder":"TaskId(2:0)","limit":1,"mutex_waiters":1,"observed_arena_obligations":1,"phase":"owned_and_parked","physical_reservations":1,"scenario":"native_checked_one_quota","sharded":true,"typed_refusals":1}
+{"bead_id":"asupersync-bi2462.29","holder":"TaskId(1:0)","limit":1,"mutex_waiters":1,"observed_arena_obligations":1,"phase":"owned_and_parked","physical_reservations":1,"scenario":"native_checked_one_quota","sharded":false,"typed_refusals":1}
+{"actual_obligation_ids":0,"bead_id":"asupersync-bi2462.29","limit":0,"primitive":"Oneshot","result":"pass","runtime_quiescent":true,"scenario":"native_checked_primitive","sharded":false}
+{"aborted":1,"bead_id":"asupersync-bi2462.29","committed":65,"live_tasks":0,"phase":"settled","physical_reservations":0,"result":"pass","runtime_quiescent":true,"same_poll_roundtrips":65,"scenario":"native_checked_one_quota","sharded":true}
+{"bead_id":"asupersync-bi2462.29","holder":"TaskId(0:0)","limit":0,"physical_slots_reused":2,"published_checked_values":0,"scenario":"native_checked_zero_quota","sharded":true,"typed_refusals":3}
+{"actual_obligation_ids":2,"bead_id":"asupersync-bi2462.29","limit":1,"primitive":"Oneshot","result":"pass","runtime_quiescent":true,"scenario":"native_checked_primitive","sharded":false}
+{"actual_obligation_ids":0,"bead_id":"asupersync-bi2462.29","limit":0,"primitive":"Broadcast","result":"pass","runtime_quiescent":true,"scenario":"native_checked_primitive","sharded":false}
+{"aborted":1,"bead_id":"asupersync-bi2462.29","committed":65,"live_tasks":0,"phase":"settled","physical_reservations":0,"result":"pass","runtime_quiescent":true,"same_poll_roundtrips":65,"scenario":"native_checked_one_quota","sharded":false}
+
+thread 'legacy_state_ready_future_drop_panic_is_published_as_join_error' (1128648) panicked at tests/runtime_abort_vs_cancel_semantics_audit.rs:930:13:
+legacy-ready-future-drop-panic-sentinel
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'legacy_state_ready_future_drop_panic_is_published_as_join_error' (1128648) panicked at tests/runtime_abort_vs_cancel_semantics_audit.rs:930:13:
+legacy-ready-future-drop-panic-sentinel
+
+thread 'legacy_state_task_panic_after_abort_remains_panicked' (1128655) panicked at tests/runtime_abort_vs_cancel_semantics_audit.rs:848:17:
+legacy-state-cancel-panic-sentinel
+
+thread 'native_nested_masks_preserve_checkpoint_deferral_and_unwind_restoration' (1128661) panicked at tests/runtime_abort_vs_cancel_semantics_audit.rs:3287:33:
+unwind inner native mask
+{"actual_obligation_ids":2,"bead_id":"asupersync-bi2462.29","limit":1,"primitive":"Broadcast","result":"pass","runtime_quiescent":true,"scenario":"native_checked_primitive","sharded":false}
+
+thread 'panic_during_cancel_cleanup_outranks_task_cancellation' (1128668) panicked at tests/runtime_abort_vs_cancel_semantics_audit.rs:1485:17:
+native-cancel-cleanup-panic-sentinel
+{"actual_obligation_ids":0,"bead_id":"asupersync-bi2462.29","limit":0,"primitive":"Semaphore","result":"pass","runtime_quiescent":true,"scenario":"native_checked_primitive","sharded":false}
+
+thread 'asupersync-worker-0' (1128678) panicked at tests/runtime_abort_vs_cancel_semantics_audit.rs:3287:33:
+unwind inner native mask
+{"actual_obligation_ids":2,"bead_id":"asupersync-bi2462.29","limit":1,"primitive":"Semaphore","result":"pass","runtime_quiescent":true,"scenario":"native_checked_primitive","sharded":false}
+{"actual_obligation_ids":0,"bead_id":"asupersync-bi2462.29","limit":0,"primitive":"Oneshot","result":"pass","runtime_quiescent":true,"scenario":"native_checked_primitive","sharded":true}
+
+thread 'terminal_publication_boundary_preserves_panics_as_join_errors' (1128714) panicked at tests/runtime_abort_vs_cancel_semantics_audit.rs:1449:17:
+native-task-boundary-panic-sentinel
+{"actual_obligation_ids":2,"bead_id":"asupersync-bi2462.29","limit":1,"primitive":"Oneshot","result":"pass","runtime_quiescent":true,"scenario":"native_checked_primitive","sharded":true}
+{"actual_obligation_ids":0,"bead_id":"asupersync-bi2462.29","limit":0,"primitive":"Broadcast","result":"pass","runtime_quiescent":true,"scenario":"native_checked_primitive","sharded":true}
+{"actual_obligation_ids":2,"bead_id":"asupersync-bi2462.29","limit":1,"primitive":"Broadcast","result":"pass","runtime_quiescent":true,"scenario":"native_checked_primitive","sharded":true}
+{"actual_obligation_ids":0,"bead_id":"asupersync-bi2462.29","limit":0,"primitive":"Semaphore","result":"pass","runtime_quiescent":true,"scenario":"native_checked_primitive","sharded":true}
+{"actual_obligation_ids":2,"bead_id":"asupersync-bi2462.29","limit":1,"primitive":"Semaphore","result":"pass","runtime_quiescent":true,"scenario":"native_checked_primitive","sharded":true}
+test mailbox_and_scope_spawn_paths_classify_before_terminal_publication ... ok
+
+test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.14s
+
+
+[RCH] remote <worker> (830.6s)
+--- rchq3 attempt 1 executed rc=0 (refused_marker=0 executed_marker=1)
