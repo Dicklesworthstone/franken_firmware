@@ -1,0 +1,86 @@
+[
+  {
+    "bytes": 16904,
+    "path": "mips-64m/runtime.serial.log",
+    "published_sha256": "ada2368ddeb94882607946e904b75dad44c1fbfdcd9286a60a2f1379eef5cb44",
+    "raw_sha256": "ada2368ddeb94882607946e904b75dad44c1fbfdcd9286a60a2f1379eef5cb44",
+    "transformation": "none"
+  },
+  {
+    "bytes": 0,
+    "path": "mips-64m/qemu.stderr.log",
+    "published_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "transformation": "none"
+  },
+  {
+    "bytes": 6956,
+    "path": "mips-64m/receipt.json",
+    "published_sha256": "90a6bdf9076d6fd39969f806b3cd16648a0c999d65a1d75bc2afb3d5b92a15e7",
+    "raw_sha256": "90a6bdf9076d6fd39969f806b3cd16648a0c999d65a1d75bc2afb3d5b92a15e7",
+    "transformation": "none"
+  },
+  {
+    "bytes": 18766,
+    "path": "powerpc-64m/runtime.serial.log",
+    "published_sha256": "01d84b245729cce004691d6aed59228cbcad0765db6217b057700e06f286dc65",
+    "raw_sha256": "01d84b245729cce004691d6aed59228cbcad0765db6217b057700e06f286dc65",
+    "transformation": "none"
+  },
+  {
+    "bytes": 0,
+    "path": "powerpc-64m/qemu.stderr.log",
+    "published_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "transformation": "none"
+  },
+  {
+    "bytes": 6964,
+    "path": "powerpc-64m/receipt.json",
+    "published_sha256": "a6da55b2efe3836142f935fa0f6ee719ee13c64fea904af1982b0023e014b971",
+    "raw_sha256": "a6da55b2efe3836142f935fa0f6ee719ee13c64fea904af1982b0023e014b971",
+    "transformation": "none"
+  },
+  {
+    "bytes": 16902,
+    "path": "mips-32m/runtime.serial.log",
+    "published_sha256": "e8cce742b103f0b479236d137a3a04e50479fe28d7e79817bf12550e45b4e2f2",
+    "raw_sha256": "e8cce742b103f0b479236d137a3a04e50479fe28d7e79817bf12550e45b4e2f2",
+    "transformation": "none"
+  },
+  {
+    "bytes": 0,
+    "path": "mips-32m/qemu.stderr.log",
+    "published_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "transformation": "none"
+  },
+  {
+    "bytes": 6992,
+    "path": "mips-32m/receipt.json",
+    "published_sha256": "13933d81f8b1889638078306773b6b211748204dc8567871087bc4120153ed8d",
+    "raw_sha256": "13933d81f8b1889638078306773b6b211748204dc8567871087bc4120153ed8d",
+    "transformation": "none"
+  },
+  {
+    "bytes": 1222,
+    "path": "powerpc-32m/runtime.serial.log",
+    "published_sha256": "f5d1698604d63432215f2ed3644c538f71c80260b7afb5d9c4b602137d20e996",
+    "raw_sha256": "f5d1698604d63432215f2ed3644c538f71c80260b7afb5d9c4b602137d20e996",
+    "transformation": "none"
+  },
+  {
+    "bytes": 0,
+    "path": "powerpc-32m/qemu.stderr.log",
+    "published_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "transformation": "none"
+  },
+  {
+    "bytes": 7611,
+    "path": "powerpc-32m/receipt.json",
+    "published_sha256": "6ed0dfcb5ae9b9f099fa31f9140d4f0914fb6d698cfa958261a4a38bba40ed62",
+    "raw_sha256": "6ed0dfcb5ae9b9f099fa31f9140d4f0914fb6d698cfa958261a4a38bba40ed62",
+    "transformation": "none"
+  }
+]

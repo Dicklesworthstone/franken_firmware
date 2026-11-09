@@ -1,0 +1,568 @@
+[
+  {
+    "arch": "mips",
+    "case": "missing-marker",
+    "command": [
+      "<REPO>/scripts/e2e/p05",
+      "--runtime",
+      "analyze",
+      "--arch",
+      "mips",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/mips/ffw-p05-runtime",
+      "--supervisor",
+      "<ELF_ROOT>/mips/ffw-hello-init",
+      "--log",
+      "<REVIEW64>/mips-missing-marker.serial.log",
+      "--receipt",
+      "<REVIEW64>/mips-missing-marker.receipt.json"
+    ],
+    "exit_code": 1,
+    "expected_exit": 1,
+    "nonpassing_gates": [
+      [
+        "P05R-TRANSCRIPT",
+        "failed",
+        "observed marker order: ['BEGIN', 'CENSUS', 'CALLER_DRIVEN_PROFILE', 'PROFILE_ACCEPT', 'PROFILE_REFUSES_ZERO_WORKERS', 'PROFILE_REFUSES_UNBOUNDED_QUEUE', 'PROFILE_REFUSES_OVER_BUDGET', 'CALLER_DRIVEN_REFUSES_TWO_WORKERS', 'CALLER_DRIVEN_REFUSES_BLOCKING_THREADS', 'REACTOR', 'RUNTIME_AUDIT', 'CENSUS', 'CALLER_DRIVEN_RUNTIME', 'CENSUS', 'SPAWN_JOIN', 'CENSUS', 'ABORT_TIMER_PARKED', 'CENSUS', 'ABORT_BLIND_VALUE', 'CENSUS', 'CENSUS', 'UDP_LOOPBACK', 'CENSUS', 'CALLER_DRIVEN_BLOCKING_REFUSED', 'CENSUS', 'CALLER_DRIVEN_HANDLE_SPAWN_WAITS', 'CENSUS', 'DRAIN', 'CENSUS', 'CENSUS', 'END']"
+      ],
+      [
+        "P05R-END",
+        "failed",
+        "END={'status': 'done', 'ops': '30', 'ok': '30', 'failed': '0', 'unsupported': '0', 'partial': '0', 'unknown': '0', 'census_samples': '12'}; observed={'ok': 29, 'failed': 0, 'unsupported': 0, 'partial': 0, 'unknown': 0}"
+      ]
+    ]
+  },
+  {
+    "arch": "mips",
+    "case": "bad-phase-joined",
+    "command": [
+      "<REPO>/scripts/e2e/p05",
+      "--runtime",
+      "analyze",
+      "--arch",
+      "mips",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/mips/ffw-p05-runtime",
+      "--supervisor",
+      "<ELF_ROOT>/mips/ffw-hello-init",
+      "--log",
+      "<REVIEW64>/mips-bad-phase-joined.serial.log",
+      "--receipt",
+      "<REVIEW64>/mips-bad-phase-joined.receipt.json"
+    ],
+    "exit_code": 1,
+    "expected_exit": 1,
+    "nonpassing_gates": [
+      [
+        "P05R-PHASES",
+        "failed",
+        "SPAWN_JOIN.joined=0 expected=8"
+      ]
+    ]
+  },
+  {
+    "arch": "mips",
+    "case": "bad-cleanup-witness",
+    "command": [
+      "<REPO>/scripts/e2e/p05",
+      "--runtime",
+      "analyze",
+      "--arch",
+      "mips",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/mips/ffw-p05-runtime",
+      "--supervisor",
+      "<ELF_ROOT>/mips/ffw-hello-init",
+      "--log",
+      "<REVIEW64>/mips-bad-cleanup-witness.serial.log",
+      "--receipt",
+      "<REVIEW64>/mips-bad-cleanup-witness.receipt.json"
+    ],
+    "exit_code": 1,
+    "expected_exit": 1,
+    "nonpassing_gates": [
+      [
+        "P05R-CLEANUP",
+        "failed",
+        "ABORT_TIMER_PARKED: expected 1 unique children resumed under cancellation before natural expiry"
+      ]
+    ]
+  },
+  {
+    "arch": "mips",
+    "case": "above-start-thread",
+    "command": [
+      "<REPO>/scripts/e2e/p05",
+      "--runtime",
+      "analyze",
+      "--arch",
+      "mips",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/mips/ffw-p05-runtime",
+      "--supervisor",
+      "<ELF_ROOT>/mips/ffw-hello-init",
+      "--log",
+      "<REVIEW64>/mips-above-start-thread.serial.log",
+      "--receipt",
+      "<REVIEW64>/mips-above-start-thread.receipt.json"
+    ],
+    "exit_code": 1,
+    "expected_exit": 1,
+    "nonpassing_gates": [
+      [
+        "P05R-CENSUS",
+        "failed",
+        "after_build: the row shows 2 threads, above the starting count 1"
+      ]
+    ]
+  },
+  {
+    "arch": "mips",
+    "case": "malformed-control",
+    "command": [
+      "<REPO>/scripts/e2e/p05",
+      "--runtime",
+      "analyze",
+      "--arch",
+      "mips",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/mips/ffw-p05-runtime",
+      "--supervisor",
+      "<ELF_ROOT>/mips/ffw-hello-init",
+      "--log",
+      "<REVIEW64>/mips-malformed-control.serial.log",
+      "--receipt",
+      "<REVIEW64>/mips-malformed-control.receipt.json"
+    ],
+    "exit_code": 1,
+    "expected_exit": 1,
+    "nonpassing_gates": [
+      [
+        "P05R-TRANSCRIPT",
+        "failed",
+        "observed marker order: []"
+      ],
+      [
+        "P05R-ENV",
+        "failed",
+        "BEGIN platform identity does not match selected architecture; BEGIN topology=absent does not match the caller-driven profile; missing/invalid PID (a supervised runtime must be a child, not PID 1)"
+      ],
+      [
+        "P05R-CLEANUP",
+        "blocked",
+        "ABORT_TIMER_PARKED: child-side cleanup witnesses absent; DRAIN: child-side cleanup witnesses absent"
+      ],
+      [
+        "P05R-CENSUS",
+        "failed",
+        "observed census phases: []; start: no stable thread count, so no row can be held to the starting count"
+      ],
+      [
+        "P05R-END",
+        "failed",
+        "END={}; observed={'ok': 0, 'failed': 0, 'unsupported': 0, 'partial': 0, 'unknown': 0}"
+      ],
+      [
+        "P05R-SUPERVISOR",
+        "failed",
+        "missing/duplicate standalone userspace start or invalid protocol line separator/control"
+      ]
+    ]
+  },
+  {
+    "arch": "mips",
+    "case": "truncated",
+    "command": [
+      "<REPO>/scripts/e2e/p05",
+      "--runtime",
+      "analyze",
+      "--arch",
+      "mips",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/mips/ffw-p05-runtime",
+      "--supervisor",
+      "<ELF_ROOT>/mips/ffw-hello-init",
+      "--log",
+      "<REVIEW64>/mips-truncated.serial.log",
+      "--receipt",
+      "<REVIEW64>/mips-truncated.receipt.json"
+    ],
+    "exit_code": 1,
+    "expected_exit": 1,
+    "nonpassing_gates": [
+      [
+        "P05R-TRANSCRIPT",
+        "failed",
+        "observed marker order: []"
+      ],
+      [
+        "P05R-ENV",
+        "failed",
+        "BEGIN platform identity does not match selected architecture; BEGIN topology=absent does not match the caller-driven profile; missing/invalid PID (a supervised runtime must be a child, not PID 1)"
+      ],
+      [
+        "P05R-CLEANUP",
+        "blocked",
+        "ABORT_TIMER_PARKED: child-side cleanup witnesses absent; DRAIN: child-side cleanup witnesses absent"
+      ],
+      [
+        "P05R-CENSUS",
+        "failed",
+        "observed census phases: []; start: no stable thread count, so no row can be held to the starting count"
+      ],
+      [
+        "P05R-END",
+        "failed",
+        "END={}; observed={'ok': 0, 'failed': 0, 'unsupported': 0, 'partial': 0, 'unknown': 0}"
+      ],
+      [
+        "P05R-SUPERVISOR",
+        "failed",
+        "begin_or_exit_not_exactly_once"
+      ]
+    ]
+  },
+  {
+    "arch": "mips",
+    "case": "wrong-architecture-elf",
+    "command": [
+      "<REPO>/scripts/e2e/p05",
+      "--runtime",
+      "analyze",
+      "--arch",
+      "mips",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/ppc/ffw-p05-runtime",
+      "--supervisor",
+      "<ELF_ROOT>/mips/ffw-hello-init",
+      "--log",
+      "<SUPERVISOR_SCRATCH>/p05cd-guest-mips/runtime.serial.log",
+      "--receipt",
+      "<REVIEW64>/mips-wrong-architecture-elf.receipt.json"
+    ],
+    "exit_code": 2,
+    "expected_exit": 2,
+    "nonpassing_gates": []
+  },
+  {
+    "arch": "mips",
+    "case": "same-architecture-wrong-elf",
+    "command": [
+      "<REPO>/scripts/e2e/p05",
+      "--runtime",
+      "analyze",
+      "--arch",
+      "mips",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/mips/ffw-hello-init",
+      "--supervisor",
+      "<ELF_ROOT>/mips/ffw-hello-init",
+      "--log",
+      "<SUPERVISOR_SCRATCH>/p05cd-guest-mips/runtime.serial.log",
+      "--receipt",
+      "<REVIEW64>/mips-same-architecture-wrong-elf.receipt.json"
+    ],
+    "exit_code": 0,
+    "expected_exit": null,
+    "nonpassing_gates": []
+  },
+  {
+    "arch": "powerpc",
+    "case": "missing-marker",
+    "command": [
+      "<REPO>/scripts/e2e/p05",
+      "--runtime",
+      "analyze",
+      "--arch",
+      "powerpc",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/ppc/ffw-p05-runtime",
+      "--supervisor",
+      "<ELF_ROOT>/ppc/ffw-hello-init",
+      "--log",
+      "<REVIEW64>/ppc-missing-marker.serial.log",
+      "--receipt",
+      "<REVIEW64>/ppc-missing-marker.receipt.json"
+    ],
+    "exit_code": 1,
+    "expected_exit": 1,
+    "nonpassing_gates": [
+      [
+        "P05R-TRANSCRIPT",
+        "failed",
+        "observed marker order: ['BEGIN', 'CENSUS', 'CALLER_DRIVEN_PROFILE', 'PROFILE_ACCEPT', 'PROFILE_REFUSES_ZERO_WORKERS', 'PROFILE_REFUSES_UNBOUNDED_QUEUE', 'PROFILE_REFUSES_OVER_BUDGET', 'CALLER_DRIVEN_REFUSES_TWO_WORKERS', 'CALLER_DRIVEN_REFUSES_BLOCKING_THREADS', 'REACTOR', 'RUNTIME_AUDIT', 'CENSUS', 'CALLER_DRIVEN_RUNTIME', 'CENSUS', 'SPAWN_JOIN', 'CENSUS', 'ABORT_TIMER_PARKED', 'CENSUS', 'ABORT_BLIND_VALUE', 'CENSUS', 'CENSUS', 'UDP_LOOPBACK', 'CENSUS', 'CALLER_DRIVEN_BLOCKING_REFUSED', 'CENSUS', 'CALLER_DRIVEN_HANDLE_SPAWN_WAITS', 'CENSUS', 'DRAIN', 'CENSUS', 'CENSUS', 'END']"
+      ],
+      [
+        "P05R-END",
+        "failed",
+        "END={'status': 'done', 'ops': '30', 'ok': '30', 'failed': '0', 'unsupported': '0', 'partial': '0', 'unknown': '0', 'census_samples': '12'}; observed={'ok': 29, 'failed': 0, 'unsupported': 0, 'partial': 0, 'unknown': 0}"
+      ]
+    ]
+  },
+  {
+    "arch": "powerpc",
+    "case": "bad-phase-joined",
+    "command": [
+      "<REPO>/scripts/e2e/p05",
+      "--runtime",
+      "analyze",
+      "--arch",
+      "powerpc",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/ppc/ffw-p05-runtime",
+      "--supervisor",
+      "<ELF_ROOT>/ppc/ffw-hello-init",
+      "--log",
+      "<REVIEW64>/ppc-bad-phase-joined.serial.log",
+      "--receipt",
+      "<REVIEW64>/ppc-bad-phase-joined.receipt.json"
+    ],
+    "exit_code": 1,
+    "expected_exit": 1,
+    "nonpassing_gates": [
+      [
+        "P05R-PHASES",
+        "failed",
+        "SPAWN_JOIN.joined=0 expected=8"
+      ]
+    ]
+  },
+  {
+    "arch": "powerpc",
+    "case": "bad-cleanup-witness",
+    "command": [
+      "<REPO>/scripts/e2e/p05",
+      "--runtime",
+      "analyze",
+      "--arch",
+      "powerpc",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/ppc/ffw-p05-runtime",
+      "--supervisor",
+      "<ELF_ROOT>/ppc/ffw-hello-init",
+      "--log",
+      "<REVIEW64>/ppc-bad-cleanup-witness.serial.log",
+      "--receipt",
+      "<REVIEW64>/ppc-bad-cleanup-witness.receipt.json"
+    ],
+    "exit_code": 1,
+    "expected_exit": 1,
+    "nonpassing_gates": [
+      [
+        "P05R-CLEANUP",
+        "failed",
+        "ABORT_TIMER_PARKED: expected 1 unique children resumed under cancellation before natural expiry"
+      ]
+    ]
+  },
+  {
+    "arch": "powerpc",
+    "case": "above-start-thread",
+    "command": [
+      "<REPO>/scripts/e2e/p05",
+      "--runtime",
+      "analyze",
+      "--arch",
+      "powerpc",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/ppc/ffw-p05-runtime",
+      "--supervisor",
+      "<ELF_ROOT>/ppc/ffw-hello-init",
+      "--log",
+      "<REVIEW64>/ppc-above-start-thread.serial.log",
+      "--receipt",
+      "<REVIEW64>/ppc-above-start-thread.receipt.json"
+    ],
+    "exit_code": 1,
+    "expected_exit": 1,
+    "nonpassing_gates": [
+      [
+        "P05R-CENSUS",
+        "failed",
+        "after_build: the row shows 2 threads, above the starting count 1"
+      ]
+    ]
+  },
+  {
+    "arch": "powerpc",
+    "case": "malformed-control",
+    "command": [
+      "<REPO>/scripts/e2e/p05",
+      "--runtime",
+      "analyze",
+      "--arch",
+      "powerpc",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/ppc/ffw-p05-runtime",
+      "--supervisor",
+      "<ELF_ROOT>/ppc/ffw-hello-init",
+      "--log",
+      "<REVIEW64>/ppc-malformed-control.serial.log",
+      "--receipt",
+      "<REVIEW64>/ppc-malformed-control.receipt.json"
+    ],
+    "exit_code": 1,
+    "expected_exit": 1,
+    "nonpassing_gates": [
+      [
+        "P05R-TRANSCRIPT",
+        "failed",
+        "observed marker order: []"
+      ],
+      [
+        "P05R-ENV",
+        "failed",
+        "BEGIN platform identity does not match selected architecture; BEGIN topology=absent does not match the caller-driven profile; missing/invalid PID (a supervised runtime must be a child, not PID 1)"
+      ],
+      [
+        "P05R-CLEANUP",
+        "blocked",
+        "ABORT_TIMER_PARKED: child-side cleanup witnesses absent; DRAIN: child-side cleanup witnesses absent"
+      ],
+      [
+        "P05R-CENSUS",
+        "failed",
+        "observed census phases: []; start: no stable thread count, so no row can be held to the starting count"
+      ],
+      [
+        "P05R-END",
+        "failed",
+        "END={}; observed={'ok': 0, 'failed': 0, 'unsupported': 0, 'partial': 0, 'unknown': 0}"
+      ],
+      [
+        "P05R-SUPERVISOR",
+        "failed",
+        "missing/duplicate standalone userspace start or invalid protocol line separator/control"
+      ]
+    ]
+  },
+  {
+    "arch": "powerpc",
+    "case": "truncated",
+    "command": [
+      "<REPO>/scripts/e2e/p05",
+      "--runtime",
+      "analyze",
+      "--arch",
+      "powerpc",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/ppc/ffw-p05-runtime",
+      "--supervisor",
+      "<ELF_ROOT>/ppc/ffw-hello-init",
+      "--log",
+      "<REVIEW64>/ppc-truncated.serial.log",
+      "--receipt",
+      "<REVIEW64>/ppc-truncated.receipt.json"
+    ],
+    "exit_code": 1,
+    "expected_exit": 1,
+    "nonpassing_gates": [
+      [
+        "P05R-TRANSCRIPT",
+        "failed",
+        "observed marker order: []"
+      ],
+      [
+        "P05R-ENV",
+        "failed",
+        "BEGIN platform identity does not match selected architecture; BEGIN topology=absent does not match the caller-driven profile; missing/invalid PID (a supervised runtime must be a child, not PID 1)"
+      ],
+      [
+        "P05R-CLEANUP",
+        "blocked",
+        "ABORT_TIMER_PARKED: child-side cleanup witnesses absent; DRAIN: child-side cleanup witnesses absent"
+      ],
+      [
+        "P05R-CENSUS",
+        "failed",
+        "observed census phases: []; start: no stable thread count, so no row can be held to the starting count"
+      ],
+      [
+        "P05R-END",
+        "failed",
+        "END={}; observed={'ok': 0, 'failed': 0, 'unsupported': 0, 'partial': 0, 'unknown': 0}"
+      ],
+      [
+        "P05R-SUPERVISOR",
+        "failed",
+        "begin_or_exit_not_exactly_once"
+      ]
+    ]
+  },
+  {
+    "arch": "powerpc",
+    "case": "wrong-architecture-elf",
+    "command": [
+      "<REPO>/scripts/e2e/p05",
+      "--runtime",
+      "analyze",
+      "--arch",
+      "powerpc",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/mips/ffw-p05-runtime",
+      "--supervisor",
+      "<ELF_ROOT>/ppc/ffw-hello-init",
+      "--log",
+      "<SUPERVISOR_SCRATCH>/p05cd-guest-ppc/runtime.serial.log",
+      "--receipt",
+      "<REVIEW64>/ppc-wrong-architecture-elf.receipt.json"
+    ],
+    "exit_code": 2,
+    "expected_exit": 2,
+    "nonpassing_gates": []
+  },
+  {
+    "arch": "powerpc",
+    "case": "same-architecture-wrong-elf",
+    "command": [
+      "<REPO>/scripts/e2e/p05",
+      "--runtime",
+      "analyze",
+      "--arch",
+      "powerpc",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/ppc/ffw-hello-init",
+      "--supervisor",
+      "<ELF_ROOT>/ppc/ffw-hello-init",
+      "--log",
+      "<SUPERVISOR_SCRATCH>/p05cd-guest-ppc/runtime.serial.log",
+      "--receipt",
+      "<REVIEW64>/ppc-same-architecture-wrong-elf.receipt.json"
+    ],
+    "exit_code": 0,
+    "expected_exit": null,
+    "nonpassing_gates": []
+  }
+]

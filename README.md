@@ -111,6 +111,8 @@ Evidence lives in `toolchain/results/` with committed serial logs.
 | Initramfs unpack, `/init` exec, user→kernel syscalls, clean reboot | BE-PPC (QEMU g3beige/OpenBIOS, 4.9 kernel) | done; userspace output reaches the serial console through the `pmac_zilog` driver (`/dev/ttyPZ0`, `console=ttyPZ0`); run `toolchain/results/runs/1412ac47120d4e5b865f9de6e05f50fe` |
 | std + full dependency graph cross-compiles | BE-PPC via `-Z build-std` | done |
 | asupersync legacy runtime on BE-PPC | | the initial `AtomicU64` compile blocker has been addressed; P05 remains open for its bounded-runtime acceptance and target evidence (`docs/contracts/p05.md`) |
+| Caller-driven Asupersync probe under the E07 supervisor | BE-MIPS and BE-PPC, 64 MiB generic QEMU guests | actual execution: both complete 30 operations with one observed process thread; [serial logs and receipts](toolchain/results/p05/20261109-caller-driven-guests/RUN.md) |
+| Same caller-driven probe at 32 MiB | BE-MIPS / BE-PPC | MIPS completes; PowerPC stops in the early Linux/Open Firmware allocation path before userspace and times out. The failed capture is retained; production RAM fit remains unqualified. |
 
 These are cross-build and emulation results on generic QEMU machines (Malta,
 g3beige). They show the toolchain and boot path work for the two big-endian

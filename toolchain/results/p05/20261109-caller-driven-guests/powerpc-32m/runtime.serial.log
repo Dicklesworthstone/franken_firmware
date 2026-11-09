@@ -1,0 +1,28 @@
+
+>> =============================================================
+>> OpenBIOS 1.1 [Jun 29 2026 21:11]
+>> Configuration device id QEMU version 1 machine id 2
+>> CPUs: 1
+>> Memory: 32M
+>> UUID: 00000000-0000-0000-0000-000000000000
+>> CPU type PowerPC,750
+milliseconds isn't unique.
+Welcome to OpenBIOS v1.1 built on Jun 29 2026 21:11
+>> [ppc] Kernel already loaded (0x01000000 + 0x009c1488) (initrd 0x01ac2000 + 0x000f0317)
+>> [ppc] Kernel command line: console=ttyPZ0,38400 rdinit=/init panic=-1
+>> switching to new context:
+OF stdout device is: /pci@80000000/mac-io@10/escc@13000/ch-a@13020
+Preparing to boot Linux version 4.9.0-0.bpo.6-powerpc (debian-kernel@lists.debian.org) (gcc version 4.9.2 (Debian 4.9.2-10) ) #1 Debian 4.9.88-1+deb9u1~bpo8+1 (2018-05-13)
+Detected machine type: 00000400
+command line: console=ttyS0,9600 console=tty0
+memory layout at init:
+  memory_limit : 00000000 (16 MB aligned)
+  alloc_bottom : 01bb3000
+  alloc_top    : 02000000
+  alloc_top_hi : 02000000
+  rmo_top      : 02000000
+  ram_top      : 02000000
+found display   : /pci@80000000/QEMU,VGA@1, opening... done
+copying OF device tree...
+Can't allocate initial device-tree chunk
+``````````````````

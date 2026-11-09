@@ -1,0 +1,196 @@
+{
+  "arch": "mips",
+  "elf": {
+    "arch": "mips",
+    "bytes": 2515448,
+    "pointer_bits": 32,
+    "sha256": "91f434450a6e22d53616f8f41e39cb601f5bafabe5eff551d27958ae17845c15",
+    "source_provenance": "not_attested_by_this_runner"
+  },
+  "evidence_kind": "captured_guest_execution",
+  "execution": {
+    "command": [
+      "qemu-system-mips",
+      "-M",
+      "malta",
+      "-cpu",
+      "24Kf",
+      "-m",
+      "64M",
+      "-nographic",
+      "-no-reboot",
+      "-nic",
+      "none",
+      "-kernel",
+      "<outside-repo>/vmlinux.runtime-snapshot",
+      "-initrd",
+      "<outside-repo>/runtime.cpio.gz",
+      "-append",
+      "console=ttyS0,38400 rdinit=/init panic=-1"
+    ],
+    "exit_code": 0,
+    "initramfs": {
+      "archive_sha256": "6e8811dbd76af6b395c07689936d58f265ca0a5107fd0bc6abc39c276265ad9e",
+      "compressed_bytes": 1107128,
+      "devices": {
+        "dev/console": {
+          "mode": "0o20600",
+          "rdev": [
+            5,
+            1
+          ]
+        },
+        "dev/null": {
+          "mode": "0o20666",
+          "rdev": [
+            1,
+            3
+          ]
+        },
+        "dev/random": {
+          "mode": "0o20600",
+          "rdev": [
+            1,
+            8
+          ]
+        },
+        "dev/ttyPZ0": {
+          "mode": "0o20600",
+          "rdev": [
+            204,
+            192
+          ]
+        },
+        "dev/ttyS0": {
+          "mode": "0o20600",
+          "rdev": [
+            4,
+            64
+          ]
+        },
+        "dev/urandom": {
+          "mode": "0o20666",
+          "rdev": [
+            1,
+            9
+          ]
+        },
+        "dev/zero": {
+          "mode": "0o20666",
+          "rdev": [
+            1,
+            5
+          ]
+        }
+      },
+      "entry_count": 16,
+      "extra_files": {
+        "ffw_p05_profile": {
+          "mode": "0o100644",
+          "sha256": "e9ae745539ce324482653edbb1d16b1803abda774b69300a1ee42ae75865947b",
+          "size": 14
+        },
+        "franken-speaker": {
+          "mode": "0o100755",
+          "sha256": "91f434450a6e22d53616f8f41e39cb601f5bafabe5eff551d27958ae17845c15",
+          "size": 2515448
+        }
+      },
+      "init_path": "<outside-repo>/ffw-hello-init",
+      "init_sha256": "94ee93ff2ab1bf4a6469f17db8aedfe971c524c05ebd785567898511a76847fc",
+      "init_size": 30788,
+      "out_path": "<outside-repo>/runtime.cpio.gz",
+      "raw_cpio_sha256": "c8b31be912ffc34328a95d3540b978038ff912dba388962ac4f24445601d9460",
+      "uncompressed_bytes": 2548224
+    },
+    "inputs_after_capture": {
+      "initramfs": "6e8811dbd76af6b395c07689936d58f265ca0a5107fd0bc6abc39c276265ad9e",
+      "kernel": "3803357ef7821dbf691c901105fb9b2b00382abf67fce8a4be2a0d592267dc61"
+    },
+    "kernel_sha256": "3803357ef7821dbf691c901105fb9b2b00382abf67fce8a4be2a0d592267dc61",
+    "profile": "caller-driven",
+    "qemu": "QEMU emulator version 11.1.3",
+    "scope": "E07 supervisor child, not runtime as PID 1",
+    "stderr_bytes": 0,
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stdout_sha256": "ada2368ddeb94882607946e904b75dad44c1fbfdcd9286a60a2f1379eef5cb44",
+    "stop_reason": null
+  },
+  "gates": [
+    {
+      "detail": "",
+      "gate_id": "P05R-TRANSCRIPT",
+      "status": "passed",
+      "title": "all 32 runtime markers in the declared order"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-ENV",
+      "status": "passed",
+      "title": "runtime BEGIN and supplied ELF agree"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-PHASES",
+      "status": "passed",
+      "title": "every required operation actually reports ok"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-CLEANUP",
+      "status": "passed",
+      "title": "child-side cancellation cleanup is actually observed"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-CENSUS",
+      "status": "passed",
+      "title": "twelve complete, consistent census samples, none above the start count, the runtime drop settled"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-END",
+      "status": "passed",
+      "title": "END matches independently counted operations"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-SUPERVISOR",
+      "status": "passed",
+      "title": "bootstrap setup, child hash/exit and ordered reboot"
+    },
+    {
+      "detail": "",
+      "gate_id": "P05R-CAPTURE",
+      "status": "passed",
+      "title": "bounded complete capture and packaged ELF identity"
+    }
+  ],
+  "path_hashes": [
+    {
+      "path": "<outside-repo>/vmlinux.runtime-snapshot",
+      "sha256": "3803357ef7821dbf691c901105fb9b2b00382abf67fce8a4be2a0d592267dc61"
+    },
+    {
+      "path": "<outside-repo>/runtime.cpio.gz",
+      "sha256": "6e8811dbd76af6b395c07689936d58f265ca0a5107fd0bc6abc39c276265ad9e"
+    },
+    {
+      "path": "<outside-repo>/ffw-hello-init",
+      "sha256": "94ee93ff2ab1bf4a6469f17db8aedfe971c524c05ebd785567898511a76847fc"
+    }
+  ],
+  "profile": "caller-driven",
+  "result": "passed",
+  "revision_claim": "independent replay of supplied frozen ELF bytes; source provenance not attested",
+  "schema": "ffw.p05.runtime_receipt.v1",
+  "scope": "A runtime transcript is distinct from the atomic-cell guest. Native execution does not qualify BE execution. A supplied ELF hash binds bytes, not their compiler/source provenance. The supplied revision is an operator claim, not an attestation. Analysis only validates supplied transcript bytes; command exit and execution custody require the original execution receipt. This runner compiles nothing. Synthetic checker tests are not runtime or QEMU proof. A guest pass covers the named phases under the recorded QEMU kernel, not stock kernels, 32 MiB memory fit, physical drivers/audio, provider integrations, or completion of P05/P03. This is the caller-driven run: a runtime built with LegacyProfile::caller_driven, whose one scheduler worker is driven by the thread that calls block_on, with no blocking thread and no helper thread, selected by an initramfs marker because the unchanged supervisor passes the probe no argument. Its rows are observations on one such runtime in one guest: that its tasks, timers and drain ran on the calling thread, that no census row showed a thread above the starting count, that blocking work is refused, and that work spawned through a handle between block_on calls waits for the next block_on. It does not show that the mode is suitable for the speaker's I/O load, or that it is deadlock-free: a synchronous block inside a task stalls the whole runtime by design. Every row is ok and nothing is declared unsupported.",
+  "supervisor_elf": {
+    "arch": "mips",
+    "bytes": 30788,
+    "pointer_bits": 32,
+    "sha256": "94ee93ff2ab1bf4a6469f17db8aedfe971c524c05ebd785567898511a76847fc",
+    "source_provenance": "not_attested_by_this_runner"
+  },
+  "transcript_sha256": "ada2368ddeb94882607946e904b75dad44c1fbfdcd9286a60a2f1379eef5cb44"
+}

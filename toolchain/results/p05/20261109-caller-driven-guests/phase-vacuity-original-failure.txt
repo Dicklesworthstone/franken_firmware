@@ -1,0 +1,1439 @@
+test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) ... 
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='PROFILE_ACCEPT', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='PROFILE_ACCEPT', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='PROFILE_REFUSES_ZERO_WORKERS', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='PROFILE_REFUSES_ZERO_WORKERS', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='PROFILE_REFUSES_UNBOUNDED_QUEUE', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='PROFILE_REFUSES_UNBOUNDED_QUEUE', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='PROFILE_REFUSES_OVER_BUDGET', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='PROFILE_REFUSES_OVER_BUDGET', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='REACTOR', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='REACTOR', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='RUNTIME_AUDIT', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='RUNTIME_AUDIT', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='SPAWN_JOIN', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='SPAWN_JOIN', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='ABORT_TIMER_PARKED', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='ABORT_TIMER_PARKED', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='ABORT_BLIND_VALUE', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='ABORT_BLIND_VALUE', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='TIMER_WAKE', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='TIMER_WAKE', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='UDP_LOOPBACK', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='UDP_LOOPBACK', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='BLOCKING_POOL', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='BLOCKING_POOL', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='DRAIN', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='DRAIN', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='SINGLE_OWNER_PROFILE', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='SINGLE_OWNER_PROFILE', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='PROFILE_ACCEPT', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='PROFILE_ACCEPT', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='PROFILE_REFUSES_ZERO_WORKERS', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='PROFILE_REFUSES_ZERO_WORKERS', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='PROFILE_REFUSES_UNBOUNDED_QUEUE', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='PROFILE_REFUSES_UNBOUNDED_QUEUE', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='PROFILE_REFUSES_OVER_BUDGET', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='PROFILE_REFUSES_OVER_BUDGET', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='REACTOR', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='REACTOR', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='RUNTIME_AUDIT', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='RUNTIME_AUDIT', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='SINGLE_OWNER_RUNTIME', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='SINGLE_OWNER_RUNTIME', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='CALLER_DRIVEN_CURRENT_THREAD', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='CALLER_DRIVEN_CURRENT_THREAD', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='SPAWN_JOIN', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='SPAWN_JOIN', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='ABORT_TIMER_PARKED', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='ABORT_TIMER_PARKED', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='ABORT_BLIND_VALUE', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='ABORT_BLIND_VALUE', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='TIMER_WAKE', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='TIMER_WAKE', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='UDP_LOOPBACK', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='UDP_LOOPBACK', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='BLOCKING_POOL', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='BLOCKING_POOL', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='SINGLE_OWNER_BLOCKING_OFFLOAD', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='SINGLE_OWNER_BLOCKING_OFFLOAD', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='DRAIN', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='DRAIN', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='BYTE_BUDGET_REFUSAL', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='BYTE_BUDGET_REFUSAL', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='FIRST_USE_BACKGROUND', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='FIRST_USE_BACKGROUND', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='RUNTIME_USABLE_AFTER_REFUSAL', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='RUNTIME_USABLE_AFTER_REFUSAL', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_PROFILE', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_PROFILE', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='PROFILE_ACCEPT', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='PROFILE_ACCEPT', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='PROFILE_REFUSES_ZERO_WORKERS', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='PROFILE_REFUSES_ZERO_WORKERS', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='PROFILE_REFUSES_UNBOUNDED_QUEUE', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='PROFILE_REFUSES_UNBOUNDED_QUEUE', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='PROFILE_REFUSES_OVER_BUDGET', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='PROFILE_REFUSES_OVER_BUDGET', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_REFUSES_TWO_WORKERS', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_REFUSES_TWO_WORKERS', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_REFUSES_BLOCKING_THREADS', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_REFUSES_BLOCKING_THREADS', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='REACTOR', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='REACTOR', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='RUNTIME_AUDIT', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='RUNTIME_AUDIT', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_RUNTIME', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_RUNTIME', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='SPAWN_JOIN', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='SPAWN_JOIN', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='ABORT_TIMER_PARKED', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='ABORT_TIMER_PARKED', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='ABORT_BLIND_VALUE', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='ABORT_BLIND_VALUE', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='TIMER_WAKE', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='TIMER_WAKE', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='UDP_LOOPBACK', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='UDP_LOOPBACK', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_BLOCKING_REFUSED', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_BLOCKING_REFUSED', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_HANDLE_SPAWN_WAITS', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_HANDLE_SPAWN_WAITS', observed=2) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='DRAIN', observed=0) ... FAIL
+  test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='DRAIN', observed=2) ... FAIL
+test_boot_failure_and_end_only_never_claim_operations_ran (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_boot_failure_and_end_only_never_claim_operations_ran) ... 
+  test_boot_failure_and_end_only_never_claim_operations_ran (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_boot_failure_and_end_only_never_claim_operations_ran) (profile='threaded', text='') ... FAIL
+  test_boot_failure_and_end_only_never_claim_operations_ran (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_boot_failure_and_end_only_never_claim_operations_ran) (profile='threaded', text="Can't allocate initial device-tree chunk\r\n") ... FAIL
+  test_boot_failure_and_end_only_never_claim_operations_ran (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_boot_failure_and_end_only_never_claim_operations_ran) (profile='threaded', text='FFW_P05_RUNTIME:END status=done ops=23 ok=23 failed=0 unsupported=0 partial=0 unknown=0 census_samples=10\n') ... FAIL
+  test_boot_failure_and_end_only_never_claim_operations_ran (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_boot_failure_and_end_only_never_claim_operations_ran) (profile='single-owner', text='') ... FAIL
+  test_boot_failure_and_end_only_never_claim_operations_ran (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_boot_failure_and_end_only_never_claim_operations_ran) (profile='single-owner', text="Can't allocate initial device-tree chunk\r\n") ... FAIL
+  test_boot_failure_and_end_only_never_claim_operations_ran (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_boot_failure_and_end_only_never_claim_operations_ran) (profile='single-owner', text='FFW_P05_RUNTIME:END status=done ops=33 ok=32 failed=0 unsupported=1 partial=0 unknown=0 census_samples=13\n') ... FAIL
+  test_boot_failure_and_end_only_never_claim_operations_ran (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_boot_failure_and_end_only_never_claim_operations_ran) (profile='caller-driven', text='') ... FAIL
+  test_boot_failure_and_end_only_never_claim_operations_ran (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_boot_failure_and_end_only_never_claim_operations_ran) (profile='caller-driven', text="Can't allocate initial device-tree chunk\r\n") ... FAIL
+  test_boot_failure_and_end_only_never_claim_operations_ran (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_boot_failure_and_end_only_never_claim_operations_ran) (profile='caller-driven', text='FFW_P05_RUNTIME:END status=done ops=30 ok=30 failed=0 unsupported=0 partial=0 unknown=0 census_samples=12\n') ... FAIL
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='PROFILE_ACCEPT', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='PROFILE_ACCEPT', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='PROFILE_REFUSES_ZERO_WORKERS', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='PROFILE_REFUSES_ZERO_WORKERS', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='PROFILE_REFUSES_UNBOUNDED_QUEUE', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='PROFILE_REFUSES_UNBOUNDED_QUEUE', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='PROFILE_REFUSES_OVER_BUDGET', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='PROFILE_REFUSES_OVER_BUDGET', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='REACTOR', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='REACTOR', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='RUNTIME_AUDIT', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='RUNTIME_AUDIT', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='SPAWN_JOIN', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='SPAWN_JOIN', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='ABORT_TIMER_PARKED', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='ABORT_TIMER_PARKED', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='ABORT_BLIND_VALUE', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='ABORT_BLIND_VALUE', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='TIMER_WAKE', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='TIMER_WAKE', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='UDP_LOOPBACK', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='UDP_LOOPBACK', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='BLOCKING_POOL', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='BLOCKING_POOL', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='DRAIN', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='threaded', operation='DRAIN', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='SINGLE_OWNER_PROFILE', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='SINGLE_OWNER_PROFILE', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='PROFILE_ACCEPT', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='PROFILE_ACCEPT', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='PROFILE_REFUSES_ZERO_WORKERS', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='PROFILE_REFUSES_ZERO_WORKERS', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='PROFILE_REFUSES_UNBOUNDED_QUEUE', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='PROFILE_REFUSES_UNBOUNDED_QUEUE', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='PROFILE_REFUSES_OVER_BUDGET', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='PROFILE_REFUSES_OVER_BUDGET', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='REACTOR', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='REACTOR', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='RUNTIME_AUDIT', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='RUNTIME_AUDIT', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='SINGLE_OWNER_RUNTIME', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='SINGLE_OWNER_RUNTIME', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='CALLER_DRIVEN_CURRENT_THREAD', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 177, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertIn(f"{name}: required operation must appear exactly once (observed {count})",
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                  phase.detail)
+                  ^^^^^^^^^^^^^
+AssertionError: 'CALLER_DRIVEN_CURRENT_THREAD: required operation must appear exactly once (observed 0)' not found in 'CALLER_DRIVEN_CURRENT_THREAD: must be exactly one row with status=unsupported (observed [])'
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='CALLER_DRIVEN_CURRENT_THREAD', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 177, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertIn(f"{name}: required operation must appear exactly once (observed {count})",
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                  phase.detail)
+                  ^^^^^^^^^^^^^
+AssertionError: 'CALLER_DRIVEN_CURRENT_THREAD: required operation must appear exactly once (observed 2)' not found in "CALLER_DRIVEN_CURRENT_THREAD: must be exactly one row with status=unsupported (observed ['unsupported', 'unsupported'])"
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='SPAWN_JOIN', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='SPAWN_JOIN', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='ABORT_TIMER_PARKED', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='ABORT_TIMER_PARKED', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='ABORT_BLIND_VALUE', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='ABORT_BLIND_VALUE', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='TIMER_WAKE', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='TIMER_WAKE', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='UDP_LOOPBACK', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='UDP_LOOPBACK', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='BLOCKING_POOL', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='BLOCKING_POOL', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='SINGLE_OWNER_BLOCKING_OFFLOAD', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='SINGLE_OWNER_BLOCKING_OFFLOAD', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='DRAIN', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='DRAIN', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='BYTE_BUDGET_REFUSAL', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='BYTE_BUDGET_REFUSAL', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='FIRST_USE_BACKGROUND', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='FIRST_USE_BACKGROUND', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='RUNTIME_USABLE_AFTER_REFUSAL', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='single-owner', operation='RUNTIME_USABLE_AFTER_REFUSAL', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_PROFILE', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_PROFILE', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='PROFILE_ACCEPT', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='PROFILE_ACCEPT', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='PROFILE_REFUSES_ZERO_WORKERS', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='PROFILE_REFUSES_ZERO_WORKERS', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='PROFILE_REFUSES_UNBOUNDED_QUEUE', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='PROFILE_REFUSES_UNBOUNDED_QUEUE', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='PROFILE_REFUSES_OVER_BUDGET', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='PROFILE_REFUSES_OVER_BUDGET', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_REFUSES_TWO_WORKERS', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_REFUSES_TWO_WORKERS', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_REFUSES_BLOCKING_THREADS', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_REFUSES_BLOCKING_THREADS', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='REACTOR', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='REACTOR', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='RUNTIME_AUDIT', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='RUNTIME_AUDIT', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_RUNTIME', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_RUNTIME', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='SPAWN_JOIN', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='SPAWN_JOIN', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='ABORT_TIMER_PARKED', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='ABORT_TIMER_PARKED', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='ABORT_BLIND_VALUE', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='ABORT_BLIND_VALUE', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='TIMER_WAKE', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='TIMER_WAKE', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='UDP_LOOPBACK', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='UDP_LOOPBACK', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_BLOCKING_REFUSED', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_BLOCKING_REFUSED', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_HANDLE_SPAWN_WAITS', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='CALLER_DRIVEN_HANDLE_SPAWN_WAITS', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='DRAIN', observed=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_phase_gate_requires_each_operation_once_in_every_profile (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_phase_gate_requires_each_operation_once_in_every_profile) (profile='caller-driven', operation='DRAIN', observed=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 176, in test_phase_gate_requires_each_operation_once_in_every_profile
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_boot_failure_and_end_only_never_claim_operations_ran (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_boot_failure_and_end_only_never_claim_operations_ran) (profile='threaded', text='')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 188, in test_boot_failure_and_end_only_never_claim_operations_ran
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_boot_failure_and_end_only_never_claim_operations_ran (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_boot_failure_and_end_only_never_claim_operations_ran) (profile='threaded', text="Can't allocate initial device-tree chunk\r\n")
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 188, in test_boot_failure_and_end_only_never_claim_operations_ran
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_boot_failure_and_end_only_never_claim_operations_ran (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_boot_failure_and_end_only_never_claim_operations_ran) (profile='threaded', text='FFW_P05_RUNTIME:END status=done ops=23 ok=23 failed=0 unsupported=0 partial=0 unknown=0 census_samples=10\n')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 188, in test_boot_failure_and_end_only_never_claim_operations_ran
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_boot_failure_and_end_only_never_claim_operations_ran (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_boot_failure_and_end_only_never_claim_operations_ran) (profile='single-owner', text='')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 189, in test_boot_failure_and_end_only_never_claim_operations_ran
+    self.assertIn("TIMER_WAKE: required operation must appear exactly once (observed 0)", phase.detail)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'TIMER_WAKE: required operation must appear exactly once (observed 0)' not found in 'CALLER_DRIVEN_CURRENT_THREAD: must be exactly one row with status=unsupported (observed [])'
+
+======================================================================
+FAIL: test_boot_failure_and_end_only_never_claim_operations_ran (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_boot_failure_and_end_only_never_claim_operations_ran) (profile='single-owner', text="Can't allocate initial device-tree chunk\r\n")
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 189, in test_boot_failure_and_end_only_never_claim_operations_ran
+    self.assertIn("TIMER_WAKE: required operation must appear exactly once (observed 0)", phase.detail)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'TIMER_WAKE: required operation must appear exactly once (observed 0)' not found in 'CALLER_DRIVEN_CURRENT_THREAD: must be exactly one row with status=unsupported (observed [])'
+
+======================================================================
+FAIL: test_boot_failure_and_end_only_never_claim_operations_ran (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_boot_failure_and_end_only_never_claim_operations_ran) (profile='single-owner', text='FFW_P05_RUNTIME:END status=done ops=33 ok=32 failed=0 unsupported=1 partial=0 unknown=0 census_samples=13\n')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 189, in test_boot_failure_and_end_only_never_claim_operations_ran
+    self.assertIn("TIMER_WAKE: required operation must appear exactly once (observed 0)", phase.detail)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'TIMER_WAKE: required operation must appear exactly once (observed 0)' not found in 'CALLER_DRIVEN_CURRENT_THREAD: must be exactly one row with status=unsupported (observed [])'
+
+======================================================================
+FAIL: test_boot_failure_and_end_only_never_claim_operations_ran (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_boot_failure_and_end_only_never_claim_operations_ran) (profile='caller-driven', text='')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 188, in test_boot_failure_and_end_only_never_claim_operations_ran
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_boot_failure_and_end_only_never_claim_operations_ran (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_boot_failure_and_end_only_never_claim_operations_ran) (profile='caller-driven', text="Can't allocate initial device-tree chunk\r\n")
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 188, in test_boot_failure_and_end_only_never_claim_operations_ran
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+======================================================================
+FAIL: test_boot_failure_and_end_only_never_claim_operations_ran (toolchain.tests.test_measure_p05_runtime.RuntimeTranscriptTests.test_boot_failure_and_end_only_never_claim_operations_ran) (profile='caller-driven', text='FFW_P05_RUNTIME:END status=done ops=30 ok=30 failed=0 unsupported=0 partial=0 unknown=0 census_samples=12\n')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<REPO>/toolchain/tests/test_measure_p05_runtime.py", line 188, in test_boot_failure_and_end_only_never_claim_operations_ran
+    self.assertEqual(phase.status, "failed")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'passed' != 'failed'
+- passed
++ failed
+
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.289s
+
+FAILED (failures=111)

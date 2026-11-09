@@ -1,0 +1,4 @@
+<ELF_ROOT>/mips/ffw-p05-runtime: ELF 32-bit MSB executable, MIPS, MIPS32 rel2 version 1 (SYSV), statically linked, stripped
+<ELF_ROOT>/mips/ffw-hello-init: ELF 32-bit MSB executable, MIPS, MIPS32 rel2 version 1 (SYSV), statically linked, stripped
+<ELF_ROOT>/ppc/ffw-p05-runtime: ELF 32-bit MSB executable, PowerPC or cisco 4500, version 1 (SYSV), statically linked, stripped
+<ELF_ROOT>/ppc/ffw-hello-init: ELF 32-bit MSB executable, PowerPC or cisco 4500, version 1 (SYSV), statically linked, stripped

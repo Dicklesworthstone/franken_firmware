@@ -1,0 +1,98 @@
+[
+  {
+    "folder": "mips-64m",
+    "command": [
+      "scripts/e2e/p05",
+      "--runtime",
+      "analyze",
+      "--arch",
+      "mips",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/mips/ffw-p05-runtime",
+      "--supervisor",
+      "<ELF_ROOT>/mips/ffw-hello-init",
+      "--log",
+      "<ARCHIVE>/mips-64m/runtime.serial.log",
+      "--receipt",
+      "<ARCHIVE>/mips-64m/postfix-analysis.json",
+      "--revision",
+      "8d76ad0 plus exact-once phase diagnostic correction; supplied transcript analysis only"
+    ],
+    "exit_code": 0,
+    "evidence_kind": "supplied_transcript_analysis_not_new_execution"
+  },
+  {
+    "folder": "powerpc-64m",
+    "command": [
+      "scripts/e2e/p05",
+      "--runtime",
+      "analyze",
+      "--arch",
+      "powerpc",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/ppc/ffw-p05-runtime",
+      "--supervisor",
+      "<ELF_ROOT>/ppc/ffw-hello-init",
+      "--log",
+      "<ARCHIVE>/powerpc-64m/runtime.serial.log",
+      "--receipt",
+      "<ARCHIVE>/powerpc-64m/postfix-analysis.json",
+      "--revision",
+      "8d76ad0 plus exact-once phase diagnostic correction; supplied transcript analysis only"
+    ],
+    "exit_code": 0,
+    "evidence_kind": "supplied_transcript_analysis_not_new_execution"
+  },
+  {
+    "folder": "mips-32m",
+    "command": [
+      "scripts/e2e/p05",
+      "--runtime",
+      "analyze",
+      "--arch",
+      "mips",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/mips/ffw-p05-runtime",
+      "--supervisor",
+      "<ELF_ROOT>/mips/ffw-hello-init",
+      "--log",
+      "<ARCHIVE>/mips-32m/runtime.serial.log",
+      "--receipt",
+      "<ARCHIVE>/mips-32m/postfix-analysis.json",
+      "--revision",
+      "8d76ad0 plus exact-once phase diagnostic correction; supplied transcript analysis only"
+    ],
+    "exit_code": 0,
+    "evidence_kind": "supplied_transcript_analysis_not_new_execution"
+  },
+  {
+    "folder": "powerpc-32m",
+    "command": [
+      "scripts/e2e/p05",
+      "--runtime",
+      "analyze",
+      "--arch",
+      "powerpc",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/ppc/ffw-p05-runtime",
+      "--supervisor",
+      "<ELF_ROOT>/ppc/ffw-hello-init",
+      "--log",
+      "<ARCHIVE>/powerpc-32m/runtime.serial.log",
+      "--receipt",
+      "<ARCHIVE>/powerpc-32m/postfix-analysis.json",
+      "--revision",
+      "8d76ad0 plus exact-once phase diagnostic correction; supplied transcript analysis only"
+    ],
+    "exit_code": 1,
+    "evidence_kind": "supplied_transcript_analysis_not_new_execution"
+  }
+]

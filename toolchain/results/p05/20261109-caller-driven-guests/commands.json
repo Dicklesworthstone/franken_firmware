@@ -1,0 +1,130 @@
+[
+  {
+    "arch": "mips",
+    "command": [
+      "<REPO>/scripts/e2e/p05",
+      "--runtime",
+      "run",
+      "--arch",
+      "mips",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/mips/ffw-p05-runtime",
+      "--supervisor",
+      "<ELF_ROOT>/mips/ffw-hello-init",
+      "--receipt",
+      "<REVIEW64>/mips-run.receipt.json",
+      "--revision",
+      "independent replay of supplied frozen ELF bytes; source provenance not attested",
+      "--log-dir",
+      "<REVIEW64>/mips-replay",
+      "--timeout",
+      "600"
+    ],
+    "elapsed_seconds": 6.622,
+    "env": {
+      "FFW_BUILD_DIR": "<BUILD_DIR>"
+    },
+    "exit_code": 0,
+    "mode": "run",
+    "stderr": "<REVIEW64>/mips-run.stderr",
+    "stdout": "<REVIEW64>/mips-run.out"
+  },
+  {
+    "arch": "powerpc",
+    "command": [
+      "<REPO>/scripts/e2e/p05",
+      "--runtime",
+      "run",
+      "--arch",
+      "powerpc",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/ppc/ffw-p05-runtime",
+      "--supervisor",
+      "<ELF_ROOT>/ppc/ffw-hello-init",
+      "--receipt",
+      "<REVIEW64>/ppc-run.receipt.json",
+      "--revision",
+      "independent replay of supplied frozen ELF bytes; source provenance not attested",
+      "--log-dir",
+      "<REVIEW64>/ppc-replay",
+      "--timeout",
+      "600"
+    ],
+    "elapsed_seconds": 5.224,
+    "env": {
+      "FFW_BUILD_DIR": "<BUILD_DIR>"
+    },
+    "exit_code": 0,
+    "mode": "run",
+    "stderr": "<REVIEW64>/ppc-run.stderr",
+    "stdout": "<REVIEW64>/ppc-run.out"
+  },
+  {
+    "arch": "mips",
+    "command": [
+      "<REPO>/scripts/e2e/p05",
+      "--runtime",
+      "run",
+      "--arch",
+      "mips",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/mips/ffw-p05-runtime",
+      "--supervisor",
+      "<ELF_ROOT>/mips/ffw-hello-init",
+      "--receipt",
+      "<REVIEW32>/mips-32m.receipt.json",
+      "--revision",
+      "independent32MiB execution of supplied frozen ELF bytes; source provenance not attested",
+      "--log-dir",
+      "<REVIEW32>/mips-32m",
+      "--timeout",
+      "600",
+      "--guest-memory-mib",
+      "32"
+    ],
+    "elapsed_seconds": 10.273,
+    "env": {
+      "FFW_BUILD_DIR": "<BUILD_DIR>"
+    },
+    "exit_code": 0,
+    "kind": "qemu32MiB"
+  },
+  {
+    "arch": "powerpc",
+    "command": [
+      "<REPO>/scripts/e2e/p05",
+      "--runtime",
+      "run",
+      "--arch",
+      "powerpc",
+      "--profile",
+      "caller-driven",
+      "--elf",
+      "<ELF_ROOT>/ppc/ffw-p05-runtime",
+      "--supervisor",
+      "<ELF_ROOT>/ppc/ffw-hello-init",
+      "--receipt",
+      "<REVIEW32>/ppc-32m.receipt.json",
+      "--revision",
+      "independent32MiB execution of supplied frozen ELF bytes; source provenance not attested",
+      "--log-dir",
+      "<REVIEW32>/ppc-32m",
+      "--timeout",
+      "600",
+      "--guest-memory-mib",
+      "32"
+    ],
+    "elapsed_seconds": 600.692,
+    "env": {
+      "FFW_BUILD_DIR": "<BUILD_DIR>"
+    },
+    "exit_code": 1,
+    "kind": "qemu32MiB"
+  }
+]
