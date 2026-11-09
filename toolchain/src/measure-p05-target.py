@@ -1352,6 +1352,9 @@ def run_runtime(args: argparse.Namespace, expected_elf: dict[str, Any],
     """
     profile = getattr(args, "profile", RUNTIME_THREADED)
     marker_bytes = RUNTIME_MARKER_BYTES.get(profile)
+    guest_memory_mib = getattr(args, "guest_memory_mib", 64)
+    if type(guest_memory_mib) is not int or guest_memory_mib not in (32, 64):
+        raise MeasurementError("guest memory must be 32 or 64 MiB")
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         raise MeasurementError("a finite positive timeout is required")
     if args.log_dir.exists() and any(args.log_dir.iterdir()):
@@ -1389,7 +1392,7 @@ def run_runtime(args: argparse.Namespace, expected_elf: dict[str, Any],
     # The guest's own loopback remains available; no emulated NIC can contact a real LAN.
     qemu = "qemu-system-mips" if is_mips else "qemu-system-ppc"
     command = [qemu, "-M", "malta" if is_mips else "g3beige", "-cpu", "24Kf" if is_mips else "G3",
-               "-m", "64M", "-nographic", "-no-reboot", "-nic", "none", "-kernel", str(kernel_snapshot), "-initrd", str(archive),
+               "-m", f"{guest_memory_mib}M", "-nographic", "-no-reboot", "-nic", "none", "-kernel", str(kernel_snapshot), "-initrd", str(archive),
                "-append", "console=" + ("ttyS0" if is_mips else "ttyPZ0") + ",38400 rdinit=/init panic=-1"]
     capture = boot.capture_guest(command, env, args.timeout, max_bytes=RUNTIME_CAPTURE_BYTES,
         capture_paths={"stdout": args.log_dir / "runtime.serial.log", "stderr": args.log_dir / "qemu.stderr.log"})
@@ -1408,7 +1411,7 @@ def run_runtime(args: argparse.Namespace, expected_elf: dict[str, Any],
         "stop_reason": capture["stop_reason"], "stderr_sha256": hashlib.sha256(capture["stderr"]).hexdigest(),
         "stdout_sha256": hashlib.sha256(capture["stdout"]).hexdigest(),
         "stderr_bytes": len(capture["stderr"]), "scope": "E07 supervisor child, not runtime as PID 1",
-        "profile": profile}
+        "profile": profile, "guest_memory_mib": guest_memory_mib}
 
 
 # ---- receipt path hygiene --------------------------------------------------------------------------------------------------------
@@ -1620,6 +1623,8 @@ def main(argv: list[str] | None = None) -> int:
         if name == "run-runtime":
             p.add_argument("--log-dir", type=pathlib.Path, required=True)
             p.add_argument("--timeout", type=float, default=180.0)
+            p.add_argument("--guest-memory-mib", type=int, choices=(32, 64), default=64,
+                           help="QEMU guest memory in MiB (default: 64); a probe experiment, not a production RAM budget")
         else:
             p.add_argument("--log", type=pathlib.Path)
     p = sub.add_parser("prepare")

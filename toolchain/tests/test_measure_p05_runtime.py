@@ -537,7 +537,7 @@ class RuntimePackagingTests(unittest.TestCase):
         self.boot = M.boot_runner()
         self.capture = self.boot.capture_guest
 
-    def invoke(self, arch="mips", mode="normal", mutate=None, writer=None):
+    def invoke(self, arch="mips", mode="normal", mutate=None, writer=None, memory_mib=None):
         elf, supervisor = self.root / "runtime.elf", self.root / "supervisor.elf"
         elf.write_bytes(elf_fixture(arch) + b"SYNTHETIC CHILD; NOT EXECUTABLE")
         supervisor.write_bytes(elf_fixture(arch) + b"SYNTHETIC SUPERVISOR; NOT EXECUTABLE")
@@ -559,7 +559,7 @@ class RuntimePackagingTests(unittest.TestCase):
             self.assertEqual(command[:5], ["qemu-system-mips" if arch == "mips" else "qemu-system-ppc",
                 "-M", "malta" if arch == "mips" else "g3beige", "-cpu", "24Kf" if arch == "mips" else "G3"])
             self.assertEqual(command[command.index("-nic") + 1], "none", "loopback only, with no emulated LAN NIC")
-            self.assertEqual(command[command.index("-m") + 1], "64M")
+            self.assertEqual(command[command.index("-m") + 1], "64M" if memory_mib is None else f"{memory_mib}M")
             self.assertEqual(command[command.index("-append") + 1],
                 "console=" + ("ttyS0" if arch == "mips" else "ttyPZ0") + ",38400 rdinit=/init panic=-1")
             snapshot = Path(command[command.index("-kernel") + 1])
@@ -605,6 +605,8 @@ class RuntimePackagingTests(unittest.TestCase):
 
         args = ["run-runtime", "--arch", arch, "--elf", str(elf), "--supervisor", str(supervisor),
                 "--log-dir", str(logs), "--receipt", str(receipt), "--timeout", "2"]
+        if memory_mib is not None:
+            args += ["--guest-memory-mib", str(memory_mib)]
         with patch.dict(os.environ, {"FFW_BUILD_DIR": str(self.root)}), patch.object(
                 self.boot, "capture_guest", side_effect=synthetic_capture), patch.object(
                 self.boot, "cmd_version", return_value="SYNTHETIC; NO QEMU RAN"), patch.object(
@@ -628,6 +630,55 @@ class RuntimePackagingTests(unittest.TestCase):
         result, receipt, _ = self.invoke("powerpc")
         self.assertEqual(result, 0)
         self.assertEqual(receipt["arch"], "powerpc")
+
+    def test_explicit_32_mib_guest_limit_is_executed_and_recorded_for_both_architectures(self):
+        for arch in ("mips", "powerpc"):
+            with self.subTest(arch=arch):
+                self.setUp()
+                result, receipt, _ = self.invoke(arch, memory_mib=32)
+                self.assertEqual(result, 0)
+                self.assertEqual(receipt["execution"]["guest_memory_mib"], 32)
+                command = receipt["execution"]["command"]
+                self.assertEqual(command[command.index("-m") + 1], "32M")
+                self.assertEqual(command[command.index("-nic") + 1], "none")
+
+    def test_default_and_explicit_64_mib_keep_the_existing_guest_limit_and_image(self):
+        result, receipt, _ = self.invoke()
+        self.assertEqual(result, 0)
+        self.assertEqual(receipt["execution"]["guest_memory_mib"], 64)
+        initial_image = receipt["execution"]["initramfs"]["archive_sha256"]
+        self.setUp()
+        result, receipt, _ = self.invoke(memory_mib=64)
+        self.assertEqual(result, 0)
+        self.assertEqual(receipt["execution"]["guest_memory_mib"], 64)
+        self.assertEqual(receipt["execution"]["initramfs"]["archive_sha256"], initial_image)
+        command = receipt["execution"]["command"]
+        self.assertEqual(command[command.index("-m") + 1], "64M")
+
+    def test_guest_memory_option_rejects_unsupported_limits_before_any_output(self):
+        args = ["run-runtime", "--arch", "mips", "--elf", str(self.root / "not-read.elf"),
+                "--supervisor", str(self.root / "not-read-supervisor.elf"),
+                "--log-dir", str(self.root / "no-logs"), "--receipt", str(self.root / "no-receipt.json")]
+        for value in ("0", "16", "48", "-1", "1024", "32M", "32.0"):
+            with self.subTest(value=value), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as error:
+                    M.main(args + ["--guest-memory-mib", value])
+                self.assertEqual(error.exception.code, 2)
+                self.assertFalse((self.root / "no-logs").exists())
+                self.assertFalse((self.root / "no-receipt.json").exists())
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+            M.main(["analyze-runtime", "--arch", "mips", "--guest-memory-mib", "32"])
+        self.assertEqual(error.exception.code, 2, "supplied transcripts cannot declare execution memory")
+
+    def test_programmatic_guest_memory_validation_precedes_packaging_and_capture(self):
+        from argparse import Namespace
+        for value in (None, True, 32.0, "32", 48):
+            with self.subTest(value=value), patch.object(M, "boot_runner") as boot:
+                args = Namespace(guest_memory_mib=value, timeout=2, log_dir=self.root / "no-logs")
+                with self.assertRaisesRegex(M.MeasurementError, "32 or 64 MiB"):
+                    M.run_runtime(args, {}, {})
+                boot.assert_not_called()
+                self.assertFalse(args.log_dir.exists())
 
     def test_run_and_analyze_receipts_hash_identical_crlf_capture_bytes(self):
         result, receipt, logs = self.invoke(mode="crlf")
