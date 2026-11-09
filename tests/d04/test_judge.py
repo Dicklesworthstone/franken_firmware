@@ -36,6 +36,12 @@ REAL_LOGS = (
     "toolchain/results/n04/20261107-acb7a3d/host-tests.log",   # RCH layout: stdout sections first, stderr headers after
     "toolchain/results/n03/media-path-20261106/tests.txt",      # plain layout: each header followed by its section
 )
+# The exact-source RED and GREEN central logs committed with the mute-ordering repair (sanitized: no addresses, no host paths). Their
+# verdicts below are derived from what the logs contain, so they stay true when a later change adds a test to the registry.
+D04_LOGS = {
+    "green": "toolchain/results/d04/20261109-mute-ordering/green-speaker.txt",  # the whole package, RCH layout
+    "red": "toolchain/results/d04/20261109-mute-ordering/red-render.txt",       # `render::` only, two tests FAILED
+}
 HEADER = "     Running unittests src/lib.rs (.rch-target-w0-pool-0123456789abcdef/debug/deps/%s-0123456789abcdef)"
 PANIC = "assertion `left == right` failed: the loop did not stay Running"
 
@@ -245,10 +251,13 @@ class RealLogs(unittest.TestCase):
                 self.assertEqual(logs.test_status(rc.LIB_STEM, name), "ok", (rel, name))
             status, detail = rc.judge_rust(logs)
             self.assertEqual(status, rc.BLOCKED, (rel, detail))
-            absent = sorted(names - found)
+            absent = names - found
             self.assertIn("%d of %d required Rust test(s) not shown ok" % (len(absent), len(names)), detail, rel)
-            for name in absent[:rc.MAX_SHOWN]:
-                self.assertIn(name, detail, rel)
+            # The verdict lists the first MAX_SHOWN missing names in registry order, which is not sorted order, so the check is on the
+            # set: how many are shown, and that every one shown really is absent from the log.
+            shown = re.findall(r"((?:render|render_log)::tests::\w+): not reported", detail)
+            self.assertEqual(len(shown), min(len(absent), rc.MAX_SHOWN), rel)
+            self.assertTrue(set(shown) <= absent, rel)
 
     def test_a_real_log_plus_the_missing_names_is_a_pass_and_without_one_is_not(self):
         """D04-JUDGE-REAL-COMPLETED: the real n03 log completed with the names it lacks, as a second log, passes; leaving one of
@@ -264,6 +273,83 @@ class RealLogs(unittest.TestCase):
             status, detail = rc.judge_rust(rc.load_logs([path, partial]))
             self.assertEqual(status, rc.BLOCKED)
             self.assertIn(lacking[0], detail)
+
+
+class CommittedD04Logs(unittest.TestCase):
+    """The committed exact-source central logs of the render loop, judged by what they hold."""
+
+    def _real(self, key):
+        path = os.path.join(rc.REPO, D04_LOGS[key])
+        self.assertTrue(os.path.isfile(path), "the real control log is missing: " + D04_LOGS[key])
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            return handle.read()
+
+    def _judge_text(self, text, completion=None):
+        with tempfile.TemporaryDirectory() as d:
+            paths = [_write(d, 0, text)] + ([_write(d, 1, completion)] if completion else [])
+            return rc.judge_rust(rc.load_logs(paths))
+
+    def test_the_green_whole_package_log_passes_once_complete_and_a_planted_change_to_its_own_bytes_is_seen(self):
+        """D04-JUDGE-REAL-GREEN: the real green log, completed with any names it predates, passes (the control). The same real
+        bytes with one result line dropped are BLOCKED naming it, and with one made FAILED are a FAIL naming it."""
+        text = self._real("green")
+        names = required()
+        held = [n for n in names if re.search(r"^test %s \.\.\. ok\s*$" % re.escape(n), text, re.M)]
+        self.assertGreaterEqual(len(held), 50, "the control would be vacuous")
+        lacking = [n for n in names if n not in held]
+        completion = build_log(skip=set(held)) if lacking else None  # the names this log predates, as a second log
+        status, detail = self._judge_text(text, completion)
+        self.assertEqual(status, rc.PASS, detail)
+        victim = held[len(held) // 2]
+        line = re.compile(r"^(test %s \.\.\. )ok(\s*)$" % re.escape(victim), re.M)
+        status, detail = self._judge_text(line.sub("", text, count=1), completion)
+        self.assertEqual(status, rc.BLOCKED, detail)
+        self.assertIn(victim, detail)
+        status, detail = self._judge_text(line.sub(r"\1FAILED\2", text, count=1), completion)
+        self.assertEqual(status, rc.FAIL, detail)
+        self.assertIn(victim, detail)
+
+    def test_the_red_render_log_fails_on_exactly_the_tests_it_shows_failed(self):
+        """D04-JUDGE-REAL-RED: the real red log is a FAIL naming each test it shows FAILED, with cargo's panic line as the first
+        causal event. The control is the same bytes with those results made ok: the log holds only `render::`, so that is BLOCKED,
+        never FAIL and never a pass."""
+        text = self._real("red")
+        names = required()
+        failed = [n for n in names if re.search(r"^test %s \.\.\. FAILED\s*$" % re.escape(n), text, re.M)]
+        self.assertTrue(failed, "the control would be vacuous")
+        status, detail = self._judge_text(text)
+        self.assertEqual(status, rc.FAIL, detail)
+        self.assertIn("%d of %d required Rust test(s) FAILED" % (len(failed), len(names)), detail)
+        for name in failed:
+            self.assertIn(name, detail)
+        self.assertIn("first causal event", detail)
+        self.assertIn("panicked at", detail)
+        healed = re.sub(r"^(test (?:render|render_log)::tests::\S+ \.\.\. )FAILED(\s*)$", r"\1ok\2", text, flags=re.M)
+        status, detail = self._judge_text(healed)
+        self.assertEqual(status, rc.BLOCKED, detail)
+
+
+class RegistryIsWhole(unittest.TestCase):
+    def test_the_judge_requires_every_test_of_both_files(self):
+        """D04-JUDGE-REGISTRY: the names the judge requires are exactly every #[test] of render.rs and render_log.rs, counted here from
+        the `#[test]` lines and the `fn` under each, and not through all_rust_tests(). Without this, a registry that dropped one file's
+        tests would still pass every log that holds the other's: with render_log's 16 dropped, the `render::`-only log reads as complete,
+        and only a size floor in another test noticed, which stops working once render.rs holds enough tests."""
+        expected = {}
+        for rel, module in (("crates/franken-speaker/src/render.rs", "render"), ("crates/franken-speaker/src/render_log.rs", "render_log")):
+            with open(os.path.join(rc.REPO, rel), encoding="utf-8") as handle:
+                lines = handle.read().splitlines()
+            found = set()
+            for i, line in enumerate(lines):
+                if line.strip() == "#[test]":
+                    after = next(l for l in lines[i + 1:] if l.strip() and not l.strip().startswith(("#[", "//")))
+                    found.add("%s::tests::%s" % (module, re.match(r"\s*fn (\w+)", after).group(1)))
+            self.assertTrue(found, "the control would be vacuous: no #[test] found in " + rel)
+            expected[module] = found
+        required = {name for _, name in rc.cargo_names()}
+        self.assertEqual(required, expected["render"] | expected["render_log"])
+        self.assertEqual({n for n in required if n.startswith("render_log::")}, expected["render_log"])
+        self.assertEqual(len(rc.cargo_names()), len(required), "a required name is listed twice")
 
 
 class RunnerSurface(unittest.TestCase):
