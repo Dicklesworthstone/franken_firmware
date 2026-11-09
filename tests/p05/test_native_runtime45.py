@@ -102,6 +102,43 @@ class Runtime45(Case):
         self.assertIn("not the probe test binary", "\n".join(report.problems))
         self.assert_control45()
 
+    def test_positive_printing_logs_keep_binary_identity_and_headerless_support(self):
+        for names, pinned, printers in ((NAMES38, PIN38, PRINTERS), (NAMES45, PIN45, PRINTERS45)):
+            for header in (False, True):
+                with self.subTest(registry=pinned.label, header=header):
+                    report = self.judge45((nocapture(names, printers=printers, header=header), 0),
+                                          names=names, pinned=pinned)
+                    self.assertTrue(report.complete, report.problems)
+                    self.assertEqual(report.ok_names, len(names))
+                    self.assertEqual(report.runs[0][1]["credited_by_closure"], len(printers))
+
+    def test_negative_foreign_headers_cannot_be_erased_by_interrupted_printing_results(self):
+        for names, pinned, printers in ((NAMES38, PIN38, PRINTERS), (NAMES45, PIN45, PRINTERS45)):
+            with self.subTest(registry=pinned.label):
+                good = nocapture(names, printers=printers, header=True)
+                foreign = good.replace("ffw_p05_runtime-", "asupersync-")
+                self.assertNotEqual(foreign, good)
+                report = self.judge45((foreign, 0), names=names, pinned=pinned)
+                self.assertFalse(report.complete)
+                self.assertIn("not the probe test binary", "\n".join(report.problems))
+                self.assertNotIn("credited_by_closure", report.runs[0][1])
+                control = self.judge45((good, 0), names=names, pinned=pinned)
+                self.assertTrue(control.complete, control.problems)
+
+    def test_negative_multiple_or_malformed_running_headers_do_not_become_headerless(self):
+        for names, pinned, printers in ((NAMES38, PIN38, PRINTERS), (NAMES45, PIN45, PRINTERS45)):
+            good = nocapture(names, printers=printers, header=True)
+            header = next(line for line in good.splitlines() if line.strip().startswith("Running "))
+            malformed = good.replace(header, "     Running unittests src/main.rs (target/debug/deps/unknown)")
+            for text in (header + "\n" + good, malformed):
+                with self.subTest(registry=pinned.label, header=text.splitlines()[0]):
+                    report = self.judge45((text, 0), names=names, pinned=pinned)
+                    self.assertFalse(report.complete)
+                    self.assertIn("`Running` header", "\n".join(report.problems))
+                    self.assertNotIn("credited_by_closure", report.runs[0][1])
+            control = self.judge45((good, 0), names=names, pinned=pinned)
+            self.assertTrue(control.complete, control.problems)
+
     def test_negative_a_log_missing_one_new_name_is_refused(self):
         for gone in NEW_NAMES:
             with self.subTest(gone=gone):

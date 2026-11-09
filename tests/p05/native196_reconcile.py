@@ -15,8 +15,9 @@ names (the default), the 38 native tests of the P05 runtime probe at its single-
 (`94be74e6...`), or the 45 of the probe with its caller-driven profile, `native_runtime45_names.txt` (`52f277cd...`: those 38, unchanged and
 in order, then 7); any other file, any of them with one byte changed or reordered included, is a usage error (exit 2) and nothing is
 reconciled. For the 38 and the 45 the binary a run may come from is the probe's (`ffw_p05_runtime`), not Asupersync's, and results are
-credited by libtest's own totals when `--nocapture` makes them unattributable (see `credit_by_closure`). The 196 path is unchanged: it
-never credits an interrupted result.
+credited by libtest's own totals when `--nocapture` makes them unattributable (see `credit_by_closure`). Explicit Cargo `Running` headers
+are validated independently before any closure credit; missing headers remain supported for stdout-only captures. The 196 path never
+credits an interrupted result.
 
 Reuse, not a fork. The result parser is D01's `Logs` (tests/d01/run_cases.py): it already reads libtest output under `--nocapture`, where
 another line can land between `test <name> ... ` and its `ok`. The failure and terminal-line patterns are `audit_check.py`'s
@@ -229,6 +230,18 @@ def analyse_run(run: Run, d01, audit, report: Report, size: int = 196, stems: tu
     lines = text.replace("\r\n", "\n").split("\n")
     declared = [int(m.group(1)) for line in lines if (m := d01.SECTION_START.match(line))]
     results = [m for line in lines if (m := RESULT.search(line))]
+    # D01 may deliberately discard section attribution when --nocapture interrupts a result.
+    # Explicit Cargo headers still constrain the run; that evidence must survive closure credit.
+    headers = [line for line in lines if re.match(r"^\s*Running\s+", line)]
+    if len(headers) > 1:
+        problems.append(f"{label}: {len(headers)} `Running` headers; a `--lib` run has exactly one binary")
+    for header in headers:
+        parsed = d01.RUNNING.match(header)
+        if parsed is None:
+            problems.append(f"{label}: a `Running` header cannot be attributed to a test binary")
+        elif parsed.group(1) not in stems:
+            which = "library" if stems == LIB_STEMS else "probe"
+            problems.append(f"{label}: header names binary `{parsed.group(1)}`, not the {which} test binary")
     summary = {"declared": declared, "results": len(results), "filtered_out": None}
     if len(declared) != 1:
         problems.append(f"{label}: {len(declared)} `running N tests` sections; a `--lib` run has exactly one")
