@@ -335,9 +335,10 @@
  "invariants": [
   {
    "id": "INV-LIFECYCLE",
-   "text": "ready, running, muted, draining, stopped and faulted: every transition is taken and every illegal one is refused with a typed error; a stale command does not outlive a stop",
+   "text": "ready, running, muted, draining, stopped and faulted: every transition is taken and every illegal one is refused with a typed error; a stale command does not outlive a stop; block-in-progress follows start and finish and clears on cancellation",
    "rust_tests": [
     "render::a_new_loop_is_ready_and_silent_and_touches_the_device_only_to_prepare",
+    "render::a_block_is_in_progress_from_its_start_to_its_end_and_a_cancel_drops_it_without_an_outcome",
     "render::start_is_refused_for_a_board_that_is_not_active_and_leaves_the_device_alone",
     "render::every_lifecycle_transition_is_taken_and_every_illegal_one_is_refused",
     "render::mute_and_stop_from_the_port_take_effect_and_a_stale_command_does_not_outlive_a_stop",
@@ -453,10 +454,13 @@
   },
   {
    "id": "INV-CONTROL-BOUNDED",
-   "text": "a control storm is bounded; a blocked management request cannot hold the render owner's lock; mute and stop are never refused",
+   "text": "a control storm is bounded; a blocked management request cannot hold the render owner's lock; mute and stop are never refused; mute supersedes older queued unmute requests while a newer unmute remains permitted",
    "rust_tests": [
     "render::a_control_storm_is_bounded_and_does_not_make_a_render_late",
-    "render::a_blocked_management_request_cannot_hold_the_render_owners_lock"
+    "render::a_blocked_management_request_cannot_hold_the_render_owners_lock",
+    "render::a_later_mute_supersedes_unmutes_even_beyond_the_first_control_batch",
+    "render::an_unmute_after_the_latest_mute_is_preserved",
+    "render::a_repeated_mute_supersedes_an_intervening_unmute_without_widening_the_queue"
    ],
    "cases": [
     "D04-OPEN-P03"

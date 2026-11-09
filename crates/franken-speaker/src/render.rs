@@ -309,13 +309,23 @@ pub struct ControlPort {
 
 impl ControlPort {
     /// Ask the loop to do something. `Mute` and `Stop` are always accepted; the rest are bounded.
+    /// A mute supersedes older queued unmute requests, while a newer unmute remains permitted.
     pub fn send(&self, control: Control) -> Result<(), ControlRejected> {
         let mut inner = self
             .inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         match control {
-            Control::Mute => inner.mute_latched = true,
+            Control::Mute => {
+                // The loop applies the urgent latch before its bounded command batch. Keeping an
+                // older Unmute here would undo this mute, possibly several ticks later. Remove only
+                // those superseded requests; a subsequently sent Unmute keeps its normal FIFO place.
+                // This walks at most CONTROL_QUEUE_CAP entries on the sending task, never the render.
+                inner
+                    .queue
+                    .retain(|queued| !matches!(*queued, Control::Unmute));
+                inner.mute_latched = true;
+            }
             Control::Stop => inner.stop_latched = true,
             other => {
                 if inner.queue.len() >= CONTROL_QUEUE_CAP {
@@ -2256,6 +2266,112 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------ control
+
+    #[test]
+    fn a_later_mute_supersedes_unmutes_even_beyond_the_first_control_batch() {
+        for backlog in [0, MAX_CONTROL_PER_TICK, CONTROL_QUEUE_CAP - 1] {
+            let (mut l, _probe, _) = started();
+            let port = l.control_port();
+            for _ in 0..backlog {
+                port.send(Control::SetGain(0.25)).unwrap();
+            }
+            port.send(Control::Unmute).unwrap();
+            port.send(Control::Mute).unwrap();
+            let (mut src, mut t) = (ToneSource::new(), timing(1, &[], &[]));
+            for tick in 0..(CONTROL_QUEUE_CAP / MAX_CONTROL_PER_TICK + 2) {
+                l.tick(&mut src, &mut t);
+                assert_eq!(
+                    l.state(),
+                    RenderState::Muted,
+                    "an older Unmute undid a later Mute: backlog={backlog} tick={tick} stats={:?}",
+                    port.stats()
+                );
+            }
+            let expected_gain = if backlog == 0 { 1.0 } else { 0.25 };
+            assert!(
+                (l.dsp().user_gain() - expected_gain).abs() < f32::EPSILON,
+                "superseding Unmute must preserve queued gain commands"
+            );
+            eprintln!(
+                "D04_CONTROL_ORDER scenario=older_unmute backlog={backlog} state={:?} stats={:?}",
+                l.state(),
+                port.stats()
+            );
+        }
+    }
+
+    #[test]
+    fn an_unmute_after_the_latest_mute_is_preserved() {
+        for older_unmute in [false, true] {
+            let (mut l, _probe, _) = started();
+            let port = l.control_port();
+            if older_unmute {
+                port.send(Control::Unmute).unwrap();
+            }
+            port.send(Control::Mute).unwrap();
+            // This is a new request, after the mute, not the stale request it superseded.
+            port.send(Control::Unmute).unwrap();
+            let (mut src, mut t) = (ToneSource::new(), timing(1, &[], &[]));
+            l.tick(&mut src, &mut t);
+            assert_eq!(
+                l.state(),
+                RenderState::Running,
+                "older_unmute={older_unmute}"
+            );
+            let states: Vec<_> = std::iter::from_fn(|| l.take_event())
+                .filter_map(|event| match event.kind {
+                    RenderEventKind::State { from, to } => Some((from, to)),
+                    _ => None,
+                })
+                .collect();
+            assert!(states.contains(&(RenderState::Running, RenderState::Muted)));
+            assert!(states.contains(&(RenderState::Muted, RenderState::Running)));
+            eprintln!(
+                "D04_CONTROL_ORDER scenario=fresh_unmute older_unmute={older_unmute} states={states:?} stats={:?}",
+                port.stats()
+            );
+        }
+    }
+
+    #[test]
+    fn a_repeated_mute_supersedes_an_intervening_unmute_without_widening_the_queue() {
+        let (mut l, _probe, _) = started();
+        let port = l.control_port();
+        for _ in 0..CONTROL_QUEUE_CAP {
+            port.send(Control::Unmute).unwrap();
+        }
+        port.send(Control::Mute).unwrap();
+        // Superseded requests no longer occupy the bounded queue; a genuinely newer Unmute fits.
+        port.send(Control::Unmute).unwrap();
+        port.send(Control::Mute).unwrap();
+        for _ in 0..CONTROL_QUEUE_CAP {
+            port.send(Control::SetGain(0.5)).unwrap();
+        }
+        assert_eq!(port.send(Control::Unmute), Err(ControlRejected::QueueFull));
+        assert_eq!(
+            port.send(Control::Mute),
+            Ok(()),
+            "a full queue never refuses Mute"
+        );
+        let (mut src, mut t) = (ToneSource::new(), timing(1, &[], &[]));
+        for tick in 0..(CONTROL_QUEUE_CAP / MAX_CONTROL_PER_TICK + 2) {
+            l.tick(&mut src, &mut t);
+            assert_eq!(
+                l.state(),
+                RenderState::Muted,
+                "tick={tick} stats={:?}",
+                port.stats()
+            );
+        }
+        assert!((l.dsp().user_gain() - 0.5).abs() < f32::EPSILON);
+        assert_eq!(port.stats().accepted, (2 * CONTROL_QUEUE_CAP + 4) as u64);
+        assert_eq!(port.stats().rejected, 1);
+        eprintln!(
+            "D04_CONTROL_ORDER scenario=repeated_mute capacity={CONTROL_QUEUE_CAP} state={:?} stats={:?}",
+            l.state(),
+            port.stats()
+        );
+    }
 
     #[test]
     fn a_control_storm_is_bounded_and_does_not_make_a_render_late() {
