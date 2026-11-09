@@ -1,0 +1,158 @@
+{
+  "schema": "ffw.d04.native_mute_ordering.v1",
+  "base_commit": "251e5b74f4cb0ccbeb590d8599a77408092a3072",
+  "fix_commit": "d87a89b0d54e860e8398862777728cb89b754129",
+  "proof_class": "native Linux tests with existing FakeHAL; no guest, provider, or hardware execution",
+  "record_kind": "derived public snapshot of observed execution records, not a signed RCH attestation",
+  "red_patch_sha256": "fb58a0200272dc0e20e10b957d6026e65d254206ff8b5f3832738805f2dee8a6",
+  "records": [
+    {
+      "case": "red-render",
+      "command": "cargo test --locked -j 2 -p franken-speaker --lib -- render::tests:: --nocapture --test-threads=1",
+      "remote_build_id": "30100509981410407",
+      "wrapper_id": "rchw-49391f81-1791-403d-bbbb-f8fed9bc1e11",
+      "strict_remote": true,
+      "exit_code": 101,
+      "source_content_receipt_root": "9ef14f6fa2fad729a63e6eadb14b76f34926632a25252037a828f61cdee6f997",
+      "source_hashes": {
+        "crates/franken-speaker/src/render.rs": "85a98743dd373cb17a3038c590108d9bb53169bc50241c8b291157105803139c",
+        "tests/d04/cases.json": "098f131c0499166f67b34c6131382ea1adce4eda65f8c4de3a0675154700d79b"
+      },
+      "raw_private_log_sha256": "8fe5a210208afbbc284f8cb0eab405564e51a64ad0fec2f6dbbb4ff115cce804",
+      "public_cargo_output": "red-render.txt",
+      "public_cargo_output_sha256": "60f931b2132328eb1a1ebdd5383b8ea9d135cf9eb65e118ec9490ec688905626",
+      "observed_native_terminal": {
+        "state": "finished",
+        "phase": "finished",
+        "terminal_acknowledged": true
+      },
+      "observed_wrapper_alive": false,
+      "observed_owner_presence": "absent",
+      "observed_recovery": {
+        "exit_code": 101,
+        "returned": 101,
+        "execution_started": true,
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "retired": true,
+        "staging_released": null
+      },
+      "test_summaries": [
+        "test result: FAILED. 37 passed; 2 failed; 0 ignored; 0 measured; 383 filtered out; finished in 0.28s"
+      ]
+    },
+    {
+      "case": "green-clippy",
+      "command": "cargo clippy --locked -j 2 -p franken-speaker --all-targets -- -D warnings",
+      "remote_build_id": "30100509981410411",
+      "wrapper_id": "rchw-ada1fedf-da3d-4b3e-b417-086340db5eab",
+      "strict_remote": true,
+      "exit_code": 0,
+      "source_content_receipt_root": "57c76fb306530707b028a1544f9b75d199c40873349857ab7219df2713598403",
+      "source_hashes": {
+        "crates/franken-speaker/src/render.rs": "37bacb6994c4baad9881cae41dc7abb891afbd5aebe391f1efb12d56287ac374",
+        "tests/d04/cases.json": "098f131c0499166f67b34c6131382ea1adce4eda65f8c4de3a0675154700d79b"
+      },
+      "raw_private_log_sha256": "4e9e6bc4eefdca48ce3e137babeefd2eefb24dec231fe77336dffe6afc68c8d4",
+      "public_cargo_output": "green-clippy.txt",
+      "public_cargo_output_sha256": "6765eac342d60852581a565d36f9a4ead0a54b37e44591ff65a7ba10fc72ddd9",
+      "observed_native_terminal": {
+        "state": "finished",
+        "phase": "finished",
+        "terminal_acknowledged": true
+      },
+      "observed_wrapper_alive": false,
+      "observed_owner_presence": "absent",
+      "observed_recovery": {
+        "exit_code": 0,
+        "returned": 0,
+        "execution_started": true,
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "retired": true,
+        "staging_released": true
+      },
+      "test_summaries": []
+    },
+    {
+      "case": "green-render",
+      "command": "cargo test --locked -j 2 -p franken-speaker --lib -- render::tests:: --nocapture --test-threads=1",
+      "remote_build_id": "30100509981410414",
+      "wrapper_id": "rchw-49f3564a-a111-4afd-b8bb-82c6452c6d8c",
+      "strict_remote": true,
+      "exit_code": 0,
+      "source_content_receipt_root": "783b3311f9bc7dec44a68e8664f800edb133bda561a79710a1fa20697b29095c",
+      "source_hashes": {
+        "crates/franken-speaker/src/render.rs": "37bacb6994c4baad9881cae41dc7abb891afbd5aebe391f1efb12d56287ac374",
+        "tests/d04/cases.json": "098f131c0499166f67b34c6131382ea1adce4eda65f8c4de3a0675154700d79b"
+      },
+      "raw_private_log_sha256": "1ac4dbfd7ab990e6b488fefd39155a62fe4653360cbc27bb1ebbde456969823c",
+      "public_cargo_output": "green-render.txt",
+      "public_cargo_output_sha256": "df1f709feec697cc660ace25e236012bcf84f25bba49bc6cbe869d2fadb07cf7",
+      "observed_native_terminal": {
+        "state": "finished",
+        "phase": "finished",
+        "terminal_acknowledged": true
+      },
+      "observed_wrapper_alive": false,
+      "observed_owner_presence": "absent",
+      "observed_recovery": {
+        "exit_code": 0,
+        "returned": 0,
+        "execution_started": true,
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "retired": true,
+        "staging_released": true
+      },
+      "test_summaries": [
+        "test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 383 filtered out; finished in 0.28s"
+      ]
+    },
+    {
+      "case": "green-speaker",
+      "command": "cargo test --locked -j 2 -p franken-speaker --no-fail-fast -- --test-threads=1",
+      "remote_build_id": "30100509981410420",
+      "wrapper_id": "rchw-2f7872da-0785-44f6-9255-742bfa61c914",
+      "strict_remote": true,
+      "exit_code": 0,
+      "source_content_receipt_root": "491152e348d47c520e024a171ece5918a6f9aba97eba498f59eb35176e91614c",
+      "source_hashes": {
+        "crates/franken-speaker/src/render.rs": "37bacb6994c4baad9881cae41dc7abb891afbd5aebe391f1efb12d56287ac374",
+        "tests/d04/cases.json": "098f131c0499166f67b34c6131382ea1adce4eda65f8c4de3a0675154700d79b"
+      },
+      "raw_private_log_sha256": "6cd493a110db2cc068cd2de1c4f8af737b092c6ebaa1cd34c5c45fdedb2c7335",
+      "public_cargo_output": "green-speaker.txt",
+      "public_cargo_output_sha256": "669b436ca122a8f7e2109b55ea33108389d38c931606e4abc614dc0853aca14e",
+      "observed_native_terminal": {
+        "state": "finished",
+        "phase": "finished",
+        "terminal_acknowledged": true
+      },
+      "observed_wrapper_alive": false,
+      "observed_owner_presence": "absent",
+      "observed_recovery": {
+        "exit_code": 0,
+        "returned": 0,
+        "execution_started": true,
+        "sources_released": true,
+        "tree_retired": true,
+        "pair_released": true,
+        "retired": true,
+        "staging_released": true
+      },
+      "test_summaries": [
+        "test result: ok. 422 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 76.61s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s",
+        "test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    }
+  ]
+}

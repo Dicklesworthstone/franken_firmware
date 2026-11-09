@@ -1,0 +1,102 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
+   Compiling typenum v1.20.1
+   Compiling hybrid-array v0.4.15
+   Compiling syn v3.0.9
+   Compiling cmov v0.5.4
+   Compiling serde_core v1.0.229
+   Compiling ctutils v0.4.8
+   Compiling block-buffer v0.12.1
+   Compiling crypto-common v0.2.2
+   Compiling zmij v1.0.23
+   Compiling const-oid v0.10.2
+   Compiling digest v0.11.3
+   Compiling serde_json v1.0.154
+   Compiling serde v1.0.229
+   Compiling serde_derive v1.0.229
+   Compiling memchr v2.8.3
+   Compiling cpufeatures v0.3.1
+   Compiling thiserror v2.0.21
+   Compiling cfg-if v1.0.5
+   Compiling itoa v1.0.18
+   Compiling sha2 v0.11.1
+   Compiling thiserror-impl v2.0.21
+   Compiling hex v0.4.3
+   Compiling franken-board-profile v0.1.0 (<BUILD_ROOT>/crates/franken-board-profile)
+   Compiling hmac v0.13.0
+   Compiling franken-atomic v0.1.0 (<BUILD_ROOT>/crates/franken-atomic)
+   Compiling franken-journal v0.1.0 (<BUILD_ROOT>/crates/franken-journal)
+   Compiling franken-test-support v0.1.0 (<BUILD_ROOT>/crates/franken-test-support)
+   Compiling franken-dsp v0.1.0 (<BUILD_ROOT>/crates/franken-dsp)
+   Compiling franken-clock v0.1.0 (<BUILD_ROOT>/crates/franken-clock)
+   Compiling franken-platform v0.1.0 (<BUILD_ROOT>/crates/franken-platform)
+   Compiling franken-session v0.1.0 (<BUILD_ROOT>/crates/franken-session)
+   Compiling franken-platform-linux v0.1.0 (<BUILD_ROOT>/crates/franken-platform-linux)
+   Compiling franken-stream v0.1.0 (<BUILD_ROOT>/crates/franken-stream)
+   Compiling franken-control v0.1.0 (<BUILD_ROOT>/crates/franken-control)
+   Compiling franken-hal v0.1.0 (<BUILD_ROOT>/crates/franken-hal)
+   Compiling franken-speaker v0.1.0 (<BUILD_ROOT>/crates/franken-speaker)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 39.70s
+     Running unittests src/lib.rs (<TARGET_DIR>/debug/deps/franken_speaker-333d8107518fcd2e)
+
+thread 'render::tests::a_later_mute_supersedes_unmutes_even_beyond_the_first_control_batch' (391320) panicked at crates/franken-speaker/src/render.rs:2273:17:
+assertion `left == right` failed: an older Unmute undid a later Mute: backlog=0 tick=0 stats=ControlStats { accepted: 2, rejected: 0 }
+  left: Running
+ right: Muted
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+running 39 tests
+test render::tests::a_block_finishing_on_its_deadline_is_on_time_and_one_tick_later_is_dropped ... ok
+test render::tests::a_block_is_in_progress_from_its_start_to_its_end_and_a_cancel_drops_it_without_an_outcome ... ok
+test render::tests::a_blocked_management_request_cannot_hold_the_render_owners_lock ... ok
+test render::tests::a_control_storm_is_bounded_and_does_not_make_a_render_late ... ok
+test render::tests::a_counter_that_goes_back_across_its_wrap_is_a_regress_and_the_wrap_itself_is_not ... ok
+test render::tests::a_counter_that_goes_back_by_one_faults_the_loop_with_its_own_reason_and_holds_every_buffer ... ok
+test render::tests::a_device_that_runs_dry_after_the_loop_dropped_a_block_is_explained_not_blamed_on_the_driver ... ok
+test render::tests::a_device_that_runs_dry_with_nothing_dropped_is_a_driver_underrun ... ok
+test render::tests::a_forward_overclaim_faults_the_loop_as_a_session_fault_and_leaves_the_mapping_valid ... ok
+test render::tests::a_full_or_unread_event_sink_changes_no_deadline_and_no_outcome ... ok
+test render::tests::a_graceful_stop_ramps_to_silence_and_ends_within_the_ramp_plus_the_stop_deadline ... ok
+test render::tests::a_held_buffer_is_never_released_because_a_timer_ran_out_only_on_an_acknowledgment ... ok
+test render::tests::a_late_wakeup_that_still_meets_the_deadline_is_on_time_and_one_that_does_not_is_a_cpu_miss ... ok
+test render::tests::a_later_mute_supersedes_unmutes_even_beyond_the_first_control_batch ... FAILED
+test render::tests::a_loop_that_recovered_from_a_fault_starts_clean_and_is_not_faulted_by_the_old_events ... ok
+test render::tests::a_new_loop_is_ready_and_silent_and_touches_the_device_only_to_prepare ... ok
+test render::tests::a_one_frame_block_is_rendered_and_submitted_without_indexing_errors ... ok
+test render::tests::a_protection_dsp_that_stops_being_active_faults_the_loop_and_mutes ... ok
+test render::tests::a_regress_during_a_drain_faults_it_instead_of_timing_out_and_the_stop_tail_is_not_trusted ... ok
+test render::tests::a_regress_while_muted_faults_the_same_way_and_leaves_the_muted_state_for_faulted ... ok
+test render::tests::a_render_longer_than_the_period_delays_the_next_block_instead_of_overlapping_it ... ok
+test render::tests::a_repeated_mute_supersedes_an_intervening_unmute_without_widening_the_queue ... FAILED
+test render::tests::a_short_write_is_retried_within_the_tick_and_the_rest_is_discarded_not_carried ... ok
+test render::tests::a_stop_the_device_never_acknowledges_faults_and_quarantines_it_does_not_free ... ok
+test render::tests::after_a_regress_the_loop_refuses_the_old_mapping_until_it_is_reinstalled_and_then_takes_a_new_baseline ... ok
+test render::tests::an_unmute_after_the_latest_mute_is_preserved ... ok
+test render::tests::consecutive_cpu_misses_trip_the_watchdog_which_mutes_and_stops_rendering ... ok
+
+thread 'render::tests::a_repeated_mute_supersedes_an_intervening_unmute_without_widening_the_queue' (391354) panicked at crates/franken-speaker/src/render.rs:2335:36:
+called `Result::unwrap()` on an `Err` value: QueueFull
+D04_CONTROL_ORDER scenario=fresh_unmute older_unmute=false states=[(Ready, Running), (Running, Muted), (Muted, Running)] stats=ControlStats { accepted: 2, rejected: 0 }
+D04_CONTROL_ORDER scenario=fresh_unmute older_unmute=true states=[(Ready, Running), (Running, Muted), (Muted, Running)] stats=ControlStats { accepted: 3, rejected: 0 }
+error: test failed, to rerun pass `-p franken-speaker --lib`
+test render::tests::construction_refuses_what_the_render_path_cannot_carry ... ok
+test render::tests::device_loss_is_a_persistent_fault_that_cannot_be_acknowledged_or_recovered ... ok
+test render::tests::every_lifecycle_transition_is_taken_and_every_illegal_one_is_refused ... ok
+test render::tests::ingress_loss_and_decode_delay_are_counted_apart_and_only_ingress_loss_resets_the_stream ... ok
+test render::tests::injected_admission_failures_fail_closed_at_start_and_reconnect_and_the_stop_path_still_finishes ... ok
+test render::tests::mute_and_stop_from_the_port_take_effect_and_a_stale_command_does_not_outlive_a_stop ... ok
+test render::tests::process_death_leaves_the_kernels_buffers_alive_and_claims_no_acknowledgment ... ok
+test render::tests::start_is_refused_for_a_board_that_is_not_active_and_leaves_the_device_alone ... ok
+test render::tests::steady_state_blocks_are_released_on_the_period_and_submitted_before_their_deadline ... ok
+test render::tests::the_cleanup_reserve_keeps_a_slot_that_ordinary_blocks_cannot_take_and_the_stop_path_can ... ok
+test render::tests::the_committed_scenarios_replay_through_the_real_loop_exactly_as_the_independent_model_says ... ok
+test render::tests::what_reaches_the_device_is_exactly_what_the_stages_produce_in_order_without_loss_or_repeat ... ok
+
+failures:
+
+failures:
+    render::tests::a_later_mute_supersedes_unmutes_even_beyond_the_first_control_batch
+    render::tests::a_repeated_mute_supersedes_an_intervening_unmute_without_widening_the_queue
+
+test result: FAILED. 37 passed; 2 failed; 0 ignored; 0 measured; 383 filtered out; finished in 0.28s

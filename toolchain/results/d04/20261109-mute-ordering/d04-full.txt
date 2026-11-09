@@ -1,0 +1,58 @@
+PASS    D04-DEFECT-01          planted_defect  caught by 3 scenario(s)
+PASS    D04-DEFECT-02          planted_defect  caught by 5 scenario(s)
+PASS    D04-DEFECT-03          planted_defect  caught by 2 scenario(s)
+PASS    D04-DEFECT-04          planted_defect  caught by 2 scenario(s)
+PASS    D04-DEFECT-05          planted_defect  caught by 1 scenario(s)
+PASS    D04-DEFECT-06          planted_defect  caught by 3 scenario(s)
+PASS    D04-META-001           meta_files
+PASS    D04-META-002           meta_shared
+PASS    D04-META-003           meta_generated
+PASS    D04-META-004           meta_invariants  23 invariants, 59 named Rust tests, all 55 mapped
+PASS    D04-META-005           meta_hygiene
+PASS    D04-META-006           meta_no_unsafe
+PASS    D04-LOG-001            log_golden  12 lines and the bounded log reproduced
+PASS    D04-META-007           meta_log  15 fields in order
+PASS    D04-LOG-DEFECT-01      log_defect  caught: 12 line(s) against 12 expected; first difference at line 0
+PASS    D04-LOG-DEFECT-02      log_defect  caught: 12 line(s) against 12 expected; first difference at line 4
+PASS    D04-LOG-DEFECT-03      log_defect  caught: 12 line(s) against 12 expected; first difference at line 2
+PASS    D04-LOG-DEFECT-04      log_defect  caught: 12 line(s) against 12 expected; first difference at line 4
+PASS    D04-LOG-DEFECT-05      log_defect  caught: bounded log kept ['block-0', 'block-1', 'block-2'] with {'emitted': 11, 'dropped_ordinary': 8, 'evicted_ordinary': 0, 'lost_critical': 0}, expected ['block-1', 'block-2', 'tick-10'] with {'emitted': 11, 'dropped_ordinary': 7, 'evicted_ordinary': 1, 'lost_critical': 0}
+PASS    D04-REGRESS-001        regress_scenario
+PASS    D04-REGRESS-002        regress_scenario
+PASS    D04-REGRESS-003        regress_scenario
+PASS    D04-REGRESS-004        regress_scenario
+PASS    D04-REGRESS-005        regress_scenario
+PASS    D04-REGRESS-006        regress_scenario
+PASS    D04-REGRESS-007        regress_scenario
+PASS    D04-REGRESS-008        regress_scenario
+PASS    D04-REGRESS-LOG        regress_log  2 runs reproduced
+PASS    D04-REGRESS-DEFECT-01  regress_defect  caught by one_past_half_is_behind, recover_reinstall_rebaseline, regress_across_wrap, regress_by_one, regress_during_drain, regress_while_muted
+PASS    D04-REGRESS-DEFECT-02  regress_defect  caught by one_past_half_is_behind, recover_reinstall_rebaseline, regress_across_wrap, regress_by_one, regress_during_drain, regress_while_muted
+PASS    D04-REGRESS-DEFECT-03  regress_defect  caught by recover_reinstall_rebaseline
+PASS    D04-REGRESS-DEFECT-04  regress_defect  caught by regress_by_one, regress_during_drain
+PASS    D04-REGRESS-DEFECT-05  regress_defect  caught by half_range_is_ahead
+PASS    D04-REGRESS-DEFECT-06  regress_defect  caught by one_past_half_is_behind, recover_reinstall_rebaseline, regress_across_wrap, regress_by_one, regress_during_drain, regress_while_muted
+PASS    D04-REGRESS-DEFECT-07  regress_defect  caught by one_past_half_is_behind, recover_reinstall_rebaseline, regress_across_wrap, regress_by_one, regress_during_drain, regress_while_muted
+PASS    D04-REGRESS-DEFECT-08  regress_defect  caught by log_runs
+PASS    D04-REGRESS-DEFECT-09  regress_defect  caught by log_runs
+PASS    D04-REGRESS-DEFECT-10  regress_defect  caught by log_runs
+PASS    D04-SELFTEST-001       runner_selftest
+BLOCKED D04-RUST-CENTRAL       blocked  EXT-D04-RUST-CENTRAL (owner: orchestrator (central RCH)): cargo test -p franken-speaker (the count printed by the runner), cargo clippy --workspace --all-targets -- -D warnings and cargo fmt --all -- --check, plus the two device speaker builds, each via RCH_REQUIRE_REMOTE=1 rch exec. The loop's behavior is only its Rust tests; this runner never builds. Expect 55 #[test] functions in render.rs and render_log.rs.
+BLOCKED D04-EXT-BOARD          blocked  EXT-D04-BOARD-CPU (owner: human-led qualification lane): measured render execution time on each board class against the 25% reserve, the real driver's submission lead and underrun signal (E04 has mapped neither), and a 24-hour clean-network campaign. Render cost here is injected; guest wall-clock results never substitute for board CPU measurements.
+BLOCKED D04-EXT-PROCDEATH      blocked  EXT-D04-PROCESS-DEATH-MUTE (owner: human-led qualification lane): a supervisor and hardware evidence that the amplifier is muted when the render process dies. In-process, only what the dying owner leaves behind can be shown (buffers kept alive, a best-effort mute requested); whether the amplifier muted is not observable here.
+BLOCKED D04-OPEN-P03           blocked  OPEN-D04-P03-RUNTIME (owner: P03 (ffw-q5r) bounded Asupersync profile): the production control runtime: regions for device lifetime and streams, cancellation ownership, pre-admitted task and finalizer capacity, and the render task's separately measured budget. This loop takes its commands through a bounded ControlPort and never waits on it; binding that port to the P03 runtime is open.
+PASS    D04-TIM-001            scenario
+PASS    D04-TIM-002            scenario
+PASS    D04-TIM-003            scenario
+PASS    D04-TIM-004            scenario
+PASS    D04-TIM-005            scenario
+PASS    D04-SRC-001            scenario
+PASS    D04-SRC-002            scenario
+PASS    D04-CAP-001            scenario
+PASS    D04-SUB-001            scenario
+PASS    D04-SUB-002            scenario
+PASS    D04-MIX-001            scenario
+PASS    D04-MIX-002            scenario
+
+D04 full: 55 case(s): 51 passed, 0 failed, 4 blocked -- NOT QUALIFIED
+blocked cases are required invariants nothing here can verify; they are counted, not passed
