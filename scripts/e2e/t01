@@ -2,7 +2,7 @@
 # T01 end-to-end entry point (bead ffw-32a): native Tailscale protocol and resource feasibility, offline.
 # Delegates to tests/t01/run_cases.py (stdlib Python; it builds nothing, contacts nothing and never invokes cargo). Contract: docs/contracts/t01.md.
 #
-#   scripts/e2e/t01                                     the full tier without sources: the smoke cases pass, the source probes and the two central cases are BLOCKED (exit 3)
+#   scripts/e2e/t01                                     the full tier without sources: the smoke cases and the two committed-evidence cases (T01-X01, T01-X02) pass, the five source probes are BLOCKED (exit 3)
 #   scripts/e2e/t01 --tier smoke                        the ledger, the profile, the rules, the matrix, the synthetic fixtures and the native-requirement statement (seconds)
 #   scripts/e2e/t01 --tier full --sources DIR           also the source probes over the pinned trees in DIR (tailscale-rs/, aws-lc-sys/, mio/); how to fetch them: tests/tailscale-fixtures/evidence/FETCH.md
 #   scripts/e2e/t01 --tier soak                         NOT RUN, with the reason: exit 4, never a pass
@@ -16,8 +16,9 @@
 #                                                       judge a supplied transcript (supplied_transcript_analysis: it proves nothing about the ELF that printed it)
 #
 # Exit 0 only when every case passed, none is blocked and the diagnostic log is complete; 1 on a failed case or a log that lost critical evidence; 3 when the only non-passes are
-# blocked cases (reported, never counted as passed); 4 for --tier soak; 2 on usage errors. The default run exits 3 on purpose: the exact legacy-ISA build (T01-X01) and the on-target
-# memory/CPU figures (T01-X02) need a central build and guests that do not exist, and a pass of the rest says nothing about a target.
+# blocked cases (reported, never counted as passed); 4 for --tier soak; 2 on usage errors. The default run exits 3 on purpose: the source probes need the pinned third-party trees
+# (--sources), and T01-X01 and T01-X02 pass only from evidence a central build and the harness guests produced earlier (type-check records; one QEMU guest run per architecture on
+# harness Debian kernels). A pass of any case says nothing about a Sonos kernel or a board, and T01 stays open (docs/contracts/t01.md section 10).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 if [ "${1:-}" = "--x02" ]; then
