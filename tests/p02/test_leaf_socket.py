@@ -7,6 +7,7 @@ What a host can hold, this file holds:
 * `sys.rs` keeps the leaf's unsafe small and checkable: the two trampolines and ONE executor are the only `unsafe fn`; every `unsafe` block has a SAFETY
   comment; the five socket wrappers call the executor and nothing else, type no number (they build their words with `socket_route`, which takes the route from
   the plan), and a compile-time assertion checks each route fits the trampoline; no `fcntl`, `accept` or `uname` appears.
+  The poll wrapper makes one plan from the exact descriptor element count and one raw call with that plan's number and finite timeout, without retry.
 * `socket_route.rs` has no `unsafe`; `issue_for` types no number; `admit` decides by the route (sub-call 18 through `socketcall`), not by the ABI's name.
 * The admission is held to an independent model built from the kernel evidence (`tests/p02/socket_kernel_evidence.json`): the kernel whose sub-call 18 is
   `paccept`, the first kernel where it is `accept4`, the largest `nargs` entry, and the sub-call number are DERIVED from those lines and compared with the Rust
@@ -103,6 +104,19 @@ def sys_problems(src):
             out.append("execute does not match both Issue arms or does not pass the block's address once")
         if typed_numbers(execute):
             out.append("execute types a number: %s" % typed_numbers(execute))
+    poll = fn_body(code, "poll")
+    if poll is None:
+        out.append("sys.rs has no poll wrapper")
+    else:
+        compact = re.sub(r"\s+", "", poll)
+        planned = "crate::wait_route::issue_for(COMPILED_ABI,fds.as_mut_ptr()asusize,fds.len(),timeout)"
+        if len(re.findall(r"\bissue_for\(", compact)) != 1 or compact.count(planned) != 1:
+            out.append("the poll wrapper must build one plan from the exact descriptor element count and finite timeout")
+        raw_arguments = r"\braw5\(issue\.number,issue\.words\[0\],issue\.words\[1\],issue\.words\[2\],0,0,?\)"
+        if len(re.findall(r"\braw5\(", compact)) != 1 or not re.search(raw_arguments, compact):
+            out.append("the poll wrapper must make one call with the planned raw5 arguments (plan number, pointer, element count, finite timeout)")
+        if re.search(r"\b(?:loop|while|for|EINTR)\b|-\s*4\b|\busize\s*::\s*MAX\b", poll):
+            out.append("the poll wrapper must not retry or substitute an infinite timeout")
     assertions = re.findall(r"assert!\(plan\.(\w+)\.fits_the_leaf\(\)\);", code)
     if sorted(assertions) != sorted(name for name, _, _ in OPS):
         out.append("the compile-time fit assertions are %s, expected one per socket route" % sorted(assertions))
@@ -148,6 +162,39 @@ class SysShapeTests(unittest.TestCase):
 
     def test_the_real_sys_rs_keeps_the_leafs_unsafe_small_and_checkable(self):
         self.assertEqual(sys_problems(self.src), [])
+
+    def assert_poll_plant_rejected(self, old, new, reason):
+        self.assertEqual(sys_problems(self.src), [])  # permitted real-source control
+        body = fn_body(self.src, "poll")
+        self.assertIsNotNone(body)
+        self.assertEqual(body.count(old), 1, "the plant must change exactly one poll expression")
+        changed = body.replace(old, new, 1)
+        self.assertNotEqual(changed, body)
+        bad = self.src.replace(body, changed, 1)
+        self.assertTrue(any(reason in problem for problem in sys_problems(bad)),
+                        "%s: %s" % (reason, sys_problems(bad)))
+
+    def test_poll_cannot_retry_eintr_with_the_original_timeout(self):
+        body = fn_body(self.src, "poll")
+        self.assertIsNotNone(body)
+        changed = body.replace("    unsafe {", "    loop {\n        // SAFETY: the borrowed poll array and finite timeout remain valid.\n        let result = unsafe {", 1)
+        changed = changed.rstrip() + ";\n        if result != -4 { break result; }\n    }\n"
+        self.assertEqual(sys_problems(self.src), [])  # permitted real-source control
+        self.assertNotEqual(changed, body)
+        bad = self.src.replace(body, changed, 1)
+        self.assertTrue(any("must not retry" in problem for problem in sys_problems(bad)), sys_problems(bad))
+
+    def test_poll_cannot_replace_the_finite_timeout_with_infinity(self):
+        self.assert_poll_plant_rejected("issue.words[2]", "usize::MAX", "planned raw5 arguments")
+
+    def test_poll_nfds_must_be_elements_rather_than_bytes(self):
+        self.assert_poll_plant_rejected("fds.len()", "fds.len() * 8", "exact descriptor element count")
+
+    def test_poll_must_use_the_plans_syscall_number(self):
+        self.assert_poll_plant_rejected("issue.number", "167", "planned raw5 arguments")
+
+    def test_poll_plan_cannot_claim_an_extra_descriptor(self):
+        self.assert_poll_plant_rejected("fds.len()", "fds.len() + 1", "exact descriptor element count")
 
     def test_each_planted_fault_in_sys_rs_is_reported(self):
         plants = [
@@ -408,11 +455,11 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(sorted(known - cited), [], "a leaf Rust test the contract does not name")
         self.assertEqual(sorted(cited - known), [], "names that are not leaf tests")
 
-    def test_the_file_table_and_the_unsafe_surface_paragraph_say_fourteen(self):
+    def test_the_file_table_and_the_unsafe_surface_paragraph_say_fifteen(self):
         row = next(line for line in self.doc.splitlines() if line.startswith("| `crates/franken-platform-linux/` |"))
-        self.assertIn("fourteen typed wrappers", row)
+        self.assertIn("fifteen typed wrappers", row)
         self.assertIn("socket route plan and the release admission", row)
-        self.assertIn("**plus fourteen typed wrappers**", self.doc)
+        self.assertIn("**plus fifteen typed wrappers**", self.doc)
         self.assertIn("the only\nother `unsafe` site", self.doc)
 
 

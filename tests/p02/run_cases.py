@@ -23,7 +23,7 @@ Rust-backed cases. A requirement passes only when every test it names is reporte
 name was printed with no result (a cut-off run), BLOCKS the case: evidence is missing. A test reported ``FAILED``, a test reported ``ignored``
 (a required test someone switched off is a weakened assertion, not missing evidence), and a test the logs report with two different results,
 FAIL it; the first causal event of a failure is cargo's panic location and message. The floor case ``P02-RUST-ALL`` requires every test of P02's
-own files, so a requirement map cannot silently leave one out. Tests of other crates, P06's modules of the same crate (``net``, ``durable``) and unrelated
+own files, so a requirement map cannot silently leave one out. Tests of other crates, P06's modules (``net``, ``durable``), N07's datagram modules and unrelated
 ignored tests in the same log are not judged and cannot affect a verdict.
 
 Every decided case writes a CRITICAL begin and end event through the shared Q00 sink; a run whose log lost critical evidence (dropped, torn,
@@ -71,15 +71,16 @@ UNIT_TIMEOUT_S = 600
 CONTRACT = "docs/contracts/p02.md"
 
 # P02's own Rust files (repo-relative). Their libtest names are derived from the path: `src/lib.rs` is the crate root, any other `src/x.rs` is
-# module `x`, and inline `mod tests { ... }` blocks add their own segment. `net.rs` and `durable.rs` of franken-platform belong to P06 and are not
-# judged here; `wall_clock.rs` is P02's (original acceptance, wall-clock confidence kept apart from monotonic audio time).
+# module `x`, and inline `mod tests { ... }` blocks add their own segment. `net.rs` and `durable.rs` belong to P06; `datagram.rs` and
+# `datagram_route.rs` belong to N07. They are not judged here; `wall_clock.rs` is P02's (original acceptance, wall-clock confidence kept apart
+# from monotonic audio time). The source-coverage meta-test names these four exclusions and catches an omitted P02 module.
 CLI_TESTS = frozenset({
     "platform_diagnose_is_a_real_command_with_a_safe_action_for_an_unavailable_backend",
     "both_platform_commands_reject_malformed_provider_arguments_before_startup",
 })
 GROUPS: Dict[str, List[str]] = {
-    "platform": ["crates/franken-platform/src/%s.rs" % m for m in ("abi", "clock", "entropy", "layer", "lib", "ops", "sim", "socket", "wake", "wall_clock")],
-    "linux": ["crates/franken-platform-linux/src/%s.rs" % m for m in ("lib", "numbers", "socket_route", "sys")],
+    "platform": ["crates/franken-platform/src/%s.rs" % m for m in ("abi", "clock", "entropy", "layer", "lib", "ops", "sim", "socket", "wait", "wake", "wall_clock")],
+    "linux": ["crates/franken-platform-linux/src/%s.rs" % m for m in ("lib", "numbers", "socket_route", "sys", "wait_route")],
     "speaker": ["crates/franken-speaker/src/platform_start.rs", "crates/franken-speaker/tests/cli_services.rs"],
 }
 JUDGED_ARTIFACTS = tuple(

@@ -22,6 +22,10 @@ pub mod sim;
 // `tests/p06/test_durable.py` pins as `clock`, `durable`, `entropy` in a row.
 pub mod datagram;
 
+// Finite readiness waiting for the admitted P02 platform. No retry or alternate
+// reactor is selected by this boundary.
+pub mod wait;
+
 use crate::entropy::EntropyAvailability;
 use franken_board_profile::{BoardProfile, CpuIsa};
 use serde::{Deserialize, Serialize};

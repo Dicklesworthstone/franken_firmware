@@ -7,6 +7,7 @@ real in the last class. Every refusal is planted against the clean log of the sa
 own tests as missing, failed and ignored in turn.
 """
 import contextlib
+import glob
 import io
 import json
 import os
@@ -29,6 +30,29 @@ ALL_IDS = ["P02-META-MAP", "P02-REF-PYTHON"] + RUST_IDS
 NOISE = ("[RCH] Selected worker: example-worker (slots remaining 1)\n"
          "test other_crate::tests::something_unrelated ... ok\n"
          "test other_crate::tests::a_soak_that_is_ignored_on_purpose ... ignored\n")
+
+# These modules have tests but belong to P06 (net/durable) or N07 (datagram routing), not P02.
+EXCLUDED_PLATFORM_TEST_MODULES = frozenset({
+    "crates/franken-platform/src/net.rs",
+    "crates/franken-platform/src/durable.rs",
+    "crates/franken-platform/src/datagram.rs",
+    "crates/franken-platform-linux/src/datagram_route.rs",
+})
+
+
+def platform_test_modules():
+    """Actual test-bearing platform source files, independent of the runner's module list."""
+    modules = set()
+    for path in glob.glob(os.path.join(REPO, "crates", "franken-platform*", "src", "*.rs")):
+        with open(path, encoding="utf-8") as handle:
+            if rc.test_functions(handle.read()):
+                modules.add(os.path.relpath(path, REPO).replace(os.sep, "/"))
+    return modules
+
+
+def uncovered_platform_test_modules(groups):
+    grouped = {rel for files in groups.values() for rel in files}
+    return platform_test_modules() - grouped - EXCLUDED_PLATFORM_TEST_MODULES
 
 
 def good_log(skip=(), failed=(), ignored=(), unfinished=(), panics=None, summary=True, noise=NOISE):
@@ -76,6 +100,24 @@ def judged(log, **kw):
 
 
 class Plan(unittest.TestCase):
+    def test_every_test_bearing_platform_module_is_judged_or_explicitly_excluded(self):
+        modules = platform_test_modules()
+        self.assertTrue(modules)
+        self.assertTrue(EXCLUDED_PLATFORM_TEST_MODULES <= modules, "an exclusion names no actual test-bearing module")
+        grouped = {rel for files in rc.GROUPS.values() for rel in files}
+        self.assertFalse(grouped & EXCLUDED_PLATFORM_TEST_MODULES, "a judged module is also excluded")
+        self.assertEqual(uncovered_platform_test_modules(rc.GROUPS), set())
+
+    def test_removing_either_wait_module_is_rejected_by_the_source_coverage_check(self):
+        self.assertEqual(uncovered_platform_test_modules(rc.GROUPS), set())  # permitted control
+        for group, module in (("platform", "crates/franken-platform/src/wait.rs"),
+                              ("linux", "crates/franken-platform-linux/src/wait_route.rs")):
+            with self.subTest(module=module):
+                self.assertIn(module, rc.GROUPS[group])
+                groups = {name: list(files) for name, files in rc.GROUPS.items()}
+                groups[group].remove(module)
+                self.assertEqual(uncovered_platform_test_modules(groups), {module})
+
     def test_the_clause_map_is_whole_on_this_tree_and_names_the_beads_criteria(self):
         result = rc.meta_map(PLAN, GROUPS)
         self.assertEqual((result.status, result.detail), ("passed", ""))

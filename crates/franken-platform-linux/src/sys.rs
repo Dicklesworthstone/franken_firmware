@@ -8,14 +8,16 @@
 //! # Invariants every wrapper relies on
 //! 1. The syscall number is fixed here from [`crate::numbers`] for this ABI, so safe callers cannot pair a number with the
 //!    wrong call or the wrong ABI.
-//! 2. Every pointer passed is derived from a live Rust reference (`&mut [i32; 2]`, `&mut [u8]`, `&[u8]`) that stays borrowed for the
+//! 2. Every pointer passed is derived from a live Rust reference (`&mut [i32; 2]`, `&mut [u8]`, `&[u8]`, `&mut [PollFd]`) that stays borrowed for the
 //!    whole call, and every length passed is that reference's length, so a kernel that honors its contract writes or reads
 //!    inside the referenced bytes. The kernel is trusted to honor `count`/`len`; a kernel that does not is outside what Rust can
 //!    defend. The one pointer that is not a buffer is `open`'s path: the address of a `'static` NUL-terminated constant
 //!    (`DEV_RANDOM`), valid for the whole program, which the kernel reads up to its NUL.
 //! 3. The return value is normalized to the convention `franken_platform::ops::KernelOps` documents: a non-negative result, or
 //!    `-errno`. MIPS reports errors in `$7` with a positive errno in `$2`; PowerPC in `cr0.SO` with a positive errno in `r3`.
-//! 4. No call here blocks on its own: the callers pass nonblocking flags or descriptors, and `EINTR` is handled above.
+//! 4. I/O calls use nonblocking flags or descriptors. `poll` is the explicit
+//!    exception: its validated timeout is finite and at most one second. There
+//!    is no hidden retry here; the owner handles `EINTR` and its remaining deadline.
 //! 5. A `socketcall` block (the PowerPC route of the socket wrappers) is a local array of six words that lives across the call; the kernel reads
 //!    at most `nargs[sub]` of them, which is six at most. Each word is an integer or an address derived under invariant 2. Which words, and
 //!    whether a call is direct or goes through `socketcall`, is decided by [`crate::socket_route::issue_for`] from the plan in
@@ -34,6 +36,7 @@ use crate::socket_route::{
 };
 use franken_platform::abi::Abi;
 use franken_platform::socket::SocketOp;
+use franken_platform::wait::{PollFd, PollTimeout};
 
 #[cfg(target_arch = "mips")]
 mod arch {
@@ -156,6 +159,27 @@ use arch::{NR, raw5};
 
 /// The ABI this build speaks.
 pub(crate) const COMPILED_ABI: Abi = arch::ABI;
+
+/// One `poll` over a borrowed native-layout array. No descriptor is owned or
+/// closed here, and there is no retry or timeout substitution.
+pub(crate) fn poll(fds: &mut [PollFd], timeout: PollTimeout) -> isize {
+    let issue =
+        crate::wait_route::issue_for(COMPILED_ABI, fds.as_mut_ptr() as usize, fds.len(), timeout);
+    // SAFETY: invariants 1–4: the ABI plan fixes poll's number, the native-layout
+    // slice stays exclusively borrowed for exactly nfds elements (zero is not
+    // dereferenced), and PollTimeout is finite. The kernel reads fd/events and
+    // writes only revents within the slice; raw5 normalizes errors unchanged.
+    unsafe {
+        raw5(
+            issue.number,
+            issue.words[0],
+            issue.words[1],
+            issue.words[2],
+            0,
+            0,
+        )
+    }
+}
 
 /// `getrandom(buf, buf.len(), flags)`.
 pub(crate) fn getrandom(buf: &mut [u8], flags: u32) -> isize {

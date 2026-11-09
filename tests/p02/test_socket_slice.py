@@ -679,7 +679,7 @@ class ContractTests(unittest.TestCase):
         self.assertIn("%d Python tests in `tests/p02/test_socket_slice.py`" % python_tests, self.doc)
 
     def test_the_file_table_counts_the_leaf_wrappers_the_leaf_has(self):
-        words = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten", 11: "eleven", 12: "twelve", 13: "thirteen", 14: "fourteen"}
+        words = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten", 11: "eleven", 12: "twelve", 13: "thirteen", 14: "fourteen", 15: "fifteen"}
         wrappers = len(re.findall(r"^pub\(crate\) fn ", READ(tsn.SYS_RS), re.M))
         row = next(line for line in self.doc.splitlines() if line.startswith("| `crates/franken-platform-linux/` |"))
         self.assertIn("%s typed wrappers" % words[wrappers], row)

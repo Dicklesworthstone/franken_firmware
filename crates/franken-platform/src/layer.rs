@@ -20,8 +20,9 @@ use crate::abi::Abi;
 use crate::clock::{self, ClockError};
 use crate::entropy::{self, EntropyAvailability, EntropyError, EntropyProfile, EntropyProvider};
 use crate::ops::{KernelOps, Provenance};
+use crate::wait::{PollFd, PollTimeout, WaitError, WaitOps, WaitOutcome};
 use crate::wake::{Drained, WakeError, WakeOutcome, Waker};
-use crate::{KernelCapabilityMatrix, PlatformAdmissionError};
+use crate::{CapabilityStatus, KernelCapabilityMatrix, PlatformAdmissionError};
 use std::sync::Arc;
 
 /// In-process identity of one admitted clock epoch. Native-width Arc reference
@@ -68,6 +69,8 @@ pub struct PlatformLayer<O: KernelOps> {
     getrandom_availability: EntropyAvailability,
     entropy_profile: EntropyProfile,
     clock_resolution_ns: u64,
+    // Admission of another mux (epoll) does not qualify this poll route.
+    poll_status: CapabilityStatus,
     clock_epoch: ClockEpoch,
     last_ns: Option<u64>,
     waker: Waker,
@@ -105,6 +108,7 @@ impl<O: KernelOps> PlatformLayer<O> {
             getrandom_availability,
             entropy_profile: EntropyProfile::Getrandom,
             clock_resolution_ns: matrix.clock_monotonic_res_ns,
+            poll_status: matrix.poll_syscall,
             clock_epoch: ClockEpoch::new(),
             last_ns: None,
             waker,
@@ -129,6 +133,41 @@ impl<O: KernelOps> PlatformLayer<O> {
     #[must_use]
     pub const fn ops(&self) -> &O {
         &self.ops
+    }
+
+    /// Wait once through the specifically admitted `poll` route, without a
+    /// hidden retry or an alternate reactor. An epoll-only profile does not
+    /// authorize poll. Interrupted calls return to the owner, which must
+    /// recompute its remaining deadline before another finite wait.
+    ///
+    /// This borrows descriptors; it neither takes ownership nor closes them.
+    /// The timeout's millisecond quantization is not a render-deadline claim.
+    /// An oversized array is rejected without visiting or clearing its output.
+    /// Valid-size arrays have stale output cleared on every refusal.
+    ///
+    /// # Errors
+    /// [`WaitError::NotAdmitted`] before any poll call when this profile did
+    /// not qualify poll; otherwise the checked raw boundary's typed error.
+    pub fn wait_once(
+        &mut self,
+        fds: &mut [PollFd],
+        timeout: PollTimeout,
+    ) -> Result<WaitOutcome, WaitError>
+    where
+        O: WaitOps,
+    {
+        if fds.len() > crate::wait::MAX_POLL_FDS {
+            return Err(WaitError::TooManyDescriptors { count: fds.len() });
+        }
+        if self.poll_status != CapabilityStatus::Supported {
+            for fd in fds {
+                fd.revents = 0;
+            }
+            return Err(WaitError::NotAdmitted {
+                observed: self.poll_status,
+            });
+        }
+        crate::wait::poll_once(&mut self.ops, self.abi, fds, timeout)
     }
 
     /// The monotonic resolution the matrix recorded for this guest (an observation, not a measurement here).
@@ -755,5 +794,141 @@ mod tests {
         assert_eq!(layer.fill_random(&mut buf), Err(EntropyError::NotSeeded));
         assert_eq!(layer.fill_random(&mut buf), Err(EntropyError::NotSeeded));
         assert_eq!(buf, [0u8; 16]);
+    }
+
+    mod waiting {
+        use super::{CapabilityStatus, PlatformLayer, ppc_matrix};
+        use crate::abi::Abi;
+        use crate::ops::{KernelOps, Provenance, Timespec};
+        use crate::sim::SeededSim;
+        use crate::wait::{
+            MAX_POLL_FDS, PollFd, PollTimeout, READABLE, WaitError, WaitOps, WaitOutcome,
+        };
+
+        // Existing simulated kernel for the old seams, plus one counted,
+        // scripted poll. No real descriptor or kernel is used by these tests.
+        struct PollSpy {
+            inner: SeededSim,
+            calls: usize,
+        }
+
+        impl PollSpy {
+            fn new() -> Self {
+                Self {
+                    inner: SeededSim::new(7),
+                    calls: 0,
+                }
+            }
+        }
+
+        impl KernelOps for PollSpy {
+            fn provenance(&self) -> Provenance {
+                self.inner.provenance()
+            }
+            fn backend_abi(&self) -> Option<Abi> {
+                self.inner.backend_abi()
+            }
+            fn clock_gettime_monotonic(&mut self, out: &mut Timespec) -> isize {
+                self.inner.clock_gettime_monotonic(out)
+            }
+            fn getrandom(&mut self, buf: &mut [u8], flags: u32) -> isize {
+                self.inner.getrandom(buf, flags)
+            }
+            fn open_dev_random(&mut self, flags: u32) -> isize {
+                self.inner.open_dev_random(flags)
+            }
+            fn eventfd2(&mut self, initval: u32, flags: u32) -> isize {
+                self.inner.eventfd2(initval, flags)
+            }
+            fn pipe2(&mut self, fds: &mut [i32; 2], flags: u32) -> isize {
+                self.inner.pipe2(fds, flags)
+            }
+            fn write(&mut self, fd: i32, buf: &[u8]) -> isize {
+                self.inner.write(fd, buf)
+            }
+            fn read(&mut self, fd: i32, buf: &mut [u8]) -> isize {
+                self.inner.read(fd, buf)
+            }
+            fn close(&mut self, fd: i32) -> isize {
+                self.inner.close(fd)
+            }
+        }
+
+        impl WaitOps for PollSpy {
+            fn poll(&mut self, fds: &mut [PollFd], _timeout: PollTimeout) -> isize {
+                self.calls += 1;
+                for fd in fds.iter_mut() {
+                    fd.revents = fd.events & READABLE;
+                }
+                fds.iter().filter(|fd| fd.revents != 0).count() as isize
+            }
+        }
+
+        #[test]
+        fn a_poll_admitted_layer_uses_the_same_backend_for_readiness_and_timeout() {
+            let mut profile = ppc_matrix();
+            profile.epoll_syscall = CapabilityStatus::MissingRequired;
+            let mut layer = PlatformLayer::admit(&profile, PollSpy::new()).unwrap();
+            assert_eq!(layer.provenance(), Provenance::Simulated);
+            let mut slots = [PollFd {
+                fd: layer.wake_fd(),
+                events: READABLE,
+                revents: 0,
+            }];
+            assert_eq!(
+                layer.wait_once(&mut slots, PollTimeout::new(0).unwrap()),
+                Ok(WaitOutcome::Ready { ready: 1 })
+            );
+            assert_eq!(slots[0].revents, READABLE);
+            assert_eq!(
+                layer.wait_once(&mut [], PollTimeout::new(1).unwrap()),
+                Ok(WaitOutcome::TimedOut)
+            );
+            assert_eq!(layer.ops().calls, 2);
+        }
+
+        #[test]
+        fn an_epoll_only_layer_refuses_poll_before_calling_its_backend() {
+            for observed in [
+                CapabilityStatus::MissingRequired,
+                CapabilityStatus::UnqualifiedPendingStockGuest,
+                CapabilityStatus::AbsentFallbackAdmitted,
+            ] {
+                let mut profile = ppc_matrix();
+                profile.poll_syscall = observed;
+                // The other mux permits layer admission, but not use of poll.
+                let mut layer = PlatformLayer::admit(&profile, PollSpy::new()).unwrap();
+                let mut slots = [PollFd {
+                    fd: layer.wake_fd(),
+                    events: READABLE,
+                    revents: READABLE,
+                }];
+                assert_eq!(
+                    layer.wait_once(&mut slots, PollTimeout::new(0).unwrap()),
+                    Err(WaitError::NotAdmitted { observed })
+                );
+                assert_eq!(slots[0].revents, 0);
+                assert_eq!(layer.ops().calls, 0);
+            }
+        }
+
+        #[test]
+        fn the_layer_rejects_an_oversized_array_without_scanning_or_clearing_it() {
+            let mut layer = PlatformLayer::admit(&ppc_matrix(), PollSpy::new()).unwrap();
+            let mut slots = [PollFd {
+                fd: 1,
+                events: READABLE,
+                revents: READABLE,
+            }; MAX_POLL_FDS + 1];
+            let before = slots;
+            assert_eq!(
+                layer.wait_once(&mut slots, PollTimeout::new(0).unwrap()),
+                Err(WaitError::TooManyDescriptors {
+                    count: MAX_POLL_FDS + 1
+                })
+            );
+            assert_eq!(slots, before);
+            assert_eq!(layer.ops().calls, 0);
+        }
     }
 }

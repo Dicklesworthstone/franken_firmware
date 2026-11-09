@@ -29,10 +29,17 @@
 //!   `franken_platform::datagram::DatagramOps` (`sendto`, `recvfrom`), two more wrappers in `sys.rs`. Both are issued as `socketcall` sub-calls 11
 //!   and 12 on **both** ABIs, with the words decided by [`datagram_route`] (host-tested, no `unsafe`); there is no wider trampoline. No guest has
 //!   issued a `socketcall` on either ABI, and on MIPS o32 these would be the first (the leaf's other socket calls are direct there).
+//! * **Readiness waiting is an explicit finite step.** Both backends implement
+//!   `franken_platform::wait::WaitOps` with one raw `poll`; its number and three
+//!   argument words come from [`wait_route`]. The validated timeout cannot be
+//!   infinite. `PlatformLayer::wait_once` additionally requires this particular
+//!   route to be admitted; epoll admission does not stand in for poll. This
+//!   wrapper has no guest-execution proof from the older hello probe alone.
 //! * It declares [`Provenance::Kernel`] and the ABI it was compiled for, which [`PlatformLayer::admit`] checks against the
 //!   profile's.
 //! * The socket wrappers have no guest execution proof. Other startup operations have run on the named QEMU harness kernels; the
-//!   trampolines are the ones the E03 guest probes ran; the wrappers and this impl have only been type-checked for both targets.
+//!   trampolines are the ones the E03 guest probes ran. Target type-checks or Clippy qualify compilation only; they cannot
+//!   establish execution of a wrapper added after those probes.
 //!
 //! [`PlatformLayer::admit`]: franken_platform::layer::PlatformLayer::admit
 
@@ -42,6 +49,7 @@
 pub mod datagram_route;
 pub mod numbers;
 pub mod socket_route;
+pub mod wait_route;
 
 /// Whether this build can issue kernel calls (Linux, 32-bit big-endian, MIPS or PowerPC).
 pub const SUPPORTED_TARGET: bool = cfg!(all(
@@ -73,6 +81,7 @@ mod backend {
     use franken_platform::datagram::DatagramOps;
     use franken_platform::ops::{KernelOps, Provenance, Timespec};
     use franken_platform::socket::SocketOps;
+    use franken_platform::wait::{PollFd, PollTimeout, WaitOps};
     use std::time::Instant;
 
     /// The kernel as a [`KernelOps`] backend. Its only state is the clock's anchor; every other method is one syscall.
@@ -118,6 +127,18 @@ mod backend {
     #[derive(Debug, Clone, Copy)]
     pub struct SocketKernel {
         kernel: LinuxKernel,
+    }
+
+    impl WaitOps for LinuxKernel {
+        fn poll(&mut self, fds: &mut [PollFd], timeout: PollTimeout) -> isize {
+            sys::poll(fds, timeout)
+        }
+    }
+
+    impl WaitOps for SocketKernel {
+        fn poll(&mut self, fds: &mut [PollFd], timeout: PollTimeout) -> isize {
+            self.kernel.poll(fds, timeout)
+        }
     }
 
     impl KernelOps for SocketKernel {
