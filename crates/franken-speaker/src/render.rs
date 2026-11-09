@@ -58,10 +58,10 @@ use franken_hal::backend::{DeviceBackend, DriverError};
 use franken_hal::emit::{Critical, CriticalQueue, PushOutcome, SessionEventKind};
 use franken_hal::session::{
     DrainOutcome, FaultCode, HalSession, PositionClass, SessionError, SessionPhase,
-    StartPreconditions,
+    StartPreconditions, StorageFootprint,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, TryReserveError, VecDeque};
 use std::sync::{Arc, Mutex, TryLockError};
 
 /// Most bytes one block can hold: every hardware channel, a whole DSP block, 16-bit samples.
@@ -210,6 +210,11 @@ pub enum RenderError {
     NoOrdinaryCapacity,
     #[error("admission failed at {0:?}")]
     AdmissionFailed(AdmitPoint),
+    /// Storage the loop appends to while it runs could not be reserved at admission. Nothing was started.
+    /// This is the allocator (or the size) saying no at admission: it is neither `NoOrdinaryCapacity` (the
+    /// ring has no ordinary slot), nor an injected `AdmissionFailed`, nor a rejected block.
+    #[error("the {what} storage could not be reserved at admission; nothing was started")]
+    StorageNotAdmitted { what: &'static str },
     #[error(
         "the driver's counter went backwards, so the presentation mapping is invalid until it is reinstalled"
     )]
@@ -308,6 +313,33 @@ pub struct ControlPort {
 }
 
 impl ControlPort {
+    /// A port whose queue storage is reserved now, with the fallible allocation API. `send` is called from
+    /// other tasks, which would otherwise grow the queue (and so allocate) while holding the lock.
+    ///
+    /// # Errors
+    /// The reservation was refused (the size, or the allocator).
+    pub fn reserved() -> Result<Self, TryReserveError> {
+        let mut queue = VecDeque::new();
+        queue.try_reserve_exact(CONTROL_QUEUE_CAP)?;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(ControlInner {
+                queue,
+                ..ControlInner::default()
+            })),
+        })
+    }
+
+    /// Commands the queue can hold without allocating. A diagnostic for the owner and for tests: it takes the lock,
+    /// which the render path never does (it only `try_lock`s).
+    #[must_use]
+    pub fn reserved_capacity(&self) -> usize {
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .queue
+            .capacity()
+    }
+
     /// Ask the loop to do something. `Mute` and `Stop` are always accepted; the rest are bounded.
     /// A mute supersedes older queued unmute requests, while a newer unmute remains permitted.
     pub fn send(&self, control: Control) -> Result<(), ControlRejected> {
@@ -478,6 +510,24 @@ struct Busy {
     starved: Option<(Starvation, usize)>,
 }
 
+/// What a loop reserved at admission, as capacities. Every figure is fixed by admission: start, reconnect,
+/// cancel, a drain (acknowledged or not), a fault, a recovery and a restart never change one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RenderFootprint {
+    pub session: StorageFootprint,
+    /// Render events that fit without allocating.
+    pub events: usize,
+    /// Control commands that fit without allocating.
+    pub control: usize,
+}
+
+/// What `new` reserves for the loop itself; `session` and the fixed-size buffers are the rest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoopStorage {
+    Events,
+    Control,
+}
+
 // ------------------------------------------------------------------------------------ the loop
 
 /// The protected render loop over one HAL session.
@@ -539,10 +589,23 @@ impl<B: DeviceBackend> RenderLoop<B> {
     /// Admit a loop. Nothing audible happens: the session stays prepared and muted. Everything the
     /// render path needs is allocated here, before `Running`.
     pub fn new(
+        session: HalSession<B>,
+        dsp: ProtectedBoardDsp,
+        resampler: DriftResampler,
+        cfg: RenderConfig,
+    ) -> Result<Self, RenderError> {
+        Self::new_reserving(session, dsp, resampler, cfg, &mut |_| false)
+    }
+
+    /// `new` with each reservation made visible: `refuse` is asked before each one and a `true` refuses it, so
+    /// a test can show that the refusal is typed and nothing was started. Production never refuses; the real
+    /// reservation can still fail, and fails the same way.
+    fn new_reserving(
         mut session: HalSession<B>,
         dsp: ProtectedBoardDsp,
         resampler: DriftResampler,
         cfg: RenderConfig,
+        refuse: &mut dyn FnMut(LoopStorage) -> bool,
     ) -> Result<Self, RenderError> {
         if session.phase() != SessionPhase::Prepared {
             return Err(RenderError::SessionNotPrepared(session.phase()));
@@ -592,15 +655,28 @@ impl<B: DeviceBackend> RenderLoop<B> {
         };
         // The session announced its own preparation; that is not news for this loop.
         while session.take_event().is_some() {}
-        // Reserve the event queue's storage now: pushing and popping leaves the capacity behind.
-        let mut events = CriticalQueue::new(RENDER_EVENT_CAP);
-        for _ in 0..RENDER_EVENT_CAP {
-            events.push(RenderEvent {
-                tick: 0,
-                kind: RenderEventKind::DriverUnderrun,
+        // Everything the loop, and the tasks that send to it, append to while it runs is reserved now with the
+        // fallible API, so a start, a cancel, a drain or a reconnect never allocates and a refusal is an error here.
+        let events = if refuse(LoopStorage::Events) {
+            None
+        } else {
+            CriticalQueue::reserved(RENDER_EVENT_CAP).ok()
+        };
+        let Some(events) = events else {
+            return Err(RenderError::StorageNotAdmitted {
+                what: "event queue",
             });
-        }
-        while events.pop().is_some() {}
+        };
+        let control = if refuse(LoopStorage::Control) {
+            None
+        } else {
+            ControlPort::reserved().ok()
+        };
+        let Some(control) = control else {
+            return Err(RenderError::StorageNotAdmitted {
+                what: "control queue",
+            });
+        };
         Ok(Self {
             ring_depth: geometry.ring_depth,
             session,
@@ -639,7 +715,7 @@ impl<B: DeviceBackend> RenderLoop<B> {
             stop_tail_trusted: true,
             mapping_valid: true,
             last_mute_ack: None,
-            control: ControlPort::default(),
+            control,
             clear_control_pending: false,
             admit_faults: AdmitFaults::default(),
             counters: RenderCounters::default(),
@@ -733,6 +809,17 @@ impl<B: DeviceBackend> RenderLoop<B> {
 
     pub fn set_admit_faults(&mut self, faults: AdmitFaults) {
         self.admit_faults = faults;
+    }
+
+    /// A read-only report of the capacities reserved at admission (see [`RenderFootprint`]). It is not a
+    /// memory measurement: it says what was asked for and kept, not what the process uses.
+    #[must_use]
+    pub fn storage_footprint(&self) -> RenderFootprint {
+        RenderFootprint {
+            session: self.session.storage_footprint(),
+            events: self.events.reserved_capacity(),
+            control: self.control.reserved_capacity(),
+        }
     }
 
     /// The next render event, oldest first. The queue is bounded: see the counters for what it lost.
@@ -1696,6 +1783,152 @@ mod tests {
         assert!(!l.block_in_progress());
         let c = l.counters();
         assert_eq!((c.blocks_started, c.blocks_on_time), (2, 1));
+    }
+
+    #[test]
+    fn a_refused_reservation_admits_no_loop_names_which_storage_and_never_reads_as_capacity() {
+        let make = || {
+            let (backend, probe) = FakeBackend::new(fake_config());
+            let config = SessionConfig::with_ledger(Arc::new(LeakLedger::new(8)), 2);
+            let mut session = HalSession::open(profile(), backend, config).unwrap();
+            session.prepare().unwrap();
+            (session, probe)
+        };
+        let resampler = || DriftResampler::new(ResamplerConfig::default()).unwrap();
+        let ok = RenderConfig::standard(BLOCK);
+        for (which, what) in [
+            (LoopStorage::Events, "event queue"),
+            (LoopStorage::Control, "control queue"),
+        ] {
+            let (session, probe) = make();
+            let refused =
+                RenderLoop::new_reserving(session, dsp(), resampler(), ok, &mut |asked| {
+                    asked == which
+                })
+                .err();
+            assert_eq!(refused, Some(RenderError::StorageNotAdmitted { what }));
+            assert!(
+                !probe.calls().iter().any(|c| matches!(
+                    c,
+                    FakeCall::Start | FakeCall::SubmitRetained { .. } | FakeCall::SetMute(false)
+                )),
+                "a refused admission starts nothing"
+            );
+        }
+        // Its own name: not the ring, not an injected admission failure, and not a rejected block.
+        let error = RenderError::StorageNotAdmitted {
+            what: "event queue",
+        };
+        assert_ne!(error, RenderError::NoOrdinaryCapacity);
+        assert_ne!(error, RenderError::AdmissionFailed(AdmitPoint::Start));
+        let text = error.to_string();
+        assert!(text.contains("reserved") && text.contains("nothing was started"));
+        assert!(
+            !text.contains("ordinary") && !text.contains("ring") && !text.contains("capacity"),
+            "{text}"
+        );
+        // A rejected block is an outcome of a started block, in its own vocabulary.
+        assert_eq!(
+            serde_json::to_string(&BlockOutcome::CapacityRejected).unwrap(),
+            r#"{"outcome":"capacity_rejected"}"#
+        );
+        // Permitted positive: with nothing refused the loop is admitted, and its footprint is that of a
+        // loop that never saw a refusal.
+        let (session, _probe) = make();
+        let admitted =
+            RenderLoop::new_reserving(session, dsp(), resampler(), ok, &mut |_| false).unwrap();
+        let (clean, _probe, _) = standard();
+        assert_eq!(admitted.storage_footprint(), clean.storage_footprint());
+    }
+
+    #[test]
+    fn the_storage_a_loop_reserved_at_admission_does_not_move_through_start_reconnect_cancel_stop_a_fault_and_a_restart()
+     {
+        let (mut l, _probe, _) = standard();
+        let admitted = l.storage_footprint();
+        assert!(admitted.events >= RENDER_EVENT_CAP);
+        assert!(admitted.control >= CONTROL_QUEUE_CAP);
+        assert!(admitted.session.fault_records >= franken_hal::session::MAX_FAULT_RECORDS);
+        assert_eq!(admitted.session.slots, 4);
+        let (mut src, mut t) = (ToneSource::new(), timing(1, &[], &[]));
+        let port = l.control_port();
+        // Start, run past the ring depth so every slot has been used, flood the control port past its cap,
+        // reconnect, mute and unmute.
+        l.start(READY).unwrap();
+        run(&mut l, &mut src, &mut t, 24);
+        for _ in 0..(2 * CONTROL_QUEUE_CAP) {
+            let _ = port.send(Control::SetGain(0.5));
+        }
+        run(&mut l, &mut src, &mut t, 4);
+        l.reconnect().unwrap();
+        l.mute().unwrap();
+        l.unmute().unwrap();
+        run(&mut l, &mut src, &mut t, 8);
+        assert_eq!(l.storage_footprint(), admitted);
+        // Cancel, then stop-and-start cycles, with the render events well past their cap.
+        l.cancel().unwrap();
+        run_until_stopped(&mut l, &mut src, &mut t);
+        assert_eq!(l.state(), RenderState::Stopped);
+        assert_eq!(l.storage_footprint(), admitted);
+        for _ in 0..40 {
+            l.start(READY).unwrap();
+            run(&mut l, &mut src, &mut t, 6);
+            l.stop().unwrap();
+            run_until_stopped(&mut l, &mut src, &mut t);
+            assert_eq!(l.state(), RenderState::Stopped);
+            assert_eq!(l.storage_footprint(), admitted);
+        }
+        let counters = l.counters();
+        assert!(
+            counters.events_dropped + counters.events_evicted + counters.events_lost_critical > 0,
+            "the render events overflowed their cap without growing it"
+        );
+
+        // A stop the device never acknowledges faults and quarantines; the loop recovers and starts again.
+        let mut cfg = fake_config();
+        cfg.flush_ack_delay_ticks = None;
+        let (mut l, _probe, _) = build(cfg, RenderConfig::standard(BLOCK));
+        let admitted = l.storage_footprint();
+        l.start(READY).unwrap();
+        run(&mut l, &mut src, &mut t, 8);
+        l.cancel().unwrap();
+        run_until_stopped(&mut l, &mut src, &mut t);
+        assert_eq!(l.fault(), Some(FaultReason::DrainTimedOut));
+        assert_eq!(l.storage_footprint(), admitted);
+        l.recover().unwrap();
+        l.start(READY).unwrap();
+        run(&mut l, &mut src, &mut t, 8);
+        assert_eq!(l.storage_footprint(), admitted);
+    }
+
+    #[test]
+    fn a_cancel_with_device_events_pending_and_a_failing_poll_faults_the_loop_muted_and_grows_nothing()
+     {
+        let (mut l, probe, _) = started();
+        let admitted = l.storage_footprint();
+        let (mut src, mut t) = (ToneSource::new(), timing(1, &[], &[]));
+        run(&mut l, &mut src, &mut t, 8);
+        // Events the device has not yet reported (a flush acknowledgment outside a drain is an anomaly, never a
+        // fault), and a poll that fails once while the cancel settles them.
+        probe.queue_event(DeviceEvent::FlushAck);
+        probe.queue_event(DeviceEvent::FlushAck);
+        probe.fail_next(franken_hal::backend::Op::PollEvent, DriverError::Errno(5));
+        l.cancel().unwrap();
+        run_until_stopped(&mut l, &mut src, &mut t);
+        assert_eq!(l.state(), RenderState::Faulted);
+        assert_eq!(l.fault(), Some(FaultReason::SessionFaulted));
+        assert_eq!(l.last_mute_acknowledged(), Some(true));
+        assert_eq!(l.storage_footprint(), admitted);
+        // Permitted positive: the same cancel with the same events and no failing poll stops cleanly.
+        let (mut l, probe, _) = started();
+        let (mut src, mut t) = (ToneSource::new(), timing(1, &[], &[]));
+        run(&mut l, &mut src, &mut t, 8);
+        probe.queue_event(DeviceEvent::FlushAck);
+        probe.queue_event(DeviceEvent::FlushAck);
+        l.cancel().unwrap();
+        run_until_stopped(&mut l, &mut src, &mut t);
+        assert_eq!(l.state(), RenderState::Stopped);
+        assert_eq!(l.storage_footprint(), admitted);
     }
 
     #[test]

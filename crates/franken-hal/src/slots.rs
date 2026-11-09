@@ -18,6 +18,7 @@
 //! use-after-free.
 
 use serde::{Deserialize, Serialize};
+use std::collections::TryReserveError;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
@@ -35,16 +36,37 @@ pub struct StorageCell {
 }
 
 impl StorageCell {
-    fn new() -> Self {
-        Self {
-            bytes: Mutex::new(Vec::new()),
-        }
+    /// A cell with `bytes` of storage reserved now, with the fallible allocation API. [`StorageCell::set`]
+    /// never writes more than that, so a submit never grows it: the allocation happens here, at admission,
+    /// where a refusal is an error, and not on the first submit into the slot, inside `Running`.
+    ///
+    /// # Errors
+    /// The reservation was refused (the size, or the allocator).
+    pub(crate) fn reserved(bytes: usize) -> Result<Self, TryReserveError> {
+        let mut storage = Vec::new();
+        storage.try_reserve_exact(bytes)?;
+        Ok(Self {
+            bytes: Mutex::new(storage),
+        })
     }
 
     fn set(&self, data: &[u8]) {
         let mut guard = self.bytes.lock().unwrap_or_else(PoisonError::into_inner);
+        // `acquire_free` refuses data longer than the block, and the cell holds a whole block.
+        debug_assert!(
+            data.len() <= guard.capacity(),
+            "a submit must not grow a slot"
+        );
         guard.clear();
         guard.extend_from_slice(data);
+    }
+
+    /// Bytes the cell can hold without allocating.
+    fn capacity(&self) -> usize {
+        self.bytes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .capacity()
     }
 
     fn snapshot(&self) -> Vec<u8> {
@@ -175,6 +197,12 @@ pub enum SlotError {
     BadQuarantineCap { cap: usize, depth: usize },
     #[error("the process leak budget is exhausted")]
     LeakBudgetExhausted,
+    /// The storage for the slots could not be reserved. Nothing was admitted. This is the allocator (or
+    /// the size) saying no at admission; it is not a full ring, and not `NoFreeSlot`.
+    #[error(
+        "the slot storage could not be reserved after {reserved} of {depth} slot(s); nothing was admitted"
+    )]
+    StorageNotAdmitted { reserved: usize, depth: usize },
     #[error("no free slot")]
     NoFreeSlot,
     #[error("{len} byte(s) do not fit a {block}-byte block")]
@@ -206,6 +234,20 @@ impl SlotTable {
         quarantine_cap: usize,
         ledger: Arc<LeakLedger>,
     ) -> Result<Self, SlotError> {
+        Self::new_reserving(depth, block_bytes, quarantine_cap, ledger, &mut |_| false)
+    }
+
+    /// [`SlotTable::new`] with each slot's reservation made visible: `refuse(slot)` is asked before slot
+    /// `slot`'s storage is reserved, and a `true` refuses it, so a test can show that a refusal at any
+    /// slot admits nothing and says how far it got. Production never refuses; the real reservation can
+    /// still fail, and fails the same way.
+    pub(crate) fn new_reserving(
+        depth: usize,
+        block_bytes: usize,
+        quarantine_cap: usize,
+        ledger: Arc<LeakLedger>,
+        refuse: &mut dyn FnMut(usize) -> bool,
+    ) -> Result<Self, SlotError> {
         if depth == 0 || depth > MAX_SLOTS {
             return Err(SlotError::BadSlotCount(depth));
         }
@@ -221,13 +263,20 @@ impl SlotTable {
         if ledger.exhausted() {
             return Err(SlotError::LeakBudgetExhausted);
         }
-        let slots = (0..depth)
-            .map(|_| Slot {
-                cell: Arc::new(StorageCell::new()),
+        let refused = |reserved: usize| SlotError::StorageNotAdmitted { reserved, depth };
+        let mut slots: Vec<Slot> = Vec::new();
+        slots.try_reserve_exact(depth).map_err(|_| refused(0))?;
+        for reserved in 0..depth {
+            if refuse(reserved) {
+                return Err(refused(reserved));
+            }
+            let cell = StorageCell::reserved(block_bytes).map_err(|_| refused(reserved))?;
+            slots.push(Slot {
+                cell: Arc::new(cell),
                 state: SlotState::Free,
                 generation: 0,
-            })
-            .collect();
+            });
+        }
         Ok(Self {
             slots,
             block_bytes,
@@ -239,6 +288,23 @@ impl SlotTable {
     #[must_use]
     pub fn depth(&self) -> usize {
         self.slots.len()
+    }
+
+    /// The bytes of storage reserved for the slots, summed. It is fixed at admission: a submit, a
+    /// completion, a flush or a reset never changes it.
+    #[must_use]
+    pub fn reserved_bytes(&self) -> usize {
+        self.slots.iter().map(|s| s.cell.capacity()).sum()
+    }
+
+    /// The smallest single slot reservation (0 for an empty table).
+    #[must_use]
+    pub fn smallest_reservation(&self) -> usize {
+        self.slots
+            .iter()
+            .map(|s| s.cell.capacity())
+            .min()
+            .unwrap_or(0)
     }
 
     #[must_use]
@@ -387,7 +453,9 @@ impl Drop for SlotTable {
         for slot in &self.slots {
             if slot.state != SlotState::Free {
                 let keep = Arc::clone(&slot.cell);
-                bytes += keep.snapshot().len();
+                // Keep the full reservation, even after a short submit. Reading its capacity does not
+                // allocate while the owner is being destroyed, or mistake payload bytes for retained storage.
+                bytes += keep.capacity();
                 slots += 1;
                 std::mem::forget(keep);
             }
@@ -412,7 +480,7 @@ mod tests {
     fn the_weak_view_really_does_detect_a_free() {
         // Control for every use-after-free assertion below: if the owner dropped the last strong
         // reference, the kernel's view must report it. Otherwise "never freed" would prove nothing.
-        let cell = Arc::new(StorageCell::new());
+        let cell = Arc::new(StorageCell::reserved(3).expect("three bytes can be reserved"));
         cell.set(&[1, 2, 3]);
         let view = KernelView {
             cell: Arc::downgrade(&cell),
@@ -443,6 +511,76 @@ mod tests {
         );
         // Permitted positive: the largest legal table builds.
         assert!(new(MAX_SLOTS, MAX_BLOCK_BYTES, MAX_SLOTS).is_ok());
+    }
+
+    #[test]
+    fn every_slot_is_reserved_at_admission_and_no_submit_ever_grows_one() {
+        let (mut t, _) = table(3);
+        let admitted = t.reserved_bytes();
+        assert!(admitted >= 3 * 16, "each slot already holds a whole block");
+        assert!(t.smallest_reservation() >= 16);
+        // Many submits of every length up to the block, through every slot, each completed: the
+        // reservation never moves.
+        for round in 0..20usize {
+            let mut held = Vec::new();
+            for step in 0..3usize {
+                let data = vec![0xA5; (round + step) % 16 + 1];
+                let (slot, generation, _view) = t.acquire_free(&data).unwrap();
+                held.push((slot, generation));
+            }
+            assert_eq!(t.reserved_bytes(), admitted, "round {round}");
+            for (slot, generation) in held {
+                t.complete(slot, generation).unwrap();
+            }
+        }
+        // A block of exactly the block size fits without growing, too.
+        let (slot, generation, _view) = t.acquire_free(&[7; 16]).unwrap();
+        assert_eq!(t.reserved_bytes(), admitted);
+        t.complete(slot, generation).unwrap();
+    }
+
+    #[test]
+    fn a_refused_slot_reservation_admits_no_table_and_says_how_far_it_got() {
+        let ledger = Arc::new(LeakLedger::new(8));
+        for first_refused in [0usize, 2, 3] {
+            let refused = SlotTable::new_reserving(4, 16, 2, Arc::clone(&ledger), &mut |slot| {
+                slot == first_refused
+            });
+            assert_eq!(
+                refused.unwrap_err(),
+                SlotError::StorageNotAdmitted {
+                    reserved: first_refused,
+                    depth: 4
+                }
+            );
+        }
+        assert_eq!(ledger.leaked_slots(), 0, "nothing was handed out");
+        // Permitted positive: with nothing refused the same table is admitted whole, and is exactly the table
+        // a never-refused admission builds.
+        let t = SlotTable::new_reserving(4, 16, 2, Arc::clone(&ledger), &mut |_| false).unwrap();
+        assert_eq!(t.depth(), 4);
+        let clean = SlotTable::new(4, 16, 2, Arc::clone(&ledger)).unwrap();
+        assert_eq!(t.reserved_bytes(), clean.reserved_bytes());
+        assert_eq!(t.states(), clean.states());
+        // The size checks keep their own names, and come before any reservation is asked for.
+        let mut asked = 0usize;
+        let bad = SlotTable::new_reserving(0, 16, 1, Arc::clone(&ledger), &mut |_| {
+            asked += 1;
+            true
+        });
+        assert_eq!(bad.unwrap_err(), SlotError::BadSlotCount(0));
+        assert_eq!(asked, 0);
+    }
+
+    #[test]
+    fn a_reservation_the_allocator_could_never_make_is_a_refusal_not_a_panic() {
+        assert!(StorageCell::reserved(usize::MAX).is_err());
+        assert!(StorageCell::reserved(MAX_BLOCK_BYTES).is_ok());
+        // The test-only snapshot preserves the short payload inside the larger reservation.
+        let cell = StorageCell::reserved(8).unwrap();
+        cell.set(&[1, 2, 3]);
+        assert_eq!(cell.snapshot(), vec![1, 2, 3]);
+        assert!(cell.capacity() >= 8);
     }
 
     #[test]
@@ -558,6 +696,13 @@ mod tests {
                 SlotState::Quarantined
             ]
         );
+        let retained_bytes = t.slots[0].cell.capacity() + t.slots[2].cell.capacity();
+        assert!(retained_bytes >= 32, "both full blocks remain reserved");
+        assert_eq!(
+            t.reserved_bytes(),
+            retained_bytes + t.slots[1].cell.capacity(),
+            "the completed slot's reservation must be freed, not counted as a leak"
+        );
         drop(t);
         // Kernel-owned and quarantined storage survives the table.
         assert_eq!(in_flight.read(), KernelRead::Alive(vec![7; 4]));
@@ -565,7 +710,7 @@ mod tests {
         // A slot that was properly completed is freed with the table, so nothing leaks needlessly.
         assert_eq!(done.read(), KernelRead::Freed);
         assert_eq!(ledger.leaked_slots(), 2);
-        assert_eq!(ledger.leaked_bytes(), 4 + 8);
+        assert_eq!(ledger.leaked_bytes(), retained_bytes);
     }
 
     #[test]
@@ -576,6 +721,7 @@ mod tests {
         drop(t);
         assert_eq!(view.read(), KernelRead::Freed);
         assert_eq!(ledger.leaked_slots(), 0);
+        assert_eq!(ledger.leaked_bytes(), 0);
     }
 
     #[test]

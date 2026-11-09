@@ -30,7 +30,7 @@
 
 use crate::session::FaultCode;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{TryReserveError, VecDeque};
 
 /// Default capacity of a session's event queue.
 pub const DEFAULT_EVENT_QUEUE_CAP: usize = 32;
@@ -68,6 +68,24 @@ impl<T: Critical> CriticalQueue<T> {
             cap,
             items: VecDeque::new(),
         }
+    }
+
+    /// A queue whose storage for `cap` events is reserved now, with the fallible allocation API, so that
+    /// no push, pop or eviction after this call allocates: [`CriticalQueue::new`] grows on demand instead,
+    /// which would put an allocation inside whichever path first emits.
+    ///
+    /// # Errors
+    /// The reservation was refused (the size, or the allocator): nothing was built.
+    pub fn reserved(cap: usize) -> Result<Self, TryReserveError> {
+        let mut items = VecDeque::new();
+        items.try_reserve_exact(cap)?;
+        Ok(Self { cap, items })
+    }
+
+    /// Events the queue can hold without allocating. It does not change after [`CriticalQueue::reserved`].
+    #[must_use]
+    pub fn reserved_capacity(&self) -> usize {
+        self.items.capacity()
     }
 
     /// Add an event. The queue never grows past its cap.
@@ -172,9 +190,10 @@ pub(crate) struct EventQueue {
 }
 
 impl EventQueue {
-    pub(crate) const fn new(cap: usize) -> Self {
-        Self {
-            queue: CriticalQueue::new(cap),
+    /// A session's queue with room for `cap` events reserved now, so that emitting one never allocates.
+    pub(crate) fn reserved(cap: usize) -> Result<Self, TryReserveError> {
+        Ok(Self {
+            queue: CriticalQueue::reserved(cap)?,
             next_seq: 1,
             stats: EmitStats {
                 emitted: 0,
@@ -183,7 +202,11 @@ impl EventQueue {
                 evicted_ordinary: 0,
                 lost_critical: 0,
             },
-        }
+        })
+    }
+
+    pub(crate) fn reserved_capacity(&self) -> usize {
+        self.queue.reserved_capacity()
     }
 
     pub(crate) fn emit(&mut self, kind: SessionEventKind, accepted_frames: u64) {
@@ -285,8 +308,41 @@ mod tests {
     }
 
     #[test]
+    fn a_reserved_queue_holds_its_whole_cap_and_no_push_pop_or_eviction_leaves_the_reservation() {
+        let mut q = CriticalQueue::<Item>::reserved(3).expect("three items can be reserved");
+        let reserved = q.reserved_capacity();
+        assert!(reserved >= 3, "the cap is reserved up front");
+        for round in 0..50u8 {
+            // Fills it, drops ordinary events, evicts ordinary ones, and loses critical ones.
+            for item in [
+                ord(round),
+                crit(round),
+                ord(round),
+                ord(round),
+                crit(round),
+                crit(round),
+                crit(round),
+            ] {
+                q.push(item);
+            }
+            assert_eq!(q.reserved_capacity(), reserved, "round {round}");
+            while q.pop().is_some() {}
+            assert_eq!(q.reserved_capacity(), reserved, "round {round}, drained");
+        }
+    }
+
+    #[test]
+    fn a_reservation_nothing_could_satisfy_is_a_refusal_not_a_panic_and_a_small_one_is_made() {
+        assert!(CriticalQueue::<Item>::reserved(usize::MAX).is_err());
+        assert!(EventQueue::reserved(usize::MAX).is_err());
+        // Permitted positive: ordinary sizes are reserved.
+        assert!(CriticalQueue::<Item>::reserved(1).is_ok());
+        assert!(EventQueue::reserved(2).is_ok());
+    }
+
+    #[test]
     fn the_accounting_adds_up_and_a_gap_in_seq_shows_what_was_lost() {
-        let mut q = EventQueue::new(2);
+        let mut q = EventQueue::reserved(2).expect("two events can be reserved");
         q.emit(SessionEventKind::Prepared, 0); // seq 1, queued
         q.emit(SessionEventKind::Started, 0); // seq 2, queued; the queue is now full
         q.emit(SessionEventKind::StopAcknowledged, 4); // seq 3, dropped

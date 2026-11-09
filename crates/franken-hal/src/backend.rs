@@ -15,7 +15,7 @@
 //! (`use_after_free`) or changed while the kernel owned it (`modified_while_owned`). A test that
 //! ends with both at zero has shown the HAL never gave the kernel's storage back early.
 
-use crate::abi::{DeviceEvent, RawGeometry, encode_event, encode_geometry};
+use crate::abi::{DeviceEvent, EVENT_LEN, RawGeometry, encode_event, encode_geometry};
 use crate::slots::{KernelRead, KernelView};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -114,7 +114,14 @@ pub trait DeviceBackend {
         len: usize,
     ) -> Result<usize, DriverError>;
     /// One raw event record, if any. Untrusted bytes; the session decodes and validates them.
-    fn poll_event(&mut self) -> Result<Option<Vec<u8>>, DriverError>;
+    ///
+    /// The device writes the record into `record`, a buffer the caller owns and reuses, so a backend allocates
+    /// nothing per event. The value returned is the length of the record the device **had**: `Some(EVENT_LEN)` for
+    /// a well-formed one. A longer record is reported with its full length and `record` holds its first
+    /// `EVENT_LEN` bytes; a shorter one is reported with its length and the rest of `record` is not meaningful.
+    /// Either way the session refuses a record whose length is not `EVENT_LEN`, by that length: a record is never
+    /// cut to fit and then read.
+    fn poll_event(&mut self, record: &mut [u8; EVENT_LEN]) -> Result<Option<usize>, DriverError>;
     fn request_flush(&mut self) -> Result<(), DriverError>;
     /// Returns whether the device acknowledged a full reset.
     fn reset(&mut self) -> Result<bool, DriverError>;
@@ -205,12 +212,41 @@ struct Pending {
     due: u64,
 }
 
+/// One event record as the fake device holds it: the length the device "had" and the first [`EVENT_LEN`] bytes of
+/// it. It is a small value, so queuing it, handing it over and dropping it allocate nothing per event.
+#[derive(Debug, Clone, Copy)]
+struct RawRecord {
+    len: usize,
+    head: [u8; EVENT_LEN],
+}
+
+impl RawRecord {
+    fn of(event: &DeviceEvent) -> Self {
+        Self {
+            len: EVENT_LEN,
+            head: encode_event(event),
+        }
+    }
+
+    /// Whatever bytes a test says the device sent: a short or a long record keeps its true length, and its first
+    /// `EVENT_LEN` bytes (zero-filled if there are fewer).
+    fn from_bytes(bytes: &[u8]) -> Self {
+        let mut head = [0u8; EVENT_LEN];
+        let kept = bytes.len().min(EVENT_LEN);
+        head[..kept].copy_from_slice(&bytes[..kept]);
+        Self {
+            len: bytes.len(),
+            head,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct FakeState {
     cfg: FakeConfig,
     tick: u64,
     pending: Vec<Pending>,
-    events: VecDeque<Vec<u8>>,
+    events: VecDeque<RawRecord>,
     flush_due: Option<u64>,
     accept_limit: Option<usize>,
     lose_completions: bool,
@@ -284,7 +320,7 @@ impl FakeState {
                         slot: p.slot,
                         generation: p.generation,
                     };
-                    self.events.push_back(encode_event(&event).to_vec());
+                    self.events.push_back(RawRecord::of(&event));
                 } else {
                     i += 1;
                 }
@@ -294,8 +330,7 @@ impl FakeState {
             && due <= now
         {
             self.settle_all();
-            self.events
-                .push_back(encode_event(&DeviceEvent::FlushAck).to_vec());
+            self.events.push_back(RawRecord::of(&DeviceEvent::FlushAck));
             self.flush_due = None;
         }
     }
@@ -440,12 +475,13 @@ impl DeviceBackend for FakeBackend {
         Ok(accepted)
     }
 
-    fn poll_event(&mut self) -> Result<Option<Vec<u8>>, DriverError> {
+    fn poll_event(&mut self, record: &mut [u8; EVENT_LEN]) -> Result<Option<usize>, DriverError> {
         let mut s = self.lock();
         s.injected(Op::PollEvent)?;
         // Events the device queued before it vanished (its own loss announcement) still drain.
-        if let Some(bytes) = s.events.pop_front() {
-            return Ok(Some(bytes));
+        if let Some(queued) = s.events.pop_front() {
+            *record = queued.head;
+            return Ok(Some(queued.len));
         }
         if s.gone {
             return Err(DriverError::Gone);
@@ -490,11 +526,11 @@ impl FakeProbe {
 
     /// Queue raw event bytes exactly as given, to model a malformed or forged record.
     pub fn queue_raw_event(&self, bytes: Vec<u8>) {
-        self.lock().events.push_back(bytes);
+        self.lock().events.push_back(RawRecord::from_bytes(&bytes));
     }
 
     pub fn queue_event(&self, event: DeviceEvent) {
-        self.queue_raw_event(encode_event(&event).to_vec());
+        self.lock().events.push_back(RawRecord::of(&event));
     }
 
     /// Cap how many bytes a write or retained submit accepts (a short write).
@@ -529,8 +565,7 @@ impl FakeProbe {
     pub fn lose_device(&self) {
         let mut s = self.lock();
         s.gone = true;
-        s.events
-            .push_back(encode_event(&DeviceEvent::DeviceLost).to_vec());
+        s.events.push_back(RawRecord::of(&DeviceEvent::DeviceLost));
     }
 
     #[must_use]

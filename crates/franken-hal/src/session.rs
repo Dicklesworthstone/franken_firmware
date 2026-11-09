@@ -31,7 +31,7 @@
 //! This is a host model. Run against the fake device it shows the adapter logic and nothing about
 //! any board; the receipt says so.
 
-use crate::abi::{AbiError, DeviceEvent, RawGeometry, decode_event, decode_geometry};
+use crate::abi::{AbiError, DeviceEvent, EVENT_LEN, RawGeometry, decode_event, decode_geometry};
 use crate::backend::{AbiKind, DeviceBackend, DriverError, LocalEventCapability, Op, Provenance};
 use crate::contract::ContractMatrix;
 use crate::emit::{DEFAULT_EVENT_QUEUE_CAP, EmitStats, EventQueue, SessionEvent, SessionEventKind};
@@ -153,6 +153,29 @@ pub struct FaultRecord {
     pub code: FaultCode,
     /// Frames accepted by the device when the fault was recorded.
     pub accepted_frames: u64,
+}
+
+/// What `open` reserves for the cleanup path before any block can be submitted (the slot storage is
+/// reserved by `prepare`, which asks slot by slot).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Reserved {
+    FaultRecords,
+    EventQueue,
+}
+
+/// The storage a session reserved at admission, as capacities. Every figure is fixed by admission:
+/// start, submit, drain, cancel, a fault, a reset or a restart never changes one, which is what makes
+/// the cleanup path free of allocation. (The leak ledger is atomics, and the device is the backend's.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StorageFootprint {
+    /// Fault records that fit without allocating.
+    pub fault_records: usize,
+    /// Session events that fit without allocating.
+    pub events: usize,
+    /// Slots in the table (0 before `prepare`, and for a copying ABI).
+    pub slots: usize,
+    /// Bytes reserved for the slots, summed.
+    pub slot_bytes: usize,
 }
 
 /// A device geometry that passed validation.
@@ -387,6 +410,10 @@ pub enum SessionError {
     NoFreeSlot,
     #[error("slot table: {0}")]
     Slots(SlotError),
+    /// Something the cleanup path needs could not be reserved at admission. Nothing was started and the
+    /// device was not touched. This is the allocator (or the size) saying no; it is not a full ring.
+    #[error("the {what} storage could not be reserved at admission; nothing was started")]
+    StorageNotAdmitted { what: &'static str },
     #[error("the session faulted and is muted: {0:?}")]
     Faulted(FaultCode),
     #[error("the session faulted while draining")]
@@ -500,6 +527,19 @@ impl<B: DeviceBackend> HalSession<B> {
         config: SessionConfig,
         ids: &AtomicU32,
     ) -> Result<Self, SessionError> {
+        Self::open_admitting(profile, backend, config, ids, &mut |_| false)
+    }
+
+    /// `open_with_ids` with each reservation for the cleanup path made visible: `refuse` is asked before
+    /// each one and a `true` refuses it, so a test can show a refusal is clean (typed, the device untouched,
+    /// no id used). Production never refuses; the real reservation can still fail, and fails the same way.
+    fn open_admitting(
+        profile: BoardProfile,
+        backend: B,
+        config: SessionConfig,
+        ids: &AtomicU32,
+        refuse: &mut dyn FnMut(Reserved) -> bool,
+    ) -> Result<Self, SessionError> {
         profile
             .verify_integrity()
             .map_err(SessionError::ProfileRejected)?;
@@ -515,6 +555,25 @@ impl<B: DeviceBackend> HalSession<B> {
         if config.quarantine_cap == 0 || config.event_queue_cap == 0 {
             return Err(SessionError::BadConfig);
         }
+        // The cleanup path appends to these (a fault is recorded, an event emitted) on a stop, a drain
+        // timeout or a failed start: reserved now, they are never grown there. Before the id is taken,
+        // so a refused open uses none, and before the device is touched.
+        let mut faults = Vec::new();
+        if refuse(Reserved::FaultRecords) || faults.try_reserve_exact(MAX_FAULT_RECORDS).is_err() {
+            return Err(SessionError::StorageNotAdmitted {
+                what: "fault records",
+            });
+        }
+        let events = if refuse(Reserved::EventQueue) {
+            None
+        } else {
+            EventQueue::reserved(config.event_queue_cap).ok()
+        };
+        let Some(events) = events else {
+            return Err(SessionError::StorageNotAdmitted {
+                what: "event queue",
+            });
+        };
         // Last, so a refused open does not use up an id. Nothing has touched the device yet.
         let session_id = take_session_id(ids).ok_or(SessionError::SessionIdsExhausted)?;
         let provenance = backend.provenance();
@@ -544,12 +603,12 @@ impl<B: DeviceBackend> HalSession<B> {
             stop_requested: false,
             device_lost: false,
             saturated_reported: false,
-            faults: Vec::new(),
+            faults,
             dropped_fault_records: 0,
             anomalies: 0,
             ledger: config.ledger,
             quarantine_cap: config.quarantine_cap,
-            events: EventQueue::new(config.event_queue_cap),
+            events,
             required_silence_blocks: config.required_silence_blocks,
             primed_silence_blocks: 0,
         })
@@ -614,6 +673,18 @@ impl<B: DeviceBackend> HalSession<B> {
     #[must_use]
     pub fn slot_states(&self) -> Vec<SlotState> {
         self.slots.as_ref().map_or_else(Vec::new, SlotTable::states)
+    }
+
+    /// A read-only report of the capacities reserved at admission (see [`StorageFootprint`]). It is not a
+    /// memory measurement: it says what was asked for and kept, not what the process uses.
+    #[must_use]
+    pub fn storage_footprint(&self) -> StorageFootprint {
+        StorageFootprint {
+            fault_records: self.faults.capacity(),
+            events: self.events.reserved_capacity(),
+            slots: self.slots.as_ref().map_or(0, SlotTable::depth),
+            slot_bytes: self.slots.as_ref().map_or(0, SlotTable::reserved_bytes),
+        }
     }
 
     /// Fewest ticks ahead of the output cursor a block must be submitted, if the device says.
@@ -848,9 +919,19 @@ impl<B: DeviceBackend> HalSession<B> {
 
     // ---- lifecycle
 
-    /// `Closed -> Prepared`. Queries the device (no state change), validates what it says, mutes,
-    /// and only then builds buffers.
+    /// `Closed -> Prepared`. Queries the device (no state change), validates what it says, reserves the
+    /// buffers (a refusal here has touched the device with nothing but that query), mutes, and commits.
     pub fn prepare(&mut self) -> Result<(), SessionError> {
+        self.prepare_reserving(&mut |_| false)
+    }
+
+    /// `prepare` with each slot's reservation made visible: `refuse(slot)` is asked before slot `slot`'s
+    /// storage is reserved. A refusal leaves the session `Closed` and muted, with no table and no fault
+    /// recorded, so the same session can prepare again.
+    fn prepare_reserving(
+        &mut self,
+        refuse: &mut dyn FnMut(usize) -> bool,
+    ) -> Result<(), SessionError> {
         self.require_phase(&[SessionPhase::Closed])?;
         let caps = match self.backend.capabilities() {
             Ok(caps) => caps,
@@ -871,22 +952,28 @@ impl<B: DeviceBackend> HalSession<B> {
                 abi: None,
             }));
         };
+        // The buffers are reserved before the device is asked to do anything but answer the query above, so a
+        // refusal touches nothing; until the session commits below, the table is only a local.
+        let table = if self.abi == AbiKind::RetainedBuffer {
+            let cap = self.quarantine_cap.min(geometry.ring_depth);
+            let table = SlotTable::new_reserving(
+                geometry.ring_depth,
+                geometry.block_bytes,
+                cap,
+                Arc::clone(&self.ledger),
+                refuse,
+            )
+            .map_err(SessionError::Slots)?;
+            Some(table)
+        } else {
+            None
+        };
         match self.backend.set_mute(true) {
             Ok(true) => self.amp = Amp::Muted,
             Ok(false) => return Err(self.fail_muted(FaultCode::MuteNotAcknowledged)),
             Err(error) => return Err(self.driver_failed(Op::SetMute, error)),
         }
-        if self.abi == AbiKind::RetainedBuffer {
-            let cap = self.quarantine_cap.min(geometry.ring_depth);
-            let table = SlotTable::new(
-                geometry.ring_depth,
-                geometry.block_bytes,
-                cap,
-                Arc::clone(&self.ledger),
-            )
-            .map_err(SessionError::Slots)?;
-            self.slots = Some(table);
-        }
+        self.slots = table;
         self.geometry = Some(geometry);
         self.stop_deadline_ticks = caps.stop_deadline_ticks;
         self.min_lead_ticks = caps.min_submission_lead_ticks;
@@ -1188,8 +1275,12 @@ impl<B: DeviceBackend> HalSession<B> {
     pub fn poll(&mut self) -> PollReport {
         let mut report = PollReport::default();
         for _ in 0..MAX_EVENTS_PER_POLL {
-            let raw = match self.backend.poll_event() {
-                Ok(Some(raw)) => raw,
+            // One fixed record on the stack, fresh for each event: the device writes into it and nothing is
+            // allocated. A backend that reports a record it did not write hands back zeroes, which read as an
+            // unknown kind and fault, and never as a repeat of the previous event.
+            let mut record = [0u8; EVENT_LEN];
+            let len = match self.backend.poll_event(&mut record) {
+                Ok(Some(len)) => len,
                 Ok(None) => break,
                 Err(error) => {
                     if self.phase == SessionPhase::Faulted {
@@ -1203,7 +1294,17 @@ impl<B: DeviceBackend> HalSession<B> {
                 }
             };
             report.events += 1;
-            match decode_event(&raw) {
+            // A record of any other length is refused by the length the device reported; it is never cut to
+            // fit and then decoded.
+            let decoded = if len == EVENT_LEN {
+                decode_event(&record)
+            } else {
+                Err(AbiError::Length {
+                    expected: EVENT_LEN,
+                    actual: len,
+                })
+            };
+            match decoded {
                 Ok(event) => self.apply_event(event, &mut report),
                 Err(error) => {
                     if self.phase == SessionPhase::Faulted {
@@ -2658,7 +2759,10 @@ mod tests {
             ) -> Result<usize, DriverError> {
                 Err(DriverError::Gone)
             }
-            fn poll_event(&mut self) -> Result<Option<Vec<u8>>, DriverError> {
+            fn poll_event(
+                &mut self,
+                _: &mut [u8; EVENT_LEN],
+            ) -> Result<Option<usize>, DriverError> {
                 Err(DriverError::Gone)
             }
             fn request_flush(&mut self) -> Result<(), DriverError> {
@@ -3114,6 +3218,263 @@ mod tests {
             HalSession::open(profile(), backend, zero).err().unwrap(),
             SessionError::BadConfig
         );
+    }
+
+    // ---- the storage the cleanup path needs is reserved at admission, and a refusal is clean
+
+    fn refuse_only(what: Reserved) -> impl FnMut(Reserved) -> bool {
+        move |asked| asked == what
+    }
+
+    #[test]
+    fn a_refused_reservation_at_open_is_a_typed_refusal_that_leaves_the_device_and_the_id_alone() {
+        let config = || SessionConfig::with_ledger(Arc::new(LeakLedger::new(64)), 2);
+        for (what, name) in [
+            (Reserved::FaultRecords, "fault records"),
+            (Reserved::EventQueue, "event queue"),
+        ] {
+            let ids = AtomicU32::new(5);
+            let (backend, probe) = FakeBackend::new(FakeConfig::retained());
+            let refused = HalSession::open_admitting(
+                profile(),
+                backend,
+                config(),
+                &ids,
+                &mut refuse_only(what),
+            );
+            assert_eq!(
+                refused.err().unwrap(),
+                SessionError::StorageNotAdmitted { what: name }
+            );
+            assert!(probe.calls().is_empty(), "nothing touched the device");
+            assert_eq!(ids.load(Ordering::Relaxed), 5, "no id was used");
+        }
+        // The allocator's own refusal, not the seam's: a queue nothing could hold is refused the same way.
+        let (backend, probe) = FakeBackend::new(FakeConfig::retained());
+        let huge = config().with_event_queue_cap(usize::MAX);
+        assert_eq!(
+            HalSession::open(profile(), backend, huge).err().unwrap(),
+            SessionError::StorageNotAdmitted {
+                what: "event queue"
+            }
+        );
+        assert!(probe.calls().is_empty());
+        // Permitted positive: with nothing refused it opens, and uses one id.
+        let ids = AtomicU32::new(5);
+        let (backend, _probe) = FakeBackend::new(FakeConfig::retained());
+        let opened =
+            HalSession::open_admitting(profile(), backend, config(), &ids, &mut |_| false).unwrap();
+        assert_eq!(opened.phase(), SessionPhase::Closed);
+        assert_eq!(ids.load(Ordering::Relaxed), 6);
+        // A refusal leaves nothing a later admission trusts: the session that opens after one has exactly the
+        // footprint of one that never saw a refusal.
+        let (clean, _p, _l) = session(FakeConfig::retained());
+        assert_eq!(opened.storage_footprint(), clean.storage_footprint());
+    }
+
+    #[test]
+    fn a_refused_slot_reservation_at_prepare_admits_no_slots_starts_nothing_and_a_retry_succeeds() {
+        let (mut s, probe, ledger) = session(FakeConfig::retained());
+        let before = s.storage_footprint();
+        let refused = s.prepare_reserving(&mut |slot| slot == 2);
+        // The device was asked one question and given no instruction: no mute, no start.
+        assert_eq!(probe.calls(), vec![FakeCall::Capabilities]);
+        assert_eq!(
+            refused,
+            Err(SessionError::Slots(SlotError::StorageNotAdmitted {
+                reserved: 2,
+                depth: 4
+            }))
+        );
+        assert_eq!(s.phase(), SessionPhase::Closed);
+        assert_eq!(s.amp(), Amp::Muted);
+        assert!(s.slot_states().is_empty(), "no table was admitted");
+        assert!(
+            s.receipt().faults.is_empty(),
+            "a refused reservation is not a device fault"
+        );
+        assert_eq!(ledger.leaked_slots(), 0);
+        assert_eq!(s.storage_footprint(), before);
+        // Permitted positive: the same session prepares when nothing is refused, and ends up exactly where a
+        // session that was never refused does.
+        s.prepare().unwrap();
+        assert_eq!(s.phase(), SessionPhase::Prepared);
+        assert_eq!(s.slot_states().len(), 4);
+        let (mut clean, _p, _l) = session(FakeConfig::retained());
+        clean.prepare().unwrap();
+        assert_eq!(s.storage_footprint(), clean.storage_footprint());
+    }
+
+    #[test]
+    fn the_storage_footprint_is_fixed_at_admission_and_a_fault_flood_and_a_full_cycle_never_grow_it()
+     {
+        let (mut s, probe) = session_events(FakeConfig::retained(), 2, 4);
+        let opened = s.storage_footprint();
+        assert!(opened.fault_records >= MAX_FAULT_RECORDS);
+        assert!(opened.events >= 4);
+        assert_eq!((opened.slots, opened.slot_bytes), (0, 0));
+        s.prepare().unwrap();
+        let admitted = s.storage_footprint();
+        assert_eq!(
+            (admitted.fault_records, admitted.events),
+            (opened.fault_records, opened.events)
+        );
+        assert_eq!(admitted.slots, 4);
+        assert!(
+            admitted.slot_bytes >= 4 * BLOCK.len(),
+            "a whole block per slot"
+        );
+        // A fault flood, well past MAX_FAULT_RECORDS and the 4-event queue, with every slot used.
+        for _ in 0..40 {
+            fault_and_reset(&mut s, &probe);
+            assert_eq!(s.storage_footprint(), admitted);
+        }
+        assert_eq!(s.receipt().faults.len(), MAX_FAULT_RECORDS);
+        assert!(s.receipt().dropped_fault_records > 0);
+        // A clean cycle that fills every slot and drains.
+        s.start(READY).unwrap();
+        let tokens: Vec<SubmitToken> = (0..4).map(|_| token(&mut s)).collect();
+        assert_eq!(tokens.len(), 4);
+        assert_eq!(s.storage_footprint(), admitted);
+        assert!(matches!(s.drain(8), Ok(DrainOutcome::Acknowledged { .. })));
+        assert_eq!(s.storage_footprint(), admitted);
+        // A drain the device never acknowledges faults and quarantines, and still allocates nothing.
+        let mut cfg = FakeConfig::retained();
+        cfg.flush_ack_delay_ticks = None;
+        let (mut s, _probe) = session_events(cfg, 2, 4);
+        s.prepare().unwrap();
+        let admitted = s.storage_footprint();
+        s.start(READY).unwrap();
+        let _t = token(&mut s);
+        assert!(matches!(s.drain(3), Ok(DrainOutcome::TimedOut { .. })));
+        assert_eq!(s.phase(), SessionPhase::Faulted);
+        assert_eq!(s.storage_footprint(), admitted);
+        s.reset_device().unwrap();
+        s.start(READY).unwrap();
+        assert!(s.abort_mute().unwrap().mute_acknowledged);
+        assert_eq!(s.storage_footprint(), admitted);
+    }
+
+    // ---- the event record is the caller's buffer, so the cancel and drain paths read events without allocating
+
+    #[test]
+    fn a_device_record_is_read_into_the_callers_buffer_and_a_wrong_sized_one_is_refused_by_its_true_length()
+     {
+        // The fake hands a record over by value, and reports the length the device had.
+        let (mut backend, probe) = FakeBackend::new(FakeConfig::retained());
+        let mut record = [0xEE; EVENT_LEN];
+        assert_eq!(backend.poll_event(&mut record), Ok(None));
+        probe.queue_event(DeviceEvent::Position { counter: 7 });
+        assert_eq!(backend.poll_event(&mut record), Ok(Some(EVENT_LEN)));
+        assert_eq!(
+            decode_event(&record),
+            Ok(DeviceEvent::Position { counter: 7 })
+        );
+        probe.queue_raw_event(vec![1, 2, 3]);
+        assert_eq!(backend.poll_event(&mut record), Ok(Some(3)));
+        assert_eq!(record[..3], [1, 2, 3]);
+        probe.queue_raw_event((0..40u8).collect::<Vec<u8>>());
+        assert_eq!(
+            backend.poll_event(&mut record),
+            Ok(Some(40)),
+            "the length the device had, not the length that fitted"
+        );
+        assert_eq!(record, [0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+
+        // The session refuses each by the length reported, including a long record whose first 12 bytes are a
+        // valid event: it is not cut to fit and applied.
+        let mut long_valid = crate::abi::encode_event(&DeviceEvent::FlushAck).to_vec();
+        long_valid.extend_from_slice(&[0, 0, 0, 0]);
+        let cases: [(Vec<u8>, usize); 6] = [
+            (vec![], 0),
+            (vec![1, 2, 3], 3),
+            (vec![0; 11], 11),
+            (vec![0; 13], 13),
+            (long_valid, 16),
+            ((0..40u8).collect::<Vec<u8>>(), 40),
+        ];
+        for (bytes, actual) in cases {
+            let (mut s, probe, _) = running(FakeConfig::retained());
+            let _t = token(&mut s);
+            probe.queue_raw_event(bytes);
+            let report = s.poll();
+            assert_eq!(report.anomalies, 1, "{actual}");
+            assert_eq!(s.phase(), SessionPhase::Faulted, "{actual}");
+            assert_eq!(
+                first_fault(&s),
+                FaultCode::Malformed {
+                    what: MalformedKind::Event,
+                    abi: Some(AbiError::Length {
+                        expected: EVENT_LEN,
+                        actual
+                    })
+                },
+                "{actual}"
+            );
+        }
+        // Permitted positive: a well-formed record of the right length is applied.
+        let (mut s, probe, _) = running(FakeConfig::retained());
+        probe.queue_event(DeviceEvent::Position { counter: 0 });
+        let report = s.poll();
+        assert_eq!((report.events, report.anomalies), (1, 0));
+        assert_eq!(s.phase(), SessionPhase::Running);
+    }
+
+    #[test]
+    fn an_abort_and_a_drain_with_events_pending_read_them_into_the_callers_buffer_and_never_grow_the_reservation()
+     {
+        // Abort with events waiting: both completions are read and applied while the abort settles, a malformed
+        // record behind them faults the session muted, and nothing grew.
+        let (mut s, probe, _) = running(FakeConfig::retained());
+        let admitted = s.storage_footprint();
+        let _a = token(&mut s);
+        let _b = token(&mut s);
+        for (slot, generation) in probe.pending_slots() {
+            probe.queue_event(DeviceEvent::Completed { slot, generation });
+        }
+        probe.queue_raw_event(vec![9; 5]);
+        assert!(s.abort_mute().unwrap().mute_acknowledged);
+        assert_eq!(s.phase(), SessionPhase::Faulted);
+        assert_eq!(
+            first_fault(&s),
+            FaultCode::Malformed {
+                what: MalformedKind::Event,
+                abi: Some(AbiError::Length {
+                    expected: EVENT_LEN,
+                    actual: 5
+                })
+            }
+        );
+        assert_eq!(s.storage_footprint(), admitted);
+        // Permitted positive: the same events without the malformed record are applied and free both slots.
+        let (mut s, probe, _) = running(FakeConfig::retained());
+        let _a = token(&mut s);
+        let _b = token(&mut s);
+        for (slot, generation) in probe.pending_slots() {
+            probe.queue_event(DeviceEvent::Completed { slot, generation });
+        }
+        assert!(s.abort_mute().unwrap().mute_acknowledged);
+        assert_eq!(s.phase(), SessionPhase::Draining);
+        assert!(s.slot_states().iter().all(|st| *st == SlotState::Free));
+
+        // A drain with an event waiting and a poll that fails once while it settles: refused muted, the slot
+        // quarantined, and the reservation as it was.
+        let (mut s, probe, _) = running(FakeConfig::retained());
+        let admitted = s.storage_footprint();
+        let _t = token(&mut s);
+        probe.queue_event(DeviceEvent::FlushAck);
+        probe.fail_next(Op::PollEvent, DriverError::Errno(5));
+        assert_eq!(s.drain(5).err(), Some(SessionError::FaultedDuringDrain));
+        assert_eq!((s.phase(), s.amp()), (SessionPhase::Faulted, Amp::Muted));
+        assert_eq!(
+            first_fault(&s),
+            FaultCode::DriverError {
+                op: Op::PollEvent,
+                error: DriverError::Errno(5)
+            }
+        );
+        assert_eq!(s.slot_states()[0], SlotState::Quarantined);
+        assert_eq!(s.storage_footprint(), admitted);
     }
 
     #[test]
