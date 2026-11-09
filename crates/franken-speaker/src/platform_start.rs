@@ -14,7 +14,8 @@
 //!    and *recorded* in the `BEGIN` line, bounded and sanitised, and never compared. If a kernel lacks a call the probe says so
 //!    and startup refuses with that call's typed code (for example `wake_open_failed` for a missing `eventfd2`).
 //! 3. **The layer is admitted, then each capability is exercised once:** two monotonic readings, 16 bytes from the **selected**
-//!    entropy provider, and one wake signalled and drained. The provider is [`EntropySelection::Getrandom`]
+//!    entropy provider, and one wake signalled, observed readable by an admitted finite poll, and drained. A second
+//!    finite poll must time out after the existing empty-drain check. The provider is [`EntropySelection::Getrandom`]
 //!    (`getrandom(GRND_NONBLOCK)`) unless the caller names the legacy `/dev/random` provider ([`EntropySelection`],
 //!    `--entropy-provider`); no failure of one ever selects the other. An error is the refusal; nothing falls back. In particular an
 //!    unseeded entropy pool is [`StartupError::Entropy`] (`not_seeded`), retryable by the caller, and **never** answered with a
@@ -32,12 +33,24 @@ use franken_platform::clock::ClockError;
 use franken_platform::entropy::{EntropyError, EntropyProfile, ProviderQualification};
 use franken_platform::layer::{LayerError, PlatformLayer};
 use franken_platform::ops::{KernelOps, Provenance};
+use franken_platform::wait::{
+    ERROR, HANGUP, INVALID, MAX_POLL_TIMEOUT_MS, PollFd, PollTimeout, READABLE, WaitError, WaitOps,
+    WaitOutcome,
+};
 use franken_platform::wake::{WakeError, WakeOutcome};
 
 /// Where the running kernel's release is read from (recorded, never compared).
 pub const OSRELEASE_PATH: &str = "/proc/sys/kernel/osrelease";
 /// Bytes of entropy requested at startup (and discarded: startup proves the capability, it keeps nothing).
 pub const ENTROPY_PROBE_BYTES: usize = 16;
+/// One bounded readiness wait after signalling the owned wake source. No interruption is retried.
+pub const WAKE_READY_TIMEOUT_MS: u32 = 100;
+/// One bounded wait after draining the owned wake source; it must report no readiness.
+pub const WAKE_EMPTY_TIMEOUT_MS: u32 = 1;
+const _: () = {
+    assert!(WAKE_READY_TIMEOUT_MS <= MAX_POLL_TIMEOUT_MS);
+    assert!(WAKE_EMPTY_TIMEOUT_MS <= MAX_POLL_TIMEOUT_MS);
+};
 /// Longest `kernel=` value recorded; a longer release is recorded as [`INVALID_KERNEL`].
 pub const MAX_KERNEL_FIELD_LEN: usize = 64;
 /// What `kernel=` says when the release is unreadable, too long, or has bytes outside `[A-Za-z0-9._+-]`.
@@ -259,6 +272,18 @@ pub enum StartupError {
     Entropy(EntropyError),
     #[error("wake: {0}")]
     Wake(WakeError),
+    #[error("the admitted wake poll failed: {0}")]
+    WakeWait(WaitError),
+    #[error("the wake poll returned fault bits ({revents})")]
+    WakePollFault { revents: i16 },
+    #[error(
+        "the wake poll returned {outcome:?} with mask {revents}; expected readable: {expected_readable}"
+    )]
+    WakeWaitUnexpected {
+        expected_readable: bool,
+        outcome: WaitOutcome,
+        revents: i16,
+    },
     #[error("the wake was signalled but {outcome:?} was reported instead of a delivery")]
     WakeNotSignalled { outcome: WakeOutcome },
     #[error(
@@ -336,9 +361,12 @@ impl StartupError {
             }
             Self::Clock(_) => Capability::Clock,
             Self::Entropy(_) => Capability::Entropy,
-            Self::Wake(_) | Self::WakeNotSignalled { .. } | Self::WakeNotObserved { .. } => {
-                Capability::Wake
-            }
+            Self::Wake(_)
+            | Self::WakeWait(_)
+            | Self::WakePollFault { .. }
+            | Self::WakeWaitUnexpected { .. }
+            | Self::WakeNotSignalled { .. }
+            | Self::WakeNotObserved { .. } => Capability::Wake,
         }
     }
 
@@ -352,13 +380,21 @@ impl StartupError {
             Self::Clock(error) => clock_code(error),
             Self::Entropy(error) => entropy_code(error),
             Self::Wake(error) => wake_code(error),
+            // Preserve the existing closed marker vocabulary while retaining the precise typed error.
+            // Missing admission is not evidence of an absent syscall: only a decoded ENOSYS says absent.
+            Self::WakeWait(WaitError::Sys(franken_platform::abi::SysError::Absent)) => "absent",
+            Self::WakeWait(WaitError::Sys(_)) => "sys",
+            Self::WakePollFault { revents } if *revents & INVALID != 0 => "bad_descriptor",
+            Self::WakePollFault { revents } if *revents & HANGUP != 0 => "end_of_file",
+            Self::WakePollFault { .. } => "sys",
+            Self::WakeWait(_) | Self::WakeWaitUnexpected { .. } => "unexpected",
             Self::WakeNotSignalled { .. } => "not_signalled",
             Self::WakeNotObserved { .. } => "not_observed",
         }
     }
 
     /// Whether trying again later can succeed: only an entropy pool that is not seeded yet. The caller decides how long to wait;
-    /// startup itself never waits and never substitutes.
+    /// startup never waits for entropy and never substitutes.
     #[must_use]
     pub const fn is_retryable(&self) -> bool {
         matches!(self, Self::Entropy(EntropyError::NotSeeded))
@@ -382,13 +418,13 @@ impl StartupError {
 const ACTION_RETRY: &str = "Start again later: the kernel has not seeded its random pool yet. The speaker neither waits nor substitutes another entropy source, so the caller decides how long to wait.";
 const ACTION_WRONG_BUILD: &str = "Do not start. This build is not wired to the device kernel backend for this board. Use the device build for big-endian MIPS or PowerPC that matches the board; a simulated or mismatched backend is never accepted.";
 const ACTION_NOT_ADMITTED: &str = "Do not start. This kernel has no qualified profile for the platform layer. Run a kernel image with a matching admitted profile; compatibility stays unqualified until one is recorded.";
-const ACTION_WAKE_ABSENT: &str = "Do not start. The kernel does not provide the wakeup call the profile selects. Use a kernel that provides it; the speaker never tries another mechanism in its place.";
+const ACTION_WAKE_ABSENT: &str = "Do not start. A required call for the selected wake path is absent. Use a kernel that provides it; the speaker never tries another mechanism in its place.";
 const ACTION_WAKE_OPEN_FAILED: &str = "Do not start. The selected wake source could not be opened. Keep this output and report the failure to the platform owner; the speaker never substitutes another mechanism.";
 const ACTION_CLOCK_ABSENT: &str = "Do not start. The kernel does not provide the monotonic clock call. Use a kernel that provides it; the speaker never falls back to wall time.";
 const ACTION_ENTROPY_ABSENT: &str = "Do not start. The kernel does not provide secure entropy through the selected provider. Use a kernel that does; the speaker never falls back to a weaker source.";
 const ACTION_ENTROPY_UNQUALIFIED: &str = "Do not start. The profile does not qualify the selected entropy provider on this kernel. A provider needs its own recorded evidence; the speaker never switches to another one.";
-/// Every other refusal means the platform answered something it should not: nothing a person can safely change, so stop and report.
-const ACTION_REPORT: &str = "Do not start and do not work around it. The platform gave an answer it should not give. Keep this output and give it to the platform owner.";
+/// Other refusals include unqualified operations, ordinary OS errors, and invalid results. Stop and report without inventing a repair.
+const ACTION_REPORT: &str = "Do not start and do not work around it. A required platform operation is unqualified, could not complete, or returned an invalid result. Keep this output and give it to the platform owner.";
 
 /// Whether `code` is a member of [`REASON_CODES`] for `capability`.
 fn is_reason_code(capability: Capability, code: &str) -> bool {
@@ -672,11 +708,51 @@ fn probe_entropy<O: KernelOps>(layer: &mut PlatformLayer<O>) -> Result<(), Start
     layer.fill_random(&mut bytes).map_err(StartupError::Entropy)
 }
 
-fn probe_wake<O: KernelOps>(layer: &mut PlatformLayer<O>) -> Result<(), StartupError> {
+/// One call for this stage of the prototype capability probe, not a retrying production startup.
+/// In particular, EINTR propagates unchanged and startup refuses; no deadline is recomputed here.
+fn probe_wake_wait<O: KernelOps + WaitOps>(
+    layer: &mut PlatformLayer<O>,
+    expected_readable: bool,
+) -> Result<(), StartupError> {
+    let mut slots = [PollFd {
+        fd: layer.wake_fd(),
+        events: READABLE,
+        revents: 0,
+    }];
+    let milliseconds = if expected_readable {
+        WAKE_READY_TIMEOUT_MS
+    } else {
+        WAKE_EMPTY_TIMEOUT_MS
+    };
+    let timeout = PollTimeout::new(milliseconds).map_err(StartupError::WakeWait)?;
+    let outcome = layer
+        .wait_once(&mut slots, timeout)
+        .map_err(StartupError::WakeWait)?;
+    let revents = slots[0].revents;
+    if revents & (ERROR | HANGUP | INVALID) != 0 {
+        return Err(StartupError::WakePollFault { revents });
+    }
+    let correct = if expected_readable {
+        outcome == (WaitOutcome::Ready { ready: 1 }) && revents == READABLE
+    } else {
+        outcome == WaitOutcome::TimedOut && revents == 0
+    };
+    if !correct {
+        return Err(StartupError::WakeWaitUnexpected {
+            expected_readable,
+            outcome,
+            revents,
+        });
+    }
+    Ok(())
+}
+
+fn probe_wake<O: KernelOps + WaitOps>(layer: &mut PlatformLayer<O>) -> Result<(), StartupError> {
     match layer.signal_wake().map_err(StartupError::Wake)? {
         WakeOutcome::Signalled => {}
         outcome => return Err(StartupError::WakeNotSignalled { outcome }),
     }
+    probe_wake_wait(layer, true)?;
     let drained = layer.drain_wake().map_err(StartupError::Wake)?;
     if drained.wakes != 1 || drained.more_pending {
         return Err(StartupError::WakeNotObserved {
@@ -691,6 +767,7 @@ fn probe_wake<O: KernelOps>(layer: &mut PlatformLayer<O>) -> Result<(), StartupE
             more_pending: again.more_pending,
         });
     }
+    probe_wake_wait(layer, false)?;
     Ok(())
 }
 
@@ -712,7 +789,7 @@ fn settle(result: Result<(), StartupError>, first: &mut Option<StartupError>) ->
 ///
 /// # Errors
 /// A [`StartupError`], whose [`StartupError::code`] is the `reason=` of the refusing line.
-pub fn bring_up<O: KernelOps>(
+pub fn bring_up<O: KernelOps + WaitOps>(
     ops: O,
     running_release: Option<&str>,
 ) -> (Result<PlatformLayer<O>, StartupError>, StartupReport) {
@@ -729,7 +806,7 @@ pub fn bring_up<O: KernelOps>(
 ///
 /// # Errors
 /// A [`StartupError`], whose [`StartupError::code`] is the `reason=` of the refusing line.
-pub fn bring_up_with<O: KernelOps>(
+pub fn bring_up_with<O: KernelOps + WaitOps>(
     ops: O,
     running_release: Option<&str>,
     selection: EntropySelection,
@@ -879,6 +956,9 @@ mod tests {
         write: Cell<u32>,
         read: Cell<u32>,
         close: Cell<u32>,
+        poll: Cell<u32>,
+        poll_args: RefCell<Vec<(i32, i16, u32)>>,
+        poll_pending: RefCell<Vec<u64>>,
         random_flags: RefCell<Vec<u32>>,
         random_lens: RefCell<Vec<usize>>,
     }
@@ -893,6 +973,7 @@ mod tests {
                 + self.write.get()
                 + self.read.get()
                 + self.close.get()
+                + self.poll.get()
         }
     }
 
@@ -920,6 +1001,8 @@ mod tests {
         legacy_open: isize,
         /// The scripted replies of reads on the legacy descriptor, one per call; an empty script answers `-EAGAIN`, an empty pool.
         legacy_reads: VecDeque<(isize, Vec<u8>)>,
+        /// Raw poll replies; otherwise readiness follows the double's pending wake count.
+        poll_replies: VecDeque<(isize, i16)>,
         calls: Rc<Calls>,
     }
 
@@ -942,6 +1025,7 @@ mod tests {
                 pending: 0,
                 legacy_open: LEGACY_FD,
                 legacy_reads: VecDeque::new(),
+                poll_replies: VecDeque::new(),
                 calls: Rc::clone(&calls),
             };
             (fake, calls)
@@ -1042,6 +1126,11 @@ mod tests {
             if self.pending == 0 {
                 return -11;
             }
+            if fd == 8 {
+                buf[0] = 1;
+                self.pending -= 1;
+                return 1;
+            }
             buf[..8].copy_from_slice(&self.pending.to_ne_bytes());
             self.pending = 0;
             8
@@ -1050,6 +1139,507 @@ mod tests {
         fn close(&mut self, _fd: i32) -> isize {
             self.calls.close.set(self.calls.close.get() + 1);
             self.close_error.unwrap_or(0)
+        }
+    }
+
+    impl WaitOps for Fake {
+        fn poll(&mut self, fds: &mut [PollFd], timeout: PollTimeout) -> isize {
+            self.calls.poll.set(self.calls.poll.get() + 1);
+            assert_eq!(
+                fds.len(),
+                1,
+                "startup polls only its borrowed wake descriptor"
+            );
+            assert_eq!(fds[0].revents, 0, "the boundary must clear stale output");
+            self.calls
+                .poll_args
+                .borrow_mut()
+                .push((fds[0].fd, fds[0].events, timeout.as_millis()));
+            self.calls.poll_pending.borrow_mut().push(self.pending);
+            let (raw, revents) = self.poll_replies.pop_front().unwrap_or({
+                if self.pending == 0 {
+                    (0, 0)
+                } else {
+                    (1, READABLE)
+                }
+            });
+            fds[0].revents = revents;
+            raw
+        }
+    }
+
+    mod finite_wake_wait {
+        use super::*;
+        use franken_platform::wait::{PRIORITY, WRITABLE};
+
+        const BOTH: [Abi; 2] = [Abi::PowerPc32, Abi::Mips32];
+
+        fn release(abi: Abi) -> &'static str {
+            match abi {
+                Abi::PowerPc32 => PPC_RELEASE,
+                Abi::Mips32 => MIPS_RELEASE,
+            }
+        }
+
+        fn healthy(abi: Abi) {
+            let (fake, calls) = Fake::kernel(abi);
+            let (result, report) = bring_up(fake, Some(release(abi)));
+            assert!(report.started(), "{abi:?}: permitted counterpart");
+            let layer = result.expect("a readable wake followed by an empty timeout is permitted");
+            assert_eq!(
+                *calls.poll_args.borrow(),
+                vec![(7, READABLE, 100), (7, READABLE, 1)]
+            );
+            assert_eq!(*calls.poll_pending.borrow(), vec![1, 0]);
+            assert_eq!(calls.poll.get(), 2);
+            assert_eq!((calls.write.get(), calls.read.get()), (1, 2));
+            assert_eq!(
+                calls.close.get(),
+                0,
+                "poll borrows and never closes the descriptor"
+            );
+            assert_eq!(layer.wake_fd(), 7);
+            layer
+                .close()
+                .expect("release the one owned wake descriptor");
+            assert_eq!(calls.close.get(), 1);
+        }
+
+        fn refused(
+            abi: Abi,
+            replies: &[(isize, i16)],
+            expected: StartupError,
+            polls: u32,
+            reads: u32,
+        ) {
+            let (mut fake, calls) = Fake::kernel(abi);
+            fake.poll_replies = replies.iter().copied().collect();
+            let (result, report) = bring_up(fake, Some(release(abi)));
+            assert_eq!(result.err(), Some(expected.clone()), "{abi:?}");
+            assert_eq!(report.wake, Outcome::Refused(expected.code()));
+            assert_eq!(
+                report.first_refusal(),
+                Some((Capability::Wake, expected.code()))
+            );
+            assert_eq!(
+                (report.kernel, report.clock, report.entropy),
+                (Outcome::Pass, Outcome::Pass, Outcome::Pass)
+            );
+            assert_eq!(report.exit_status(), EXIT_REFUSED);
+            assert_eq!(report.markers().lines().count(), 6);
+            assert!(report.markers().ends_with(&format!(
+                "FFW_PLATFORM:END started=0 refused=wake:{}\n",
+                expected.code()
+            )));
+            assert_eq!(report.next_action(), Some(expected.safe_next_action()));
+            assert_eq!(
+                calls.poll.get(),
+                polls,
+                "{abi:?}: a refused wait is never retried"
+            );
+            assert_eq!(calls.read.get(), reads);
+            assert_eq!(calls.write.get(), 1);
+            assert_eq!(
+                calls.clock.get(),
+                2,
+                "the wait does not substitute another clock"
+            );
+            assert_eq!(
+                (calls.eventfd.get(), calls.pipe.get()),
+                (1, 0),
+                "no alternate wake mechanism"
+            );
+            assert_eq!(
+                calls.close.get(),
+                1,
+                "the refused start drops its owned layer"
+            );
+        }
+
+        #[test]
+        fn startup_waits_for_the_signalled_wake_then_times_out_after_both_original_drains() {
+            for abi in BOTH {
+                healthy(abi);
+            }
+            assert_eq!(WAKE_READY_TIMEOUT_MS, 100);
+            assert_eq!(WAKE_EMPTY_TIMEOUT_MS, 1);
+        }
+
+        #[test]
+        fn either_interrupted_startup_wait_returns_once_and_closes_the_layer() {
+            for abi in BOTH {
+                healthy(abi);
+                refused(
+                    abi,
+                    &[(-4, READABLE)],
+                    StartupError::WakeWait(WaitError::Sys(SysError::Interrupted)),
+                    1,
+                    0,
+                );
+                refused(
+                    abi,
+                    &[(1, READABLE), (-4, READABLE)],
+                    StartupError::WakeWait(WaitError::Sys(SysError::Interrupted)),
+                    2,
+                    2,
+                );
+            }
+        }
+
+        #[test]
+        fn startup_poll_preserves_each_abis_absence_and_other_syscall_errors_without_retry() {
+            for abi in BOTH {
+                healthy(abi);
+                for (raw, error) in [
+                    (-(abi.enosys() as isize), SysError::Absent),
+                    (-11, SysError::WouldBlock),
+                    (-22, SysError::Invalid),
+                    (-9, SysError::Errno(9)),
+                    (-4096, SysError::Malformed(-4096)),
+                ] {
+                    refused(
+                        abi,
+                        &[(raw, READABLE)],
+                        StartupError::WakeWait(WaitError::Sys(error)),
+                        1,
+                        0,
+                    );
+                }
+                let other = match abi {
+                    Abi::PowerPc32 => 89,
+                    Abi::Mips32 => 38,
+                };
+                refused(
+                    abi,
+                    &[(-(other as isize), 0)],
+                    StartupError::WakeWait(WaitError::Sys(SysError::Errno(other))),
+                    1,
+                    0,
+                );
+            }
+        }
+
+        #[test]
+        fn a_signal_without_poll_readiness_is_refused_before_the_drain() {
+            for abi in BOTH {
+                healthy(abi);
+                let (mut fake, calls) = Fake::kernel(abi);
+                fake.swallow_wake = true;
+                let (result, report) = bring_up(fake, Some(release(abi)));
+                assert_eq!(
+                    result.err(),
+                    Some(StartupError::WakeWaitUnexpected {
+                        expected_readable: true,
+                        outcome: WaitOutcome::TimedOut,
+                        revents: 0,
+                    })
+                );
+                assert_eq!(report.wake, Outcome::Refused("unexpected"));
+                assert_eq!(
+                    (calls.poll.get(), calls.read.get(), calls.close.get()),
+                    (1, 0, 1)
+                );
+            }
+        }
+
+        #[test]
+        fn reported_readiness_after_the_empty_drain_is_refused() {
+            for abi in BOTH {
+                healthy(abi);
+                refused(
+                    abi,
+                    &[(1, READABLE), (1, READABLE)],
+                    StartupError::WakeWaitUnexpected {
+                        expected_readable: false,
+                        outcome: WaitOutcome::Ready { ready: 1 },
+                        revents: READABLE,
+                    },
+                    2,
+                    2,
+                );
+            }
+        }
+
+        #[test]
+        fn either_startup_wait_rejects_every_fault_bit_even_when_readability_is_present() {
+            for abi in BOTH {
+                healthy(abi);
+                // Independent expected codes pin fault precedence, including every combination.
+                for (revents, code) in [
+                    (ERROR, "sys"),
+                    (HANGUP, "end_of_file"),
+                    (INVALID, "bad_descriptor"),
+                    (ERROR | HANGUP, "end_of_file"),
+                    (ERROR | INVALID, "bad_descriptor"),
+                    (HANGUP | INVALID, "bad_descriptor"),
+                    (ERROR | HANGUP | INVALID, "bad_descriptor"),
+                    (READABLE | ERROR, "sys"),
+                    (READABLE | HANGUP, "end_of_file"),
+                    (READABLE | INVALID, "bad_descriptor"),
+                    (READABLE | ERROR | HANGUP, "end_of_file"),
+                    (READABLE | ERROR | INVALID, "bad_descriptor"),
+                    (READABLE | HANGUP | INVALID, "bad_descriptor"),
+                    (READABLE | ERROR | HANGUP | INVALID, "bad_descriptor"),
+                ] {
+                    assert_eq!(StartupError::WakePollFault { revents }.code(), code);
+                    refused(
+                        abi,
+                        &[(1, revents)],
+                        StartupError::WakePollFault { revents },
+                        1,
+                        0,
+                    );
+                    refused(
+                        abi,
+                        &[(1, READABLE), (1, revents)],
+                        StartupError::WakePollFault { revents },
+                        2,
+                        2,
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn either_startup_wait_rejects_wrong_counts_unknown_masks_and_unrequested_bits() {
+            for abi in BOTH {
+                healthy(abi);
+                for (raw, revents, error) in [
+                    (
+                        2,
+                        READABLE,
+                        WaitError::CountOutOfRange {
+                            returned: 2,
+                            slots: 1,
+                        },
+                    ),
+                    (
+                        0,
+                        READABLE,
+                        WaitError::CountMismatch {
+                            returned: 0,
+                            observed: 1,
+                        },
+                    ),
+                    (
+                        1,
+                        0,
+                        WaitError::CountMismatch {
+                            returned: 1,
+                            observed: 0,
+                        },
+                    ),
+                    (
+                        1,
+                        64,
+                        WaitError::UnknownReturnedEvents {
+                            index: 0,
+                            events: 64,
+                        },
+                    ),
+                    (
+                        1,
+                        WRITABLE,
+                        WaitError::UnrequestedEvents {
+                            index: 0,
+                            events: WRITABLE,
+                            requested: READABLE,
+                        },
+                    ),
+                    (
+                        1,
+                        PRIORITY,
+                        WaitError::UnrequestedEvents {
+                            index: 0,
+                            events: PRIORITY,
+                            requested: READABLE,
+                        },
+                    ),
+                ] {
+                    refused(abi, &[(raw, revents)], StartupError::WakeWait(error), 1, 0);
+                    refused(
+                        abi,
+                        &[(1, READABLE), (raw, revents)],
+                        StartupError::WakeWait(error),
+                        2,
+                        2,
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn an_epoll_only_admitted_layer_cannot_substitute_poll_for_the_startup_wake_check() {
+            for abi in BOTH {
+                healthy(abi);
+                for observed in [
+                    CapabilityStatus::AbsentFallbackAdmitted,
+                    CapabilityStatus::MissingRequired,
+                    CapabilityStatus::UnqualifiedPendingStockGuest,
+                ] {
+                    let mut matrix = guest_evidence::for_abi(abi).matrix();
+                    matrix.poll_syscall = observed;
+                    matrix.epoll_syscall = CapabilityStatus::Supported;
+                    let (fake, calls) = Fake::kernel(abi);
+                    let mut layer = admit_test_layer(&matrix, fake)
+                        .expect("epoll alone admits the layer, not this poll route");
+                    assert_eq!(
+                        probe_wake(&mut layer),
+                        Err(StartupError::WakeWait(WaitError::NotAdmitted { observed }))
+                    );
+                    assert_eq!(
+                        (calls.write.get(), calls.poll.get(), calls.read.get()),
+                        (1, 0, 0)
+                    );
+                    layer
+                        .close()
+                        .expect("release the refused probe's owned wake source");
+                    assert_eq!(calls.close.get(), 1);
+                }
+            }
+        }
+
+        #[test]
+        fn a_failed_or_backlogged_signal_never_enters_the_wait_or_drain() {
+            for abi in BOTH {
+                healthy(abi);
+                for (raw, expected) in [
+                    (
+                        -9,
+                        StartupError::Wake(WakeError::Sys {
+                            call: WakeCall::Write,
+                            error: SysError::Errno(9),
+                        }),
+                    ),
+                    (
+                        -11,
+                        StartupError::WakeNotSignalled {
+                            outcome: WakeOutcome::Backlogged,
+                        },
+                    ),
+                ] {
+                    let (mut fake, calls) = Fake::kernel(abi);
+                    fake.wake_write_error = Some(raw);
+                    let (result, report) = bring_up(fake, Some(release(abi)));
+                    assert_eq!(result.err(), Some(expected));
+                    assert_eq!(report.exit_status(), EXIT_REFUSED);
+                    assert_eq!(
+                        (calls.poll.get(), calls.read.get(), calls.close.get()),
+                        (0, 0, 1)
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn earlier_clock_or_entropy_failures_keep_their_priority_and_still_record_wait_failure() {
+            for abi in BOTH {
+                healthy(abi);
+                for clock_failure in [true, false] {
+                    let (mut fake, calls) = Fake::kernel(abi);
+                    let first = if clock_failure {
+                        fake.clock_error = Some(-(abi.enosys() as isize));
+                        StartupError::Clock(ClockError::Absent)
+                    } else {
+                        fake.random = Random::Errno(-11);
+                        StartupError::Entropy(EntropyError::NotSeeded)
+                    };
+                    fake.poll_replies.push_back((-4, READABLE));
+                    let (result, report) = bring_up(fake, Some(release(abi)));
+                    assert_eq!(result.err(), Some(first.clone()));
+                    assert_eq!(
+                        report.first_refusal(),
+                        Some((first.capability(), first.code()))
+                    );
+                    assert_eq!(report.wake, Outcome::Refused("sys"));
+                    assert_eq!(
+                        (calls.poll.get(), calls.read.get(), calls.close.get()),
+                        (1, 0, 1)
+                    );
+                    assert_eq!(calls.random.get(), 1);
+                }
+            }
+        }
+
+        #[test]
+        fn wait_failure_codes_keep_the_existing_marker_set_and_are_never_retry_advice() {
+            for (error, code, action) in [
+                (
+                    StartupError::WakeWait(WaitError::Sys(SysError::Absent)),
+                    "absent",
+                    ACTION_WAKE_ABSENT,
+                ),
+                (
+                    StartupError::WakeWait(WaitError::Sys(SysError::Interrupted)),
+                    "sys",
+                    ACTION_REPORT,
+                ),
+                (
+                    StartupError::WakeWait(WaitError::NotAdmitted {
+                        observed: CapabilityStatus::UnqualifiedPendingStockGuest,
+                    }),
+                    "unexpected",
+                    ACTION_REPORT,
+                ),
+                (
+                    StartupError::WakePollFault { revents: ERROR },
+                    "sys",
+                    ACTION_REPORT,
+                ),
+                (
+                    StartupError::WakePollFault { revents: HANGUP },
+                    "end_of_file",
+                    ACTION_REPORT,
+                ),
+                (
+                    StartupError::WakePollFault { revents: INVALID },
+                    "bad_descriptor",
+                    ACTION_REPORT,
+                ),
+                (
+                    StartupError::WakeWaitUnexpected {
+                        expected_readable: true,
+                        outcome: WaitOutcome::TimedOut,
+                        revents: 0,
+                    },
+                    "unexpected",
+                    ACTION_REPORT,
+                ),
+            ] {
+                assert_eq!((error.capability(), error.code()), (Capability::Wake, code));
+                assert!(is_reason_code(error.capability(), error.code()));
+                assert!(!error.is_retryable());
+                assert!(error.safe_next_action().starts_with("Do not start"));
+                assert_eq!(error.safe_next_action(), action);
+            }
+            assert!(
+                ACTION_WAKE_ABSENT
+                    .contains("A required call for the selected wake path is absent.")
+            );
+            assert!(ACTION_REPORT.contains("A required platform operation is unqualified, could not complete, or returned an invalid result."));
+            assert!(!ACTION_REPORT.contains("should not give"));
+        }
+
+        #[test]
+        fn the_same_wait_consumer_borrows_and_releases_both_ends_of_an_admitted_self_pipe() {
+            for abi in BOTH {
+                healthy(abi);
+                let mut matrix = guest_evidence::for_abi(abi).matrix();
+                matrix.eventfd_syscall = CapabilityStatus::AbsentFallbackAdmitted;
+                let (fake, calls) = Fake::kernel(abi);
+                let mut layer = admit_test_layer(&matrix, fake)
+                    .expect("the profile admits its nonblocking pipe fallback");
+                assert_eq!(probe_wake(&mut layer), Ok(()));
+                assert_eq!(
+                    *calls.poll_args.borrow(),
+                    vec![(8, READABLE, 100), (8, READABLE, 1)]
+                );
+                assert_eq!(*calls.poll_pending.borrow(), vec![1, 0]);
+                assert_eq!(calls.poll.get(), 2);
+                assert_eq!(calls.close.get(), 0);
+                layer.close().expect("close both owned pipe ends");
+                assert_eq!(calls.close.get(), 2);
+            }
         }
     }
 
@@ -1333,7 +1923,7 @@ mod tests {
                 ],
                 "{abi:?}"
             );
-            // Two clock readings, one nonblocking getrandom, one eventfd, one signal, two drains; no other call.
+            // The original calls are retained, plus exactly two polls: readiness before drain and timeout after empty drain.
             assert_eq!(calls.clock.get(), 2);
             assert_eq!(calls.random.get(), 1);
             assert_eq!(*calls.random_flags.borrow(), vec![GRND_NONBLOCK]);
@@ -1348,6 +1938,7 @@ mod tests {
             );
             assert_eq!((calls.eventfd.get(), calls.pipe.get()), (1, 0));
             assert_eq!((calls.write.get(), calls.read.get()), (1, 2));
+            assert_eq!(calls.poll.get(), 2);
         }
     }
 
@@ -1595,6 +2186,11 @@ mod tests {
             StartupError::Entropy(EntropyError::Degenerate),
             StartupError::Clock(ClockError::Absent),
             StartupError::Wake(WakeError::ZeroCounter),
+            StartupError::WakeWait(WaitError::Sys(SysError::Interrupted)),
+            StartupError::WakeWait(WaitError::NotAdmitted {
+                observed: CapabilityStatus::UnqualifiedPendingStockGuest,
+            }),
+            StartupError::WakePollFault { revents: INVALID },
             StartupError::BackendNamesNoAbi,
             StartupError::Admission(LayerError::Wake(WakeError::ZeroCounter)),
         ] {
@@ -1856,6 +2452,8 @@ mod tests {
         // Signalled, but a drain finds nothing: the wake did not arrive.
         let (mut fake, _) = Fake::kernel(Abi::PowerPc32);
         fake.swallow_wake = true;
+        // Preserve this original drain-negative: poll reported readable, then the planted drain loses the wake.
+        fake.poll_replies.push_back((1, READABLE));
         let (result, report) = bring_up(fake, Some(PPC_RELEASE));
         assert_eq!(
             result.err(),
@@ -2084,6 +2682,17 @@ mod tests {
             }),
             StartupError::Wake(WakeError::ZeroCounter),
             StartupError::Wake(WakeError::EndOfFile),
+            StartupError::WakeWait(WaitError::Sys(SysError::Absent)),
+            StartupError::WakeWait(WaitError::Sys(SysError::Interrupted)),
+            StartupError::WakeWait(WaitError::NotAdmitted {
+                observed: CapabilityStatus::MissingRequired,
+            }),
+            StartupError::WakePollFault { revents: ERROR },
+            StartupError::WakeWaitUnexpected {
+                expected_readable: true,
+                outcome: WaitOutcome::TimedOut,
+                revents: 0,
+            },
             StartupError::WakeNotSignalled {
                 outcome: WakeOutcome::Backlogged,
             },
@@ -2174,6 +2783,7 @@ mod tests {
             "wake_not_observed_powerpc" => {
                 let (mut fake, _) = Fake::kernel(Abi::PowerPc32);
                 fake.swallow_wake = true;
+                fake.poll_replies.push_back((1, READABLE));
                 finish_check(bring_up(fake, Some(PPC_RELEASE)))
             }
             other => panic!("no scenario named {other}"),
