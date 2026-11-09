@@ -3331,8 +3331,10 @@ mod tests {
         let unsupported = caller_driven_verdict(Some(false));
         assert_eq!(word(&unsupported), "unsupported");
         assert_eq!(unsupported.status(), "unsupported");
-        assert!(unsupported.detail().contains("legacy_profile.rs:406"));
-        assert!(unsupported.detail().contains("builder.rs:3911"));
+        assert_eq!(
+            unsupported.detail(),
+            "reason=caller_driven_mode_is_the_separate_caller_driven_profile reason_source=profile_split evidence=LegacyProfile::caller_driven observed_tasks_on_caller_thread=false"
+        );
         assert_eq!(word(&caller_driven_verdict(Some(true))), "fail");
         assert_eq!(word(&caller_driven_verdict(None)), "unknown");
         for observed in [Some(false), Some(true), None] {
