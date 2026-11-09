@@ -1,7 +1,7 @@
 # Native Tailscale on the legacy speakers: feasibility (T01, `ffw-32a`)
 
-Date of the study: 2026-11-06, with the compile-only T01-X01 records of 2026-11-07. Contract and candidate table: `docs/contracts/t01.md`. Frozen profile: `docs/tailscale/profiles.json` (`t01-profile-2026-11-07.1`, which replaced `t01-profile-2026-11-06.1`; wording only, see its `frozen_note`). Evidence ledger:
-`tests/tailscale-fixtures/evidence/ledger.json` (ids `T01-E01` to `T01-E47`, cited below). Offline; the only builds are root's compile-only type-checks (T01-X01), and nothing was linked, run on a target, enrolled or measured.
+Date of the study: 2026-11-06, with the compile-only T01-X01 records of 2026-11-07 and the T01-X02 guest runs of 2026-11-08. Contract and candidate table: `docs/contracts/t01.md`. Frozen profile: `docs/tailscale/profiles.json` (`t01-profile-2026-11-09.1`, which replaced `t01-profile-2026-11-07.1` and, before it, `t01-profile-2026-11-06.1`; see its `frozen_note` and the decision record in `toolchain/results/tailscale/RUN.md`). Evidence ledger:
+`tests/tailscale-fixtures/evidence/ledger.json` (ids `T01-E01` to `T01-E47`, cited below). Offline; the builds are root's compile-only type-checks (T01-X01) and the operator's release builds of the X02 probe, and no tailscale-rs client was linked, run on a target, enrolled or measured: the X02 probe (the seven core crates and a known-answer phase) ran once in one harness guest per architecture, and it is not a client.
 
 ## The question
 
@@ -53,9 +53,9 @@ Three findings are specific to our targets, each from a pinned source, none from
 No candidate is supported on any target. Of the 240 derived matrix cells (5 candidates, 4 targets, 12 behaviors), none is `supported`: the official client is `incompatible` on both stock targets;
 tailscale-rs is `incompatible` on the PowerPC stock kernel (conditional on the reported release), `no_evidence` where it is implemented but unbuilt, and `implementable_upstream_work` for NAT traversal,
 key rotation, MagicDNS and the partly implemented peer-discovery and relay behaviors. Strict-Rust native Tailscale on these targets is therefore **not shown feasible and not shown impossible**: it is
-real, bounded engineering with named gaps, and its two cheapest decisive experiments are central and not yet run.
+real, bounded engineering with named gaps. Of its two cheapest decisive experiments, the compile-only build (T01-X01) and a protocol-core probe in a harness guest (T01-X02) are done and do not answer the question; the one still open is a linked tailscale-rs client run in a harness guest.
 
-The native requirement stays required. **This study is INCOMPLETE and pending**: the legacy-ISA compile attempts (T01-X01) built as type-checks only (nothing was linked or run) and the on-target memory/CPU figures (T01-X02) are blocked, so no closure of T01 is claimed, and they are not moved to another bead. It does not close T02, T04 or Q06.
+The native requirement stays required. **This study is INCOMPLETE and pending**: the legacy-ISA compile attempts (T01-X01) built as type-checks only, and the X02 probe ran once in one harness guest per architecture (both committed receipts pass the judge; the figures are indicative only, are of the probe and not a client, and are not a stock kernel or a board), so no client was linked, run, enrolled or measured and the five tailnet scenario rows of the profile (enrollment, maps at the peer cap, reconnect, relay traffic, key rotation) are pending with their blockers. No closure of T01 is claimed, and the open work is not moved to another bead. It does not close T02, T04 or Q06.
 
 ## What would change the answer, in order of cost
 
@@ -63,7 +63,7 @@ The native requirement stays required. **This study is INCOMPLETE and pending**:
 2. **A decision on the reactor**: tokio-free I/O for the control, relay and netstack halves over the P02 platform layer, or a kernel/runtime change. This is T04's question.
 3. **Upstream or ours**: NAT traversal (disco), key rotation, MagicDNS and private DERP are upstream's stated roadmap or absent; contributing them or owning them is a staffing decision.
 4. **A budget**: no numeric RAM cap exists for the tailnet component (absent budget is pending, not pass); T04/Q02 allocate it. Only then can a measurement be a verdict.
-5. **A guest** that matches a stock kernel (none exists) or, as an indicative stand-in, the existing harness guests for a CPU-only figure.
+5. **A guest** that matches a stock kernel (none exists). **Done for the probe, not for a client:** the existing harness guests (Debian 4.19 MIPS Malta, Debian 4.9 PowerPC g3beige) ran the X02 probe once each, as an indicative stand-in (contract section 9, "What ran"); a linked client run in them, for any client figure, is still open.
 
 ## Not read in this study
 

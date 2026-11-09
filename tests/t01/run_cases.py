@@ -472,7 +472,7 @@ DESCRIPTIONS = {
     "T01-C03-matrix": "the derived matrix is complete, has no supported cell, and only tailscale-rs is in the strict-Rust native class",
     "T01-C04-budget-rules": "missing data is pending, never a pass; units, receipts and the 4 MiB reserve floor are enforced; no cap is allocated",
     "T01-C05-fixtures": "synthetic identity, network-map, relay and key-expiry fixtures equal the model on hand-written expectations",
-    "T01-C06-native-requirement": "the native requirement stays required and unwaived; the study stays incomplete while X02 is blocked and nothing is linked or run, and closes no other task; gateways and the Go client never count as native",
+    "T01-C06-native-requirement": "the native requirement stays required and unwaived; the study stays incomplete while no client is linked, run and measured (the X02 probe is not a client), and closes no other task; gateways and the Go client never count as native",
     "T01-P01-tsrs-source": "the pinned tailscale-rs tree: digest, lock census, unsafe census, README claims (needs --sources)",
     "T01-P02-workspace-edges": "which tailscale-rs crates have an intra-workspace edge to a runtime, OS or TLS crate, and which third-party closures still reach one: NOT a portability claim (needs --sources)",
     "T01-P03-awslc-targets": "aws-lc-sys 0.45.0: its assembly target sets, the no-asm refusal in optimized builds, the BE 32-bit arch macros (needs --sources)",

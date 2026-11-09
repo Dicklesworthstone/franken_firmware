@@ -143,3 +143,37 @@ The final integrated judge passed all85 Python tests with warnings treated as er
 Independent supervisor review reproduced rejection of empty remote commands and cross-target promotion with missing output filenames. Required target artifacts now have nonempty output witnesses under the selected target directory. A second independent review reproduced byte-for-byte equality between all eight public records and redactions of their original raw logs; no public record was unmatched or ambiguous. The logs remain unsigned and do not themselves establish runtime or resource behavior.
 
 Root also corrected three current-status statements that still said no BE build evidence existed: the native-requirement summary, the contract comparison table and its no-claim list. Earlier dated records above stay historical. The initial root source-dependent test used the build snapshot without the aws-lc-sys/mio sibling trees and failed; correcting that input, without changing tests, yielded85/85. A new native client guest measurement is still required for qualification.
+
+## Profile version t01-profile-2026-11-09.1 (2026-11-09)
+
+Decision record for `docs/tailscale/profiles.json` version `t01-profile-2026-11-09.1`, which replaces `t01-profile-2026-11-07.1` as the profile's own rule asks (a changed fact makes a new version and a
+decision record, never a silent edit). Cause: the two X02 guest receipts committed on 2026-11-08 (`measurements/x02-v3b-mips-20261108.json` and `measurements/x02-v3b-powerpc-20261108.json`, each judged,
+`T01-X02-target-resources` passes) made the profile's X02 statements untrue: its status line, `t01_status`, `closes_note`, the last sentence of `study_outcome` and the `rss_peak_bytes` and `cpu` blockers of the four
+tailscale-rs rows said X02 was blocked or that no harness-guest figure had been run, and `docs/tailscale/feasibility.md` said the same.
+
+Changed, and only within the proven scope (the X02 probe ran once in one harness guest per architecture; it links the seven core crates and a known-answer phase and is not a client): those five profile statements,
+and the study text (the dates and profile version in its header, the outcome paragraph, and item 5 of "What would change the answer"). Added: five scenario items, `scenario_enrollment`,
+`scenario_maps_at_peer_cap`, `scenario_reconnect`, `scenario_relay_traffic` and `scenario_key_rotation`, to every one of the eight `measurements` rows (the bead's tailnet resource table: "identity enrollment, maps at
+the declared peer cap, reconnect, relay traffic and key rotation while audio runs"), each `pending` with its exact blocker, or `not_applicable` for the Go client on the two PowerPC targets (no Go port,
+`T01-E01`). `check_profile` (`tests/t01/t01lib.py`) now refuses a row that lacks one of the five, and refuses `not_applicable` on **any** measurement item (the four earlier ones too) unless the candidate has no
+build for the target at all (`has_no_build_for_target`). That is derived from the profile's own facts, not from a list of rows: the candidate's language is Go, the target's Rust triple is powerpc, and its platform on
+that target is `incompatible` with `T01-E01` (Go 1.27.3 has no 32-bit linux/ppc port) among the evidence. It admits exactly two rows, the Go client on `ppc32be_stock` and `ppc32be_harness` (nine items each, eighteen
+in all, ten of them scenario items); a tailscale-rs row has a build path on every target, so a figure it lacks stays `pending` with its blocker and cannot be hidden as inapplicable.
+
+The blockers say what is missing and nothing more. No linked tailscale-rs client exists on any target (X01 is a type-check); a real tailnet is a provider and needs a separate authorized receipt (the bead's
+evidence rule); no audio path runs beside the component (Q04 and Q06 own that); no peer cap is declared for the tailnet component in any T01 artifact (`docs/SLIM_SPEAKER_PLAN.md`: every profile declares maximum peers;
+`tailnet_ram_cap_bytes` stays null, T04/Q02 allocate it); and tailscale-rs 0.6.1 has no automatic key rotation (`T01-E15` to `T01-E17`), so there is no flow to measure. Where a scenario needs a registered
+client, the blocker also names the reported `Device::new` hang (the library's registration path does not return against a refusing control address) **as a report from the T01-X03 study, not yet a committed
+receipt**; when that receipt is committed, this wording is the line to tighten.
+
+**Unchanged, and tested as unchanged:** every platform state (`ppc32be_stock` stays `incompatible` on the kernel's missing `epoll_create1`; the other three stay `no_evidence`), every behavior and cell, every evidence
+citation, the `build` and `binary_bytes` items, the Go client's `rss_peak_bytes` and `cpu` blockers (still true: no Go figure exists), every measurement state (all pending or not applicable: a probe reading is not a
+client figure, and no X02 figure was copied into the profile), the budgets (no cap allocated), and the native requirement (required, unwaived, unsatisfied, closes nothing, does not close T02, T04 or Q06).
+No negative result is recorded: BrightLion's ruling (Agent Mail 16942) allows a bounded `Device::new` timeout to be recorded as a negative study result only once every original study requirement is covered, and
+this version does not claim that.
+
+Paired tests (`tests/t01/test_closure_map.py`, both directions, each plant restored): the five items on every row and their states, a planted missing, `measured`-without-receipt, mis-stated or blocker-less item reported;
+the profile and the study carry none of eight stale X02 sentences while the receipts are committed, and a stale sentence put back is reported; the blockers name receipt files that exist; the decision record
+exists. The version pin in `test_the_committed_profile_holds` and `test_the_x01_statements_in_the_profile_and_the_study_match_the_recorded_scope_and_strengthen_nothing` (`tests/t01/test_t01.py`) moved to the
+new version, and the latter's two assertions that the status line says `nothing linked or run` and that `t01_status` says `nothing was linked or run` became `no client linked or run` and `no client was
+linked, run or enrolled`: the same facts, worded for a repository in which the probe has run. No other assertion in `test_t01.py` changed.

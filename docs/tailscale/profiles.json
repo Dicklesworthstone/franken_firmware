@@ -1,8 +1,8 @@
 {
  "schema": "ffw.t01.profile.v1",
- "profile_version": "t01-profile-2026-11-07.1",
- "status": "provisional feasibility profile, INCOMPLETE: the legacy-ISA compile attempts (X01) built as type-checks only, with nothing linked or run, and the on-target figures (X02) are blocked, so no T01 closure is claimed; native qualification stays pending (T04 admits a development candidate, Q06 qualifies externally)",
- "frozen_note": "Versioned before any execution; a failed threshold or a changed fact makes a new version and a decision record, never a silent edit. Version t01-profile-2026-11-07.1 replaces t01-profile-2026-11-06.1 after the first legacy-ISA build records (decision record: toolchain/results/tailscale/RUN.md): only wording changed: the status line, the per-cell build blockers and platform notes that said no build existed or that no receipt existed, the workspace-edge note, t01_status and closes_note; no state, evidence citation, cell or figure changed.",
+ "profile_version": "t01-profile-2026-11-09.1",
+ "status": "provisional feasibility profile, INCOMPLETE: the legacy-ISA compile attempts (X01) built as type-checks only, with no client linked or run; the X02 protocol-core probe (no client, no enrollment) ran once in one harness guest per architecture and both committed receipts pass the judge, indicative only; no on-target client figure exists and the five tailnet scenario rows are pending, so no T01 closure is claimed; native qualification stays pending (T04 admits a development candidate, Q06 qualifies externally)",
+ "frozen_note": "Versioned before any execution; a failed threshold or a changed fact makes a new version and a decision record, never a silent edit. Version t01-profile-2026-11-07.1 replaces t01-profile-2026-11-06.1 after the first legacy-ISA build records (decision record: toolchain/results/tailscale/RUN.md): only wording changed: the status line, the per-cell build blockers and platform notes that said no build existed or that no receipt existed, the workspace-edge note, t01_status and closes_note; no state, evidence citation, cell or figure changed. Version t01-profile-2026-11-09.1 replaces t01-profile-2026-11-07.1 after the two committed X02 guest receipts (decision record: toolchain/results/tailscale/RUN.md, section 'Profile version t01-profile-2026-11-09.1'): the status line, t01_status, closes_note, the last sentence of study_outcome and the tailscale-rs rss_peak_bytes and cpu blockers said X02 was blocked or that no harness-guest figure had been run, which is no longer the repository's state, so they are corrected within the proven scope (the probe ran; it is not a client); five tailnet scenario items (enrollment, maps at the peer cap, reconnect, relay traffic, key rotation) were added to every measurements row, each pending or not_applicable with its blocker; no existing state, evidence citation, cell or figure changed.",
  "targets": {
   "ppc32be_stock": {
    "isa": "PowerPC 32-bit big-endian (S5/ZB100 family; MPC8247 603e per the teardown, CPU identity still needs separate evidence)",
@@ -802,11 +802,36 @@
    },
    "rss_peak_bytes": {
     "state": "pending",
-    "blocker": "no matching full-system guest exists for the stock kernel (E03), so no on-target RSS or CPU is possible; a harness-guest figure would be indicative only and has not been run"
+    "blocker": "no matching full-system guest exists for the stock 2.6.14 kernel (E03), so no on-target RSS or CPU is possible; no tailscale-rs client has been linked or run on any target (T01-X01 is a type-check), and the X02 probe's readings are of its seven core crates plus a known-answer phase, not of a client, so they are not this candidate's footprint (contract section 9, 'What ran')"
    },
    "cpu": {
     "state": "pending",
-    "blocker": "no matching full-system guest exists for the stock kernel (E03), so no on-target RSS or CPU is possible; a harness-guest figure would be indicative only and has not been run"
+    "blocker": "no matching full-system guest exists for the stock 2.6.14 kernel (E03), so no on-target RSS or CPU is possible; no tailscale-rs client has been linked or run on any target (T01-X01 is a type-check), and the X02 probe's readings are of its seven core crates plus a known-answer phase, not of a client, so they are not this candidate's footprint (contract section 9, 'What ran')"
+   },
+   "scenario_enrollment": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it enrolls under its own identity and audio runs",
+    "blocker": "needs a linked client that completes control registration (E21): the library's registration path (`Device::new`) has no committed run, and T01-X03, in progress, has reported that it does not return against a refusing control address (a report, not yet a committed receipt); a real tailnet is a provider and needs a separate authorized receipt (the bead's evidence rule); no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that). On this target the reported 2.6.14 kernel also predates epoll_create1 (2.6.27), which the pinned mio calls (E34 to E36), and no matching full-system guest exists (E03)."
+   },
+   "scenario_maps_at_peer_cap": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it holds a network map at the declared peer cap and audio runs",
+    "blocker": "needs a registered client holding a map at the declared peer cap: the library's registration path (`Device::new`) has no committed run, and T01-X03, in progress, has reported that it does not return against a refusing control address (a report, not yet a committed receipt); and no peer cap is declared for the tailnet component in any T01 artifact (docs/SLIM_SPEAKER_PLAN.md: every profile declares maximum peers; T04/Q02 allocate the budget, so tailnet_ram_cap_bytes is null); the synthetic netmap fixture models policy and parsing, not a client's memory; no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that). On this target the reported 2.6.14 kernel also predates epoll_create1 (2.6.27), which the pinned mio calls (E34 to E36), and no matching full-system guest exists (E03)."
+   },
+   "scenario_reconnect": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it reconnects after a loss of the control or data path and audio runs",
+    "blocker": "needs a registered client and a controlled loss of the control or data path: the library's registration path (`Device::new`) has no committed run, and T01-X03, in progress, has reported that it does not return against a refusing control address (a report, not yet a committed receipt); no such client or fault harness exists; no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that). On this target the reported 2.6.14 kernel also predates epoll_create1 (2.6.27), which the pinned mio calls (E34 to E36), and no matching full-system guest exists (E03)."
+   },
+   "scenario_relay_traffic": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it carries relay traffic and audio runs",
+    "blocker": "needs a registered client with a relay path: the library's registration path (`Device::new`) has no committed run, and T01-X03, in progress, has reported that it does not return against a refusing control address (a report, not yet a committed receipt); public DERP (E14) is a provider and needs a separate authorized receipt, and no local relay stand-in exists in this repository; no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that). On this target the reported 2.6.14 kernel also predates epoll_create1 (2.6.27), which the pinned mio calls (E34 to E36), and no matching full-system guest exists (E03)."
+   },
+   "scenario_key_rotation": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while a node key is rotated and audio runs",
+    "blocker": "tailscale-rs 0.6.1 has no automatic key rotation (E15 to E17; only the wire types exist, E27), so the matrix cell is implementable_upstream_work and the pinned library has no flow to measure; a figure needs that work and a registered client (the library's registration path (`Device::new`) has no committed run, and T01-X03, in progress, has reported that it does not return against a refusing control address (a report, not yet a committed receipt)); no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that). On this target the reported 2.6.14 kernel also predates epoll_create1 (2.6.27), which the pinned mio calls (E34 to E36), and no matching full-system guest exists (E03)."
    }
   },
   "tailscale-rs-0.6.1/mips32r2be_stock": {
@@ -820,11 +845,36 @@
    },
    "rss_peak_bytes": {
     "state": "pending",
-    "blocker": "no matching full-system guest exists for the stock kernel (E03), so no on-target RSS or CPU is possible; a harness-guest figure would be indicative only and has not been run"
+    "blocker": "no matching full-system guest exists for the stock 2.6.35 kernel (E03), so no on-target RSS or CPU is possible; no tailscale-rs client has been linked or run on any target (T01-X01 is a type-check), and the X02 probe's readings are of its seven core crates plus a known-answer phase, not of a client, so they are not this candidate's footprint (contract section 9, 'What ran')"
    },
    "cpu": {
     "state": "pending",
-    "blocker": "no matching full-system guest exists for the stock kernel (E03), so no on-target RSS or CPU is possible; a harness-guest figure would be indicative only and has not been run"
+    "blocker": "no matching full-system guest exists for the stock 2.6.35 kernel (E03), so no on-target RSS or CPU is possible; no tailscale-rs client has been linked or run on any target (T01-X01 is a type-check), and the X02 probe's readings are of its seven core crates plus a known-answer phase, not of a client, so they are not this candidate's footprint (contract section 9, 'What ran')"
+   },
+   "scenario_enrollment": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it enrolls under its own identity and audio runs",
+    "blocker": "needs a linked client that completes control registration (E21): the library's registration path (`Device::new`) has no committed run, and T01-X03, in progress, has reported that it does not return against a refusing control address (a report, not yet a committed receipt); a real tailnet is a provider and needs a separate authorized receipt (the bead's evidence rule); no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that). On this target no matching full-system guest exists for the reported 2.6.35 kernel (E03)."
+   },
+   "scenario_maps_at_peer_cap": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it holds a network map at the declared peer cap and audio runs",
+    "blocker": "needs a registered client holding a map at the declared peer cap: the library's registration path (`Device::new`) has no committed run, and T01-X03, in progress, has reported that it does not return against a refusing control address (a report, not yet a committed receipt); and no peer cap is declared for the tailnet component in any T01 artifact (docs/SLIM_SPEAKER_PLAN.md: every profile declares maximum peers; T04/Q02 allocate the budget, so tailnet_ram_cap_bytes is null); the synthetic netmap fixture models policy and parsing, not a client's memory; no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that). On this target no matching full-system guest exists for the reported 2.6.35 kernel (E03)."
+   },
+   "scenario_reconnect": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it reconnects after a loss of the control or data path and audio runs",
+    "blocker": "needs a registered client and a controlled loss of the control or data path: the library's registration path (`Device::new`) has no committed run, and T01-X03, in progress, has reported that it does not return against a refusing control address (a report, not yet a committed receipt); no such client or fault harness exists; no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that). On this target no matching full-system guest exists for the reported 2.6.35 kernel (E03)."
+   },
+   "scenario_relay_traffic": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it carries relay traffic and audio runs",
+    "blocker": "needs a registered client with a relay path: the library's registration path (`Device::new`) has no committed run, and T01-X03, in progress, has reported that it does not return against a refusing control address (a report, not yet a committed receipt); public DERP (E14) is a provider and needs a separate authorized receipt, and no local relay stand-in exists in this repository; no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that). On this target no matching full-system guest exists for the reported 2.6.35 kernel (E03)."
+   },
+   "scenario_key_rotation": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while a node key is rotated and audio runs",
+    "blocker": "tailscale-rs 0.6.1 has no automatic key rotation (E15 to E17; only the wire types exist, E27), so the matrix cell is implementable_upstream_work and the pinned library has no flow to measure; a figure needs that work and a registered client (the library's registration path (`Device::new`) has no committed run, and T01-X03, in progress, has reported that it does not return against a refusing control address (a report, not yet a committed receipt)); no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that). On this target no matching full-system guest exists for the reported 2.6.35 kernel (E03)."
    }
   },
   "tailscale-rs-0.6.1/ppc32be_harness": {
@@ -838,11 +888,36 @@
    },
    "rss_peak_bytes": {
     "state": "pending",
-    "blocker": "no matching full-system guest exists for the stock kernel (E03), so no on-target RSS or CPU is possible; a harness-guest figure would be indicative only and has not been run"
+    "blocker": "the X02 probe ran once in this harness guest (toolchain/results/tailscale/measurements/x02-v3b-powerpc-20261108.json) but links the seven core crates, not the library or a client, so its readings are indicative of the probe only and not a footprint of this candidate; a client figure here would be indicative only and has not been run (no tailscale-rs client has been linked or run on any target)"
    },
    "cpu": {
     "state": "pending",
-    "blocker": "no matching full-system guest exists for the stock kernel (E03), so no on-target RSS or CPU is possible; a harness-guest figure would be indicative only and has not been run"
+    "blocker": "the X02 probe ran once in this harness guest (toolchain/results/tailscale/measurements/x02-v3b-powerpc-20261108.json) but links the seven core crates, not the library or a client, so its readings are indicative of the probe only and not a footprint of this candidate; a client figure here would be indicative only and has not been run (no tailscale-rs client has been linked or run on any target)"
+   },
+   "scenario_enrollment": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it enrolls under its own identity and audio runs",
+    "blocker": "needs a linked client that completes control registration (E21): the library's registration path (`Device::new`) has no committed run, and T01-X03, in progress, has reported that it does not return against a refusing control address (a report, not yet a committed receipt); a real tailnet is a provider and needs a separate authorized receipt (the bead's evidence rule); no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that). The harness guest exists (the X02 probe ran in it once) but the probe links the core crates, not the library or a client."
+   },
+   "scenario_maps_at_peer_cap": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it holds a network map at the declared peer cap and audio runs",
+    "blocker": "needs a registered client holding a map at the declared peer cap: the library's registration path (`Device::new`) has no committed run, and T01-X03, in progress, has reported that it does not return against a refusing control address (a report, not yet a committed receipt); and no peer cap is declared for the tailnet component in any T01 artifact (docs/SLIM_SPEAKER_PLAN.md: every profile declares maximum peers; T04/Q02 allocate the budget, so tailnet_ram_cap_bytes is null); the synthetic netmap fixture models policy and parsing, not a client's memory; no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that). The harness guest exists (the X02 probe ran in it once) but the probe links the core crates, not the library or a client."
+   },
+   "scenario_reconnect": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it reconnects after a loss of the control or data path and audio runs",
+    "blocker": "needs a registered client and a controlled loss of the control or data path: the library's registration path (`Device::new`) has no committed run, and T01-X03, in progress, has reported that it does not return against a refusing control address (a report, not yet a committed receipt); no such client or fault harness exists; no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that). The harness guest exists (the X02 probe ran in it once) but the probe links the core crates, not the library or a client."
+   },
+   "scenario_relay_traffic": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it carries relay traffic and audio runs",
+    "blocker": "needs a registered client with a relay path: the library's registration path (`Device::new`) has no committed run, and T01-X03, in progress, has reported that it does not return against a refusing control address (a report, not yet a committed receipt); public DERP (E14) is a provider and needs a separate authorized receipt, and no local relay stand-in exists in this repository; no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that). The harness guest exists (the X02 probe ran in it once) but the probe links the core crates, not the library or a client."
+   },
+   "scenario_key_rotation": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while a node key is rotated and audio runs",
+    "blocker": "tailscale-rs 0.6.1 has no automatic key rotation (E15 to E17; only the wire types exist, E27), so the matrix cell is implementable_upstream_work and the pinned library has no flow to measure; a figure needs that work and a registered client (the library's registration path (`Device::new`) has no committed run, and T01-X03, in progress, has reported that it does not return against a refusing control address (a report, not yet a committed receipt)); no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that). The harness guest exists (the X02 probe ran in it once) but the probe links the core crates, not the library or a client."
    }
   },
   "tailscale-rs-0.6.1/mips32be_harness": {
@@ -856,11 +931,36 @@
    },
    "rss_peak_bytes": {
     "state": "pending",
-    "blocker": "no matching full-system guest exists for the stock kernel (E03), so no on-target RSS or CPU is possible; a harness-guest figure would be indicative only and has not been run"
+    "blocker": "the X02 probe ran once in this harness guest (toolchain/results/tailscale/measurements/x02-v3b-mips-20261108.json) but links the seven core crates, not the library or a client, so its readings are indicative of the probe only and not a footprint of this candidate; a client figure here would be indicative only and has not been run (no tailscale-rs client has been linked or run on any target)"
    },
    "cpu": {
     "state": "pending",
-    "blocker": "no matching full-system guest exists for the stock kernel (E03), so no on-target RSS or CPU is possible; a harness-guest figure would be indicative only and has not been run"
+    "blocker": "the X02 probe ran once in this harness guest (toolchain/results/tailscale/measurements/x02-v3b-mips-20261108.json) but links the seven core crates, not the library or a client, so its readings are indicative of the probe only and not a footprint of this candidate; a client figure here would be indicative only and has not been run (no tailscale-rs client has been linked or run on any target)"
+   },
+   "scenario_enrollment": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it enrolls under its own identity and audio runs",
+    "blocker": "needs a linked client that completes control registration (E21): the library's registration path (`Device::new`) has no committed run, and T01-X03, in progress, has reported that it does not return against a refusing control address (a report, not yet a committed receipt); a real tailnet is a provider and needs a separate authorized receipt (the bead's evidence rule); no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that). The harness guest exists (the X02 probe ran in it once) but the probe links the core crates, not the library or a client."
+   },
+   "scenario_maps_at_peer_cap": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it holds a network map at the declared peer cap and audio runs",
+    "blocker": "needs a registered client holding a map at the declared peer cap: the library's registration path (`Device::new`) has no committed run, and T01-X03, in progress, has reported that it does not return against a refusing control address (a report, not yet a committed receipt); and no peer cap is declared for the tailnet component in any T01 artifact (docs/SLIM_SPEAKER_PLAN.md: every profile declares maximum peers; T04/Q02 allocate the budget, so tailnet_ram_cap_bytes is null); the synthetic netmap fixture models policy and parsing, not a client's memory; no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that). The harness guest exists (the X02 probe ran in it once) but the probe links the core crates, not the library or a client."
+   },
+   "scenario_reconnect": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it reconnects after a loss of the control or data path and audio runs",
+    "blocker": "needs a registered client and a controlled loss of the control or data path: the library's registration path (`Device::new`) has no committed run, and T01-X03, in progress, has reported that it does not return against a refusing control address (a report, not yet a committed receipt); no such client or fault harness exists; no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that). The harness guest exists (the X02 probe ran in it once) but the probe links the core crates, not the library or a client."
+   },
+   "scenario_relay_traffic": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it carries relay traffic and audio runs",
+    "blocker": "needs a registered client with a relay path: the library's registration path (`Device::new`) has no committed run, and T01-X03, in progress, has reported that it does not return against a refusing control address (a report, not yet a committed receipt); public DERP (E14) is a provider and needs a separate authorized receipt, and no local relay stand-in exists in this repository; no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that). The harness guest exists (the X02 probe ran in it once) but the probe links the core crates, not the library or a client."
+   },
+   "scenario_key_rotation": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while a node key is rotated and audio runs",
+    "blocker": "tailscale-rs 0.6.1 has no automatic key rotation (E15 to E17; only the wire types exist, E27), so the matrix cell is implementable_upstream_work and the pinned library has no flow to measure; a figure needs that work and a registered client (the library's registration path (`Device::new`) has no committed run, and T01-X03, in progress, has reported that it does not return against a refusing control address (a report, not yet a committed receipt)); no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that). The harness guest exists (the X02 probe ran in it once) but the probe links the core crates, not the library or a client."
    }
   },
   "tailscale-go-1.104.5/ppc32be_stock": {
@@ -878,6 +978,31 @@
    },
    "cpu": {
     "state": "not_applicable",
+    "blocker": "nothing to build or run: no Go port for 32-bit PowerPC (T01-E01)"
+   },
+   "scenario_enrollment": {
+    "state": "not_applicable",
+    "what": "peak RSS and CPU of the tailnet component while it enrolls under its own identity and audio runs",
+    "blocker": "nothing to build or run: no Go port for 32-bit PowerPC (T01-E01)"
+   },
+   "scenario_maps_at_peer_cap": {
+    "state": "not_applicable",
+    "what": "peak RSS and CPU of the tailnet component while it holds a network map at the declared peer cap and audio runs",
+    "blocker": "nothing to build or run: no Go port for 32-bit PowerPC (T01-E01)"
+   },
+   "scenario_reconnect": {
+    "state": "not_applicable",
+    "what": "peak RSS and CPU of the tailnet component while it reconnects after a loss of the control or data path and audio runs",
+    "blocker": "nothing to build or run: no Go port for 32-bit PowerPC (T01-E01)"
+   },
+   "scenario_relay_traffic": {
+    "state": "not_applicable",
+    "what": "peak RSS and CPU of the tailnet component while it carries relay traffic and audio runs",
+    "blocker": "nothing to build or run: no Go port for 32-bit PowerPC (T01-E01)"
+   },
+   "scenario_key_rotation": {
+    "state": "not_applicable",
+    "what": "peak RSS and CPU of the tailnet component while a node key is rotated and audio runs",
     "blocker": "nothing to build or run: no Go port for 32-bit PowerPC (T01-E01)"
    }
   },
@@ -902,6 +1027,31 @@
    "cpu": {
     "state": "pending",
     "blocker": "no matching full-system guest exists for the stock kernel (E03), so no on-target RSS or CPU is possible; a harness-guest figure would be indicative only and has not been run"
+   },
+   "scenario_enrollment": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it enrolls under its own identity and audio runs",
+    "blocker": "needs a build and run of the official Go client, which does not exist: T01-X01 covers tailscale-rs only, and the official client is a reference (class official_reference), not a candidate that could count as native; its documented minimum Linux 3.2 is above the reported 2.6.35 (E02, conditional on the reported release); no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that)"
+   },
+   "scenario_maps_at_peer_cap": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it holds a network map at the declared peer cap and audio runs",
+    "blocker": "needs a build and run of the official Go client, which does not exist: T01-X01 covers tailscale-rs only, and the official client is a reference (class official_reference), not a candidate that could count as native; its documented minimum Linux 3.2 is above the reported 2.6.35 (E02, conditional on the reported release); no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that)"
+   },
+   "scenario_reconnect": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it reconnects after a loss of the control or data path and audio runs",
+    "blocker": "needs a build and run of the official Go client, which does not exist: T01-X01 covers tailscale-rs only, and the official client is a reference (class official_reference), not a candidate that could count as native; its documented minimum Linux 3.2 is above the reported 2.6.35 (E02, conditional on the reported release); no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that)"
+   },
+   "scenario_relay_traffic": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it carries relay traffic and audio runs",
+    "blocker": "needs a build and run of the official Go client, which does not exist: T01-X01 covers tailscale-rs only, and the official client is a reference (class official_reference), not a candidate that could count as native; its documented minimum Linux 3.2 is above the reported 2.6.35 (E02, conditional on the reported release); no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that)"
+   },
+   "scenario_key_rotation": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while a node key is rotated and audio runs",
+    "blocker": "needs a build and run of the official Go client, which does not exist: T01-X01 covers tailscale-rs only, and the official client is a reference (class official_reference), not a candidate that could count as native; its documented minimum Linux 3.2 is above the reported 2.6.35 (E02, conditional on the reported release); no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that)"
    }
   },
   "tailscale-go-1.104.5/ppc32be_harness": {
@@ -919,6 +1069,31 @@
    },
    "cpu": {
     "state": "not_applicable",
+    "blocker": "nothing to build or run: no Go port for 32-bit PowerPC (T01-E01)"
+   },
+   "scenario_enrollment": {
+    "state": "not_applicable",
+    "what": "peak RSS and CPU of the tailnet component while it enrolls under its own identity and audio runs",
+    "blocker": "nothing to build or run: no Go port for 32-bit PowerPC (T01-E01)"
+   },
+   "scenario_maps_at_peer_cap": {
+    "state": "not_applicable",
+    "what": "peak RSS and CPU of the tailnet component while it holds a network map at the declared peer cap and audio runs",
+    "blocker": "nothing to build or run: no Go port for 32-bit PowerPC (T01-E01)"
+   },
+   "scenario_reconnect": {
+    "state": "not_applicable",
+    "what": "peak RSS and CPU of the tailnet component while it reconnects after a loss of the control or data path and audio runs",
+    "blocker": "nothing to build or run: no Go port for 32-bit PowerPC (T01-E01)"
+   },
+   "scenario_relay_traffic": {
+    "state": "not_applicable",
+    "what": "peak RSS and CPU of the tailnet component while it carries relay traffic and audio runs",
+    "blocker": "nothing to build or run: no Go port for 32-bit PowerPC (T01-E01)"
+   },
+   "scenario_key_rotation": {
+    "state": "not_applicable",
+    "what": "peak RSS and CPU of the tailnet component while a node key is rotated and audio runs",
     "blocker": "nothing to build or run: no Go port for 32-bit PowerPC (T01-E01)"
    }
   },
@@ -943,6 +1118,31 @@
    "cpu": {
     "state": "pending",
     "blocker": "no matching full-system guest exists for the stock kernel (E03), so no on-target RSS or CPU is possible; a harness-guest figure would be indicative only and has not been run"
+   },
+   "scenario_enrollment": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it enrolls under its own identity and audio runs",
+    "blocker": "needs a build and run of the official Go client, which does not exist: T01-X01 covers tailscale-rs only, and the official client is a reference (class official_reference), not a candidate that could count as native; the harness guest's kernel is newer than that Linux 3.2 minimum, but no Go client has been built for or run in it; no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that)"
+   },
+   "scenario_maps_at_peer_cap": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it holds a network map at the declared peer cap and audio runs",
+    "blocker": "needs a build and run of the official Go client, which does not exist: T01-X01 covers tailscale-rs only, and the official client is a reference (class official_reference), not a candidate that could count as native; the harness guest's kernel is newer than that Linux 3.2 minimum, but no Go client has been built for or run in it; no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that)"
+   },
+   "scenario_reconnect": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it reconnects after a loss of the control or data path and audio runs",
+    "blocker": "needs a build and run of the official Go client, which does not exist: T01-X01 covers tailscale-rs only, and the official client is a reference (class official_reference), not a candidate that could count as native; the harness guest's kernel is newer than that Linux 3.2 minimum, but no Go client has been built for or run in it; no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that)"
+   },
+   "scenario_relay_traffic": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while it carries relay traffic and audio runs",
+    "blocker": "needs a build and run of the official Go client, which does not exist: T01-X01 covers tailscale-rs only, and the official client is a reference (class official_reference), not a candidate that could count as native; the harness guest's kernel is newer than that Linux 3.2 minimum, but no Go client has been built for or run in it; no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that)"
+   },
+   "scenario_key_rotation": {
+    "state": "pending",
+    "what": "peak RSS and CPU of the tailnet component while a node key is rotated and audio runs",
+    "blocker": "needs a build and run of the official Go client, which does not exist: T01-X01 covers tailscale-rs only, and the official client is a reference (class official_reference), not a candidate that could count as native; the harness guest's kernel is newer than that Linux 3.2 minimum, but no Go client has been built for or run in it; no audio path runs beside it in this repository (the bead measures 'while audio runs'; Q04 and Q06 own that)"
    }
   }
  },
@@ -1122,7 +1322,7 @@
   "status": "required",
   "waived": false,
   "satisfied_by": [],
-  "study_outcome": "No candidate is yet admitted for these fleet profiles. The official client is incompatible with the reported stock kernels (no PowerPC port; kernel floor above 2.6.35) and is not strict-Rust. tailscale-rs lacks NAT traversal, automatic key rotation and MagicDNS and is tokio/mio-bound (epoll_create1, above the reported PowerPC kernel). Its seven protocol-core crates and whole library now pass the pinned compile-only checks on both big-endian 32-bit musl targets. Those results do not establish linking, execution, stock-kernel compatibility or memory/CPU admission. The core crates have no intra-workspace runtime, OS or TLS edge, but their third-party closure still reaches libc through rand/getrandom and remains unqualified for this use. T01-X01 records those type-checks; T01-X02 and the required native feature remain blocked on measured client guest execution.",
+  "study_outcome": "No candidate is yet admitted for these fleet profiles. The official client is incompatible with the reported stock kernels (no PowerPC port; kernel floor above 2.6.35) and is not strict-Rust. tailscale-rs lacks NAT traversal, automatic key rotation and MagicDNS and is tokio/mio-bound (epoll_create1, above the reported PowerPC kernel). Its seven protocol-core crates and whole library now pass the pinned compile-only checks on both big-endian 32-bit musl targets. Those results do not establish linking, execution, stock-kernel compatibility or memory/CPU admission. The core crates have no intra-workspace runtime, OS or TLS edge, but their third-party closure still reaches libc through rand/getrandom and remains unqualified for this use. T01-X01 records those type-checks. T01-X02 ran a protocol-core probe (the seven core crates and a known-answer phase, no client) once in one harness guest per architecture: both committed receipts pass the judge, as indicative figures of that probe only, not a client footprint and not a stock kernel. The required native feature remains blocked on a linked, executed and measured client, including the five tailnet scenario rows.",
   "closes": [],
   "does_not_close": [
    "T02",
@@ -1130,7 +1330,7 @@
    "Q06"
   ],
   "gateway_note": "a gateway or wrapper is named separately and never counts as per-speaker native membership",
-  "t01_status": "incomplete: the legacy-ISA compile attempts (X01) built as type-checks only, nothing was linked or run, and X02 (on-target memory/CPU) is blocked; nothing here waives anything or moves it to another bead",
-  "closes_note": "no closure is claimed while X02 is blocked and nothing is linked or run; the bead's own rule (a reproducible negative leaves T02/T04/Q06 and the native requirement open) still holds"
+  "t01_status": "incomplete: the legacy-ISA compile attempts (X01) built as type-checks only; the X02 protocol-core probe ran once in one harness guest per architecture (both receipts pass the judge, indicative only, and it is not a client); no client was linked, run or enrolled, so the tailnet resource rows are pending; nothing here waives anything or moves it to another bead",
+  "closes_note": "no closure is claimed while no client is linked, run and measured (the X02 probe is not a client) and no negative result is recorded; the bead's own rule (a reproducible negative leaves T02/T04/Q06 and the native requirement open) still holds"
  }
 }

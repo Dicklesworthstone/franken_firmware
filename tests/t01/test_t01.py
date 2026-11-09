@@ -149,7 +149,7 @@ class Profile(unittest.TestCase):
 
     def test_the_committed_profile_holds(self):
         self.assertEqual(L.check_profile(PROFILE, LEDGER), [])
-        self.assertEqual(PROFILE["profile_version"], "t01-profile-2026-11-07.1")      # the version bump the profile's own rule asks for; the old version is named in frozen_note
+        self.assertEqual(PROFILE["profile_version"], "t01-profile-2026-11-09.1")      # the version bump the profile's own rule asks for; the old version is named in frozen_note
 
     def test_each_planted_fault_is_reported(self):
         tsrs, go = "tailscale-rs-0.6.1", "tailscale-go-1.104.5"
@@ -1589,11 +1589,11 @@ class BuildRecord(unittest.TestCase):
 
     def test_the_x01_statements_in_the_profile_and_the_study_match_the_recorded_scope_and_strengthen_nothing(self):
         profile = L.load_json(L.PROFILE)
-        self.assertEqual(profile["profile_version"], "t01-profile-2026-11-07.1")
-        for said in ("t01-profile-2026-11-06.1", "no state, evidence citation, cell or figure changed"):
+        self.assertEqual(profile["profile_version"], "t01-profile-2026-11-09.1")
+        for said in ("t01-profile-2026-11-06.1", "t01-profile-2026-11-07.1", "no state, evidence citation, cell or figure changed"):
             self.assertIn(said, profile["frozen_note"])
         self.assertIn("type-checks only", profile["status"])
-        self.assertIn("nothing linked or run", profile["status"])
+        self.assertIn("no client linked or run", profile["status"])
         raw = json.dumps(profile)
         for stale in ("no receipt exists yet", "nothing was built", "mandatory legacy-ISA build (X01)", "X01/X02 are blocked", "while X01/X02"):
             self.assertNotIn(stale, raw)
@@ -1619,7 +1619,7 @@ class BuildRecord(unittest.TestCase):
         nr = profile["native_requirement"]
         self.assertEqual((nr["status"], nr["waived"], nr["satisfied_by"], nr["closes"]), ("required", False, [], []))
         self.assertIn("X02", nr["t01_status"])
-        self.assertIn("nothing was linked or run", nr["t01_status"])
+        self.assertIn("no client was linked, run or enrolled", nr["t01_status"])
         self.assertNotIn("supported", set(L.matrix(profile).values()))
         with open(os.path.join(REPO, "docs", "tailscale", "feasibility.md"), encoding="utf-8") as handle:
             study = handle.read()

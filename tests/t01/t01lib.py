@@ -35,6 +35,10 @@ CELL_STATES = ("supported", "implementable_upstream_work", "incompatible", "no_e
 CLASSES = ("native_strict_rust", "official_reference", "wireguard_only", "wrapper", "gateway", "control_server_only")
 LEDGER_KINDS = ("git_file", "crate_file", "web_text", "web_json", "web_header", "local_file", "tracker")
 IMMUTABLE_KINDS = ("git_file", "crate_file")
+# The bead's tailnet resource table: "identity enrollment, maps at the declared peer cap, reconnect, relay traffic and key rotation while audio runs". Every measurements row carries all five.
+SCENARIO_ITEMS = ("scenario_enrollment", "scenario_maps_at_peer_cap", "scenario_reconnect", "scenario_relay_traffic", "scenario_key_rotation")
+# A measurement item may be `not_applicable` only where the candidate has no build for the target at all. The ledger entry that says so: Go 1.27.3 has no 32-bit linux/ppc port (T01-E01).
+NO_GO_PORT_EVIDENCE = "T01-E01"
 
 
 def load_json(path):
@@ -180,6 +184,18 @@ def matrix(profile):
     return out
 
 
+def has_no_build_for_target(profile, candidate_id, target_id):
+    """True only where the candidate cannot be built for the target at all, so a measurement of it is inapplicable. The profile has exactly one such case, the Go client on a 32-bit PowerPC target,
+    and it is derived from the profile's own facts, not from a list of rows: the candidate's language is Go, the target's Rust triple is powerpc, and the candidate's platform on that target is
+    `incompatible` with the Go port table (T01-E01: no 32-bit linux/ppc port) among its evidence. A tailscale-rs row has a build path on every target (a type-check passes), so what it lacks is a
+    figure, which is `pending` with a blocker, never `not_applicable`."""
+    candidate = profile.get("candidates", {}).get(candidate_id, {})
+    platform = candidate.get("platform", {}).get(target_id, {})
+    triple = str(profile.get("targets", {}).get(target_id, {}).get("rust_triple", ""))
+    return bool(candidate.get("facts", {}).get("language") == "go" and triple.startswith("powerpc-") and platform.get("state") == "incompatible"
+                and NO_GO_PORT_EVIDENCE in platform.get("evidence", []))
+
+
 def check_profile(profile, ledger):
     problems = []
     ids = {e["id"] for e in ledger.get("entries", [])}
@@ -256,6 +272,14 @@ def check_profile(profile, ledger):
                 problems.append("measurement %s/%s: state %r" % (mid, name, item.get("state")))
             if item.get("state") in ("pending", "not_applicable") and not item.get("blocker"):
                 problems.append("measurement %s/%s is %s without its reason" % (mid, name, item["state"]))
+            if item.get("state") == "not_applicable" and not has_no_build_for_target(profile, *mid.partition("/")[::2]):
+                problems.append("measurement %s/%s is not_applicable, but this candidate has a build path on that target, so what it lacks is a figure and stays pending with its blocker "
+                                "(only a candidate with no build for the target, the Go client on 32-bit PowerPC, T01-E01, may be inapplicable)" % (mid, name))
+        for name in SCENARIO_ITEMS:
+            if name not in m:
+                problems.append("measurement %s lacks the tailnet scenario item %s (the bead's resource table: absent is pending with a blocker, not missing)" % (mid, name))
+            elif m[name].get("state") not in ("measured", "pending", "not_applicable"):
+                problems.append("measurement %s/%s: a scenario figure is measured, pending or not_applicable, not %r" % (mid, name, m[name].get("state")))
     nr = profile.get("native_requirement", {})
     if nr.get("status") != "required" or nr.get("waived") is not False or nr.get("satisfied_by"):
         problems.append("the native requirement must stay required, unwaived and unsatisfied")
