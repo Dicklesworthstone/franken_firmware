@@ -1006,6 +1006,8 @@ def runtime_settle_problems(census_rows: dict[str, dict[str, str]]) -> list[str]
         threads, polls = runtime_uint(row["settle_threads"]), runtime_uint(row["settle_polls"])
         if threads is None:
             problems.append(f"{phase}: settle_threads={row['settle_threads']} is not a count")
+        elif threads < 1:
+            problems.append(f"{phase}: settle_threads={threads} is impossible: a running process has at least one thread")
         elif floor is None:
             problems.append(f"{phase}: the start row has no stable thread count to compare settle_threads with")
         elif threads > floor:
@@ -1263,8 +1265,17 @@ def run_runtime(args: argparse.Namespace, expected_elf: dict[str, Any],
 # receipt in which an absolute path survives. This restates the rule of tests/t01/x02_judge.py (and the OUTSIDE_REPO marker of
 # run-qemu-verification.py); it imports nothing from them. It changes no verdict.
 
-RECEIPT_PATH_ROOTS = ("Users", "home", "private", "var", "tmp", "root", "Volumes", "mnt", "srv", "data", "bulk")
+RECEIPT_PATH_ROOTS = ("Users", "home", "private", "var", "tmp", "root", "Volumes", "mnt", "srv", "data", "bulk",
+                      # more host roots than the X02 rule lists: a tree under any of these was written into a receipt as it was
+                      "opt", "usr", "Library", "Applications", "System", "nix", "run", "media", "net", "export", "workspace", "work",
+                      "builds")
 ABSOLUTE_PATH = re.compile(rf"(?<![A-Za-z0-9_.~-])/(?:{'|'.join(RECEIPT_PATH_ROOTS)})(?=/|[\s\"'<>,;)=]|$)(?:/[^\s\"'<>,;)=]*)?")
+# What the writer refuses after the rewrite, for the places the root list does not know: an absolute path of two or more components
+# whose first component is not one the guest itself prints (`/proc/self/task`, `/dev/...`; a lone `/init` is one component), and a
+# relative path that starts by leaving its directory (`../`). Neither can be bound to a file by the rewrite, so neither may be written.
+GUEST_PATH_ROOTS = ("proc", "sys", "dev")
+LEFTOVER_PATH = re.compile(rf"(?<![A-Za-z0-9_.~<>/-])/(?!(?:{'|'.join(GUEST_PATH_ROOTS)})/)[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+"
+                           r"|(?<![A-Za-z0-9_.~<>/-])\.\./")
 OUTSIDE_REPO = "<outside-repo>"
 PATH_HASH_CAP = 512 * 1024 * 1024
 
@@ -1307,27 +1318,45 @@ def scrub_receipt_value(value: Any, seen: list[dict[str, Any]]) -> Any:
     if isinstance(value, list):
         return [scrub_receipt_value(item, seen) for item in value]
     if isinstance(value, dict):
-        return {(scrub_receipt_value(key, seen) if isinstance(key, str) else key): scrub_receipt_value(item, seen)
-                for key, item in value.items()}
+        out: dict[Any, Any] = {}
+        for key, item in value.items():
+            new_key = scrub_receipt_value(key, seen) if isinstance(key, str) else key
+            new_item = scrub_receipt_value(item, seen)
+            if new_key in out and out[new_key] != new_item:
+                raise MeasurementError(f"two different entries would both be keyed {new_key!r} once host paths are rewritten; "
+                                       "nothing was written")
+            out[new_key] = new_item
+        return out
     return value
 
 
 def scrub_receipt(body: dict[str, Any]) -> dict[str, Any]:
-    """A copy of the receipt body with host paths rewritten, plus `path_hashes`: each path it now names and the sha256 of its file."""
+    """A copy of the receipt body with host paths rewritten, plus `path_hashes`: each path it now names and the sha256 of its file.
+
+    A new name that two different files would share is refused: `<outside-repo>/init` could not say which of them it binds."""
     seen: list[dict[str, Any]] = []
     clean = scrub_receipt_value(body, seen)
+    named: dict[str, str | None] = {}
+    for entry in seen:
+        if entry["path"] in named and named[entry["path"]] != entry["sha256"]:
+            raise MeasurementError(f"two different files would both be named {entry['path']} in the receipt; nothing was written")
+        named[entry["path"]] = entry["sha256"]
     clean["path_hashes"] = seen
     return clean
 
 
 def write_runtime_receipt(path: pathlib.Path, body: dict[str, Any]) -> None:
     """Write the runtime receipt exclusively, after the rewrite. Both `run-runtime` and `analyze-runtime` come through here. If an
-    absolute host path would still be in it, nothing is written."""
+    absolute host path, or a relative path that leaves the repository, would still be in it, nothing is written."""
     clean = scrub_receipt(body)
-    leftover = ABSOLUTE_PATH.search(json.dumps(clean))
+    dumped = json.dumps(clean)
+    leftover = ABSOLUTE_PATH.search(dumped) or LEFTOVER_PATH.search(dumped)
     if leftover is not None:
-        raise MeasurementError("refusing to write a receipt that still carries an absolute path under /"
-                               + leftover.group(0).split("/")[1] + "/; nothing was written")
+        if leftover.group(0).startswith("/"):
+            raise MeasurementError("refusing to write a receipt that still carries an absolute path under /"
+                                   + leftover.group(0).split("/")[1] + "/; nothing was written")
+        raise MeasurementError("refusing to write a receipt that still carries a relative path that leaves the repository; "
+                               "nothing was written")
     with path.open("x", encoding="utf-8") as handle:
         json.dump(clean, handle, indent=2, sort_keys=True)
         handle.write("\n")

@@ -876,6 +876,80 @@ class RuntimePackagingTests(unittest.TestCase):
         self.assertEqual(saved["path_hashes"], [], "an analysis names no host path")
         self.assert_no_host_path(saved)
 
+    def written_or_refused(self, body):
+        """What `write_runtime_receipt` does with `body`: the receipt it wrote, or the refusal (nothing is written then)."""
+        out = self.root / f"receipt-{len(list(self.root.iterdir()))}.json"
+        try:
+            M.write_runtime_receipt(out, body)
+        except M.MeasurementError as refusal:
+            self.assertFalse(out.exists(), "a refused receipt leaves no file")
+            self.assertIn("nothing was written", str(refusal))
+            return str(refusal)
+        return json.loads(out.read_text())
+
+    def test_the_writer_never_writes_an_absolute_host_path_whatever_its_first_directory(self):
+        # Rewritten: more host roots than the X02 list names. Before this, each of these was written into the receipt as it was.
+        for root in ("opt", "usr", "Library", "Applications", "System", "nix", "run", "media", "net", "export", "workspace", "work",
+                     "builds"):
+            with self.subTest(root=root):
+                saved = self.written_or_refused({"p": f"/{root}/someone/tree/qemu-system-mips"})
+                self.assertEqual(saved["p"], "<outside-repo>/qemu-system-mips")
+        # Refused: a root nobody listed. The rewrite cannot bind it to a file, so the receipt is not written.
+        for text in ("/etc/ssh/config", "/zzz/someone/tree/kernel.bin", "-kernel /lost-and-found/a/b.bin tail"):
+            with self.subTest(text=text):
+                refusal = self.written_or_refused({"p": text})
+                self.assertIsInstance(refusal, str, "an absolute path under an unlisted root must be refused")
+                self.assertIn("an absolute path under /", refusal)
+                self.assertNotIn("someone", refusal, "the message names the root, never the path")
+        # Control: what the guest prints, the rewritten labels and a URL are not host paths, and are written as they are.
+        keep = {"p": "rdinit=/init", "proc": "/proc/self/task", "dev": "/dev/ttyS0", "label": "<outside-repo>/init",
+                "url": "https://example.invalid/some/where", "relative": "toolchain/results/p05/x.json", "ratio": "workers=1/1"}
+        self.assertEqual({k: v for k, v in self.written_or_refused(keep).items() if k != "path_hashes"}, keep)
+
+    def test_the_writer_refuses_a_relative_path_that_leaves_the_repository(self):
+        # `--log-dir ../out/run` puts `../out/run/vmlinux.runtime-snapshot` on the QEMU command line, and no absolute path is in it.
+        for text in ["../out/run/vmlinux.runtime-snapshot", "../../private-sibling/archive.cpio.gz", "../.."]:
+            with self.subTest(text=text):
+                refusal = self.written_or_refused({"execution": {"command": ["qemu-system-mips", "-kernel", text]}})
+                self.assertIsInstance(refusal, str, "a relative path that leaves the repository must be refused")
+                self.assertIn("relative path that leaves the repository", refusal)
+                self.assertNotIn("out/run", refusal, "the message does not repeat the path")
+        refusal = self.written_or_refused({"c": "-initrd ../a/b.cpio.gz tail"})
+        self.assertIsInstance(refusal, str)
+        # Control: a relative path that stays under its directory, or only mentions two dots, is written as it is.
+        keep = {"a": "toolchain/results/p05/x.json", "b": "src/../x", "c": "./out/run/archive.cpio.gz", "d": "wait... what", "e": "a..b"}
+        self.assertEqual({k: v for k, v in self.written_or_refused(keep).items() if k != "path_hashes"}, keep)
+
+    def test_two_different_files_with_one_basename_do_not_share_one_name_in_the_receipt(self):
+        first, second = self.root / "one", self.root / "two"
+        first.mkdir()
+        second.mkdir()
+        (first / "ffw-hello-init").write_bytes(b"AAAA")
+        (second / "ffw-hello-init").write_bytes(b"BBBB")
+        (first / "kernel.bin").write_bytes(b"KKKK")
+        # Plant: both would be `<outside-repo>/ffw-hello-init`, with two different hashes; the name could not say which is which.
+        refusal = self.written_or_refused({"supervisor": str(first / "ffw-hello-init"), "probe": str(second / "ffw-hello-init")})
+        self.assertIsInstance(refusal, str, "two different files under one new name must be refused")
+        self.assertIn("two different files would both be named <outside-repo>/ffw-hello-init", refusal)
+        # A path that does not exist and one that does, under one name, are as ambiguous.
+        refusal = self.written_or_refused({"a": str(first / "ffw-hello-init"), "b": str(self.root / "gone" / "ffw-hello-init")})
+        self.assertIsInstance(refusal, str)
+        # Control: the same file named twice, and two files with two basenames, are written, each bound to its own bytes.
+        saved = self.written_or_refused({"a": str(first / "ffw-hello-init"), "b": f"-initrd {first / 'ffw-hello-init'}",
+                                         "c": str(first / "kernel.bin")})
+        self.assertEqual(saved["a"], "<outside-repo>/ffw-hello-init")
+        self.assertEqual(sorted((e["path"], e["sha256"]) for e in saved["path_hashes"]),
+                         sorted([("<outside-repo>/ffw-hello-init", hashlib.sha256(b"AAAA").hexdigest()),
+                                 ("<outside-repo>/kernel.bin", hashlib.sha256(b"KKKK").hexdigest())]))
+
+    def test_two_keys_that_the_rewrite_would_make_one_are_refused_and_not_silently_merged(self):
+        refusal = self.written_or_refused({"/tmp/one/x.bin": 1, "/var/two/x.bin": 2})
+        self.assertIsInstance(refusal, str, "the second entry must not overwrite the first")
+        self.assertIn("would both be keyed '<outside-repo>/x.bin'", refusal)
+        # Control: the same value under both spellings loses nothing, and distinct names stay distinct.
+        saved = self.written_or_refused({"/tmp/one/x.bin": 1, "/var/two/x.bin": 1, "/tmp/one/y.bin": 2})
+        self.assertEqual({k: v for k, v in saved.items() if k != "path_hashes"}, {"<outside-repo>/x.bin": 1, "<outside-repo>/y.bin": 2})
+
 
 # ---- the single-owner profile (the probe's second run: one scheduler worker through LegacyProfile) -----------------------------
 
@@ -1180,6 +1254,8 @@ class SingleOwnerSettleTests(unittest.TestCase):
                  f"{phase}: settle_polls=01 is not at least 1"),
                 (f"{phase} settle_threads is not a count", phase, "settle_threads=4", "settle_threads=four",
                  f"{phase}: settle_threads=four is not a count"),
+                (f"e: {phase} settle_threads is zero", phase, "settle_threads=4", "settle_threads=0",
+                 f"{phase}: settle_threads=0 is impossible: a running process has at least one thread"),
             ]
         return out
 
@@ -1263,7 +1339,7 @@ class SingleOwnerSettleTests(unittest.TestCase):
         good = single_owner_fixture()
         self.assertTrue(self.judge(good)["ok"], "control")
         plants = self.plants()
-        self.assertEqual(len(plants), 22)
+        self.assertEqual(len(plants), 24)
         for label, phase, old, new, reason in plants:
             with self.subTest(plant=label):
                 text, changed, original = self.planted(good, phase, old, new)
