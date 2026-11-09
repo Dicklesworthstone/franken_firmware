@@ -238,6 +238,71 @@ def receipt_problem(receipt, repo=None, state="measured"):
     return None
 
 
+# A `measured` figure is BOUND to the receipt that holds it. The table below, not the item, fixes what each bindable item is: the one field it reads (and nothing else), its unit and the scale from the
+# receipt's unit. The figure is taken from the X02 judge's re-derived `resources` (x02_judge.judge_receipt rebuilds them from the recorded phases), never from the raw JSON. An item with no rule here cannot
+# be `measured`: `build` and the five scenario items have no receipt field that holds them, and `binary_bytes` would rest on `elf.bytes`, which the judge does not re-derive.
+FIGURE_RULES = {
+    "rss_peak_bytes": {"field": "verdict.resources.VmHWM", "parts": ("VmHWM",), "scale": 1024, "unit": "bytes"},
+    "cpu": {"field": "verdict.resources.utime+verdict.resources.stime", "parts": ("utime", "stime"), "scale": 1, "unit": "clock_ticks"},
+}
+# Where a figure may come from. The X02 judge accepts only the eight core-probe phases, so a receipt that passes it measured the core probe, not a tailscale-rs client, and ran in a harness guest. Its figure may
+# stand only in a row for that subject and only on a harness target. No such row exists (root, 17433: a row for the probe is a separate decision), so today no X02 receipt can back any figure; the
+# client rows stay unmeasurable until a judge for a client run adds a source whose subject is the client.
+FIGURE_SOURCE = {"subject": "t01-core-probe", "target_state": "harness_guest_only", "triples": {"mips": "mips-", "powerpc": "powerpc-"}}
+SHA256_HEX = r"[0-9a-f]{64}"
+
+
+def figure_problems(mid, name, item, profile, repo=None):
+    """Why a `measured` item's figure is not bound to its receipt, as a list that is empty when it is bound. Without the repository only what the item and the profile say is checked (a rule for the item,
+    the table's field and unit, the shape of the value and digest, the subject and the target); with it, the receipt's digest, a fresh judgement by the X02 judge, the architecture and the value are too."""
+    rule = FIGURE_RULES.get(name)
+    if rule is None:
+        return ["has no binding rule (only %s can be measured), so it cannot be 'measured'" % ", ".join(sorted(FIGURE_RULES))]
+    problems = []
+    missing = [key for key in ("field", "unit", "value", "receipt_sha256") if key not in item]
+    if missing:
+        problems.append("lacks %s" % ", ".join(missing))
+    if "field" in item and item["field"] != rule["field"]:
+        problems.append("names the field %s, but this item binds to %s and nothing else" % (repr(item["field"])[:80], rule["field"]))
+    if "unit" in item and item["unit"] != rule["unit"]:
+        problems.append("has the unit %s, but this item's is %s" % (repr(item["unit"])[:40], rule["unit"]))
+    value = item.get("value")
+    if "value" in item and (isinstance(value, bool) or not isinstance(value, int) or value <= 0):
+        problems.append("has the value %s, which is not a positive integer" % repr(value)[:40])
+    digest = item.get("receipt_sha256")
+    if "receipt_sha256" in item and not (isinstance(digest, str) and re.fullmatch(SHA256_HEX, digest)):
+        problems.append("has a receipt_sha256 that is not a lowercase sha256")
+    candidate, _, target = mid.partition("/")
+    if candidate != FIGURE_SOURCE["subject"]:
+        problems.append("rests on a receipt that measured the core probe (%s), not %s: a probe's figure is not a client's, and no measurement row exists for the probe" % (FIGURE_SOURCE["subject"], candidate))
+    kernel = profile.get("targets", {}).get(target, {}).get("kernel_state")
+    if kernel != FIGURE_SOURCE["target_state"]:
+        problems.append("rests on a harness-guest receipt, which cannot back a figure for target %s (its kernel is %s)" % (target, kernel))
+    if problems or repo is None:
+        return problems
+    try:
+        data = read_bounded_file(os.path.join(repo, *item["receipt"].split("/")))
+    except (SourceRefused, OSError, AttributeError):
+        return ["names a receipt that cannot be read"]
+    if sha256_bytes(data) != digest:
+        return ["has a receipt_sha256 that is not the sha256 of its receipt"]
+    try:
+        import x02_judge  # noqa: PLC0415 - loaded on demand: it imports nothing from this module
+        verdict = x02_judge.judge_receipt(data.decode("utf-8"))
+    except (ImportError, UnicodeDecodeError) as err:
+        return ["cannot be judged (%s)" % type(err).__name__]
+    if verdict.state != "passed" or not isinstance(verdict.resources, dict):
+        return ["rests on a receipt that does not judge as a passed captured guest run (%s: %s)" % (verdict.state, "; ".join(verdict.problems)[:100])]
+    prefix = FIGURE_SOURCE["triples"].get(verdict.arch)
+    triple = str(profile.get("targets", {}).get(target, {}).get("rust_triple", ""))
+    if not prefix or not triple.startswith(prefix):
+        return ["rests on a %s receipt, but target %s builds for %s" % (verdict.arch, target, triple or "nothing")]
+    expected = sum(verdict.resources[part] for part in rule["parts"]) * rule["scale"]
+    if expected != value:
+        return ["has the value %d, but the receipt's %s is %d %s" % (value, rule["field"], expected, rule["unit"])]
+    return []
+
+
 def check_profile(profile, ledger, repo=None):
     problems = []
     ids = {e["id"] for e in ledger.get("entries", [])}
@@ -318,6 +383,8 @@ def check_profile(profile, ledger, repo=None):
                 why = receipt_problem(item["receipt"], repo)
                 if why:
                     problems.append("measurement %s/%s is 'measured', but its receipt %s" % (mid, name, why))
+                else:
+                    problems += ["measurement %s/%s is 'measured', but its figure %s" % (mid, name, p) for p in figure_problems(mid, name, item, profile, repo)]
             if item.get("state") not in ("measured", "pending", "observed_not_a_footprint", "not_applicable"):
                 problems.append("measurement %s/%s: state %r" % (mid, name, item.get("state")))
             if item.get("state") in ("pending", "not_applicable") and not item.get("blocker"):

@@ -338,7 +338,8 @@ class InapplicableOnlyWhereThereIsNoBuild(unittest.TestCase):
 
 class MeasuredNeedsARealReceipt(unittest.TestCase):
     """A `measured` item is the only way the profile can say a figure exists, so its `receipt` must name a real file: directly under toolchain/results/tailscale/measurements/, existing, a plain regular
-    file, and parsing as a JSON object. No row is measured today, so this must hold before any is. What it does not do: judge that the file holds the figure (that is x02_judge's job)."""
+    file, and parsing as a JSON object. No row is measured today, so this must hold before any is. What it does not do: judge that the file holds the figure (that is x02_judge's job; the binding of the
+    figure to the receipt is tests/t01/test_figure_binding.py, so `check` here leaves its problems out: a probe receipt on a tailscale-rs row is refused there, by design)."""
 
     ROW = "tailscale-rs-0.6.1/mips32be_harness"
     DIR = "toolchain/results/tailscale/measurements/"
@@ -347,7 +348,7 @@ class MeasuredNeedsARealReceipt(unittest.TestCase):
     def check(self, receipt, item="cpu", repo=REPO, state="measured"):
         doc = copy.deepcopy(PROFILE)
         doc["measurements"][self.ROW][item].update({"state": state, "receipt": receipt})
-        return L.check_profile(doc, LEDGER, repo)
+        return [p for p in L.check_profile(doc, LEDGER, repo) if "but its figure" not in p]
 
     def test_no_row_is_measured_today_and_the_profile_passes_with_the_repository(self):
         self.assertEqual([k for k, row in PROFILE["measurements"].items() for i in row.values() if i["state"] == "measured"], [])
@@ -416,13 +417,13 @@ class MeasuredNeedsARealReceipt(unittest.TestCase):
     def test_the_runners_profile_case_applies_it_with_the_repository(self):
         data = rc.inputs()
         self.assertEqual(rc.case_profile(data, REPO).status, "passed")
-        for receipt, status in ((self.DIR + self.REAL[0], "passed"), (self.DIR + "no-such-receipt.json", "failed"), ("x", "failed")):
+        for receipt, receipt_problem in ((self.DIR + self.REAL[0], False), (self.DIR + "no-such-receipt.json", True), ("x", True)):
             weak = copy.deepcopy(data)
             weak["profile"]["measurements"][self.ROW]["cpu"].update({"state": "measured", "receipt": receipt})
             result = rc.case_profile(weak, REPO)
-            self.assertEqual(result.status, status, receipt)
-            if status == "failed":
-                self.assertIn("is 'measured', but its receipt", result.detail)
+            self.assertEqual(result.status, "failed", receipt)                                                                   # a tailscale-rs row is never measured by a probe receipt (see test_figure_binding.py)
+            self.assertEqual("is 'measured', but its receipt" in result.detail, receipt_problem, receipt)                       # and the receipt rule speaks only where the receipt is the problem
+            self.assertEqual("is 'measured', but its figure" in result.detail, not receipt_problem, receipt)
 
     def test_a_state_that_is_not_measured_needs_no_receipt(self):
         self.assertEqual(self.check("x", state="pending"), [])

@@ -170,6 +170,19 @@ object for a `.json`. `ran_on_target` is not touched: it already derives a `supp
 the form although a type-check is not a linked build, and no judge exists for a linked build yet; the rule makes the claim name a real record, not prove it is a build. Planting the state on the two Go PowerPC rows is refused by the
 `not_applicable` rule instead, since the profile cannot say both that no build exists and that one does.
 
+**A `measured` figure is bound to its receipt** (`t01lib.figure_problems`, called from the `measured` branch of `check_profile`; root's go, Agent Mail 17433, closing disclosure 1). A receipt that exists is not yet
+a figure: a probe receipt could stand behind a tailscale-rs client row. The binding table `FIGURE_RULES` fixes, per item and not by the item, the one field it reads, its unit and the scale: `rss_peak_bytes` is
+`verdict.resources.VmHWM` in `bytes` (kB x 1024) and `cpu` is `verdict.resources.utime+verdict.resources.stime` in `clock_ticks` (raw `/proc` ticks, not seconds). An item must carry `field`, `unit`, `value` and
+`receipt_sha256`, its `field` must equal the table's (an item that cites another field, `VmRSS` for `rss_peak_bytes`, or `utime` alone for `cpu`, is refused even when its value equals that field), the unit must
+match, the value must be a positive integer, and the digest must be the receipt's. With the repository the receipt is re-judged by `x02_judge.judge_receipt` and must be a `passed` captured guest run (a blocked,
+failed or supplied-transcript receipt backs nothing); the value must equal the JUDGE's re-derived `resources`, not the raw JSON; the receipt's architecture must fit the target's Rust triple. The X02 judge accepts only
+the eight core-probe phases, so a receipt that passes it measured the **core probe**, and ran in a harness guest: its figure may stand only in a row for the probe (`t01-core-probe/<target>`) and only on a
+`harness_guest_only` target. Items with no rule (`build`, the five scenario items, and `binary_bytes`, whose `elf.bytes` the judge does not re-derive) cannot be `measured`. Decisions of root: no profile change, **no
+row for the probe** (a separate decision, made only if a consumer needs it), so today no X02 receipt can back any figure, and no tailscale-rs client row can be `measured` until a judge for a client run adds a source
+whose subject is the client. Consumer: `T01-META-PROFILE`; gate: no `measured` item is unbound; retirement: when X02 and X03 share one receipt schema and the judge returns the figure itself. The landed
+receipt-exists tests (`test_closure_map.py::MeasuredNeedsARealReceipt`) now leave the figure problems out of their `check`, because their controls put a real probe receipt on a tailscale-rs row, which is
+exactly what the binding refuses; the binding's own tests are `tests/t01/test_figure_binding.py`.
+
 The blockers say what is missing and nothing more. No linked tailscale-rs client exists on any target (X01 is a type-check); a real tailnet is a provider and needs a separate authorized receipt (the bead's
 evidence rule); no audio path runs beside the component (Q04 and Q06 own that); no peer cap is declared for the tailnet component in any T01 artifact (`docs/SLIM_SPEAKER_PLAN.md`: every profile declares maximum peers;
 `tailnet_ram_cap_bytes` stays null, T04/Q02 allocate it); and tailscale-rs 0.6.1 has no automatic key rotation (`T01-E15` to `T01-E17`), so there is no flow to measure. Where a scenario needs a registered
