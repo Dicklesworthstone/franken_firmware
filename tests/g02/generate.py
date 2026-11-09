@@ -253,6 +253,12 @@ def member_cases() -> List[dict]:
         REJOIN + ["G02-INV-RECONNECT-SILENT", "G02-INV-MUTE-PRIORITY"],
         [["sync"], ["ramp", 300], ["reconnect", EPOCH, 1, 20, False], ["join"], ["sync"], ["ramp", 600]],
         board="fail_muted", start={"restore": {"volume": 95, "trim": 1000, "local_mute": False}})
+    add(25, "a snapshot that is out of range and also stale is refused as out of range, whichever way it is stale; the same staleness with a valid volume keeps its own name; nothing changes",
+        REJOIN + ["G02-INV-AUTHORITY"],
+        setup + [C(1, "set_volume", 80), C(2, "set_volume", 30),
+                 ["reconnect", EPOCH - 1, 9, 101, False], ["reconnect", EPOCH, 1, 101, False],
+                 ["reconnect", EPOCH - 1, 9, 20, False], ["reconnect", EPOCH, 1, 20, False],
+                 C(3, "set_volume", 35), ["reconnect", EPOCH, 3, 40, False], ["join"]])
     return out
 
 

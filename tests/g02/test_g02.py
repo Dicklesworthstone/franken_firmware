@@ -22,6 +22,7 @@ import sys
 import tempfile
 import unittest
 from typing import Any, Dict, List, Optional
+from unittest.mock import patch
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
@@ -111,7 +112,7 @@ class ReferenceAndVectors(Base):
         covered = {i for c in self.doc["cases"] for i in c["invariants"]}
         external = {k for k, v in self.doc["external"].items() if v}
         self.assertEqual(set(self.doc["invariants"]) - covered - external, set())
-        self.assertEqual(len(ids), 50)
+        self.assertEqual(len(ids), 51)
 
     def test_the_tolerance_is_not_widened(self) -> None:
         # f32 is emulated operation by operation, so one ulp near 1.0 (1.2e-7) is the most that can differ.
@@ -154,12 +155,12 @@ class ContractMatchesVectors(Base):
                     self.assertIn(name.split("::", 1)[1], self.text)
 
     def test_the_contract_states_the_plan_and_the_limits(self) -> None:
-        self.assertIn("126 cases: 4 meta, 50 vectors and 72 Rust tests", self.text)
+        self.assertIn("128 cases: 4 meta, 51 vectors and 73 Rust tests", self.text)
         self.assertIn("Numerical tests do not prove physical behavior", self.text)
         self.assertIn("second implementation of this contract by the same author", self.text)
         self.assertIn("scripts/e2e/g02 --tier full --judge", self.text)
         planned = len(runner.run("full", None)[0])
-        self.assertEqual(planned, 126)
+        self.assertEqual(planned, 128)
 
 
 class HandDerivedPins(Base):
@@ -320,6 +321,15 @@ class HandDerivedPins(Base):
         self.assertEqual({e["max_applied"] for op, e in zip(self.cases["G02-MBR-024"]["ops"], t) if op[0] == "ramp"}, {0.0})
         self.assertEqual(t[-1]["desired"], 20)
         self.assertAlmostEqual(t[-1]["unmuted"], 0.2, places=7)
+        # 025: the member has applied revisions 1 (80) and 2 (30). A snapshot with a volume of 101 is out of range, and that is
+        # the answer whether it is also from the older epoch (6, revision 9) or from the member's own epoch at the older
+        # revision 1. The same two with a valid volume keep their own names. None of the four changes anything (30, revision 2,
+        # no join started); the next command is taken (35) and so is a current snapshot (40, join-muted).
+        r = rows("G02-MBR-025", "reconnect")
+        self.assertEqual([e["result"] for e in r], ["volume_out_of_range", "volume_out_of_range", "stale_epoch", "stale_revision", "ok"])
+        self.assertEqual([(e["desired"], e["revision"]) for e in r], [(30, 2)] * 4 + [(40, 3)])
+        self.assertEqual([e["mute"] for e in r], [None] * 4 + ["join"])
+        self.assertEqual([e["desired"] for e in rows("G02-MBR-025", "cmd")], [80, 30, 35])
 
     def test_group_by_hand(self) -> None:
         t = self.trace("G02-GRP-001")
@@ -365,7 +375,7 @@ class PairedNegativesAndPositives(Base):
 
     def test_refusals_are_followed_by_accepted_commands(self) -> None:
         for case_id in ("G02-MBR-007", "G02-MBR-008", "G02-MBR-009", "G02-MBR-010", "G02-MBR-016", "G02-MBR-020", "G02-MBR-021",
-                        "G02-GRP-002", "G02-GRP-004"):
+                        "G02-MBR-025", "G02-GRP-002", "G02-GRP-004"):
             results = [e["result"] for e in self.trace(case_id)]
             first_refusal = next(i for i, r in enumerate(results) if r not in ("ok",))
             self.assertIn("ok", results[first_refusal + 1:], f"{case_id}: nothing legitimate after the first refusal")
@@ -427,6 +437,37 @@ class PlantedDefects(Base):
                 self.assertTrue(expected <= alone, f"{bug}: {sorted(expected - alone)} did not fail on the properties alone")
                 self.assertEqual(self.judge_all(frozenset()), [], f"{bug}: the control is not green")
 
+    @staticmethod
+    def reconnect_checking(order: tuple):
+        """`Member.reconnect` with its three refusals judged in `order` instead of range, epoch, revision."""
+        def reconnect(self, epoch: int, revision: int, volume: int, group_mute: bool) -> str:
+            for check in order:
+                if check == "range" and volume > ref.MAX_VOLUME:
+                    return "volume_out_of_range"
+                if check == "epoch" and self.epoch is not None and epoch < self.epoch:
+                    return "stale_epoch"
+                if check == "revision" and self.epoch == epoch and revision < self.last_rev:
+                    return "stale_revision"
+            self.adopt(epoch, revision, volume, group_mute)
+            return "ok"
+        return reconnect
+
+    def test_the_place_of_the_range_check_among_the_refusals_is_pinned_and_its_control_is_green(self) -> None:
+        correct = ("range", "epoch", "revision")
+        with patch.object(ref.Member, "reconnect", self.reconnect_checking(correct)):
+            self.assertEqual(self.judge_all(frozenset()), [], "control: the contract's order is green")
+        # The range check anywhere but first changes the answer for a snapshot that fails it and a staleness check. Epoch and
+        # revision staleness exclude each other, so those two never need an order between them.
+        for order, why in ((("epoch", "revision", "range"), "range last: both snapshots are named for their staleness"),
+                           (("epoch", "range", "revision"), "range after the epoch check: the older-epoch snapshot is named stale_epoch"),
+                           (("revision", "range", "epoch"), "range after the revision check: the older-revision snapshot is named stale_revision")):
+            with self.subTest(order=order, why=why):
+                with patch.object(ref.Member, "reconnect", self.reconnect_checking(order)):
+                    self.assertEqual(self.judge_all(frozenset()), ["G02-MBR-025"])
+        with patch.object(ref.Member, "reconnect", self.reconnect_checking(correct)):
+            self.assertEqual(self.judge_all(frozenset()), [], "the plant removed: green again")
+        self.assertEqual(self.judge_all(frozenset()), [], "unpatched: green")
+
     def test_the_rejoin_plants_do_not_fail_cases_that_never_rejoin(self) -> None:
         rejoining = {c["id"] for c in self.doc["cases"] if any(op[0] in ("reconnect", "rejoin") for op in c.get("ops", []))}
         for bug in self.REJOIN_PLANTS:
@@ -444,7 +485,7 @@ class JudgeBehavior(Base):
         self.assertEqual(self.by(results, "failed"), [])
         self.assertEqual(self.by(results, "blocked"), [])
         self.assertEqual(runner.exit_code(results), 0)
-        self.assertEqual(len(results), 4 + 50 + len(runner.derive_rust_tests()))
+        self.assertEqual(len(results), 4 + 51 + len(runner.derive_rust_tests()))
 
     def test_no_log_blocks_everything_rust_backed(self) -> None:
         results, _ = runner.run("full", None)

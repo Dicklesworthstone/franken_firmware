@@ -5,7 +5,8 @@
 //! own mute and trim, and that a restored member is silent until it rejoins. These tests pin what was left open:
 //!
 //! * a snapshot from the member's own epoch that is **older than what the member has applied** is a stale volume
-//!   too. It is refused with nothing changed (an equal or newer one is taken, a newer epoch numbers afresh);
+//!   too. It is refused with nothing changed (an equal or newer one is taken, a newer epoch numbers afresh); a
+//!   snapshot that is both stale and above the maximum volume is named for the volume, which is judged first;
 //! * a rejoin cannot clear a **fault mute**, and neither can completing the join; only the board returning to
 //!   `Active` does, and it leaves the room's own mute standing;
 //! * a rejoin keeps the **fault ceiling**, so the ramp is never handed more than it, before, during or after;
@@ -13,7 +14,7 @@
 //!
 //! Every refusal sits beside the behaviour it must not break (the equal or newer snapshot, the board returning to
 //! `Active`, the same steps on a healthy board). Expected values are written by hand from the contract, not read
-//! back from the code under test. The same behaviour is also in the Python vectors (`G02-MBR-020..024`).
+//! back from the code under test. The same behaviour is also in the Python vectors (`G02-MBR-020..025`).
 //!
 //! What they do not show: a transport that delivers snapshots, or who decides which snapshot is the group's
 //! current one. The member only refuses one that is older than its own state.
@@ -196,6 +197,60 @@ fn a_newer_epoch_takes_its_snapshot_at_any_revision_and_an_older_one_is_refused_
         })
     );
     assert_eq!((m.desired_volume(), m.last_revision()), (40, 2));
+}
+
+fn snapshot_of(epoch: u64, revision: u64, master_volume: u8) -> GroupSnapshot {
+    GroupSnapshot {
+        epoch,
+        revision,
+        master_volume,
+        group_mute: false,
+    }
+}
+
+#[test]
+fn an_out_of_range_snapshot_is_refused_as_out_of_range_before_it_is_judged_stale() {
+    let mut m = member();
+    set(&mut m, 1, VolumeCommand::SetVolume(80));
+    set(&mut m, 2, VolumeCommand::SetVolume(30));
+    let too_loud = MAX_VOLUME + 1;
+    let out_of_range = Err(VolumeError::VolumeOutOfRange { value: too_loud });
+
+    // From an older epoch, and above the maximum: the volume is judged first, so the refusal is named for it.
+    assert_eq!(
+        m.reconnect(snapshot_of(EPOCH - 1, 9, too_loud)),
+        out_of_range
+    );
+    // From the member's own epoch at an older revision, and above the maximum: the same.
+    assert_eq!(m.reconnect(snapshot_of(EPOCH, 1, too_loud)), out_of_range);
+
+    // The permitted answers beside them: the same two staleness with a valid volume keep their own names.
+    assert_eq!(
+        m.reconnect(snapshot_of(EPOCH - 1, 9, 20)),
+        Err(VolumeError::StaleEpoch {
+            command: EPOCH - 1,
+            current: EPOCH
+        })
+    );
+    assert_eq!(
+        m.reconnect(snapshot_of(EPOCH, 1, 20)),
+        Err(VolumeError::StaleRevision {
+            revision: 1,
+            last: 2
+        })
+    );
+
+    // None of the four changed anything, and no join was started.
+    assert_eq!(m.desired_volume(), 30);
+    assert_eq!(m.last_revision(), 2);
+    assert_eq!(m.epoch(), Some(EPOCH));
+    assert_eq!(m.effective_mute(), None);
+    assert_eq!(m.output_gain(), 0.3);
+
+    // And a current snapshot with a valid volume is still taken.
+    m.reconnect(snapshot_of(EPOCH, 2, 40)).unwrap();
+    assert_eq!(m.desired_volume(), 40);
+    assert_eq!(m.effective_mute(), Some(MuteReason::Join));
 }
 
 #[test]
