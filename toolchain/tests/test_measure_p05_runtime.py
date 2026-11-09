@@ -1029,6 +1029,60 @@ def wrapped_single_owner(child, arch="mips", *, status=0, summary="FFW_MARKER:TE
     return base.replace("FFW_MARKER:TEST_SUCCESS failures=0", region + summary)
 
 
+CD = M.RUNTIME_CALLER_DRIVEN
+# What the caller-driven probe prints on every census row after its OS-thread ceiling (0: no worker, blocking or helper thread), and the
+# settle pairs on the row after the runtime drop. The fixture's start row has 4 threads and no row may show more.
+CD_CEILING = " os_thread_ceiling=0"
+CD_SETTLE = " settle=settled settle_threads=4 settle_polls=1"
+
+
+def caller_driven_fixture(arch="mips", *, cleanup=True, ceiling=True, settle=True):
+    """Handwritten row-by-row caller-driven transcript. Deliberately not built from the judge's expected-order tables."""
+    def c(phase):
+        return (f"FFW_P05_RUNTIME:CENSUS status=ok phase={phase} threads_task_dir_before=4 threads_task_dir_after=4 "
+                "task_dir_stable=true threads_status=4 sources_agree=true vm_rss_kb=5000 vm_hwm_kb=6000 mem_available_kb=9000"
+                + (CD_CEILING if ceiling else "") + (CD_SETTLE if settle and phase == "after_runtime_drop" else ""))
+
+    bits, endian = (64, "little") if arch == "x86_64" else (32, "big")
+    drain = ("outcome=Quiescent expected_outcome=Quiescent live_tasks=0 pending_obligations=0 live_regions=0 "
+             "expected_live_regions=0 queued_finalizers=0 pending_spawns=0 pending_obligation_posts=false")
+    abort_cleanup = " cleanup_resumed=1 cleanup_unique=1 cleanup_cancelled=1 cleanup_before_deadline=1" if cleanup else ""
+    drain_cleanup = " cleanup_resumed=4 cleanup_unique=4 cleanup_cancelled=4 cleanup_before_deadline=4" if cleanup else ""
+    return "\n".join([
+        f"FFW_P05_RUNTIME:BEGIN status=start pid=17 arch={arch} endian={endian} pointer_bits={bits} threads_available_to_std=1 topology=caller_driven",
+        c("start"),
+        "FFW_P05_RUNTIME:CALLER_DRIVEN_PROFILE status=ok claimed=caller_driven stated_worker_threads=1 required_worker_threads=1 blocking_max_threads=0 os_thread_ceiling=0",
+        "FFW_P05_RUNTIME:PROFILE_ACCEPT status=ok violations=0 worst_case_stack_bytes=1048576 budget=1048576",
+        "FFW_P05_RUNTIME:PROFILE_REFUSES_ZERO_WORKERS status=ok named_violation=true builder_refused=true",
+        "FFW_P05_RUNTIME:PROFILE_REFUSES_UNBOUNDED_QUEUE status=ok named_violation=true builder_refused=true",
+        "FFW_P05_RUNTIME:PROFILE_REFUSES_OVER_BUDGET status=ok named_violation=true builder_refused=true",
+        "FFW_P05_RUNTIME:CALLER_DRIVEN_REFUSES_TWO_WORKERS status=ok named_violation=true builder_refused=true stated_worker_threads=2",
+        "FFW_P05_RUNTIME:CALLER_DRIVEN_REFUSES_BLOCKING_THREADS status=ok named_violation=true builder_refused=true stated_blocking_max_threads=1",
+        "FFW_P05_RUNTIME:REACTOR status=ok kind=platform",
+        "FFW_P05_RUNTIME:RUNTIME_AUDIT status=ok audit_ok=true workers=1/1 blocking_threads=0/0 global_queue=256/256 blocking_queue=0/0 (carried/stated)",
+        c("after_build"),
+        "FFW_P05_RUNTIME:CALLER_DRIVEN_RUNTIME status=ok carried_workers=1 stated_workers=1 audit_ok=true os_thread_ceiling=0 children_joined=8 task_threads=1 tasks_on_caller_thread=true threads_during=4 start_threads=4",
+        c("after_caller_driven_tasks"),
+        "FFW_P05_RUNTIME:SPAWN_JOIN status=ok children=8 joined=8 sum=140 expected=140",
+        c("after_spawn_join"),
+        "FFW_P05_RUNTIME:ABORT_TIMER_PARKED status=ok parked=true pending_timers_before=1 pending_timers_after=0 abort_to_join_ms=2 join_result=Ok expected_join_result=Ok threads_during_task_dir=4 threads_during_status=4" + abort_cleanup,
+        c("after_abort_timer_parked"),
+        "FFW_P05_RUNTIME:ABORT_BLIND_VALUE status=ok join_result=Cancelled expected_join_result=Cancelled ok_value=None",
+        c("after_abort_blind_value"),
+        "FFW_P05_RUNTIME:TIMER_WAKE status=ok wanted_ms=50 slept_ms=50",
+        c("after_timer_wake"),
+        "FFW_P05_RUNTIME:UDP_LOOPBACK status=ok bytes=19 payload_equal=true peer_is_sender=true",
+        c("after_udp"),
+        "FFW_P05_RUNTIME:CALLER_DRIVEN_BLOCKING_REFUSED status=ok policy=Forbidden refusal=Some(Forbidden) expected_refusal=Some(Forbidden) charged_refusal=Some(Forbidden) pool_threads_after_refusal=0 refused_job_ran=false",
+        c("after_blocking_refused"),
+        "FFW_P05_RUNTIME:CALLER_DRIVEN_HANDLE_SPAWN_WAITS status=ok ran_before_block_on=false ran_after_block_on=true ran_on_caller=true",
+        c("after_handle_spawn"),
+        "FFW_P05_RUNTIME:DRAIN status=ok tasks_spawned=4/4 tasks_parked_before_drain=4 snapshot_before_drain=(admitted=4 unfinished=4 timers_pending=4) " + drain + " elapsed_ms=2 bound_ms=5000" + drain_cleanup + " repeat: " + drain,
+        c("after_drain"), c("after_runtime_drop"),
+        "FFW_P05_RUNTIME:END status=done ops=30 ok=30 failed=0 unsupported=0 partial=0 unknown=0 census_samples=12",
+    ]) + "\n"
+
+
 class SingleOwnerTranscriptTests(unittest.TestCase):
     def judge(self, text, arch="mips", supervised=False):
         return M.judge_runtime(text, arch, {"arch": arch}, supervised=supervised, profile=SO)
@@ -1640,6 +1694,405 @@ class SingleOwnerRunTests(unittest.TestCase):
         refused = subprocess.run([str(script), "--runtime", "analyze", "--arch", "x86_64", "--profile", "threadless"],
                                  capture_output=True, text=True, timeout=10)
         self.assertEqual(refused.returncode, 2, refused.stdout + refused.stderr)
+
+
+def line_edit(text, prefix, old, new):
+    """`text` with `old` replaced by `new` on the one line that starts with `prefix`; also that line before and after the edit."""
+    matching = [line for line in text.splitlines() if line.startswith(prefix)]
+    assert len(matching) == 1, (prefix, len(matching))
+    assert old in matching[0], (prefix, old)
+    changed = matching[0].replace(old, new, 1)
+    return text.replace(matching[0], changed), changed, matching[0]
+
+
+class CallerDrivenTranscriptTests(unittest.TestCase):
+    """The caller-driven profile: a runtime driven by the thread that calls `block_on`, with no worker, blocking or helper thread.
+
+    Its rows are all `ok` and it declares nothing unsupported. The rule that makes it that profile is thread-side: no census row, and
+    no thread count read inside a running task, may show more threads than the `start` row, and every census row prints the ceiling 0.
+    Every plant edits one row, is refused by one named gate for a named reason, and is accepted again once the edit is reverted."""
+
+    def judge(self, text, arch="mips"):
+        return M.judge_runtime(text, arch, {"arch": arch}, profile=CD)
+
+    @staticmethod
+    def failed(report):
+        return {g.gate_id for g in report["gates"] if g.status == "failed"}
+
+    @staticmethod
+    def detail(report, gate_id):
+        return next(g.detail for g in report["gates"] if g.gate_id == gate_id)
+
+    def test_the_exact_complete_fixture_is_a_plain_pass_with_nothing_declared_for_each_architecture(self):
+        for arch in ("mips", "powerpc", "x86_64"):
+            with self.subTest(arch=arch):
+                report = self.judge(caller_driven_fixture(arch), arch)
+                self.assertTrue(report["ok"], report)
+                self.assertEqual(report["observed_statuses"], dict(ok=30, failed=0, unsupported=0, partial=0, unknown=0))
+                self.assertEqual(report["profile"], CD)
+                self.assertNotIn("declared_unsupported", report)
+                self.assertNotIn("P05R-DECLARED", [g.gate_id for g in report["gates"]])
+                self.assertEqual(M.exit_code(report), 0)
+        title = next(g.title for g in report["gates"] if g.gate_id == "P05R-CENSUS")
+        self.assertEqual(title, "twelve complete, consistent census samples, none above the start count, the runtime drop settled")
+        self.assertEqual(len(caller_driven_fixture().splitlines()), 32)
+
+    def test_the_profiles_refuse_each_others_transcripts_and_the_old_declared_row_is_refused_once_the_mode_is_claimed(self):
+        cd, single, threaded = caller_driven_fixture(), single_owner_fixture(), fixture()
+        self.assertTrue(self.judge(cd)["ok"])
+        for profile in (M.RUNTIME_THREADED, SO):
+            with self.subTest(judged_as=profile):
+                self.assertFalse(M.judge_runtime(cd, "mips", {"arch": "mips"}, profile=profile)["ok"])
+        for name, text in (("single-owner", single), ("threaded", threaded)):
+            with self.subTest(transcript=name):
+                self.assertFalse(self.judge(text)["ok"])
+        # A single-owner run that claims the caller-driven topology keeps its declared unsupported row, and is refused.
+        claimed = single.replace("topology=single_owner", "topology=caller_driven", 1)
+        report = self.judge(claimed)
+        self.assertFalse(report["ok"])
+        self.assertIn("P05R-TRANSCRIPT", self.failed(report))
+        # The caller-driven transcript with the declared row put back among its rows is refused too.
+        declared = next(line for line in single.splitlines() if line.startswith("FFW_P05_RUNTIME:" + DECLARED + " "))
+        with_row = cd.replace("FFW_P05_RUNTIME:CALLER_DRIVEN_RUNTIME ", declared + "\nFFW_P05_RUNTIME:CALLER_DRIVEN_RUNTIME ", 1)
+        report = self.judge(with_row)
+        self.assertFalse(report["ok"])
+        self.assertIn("P05R-TRANSCRIPT", self.failed(report))
+        # And the topology claim itself cannot be changed to another profile's.
+        for other in ("single_owner", "threaded"):
+            self.assertFalse(self.judge(cd.replace("topology=caller_driven", f"topology={other}", 1))["ok"])
+        self.assertFalse(self.judge(cd.replace(" topology=caller_driven", "", 1))["ok"])
+
+    def test_every_row_is_required_exactly_once_and_no_adjacent_pair_may_swap(self):
+        good = caller_driven_fixture().splitlines(keepends=True)
+        self.assertEqual(len(good), 32)
+        self.assertTrue(self.judge("".join(good))["ok"])
+        for index in range(len(good)):
+            with self.subTest(missing=index):
+                self.assertFalse(self.judge("".join(good[:index] + good[index + 1:]))["ok"])
+            with self.subTest(duplicate=index):
+                self.assertFalse(self.judge("".join(good[:index] + [good[index]] + good[index:]))["ok"])
+        for index in range(len(good) - 1):
+            changed = good.copy()
+            changed[index:index + 2] = reversed(changed[index:index + 2])
+            with self.subTest(swap=index):
+                self.assertFalse(self.judge("".join(changed))["ok"])
+
+    def plants(self):
+        census = "FFW_P05_RUNTIME:CENSUS status=ok phase="
+        counts = "threads_task_dir_before=4 threads_task_dir_after=4 task_dir_stable=true threads_status=4"
+        five = counts.replace("=4", "=5")
+        return [
+            ("a thread appears: after_build shows 5", census + "after_build ", counts, five, "P05R-CENSUS",
+             "after_build: the row shows 5 threads, above the starting count 4"),
+            ("a thread appears: after_timer_wake shows 5", census + "after_timer_wake ", counts, five, "P05R-CENSUS",
+             "after_timer_wake: the row shows 5 threads, above the starting count 4"),
+            ("a thread appears: after_handle_spawn shows 5", census + "after_handle_spawn ", counts, five, "P05R-CENSUS",
+             "after_handle_spawn: the row shows 5 threads, above the starting count 4"),
+            ("a thread is left after the drop", census + "after_runtime_drop ", counts, five, "P05R-CENSUS",
+             "after_runtime_drop: the row shows 5 threads, above the starting count 4"),
+            ("a census row does not print the ceiling", census + "after_udp ", CD_CEILING, "", "P05R-CENSUS",
+             "after_udp: os_thread_ceiling=missing is not the ceiling 0"),
+            ("a census row prints a ceiling of 1", census + "after_udp ", "os_thread_ceiling=0", "os_thread_ceiling=1", "P05R-CENSUS",
+             "after_udp: os_thread_ceiling=1 is not the ceiling 0"),
+            ("a thread is read inside the abort phase", "FFW_P05_RUNTIME:ABORT_TIMER_PARKED ", "threads_during_task_dir=4",
+             "threads_during_task_dir=5", "P05R-CENSUS", "ABORT_TIMER_PARKED: threads_during_task_dir=5 is above the starting count 4"),
+            ("a thread is read inside the abort phase (status)", "FFW_P05_RUNTIME:ABORT_TIMER_PARKED ", "threads_during_status=4",
+             "threads_during_status=5", "P05R-CENSUS", "ABORT_TIMER_PARKED: threads_during_status=5 is above the starting count 4"),
+            ("a thread is read while the tasks ran", "FFW_P05_RUNTIME:CALLER_DRIVEN_RUNTIME ", "threads_during=4", "threads_during=5",
+             "P05R-CENSUS", "CALLER_DRIVEN_RUNTIME: threads_during=5 is above the starting count 4"),
+            ("a zero is read inside the abort phase (task_dir)", "FFW_P05_RUNTIME:ABORT_TIMER_PARKED ", "threads_during_task_dir=4",
+             "threads_during_task_dir=0", "P05R-CENSUS", "ABORT_TIMER_PARKED: threads_during_task_dir=0 is impossible"),
+            ("a zero is read inside the abort phase (status)", "FFW_P05_RUNTIME:ABORT_TIMER_PARKED ", "threads_during_status=4",
+             "threads_during_status=0", "P05R-CENSUS", "ABORT_TIMER_PARKED: threads_during_status=0 is impossible"),
+            ("a zero is read while the tasks ran", "FFW_P05_RUNTIME:CALLER_DRIVEN_RUNTIME ", "threads_during=4", "threads_during=0",
+             "P05R-CENSUS", "CALLER_DRIVEN_RUNTIME: threads_during=0 is impossible"),
+            ("the runtime row's start count is not the start row's", "FFW_P05_RUNTIME:CALLER_DRIVEN_RUNTIME ", "start_threads=4",
+             "start_threads=3", "P05R-CENSUS", "CALLER_DRIVEN_RUNTIME: start_threads=3 is not the start row's 4"),
+            ("the start row is unstable", census + "start ", "threads_task_dir_before=4", "threads_task_dir_before=3", "P05R-CENSUS",
+             "start: no stable thread count, so no row can be held to the starting count"),
+            ("tasks are not on the caller thread", "FFW_P05_RUNTIME:CALLER_DRIVEN_RUNTIME ", "tasks_on_caller_thread=true",
+             "tasks_on_caller_thread=false", "P05R-PHASES", "CALLER_DRIVEN_RUNTIME.tasks_on_caller_thread=false expected=true"),
+            ("the tasks used two threads", "FFW_P05_RUNTIME:CALLER_DRIVEN_RUNTIME ", "task_threads=1", "task_threads=2", "P05R-PHASES",
+             "CALLER_DRIVEN_RUNTIME.task_threads=2 expected=1"),
+            ("the profile states a ceiling of 1", "FFW_P05_RUNTIME:CALLER_DRIVEN_PROFILE ", "os_thread_ceiling=0", "os_thread_ceiling=1",
+             "P05R-PHASES", "CALLER_DRIVEN_PROFILE.os_thread_ceiling=1 expected=0"),
+            ("the profile states a blocking thread", "FFW_P05_RUNTIME:CALLER_DRIVEN_PROFILE ", "blocking_max_threads=0",
+             "blocking_max_threads=1", "P05R-PHASES", "CALLER_DRIVEN_PROFILE.blocking_max_threads=1 expected=0"),
+            ("the audited runtime carries a blocking thread", "FFW_P05_RUNTIME:RUNTIME_AUDIT ", "blocking_threads=0/0",
+             "blocking_threads=1/1", "P05R-PHASES", "RUNTIME_AUDIT.blocking_threads=1/1 expected=0/0"),
+            ("the audited runtime carries two workers", "FFW_P05_RUNTIME:RUNTIME_AUDIT ", "workers=1/1", "workers=2/2", "P05R-PHASES",
+             "RUNTIME_AUDIT.workers=2/2 expected=1/1"),
+            ("blocking work is not refused", "FFW_P05_RUNTIME:CALLER_DRIVEN_BLOCKING_REFUSED ", "refusal=Some(Forbidden)", "refusal=None",
+             "P05R-PHASES", "CALLER_DRIVEN_BLOCKING_REFUSED.refusal=None expected=Some(Forbidden)"),
+            ("a charged spawn is refused as too large, not as forbidden", "FFW_P05_RUNTIME:CALLER_DRIVEN_BLOCKING_REFUSED ",
+             "charged_refusal=Some(Forbidden)", "charged_refusal=Some(ChargeTooLarge)", "P05R-PHASES",
+             "CALLER_DRIVEN_BLOCKING_REFUSED.charged_refusal=Some(ChargeTooLarge) expected=Some(Forbidden)"),
+            ("a pool thread started", "FFW_P05_RUNTIME:CALLER_DRIVEN_BLOCKING_REFUSED ", "pool_threads_after_refusal=0",
+             "pool_threads_after_refusal=1", "P05R-PHASES", "CALLER_DRIVEN_BLOCKING_REFUSED.pool_threads_after_refusal=1 expected=0"),
+            ("handle-spawned work ran with no block_on (a thread drives the runtime)", "FFW_P05_RUNTIME:CALLER_DRIVEN_HANDLE_SPAWN_WAITS ",
+             "ran_before_block_on=false", "ran_before_block_on=true", "P05R-PHASES",
+             "CALLER_DRIVEN_HANDLE_SPAWN_WAITS.ran_before_block_on=true expected=false"),
+            ("handle-spawned work never ran", "FFW_P05_RUNTIME:CALLER_DRIVEN_HANDLE_SPAWN_WAITS ", "ran_after_block_on=true",
+             "ran_after_block_on=false", "P05R-PHASES", "CALLER_DRIVEN_HANDLE_SPAWN_WAITS.ran_after_block_on=false expected=true"),
+            ("the drop row has no settle pairs", census + "after_runtime_drop ", CD_SETTLE, "", "P05R-CENSUS",
+             "after_runtime_drop: the settle pairs are missing"),
+            ("the drop row did not settle", census + "after_runtime_drop ", "settle=settled", "settle=pending", "P05R-CENSUS",
+             "after_runtime_drop: status=ok contradicts settle=pending"),
+        ]
+
+    def test_each_planted_deviation_is_refused_by_its_gate_for_its_reason_and_accepted_again_when_removed(self):
+        good = caller_driven_fixture()
+        self.assertTrue(self.judge(good)["ok"], "control")
+        plants = self.plants()
+        self.assertEqual(len(plants), 27)
+        for label, prefix, old, new, gate, reason in plants:
+            with self.subTest(plant=label):
+                text, changed, original = line_edit(good, prefix, old, new)
+                report = self.judge(text)
+                self.assertFalse(report["ok"])
+                self.assertEqual(self.failed(report), {gate}, "the named gate alone refuses it")
+                self.assertIn(reason, self.detail(report, gate))
+                self.assertEqual(M.exit_code(report), 1)
+                restored = text.replace(changed, original)
+                self.assertEqual(restored, good)
+                self.assertTrue(self.judge(restored)["ok"], "the plant removed")
+
+    def test_a_stated_blocking_queue_other_than_zero_is_refused_though_the_audit_passes_and_the_carried_half_cannot_stand_in(self):
+        """Caller-driven caps copied from the threaded ones (`..caps()`) carry `blocking_max_queued: 1`. The audit passes anyway, because a
+        forbidden pool ignores the stated queue, so an honest run would print `blocking_queue=0/1` beside `audit_ok=true`. The judge pins the
+        stated half too, and refuses that transcript for that reason alone. The control is the fixture, which states 0 and carries 0."""
+        good = caller_driven_fixture()
+        self.assertTrue(self.judge(good)["ok"], "control")
+        for halves in ("0/1", "1/0", "1/1"):
+            with self.subTest(blocking_queue=halves):
+                text, changed, original = line_edit(good, "FFW_P05_RUNTIME:RUNTIME_AUDIT ", "blocking_queue=0/0", f"blocking_queue={halves}")
+                self.assertIn("audit_ok=true", changed, "the audit still passes on this row")
+                report = self.judge(text)
+                self.assertFalse(report["ok"])
+                self.assertEqual(self.failed(report), {"P05R-PHASES"}, "the phase gate alone refuses it")
+                self.assertIn(f"RUNTIME_AUDIT.blocking_queue={halves} expected=0/0", self.detail(report, "P05R-PHASES"))
+                restored = text.replace(changed, original)
+                self.assertEqual(restored, good)
+                self.assertTrue(self.judge(restored)["ok"], "the plant removed")
+
+    def test_a_row_at_the_starting_count_or_below_it_is_accepted_and_the_ceiling_is_the_run_own_start_row(self):
+        good = caller_driven_fixture()
+        counts = "threads_task_dir_before=4 threads_task_dir_after=4 task_dir_stable=true threads_status=4"
+        for rows in (3, 2, 1):
+            text = good
+            for phase in ("after_udp", "after_drain"):
+                text, _, _ = line_edit(text, f"FFW_P05_RUNTIME:CENSUS status=ok phase={phase} ", counts, counts.replace("=4", f"={rows}"))
+            with self.subTest(rows_below_start=rows):
+                self.assertTrue(self.judge(text)["ok"])
+        # The ceiling is added to nothing: a start row of 2 holds the rest to 2, not to the fixture's 4.
+        text = good
+        for phase in ("start", "after_build", "after_caller_driven_tasks", "after_spawn_join", "after_abort_timer_parked",
+                      "after_abort_blind_value", "after_timer_wake", "after_udp", "after_blocking_refused", "after_handle_spawn",
+                      "after_drain", "after_runtime_drop"):
+            text, _, _ = line_edit(text, f"FFW_P05_RUNTIME:CENSUS status=ok phase={phase} ", counts, counts.replace("=4", "=2"))
+        text = text.replace("start_threads=4", "start_threads=2").replace("threads_during=4", "threads_during=2")
+        text = text.replace("threads_during_task_dir=4 threads_during_status=4", "threads_during_task_dir=2 threads_during_status=2")
+        text = text.replace("settle_threads=4", "settle_threads=2")
+        self.assertTrue(self.judge(text)["ok"], self.detail(self.judge(text), "P05R-CENSUS"))
+        report = self.judge(line_edit(text, "FFW_P05_RUNTIME:CENSUS status=ok phase=after_udp ", counts.replace("=4", "=2"),
+                                      counts.replace("=4", "=3"))[0])
+        self.assertFalse(report["ok"])
+        self.assertIn("after_udp: the row shows 3 threads, above the starting count 2", self.detail(report, "P05R-CENSUS"))
+
+    def test_cleanup_witnesses_and_the_shared_rows_are_still_required_in_this_profile(self):
+        legacy = self.judge(caller_driven_fixture(cleanup=False))
+        self.assertFalse(legacy["ok"])
+        self.assertEqual(M.exit_code(legacy), 3)
+        good = caller_driven_fixture()
+        for status in ("failed", "unsupported", "partial", "unknown"):
+            for name in M.CALLER_DRIVEN_PHASES:
+                with self.subTest(status=status, name=name):
+                    text = good.replace(f"{name} status=ok", f"{name} status={status}")
+                    self.assertNotEqual(text, good)
+                    report = self.judge(text)
+                    self.assertFalse(report["ok"])
+                    self.assertIn("P05R-PHASES", self.failed(report))
+        self.assertFalse(self.judge(caller_driven_fixture(ceiling=False))["ok"])
+        self.assertFalse(self.judge(caller_driven_fixture(settle=False))["ok"])
+
+
+class CallerDrivenContractText(unittest.TestCase):
+    """docs/contracts/p05.md states the caller-driven profile in the judge's own numbers and words, and claims no run of it.
+
+    One function, so each planted fault runs the very same rules on a changed copy of the text."""
+    PATH = HERE.parents[1] / "docs/contracts/p05.md"
+
+    @staticmethod
+    def contract_problems(text):
+        flat = " ".join(text.split())
+        shape = M.RUNTIME_SHAPES[CD]
+        wanted = (
+            f"{len(shape['phases'])} phases and {shape['census_samples']} census samples: {shape['ops']} operations, all `ok`, in "
+            f"{len(shape['order'])} markers of an exact order",
+            "`--profile caller-driven`", "`os_thread_ceiling=0`", "`tasks_on_caller_thread=true`", "refused as `Forbidden`",
+            "`CALLER_DRIVEN_HANDLE_SPAWN_WAITS`", f"reason={M.DECLARED_REASON_SPLIT} reason_source=profile_split",
+            f"evidence={M.DECLARED_EVIDENCE_SPLIT}", f"`{M.DECLARED_EVIDENCE_AT_PIN}` evidence",
+            "No run of it, natively or in a guest, is recorded", "a plain `passed` (exit 0)",
+        )
+        problems = [f"the contract does not say: {needle}" for needle in wanted if needle not in flat]
+        for needle in ("has been run in a guest", "was run in a guest", "caller-driven profile passed"):
+            if needle in flat:
+                problems.append(f"the contract claims a run: {needle}")
+        return problems
+
+    def test_the_contract_states_the_profile_as_the_judge_does_and_claims_no_run(self):
+        text = self.PATH.read_text(encoding="utf-8")
+        self.assertEqual(self.contract_problems(text), [])
+        shape = M.RUNTIME_SHAPES[CD]
+        wrong_ops = text.replace(f"{shape['ops']} operations, all `ok`", f"{shape['ops'] + 1} operations, all `ok`", 1)
+        self.assertNotEqual(wrong_ops, text)
+        self.assertEqual(len(self.contract_problems(wrong_ops)), 1)                      # planted: a figure is changed
+        no_limit = text.replace("No run of it, natively or in a guest, is recorded", "A run of it is recorded", 1)
+        self.assertEqual(self.contract_problems(no_limit), ["the contract does not say: No run of it, natively or in a guest, is recorded"])
+        claims = text + "\nThe caller-driven profile passed in a guest.\n"
+        self.assertEqual(self.contract_problems(claims), ["the contract claims a run: caller-driven profile passed"])
+        self.assertEqual(self.contract_problems(text), [])                               # control: the plants removed
+
+
+class DeclaredRowVersionTests(unittest.TestCase):
+    """The single-owner run's declared row is valid with one of two declarations, each with its own source and no other.
+
+    The one made at Asupersync 460306de is what the committed receipts carry and must still be judged valid. The one made once the
+    caller-driven mode exists points to the separate caller-driven profile."""
+    OLD = ("reason=profile_builder_cannot_build_caller_driven_mode reason_source=static_source_reading "
+           "evidence=asupersync_460306de:src/runtime/legacy_profile.rs:406,src/runtime/builder.rs:3911-3914")
+    NEW = "reason=caller_driven_mode_is_the_separate_caller_driven_profile reason_source=profile_split evidence=LegacyProfile::caller_driven"
+
+    def judge(self, text):
+        return M.judge_runtime(text, "mips", {"arch": "mips"}, profile=SO)
+
+    def declared_with(self, pairs):
+        good = single_owner_fixture()
+        return line_edit(good, "FFW_P05_RUNTIME:" + DECLARED + " ", self.OLD, pairs)[0]
+
+    def test_both_declarations_are_valid_and_each_mix_or_unknown_pair_is_refused_for_its_reason(self):
+        good = single_owner_fixture()
+        self.assertIn(self.OLD, good)
+        self.assertTrue(self.judge(good)["ok"], "control: the declaration the committed receipts carry")
+        self.assertTrue(self.judge(self.declared_with(self.NEW))["ok"], "the declaration made once the mode exists")
+        cases = (
+            ("the old reason with the new source", "reason=profile_builder_cannot_build_caller_driven_mode reason_source=profile_split "
+             "evidence=LegacyProfile::caller_driven", "is not one of the two valid declarations"),
+            ("the new reason with the old source", "reason=caller_driven_mode_is_the_separate_caller_driven_profile "
+             "reason_source=static_source_reading evidence=asupersync_460306de:src/runtime/legacy_profile.rs:406",
+             "is not one of the two valid declarations"),
+            ("the old reason at another revision", self.OLD.replace("asupersync_460306de:", "asupersync_deadbeef:"),
+             "names no asupersync_460306de: source evidence"),
+            ("the old reason with no evidence", self.OLD.split(" evidence=")[0], "names no asupersync_460306de: source evidence"),
+            ("the old reason citing the revision but no location", self.OLD.split(" evidence=")[0] + " evidence=asupersync_460306de:",
+             "cites no source location (path:line)"),
+            ("the old reason citing the revision and a non-location", self.OLD.split(" evidence=")[0] + " evidence=asupersync_460306de:x",
+             "cites no source location (path:line)"),
+            ("the new reason with other evidence", self.NEW.replace("LegacyProfile::caller_driven", "legacy_profile.rs:406"),
+             "does not cite LegacyProfile::caller_driven"),
+            ("the new reason with no evidence", self.NEW.split(" evidence=")[0], "does not cite LegacyProfile::caller_driven"),
+            ("an unknown reason", "reason=something_else reason_source=static_source_reading evidence=asupersync_460306de:x",
+             "is not one of the two valid declarations"),
+            ("no reason at all", "evidence=asupersync_460306de:x", "reason=missing reason_source=missing is not one of"),
+        )
+        for label, pairs, reason in cases:
+            with self.subTest(plant=label):
+                report = self.judge(self.declared_with(pairs))
+                self.assertFalse(report["ok"])
+                self.assertIn(reason, next(g.detail for g in report["gates"] if g.gate_id == "P05R-PHASES"))
+                self.assertTrue(self.judge(self.declared_with(self.OLD))["ok"], "the plant removed")
+
+    def test_the_declared_row_must_still_say_that_no_task_was_seen_on_the_caller_thread(self):
+        text = self.declared_with(self.NEW)
+        self.assertTrue(self.judge(text)["ok"])
+        self.assertFalse(self.judge(text.replace("observed_tasks_on_caller_thread=false", "observed_tasks_on_caller_thread=true"))["ok"])
+
+
+class CallerDrivenRunTests(unittest.TestCase):
+    """Real archive and subprocess plumbing with synthetic bytes, explicitly not a QEMU execution (the single-owner harness, reused)."""
+    setUp = SingleOwnerRunTests.setUp
+    invoke = SingleOwnerRunTests.invoke
+
+    def transcript(self, arch="mips"):
+        return wrapped_single_owner(caller_driven_fixture(arch), arch)
+
+    def test_the_run_packs_its_own_marker_and_the_receipt_says_passed_with_nothing_declared(self):
+        for arch in ("mips", "powerpc"):
+            with self.subTest(arch=arch):
+                self.setUp()
+                result, receipt, output, seen, _ = self.invoke("--profile", CD, arch=arch, transcript=self.transcript(arch))
+                self.assertEqual(result, 0)
+                self.assertEqual(receipt["result"], "passed")
+                self.assertEqual((receipt["profile"], receipt["execution"]["profile"]), (CD, CD))
+                self.assertNotIn("declared_unsupported", receipt)
+                marker = seen["members"]["ffw_p05_profile"]
+                self.assertEqual((marker["data"], marker["mode"]), (b"caller-driven\n", 0o100644))
+                packed = receipt["execution"]["initramfs"]["extra_files"]["ffw_p05_profile"]
+                self.assertEqual(packed["sha256"], hashlib.sha256(b"caller-driven\n").hexdigest())
+                self.assertEqual(seen["command"][seen["command"].index("-append") + 1], DEFAULT_APPEND[arch])
+                self.assertIn("PASSED", output.splitlines())
+                self.assertNotIn("ACCEPTED", output)
+                self.assertIn("caller-driven run", receipt["scope"])
+                self.assertNotIn("single-owner run", receipt["scope"])
+
+    def test_the_marker_of_another_profile_is_red_and_never_a_pass(self):
+        for wrong in (b"single-owner\n", b"threaded\n"):
+            with self.subTest(marker=wrong):
+                self.setUp()
+                result, receipt, output, seen, _ = self.invoke("--profile", CD, transcript=self.transcript(), marker_bytes=wrong)
+                self.assertEqual(result, 1)
+                self.assertEqual(receipt["result"], "not_passed")
+                self.assertEqual(seen["members"]["ffw_p05_profile"]["data"], wrong)
+                failed = [g for g in receipt["gates"] if g["status"] == "failed"]
+                self.assertEqual([g["gate_id"] for g in failed], ["P05R-CAPTURE"])
+                self.assertIn("caller-driven marker", failed[0]["detail"])
+                self.assertNotIn("PASSED", output.splitlines())
+        # And the caller-driven marker in a single-owner run is red the same way.
+        self.setUp()
+        result, receipt, _, _, _ = self.invoke("--profile", SO, marker_bytes=b"caller-driven\n")
+        self.assertEqual(result, 1)
+        self.assertIn("single-owner marker", [g for g in receipt["gates"] if g["status"] == "failed"][0]["detail"])
+
+    def test_the_wrong_profile_for_the_transcript_is_red_in_every_direction(self):
+        cases = (("caller-driven transcript, default profile", (), self.transcript()),
+                 ("caller-driven transcript, single-owner profile", ("--profile", SO), self.transcript()),
+                 ("threaded transcript, caller-driven profile", ("--profile", CD), wrapped(fixture())),
+                 ("single-owner transcript, caller-driven profile", ("--profile", CD), wrapped_single_owner(single_owner_fixture())))
+        for label, extra, text in cases:
+            with self.subTest(case=label):
+                self.setUp()
+                result, receipt, output, _, _ = self.invoke(*extra, transcript=text)
+                self.assertEqual(result, 1)
+                self.assertEqual(receipt["result"], "not_passed")
+                self.assertNotIn("PASSED", output.splitlines())
+
+    def test_a_missing_marker_stops_before_the_guest_is_launched(self):
+        result, receipt, _, seen, logs = self.invoke("--profile", CD, transcript=self.transcript(), drop_marker=True)
+        self.assertEqual(result, 2)
+        self.assertIsNone(receipt)
+        self.assertNotIn("command", seen)
+        self.assertFalse((logs / "runtime.serial.log").exists())
+
+    def test_the_analysis_of_the_saved_log_agrees_and_the_public_entrypoint_takes_the_profile(self):
+        log = self.root / "caller-driven.log"
+        log.write_text(caller_driven_fixture("x86_64"))
+        elf = self.root / "native.elf"
+        elf.write_bytes(elf_fixture("x86_64"))
+        analysis = self.root / "analysis.json"
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = M.main(["analyze-runtime", "--arch", "x86_64", "--elf", str(elf), "--log", str(log), "--profile", CD,
+                           "--receipt", str(analysis)])
+        self.assertEqual(code, 0)
+        saved = json.loads(analysis.read_text())
+        self.assertEqual((saved["result"], saved["profile"], saved["evidence_kind"]), ("passed", CD, "supplied_transcript_analysis"))
+        self.assertNotIn("declared_unsupported", saved)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(M.main(["analyze-runtime", "--arch", "x86_64", "--elf", str(elf), "--log", str(log)]), 1,
+                             "the default profile refuses it")
+        script = HERE.parents[1] / "scripts/e2e/p05"
+        accepted = subprocess.run([str(script), "--runtime", "analyze", "--arch", "x86_64", "--profile", CD],
+                                  capture_output=True, text=True, timeout=10)
+        self.assertEqual(accepted.returncode, 3, accepted.stdout + accepted.stderr)  # no log: BLOCKED, as before
 
 
 if __name__ == "__main__":

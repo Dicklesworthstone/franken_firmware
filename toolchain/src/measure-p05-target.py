@@ -14,6 +14,10 @@ mode; the probe exits 0 only for exactly that row, so the supervisor's own accou
 and the supervisor envelope is the UNMODIFIED standard one: no line of the log is changed before the strict verifier reads it. The
 result is "accepted_with_declared_unsupported" (command-line exit 4), never a plain pass.
 
+--profile caller-driven judges the probe's third run: a runtime built with LegacyProfile::caller_driven, driven by the thread that
+calls block_on, with no worker, blocking or helper thread. It is selected the same way (a marker, here `caller-driven`), declares
+nothing unsupported, and holds every census row to the starting thread count. Its result is a plain "passed" (exit 0).
+
 Bead ffw-ipz, the open item `P05-EXT-GUEST`. The guest (`toolchain/src/p05-target`, PID 1 of the existing Debian/Malta guest)
 compiles the FROZEN `crates/franken-atomic` source files unchanged and prints `FFW_P05T_*` lines; this script runs it and JUDGES
 the transcript. The question answered is narrow: does the same source behave on a 32-bit big-endian guest exactly as the
@@ -770,7 +774,10 @@ RUNTIME_ORDER = (
 )
 RUNTIME_THREADED = "threaded"
 RUNTIME_SINGLE_OWNER = "single-owner"
-RUNTIME_PROFILES = (RUNTIME_THREADED, RUNTIME_SINGLE_OWNER)
+RUNTIME_CALLER_DRIVEN = "caller-driven"
+RUNTIME_PROFILES = (RUNTIME_THREADED, RUNTIME_SINGLE_OWNER, RUNTIME_CALLER_DRIVEN)
+# What each profile's BEGIN row says about its topology (the threaded run says nothing).
+RUNTIME_TOPOLOGY = {RUNTIME_THREADED: None, RUNTIME_SINGLE_OWNER: "single_owner", RUNTIME_CALLER_DRIVEN: "caller_driven"}
 # The single-owner profile, written out row by row from the probe's second run (toolchain/src/p05-runtime `run_probe_for` with
 # `Topology::SingleOwner`), not derived from the threaded tuples above.
 SINGLE_OWNER_DECLARED_UNSUPPORTED = "CALLER_DRIVEN_CURRENT_THREAD"
@@ -801,16 +808,57 @@ SINGLE_OWNER_ORDER = (
     "BYTE_BUDGET_REFUSAL", "FIRST_USE_BACKGROUND", "RUNTIME_USABLE_AFTER_REFUSAL", "CENSUS",
     "END",
 )
+# The caller-driven profile, written out row by row from the probe's third run (toolchain/src/p05-runtime `Topology::CallerDriven`),
+# not derived from the tuples above. It is a runtime built with `LegacyProfile::caller_driven()`: one scheduler worker that no thread
+# owns (`block_on` runs every task, timer and reactor turn on the calling thread), no blocking thread and no helper thread, so the
+# profile's OS-thread ceiling is 0 and no census row may show a thread above the starting count. Every row is `ok`: unlike the
+# single-owner run it declares nothing unsupported. It needs an Asupersync that has `LegacyProfile::caller_driven`; the pin of the
+# committed single-owner evidence (460306de) does not.
+CALLER_DRIVEN_PHASES = (
+    "CALLER_DRIVEN_PROFILE", "PROFILE_ACCEPT", "PROFILE_REFUSES_ZERO_WORKERS", "PROFILE_REFUSES_UNBOUNDED_QUEUE",
+    "PROFILE_REFUSES_OVER_BUDGET", "CALLER_DRIVEN_REFUSES_TWO_WORKERS", "CALLER_DRIVEN_REFUSES_BLOCKING_THREADS", "REACTOR",
+    "RUNTIME_AUDIT", "CALLER_DRIVEN_RUNTIME", "SPAWN_JOIN", "ABORT_TIMER_PARKED", "ABORT_BLIND_VALUE", "TIMER_WAKE",
+    "UDP_LOOPBACK", "CALLER_DRIVEN_BLOCKING_REFUSED", "CALLER_DRIVEN_HANDLE_SPAWN_WAITS", "DRAIN",
+)
+CALLER_DRIVEN_CENSUS = (
+    "start", "after_build", "after_caller_driven_tasks", "after_spawn_join", "after_abort_timer_parked",
+    "after_abort_blind_value", "after_timer_wake", "after_udp", "after_blocking_refused", "after_handle_spawn",
+    "after_drain", "after_runtime_drop",
+)
+CALLER_DRIVEN_SETTLE_ROWS = ("after_runtime_drop",)
+CALLER_DRIVEN_ORDER = (
+    "BEGIN", "CENSUS",
+    "CALLER_DRIVEN_PROFILE", "PROFILE_ACCEPT", "PROFILE_REFUSES_ZERO_WORKERS", "PROFILE_REFUSES_UNBOUNDED_QUEUE",
+    "PROFILE_REFUSES_OVER_BUDGET", "CALLER_DRIVEN_REFUSES_TWO_WORKERS", "CALLER_DRIVEN_REFUSES_BLOCKING_THREADS",
+    "REACTOR", "RUNTIME_AUDIT", "CENSUS",
+    "CALLER_DRIVEN_RUNTIME", "CENSUS", "SPAWN_JOIN", "CENSUS", "ABORT_TIMER_PARKED", "CENSUS", "ABORT_BLIND_VALUE", "CENSUS",
+    "TIMER_WAKE", "CENSUS", "UDP_LOOPBACK", "CENSUS", "CALLER_DRIVEN_BLOCKING_REFUSED", "CENSUS",
+    "CALLER_DRIVEN_HANDLE_SPAWN_WAITS", "CENSUS", "DRAIN", "CENSUS", "CENSUS",
+    "END",
+)
 # Per profile: the phases whose fields are judged, the exact marker order, the census phases, and the END tallies.
 RUNTIME_SHAPES = {
     RUNTIME_THREADED: {"phases": RUNTIME_PHASES, "order": RUNTIME_ORDER, "census": RUNTIME_CENSUS,
                        "ops": 23, "ok": 23, "unsupported": 0, "census_samples": 10},
     RUNTIME_SINGLE_OWNER: {"phases": SINGLE_OWNER_PHASES, "order": SINGLE_OWNER_ORDER, "census": SINGLE_OWNER_CENSUS,
                            "ops": 33, "ok": 32, "unsupported": 1, "census_samples": 13},
+    RUNTIME_CALLER_DRIVEN: {"phases": CALLER_DRIVEN_PHASES, "order": CALLER_DRIVEN_ORDER, "census": CALLER_DRIVEN_CENSUS,
+                            "ops": 30, "ok": 30, "unsupported": 0, "census_samples": 12},
 }
 # The initramfs file that selects the single-owner run (the probe reads `/ffw_p05_profile`, as the other guests read `/ffw_seed`).
 SINGLE_OWNER_MARKER_NAME = "ffw_p05_profile"
 SINGLE_OWNER_MARKER_BYTES = b"single-owner\n"
+CALLER_DRIVEN_MARKER_BYTES = b"caller-driven\n"
+# The same file with other content selects the caller-driven run; the threaded run packs no marker at all.
+RUNTIME_MARKER_BYTES = {RUNTIME_SINGLE_OWNER: SINGLE_OWNER_MARKER_BYTES, RUNTIME_CALLER_DRIVEN: CALLER_DRIVEN_MARKER_BYTES}
+# The single-owner run's one declared row says why the caller-driven mode is not run in it. Two declarations are valid, each only with
+# its own source: the one made at Asupersync 460306de (whose `LegacyProfile` cannot build the mode at all, read from that source), and
+# the one made once the mode exists, which points to the separate caller-driven profile (the single-owner profile has a blocking pool,
+# which the caller-driven mode forbids). A declaration paired with the other one's source is refused.
+DECLARED_REASON_AT_PIN = "profile_builder_cannot_build_caller_driven_mode"
+DECLARED_EVIDENCE_AT_PIN = "asupersync_460306de:"
+DECLARED_REASON_SPLIT = "caller_driven_mode_is_the_separate_caller_driven_profile"
+DECLARED_EVIDENCE_SPLIT = "LegacyProfile::caller_driven"
 # Command-line exit for a single-owner run that is accepted WITH its one declared unsupported row. Not 0 (that is a full pass), not 1
 # (failed), 2 (usage or error) or 3 (blocked).
 EXIT_ACCEPTED_WITH_DECLARED_UNSUPPORTED = 4
@@ -827,9 +875,19 @@ RUNTIME_SCOPE = (
 )
 SINGLE_OWNER_SCOPE = (
     "This is the single-owner run: one scheduler worker through LegacyProfile, selected by an initramfs marker because the "
-    "unchanged supervisor passes the probe no argument. LegacyProfile cannot build the caller-driven current-thread mode at the "
-    "pinned revision, so that row is DECLARED unsupported, not passed: the result is accepted with exactly that one row, never a "
-    "full pass. The probe exits 0 only for exactly that row, so the supervisor log is the ordinary one and is judged unmodified."
+    "unchanged supervisor passes the probe no argument. The caller-driven current-thread mode is not run in this profile, so "
+    "that row is DECLARED unsupported, not passed (the reason it prints says why, and the declaration is read from source, not "
+    "observed): the result is accepted with exactly that one row, never a full pass. The probe exits 0 only for exactly that "
+    "row, so the supervisor log is the ordinary one and is judged unmodified."
+)
+CALLER_DRIVEN_SCOPE = (
+    "This is the caller-driven run: a runtime built with LegacyProfile::caller_driven, whose one scheduler worker is driven by the "
+    "thread that calls block_on, with no blocking thread and no helper thread, selected by an initramfs marker because the "
+    "unchanged supervisor passes the probe no argument. Its rows are observations on one such runtime in one guest: that its tasks, "
+    "timers and drain ran on the calling thread, that no census row showed a thread above the starting count, that blocking work "
+    "is refused, and that work spawned through a handle between block_on calls waits for the next block_on. It does not show that "
+    "the mode is suitable for the speaker's I/O load, or that it is deadlock-free: a synchronous block inside a task stalls the "
+    "whole runtime by design. Every row is ok and nothing is declared unsupported."
 )
 
 
@@ -889,6 +947,29 @@ def runtime_elf(path: pathlib.Path, arch: str) -> dict[str, Any]:
             "source_provenance": "not_attested_by_this_runner"}
 
 
+def declared_row_problems(name: str, pairs: dict[str, str]) -> list[str]:
+    """The single-owner run's declared row must carry one of the two valid declarations, each with its own source and no other.
+
+    The declaration made at Asupersync 460306de says the profile builder cannot build the mode and cites that revision's source, so it
+    is valid only with that revision named: the committed single-owner receipts are judged by it. Once the mode exists the probe
+    declares instead that the mode is the separate caller-driven profile, and cites that profile's constructor. Neither is an
+    observation, and a reason paired with the other one's source is refused."""
+    reason, source, evidence = pairs.get("reason"), pairs.get("reason_source"), pairs.get("evidence", "")
+    if (reason, source) == (DECLARED_REASON_AT_PIN, "static_source_reading"):
+        if not evidence.startswith(DECLARED_EVIDENCE_AT_PIN):
+            return [f"{name}: the declaration of {DECLARED_REASON_AT_PIN} names no {DECLARED_EVIDENCE_AT_PIN} source evidence"]
+        # The revision alone is not evidence: the declaration is a reading of that source, so it must cite where (`path:line`).
+        if re.match(r"[^\s:,]+:[0-9]+", evidence[len(DECLARED_EVIDENCE_AT_PIN):]) is None:
+            return [f"{name}: the declaration of {DECLARED_REASON_AT_PIN} cites no source location (path:line) after "
+                    f"{DECLARED_EVIDENCE_AT_PIN}"]
+        return []
+    if (reason, source) == (DECLARED_REASON_SPLIT, "profile_split"):
+        if evidence != DECLARED_EVIDENCE_SPLIT:
+            return [f"{name}: the declaration of {DECLARED_REASON_SPLIT} does not cite {DECLARED_EVIDENCE_SPLIT}"]
+        return []
+    return [f"{name}: reason={reason or 'missing'} reason_source={source or 'missing'} is not one of the two valid declarations"]
+
+
 def runtime_phase_problems(name: str, pairs: dict[str, str], detail: str, profile: str = RUNTIME_THREADED) -> list[str]:
     """Hand-stated observable predicates, independent of the probe's status bit and summary."""
     exact = {
@@ -920,10 +1001,8 @@ def runtime_phase_problems(name: str, pairs: dict[str, str], detail: str, profil
             "SINGLE_OWNER_PROFILE": {"claimed": "single_owner", "stated_worker_threads": "1", "required_worker_threads": "1"},
             "SINGLE_OWNER_RUNTIME": {"carried_workers": "1", "stated_workers": "1", "audit_ok": "true",
                                      "children_joined": "8", "task_threads": "1", "tasks_on_caller_thread": "false"},
-            # `reason_source` says the reason is a declaration from reading the pinned source, not an observation.
-            SINGLE_OWNER_DECLARED_UNSUPPORTED: {"reason": "profile_builder_cannot_build_caller_driven_mode",
-                                                "reason_source": "static_source_reading",
-                                                "observed_tasks_on_caller_thread": "false"},
+            # The reason and its source are a declaration, not an observation; the two valid pairs are checked below.
+            SINGLE_OWNER_DECLARED_UNSUPPORTED: {"observed_tasks_on_caller_thread": "false"},
             "SINGLE_OWNER_BLOCKING_OFFLOAD": {"held_admitted": "true", "held_started": "true", "async_phase": "ok",
                                               "held_job_unfinished_during_async": "true",
                                               "held_job_finished_after_release": "true"},
@@ -937,11 +1016,34 @@ def runtime_phase_problems(name: str, pairs: dict[str, str], detail: str, profil
                                              "pending_obligations": "0", "live_regions": "0", "queued_finalizers": "0",
                                              "pending_spawns": "0", "pending_obligation_posts": "false"},
         }
+    if profile == RUNTIME_CALLER_DRIVEN:
+        # One worker that no thread owns, no blocking thread, no helper thread. The figures below are the probe's stated caps, not
+        # measurements: the 1 MiB stack is the one worker's stated stack, an over-count that binds no thread. The rows shared with the
+        # other profiles keep their exact fields, except the two that state the caps.
+        exact = {
+            **exact,
+            "PROFILE_ACCEPT": {"violations": "0", "worst_case_stack_bytes": "1048576", "budget": "1048576"},
+            "RUNTIME_AUDIT": {"audit_ok": "true", "workers": "1/1", "blocking_threads": "0/0",
+                              "global_queue": "256/256", "blocking_queue": "0/0"},
+            "CALLER_DRIVEN_PROFILE": {"claimed": "caller_driven", "stated_worker_threads": "1", "required_worker_threads": "1",
+                                      "blocking_max_threads": "0", "os_thread_ceiling": "0"},
+            "CALLER_DRIVEN_REFUSES_TWO_WORKERS": {"named_violation": "true", "builder_refused": "true",
+                                                  "stated_worker_threads": "2"},
+            "CALLER_DRIVEN_REFUSES_BLOCKING_THREADS": {"named_violation": "true", "builder_refused": "true",
+                                                       "stated_blocking_max_threads": "1"},
+            "CALLER_DRIVEN_RUNTIME": {"carried_workers": "1", "stated_workers": "1", "audit_ok": "true", "os_thread_ceiling": "0",
+                                      "children_joined": "8", "task_threads": "1", "tasks_on_caller_thread": "true"},
+            "CALLER_DRIVEN_BLOCKING_REFUSED": {"policy": "Forbidden", "refusal": "Some(Forbidden)",
+                                               "expected_refusal": "Some(Forbidden)", "charged_refusal": "Some(Forbidden)",
+                                               "pool_threads_after_refusal": "0", "refused_job_ran": "false"},
+            "CALLER_DRIVEN_HANDLE_SPAWN_WAITS": {"ran_before_block_on": "false", "ran_after_block_on": "true",
+                                                 "ran_on_caller": "true"},
+        }
     problems = [f"{name}.{key}={pairs.get(key, 'missing')} expected={value}"
                 for key, value in exact.get(name, {}).items() if pairs.get(key) != value]
     if profile == RUNTIME_SINGLE_OWNER:
-        if name == SINGLE_OWNER_DECLARED_UNSUPPORTED and not pairs.get("evidence", "").startswith("asupersync_"):
-            problems.append(f"{name}: the pinned-source evidence is missing")
+        if name == SINGLE_OWNER_DECLARED_UNSUPPORTED:
+            problems.extend(declared_row_problems(name, pairs))
         if name == "SINGLE_OWNER_BLOCKING_OFFLOAD" and not re.search(
                 r"\basync_detail=\(children=8 joined=8 sum=140 expected=140\)", detail):
             problems.append(f"{name}: the async phase that ran beside the held blocking job did not join all 8 children")
@@ -972,7 +1074,8 @@ def runtime_phase_problems(name: str, pairs: dict[str, str], detail: str, profil
     return problems
 
 
-def runtime_settle_problems(census_rows: dict[str, dict[str, str]]) -> list[str]:
+def runtime_settle_problems(census_rows: dict[str, dict[str, str]],
+                            settle_rows: tuple[str, ...] = SINGLE_OWNER_SETTLE_ROWS) -> list[str]:
     """The single-owner rule for the census rows that follow a runtime drop; `census_rows` maps each row's phase to its pairs.
 
     Each such row must say `settle=settled`, give a `settle_threads` no larger than this run's own `start` row, and a
@@ -984,7 +1087,7 @@ def runtime_settle_problems(census_rows: dict[str, dict[str, str]]) -> list[str]
     figures = [runtime_uint(start.get(key)) for key in ("threads_task_dir_before", "threads_task_dir_after", "threads_status")]
     floor = figures[0] if None not in figures and figures[0] == figures[1] == figures[2] and figures[0] > 0 else None
     problems = []
-    for phase in SINGLE_OWNER_SETTLE_ROWS:
+    for phase in settle_rows:
         row = census_rows.get(phase)
         if row is None:
             continue
@@ -1022,17 +1125,63 @@ def runtime_settle_problems(census_rows: dict[str, dict[str, str]]) -> list[str]
     return problems
 
 
+def stable_thread_count(pairs: dict[str, str]) -> int | None:
+    """The thread count of a census row when its two directory readings and the status reading are equal and positive, else None."""
+    figures = [runtime_uint(pairs.get(key)) for key in ("threads_task_dir_before", "threads_task_dir_after", "threads_status")]
+    return figures[0] if None not in figures and figures[0] == figures[1] == figures[2] and figures[0] > 0 else None
+
+
+def runtime_caller_driven_problems(ops: list[tuple[str, dict[str, str]]], census_rows: dict[str, dict[str, str]]) -> list[str]:
+    """The caller-driven rule: no thread above the starting count, anywhere the transcript counts threads.
+
+    The profile's OS-thread ceiling is 0 (no worker thread, no blocking thread, no helper thread), so the process may not hold
+    more threads than it started with. This is the thread-side half of "the runtime is driven by the caller": the other half is
+    that the tasks were seen on the calling thread. Each census row must print that ceiling and show a stable count no larger than
+    the `start` row's; so must the two places a thread count is read inside a running task (`ABORT_TIMER_PARKED`, which prints
+    both of its readings, and `CALLER_DRIVEN_RUNTIME`). A start row with no stable count leaves nothing to hold the rest to, and
+    is refused."""
+    floor = stable_thread_count(census_rows.get("start", {}))
+    if floor is None:
+        return ["start: no stable thread count, so no row can be held to the starting count"]
+    problems = []
+    for phase, row in census_rows.items():
+        if row.get("os_thread_ceiling") != "0":
+            problems.append(f"{phase}: os_thread_ceiling={row.get('os_thread_ceiling', 'missing')} is not the ceiling 0")
+        own = stable_thread_count(row)
+        if own is not None and own > floor:
+            problems.append(f"{phase}: the row shows {own} threads, above the starting count {floor}")
+    rows = {name: pairs for name, pairs in ops if name in ("ABORT_TIMER_PARKED", "CALLER_DRIVEN_RUNTIME")}
+    readings = (("ABORT_TIMER_PARKED", "threads_during_task_dir"), ("ABORT_TIMER_PARKED", "threads_during_status"),
+                ("CALLER_DRIVEN_RUNTIME", "threads_during"))
+    for name, key in readings:
+        seen = runtime_uint(rows.get(name, {}).get(key))
+        if seen is None:
+            problems.append(f"{name}: {key} is missing or not a count")
+        elif seen < 1:
+            problems.append(f"{name}: {key}={seen} is impossible: a reading taken inside a running task counts at least "
+                            "the thread that runs it")
+        elif seen > floor:
+            problems.append(f"{name}: {key}={seen} is above the starting count {floor}")
+    start_threads = runtime_uint(rows.get("CALLER_DRIVEN_RUNTIME", {}).get("start_threads"))
+    if start_threads != floor:
+        problems.append(f"CALLER_DRIVEN_RUNTIME: start_threads={start_threads if start_threads is not None else 'missing'} "
+                        f"is not the start row's {floor}")
+    return problems
+
+
 def judge_runtime(text: str, arch: str, elf: dict[str, Any] | None, *, supervised: bool = False,
                   profile: str = RUNTIME_THREADED) -> dict[str, Any]:
     """Judge exact phase/census identity, order and observed tallies; never accept an END total by itself.
 
-    `profile` selects which of the probe's two runs the transcript must be (default: the threaded run, unchanged). The
+    `profile` selects which of the probe's three runs the transcript must be (default: the threaded run, unchanged). The
     single-owner profile has exactly one declared unsupported row, and `ok` then means "accepted with that one row", never a
-    full pass: the caller reads `report["declared_unsupported"]`."""
+    full pass: the caller reads `report["declared_unsupported"]`. The caller-driven profile declares nothing: every row is ok,
+    and no census row may show a thread above the starting count."""
     if profile not in RUNTIME_SHAPES:
         raise MeasurementError(f"unknown runtime profile {profile!r}")
     shape = RUNTIME_SHAPES[profile]
     single_owner = profile == RUNTIME_SINGLE_OWNER
+    caller_driven = profile == RUNTIME_CALLER_DRIVEN
     gates, rows, malformed, semantic_errors = [], [], [], []
     if runtime_has_nonserial(text.replace("\r\n", "\n")):
         malformed.append("non_serial_control_character_or_line_separator")
@@ -1076,7 +1225,7 @@ def judge_runtime(text: str, arch: str, elf: dict[str, Any] | None, *, supervise
     if begin.get("status") != "start" or begin.get("arch") != arch or begin.get("endian") != (
             "big" if endian == 2 else "little") or begin.get("pointer_bits") != str(bits):
         env_errors.append("BEGIN platform identity does not match selected architecture")
-    if begin.get("topology") != ("single_owner" if single_owner else None):
+    if begin.get("topology") != RUNTIME_TOPOLOGY[profile]:
         env_errors.append(f"BEGIN topology={begin.get('topology', 'absent')} does not match the {profile} profile")
     if pid is None or pid < (2 if supervised else 1):
         env_errors.append("missing/invalid PID (a supervised runtime must be a child, not PID 1)")
@@ -1130,8 +1279,13 @@ def judge_runtime(text: str, arch: str, elf: dict[str, Any] | None, *, supervise
         census_errors.append(f"observed census phases: {phases}")
     if single_owner:
         census_errors.extend(runtime_settle_problems(census_rows))
-    gates.append(_gate("P05R-CENSUS", f"{'thirteen' if single_owner else 'ten'} complete, consistent census samples"
-                       + (", each runtime drop settled" if single_owner else ""), census_errors))
+    if caller_driven:
+        census_errors.extend(runtime_settle_problems(census_rows, CALLER_DRIVEN_SETTLE_ROWS))
+        census_errors.extend(runtime_caller_driven_problems(ops, census_rows))
+    census_title = (f"{'ten' if profile == RUNTIME_THREADED else 'thirteen' if single_owner else 'twelve'} complete, consistent "
+                    "census samples" + (", each runtime drop settled" if single_owner else "") +
+                    (", none above the start count, the runtime drop settled" if caller_driven else ""))
+    gates.append(_gate("P05R-CENSUS", census_title, census_errors))
     end = rows[-1][1] if rows and rows[-1][0] == "END" else {}
     expected_end = {"status": "done", "ops": str(shape["ops"]), "ok": str(shape["ok"]), "failed": "0",
                     "unsupported": str(shape["unsupported"]), "partial": "0", "unknown": "0",
@@ -1197,7 +1351,7 @@ def run_runtime(args: argparse.Namespace, expected_elf: dict[str, Any],
     threaded run packs no marker. Do not enable speaker-platform: that would invoke this runtime twice. No compiler runs here.
     """
     profile = getattr(args, "profile", RUNTIME_THREADED)
-    single_owner = profile == RUNTIME_SINGLE_OWNER
+    marker_bytes = RUNTIME_MARKER_BYTES.get(profile)
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         raise MeasurementError("a finite positive timeout is required")
     if args.log_dir.exists() and any(args.log_dir.iterdir()):
@@ -1220,15 +1374,16 @@ def run_runtime(args: argparse.Namespace, expected_elf: dict[str, Any],
     kernel_sha256 = kernel_identity["sha256"]
     archive = args.log_dir / "runtime.cpio.gz"
     extras = [("franken-speaker", 0o100755, args.elf.read_bytes())]
-    if single_owner:
-        extras.append((SINGLE_OWNER_MARKER_NAME, S_IFREG_644, SINGLE_OWNER_MARKER_BYTES))
+    if marker_bytes is not None:
+        extras.append((SINGLE_OWNER_MARKER_NAME, S_IFREG_644, marker_bytes))
     image = boot.mkinitramfs.build(args.supervisor, archive, extras, exclusive=True)
     if image["init_sha256"] != expected_supervisor["sha256"]:
         raise MeasurementError("supervisor bytes changed before packaging; guest not launched")
     if image["extra_files"]["franken-speaker"]["sha256"] != expected_elf["sha256"]:
         raise MeasurementError("runtime bytes changed before packaging; guest not launched")
-    if (SINGLE_OWNER_MARKER_NAME in image["extra_files"]) != single_owner:
-        raise MeasurementError("the profile marker must be packed for the single-owner run and for no other; guest not launched")
+    if (SINGLE_OWNER_MARKER_NAME in image["extra_files"]) != (marker_bytes is not None):
+        raise MeasurementError("the profile marker must be packed for the single-owner and caller-driven runs and for no other; "
+                               "guest not launched")
     env = dict(os.environ, FFW_BUILD_DIR=str(build_dir), FFW_INITRAMFS=str(archive.resolve()))
     # Match the existing boot scripts' machine/CPU/console, with NICs explicitly disabled.
     # The guest's own loopback remains available; no emulated NIC can contact a real LAN.
@@ -1402,12 +1557,13 @@ def runtime_main(args: argparse.Namespace) -> int:
         packaged = meta["initramfs"]["extra_files"]
         if packaged.get("franken-speaker", {}).get("sha256") != elf["sha256"]:
             capture_errors.append("runtime bytes changed before packaging")
-        # The profile marker is part of the packaged identity: present with exactly the selecting bytes for the single-owner
-        # run, absent for every other run.
+        # The profile marker is part of the packaged identity: present with exactly the selecting bytes for the single-owner and
+        # the caller-driven run, each its own, and absent for the threaded run.
         marker = packaged.get(SINGLE_OWNER_MARKER_NAME)
-        if single_owner and (marker is None or marker.get("sha256") != hashlib.sha256(SINGLE_OWNER_MARKER_BYTES).hexdigest()):
-            capture_errors.append("the single-owner marker is missing from the initramfs or its bytes differ")
-        if not single_owner and marker is not None:
+        marker_bytes = RUNTIME_MARKER_BYTES.get(profile)
+        if marker_bytes is not None and (marker is None or marker.get("sha256") != hashlib.sha256(marker_bytes).hexdigest()):
+            capture_errors.append(f"the {profile} marker is missing from the initramfs or its bytes differ")
+        if marker_bytes is None and marker is not None:
             capture_errors.append("an unexpected profile marker was packaged for a run that did not select a profile")
         for name, expected in (("kernel", meta["kernel_sha256"]), ("initramfs", meta["initramfs"]["archive_sha256"])):
             if meta["inputs_after_capture"][name] != expected:
@@ -1417,15 +1573,17 @@ def runtime_main(args: argparse.Namespace) -> int:
     # The single-owner run is never a plain pass: its one unsupported row is declared, so an accepted run is named for that.
     accepted = "accepted_with_declared_unsupported" if single_owner else "passed"
     outcome = accepted if report["ok"] else "blocked" if exit_code(report) == 3 else "not_passed"
-    scope = RUNTIME_SCOPE + (" " + SINGLE_OWNER_SCOPE if single_owner else "")
+    scope = RUNTIME_SCOPE + {RUNTIME_THREADED: "", RUNTIME_SINGLE_OWNER: " " + SINGLE_OWNER_SCOPE,
+                             RUNTIME_CALLER_DRIVEN: " " + CALLER_DRIVEN_SCOPE}[profile]
     if args.receipt:
         body = {"schema": RUNTIME_SCHEMA, "result": outcome, "arch": args.arch,
                 "evidence_kind": "captured_guest_execution" if meta is not None else "supplied_transcript_analysis",
                 "revision_claim": args.revision, "elf": elf, "supervisor_elf": supervisor, "execution": meta,
                 "transcript_sha256": transcript_sha256, "gates": [vars(g) for g in report["gates"]],
                 "scope": scope}
-        if single_owner:
+        if profile != RUNTIME_THREADED:
             body["profile"] = profile
+        if single_owner:
             body["declared_unsupported"] = report["declared_unsupported"]
         write_runtime_receipt(args.receipt, body)
     # Do not publish a green result if persisting its requested receipt failed.
@@ -1455,8 +1613,10 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--receipt", type=pathlib.Path)
         p.add_argument("--revision", help="operator-supplied source claim; not build attestation")
         p.add_argument("--profile", choices=RUNTIME_PROFILES, default=RUNTIME_THREADED,
-                       help="which run the probe made: threaded (default) or single-owner, which has one declared "
-                            "unsupported row and is accepted, never passed (command-line exit 4)")
+                       help="which run the probe made: threaded (default); single-owner, which has one declared "
+                            "unsupported row and is accepted, never passed (command-line exit 4); or caller-driven, whose "
+                            "runtime is driven by the calling thread, shows no thread above the starting count and declares "
+                            "nothing unsupported")
         if name == "run-runtime":
             p.add_argument("--log-dir", type=pathlib.Path, required=True)
             p.add_argument("--timeout", type=float, default=180.0)

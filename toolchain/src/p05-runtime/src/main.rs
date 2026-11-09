@@ -26,8 +26,14 @@
 //! Topologies. By default the probe builds the threaded profile (two scheduler workers) and its transcript is unchanged. Run with the
 //! argument `--profile=single-owner` it builds the single-owner profile instead: the same bounded `LegacyProfile` with exactly one
 //! scheduler worker, built and audited by the same path, so one thread polls every task. Its transcript has more rows and is not the
-//! one the default judge reads. The caller-driven mode (`RuntimeBuilder::current_thread()`) is not something `LegacyProfile` can
-//! build at the pinned revision, so that row is printed `unsupported` and is never counted as `ok`.
+//! one the default judge reads. The single-owner profile states a blocking pool, which the caller-driven mode forbids, so that mode is
+//! not run in it: its row is printed `unsupported`, declares why, and is never counted as `ok`.
+//!
+//! Run with the argument `--profile=caller-driven` (or the same marker, holding `caller-driven`) it builds the caller-driven profile
+//! instead: `LegacyProfile::caller_driven`, one scheduler worker that no thread owns, so the thread that calls `block_on` runs every
+//! task, timer and reactor turn, with no blocking thread and no helper thread. Its ceiling is 0 OS threads, and every census row is held
+//! to the starting thread count. Its transcript has its own rows (blocking work refused, handle-spawned work waiting for the next
+//! `block_on`) and none is declared unsupported.
 #![forbid(unsafe_code)]
 
 use std::collections::HashSet;
@@ -46,7 +52,9 @@ use std::time::{Duration, Instant};
 
 use asupersync::cx::Cx;
 use asupersync::net::UdpSocket;
-use asupersync::runtime::legacy_profile::{CapViolation, LegacyCaps, LegacyProfile};
+use asupersync::runtime::legacy_profile::{
+    CapViolation, LegacyCaps, LegacyProfile, TopologyViolation,
+};
 use asupersync::runtime::reactor::create_reactor;
 use asupersync::runtime::{
     BlockingSpawnErrorKind, BlockingTaskHandle, JoinError, RootDrainOutcome, RootDrainReport,
@@ -497,6 +505,44 @@ fn sample_settled(report: &mut Report, phase: &str, settle: Settle) {
     report.record("CENSUS", verdict);
 }
 
+/// A verdict with `pairs` added to its detail and its status unchanged.
+fn with_pairs(verdict: Verdict, pairs: &str) -> Verdict {
+    let detail = format!("{} {pairs}", verdict.detail());
+    match verdict {
+        Verdict::Pass(_) => Verdict::Pass(detail),
+        Verdict::Fail(_) => Verdict::Fail(detail),
+        Verdict::Unsupported(_) => Verdict::Unsupported(detail),
+        Verdict::Partial(_) => Verdict::Partial(detail),
+        Verdict::Unknown(_) => Verdict::Unknown(detail),
+    }
+}
+
+/// The caller-driven profile's OS-thread ceiling as a pair, printed on every census row of its run so a reader holds the thread count
+/// to it. `unknown` when the profile cannot say.
+fn ceiling_pair(ceiling: Option<u64>) -> String {
+    format!("os_thread_ceiling={}", show(ceiling))
+}
+
+/// `sample` for the caller-driven run: the reading and its verdict, with the ceiling on the row. Returns the reading.
+fn sample_caller_driven(report: &mut Report, phase: &str, ceiling: Option<u64>) -> Census {
+    let c = census();
+    let verdict = with_pairs(judge_census(phase, &c), &ceiling_pair(ceiling));
+    report.record("CENSUS", verdict);
+    c
+}
+
+/// `sample_settled` for the caller-driven run: the ceiling and the settle outcome go on the same census row.
+fn sample_caller_driven_settled(
+    report: &mut Report,
+    phase: &str,
+    ceiling: Option<u64>,
+    settle: Settle,
+) {
+    let c = census();
+    let verdict = settled_verdict(judge_census(phase, &c), settle);
+    report.record("CENSUS", with_pairs(verdict, &ceiling_pair(ceiling)));
+}
+
 // ---- the profile ------------------------------------------------------------------------------------------------------------
 
 /// Two scheduler workers, one blocking thread and one queued blocking job, every queue bounded, every stack stated.
@@ -525,6 +571,9 @@ enum Topology {
     Threaded,
     /// The profile of `single_owner_caps()`: the same bounds with exactly one scheduler worker.
     SingleOwner,
+    /// The profile of `caller_driven_caps()` in the caller-driven topology: one worker that no thread owns, so the thread that calls
+    /// `block_on` runs every task, and no blocking or helper thread.
+    CallerDriven,
 }
 
 /// The `caps()` bounds with exactly one scheduler worker and nothing else changed, so the single-owner run is the same profile with
@@ -578,6 +627,128 @@ fn single_owner_claim(profile: &LegacyProfile) -> Result<(), SingleOwnerRefusal>
         1 => Ok(()),
         workers => Err(SingleOwnerRefusal::MoreThanOneWorker(workers)),
     }
+}
+
+/// The `caps()` bounds for the caller-driven run: one worker, which is the thread that calls `block_on`, and no blocking pool, which that
+/// topology forbids. The blocking stack and queue are stated as 0, not copied from `caps()` (which carries half a MiB and 1): a forbidden
+/// pool ignores them, so the audit passes with any stated value, but `RUNTIME_AUDIT` prints the stated half and the judge pins
+/// `blocking_queue=0/0`. The 256-entry global queue and the 1 MiB worker stack are `caps()`'s, and the judge pins them too.
+fn caller_driven_caps() -> LegacyCaps {
+    LegacyCaps {
+        worker_threads: 1,
+        blocking_max_threads: 0,
+        blocking_thread_stack_bytes: 0,
+        blocking_max_queued: 0,
+        ..caps()
+    }
+}
+
+fn caller_driven_profile() -> Option<LegacyProfile> {
+    let stated = caller_driven_caps();
+    stated
+        .worst_case_stack_bytes()
+        .map(|budget| LegacyProfile::new(stated, budget).caller_driven())
+}
+
+/// The caller-driven profile row. Pure, so every branch is tested with made-up profiles. It passes only for a profile that was built with
+/// `LegacyProfile::caller_driven`, is acceptable as to both its caps and its topology, states one worker and no blocking thread, and
+/// promises an OS-thread ceiling of exactly 0.
+fn judge_caller_driven_profile(profile: &LegacyProfile) -> Verdict {
+    let caps = profile.caps();
+    let ceiling = profile.os_thread_ceiling();
+    let detail = format!(
+        "claimed=caller_driven stated_worker_threads={} required_worker_threads=1 blocking_max_threads={} os_thread_ceiling={}",
+        caps.worker_threads,
+        caps.blocking_max_threads,
+        show(ceiling)
+    );
+    let acceptable = profile.is_caller_driven()
+        && profile.violations().is_empty()
+        && profile.topology_violations().is_empty()
+        && profile.validate().is_ok();
+    if acceptable
+        && caps.worker_threads == 1
+        && caps.blocking_max_threads == 0
+        && ceiling == Some(0)
+    {
+        Verdict::Pass(detail)
+    } else {
+        let flag = profile.is_caller_driven();
+        let named = profile.topology_violations().len();
+        Verdict::Fail(format!(
+            "{detail} caller_driven={flag} topology_violations={named}"
+        ))
+    }
+}
+
+fn is_needs_one_worker(violation: &TopologyViolation) -> bool {
+    matches!(
+        violation,
+        TopologyViolation::CallerDrivenNeedsOneWorker { .. }
+    )
+}
+
+fn is_forbids_blocking_threads(violation: &TopologyViolation) -> bool {
+    matches!(
+        violation,
+        TopologyViolation::CallerDrivenForbidsBlockingThreads { .. }
+    )
+}
+
+/// Whether a caller-driven profile over `stated` is refused by exactly one topology violation, the one `wanted` names (and by no cap
+/// violation, so the topology is the only reason), and whether its builder refuses it too. The profile gets the stack budget its own
+/// caps need. Pure.
+fn caller_driven_refusal(
+    stated: LegacyCaps,
+    wanted: fn(&TopologyViolation) -> bool,
+) -> (bool, bool) {
+    let Some(budget) = stated.worst_case_stack_bytes() else {
+        return (false, false);
+    };
+    let profile = LegacyProfile::new(stated, budget).caller_driven();
+    let violations = profile.topology_violations();
+    let named =
+        profile.violations().is_empty() && matches!(violations.as_slice(), [only] if wanted(only));
+    (named, profile.builder().is_err())
+}
+
+fn record_refusal(report: &mut Report, name: &str, limit: (&str, usize), outcome: (bool, bool)) {
+    let (named, refused) = outcome;
+    let (key, value) = limit;
+    let detail = format!("named_violation={named} builder_refused={refused} {key}={value}");
+    let verdict = if named && refused {
+        Verdict::Pass(detail)
+    } else {
+        Verdict::Fail(detail)
+    };
+    report.record(name, verdict);
+}
+
+/// The topology refuses, by name, a profile whose caps ask it for a thread it does not start: a second scheduler worker, or a blocking
+/// thread. It is never downgraded to the one-worker, no-blocking runtime.
+fn caller_driven_refusal_phases(report: &mut Report, good: &LegacyProfile) {
+    let workers = LegacyCaps {
+        worker_threads: 2,
+        ..good.caps()
+    };
+    let outcome = caller_driven_refusal(workers, is_needs_one_worker);
+    let limit = ("stated_worker_threads", workers.worker_threads);
+    record_refusal(report, "CALLER_DRIVEN_REFUSES_TWO_WORKERS", limit, outcome);
+    let blocking = LegacyCaps {
+        blocking_max_threads: 1,
+        blocking_thread_stack_bytes: MIB / 2,
+        blocking_max_queued: 1,
+        ..good.caps()
+    };
+    let outcome = caller_driven_refusal(blocking, is_forbids_blocking_threads);
+    let threads = blocking.blocking_max_threads;
+    let limit = ("stated_blocking_max_threads", threads);
+    record_refusal(
+        report,
+        "CALLER_DRIVEN_REFUSES_BLOCKING_THREADS",
+        limit,
+        outcome,
+    );
 }
 
 /// The profile accepts the caps it was given and refuses, by name, the ones that leave something unbounded or over budget.
@@ -1213,6 +1384,29 @@ fn finished<E>(submitted: &Result<BlockingTaskHandle, E>, deadline: Instant) -> 
 
 /// Root tasks parked on 10 s timers, then a bounded root drain: it must cancel them and leave no live task, obligation or finalizer.
 fn drain_phase(report: &mut Report, runtime: &Runtime) {
+    drain_phase_with(report, runtime, false);
+}
+
+/// Resolves once `counter` reaches `wanted` (`true`) or `PHASE_LIMIT` passes (`false`), giving the runtime's worker its turns while it
+/// waits. It is the park-wait of a runtime that has no thread of its own: there only a running `block_on` polls the parked tasks, so
+/// waiting for them on the main thread, as the other topologies do, would wait for work that nothing runs.
+async fn wait_for_count(counter: Arc<AtomicUsize>, wanted: usize) -> bool {
+    let started = Instant::now();
+    loop {
+        if counter.load(Ordering::SeqCst) == wanted {
+            break true;
+        }
+        if started.elapsed() >= PHASE_LIMIT {
+            break false;
+        }
+        yield_now().await;
+    }
+}
+
+/// `drain_phase`, where `caller_driven` says that no thread but the caller's runs the runtime, so the parked tasks are waited for inside
+/// `block_on`. The tasks are spawned from the main thread in both cases, and the drain itself is `shutdown_drained`, which borrows the
+/// worker on the calling thread.
+fn drain_phase_with(report: &mut Report, runtime: &Runtime, caller_driven: bool) {
     let handle = runtime.handle();
     let mut spawned = 0_usize;
     let mut tasks = Vec::new();
@@ -1262,7 +1456,11 @@ fn drain_phase(report: &mut Report, runtime: &Runtime) {
     // The drain is triggered only once every admitted task has been SEEN parked, not after a guessed delay. If they do not all park
     // within the limit the drain is refused and said so, because a drain of tasks that never slept proves nothing about cancelling
     // parked ones.
-    let all_parked = wait_until(PHASE_LIMIT, || entered.load(Ordering::SeqCst) == spawned);
+    let all_parked = if caller_driven {
+        run_async_value(runtime, wait_for_count(Arc::clone(&entered), spawned))
+    } else {
+        wait_until(PHASE_LIMIT, || entered.load(Ordering::SeqCst) == spawned)
+    };
     let parked_count = entered.load(Ordering::SeqCst);
     if !all_parked {
         let detail = format!(
@@ -1396,14 +1594,17 @@ const SINGLE_OWNER_ARG: &str = "--profile=single-owner";
 /// The row that is the one declared gap of the single-owner run, and the start of its `unsupported` detail (the reason, which the
 /// judge pins too). A single-owner run is 20 phases plus 13 census samples, which is the size its exit code is defined for.
 const CALLER_DRIVEN_ROW: &str = "CALLER_DRIVEN_CURRENT_THREAD";
-const CALLER_DRIVEN_REASON: &str = "reason=profile_builder_cannot_build_caller_driven_mode";
+const CALLER_DRIVEN_REASON: &str =
+    "reason=caller_driven_mode_is_the_separate_caller_driven_profile";
 const SINGLE_OWNER_OPS: u32 = 33;
 
-/// Why the caller-driven mode is not run here, with where the pinned source shows it (Asupersync 460306de): the profile's builder
-/// starts from `RuntimeBuilder::new()` and the mode's flag is private to the `current_thread()` constructor. This is a DECLARATION
-/// from reading that source (`reason_source=static_source_reading`), not an observation: the one runtime observation next to it,
-/// `observed_tasks_on_caller_thread`, can only contradict it, and nothing checks the file and line citations.
-const CALLER_DRIVEN_UNSUPPORTED: &str = "reason=profile_builder_cannot_build_caller_driven_mode reason_source=static_source_reading evidence=asupersync_460306de:src/runtime/legacy_profile.rs:406,src/runtime/builder.rs:3911-3914";
+/// Why the caller-driven mode is not run in this run. Its profile states a blocking pool of one thread, which the caller-driven
+/// topology (`LegacyProfile::caller_driven`) forbids, so the mode is run as the separate caller-driven profile
+/// (`--profile=caller-driven`). This is a DECLARATION (`reason_source=profile_split`), not an observation: the one runtime
+/// observation next to it, `observed_tasks_on_caller_thread`, can only contradict it. Before that topology existed the row said instead
+/// that the pinned profile builder could not build the mode (`profile_builder_cannot_build_caller_driven_mode`, read from Asupersync
+/// 460306de); the judge still accepts that declaration, with that revision named, for the receipts that carry it.
+const CALLER_DRIVEN_UNSUPPORTED: &str = "reason=caller_driven_mode_is_the_separate_caller_driven_profile reason_source=profile_split evidence=LegacyProfile::caller_driven";
 
 /// The blocking pool's live-byte budget in the byte-budget run: small, so a declared charge over it is refused as too large.
 const BYTE_BUDGET: NonZeroUsize = match NonZeroUsize::new(4096) {
@@ -1461,6 +1662,36 @@ fn single_owner_selected(
     marker: Option<&[u8]>,
 ) -> bool {
     single_owner_requested(args) || marker_selects_single_owner(marker)
+}
+
+/// The argument that selects the caller-driven run, and the marker content that does the same. Like the single-owner run's they are
+/// exact: anything else, including a longer or differently cased word, is not the caller-driven run.
+const CALLER_DRIVEN_ARG: &str = "--profile=caller-driven";
+const CALLER_DRIVEN_MARKER_WORD: &[u8] = b"caller-driven";
+
+/// Whether the arguments select the caller-driven run: only the exact argument does.
+fn caller_driven_requested(args: impl IntoIterator<Item = std::ffi::OsString>) -> bool {
+    args.into_iter().any(|arg| arg == CALLER_DRIVEN_ARG)
+}
+
+/// Whether marker contents select the caller-driven run: exactly the word, with at most one trailing newline. Pure.
+fn marker_selects_caller_driven(contents: Option<&[u8]>) -> bool {
+    let Some(bytes) = contents else {
+        return false;
+    };
+    bytes.strip_suffix(b"\n").unwrap_or(bytes) == CALLER_DRIVEN_MARKER_WORD
+}
+
+/// Which run the arguments and the marker select. The single-owner run wins when both are asked for, so a request for the older run is
+/// never turned into the newer one; the judge refuses a transcript whose topology is not the profile it was asked to judge.
+fn selected_topology(args: Vec<std::ffi::OsString>, marker: Option<&[u8]>) -> Topology {
+    if single_owner_selected(args.clone(), marker) {
+        Topology::SingleOwner
+    } else if caller_driven_requested(args) || marker_selects_caller_driven(marker) {
+        Topology::CallerDriven
+    } else {
+        Topology::Threaded
+    }
 }
 
 /// Which threads polled the tasks of one phase.
@@ -1553,9 +1784,9 @@ fn judge_single_owner_runtime(
     }
 }
 
-/// The caller-driven mode is not something `LegacyProfile` can build at the pin, so this probe does not run its phases in it: that is
-/// `unsupported`, never `ok`. If tasks were nevertheless seen on the thread that called `block_on`, the stated reason is wrong and that
-/// is a failure to read, not a pass. If nothing could be observed it is `unknown`.
+/// The caller-driven mode is not run in the single-owner run (it is the separate caller-driven profile), so this row is `unsupported`,
+/// never `ok`. If tasks were nevertheless seen on the thread that called `block_on`, the stated reason is wrong and that is a failure to
+/// read, not a pass. If nothing could be observed it is `unknown`.
 fn caller_driven_verdict(tasks_on_caller: Option<bool>) -> Verdict {
     match tasks_on_caller {
         Some(false) => Verdict::Unsupported(format!(
@@ -1566,6 +1797,144 @@ fn caller_driven_verdict(tasks_on_caller: Option<bool>) -> Verdict {
         )),
         None => Verdict::Unknown("task_thread_observation_unavailable".to_string()),
     }
+}
+
+/// What one phase of a caller-driven runtime saw: which threads its tasks ran on (as in the single-owner run), and the process's thread
+/// count read from inside the running phase, while the runtime was being driven.
+async fn caller_driven_tasks_phase(
+    caller: ThreadId,
+) -> (Result<TaskThreads, String>, Option<usize>) {
+    let observed = task_threads_phase(caller).await;
+    (observed, task_dir_count())
+}
+
+/// The caller-driven runtime row. Pure, so every branch is tested with made-up readings. It passes only if the runtime CARRIES one worker
+/// (the audit against the stated caps said so), the profile promised no thread (`ceiling` is `Some(0)`), every child joined, the phase's
+/// tasks were seen on exactly one OS thread and that thread is the one that called `block_on`, and the process held no more threads while
+/// the tasks ran (`during`) than it started with (`start`). `carried_workers` is configuration read from the runtime, not an observation.
+fn judge_caller_driven_runtime(
+    carried_workers: usize,
+    audit_ok: bool,
+    ceiling: Option<u64>,
+    observed: &Result<TaskThreads, String>,
+    threads: (Option<usize>, Option<usize>),
+) -> Verdict {
+    let (during, start) = threads;
+    let detail = format!(
+        "carried_workers={carried_workers} stated_workers=1 audit_ok={audit_ok} {} {} threads_during={} start_threads={}",
+        ceiling_pair(ceiling),
+        task_threads_detail(observed),
+        show(during),
+        show(start)
+    );
+    let within = matches!((during, start), (Some(now), Some(first)) if now <= first);
+    match observed {
+        Ok(seen)
+            if carried_workers == 1
+                && audit_ok
+                && ceiling == Some(0)
+                && seen.joined == CHILDREN
+                && seen.distinct == 1
+                && seen.on_caller
+                && within =>
+        {
+            Verdict::Pass(detail)
+        }
+        _ => Verdict::Fail(detail),
+    }
+}
+
+/// The caller-driven blocking row. Pure. Blocking work is refused by type, in the plain and in the charged form: the pool's policy is
+/// `Forbidden`, both submissions come back `Forbidden`, no job ran inline, and no pool thread started.
+fn judge_caller_driven_blocking(
+    policy: &str,
+    refusals: (
+        Option<BlockingSpawnErrorKind>,
+        Option<BlockingSpawnErrorKind>,
+    ),
+    pool_threads: usize,
+    ran: bool,
+) -> Verdict {
+    let (plain, charged) = refusals;
+    let detail = format!(
+        "policy={policy} refusal={plain:?} expected_refusal=Some(Forbidden) charged_refusal={charged:?} pool_threads_after_refusal={pool_threads} refused_job_ran={ran}"
+    );
+    let forbidden = Some(BlockingSpawnErrorKind::Forbidden);
+    if policy == "Forbidden"
+        && plain == forbidden
+        && charged == forbidden
+        && pool_threads == 0
+        && !ran
+    {
+        Verdict::Pass(detail)
+    } else {
+        Verdict::Fail(detail)
+    }
+}
+
+/// Blocking work in a runtime that starts no thread: refused, never run inline, and no pool thread appears.
+fn caller_driven_blocking_phase(report: &mut Report, runtime: &Runtime) {
+    let Some(pool) = runtime.blocking_handle() else {
+        let detail = "no_blocking_pool_so_blocking_work_would_run_inline".to_string();
+        report.record("CALLER_DRIVEN_BLOCKING_REFUSED", Verdict::Fail(detail));
+        return;
+    };
+    let policy = format!("{:?}", pool.admission_policy());
+    let ran = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&ran);
+    let plain = pool.try_spawn(move || flag.store(true, Ordering::SeqCst));
+    let plain = plain.err().map(|refused| refused.kind());
+    let flag = Arc::clone(&ran);
+    let job = move || flag.store(true, Ordering::SeqCst);
+    let charged = pool.try_spawn_charged(job, BYTE_BUDGET_JOB_HEAP);
+    let charged = charged.err().map(|refused| refused.kind());
+    let verdict = judge_caller_driven_blocking(
+        &policy,
+        (plain, charged),
+        pool.active_threads(),
+        ran.load(Ordering::SeqCst),
+    );
+    report.record("CALLER_DRIVEN_BLOCKING_REFUSED", verdict);
+}
+
+/// How long a handle-spawned task is given to run on its own while nothing drives the runtime. A runtime with a thread of its own runs
+/// it in far less; one without must not run it at all.
+const HANDLE_SPAWN_WAIT: Duration = Duration::from_millis(200);
+
+/// The handle-spawn row. Pure. The task did not run while nothing drove the runtime, did run once a `block_on` did, and ran on the
+/// thread that called it: the mode's documented limit, observed.
+fn judge_handle_spawn(ran_before: bool, ran_after: bool, on_caller: bool) -> Verdict {
+    let detail = format!(
+        "ran_before_block_on={ran_before} ran_after_block_on={ran_after} ran_on_caller={on_caller}"
+    );
+    if !ran_before && ran_after && on_caller {
+        Verdict::Pass(detail)
+    } else {
+        Verdict::Fail(detail)
+    }
+}
+
+fn thread_seen(slot: &Mutex<Option<ThreadId>>) -> Option<ThreadId> {
+    *slot.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Work spawned through a handle while nothing drives the runtime waits for the next `block_on`. The task is spawned from the main
+/// thread and given `HANDLE_SPAWN_WAIT` to run on its own, which a runtime with a worker thread would let it do; then a `block_on` on
+/// the calling thread picks it up.
+fn handle_spawn_phase(report: &mut Report, runtime: &Runtime) {
+    let caller = std::thread::current().id();
+    let ran_on = Arc::new(Mutex::new(None));
+    let record = Arc::clone(&ran_on);
+    let task = runtime.handle().spawn(async move {
+        let id = std::thread::current().id();
+        *record.lock().unwrap_or_else(PoisonError::into_inner) = Some(id);
+    });
+    std::thread::sleep(HANDLE_SPAWN_WAIT);
+    let ran_before = thread_seen(&ran_on).is_some();
+    runtime.block_on(task);
+    let seen = thread_seen(&ran_on);
+    let verdict = judge_handle_spawn(ran_before, seen.is_some(), seen == Some(caller));
+    report.record("CALLER_DRIVEN_HANDLE_SPAWN_WAITS", verdict);
 }
 
 /// A blocking job is held on the pool's only thread while async work runs to completion on the runtime's one worker: offloaded blocking
@@ -1773,13 +2142,24 @@ fn finish(report: &Report, code: i32) -> ! {
 
 fn main() {
     let marker = read_single_owner_marker();
-    if single_owner_selected(std::env::args_os().skip(1), marker.as_deref()) {
-        let report = run_single_owner_probe();
-        let code = report.single_owner_exit_code();
-        finish(&report, code)
-    }
-    let report = run_probe();
-    let code = report.exit_code();
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    let (report, code) = match selected_topology(args, marker.as_deref()) {
+        Topology::SingleOwner => {
+            let report = run_single_owner_probe();
+            let code = report.single_owner_exit_code();
+            (report, code)
+        }
+        Topology::CallerDriven => {
+            let report = run_caller_driven_probe();
+            let code = report.exit_code();
+            (report, code)
+        }
+        Topology::Threaded => {
+            let report = run_probe();
+            let code = report.exit_code();
+            (report, code)
+        }
+    };
     finish(&report, code)
 }
 
@@ -1795,12 +2175,14 @@ fn run_single_owner_probe() -> Report {
     run_probe_for(Topology::SingleOwner, single_owner_profile())
 }
 
-/// The one body both runs share. `stated` is the profile the run builds its runtime from. A run that claims the single-owner topology
-/// refuses a profile that does not state exactly one worker before it builds anything; the default run's rows and output are unchanged.
-fn run_probe_for(topology: Topology, stated: Option<LegacyProfile>) -> Report {
-    let single_owner = topology == Topology::SingleOwner;
-    let mut report = Report::default();
-    let mut begin = format!(
+/// The third run: a runtime built from the caller-driven profile, whose one worker is driven by the thread that calls `block_on`.
+fn run_caller_driven_probe() -> Report {
+    run_caller_driven_for(caller_driven_profile())
+}
+
+/// What every run's `BEGIN` row says about the platform; a run that claims a topology adds it after these.
+fn begin_detail() -> String {
+    format!(
         "pid={} arch={} endian={} pointer_bits={} threads_available_to_std={}",
         std::process::id(),
         std::env::consts::ARCH,
@@ -1815,7 +2197,16 @@ fn run_probe_for(topology: Topology, stated: Option<LegacyProfile>) -> Report {
                 .ok()
                 .map(std::num::NonZeroUsize::get)
         )
-    );
+    )
+}
+
+/// The one body the threaded and single-owner runs share. `stated` is the profile the run builds its runtime from. A run that claims
+/// the single-owner topology refuses a profile that does not state exactly one worker before it builds anything; the default run's rows
+/// and output are unchanged.
+fn run_probe_for(topology: Topology, stated: Option<LegacyProfile>) -> Report {
+    let single_owner = topology == Topology::SingleOwner;
+    let mut report = Report::default();
+    let mut begin = begin_detail();
     if single_owner {
         begin.push_str(" topology=single_owner");
     }
@@ -1909,6 +2300,82 @@ fn run_probe_for(topology: Topology, stated: Option<LegacyProfile>) -> Report {
         let settled = byte_budget_phases(&mut report, stated, floor);
         sample_settled(&mut report, "after_byte_budget", settled);
     }
+    report
+}
+
+/// The caller-driven run's body. Every row is observed on one runtime that starts no thread: the thread count is held to the starting
+/// count at every census row, and the ceiling the profile promises is printed on each. A profile that is not an acceptable caller-driven
+/// profile ends the run at its own row, before anything is built. The blocking pool is forbidden in this topology, so the rows that
+/// need its thread have no counterpart here.
+fn run_caller_driven_for(stated: Option<LegacyProfile>) -> Report {
+    let mut report = Report::default();
+    let mut begin = begin_detail();
+    begin.push_str(" topology=caller_driven");
+    emit(&line("BEGIN", "start", &begin));
+    let ceiling = stated.as_ref().and_then(LegacyProfile::os_thread_ceiling);
+    // The thread count before any runtime exists: every later reading is held to it, and the drop below waits to get back to it.
+    let start = sample_caller_driven(&mut report, "start", ceiling);
+    let floor = start.stable_task_dir();
+
+    let Some(stated) = stated else {
+        let detail = "worst_case_stack_bytes=overflow".to_string();
+        report.record("CALLER_DRIVEN_PROFILE", Verdict::Fail(detail));
+        return report;
+    };
+    let claim = judge_caller_driven_profile(&stated);
+    let claimed = matches!(claim, Verdict::Pass(_));
+    report.record("CALLER_DRIVEN_PROFILE", claim);
+    if !claimed {
+        return report;
+    }
+    profile_phase(&mut report, Some(stated));
+    caller_driven_refusal_phases(&mut report, &stated);
+    let Some((runtime, reactor)) = build_phase(&mut report, &stated) else {
+        return report;
+    };
+    sample_caller_driven(&mut report, "after_build", ceiling);
+
+    let caller = std::thread::current().id();
+    let (observed, during) = run_async_value(&runtime, caller_driven_tasks_phase(caller));
+    let carried = LegacyCaps::of_runtime(&runtime).worker_threads;
+    let audit_ok = stated.audit(&runtime).is_ok();
+    let threads = (during, floor);
+    let verdict = judge_caller_driven_runtime(carried, audit_ok, ceiling, &observed, threads);
+    report.record("CALLER_DRIVEN_RUNTIME", verdict);
+    sample_caller_driven(&mut report, "after_caller_driven_tasks", ceiling);
+
+    report.record("SPAWN_JOIN", run_async(&runtime, spawn_join_phase()));
+    sample_caller_driven(&mut report, "after_spawn_join", ceiling);
+    report.record(
+        "ABORT_TIMER_PARKED",
+        run_async(&runtime, abort_timer_phase()),
+    );
+    sample_caller_driven(&mut report, "after_abort_timer_parked", ceiling);
+    report.record(
+        "ABORT_BLIND_VALUE",
+        run_async(&runtime, abort_blind_phase()),
+    );
+    sample_caller_driven(&mut report, "after_abort_blind_value", ceiling);
+    report.record("TIMER_WAKE", run_async(&runtime, timer_wake_phase()));
+    sample_caller_driven(&mut report, "after_timer_wake", ceiling);
+    if reactor {
+        report.record("UDP_LOOPBACK", run_async(&runtime, udp_phase()));
+    } else {
+        report.record(
+            "UDP_LOOPBACK",
+            Verdict::Unsupported("no_reactor_on_this_runtime".to_string()),
+        );
+    }
+    sample_caller_driven(&mut report, "after_udp", ceiling);
+    caller_driven_blocking_phase(&mut report, &runtime);
+    sample_caller_driven(&mut report, "after_blocking_refused", ceiling);
+    handle_spawn_phase(&mut report, &runtime);
+    sample_caller_driven(&mut report, "after_handle_spawn", ceiling);
+    drain_phase_with(&mut report, &runtime, true);
+    sample_caller_driven(&mut report, "after_drain", ceiling);
+    drop(runtime);
+    let settled = settle_threads(floor);
+    sample_caller_driven_settled(&mut report, "after_runtime_drop", ceiling, settled);
     report
 }
 
@@ -2779,10 +3246,14 @@ mod tests {
         let detail = caller_driven_verdict(Some(false));
         assert!(detail.detail().starts_with(CALLER_DRIVEN_REASON));
         assert!(
+            detail.detail().contains("reason_source=profile_split"),
+            "the row is a declaration, not an observation, and says so"
+        );
+        assert!(
             detail
                 .detail()
-                .contains("reason_source=static_source_reading"),
-            "the row is a declaration from the source, and says so"
+                .contains("evidence=LegacyProfile::caller_driven"),
+            "and names the constructor that is the other profile"
         );
         assert_eq!(detail.status(), "unsupported");
         assert_eq!(CALLER_DRIVEN_ROW, "CALLER_DRIVEN_CURRENT_THREAD");
@@ -3043,5 +3514,313 @@ mod tests {
             args(&["--catalog"]),
             Some(b"threaded\n")
         ));
+    }
+
+    // ---- the caller-driven run ------------------------------------------------------------------------------------------------
+
+    /// The REAL caller-driven phases under `cargo test`, through the same body `main` calls, with the same needs as the single-owner
+    /// run (a platform reactor, loopback UDP, a readable /proc, `--test-threads=1`). Every row is `ok`: nothing is declared
+    /// unsupported, so the generic exit code is 0 and no special code is needed.
+    #[test]
+    fn caller_driven_runtime_runs_every_phase_on_the_caller_thread_and_holds_the_thread_count() {
+        const PHASES: [&str; 18] = [
+            "CALLER_DRIVEN_PROFILE",
+            "PROFILE_ACCEPT",
+            "PROFILE_REFUSES_ZERO_WORKERS",
+            "PROFILE_REFUSES_UNBOUNDED_QUEUE",
+            "PROFILE_REFUSES_OVER_BUDGET",
+            "CALLER_DRIVEN_REFUSES_TWO_WORKERS",
+            "CALLER_DRIVEN_REFUSES_BLOCKING_THREADS",
+            "REACTOR",
+            "RUNTIME_AUDIT",
+            "CALLER_DRIVEN_RUNTIME",
+            "SPAWN_JOIN",
+            "ABORT_TIMER_PARKED",
+            "ABORT_BLIND_VALUE",
+            "TIMER_WAKE",
+            "UDP_LOOPBACK",
+            "CALLER_DRIVEN_BLOCKING_REFUSED",
+            "CALLER_DRIVEN_HANDLE_SPAWN_WAITS",
+            "DRAIN",
+        ];
+        let report = run_caller_driven_probe();
+        let summary = report.end();
+        emit(&summary);
+        let phases: Vec<&str> = report
+            .names
+            .iter()
+            .map(String::as_str)
+            .filter(|name| *name != "CENSUS")
+            .collect();
+        assert_eq!(phases, PHASES, "{summary}");
+        assert_eq!(report.census_samples, 12, "{summary}");
+        assert_eq!(report.ops, 30, "{summary}");
+        let tally = (
+            report.ok,
+            report.failed,
+            report.unsupported,
+            report.partial,
+            report.unknown,
+        );
+        assert_eq!(tally, (30, 0, 0, 0, 0), "{summary}");
+        assert_eq!(report.exit_code(), 0, "{summary}");
+    }
+
+    /// The profile row and the two refusal rows, in their pure form. The control passes; each planted profile (the same caps without the
+    /// topology, a second worker, a blocking thread) is refused, and the refusal helper names the right violation and no other.
+    #[test]
+    fn the_caller_driven_profile_row_is_judged_from_the_profile_alone() {
+        let good = caller_driven_profile().expect("the stated caps do not overflow");
+        let verdict = judge_caller_driven_profile(&good);
+        assert_eq!(word(&verdict), "pass", "{}", verdict.detail());
+        assert!(verdict.detail().contains("os_thread_ceiling=0"));
+        // The stated half of every figure the judge pins for this run (`PROFILE_ACCEPT`, `RUNTIME_AUDIT`): written out, not read back from
+        // `caps()`, so a caps list copied with `..caps()` that left the blocking queue at 1 is caught here and not only in the transcript.
+        let judged = LegacyCaps {
+            worker_threads: 1,
+            thread_stack_bytes: MIB,
+            blocking_max_threads: 0,
+            blocking_thread_stack_bytes: 0,
+            global_queue_limit: 256,
+            blocking_max_queued: 0,
+        };
+        assert_eq!(good.caps(), judged);
+        let caps = good.caps();
+        let with_budget = |stated: LegacyCaps| {
+            let budget = stated
+                .worst_case_stack_bytes()
+                .expect("the stated caps do not overflow");
+            LegacyProfile::new(stated, budget)
+        };
+        let workers = LegacyCaps {
+            worker_threads: 2,
+            ..caps
+        };
+        let blocking = LegacyCaps {
+            blocking_max_threads: 1,
+            blocking_thread_stack_bytes: MIB / 2,
+            blocking_max_queued: 1,
+            ..caps
+        };
+        let planted = [
+            ("the topology is not chosen", with_budget(caps)),
+            ("two workers", with_budget(workers).caller_driven()),
+            ("a blocking thread", with_budget(blocking).caller_driven()),
+        ];
+        for (what, profile) in planted {
+            let verdict = judge_caller_driven_profile(&profile);
+            assert_eq!(word(&verdict), "fail", "{what}: {}", verdict.detail());
+        }
+        assert_eq!(
+            caller_driven_refusal(workers, is_needs_one_worker),
+            (true, true)
+        );
+        assert_eq!(
+            caller_driven_refusal(workers, is_forbids_blocking_threads),
+            (false, true)
+        );
+        assert_eq!(
+            caller_driven_refusal(blocking, is_forbids_blocking_threads),
+            (true, true)
+        );
+        assert_eq!(
+            caller_driven_refusal(caps, is_needs_one_worker),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn the_caller_driven_runtime_row_passes_only_for_tasks_on_the_caller_within_the_start_count() {
+        let seen =
+            |joined: usize, distinct: usize, on_caller: bool| -> Result<TaskThreads, String> {
+                Ok(TaskThreads {
+                    joined,
+                    distinct,
+                    on_caller,
+                })
+            };
+        let counts = (Some(4), Some(4));
+        let on_caller = seen(CHILDREN, 1, true);
+        let good = judge_caller_driven_runtime(1, true, Some(0), &on_caller, counts);
+        assert_eq!(word(&good), "pass", "{}", good.detail());
+        assert!(good.detail().contains("threads_during=4 start_threads=4"));
+        // A thread of the process may have left since the start: fewer threads than the start is not a failure.
+        let fewer = (Some(3), Some(4));
+        let verdict = judge_caller_driven_runtime(1, true, Some(0), &on_caller, fewer);
+        assert_eq!(word(&verdict), "pass", "{}", verdict.detail());
+        let above = (Some(5), Some(4));
+        for (carried, audit_ok, ceiling, observed, counts) in [
+            (2, true, Some(0), seen(CHILDREN, 1, true), counts),
+            (1, false, Some(0), seen(CHILDREN, 1, true), counts),
+            (1, true, Some(1), seen(CHILDREN, 1, true), counts),
+            (1, true, None, seen(CHILDREN, 1, true), counts),
+            (1, true, Some(0), seen(CHILDREN, 2, true), counts),
+            (1, true, Some(0), seen(CHILDREN - 1, 1, true), counts),
+            (1, true, Some(0), seen(CHILDREN, 1, false), counts),
+            (1, true, Some(0), Err("no_current_cx".to_string()), counts),
+            (1, true, Some(0), seen(CHILDREN, 1, true), above),
+            (1, true, Some(0), seen(CHILDREN, 1, true), (None, Some(4))),
+            (1, true, Some(0), seen(CHILDREN, 1, true), (Some(4), None)),
+        ] {
+            let verdict =
+                judge_caller_driven_runtime(carried, audit_ok, ceiling, &observed, counts);
+            assert_eq!(word(&verdict), "fail", "{}", verdict.detail());
+        }
+    }
+
+    #[test]
+    fn the_caller_driven_blocking_and_handle_spawn_rows_are_judged_from_observations() {
+        let forbidden = Some(BlockingSpawnErrorKind::Forbidden);
+        let good = judge_caller_driven_blocking("Forbidden", (forbidden, forbidden), 0, false);
+        assert_eq!(word(&good), "pass", "{}", good.detail());
+        assert!(good.detail().contains("refusal=Some(Forbidden)"));
+        let saturated = Some(BlockingSpawnErrorKind::Saturated);
+        let too_large = Some(BlockingSpawnErrorKind::ChargeTooLarge);
+        for (policy, refusals, threads, ran) in [
+            ("Forbidden", (None, forbidden), 0, false),
+            ("Forbidden", (forbidden, None), 0, false),
+            ("Forbidden", (saturated, forbidden), 0, false),
+            ("Forbidden", (forbidden, too_large), 0, false),
+            ("Forbidden", (forbidden, forbidden), 1, false),
+            ("Forbidden", (forbidden, forbidden), 0, true),
+            ("Unbounded", (forbidden, forbidden), 0, false),
+        ] {
+            let verdict = judge_caller_driven_blocking(policy, refusals, threads, ran);
+            assert_eq!(word(&verdict), "fail", "{}", verdict.detail());
+        }
+        let waited = judge_handle_spawn(false, true, true);
+        assert_eq!(word(&waited), "pass", "{}", waited.detail());
+        for (before, after, on_caller) in [
+            (true, true, true),
+            (false, false, true),
+            (false, true, false),
+            (true, false, false),
+        ] {
+            let verdict = judge_handle_spawn(before, after, on_caller);
+            assert_eq!(word(&verdict), "fail", "{}", verdict.detail());
+        }
+    }
+
+    #[test]
+    fn only_the_exact_argument_or_marker_selects_the_caller_driven_run_and_single_owner_wins() {
+        let args = |list: &[&str]| -> Vec<std::ffi::OsString> {
+            list.iter()
+                .map(|item| std::ffi::OsString::from(*item))
+                .collect()
+        };
+        assert!(caller_driven_requested(args(&["--profile=caller-driven"])));
+        assert!(caller_driven_requested(args(&[
+            "--catalog",
+            "--profile=caller-driven"
+        ])));
+        let refused_args: &[&[&str]] = &[
+            &[],
+            &["--catalog"],
+            &["--profile=caller-driven-x"],
+            &["--profile=Caller-driven"],
+            &["--profile=single-owner"],
+        ];
+        for list in refused_args {
+            assert!(!caller_driven_requested(args(list)), "{list:?}");
+        }
+        assert!(marker_selects_caller_driven(Some(b"caller-driven")));
+        assert!(marker_selects_caller_driven(Some(b"caller-driven\n")));
+        assert!(!marker_selects_caller_driven(None));
+        let refused_markers: &[&[u8]] = &[
+            b"",
+            b"\n",
+            b"caller-driven\n\n",
+            b"caller-driven ",
+            b"Caller-driven",
+            b"caller-driven-x",
+            b"single-owner",
+            b"--profile=caller-driven",
+            b"caller-driven\0",
+        ];
+        for contents in refused_markers {
+            assert!(
+                !marker_selects_caller_driven(Some(contents)),
+                "{contents:?} must not select the caller-driven run"
+            );
+        }
+        let marker: Option<&[u8]> = Some(b"caller-driven\n");
+        let other: Option<&[u8]> = Some(b"single-owner\n");
+        let own = args(&["--profile=caller-driven"]);
+        // What the unchanged supervisor really passes is `--catalog` and no marker unless the runner packed one.
+        let selected = selected_topology(args(&["--catalog"]), None);
+        assert_eq!(selected, Topology::Threaded);
+        let selected = selected_topology(args(&["--catalog"]), marker);
+        assert_eq!(selected, Topology::CallerDriven);
+        let selected = selected_topology(own.clone(), None);
+        assert_eq!(selected, Topology::CallerDriven);
+        // Both runs asked for: the single-owner run wins, in either direction.
+        let selected = selected_topology(args(&["--profile=single-owner"]), marker);
+        assert_eq!(selected, Topology::SingleOwner);
+        assert_eq!(selected_topology(own, other), Topology::SingleOwner);
+        let selected = selected_topology(args(&["--catalog"]), other);
+        assert_eq!(selected, Topology::SingleOwner);
+    }
+
+    /// The planted negative and its control, on real runtimes. The same caps built WITHOUT the caller-driven topology start a worker
+    /// thread: the runtime row sees its tasks off the calling thread and one more thread than the start, and the caller-driven audit
+    /// refuses it. The runtime built the real way passes both. Like the runs above it counts threads, so it needs `--test-threads=1`. (The
+    /// real runtime goes first, and the planted one's thread is waited for before the test ends, so neither colours a later start count.)
+    #[test]
+    fn a_runtime_that_ignores_the_caller_driven_choice_fails_the_runtime_row_and_the_audit() {
+        let real = caller_driven_profile().expect("the stated caps do not overflow");
+        let plant = LegacyProfile::new(real.caps(), real.stack_budget_bytes());
+        assert!(real.is_caller_driven() && !plant.is_caller_driven());
+        let observe = |profile: &LegacyProfile| {
+            let start = task_dir_count();
+            let runtime = profile
+                .builder()
+                .expect("valid caps")
+                .enable_platform_reactor(false)
+                .build()
+                .expect("runtime build");
+            let caller = std::thread::current().id();
+            let (observed, during) = run_async_value(&runtime, caller_driven_tasks_phase(caller));
+            let carried = LegacyCaps::of_runtime(&runtime).worker_threads;
+            let audit_ok = real.audit(&runtime).is_ok();
+            let ceiling = real.os_thread_ceiling();
+            let counts = (during, start);
+            let verdict =
+                judge_caller_driven_runtime(carried, audit_ok, ceiling, &observed, counts);
+            drop(runtime);
+            let _settled = settle_threads(start);
+            (verdict, audit_ok)
+        };
+        let (control, control_audit) = observe(&real);
+        assert_eq!(word(&control), "pass", "{}", control.detail());
+        assert!(control_audit);
+        let (planted, planted_audit) = observe(&plant);
+        assert_eq!(word(&planted), "fail", "{}", planted.detail());
+        assert!(!planted_audit);
+        assert!(planted.detail().contains("tasks_on_caller_thread=false"));
+    }
+
+    /// The same plant and control for the handle-spawn row: a runtime with a thread of its own runs the handle-spawned task by itself,
+    /// before any `block_on`, which is the one thing the caller-driven runtime must not do. The planted runtime's thread is waited for
+    /// before the test ends (it counts threads, so it needs `--test-threads=1` like the runs above).
+    #[test]
+    fn a_runtime_with_a_thread_of_its_own_runs_handle_spawned_work_by_itself_and_fails_that_row() {
+        let build = |profile: &LegacyProfile| {
+            profile
+                .builder()
+                .expect("valid caps")
+                .enable_platform_reactor(false)
+                .build()
+                .expect("runtime build")
+        };
+        let real = caller_driven_profile().expect("the stated caps do not overflow");
+        let mut control = Report::default();
+        handle_spawn_phase(&mut control, &build(&real));
+        assert_eq!((control.ok, control.failed), (1, 0));
+        let plant = LegacyProfile::new(real.caps(), real.stack_budget_bytes());
+        let floor = task_dir_count();
+        let mut planted = Report::default();
+        handle_spawn_phase(&mut planted, &build(&plant));
+        let _settled = settle_threads(floor);
+        assert_eq!((planted.ok, planted.failed), (0, 1));
     }
 }

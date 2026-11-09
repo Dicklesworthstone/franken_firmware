@@ -11,15 +11,20 @@ publish = false
 # predicates; `measure-p05-target.py` independently checks its transcript and capture. It is built only for measurement and never ships.
 #
 # Its own workspace root, like `p05-target`, so the application workspace, its lockfile and the P01 workspace contract are not touched.
-# The committed lockfile was generated centrally by the official Cargo resolver.
+# The lockfile was generated centrally by the official Cargo resolver for the earlier pin (Asupersync 460306de). Moving the pin to
+# 91509bcd8 changed only the revision text of the four Asupersync-sourced entries (`asupersync`, `franken-decision`,
+# `franken-evidence`, `franken-kernel`). That edit was made by hand, from a comparison of the two revisions' manifests, and Cargo has
+# not re-resolved it here: it is accepted only when a central `cargo check --locked` accepts it.
 [workspace]
 
-# The SAME Asupersync revision and Git source `toolchain/asupersync-cancel-audit` pins (the owned API pin), with default features OFF.
-# `native-runtime` and `runtime-core` are what the APIs used here sit behind at this revision; both are empty marker features there.
+# Asupersync 91509bcd8ac1f1cb00417b9b3a6d54875cbfce05 (same Git source), a published revision that carries
+# `LegacyProfile::caller_driven` (published since 4f624497a), with default features OFF. `toolchain/asupersync-cancel-audit` still pins the earlier revision its
+# own evidence was recorded at, so the two pins now differ on purpose; a result of one says nothing about the other's source.
+# `native-runtime` and `runtime-core` are what the APIs used here sit behind at this revision; both are empty marker features there, at 4f624497a and at 91509bcd8.
 # This list is the set selected for the APIs the probe calls, NOT a claim that it is the smallest set that builds. `proc-macros`
 # and `nightly-outcome-try` (both in Asupersync's defaults) are not used by this probe and are left out.
 [dependencies]
-asupersync = { git = "https://github.com/Dicklesworthstone/asupersync", rev = "460306de2aa4169510873716018ade44fdb01534", default-features = false, features = ["native-runtime", "runtime-core"] }
+asupersync = { git = "https://github.com/Dicklesworthstone/asupersync", rev = "91509bcd8ac1f1cb00417b9b3a6d54875cbfce05", default-features = false, features = ["native-runtime", "runtime-core"] }
 
 # The release profile mirrors the speaker workspace; this is not evidence of memory fit. A profile is read from the workspace root
 # and this package is its own. `panic = "abort"` is deliberate: a guest that panics ends the transcript without its END line, and a judge must
