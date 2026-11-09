@@ -430,6 +430,125 @@ class MeasuredNeedsARealReceipt(unittest.TestCase):
         self.assertFalse(any("receipt" in p for p in self.check("x", state="pending")))
 
 
+class BuildOkUnrunNeedsARealReceipt(unittest.TestCase):
+    """A platform state `build_ok_unrun` says a build exists, so its `receipt` must name a real record under toolchain/results/tailscale/builds/ (where run_cases.BUILD_DIR reads them): a .log or a .json
+    directly in it, existing, plain, and what its suffix says. The same rule as `measured` with its own directory. No platform claims a build today. What it does not do: judge that the record is a build."""
+
+    CAND, TARGET = "tailscale-rs-0.6.1", "mips32be_harness"
+    DIR = "toolchain/results/tailscale/builds/"
+    LOGS = sorted(n for n in os.listdir(os.path.join(REPO, "toolchain", "results", "tailscale", "builds")) if n.endswith(".log"))
+
+    def check(self, receipt, cand=None, target=None, repo=REPO, state="build_ok_unrun"):
+        doc = copy.deepcopy(PROFILE)
+        doc["candidates"][cand or self.CAND]["platform"][target or self.TARGET].update({"state": state, "receipt": receipt})
+        return L.check_profile(doc, LEDGER, repo)
+
+    def cells(self):
+        """Every candidate and target except the two rows where the profile itself marks the build inapplicable (the Go client on 32-bit PowerPC, which has measurement rows saying so; see
+        test_a_build_cannot_be_claimed_where_the_profile_says_there_is_none). The Go wrapper on PowerPC has no such rows, so it stays a control."""
+        return [(c, t) for c in PROFILE["candidates"] for t in PROFILE["targets"] if not (L.has_no_build_for_target(PROFILE, c, t) and c + "/" + t in PROFILE["measurements"])]
+
+    def test_a_build_cannot_be_claimed_where_the_profile_says_there_is_none(self):
+        for target in ("ppc32be_stock", "ppc32be_harness"):
+            self.assertFalse(any(c == "tailscale-go-1.104.5" and t == target for c, t in self.cells()))
+            problems = self.check(self.DIR + self.LOGS[0], "tailscale-go-1.104.5", target)                                      # a real record, on a cell with no Go port: its inapplicable items now contradict it
+            self.assertTrue(any("tailscale-go-1.104.5/%s/build is not_applicable" % target in p for p in problems), (target, problems))
+        self.assertEqual(len(self.cells()), 5 * 4 - 2)                                                                           # the two Go rows are out; the Go wrapper's PowerPC cells stay in
+
+    def test_no_platform_claims_a_build_today_and_only_two_states_have_a_home_for_receipts(self):
+        self.assertEqual([(c, t) for c, cand in PROFILE["candidates"].items() for t, p in cand["platform"].items() if p["state"] in ("build_ok_unrun", "ran_on_target")], [])
+        self.assertEqual(L.check_profile(PROFILE, LEDGER, REPO), [])
+        self.assertEqual(sorted(L.RECEIPT_HOMES), ["build_ok_unrun", "measured"])
+        self.assertEqual(L.RECEIPT_HOMES["build_ok_unrun"], ("toolchain/results/tailscale/builds/", (".log", ".json")))
+        self.assertEqual(L.BUILD_RECORD_DIR, "/".join(rc.BUILD_DIR) + "/")                                                       # the directory the runner reads its build records from
+
+    def test_every_committed_build_record_is_the_control_for_every_platform(self):
+        self.assertGreaterEqual(len(self.LOGS), 8)
+        for name in self.LOGS:
+            for cand, target in self.cells():
+                self.assertEqual(self.check(self.DIR + name, cand, target), [], (name, cand, target))
+
+    def test_a_receipt_that_names_no_file_is_refused_for_every_platform(self):
+        for cand, target in self.cells():
+            for text in ("x", "built", "n/a", "see the contract", "toolchain/results/tailscale/builds/", "toolchain/results/tailscale/builds", ".log", self.DIR + ".log", self.DIR + ".json"):
+                problems = self.check(text, cand, target)
+                self.assertTrue(any("candidate %s on %s: build_ok_unrun, but its receipt names" % (cand, target) in p for p in problems), (cand, target, text))
+            for odd in (7, ["a"], {"path": "x"}):
+                self.assertTrue(any("but its receipt names" in p for p in self.check(odd, cand, target)), (cand, target, odd))
+        self.assertTrue(any("build_ok_unrun needs a receipt" in p for p in self.check("")), "empty")                                # the earlier rule still speaks first
+        self.assertTrue(any("build_ok_unrun needs a receipt" in p for p in self.check(None)), "none")
+        self.assertEqual(self.check(self.DIR + self.LOGS[0]), [])                                                                # control: a real record, same cell
+
+    def test_a_missing_record_is_refused_with_the_repository_and_only_its_form_checked_without(self):
+        missing = self.DIR + "no-such-record.log"
+        self.assertTrue(any("a file that does not exist or cannot be read" in p for p in self.check(missing)))
+        self.assertTrue(any("a file that does not exist or cannot be read" in p for p in self.check(self.DIR + "no-such-record.json")))
+        self.assertEqual(self.check(missing, repo=None), [])                                                                     # the form is right; the repository vouches for the file
+        self.assertEqual(self.check(self.DIR + self.LOGS[0]), [])                                                                # control
+
+    def test_a_file_elsewhere_or_off_the_directory_is_refused_even_when_it_exists(self):
+        for path in ("toolchain/results/tailscale/measurements/x02-v3b-mips-20261108.json",                                      # a guest-run receipt is not a build record
+                     "toolchain/results/tailscale/receipts/t01-8cdc69be60fccfa2.json", "docs/tailscale/profiles.json", self.DIR + "../receipts/t01-8cdc69be60fccfa2.json",
+                     self.DIR + "sub/" + self.LOGS[0], self.DIR + "." + self.LOGS[0], self.DIR + self.LOGS[0] + "x", self.DIR + "x01.txt", "/" + self.DIR + self.LOGS[0],
+                     "./" + self.DIR + self.LOGS[0], self.DIR.replace("/", "\\") + self.LOGS[0]):
+            self.assertTrue(any("but its receipt names" in p for p in self.check(path)), path)
+
+    def test_a_record_that_is_not_what_its_suffix_says_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = os.path.join(tmp, *self.DIR.rstrip("/").split("/"))
+            os.makedirs(os.path.join(directory, "sub"))
+
+            def put(name, data):
+                with open(os.path.join(directory, name), "wb") as handle:
+                    handle.write(data)
+            put("good.log", b"cargo check finished\n")
+            put("good.json", b'{"schema": "x"}')
+            put("empty.log", b"")
+            put("blank.log", b" \n\t\n")
+            put("binary.log", b"\xff\xfe\x00\x00")
+            put("not-json.json", b"this is not json\n")
+            put("array.json", b"[1]")
+            put("valid-object.txt", b'{"schema": "x"}')
+            put(".hidden.log", b"text\n")
+            put("back\\slash.log", b"text\n")
+            put("sub/nested.log", b"text\n")
+            os.makedirs(os.path.join(directory, "a-directory.log"))
+            os.symlink(os.path.join(directory, "good.log"), os.path.join(directory, "link.log"))
+            for name in ("good.log", "good.json"):
+                self.assertEqual(self.check(self.DIR + name, repo=tmp), [], name)                                                # controls: a text log and a JSON object
+            for name, why in (("empty.log", "a file that is empty"), ("blank.log", "a file that is empty"), ("binary.log", "a file that is not UTF-8 text"),
+                              ("not-json.json", "does not parse as JSON"), ("array.json", "is not a JSON object"), ("a-directory.log", "does not exist or cannot be read"),
+                              ("link.log", "does not exist or cannot be read"), ("valid-object.txt", "which is not a .log or .json file directly under"),
+                              (".hidden.log", "which is not a .log or .json file directly under"), ("back\\slash.log", "which is not a .log or .json file directly under"),
+                              ("sub/nested.log", "which is not a .log or .json file directly under")):
+                self.assertTrue(any(why in p for p in self.check(self.DIR + name, repo=tmp)), name)
+            self.assertEqual(self.check(self.DIR + "good.log", repo=tmp), [])                                                    # and the unplanted copy passes again
+
+    def test_each_state_reads_only_its_own_directory(self):
+        build, figure = self.DIR + self.LOGS[0], "toolchain/results/tailscale/measurements/x02-v3b-mips-20261108.json"
+        self.assertIsNone(L.receipt_problem(build, REPO, "build_ok_unrun"))
+        self.assertIsNone(L.receipt_problem(figure, REPO, "measured"))
+        self.assertIn("not a file under toolchain/results/tailscale/measurements/", L.receipt_problem(build, REPO, "measured"))   # a build log is not a figure's receipt
+        self.assertIn("not a file under toolchain/results/tailscale/builds/", L.receipt_problem(figure, REPO, "build_ok_unrun"))
+        self.assertIn("not a file under toolchain/results/tailscale/measurements/", L.receipt_problem(build, REPO))             # the default state is still `measured`
+
+    def test_the_runners_profile_case_applies_it_with_the_repository(self):
+        data = rc.inputs()
+        self.assertEqual(rc.case_profile(data, REPO).status, "passed")
+        for receipt, status in ((self.DIR + self.LOGS[0], "passed"), (self.DIR + "no-such-record.log", "failed"), ("x", "failed")):
+            weak = copy.deepcopy(data)
+            weak["profile"]["candidates"][self.CAND]["platform"][self.TARGET].update({"state": "build_ok_unrun", "receipt": receipt})
+            result = rc.case_profile(weak, REPO)
+            self.assertEqual(result.status, status, receipt)
+            if status == "failed":
+                self.assertIn("build_ok_unrun, but its receipt", result.detail)
+
+    def test_ran_on_target_is_not_touched(self):
+        problems = self.check("x", state="ran_on_target")                                                                        # refused already, for the cell it makes supported, not for its receipt
+        self.assertTrue(any("is supported" in p for p in problems), problems)
+        self.assertFalse(any("but its receipt" in p for p in problems), problems)
+
+
 class ProfileAndStudyAgreeWithTheX02Receipts(unittest.TestCase):
     """The committed X02 receipts say the probe ran once in one harness guest per architecture. The frozen profile and the study text must not say it did not."""
 

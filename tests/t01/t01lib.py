@@ -196,26 +196,39 @@ def has_no_build_for_target(profile, candidate_id, target_id):
                 and NO_GO_PORT_EVIDENCE in platform.get("evidence", []))
 
 
-# A measurement is `measured` only on a receipt: a JSON file directly under this directory (the X02 writer's, scripts/e2e/t01 --x02).
+# A receipt is a file directly under the directory its state names. A `measured` figure rests on an X02 JSON receipt (the X02 writer's, scripts/e2e/t01 --x02, committed under measurements/). A
+# `build_ok_unrun` platform rests on a captured build record under builds/, where the runner reads them (run_cases.BUILD_DIR, contract section 6): the captured logs (*.log) and any JSON build receipt.
 MEASUREMENT_RECEIPT_DIR = "toolchain/results/tailscale/measurements/"
+BUILD_RECORD_DIR = "toolchain/results/tailscale/builds/"
+RECEIPT_HOMES = {"measured": (MEASUREMENT_RECEIPT_DIR, (".json",)), "build_ok_unrun": (BUILD_RECORD_DIR, (".log", ".json"))}
 
 
-def receipt_problem(receipt, repo=None):
-    """Why a `measured` item's `receipt` does not name a real receipt, or None. It must be a repo-relative path directly under toolchain/results/tailscale/measurements/ ending in .json. Given the
-    repository, the file must also exist as a plain regular file (a symlink, FIFO or oversize file is refused unread) and parse as a JSON object; without it only the form is checked, so a caller that
-    can see the repository (the runner's T01-META-PROFILE does) is what makes a bare string like "x" or a missing file fail. A parseable file is not proof that it holds the figure: judging that
-    is the X02 judge's job (x02_judge.judge_receipt), and nothing here binds the item's value to the receipt."""
-    if not isinstance(receipt, str) or not receipt.startswith(MEASUREMENT_RECEIPT_DIR):
-        return "names %s, not a file under %s" % (repr(receipt)[:60], MEASUREMENT_RECEIPT_DIR)
-    leaf = receipt[len(MEASUREMENT_RECEIPT_DIR):]
-    if not leaf.endswith(".json") or "/" in leaf or "\\" in leaf or leaf.startswith("."):
-        return "names %s, which is not a .json file directly under %s" % (repr(receipt)[:80], MEASUREMENT_RECEIPT_DIR)
+def receipt_problem(receipt, repo=None, state="measured"):
+    """Why a `receipt` does not name a real receipt for the state (`measured` or `build_ok_unrun`), or None. It must be a repo-relative path directly under the state's directory (RECEIPT_HOMES) with one
+    of its suffixes. Given the repository, the file must also exist as a plain regular file (a symlink, FIFO or oversize file is refused unread) and be what its suffix says: a JSON object for .json, a
+    non-empty UTF-8 text for .log. Without the repository only the form is checked, so a caller that can see it (the runner's T01-META-PROFILE does) is what makes a bare string like "x" or a missing file
+    fail. A file that exists is not proof that it holds what the state claims: judging that is the X02 judge's job for a figure, and no judge exists for a linked build (the X01 logs are `cargo check`
+    records, which judge_build_record accepts and which are not a link), so nothing here binds the claim to the file."""
+    home, suffixes = RECEIPT_HOMES[state]
+    if not isinstance(receipt, str) or not receipt.startswith(home):
+        return "names %s, not a file under %s" % (repr(receipt)[:60], home)
+    leaf = receipt[len(home):]
+    if not leaf.endswith(suffixes) or "/" in leaf or "\\" in leaf or leaf.startswith("."):
+        return "names %s, which is not a %s file directly under %s" % (repr(receipt)[:80], " or ".join(suffixes), home)
     if repo is None:
         return None
     try:
         data = read_bounded_file(os.path.join(repo, *receipt.split("/")))
     except (SourceRefused, OSError):
         return "names %s, a file that does not exist or cannot be read" % receipt
+    if leaf.endswith(".log"):
+        if not data.strip():
+            return "names %s, a file that is empty" % receipt
+        try:
+            data.decode("utf-8")
+        except UnicodeDecodeError:
+            return "names %s, a file that is not UTF-8 text" % receipt
+        return None
     try:
         doc = json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
@@ -283,6 +296,10 @@ def check_profile(profile, ledger, repo=None):
                 problems.append("candidate %s on %s: an incompatibility on a stock target must say what it is conditional on (the reported kernel release) or that it is unconditional" % (cid, tid))
             if p["state"] in ("build_ok_unrun", "ran_on_target") and not p.get("receipt"):
                 problems.append("candidate %s on %s: %s needs a receipt" % (cid, tid, p["state"]))
+            elif p["state"] == "build_ok_unrun":
+                why = receipt_problem(p["receipt"], repo, "build_ok_unrun")
+                if why:
+                    problems.append("candidate %s on %s: build_ok_unrun, but its receipt %s" % (cid, tid, why))
     cells = matrix(profile) if not problems else {}
     for key, cell in cells.items():
         if cell == "supported":

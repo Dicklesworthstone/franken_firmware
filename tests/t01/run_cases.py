@@ -23,7 +23,8 @@ Tiers (explicit):
   soak   selectable, says why nothing runs, exits 4. It is never a pass.
 
 Every decided case writes a CRITICAL begin and end event through the shared Q00 sink (``case_log.py``); a run whose log lost critical evidence is NOT QUALIFIED. A run that is not a pass
-prints RETAINED FOR REPLAY: the first failure or block, the replay command and the sha256 of every artifact judged. ``--receipts DIR`` also writes a JSON receipt next to the JSONL log.
+prints RETAINED FOR REPLAY: the first failure or block, the replay command and the sha256 of every artifact judged. ``--receipts DIR`` also writes a JSON receipt next to the JSONL log (schema v2: it
+publishes the run's and each case's duration, the profile version, each case's evidence kind and a seeds statement, and ``check_receipt`` refuses to write one that lacks them).
 
 Exit codes: 0 every case passed and the diagnostic log is complete; 1 a case failed or the log lost critical evidence; 3 the only non-passes are blocked cases; 4 ``--tier soak``; 2 usage.
 
@@ -37,8 +38,10 @@ import datetime
 import json
 import os
 import platform
+import re
 import secrets
 import sys
+import time
 from typing import Any, Callable, Dict, List, Optional
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -53,7 +56,57 @@ SOAK_EXIT = 4
 SOAK_NOT_RUN = (
     "T01 soak: NOT RUN. T01 is a feasibility study over pinned sources and synthetic fixtures: it owns no long-running test, and the long-running questions (a 24-hour campaign, key rotation "
     "while audio runs, relay traffic) need a candidate that builds and runs on the target, which does not exist yet. Nothing here soaks. This is not a pass.")
-RECEIPT_SCHEMA = "ffw.t01.receipt.v1"
+RECEIPT_SCHEMA = "ffw.t01.receipt.v2"
+# Bead ffw-32a: "All tests publish exact build, target, profile, duration, seeds, denominator, maxima, failures and whether results are host simulation, guest execution, real service or
+# physical output." A v2 receipt adds the four fields v1 lacked: the run's and each case's `duration_s`, the `profile_version`, each case's `evidence_kind` and a `seeds` statement. Consumer: `write_receipt`
+# (it refuses an incomplete v2 receipt) and tests/t01/test_receipt_fields.py (every committed receipt). Gate: no v2 receipt is written without them. Retirement: when the X02 writer publishes a duration too.
+LEGACY_RECEIPT_SCHEMA = "ffw.t01.receipt.v1"
+LEGACY_RECEIPTS = ("t01-01665612603d232e.json", "t01-09ad140ddcc4f2c3.json", "t01-0db87ae2afa33766.json", "t01-71f9a235d148927a.json", "t01-8cdc69be60fccfa2.json", "t01-9f4270b321a6868a.json",
+                   "t01-d1fd5102fa96c248.json")  # the seven committed before the v2 fields existed, kept byte for byte; a receipt not named here must be v2
+# The kind of evidence a case ran is DERIVED, never typed next to its name (derive_kind). A case that judges recorded evidence lists the files it consumed (`consumed`: kind, repo-relative path, sha256) and
+# its kind is the strongest of theirs; a host case consumes none, so it is host_simulation when it ran and `none` when it did not. host_simulation: computed on the host from files and hand-written tables
+# (a supplied transcript's analysis too: nothing executed). compile_only: a captured `cargo check` log; nothing was linked or run. guest_execution: a captured run in one QEMU guest. real_service and
+# physical_output are the bead's other two kinds; T01 owns neither, so no receipt may carry them.
+EVIDENCE_KINDS = ("none", "host_simulation", "compile_only", "guest_execution", "real_service", "physical_output")
+NOT_CLAIMED_KINDS = ("real_service", "physical_output")
+KIND_ORDER = ("host_simulation", "compile_only", "guest_execution")  # what a record can be, weakest first
+HOST_GROUPS = ("meta", "contract", "rules", "fixtures", "probe")  # cases that read only files and hand-written tables: they may consume no recorded evidence
+RECORD_DIRS = {"compile_only": "toolchain/results/tailscale/builds/", "guest_execution": "toolchain/results/tailscale/measurements/", "host_simulation": "toolchain/results/tailscale/measurements/"}
+SUPPLIED_LOG = "supplied build log "  # a --build-log from outside the repository is named by its position, not a path
+SHA256_RE = r"[0-9a-f]{64}"
+
+
+def derive_kind(group: str, status: str, consumed: List[Dict[str, str]]) -> str:
+    """What a case ran, from what it consumed: the strongest kind among the recorded files it judged. With none: a case that judges central records ran nothing (`none`), a blocked case ran nothing, and
+    any other case is a host case that ran (`host_simulation`)."""
+    kinds = {c["kind"] for c in consumed}
+    if kinds:
+        return max(kinds, key=KIND_ORDER.index)
+    if group in ("central", "runner") or status == "blocked":
+        return "none"
+    return "host_simulation"
+
+
+# The group of each case is the runner's PLAN, written by hand in tests/t01/cases.json (`case_groups`), and a receipt may not restate it: check_receipt refuses a result whose group differs, so a host case
+# cannot be relabelled `central` (or a central one `rules`) to change what it may have consumed. It is read from the runner's own directory, not from the repository being judged.
+PLAN_PATH = os.path.join(HERE, "cases.json")
+
+
+def plan_groups() -> Dict[str, str]:
+    groups = L.load_json(PLAN_PATH)["case_groups"]
+    if not isinstance(groups, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in groups.items()):
+        raise ValueError("case_groups is not a table of case id to group")
+    return groups
+
+
+SEEDS_STATEMENT ={"applies": False, "reason": "none: no test input is random and no clock decides a verdict; every input is a fixed file or a hand-written table, and the clock is recorded (duration_s, finished_utc) or bounds a probe, never an input"}
+# What `duration_s` is. T01-X01 and T01-X02 JUDGE records of a build and of guest runs: their duration_s is the time this runner took to judge them, not the duration of the build or the guest run.
+DURATION_NOTE = ("wall seconds this runner spent on the run or on the case (time.monotonic), not the duration of any build or guest run a case judged; "
+                 "a guest run's own duration is not published until the X02 writer records one")
+PROFILE_UNREADABLE = "unreadable"  # the receipt of a run whose profile could not be read still gets written, and says so
+PROFILE_VERSION_RE = r"t01-profile-\d{4}-\d{2}-\d{2}\.\d+"
+MAX_DURATION_S = 86400.0
+DURATION_SLACK_S = 0.01  # each case duration is rounded to a millisecond
 MAX_PRINTED = 12
 CONTRACT = "docs/contracts/t01.md"
 CONTRACT_PHRASES = (
@@ -98,19 +151,38 @@ def safe_detail(text: str) -> str:
 
 
 class Result:
-    def __init__(self, case_id: str, status: str, detail: str = "", group: str = ""):
+    def __init__(self, case_id: str, status: str, detail: str = "", group: str = "", duration_s: Optional[float] = None, consumed: Optional[List[Dict[str, str]]] = None):
         self.case_id, self.status, self.detail, self.group = case_id, status, safe_detail(detail) if detail else "", group
+        self.duration_s = duration_s
+        self.consumed = list(consumed or [])  # the recorded files this case judged: {"kind", "path", "sha256"}
+
+    @property
+    def evidence_kind(self) -> str:
+        return derive_kind(self.group, self.status, self.consumed)
 
     def as_dict(self) -> dict:
-        return {"case": self.case_id, "status": self.status, "detail": self.detail, "group": self.group}
+        return {"case": self.case_id, "status": self.status, "detail": self.detail, "group": self.group, "evidence_kind": self.evidence_kind, "consumed": self.consumed, "duration_s": self.duration_s}
 
 
-def judged(case_id: str, group: str, problems: List[str]) -> Result:
-    return Result(case_id, "failed" if problems else "passed", "; ".join(problems[:3]) + (" (+%d more)" % (len(problems) - 3) if len(problems) > 3 else ""), group)
+def timed(fn: Callable[[], "Result"]) -> "Result":
+    """Run one case and record its wall time (time.monotonic, to the millisecond) on its Result. The clock is published, never an input to a verdict."""
+    start = time.monotonic()
+    result = fn()
+    result.duration_s = round(time.monotonic() - start, 3)
+    return result
 
 
-def blocked(case_id: str, group: str, reason: str) -> Result:
-    return Result(case_id, "blocked", reason, group)
+def judged(case_id: str, group: str, problems: List[str], consumed: Optional[List[Dict[str, str]]] = None) -> Result:
+    return Result(case_id, "failed" if problems else "passed", "; ".join(problems[:3]) + (" (+%d more)" % (len(problems) - 3) if len(problems) > 3 else ""), group, consumed=consumed)
+
+
+def blocked(case_id: str, group: str, reason: str, consumed: Optional[List[Dict[str, str]]] = None) -> Result:
+    return Result(case_id, "blocked", reason, group, consumed=consumed)
+
+
+def record(kind: str, path: str, raw: bytes) -> Dict[str, str]:
+    """One recorded file a case judged: its kind, its repo-relative path (or the position of a supplied log) and the sha256 of the bytes that were read."""
+    return {"kind": kind, "path": path, "sha256": L.sha256_bytes(raw)}
 
 
 # ---- the files the study is made of -------------------------------------------------------------------------------------------------------
@@ -392,10 +464,12 @@ def case_build(repo: str, data: Optional[Dict[str, Any]] = None, build_logs: Any
     lock_text = L.read_bounded_file(os.path.join(repo, *anchors["lock_fixture"].split("/"))).decode("utf-8")
     problems = ["lock fixture: " + p for p in L.check_x01_lock(lock_text, anchors)]
     got: Dict[Any, List[Dict[str, Any]]] = {}
-    records = [(name, os.path.join(directory, name), True) for name in logs] + [("supplied build log %d" % (i + 1), path, False) for i, path in enumerate(build_logs)]
+    consumed: List[Dict[str, str]] = []  # the records the judge ACCEPTED: judge_build_record refuses anything but a `cargo check` log, so each is compile_only by what it holds
+    records = [(name, os.path.join(directory, name), True) for name in logs] + [(SUPPLIED_LOG + str(i + 1), path, False) for i, path in enumerate(build_logs)]
     for label, path, redacted in records:
         try:
-            text = L.read_bounded_file(path).decode("utf-8")
+            raw = L.read_bounded_file(path)
+            text = raw.decode("utf-8")
         except (L.SourceRefused, OSError, UnicodeDecodeError) as err:
             problems.append("%s: %s" % (label, failure_detail(err) if isinstance(err, (OSError, UnicodeDecodeError)) else str(err)))
             continue
@@ -403,15 +477,16 @@ def case_build(repo: str, data: Optional[Dict[str, Any]] = None, build_logs: Any
         problems += ["%s: %s" % (label, p) for p in found]
         if not found:
             got.setdefault((facts["target"], facts["attempt"]), []).append(facts)
+            consumed.append(record("compile_only", RECORD_DIRS["compile_only"] + label if redacted else label, raw))
     if problems:
-        return judged(X01_ID, "central", problems)
+        return judged(X01_ID, "central", problems, consumed)
     lines, complete = account_x01(got, anchors["targets"])
     bound = "type-check only: nothing linked or run, no runtime, memory, CPU, enrollment or native-endpoint result; T01-X02 and the native requirement are untouched"
     if unjudged:
-        return blocked(X01_ID, "central", "INCOMPLETE and a JSON build receipt exists that this runner has no judge for it yet; %s: %s" % (bound, "; ".join(lines)))
+        return blocked(X01_ID, "central", "INCOMPLETE and a JSON build receipt exists that this runner has no judge for it yet; %s: %s" % (bound, "; ".join(lines)), consumed)
     if not complete:
-        return blocked(X01_ID, "central", "INCOMPLETE; a core pass is partial evidence only; %s: %s" % (bound, "; ".join(lines)))
-    return Result(X01_ID, "passed", "all four required attempts built; %s: %s" % (bound, "; ".join(lines)), "central")
+        return blocked(X01_ID, "central", "INCOMPLETE; a core pass is partial evidence only; %s: %s" % (bound, "; ".join(lines)), consumed)
+    return Result(X01_ID, "passed", "all four required attempts built; %s: %s" % (bound, "; ".join(lines)), "central", consumed=consumed)
 
 
 X02_ID = "T01-X02-target-resources"
@@ -430,10 +505,12 @@ def case_resources(repo: str) -> Result:
     problems: List[str] = []
     notes: List[str] = []
     passed: Dict[str, List[Any]] = {}
+    consumed: List[Dict[str, str]] = []  # a captured run (passed or blocked) is guest_execution; a supplied transcript's analysis is only host_simulation; a receipt that failed to judge is not recorded
     for path in files:
         name = os.path.basename(path)
         try:
-            text = L.read_bounded_file(path, X.MAX_RECEIPT_BYTES).decode("utf-8")
+            raw = L.read_bounded_file(path, X.MAX_RECEIPT_BYTES)
+            text = raw.decode("utf-8")
         except (L.SourceRefused, OSError, UnicodeDecodeError) as err:
             problems.append("%s: %s" % (name, failure_detail(err) if isinstance(err, (OSError, UnicodeDecodeError)) else str(err)))
             continue
@@ -442,12 +519,15 @@ def case_resources(repo: str) -> Result:
             problems += ["%s: %s" % (name, p) for p in verdict.problems]
         elif verdict.state == "passed":
             passed.setdefault(verdict.arch, []).append((name, verdict.resources))
+            consumed.append(record("guest_execution", RECORD_DIRS["guest_execution"] + name, raw))
         elif verdict.state == "blocked":
             notes.append("%s (%s) is blocked: %s" % (name, verdict.arch, "; ".join(verdict.problems)))
+            consumed.append(record("guest_execution", RECORD_DIRS["guest_execution"] + name, raw))
         else:
             notes.append("%s is a supplied transcript analysis, not a guest run" % name)
+            consumed.append(record("host_simulation", RECORD_DIRS["host_simulation"] + name, raw))
     if problems:
-        return judged(X02_ID, "central", problems)
+        return judged(X02_ID, "central", problems, consumed)
     lines = []
     for arch in X.ARCHES:
         if arch not in passed:
@@ -457,8 +537,8 @@ def case_resources(repo: str) -> Result:
         earlier = " (+%d earlier passed)" % (len(passed[arch]) - 1) if len(passed[arch]) > 1 else ""
         lines.append("%s: PASSED, VmHWM %d kB, VmRSS %d kB, utime %d, stime %d ticks, from %s%s" % (arch, figures["VmHWM"], figures["VmRSS"], figures["utime"], figures["stime"], name, earlier))
     if all(arch in passed for arch in X.ARCHES):
-        return Result(X02_ID, "passed", "a captured guest run with every phase ok and every reading known on each legacy target; %s: %s" % (X02_BOUND, "; ".join(lines)), "central")
-    return blocked(X02_ID, "central", "INCOMPLETE; one target is partial evidence only; %s: %s" % (X02_BOUND, "; ".join(lines + notes)))
+        return Result(X02_ID, "passed", "a captured guest run with every phase ok and every reading known on each legacy target; %s: %s" % (X02_BOUND, "; ".join(lines)), "central", consumed=consumed)
+    return blocked(X02_ID, "central", "INCOMPLETE; one target is partial evidence only; %s: %s" % (X02_BOUND, "; ".join(lines + notes)), consumed)
 
 
 SMOKE_CASES = (case_ledger, case_profile, case_classification, case_cell_rules, case_matrix, case_budget, case_fixtures, case_native_requirement)
@@ -487,14 +567,22 @@ def run(tier: str, sources: Optional[str] = None, repo: str = REPO, build_logs: 
     if tier not in RUN_TIERS:
         raise ValueError("tier %r judges nothing (the soak tier is not run)" % tier)
     try:
+        groups = plan_groups()
+    except (OSError, ValueError, KeyError, TypeError):  # no plan: every failure falls in the generic group, and check_receipt then refuses the receipt for it
+        groups = {}
+
+    def group_of(case_id: str) -> str:
+        return groups.get(case_id, "contract")
+    try:
         data = inputs(repo)
     except Exception as err:  # noqa: BLE001 - the judged inputs themselves are unreadable: every case fails with that cause
         cause = "the judged inputs could not be loaded: %s" % failure_detail(err)
-        return [Result(case_id, "failed", cause, "contract") for case_id in planned_ids(tier)]
-    results = [guarded(case_id, "contract", lambda case=case: case(data, repo)) for case_id, case in zip(SMOKE_IDS, SMOKE_CASES)]
+        return [Result(case_id, "failed", cause, group_of(case_id), 0.0) for case_id in planned_ids(tier)]    # none ran, so each took no time
+    results = [timed(lambda case_id=case_id, case=case: guarded(case_id, group_of(case_id), lambda: case(data, repo))) for case_id, case in zip(SMOKE_IDS, SMOKE_CASES)]
     if tier == "full":
-        results += [case_tsrs(data, sources), case_workspace_edges(data, sources), case_awslc(data, sources), case_mio(data, sources), case_ledger_sources(data, sources),
-                    guarded("T01-X01-legacy-isa-build", "central", lambda: case_build(repo, data, build_logs)), guarded("T01-X02-target-resources", "central", lambda: case_resources(repo))]
+        results += [timed(lambda: case_tsrs(data, sources)), timed(lambda: case_workspace_edges(data, sources)), timed(lambda: case_awslc(data, sources)), timed(lambda: case_mio(data, sources)),
+                    timed(lambda: case_ledger_sources(data, sources)), timed(lambda: guarded("T01-X01-legacy-isa-build", group_of("T01-X01-legacy-isa-build"), lambda: case_build(repo, data, build_logs))),
+                    timed(lambda: guarded("T01-X02-target-resources", group_of("T01-X02-target-resources"), lambda: case_resources(repo)))]
     return results
 
 
@@ -569,14 +657,151 @@ def report(results: List[Result], tier: str, sources: Optional[str] = None, arti
     print("T01 e2e tier=%s: %s  planned=%d passed=%d failed=%d blocked=%d%s" % (tier, verdict, len(results), counts["passed"], counts["failed"], counts["blocked"], note))
 
 
-def write_receipt(directory: str, tier: str, results: List[Result], artifacts: Dict[str, str], sources: Optional[str], run_id: str, evidence: Optional[Any]) -> str:
-    os.makedirs(directory, exist_ok=True)
+class ReceiptRefused(Exception):
+    """A v2 receipt that does not publish what the bead requires of every result is not written."""
+
+
+def _duration_problem(where: str, value: Any) -> Optional[str]:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= MAX_DURATION_S:  # NaN and infinity fail the range comparison
+        return "%s: duration_s %r is not a finite number of seconds from 0 to %d" % (where, value, int(MAX_DURATION_S))
+    return None
+
+
+def _record_problems(case: str, consumed: List[Any], repo: Optional[str]) -> List[str]:
+    """What is wrong with the recorded files a case says it consumed: a shape (kind, path, sha256), a path directly under the directory its kind lives in, and, given the repository, a file that exists
+    and has the recorded digest."""
+    problems: List[str] = []
+    for c in consumed:
+        if not (isinstance(c, dict) and c.get("kind") in KIND_ORDER and isinstance(c.get("path"), str) and isinstance(c.get("sha256"), str) and re.fullmatch(SHA256_RE, c["sha256"])):
+            problems.append("%s: a consumed record needs a kind (%s), a path and a lowercase sha256" % (case, ", ".join(KIND_ORDER)))
+            continue
+        path = c["path"]
+        if path.startswith(SUPPLIED_LOG):
+            if c["kind"] != "compile_only":
+                problems.append("%s: only a build log can be supplied from outside the repository, not a %s record" % (case, c["kind"]))
+            continue
+        prefix = RECORD_DIRS[c["kind"]]
+        leaf = path[len(prefix):]
+        if not path.startswith(prefix) or not leaf or "/" in leaf or "\\" in leaf or leaf.startswith("."):
+            problems.append("%s: a %s record lives directly under %s, not at %s" % (case, c["kind"], prefix, path))
+        elif repo is not None:
+            try:
+                data = L.read_bounded_file(os.path.join(repo, *path.split("/")))
+            except (L.SourceRefused, OSError):
+                problems.append("%s: the consumed record %s cannot be read" % (case, path))
+                continue
+            if L.sha256_bytes(data) != c["sha256"]:
+                problems.append("%s: the consumed record %s is not the file that was judged (sha256 differs)" % (case, path))
+    return problems
+
+
+def check_receipt(doc: Any, name: str = "", repo: Optional[str] = None) -> List[str]:
+    """What is wrong with a T01 receipt. A v2 receipt publishes the run's and every case's duration (with the note that it is this runner's own time), the profile version, each case's evidence kind (derived from the
+    recorded files the case consumed, never typed, and never real_service or physical_output; given the repository, each consumed file must exist with its recorded digest) and a seeds statement; its results are the tier's planned cases, or the single failed T01-RUNNER of a crashed run, and its counts are its own results'.
+    A v1 receipt is valid only under the file name of one of the seven committed before those fields existed, so a new receipt cannot pass by being labelled v1."""
+    if not isinstance(doc, dict):
+        return ["the receipt is not a JSON object"]
+    schema = doc.get("schema")
+    if schema == LEGACY_RECEIPT_SCHEMA:
+        return [] if name in LEGACY_RECEIPTS else ["a v1 receipt is valid only as one of the %d committed before the v2 fields existed, and %s is not one of them" % (len(LEGACY_RECEIPTS), name or "this receipt")]
+    if schema != RECEIPT_SCHEMA:
+        return ["the receipt schema is %r, not %s" % (schema, RECEIPT_SCHEMA)]
+    problems: List[str] = []
+    tier = doc.get("tier")
+    if tier not in RUN_TIERS:
+        problems.append("the tier %r is not one that runs" % (tier,))
+    if not isinstance(doc.get("run_id"), str) or not doc["run_id"]:
+        problems.append("the receipt has no run id")
+    if doc.get("duration_note") != DURATION_NOTE:
+        problems.append("duration_note must say that duration_s is this runner's own time and not the duration of a build or guest run it judged")
+    version = doc.get("profile_version")
+    if version != PROFILE_UNREADABLE and not (isinstance(version, str) and re.fullmatch(PROFILE_VERSION_RE, version)):
+        problems.append("profile_version %r is neither a frozen profile version nor %r" % (version, PROFILE_UNREADABLE))
+    seeds = doc.get("seeds")
+    if not (isinstance(seeds, dict) and seeds.get("applies") is False and isinstance(seeds.get("reason"), str) and seeds["reason"].strip()):
+        problems.append("seeds must state that none apply, with the reason")
+    results = doc.get("results")
+    if not isinstance(results, list) or not results:
+        problems.append("the receipt lists no results")
+        return problems
+    ids = [r.get("case") if isinstance(r, dict) else None for r in results]
+    if tier in RUN_TIERS and ids != planned_ids(tier) and ids != ["T01-RUNNER"]:
+        problems.append("the results are not the tier's planned cases in order (the denominator), nor the single failed T01-RUNNER of a crashed run")
+    counts = {"passed": 0, "failed": 0, "blocked": 0}
+    cases_total = 0.0
+    try:
+        plan = plan_groups()
+    except (OSError, ValueError, KeyError, TypeError):
+        plan = None
+        problems.append("the plan of case groups (tests/t01/cases.json case_groups) cannot be read, so no result's group can be checked")
+    for r in results:
+        if not isinstance(r, dict):
+            problems.append("a result is not an object")
+            continue
+        case = r.get("case")
+        if r.get("status") in counts:
+            counts[r["status"]] += 1
+        else:
+            problems.append("%s: status %r is not passed, failed or blocked" % (case, r.get("status")))
+        kind, group, consumed = r.get("evidence_kind"), r.get("group"), r.get("consumed")
+        if plan is not None and group != plan.get(case):
+            problems.append("%s: group %r, but the plan says %r (a receipt may not restate its case's group)" % (case, group, plan.get(case)))
+        if kind in NOT_CLAIMED_KINDS:
+            problems.append("%s: T01 holds no %s evidence, so no case may claim it" % (case, kind))
+        elif kind not in EVIDENCE_KINDS:
+            problems.append("%s: evidence_kind %r is not one of %s" % (case, kind, ", ".join(EVIDENCE_KINDS)))
+        if not isinstance(consumed, list):
+            problems.append("%s: consumed must list the recorded files the case judged (an empty list for a host case)" % case)
+        else:
+            found = _record_problems(str(case), consumed, repo)
+            problems += found
+            if group in HOST_GROUPS and consumed:
+                problems.append("%s: a host case (group %s) reads only files and hand-written tables, so it cannot have consumed recorded evidence" % (case, group))
+            if not found:
+                derived = derive_kind(str(group), str(r.get("status")), consumed)
+                if kind in EVIDENCE_KINDS and kind not in NOT_CLAIMED_KINDS and kind != derived:
+                    problems.append("%s: evidence_kind %s, but what it consumed gives %s" % (case, kind, derived))
+                if r.get("status") == "passed" and derived == "none":
+                    problems.append("%s: a passed result consumed nothing and ran nothing, so it passed on no evidence (`none` is for a blocked case, or a central case that did not pass)" % case)
+        problem = _duration_problem(str(case), r.get("duration_s"))
+        if problem:
+            problems.append(problem)
+        else:
+            cases_total += r["duration_s"]
+    problem = _duration_problem("the run", doc.get("duration_s"))
+    if problem:
+        problems.append(problem)
+    elif doc["duration_s"] + DURATION_SLACK_S < cases_total:
+        problems.append("the run's duration_s %s is less than the %s its cases took" % (doc["duration_s"], round(cases_total, 3)))
+    if doc.get("counts") != counts:
+        problems.append("counts %r are not the results' own %r" % (doc.get("counts"), counts))
+    return problems
+
+
+def current_profile_version() -> str:
+    try:
+        version = L.load_json(L.PROFILE)["profile_version"]
+    except Exception:  # noqa: BLE001 - an unreadable profile is stated in the receipt, not a reason to lose the receipt
+        return PROFILE_UNREADABLE
+    return version if isinstance(version, str) else PROFILE_UNREADABLE
+
+
+def write_receipt(directory: str, tier: str, results: List[Result], artifacts: Dict[str, str], sources: Optional[str], run_id: str, evidence: Optional[Any], duration_s: Optional[float] = None) -> str:
+    durations = [r.duration_s for r in results]
+    if duration_s is None and all(d is not None for d in durations):
+        duration_s = sum(durations)  # type: ignore[arg-type]
     path = os.path.join(directory, "t01-%s.json" % run_id)
     doc = {"schema": RECEIPT_SCHEMA, "run_id": run_id, "tier": tier, "finished_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+           "duration_s": round(duration_s, 3) if isinstance(duration_s, (int, float)) and not isinstance(duration_s, bool) else duration_s,
+           "duration_note": DURATION_NOTE, "profile_version": current_profile_version(), "seeds": dict(SEEDS_STATEMENT),
            "counts": summarize(results), "exit_code": final_exit(results, evidence), "replay": replay_command(tier, sources), "python": platform.python_version(),
            "sources_supplied": sorted(n for n in SOURCE_DIRS if source_dir(sources, n)) if sources else [], "artifacts": artifacts, "results": [r.as_dict() for r in results]}
     if evidence is not None:
         doc["diagnostics"] = {"complete": evidence.complete, "reasons": list(evidence.reasons), "log": evidence.log, "file": os.path.basename(evidence.path) if evidence.path else None}
+    problems = check_receipt(doc, os.path.basename(path), REPO)
+    if problems:
+        raise ReceiptRefused("; ".join(problems[:3]) + (" (+%d more)" % (len(problems) - 3) if len(problems) > 3 else ""))
+    os.makedirs(directory, exist_ok=True)
     with open(path, "x", encoding="utf-8") as handle:  # never overwrites an earlier run's receipt
         json.dump(doc, handle, indent=1, sort_keys=True)
         handle.write("\n")
@@ -643,10 +868,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(safe_detail("error: judged artifacts could not be digested: %s" % type(err).__name__), file=sys.stderr)
     log = case_log.CaseLog.open(REPO, run_id, args.tier, args.receipts, header_extra={
         "python": platform.python_version(), "tier": args.tier, "artifact_count": len(artifacts), "artifact_set_sha256": artifact_set_digest(artifacts)})
+    started = time.monotonic()
     try:
         results = run(args.tier, args.sources, REPO, tuple(args.build_log))
     except Exception as err:  # noqa: BLE001 - last resort: still a failed, logged, receipted run, never a traceback
-        results = [Result("T01-RUNNER", "failed", "the runner raised %s" % failure_detail(err, args.sources), "runner")]
+        results = [Result("T01-RUNNER", "failed", "the runner raised %s" % failure_detail(err, args.sources), "runner", round(time.monotonic() - started, 3))]
+    elapsed = time.monotonic() - started
     for r in results:
         log.record(r.case_id, r.group, r.status, r.detail)
     evidence = log.finish(summarize(results))
@@ -656,7 +883,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     code = final_exit(results, evidence)
     if args.receipts:
         try:
-            print("receipt:", write_receipt(args.receipts, args.tier, results, artifacts, args.sources, run_id, evidence))
+            print("receipt:", write_receipt(args.receipts, args.tier, results, artifacts, args.sources, run_id, evidence, elapsed))
+        except ReceiptRefused as err:
+            print(safe_detail("error: the receipt was refused, and none was written: %s" % err), file=sys.stderr)
+            return code or 1
         except OSError as err:
             print(safe_detail("error: the receipt could not be written under the receipts directory: %s" % type(err).__name__), file=sys.stderr)
             return code or 1

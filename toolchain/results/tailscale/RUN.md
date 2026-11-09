@@ -164,6 +164,12 @@ in all, ten of them scenario items); a tailscale-rs row has a build path on ever
 object (`receipt_problem`; the runner's `T01-META-PROFILE` passes the repository, so a bare string such as `x` or a missing file fails the case). No row is measured today, so nothing changes now; this holds before any
 row is marked measured. It does not judge that the file holds the figure: that is `x02_judge.judge_receipt`'s job, and nothing binds the item's value to the receipt yet.
 
+The same rule, with its own directory, applies to a platform state `build_ok_unrun` (`receipt_problem(..., "build_ok_unrun")`, wired into the platform loop of `check_profile`): the `receipt` must name a `.log` or `.json` directly
+under `toolchain/results/tailscale/builds/` (where `run_cases.BUILD_DIR` reads the captured build records, contract section 6) that exists as a plain regular file, and is a non-empty UTF-8 text for a `.log` or a JSON
+object for a `.json`. `ran_on_target` is not touched: it already derives a `supported` cell, which `check_profile` refuses. No platform claims a build today. **Limit:** an X01 log is a `cargo check` record, so it satisfies
+the form although a type-check is not a linked build, and no judge exists for a linked build yet; the rule makes the claim name a real record, not prove it is a build. Planting the state on the two Go PowerPC rows is refused by the
+`not_applicable` rule instead, since the profile cannot say both that no build exists and that one does.
+
 The blockers say what is missing and nothing more. No linked tailscale-rs client exists on any target (X01 is a type-check); a real tailnet is a provider and needs a separate authorized receipt (the bead's
 evidence rule); no audio path runs beside the component (Q04 and Q06 own that); no peer cap is declared for the tailnet component in any T01 artifact (`docs/SLIM_SPEAKER_PLAN.md`: every profile declares maximum peers;
 `tailnet_ram_cap_bytes` stays null, T04/Q02 allocate it); and tailscale-rs 0.6.1 has no automatic key rotation (`T01-E15` to `T01-E17`), so there is no flow to measure. Where a scenario needs a registered
