@@ -272,7 +272,12 @@ class Applier(Base):
         self.assertEqual(self.prepare("none")["result_tree_sha256"], self.pin["tree_sha256"])
 
     def test_a_patch_that_writes_paths_the_manifest_does_not_list_is_refused(self):
-        self.manifest["patches"][0]["touches"] = ["src/deep/mod.rs", "src/lib.rs"]
+        self.manifest["patches"][0]["touches"] = ["src/deep/mod.rs", "src/lib.rs"]                # plant: the patch writes a path the manifest does not list
+        self.save_manifest()
+        self.refused("a", "paths other than the manifest lists")
+        # plant, the other direction: the manifest lists a path the patch never writes. The list is still sorted, unique and safe, so only the check
+        # that the two sets are equal can refuse it (a subset check lets it through)
+        self.manifest["patches"][0]["touches"] = ["src/deep/mod.rs", "src/lib.rs", "src/never.rs", "tests/new.rs"]
         self.save_manifest()
         self.refused("a", "paths other than the manifest lists")
         self.manifest["patches"][0]["touches"] = ["src/deep/mod.rs", "src/lib.rs", "tests/new.rs"]   # control
