@@ -301,11 +301,11 @@
   },
   {
    "id": "D04-RUST-CENTRAL",
-   "kind": "blocked",
+   "kind": "central_rust",
    "tier": "full",
    "owner": "orchestrator (central RCH)",
    "blocker": "EXT-D04-RUST-CENTRAL",
-   "needs": "cargo test -p franken-speaker (the count printed by the runner), cargo clippy --workspace --all-targets -- -D warnings and cargo fmt --all -- --check, plus the two device speaker builds, each via RCH_REQUIRE_REMOTE=1 rch exec. The loop's behavior is only its Rust tests; this runner never builds."
+   "needs": "the output of the central cargo test -p franken-speaker (RCH_REQUIRE_REMOTE=1 rch exec), supplied with scripts/e2e/d04 --judge LOG: every Rust test in render.rs and render_log.rs (the count printed by the runner) reported ok by name in the franken_speaker unit-test binary. That judges the tests only. Not read from a test log, and still the supervisor's landing census: cargo clippy --workspace --all-targets -- -D warnings, cargo fmt --all -- --check and the two device speaker builds, each via RCH_REQUIRE_REMOTE=1 rch exec. The loop's behavior is only its Rust tests; this runner never builds."
   },
   {
    "id": "D04-EXT-BOARD",

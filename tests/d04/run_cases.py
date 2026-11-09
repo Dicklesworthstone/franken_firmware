@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """D04 (ffw-5h5) host-side case runner.
 
-    run_cases.py --tier smoke|full [--case ID] [--list] [--receipts DIR]
+    run_cases.py --tier smoke|full [--case ID] [--list] [--receipts DIR] [--judge LOG [LOG ...]]
 
 What this runner is, so a pass is not over-read:
 * It re-derives every scripted run with an independent model of the render loop's timing and
@@ -10,9 +10,16 @@ What this runner is, so a pass is not over-read:
   that every required invariant maps to Rust tests that EXIST in render.rs. It does not run those
   tests: there is no local cargo, and the loop itself is verified only by the central
   `cargo test -p franken-speaker`.
-* So the behavioral half is the BLOCKED case D04-RUST-CENTRAL, counted and never passed, and the
-  run is NOT QUALIFIED until it exists. Three more things are blocked, honestly: the driver and
-  board CPU measurements (D04-EXT-BOARD), the P03 control runtime (D04-OPEN-P03) and the separate
+* So the behavioral half is the case D04-RUST-CENTRAL. It is BLOCKED, counted and never passed,
+  until the output of the central `cargo test -p franken-speaker` is supplied with `--judge LOG`;
+  then every Rust test in render.rs and render_log.rs must be reported `ok` BY NAME in the
+  franken_speaker unit-test binary (a test that is missing, ignored or unattributable stays
+  BLOCKED, one that failed or contradicts another log FAILS). That judges the tests only: clippy,
+  fmt and the two device builds are not read from a test log, and a pass says so. The log is bound
+  to the registry by test name, not to the source by content; the receipt and the retained lines
+  record the sha256 of the log and of the sources it was judged against. The run is NOT QUALIFIED
+  while any case is blocked. Three more things are blocked, honestly: the driver and board CPU
+  measurements (D04-EXT-BOARD), the P03 control runtime (D04-OPEN-P03) and the separate
   process-death mute qualification (D04-EXT-PROCDEATH).
 * The model and the Rust loop share an author. Agreement shows the arithmetic was done twice by
   two routes; it does not show the contract is right. The sample path is checked by a differential
@@ -27,9 +34,11 @@ import argparse
 import copy
 import datetime
 import hashlib
+import importlib.util
 import json
 import os
 import re
+import shlex
 import sys
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -56,7 +65,7 @@ SCHEMA = "ffw.d04.cases.v1"
 TIERS = ("smoke", "full")
 KINDS = ("scenario", "planted_defect", "meta_files", "meta_shared", "meta_generated", "meta_invariants",
          "meta_hygiene", "meta_no_unsafe", "meta_log", "log_golden", "log_defect", "regress_scenario", "regress_log",
-         "regress_defect", "runner_selftest", "blocked")
+         "regress_defect", "runner_selftest", "blocked", "central_rust")
 PASS, FAIL, BLOCKED = "pass", "fail", "blocked"
 Result = Tuple[str, str]
 
@@ -466,9 +475,99 @@ def run_runner_selftest(c) -> Result:
 
 
 def run_blocked(c) -> Result:
-    extra = f" Expect {len(all_rust_tests())} #[test] functions in render.rs and render_log.rs." \
-        if c["id"] == "D04-RUST-CENTRAL" else ""
-    return BLOCKED, f"{c['blocker']} (owner: {c['owner']}): {c['needs']}{extra}"
+    return BLOCKED, f"{c['blocker']} (owner: {c['owner']}): {c['needs']}"
+
+
+# ------------------------------------------------------------------------------- central Rust log
+
+RUST_CENTRAL = "D04-RUST-CENTRAL"
+LIB_STEM = "franken_speaker"  # the unit-test binary of the franken-speaker lib, the stem of its `Running` header
+TESTS_ONLY = "tests only: clippy, fmt and the two device builds are not judged here and stay in the supervisor's landing census"
+MAX_SHOWN = 6
+# Besides the logs, the files whose bytes decide a verdict or hold the judged tests; their sha256 goes into the receipt and
+# into the lines a non-pass retains.
+JUDGED_ARTIFACTS = (
+    "crates/franken-speaker/src/render.rs", "crates/franken-speaker/src/render_log.rs", "crates/franken-speaker/src/lib.rs",
+    "tests/d04/cases.json", "tests/d04/run_cases.py", "docs/contracts/d04.md", "Cargo.lock", "rust-toolchain.toml",
+)
+JUDGE_LOGS: Any = None  # the parsed `--judge` logs, set by main; None when no log was supplied
+
+
+def load_logs(paths: List[str]) -> Any:
+    """Parse cargo test output with D01's parser, which D03 and the other judged gates reuse rather than carry a copy. Through
+    RCH the `Running` headers (stderr) and the test sections (stdout) arrive as separate streams, so a test cannot be given to
+    the nearest preceding header; the parser pairs the n-th header with the n-th section and falls back to exact names."""
+    path = os.path.join(REPO, "tests", "d01", "run_cases.py")
+    if not os.path.isfile(path):
+        raise CaseError("--judge needs D01's runner for its cargo-log parser: tests/d01/run_cases.py is missing")
+    spec = importlib.util.spec_from_file_location("d01_run_cases_for_d04", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    logs = module.Logs()
+    for p in paths:
+        if not os.path.isfile(p):
+            raise CaseError(f"--judge: no such log {p!r}")
+        logs.add(p)
+    return logs
+
+
+def cargo_names() -> List[Tuple[str, str]]:
+    """(binary stem, cargo's full test name) for every Rust test the invariants rest on: the `#[test]` functions of render.rs
+    and render_log.rs. Both files keep their tests in one `#[cfg(test)] mod tests`, so cargo names them `render::tests::<fn>`
+    and `render_log::tests::<fn>` in the franken_speaker unit-test binary. A test moved into a nested module would be reported
+    under another name and so stay BLOCKED; it can never be passed by accident."""
+    return [(LIB_STEM, n.replace("::", "::tests::", 1)) for n in all_rust_tests()]
+
+
+def _shown(items: List[str]) -> str:
+    text = "; ".join(items[:MAX_SHOWN])
+    return text + (f"; (+{len(items) - MAX_SHOWN} more)" if len(items) > MAX_SHOWN else "")
+
+
+def judge_rust(logs: Any) -> Result:
+    """The central `cargo test -p franken-speaker` log against the Rust tests the invariants name. A test that is missing,
+    ignored or that the log cannot attribute to the franken_speaker binary stays BLOCKED; one that FAILED, or that two logs
+    report differently, FAILS. Neither is ever a pass, and an empty registry is not a vacuous pass."""
+    required = cargo_names()
+    if not required:
+        return FAIL, "no #[test] function was found in render.rs and render_log.rs, so there is nothing to judge"
+    failed: List[str] = []
+    blocked: List[str] = []
+    for stem, name in required:
+        status = logs.test_status(stem, name)
+        if status == "ok":
+            continue
+        if status in ("FAILED", "CONFLICT"):
+            cause = logs.failure_context.get(name) if status == "FAILED" else None
+            failed.append(f"{name}: {status}" + (f"; first causal event {cause}" if cause else ""))
+        elif status == "AMBIGUOUS":
+            blocked.append(f"{name}: in more than one test section and the log cannot say which binary ran it")
+        elif status == "ignored":
+            blocked.append(f"{name}: ignored (not run)")
+        else:
+            blocked.append(f"{name}: not reported")
+    total = len(required)
+    if failed:
+        more = f"; {len(blocked)} more not shown ok" if blocked else ""
+        return FAIL, f"{len(failed)} of {total} required Rust test(s) FAILED: {_shown(failed)}{more}"
+    if blocked:
+        return BLOCKED, f"{len(blocked)} of {total} required Rust test(s) not shown ok in the supplied log(s): {_shown(blocked)}"
+    notes = [TESTS_ONLY]
+    ours = set(required)
+    others = [n for (s, n), st in logs.tests.items() if st == "FAILED" and (s, n) not in ours and s in (LIB_STEM, None)]
+    if others:
+        notes.append(f"{len(others)} other test(s) FAILED in the log, not D04's")
+    if logs.unattributed_logs:
+        notes.append("no Running-header pairing, exact test names used: " + "; ".join(logs.unattributed_logs))
+    return PASS, f"all {total} required Rust tests ok in the {LIB_STEM} unit-test binary; " + "; ".join(notes)
+
+
+def run_central_rust(c) -> Result:
+    if JUDGE_LOGS is None:
+        return BLOCKED, (f"{c['blocker']} (owner: {c['owner']}): {c['needs']} Expect {len(all_rust_tests())} #[test] functions "
+                         "in render.rs and render_log.rs. No log was supplied (--judge).")
+    return judge_rust(JUDGE_LOGS)
 
 
 RUNNERS: Dict[str, Callable[[Dict[str, Any]], Result]] = {
@@ -476,7 +575,7 @@ RUNNERS: Dict[str, Callable[[Dict[str, Any]], Result]] = {
     "meta_shared": run_meta_shared, "meta_generated": run_meta_generated,
     "meta_invariants": run_meta_invariants, "meta_hygiene": run_meta_hygiene,
     "meta_no_unsafe": run_meta_no_unsafe, "runner_selftest": run_runner_selftest, "blocked": run_blocked,
-    "meta_log": run_meta_log, "log_golden": run_log_golden, "log_defect": run_log_defect,
+    "central_rust": run_central_rust, "meta_log": run_meta_log, "log_golden": run_log_golden, "log_defect": run_log_defect,
     "regress_scenario": run_regress_scenario, "regress_log": run_regress_log, "regress_defect": run_regress_defect,
 }
 
@@ -511,12 +610,32 @@ def select(cases, tier: str, only: Optional[str]):
     return [c for c in cases if tier == "full" or c["tier"] == "smoke"]
 
 
+def artifact_digests() -> List[Tuple[str, str]]:
+    return [(rel, sha256_file(os.path.join(REPO, rel))) for rel in JUDGED_ARTIFACTS if os.path.isfile(os.path.join(REPO, rel))]
+
+
+def retained_lines(argv: List[str], logs: Any) -> List[str]:
+    """What a run that is not a pass keeps, so it can be replayed and the inputs it judged identified: the replay command, the
+    interpreter and schema, the sha256 of every judged log and of the sources and runner the verdict rests on."""
+    lines = ["replay: " + " ".join(["scripts/e2e/d04"] + [shlex.quote(a) for a in argv]),
+             f"versions: python {sys.version.split()[0]}; {SCHEMA}"]
+    if logs is not None:
+        lines += [f"judged log sha256 {digest}  {os.path.basename(path)}" for path, digest in logs.files]
+        lines += [f"repeated log input read once: {name}" for name in logs.repeated_inputs]
+    lines += [f"artifact sha256 {digest}  {rel}" for rel, digest in artifact_digests()]
+    return lines
+
+
 def main(argv: List[str]) -> int:
+    global JUDGE_LOGS
+    JUDGE_LOGS = None
     ap = argparse.ArgumentParser(description="D04 host-side case runner")
     ap.add_argument("--tier", choices=TIERS, default="full")
     ap.add_argument("--case", metavar="ID")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--receipts", metavar="DIR")
+    ap.add_argument("--judge", nargs="+", metavar="LOG",
+                    help="output of the central `cargo test -p franken-speaker` run, judged by D04-RUST-CENTRAL")
     args = ap.parse_args(argv)
     try:
         chosen = select(all_cases(), args.tier, args.case)
@@ -524,6 +643,8 @@ def main(argv: List[str]) -> int:
             for c in chosen:
                 print(f"{c['id']:<18} {c['tier']:<6} {c['kind']}")
             return 0
+        if args.judge:
+            JUDGE_LOGS = load_logs(args.judge)
         results = []
         for c in chosen:
             try:
@@ -538,21 +659,32 @@ def main(argv: List[str]) -> int:
         print(f"D04 runner: {e}", file=sys.stderr)
         return 2
     counts = {s: sum(1 for _, st, _ in results if st == s) for s in (PASS, FAIL, BLOCKED)}
-    qualified = counts[FAIL] == 0 and counts[BLOCKED] == 0
+    # One selected case is never the run's verdict: a lone passing case would otherwise read as QUALIFIED.
+    qualified = counts[FAIL] == 0 and counts[BLOCKED] == 0 and not args.case
+    verdict = ("ONE CASE SELECTED, NOT A QUALIFICATION" if args.case else
+               "QUALIFIED (host simulation only)" if qualified else "NOT QUALIFIED")
     print(f"\nD04 {args.tier}: {len(results)} case(s): {counts[PASS]} passed, {counts[FAIL]} failed, "
-          f"{counts[BLOCKED]} blocked -- {'QUALIFIED (host simulation only)' if qualified else 'NOT QUALIFIED'}")
+          f"{counts[BLOCKED]} blocked -- {verdict}")
     if counts[BLOCKED]:
         print("blocked cases are required invariants nothing here can verify; they are counted, not passed")
+    if args.judge and not any(c["id"] == RUST_CENTRAL for c, _, _ in results):
+        print(f"note: --judge was given but {RUST_CENTRAL} is not among the selected cases, so the log was not used")
+    if counts[FAIL] or counts[BLOCKED]:
+        print("\n".join(retained_lines(argv, JUDGE_LOGS)))
     if args.receipts:
         os.makedirs(args.receipts, exist_ok=True)
         receipt = {
-            "schema": "ffw.d04.receipt.v1", "kind": "host_check_only_rust_not_run",
+            "schema": "ffw.d04.receipt.v1",
+            "kind": "host_check_and_central_rust_log_judged" if JUDGE_LOGS is not None else "host_check_only_rust_not_run",
             "command": "tests/d04/run_cases.py " + " ".join(argv),
             "utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "python": sys.version.split()[0], "tier": args.tier, "denominator": len(results), "counts": counts,
             "qualified": qualified, "rust_test_functions_expected": len(all_rust_tests()),
             "inputs": {os.path.relpath(p, REPO): sha256_file(p) for p in (CASES_FILE, SCENARIOS_FILE, LOG_GOLDEN, REGRESS_GOLDEN)},
             "cases": [{"id": c["id"], "status": st} for c, st, _ in results],
+            "artifacts": dict(artifact_digests()),
+            "judged_logs": [{"name": os.path.basename(p), "sha256": d} for p, d in (JUDGE_LOGS.files if JUDGE_LOGS else [])],
+            "judged_scope": TESTS_ONLY if JUDGE_LOGS is not None else None,
         }
         path = os.path.join(args.receipts, f"d04-{args.tier}.json")
         with open(path, "w", encoding="utf-8") as f:

@@ -7,6 +7,7 @@
 #   scripts/e2e/d04 --tier smoke|full        explicit tier
 #   scripts/e2e/d04 --tier full --case D04-TIM-002 [--receipts DIR]     replay one case
 #   scripts/e2e/d04 --list                   list the selected cases
+#   scripts/e2e/d04 --tier full --judge LOG [LOG ...]    judge the central cargo test output (D04-RUST-CENTRAL)
 #
 # What this does and does not show. The Python runner re-derives every scripted run with an independent
 # model of the loop's timing and classification, checks the committed scenarios are exactly what that
@@ -22,7 +23,9 @@
 # Exit 0 only when every case passed and no required case is blocked; 1 on a failed case; 3 when the only
 # non-passes are blocked cases (reported, never counted as passed); 2 on usage or a malformed case file.
 # The full tier is expected to exit 3 until central Rust verification, board measurements, the process-death
-# qualification and the P03 runtime exist, because each is counted as blocked, not skipped.
+# qualification and the P03 runtime exist, because each is counted as blocked, not skipped. With --judge, the
+# central Rust case reads the supplied log (the tests only; clippy, fmt and the device builds are not in a
+# test log), and the other three stay blocked, so the run still exits 3.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 if [ "$#" -eq 0 ]; then
