@@ -1,0 +1,12 @@
+preconditions ok: c2 42 executed rc=0; p02c stopped at c3 before any attempt
+after hashes: all 12 ok
+core closure identical to v3 tree
+launch 2026-11-09T05:05:51Z cwd=<operational-path> worker=<worker>
+=== 2026-11-09T05:05:51Z line c3-speaker-cli (RCH_TEST_TIMEOUT_SEC=2400, --worker <worker>, no preview): cargo test --locked -j 1 -p franken-speaker --test cli_services -- platform_ --nocapture
+=== c3-speaker-cli rc=104 end 2026-11-09T05:10:53Z
+--- rchq3 attempt 1/1 2026-11-09T05:05:51Z
+  2026-11-09T05:10:53.487448Z  WARN rch::hook::incident: hook incident recorded, reason_code: RCH-I001, failure_class: "no admissible workers", selected_mode
+[RCH] remote required; refusing local fallback ([RCH-I001] requested worker set [<worker>] refused (selection error: queue_timeout); run `rch diagnose -- <command>` and request an admissible worker) — retryable
+--- rchq3 attempt 1 NOTRUN-CANDIDATE rc=103 (refusal, no execution marker); NOT re-queued (16870): settle the native ID first
+BATCH STOPPED at c3-speaker-cli rc=104 2026-11-09T05:10:53Z; later lines not started
+batch exit=104

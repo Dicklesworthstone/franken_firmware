@@ -1,0 +1,25 @@
+# Source p02c-remote.out; raw SHA-256 395606fdb826f0f393bc3cb308c1f62b23652feb2175a7ce604f0574f3c2a025
+12: === 2026-11-09T05:00:33Z line c2-speaker-lib (RCH_TEST_TIMEOUT_SEC=2400): cargo test --locked -j 1 -p franken-speaker --lib -- platform_start --nocapture
+13: === c2-speaker-lib rc=0 end 2026-11-09T05:02:59Z
+20: === c3-speaker-cli NOT RUN: admission waiter rc=143 (not attempted)
+21: BATCH STOPPED at c3-speaker-cli rc=143 2026-11-09T05:05:42Z; later lines not started
+22: batch exit=143
+
+# Source p02cr-remote.out; raw SHA-256 8dc8b661085cdded83e68052f4281208d546df0475d84a588d55171e650b14b2
+7: === 2026-11-09T05:14:50Z line c3-speaker-cli (RCH_TEST_TIMEOUT_SEC=2400, --worker <worker>): cargo test --locked -j 1 -p franken-speaker --test cli_services -- platform_ --nocapture
+8: === c3-speaker-cli rc=0 end 2026-11-09T05:15:41Z
+16: === 2026-11-09T05:16:49Z line c4-host-clippy (RCH_BUILD_TIMEOUT_SEC=2400, --worker <worker>): cargo clippy --locked -j 1 -p franken-speaker --all-targets -- -D warnings
+17: === c4-host-clippy rc=101 end 2026-11-09T05:18:21Z
+22: BATCH STOPPED at c4-host-clippy rc=101 2026-11-09T05:18:21Z; later lines not started
+23: batch exit=101
+
+# Source p02d-remote.out; raw SHA-256 8925f930e4922670deeafac16fd34019c7d1eee9dcf08375845d01f71a231c02
+12: === 2026-11-09T05:26:45Z line d1-speaker-tests (RCH_TEST_TIMEOUT_SEC=2400, --worker <worker>): cargo test --locked -j 1 -p franken-speaker --lib --test cli_services --no-fail-fast -- platform_start platform_diagnose both_platform_commands --nocapture
+13: === d1-speaker-tests rc=0 end 2026-11-09T05:28:52Z
+23: === 2026-11-09T05:29:59Z line d2-host-clippy (RCH_BUILD_TIMEOUT_SEC=2400, --worker <worker>): cargo clippy --locked -j 1 -p franken-speaker --all-targets -- -D warnings
+24: === d2-host-clippy rc=0 end 2026-11-09T05:31:34Z
+29: === 2026-11-09T05:32:38Z line d3-be-clippy-mips (RCH_BUILD_TIMEOUT_SEC=2400, --worker <worker>): cargo +nightly-2026-08-31 clippy --locked -j 1 -p franken-speaker --target mips-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort -- -D warnings
+30: === d3-be-clippy-mips rc=0 end 2026-11-09T05:35:29Z
+35: === 2026-11-09T05:36:31Z line d4-be-clippy-ppc (RCH_BUILD_TIMEOUT_SEC=2400, --worker <worker>): cargo +nightly-2026-08-31 clippy --locked -j 1 -p franken-speaker --target powerpc-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort -- -D warnings
+36: === d4-be-clippy-ppc rc=0 end 2026-11-09T05:38:57Z
+40: batch exit=0

@@ -1,0 +1,101 @@
+--- rchq3 attempt 1/1 2026-11-09T05:26:45Z
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
+   Compiling typenum v1.20.1
+   Compiling hybrid-array v0.4.15
+   Compiling syn v3.0.9
+   Compiling cmov v0.5.4
+   Compiling serde_core v1.0.229
+   Compiling ctutils v0.4.8
+   Compiling crypto-common v0.2.2
+   Compiling block-buffer v0.12.1
+   Compiling zmij v1.0.23
+   Compiling const-oid v0.10.2
+   Compiling digest v0.11.3
+   Compiling serde v1.0.229
+   Compiling serde_json v1.0.154
+   Compiling serde_derive v1.0.229
+   Compiling memchr v2.8.3
+   Compiling cpufeatures v0.3.1
+   Compiling thiserror v2.0.21
+   Compiling cfg-if v1.0.5
+   Compiling itoa v1.0.18
+   Compiling sha2 v0.11.1
+   Compiling thiserror-impl v2.0.21
+   Compiling hex v0.4.3
+   Compiling franken-board-profile v0.1.0 (<operational-path>)
+   Compiling hmac v0.13.0
+   Compiling franken-atomic v0.1.0 (<operational-path>)
+   Compiling franken-platform v0.1.0 (<operational-path>)
+   Compiling franken-dsp v0.1.0 (<operational-path>)
+   Compiling franken-clock v0.1.0 (<operational-path>)
+   Compiling franken-session v0.1.0 (<operational-path>)
+   Compiling franken-journal v0.1.0 (<operational-path>)
+   Compiling franken-control v0.1.0 (<operational-path>)
+   Compiling franken-stream v0.1.0 (<operational-path>)
+   Compiling franken-platform-linux v0.1.0 (<operational-path>)
+   Compiling franken-hal v0.1.0 (<operational-path>)
+   Compiling franken-speaker v0.1.0 (<operational-path>)
+   Compiling franken-test-support v0.1.0 (<operational-path>)
+
+running 42 tests
+test platform_start::tests::a_kernel_backend_that_names_no_abi_is_refused_before_any_kernel_call ... ok
+test platform_start::tests::a_missing_legacy_device_and_a_failed_read_keep_their_own_typed_refusals ... ok
+test platform_start::tests::a_wake_open_resource_or_permission_failure_does_not_claim_the_call_is_absent ... ok
+test platform_start::tests::a_clock_that_is_absent_is_a_typed_refusal_and_the_other_capabilities_are_still_tried ... ok
+test platform_start::tests::a_startup_error_carries_the_action_of_its_code_and_says_to_start_again_exactly_when_it_is_retryable ... ok
+test platform_start::tests::a_wake_that_cannot_be_signalled_or_is_not_seen_is_a_typed_refusal ... ok
+test platform_start::tests::an_empty_legacy_pool_is_waiting_and_retryable_with_the_provider_shown_and_no_getrandom ... ok
+test platform_start::tests::an_entropy_call_that_is_absent_or_degenerate_is_refused_not_papered_over ... ok
+test platform_start::tests::a_getrandom_failure_at_startup_never_opens_the_legacy_device ... ok
+test platform_start::tests::a_wake_source_the_kernel_cannot_open_refuses_the_platform_on_its_typed_code ... ok
+test platform_start::tests::an_unseeded_pool_is_a_retryable_refusal_and_is_never_answered_with_a_seeded_value ... ok
+test platform_start::tests::every_reason_code_is_produced_by_some_error_and_belongs_to_its_capabilitys_closed_set ... ok
+test platform_start::tests::every_selection_has_one_spelling_and_the_default_alone_has_no_marker_token ... ok
+test platform_start::tests::finite_wake_wait::a_failed_or_backlogged_signal_never_enters_the_wait_or_drain ... ok
+test platform_start::tests::finite_wake_wait::a_signal_without_poll_readiness_is_refused_before_the_drain ... ok
+test platform_start::tests::finite_wake_wait::an_epoll_only_admitted_layer_cannot_substitute_poll_for_the_startup_wake_check ... ok
+test platform_start::tests::finite_wake_wait::either_interrupted_startup_wait_returns_once_and_closes_the_layer ... ok
+test platform_start::tests::finite_wake_wait::reported_readiness_after_the_empty_drain_is_refused ... ok
+test platform_start::tests::every_refusal_code_has_one_safe_next_action_and_only_not_seeded_says_to_start_again ... ok
+test platform_start::tests::finite_wake_wait::either_startup_wait_rejects_wrong_counts_unknown_masks_and_unrequested_bits ... ok
+test platform_start::tests::a_wake_source_that_will_not_close_is_a_wake_refusal_and_not_a_silent_pass ... ok
+test platform_start::tests::finite_wake_wait::earlier_clock_or_entropy_failures_keep_their_priority_and_still_record_wait_failure ... ok
+test platform_start::tests::finite_wake_wait::either_startup_wait_rejects_every_fault_bit_even_when_readability_is_present ... ok
+test platform_start::tests::a_kernel_declaring_backend_starts_and_every_capability_reports_kernel ... ok
+test platform_start::tests::a_refused_report_names_the_capability_the_reason_and_the_next_action_and_the_markers_stay_as_they_were ... ok
+test platform_start::tests::the_command_line_selects_a_provider_only_by_naming_it_and_refuses_everything_else ... ok
+test platform_start::tests::a_selected_legacy_provider_in_a_test_environment_starts_through_open_and_never_calls_getrandom ... ok
+test platform_start::tests::a_device_build_wired_to_a_simulated_backend_is_refused_before_any_kernel_call ... ok
+test platform_start::tests::finite_wake_wait::startup_waits_for_the_signalled_wake_then_times_out_after_both_original_drains ... ok
+test platform_start::tests::finite_wake_wait::startup_poll_preserves_each_abis_absence_and_other_syscall_errors_without_retry ... ok
+test platform_start::tests::finite_wake_wait::wait_failure_codes_keep_the_existing_marker_set_and_are_never_retry_advice ... ok
+test platform_start::tests::finite_wake_wait::the_same_wait_consumer_borrows_and_releases_both_ends_of_an_admitted_self_pipe ... ok
+test platform_start::tests::only_an_unseeded_pool_is_retryable ... ok
+test platform_start::tests::the_committed_legacy_marker_examples_are_exactly_what_each_scenario_prints ... ok
+test platform_start::tests::the_default_selection_prints_no_provider_token_and_never_opens_the_legacy_device ... ok
+test platform_start::tests::the_kernel_field_is_one_to_sixty_four_safe_bytes_or_the_literal_invalid ... ok
+test platform_start::tests::the_committed_marker_examples_are_exactly_what_each_scenario_prints_and_the_reason_set_matches ... ok
+test platform_start::tests::the_construction_counter_sees_a_second_site_and_ignores_prose ... ok
+test platform_start::tests::the_one_shot_check_closes_the_layer_it_opened ... ok
+test platform_start::tests::the_evidence_qualified_legacy_provider_is_refused_unavailable_without_any_entropy_call ... ok
+test platform_start::tests::the_running_kernel_is_recorded_and_never_a_reason_to_refuse ... ok
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 15s
+     Running unittests src/lib.rs (<operational-path>)
+test platform_start::tests::the_speaker_builds_a_layer_and_the_backend_in_exactly_one_place_each ... ok
+
+test result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 392 filtered out; finished in 0.09s
+
+     Running tests/cli_services.rs (<operational-path>)
+
+running 3 tests
+test platform_startup_is_still_refused_on_a_build_with_no_kernel_backend ... ok
+test platform_diagnose_is_a_real_command_with_a_safe_action_for_an_unavailable_backend ... ok
+test both_platform_commands_reject_malformed_provider_arguments_before_startup ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.01s
+
+
+[RCH] remote <worker> (123.2s)
+--- rchq3 attempt 1 executed rc=0 (refused_marker=0 executed_marker=1)

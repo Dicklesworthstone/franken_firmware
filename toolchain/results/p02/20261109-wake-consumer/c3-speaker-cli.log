@@ -1,0 +1,15 @@
+--- rchq3 attempt 1/1 2026-11-09T05:14:50Z
+   Compiling franken-speaker v0.1.0 (<operational-path>)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.48s
+     Running tests/cli_services.rs (<operational-path>)
+
+running 3 tests
+test platform_diagnose_is_a_real_command_with_a_safe_action_for_an_unavailable_backend ... ok
+test platform_startup_is_still_refused_on_a_build_with_no_kernel_backend ... ok
+test both_platform_commands_reject_malformed_provider_arguments_before_startup ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.02s
+
+
+[RCH] remote <worker> (48.0s)
+--- rchq3 attempt 1 executed rc=0 (refused_marker=0 executed_marker=1)

@@ -1,0 +1,3 @@
+diag run=p02-full-7c974a2752f166a7: evidence COMPLETE; events=27 critical=27 dropped=0 critical_lost=0 bytes=8841 sha256=f093859c91e6
+P02 e2e tier=full: QUALIFIED  planned=13 passed=13 failed=0 blocked=0
+diagnostic log kept: <operational-path>

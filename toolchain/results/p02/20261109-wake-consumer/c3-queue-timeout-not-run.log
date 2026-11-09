@@ -1,0 +1,6 @@
+--- rchq3 attempt 1/1 2026-11-09T05:05:51Z
+  2026-11-09T05:10:53.487448Z  WARN rch::hook::incident: hook incident recorded, reason_code: RCH-I001, failure_class: "no admissible workers", selected_mode: Local, local_fallback_allowed: false
+    at rch/src/hook.rs:3250 on ThreadId(1)
+
+[RCH] remote required; refusing local fallback ([RCH-I001] requested worker set [<worker>] refused (selection error: queue_timeout); run `rch diagnose -- <command>` and request an admissible worker) — retryable
+--- rchq3 attempt 1 NOTRUN-CANDIDATE rc=103 (refusal, no execution marker); NOT re-queued (16870): settle the native ID first

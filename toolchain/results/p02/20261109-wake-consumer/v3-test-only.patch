@@ -1,0 +1,11 @@
+--- a/crates/franken-speaker/src/platform_start.rs
++++ b/crates/franken-speaker/src/platform_start.rs
+@@ -1156,7 +1156,7 @@
+                 .borrow_mut()
+                 .push((fds[0].fd, fds[0].events, timeout.as_millis()));
+             self.calls.poll_pending.borrow_mut().push(self.pending);
+-            let (raw, revents) = self.poll_replies.pop_front().unwrap_or_else(|| {
++            let (raw, revents) = self.poll_replies.pop_front().unwrap_or({
+                 if self.pending == 0 {
+                     (0, 0)
+                 } else {

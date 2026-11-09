@@ -1,0 +1,40 @@
+patch sha efb3b993 ok
+before hashes: all 12 ok
+files patched: 12
+orig/rej: 0
+after hashes: all 12 ok
+Ran 182 tests in 8.408s OK (rc=0)
+fmt rc=0 blocks=0
+core closure identical to v3 tree; v3 core log executed rc=0
+launch 2026-11-09T05:26:41Z cwd=<operational-path> worker=<worker>
+=== 2026-11-09T05:26:41Z diag-wait <worker> for d1-speaker-tests
+ADMISSIBLE <worker>
+=== 2026-11-09T05:26:45Z line d1-speaker-tests (RCH_TEST_TIMEOUT_SEC=2400, --worker <worker>): cargo test --locked -j 1 -p franken-speaker --lib --test cli_services --no-fail-fast -- platform_start platform_diagnose both_platform_commands --nocapture
+=== d1-speaker-tests rc=0 end 2026-11-09T05:28:52Z
+--- rchq3 attempt 1/1 2026-11-09T05:26:45Z
+test result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 392 filtered out; finished in 0.09s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.01s
+--- rchq3 attempt 1 executed rc=0 (refused_marker=0 executed_marker=1)
+d1 result lines: ok.42=1 ok.3=1
+P02 e2e tier=full: QUALIFIED  planned=13 passed=13 failed=0 blocked=0
+judge rc=0
+=== 2026-11-09T05:28:53Z diag-wait <worker> for d2-host-clippy
+ADMISSIBLE <worker>
+=== 2026-11-09T05:29:59Z line d2-host-clippy (RCH_BUILD_TIMEOUT_SEC=2400, --worker <worker>): cargo clippy --locked -j 1 -p franken-speaker --all-targets -- -D warnings
+=== d2-host-clippy rc=0 end 2026-11-09T05:31:34Z
+--- rchq3 attempt 1/1 2026-11-09T05:30:00Z
+--- rchq3 attempt 1 executed rc=0 (refused_marker=0 executed_marker=1)
+=== 2026-11-09T05:31:34Z diag-wait <worker> for d3-be-clippy-mips
+ADMISSIBLE <worker>
+=== 2026-11-09T05:32:38Z line d3-be-clippy-mips (RCH_BUILD_TIMEOUT_SEC=2400, --worker <worker>): cargo +nightly-2026-08-31 clippy --locked -j 1 -p franken-speaker --target mips-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort -- -D warnings
+=== d3-be-clippy-mips rc=0 end 2026-11-09T05:35:29Z
+--- rchq3 attempt 1/1 2026-11-09T05:32:38Z
+--- rchq3 attempt 1 executed rc=0 (refused_marker=0 executed_marker=1)
+=== 2026-11-09T05:35:29Z diag-wait <worker> for d4-be-clippy-ppc
+ADMISSIBLE <worker>
+=== 2026-11-09T05:36:31Z line d4-be-clippy-ppc (RCH_BUILD_TIMEOUT_SEC=2400, --worker <worker>): cargo +nightly-2026-08-31 clippy --locked -j 1 -p franken-speaker --target powerpc-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort -- -D warnings
+=== d4-be-clippy-ppc rc=0 end 2026-11-09T05:38:57Z
+--- rchq3 attempt 1/1 2026-11-09T05:36:31Z
+--- rchq3 attempt 1 executed rc=0 (refused_marker=0 executed_marker=1)
+all lines done rc=0 2026-11-09T05:38:57Z
+batch exit=0

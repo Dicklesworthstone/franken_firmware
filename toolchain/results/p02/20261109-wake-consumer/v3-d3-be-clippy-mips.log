@@ -1,0 +1,63 @@
+--- rchq3 attempt 1/1 2026-11-09T05:32:38Z
+   Compiling compiler_builtins v0.1.160 (<operational-path>)
+   Compiling core v0.0.0 (<operational-path>)
+   Compiling rustc-std-workspace-core v1.99.0 (<operational-path>)
+   Compiling alloc v0.0.0 (<operational-path>)
+   Compiling rustc-std-workspace-alloc v1.99.0 (<operational-path>)
+   Compiling libc v0.2.189
+   Compiling object v0.39.1
+   Compiling unwind v0.0.0 (<operational-path>)
+   Compiling gimli v0.34.0
+   Compiling memchr v2.8.3
+   Compiling adler2 v2.0.1
+   Compiling std v0.0.0 (<operational-path>)
+   Compiling miniz_oxide v0.9.1
+   Compiling addr2line v0.27.1
+   Compiling panic_unwind v0.0.0 (<operational-path>)
+   Compiling std_detect v0.1.5 (<operational-path>)
+   Compiling hashbrown v0.17.1
+   Compiling panic_abort v0.0.0 (<operational-path>)
+   Compiling cfg-if v1.0.4
+   Compiling rustc-demangle v0.1.28
+   Compiling rustc-literal-escaper v0.0.8
+   Compiling proc_macro v0.0.0 (<operational-path>)
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
+    Checking typenum v1.20.1
+    Checking hybrid-array v0.4.15
+   Compiling syn v3.0.9
+    Checking cmov v0.5.4
+   Compiling serde_core v1.0.229
+    Checking ctutils v0.4.8
+    Checking crypto-common v0.2.2
+    Checking block-buffer v0.12.1
+    Checking const-oid v0.10.2
+   Compiling zmij v1.0.23
+    Checking digest v0.11.3
+   Compiling serde v1.0.229
+   Compiling serde_json v1.0.154
+   Compiling serde_derive v1.0.229
+    Checking itoa v1.0.18
+    Checking cfg-if v1.0.5
+   Compiling thiserror v2.0.21
+    Checking sha2 v0.11.1
+   Compiling thiserror-impl v2.0.21
+    Checking hex v0.4.3
+    Checking franken-board-profile v0.1.0 (<operational-path>)
+    Checking hmac v0.13.0
+    Checking franken-atomic v0.1.0 (<operational-path>)
+    Checking franken-platform v0.1.0 (<operational-path>)
+    Checking franken-dsp v0.1.0 (<operational-path>)
+    Checking franken-clock v0.1.0 (<operational-path>)
+    Checking franken-session v0.1.0 (<operational-path>)
+    Checking franken-journal v0.1.0 (<operational-path>)
+    Checking franken-control v0.1.0 (<operational-path>)
+    Checking franken-stream v0.1.0 (<operational-path>)
+    Checking franken-platform-linux v0.1.0 (<operational-path>)
+    Checking franken-hal v0.1.0 (<operational-path>)
+    Checking franken-speaker v0.1.0 (<operational-path>)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 51s
+
+[RCH] remote <worker> (166.5s)
+--- rchq3 attempt 1 executed rc=0 (refused_marker=0 executed_marker=1)
