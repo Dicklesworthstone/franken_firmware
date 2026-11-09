@@ -1,0 +1,1247 @@
+--- a/crates/franken-platform/src/lib.rs
++++ b/crates/franken-platform/src/lib.rs
+@@ -21,6 +21,10 @@
+ // The datagram carrier seam (`N07`, on `P02`): `sendto` and `recvfrom`, additive to `socket`. Declared apart from the ordered group above, which
+ // `tests/p06/test_durable.py` pins as `clock`, `durable`, `entropy` in a row.
+ pub mod datagram;
++
++// Finite readiness waiting for the admitted P02 platform. No retry or alternate
++// reactor is selected by this boundary.
++pub mod wait;
+ 
+ use crate::entropy::EntropyAvailability;
+ use franken_board_profile::{BoardProfile, CpuIsa};
+--- a/crates/franken-platform/src/layer.rs
++++ b/crates/franken-platform/src/layer.rs
+@@ -20,8 +20,9 @@
+ use crate::clock::{self, ClockError};
+ use crate::entropy::{self, EntropyAvailability, EntropyError, EntropyProfile, EntropyProvider};
+ use crate::ops::{KernelOps, Provenance};
++use crate::wait::{PollFd, PollTimeout, WaitError, WaitOps, WaitOutcome};
+ use crate::wake::{Drained, WakeError, WakeOutcome, Waker};
+-use crate::{KernelCapabilityMatrix, PlatformAdmissionError};
++use crate::{CapabilityStatus, KernelCapabilityMatrix, PlatformAdmissionError};
+ use std::sync::Arc;
+ 
+ /// In-process identity of one admitted clock epoch. Native-width Arc reference
+@@ -68,6 +69,8 @@
+     getrandom_availability: EntropyAvailability,
+     entropy_profile: EntropyProfile,
+     clock_resolution_ns: u64,
++    // Admission of another mux (epoll) does not qualify this poll route.
++    poll_status: CapabilityStatus,
+     clock_epoch: ClockEpoch,
+     last_ns: Option<u64>,
+     waker: Waker,
+@@ -105,6 +108,7 @@
+             getrandom_availability,
+             entropy_profile: EntropyProfile::Getrandom,
+             clock_resolution_ns: matrix.clock_monotonic_res_ns,
++            poll_status: matrix.poll_syscall,
+             clock_epoch: ClockEpoch::new(),
+             last_ns: None,
+             waker,
+@@ -129,6 +133,41 @@
+     #[must_use]
+     pub const fn ops(&self) -> &O {
+         &self.ops
++    }
++
++    /// Wait once through the specifically admitted `poll` route, without a
++    /// hidden retry or an alternate reactor. An epoll-only profile does not
++    /// authorize poll. Interrupted calls return to the owner, which must
++    /// recompute its remaining deadline before another finite wait.
++    ///
++    /// This borrows descriptors; it neither takes ownership nor closes them.
++    /// The timeout's millisecond quantization is not a render-deadline claim.
++    /// An oversized array is rejected without visiting or clearing its output.
++    /// Valid-size arrays have stale output cleared on every refusal.
++    ///
++    /// # Errors
++    /// [`WaitError::NotAdmitted`] before any poll call when this profile did
++    /// not qualify poll; otherwise the checked raw boundary's typed error.
++    pub fn wait_once(
++        &mut self,
++        fds: &mut [PollFd],
++        timeout: PollTimeout,
++    ) -> Result<WaitOutcome, WaitError>
++    where
++        O: WaitOps,
++    {
++        if fds.len() > crate::wait::MAX_POLL_FDS {
++            return Err(WaitError::TooManyDescriptors { count: fds.len() });
++        }
++        if self.poll_status != CapabilityStatus::Supported {
++            for fd in fds {
++                fd.revents = 0;
++            }
++            return Err(WaitError::NotAdmitted {
++                observed: self.poll_status,
++            });
++        }
++        crate::wait::poll_once(&mut self.ops, self.abi, fds, timeout)
+     }
+ 
+     /// The monotonic resolution the matrix recorded for this guest (an observation, not a measurement here).
+@@ -756,4 +795,140 @@
+         assert_eq!(layer.fill_random(&mut buf), Err(EntropyError::NotSeeded));
+         assert_eq!(buf, [0u8; 16]);
+     }
++
++    mod waiting {
++        use super::{CapabilityStatus, PlatformLayer, ppc_matrix};
++        use crate::abi::Abi;
++        use crate::ops::{KernelOps, Provenance, Timespec};
++        use crate::sim::SeededSim;
++        use crate::wait::{
++            MAX_POLL_FDS, PollFd, PollTimeout, READABLE, WaitError, WaitOps, WaitOutcome,
++        };
++
++        // Existing simulated kernel for the old seams, plus one counted,
++        // scripted poll. No real descriptor or kernel is used by these tests.
++        struct PollSpy {
++            inner: SeededSim,
++            calls: usize,
++        }
++
++        impl PollSpy {
++            fn new() -> Self {
++                Self {
++                    inner: SeededSim::new(7),
++                    calls: 0,
++                }
++            }
++        }
++
++        impl KernelOps for PollSpy {
++            fn provenance(&self) -> Provenance {
++                self.inner.provenance()
++            }
++            fn backend_abi(&self) -> Option<Abi> {
++                self.inner.backend_abi()
++            }
++            fn clock_gettime_monotonic(&mut self, out: &mut Timespec) -> isize {
++                self.inner.clock_gettime_monotonic(out)
++            }
++            fn getrandom(&mut self, buf: &mut [u8], flags: u32) -> isize {
++                self.inner.getrandom(buf, flags)
++            }
++            fn open_dev_random(&mut self, flags: u32) -> isize {
++                self.inner.open_dev_random(flags)
++            }
++            fn eventfd2(&mut self, initval: u32, flags: u32) -> isize {
++                self.inner.eventfd2(initval, flags)
++            }
++            fn pipe2(&mut self, fds: &mut [i32; 2], flags: u32) -> isize {
++                self.inner.pipe2(fds, flags)
++            }
++            fn write(&mut self, fd: i32, buf: &[u8]) -> isize {
++                self.inner.write(fd, buf)
++            }
++            fn read(&mut self, fd: i32, buf: &mut [u8]) -> isize {
++                self.inner.read(fd, buf)
++            }
++            fn close(&mut self, fd: i32) -> isize {
++                self.inner.close(fd)
++            }
++        }
++
++        impl WaitOps for PollSpy {
++            fn poll(&mut self, fds: &mut [PollFd], _timeout: PollTimeout) -> isize {
++                self.calls += 1;
++                for fd in fds.iter_mut() {
++                    fd.revents = fd.events & READABLE;
++                }
++                fds.iter().filter(|fd| fd.revents != 0).count() as isize
++            }
++        }
++
++        #[test]
++        fn a_poll_admitted_layer_uses_the_same_backend_for_readiness_and_timeout() {
++            let mut profile = ppc_matrix();
++            profile.epoll_syscall = CapabilityStatus::MissingRequired;
++            let mut layer = PlatformLayer::admit(&profile, PollSpy::new()).unwrap();
++            assert_eq!(layer.provenance(), Provenance::Simulated);
++            let mut slots = [PollFd {
++                fd: layer.wake_fd(),
++                events: READABLE,
++                revents: 0,
++            }];
++            assert_eq!(
++                layer.wait_once(&mut slots, PollTimeout::new(0).unwrap()),
++                Ok(WaitOutcome::Ready { ready: 1 })
++            );
++            assert_eq!(slots[0].revents, READABLE);
++            assert_eq!(
++                layer.wait_once(&mut [], PollTimeout::new(1).unwrap()),
++                Ok(WaitOutcome::TimedOut)
++            );
++            assert_eq!(layer.ops().calls, 2);
++        }
++
++        #[test]
++        fn an_epoll_only_layer_refuses_poll_before_calling_its_backend() {
++            for observed in [
++                CapabilityStatus::MissingRequired,
++                CapabilityStatus::UnqualifiedPendingStockGuest,
++                CapabilityStatus::AbsentFallbackAdmitted,
++            ] {
++                let mut profile = ppc_matrix();
++                profile.poll_syscall = observed;
++                // The other mux permits layer admission, but not use of poll.
++                let mut layer = PlatformLayer::admit(&profile, PollSpy::new()).unwrap();
++                let mut slots = [PollFd {
++                    fd: layer.wake_fd(),
++                    events: READABLE,
++                    revents: READABLE,
++                }];
++                assert_eq!(
++                    layer.wait_once(&mut slots, PollTimeout::new(0).unwrap()),
++                    Err(WaitError::NotAdmitted { observed })
++                );
++                assert_eq!(slots[0].revents, 0);
++                assert_eq!(layer.ops().calls, 0);
++            }
++        }
++
++        #[test]
++        fn the_layer_rejects_an_oversized_array_without_scanning_or_clearing_it() {
++            let mut layer = PlatformLayer::admit(&ppc_matrix(), PollSpy::new()).unwrap();
++            let mut slots = [PollFd {
++                fd: 1,
++                events: READABLE,
++                revents: READABLE,
++            }; MAX_POLL_FDS + 1];
++            let before = slots;
++            assert_eq!(
++                layer.wait_once(&mut slots, PollTimeout::new(0).unwrap()),
++                Err(WaitError::TooManyDescriptors {
++                    count: MAX_POLL_FDS + 1
++                })
++            );
++            assert_eq!(slots, before);
++            assert_eq!(layer.ops().calls, 0);
++        }
++    }
+ }
+--- /dev/null
++++ b/crates/franken-platform/src/wait.rs
+@@ -0,0 +1,754 @@
++//! One finite `poll` wait through the legacy kernel seam (`P02`).
++//!
++//! [`poll_once`] validates at most [`MAX_POLL_FDS`] descriptors, clears stale output, issues one raw
++//! call, and checks both the returned event masks and the number of descriptors with events. A
++//! count alone is never readiness evidence. Error, hangup, and invalid-descriptor bits are exposed
++//! to the owner for fault handling; [`WaitOutcome::Ready`] does not mean an I/O operation succeeded.
++//! An oversized array is refused before any element is touched; its unchanged output is never
++//! readiness evidence from this call.
++//!
++//! [`PollTimeout`] permits zero through [`MAX_POLL_TIMEOUT_MS`] milliseconds, never the kernel's
++//! infinite-wait sentinel. Converting a [`Duration`] rounds a positive fraction of a millisecond
++//! upward. That quantization, kernel timer resolution, and scheduler overshoot mean this is not a
++//! whole-driver or wall-clock deadline guarantee. An interrupted wait is returned without retry:
++//! the owner must re-read its admitted clock and recompute its remaining deadline before another
++//! call. There is no alternate wait mechanism or fallback here.
++//!
++//! This policy and its scripted unit tests do not admit a kernel, qualify a Linux leaf, or prove
++//! guest or hardware execution. The descriptor array and all policy bookkeeping are caller-owned
++//! or on the stack; the boundary allocates nothing.
++
++use std::time::Duration;
++
++use crate::abi::{Abi, SysError};
++
++/// Request or return ordinary readable data (`POLLIN`).
++pub const READABLE: i16 = 1;
++/// Request or return priority data (`POLLPRI`).
++pub const PRIORITY: i16 = 2;
++/// Request or return writable space (`POLLOUT`).
++pub const WRITABLE: i16 = 4;
++/// A returned error (`POLLERR`), whether or not requested.
++pub const ERROR: i16 = 8;
++/// A returned hangup (`POLLHUP`), whether or not requested.
++pub const HANGUP: i16 = 16;
++/// A returned invalid descriptor (`POLLNVAL`), whether or not requested.
++pub const INVALID: i16 = 32;
++
++/// Maximum descriptors issued in one wait.
++pub const MAX_POLL_FDS: usize = 16;
++/// Longest interval accepted for one kernel wait, in milliseconds.
++pub const MAX_POLL_TIMEOUT_MS: u32 = 1_000;
++
++const REQUEST_EVENTS: i16 = READABLE | PRIORITY | WRITABLE;
++const RETURN_EVENTS: i16 = REQUEST_EVENTS | ERROR | HANGUP | INVALID;
++
++/// The Linux `pollfd` layout on both supported legacy ABIs.
++///
++/// `fd` and `events` are inputs, and `revents` is output. A raw backend must preserve the inputs.
++#[repr(C)]
++#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
++pub struct PollFd {
++    pub fd: i32,
++    pub events: i16,
++    pub revents: i16,
++}
++
++const _: () = {
++    assert!(std::mem::size_of::<PollFd>() == 8);
++    assert!(std::mem::align_of::<PollFd>() == 4);
++};
++
++/// A validated finite kernel timeout in milliseconds. The field is deliberately private.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct PollTimeout(u32);
++
++impl PollTimeout {
++    /// Validate a timeout in milliseconds. Zero requests an immediate, nonblocking poll.
++    ///
++    /// # Errors
++    /// [`WaitError::TimeoutTooLong`] above [`MAX_POLL_TIMEOUT_MS`].
++    pub const fn new(milliseconds: u32) -> Result<Self, WaitError> {
++        if milliseconds > MAX_POLL_TIMEOUT_MS {
++            Err(WaitError::TimeoutTooLong)
++        } else {
++            Ok(Self(milliseconds))
++        }
++    }
++
++    /// The validated value the raw backend passes to the kernel, always in `0..=1000`.
++    #[must_use]
++    pub const fn as_millis(self) -> u32 {
++        self.0
++    }
++}
++
++impl TryFrom<Duration> for PollTimeout {
++    type Error = WaitError;
++
++    /// Round up to whole milliseconds, refusing a duration above the finite bound.
++    fn try_from(duration: Duration) -> Result<Self, Self::Error> {
++        // Reject before any rounding or narrowing, including Duration::MAX.
++        if duration > Duration::from_millis(u64::from(MAX_POLL_TIMEOUT_MS)) {
++            return Err(WaitError::TimeoutTooLong);
++        }
++        let milliseconds =
++            duration.as_millis() + u128::from(!duration.subsec_nanos().is_multiple_of(1_000_000));
++        let milliseconds = u32::try_from(milliseconds).map_err(|_| WaitError::TimeoutTooLong)?;
++        Self::new(milliseconds)
++    }
++}
++
++/// One raw finite `poll` call. No retry, emulation, or alternate mechanism is allowed here.
++///
++/// The backend passes the slice and validated timeout unchanged, returns a nonnegative descriptor
++/// count or raw `-errno`, and modifies only `revents`. In particular it must preserve every `fd`
++/// and requested `events` value even on failure. [`poll_once`] owns validation and error decoding.
++pub trait WaitOps {
++    fn poll(&mut self, fds: &mut [PollFd], timeout: PollTimeout) -> isize;
++}
++
++/// The validated result of one finite wait.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum WaitOutcome {
++    /// The raw count was zero and every returned event mask was zero.
++    TimedOut,
++    /// Exactly this many descriptors have a nonzero, validated `revents` mask.
++    /// The owner must inspect those masks, including [`ERROR`], [`HANGUP`], and [`INVALID`].
++    Ready { ready: usize },
++}
++
++/// An argument refusal, decoded kernel error, or malformed successful answer.
++#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
++pub enum WaitError {
++    /// The admitted layer did not observe support for this particular poll route. The raw helper
++    /// does not make admission decisions; the layer checks this before delegating to it.
++    #[error("poll route is not admitted ({observed:?})")]
++    NotAdmitted { observed: crate::CapabilityStatus },
++    #[error("poll timeout exceeds the finite millisecond bound")]
++    TimeoutTooLong,
++    #[error("poll has {count} descriptors, above the finite descriptor bound")]
++    TooManyDescriptors { count: usize },
++    #[error("poll descriptor {index} is negative ({fd})")]
++    NegativeDescriptor { index: usize, fd: i32 },
++    #[error("poll descriptors {first} and {second} repeat descriptor {fd}")]
++    DuplicateDescriptor {
++        first: usize,
++        second: usize,
++        fd: i32,
++    },
++    #[error("poll descriptor {index} requests unsupported event bits ({events})")]
++    UnsupportedEvents { index: usize, events: i16 },
++    #[error("poll: {0}")]
++    Sys(SysError),
++    #[error("poll returned count {returned} for {slots} descriptors")]
++    CountOutOfRange { returned: usize, slots: usize },
++    #[error("poll descriptor {index} returned unknown event bits ({events})")]
++    UnknownReturnedEvents { index: usize, events: i16 },
++    #[error(
++        "poll descriptor {index} returned unrequested readiness bits ({events}); requested {requested}"
++    )]
++    UnrequestedEvents {
++        index: usize,
++        events: i16,
++        requested: i16,
++    },
++    #[error("poll returned count {returned} but {observed} descriptors have events")]
++    CountMismatch { returned: usize, observed: usize },
++}
++
++/// Issue one finite wait after validating its descriptor array.
++///
++/// Negative and duplicate descriptors, unsupported requested bits, and an oversized array are
++/// refused before any backend call. Zero requested events is allowed, so an owner can observe
++/// fault bits alone. Readable, priority, and writable return bits must have been requested;
++/// error, hangup, and invalid-descriptor bits may arrive without a request.
++///
++/// An oversized array is refused before any element is read or written. It remains unchanged,
++/// including stale output, which is never readiness evidence from this call. For arrays within
++/// [`MAX_POLL_FDS`], stale `revents` are cleared before further validation and every output is
++/// cleared on any error. This function never changes the input descriptors or requested masks;
++/// preserving those inputs is also a requirement of [`WaitOps`]. An empty array is allowed for a
++/// finite timeout-only wait.
++///
++/// # Errors
++/// [`WaitError`] on an invalid argument, any decoded kernel error (including an un-retried
++/// [`SysError::Interrupted`]), an invalid returned event mask, or an inconsistent returned count.
++pub fn poll_once<O: WaitOps + ?Sized>(
++    ops: &mut O,
++    abi: Abi,
++    slots: &mut [PollFd],
++    timeout: PollTimeout,
++) -> Result<WaitOutcome, WaitError> {
++    if slots.len() > MAX_POLL_FDS {
++        return Err(WaitError::TooManyDescriptors { count: slots.len() });
++    }
++    clear_events(slots);
++    let result = (|| {
++        for (index, slot) in slots.iter().enumerate() {
++            if slot.fd < 0 {
++                return Err(WaitError::NegativeDescriptor { index, fd: slot.fd });
++            }
++            if slot.events & !REQUEST_EVENTS != 0 {
++                return Err(WaitError::UnsupportedEvents {
++                    index,
++                    events: slot.events,
++                });
++            }
++            if let Some(first) = slots[..index].iter().position(|other| other.fd == slot.fd) {
++                return Err(WaitError::DuplicateDescriptor {
++                    first,
++                    second: index,
++                    fd: slot.fd,
++                });
++            }
++        }
++
++        let returned = abi
++            .decode(ops.poll(slots, timeout))
++            .map_err(WaitError::Sys)?;
++        if returned > slots.len() {
++            return Err(WaitError::CountOutOfRange {
++                returned,
++                slots: slots.len(),
++            });
++        }
++        let mut observed = 0;
++        for (index, slot) in slots.iter().enumerate() {
++            if slot.revents & !RETURN_EVENTS != 0 {
++                return Err(WaitError::UnknownReturnedEvents {
++                    index,
++                    events: slot.revents,
++                });
++            }
++            if slot.revents & REQUEST_EVENTS & !slot.events != 0 {
++                return Err(WaitError::UnrequestedEvents {
++                    index,
++                    events: slot.revents,
++                    requested: slot.events,
++                });
++            }
++            observed += usize::from(slot.revents != 0);
++        }
++        if returned != observed {
++            return Err(WaitError::CountMismatch { returned, observed });
++        }
++        Ok(if returned == 0 {
++            WaitOutcome::TimedOut
++        } else {
++            WaitOutcome::Ready { ready: returned }
++        })
++    })();
++    if result.is_err() {
++        clear_events(slots);
++    }
++    result
++}
++
++fn clear_events(slots: &mut [PollFd]) {
++    for slot in slots {
++        slot.revents = 0;
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    const BOTH: [Abi; 2] = [Abi::PowerPc32, Abi::Mips32];
++
++    /// A raw scripted answer, with fixed storage and a call counter. It checks that the policy
++    /// removed stale output before making the call and records the exact inputs it received.
++    struct ScriptedWait {
++        raw: isize,
++        revents: [i16; MAX_POLL_FDS],
++        calls: usize,
++        received: [PollFd; MAX_POLL_FDS],
++        received_len: usize,
++        timeout: Option<PollTimeout>,
++    }
++
++    impl ScriptedWait {
++        fn answer(raw: isize, revents: &[i16]) -> Self {
++            let mut answer = Self {
++                raw,
++                revents: [0; MAX_POLL_FDS],
++                calls: 0,
++                received: [PollFd::default(); MAX_POLL_FDS],
++                received_len: 0,
++                timeout: None,
++            };
++            answer.revents[..revents.len()].copy_from_slice(revents);
++            answer
++        }
++    }
++
++    impl WaitOps for ScriptedWait {
++        fn poll(&mut self, fds: &mut [PollFd], timeout: PollTimeout) -> isize {
++            self.calls += 1;
++            assert!(
++                fds.iter().all(|slot| slot.revents == 0),
++                "stale output reached the backend"
++            );
++            self.received_len = fds.len();
++            self.received[..fds.len()].copy_from_slice(fds);
++            self.timeout = Some(timeout);
++            for (slot, revents) in fds.iter_mut().zip(self.revents) {
++                slot.revents = revents;
++            }
++            self.raw
++        }
++    }
++
++    fn timeout() -> PollTimeout {
++        PollTimeout::new(37).unwrap()
++    }
++
++    fn slots<const N: usize>() -> [PollFd; N] {
++        std::array::from_fn(|index| PollFd {
++            fd: i32::try_from(index).unwrap(),
++            events: READABLE,
++            revents: -1,
++        })
++    }
++
++    fn assert_inputs_unchanged(before: &[PollFd], after: &[PollFd]) {
++        assert_eq!(before.len(), after.len());
++        for (before, after) in before.iter().zip(after) {
++            assert_eq!((before.fd, before.events), (after.fd, after.events));
++        }
++    }
++
++    fn assert_refused_without_call(mut fds: impl AsMut<[PollFd]>, expected: WaitError) {
++        for abi in BOTH {
++            let slots = fds.as_mut();
++            slots.iter_mut().for_each(|slot| slot.revents = -1);
++            let mut ops = ScriptedWait::answer(0, &[]);
++            assert_eq!(
++                poll_once(&mut ops, abi, slots, timeout()),
++                Err(expected),
++                "{abi:?}"
++            );
++            assert_eq!(ops.calls, 0, "invalid input reached the backend");
++            assert!(slots.iter().all(|slot| slot.revents == 0));
++        }
++    }
++
++    #[test]
++    fn pollfd_layout_and_flag_values_match_the_legacy_kernel_contract() {
++        assert_eq!(std::mem::size_of::<PollFd>(), 8);
++        assert_eq!(std::mem::align_of::<PollFd>(), 4);
++        assert_eq!(std::mem::offset_of!(PollFd, fd), 0);
++        assert_eq!(std::mem::offset_of!(PollFd, events), 4);
++        assert_eq!(std::mem::offset_of!(PollFd, revents), 6);
++        assert_eq!(
++            [READABLE, PRIORITY, WRITABLE, ERROR, HANGUP, INVALID],
++            [1, 2, 4, 8, 16, 32]
++        );
++    }
++
++    #[test]
++    fn readable_data_and_a_clean_timeout_are_distinct_single_calls() {
++        for abi in BOTH {
++            for (raw, revents, expected) in [
++                (1, READABLE, WaitOutcome::Ready { ready: 1 }),
++                (0, 0, WaitOutcome::TimedOut),
++            ] {
++                let mut fds = slots::<1>();
++                let before = fds;
++                let mut ops = ScriptedWait::answer(raw, &[revents]);
++                assert_eq!(poll_once(&mut ops, abi, &mut fds, timeout()), Ok(expected));
++                assert_eq!(ops.calls, 1);
++                assert_eq!(ops.timeout, Some(timeout()));
++                assert_eq!(
++                    ops.received[0],
++                    PollFd {
++                        fd: 0,
++                        events: READABLE,
++                        revents: 0
++                    }
++                );
++                assert_eq!(fds[0].revents, revents);
++                assert_inputs_unchanged(&before, &fds);
++            }
++        }
++    }
++
++    #[test]
++    fn zero_timeout_reaches_the_backend_without_becoming_infinite() {
++        for abi in BOTH {
++            let mut ops = ScriptedWait::answer(0, &[]);
++            assert_eq!(
++                poll_once(&mut ops, abi, &mut [], PollTimeout::new(0).unwrap()),
++                Ok(WaitOutcome::TimedOut)
++            );
++            assert_eq!(ops.calls, 1);
++            assert_eq!(ops.timeout.unwrap().as_millis(), 0);
++        }
++    }
++
++    #[test]
++    fn writable_priority_and_combined_requested_readiness_are_preserved() {
++        for abi in BOTH {
++            for events in [WRITABLE, PRIORITY, READABLE | WRITABLE | PRIORITY] {
++                let mut fds = [PollFd {
++                    fd: i32::MAX,
++                    events,
++                    revents: -1,
++                }];
++                let mut ops = ScriptedWait::answer(1, &[events]);
++                assert_eq!(
++                    poll_once(&mut ops, abi, &mut fds, timeout()),
++                    Ok(WaitOutcome::Ready { ready: 1 })
++                );
++                assert_eq!(fds[0].revents, events);
++            }
++        }
++    }
++
++    #[test]
++    fn fault_bits_are_exposed_even_with_no_requested_events() {
++        for abi in BOTH {
++            for revents in [ERROR, HANGUP, INVALID, ERROR | HANGUP | INVALID] {
++                let mut fds = [PollFd {
++                    fd: 3,
++                    events: 0,
++                    revents: -1,
++                }];
++                let mut ops = ScriptedWait::answer(1, &[revents]);
++                assert_eq!(
++                    poll_once(&mut ops, abi, &mut fds, timeout()),
++                    Ok(WaitOutcome::Ready { ready: 1 })
++                );
++                assert_eq!(fds[0].revents, revents);
++            }
++        }
++    }
++
++    #[test]
++    fn combined_fault_and_requested_bits_count_descriptors_rather_than_bits() {
++        for abi in BOTH {
++            let mut fds = slots::<3>();
++            let mut ops = ScriptedWait::answer(2, &[READABLE | ERROR | HANGUP, 0, INVALID]);
++            assert_eq!(
++                poll_once(&mut ops, abi, &mut fds, timeout()),
++                Ok(WaitOutcome::Ready { ready: 2 })
++            );
++            assert_eq!(
++                [fds[0].revents, fds[1].revents, fds[2].revents],
++                [READABLE | ERROR | HANGUP, 0, INVALID]
++            );
++        }
++    }
++
++    #[test]
++    fn zero_one_and_sixteen_slots_are_allowed_but_seventeen_never_reach_the_backend() {
++        for abi in BOTH {
++            for count in [0, 1, MAX_POLL_FDS - 1, MAX_POLL_FDS] {
++                let mut fds = slots::<MAX_POLL_FDS>();
++                let mut ops = ScriptedWait::answer(0, &[]);
++                assert_eq!(
++                    poll_once(&mut ops, abi, &mut fds[..count], timeout()),
++                    Ok(WaitOutcome::TimedOut)
++                );
++                assert_eq!((ops.calls, ops.received_len), (1, count));
++            }
++            let mut fds = slots::<MAX_POLL_FDS>();
++            let mut ops = ScriptedWait::answer(16, &[READABLE; MAX_POLL_FDS]);
++            assert_eq!(
++                poll_once(&mut ops, abi, &mut fds, timeout()),
++                Ok(WaitOutcome::Ready { ready: 16 })
++            );
++            let mut oversized = slots::<64>();
++            let before = oversized;
++            for count in [17, 64] {
++                let mut ops = ScriptedWait::answer(0, &[]);
++                assert_eq!(
++                    poll_once(&mut ops, abi, &mut oversized[..count], timeout()),
++                    Err(WaitError::TooManyDescriptors { count })
++                );
++                assert_eq!(ops.calls, 0, "an oversized array reached the backend");
++                assert_eq!(oversized, before, "oversized input or stale output changed");
++            }
++        }
++    }
++
++    #[test]
++    fn negative_descriptors_are_refused_without_touching_the_kernel() {
++        for fd in [-1, i32::MIN] {
++            let mut fds = slots::<3>();
++            fds[1].fd = fd;
++            assert_refused_without_call(fds, WaitError::NegativeDescriptor { index: 1, fd });
++        }
++    }
++
++    #[test]
++    fn duplicate_descriptors_are_refused_even_when_their_requests_differ() {
++        let mut fds = slots::<MAX_POLL_FDS>();
++        fds[MAX_POLL_FDS - 1].fd = 0;
++        fds[MAX_POLL_FDS - 1].events = WRITABLE;
++        assert_refused_without_call(
++            fds,
++            WaitError::DuplicateDescriptor {
++                first: 0,
++                second: MAX_POLL_FDS - 1,
++                fd: 0,
++            },
++        );
++    }
++
++    #[test]
++    fn faults_unknown_bits_and_signed_masks_cannot_be_requested() {
++        for events in [ERROR, HANGUP, INVALID, 64, i16::MIN, -1, READABLE | ERROR] {
++            let mut fds = slots::<3>();
++            fds[1].events = events;
++            assert_refused_without_call(fds, WaitError::UnsupportedEvents { index: 1, events });
++        }
++    }
++
++    #[test]
++    fn each_abis_eintr_eagain_enosys_and_other_errors_return_after_one_call() {
++        for abi in BOTH {
++            for (raw, expected) in [
++                (-4, SysError::Interrupted),
++                (-11, SysError::WouldBlock),
++                (-(abi.enosys() as isize), SysError::Absent),
++                (-22, SysError::Invalid),
++                (-9, SysError::Errno(9)),
++            ] {
++                let mut fds = slots::<2>();
++                let before = fds;
++                let mut ops = ScriptedWait::answer(raw, &[READABLE, ERROR]);
++                assert_eq!(
++                    poll_once(&mut ops, abi, &mut fds, timeout()),
++                    Err(WaitError::Sys(expected)),
++                    "{abi:?}"
++                );
++                assert_eq!(ops.calls, 1, "a failed finite wait was retried");
++                assert!(fds.iter().all(|slot| slot.revents == 0));
++                assert_inputs_unchanged(&before, &fds);
++            }
++        }
++    }
++
++    #[test]
++    fn the_other_abis_enosys_number_is_not_absence() {
++        for (abi, raw, errno) in [(Abi::PowerPc32, -89, 89), (Abi::Mips32, -38, 38)] {
++            let mut ops = ScriptedWait::answer(raw, &[READABLE]);
++            let mut fds = slots::<1>();
++            assert_eq!(
++                poll_once(&mut ops, abi, &mut fds, timeout()),
++                Err(WaitError::Sys(SysError::Errno(errno)))
++            );
++            assert_eq!(ops.calls, 1);
++            assert_eq!(fds[0].revents, 0);
++        }
++    }
++
++    #[test]
++    fn malformed_negative_returns_are_errors_and_clear_partial_output() {
++        for abi in BOTH {
++            for raw in [-4096, isize::MIN] {
++                let mut ops = ScriptedWait::answer(raw, &[READABLE]);
++                let mut fds = slots::<1>();
++                assert_eq!(
++                    poll_once(&mut ops, abi, &mut fds, timeout()),
++                    Err(WaitError::Sys(SysError::Malformed(raw)))
++                );
++                assert_eq!(ops.calls, 1);
++                assert_eq!(fds[0].revents, 0);
++            }
++        }
++    }
++
++    #[test]
++    fn a_count_larger_than_the_array_is_not_readiness() {
++        for abi in BOTH {
++            for returned in [3, isize::MAX] {
++                let mut fds = slots::<2>();
++                let mut ops = ScriptedWait::answer(returned, &[READABLE, READABLE]);
++                assert_eq!(
++                    poll_once(&mut ops, abi, &mut fds, timeout()),
++                    Err(WaitError::CountOutOfRange {
++                        returned: returned.unsigned_abs(),
++                        slots: 2
++                    })
++                );
++                assert_eq!(ops.calls, 1);
++                assert!(fds.iter().all(|slot| slot.revents == 0));
++            }
++            let mut ops = ScriptedWait::answer(1, &[]);
++            assert_eq!(
++                poll_once(&mut ops, abi, &mut [], timeout()),
++                Err(WaitError::CountOutOfRange {
++                    returned: 1,
++                    slots: 0
++                })
++            );
++        }
++    }
++
++    #[test]
++    fn zero_with_events_or_positive_with_wrong_nonzero_count_is_refused() {
++        for abi in BOTH {
++            for (returned, revents, observed) in [
++                (0, [READABLE, 0], 1),
++                (1, [0, 0], 0),
++                (1, [READABLE, ERROR], 2),
++                (2, [READABLE, 0], 1),
++            ] {
++                let mut fds = slots::<2>();
++                let before = fds;
++                let mut ops = ScriptedWait::answer(returned, &revents);
++                assert_eq!(
++                    poll_once(&mut ops, abi, &mut fds, timeout()),
++                    Err(WaitError::CountMismatch {
++                        returned: returned.unsigned_abs(),
++                        observed
++                    })
++                );
++                assert!(fds.iter().all(|slot| slot.revents == 0));
++                assert_inputs_unchanged(&before, &fds);
++            }
++        }
++    }
++
++    #[test]
++    fn unknown_returned_bits_in_any_slot_clear_every_output() {
++        for abi in BOTH {
++            for events in [64, READABLE | 64, i16::MIN, -1] {
++                let mut fds = slots::<3>();
++                let mut ops = ScriptedWait::answer(2, &[READABLE, 0, events]);
++                assert_eq!(
++                    poll_once(&mut ops, abi, &mut fds, timeout()),
++                    Err(WaitError::UnknownReturnedEvents { index: 2, events })
++                );
++                assert!(fds.iter().all(|slot| slot.revents == 0));
++            }
++        }
++    }
++
++    #[test]
++    fn each_unrequested_readiness_bit_is_refused_even_with_a_valid_fault_bit() {
++        for abi in BOTH {
++            for events in [READABLE, PRIORITY, WRITABLE] {
++                for faults in [0, ERROR | HANGUP | INVALID] {
++                    let mut fds = [PollFd {
++                        fd: 7,
++                        events: REQUEST_EVENTS & !events,
++                        revents: -1,
++                    }];
++                    let mut ops = ScriptedWait::answer(1, &[events | faults]);
++                    assert_eq!(
++                        poll_once(&mut ops, abi, &mut fds, timeout()),
++                        Err(WaitError::UnrequestedEvents {
++                            index: 0,
++                            events: events | faults,
++                            requested: REQUEST_EVENTS & !events
++                        })
++                    );
++                    assert_eq!(fds[0].revents, 0);
++                }
++            }
++        }
++    }
++
++    #[test]
++    fn every_allowed_return_mask_is_accepted_when_its_readiness_was_requested() {
++        for abi in BOTH {
++            for events in 0..=63 {
++                let mut fds = [PollFd {
++                    fd: 9,
++                    events: events & 7,
++                    revents: -1,
++                }];
++                let raw = isize::from(events != 0);
++                let mut ops = ScriptedWait::answer(raw, &[events]);
++                let expected = if events == 0 {
++                    WaitOutcome::TimedOut
++                } else {
++                    WaitOutcome::Ready { ready: 1 }
++                };
++                assert_eq!(
++                    poll_once(&mut ops, abi, &mut fds, timeout()),
++                    Ok(expected),
++                    "{abi:?}: mask {events}"
++                );
++                assert_eq!(fds[0].revents, events);
++            }
++        }
++    }
++
++    #[test]
++    fn a_later_timeout_or_failure_cannot_reuse_a_previous_calls_readiness() {
++        for abi in BOTH {
++            let mut fds = slots::<1>();
++            let mut ops = ScriptedWait::answer(1, &[READABLE]);
++            assert_eq!(
++                poll_once(&mut ops, abi, &mut fds, timeout()),
++                Ok(WaitOutcome::Ready { ready: 1 })
++            );
++            ops.raw = 0;
++            ops.revents = [0; MAX_POLL_FDS];
++            assert_eq!(
++                poll_once(&mut ops, abi, &mut fds, timeout()),
++                Ok(WaitOutcome::TimedOut)
++            );
++            assert_eq!(fds[0].revents, 0);
++            fds[0].revents = READABLE;
++            ops.raw = -4;
++            assert_eq!(
++                poll_once(&mut ops, abi, &mut fds, timeout()),
++                Err(WaitError::Sys(SysError::Interrupted))
++            );
++            assert_eq!(fds[0].revents, 0);
++            assert_eq!(ops.calls, 3);
++        }
++    }
++
++    #[test]
++    fn the_timeout_constructor_accepts_zero_through_the_bound_only() {
++        for milliseconds in [0, 1, 999, 1_000] {
++            assert_eq!(
++                PollTimeout::new(milliseconds).unwrap().as_millis(),
++                milliseconds
++            );
++        }
++        for milliseconds in [1_001, u32::MAX] {
++            assert_eq!(
++                PollTimeout::new(milliseconds),
++                Err(WaitError::TimeoutTooLong)
++            );
++        }
++    }
++
++    #[test]
++    fn duration_conversion_rounds_up_without_extending_the_finite_bound() {
++        for (duration, milliseconds) in [
++            (Duration::ZERO, 0),
++            (Duration::from_nanos(1), 1),
++            (Duration::from_nanos(999_999), 1),
++            (Duration::from_millis(1), 1),
++            (Duration::from_nanos(1_000_001), 2),
++            (Duration::from_nanos(999_000_001), 1_000),
++            (Duration::from_secs(1), 1_000),
++        ] {
++            assert_eq!(
++                PollTimeout::try_from(duration).unwrap().as_millis(),
++                milliseconds,
++                "{duration:?}"
++            );
++        }
++        for duration in [
++            Duration::from_nanos(1_000_000_001),
++            Duration::from_millis(1_001),
++            Duration::MAX,
++        ] {
++            assert_eq!(
++                PollTimeout::try_from(duration),
++                Err(WaitError::TimeoutTooLong),
++                "{duration:?}"
++            );
++        }
++    }
++}
+--- a/crates/franken-platform-linux/src/lib.rs
++++ b/crates/franken-platform-linux/src/lib.rs
+@@ -29,6 +29,12 @@
+ //!   `franken_platform::datagram::DatagramOps` (`sendto`, `recvfrom`), two more wrappers in `sys.rs`. Both are issued as `socketcall` sub-calls 11
+ //!   and 12 on **both** ABIs, with the words decided by [`datagram_route`] (host-tested, no `unsafe`); there is no wider trampoline. No guest has
+ //!   issued a `socketcall` on either ABI, and on MIPS o32 these would be the first (the leaf's other socket calls are direct there).
++//! * **Readiness waiting is an explicit finite step.** Both backends implement
++//!   `franken_platform::wait::WaitOps` with one raw `poll`; its number and three
++//!   argument words come from [`wait_route`]. The validated timeout cannot be
++//!   infinite. `PlatformLayer::wait_once` additionally requires this particular
++//!   route to be admitted; epoll admission does not stand in for poll. This
++//!   wrapper has no guest-execution proof from the older hello probe alone.
+ //! * It declares [`Provenance::Kernel`] and the ABI it was compiled for, which [`PlatformLayer::admit`] checks against the
+ //!   profile's.
+ //! * The socket wrappers have no guest execution proof. Other startup operations have run on the named QEMU harness kernels; the
+@@ -42,6 +48,7 @@
+ pub mod datagram_route;
+ pub mod numbers;
+ pub mod socket_route;
++pub mod wait_route;
+ 
+ /// Whether this build can issue kernel calls (Linux, 32-bit big-endian, MIPS or PowerPC).
+ pub const SUPPORTED_TARGET: bool = cfg!(all(
+@@ -73,6 +80,7 @@
+     use franken_platform::datagram::DatagramOps;
+     use franken_platform::ops::{KernelOps, Provenance, Timespec};
+     use franken_platform::socket::SocketOps;
++    use franken_platform::wait::{PollFd, PollTimeout, WaitOps};
+     use std::time::Instant;
+ 
+     /// The kernel as a [`KernelOps`] backend. Its only state is the clock's anchor; every other method is one syscall.
+@@ -120,6 +128,18 @@
+         kernel: LinuxKernel,
+     }
+ 
++    impl WaitOps for LinuxKernel {
++        fn poll(&mut self, fds: &mut [PollFd], timeout: PollTimeout) -> isize {
++            sys::poll(fds, timeout)
++        }
++    }
++
++    impl WaitOps for SocketKernel {
++        fn poll(&mut self, fds: &mut [PollFd], timeout: PollTimeout) -> isize {
++            self.kernel.poll(fds, timeout)
++        }
++    }
++
+     impl KernelOps for SocketKernel {
+         fn provenance(&self) -> Provenance {
+             self.kernel.provenance()
+--- a/crates/franken-platform-linux/src/sys.rs
++++ b/crates/franken-platform-linux/src/sys.rs
+@@ -15,7 +15,9 @@
+ //!    (`DEV_RANDOM`), valid for the whole program, which the kernel reads up to its NUL.
+ //! 3. The return value is normalized to the convention `franken_platform::ops::KernelOps` documents: a non-negative result, or
+ //!    `-errno`. MIPS reports errors in `$7` with a positive errno in `$2`; PowerPC in `cr0.SO` with a positive errno in `r3`.
+-//! 4. No call here blocks on its own: the callers pass nonblocking flags or descriptors, and `EINTR` is handled above.
++//! 4. I/O calls use nonblocking flags or descriptors. `poll` is the explicit
++//!    exception: its validated timeout is finite and at most one second. There
++//!    is no hidden retry here; the owner handles `EINTR` and its remaining deadline.
+ //! 5. A `socketcall` block (the PowerPC route of the socket wrappers) is a local array of six words that lives across the call; the kernel reads
+ //!    at most `nargs[sub]` of them, which is six at most. Each word is an integer or an address derived under invariant 2. Which words, and
+ //!    whether a call is direct or goes through `socketcall`, is decided by [`crate::socket_route::issue_for`] from the plan in
+@@ -34,6 +36,7 @@
+ };
+ use franken_platform::abi::Abi;
+ use franken_platform::socket::SocketOp;
++use franken_platform::wait::{PollFd, PollTimeout};
+ 
+ #[cfg(target_arch = "mips")]
+ mod arch {
+@@ -157,6 +160,33 @@
+ /// The ABI this build speaks.
+ pub(crate) const COMPILED_ABI: Abi = arch::ABI;
+ 
++/// One `poll` over a borrowed native-layout array. No descriptor is owned or
++/// closed here, and there is no retry or timeout substitution.
++pub(crate) fn poll(fds: &mut [PollFd], timeout: PollTimeout) -> isize {
++    let issue =
++        crate::wait_route::issue_for(COMPILED_ABI, fds.as_mut_ptr() as usize, fds.len(), timeout);
++    // SAFETY: the fixed ABI route names poll and has three arguments. PollFd
++    // has the kernel's native repr(C) layout (i32, i16, i16; size8/align4).
++    // The exclusively borrowed slice remains alive throughout the call, and
++    // nfds is exactly its element count, not its byte count. The kernel reads
++    // fd/events and writes only revents within that array. A zero-length
++    // slice is not dereferenced by poll. The kernel is trusted to honor nfds.
++    // PollTimeout cannot represent a negative/infinite wait. raw5 normalizes
++    // this ABI's error flag to -errno; this wrapper returns it unchanged.
++    // SAFETY: the borrowed native-layout array/count and finite timeout satisfy
++    // the poll argument invariants detailed above; raw5 preserves the ABI.
++    unsafe {
++        raw5(
++            issue.number,
++            issue.words[0],
++            issue.words[1],
++            issue.words[2],
++            0,
++            0,
++        )
++    }
++}
++
+ /// `getrandom(buf, buf.len(), flags)`.
+ pub(crate) fn getrandom(buf: &mut [u8], flags: u32) -> isize {
+     // SAFETY: invariants 1 to 3: the kernel writes at most `buf.len()` bytes into `buf`.
+--- /dev/null
++++ b/crates/franken-platform-linux/src/wait_route.rs
+@@ -0,0 +1,55 @@
++//! The argument plan for the finite P02 `poll` boundary.
++//!
++//! This is plain data on every host. The audited leaf executes this exact plan;
++//! these tests establish its number and argument shape, not kernel execution.
++
++use crate::numbers::p06_for_abi;
++use franken_platform::abi::Abi;
++use franken_platform::wait::PollTimeout;
++
++/// Three native-width words, in Linux `poll(fds, nfds, timeout_ms)` order.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct PollIssue {
++    pub number: usize,
++    pub words: [usize; 3],
++}
++
++/// Plan the one call. `address` and `count` come from the same borrowed slice in
++/// the leaf; this function neither dereferences an address nor issues a call.
++#[must_use]
++pub fn issue_for(abi: Abi, address: usize, count: usize, timeout: PollTimeout) -> PollIssue {
++    PollIssue {
++        number: p06_for_abi(abi).poll.number,
++        words: [address, count, timeout.as_millis() as usize],
++    }
++}
++
++const _: () = {
++    assert!(p06_for_abi(Abi::Mips32).poll.slots == 3);
++    assert!(p06_for_abi(Abi::PowerPc32).poll.slots == 3);
++};
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn the_two_legacy_abis_use_the_existing_poll_table_and_three_ordered_words() {
++        for (abi, number) in [(Abi::Mips32, 4188), (Abi::PowerPc32, 167)] {
++            let plan = issue_for(abi, 0x1020, 3, PollTimeout::new(17).unwrap());
++            assert_eq!(plan.number, number);
++            assert_eq!(plan.words, [0x1020, 3, 17]);
++        }
++    }
++
++    #[test]
++    fn zero_and_maximum_finite_timeouts_are_not_a_signed_infinite_wait() {
++        for abi in [Abi::Mips32, Abi::PowerPc32] {
++            for millis in [0, 1000] {
++                let plan = issue_for(abi, 0x1020, 0, PollTimeout::new(millis).unwrap());
++                assert_eq!(plan.words, [0x1020, 0, millis as usize]);
++                assert!(plan.words[2] <= i32::MAX as usize);
++            }
++        }
++    }
++}
+--- a/docs/contracts/p02.md
++++ b/docs/contracts/p02.md
+@@ -29,7 +29,7 @@
+ | `src/lib.rs` | the E03 capability matrix and gate (`check_admission`), `secure_entropy`, the portable 64-bit atomics, the memory budget type |
+ | `tests/vectors/p02_errno.json` | the errno and open-flag numbers per ABI, generated from the E03 oracle |
+ | `tests/p02/test_errno_tables.py`, `scripts/e2e/p02` | the host cross-checks of those numbers, and the central plan |
+-| `crates/franken-platform-linux/` | the Linux leaf: one trampoline per ABI and fourteen typed wrappers (the only `unsafe`: seven kernel calls, seven socket calls: the five of the socket capability and the two of the datagram seam), `LinuxKernel`, `SocketKernel`, the syscall number tables, the socket route plan and the release admission (`socket_route.rs`), and the datagram routes (`datagram_route.rs`) |
++| `crates/franken-platform-linux/` | the Linux leaf: one trampoline per ABI and fifteen typed wrappers (the only `unsafe`: seven kernel calls, seven socket calls (the five of the socket capability and the two of the datagram seam), and one finite poll wait), `LinuxKernel`, `SocketKernel`, the syscall number tables, the socket route plan and the release admission (`socket_route.rs`), and the datagram routes (`datagram_route.rs`) |
+ | `tests/p02/test_syscall_numbers.py` | the syscall numbers against the E03 probes and the libc crate |
+ | `tests/p02/test_socket_slice.py` | the `listen`/`accept4` rows against the probes, the libc crate and the kernel evidence lines; the route plan; the typed flag values; the shape of `socket.rs` |
+ | `tests/p02/test_leaf_socket.py` | the leaf's socket `unsafe` held to its rules (one executor, no typed number, a SAFETY comment on every block), the admission against an independent model built from the kernel evidence, the plan constants against that evidence |
+@@ -486,10 +486,10 @@
+ edge to the same crate) is made by the gate's owner, not by the crate that benefits, and **the leaf lands in the same batch, not
+ before**. This crate (`franken-platform`) keeps `#![forbid(unsafe_code)]` and contains no backend.
+ 
+-**The leaf's unsafe surface is one trampoline per ABI** (the audited `raw5`, reproduced unchanged) **plus fourteen typed wrappers**, in a single
+-`sys` module: seven of one line each (the kernel calls), and seven socket wrappers that hand the words `socket_route` (the five of the socket capability) or
++**The leaf's unsafe surface is one trampoline per ABI** (the audited `raw5`, reproduced unchanged) **plus fifteen typed wrappers**, in a single
++`sys` module: seven kernel-call wrappers, one finite poll wrapper, and seven socket wrappers that hand the words `socket_route` (the five of the socket capability) or
+ `datagram_route` (`sendto` and `recvfrom`) chose to one executor (`execute`), the only
+-other `unsafe` site (socket execution unqualified; see "The socket capability" and "The datagram seam"). Of the seven, the seventh, `open_dev_random`, was added for the legacy entropy provider: the one pointer it passes
++other `unsafe` site outside those wrappers and trampolines (socket execution unqualified; see "The socket capability" and "The datagram seam"). Of the seven, the seventh, `open_dev_random`, was added for the legacy entropy provider: the one pointer it passes
+ is the address of the `'static` NUL-terminated constant `b"/dev/random\0"`, the method takes no path, and its SAFETY comment states that. A wrapper takes Rust references, fixes the syscall number for its compiled ABI, and passes only
+ pointers and lengths derived from those references, so a safe caller cannot pair a number with the wrong call or pass a stray
+ pointer. Every `unsafe` block carries its SAFETY comment. The crate's only dependency is `franken-platform`. On any other target the
+@@ -510,7 +510,7 @@
+ 
+ Sockets are the next slice and std's `net` is safe for most of it, but `TcpListener::accept` cannot set `SOCK_NONBLOCK` at accept time
+ (only `SOCK_CLOEXEC`), so the accept4 rule above would need a raw `accept4` there; that call and its reason join this table then.
+-`ppoll`/`epoll` are not needed by this slice (the reactor polls `wake_fd`).
++`poll` is the explicit finite-wait route described below; `ppoll`/`epoll` wrappers are not added by that slice.
+ 
+ **Syscall numbers are cross-checked per ABI by a test, not a comment:** `tests/p02/test_syscall_numbers.py` holds
+ `crates/franken-platform-linux/src/numbers.rs` to the E03 guest probes (`toolchain/src/ffw-hello-init`, always required) and to the
+@@ -519,8 +519,7 @@
+ 
+ **The P06 calls: numbers and slot counts (`P06Calls`, S3 of `docs/contracts/p06.md` "Applicability").** `numbers.rs` has a second table, `P06_POWERPC32` and
+ `P06_MIPS32_O32`, for the seventeen calls the P06 primitives (`franken-platform`'s `net` and `durable`) are used with: `poll`, `socketcall`, `socket`, `bind`,
+-`connect`, `getsockname`, `send`, `recv`, `sendto`, `recvfrom`, `setsockopt`, `fsync`, `rename`, `unlink`, `_llseek`, `pread64`, `pwrite64`. It is data and tests only:
+-**no wrapper, no `KernelOps` method, no `sys.rs` change, no `unsafe`, and nothing issues these calls.** Each row has the syscall number and the **slot count** (the
++`connect`, `getsockname`, `send`, `recv`, `sendto`, `recvfrom`, `setsockopt`, `fsync`, `rename`, `unlink`, `_llseek`, `pread64`, `pwrite64`. The tables themselves are data and tests, not execution proof. The socket/datagram consumers above and the finite poll boundary below now consume their corresponding rows; unlisted rows are not thereby implemented or qualified. Each row has the syscall number and the **slot count** (the
+ arguments the kernel's entry takes; a 64-bit argument takes two, on an even register pair, and the pad slot counts), and each socket-family call also has its
+ `socketcall` sub-call number (`linux/net.h`: 1, 2, 3, 6, 9, 10, 11, 12, 14) and a `direct_on_stock` flag.
+ 
+@@ -713,3 +712,28 @@
+   2.6.27, no `accept4` before 2.6.28). `accept4` reading `EINVAL` as absence is the profile's decision and is reachable on none of the kernels whose
+   source was read (`tests/p02/socket_kernel_evidence.json`); the kernel that comes closest, v2.6.27, runs `paccept` on `socketcall` sub-call 18 and the
+   leaf refuses it for that route by name (`socket_route::admit`). None of this is observed on any kernel.
++
++
++## Finite readiness wait (P03 prerequisite)
++
++`wait.rs` provides one finite `poll` operation over at most 16 borrowed
++native-layout descriptors, with a validated timeout of 0 through 1000 ms.
++Fractional milliseconds round upward; this quantization and kernel scheduling
++are not a render-deadline guarantee. Interruptions return to the owner without
++retry, so its original deadline cannot be silently restarted. Ready counts and
++returned flags are checked together; hangup, error and invalid-descriptor flags
++remain faults for the owner to handle, not successful I/O. Oversized arrays are
++refused without scanning them; output is meaningful only on success.
++
++`PlatformLayer::wait_once` consumes that policy only when its admitted matrix
++specifically qualifies poll. Admission of epoll alone cannot authorize it.
++The Linux leaf uses the existing ABI tables through `wait_route.rs` and issues
++one raw syscall, without changing socket admission or adding an alternate
++reactor. The new wrapper adds one audited unsafe call inside the existing
++`sys` exception; no application crate gains unsafe code.
++
++This connects the platform layer to the readiness primitive P03 needs. It does
++not implement the Asupersync reactor/timer bridge, nor qualify production
++playback. The older hello guest's poll probe does not establish execution of
++this new wrapper. Guest/stock-kernel execution and runtime integration remain
++separate qualification requirements; scripted host tests cannot supply them.
+--- a/tests/p02/test_socket_slice.py
++++ b/tests/p02/test_socket_slice.py
+@@ -679,7 +679,7 @@
+         self.assertIn("%d Python tests in `tests/p02/test_socket_slice.py`" % python_tests, self.doc)
+ 
+     def test_the_file_table_counts_the_leaf_wrappers_the_leaf_has(self):
+-        words = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten", 11: "eleven", 12: "twelve", 13: "thirteen", 14: "fourteen"}
++        words = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten", 11: "eleven", 12: "twelve", 13: "thirteen", 14: "fourteen", 15: "fifteen"}
+         wrappers = len(re.findall(r"^pub\(crate\) fn ", READ(tsn.SYS_RS), re.M))
+         row = next(line for line in self.doc.splitlines() if line.startswith("| `crates/franken-platform-linux/` |"))
+         self.assertIn("%s typed wrappers" % words[wrappers], row)
+--- a/tests/p02/test_leaf_socket.py
++++ b/tests/p02/test_leaf_socket.py
+@@ -408,11 +408,11 @@
+         self.assertEqual(sorted(known - cited), [], "a leaf Rust test the contract does not name")
+         self.assertEqual(sorted(cited - known), [], "names that are not leaf tests")
+ 
+-    def test_the_file_table_and_the_unsafe_surface_paragraph_say_fourteen(self):
++    def test_the_file_table_and_the_unsafe_surface_paragraph_say_fifteen(self):
+         row = next(line for line in self.doc.splitlines() if line.startswith("| `crates/franken-platform-linux/` |"))
+-        self.assertIn("fourteen typed wrappers", row)
++        self.assertIn("fifteen typed wrappers", row)
+         self.assertIn("socket route plan and the release admission", row)
+-        self.assertIn("**plus fourteen typed wrappers**", self.doc)
++        self.assertIn("**plus fifteen typed wrappers**", self.doc)
+         self.assertIn("the only\nother `unsafe` site", self.doc)
+ 
+ 

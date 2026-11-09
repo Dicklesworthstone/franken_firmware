@@ -1,0 +1,379 @@
+{
+  "scope": "Finite poll prerequisite: native unit execution and strict compile checks; no speaker/guest qualification",
+  "base_commit": "c4b8e54dd384c661c300189b9dd5de1a5e0ef5e3",
+  "v3_source_commit": "3bbb52d78d09bdc308e5c6bba45e98edf1cb1b28",
+  "v3_source_sha256": {
+    "crates/franken-platform/src/lib.rs": "86adc40e72dea6736ff9e2511309e07f31ead83b7658506d66c715a3811d3a1c",
+    "crates/franken-platform/src/layer.rs": "11a17a5a4d29c0cb17bf258aab9721d2cb2baaa16958c26f18b120c27f502d55",
+    "crates/franken-platform/src/wait.rs": "fd8f17c3352d45c206e10136df83cbc01de2307a0d2e995b1465021e6ab48a76",
+    "crates/franken-platform-linux/src/lib.rs": "a04bf2681517311eacda51956e9df0f392a503faa34a32ec7c9792ae8b6bd9fc",
+    "crates/franken-platform-linux/src/sys.rs": "c960eab44e179bfe7aa7bfc0e1c0a01c2a752086fa769ca2541633a2c4d502bc",
+    "crates/franken-platform-linux/src/wait_route.rs": "9aae4632e5643eea348b7db4a5e923a982e7d7df5db1d190878ac0c03986324a",
+    "docs/contracts/p02.md": "ad1798eb3567b2da0dd53b35ab4cc87044ccbfbfec70588f752ead3a5986dc7b",
+    "tests/p02/test_socket_slice.py": "c2466aa05979c551cb8ae3775dd066637453909d0991f3ee217988722e79524c",
+    "tests/p02/test_leaf_socket.py": "e1bbfea415e414df6b180c83225c0c909d10996706187f0b724da728c16b5034",
+    "tests/p02/run_cases.py": "a43608618812b7f556281e0183ca1894e0a7ed1c2a57c83948db3a975f7bb8a3",
+    "tests/p02/test_run_cases.py": "1118cdb82a87df513a532545cf2854b6f1d5039c5346523663e3a20acc1c93dd"
+  },
+  "base_before_sha256": {
+    "crates/franken-platform/src/lib.rs": "888f420af6b096e32c0fb17a4498e4c0f733d3062e9c5e5de3b95436574ae0d0",
+    "crates/franken-platform/src/layer.rs": "616fd4c7ed8d5f8e81bd8b59a5d1aa27c3d8bdfcfc79901b20fc2bc21126d266",
+    "crates/franken-platform/src/wait.rs": null,
+    "crates/franken-platform-linux/src/lib.rs": "9e91a50a733165b9c042d63e9a3d57ce9c38af700500dd833414a2ad6db1e3de",
+    "crates/franken-platform-linux/src/sys.rs": "70a20e326cef6ec873905b82d2c6af9745713176993d90e897f48282e9f2a147",
+    "crates/franken-platform-linux/src/wait_route.rs": null,
+    "docs/contracts/p02.md": "e24be765120a55547b96cac5b524ea21e51fb45997a4760c5034969e81f9dc11",
+    "tests/p02/test_socket_slice.py": "ade73b90333c24b4bd6c40ff318feb22ad78872fe46dd26ba9dd55fa8fc6c39b",
+    "tests/p02/test_leaf_socket.py": "f2ad0f3f2281f68b6127611b6f7cceea245cb363e9bd93a4465453e9d5f538c9",
+    "tests/p02/run_cases.py": "599eefc8d966c7779f9b7cf9989146fa6a2ec3761d3af2f08fea72ff10b97e6a",
+    "tests/p02/test_run_cases.py": "8ce523ed4dcd55fc60ae4b564607a92b4200e92e03f1bc0e964a5ce101237720"
+  },
+  "frozen_patch_sha256": {
+    "v1": "c335f98027dc553d2247982cc5f3546eebbdba7a3825c8f0a2d190a23ab66641",
+    "v2": "db3f55670f66fe3f57cbab2495f552f49bc5aa73908f73f69fecb557e0c8f487",
+    "v3": "dd666cc7b09886ab620fdf5f2e5d67077bf85139bc88bc90d10bd9fc237e24d2"
+  },
+  "raw_inputs": {
+    "ffw-p02-wait-wave-20261109.json": {
+      "sha256": "a1858da060d001526ef722c8d728c3d28758b6378820283f658344b305202369",
+      "bytes": 2880
+    },
+    "ffw-p02-wait-v2-wave-20261109.json": {
+      "sha256": "b47e2f0c5b21187035f041dd2f64a554f17277d60fd7839ac91e6c8d3e369a31",
+      "bytes": 3318
+    },
+    "ffw-p02-wait-v3-wave-20261109.json": {
+      "sha256": "358e3d5f074677eb108560ff30e933ac81ba5ba339e224c82b4a05887236d802",
+      "bytes": 3358
+    },
+    "p02red-red.log": {
+      "sha256": "2cc54ac0fbf956f16c88350d55dbfd72f3efefe0cd8c36aded1945bdc2795748",
+      "bytes": 245998
+    },
+    "p02v2-l1-test.log": {
+      "sha256": "2c30e768de96fa97a2770c21354494cd37f8d2d98bc3c38d47cbdef475b5406c",
+      "bytes": 1319
+    },
+    "p02v2b-l1-test.log": {
+      "sha256": "e5d4d0f1c79177809d59a9a1ccfb5d187bc3bf86db8912c4c9035f8b7864f4ae",
+      "bytes": 271665
+    },
+    "p02v2b-l2-clippy.log": {
+      "sha256": "84e7e07d9596e774dbf7faa8dd61e96f0f4093218c2e09f6e88f79ffa969f454",
+      "bytes": 244605
+    },
+    "ffw-p02-finite-wait-v1.patch": {
+      "sha256": "c335f98027dc553d2247982cc5f3546eebbdba7a3825c8f0a2d190a23ab66641",
+      "bytes": 55516
+    },
+    "ffw-p02-wait-v2-red-scaffold.patch": {
+      "sha256": "2ab2e5e3d33e88e3747d2852ea4b889f3fe38fad0cc48235ad23c39e87101b3a",
+      "bytes": 3554
+    },
+    "ffw-p02-finite-wait-v3.patch": {
+      "sha256": "dd666cc7b09886ab620fdf5f2e5d67077bf85139bc88bc90d10bd9fc237e24d2",
+      "bytes": 74938
+    },
+    "ffw-p02-wait-v2-red-scaffold.json": {
+      "sha256": "df75c2627453db2f6bc6a7a95979eb79bcb2391084966ba4fb5b2a51026db839",
+      "bytes": 745
+    },
+    "ffw-p02-wait-v2-29-case-check.json": {
+      "sha256": "ddb1cdc9def88602c3ce721d33763de60a632e74f85f0da5aa07111a67bc31d5",
+      "bytes": 2713
+    },
+    "python-full.log": {
+      "sha256": "5819dc5f92bf15ccd766f0c2a522aec1a16c551c1ad2595dd93b94e00531ac8e",
+      "bytes": 314
+    },
+    "python-smoke.log": {
+      "sha256": "c78c4aa94a5ddf533b23ec10be4a1d4b961545343ba25068fdd46230ce40784e",
+      "bytes": 137
+    },
+    "python-smoke-entrypoint.log": {
+      "sha256": "4dc79657794b1388b7651841c61daaef2565ac7b1e8aef9be012db8cdcc5cd3f",
+      "bytes": 301
+    },
+    "python-pycompile.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "p02v3-l1-test.log": {
+      "sha256": "258f0f6027538f6295d312915c97a08147de4a3bb5c1fa9019b5e0dfc03484be",
+      "bytes": 271665
+    },
+    "p02v3-l2-clippy.log": {
+      "sha256": "dac51eeb9bea8d2af196df4327f6ff1a21a99be780ae1f603fd8841b2aa0bfbb",
+      "bytes": 244110
+    },
+    "p02v3g-l3-beclippy-mips.log": {
+      "sha256": "f09562efafc6797edc1bb57dc15154424bf694b79f5c76489f25121bf2826c42",
+      "bytes": 245934
+    },
+    "p02v3g-l4-beclippy-ppc.log": {
+      "sha256": "2d111cc62a4581c3686fb62484d7f8afbf73aec219d443cc538c5c2c0097313d",
+      "bytes": 245872
+    }
+  },
+  "runs": {
+    "red": {
+      "status": "RED_EXECUTED",
+      "exit_code": 101,
+      "normalized_log": "red-scaffold-cargo.log",
+      "raw_input": "p02red-red.log",
+      "test_summaries": [
+        {
+          "verdict": "FAILED",
+          "passed": 4,
+          "failed": 2,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 242
+        }
+      ],
+      "normalization": {
+        "raw_lines": 71,
+        "retained_lines": 70,
+        "omitted_source_receipt_lines": 1,
+        "pseudonymized_lines": 6,
+        "truncated_test_or_diagnostic_lines": 0
+      }
+    },
+    "v2_not_run": {
+      "status": "NOT_RUN",
+      "exit_code": 120,
+      "normalized_log": "v2-disk-not-run.log",
+      "raw_input": "p02v2-l1-test.log",
+      "test_summaries": [],
+      "normalization": {
+        "raw_lines": 9,
+        "retained_lines": 9,
+        "omitted_source_receipt_lines": 0,
+        "pseudonymized_lines": 3,
+        "truncated_test_or_diagnostic_lines": 0
+      }
+    },
+    "v2_native": {
+      "status": "HOST_TESTS_EXECUTED",
+      "exit_code": 0,
+      "normalized_log": "v2-native-cargo.log",
+      "raw_input": "p02v2b-l1-test.log",
+      "test_summaries": [
+        {
+          "verdict": "ok",
+          "passed": 248,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "verdict": "ok",
+          "passed": 36,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "verdict": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        },
+        {
+          "verdict": "ok",
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered_out": 0
+        }
+      ],
+      "normalization": {
+        "raw_lines": 345,
+        "retained_lines": 344,
+        "omitted_source_receipt_lines": 1,
+        "pseudonymized_lines": 8,
+        "truncated_test_or_diagnostic_lines": 0
+      }
+    },
+    "v2_clippy": {
+      "status": "CLIPPY_FAILED",
+      "exit_code": 101,
+      "normalized_log": "v2-clippy-failure.log",
+      "raw_input": "p02v2b-l2-clippy.log",
+      "test_summaries": [],
+      "normalization": {
+        "raw_lines": 47,
+        "retained_lines": 46,
+        "omitted_source_receipt_lines": 1,
+        "pseudonymized_lines": 5,
+        "truncated_test_or_diagnostic_lines": 0
+      }
+    },
+    "v3_native": {
+      "status": "HOST_TESTS_EXECUTED",
+      "exit_code": 0,
+      "normalized_log": "v3-native.log",
+      "raw_input": "p02v3-l1-test.log",
+      "build_id": "30100509981410595",
+      "receipt_root": "94a3ae5cc02ad4b06d6bee946b49eccc5f4a68e467f9139eb5905e3f26c5f297",
+      "command_sha256": "11b32cc47729973b994cc036cb4b191e3b735a381cfb79e1e32e0f4b7c10c56c",
+      "source_file_count": 1417,
+      "test_summary_lines": [
+        "test result: ok. 248 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+        "test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ],
+      "normalization": {
+        "raw_lines": 345,
+        "retained_lines": 344,
+        "omitted_source_receipt_lines": 1,
+        "pseudonymized_lines": 8,
+        "truncated_test_or_diagnostic_lines": 0
+      }
+    },
+    "v3_clippy": {
+      "status": "COMPILATION_ONLY_PASSED",
+      "exit_code": 0,
+      "normalized_log": "v3-clippy.log",
+      "raw_input": "p02v3-l2-clippy.log",
+      "build_id": "30100509981410597",
+      "receipt_root": "7c1df8be95abe7f0a8c01a5f72430e741eed39e927e814452355eef7b1bfc4b5",
+      "command_sha256": "7dd3e94a083237a8664d54b65a50cafbb41807d13d50832b8704b6d5d62dadad",
+      "source_file_count": 1417,
+      "test_summary_lines": [],
+      "normalization": {
+        "raw_lines": 37,
+        "retained_lines": 36,
+        "omitted_source_receipt_lines": 1,
+        "pseudonymized_lines": 6,
+        "truncated_test_or_diagnostic_lines": 0
+      }
+    },
+    "v3_mips": {
+      "status": "COMPILATION_ONLY_PASSED",
+      "exit_code": 0,
+      "normalized_log": "v3-mips-clippy.log",
+      "raw_input": "p02v3g-l3-beclippy-mips.log",
+      "build_id": "30100509981410600",
+      "receipt_root": "0c462e21c2f1541b28fa73ae0cb4c90fbe9c5535656fd9b0c59c67fe63b99add",
+      "command_sha256": "84e6acad692f7ac6e75dd8ab4e9f9ab47d8a24256f84b335802b0d070362b399",
+      "source_file_count": 1417,
+      "test_summary_lines": [],
+      "normalization": {
+        "raw_lines": 56,
+        "retained_lines": 55,
+        "omitted_source_receipt_lines": 1,
+        "pseudonymized_lines": 16,
+        "truncated_test_or_diagnostic_lines": 0
+      }
+    },
+    "v3_ppc": {
+      "status": "COMPILATION_ONLY_PASSED",
+      "exit_code": 0,
+      "normalized_log": "v3-ppc-clippy.log",
+      "raw_input": "p02v3g-l4-beclippy-ppc.log",
+      "build_id": "30100509981410603",
+      "receipt_root": "696c09e91a7096098f1d8b45307725c1981d1772efaa954dbf62d4ad289885b5",
+      "command_sha256": "e377da2397618fc951b4a88f4c1df9d98b41ad733382783a6bab52c9db55328e",
+      "source_file_count": 1417,
+      "test_summary_lines": [],
+      "normalization": {
+        "raw_lines": 56,
+        "retained_lines": 55,
+        "omitted_source_receipt_lines": 1,
+        "pseudonymized_lines": 16,
+        "truncated_test_or_diagnostic_lines": 0
+      }
+    }
+  },
+  "cargo_commands": {
+    "red": "cargo test --locked -j 1 -p franken-platform --lib -- backend_ finite_wait_",
+    "v2_native": "cargo test --locked -j 1 -p franken-platform -p franken-platform-linux",
+    "v2_clippy": "cargo clippy --locked -j 1 -p franken-platform -p franken-platform-linux --all-targets -- -D warnings",
+    "v3_native": "cargo test --locked -j 1 -p franken-platform -p franken-platform-linux",
+    "v3_clippy": "cargo clippy --locked -j 1 -p franken-platform -p franken-platform-linux --all-targets -- -D warnings",
+    "v3_mips": "cargo +nightly-2026-08-31 clippy --locked -j 1 -p franken-platform-linux --target mips-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort -- -D warnings",
+    "v3_ppc": "cargo +nightly-2026-08-31 clippy --locked -j 1 -p franken-platform-linux --target powerpc-unknown-linux-musl -Z build-std=core,alloc,std,panic_abort -- -D warnings"
+  },
+  "execution_prefix": "RCH_REQUIRE_REMOTE=1 rch exec --source-content-receipt -- env CARGO_TARGET_DIR=<operational-target-root> CARGO_INCREMENTAL=0",
+  "red_scaffold": {
+    "base": "v1 c335f980 on c4b8e54",
+    "patch": "red-scaffold.patch",
+    "patch_sha256": "2ab2e5e3d33e88e3747d2852ea4b889f3fe38fad0cc48235ad23c39e87101b3a",
+    "source_sha256": "b4abc958786c6557627276894fbe1f6a94994a0820b62048ca45095f4c03364c",
+    "changes": "tests + InputChanged variant declaration only; v1 production poll_once unchanged",
+    "command": "cargo test --locked -j 1 -p franken-platform --lib -- backend_ finite_wait_",
+    "expected": {
+      "tests": 3,
+      "failed": 2,
+      "passed": 1
+    },
+    "failed_names": [
+      "wait::tests::backend_cannot_authorize_its_own_unrequested_readiness_by_editing_events",
+      "wait::tests::backend_input_edits_are_restored_on_success_and_error_and_never_count_as_readiness"
+    ]
+  },
+  "red_actual_selected": {
+    "tests": 6,
+    "passed": 4,
+    "failed": 2,
+    "filtered_out": 242,
+    "planned_tests": 3,
+    "planned_passed": 1,
+    "planned_failed": 2,
+    "selector_error": "backend_ OR finite_wait_ selected six actual tests; planned three was wrong",
+    "original_planned_count_oracle": "NOT MET:planned3,observed6; two intended assertion failures independently observed, not a qualified3-case gate"
+  },
+  "python": {
+    "source_version": "v2",
+    "suite_passed": 182,
+    "smoke_passed": 2,
+    "wrong_interpreter_smoke_invocation": "SyntaxError retained; corrected shell entrypoint smoke passed",
+    "python_source_hashes_unchanged_v2_to_v3": true,
+    "rust_execution_claim": false
+  },
+  "toolchain": {
+    "host_requested_pin": "1.99.0",
+    "host_version_evidence": "requested host pin and rust-1.99.0 Clippy URL; inferred, not measured",
+    "rustc_version_capture": null,
+    "planned_big_endian_selection": "nightly-2026-08-31 (explicit command used for both compile checks)",
+    "big_endian_execution_included": false,
+    "big_endian_compile_checks_included": true
+  },
+  "v3_pending": {
+    "speaker_consumer_checks": "NOT QUALIFIED: historical30/2 commands refused beforeexecution; corrected42/2 consumer under separate qualification",
+    "native_settlement_and_content_receipts": "VERIFIED for four core jobs; see terminal.json",
+    "commit_to_11_source_hash_binding": "VERIFIED: all11 committed bytes match frozen v3; validation snapshot is c4b8e54+v3, not whole currentmain",
+    "guest_and_hardware": "NOT RUN for this wrapper"
+  },
+  "normalization": {
+    "existing_helper_patterns": "scripts/e06/checks.py ANSI/address expressions; toolchain/src/softfloat-record.py FORBIDDEN; scripts/test/run-workspace-verification.py FORBIDDEN_PATTERNS",
+    "policy": "Omit source-content receipt payload lines. Pseudonymize absolute operational paths, addresses, worker aliases and attempt UUIDs. Strip ANSI, without truncating Cargo tests or diagnostics. Worker home-directory paths are also pseudonymized.",
+    "omitted_source_receipt_lines": 7,
+    "no_raw_receipts_copied": true
+  },
+  "v3_core_content_set": {
+    "file_count": 1417,
+    "sha256_of_sorted_path_hash_pairs": "225b13a8c43d2f7078ced1c5d07e706fe070cda1aaa88b33cb3a55997ce49f9b",
+    "all_four_identical": true,
+    "owned_source_hashes_matched": 11
+  },
+  "case_registry_files": {
+    "v2-29-case-check.json": {
+      "archive_sha256": "57f422a5ae701a08673b3a2ca15802650d668960ded9758d73b2a166a53ef382",
+      "raw_sha256": "ddb1cdc9def88602c3ce721d33763de60a632e74f85f0da5aa07111a67bc31d5",
+      "binding": "same names independently matched once in the corresponding normalized native log; public JSON may be reserialized"
+    },
+    "v3-29-case-check.json": {
+      "archive_sha256": "aef4d449b255a2b7101ff7d62e9020032a587efd39d5d7fab8075a8dfef7a289",
+      "raw_sha256": "aef4d449b255a2b7101ff7d62e9020032a587efd39d5d7fab8075a8dfef7a289",
+      "binding": "same names independently matched once in the corresponding normalized native log; public JSON may be reserialized"
+    }
+  }
+}

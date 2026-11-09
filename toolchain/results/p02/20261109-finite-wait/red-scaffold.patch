@@ -1,0 +1,101 @@
+diff --git a/crates/franken-platform/src/wait.rs b/crates/franken-platform/src/wait.rs
+--- a/crates/franken-platform/src/wait.rs
++++ b/crates/franken-platform/src/wait.rs
+@@ -153,6 +153,8 @@
+         events: i16,
+         requested: i16,
+     },
++    #[error("poll backend changed descriptor inputs at index {index}")]
++    InputChanged { index: usize },
+     #[error("poll returned count {returned} but {observed} descriptors have events")]
+     CountMismatch { returned: usize, observed: usize },
+ }
+@@ -348,6 +350,88 @@
+     }
+ 
+     #[test]
++    fn finite_wait_and_p06_wire_model_share_the_kernel_layout_and_common_flags() {
++        use crate::net;
++        assert_eq!(
++            [READABLE, PRIORITY, WRITABLE, ERROR, HANGUP, INVALID].map(|bit| bit as u16),
++            [
++                net::POLLIN,
++                net::POLLPRI,
++                net::POLLOUT,
++                net::POLLERR,
++                net::POLLHUP,
++                net::POLLNVAL
++            ]
++        );
++        assert_eq!(std::mem::size_of::<PollFd>(), net::POLLFD_LEN);
++        assert!(MAX_POLL_TIMEOUT_MS <= net::POLL_MAX_FINITE_MS);
++    }
++
++    #[test]
++    fn backend_cannot_authorize_its_own_unrequested_readiness_by_editing_events() {
++        struct EditingWait;
++        impl WaitOps for EditingWait {
++            fn poll(&mut self, fds: &mut [PollFd], _: PollTimeout) -> isize {
++                fds[0].events |= WRITABLE;
++                fds[0].revents = WRITABLE;
++                1
++            }
++        }
++        for abi in BOTH {
++            let mut fds = slots::<1>();
++            let before = fds;
++            assert_eq!(
++                poll_once(&mut EditingWait, abi, &mut fds, timeout()),
++                Err(WaitError::UnrequestedEvents {
++                    index: 0,
++                    events: WRITABLE,
++                    requested: READABLE
++                })
++            );
++            assert_inputs_unchanged(&before, &fds);
++            assert_eq!(fds[0].revents, 0);
++        }
++    }
++
++    #[test]
++    fn backend_input_edits_are_restored_on_success_and_error_and_never_count_as_readiness() {
++        struct EditingWait {
++            raw: isize,
++            edit_fd: bool,
++        }
++        impl WaitOps for EditingWait {
++            fn poll(&mut self, fds: &mut [PollFd], _: PollTimeout) -> isize {
++                if self.edit_fd {
++                    fds[0].fd += 1;
++                } else {
++                    fds[0].events |= WRITABLE;
++                }
++                fds[0].revents = READABLE;
++                self.raw
++            }
++        }
++        for abi in BOTH {
++            for edit_fd in [false, true] {
++                for raw in [1, -4] {
++                    let mut fds = slots::<1>();
++                    let before = fds;
++                    let expected = if raw < 0 {
++                        WaitError::Sys(SysError::Interrupted)
++                    } else {
++                        WaitError::InputChanged { index: 0 }
++                    };
++                    assert_eq!(
++                        poll_once(&mut EditingWait { raw, edit_fd }, abi, &mut fds, timeout()),
++                        Err(expected)
++                    );
++                    assert_inputs_unchanged(&before, &fds);
++                    assert_eq!(fds[0].revents, 0);
++                }
++            }
++        }
++    }
++
++    #[test]
+     fn readable_data_and_a_clean_timeout_are_distinct_single_calls() {
+         for abi in BOTH {
+             for (raw, revents, expected) in [
