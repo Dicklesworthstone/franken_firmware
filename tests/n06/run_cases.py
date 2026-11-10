@@ -34,6 +34,8 @@ CASES["N06-RESTART"].extend([
     ("franken_stream", CORE + "n06_rebind_preserves_pair_quota_until_next_interval"),
     ("franken_stream", CORE + "n06_epoch_transition_preserves_work_cap_and_next_interval_recovers"),
     ("franken_stream", CORE + "n06_epoch_new_leader_clock_rebases_work_without_refund_or_stranding"),
+    ("franken_stream", CORE + "n06_rebase_cannot_refund_work_spent_in_the_same_aligned_interval"),
+    ("franken_stream", CORE + "n06_rebase_accounts_for_publication_in_the_fresh_clock_interval"),
 ])
 CASES["N06-CONSUMER"].extend([
     ("franken_speaker", SPEAKER + "n06_media_relock_catches_up_absolute_window_without_restarting_the_healthy_group"),

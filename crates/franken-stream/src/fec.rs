@@ -527,14 +527,19 @@ impl Receiver {
         if self.rebase_pending {
             let start = *self.rebase_start.get_or_insert(now);
             if now.saturating_sub(start) < WORK_INTERVAL_NS {
+                // Work done during the hold belongs to this aligned interval.
+                // Carry the ledger forward instead of refilling it early.
+                self.interval = current;
                 return;
             }
             self.rebase_pending = false;
             self.rebase_start = None;
+            if current > self.interval {
+                self.auth_attempt_ids = [None; WINDOWS];
+                self.auth_attempts = [[0; N]; WINDOWS];
+                self.charged = 0;
+            }
             self.interval = current;
-            self.auth_attempt_ids = [None; WINDOWS];
-            self.auth_attempts = [[0; N]; WINDOWS];
-            self.charged = 0;
             return;
         }
         if current > self.interval {
@@ -1155,6 +1160,9 @@ impl Receiver {
             self.cancel();
             return Err(Refusal::Cancelled);
         }
+        // Publication spends reserved work too. Record its actual interval so
+        // a subsequent rebase cannot refund work spent in that interval.
+        self.update_interval(view.group_ns);
         let Some(index) = self.active else {
             return Ok(DecodeState::Idle);
         };

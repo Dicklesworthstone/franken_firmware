@@ -402,8 +402,14 @@ fn n06_rebind_preserves_pair_quota_until_next_interval() {
         Err(Refusal::Storm)
     );
     assert_eq!(receiver.charged, charged);
+    // Expiry is still inside the aligned interval that saw the prior attempt.
     assert_eq!(
         receiver.ingest(view(20_000_000 + WORK_INTERVAL_NS), &symbol(&cfg, 0, 2, 0)),
+        Err(Refusal::Storm)
+    );
+    assert_eq!(receiver.charged, charged);
+    assert_eq!(
+        receiver.ingest(view(42_666_667), &symbol(&cfg, 0, 2, 0)),
         Ok(Some(Admission::Admitted))
     );
     decide(&mut receiver, 0);
@@ -490,7 +496,16 @@ fn n06_epoch_new_leader_clock_rebases_work_without_refund_or_stranding() {
             receiver.ingest(view(new_now + WORK_INTERVAL_NS - 1), &packet),
             Err(Refusal::Work)
         );
-        feed(&mut receiver, 7, 252, new_now + WORK_INTERVAL_NS);
+        // Expiry follows an attempt in this same aligned interval, so the
+        // ledger stays charged until the next aligned boundary.
+        assert_eq!(
+            receiver.ingest(view(new_now + WORK_INTERVAL_NS), &packet),
+            Err(Refusal::Work)
+        );
+        let interval = work_interval(new_now + WORK_INTERVAL_NS);
+        let next_boundary =
+            (u128::from(interval + 1) * 1024 * 1_000_000_000).div_ceil(48_000) as u64;
+        feed(&mut receiver, 7, 252, next_boundary);
         assert_eq!(
             finish(&mut receiver, new_now + 80_000_000),
             DecodeState::Ready
@@ -503,6 +518,112 @@ fn n06_epoch_new_leader_clock_rebases_work_without_refund_or_stranding() {
             (playout::Outcome::Real, source(7)[0])
         );
     }
+}
+
+#[test]
+fn n06_rebase_cannot_refund_work_spent_in_the_same_aligned_interval() {
+    let cfg = config();
+    let mut receiver = Rig::new(cfg.clone()).unwrap();
+    // Establish the old timeline and rebind; neither malformed packet costs MAC work.
+    assert_eq!(receiver.ingest(view(150_000_000), &[]), Err(Refusal::Shape));
+    receiver
+        .engine
+        .begin_stream(cfg.epoch, 0, cfg.presentation_origin_ns)
+        .unwrap();
+    receiver
+        .fec
+        .rebind(&receiver.engine, cfg.presentation_origin_ns)
+        .unwrap();
+    assert_eq!(receiver.ingest(view(150_000_000), &[]), Err(Refusal::Shape));
+    let before_expiry = 150_000_000 + WORK_INTERVAL_NS - 1;
+    for window in 2..8 {
+        for esi in 0..N {
+            let mut forged = symbol(&cfg, window, esi, if esi < K { 0 } else { 2 });
+            forged[DATAGRAM - 1] ^= 1;
+            assert_eq!(
+                receiver.ingest(view(before_expiry), &forged),
+                Err(Refusal::Authentication)
+            );
+        }
+    }
+    assert_eq!(receiver.charged, 48 * AUTH_WORK);
+    let genuine = symbol(&cfg, 8, 0, 0);
+    assert_eq!(
+        receiver.ingest(view(150_000_000 + WORK_INTERVAL_NS), &genuine),
+        Err(Refusal::Work)
+    );
+    assert_eq!(receiver.charged, 48 * AUTH_WORK);
+    assert_eq!(
+        receiver.ingest(view(192_000_000), &genuine),
+        Ok(Some(Admission::Admitted))
+    );
+    feed(&mut receiver, 8, 252, 192_000_000);
+    assert_eq!(finish(&mut receiver, 270_000_000), DecodeState::Ready);
+    for block in 0..32 {
+        decide(&mut receiver, block);
+    }
+    assert_eq!(
+        decide(&mut receiver, 32),
+        (playout::Outcome::Real, source(8)[0])
+    );
+    assert_eq!(
+        decide(&mut receiver, 33),
+        (playout::Outcome::Real, source(8)[1])
+    );
+}
+
+#[test]
+fn n06_rebase_accounts_for_publication_in_the_fresh_clock_interval() {
+    let cfg = config();
+    let mut receiver = Rig::new(cfg.clone()).unwrap();
+    feed(&mut receiver, 0, 252, 20_000_000);
+    receiver
+        .engine
+        .begin_stream(cfg.epoch, 0, cfg.presentation_origin_ns)
+        .unwrap();
+    receiver
+        .fec
+        .rebind(&receiver.engine, cfg.presentation_origin_ns)
+        .unwrap();
+    assert_eq!(receiver.ingest(view(80_000_000), &[]), Err(Refusal::Shape));
+    let cancelled = AtomicBool::new(false);
+    let mut ready = false;
+    for _ in 0..1000 {
+        match receiver
+            .fec
+            .poll(&mut receiver.engine, view(84_000_000), &cancelled)
+        {
+            Ok(DecodeState::Pending) => {}
+            Ok(DecodeState::Ready) => {
+                ready = true;
+                break;
+            }
+            other => panic!("unexpected decode state {other:?}"),
+        }
+    }
+    assert!(ready, "bounded decode did not reach publication");
+    let before = receiver.charged;
+    assert_eq!(
+        receiver
+            .fec
+            .publish(&mut receiver.engine, view(100_000_000), &cancelled),
+        Ok(DecodeState::Ready)
+    );
+    let after = receiver.charged;
+    assert!(after > before, "publication must charge real work");
+    assert_eq!(
+        receiver.ingest(view(80_000_000 + WORK_INTERVAL_NS), &[]),
+        Err(Refusal::Shape)
+    );
+    assert_eq!(receiver.charged, after);
+    assert_eq!(
+        decide(&mut receiver, 0),
+        (playout::Outcome::Real, source(0)[0])
+    );
+    assert_eq!(
+        decide(&mut receiver, 1),
+        (playout::Outcome::Real, source(0)[1])
+    );
 }
 
 #[test]
