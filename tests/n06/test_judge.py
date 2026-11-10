@@ -19,7 +19,7 @@ class Controls(unittest.TestCase):
 
     def test_owned_source_registry_and_pending_integration_are_explicit(self):
         run_cases.source_registry()
-        self.assertEqual(len({name for rows in run_cases.CASES.values() for _, name in rows}), 28)
+        self.assertEqual(len({name for rows in run_cases.CASES.values() for _, name in rows}), 31)
         self.assertEqual(set(run_cases.PENDING), {"N06-CARRIER", "N06-PACED-SENDER"})
 
     def test_missing_native_never_shrinks_denominator_or_qualifies(self):
@@ -45,7 +45,10 @@ class Controls(unittest.TestCase):
                      {"member": member, "block": block, "outcome": "real", "pcm_sha256": hashlib.sha256(reference.pcm(block)).hexdigest()}
                      for member in range(6) for block in range(4)]}
         reference.check_fleet(fleet)
-        for mutate in (lambda row: row["output"].pop(), lambda row: row["output"][0].update(pcm_sha256="00" * 32)):
+        for mutate in (lambda row: row["output"].pop(),
+                       lambda row: row["output"][0].update(pcm_sha256="00" * 32),
+                       lambda row: row.update(checks=1),
+                       lambda row: row.update(charged_work=8192)):
             broken = copy.deepcopy(fleet)
             mutate(broken)
             with self.assertRaises(AssertionError):

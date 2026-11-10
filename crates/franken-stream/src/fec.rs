@@ -32,6 +32,8 @@ const DIGEST_DOMAIN: &[u8] = b"FFWR-N06-v1-source";
 const WORK_NS: u64 = 1_000_000;
 const LEAD_NS: u64 = 1_000_000;
 const GUARD_NS: u64 = 500_000;
+// Ceiling of one 1024-frame work interval at 48 kHz.
+const WORK_INTERVAL_NS: u64 = 21_333_334;
 pub fn profile_view(mut view: ClockView) -> ClockView {
     view.uncertainty_ns = view.uncertainty_ns.max(GUARD_NS);
     view
@@ -442,6 +444,10 @@ pub struct Receiver {
     solver: IncrementalDecode,
     active: Option<usize>,
     interval: u64,
+    // A control rebind may change the group clock's origin. Charge survives,
+    // then the first usable reading anchors a full interval in the new domain.
+    rebase_pending: bool,
+    rebase_start: Option<u64>,
     auth_attempt_ids: [Option<u64>; WINDOWS],
     auth_attempts: [[u8; N]; WINDOWS],
     charged: u64,
@@ -468,6 +474,8 @@ impl Receiver {
             solver: IncrementalDecode::new(),
             active: None,
             interval: 0,
+            rebase_pending: false,
+            rebase_start: None,
             auth_attempt_ids: [None; WINDOWS],
             auth_attempts: [[0; N]; WINDOWS],
             charged: 0,
@@ -516,6 +524,19 @@ impl Receiver {
     }
     fn update_interval(&mut self, now: u64) {
         let current = work_interval(now);
+        if self.rebase_pending {
+            let start = *self.rebase_start.get_or_insert(now);
+            if now.saturating_sub(start) < WORK_INTERVAL_NS {
+                return;
+            }
+            self.rebase_pending = false;
+            self.rebase_start = None;
+            self.interval = current;
+            self.auth_attempt_ids = [None; WINDOWS];
+            self.auth_attempts = [[0; N]; WINDOWS];
+            self.charged = 0;
+            return;
+        }
         if current > self.interval {
             self.interval = current;
             self.auth_attempt_ids = [None; WINDOWS];
@@ -580,11 +601,19 @@ impl Receiver {
                 slot.conflict = false;
             }
         }
-        self.last_clock = None;
+        // An unchanged context still uses the same group-clock timeline: a
+        // backwards first reading must not start the new work interval early.
+        if changed {
+            self.last_clock = None;
+        }
+        self.rebase_pending = true;
+        self.rebase_start = None;
         self.render_until = 0;
         self.next_collection = first_window;
-        self.auth_attempt_ids = [None; WINDOWS];
-        self.auth_attempts = [[0; N]; WINDOWS];
+        if changed {
+            self.auth_attempt_ids = [None; WINDOWS];
+            self.auth_attempts = [[0; N]; WINDOWS];
+        }
         Ok(())
     }
     fn charge(&mut self, units: u64) -> Result<(), Refusal> {
@@ -1234,14 +1263,16 @@ impl Receiver {
             slot.cancelled = false;
             slot.refusal = None;
         }
-        self.interval = 0;
+        // Epoch changes retire symbols, not CPU already spent in this trusted
+        // work interval. Only update_interval may refill the shared ledger.
         self.auth_attempt_ids = [None; WINDOWS];
         self.auth_attempts = [[0; N]; WINDOWS];
-        self.charged = 0;
         self.reserved = 0;
         self.stopped = false;
         self.next_collection = 0;
         self.last_clock = None;
+        self.rebase_pending = true;
+        self.rebase_start = None;
         self.render_until = 0;
         Ok(())
     }

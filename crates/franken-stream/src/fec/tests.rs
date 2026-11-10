@@ -172,9 +172,13 @@ fn n06_six_member_feedback_is_fair_at_the_fleet_cap_and_one_broadcast_is_final()
             ),
         }
     }
-    assert_eq!(sender.checks_used(), 6);
+    // Snapshot the six-member interval before the later rollover probe.
+    let fleet_checks = sender.checks_used();
+    let fleet_work = sender.charged_work();
+    assert_eq!(fleet_checks, 6);
+    assert_eq!(fleet_work, 6 * AUTH_WORK + 2 * (AUTH_WORK + 1024 + 1000));
     assert_eq!(replies.len(), 2);
-    assert!(sender.charged_work() * WORK_UNIT_NS <= WINDOW_ALLOWANCE_NS);
+    assert!(fleet_work * WORK_UNIT_NS <= WINDOW_ALLOWANCE_NS);
     for packet in &replies {
         for receiver in &mut receivers {
             assert!(matches!(
@@ -203,6 +207,8 @@ fn n06_six_member_feedback_is_fair_at_the_fleet_cap_and_one_broadcast_is_final()
         sender.serve(view(130_000_000), &requests[0].0, &AtomicBool::new(false)),
         Err(Refusal::Duplicate)
     ));
+    assert_eq!(sender.checks_used(), 1);
+    assert_eq!(sender.charged_work(), AUTH_WORK);
     assert!(SenderWindow::new(cfg.clone(), 0, source(0), 0).is_err());
     assert!(SenderWindow::new(cfg.clone(), 0, source(0), 22).is_err());
     let mut fleet = SenderWindow::new(cfg, 0, source(0), MAX_GROUP_MEMBERS).unwrap();
@@ -215,7 +221,7 @@ fn n06_six_member_feedback_is_fair_at_the_fleet_cap_and_one_broadcast_is_final()
     assert!(fleet.charged_work() * WORK_UNIT_NS <= WINDOW_ALLOWANCE_NS);
     println!(
         "N06-FLEET {}",
-        serde_json::json!({"schema":"n06.fleet.v1","profile":PROFILE,"group_members":receivers.len(),"fleet_cap":MAX_GROUP_MEMBERS,"checks":sender.checks_used(),"check_limit":sender.check_limit(),"charged_work":sender.charged_work(),"request_masks":requests.iter().map(|request| request.0[64]).collect::<Vec<_>>(),"reply_esis":replies.iter().map(|packet| packet[72]).collect::<Vec<_>>(),"output":observed})
+        serde_json::json!({"schema":"n06.fleet.v1","profile":PROFILE,"group_members":receivers.len(),"fleet_cap":MAX_GROUP_MEMBERS,"checks":fleet_checks,"check_limit":sender.check_limit(),"charged_work":fleet_work,"request_masks":requests.iter().map(|request| request.0[64]).collect::<Vec<_>>(),"reply_esis":replies.iter().map(|packet| packet[72]).collect::<Vec<_>>(),"output":observed})
     );
 }
 
@@ -352,6 +358,149 @@ fn n06_distinct_forgery_work_exhaustion_and_targeted_pair_denial_have_live_recov
         assert_eq!(
             decide(&mut targeted, block),
             (playout::Outcome::Real, source(0)[block as usize])
+        );
+    }
+}
+
+#[test]
+fn n06_rebind_preserves_pair_quota_until_next_interval() {
+    let cfg = config();
+    let mut receiver = Rig::new(cfg.clone()).unwrap();
+    let mut bad = symbol(&cfg, 0, 2, 0);
+    bad[DATAGRAM - 1] ^= 1;
+    for _ in 0..AUTH_PAIR_ATTEMPTS {
+        assert_eq!(
+            receiver.ingest(view(20_000_000), &bad),
+            Err(Refusal::Authentication)
+        );
+    }
+    let charged = receiver.charged;
+    receiver
+        .engine
+        .begin_stream(cfg.epoch, 0, cfg.presentation_origin_ns)
+        .unwrap();
+    receiver
+        .fec
+        .rebind(&receiver.engine, cfg.presentation_origin_ns)
+        .unwrap();
+    assert_eq!(receiver.charged, charged);
+    // A backwards reading, even on malformed input, cannot anchor a fresh
+    // interval or refund either work or the targeted pair's quota.
+    assert_eq!(receiver.ingest(view(0), &[]), Err(Refusal::Clock));
+    assert_eq!(receiver.last_clock, Some(20_000_000));
+    assert_eq!(receiver.rebase_start, None);
+    assert_eq!(receiver.charged, charged);
+    assert_eq!(
+        receiver.ingest(view(20_000_000), &symbol(&cfg, 0, 2, 0)),
+        Err(Refusal::Storm)
+    );
+    assert_eq!(
+        receiver.ingest(
+            view(20_000_000 + WORK_INTERVAL_NS - 1),
+            &symbol(&cfg, 0, 2, 0)
+        ),
+        Err(Refusal::Storm)
+    );
+    assert_eq!(receiver.charged, charged);
+    assert_eq!(
+        receiver.ingest(view(20_000_000 + WORK_INTERVAL_NS), &symbol(&cfg, 0, 2, 0)),
+        Ok(Some(Admission::Admitted))
+    );
+    decide(&mut receiver, 0);
+    decide(&mut receiver, 1);
+    assert_eq!(decide(&mut receiver, 2).0, playout::Outcome::Real);
+}
+
+#[test]
+fn n06_epoch_transition_preserves_work_cap_and_next_interval_recovers() {
+    let cfg = config();
+    let mut receiver = Rig::new(cfg.clone()).unwrap();
+    let mut failures = 0;
+    let mut refused = 0;
+    for window in 1..=8 {
+        for esi in 0..N {
+            let mut wire = symbol(&cfg, window, esi, if esi < K { 0 } else { 2 });
+            wire[DATAGRAM - 1] ^= 1;
+            match receiver.ingest(view(150_000_000), &wire) {
+                Err(Refusal::Authentication) => failures += 1,
+                Err(Refusal::Work) => refused += 1,
+                other => panic!("unexpected forged-pair result {other:?}"),
+            }
+        }
+    }
+    assert_eq!((failures, refused), (48, 16));
+    assert_eq!(receiver.charged, 48 * AUTH_WORK);
+    let mut next = cfg;
+    next.epoch += 1;
+    receiver.transition(next.clone()).unwrap();
+    assert_eq!(receiver.charged, 48 * AUTH_WORK);
+    assert_eq!(
+        receiver.ingest(view(150_000_000), &symbol(&next, 7, 0, 0)),
+        Err(Refusal::Work)
+    );
+    feed(&mut receiver, 7, 252, 172_000_000);
+    assert_eq!(finish(&mut receiver, 230_000_000), DecodeState::Ready);
+    for block in 0..28 {
+        decide(&mut receiver, block);
+    }
+    assert_eq!(
+        decide(&mut receiver, 28),
+        (playout::Outcome::Real, source(7)[0])
+    );
+}
+
+#[test]
+fn n06_epoch_new_leader_clock_rebases_work_without_refund_or_stranding() {
+    for (old_origin, new_origin) in [
+        (100_500_000_000, 500_000_000),
+        (500_000_000, 100_500_000_000),
+    ] {
+        let mut old = config();
+        old.presentation_origin_ns = old_origin;
+        let old_now = old_origin - 350_000_000;
+        let mut receiver = Rig::new(old.clone()).unwrap();
+        let mut failures = 0;
+        let mut refused = 0;
+        for window in 1..=8 {
+            for esi in 0..N {
+                let mut wire = symbol(&old, window, esi, if esi < K { 0 } else { 2 });
+                wire[DATAGRAM - 1] ^= 1;
+                match receiver.ingest(view(old_now), &wire) {
+                    Err(Refusal::Authentication) => failures += 1,
+                    Err(Refusal::Work) => refused += 1,
+                    other => panic!("unexpected old-domain result {other:?}"),
+                }
+            }
+        }
+        assert_eq!((failures, refused), (48, 16));
+        let mut next = old;
+        next.epoch += 1;
+        next.presentation_origin_ns = new_origin;
+        receiver.transition(next.clone()).unwrap();
+        let new_now = new_origin - 350_000_000;
+        let packet = symbol(&next, 7, 0, 0);
+        let mut unusable = view(new_now);
+        unusable.usable = false;
+        assert_eq!(receiver.ingest(unusable, &packet), Err(Refusal::Clock));
+        assert_eq!(receiver.rebase_start, None);
+        assert_eq!(receiver.charged, 48 * AUTH_WORK);
+        assert_eq!(receiver.ingest(view(new_now), &packet), Err(Refusal::Work));
+        assert_eq!(receiver.charged, 48 * AUTH_WORK);
+        assert_eq!(
+            receiver.ingest(view(new_now + WORK_INTERVAL_NS - 1), &packet),
+            Err(Refusal::Work)
+        );
+        feed(&mut receiver, 7, 252, new_now + WORK_INTERVAL_NS);
+        assert_eq!(
+            finish(&mut receiver, new_now + 80_000_000),
+            DecodeState::Ready
+        );
+        for block in 0..28 {
+            decide(&mut receiver, block);
+        }
+        assert_eq!(
+            decide(&mut receiver, 28),
+            (playout::Outcome::Real, source(7)[0])
         );
     }
 }

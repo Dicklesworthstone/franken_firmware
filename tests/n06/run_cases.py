@@ -30,6 +30,11 @@ CASES = {
     "N06-REPLAY": [("franken_stream", CORE + "n06_replay_baseline_hybrid_and_decode_overload_use_independent_pcm_observations")],
 }
 CASES["N06-TAIL"].append(("franken_stream", CORE + "n06_six_member_feedback_is_fair_at_the_fleet_cap_and_one_broadcast_is_final"))
+CASES["N06-RESTART"].extend([
+    ("franken_stream", CORE + "n06_rebind_preserves_pair_quota_until_next_interval"),
+    ("franken_stream", CORE + "n06_epoch_transition_preserves_work_cap_and_next_interval_recovers"),
+    ("franken_stream", CORE + "n06_epoch_new_leader_clock_rebases_work_without_refund_or_stranding"),
+])
 CASES["N06-CONSUMER"].extend([
     ("franken_speaker", SPEAKER + "n06_media_relock_catches_up_absolute_window_without_restarting_the_healthy_group"),
     ("franken_speaker", SPEAKER + "n06_media_ready_second_platform_read_fault_retires_without_publication"),
