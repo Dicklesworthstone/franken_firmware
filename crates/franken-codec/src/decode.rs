@@ -14,7 +14,7 @@
 //! of the new format (`format_changed`), and for MP3 (whose decoder only reports a generic decode error for it) the frame header is read here
 //! so the change is explicit instead of silently dropped.
 //!
-//! Everything is bounded by [`Caps`]. Unsupported material is refused with a named [`CodecError`] before decoding starts: multichannel AAC
+//! [`Caps`] bounds accepted inputs and returned blocks, not every allocation inside Symphonia. Unsupported material is refused with a named [`CodecError`]: multichannel AAC
 //! (a BLOCKED requirement, not a deletion), HE-AAC, AAC-ELD, AAC-LD, 960-sample frames and every ALAC depth other than 16 and 24.
 
 use std::io::{self, Cursor, Read, Seek, SeekFrom};
@@ -87,10 +87,11 @@ impl SourceCodec {
     }
 }
 
-/// Resource caps. Every cap is checked before the thing it bounds is allocated or returned.
+/// Input and returned-block caps. Decoder-internal allocations can occur before
+/// decoded frame/channel caps are checked; these are not a total heap bound.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Caps {
-    /// Largest container accepted at [`ContainerDecoder::open`].
+    /// Largest container accepted at [`ContainerDecoder::open`] or [`ContainerDecoder::open_reader`].
     pub max_input_bytes: usize,
     /// Most frames one decoded block may hold (Vorbis blocks are at most 4096, MP3 1152, AAC 1024, ALAC `frameLength`).
     pub max_block_frames: usize,

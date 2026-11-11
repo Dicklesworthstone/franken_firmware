@@ -25,6 +25,7 @@ franken-hal.workspace = true
 franken-dsp.workspace = true
 franken-clock.workspace = true
 franken-stream.workspace = true
+franken-codec = { path = "../franken-codec" }
 franken-session.workspace = true
 franken-control.workspace = true
 

@@ -227,6 +227,7 @@
         "franken-dsp",
         "franken-clock",
         "franken-stream",
+        "franken-codec",
         "franken-session",
         "franken-control",
         "franken-platform-linux"
