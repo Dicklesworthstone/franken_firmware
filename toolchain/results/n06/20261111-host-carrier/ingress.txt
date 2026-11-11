@@ -1,0 +1,84 @@
+N06 fixed FFCN ingress budget: selected actual observations, 2026-11-11.
+Proof class: offline-host-synthetic; production_fec_profile_admitted=false.
+Source revision: b5d1bc8153ba60a5fde84201f992349f7c5e115b
+Reproduction commands normalize worker selection and omit environment; exact executed-command hashes are below.
+No hardware, provider, radio, DAC, old-kernel, RAM or WCET qualification is claimed.
+The 64-call burst and one-call-per-10ms refill are a configurable host-development call-count policy.
+Retain the endpoint across proposal/rebind changes; transport lifetime, source admission and scheduling remain integration obligations.
+A concurrent session committed/pushed this unchanged source before the central full regression finished.
+The independent source review and actual central gates below completed afterward; the commit message is not used as test evidence.
+
+[workspace]
+RCH_REQUIRE_REMOTE=1 rch exec --source-content-receipt -- cargo +1.99.0 test -p franken-stream -p franken-speaker -p franken-control --lib --locked -j1 --no-fail-fast -- --show-output
+Native build: 30103800983323130; remote command exit: 0.
+Exact executed-command SHA-256: 501f72a96029e56eae0e9591f57fd352ac1e12258a4df2bf3974f412d756128a
+Full private capture SHA-256: da7988990e7804597b5a11c9293e4b5337b3be20682dbc6ca886f91a9194e1a6
+Finished `test` profile [unoptimized] target(s) in 1m 30s
+test channel::endpoint::fec_ingress_tests::n06_fec_ingress_budget_survives_round_replacement_and_peer_rebind ... ok
+test channel::endpoint::fec_ingress_tests::n06_fec_ingress_backward_clock_cannot_refund_and_refill_boundary_is_exact ... ok
+test channel::endpoint::fec_ingress_tests::n06_fec_ingress_diagnostics_saturate_without_changing_admission ... ok
+test channel::endpoint::fec_ingress_tests::n06_fec_ingress_budget_charges_malformed_and_oversized_before_authentication ... ok
+test channel::endpoint::fec_ingress_tests::n06_fec_ingress_budget_bounds_pre_auth_storm_and_recovers_real_selection ... ok
+test channel::endpoint::fec_ingress_tests::n06_fec_ingress_flood_preserves_ordinary_control_and_priority_stop ... ok
+test result: ok. 610 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.65s
+test result: ok. 450 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.50s
+test result: ok. 206 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.08s
+Terminal ACK and source/tree/pair/staging retirement were independently reconciled.
+
+[clippy]
+RCH_REQUIRE_REMOTE=1 rch exec --source-content-receipt -- cargo +1.99.0 clippy -p franken-stream -p franken-speaker -p franken-control --all-targets --locked -j1 --keep-going -- -D warnings
+Native build: 30103800983323128; remote command exit: 0.
+Exact executed-command SHA-256: 5543e53ad35de1eae8f31ed47bfdde53d4846c9294f77d94bc4b7a582a59a991
+Full private capture SHA-256: a163cd6b6397fc87d977f89e874c85bba60da683239e1d36eb4714ab4f7675aa
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 16.89s
+Terminal ACK and source/tree/pair/staging retirement were independently reconciled.
+
+[Attempt accounting]
+The original own regression wrapper was cancelled before remote admission (exit130, ACK true): it ran zero tests.
+The sole executed full regression was build30103800983323130, 1266 passed, zero failed/ignored/filtered.
+Strict all-target Clippy was build30103800983323128; it passed at the same seven recorded source inputs.
+
+[Python controls: actual host execution]
+python3 -B -W error -m unittest discover -s tests/n06 -p test_*.py -v
+test_fleet_and_relock_oracles_reject_missing_members_wrong_pcm_and_reset_origin (test_judge.Controls.test_fleet_and_relock_oracles_reject_missing_members_wrong_pcm_and_reset_origin) ... ok
+test_independent_pcm_and_signed_q15_hand_anchors (test_judge.Controls.test_independent_pcm_and_signed_q15_hand_anchors) ... ok
+test_missing_critical_observations_and_truncation_are_not_green (test_judge.Controls.test_missing_critical_observations_and_truncation_are_not_green) ... ok
+test_missing_native_never_shrinks_denominator_or_qualifies (test_judge.Controls.test_missing_native_never_shrinks_denominator_or_qualifies) ... ok
+test_owned_source_registry_and_pending_integration_are_explicit (test_judge.Controls.test_owned_source_registry_and_pending_integration_are_explicit) ... ok
+test_replay_protocol_has_positive_sensor_and_rejects_real_output_corruption (test_judge.Controls.test_replay_protocol_has_positive_sensor_and_rejects_real_output_corruption) ... ok
+test_soak_is_not_run (test_judge.Controls.test_soak_is_not_run) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.046s
+
+OK
+
+[Full adapter: actual host execution]
+scripts/e2e/n06 --tier full --judge <workspace-log-above> --judge <unchanged-reference-log> --receipts <owned-output-dir>
+The standalone reference capture is the prior 30103800983323096 run, not a new execution.
+Its relevant qualifier and FEC implementation inputs are unchanged by this ingress wave.
+N06-AUTH: passed
+N06-CORRUPTION: passed
+N06-OVERLOAD: passed
+N06-STORM: passed
+N06-CANCEL: passed
+N06-DEADLINE: passed
+N06-RESTART: passed
+N06-TAIL: passed
+N06-REFERENCE: passed
+N06-CONSUMER: passed
+N06-REPLAY: passed
+N06-CARRIER: blocked (typed ingress exists; authenticated peer selection and end-to-end carrier qualification remain pending)
+N06-PACED-SENDER: blocked (paced FEC sender candidate exists; combined native and original acceptance qualification remain pending)
+{"blocked": 2, "diagnostics_dropped": 0, "evidence_class": "offline-host-synthetic", "expected": 13, "failed": 0, "log_sha256": "c79ed853c2f03abf9a0f36665b28c78e909cc86f1c4d299331f7ae4210917a88", "not_run": 0, "passed": 11, "production_fec_profile_admitted": false, "profile": "n06.host-hybrid.k4-r4.v1", "qualified": false, "schema": "n06.receipt.v1", "tier": "full"}
+Expected full-adapter exit: 3. Original 13 cases remain 11 passed, 2 blocked, zero failed, qualified=false.
+The new six ingress cases run in the full native control suite; the original65-name N06 registry/oracles are unchanged.
+
+[Source SHA-256, independently matched to BOTH worker receipts at the revision above]
+85376c17d19579326293aa4311b849e880ca4f9531e1cfef37ac630c039abcfd  crates/franken-control/src/channel/endpoint.rs
+cfa77070b4bb518647a9ef070f1cef9425704f02eadfa927ec149c3b87616641  crates/franken-control/src/channel/fec_negotiation.rs
+b79925f9dc3d50cf92f7fbb9741d449e5b92b25ab9f9ee941b84d21e72d4f04b  crates/franken-control/src/channel/endpoint/fec_ingress_tests.rs
+97f878b5a5a0932e396dba9ba9d13a1967d94ad043dd3151cd65643ab5b81972  docs/contracts/n06.md
+c0f639f8979ee76643a77031b6253e33b92506b2bb792cc99feda474c2e6496e  crates/franken-control/src/channel/peer.rs
+6aaae8aac3d87262cd7057749b84bb4df921dcee810dd5d03cfdddc1c4ebe107  Cargo.toml
+39e70649d690a342c74157bada974cfabaf76bfbbcb4dc05a33fa0af6181c58c  Cargo.lock
