@@ -1,0 +1,424 @@
+{
+  "base_commit": "8478fbd242756f84b74a0a1d880b623c5683c332",
+  "canonical_actual_log_pipeline": {
+    "counts": {
+      "blocked": 0,
+      "failed": 0,
+      "passed": 71
+    },
+    "diagnostics": {
+      "complete": true,
+      "log": {
+        "bytes": 43210,
+        "critical_lost": false,
+        "dropped": 0,
+        "events": 143,
+        "sha256": "e0f687ab21b46f20ce2e0ff24664d7d5a0aaa5b0c38f8052b5b955b5d62f1c8a",
+        "truncated": false
+      },
+      "reasons": []
+    },
+    "exit_code": 0,
+    "finished_utc": "2026-11-11T22:13:40+00:00",
+    "private_receipt_sha256": "a0037fa2e11f0f8226b72708d527436657310672cfdd099ed5f5fa8cf75f00cf",
+    "run_id": "8fb2f934287f306d"
+  },
+  "canonical_python_controls": {
+    "errors": 0,
+    "failed": 0,
+    "optional_skipped": 1,
+    "passed": 68,
+    "private_log_sha256": "f462c981050b2595a6434d18c8006794955af6e1125244f73a0cbd636e2049d2",
+    "run": 69
+  },
+  "excluded_paths": [
+    ".beads/.gitignore",
+    ".beads/config.yaml"
+  ],
+  "export_input_count": 1564,
+  "focused_source_bindings": [
+    {
+      "bytes": 15605,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "ecae67c737e47feaef3df83c0521da3ba75886c4a7daa6b7ce51fd0738acb987",
+      "path": "Cargo.lock",
+      "sha256": "ecae67c737e47feaef3df83c0521da3ba75886c4a7daa6b7ce51fd0738acb987"
+    },
+    {
+      "bytes": 1767,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "6aaae8aac3d87262cd7057749b84bb4df921dcee810dd5d03cfdddc1c4ebe107",
+      "path": "Cargo.toml",
+      "sha256": "6aaae8aac3d87262cd7057749b84bb4df921dcee810dd5d03cfdddc1c4ebe107"
+    },
+    {
+      "bytes": 1081,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "8db9ddb0ee77894267f1900e81acb4dfb2dad516d5b7f578946af3b66115820f",
+      "path": "crates/franken-alloc-probe/Cargo.toml",
+      "sha256": "8db9ddb0ee77894267f1900e81acb4dfb2dad516d5b7f578946af3b66115820f"
+    },
+    {
+      "bytes": 14617,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "927842d7e660cd7c122ec9e0e64d07dc380ee3db776817ae176a731fd76e02c7",
+      "path": "crates/franken-alloc-probe/src/lib.rs",
+      "sha256": "927842d7e660cd7c122ec9e0e64d07dc380ee3db776817ae176a731fd76e02c7"
+    },
+    {
+      "bytes": 21652,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "3f0e658cf885f4b4457d440456f69edbd9424708652cf6babede08e10e6448e0",
+      "path": "crates/franken-alloc-probe/tests/s02_codec_heap.rs",
+      "sha256": "3f0e658cf885f4b4457d440456f69edbd9424708652cf6babede08e10e6448e0"
+    },
+    {
+      "bytes": 997,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "991c1c64c17a3219469b73ddaac23dd5b92996ecc7d05b22d8b3f5a59fbdeea0",
+      "path": "crates/franken-codec/Cargo.toml",
+      "sha256": "991c1c64c17a3219469b73ddaac23dd5b92996ecc7d05b22d8b3f5a59fbdeea0"
+    },
+    {
+      "bytes": 17488,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "b8c8c862870135bb499e8f8342539ecbb959261478923808e0f2ea3b52333fdb",
+      "path": "crates/franken-codec/src/admission.rs",
+      "sha256": "b8c8c862870135bb499e8f8342539ecbb959261478923808e0f2ea3b52333fdb"
+    },
+    {
+      "bytes": 49241,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "c640113f791a0e55d923e832e0c8565954fef8da0f6f79c013bbbdc7cb120f3d",
+      "path": "crates/franken-codec/src/decode.rs",
+      "sha256": "c640113f791a0e55d923e832e0c8565954fef8da0f6f79c013bbbdc7cb120f3d"
+    },
+    {
+      "bytes": 1565,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "9cfe3631f73dac1cf18ef718f0d8cf0304ead90c18316c0fd3718c2355aaeb8c",
+      "path": "crates/franken-codec/src/lib.rs",
+      "sha256": "9cfe3631f73dac1cf18ef718f0d8cf0304ead90c18316c0fd3718c2355aaeb8c"
+    },
+    {
+      "bytes": 15927,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "a4283d0474b6439b60859624d9528440a49f4f47dcdcaf8d79e51027bb270bf4",
+      "path": "crates/franken-codec/src/rate_bridge.rs",
+      "sha256": "a4283d0474b6439b60859624d9528440a49f4f47dcdcaf8d79e51027bb270bf4"
+    },
+    {
+      "bytes": 103997,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "5802e4d050681644d45377ac56c8dfd97455879215b2a6cef3ef461f91b0c2bd",
+      "path": "crates/franken-codec/src/rate_table.rs",
+      "sha256": "5802e4d050681644d45377ac56c8dfd97455879215b2a6cef3ef461f91b0c2bd"
+    },
+    {
+      "bytes": 10645,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "51db8084fbdccac3246586160d69f1e59f6d3b1545696bbc260bc7de45edb599",
+      "path": "crates/franken-codec/tests/s02_admission.rs",
+      "sha256": "51db8084fbdccac3246586160d69f1e59f6d3b1545696bbc260bc7de45edb599"
+    },
+    {
+      "bytes": 17681,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "909f48dbde2d324bf37b61e83f1662c2d5e03a889a6b7b3007c7208ea9275ad2",
+      "path": "crates/franken-codec/tests/s02_bridge.rs",
+      "sha256": "909f48dbde2d324bf37b61e83f1662c2d5e03a889a6b7b3007c7208ea9275ad2"
+    },
+    {
+      "bytes": 40788,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "d92556a45762d7f1306cdb172fe8b1ec4827890ac7a4b480e40d878398ffa65e",
+      "path": "crates/franken-codec/tests/s02_decode.rs",
+      "sha256": "d92556a45762d7f1306cdb172fe8b1ec4827890ac7a4b480e40d878398ffa65e"
+    },
+    {
+      "bytes": 15532,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "a461f461fc9cb092b24fce4518e0a8b15bfc96276774e9c984fa443d85961c3a",
+      "path": "crates/franken-codec/tests/s02_reader.rs",
+      "sha256": "a461f461fc9cb092b24fce4518e0a8b15bfc96276774e9c984fa443d85961c3a"
+    },
+    {
+      "bytes": 177046,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "e2fef542db7640ba0cf63de3abee776597e7b8f2c32d8ac6fc6aa5e6e272954b",
+      "path": "crates/franken-codec/tests/vectors/s02_bridge_vectors.json",
+      "sha256": "e2fef542db7640ba0cf63de3abee776597e7b8f2c32d8ac6fc6aa5e6e272954b"
+    },
+    {
+      "bytes": 17922,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "e30d9af8998ceff21c9b498c090b3b0d74e04f9a06daca66f3cdf4c9c7dbf4eb",
+      "path": "crates/franken-codec/tests/vectors/s02_vectors.json",
+      "sha256": "e30d9af8998ceff21c9b498c090b3b0d74e04f9a06daca66f3cdf4c9c7dbf4eb"
+    },
+    {
+      "bytes": 29157,
+      "executable": false,
+      "matches_native_snapshot": false,
+      "native_snapshot_sha256": "0d3c2e504fc312521baaf3f5d2a865ff3520d1823bdce9fecc8fa461a7fba5d3",
+      "path": "docs/contracts/s02.md",
+      "scope": "Noncompiler contract updated after native export; old native snapshot is not relabeled current.",
+      "sha256": "48d0abd540392ee16bc17d0cf928ae2b4591406cde19ab1d0ae9b73ec728ec93"
+    },
+    {
+      "bytes": 31,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "ff13c9224217a4ccd63320d8b89cc82d7fa64da14a627e499f9f18db4c6602d0",
+      "path": "rust-toolchain.toml",
+      "sha256": "ff13c9224217a4ccd63320d8b89cc82d7fa64da14a627e499f9f18db4c6602d0"
+    },
+    {
+      "bytes": 81143,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "df90049d7a0b87a3513c45bf4ae7502701d624d34c9e0d8e3e2394f6dba947b7",
+      "path": "scripts/test/test_support/diagnostics.py",
+      "sha256": "df90049d7a0b87a3513c45bf4ae7502701d624d34c9e0d8e3e2394f6dba947b7"
+    },
+    {
+      "bytes": 38799,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "a8be8f29be09a7197502ec05f33ed37ae4a015faa07ccbe89be3d757b9f2a083",
+      "path": "tests/d01/run_cases.py",
+      "sha256": "a8be8f29be09a7197502ec05f33ed37ae4a015faa07ccbe89be3d757b9f2a083"
+    },
+    {
+      "bytes": 36626,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "464a14f055898a5618be57a7ad415cec8c7746380cad168c9ef0530577a49228",
+      "path": "tests/s02/admission.json",
+      "sha256": "464a14f055898a5618be57a7ad415cec8c7746380cad168c9ef0530577a49228"
+    },
+    {
+      "bytes": 3212,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "d537ff9ee4303ab65fa4495b8b96c171b9b2a943b0e236c10138c9f612a368f5",
+      "path": "tests/s02/bridge_mirror.py",
+      "sha256": "d537ff9ee4303ab65fa4495b8b96c171b9b2a943b0e236c10138c9f612a368f5"
+    },
+    {
+      "bytes": 14809,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "28ecc81a2cd0cc827ce04f3c9e0be9d97d68f3fa39190004265076a299b70ff5",
+      "path": "tests/s02/bridge_reference.py",
+      "sha256": "28ecc81a2cd0cc827ce04f3c9e0be9d97d68f3fa39190004265076a299b70ff5"
+    },
+    {
+      "bytes": 9373,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "81a28c6578ec4e5fec28b888d3452ef1ed673f271b5b151783a3e95d167ae737",
+      "path": "tests/s02/case_log.py",
+      "sha256": "81a28c6578ec4e5fec28b888d3452ef1ed673f271b5b151783a3e95d167ae737"
+    },
+    {
+      "bytes": 21369,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "141ac51e1824b56d051f258337024ae668e2233b5a96c698c573cd3fb4ef72fd",
+      "path": "tests/s02/cases.json",
+      "sha256": "141ac51e1824b56d051f258337024ae668e2233b5a96c698c573cd3fb4ef72fd"
+    },
+    {
+      "bytes": 5776,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "60315545dd0230c4e980847204e33a30abd8c8c096abd726c020ce2b0dc5cb8c",
+      "path": "tests/s02/gen_rate_table.py",
+      "sha256": "60315545dd0230c4e980847204e33a30abd8c8c096abd726c020ce2b0dc5cb8c"
+    },
+    {
+      "bytes": 6802,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "0c992e28a5660ced251cca21799ceba993eb36c89d14abce67e42cd97e7d045d",
+      "path": "tests/s02/ledger_check.py",
+      "sha256": "0c992e28a5660ced251cca21799ceba993eb36c89d14abce67e42cd97e7d045d"
+    },
+    {
+      "bytes": 30395,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "84b4a6d5cfc555f25c9da48179de5c63c2bc16c353a946a48e5bb2e250e86bca",
+      "path": "tests/s02/make_vectors.py",
+      "sha256": "84b4a6d5cfc555f25c9da48179de5c63c2bc16c353a946a48e5bb2e250e86bca"
+    },
+    {
+      "bytes": 9096,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "bf3c8ecee9f18b6faebab06f1a3d9745795bff9b212871320525b7bd3501841c",
+      "path": "tests/s02/negotiated.json",
+      "sha256": "bf3c8ecee9f18b6faebab06f1a3d9745795bff9b212871320525b7bd3501841c"
+    },
+    {
+      "bytes": 13570,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "d1389e6b9b027908bf9f5aa122150d44a77a7a108c3becccd99e5b4204c4c9e5",
+      "path": "tests/s02/oracle.py",
+      "sha256": "d1389e6b9b027908bf9f5aa122150d44a77a7a108c3becccd99e5b4204c4c9e5"
+    },
+    {
+      "bytes": 39277,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "f36d051809847e4ac57c3531266537851d1ec450ed3b8a087519331ad01abc87",
+      "path": "tests/s02/run_cases.py",
+      "sha256": "f36d051809847e4ac57c3531266537851d1ec450ed3b8a087519331ad01abc87"
+    },
+    {
+      "bytes": 14426,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "10eea0cf675f716a9ffd8e5c74f9120155bbd8d6832b6c4901b3f5f551d9eee7",
+      "path": "tests/s02/test_admission.py",
+      "sha256": "10eea0cf675f716a9ffd8e5c74f9120155bbd8d6832b6c4901b3f5f551d9eee7"
+    },
+    {
+      "bytes": 54184,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "f88aadcf428f28996df1cb4399581834b14ae8659f387888ba41a267386a1e52",
+      "path": "tests/s02/test_s02.py",
+      "sha256": "f88aadcf428f28996df1cb4399581834b14ae8659f387888ba41a267386a1e52"
+    },
+    {
+      "bytes": 2420,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "d2a8ffefbf7535ee775ae994fba4b212004946a70902ddcc9f65ceb9909a2e19",
+      "path": "tests/s02/vorbis_tool.py",
+      "sha256": "d2a8ffefbf7535ee775ae994fba4b212004946a70902ddcc9f65ceb9909a2e19"
+    }
+  ],
+  "heap_snapshot_difference_from_corrected_snapshot": [
+    {
+      "corrected_sha256": "a461f461fc9cb092b24fce4518e0a8b15bfc96276774e9c984fa443d85961c3a",
+      "heap_component_compiles_this_file": false,
+      "heap_sha256": "edd0ba5af13f736638ef512a8bf379be9a957ebf4320a94a19227c3fc126c789",
+      "path": "crates/franken-codec/tests/s02_reader.rs"
+    }
+  ],
+  "inventory_sha256": "896450b82ed31df34883f77caca63e368e74aa0b86279a79ee934f675245249a",
+  "native_jobs": [
+    {
+      "execution_started": true,
+      "exit_code": 0,
+      "full_private_capture_sha256": "72fc3fe1aca3b73552cc06f32b8948fa262cbad6b4dd3d0b26052200f7a23749",
+      "native_job": "30104858719683157",
+      "purpose": "corrected_codec",
+      "receipt_root": "e3d3c51f6a46543780329b1069e250bc6328dea36d8c1b0b69efab9101e1ab84",
+      "receipt_selected_input_count": 1562,
+      "source_tree_pair_staging_custody_retired": true,
+      "terminal_acknowledged": true,
+      "wrapper_alive": false
+    },
+    {
+      "execution_started": true,
+      "exit_code": 0,
+      "full_private_capture_sha256": "32babe7eddcd051e56bd88a18c7644875f92e17b6878dd8acfbf5dd9f5022443",
+      "native_job": "30104858719683147",
+      "purpose": "unchanged_vec_heap_component",
+      "receipt_root": "b5fa837d3766607cccd0e079bbf96f0e01e1810f7bf07339078c709f18ff53e5",
+      "receipt_selected_input_count": 1562,
+      "source_tree_pair_staging_custody_retired": true,
+      "terminal_acknowledged": true,
+      "wrapper_alive": false
+    },
+    {
+      "execution_started": true,
+      "exit_code": 0,
+      "full_private_capture_sha256": "90723961ab4b41875fa07309e7b061b307b5e26a127e7bd76224ffe67f73187a",
+      "native_job": "30104858719683159",
+      "purpose": "strict_workspace_all_targets_clippy",
+      "receipt_root": "9333fcd08720cb67e25b36ee10227b9d5068e088a672c8a5a0accd055b65b090",
+      "receipt_selected_input_count": 1562,
+      "source_tree_pair_staging_custody_retired": true,
+      "terminal_acknowledged": true,
+      "wrapper_alive": false
+    }
+  ],
+  "publication_root_mode": "0755",
+  "schema": "ffw.s02-finite-reader-host-evidence.v1",
+  "scope": "Remote host native tests and source-bound evidence pipeline; no guest, physical-board or native-provider qualification.",
+  "selected_input_count": 1562,
+  "source_files_read_only": true,
+  "source_overlays": [
+    {
+      "bytes": 49241,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "c640113f791a0e55d923e832e0c8565954fef8da0f6f79c013bbbdc7cb120f3d",
+      "path": "crates/franken-codec/src/decode.rs",
+      "sha256": "c640113f791a0e55d923e832e0c8565954fef8da0f6f79c013bbbdc7cb120f3d"
+    },
+    {
+      "bytes": 1565,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "9cfe3631f73dac1cf18ef718f0d8cf0304ead90c18316c0fd3718c2355aaeb8c",
+      "path": "crates/franken-codec/src/lib.rs",
+      "sha256": "9cfe3631f73dac1cf18ef718f0d8cf0304ead90c18316c0fd3718c2355aaeb8c"
+    },
+    {
+      "bytes": 15532,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "a461f461fc9cb092b24fce4518e0a8b15bfc96276774e9c984fa443d85961c3a",
+      "path": "crates/franken-codec/tests/s02_reader.rs",
+      "sha256": "a461f461fc9cb092b24fce4518e0a8b15bfc96276774e9c984fa443d85961c3a"
+    },
+    {
+      "bytes": 21369,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "141ac51e1824b56d051f258337024ae668e2233b5a96c698c573cd3fb4ef72fd",
+      "path": "tests/s02/cases.json",
+      "sha256": "141ac51e1824b56d051f258337024ae668e2233b5a96c698c573cd3fb4ef72fd"
+    },
+    {
+      "bytes": 39277,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "f36d051809847e4ac57c3531266537851d1ec450ed3b8a087519331ad01abc87",
+      "path": "tests/s02/run_cases.py",
+      "sha256": "f36d051809847e4ac57c3531266537851d1ec450ed3b8a087519331ad01abc87"
+    },
+    {
+      "bytes": 54184,
+      "executable": false,
+      "matches_native_snapshot": true,
+      "native_snapshot_sha256": "f88aadcf428f28996df1cb4399581834b14ae8659f387888ba41a267386a1e52",
+      "path": "tests/s02/test_s02.py",
+      "sha256": "f88aadcf428f28996df1cb4399581834b14ae8659f387888ba41a267386a1e52"
+    }
+  ]
+}
