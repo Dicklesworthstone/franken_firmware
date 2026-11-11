@@ -1,0 +1,193 @@
+{
+  "schema": "ffw.focused-source-inputs.v1",
+  "scope": "Offline host development; no whole-bead, provider, target or physical qualification",
+  "git_build_source": "immutable export with hash-bound overlays, without Git metadata",
+  "inputs": [
+    {
+      "path": "crates/franken-stream/src/carrier.rs",
+      "base_sha256": "784aa29a132d6bab4c15e4f3939aa78151bbe6a80f7e9cf8d77c6c0730778cd4",
+      "sha256": "1a2b826c5727b1d791527a69fa097494591f51f4d544424de6aa09156d88db75"
+    },
+    {
+      "path": "crates/franken-stream/src/carrier/fec_tests.rs",
+      "base_sha256": "e182dda714c620cb96be2825b1f08e6cff37adf8f1cf1488d8732ee636cb3cba",
+      "sha256": "fee28cb6e1d6e019bdf46fc9b3520b430788d90a33c2525f4a00c8bdadc17b96"
+    },
+    {
+      "path": "crates/franken-alloc-probe/tests/s02_codec_heap.rs",
+      "base_sha256": null,
+      "sha256": "3f0e658cf885f4b4457d440456f69edbd9424708652cf6babede08e10e6448e0"
+    },
+    {
+      "path": "crates/franken-alloc-probe/Cargo.toml",
+      "base_sha256": "380540e7af5d2809bf125048c39696b46518f647444457d5acdaa6f888f83c08",
+      "sha256": "8db9ddb0ee77894267f1900e81acb4dfb2dad516d5b7f578946af3b66115820f"
+    },
+    {
+      "path": "Cargo.lock",
+      "base_sha256": "39e70649d690a342c74157bada974cfabaf76bfbbcb4dc05a33fa0af6181c58c",
+      "sha256": "ecae67c737e47feaef3df83c0521da3ba75886c4a7daa6b7ce51fd0738acb987"
+    },
+    {
+      "path": "tests/n06/run_cases.py",
+      "base_sha256": "594eedca583d6ce222ddc9bad6fa3a70a72c73190370e8ce62e0a78f83c7ebd9",
+      "sha256": "a5fce0f13e2b6de9d245cf8e7e64856becb31ee3951758766eb68488c1ae9f23"
+    },
+    {
+      "path": "tests/n06/test_judge.py",
+      "base_sha256": "d0d20469355d5d344c882ed1e7d63cbbad25ceb1adae2af15ca408e803f43c29",
+      "sha256": "9ed3896cdb57bc068ebff48746d148398863589caaa5cb93e172e9c476c2be49"
+    }
+  ],
+  "native_libraries": {
+    "build_id": "30104858719682992",
+    "receipt_root": "f655472417077597fb14da3c8742fd2d0328ffb077a25fe6d06c3837be3f35f7",
+    "command_sha256": "fb0a0ace63582cd22f7a92363205956728dbba3a4f3e59a64b2cdb6d9a895bbe",
+    "exit_code": 0,
+    "matched_files": 1550,
+    "ack": true,
+    "wrapper_dead": true,
+    "source_tree_pair_retired": true,
+    "local_staging": "released",
+    "log_sha256": "1190999156fcf4c646c2bc199526ab0b19ee2d45b6d01be225560f02a9caf5bf",
+    "footers": [
+      "test result: ok. 649 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.29s",
+      "test result: ok. 468 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.38s",
+      "test result: ok. 220 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.73s"
+    ]
+  },
+  "corrected_heap": {
+    "build_id": "30104858719683010",
+    "receipt_root": "de65f7f712ee1b40bbda6cb317622fe144b00b2c24f1d29ce04d39da3699f106",
+    "command_sha256": "67f045004c02577acd872225205e220fa772f07c1707278d848e0860fedf4c36",
+    "exit_code": 0,
+    "matched_files": 1550,
+    "ack": true,
+    "wrapper_dead": true,
+    "source_tree_pair_retired": true,
+    "log_sha256": "c55c94d95b766fe54722c34205de8541c6f5c4d7e80e21cda82b392a9b9494d7",
+    "footers": [
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.59s"
+    ]
+  },
+  "corrected_clippy": {
+    "build_id": "30104858719683012",
+    "receipt_root": "7a2bbdcc57dfcbf20511fb9737617c2142545e133c12b7477ff2f096a00e39cb",
+    "command_sha256": "01c4b2642fa4678fb53e37f387207922d9453a7bc5efe4e696ea7e2274158197",
+    "exit_code": 0,
+    "matched_files": 1550,
+    "ack": true,
+    "wrapper_dead": true,
+    "source_tree_pair_retired": true,
+    "local_staging": "released",
+    "log_sha256": "3e1f1b68cc9f779c1581e4e90996b729fcdbae640d2f744d1a96283d60c77c4f",
+    "finished": "Finished `dev` profile [unoptimized] target(s) in 3m 42s"
+  },
+  "preserved_clippy_failure": {
+    "build_id": "30104858719683001",
+    "receipt_root": "7883b62b56ef2358b23ca7d9630a2cad0e1c9acbcee6508dc3e001ddff50a1bd",
+    "command_exit_code": 101,
+    "matched_files": 1550,
+    "ack": true,
+    "wrapper_dead": true,
+    "source_tree_pair_retired": true,
+    "log_sha256": "8812808f3d6b04011786c2ba5faac109bb2b49d39f9c77cffac0bc6ce4a75840",
+    "diagnostic": "Two chunks_exact_to_as_chunks lints in new test source; no pass claimed"
+  },
+  "preserved_pre_cargo_refusal": {
+    "build_id": "30104858719682978",
+    "class": "pre-Cargo remote disk admission refusal",
+    "native_tests_run": 0,
+    "source_receipt": false,
+    "exit_code": 120,
+    "terminal_ack": true,
+    "wrapper_absent": true,
+    "source_tree_pair_retired": true,
+    "local_staging": "not created; no staging ownership in lease",
+    "causal_marker": {
+      "reason": "admission",
+      "free_bytes": 18911326208,
+      "growth_bytes": 0,
+      "max_growth_bytes": 32212254720,
+      "min_free_bytes": 10737418240,
+      "started": false,
+      "detail": "free space cannot cover active build reservations and protected floor",
+      "peak_output_bytes": 53440512
+    },
+    "log_sha256": "d0a26165bce9b1b6507bf60c7429a342ee86c08d7a881d2d35eba4174c656f82"
+  },
+  "python_followon_inputs": [
+    {
+      "path": "tests/s02/run_cases.py",
+      "base_sha256": "48b9d26e618311f866e05a49fecba5cd8d51f6f825510dba3c2091b3798e6424",
+      "sha256": "f321a3d4c603a422e65bc32898aabb7046132601cd25d9fd32af8fa287ba7ee2"
+    },
+    {
+      "path": "tests/s02/cases.json",
+      "base_sha256": "d8d84ef295913bc4d48c8ba3178d6ace45c6ef2821ab537e8c37d51abb81f820",
+      "sha256": "481d6558cbbc34ec8ea6e84e0f8aca7640ace874884fdb4a336651e6902e1afd"
+    },
+    {
+      "path": "tests/s02/test_s02.py",
+      "base_sha256": "05ca603b3776ae7d72329b5b0266322abc20f8c49d092993659290cdfa886251",
+      "sha256": "6fad1b7755e5715ccc2cae498f0c03f85c96aa9bf2986bc321e6aa47e2043075"
+    }
+  ],
+  "previous_codec_native": "30104858719682899",
+  "previous_codec_log_sha256": "0e2c95c5ff6e056a5b9e8428a0e5cc18bfca680874864aa3ed2d8d2e3f08a4a4",
+  "prior_codec_source_is_not_new_whole_tree": true,
+  "python_controls": {
+    "run": 64,
+    "passed": 63,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 1,
+    "skip": "optional libvorbis/soundfile comparison unavailable"
+  },
+  "host_consumer": {
+    "counts": {
+      "blocked": 0,
+      "failed": 0,
+      "passed": 70
+    },
+    "diagnostics": {
+      "complete": true,
+      "log": {
+        "bytes": 42659,
+        "critical_lost": false,
+        "dropped": 0,
+        "events": 141,
+        "sha256": "21bf6455ffb42ec3ff7d31dcfb07a10ff45a7d16d743673c21fd68615efc6cd5",
+        "truncated": false
+      },
+      "reasons": []
+    },
+    "receipt_sha256": "8925981c3ce5e8c087f2555d1d12cd54bc72fc0d8584907acb4def61c8e372e3"
+  },
+  "landed_commits": {
+    "staged_sender_commit": "41322777a9dd4fc071b6fdd07ce4e0b198c2f78e",
+    "codec_heap_consumer_commit": "f3de19ab318ac6fd8c7337f687fa4a23257de191"
+  },
+  "export_base_commit": "7de1b771231c17a7447afedd87f83996847e7a63",
+  "canonical_host_consumer": {
+    "counts": {
+      "blocked": 0,
+      "failed": 0,
+      "passed": 70
+    },
+    "diagnostics": {
+      "complete": true,
+      "file": "s02-diag-full-ea72134c6d6dfd75.jsonl",
+      "log": {
+        "bytes": 42659,
+        "critical_lost": false,
+        "dropped": 0,
+        "events": 141,
+        "sha256": "56d94f0807f0135aceeb7a06d8d22bac043b27e5c8b97a28f53e87a0ca758f94",
+        "truncated": false
+      },
+      "reasons": []
+    },
+    "receipt_sha256": "59f5cf225590c0bab159af199e4a136812dbe0739eac55d59164ee8b707bf2e5"
+  }
+}

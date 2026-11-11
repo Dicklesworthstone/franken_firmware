@@ -1,0 +1,228 @@
+{
+  "schema": "ffw.focused-source-inputs.v1",
+  "scope": "Offline host development; no whole-bead, provider, target or physical qualification",
+  "git_build_source": "immutable export with hash-bound overlays, without Git metadata",
+  "inputs": [
+    {
+      "path": "crates/franken-stream/src/carrier.rs",
+      "base_sha256": "784aa29a132d6bab4c15e4f3939aa78151bbe6a80f7e9cf8d77c6c0730778cd4",
+      "sha256": "1a2b826c5727b1d791527a69fa097494591f51f4d544424de6aa09156d88db75"
+    },
+    {
+      "path": "crates/franken-stream/src/carrier/fec_tests.rs",
+      "base_sha256": "e182dda714c620cb96be2825b1f08e6cff37adf8f1cf1488d8732ee636cb3cba",
+      "sha256": "fee28cb6e1d6e019bdf46fc9b3520b430788d90a33c2525f4a00c8bdadc17b96"
+    },
+    {
+      "path": "crates/franken-alloc-probe/tests/s02_codec_heap.rs",
+      "base_sha256": null,
+      "sha256": "3f0e658cf885f4b4457d440456f69edbd9424708652cf6babede08e10e6448e0"
+    },
+    {
+      "path": "crates/franken-alloc-probe/Cargo.toml",
+      "base_sha256": "380540e7af5d2809bf125048c39696b46518f647444457d5acdaa6f888f83c08",
+      "sha256": "8db9ddb0ee77894267f1900e81acb4dfb2dad516d5b7f578946af3b66115820f"
+    },
+    {
+      "path": "Cargo.lock",
+      "base_sha256": "39e70649d690a342c74157bada974cfabaf76bfbbcb4dc05a33fa0af6181c58c",
+      "sha256": "ecae67c737e47feaef3df83c0521da3ba75886c4a7daa6b7ce51fd0738acb987"
+    },
+    {
+      "path": "tests/n06/run_cases.py",
+      "base_sha256": "594eedca583d6ce222ddc9bad6fa3a70a72c73190370e8ce62e0a78f83c7ebd9",
+      "sha256": "a5fce0f13e2b6de9d245cf8e7e64856becb31ee3951758766eb68488c1ae9f23"
+    },
+    {
+      "path": "tests/n06/test_judge.py",
+      "base_sha256": "d0d20469355d5d344c882ed1e7d63cbbad25ceb1adae2af15ca408e803f43c29",
+      "sha256": "9ed3896cdb57bc068ebff48746d148398863589caaa5cb93e172e9c476c2be49"
+    }
+  ],
+  "native_libraries": {
+    "build_id": "30104858719682992",
+    "receipt_root": "f655472417077597fb14da3c8742fd2d0328ffb077a25fe6d06c3837be3f35f7",
+    "command_sha256": "fb0a0ace63582cd22f7a92363205956728dbba3a4f3e59a64b2cdb6d9a895bbe",
+    "exit_code": 0,
+    "matched_files": 1550,
+    "ack": true,
+    "wrapper_dead": true,
+    "source_tree_pair_retired": true,
+    "local_staging": "released",
+    "log_sha256": "1190999156fcf4c646c2bc199526ab0b19ee2d45b6d01be225560f02a9caf5bf",
+    "footers": [
+      "test result: ok. 649 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.29s",
+      "test result: ok. 468 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.38s",
+      "test result: ok. 220 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.73s"
+    ]
+  },
+  "corrected_heap": {
+    "build_id": "30104858719683010",
+    "receipt_root": "de65f7f712ee1b40bbda6cb317622fe144b00b2c24f1d29ce04d39da3699f106",
+    "command_sha256": "67f045004c02577acd872225205e220fa772f07c1707278d848e0860fedf4c36",
+    "exit_code": 0,
+    "matched_files": 1550,
+    "ack": true,
+    "wrapper_dead": true,
+    "source_tree_pair_retired": true,
+    "log_sha256": "c55c94d95b766fe54722c34205de8541c6f5c4d7e80e21cda82b392a9b9494d7",
+    "footers": [
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.59s"
+    ]
+  },
+  "corrected_clippy": {
+    "build_id": "30104858719683012",
+    "receipt_root": "7a2bbdcc57dfcbf20511fb9737617c2142545e133c12b7477ff2f096a00e39cb",
+    "command_sha256": "01c4b2642fa4678fb53e37f387207922d9453a7bc5efe4e696ea7e2274158197",
+    "exit_code": 0,
+    "matched_files": 1550,
+    "ack": true,
+    "wrapper_dead": true,
+    "source_tree_pair_retired": true,
+    "local_staging": "released",
+    "log_sha256": "3e1f1b68cc9f779c1581e4e90996b729fcdbae640d2f744d1a96283d60c77c4f",
+    "finished": "Finished `dev` profile [unoptimized] target(s) in 3m 42s"
+  },
+  "preserved_clippy_failure": {
+    "build_id": "30104858719683001",
+    "receipt_root": "7883b62b56ef2358b23ca7d9630a2cad0e1c9acbcee6508dc3e001ddff50a1bd",
+    "command_exit_code": 101,
+    "matched_files": 1550,
+    "ack": true,
+    "wrapper_dead": true,
+    "source_tree_pair_retired": true,
+    "log_sha256": "8812808f3d6b04011786c2ba5faac109bb2b49d39f9c77cffac0bc6ce4a75840",
+    "diagnostic": "Two chunks_exact_to_as_chunks lints in new test source; no pass claimed"
+  },
+  "preserved_pre_cargo_refusal": {
+    "build_id": "30104858719682978",
+    "class": "pre-Cargo remote disk admission refusal",
+    "native_tests_run": 0,
+    "source_receipt": false,
+    "exit_code": 120,
+    "terminal_ack": true,
+    "wrapper_absent": true,
+    "source_tree_pair_retired": true,
+    "local_staging": "not created; no staging ownership in lease",
+    "causal_marker": {
+      "reason": "admission",
+      "free_bytes": 18911326208,
+      "growth_bytes": 0,
+      "max_growth_bytes": 32212254720,
+      "min_free_bytes": 10737418240,
+      "started": false,
+      "detail": "free space cannot cover active build reservations and protected floor",
+      "peak_output_bytes": 53440512
+    },
+    "log_sha256": "d0a26165bce9b1b6507bf60c7429a342ee86c08d7a881d2d35eba4174c656f82"
+  },
+  "registry_requirements": 123,
+  "full": {
+    "blocked": 2,
+    "diagnostics_dropped": 0,
+    "evidence_class": "offline-host-synthetic",
+    "expected": 13,
+    "failed": 0,
+    "log_sha256": "7cf90c4cc07430ad200b545d95e23a77c91d77c7c79367a10f05badda7ca43f4",
+    "not_run": 0,
+    "passed": 11,
+    "production_fec_profile_admitted": false,
+    "profile": "n06.host-hybrid.k4-r4.v1",
+    "qualified": false,
+    "schema": "n06.receipt.v1",
+    "tier": "full"
+  },
+  "unchanged_reference_algorithm_inputs": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "6aaae8aac3d87262cd7057749b84bb4df921dcee810dd5d03cfdddc1c4ebe107"
+    },
+    {
+      "path": "crates/franken-stream/Cargo.toml",
+      "sha256": "c0059611538c78e101c437ff4852ac228dc45456f5c2622d41c14940fbe73089"
+    },
+    {
+      "path": "crates/franken-stream/src/bin/n01_wire_guest/main.rs",
+      "sha256": "cdc67c883ff57af2ec6785046498c1631f490a7ae677108bfb89332836ca89ca"
+    },
+    {
+      "path": "crates/franken-stream/src/bin/n01_wire_guest/replay.rs",
+      "sha256": "7557585cc5f9d5865c339d42a1a89776ad154bd0a1f178cec3bd2abe498bc47f"
+    },
+    {
+      "path": "crates/franken-stream/src/fec/solver.rs",
+      "sha256": "00c7195c4efdb97d8b0dda69775e26534b24b9b0bd38066252d68c9b38f92303"
+    },
+    {
+      "path": "crates/franken-stream/src/fec/tests.rs",
+      "sha256": "f8d14089540f238f82123750a64190a41b1de8791c39745558c7468bee965202"
+    },
+    {
+      "path": "crates/franken-stream/src/fec.rs",
+      "sha256": "85f89a79ef67b348451d62606feebd0016fe7fdf67b16f03c1a19d620ca1226a"
+    },
+    {
+      "path": "crates/franken-stream/src/lib.rs",
+      "sha256": "3017a16aabc601509f6f5b2667f6d5306a01350328918374a1ca9a41aae1e26f"
+    },
+    {
+      "path": "crates/franken-stream/src/link/tests.rs",
+      "sha256": "a142836fb85804a6da47ac9041598ba7b66c82f3f785654ee5963f4093a9f81b"
+    },
+    {
+      "path": "crates/franken-stream/src/link.rs",
+      "sha256": "27bea62828eba40f6552bf058a053742734ed129ce5483348e3e6dd16378ce3a"
+    },
+    {
+      "path": "crates/franken-stream/src/negotiation.rs",
+      "sha256": "e93ff373b4941d73bc9618083eb932ba885c729b908174f2d57ac16c6ec58fd4"
+    },
+    {
+      "path": "crates/franken-stream/src/playout/group_clock_tests.rs",
+      "sha256": "0b6147c358b83adbacba6df3cf63d9537d750a988d582f03cb578365370fe5d2"
+    },
+    {
+      "path": "crates/franken-stream/src/playout/log/tests.rs",
+      "sha256": "f2566d6a80244297425de09649285a66adbe6c0277a3f943da6028d77d20ed82"
+    },
+    {
+      "path": "crates/franken-stream/src/playout/log.rs",
+      "sha256": "c37adff7b843a29441ed7cdc3e3f0dc5dc8b9cb90a20e4d2ed3e02b5bf6fb983"
+    },
+    {
+      "path": "crates/franken-stream/src/playout/tests.rs",
+      "sha256": "8eb9a80fe1bb0f87ba96a73c6e0bc7a45f825bdf77ea1bd8baa5291d0c6248ad"
+    },
+    {
+      "path": "crates/franken-stream/src/playout.rs",
+      "sha256": "29caa107510aff4632ab66f3c60060d9dcbaaa908342676d227330fa4894d912"
+    },
+    {
+      "path": "rust-toolchain.toml",
+      "sha256": "ff13c9224217a4ccd63320d8b89cc82d7fa64da14a627e499f9f18db4c6602d0"
+    },
+    {
+      "path": "toolchain/n06-fec-profile/Cargo.lock",
+      "sha256": "600bef19e3f4bc5eb3b53b297fd57f4b60df46c7f21af16bc610574fd61f5c2a"
+    },
+    {
+      "path": "toolchain/n06-fec-profile/Cargo.toml",
+      "sha256": "d79b4cc6e68261a2c159e814fa101f7e8b74ef125ed682790921e48ced49791e"
+    },
+    {
+      "path": "toolchain/n06-fec-profile/src/lib.rs",
+      "sha256": "f212be3e86a0a6bf573d096c7f066dc28b8de9b5615493467c47f0cf534ce286"
+    }
+  ],
+  "prior_reference_native": "30104858719682930",
+  "prior_allocator_native": "30104858719682924",
+  "prior_component_source_is_not_new_whole_tree": true,
+  "python_controls": {
+    "passed": 29
+  },
+  "landed_commits": {
+    "staged_sender_commit": "41322777a9dd4fc071b6fdd07ce4e0b198c2f78e",
+    "codec_heap_consumer_commit": "f3de19ab318ac6fd8c7337f687fa4a23257de191"
+  },
+  "export_base_commit": "7de1b771231c17a7447afedd87f83996847e7a63"
+}

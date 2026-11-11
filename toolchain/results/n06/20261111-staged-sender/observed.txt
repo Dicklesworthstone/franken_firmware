@@ -1,0 +1,15 @@
+test result: ok. 649 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.29s
+test result: ok. 468 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.38s
+test carrier::fec_tests::n06_staged_target_accounts_existing_group_and_reuses_exact_overlap ... ok
+test carrier::fec_tests::n06_sender_work_interval_at_maximum_clock_never_refunds_charge ... ok
+test carrier::fec_tests::n06_staged_target_fences_foreign_owner_membership_path_and_epoch_aba ... ok
+test carrier::fec_tests::n06_staged_target_refuses_new_live_mtu_fence_before_mutation ... ok
+test carrier::fec_tests::n06_common_sender_charges_each_fanout_and_recovers_next_interval ... ok
+test carrier::fec_tests::n06_staged_target_rejected_operations_leave_token_and_old_pcm_live ... ok
+test carrier::fec_tests::n06_staged_target_drop_cancel_and_budget_are_transactional ... ok
+test carrier::fec_tests::n06_staged_target_keeps_old_n01_then_delivers_and_repairs_pcm ... ok
+test result: ok. 220 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.73s
+
+Corrected strict workspace/all-target Clippy native 30104858719683012
+Finished `dev` profile [unoptimized] target(s) in 3m 42s
+remote command exit=0; terminal ACK=true; wrapper absent; custody retired
