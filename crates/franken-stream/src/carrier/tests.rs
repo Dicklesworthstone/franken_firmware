@@ -2785,3 +2785,3295 @@ fn n07_group_membership_is_bounded_and_each_refusal_changes_nothing() {
     // groups came, were refused and left, and the table neither grew nor shrank
     assert_eq!(sender.group_table_bytes(), table);
 }
+
+fn clocked_n01_pump(
+    sender: &mut CarrierSender<ScriptPort>,
+    interface_now: u64,
+    group_now: u64,
+) -> PumpReport {
+    let view = N01GroupClock {
+        group: PRIMARY_GROUP,
+        epoch: 1,
+        view: crate::playout::ClockView {
+            group_ns: group_now,
+            uncertainty_ns: 500_000,
+            usable: true,
+        },
+    };
+    sender.pump_n01_clocked(interface_now, &[view], &AtomicBool::new(false))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn attempt_n01(
+    sender: &mut CarrierSender<ScriptPort>,
+    group: GroupId,
+    epoch: u64,
+    required: &[u32],
+    frame: &OutboundFrame,
+    interface_now: u64,
+    group_now: u64,
+    budget: usize,
+    cancel: &AtomicBool,
+) -> Result<AllPeerAdmission, AllPeerAdmissionError> {
+    let current = sender
+        .group_view(group)
+        .ok_or(AllPeerAdmissionError::Invalid(CarrierError::UnknownGroup(
+            group,
+        )))?;
+    let ids: Vec<_> = sender
+        .peers
+        .iter()
+        .filter(|p| p.group == group)
+        .map(|p| p.id)
+        .collect();
+    let snapshot = sender.snapshot_n01_group(group, current.epoch, &ids)?;
+    sender.try_submit_group_media_all(
+        group,
+        epoch,
+        &snapshot,
+        required,
+        frame,
+        N01AdmissionInputs {
+            interface_now_ns: interface_now,
+            trusted_group_now_ns: group_now,
+            overlap_budget_bytes: budget,
+            cancelled: cancel,
+        },
+    )
+}
+
+#[test]
+fn n07_all_peer_n01_backpressure_preserves_queues_then_delivers_each_pcm_once() {
+    let limits = CarrierLimits {
+        window_packets: 1,
+        peer_queue_packets: 1,
+        pace_burst_bytes: 65_536,
+        ..CarrierLimits::baseline()
+    };
+    let mut sender =
+        CarrierSender::with_port(key(), stream(), 1, limits, ScriptPort::new()).unwrap();
+    let m1 = addr("127.0.0.1:42001");
+    let c1 = addr("127.0.0.1:42002");
+    let m2 = addr("127.0.0.1:42003");
+    let c2 = addr("127.0.0.1:42004");
+    sender.add_peer(7, m1, c1, 1500).unwrap();
+    sender.add_peer(8, m2, c2, 1500).unwrap();
+    let mut first = long_block(0, 0);
+    first.payload.fill(0x21);
+    let mut queued = long_block(1, 0);
+    queued.payload.fill(0x42);
+    let mut pending = long_block(2, 0);
+    pending.payload.fill(0x63);
+    let pending_copy = pending.clone();
+    let cancel = AtomicBool::new(false);
+    assert_eq!(sender.submit_media(1, &first, 0).unwrap().queued, 2);
+    assert_eq!(sender.pump(1).media_sent, 2);
+    sender
+        .port
+        .inbound_control
+        .push_back((encode_report(&key(), stream(), 1, 1, 7).to_vec(), Some(c1)));
+    assert_eq!(sender.poll_reports(), 1);
+    assert_eq!(sender.submit_media(1, &queued, 2).unwrap().queued, 2);
+    assert_eq!(sender.pump(3).media_sent, 1);
+    assert_eq!(sender.peer_view(7).unwrap().queued_packets, 0);
+    assert_eq!(sender.peer_view(8).unwrap().queued_packets, 1);
+    let before_group = sender.group_view(PRIMARY_GROUP).unwrap();
+    let before_7 = sender.peer_view(7).unwrap();
+    let before_8 = sender.peer_view(8).unwrap();
+    assert_eq!(
+        attempt_n01(
+            &mut sender,
+            PRIMARY_GROUP,
+            1,
+            &[7, 8],
+            &pending,
+            4,
+            0,
+            usize::MAX,
+            &cancel
+        )
+        .map(|_| ()),
+        Err(AllPeerAdmissionError::Retry(AllPeerRetry::Capacity))
+    );
+    assert_eq!(pending, pending_copy);
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), before_group);
+    assert_eq!(sender.peer_view(7).unwrap(), before_7);
+    assert_eq!(sender.peer_view(8).unwrap(), before_8);
+    sender
+        .port
+        .inbound_control
+        .push_back((encode_report(&key(), stream(), 1, 2, 7).to_vec(), Some(c1)));
+    sender
+        .port
+        .inbound_control
+        .push_back((encode_report(&key(), stream(), 1, 1, 8).to_vec(), Some(c2)));
+    assert_eq!(sender.poll_reports(), 2);
+    assert_eq!(sender.pump(5).media_sent, 1);
+    sender
+        .port
+        .inbound_control
+        .push_back((encode_report(&key(), stream(), 1, 2, 8).to_vec(), Some(c2)));
+    assert_eq!(sender.poll_reports(), 1);
+    assert_eq!(
+        attempt_n01(
+            &mut sender,
+            PRIMARY_GROUP,
+            1,
+            &[8, 7],
+            &pending,
+            6,
+            0,
+            usize::MAX,
+            &cancel
+        )
+        .map(|_| ()),
+        Ok(())
+    );
+    assert_eq!(pending, pending_copy);
+    assert_eq!(clocked_n01_pump(&mut sender, 7, 7).media_sent, 2);
+    for destination in [m1, m2] {
+        let mut receiver = StreamReceiver::new(key(), stream(), 1);
+        let packets: Vec<_> = sender
+            .port
+            .sent
+            .iter()
+            .filter(|(lane, _, to)| *lane == Lane::Media && *to == destination)
+            .map(|(_, wire, _)| receiver.accept(wire).unwrap())
+            .collect();
+        assert_eq!(packets.len(), 3);
+        assert_eq!(
+            packets.iter().map(|p| p.seq).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+        assert_eq!(packets[0].payload, first.payload);
+        assert_eq!(packets[1].payload, queued.payload);
+        assert_eq!(packets[2].payload, pending.payload);
+    }
+}
+
+#[test]
+fn n07_all_peer_n01_invalid_stale_cancel_and_membership_refuse_before_mutation() {
+    let mut sender = sender_over(ScriptPort::new());
+    sender
+        .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+        .unwrap();
+    sender
+        .add_peer(8, addr("127.0.0.1:42003"), addr("127.0.0.1:42004"), 1500)
+        .unwrap();
+    let cancel = AtomicBool::new(false);
+    let good = long_block(0, 0);
+    let before = sender.group_view(PRIMARY_GROUP).unwrap();
+    let first = sender.peer_view(7).unwrap();
+    let second = sender.peer_view(8).unwrap();
+    assert_eq!(
+        attempt_n01(
+            &mut sender,
+            PRIMARY_GROUP,
+            1,
+            &[7, 7],
+            &good,
+            0,
+            0,
+            usize::MAX,
+            &cancel
+        )
+        .map(|_| ()),
+        Err(AllPeerAdmissionError::MembershipChanged)
+    );
+    assert_eq!(
+        attempt_n01(
+            &mut sender,
+            PRIMARY_GROUP,
+            1,
+            &[7],
+            &good,
+            0,
+            0,
+            usize::MAX,
+            &cancel
+        )
+        .map(|_| ()),
+        Err(AllPeerAdmissionError::MembershipChanged)
+    );
+    assert!(matches!(
+        attempt_n01(
+            &mut sender,
+            PRIMARY_GROUP,
+            2,
+            &[7, 8],
+            &good,
+            0,
+            0,
+            usize::MAX,
+            &cancel
+        )
+        .map(|_| ()),
+        Err(AllPeerAdmissionError::Invalid(
+            CarrierError::StaleEpoch { .. }
+        ))
+    ));
+    cancel.store(true, Ordering::Release);
+    assert_eq!(
+        attempt_n01(
+            &mut sender,
+            PRIMARY_GROUP,
+            1,
+            &[7, 8],
+            &good,
+            0,
+            0,
+            usize::MAX,
+            &cancel
+        )
+        .map(|_| ()),
+        Err(AllPeerAdmissionError::Cancelled)
+    );
+    cancel.store(false, Ordering::Release);
+    for malformed in [
+        {
+            let mut f = good.clone();
+            f.start_frame = 1;
+            f
+        },
+        {
+            let mut f = good.clone();
+            f.flags = 0x80;
+            f
+        },
+        {
+            let mut f = good.clone();
+            f.consume_by_ns = f.presentation_time_ns + 1;
+            f
+        },
+        {
+            let mut f = good.clone();
+            f.fec_index = 1;
+            f
+        },
+        {
+            let mut f = good.clone();
+            f.payload.pop();
+            f
+        },
+    ] {
+        assert!(matches!(
+            attempt_n01(
+                &mut sender,
+                PRIMARY_GROUP,
+                1,
+                &[7, 8],
+                &malformed,
+                0,
+                0,
+                usize::MAX,
+                &cancel
+            )
+            .map(|_| ()),
+            Err(AllPeerAdmissionError::Invalid(_))
+        ));
+    }
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), before);
+    assert_eq!(sender.peer_view(7).unwrap(), first);
+    assert_eq!(sender.peer_view(8).unwrap(), second);
+    assert_eq!(
+        attempt_n01(
+            &mut sender,
+            PRIMARY_GROUP,
+            1,
+            &[7, 8],
+            &good,
+            0,
+            0,
+            usize::MAX,
+            &cancel
+        )
+        .map(|_| ()),
+        Ok(())
+    );
+    assert_eq!(clocked_n01_pump(&mut sender, 1, 1).media_sent, 2);
+    for (_, wire, _) in &sender.port.sent {
+        assert_eq!(
+            StreamReceiver::new(key(), stream(), 1)
+                .accept(wire)
+                .unwrap()
+                .payload,
+            good.payload
+        );
+    }
+}
+
+#[test]
+fn n07_all_peer_n01_respects_profile_sequence_headroom_and_live_path() {
+    let mut sender = sender_over(ScriptPort::new());
+    sender
+        .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+        .unwrap();
+    sender
+        .add_peer(8, addr("127.0.0.1:42003"), addr("127.0.0.1:42004"), 1500)
+        .unwrap();
+    let cancel = AtomicBool::new(false);
+    let good = long_block(0, 0);
+    let mut partial = good.clone();
+    partial.payload.truncate(512);
+    let idx = sender.index_of(8).unwrap();
+    sender.peers[idx].counters.media_submitted_packets = u64::MAX;
+    assert!(matches!(
+        attempt_n01(
+            &mut sender,
+            PRIMARY_GROUP,
+            1,
+            &[7, 8],
+            &good,
+            0,
+            0,
+            usize::MAX,
+            &cancel
+        ),
+        Err(AllPeerAdmissionError::Invalid(_))
+    ));
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap().queued_packets, 0);
+    sender.peers[idx].counters.media_submitted_packets = 0;
+    sender.peers[idx].sender.profile = crate::StreamProfile {
+        repair_allowed: true,
+        partial_blocks_allowed: false,
+    };
+    assert!(matches!(
+        attempt_n01(
+            &mut sender,
+            PRIMARY_GROUP,
+            1,
+            &[7, 8],
+            &partial,
+            0,
+            0,
+            usize::MAX,
+            &cancel
+        )
+        .map(|_| ()),
+        Err(AllPeerAdmissionError::Invalid(CarrierError::Stream(
+            StreamError::FeatureNotNegotiated { .. }
+        )))
+    ));
+    sender.peers[idx].sender.profile = crate::StreamProfile::BASELINE;
+    sender.peers[idx].sender.epoch = 2;
+    assert!(matches!(
+        attempt_n01(
+            &mut sender,
+            PRIMARY_GROUP,
+            1,
+            &[7, 8],
+            &good,
+            0,
+            0,
+            usize::MAX,
+            &cancel
+        )
+        .map(|_| ()),
+        Err(AllPeerAdmissionError::Invalid(
+            CarrierError::StaleEpoch { .. }
+        ))
+    ));
+    sender.peers[idx].sender.epoch = 1;
+    sender.set_link_up(false);
+    assert_eq!(
+        attempt_n01(
+            &mut sender,
+            PRIMARY_GROUP,
+            1,
+            &[7, 8],
+            &good,
+            0,
+            0,
+            usize::MAX,
+            &cancel
+        )
+        .map(|_| ()),
+        Err(AllPeerAdmissionError::Retry(AllPeerRetry::LinkDown))
+    );
+    sender.set_link_up(true);
+    sender.set_path_mtu(8, 1000).unwrap();
+    assert_eq!(
+        attempt_n01(
+            &mut sender,
+            PRIMARY_GROUP,
+            1,
+            &[7, 8],
+            &good,
+            0,
+            0,
+            usize::MAX,
+            &cancel
+        )
+        .map(|_| ()),
+        Err(AllPeerAdmissionError::Retry(AllPeerRetry::PeerFenced(8)))
+    );
+    sender.set_path_mtu(8, 1500).unwrap();
+    sender.peers[idx].sender.next_seq = u64::MAX - 1;
+    assert_eq!(sender.submit_media(1, &good, 0).unwrap().queued, 2);
+    let before = sender.group_view(PRIMARY_GROUP).unwrap();
+    assert_eq!(
+        attempt_n01(
+            &mut sender,
+            PRIMARY_GROUP,
+            1,
+            &[7, 8],
+            &good,
+            0,
+            0,
+            usize::MAX,
+            &cancel
+        )
+        .map(|_| ()),
+        Err(AllPeerAdmissionError::Invalid(CarrierError::Stream(
+            StreamError::SequenceExhausted
+        )))
+    );
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), before);
+    sender.peers[idx].sender.next_seq = 0;
+    assert_eq!(
+        attempt_n01(
+            &mut sender,
+            PRIMARY_GROUP,
+            1,
+            &[7, 8],
+            &good,
+            0,
+            0,
+            usize::MAX,
+            &cancel
+        )
+        .map(|_| ()),
+        Ok(())
+    );
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap().queued_packets, 4);
+}
+
+#[test]
+fn n07_all_peer_n01_membership_change_and_unfenced_small_mtu_are_checked() {
+    let limits = CarrierLimits {
+        required_payload_bytes: 4,
+        ..CarrierLimits::baseline()
+    };
+    let mut sender =
+        CarrierSender::with_port(key(), stream(), 1, limits, ScriptPort::new()).unwrap();
+    sender
+        .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+        .unwrap();
+    sender
+        .add_peer(8, addr("127.0.0.1:42003"), addr("127.0.0.1:42004"), 900)
+        .unwrap();
+    let cancel = AtomicBool::new(false);
+    let full = long_block(0, 0);
+    let before = sender.group_view(PRIMARY_GROUP).unwrap();
+    assert_eq!(
+        attempt_n01(
+            &mut sender,
+            PRIMARY_GROUP,
+            1,
+            &[7, 8],
+            &full,
+            0,
+            0,
+            usize::MAX,
+            &cancel
+        )
+        .map(|_| ()),
+        Err(AllPeerAdmissionError::Retry(AllPeerRetry::PathMtu(8)))
+    );
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), before);
+    let mut partial = full.clone();
+    partial.payload.truncate(512);
+    assert_eq!(
+        attempt_n01(
+            &mut sender,
+            PRIMARY_GROUP,
+            1,
+            &[7, 8],
+            &partial,
+            0,
+            0,
+            usize::MAX,
+            &cancel
+        )
+        .map(|_| ()),
+        Ok(())
+    );
+    assert_eq!(clocked_n01_pump(&mut sender, 1, 1).media_sent, 2);
+    for (_, wire, _) in &sender.port.sent {
+        assert_eq!(
+            StreamReceiver::new(key(), stream(), 1)
+                .accept(wire)
+                .unwrap()
+                .payload,
+            partial.payload
+        );
+    }
+    sender.remove_peer(8).unwrap();
+    let changed = sender.group_view(PRIMARY_GROUP).unwrap();
+    assert_eq!(
+        attempt_n01(
+            &mut sender,
+            PRIMARY_GROUP,
+            1,
+            &[7, 8],
+            &partial,
+            2,
+            0,
+            usize::MAX,
+            &cancel
+        )
+        .map(|_| ()),
+        Err(AllPeerAdmissionError::MembershipChanged)
+    );
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), changed);
+    sender.advance_epoch(2).unwrap();
+    assert_eq!(
+        attempt_n01(
+            &mut sender,
+            PRIMARY_GROUP,
+            2,
+            &[7],
+            &partial,
+            2,
+            2,
+            usize::MAX,
+            &cancel
+        )
+        .map(|_| ()),
+        Ok(())
+    );
+    let clock = N01GroupClock {
+        group: PRIMARY_GROUP,
+        epoch: 2,
+        view: crate::playout::ClockView {
+            group_ns: 3,
+            uncertainty_ns: 0,
+            usable: true,
+        },
+    };
+    assert_eq!(sender.pump_n01_clocked(3, &[clock], &cancel).media_sent, 1);
+}
+
+#[test]
+fn n07_all_peer_n01_repair_refused_and_overlap_capacity_exact_boundary() {
+    let mut sender = sender_over(ScriptPort::new());
+    sender
+        .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+        .unwrap();
+    sender
+        .add_peer(8, addr("127.0.0.1:42003"), addr("127.0.0.1:42004"), 1500)
+        .unwrap();
+    assert_eq!(
+        sender.submit_media(1, &long_block(0, 0), 0).unwrap().queued,
+        2
+    );
+    let snapshot = sender
+        .snapshot_n01_group(PRIMARY_GROUP, 1, &[7, 8])
+        .unwrap();
+    let cancel = AtomicBool::new(false);
+    let good = long_block(1, 0);
+    let good_copy = good.clone();
+    let before = sender.group_view(PRIMARY_GROUP).unwrap();
+    let first = sender.peer_view(7).unwrap();
+    let second = sender.peer_view(8).unwrap();
+    let mut repair = good.clone();
+    repair.kind = crate::PacketKind::Repair;
+    repair.fec_group_size = 1;
+    assert!(matches!(
+        sender.try_submit_group_media_all(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7, 8],
+            &repair,
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel
+            }
+        ),
+        Err(AllPeerAdmissionError::Invalid(_))
+    ));
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), before);
+    assert_eq!(sender.peer_view(7).unwrap(), first);
+    assert_eq!(sender.peer_view(8).unwrap(), second);
+    // Observe trusted time on the actual public rejection path before the same-allocation test.
+    assert_eq!(
+        sender.try_submit_group_media_all(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7, 8],
+            &good,
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: 0,
+                cancelled: &cancel
+            }
+        ),
+        Err(AllPeerAdmissionError::Retry(AllPeerRetry::Budget))
+    );
+    let mut staged = Some(
+        sender
+            .prepare_n01_queues(PRIMARY_GROUP, &[7, 8], &good, 0, usize::MAX)
+            .unwrap(),
+    );
+    let exact = staged.as_ref().unwrap().accounted_bytes;
+    assert!(exact > good.payload.len() * 2);
+    assert_eq!(
+        sender.commit_n01_queues(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            0,
+            exact - 1,
+            &cancel,
+            &mut staged
+        ),
+        Err(AllPeerAdmissionError::Retry(AllPeerRetry::Budget))
+    );
+    assert!(staged.is_some());
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), before);
+    assert_eq!(sender.peer_view(7).unwrap(), first);
+    assert_eq!(sender.peer_view(8).unwrap(), second);
+    assert_eq!(good, good_copy);
+    assert_eq!(
+        sender.commit_n01_queues_inner(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            0,
+            exact,
+            &cancel,
+            &mut staged,
+            || cancel.store(true, Ordering::Release)
+        ),
+        Err(AllPeerAdmissionError::Cancelled)
+    );
+    assert!(staged.is_some());
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), before);
+    assert_eq!(sender.peer_view(7).unwrap(), first);
+    assert_eq!(sender.peer_view(8).unwrap(), second);
+    cancel.store(false, Ordering::Release);
+    cancel.store(true, Ordering::Release);
+    assert_eq!(
+        sender.commit_n01_queues(PRIMARY_GROUP, 1, &snapshot, 0, exact, &cancel, &mut staged),
+        Err(AllPeerAdmissionError::Cancelled)
+    );
+    cancel.store(false, Ordering::Release);
+    sender.set_link_up(false);
+    assert_eq!(
+        sender.commit_n01_queues(PRIMARY_GROUP, 1, &snapshot, 0, exact, &cancel, &mut staged),
+        Err(AllPeerAdmissionError::Retry(AllPeerRetry::LinkDown))
+    );
+    sender.set_link_up(true);
+    assert!(staged.is_some());
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), before);
+    let admitted = sender
+        .commit_n01_queues(PRIMARY_GROUP, 1, &snapshot, 0, exact, &cancel, &mut staged)
+        .unwrap();
+    assert_eq!(admitted.accounted_overlap_bytes, exact);
+    assert!(staged.is_none());
+    assert_eq!(clocked_n01_pump(&mut sender, 1, 1).media_sent, 4);
+    for destination in [addr("127.0.0.1:42001"), addr("127.0.0.1:42003")] {
+        let mut receiver = StreamReceiver::new(key(), stream(), 1);
+        let packets: Vec<_> = sender
+            .port
+            .sent
+            .iter()
+            .filter(|(_, _, to)| *to == destination)
+            .map(|(_, wire, _)| receiver.accept(wire).unwrap())
+            .collect();
+        assert_eq!(packets.len(), 2);
+        assert_eq!(packets[1].payload, good.payload);
+    }
+}
+
+#[test]
+fn n07_all_peer_n01_deadline_uses_separate_group_and_interface_clocks() {
+    let mut sender = sender_over(ScriptPort::new());
+    sender
+        .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+        .unwrap();
+    let cancel = AtomicBool::new(false);
+    let mut frame = long_block(0, 0);
+    frame.consume_by_ns =
+        crate::playout::consume_by(frame.presentation_time_ns, 1_000_000, 1_000_000, 500_000);
+    let interface_now = frame.consume_by_ns + 1_000_000_000;
+    assert!(
+        attempt_n01(
+            &mut sender,
+            PRIMARY_GROUP,
+            1,
+            &[7],
+            &frame,
+            interface_now,
+            frame.consume_by_ns - 1,
+            usize::MAX,
+            &cancel
+        )
+        .is_ok()
+    );
+    let before = sender.group_view(PRIMARY_GROUP).unwrap();
+    assert!(matches!(
+        attempt_n01(
+            &mut sender,
+            PRIMARY_GROUP,
+            1,
+            &[7],
+            &frame,
+            interface_now,
+            frame.consume_by_ns,
+            usize::MAX,
+            &cancel
+        ),
+        Err(AllPeerAdmissionError::Invalid(_))
+    ));
+    assert!(matches!(
+        attempt_n01(
+            &mut sender,
+            PRIMARY_GROUP,
+            1,
+            &[7],
+            &frame,
+            interface_now,
+            frame.consume_by_ns + 1,
+            usize::MAX,
+            &cancel
+        ),
+        Err(AllPeerAdmissionError::Invalid(_))
+    ));
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), before);
+    let queued = sender.peers[sender.index_of(7).unwrap()]
+        .media_q
+        .front()
+        .unwrap();
+    assert_eq!(queued.enqueued_ns, interface_now);
+    assert_eq!(queued.frame.consume_by_ns, frame.consume_by_ns);
+}
+
+#[test]
+fn n07_all_peer_snapshot_fences_foreign_sender_and_same_id_aba() {
+    fn fixture() -> CarrierSender<ScriptPort> {
+        let mut sender = sender_over(ScriptPort::new());
+        sender
+            .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+            .unwrap();
+        sender
+            .add_peer(8, addr("127.0.0.1:42003"), addr("127.0.0.1:42004"), 1500)
+            .unwrap();
+        sender
+    }
+    let mut sender = fixture();
+    let mut foreign = fixture();
+    let snapshot = sender
+        .snapshot_n01_group(PRIMARY_GROUP, 1, &[7, 8])
+        .unwrap();
+    let frame = long_block(0, 0);
+    let cancel = AtomicBool::new(false);
+    let other_before = foreign.group_view(PRIMARY_GROUP).unwrap();
+    assert!(sender.owns_n01_snapshot(&snapshot));
+    assert!(!foreign.owns_n01_snapshot(&snapshot));
+    assert_eq!(
+        foreign.fence_n01_group(PRIMARY_GROUP, 1, &snapshot),
+        Err(AllPeerAdmissionError::MembershipChanged)
+    );
+    assert_eq!(foreign.group_view(PRIMARY_GROUP).unwrap(), other_before);
+    assert_eq!(
+        foreign.try_submit_group_media_all(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7, 8],
+            &frame,
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel
+            }
+        ),
+        Err(AllPeerAdmissionError::MembershipChanged)
+    );
+    assert_eq!(foreign.group_view(PRIMARY_GROUP).unwrap(), other_before);
+    assert_eq!(
+        sender.try_submit_group_media_all(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7, 8],
+            &frame,
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: 0,
+                cancelled: &cancel
+            }
+        ),
+        Err(AllPeerAdmissionError::Retry(AllPeerRetry::Budget))
+    );
+    assert!(
+        sender
+            .try_submit_group_media_all(
+                PRIMARY_GROUP,
+                1,
+                &snapshot,
+                &[7, 8],
+                &frame,
+                N01AdmissionInputs {
+                    interface_now_ns: 0,
+                    trusted_group_now_ns: 0,
+                    overlap_budget_bytes: usize::MAX,
+                    cancelled: &cancel
+                }
+            )
+            .is_ok()
+    );
+    let before_aba = sender
+        .snapshot_n01_group(PRIMARY_GROUP, 1, &[7, 8])
+        .unwrap();
+    sender.remove_peer(8).unwrap();
+    sender
+        .add_peer(8, addr("127.0.0.1:42003"), addr("127.0.0.1:42004"), 1500)
+        .unwrap();
+    let before = sender.group_view(PRIMARY_GROUP).unwrap();
+    assert_eq!(
+        sender.try_submit_group_media_all(
+            PRIMARY_GROUP,
+            1,
+            &before_aba,
+            &[7, 8],
+            &frame,
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel
+            }
+        ),
+        Err(AllPeerAdmissionError::MembershipChanged)
+    );
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), before);
+    assert_eq!(clocked_n01_pump(&mut sender, 1, 1).media_sent, 0);
+    assert!(matches!(
+        sender.snapshot_n01_group(PRIMARY_GROUP, 1, &[7, 8]),
+        Err(AllPeerAdmissionError::MembershipChanged)
+    ));
+    sender.advance_epoch(2).unwrap();
+    assert!(sender.owns_n01_snapshot(&before_aba));
+    assert!(!foreign.owns_n01_snapshot(&before_aba));
+    let route = sender
+        .snapshot_n01_group(PRIMARY_GROUP, 2, &[7, 8])
+        .unwrap();
+    sender
+        .peer_address_changed(8, addr("127.0.0.1:42103"), addr("127.0.0.1:42104"))
+        .unwrap();
+    sender
+        .peer_address_changed(8, addr("127.0.0.1:42003"), addr("127.0.0.1:42004"))
+        .unwrap();
+    assert_eq!(
+        sender.try_submit_group_media_all(
+            PRIMARY_GROUP,
+            2,
+            &route,
+            &[7, 8],
+            &frame,
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel
+            }
+        ),
+        Err(AllPeerAdmissionError::MembershipChanged)
+    );
+    let fresh = sender
+        .snapshot_n01_group(PRIMARY_GROUP, 2, &[7, 8])
+        .unwrap();
+    assert!(
+        sender
+            .try_submit_group_media_all(
+                PRIMARY_GROUP,
+                2,
+                &fresh,
+                &[7, 8],
+                &frame,
+                N01AdmissionInputs {
+                    interface_now_ns: 0,
+                    trusted_group_now_ns: 0,
+                    overlap_budget_bytes: usize::MAX,
+                    cancelled: &cancel
+                }
+            )
+            .is_ok()
+    );
+    sender.n01_binding_generation = u64::MAX;
+    assert!(matches!(
+        sender.snapshot_n01_group(PRIMARY_GROUP, 2, &[7, 8]),
+        Err(AllPeerAdmissionError::MembershipChanged)
+    ));
+    assert_eq!(
+        sender.try_submit_group_media_all(
+            PRIMARY_GROUP,
+            2,
+            &fresh,
+            &[7, 8],
+            &frame,
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel
+            }
+        ),
+        Err(AllPeerAdmissionError::MembershipChanged)
+    );
+}
+
+#[test]
+fn n07_clocked_n01_pump_uses_group_deadline_and_delivers_real_pcm() {
+    use crate::playout::{
+        Admission, ClockView, MediaPacket, Outcome, PlayoutConfig, PlayoutEngine, PlayoutProfile,
+        Poll,
+    };
+    for (interface_now, group_now) in [
+        (5_000_000_000, 1_000_000_000),
+        (1_000_000_000, 3_000_000_000),
+    ] {
+        let mut sender = sender_over(ScriptPort::new());
+        sender
+            .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+            .unwrap();
+        let snapshot = sender.snapshot_n01_group(PRIMARY_GROUP, 1, &[7]).unwrap();
+        let mut frame = long_block(0, 0);
+        frame.consume_by_ns =
+            crate::playout::consume_by(frame.presentation_time_ns, 1_000_000, 1_000_000, 500_000);
+        let cancel = AtomicBool::new(false);
+        sender
+            .try_submit_group_media_all(
+                PRIMARY_GROUP,
+                1,
+                &snapshot,
+                &[7],
+                &frame,
+                N01AdmissionInputs {
+                    interface_now_ns: interface_now,
+                    trusted_group_now_ns: group_now,
+                    overlap_budget_bytes: usize::MAX,
+                    cancelled: &cancel,
+                },
+            )
+            .unwrap();
+        // Legacy pumping cannot consume or expire a group-clock-required frame.
+        assert_eq!(sender.pump(interface_now).media_sent, 0);
+        assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap().queued_packets, 1);
+        assert_eq!(
+            clocked_n01_pump(&mut sender, interface_now + 1, group_now).media_sent,
+            1
+        );
+        let wire = &sender.port.sent[0].1;
+        let packet = StreamReceiver::new(key(), stream(), 1)
+            .accept(wire)
+            .unwrap();
+        let mut playout = PlayoutEngine::new(
+            PlayoutProfile::MUSIC,
+            PlayoutConfig {
+                work_ns: 1_000_000,
+                lead_ns: 1_000_000,
+                tolerance_ns: 0,
+            },
+        )
+        .unwrap();
+        playout
+            .begin_stream(1, 0, frame.presentation_time_ns)
+            .unwrap();
+        let view = ClockView {
+            group_ns: group_now,
+            uncertainty_ns: 500_000,
+            usable: true,
+        };
+        assert_eq!(
+            playout.on_packet(view, &MediaPacket::from_authenticated(&packet).unwrap()),
+            Admission::Admitted
+        );
+        let mut pcm = [0_u8; crate::playout::BLOCK_PAYLOAD_BYTES];
+        let cutoff = ClockView {
+            group_ns: frame.consume_by_ns,
+            ..view
+        };
+        let Poll::Decision(decision) = playout.decide(cutoff, &mut pcm) else {
+            panic!("missing real playout decision");
+        };
+        assert_eq!(decision.outcome, Outcome::Real);
+        assert_eq!(&pcm[..], &frame.payload[..]);
+    }
+}
+
+#[test]
+fn n07_clocked_n01_rejects_missing_wrong_duplicate_and_late_views() {
+    let mut sender = sender_over(ScriptPort::new());
+    sender
+        .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+        .unwrap();
+    let snapshot = sender.snapshot_n01_group(PRIMARY_GROUP, 1, &[7]).unwrap();
+    let frame = long_block(0, 0);
+    let cancel = AtomicBool::new(false);
+    sender
+        .try_submit_group_media_all(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7],
+            &frame,
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    let good = N01GroupClock {
+        group: PRIMARY_GROUP,
+        epoch: 1,
+        view: crate::playout::ClockView {
+            group_ns: frame.consume_by_ns - 1,
+            uncertainty_ns: 0,
+            usable: true,
+        },
+    };
+    let wrong = N01GroupClock { epoch: 2, ..good };
+    let unusable = N01GroupClock {
+        view: crate::playout::ClockView {
+            usable: false,
+            ..good.view
+        },
+        ..good
+    };
+    for clocks in [&[][..], &[wrong][..], &[unusable][..], &[good, good][..]] {
+        assert_eq!(
+            sender
+                .pump_n01_clocked(3_000_000_000, clocks, &cancel)
+                .media_sent,
+            0
+        );
+        assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap().queued_packets, 1);
+    }
+    cancel.store(true, Ordering::Release);
+    assert_eq!(
+        sender
+            .pump_n01_clocked(3_000_000_000, &[good], &cancel)
+            .media_sent,
+        0
+    );
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap().queued_packets, 1);
+    cancel.store(false, Ordering::Release);
+    let equal = N01GroupClock {
+        view: crate::playout::ClockView {
+            group_ns: frame.consume_by_ns,
+            ..good.view
+        },
+        ..good
+    };
+    let out = sender.pump_n01_clocked(3_000_000_001, &[equal], &cancel);
+    assert_eq!((out.media_sent, out.late_dropped), (0, 1));
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap().queued_packets, 0);
+    assert!(sender.port.sent.is_empty());
+}
+
+#[test]
+fn n07_clocked_n01_held_retry_respects_group_cutoff() {
+    for expire in [false, true] {
+        let mut sender = sender_over(ScriptPort::new());
+        sender
+            .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+            .unwrap();
+        let snapshot = sender.snapshot_n01_group(PRIMARY_GROUP, 1, &[7]).unwrap();
+        let frame = long_block(0, 0);
+        let cancel = AtomicBool::new(false);
+        sender
+            .try_submit_group_media_all(
+                PRIMARY_GROUP,
+                1,
+                &snapshot,
+                &[7],
+                &frame,
+                N01AdmissionInputs {
+                    interface_now_ns: 0,
+                    trusted_group_now_ns: 0,
+                    overlap_budget_bytes: usize::MAX,
+                    cancelled: &cancel,
+                },
+            )
+            .unwrap();
+        sender.port.send_fault = Some(PortFault::WouldBlock);
+        assert_eq!(
+            clocked_n01_pump(&mut sender, 1, frame.consume_by_ns - 2).media_sent,
+            0
+        );
+        assert!(sender.peers[sender.index_of(7).unwrap()].held.is_some());
+        sender.port.send_fault = None;
+        let group_now = if expire {
+            frame.consume_by_ns
+        } else {
+            frame.consume_by_ns - 1
+        };
+        let result = clocked_n01_pump(&mut sender, 2, group_now);
+        if expire {
+            assert_eq!((result.media_sent, result.late_dropped), (0, 1));
+            assert!(sender.port.sent.is_empty());
+        } else {
+            assert_eq!(result.media_sent, 1);
+            let packet = StreamReceiver::new(key(), stream(), 1)
+                .accept(&sender.port.sent[0].1)
+                .unwrap();
+            assert_eq!(packet.payload, frame.payload);
+        }
+    }
+}
+
+#[test]
+fn n07_clocked_n01_backward_view_fences_until_fresh_epoch() {
+    let mut sender = sender_over(ScriptPort::new());
+    sender
+        .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+        .unwrap();
+    let snapshot = sender.snapshot_n01_group(PRIMARY_GROUP, 1, &[7]).unwrap();
+    let frame = long_block(0, 0);
+    let cancel = AtomicBool::new(false);
+    sender
+        .try_submit_group_media_all(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7],
+            &frame,
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    sender.port.send_fault = Some(PortFault::WouldBlock);
+    assert_eq!(clocked_n01_pump(&mut sender, 1, 1000).media_sent, 0);
+    sender.port.send_fault = None;
+    assert_eq!(clocked_n01_pump(&mut sender, 2, 999).media_sent, 0);
+    assert_eq!(clocked_n01_pump(&mut sender, 3, 1001).media_sent, 0);
+    assert!(sender.port.sent.is_empty());
+    assert!(matches!(
+        sender.snapshot_n01_group(PRIMARY_GROUP, 1, &[7]),
+        Err(AllPeerAdmissionError::MembershipChanged)
+    ));
+    sender.advance_epoch(2).unwrap();
+    let fresh = sender.snapshot_n01_group(PRIMARY_GROUP, 2, &[7]).unwrap();
+    sender
+        .try_submit_group_media_all(
+            PRIMARY_GROUP,
+            2,
+            &fresh,
+            &[7],
+            &frame,
+            N01AdmissionInputs {
+                interface_now_ns: 4,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    let clock = N01GroupClock {
+        group: PRIMARY_GROUP,
+        epoch: 2,
+        view: crate::playout::ClockView {
+            group_ns: 1,
+            uncertainty_ns: 0,
+            usable: true,
+        },
+    };
+    assert_eq!(sender.pump_n01_clocked(5, &[clock], &cancel).media_sent, 1);
+    assert_eq!(
+        StreamReceiver::new(key(), stream(), 2)
+            .accept(&sender.port.sent[0].1)
+            .unwrap()
+            .payload,
+        frame.payload
+    );
+}
+
+#[test]
+fn n07_all_peer_admission_observes_retry_time_and_latches_rollback() {
+    for first_budget in [usize::MAX, 0] {
+        let mut sender = sender_over(ScriptPort::new());
+        sender
+            .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+            .unwrap();
+        let snapshot = sender.snapshot_n01_group(PRIMARY_GROUP, 1, &[7]).unwrap();
+        let cancel = AtomicBool::new(false);
+        let mut frame = long_block(0, 0);
+        frame.consume_by_ns = 250;
+        let first = sender.try_submit_group_media_all(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7],
+            &frame,
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 200,
+                overlap_budget_bytes: first_budget,
+                cancelled: &cancel,
+            },
+        );
+        if first_budget == 0 {
+            assert_eq!(
+                first,
+                Err(AllPeerAdmissionError::Retry(AllPeerRetry::Budget))
+            );
+        } else {
+            assert!(first.is_ok());
+        }
+        let before = sender.group_view(PRIMARY_GROUP).unwrap();
+        let counters = sender.peer_view(7).unwrap();
+        frame.consume_by_ns = 150;
+        let backwards = if first_budget == 0 { 150 } else { 100 };
+        assert!(matches!(
+            sender.try_submit_group_media_all(
+                PRIMARY_GROUP,
+                1,
+                &snapshot,
+                &[7],
+                &frame,
+                N01AdmissionInputs {
+                    interface_now_ns: 0,
+                    trusted_group_now_ns: backwards,
+                    overlap_budget_bytes: usize::MAX,
+                    cancelled: &cancel
+                }
+            ),
+            Err(AllPeerAdmissionError::Invalid(_))
+        ));
+        assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), before);
+        assert_eq!(sender.peer_view(7).unwrap(), counters);
+        frame.consume_by_ns = 300;
+        assert_eq!(
+            sender.try_submit_group_media_all(
+                PRIMARY_GROUP,
+                1,
+                &snapshot,
+                &[7],
+                &frame,
+                N01AdmissionInputs {
+                    interface_now_ns: 0,
+                    trusted_group_now_ns: 201,
+                    overlap_budget_bytes: usize::MAX,
+                    cancelled: &cancel
+                }
+            ),
+            Err(AllPeerAdmissionError::MembershipChanged)
+        );
+        assert_eq!(clocked_n01_pump(&mut sender, 1, 201).media_sent, 0);
+        sender.advance_epoch(2).unwrap();
+        let fresh = sender.snapshot_n01_group(PRIMARY_GROUP, 2, &[7]).unwrap();
+        assert!(
+            sender
+                .try_submit_group_media_all(
+                    PRIMARY_GROUP,
+                    2,
+                    &fresh,
+                    &[7],
+                    &frame,
+                    N01AdmissionInputs {
+                        interface_now_ns: 0,
+                        trusted_group_now_ns: 201,
+                        overlap_budget_bytes: usize::MAX,
+                        cancelled: &cancel
+                    }
+                )
+                .is_ok()
+        );
+    }
+}
+
+#[test]
+fn n07_clocked_n01_after_cutoff_never_sends_queued_media() {
+    let mut sender = sender_over(ScriptPort::new());
+    sender
+        .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+        .unwrap();
+    let snapshot = sender.snapshot_n01_group(PRIMARY_GROUP, 1, &[7]).unwrap();
+    let frame = long_block(0, 0);
+    let cancel = AtomicBool::new(false);
+    sender
+        .try_submit_group_media_all(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7],
+            &frame,
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    let result = clocked_n01_pump(&mut sender, 1, frame.consume_by_ns + 1);
+    assert_eq!((result.media_sent, result.late_dropped), (0, 1));
+    assert!(sender.port.sent.is_empty());
+}
+
+#[test]
+fn n07_clocked_n01_last_sequence_recovery_is_not_stale_playback() {
+    use crate::playout::{
+        Admission, ClockView, MediaPacket, PlayoutConfig, PlayoutEngine, PlayoutProfile,
+    };
+    let mut sender = sender_over(ScriptPort::new());
+    sender
+        .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+        .unwrap();
+    let snapshot = sender.snapshot_n01_group(PRIMARY_GROUP, 1, &[7]).unwrap();
+    let mut frame = long_block(0, 0);
+    frame.consume_by_ns =
+        crate::playout::consume_by(frame.presentation_time_ns, 1_000_000, 1_000_000, 500_000);
+    let cancel = AtomicBool::new(false);
+    let index = sender.index_of(7).unwrap();
+    sender.peers[index].sender.next_seq = SEQ_AHEAD_LIMIT - 1;
+    sender
+        .try_submit_group_media_all(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7],
+            &frame,
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    sender.port.send_fault = Some(PortFault::WouldBlock);
+    assert_eq!(
+        clocked_n01_pump(&mut sender, 1, frame.consume_by_ns - 1).media_sent,
+        0
+    );
+    assert!(sender.peers[index].held.is_some());
+    sender.port.send_fault = None;
+    assert_eq!(
+        clocked_n01_pump(&mut sender, 2, frame.consume_by_ns).media_sent,
+        1
+    );
+    let packet = StreamReceiver::new(key(), stream(), 1)
+        .accept(&sender.port.sent[0].1)
+        .unwrap();
+    let mut playout = PlayoutEngine::new(
+        PlayoutProfile::MUSIC,
+        PlayoutConfig {
+            work_ns: 1_000_000,
+            lead_ns: 1_000_000,
+            tolerance_ns: 0,
+        },
+    )
+    .unwrap();
+    playout
+        .begin_stream(1, 0, frame.presentation_time_ns)
+        .unwrap();
+    let view = ClockView {
+        group_ns: frame.consume_by_ns,
+        uncertainty_ns: 500_000,
+        usable: true,
+    };
+    assert_eq!(
+        playout.on_packet(view, &MediaPacket::from_authenticated(&packet).unwrap()),
+        Admission::Late
+    );
+}
+
+#[test]
+fn n07_clocked_n01_missing_view_allows_only_existing_stall_probe() {
+    let limits = CarrierLimits {
+        window_packets: 1,
+        pace_burst_bytes: 65_536,
+        ..CarrierLimits::baseline()
+    };
+    let mut sender =
+        CarrierSender::with_port(key(), stream(), 1, limits, ScriptPort::new()).unwrap();
+    sender
+        .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+        .unwrap();
+    let snapshot = sender.snapshot_n01_group(PRIMARY_GROUP, 1, &[7]).unwrap();
+    let cancel = AtomicBool::new(false);
+    let first = long_block(0, 0);
+    sender
+        .try_submit_group_media_all(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7],
+            &first,
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    assert_eq!(clocked_n01_pump(&mut sender, 1, 1).media_sent, 1);
+    let second = long_block(1, 0);
+    sender
+        .try_submit_group_media_all(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7],
+            &second,
+            N01AdmissionInputs {
+                interface_now_ns: 2,
+                trusted_group_now_ns: 2,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    let first_wire = sender.port.sent[0].1.clone();
+    assert_eq!(
+        sender
+            .pump_n01_clocked(STALL_PROBE_NS + 1, &[], &cancel)
+            .media_sent,
+        0
+    );
+    assert_eq!(sender.port.sent.len(), 2);
+    assert_eq!(sender.port.sent[1].1, first_wire);
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap().queued_packets, 1);
+    sender.fence_n01_group(PRIMARY_GROUP, 1, &snapshot).unwrap();
+    sender.pump_n01_clocked(2 * STALL_PROBE_NS + 1, &[], &cancel);
+    assert_eq!(
+        sender.port.sent.len(),
+        2,
+        "fenced group cannot emit even a protected probe"
+    );
+}
+
+#[test]
+fn n07_n01_unrelated_group_change_retains_lifetime_fence_authority() {
+    let (mut sender, second) = two_group_sender(CarrierLimits::baseline());
+    let snapshot = sender.snapshot_n01_group(PRIMARY_GROUP, 1, &[7]).unwrap();
+    let cancel = AtomicBool::new(false);
+    let frame = long_block(0, 0);
+    sender
+        .try_submit_group_media_all(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7],
+            &frame,
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    sender
+        .peer_address_changed(8, addr("127.0.0.1:42005"), addr("127.0.0.1:42006"))
+        .unwrap();
+    assert!(
+        sender
+            .has_n01_eligible_peer(PRIMARY_GROUP, 1, &snapshot, &[7], 0)
+            .is_err()
+    );
+    sender.fence_n01_group(PRIMARY_GROUP, 1, &snapshot).unwrap();
+    assert_eq!(clocked_n01_pump(&mut sender, 1, 1).media_sent, 0);
+    assert!(sender.port.sent.is_empty());
+    sender
+        .submit_group_media(second, SECOND_EPOCH, &frame, 1)
+        .unwrap();
+    assert_eq!(
+        sender.pump(2).media_sent,
+        1,
+        "other group legacy remains live"
+    );
+    let foreign = sender_over(ScriptPort::new());
+    assert!(!foreign.owns_n01_snapshot(&snapshot));
+    sender.advance_epoch(2).unwrap();
+    assert_eq!(
+        sender.fence_n01_group(PRIMARY_GROUP, 1, &snapshot),
+        Err(AllPeerAdmissionError::MembershipChanged)
+    );
+    let fresh = sender.snapshot_n01_group(PRIMARY_GROUP, 2, &[7]).unwrap();
+    sender
+        .try_submit_group_media_all(
+            PRIMARY_GROUP,
+            2,
+            &fresh,
+            &[7],
+            &frame,
+            N01AdmissionInputs {
+                interface_now_ns: 3,
+                trusted_group_now_ns: 3,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    let clock = N01GroupClock {
+        group: PRIMARY_GROUP,
+        epoch: 2,
+        view: crate::playout::ClockView {
+            group_ns: 4,
+            uncertainty_ns: 500_000,
+            usable: true,
+        },
+    };
+    assert_eq!(sender.pump_n01_clocked(4, &[clock], &cancel).media_sent, 1);
+}
+
+#[test]
+fn n07_n01_predecode_eligibility_tracks_live_capacity_and_snapshot() {
+    let mut sender = sender_over(ScriptPort::new());
+    sender
+        .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+        .unwrap();
+    sender
+        .add_peer(8, addr("127.0.0.1:42003"), addr("127.0.0.1:42004"), 1500)
+        .unwrap();
+    let snapshot = sender
+        .snapshot_n01_group(PRIMARY_GROUP, 1, &[7, 8])
+        .unwrap();
+    assert_eq!(
+        sender.has_n01_eligible_peer(PRIMARY_GROUP, 1, &snapshot, &[7, 8], 0),
+        Ok(true)
+    );
+    sender.set_path_mtu(7, 1000).unwrap();
+    sender.set_path_mtu(8, 1000).unwrap();
+    assert_eq!(
+        sender.has_n01_eligible_peer(PRIMARY_GROUP, 1, &snapshot, &[7, 8], 0),
+        Ok(false)
+    );
+    sender.set_path_mtu(8, 1500).unwrap();
+    assert_eq!(
+        sender.has_n01_eligible_peer(PRIMARY_GROUP, 1, &snapshot, &[7, 8], 0),
+        Ok(true)
+    );
+    sender.set_link_up(false);
+    assert_eq!(
+        sender.has_n01_eligible_peer(PRIMARY_GROUP, 1, &snapshot, &[7, 8], 0),
+        Ok(false)
+    );
+    sender.set_link_up(true);
+    assert!(
+        sender
+            .has_n01_eligible_peer(PRIMARY_GROUP, 1, &snapshot, &[7], 0)
+            .is_err()
+    );
+    sender
+        .peer_address_changed(8, addr("127.0.0.1:42005"), addr("127.0.0.1:42006"))
+        .unwrap();
+    assert!(
+        sender
+            .has_n01_eligible_peer(PRIMARY_GROUP, 1, &snapshot, &[7, 8], 0)
+            .is_err()
+    );
+    let fresh = sender
+        .snapshot_n01_group(PRIMARY_GROUP, 1, &[7, 8])
+        .unwrap();
+    assert_eq!(
+        sender.has_n01_eligible_peer(PRIMARY_GROUP, 1, &fresh, &[7, 8], 0),
+        Ok(true)
+    );
+}
+
+#[test]
+fn n07_n01_predecode_checks_actual_full_block_not_configured_floor() {
+    let limits = CarrierLimits {
+        required_payload_bytes: 4,
+        aggregate_queue_bytes: MAX_DATAGRAM_BYTES,
+        ..CarrierLimits::baseline()
+    };
+    let mut sender =
+        CarrierSender::with_port(key(), stream(), 1, limits, ScriptPort::new()).unwrap();
+    sender
+        .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1000)
+        .unwrap();
+    let snapshot = sender.snapshot_n01_group(PRIMARY_GROUP, 1, &[7]).unwrap();
+    assert_eq!(
+        sender.has_n01_eligible_peer(PRIMARY_GROUP, 1, &snapshot, &[7], 0),
+        Ok(false)
+    );
+    sender.set_path_mtu(7, 1500).unwrap();
+    assert_eq!(
+        sender.has_n01_eligible_peer(PRIMARY_GROUP, 1, &snapshot, &[7], 0),
+        Ok(true)
+    );
+    let mut small = long_block(0, 0);
+    small.payload.truncate(4);
+    assert_eq!(sender.submit_media(1, &small, 0).unwrap().queued, 1);
+    assert_eq!(
+        sender.has_n01_eligible_peer(PRIMARY_GROUP, 1, &snapshot, &[7], 0),
+        Ok(false)
+    );
+    assert_eq!(sender.pump(1).media_sent, 1);
+    assert_eq!(
+        sender.has_n01_eligible_peer(PRIMARY_GROUP, 1, &snapshot, &[7], 0),
+        Ok(true)
+    );
+}
+
+#[test]
+fn n07_n01_exclusive_source_blocks_competitors_and_pump_bypass() {
+    let limits = CarrierLimits {
+        window_packets: 1,
+        ..CarrierLimits::baseline()
+    };
+    let mut sender =
+        CarrierSender::with_port(key(), stream(), 1, limits, ScriptPort::new()).unwrap();
+    sender
+        .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+        .unwrap();
+    let unclaimed = sender.snapshot_n01_group(PRIMARY_GROUP, 1, &[7]).unwrap();
+    let selection = sender.claim_n01_source(PRIMARY_GROUP, 1, &[7]).unwrap();
+    assert!(matches!(
+        sender.claim_n01_source(PRIMARY_GROUP, 1, &[7]),
+        Err(AllPeerAdmissionError::MembershipChanged)
+    ));
+    assert!(matches!(
+        sender.snapshot_n01_group(PRIMARY_GROUP, 1, &[7]),
+        Err(AllPeerAdmissionError::MembershipChanged)
+    ));
+    let cancel = AtomicBool::new(false);
+    let frame = long_block(0, 0);
+    assert_eq!(
+        sender.try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &unclaimed,
+            &[7],
+            &frame,
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel
+            }
+        ),
+        Err(AllPeerAdmissionError::MembershipChanged)
+    );
+    sender
+        .try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &selection,
+            &[7],
+            &frame,
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    sender
+        .try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &selection,
+            &[7],
+            &long_block(1, 0),
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    assert_eq!(clocked_n01_pump(&mut sender, 1, 1).media_sent, 0);
+    assert_eq!(sender.pump(2).media_sent, 0);
+    let clock = N01GroupClock {
+        group: PRIMARY_GROUP,
+        epoch: 1,
+        view: crate::playout::ClockView {
+            group_ns: 3,
+            uncertainty_ns: 0,
+            usable: true,
+        },
+    };
+    assert_eq!(
+        sender
+            .pump_n01_selected(3, clock, &selection, &cancel)
+            .unwrap()
+            .media_sent,
+        1
+    );
+    let original_wire = sender.port.sent[0].1.clone();
+    sender.pump(STALL_PROBE_NS + 4);
+    assert_eq!(
+        sender.port.sent.len(),
+        1,
+        "ordinary pump cannot send selected probe"
+    );
+    let probe_clock = N01GroupClock {
+        view: crate::playout::ClockView {
+            group_ns: STALL_PROBE_NS + 4,
+            uncertainty_ns: 0,
+            usable: true,
+        },
+        ..clock
+    };
+    sender
+        .pump_n01_selected(STALL_PROBE_NS + 4, probe_clock, &selection, &cancel)
+        .unwrap();
+    assert_eq!(sender.port.sent.len(), 2);
+    assert_eq!(sender.port.sent[1].1, original_wire);
+    let mut receiver = StreamReceiver::new(key(), stream(), 1);
+    receiver.accept(&original_wire).unwrap();
+    assert!(
+        receiver.accept(&sender.port.sent[1].1).is_err(),
+        "probe is recovery traffic, not a second playable frame"
+    );
+    let mut foreign = sender_over(ScriptPort::new());
+    foreign
+        .add_peer(7, addr("127.0.0.1:42011"), addr("127.0.0.1:42012"), 1500)
+        .unwrap();
+    let foreign_claim = foreign.claim_n01_source(PRIMARY_GROUP, 1, &[7]).unwrap();
+    assert!(matches!(
+        sender.pump_n01_selected(STALL_PROBE_NS + 5, probe_clock, &foreign_claim, &cancel),
+        Err(AllPeerAdmissionError::MembershipChanged)
+    ));
+    sender.advance_epoch(2).unwrap();
+    assert!(matches!(
+        sender.pump_n01_selected(STALL_PROBE_NS + 6, probe_clock, &selection, &cancel),
+        Err(AllPeerAdmissionError::MembershipChanged)
+    ));
+    assert!(sender.claim_n01_source(PRIMARY_GROUP, 2, &[7]).is_ok());
+}
+
+#[test]
+fn n07_n01_claim_blocks_legacy_queue_held_and_cached_probe_bypass() {
+    for old_state in 0..3 {
+        let (mut sender, other) = two_group_sender(CarrierLimits::baseline());
+        let frame = long_block(0, 0);
+        sender.submit_media(1, &frame, 0).unwrap();
+        if old_state == 1 {
+            sender.port.send_fault = Some(PortFault::WouldBlock);
+            sender.pump(1);
+            sender.port.send_fault = None;
+            assert!(sender.peers[sender.index_of(7).unwrap()].held.is_some());
+        } else if old_state == 2 {
+            assert_eq!(sender.pump(1).media_sent, 1);
+            assert!(
+                sender.peers[sender.index_of(7).unwrap()]
+                    .last_sent
+                    .is_some()
+            );
+        }
+        assert!(matches!(
+            sender.claim_n01_source(PRIMARY_GROUP, 1, &[7]),
+            Err(AllPeerAdmissionError::MembershipChanged)
+        ));
+        sender.advance_epoch(2).unwrap();
+        let claim = sender.claim_n01_source(PRIMARY_GROUP, 2, &[7]).unwrap();
+        assert!(matches!(
+            sender.submit_media(2, &frame, 2),
+            Err(CarrierError::InvalidLimits(_))
+        ));
+        assert!(matches!(
+            sender.submit_group_media(PRIMARY_GROUP, 2, &frame, 2),
+            Err(CarrierError::InvalidLimits(_))
+        ));
+        sender
+            .submit_group_media(other, SECOND_EPOCH, &frame, 2)
+            .unwrap();
+        let before = sender.port.sent.len();
+        assert_eq!(sender.pump(3).media_sent, 1);
+        assert_eq!(sender.port.sent[before].2, addr("127.0.0.1:42003"));
+        let cancel = AtomicBool::new(false);
+        sender
+            .try_submit_group_media_all(
+                PRIMARY_GROUP,
+                2,
+                &claim,
+                &[7],
+                &frame,
+                N01AdmissionInputs {
+                    interface_now_ns: 4,
+                    trusted_group_now_ns: 4,
+                    overlap_budget_bytes: usize::MAX,
+                    cancelled: &cancel,
+                },
+            )
+            .unwrap();
+        let clock = N01GroupClock {
+            group: PRIMARY_GROUP,
+            epoch: 2,
+            view: crate::playout::ClockView {
+                group_ns: 5,
+                uncertainty_ns: 0,
+                usable: true,
+            },
+        };
+        assert_eq!(
+            sender
+                .pump_n01_selected(5, clock, &claim, &cancel)
+                .unwrap()
+                .media_sent,
+            1
+        );
+    }
+}
+
+#[test]
+fn n07_n01_selected_pump_never_sends_other_selected_group() {
+    let (mut sender, second) = two_group_sender(CarrierLimits::baseline());
+    let a = sender.claim_n01_source(PRIMARY_GROUP, 1, &[7]).unwrap();
+    let b = sender.claim_n01_source(second, SECOND_EPOCH, &[8]).unwrap();
+    let cancel = AtomicBool::new(false);
+    let frame = long_block(0, 0);
+    for (group, epoch, claim, peers) in [
+        (PRIMARY_GROUP, 1, &a, &[7][..]),
+        (second, SECOND_EPOCH, &b, &[8][..]),
+    ] {
+        sender
+            .try_submit_group_media_isolated(
+                group,
+                epoch,
+                claim,
+                peers,
+                &frame,
+                N01AdmissionInputs {
+                    interface_now_ns: 0,
+                    trusted_group_now_ns: 0,
+                    overlap_budget_bytes: usize::MAX,
+                    cancelled: &cancel,
+                },
+            )
+            .unwrap();
+    }
+    let clock_b = N01GroupClock {
+        group: second,
+        epoch: SECOND_EPOCH,
+        view: crate::playout::ClockView {
+            group_ns: 1,
+            uncertainty_ns: 0,
+            usable: true,
+        },
+    };
+    assert_eq!(
+        sender
+            .pump_n01_selected(1, clock_b, &b, &cancel)
+            .unwrap()
+            .media_sent,
+        1
+    );
+    assert_eq!(sender.port.sent[0].2, addr("127.0.0.1:42003"));
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap().queued_packets, 1);
+    let clock_a = N01GroupClock {
+        group: PRIMARY_GROUP,
+        epoch: 1,
+        view: crate::playout::ClockView {
+            group_ns: 2,
+            uncertainty_ns: 0,
+            usable: true,
+        },
+    };
+    assert_eq!(
+        sender
+            .pump_n01_selected(2, clock_a, &a, &cancel)
+            .unwrap()
+            .media_sent,
+        1
+    );
+    assert_eq!(sender.port.sent[1].2, addr("127.0.0.1:42001"));
+}
+
+#[test]
+fn n07_n01_selected_source_continues_after_unrelated_group_changes_and_rollback() {
+    let (mut sender, second) = two_group_sender(CarrierLimits::baseline());
+    let a = sender.claim_n01_source(PRIMARY_GROUP, 1, &[7]).unwrap();
+    let cancel = AtomicBool::new(false);
+    let first = long_block(0, 0);
+    sender
+        .try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &a,
+            &[7],
+            &first,
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    sender
+        .peer_address_changed(8, addr("127.0.0.1:42005"), addr("127.0.0.1:42006"))
+        .unwrap();
+    sender
+        .add_peer_in_group(
+            second,
+            9,
+            addr("127.0.0.1:42007"),
+            addr("127.0.0.1:42008"),
+            1500,
+        )
+        .unwrap();
+    sender
+        .advance_group_epoch(second, SECOND_EPOCH + 1)
+        .unwrap();
+    assert_eq!(
+        sender.has_n01_eligible_peer(PRIMARY_GROUP, 1, &a, &[7], 1),
+        Ok(true)
+    );
+    let next = long_block(1, 0);
+    sender
+        .try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &a,
+            &[7],
+            &next,
+            N01AdmissionInputs {
+                interface_now_ns: 1,
+                trusted_group_now_ns: 1,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    let clock_a = N01GroupClock {
+        group: PRIMARY_GROUP,
+        epoch: 1,
+        view: crate::playout::ClockView {
+            group_ns: 2,
+            uncertainty_ns: 0,
+            usable: true,
+        },
+    };
+    assert_eq!(
+        sender
+            .pump_n01_selected(2, clock_a, &a, &cancel)
+            .unwrap()
+            .media_sent,
+        2
+    );
+    let b = sender
+        .claim_n01_source(second, SECOND_EPOCH + 1, &[8, 9])
+        .unwrap();
+    let clock_b = N01GroupClock {
+        group: second,
+        epoch: SECOND_EPOCH + 1,
+        view: crate::playout::ClockView {
+            group_ns: 10,
+            uncertainty_ns: 0,
+            usable: true,
+        },
+    };
+    sender.pump_n01_selected(3, clock_b, &b, &cancel).unwrap();
+    let last = long_block(2, 0);
+    sender
+        .try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &a,
+            &[7],
+            &last,
+            N01AdmissionInputs {
+                interface_now_ns: 3,
+                trusted_group_now_ns: 3,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap().queued_packets, 1);
+    let backward_b = N01GroupClock {
+        view: crate::playout::ClockView {
+            group_ns: 9,
+            ..clock_b.view
+        },
+        ..clock_b
+    };
+    sender
+        .pump_n01_selected(4, backward_b, &b, &cancel)
+        .unwrap();
+    assert!(sender.groups[sender.group_index(second).unwrap()].n01_clock_failed);
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap().queued_packets, 1);
+    let latest = N01GroupClock {
+        view: crate::playout::ClockView {
+            group_ns: 4,
+            ..clock_a.view
+        },
+        ..clock_a
+    };
+    assert_eq!(
+        sender
+            .pump_n01_selected(6, latest, &a, &cancel)
+            .unwrap()
+            .media_sent,
+        1
+    );
+    let fresh = long_block(3, 0);
+    sender
+        .try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &a,
+            &[7],
+            &fresh,
+            N01AdmissionInputs {
+                interface_now_ns: 7,
+                trusted_group_now_ns: 5,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    let fresh_clock = N01GroupClock {
+        view: crate::playout::ClockView {
+            group_ns: 6,
+            ..clock_a.view
+        },
+        ..clock_a
+    };
+    assert_eq!(
+        sender
+            .pump_n01_selected(8, fresh_clock, &a, &cancel)
+            .unwrap()
+            .media_sent,
+        1
+    );
+    let mut receiver = StreamReceiver::new(key(), stream(), 1);
+    let received: Vec<_> = sender
+        .port
+        .sent
+        .iter()
+        .map(|(_, wire, _)| receiver.accept(wire).unwrap().start_frame)
+        .collect();
+    assert_eq!(
+        received,
+        vec![
+            first.start_frame,
+            next.start_frame,
+            last.start_frame,
+            fresh.start_frame
+        ]
+    );
+}
+
+#[test]
+fn n07_selected_pump_cannot_emit_unclaimed_other_group_protected_probe() {
+    let limits = CarrierLimits {
+        window_packets: 1,
+        ..CarrierLimits::baseline()
+    };
+    let (mut sender, second) = two_group_sender(limits);
+    let a = sender.claim_n01_source(PRIMARY_GROUP, 1, &[7]).unwrap();
+    let b = sender
+        .snapshot_n01_group(second, SECOND_EPOCH, &[8])
+        .unwrap();
+    let cancel = AtomicBool::new(false);
+    for index in 0..2 {
+        sender
+            .try_submit_group_media_all(
+                second,
+                SECOND_EPOCH,
+                &b,
+                &[8],
+                &long_block(index, 0),
+                N01AdmissionInputs {
+                    interface_now_ns: 0,
+                    trusted_group_now_ns: 0,
+                    overlap_budget_bytes: usize::MAX,
+                    cancelled: &cancel,
+                },
+            )
+            .unwrap();
+    }
+    let b_clock = N01GroupClock {
+        group: second,
+        epoch: SECOND_EPOCH,
+        view: crate::playout::ClockView {
+            group_ns: 1,
+            uncertainty_ns: 0,
+            usable: true,
+        },
+    };
+    assert_eq!(
+        sender.pump_n01_clocked(1, &[b_clock], &cancel).media_sent,
+        1
+    );
+    let b_wire = sender.port.sent[0].1.clone();
+    assert_eq!(sender.group_view(second).unwrap().queued_packets, 1);
+    sender
+        .try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &a,
+            &[7],
+            &long_block(0, 0),
+            N01AdmissionInputs {
+                interface_now_ns: 2,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    let a_clock = N01GroupClock {
+        group: PRIMARY_GROUP,
+        epoch: 1,
+        view: crate::playout::ClockView {
+            group_ns: 2,
+            uncertainty_ns: 0,
+            usable: true,
+        },
+    };
+    assert_eq!(
+        sender
+            .pump_n01_selected(STALL_PROBE_NS + 2, a_clock, &a, &cancel)
+            .unwrap()
+            .media_sent,
+        1
+    );
+    assert_eq!(
+        sender.port.sent.len(),
+        2,
+        "selected A pump did not send B's due probe"
+    );
+    assert_eq!(sender.port.sent[1].2, addr("127.0.0.1:42001"));
+    let recovery = N01GroupClock {
+        view: crate::playout::ClockView {
+            group_ns: STALL_PROBE_NS + 3,
+            ..b_clock.view
+        },
+        ..b_clock
+    };
+    sender.pump_n01_clocked(STALL_PROBE_NS + 3, &[recovery], &cancel);
+    assert_eq!(sender.port.sent.len(), 3);
+    assert_eq!(sender.port.sent[2].2, addr("127.0.0.1:42003"));
+    assert_eq!(
+        sender.port.sent[2].1, b_wire,
+        "unclaimed B recovery retains its ordinary probe"
+    );
+}
+
+#[test]
+fn n07_n01_selected_same_group_route_change_invalidates_and_fences() {
+    let mut sender = sender_over(ScriptPort::new());
+    sender
+        .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+        .unwrap();
+    let claim = sender.claim_n01_source(PRIMARY_GROUP, 1, &[7]).unwrap();
+    let cancel = AtomicBool::new(false);
+    sender
+        .try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &claim,
+            &[7],
+            &long_block(0, 0),
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    sender
+        .peer_address_changed(7, addr("127.0.0.1:42005"), addr("127.0.0.1:42006"))
+        .unwrap();
+    let clock = N01GroupClock {
+        group: PRIMARY_GROUP,
+        epoch: 1,
+        view: crate::playout::ClockView {
+            group_ns: 1,
+            uncertainty_ns: 0,
+            usable: true,
+        },
+    };
+    assert!(matches!(
+        sender.pump_n01_selected(1, clock, &claim, &cancel),
+        Err(AllPeerAdmissionError::MembershipChanged)
+    ));
+    assert!(
+        sender
+            .has_n01_eligible_peer(PRIMARY_GROUP, 1, &claim, &[7], 1)
+            .is_err()
+    );
+    assert_eq!(sender.pump(2).media_sent, 0);
+    assert!(sender.port.sent.is_empty());
+    sender.advance_epoch(2).unwrap();
+    assert!(sender.claim_n01_source(PRIMARY_GROUP, 2, &[7]).is_ok());
+}
+
+#[test]
+fn n07_n01_selected_fence_survives_unrelated_group_mutation() {
+    let (mut sender, second) = two_group_sender(CarrierLimits::baseline());
+    let a = sender.claim_n01_source(PRIMARY_GROUP, 1, &[7]).unwrap();
+    let cancel = AtomicBool::new(false);
+    sender
+        .try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &a,
+            &[7],
+            &long_block(0, 0),
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    sender
+        .peer_address_changed(8, addr("127.0.0.1:42005"), addr("127.0.0.1:42006"))
+        .unwrap();
+    sender.fence_n01_group(PRIMARY_GROUP, 1, &a).unwrap();
+    assert_eq!(clocked_n01_pump(&mut sender, 1, 1).media_sent, 0);
+    let clock = N01GroupClock {
+        group: PRIMARY_GROUP,
+        epoch: 1,
+        view: crate::playout::ClockView {
+            group_ns: 2,
+            uncertainty_ns: 0,
+            usable: true,
+        },
+    };
+    assert!(matches!(
+        sender.pump_n01_selected(2, clock, &a, &cancel),
+        Err(AllPeerAdmissionError::MembershipChanged)
+    ));
+    sender
+        .submit_group_media(second, SECOND_EPOCH, &long_block(0, 0), 2)
+        .unwrap();
+    assert_eq!(sender.pump(3).media_sent, 1);
+}
+
+#[test]
+fn n07_n01_source_claim_rejects_old_protected_state() {
+    let mut sender = sender_over(ScriptPort::new());
+    sender
+        .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+        .unwrap();
+    let snapshot = sender.snapshot_n01_group(PRIMARY_GROUP, 1, &[7]).unwrap();
+    let cancel = AtomicBool::new(false);
+    sender
+        .try_submit_group_media_all(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7],
+            &long_block(0, 0),
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        sender.claim_n01_source(PRIMARY_GROUP, 1, &[7]),
+        Err(AllPeerAdmissionError::MembershipChanged)
+    ));
+    assert_eq!(clocked_n01_pump(&mut sender, 1, 1).media_sent, 1);
+    assert!(
+        matches!(
+            sender.claim_n01_source(PRIMARY_GROUP, 1, &[7]),
+            Err(AllPeerAdmissionError::MembershipChanged)
+        ),
+        "cached protected probe also blocks claim"
+    );
+    sender.advance_epoch(2).unwrap();
+    assert!(sender.claim_n01_source(PRIMARY_GROUP, 2, &[7]).is_ok());
+}
+
+#[test]
+fn n07_isolated_retry_cooldown_cannot_steal_healthy_peer_capacity() {
+    let limits = CarrierLimits {
+        aggregate_queue_packets: 1,
+        max_sends_per_pump: 1,
+        ..CarrierLimits::baseline()
+    };
+    let mut sender =
+        CarrierSender::with_port(key(), stream(), 1, limits, ScriptPort::new()).unwrap();
+    sender
+        .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+        .unwrap();
+    sender
+        .add_peer(8, addr("127.0.0.1:42003"), addr("127.0.0.1:42004"), 1500)
+        .unwrap();
+    let snapshot = sender
+        .snapshot_n01_group(PRIMARY_GROUP, 1, &[7, 8])
+        .unwrap();
+    let cancel = AtomicBool::new(false);
+    sender
+        .try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7, 8],
+            &long_block(0, 0),
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    sender.port.send_fault = Some(PortFault::PathUnavailable);
+    for i in 0..SEND_RETRY_ATTEMPTS {
+        clocked_n01_pump(&mut sender, u64::from(i) + 1, u64::from(i) + 1);
+    }
+    sender.port.send_fault = None;
+    let now = u64::from(SEND_RETRY_ATTEMPTS) + 1;
+    assert!(
+        sender.peers[sender.index_of(7).unwrap()]
+            .send_hold_until_ns
+            .is_some_and(|until| until > now)
+    );
+    let next = long_block(1, 0);
+    let out = sender
+        .try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7, 8],
+            &next,
+            N01AdmissionInputs {
+                interface_now_ns: now,
+                trusted_group_now_ns: now,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    assert!(out.peers.contains(&Some(N01PeerOutcome {
+        peer: 7,
+        disposition: N01PeerDisposition::Stalled
+    })));
+    assert!(out.peers.contains(&Some(N01PeerOutcome {
+        peer: 8,
+        disposition: N01PeerDisposition::Queued
+    })));
+    assert_eq!(
+        clocked_n01_pump(&mut sender, now + 1, now + 1).media_sent,
+        1
+    );
+    assert_eq!(
+        sender.media_cursor, 0,
+        "a real peer 8 send rotates the cursor to peer 7"
+    );
+    let later = long_block(2, 0);
+    let out = sender
+        .try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7, 8],
+            &later,
+            N01AdmissionInputs {
+                interface_now_ns: now + 2,
+                trusted_group_now_ns: now + 2,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    assert!(out.peers.contains(&Some(N01PeerOutcome {
+        peer: 7,
+        disposition: N01PeerDisposition::Stalled
+    })));
+    assert!(out.peers.contains(&Some(N01PeerOutcome {
+        peer: 8,
+        disposition: N01PeerDisposition::Queued
+    })));
+    assert_eq!(
+        clocked_n01_pump(&mut sender, now + 3, now + 3).media_sent,
+        1
+    );
+    let mut receiver = StreamReceiver::new(key(), stream(), 1);
+    let packets: Vec<_> = sender
+        .port
+        .sent
+        .iter()
+        .map(|(_, wire, _)| receiver.accept(wire).unwrap())
+        .collect();
+    assert_eq!(
+        packets.iter().map(|p| p.start_frame).collect::<Vec<_>>(),
+        vec![next.start_frame, later.start_frame]
+    );
+    assert!(
+        sender
+            .port
+            .sent
+            .iter()
+            .all(|(_, _, to)| *to == addr("127.0.0.1:42003"))
+    );
+    let next_time = now + 4;
+    sender
+        .try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7, 8],
+            &long_block(3, 0),
+            N01AdmissionInputs {
+                interface_now_ns: next_time,
+                trusted_group_now_ns: next_time,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    sender.port.send_fault = Some(PortFault::PathUnavailable);
+    for i in 0..SEND_RETRY_ATTEMPTS - 1 {
+        let time = next_time + u64::from(i) + 1;
+        let report = clocked_n01_pump(&mut sender, time, time);
+        assert!(!report.pace_limited);
+    }
+    let pace_time = next_time + u64::from(SEND_RETRY_ATTEMPTS);
+    let report = clocked_n01_pump(&mut sender, pace_time, pace_time);
+    assert!(report.pace_limited);
+    let retry_time = report.next_send_ns.expect("pacer reports when to retry");
+    assert!(retry_time > pace_time);
+    let peer8 = sender.index_of(8).unwrap();
+    assert_eq!(sender.peers[peer8].held.as_ref().unwrap().attempts, 2);
+    assert_eq!(sender.aggregate_media().0, 1);
+    // A held datagram consumes the only aggregate slot, even when peer 7 cools.
+    let recovery = sender.peers[sender.index_of(7).unwrap()]
+        .send_hold_until_ns
+        .unwrap();
+    assert!(retry_time < recovery);
+    assert_eq!(
+        sender.has_n01_eligible_peer(PRIMARY_GROUP, 1, &snapshot, &[7, 8], recovery),
+        Ok(false)
+    );
+    let report = clocked_n01_pump(&mut sender, retry_time, retry_time);
+    assert!(!report.pace_limited);
+    assert_eq!(report.media_sent, 0);
+    assert!(sender.peers[peer8].held.is_none());
+    assert_eq!(sender.aggregate_media(), (0, 0));
+    assert!(sender.peers[peer8].send_hold_until_ns.unwrap() > recovery);
+    sender.port.send_fault = None;
+    let held_time = retry_time + 1;
+    assert!(held_time < recovery);
+    assert_eq!(
+        sender.has_n01_eligible_peer(PRIMARY_GROUP, 1, &snapshot, &[7, 8], held_time),
+        Ok(false)
+    );
+    assert!(matches!(
+        sender.try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7, 8],
+            &long_block(4, 0),
+            N01AdmissionInputs {
+                interface_now_ns: held_time,
+                trusted_group_now_ns: held_time,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel
+            }
+        ),
+        Err(AllPeerAdmissionError::Retry(AllPeerRetry::NoEligiblePeers))
+    ));
+    let recovery = sender.peers[sender.index_of(7).unwrap()]
+        .send_hold_until_ns
+        .unwrap();
+    assert_eq!(
+        sender.has_n01_eligible_peer(PRIMARY_GROUP, 1, &snapshot, &[7, 8], recovery),
+        Ok(true)
+    );
+    let resumed = long_block(4, 0);
+    let outcome = sender
+        .try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7, 8],
+            &resumed,
+            N01AdmissionInputs {
+                interface_now_ns: recovery,
+                trusted_group_now_ns: recovery,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    assert!(outcome.peers.contains(&Some(N01PeerOutcome {
+        peer: 7,
+        disposition: N01PeerDisposition::Queued,
+    })));
+    assert!(outcome.peers.contains(&Some(N01PeerOutcome {
+        peer: 8,
+        disposition: N01PeerDisposition::Stalled,
+    })));
+    assert_eq!(
+        clocked_n01_pump(&mut sender, recovery, recovery).media_sent,
+        1
+    );
+    let (_, wire, to) = sender.port.sent.last().unwrap();
+    assert_eq!(*to, addr("127.0.0.1:42001"));
+    let mut recovered_receiver = StreamReceiver::new(key(), stream(), 1);
+    assert_eq!(
+        recovered_receiver.accept(wire).unwrap().start_frame,
+        resumed.start_frame
+    );
+}
+
+#[test]
+fn n07_isolated_fanout_continues_healthy_peer_and_never_replays_skipped_pcm() {
+    let mut sender = sender_over(ScriptPort::new());
+    let m1 = addr("127.0.0.1:42001");
+    let m2 = addr("127.0.0.1:42003");
+    sender
+        .add_peer(7, m1, addr("127.0.0.1:42002"), 1500)
+        .unwrap();
+    sender
+        .add_peer(8, m2, addr("127.0.0.1:42004"), 1500)
+        .unwrap();
+    let snapshot = sender
+        .snapshot_n01_group(PRIMARY_GROUP, 1, &[7, 8])
+        .unwrap();
+    let cancel = AtomicBool::new(false);
+    sender.set_path_mtu(8, 1000).unwrap();
+    let mut first = long_block(0, 0);
+    first.payload.fill(0x31);
+    let copy = first.clone();
+    let result = sender
+        .try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7, 8],
+            &first,
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    assert_eq!(result.status, N01IsolatedStatus::Published);
+    assert_eq!(result.peer_count, 2);
+    assert!(result.peers.contains(&Some(N01PeerOutcome {
+        peer: 7,
+        disposition: N01PeerDisposition::Queued
+    })));
+    assert!(result.peers.contains(&Some(N01PeerOutcome {
+        peer: 8,
+        disposition: N01PeerDisposition::Fenced
+    })));
+    assert_eq!(first, copy);
+    assert_eq!(clocked_n01_pump(&mut sender, 1, 1).media_sent, 1);
+    sender.set_path_mtu(8, 1500).unwrap();
+    let mut next = long_block(1, 0);
+    next.payload.fill(0x52);
+    let result = sender
+        .try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7, 8],
+            &next,
+            N01AdmissionInputs {
+                interface_now_ns: 2,
+                trusted_group_now_ns: 2,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    assert_eq!(result.status, N01IsolatedStatus::Published);
+    assert!(result.peers.contains(&Some(N01PeerOutcome {
+        peer: 7,
+        disposition: N01PeerDisposition::Queued
+    })));
+    assert!(result.peers.contains(&Some(N01PeerOutcome {
+        peer: 8,
+        disposition: N01PeerDisposition::Queued
+    })));
+    assert_eq!(clocked_n01_pump(&mut sender, 3, 3).media_sent, 2);
+    let mut first_receiver = StreamReceiver::new(key(), stream(), 1);
+    let frames: Vec<_> = sender
+        .port
+        .sent
+        .iter()
+        .filter(|(_, _, to)| *to == m1)
+        .map(|(_, wire, _)| first_receiver.accept(wire).unwrap())
+        .collect();
+    assert_eq!(frames.len(), 2);
+    assert_eq!(frames[0].payload, first.payload);
+    assert_eq!(frames[1].payload, next.payload);
+    let mut second_receiver = StreamReceiver::new(key(), stream(), 1);
+    let frames: Vec<_> = sender
+        .port
+        .sent
+        .iter()
+        .filter(|(_, _, to)| *to == m2)
+        .map(|(_, wire, _)| second_receiver.accept(wire).unwrap())
+        .collect();
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames[0].payload, next.payload);
+    assert_eq!(frames[0].start_frame, next.start_frame);
+}
+
+#[test]
+fn n07_isolated_fanout_all_unavailable_waits_then_expired_skips_once() {
+    let mut sender = sender_over(ScriptPort::new());
+    sender
+        .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+        .unwrap();
+    sender
+        .add_peer(8, addr("127.0.0.1:42003"), addr("127.0.0.1:42004"), 1500)
+        .unwrap();
+    let snapshot = sender
+        .snapshot_n01_group(PRIMARY_GROUP, 1, &[7, 8])
+        .unwrap();
+    sender.set_path_mtu(7, 1000).unwrap();
+    sender.set_path_mtu(8, 1000).unwrap();
+    let frame = long_block(0, 0);
+    let copy = frame.clone();
+    let cancel = AtomicBool::new(false);
+    let before = sender.group_view(PRIMARY_GROUP).unwrap();
+    assert_eq!(
+        sender.try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7, 8],
+            &frame,
+            N01AdmissionInputs {
+                interface_now_ns: 1,
+                trusted_group_now_ns: 1,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel
+            }
+        ),
+        Err(AllPeerAdmissionError::Retry(AllPeerRetry::NoEligiblePeers))
+    );
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), before);
+    assert_eq!(frame, copy);
+    let expired = sender
+        .try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7, 8],
+            &frame,
+            N01AdmissionInputs {
+                interface_now_ns: 2,
+                trusted_group_now_ns: frame.consume_by_ns,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    assert_eq!(expired.status, N01IsolatedStatus::Expired);
+    assert_eq!(expired.peer_count, 0);
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), before);
+    sender.set_path_mtu(7, 1500).unwrap();
+    sender.set_path_mtu(8, 1500).unwrap();
+    let fresh = long_block(1, 1_000_000_000);
+    let next = sender
+        .try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7, 8],
+            &fresh,
+            N01AdmissionInputs {
+                interface_now_ns: 3,
+                trusted_group_now_ns: frame.consume_by_ns + 1,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    assert_eq!(next.status, N01IsolatedStatus::Published);
+    assert_eq!(
+        clocked_n01_pump(&mut sender, 4, frame.consume_by_ns + 1).media_sent,
+        2
+    );
+    for (_, wire, _) in &sender.port.sent {
+        let packet = StreamReceiver::new(key(), stream(), 1)
+            .accept(wire)
+            .unwrap();
+        assert_eq!(packet.start_frame, fresh.start_frame);
+        assert_eq!(packet.payload, fresh.payload);
+    }
+}
+
+#[test]
+fn n07_isolated_fanout_partial_capacity_rotates_and_validates_every_profile() {
+    let limits = CarrierLimits {
+        aggregate_queue_packets: 1,
+        pace_burst_bytes: 65_536,
+        ..CarrierLimits::baseline()
+    };
+    let mut sender =
+        CarrierSender::with_port(key(), stream(), 1, limits, ScriptPort::new()).unwrap();
+    sender
+        .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+        .unwrap();
+    sender
+        .add_peer(8, addr("127.0.0.1:42003"), addr("127.0.0.1:42004"), 1500)
+        .unwrap();
+    let snapshot = sender
+        .snapshot_n01_group(PRIMARY_GROUP, 1, &[7, 8])
+        .unwrap();
+    let cancel = AtomicBool::new(false);
+    let mut partial = long_block(0, 0);
+    partial.payload.truncate(512);
+    let second = sender.index_of(8).unwrap();
+    sender.peers[second].sender.profile = crate::StreamProfile {
+        repair_allowed: true,
+        partial_blocks_allowed: false,
+    };
+    assert!(matches!(
+        sender.try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7, 8],
+            &partial,
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel
+            }
+        ),
+        Err(AllPeerAdmissionError::Invalid(CarrierError::Stream(
+            StreamError::FeatureNotNegotiated { .. }
+        )))
+    ));
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap().queued_packets, 0);
+    sender.peers[second].sender.profile = crate::StreamProfile::BASELINE;
+    let first = sender
+        .try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7, 8],
+            &partial,
+            N01AdmissionInputs {
+                interface_now_ns: 1,
+                trusted_group_now_ns: 1,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    assert!(first.peers.contains(&Some(N01PeerOutcome {
+        peer: 7,
+        disposition: N01PeerDisposition::Queued
+    })));
+    assert!(first.peers.contains(&Some(N01PeerOutcome {
+        peer: 8,
+        disposition: N01PeerDisposition::Capacity
+    })));
+    assert_eq!(clocked_n01_pump(&mut sender, 2, 2).media_sent, 1);
+    let second_frame = long_block(1, 0);
+    let second_out = sender
+        .try_submit_group_media_isolated(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7, 8],
+            &second_frame,
+            N01AdmissionInputs {
+                interface_now_ns: 3,
+                trusted_group_now_ns: 3,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    assert!(second_out.peers.contains(&Some(N01PeerOutcome {
+        peer: 8,
+        disposition: N01PeerDisposition::Queued
+    })));
+    assert!(second_out.peers.contains(&Some(N01PeerOutcome {
+        peer: 7,
+        disposition: N01PeerDisposition::Capacity
+    })));
+    assert_eq!(clocked_n01_pump(&mut sender, 4, 4).media_sent, 1);
+    assert_eq!(sender.port.sent[0].2, addr("127.0.0.1:42001"));
+    assert_eq!(sender.port.sent[1].2, addr("127.0.0.1:42003"));
+}
+
+#[test]
+fn n07_clocked_n01_lifetime_bound_fence_blocks_queued_media_until_new_epoch() {
+    let mut sender = sender_over(ScriptPort::new());
+    sender
+        .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+        .unwrap();
+    let snapshot = sender.snapshot_n01_group(PRIMARY_GROUP, 1, &[7]).unwrap();
+    let frame = long_block(0, 0);
+    let cancel = AtomicBool::new(false);
+    sender
+        .try_submit_group_media_all(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7],
+            &frame,
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    sender.fence_n01_group(PRIMARY_GROUP, 1, &snapshot).unwrap();
+    assert_eq!(clocked_n01_pump(&mut sender, 1, 1).media_sent, 0);
+    assert_eq!(sender.pump(2).media_sent, 0);
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap().queued_packets, 1);
+    assert_eq!(
+        sender.try_submit_group_media_all(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7],
+            &frame,
+            N01AdmissionInputs {
+                interface_now_ns: 2,
+                trusted_group_now_ns: 2,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel
+            }
+        ),
+        Err(AllPeerAdmissionError::MembershipChanged)
+    );
+    sender.advance_epoch(2).unwrap();
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap().queued_packets, 0);
+    assert_eq!(
+        sender.fence_n01_group(PRIMARY_GROUP, 1, &snapshot),
+        Err(AllPeerAdmissionError::MembershipChanged)
+    );
+    let fresh = sender.snapshot_n01_group(PRIMARY_GROUP, 2, &[7]).unwrap();
+    sender
+        .try_submit_group_media_all(
+            PRIMARY_GROUP,
+            2,
+            &fresh,
+            &[7],
+            &frame,
+            N01AdmissionInputs {
+                interface_now_ns: 3,
+                trusted_group_now_ns: 3,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    let clock = N01GroupClock {
+        group: PRIMARY_GROUP,
+        epoch: 2,
+        view: crate::playout::ClockView {
+            group_ns: 4,
+            uncertainty_ns: 0,
+            usable: true,
+        },
+    };
+    assert_eq!(sender.pump_n01_clocked(4, &[clock], &cancel).media_sent, 1);
+    assert_eq!(
+        StreamReceiver::new(key(), stream(), 2)
+            .accept(&sender.port.sent[0].1)
+            .unwrap()
+            .payload,
+        frame.payload
+    );
+}
+
+#[test]
+fn n07_all_peer_same_snapshot_recovers_link_fence_and_mtu_backpressure() {
+    for mode in 0..3 {
+        let limits = CarrierLimits {
+            required_payload_bytes: if mode == 2 { 4 } else { MAX_PAYLOAD_BYTES },
+            ..CarrierLimits::baseline()
+        };
+        let mut sender =
+            CarrierSender::with_port(key(), stream(), 1, limits, ScriptPort::new()).unwrap();
+        let m1 = addr("127.0.0.1:42001");
+        let m2 = addr("127.0.0.1:42003");
+        sender
+            .add_peer(7, m1, addr("127.0.0.1:42002"), 1500)
+            .unwrap();
+        sender
+            .add_peer(8, m2, addr("127.0.0.1:42004"), 1500)
+            .unwrap();
+        let snapshot = sender
+            .snapshot_n01_group(PRIMARY_GROUP, 1, &[7, 8])
+            .unwrap();
+        let frame = long_block(0, 0);
+        let copy = frame.clone();
+        let cancel = AtomicBool::new(false);
+        match mode {
+            0 => sender.set_link_up(false),
+            1 => {
+                sender.set_path_mtu(8, 1000).unwrap();
+            }
+            _ => {
+                sender.set_path_mtu(8, 900).unwrap();
+            }
+        }
+        let before = sender.group_view(PRIMARY_GROUP).unwrap();
+        let expected = match mode {
+            0 => AllPeerRetry::LinkDown,
+            1 => AllPeerRetry::PeerFenced(8),
+            _ => AllPeerRetry::PathMtu(8),
+        };
+        assert_eq!(
+            sender.try_submit_group_media_all(
+                PRIMARY_GROUP,
+                1,
+                &snapshot,
+                &[7, 8],
+                &frame,
+                N01AdmissionInputs {
+                    interface_now_ns: 1,
+                    trusted_group_now_ns: 1,
+                    overlap_budget_bytes: usize::MAX,
+                    cancelled: &cancel
+                }
+            ),
+            Err(AllPeerAdmissionError::Retry(expected))
+        );
+        assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), before);
+        assert_eq!(frame, copy);
+        if mode == 0 {
+            sender.set_link_up(true);
+        } else {
+            sender.set_path_mtu(8, 1500).unwrap();
+        }
+        assert!(
+            sender
+                .try_submit_group_media_all(
+                    PRIMARY_GROUP,
+                    1,
+                    &snapshot,
+                    &[7, 8],
+                    &frame,
+                    N01AdmissionInputs {
+                        interface_now_ns: 2,
+                        trusted_group_now_ns: 2,
+                        overlap_budget_bytes: usize::MAX,
+                        cancelled: &cancel
+                    }
+                )
+                .is_ok()
+        );
+        assert_eq!(clocked_n01_pump(&mut sender, 3, 3).media_sent, 2);
+        for destination in [m1, m2] {
+            let wire = &sender
+                .port
+                .sent
+                .iter()
+                .find(|(_, _, to)| *to == destination)
+                .unwrap()
+                .1;
+            assert_eq!(
+                StreamReceiver::new(key(), stream(), 1)
+                    .accept(wire)
+                    .unwrap()
+                    .payload,
+                frame.payload
+            );
+        }
+    }
+}
+
+#[test]
+fn n07_all_peer_audio_survives_legacy_and_fec_aggregate_pressure() {
+    let limits = CarrierLimits {
+        aggregate_queue_packets: 2,
+        pace_burst_bytes: 65_536,
+        ..CarrierLimits::baseline()
+    };
+    let mut sender =
+        CarrierSender::with_port(key(), stream(), 1, limits, ScriptPort::new()).unwrap();
+    sender
+        .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+        .unwrap();
+    sender
+        .add_peer(8, addr("127.0.0.1:42003"), addr("127.0.0.1:42004"), 1500)
+        .unwrap();
+    let legacy_group = sender
+        .add_group(key(), StreamId::new(stream().get() + 1).unwrap(), 1)
+        .unwrap();
+    sender
+        .add_peer_in_group(
+            legacy_group,
+            9,
+            addr("127.0.0.1:42005"),
+            addr("127.0.0.1:42006"),
+            1500,
+        )
+        .unwrap();
+    let fec_group = sender
+        .add_group(key(), StreamId::new(stream().get() + 2).unwrap(), 1)
+        .unwrap();
+    sender
+        .add_peer_in_group(
+            fec_group,
+            10,
+            addr("127.0.0.1:42007"),
+            addr("127.0.0.1:42008"),
+            1500,
+        )
+        .unwrap();
+    sender
+        .select_group_fec(fec_group, 2, 500_000_000, &[10])
+        .unwrap();
+    let snapshot = sender
+        .snapshot_n01_group(PRIMARY_GROUP, 1, &[7, 8])
+        .unwrap();
+    let cancel = AtomicBool::new(false);
+    let frame = long_block(0, 0);
+    sender
+        .try_submit_group_media_all(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7, 8],
+            &frame,
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    let before = sender.group_view(PRIMARY_GROUP).unwrap();
+    let peer7 = sender.peer_view(7).unwrap();
+    let peer8 = sender.peer_view(8).unwrap();
+    let old = sender
+        .submit_group_media(legacy_group, 1, &frame, 0)
+        .unwrap();
+    assert_eq!((old.queued, old.evicted, old.rejected_aggregate), (0, 0, 1));
+    let source = [[0x31_u8; crate::fec::BYTES]; crate::fec::K];
+    let fec = sender
+        .submit_group_fec_window(fec_group, 2, 0, source, 0)
+        .unwrap();
+    assert_eq!(
+        (fec.queued, fec.evicted, fec.rejected_aggregate),
+        (0, 0, crate::fec::N as u32)
+    );
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), before);
+    assert_eq!(sender.peer_view(7).unwrap(), peer7);
+    assert_eq!(sender.peer_view(8).unwrap(), peer8);
+    assert_eq!(clocked_n01_pump(&mut sender, 1, 1).media_sent, 2);
+    for destination in [addr("127.0.0.1:42001"), addr("127.0.0.1:42003")] {
+        let wire = &sender
+            .port
+            .sent
+            .iter()
+            .find(|(_, _, to)| *to == destination)
+            .unwrap()
+            .1;
+        assert_eq!(
+            StreamReceiver::new(key(), stream(), 1)
+                .accept(wire)
+                .unwrap()
+                .payload,
+            frame.payload
+        );
+    }
+    assert_eq!(
+        sender
+            .submit_group_media(legacy_group, 1, &frame, 2)
+            .unwrap()
+            .queued,
+        1
+    );
+    assert_eq!(sender.pump(3).media_sent, 1);
+    let retried = sender
+        .submit_group_fec_window(fec_group, 2, 1, source, 21_333_334)
+        .unwrap();
+    assert_eq!(retried.queued, crate::fec::N as u32);
+    assert_eq!(retried.evicted, (crate::fec::N - 2) as u32);
+}
+
+#[test]
+fn n07_clocked_n01_mixed_queues_preserve_each_deadline_domain() {
+    for (interface_now, group_now, expected_payload) in [
+        (3_000_000_000, 1_000_000_000, 0x55_u8),
+        (1_000_000_000, 3_000_000_000, 0x33_u8),
+        (2_000_000_000, 2_000_000_000, 0x33_u8),
+    ] {
+        let mut sender = sender_over(ScriptPort::new());
+        sender
+            .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+            .unwrap();
+        let mut legacy = long_block(0, 0);
+        legacy.payload.fill(0x33);
+        let mut protected = long_block(1, 0);
+        protected.payload.fill(0x55);
+        assert_eq!(sender.submit_media(1, &legacy, 0).unwrap().queued, 1);
+        let snapshot = sender.snapshot_n01_group(PRIMARY_GROUP, 1, &[7]).unwrap();
+        let cancel = AtomicBool::new(false);
+        sender
+            .try_submit_group_media_all(
+                PRIMARY_GROUP,
+                1,
+                &snapshot,
+                &[7],
+                &protected,
+                N01AdmissionInputs {
+                    interface_now_ns: 0,
+                    trusted_group_now_ns: 0,
+                    overlap_budget_bytes: usize::MAX,
+                    cancelled: &cancel,
+                },
+            )
+            .unwrap();
+        let report = clocked_n01_pump(&mut sender, interface_now, group_now);
+        assert_eq!((report.media_sent, report.late_dropped), (1, 1));
+        let packet = StreamReceiver::new(key(), stream(), 1)
+            .accept(&sender.port.sent[0].1)
+            .unwrap();
+        assert!(packet.payload.iter().all(|byte| *byte == expected_payload));
+    }
+}
+
+#[test]
+fn n07_clocked_n01_missing_view_preserves_legacy_progress_and_blocks_protected() {
+    let mut sender = sender_over(ScriptPort::new());
+    sender
+        .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+        .unwrap();
+    let mut legacy = long_block(0, 0);
+    legacy.payload.fill(0x31);
+    let mut protected = long_block(1, 0);
+    protected.payload.fill(0x52);
+    assert_eq!(sender.submit_media(1, &legacy, 0).unwrap().queued, 1);
+    let snapshot = sender.snapshot_n01_group(PRIMARY_GROUP, 1, &[7]).unwrap();
+    let cancel = AtomicBool::new(false);
+    sender
+        .try_submit_group_media_all(
+            PRIMARY_GROUP,
+            1,
+            &snapshot,
+            &[7],
+            &protected,
+            N01AdmissionInputs {
+                interface_now_ns: 0,
+                trusted_group_now_ns: 0,
+                overlap_budget_bytes: usize::MAX,
+                cancelled: &cancel,
+            },
+        )
+        .unwrap();
+    assert_eq!(sender.pump_n01_clocked(1, &[], &cancel).media_sent, 1);
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap().queued_packets, 1);
+    assert_eq!(clocked_n01_pump(&mut sender, 2, 2).media_sent, 1);
+    let mut receiver = StreamReceiver::new(key(), stream(), 1);
+    let first = receiver.accept(&sender.port.sent[0].1).unwrap();
+    let second = receiver.accept(&sender.port.sent[1].1).unwrap();
+    assert_eq!(first.payload, legacy.payload);
+    assert_eq!(second.payload, protected.payload);
+}
+
+#[test]
+fn n07_all_peer_accepted_queue_is_fenced_on_route_and_membership_change() {
+    for remove in [false, true] {
+        let mut sender = sender_over(ScriptPort::new());
+        sender
+            .add_peer(7, addr("127.0.0.1:42001"), addr("127.0.0.1:42002"), 1500)
+            .unwrap();
+        sender
+            .add_peer(8, addr("127.0.0.1:42003"), addr("127.0.0.1:42004"), 1500)
+            .unwrap();
+        let snapshot = sender
+            .snapshot_n01_group(PRIMARY_GROUP, 1, &[7, 8])
+            .unwrap();
+        let frame = long_block(0, 0);
+        let cancel = AtomicBool::new(false);
+        sender
+            .try_submit_group_media_all(
+                PRIMARY_GROUP,
+                1,
+                &snapshot,
+                &[7, 8],
+                &frame,
+                N01AdmissionInputs {
+                    interface_now_ns: 0,
+                    trusted_group_now_ns: 0,
+                    overlap_budget_bytes: usize::MAX,
+                    cancelled: &cancel,
+                },
+            )
+            .unwrap();
+        if remove {
+            sender.remove_peer(8).unwrap();
+            sender
+                .add_peer(8, addr("127.0.0.1:42003"), addr("127.0.0.1:42004"), 1500)
+                .unwrap();
+        } else {
+            sender
+                .peer_address_changed(8, addr("127.0.0.1:42103"), addr("127.0.0.1:42104"))
+                .unwrap();
+        }
+        assert_eq!(clocked_n01_pump(&mut sender, 1, 1).media_sent, 0);
+        assert_eq!(sender.pump(2).media_sent, 0);
+        assert!(sender.port.sent.is_empty());
+        sender.advance_epoch(2).unwrap();
+        let fresh = sender
+            .snapshot_n01_group(PRIMARY_GROUP, 2, &[7, 8])
+            .unwrap();
+        sender
+            .try_submit_group_media_all(
+                PRIMARY_GROUP,
+                2,
+                &fresh,
+                &[7, 8],
+                &frame,
+                N01AdmissionInputs {
+                    interface_now_ns: 2,
+                    trusted_group_now_ns: 2,
+                    overlap_budget_bytes: usize::MAX,
+                    cancelled: &cancel,
+                },
+            )
+            .unwrap();
+        let clock = N01GroupClock {
+            group: PRIMARY_GROUP,
+            epoch: 2,
+            view: crate::playout::ClockView {
+                group_ns: 3,
+                uncertainty_ns: 0,
+                usable: true,
+            },
+        };
+        assert_eq!(sender.pump_n01_clocked(3, &[clock], &cancel).media_sent, 2);
+        for (_, wire, _) in &sender.port.sent {
+            assert_eq!(
+                StreamReceiver::new(key(), stream(), 2)
+                    .accept(wire)
+                    .unwrap()
+                    .payload,
+                frame.payload
+            );
+        }
+    }
+}

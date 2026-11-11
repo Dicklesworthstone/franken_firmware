@@ -182,6 +182,176 @@ fn io_err(err: io::Error) -> CarrierError {
     CarrierError::Io(err.to_string())
 }
 
+/// Temporary all-peer enqueue refusal; retry after the named condition clears.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AllPeerRetry {
+    /// The interface is not currently usable.
+    LinkDown,
+    /// This peer is fenced by the live transport.
+    PeerFenced(u32),
+    /// The current path cannot carry this frame.
+    PathMtu(u32),
+    /// At least one peer or the shared queue lacks room.
+    Capacity,
+    /// Measured overlap exceeds the caller's scoped allowance.
+    Budget,
+    /// A bounded allocation could not be made.
+    Allocation,
+    /// No currently eligible peer has room to progress.
+    NoEligiblePeers,
+}
+
+/// One member's result for a single isolated source frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum N01PeerDisposition {
+    /// One protected copy entered this peer's queue.
+    Queued,
+    /// The peer's path is fenced.
+    Fenced,
+    /// The current path cannot carry this frame.
+    PathMtu,
+    /// The peer cannot currently advance its send window.
+    Stalled,
+    /// The peer or shared queue has no room for this copy.
+    Capacity,
+    /// The peer has no remaining N01 sequence headroom.
+    SequenceExhausted,
+}
+
+/// Per-member result, never a delivery or playback claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct N01PeerOutcome {
+    /// The admitted carrier peer.
+    pub peer: u32,
+    /// Its outcome for this source frame.
+    pub disposition: N01PeerDisposition,
+}
+
+/// How the caller must dispose of the pending source frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum N01IsolatedStatus {
+    /// At least one copy was queued; consume the frame once.
+    Published,
+    /// The cutoff passed; explicitly count and discard the frame once.
+    Expired,
+}
+
+/// Fixed-size outcomes avoid an unbounded result allocation (carrier max is 64 peers).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct N01IsolatedOutcome {
+    /// Whether to account a publication or an expired-frame skip.
+    pub status: N01IsolatedStatus,
+    /// Per-member outcomes in fair carrier traversal order; first `peer_count` slots are used.
+    pub peers: [Option<N01PeerOutcome>; 64],
+    /// Number of populated member slots.
+    pub peer_count: usize,
+    /// Scoped observed overlap bytes for this publication (zero for expired frames).
+    pub accounted_overlap_bytes: usize,
+}
+
+/// Successful admission and its measured queue/allocation overlap charge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AllPeerAdmission {
+    /// Existing queue allocations plus observed temporary allocation capacities, in bytes.
+    pub accounted_overlap_bytes: usize,
+}
+
+/// Opaque carrier-bound group incarnation. Capture before producing a pending frame and
+/// retain it unchanged on retries; this does not authenticate peer provisioning.
+pub struct N01GroupSnapshot {
+    owner: Arc<AtomicBool>,
+    generation: u64,
+    fence_generation: u64,
+    selection: Option<Arc<()>>,
+    group: GroupId,
+    epoch: u64,
+}
+
+/// Caller-admitted group clock view for the additive N01 pump.
+#[derive(Debug, Clone, Copy)]
+pub struct N01GroupClock {
+    /// Carrier group whose N01 deadline domain this view describes.
+    pub group: GroupId,
+    /// Current group epoch independently admitted by the caller.
+    pub epoch: u64,
+    /// Fresh group time in the frame deadline domain.
+    pub view: crate::playout::ClockView,
+}
+
+/// Explicitly named clock domains and the scoped queue-overlap allowance.
+pub struct N01AdmissionInputs<'a> {
+    /// Local monotonic time used for interface pacing and queue-delay accounting.
+    pub interface_now_ns: u64,
+    /// Fresh caller-admitted group time in the frame deadline domain.
+    pub trusted_group_now_ns: u64,
+    /// Caller-held allowance for measured interface queue and temporary overlap.
+    pub overlap_budget_bytes: usize,
+    /// Cancellation sampled before preparation and immediately before commit.
+    pub cancelled: &'a AtomicBool,
+}
+
+/// Atomic all-peer N01 queue admission outcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AllPeerAdmissionError {
+    /// The caller cancelled before the commit boundary.
+    Cancelled,
+    /// The caller's declared member set no longer exactly matches the group.
+    MembershipChanged,
+    /// A temporary transport or resource condition permits a later retry.
+    Retry(AllPeerRetry),
+    /// This frame, group, sequence or epoch cannot be used as submitted.
+    Invalid(CarrierError),
+}
+
+fn add_all_peer_bytes(
+    total: usize,
+    count: usize,
+    size: usize,
+) -> Result<usize, AllPeerAdmissionError> {
+    count
+        .checked_mul(size)
+        .and_then(|value| total.checked_add(value))
+        .ok_or(AllPeerAdmissionError::Retry(AllPeerRetry::Budget))
+}
+
+// Mirror the encoder's header construction and use its shared field validator, without
+// allocating or advancing any sender. Peer-specific negotiated profile is checked separately.
+fn validate_all_peer_frame(
+    frame: &OutboundFrame,
+    stream: StreamId,
+    epoch: u64,
+) -> Result<(), StreamError> {
+    if frame.payload.len() > MAX_PAYLOAD_BYTES {
+        return Err(StreamError::PayloadTooLarge {
+            len: frame.payload.len(),
+        });
+    }
+    let mut h = [0_u8; crate::HEADER_LEN_BYTES];
+    h[0..4].copy_from_slice(&crate::WIRE_MAGIC);
+    h[crate::OFF_VERSION] = crate::WIRE_VERSION;
+    h[crate::OFF_KIND] = frame.kind.wire();
+    h[crate::OFF_FLAGS] = frame.flags;
+    h[crate::OFF_FORMAT] = frame.format.wire();
+    h[crate::OFF_STREAM_ID..crate::OFF_STREAM_ID + 8].copy_from_slice(&stream.get().to_be_bytes());
+    h[crate::OFF_EPOCH..crate::OFF_EPOCH + 8].copy_from_slice(&epoch.to_be_bytes());
+    h[crate::OFF_START_FRAME..crate::OFF_START_FRAME + 8]
+        .copy_from_slice(&frame.start_frame.to_be_bytes());
+    h[crate::OFF_PRESENTATION..crate::OFF_PRESENTATION + 8]
+        .copy_from_slice(&frame.presentation_time_ns.to_be_bytes());
+    h[crate::OFF_CONSUME_BY..crate::OFF_CONSUME_BY + 8]
+        .copy_from_slice(&frame.consume_by_ns.to_be_bytes());
+    h[crate::OFF_FEC_GROUP..crate::OFF_FEC_GROUP + 2]
+        .copy_from_slice(&frame.fec_group_id.to_be_bytes());
+    h[crate::OFF_FEC_INDEX] = frame.fec_index;
+    h[crate::OFF_FEC_SIZE] = frame.fec_group_size;
+    let frames = (frame.payload.len() / frame.format.bytes_per_frame()) as u16;
+    h[crate::OFF_FRAME_COUNT..crate::OFF_FRAME_COUNT + 2].copy_from_slice(&frames.to_be_bytes());
+    h[crate::OFF_PAYLOAD_LEN..crate::OFF_PAYLOAD_LEN + 2]
+        .copy_from_slice(&(frame.payload.len() as u16).to_be_bytes());
+    crate::parse_header(&h)?;
+    Ok(())
+}
+
 /// Which of an endpoint's two sockets a port call is about. Control has a socket of its own so that a media flood can
 /// fill the media socket's receive queue without ever delaying a stop or a report.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -732,6 +902,49 @@ struct GroupState {
     fec: Option<FecGroup>,
     /// A selected FEC epoch was interrupted and cannot silently become N01.
     fec_fenced: bool,
+    n01_last_group_ns: Option<u64>,
+    n01_clock_failed: bool,
+    n01_fence_generation: u64,
+    n01_selection: Option<Arc<()>>,
+}
+
+fn n01_selection_matches(state: &GroupState, snapshot: &N01GroupSnapshot) -> bool {
+    match (&state.n01_selection, &snapshot.selection) {
+        (None, None) => true,
+        (Some(current), Some(claim)) => Arc::ptr_eq(current, claim),
+        _ => false,
+    }
+}
+
+fn n01_incarnation_matches(state: &GroupState, snapshot: &N01GroupSnapshot, global: u64) -> bool {
+    if !n01_selection_matches(state, snapshot) {
+        return false;
+    }
+    if snapshot.selection.is_some() {
+        state.n01_fence_generation != u64::MAX
+            && snapshot.fence_generation == state.n01_fence_generation
+    } else {
+        global != u64::MAX && snapshot.generation == global
+    }
+}
+
+fn n01_group_time(
+    groups: &[GroupState],
+    clocks: &[N01GroupClock],
+    group: GroupId,
+    selected: Option<GroupId>,
+) -> Option<u64> {
+    let state = groups.iter().find(|state| state.id == group)?;
+    if state.n01_clock_failed || (state.n01_selection.is_some() && selected != Some(group)) {
+        return None;
+    }
+    let epoch = state.epoch;
+    let mut matching = clocks.iter().filter(|clock| clock.group == group);
+    let clock = matching.next()?;
+    if matching.next().is_some() || clock.epoch != epoch || !clock.view.usable {
+        return None;
+    }
+    Some(clock.view.group_ns)
 }
 
 /// Trusted transport provision for one already-enrolled carrier peer.
@@ -841,10 +1054,20 @@ struct FecDatagram {
     attempts: u8,
 }
 
+type StagedN01Entry = (usize, VecDeque<QueuedFrame>, QueuedFrame, usize, usize, u64);
+
+struct PreparedN01Queues {
+    entries: Vec<StagedN01Entry>,
+    live_bytes: usize,
+    accounted_bytes: usize,
+    group_members: usize,
+}
+
 struct QueuedFrame {
     frame: OutboundFrame,
     wire_len: usize,
     enqueued_ns: u64,
+    group_clock_required: bool,
 }
 
 /// A signed datagram the transport refused, kept whole for another attempt. It is never re-signed: its sequence number is its own.
@@ -855,6 +1078,7 @@ struct HeldDatagram {
     enqueued_ns: u64,
     consume_by_ns: u64,
     attempts: u8,
+    group_clock_required: bool,
 }
 
 /// The newest datagram that was actually transmitted, kept whole: it is what a probe sends again. A retransmission is the same
@@ -863,6 +1087,7 @@ struct HeldDatagram {
 struct SentDatagram {
     wire: Vec<u8>,
     wire_len: usize,
+    group_clock_required: bool,
 }
 
 struct PeerState {
@@ -1003,6 +1228,35 @@ impl PeerState {
         } else if let Some(old) = self.media_q.pop_front() {
             self.media_q_bytes -= old.wire_len;
             add_drop(&mut self.counters, kind, old.wire_len);
+        }
+    }
+
+    fn has_evictable_media(&self) -> bool {
+        !self.fec_q.is_empty() || self.media_q.iter().any(|entry| !entry.group_clock_required)
+    }
+
+    /// Lossy queue pressure cannot evict a frame already accepted by all-peer admission.
+    fn drop_oldest_evictable(&mut self, kind: DropKind) -> bool {
+        let media_index = self
+            .media_q
+            .iter()
+            .position(|entry| !entry.group_clock_required);
+        let media_time = media_index
+            .and_then(|index| self.media_q.get(index))
+            .map(|entry| entry.enqueued_ns);
+        let fec_time = self.fec_q.front().map(|entry| entry.enqueued_ns);
+        if fec_time.is_some_and(|time| media_time.is_none_or(|media| time < media)) {
+            let old = self.fec_q.pop_front().expect("front checked");
+            self.fec_q_bytes -= old.wire.len();
+            add_drop(&mut self.counters, kind, old.wire.len());
+            true
+        } else if let Some(index) = media_index {
+            let old = self.media_q.remove(index).expect("index checked");
+            self.media_q_bytes -= old.wire_len;
+            add_drop(&mut self.counters, kind, old.wire_len);
+            true
+        } else {
+            false
         }
     }
 
@@ -1175,6 +1429,7 @@ pub struct CarrierSender<P: DatagramPort = HostUdp> {
     faults: PortFaults,
     stage_owner: Arc<AtomicBool>,
     stage_generation: u64,
+    n01_binding_generation: u64,
 }
 
 /// What control cost the interface, apart from the model's counters.
@@ -1238,6 +1493,10 @@ impl<P: DatagramPort> CarrierSender<P> {
             epoch,
             fec: None,
             fec_fenced: false,
+            n01_last_group_ns: None,
+            n01_clock_failed: false,
+            n01_fence_generation: 0,
+            n01_selection: None,
         });
         Ok(Self {
             limits,
@@ -1257,6 +1516,7 @@ impl<P: DatagramPort> CarrierSender<P> {
             faults: PortFaults::default(),
             stage_owner: Arc::new(AtomicBool::new(false)),
             stage_generation: 0,
+            n01_binding_generation: 0,
         })
     }
 
@@ -1300,7 +1560,9 @@ impl<P: DatagramPort> CarrierSender<P> {
 
     /// The port, for a harness that moves its simulated state.
     pub fn port_mut(&mut self) -> &mut P {
+        self.fence_all_live_n01();
         self.fence_prepared_target();
+        self.fence_n01_binding();
         &mut self.port
     }
 
@@ -1314,7 +1576,9 @@ impl<P: DatagramPort> CarrierSender<P> {
     /// The address is outside the declared policy (nothing changed), or the port could not rebind (nothing changed).
     pub fn rebind(&mut self, ip: IpAddr) -> Result<(SocketAddr, SocketAddr), CarrierError> {
         check_address(&self.limits, SocketAddr::new(ip, 0))?;
+        self.fence_all_live_n01();
         self.fence_prepared_target();
+        self.fence_n01_binding();
         if let Err(fault) = self.port.rebind(ip) {
             self.faults.rebind_failures = self.faults.rebind_failures.saturating_add(1);
             return Err(CarrierError::Io(fault_text(&fault)));
@@ -1451,6 +1715,41 @@ impl<P: DatagramPort> CarrierSender<P> {
         self.stage_generation = self.stage_generation.saturating_add(1);
     }
 
+    fn fence_n01_binding(&mut self) {
+        self.n01_binding_generation = self.n01_binding_generation.saturating_add(1);
+    }
+
+    fn fence_live_n01_group(&mut self, group: GroupId) {
+        let live = self
+            .peers
+            .iter()
+            .filter(|peer| peer.group == group)
+            .any(|peer| {
+                peer.media_q.iter().any(|frame| frame.group_clock_required)
+                    || peer
+                        .held
+                        .as_ref()
+                        .is_some_and(|held| held.group_clock_required)
+                    || peer
+                        .last_sent
+                        .as_ref()
+                        .is_some_and(|sent| sent.group_clock_required)
+            });
+        if let Some(state) = self.groups.iter_mut().find(|state| state.id == group) {
+            state.n01_fence_generation = state.n01_fence_generation.saturating_add(1);
+            if live {
+                state.n01_clock_failed = true;
+            }
+        }
+    }
+
+    fn fence_all_live_n01(&mut self) {
+        for index in 0..self.groups.len() {
+            let group = self.groups[index].id;
+            self.fence_live_n01_group(group);
+        }
+    }
+
     fn no_target_preparation(&self) -> Result<(), CarrierError> {
         if self.stage_owner.load(Ordering::Acquire) {
             return Err(CarrierError::InvalidLimits(
@@ -1566,7 +1865,9 @@ impl<P: DatagramPort> CarrierSender<P> {
                 budget: self.limits.pace_bytes_per_sec,
             });
         }
+        self.fence_live_n01_group(group);
         self.fence_prepared_target();
+        self.fence_n01_binding();
         let state = &self.groups[gi];
         let sender = StreamSender::new(state.key.clone(), state.stream_id, state.epoch);
         self.peers.push(PeerState {
@@ -1604,6 +1905,8 @@ impl<P: DatagramPort> CarrierSender<P> {
     pub fn remove_peer(&mut self, id: u32) -> Result<(), CarrierError> {
         let idx = self.index_of(id)?;
         let group = self.peers[idx].group;
+        self.fence_live_n01_group(group);
+        self.fence_n01_binding();
         self.invalidate_group_fec(group);
         let gone = self.peers.remove(idx);
         self.stats.removed_peer_dropped_packets +=
@@ -1637,6 +1940,8 @@ impl<P: DatagramPort> CarrierSender<P> {
             });
         }
         let group = peer.group;
+        self.fence_live_n01_group(group);
+        self.fence_n01_binding();
         self.invalidate_group_fec(group);
         let peer = &mut self.peers[idx];
         peer.media_addr = media_addr;
@@ -1706,6 +2011,7 @@ impl<P: DatagramPort> CarrierSender<P> {
             }));
         }
         self.fence_prepared_target();
+        self.fence_n01_binding();
         for peer in self.peers.iter_mut().filter(|p| p.group == group) {
             peer.pending_fec_feedback = None;
             peer.sender.advance_epoch(new_epoch)?;
@@ -1714,6 +2020,9 @@ impl<P: DatagramPort> CarrierSender<P> {
         self.groups[gi].epoch = new_epoch;
         self.groups[gi].fec = None;
         self.groups[gi].fec_fenced = false;
+        self.groups[gi].n01_last_group_ns = None;
+        self.groups[gi].n01_clock_failed = false;
+        self.groups[gi].n01_selection = None;
         self.stats.epoch_advances += 1;
         Ok(())
     }
@@ -1748,6 +2057,7 @@ impl<P: DatagramPort> CarrierSender<P> {
             });
         }
         self.fence_prepared_target();
+        self.fence_n01_binding();
         let id = self.next_group;
         self.next_group = id.saturating_add(1);
         self.groups.push(GroupState {
@@ -1757,6 +2067,10 @@ impl<P: DatagramPort> CarrierSender<P> {
             epoch,
             fec: None,
             fec_fenced: false,
+            n01_last_group_ns: None,
+            n01_clock_failed: false,
+            n01_fence_generation: 0,
+            n01_selection: None,
         });
         Ok(id)
     }
@@ -1772,6 +2086,7 @@ impl<P: DatagramPort> CarrierSender<P> {
         }
         let gi = self.group_index(group)?;
         self.fence_prepared_target();
+        self.fence_n01_binding();
         let stats = &mut self.stats;
         self.peers.retain(|gone| {
             if gone.group != group {
@@ -1822,6 +2137,7 @@ impl<P: DatagramPort> CarrierSender<P> {
             }));
         }
         self.fence_prepared_target();
+        self.fence_n01_binding();
         let key = self.groups[gi].key.clone();
         for peer in self.peers.iter_mut().filter(|p| p.group == group) {
             peer.sender = StreamSender::new(key.clone(), new_stream_id, new_epoch);
@@ -1831,6 +2147,9 @@ impl<P: DatagramPort> CarrierSender<P> {
         self.groups[gi].epoch = new_epoch;
         self.groups[gi].fec = None;
         self.groups[gi].fec_fenced = false;
+        self.groups[gi].n01_last_group_ns = None;
+        self.groups[gi].n01_clock_failed = false;
+        self.groups[gi].n01_selection = None;
         self.stats.epoch_advances += 1;
         Ok(())
     }
@@ -1845,7 +2164,7 @@ impl<P: DatagramPort> CarrierSender<P> {
     fn largest_media_queue(&self) -> Option<usize> {
         let mut best: Option<(usize, usize)> = None;
         for (idx, peer) in self.peers.iter().enumerate() {
-            if peer.media_q.is_empty() && peer.fec_q.is_empty() {
+            if !peer.has_evictable_media() {
                 continue;
             }
             let longer = match best {
@@ -2635,11 +2954,14 @@ impl<P: DatagramPort> CarrierSender<P> {
             {
                 break;
             }
-            if p.media_q.is_empty() && p.fec_q.is_empty() {
+            if !p.has_evictable_media() {
                 add_drop(&mut self.peers[idx].counters, DropKind::Overflow, len);
                 return;
             }
-            self.peers[idx].drop_oldest(DropKind::Overflow);
+            if !self.peers[idx].drop_oldest_evictable(DropKind::Overflow) {
+                add_drop(&mut self.peers[idx].counters, DropKind::Overflow, len);
+                return;
+            }
             report.evicted += 1;
         }
         loop {
@@ -2654,7 +2976,11 @@ impl<P: DatagramPort> CarrierSender<P> {
                 report.rejected_aggregate += 1;
                 return;
             };
-            self.peers[victim].drop_oldest(DropKind::Aggregate);
+            if !self.peers[victim].drop_oldest_evictable(DropKind::Aggregate) {
+                add_drop(&mut self.peers[idx].counters, DropKind::Aggregate, len);
+                report.rejected_aggregate += 1;
+                return;
+            }
             report.evicted += 1;
         }
         let p = &mut self.peers[idx];
@@ -2692,6 +3018,11 @@ impl<P: DatagramPort> CarrierSender<P> {
     ) -> Result<SubmitReport, CarrierError> {
         let group_index = self.group_index(group)?;
         let current = self.groups[group_index].epoch;
+        if self.groups[group_index].n01_selection.is_some() {
+            return Err(CarrierError::InvalidLimits(
+                "group has exclusive N01 source",
+            ));
+        }
         if self.groups[group_index].fec.is_some() || self.groups[group_index].fec_fenced {
             return Err(CarrierError::InvalidLimits(
                 "group uses FEC or needs an epoch transition",
@@ -2725,10 +3056,912 @@ impl<P: DatagramPort> CarrierSender<P> {
                 frame: frame.clone(),
                 wire_len,
                 enqueued_ns: now_ns,
+                group_clock_required: false,
             };
             self.enqueue_media(idx, queued, &mut report);
         }
         Ok(report)
+    }
+
+    /// Fence all-peer N01 selection when the caller's admitted lifetime bound is invalid.
+    /// Protected queued and held frames cannot be sent by either pump until a new epoch;
+    /// epoch advance drops them. This does not fence ordinary legacy traffic.
+    pub fn fence_n01_group(
+        &mut self,
+        group: GroupId,
+        epoch: u64,
+        snapshot: &N01GroupSnapshot,
+    ) -> Result<(), AllPeerAdmissionError> {
+        let gi = self
+            .group_index(group)
+            .map_err(AllPeerAdmissionError::Invalid)?;
+        if !Arc::ptr_eq(&self.stage_owner, &snapshot.owner)
+            || snapshot.fence_generation != self.groups[gi].n01_fence_generation
+            || self.groups[gi].n01_fence_generation == u64::MAX
+            || !n01_selection_matches(&self.groups[gi], snapshot)
+            || snapshot.group != group
+            || snapshot.epoch != epoch
+            || self.groups[gi].epoch != epoch
+        {
+            return Err(AllPeerAdmissionError::MembershipChanged);
+        }
+        if !self.groups[gi].n01_clock_failed {
+            self.groups[gi].n01_clock_failed = true;
+            self.fence_n01_binding();
+        }
+        Ok(())
+    }
+
+    /// Compare carrier ownership only, including after epoch advance. This does not
+    /// validate a snapshot's epoch, generation, membership or control authority.
+    #[must_use]
+    pub fn owns_n01_snapshot(&self, snapshot: &N01GroupSnapshot) -> bool {
+        Arc::ptr_eq(&self.stage_owner, &snapshot.owner)
+    }
+
+    /// Capture the current exact membership before decoding a frame that might need retry.
+    /// Membership, peer routes, backend and epoch changes or a foreign sender make it stale.
+    /// Link state and MTU are rechecked on every attempt and may recover on the same snapshot.
+    /// The caller must retain exclusive custody of the backend: mutations through shared
+    /// aliases are not observable by this generation and this is not authentication.
+    pub fn snapshot_n01_group(
+        &self,
+        group: GroupId,
+        epoch: u64,
+        required_peers: &[u32],
+    ) -> Result<N01GroupSnapshot, AllPeerAdmissionError> {
+        let gi = self
+            .group_index(group)
+            .map_err(AllPeerAdmissionError::Invalid)?;
+        if self.groups[gi].epoch != epoch
+            || self.n01_binding_generation == u64::MAX
+            || self.groups[gi].n01_fence_generation == u64::MAX
+            || self.groups[gi].n01_clock_failed
+            || self.groups[gi].n01_selection.is_some()
+        {
+            return Err(AllPeerAdmissionError::MembershipChanged);
+        }
+        let members = self.peers.iter().filter(|peer| peer.group == group).count();
+        if members == 0
+            || required_peers.len() != members
+            || self
+                .peers
+                .iter()
+                .filter(|peer| peer.group == group)
+                .any(|peer| required_peers.iter().filter(|id| **id == peer.id).count() != 1)
+        {
+            return Err(AllPeerAdmissionError::MembershipChanged);
+        }
+        Ok(N01GroupSnapshot {
+            owner: Arc::clone(&self.stage_owner),
+            generation: self.n01_binding_generation,
+            fence_generation: self.groups[gi].n01_fence_generation,
+            selection: None,
+            group,
+            epoch,
+        })
+    }
+
+    /// Acquire exclusive source custody before decoding. Selection lives until the
+    /// next epoch and is not cloneable; any queued, held or cached media forbids it.
+    pub fn claim_n01_source(
+        &mut self,
+        group: GroupId,
+        epoch: u64,
+        required_peers: &[u32],
+    ) -> Result<N01GroupSnapshot, AllPeerAdmissionError> {
+        let mut snapshot = self.snapshot_n01_group(group, epoch, required_peers)?;
+        let gi = self
+            .group_index(group)
+            .map_err(AllPeerAdmissionError::Invalid)?;
+        if self.groups[gi].fec.is_some() || self.groups[gi].fec_fenced {
+            return Err(AllPeerAdmissionError::Invalid(CarrierError::InvalidLimits(
+                "group uses FEC or needs an epoch transition",
+            )));
+        }
+        if self
+            .peers
+            .iter()
+            .filter(|peer| peer.group == group)
+            .any(|peer| {
+                !peer.media_q.is_empty()
+                    || !peer.fec_q.is_empty()
+                    || peer.held.is_some()
+                    || peer.last_sent.is_some()
+                    || !peer.in_flight.is_empty()
+            })
+        {
+            return Err(AllPeerAdmissionError::MembershipChanged);
+        }
+        let claim = Arc::new(());
+        self.groups[gi].n01_selection = Some(Arc::clone(&claim));
+        snapshot.selection = Some(claim);
+        Ok(snapshot)
+    }
+
+    /// Conservative pre-decode advisory for one maximum-sized media block.
+    /// Admission remains authoritative: profile, clock, cancellation, allocation budget and
+    /// actual frame validation can still reject after this returns true. A false result can
+    /// conservatively delay a shorter tail block until full-block capacity becomes available.
+    pub fn has_n01_eligible_peer(
+        &self,
+        group: GroupId,
+        epoch: u64,
+        snapshot: &N01GroupSnapshot,
+        required_peers: &[u32],
+        interface_now_ns: u64,
+    ) -> Result<bool, AllPeerAdmissionError> {
+        use AllPeerAdmissionError::{Invalid, MembershipChanged};
+        let gi = self.group_index(group).map_err(Invalid)?;
+        if !Arc::ptr_eq(&self.stage_owner, &snapshot.owner)
+            || !n01_incarnation_matches(&self.groups[gi], snapshot, self.n01_binding_generation)
+            || snapshot.group != group
+            || snapshot.epoch != epoch
+            || self.groups[gi].epoch != epoch
+            || self.groups[gi].n01_clock_failed
+        {
+            return Err(MembershipChanged);
+        }
+        if self.groups[gi].fec.is_some() || self.groups[gi].fec_fenced {
+            return Err(Invalid(CarrierError::InvalidLimits(
+                "group uses FEC or needs an epoch transition",
+            )));
+        }
+        let members = self.peers.iter().filter(|peer| peer.group == group).count();
+        if members == 0
+            || required_peers.len() != members
+            || self
+                .peers
+                .iter()
+                .filter(|peer| peer.group == group)
+                .any(|peer| required_peers.iter().filter(|id| **id == peer.id).count() != 1)
+        {
+            return Err(MembershipChanged);
+        }
+        if !self.link_up {
+            return Ok(false);
+        }
+        let wire_len = WIRE_OVERHEAD_BYTES + MAX_PAYLOAD_BYTES;
+        let (packets, bytes) = self.aggregate_media();
+        if packets
+            .checked_add(1)
+            .is_none_or(|v| v > self.limits.aggregate_queue_packets)
+            || bytes
+                .checked_add(wire_len)
+                .is_none_or(|v| v > self.limits.aggregate_queue_bytes)
+        {
+            return Ok(false);
+        }
+        Ok(self
+            .peers
+            .iter()
+            .filter(|peer| peer.group == group)
+            .any(|peer| {
+                let ahead = u64::try_from(peer.media_q.len()).unwrap_or(u64::MAX);
+                peer.fence.is_none()
+                    && !peer
+                        .send_hold_until_ns
+                        .is_some_and(|until| interface_now_ns < until)
+                    && peer.path_mtu >= wire_len.saturating_add(peer.overhead())
+                    && peer.sender.epoch() == epoch
+                    && peer
+                        .sender
+                        .next_seq()
+                        .checked_add(ahead)
+                        .is_some_and(|seq| seq != u64::MAX)
+                    && !peer.waiting(self.limits.window_packets)
+                    && peer
+                        .queued_packets()
+                        .checked_add(1)
+                        .is_some_and(|v| v <= self.limits.peer_queue_packets)
+                    && peer
+                        .queued_bytes()
+                        .checked_add(wire_len)
+                        .is_some_and(|v| v <= self.limits.peer_queue_bytes)
+            }))
+    }
+
+    /// Queue one validated N01 frame for every exactly specified member, without eviction.
+    /// The borrowed frame remains with the caller on every result; advance the source only on
+    /// success. Success is queue admission, not transport delivery or playback. Retry variants
+    /// leave all existing queue contents, counters and sequence numbers unchanged.
+    /// A trusted clock observation is recorded even on refusal; a rollback latches failure and
+    /// invalidates snapshots until a new epoch. No audio queue or caller frame is changed by it.
+    /// These frames require [`Self::pump_n01_clocked`]; legacy pumps leave them queued.
+    ///
+    /// `overlap_budget_bytes` is the caller-held allowance for existing interface queue and
+    /// cached wire allocations plus the observed temporary prepared vector, replacement queue
+    /// slots and new payload capacities. Sender tables, the caller's frame, allocator metadata
+    /// and stack are outside this charge. Exact-reserve may overgrant before it can be measured:
+    /// this admission accounting is not a hard transient allocation or RSS ceiling. The
+    /// caller must continue accounting the resulting live queue allocations after this call.
+    /// `interface_now_ns` is local monotonic queue/pacer time. The caller separately
+    /// supplies `trusted_group_now_ns` in the frame deadline domain; this API does not
+    /// authenticate that clock. The caller must derive the deadline from the maximum admitted
+    /// N04 work, lead and uncertainty across the entire queued lifetime and fence the group if
+    /// that bound becomes invalid. Equality at the deadline is already late. Legacy N01 pumping
+    /// retains its existing clock semantics and cannot send these protected frames.
+    /// Cancellation is sampled again immediately before the non-fallible queue commit.
+    pub fn try_submit_group_media_all(
+        &mut self,
+        group: GroupId,
+        epoch: u64,
+        snapshot: &N01GroupSnapshot,
+        required_peers: &[u32],
+        frame: &OutboundFrame,
+        inputs: N01AdmissionInputs<'_>,
+    ) -> Result<AllPeerAdmission, AllPeerAdmissionError> {
+        use AllPeerAdmissionError::{Cancelled, Invalid, MembershipChanged, Retry};
+        let N01AdmissionInputs {
+            interface_now_ns,
+            trusted_group_now_ns,
+            overlap_budget_bytes,
+            cancelled,
+        } = inputs;
+        if cancelled.load(Ordering::Acquire) {
+            return Err(Cancelled);
+        }
+        let gi = self.group_index(group).map_err(Invalid)?;
+        let current = self.groups[gi].epoch;
+        if epoch != current {
+            return Err(Invalid(CarrierError::StaleEpoch {
+                submitted: epoch,
+                current,
+            }));
+        }
+        if !Arc::ptr_eq(&self.stage_owner, &snapshot.owner)
+            || !n01_incarnation_matches(&self.groups[gi], snapshot, self.n01_binding_generation)
+            || snapshot.group != group
+            || snapshot.epoch != epoch
+            || self.groups[gi].n01_clock_failed
+        {
+            return Err(MembershipChanged);
+        }
+        if self.groups[gi].fec.is_some() || self.groups[gi].fec_fenced {
+            return Err(Invalid(CarrierError::InvalidLimits(
+                "group uses FEC or needs an epoch transition",
+            )));
+        }
+        let members = self.peers.iter().filter(|peer| peer.group == group).count();
+        if members == 0
+            || required_peers.len() != members
+            || self
+                .peers
+                .iter()
+                .filter(|peer| peer.group == group)
+                .any(|peer| required_peers.iter().filter(|id| **id == peer.id).count() != 1)
+        {
+            return Err(MembershipChanged);
+        }
+        if self.groups[gi]
+            .n01_last_group_ns
+            .is_some_and(|last| trusted_group_now_ns < last)
+        {
+            self.groups[gi].n01_clock_failed = true;
+            self.fence_prepared_target();
+            self.fence_n01_binding();
+            return Err(Invalid(CarrierError::InvalidLimits(
+                "group clock moved backward",
+            )));
+        }
+        self.groups[gi].n01_last_group_ns = Some(trusted_group_now_ns);
+        if !self.link_up {
+            return Err(Retry(AllPeerRetry::LinkDown));
+        }
+        if frame.kind != crate::PacketKind::Media {
+            return Err(Invalid(CarrierError::InvalidLimits(
+                "all-peer admission requires media",
+            )));
+        }
+        if trusted_group_now_ns >= frame.consume_by_ns {
+            return Err(Invalid(CarrierError::InvalidLimits(
+                "frame deadline already elapsed",
+            )));
+        }
+        validate_all_peer_frame(frame, self.groups[gi].stream_id, epoch)
+            .map_err(|error| Invalid(CarrierError::Stream(error)))?;
+        let wire_len = WIRE_OVERHEAD_BYTES + frame.payload.len();
+        let (packets, bytes) = self.aggregate_media();
+        let needed_bytes = wire_len
+            .checked_mul(members)
+            .ok_or(Retry(AllPeerRetry::Capacity))?;
+        if packets
+            .checked_add(members)
+            .is_none_or(|v| v > self.limits.aggregate_queue_packets)
+            || bytes
+                .checked_add(needed_bytes)
+                .is_none_or(|v| v > self.limits.aggregate_queue_bytes)
+        {
+            return Err(Retry(AllPeerRetry::Capacity));
+        }
+        for peer in self.peers.iter().filter(|peer| peer.group == group) {
+            if peer.fence.is_some() {
+                return Err(Retry(AllPeerRetry::PeerFenced(peer.id)));
+            }
+            if peer.path_mtu < wire_len.saturating_add(peer.overhead()) {
+                return Err(Retry(AllPeerRetry::PathMtu(peer.id)));
+            }
+            if peer.sender.epoch() != epoch {
+                return Err(Invalid(CarrierError::StaleEpoch {
+                    submitted: epoch,
+                    current: peer.sender.epoch(),
+                }));
+            }
+            peer.sender
+                .profile
+                .check(frame.kind, frame.payload.len())
+                .map_err(|error| Invalid(CarrierError::Stream(error)))?;
+            let ahead = u64::try_from(peer.media_q.len())
+                .map_err(|_| Invalid(CarrierError::Stream(StreamError::SequenceExhausted)))?;
+            if peer
+                .sender
+                .next_seq()
+                .checked_add(ahead)
+                .is_none_or(|seq| seq == u64::MAX)
+            {
+                return Err(Invalid(CarrierError::Stream(
+                    StreamError::SequenceExhausted,
+                )));
+            }
+            if peer
+                .counters
+                .media_submitted_packets
+                .checked_add(1)
+                .is_none()
+                || peer
+                    .counters
+                    .media_submitted_bytes
+                    .checked_add(wire_len as u64)
+                    .is_none()
+            {
+                return Err(Invalid(CarrierError::InvalidLimits(
+                    "media accounting exhausted",
+                )));
+            }
+            if peer
+                .queued_packets()
+                .checked_add(1)
+                .is_none_or(|v| v > self.limits.peer_queue_packets)
+                || peer
+                    .queued_bytes()
+                    .checked_add(wire_len)
+                    .is_none_or(|v| v > self.limits.peer_queue_bytes)
+            {
+                return Err(Retry(AllPeerRetry::Capacity));
+            }
+        }
+        let mut staged = Some(self.prepare_n01_queues(
+            group,
+            required_peers,
+            frame,
+            interface_now_ns,
+            overlap_budget_bytes,
+        )?);
+        self.commit_n01_queues(
+            group,
+            epoch,
+            snapshot,
+            trusted_group_now_ns,
+            overlap_budget_bytes,
+            cancelled,
+            &mut staged,
+        )
+    }
+
+    /// Publish one frame once to the peers that can currently progress, without evicting
+    /// protected frames. A published result lists every member's disposition; the caller
+    /// consumes the source frame once and never retries the whole fanout. `Expired` is an
+    /// explicit skip, also consumed once. If no peer can progress, retain frame and snapshot.
+    /// The caller owns clocks, lifetime-bound fencing, skip accounting and overlap reservation.
+    pub fn try_submit_group_media_isolated(
+        &mut self,
+        group: GroupId,
+        epoch: u64,
+        snapshot: &N01GroupSnapshot,
+        required_peers: &[u32],
+        frame: &OutboundFrame,
+        inputs: N01AdmissionInputs<'_>,
+    ) -> Result<N01IsolatedOutcome, AllPeerAdmissionError> {
+        use AllPeerAdmissionError::{Cancelled, Invalid, MembershipChanged, Retry};
+        let N01AdmissionInputs {
+            interface_now_ns,
+            trusted_group_now_ns,
+            overlap_budget_bytes,
+            cancelled,
+        } = inputs;
+        if cancelled.load(Ordering::Acquire) {
+            return Err(Cancelled);
+        }
+        let gi = self.group_index(group).map_err(Invalid)?;
+        let current = self.groups[gi].epoch;
+        if epoch != current {
+            return Err(Invalid(CarrierError::StaleEpoch {
+                submitted: epoch,
+                current,
+            }));
+        }
+        if !Arc::ptr_eq(&self.stage_owner, &snapshot.owner)
+            || !n01_incarnation_matches(&self.groups[gi], snapshot, self.n01_binding_generation)
+            || snapshot.group != group
+            || snapshot.epoch != epoch
+            || self.groups[gi].n01_clock_failed
+        {
+            return Err(MembershipChanged);
+        }
+        if self.groups[gi].fec.is_some() || self.groups[gi].fec_fenced {
+            return Err(Invalid(CarrierError::InvalidLimits(
+                "group uses FEC or needs an epoch transition",
+            )));
+        }
+        let members = self.peers.iter().filter(|peer| peer.group == group).count();
+        if members == 0
+            || required_peers.len() != members
+            || self
+                .peers
+                .iter()
+                .filter(|peer| peer.group == group)
+                .any(|peer| required_peers.iter().filter(|id| **id == peer.id).count() != 1)
+        {
+            return Err(MembershipChanged);
+        }
+        if self.groups[gi]
+            .n01_last_group_ns
+            .is_some_and(|last| trusted_group_now_ns < last)
+        {
+            self.groups[gi].n01_clock_failed = true;
+            self.fence_prepared_target();
+            self.fence_n01_binding();
+            return Err(Invalid(CarrierError::InvalidLimits(
+                "group clock moved backward",
+            )));
+        }
+        self.groups[gi].n01_last_group_ns = Some(trusted_group_now_ns);
+        if frame.kind != crate::PacketKind::Media {
+            return Err(Invalid(CarrierError::InvalidLimits(
+                "isolated admission requires media",
+            )));
+        }
+        validate_all_peer_frame(frame, self.groups[gi].stream_id, epoch)
+            .map_err(|error| Invalid(CarrierError::Stream(error)))?;
+        for peer in self.peers.iter().filter(|peer| peer.group == group) {
+            if peer.sender.epoch() != epoch {
+                return Err(Invalid(CarrierError::StaleEpoch {
+                    submitted: epoch,
+                    current: peer.sender.epoch(),
+                }));
+            }
+            peer.sender
+                .profile
+                .check(frame.kind, frame.payload.len())
+                .map_err(|error| Invalid(CarrierError::Stream(error)))?;
+        }
+        let mut result = N01IsolatedOutcome {
+            status: N01IsolatedStatus::Expired,
+            peers: [None; 64],
+            peer_count: 0,
+            accounted_overlap_bytes: 0,
+        };
+        if trusted_group_now_ns >= frame.consume_by_ns {
+            return Ok(result);
+        }
+        if !self.link_up {
+            return Err(Retry(AllPeerRetry::LinkDown));
+        }
+        let wire_len = WIRE_OVERHEAD_BYTES + frame.payload.len();
+        let (mut packets, mut bytes) = self.aggregate_media();
+        let mut selected = [0_u32; 64];
+        let mut selected_len = 0_usize;
+        for offset in 0..self.peers.len() {
+            let index = (self.media_cursor + offset) % self.peers.len();
+            let peer = &self.peers[index];
+            if peer.group != group {
+                continue;
+            }
+            let ahead = u64::try_from(peer.media_q.len()).unwrap_or(u64::MAX);
+            let disposition = if peer.fence.is_some() {
+                N01PeerDisposition::Fenced
+            } else if peer.path_mtu < wire_len.saturating_add(peer.overhead()) {
+                N01PeerDisposition::PathMtu
+            } else if peer
+                .sender
+                .next_seq()
+                .checked_add(ahead)
+                .is_none_or(|seq| seq == u64::MAX)
+            {
+                N01PeerDisposition::SequenceExhausted
+            } else if peer.waiting(self.limits.window_packets)
+                || peer
+                    .send_hold_until_ns
+                    .is_some_and(|until| interface_now_ns < until)
+            {
+                N01PeerDisposition::Stalled
+            } else if peer
+                .queued_packets()
+                .checked_add(1)
+                .is_none_or(|v| v > self.limits.peer_queue_packets)
+                || peer
+                    .queued_bytes()
+                    .checked_add(wire_len)
+                    .is_none_or(|v| v > self.limits.peer_queue_bytes)
+                || packets
+                    .checked_add(1)
+                    .is_none_or(|v| v > self.limits.aggregate_queue_packets)
+                || bytes
+                    .checked_add(wire_len)
+                    .is_none_or(|v| v > self.limits.aggregate_queue_bytes)
+            {
+                N01PeerDisposition::Capacity
+            } else {
+                if peer
+                    .counters
+                    .media_submitted_packets
+                    .checked_add(1)
+                    .is_none()
+                    || peer
+                        .counters
+                        .media_submitted_bytes
+                        .checked_add(wire_len as u64)
+                        .is_none()
+                {
+                    return Err(Invalid(CarrierError::InvalidLimits(
+                        "media accounting exhausted",
+                    )));
+                }
+                selected[selected_len] = peer.id;
+                selected_len += 1;
+                packets += 1;
+                bytes += wire_len;
+                N01PeerDisposition::Queued
+            };
+            result.peers[result.peer_count] = Some(N01PeerOutcome {
+                peer: peer.id,
+                disposition,
+            });
+            result.peer_count += 1;
+        }
+        if selected_len == 0 {
+            return Err(Retry(AllPeerRetry::NoEligiblePeers));
+        }
+        let mut staged = Some(self.prepare_n01_queues(
+            group,
+            &selected[..selected_len],
+            frame,
+            interface_now_ns,
+            overlap_budget_bytes,
+        )?);
+        let admitted = self.commit_n01_queues(
+            group,
+            epoch,
+            snapshot,
+            trusted_group_now_ns,
+            overlap_budget_bytes,
+            cancelled,
+            &mut staged,
+        )?;
+        result.status = N01IsolatedStatus::Published;
+        result.accounted_overlap_bytes = admitted.accounted_overlap_bytes;
+        Ok(result)
+    }
+
+    fn n01_live_allocation_bytes(&self) -> Result<usize, AllPeerAdmissionError> {
+        let mut live = 0_usize;
+        for peer in &self.peers {
+            live = add_all_peer_bytes(
+                live,
+                peer.media_q.capacity(),
+                std::mem::size_of::<QueuedFrame>(),
+            )?;
+            live = add_all_peer_bytes(
+                live,
+                peer.fec_q.capacity(),
+                std::mem::size_of::<FecDatagram>(),
+            )?;
+            live = add_all_peer_bytes(
+                live,
+                peer.control_q.capacity(),
+                std::mem::size_of::<Vec<u8>>(),
+            )?;
+            live = add_all_peer_bytes(live, peer.in_flight.capacity(), std::mem::size_of::<u64>())?;
+            for item in &peer.media_q {
+                live = add_all_peer_bytes(live, item.frame.payload.capacity(), 1)?;
+            }
+            for item in &peer.fec_q {
+                live = add_all_peer_bytes(live, item.wire.capacity(), 1)?;
+            }
+            for item in &peer.control_q {
+                live = add_all_peer_bytes(live, item.capacity(), 1)?;
+            }
+            if let Some(held) = &peer.held {
+                live = add_all_peer_bytes(live, held.wire.capacity(), 1)?;
+            }
+            if let Some(sent) = &peer.last_sent {
+                live = add_all_peer_bytes(live, sent.wire.capacity(), 1)?;
+            }
+        }
+        Ok(live)
+    }
+
+    fn prepare_n01_queues(
+        &self,
+        group: GroupId,
+        selected_peers: &[u32],
+        frame: &OutboundFrame,
+        interface_now_ns: u64,
+        overlap_budget_bytes: usize,
+    ) -> Result<PreparedN01Queues, AllPeerAdmissionError> {
+        use AllPeerAdmissionError::Retry;
+        let group_members = self.peers.iter().filter(|peer| peer.group == group).count();
+        let members = selected_peers.len();
+        let wire_len = WIRE_OVERHEAD_BYTES + frame.payload.len();
+        // Existing allocations remain live throughout preparation; count their actual capacity.
+        let live = self.n01_live_allocation_bytes()?;
+        let mut minimum = add_all_peer_bytes(live, members, std::mem::size_of::<StagedN01Entry>())?;
+        for peer in self
+            .peers
+            .iter()
+            .filter(|peer| peer.group == group && selected_peers.contains(&peer.id))
+        {
+            minimum = add_all_peer_bytes(
+                minimum,
+                peer.media_q
+                    .len()
+                    .checked_add(1)
+                    .ok_or(Retry(AllPeerRetry::Budget))?,
+                std::mem::size_of::<QueuedFrame>(),
+            )?;
+            minimum = add_all_peer_bytes(minimum, frame.payload.len(), 1)?;
+        }
+        if minimum > overlap_budget_bytes {
+            return Err(Retry(AllPeerRetry::Budget));
+        }
+        // Live queue capacities do not change before every fallible allocation succeeds.
+        let mut prepared: Vec<StagedN01Entry> = Vec::new();
+        prepared
+            .try_reserve_exact(members)
+            .map_err(|_| Retry(AllPeerRetry::Allocation))?;
+        let mut actual = add_all_peer_bytes(
+            live,
+            prepared.capacity(),
+            std::mem::size_of::<StagedN01Entry>(),
+        )?;
+        if actual > overlap_budget_bytes {
+            return Err(Retry(AllPeerRetry::Budget));
+        }
+        for (index, peer) in self
+            .peers
+            .iter()
+            .enumerate()
+            .filter(|(_, peer)| peer.group == group && selected_peers.contains(&peer.id))
+        {
+            let mut replacement = VecDeque::new();
+            replacement
+                .try_reserve_exact(
+                    peer.media_q
+                        .len()
+                        .checked_add(1)
+                        .ok_or(Retry(AllPeerRetry::Capacity))?,
+                )
+                .map_err(|_| Retry(AllPeerRetry::Allocation))?;
+            actual = add_all_peer_bytes(
+                actual,
+                replacement.capacity(),
+                std::mem::size_of::<QueuedFrame>(),
+            )?;
+            if actual > overlap_budget_bytes {
+                return Err(Retry(AllPeerRetry::Budget));
+            }
+            let mut payload = Vec::new();
+            payload
+                .try_reserve_exact(frame.payload.len())
+                .map_err(|_| Retry(AllPeerRetry::Allocation))?;
+            actual = add_all_peer_bytes(actual, payload.capacity(), 1)?;
+            if actual > overlap_budget_bytes {
+                return Err(Retry(AllPeerRetry::Budget));
+            }
+            payload.extend_from_slice(&frame.payload);
+            let copy = OutboundFrame {
+                kind: frame.kind,
+                format: frame.format,
+                flags: frame.flags,
+                start_frame: frame.start_frame,
+                presentation_time_ns: frame.presentation_time_ns,
+                consume_by_ns: frame.consume_by_ns,
+                fec_group_id: frame.fec_group_id,
+                fec_index: frame.fec_index,
+                fec_group_size: frame.fec_group_size,
+                payload,
+            };
+            prepared.push((
+                index,
+                replacement,
+                QueuedFrame {
+                    frame: copy,
+                    wire_len,
+                    enqueued_ns: interface_now_ns,
+                    group_clock_required: true,
+                },
+                peer.media_q.len(),
+                peer.media_q.capacity(),
+                peer.sender.next_seq(),
+            ));
+        }
+        Ok(PreparedN01Queues {
+            entries: prepared,
+            live_bytes: live,
+            accounted_bytes: actual,
+            group_members,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn commit_n01_queues(
+        &mut self,
+        group: GroupId,
+        epoch: u64,
+        snapshot: &N01GroupSnapshot,
+        trusted_group_now_ns: u64,
+        overlap_budget_bytes: usize,
+        cancelled: &AtomicBool,
+        staged: &mut Option<PreparedN01Queues>,
+    ) -> Result<AllPeerAdmission, AllPeerAdmissionError> {
+        self.commit_n01_queues_inner(
+            group,
+            epoch,
+            snapshot,
+            trusted_group_now_ns,
+            overlap_budget_bytes,
+            cancelled,
+            staged,
+            || {},
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn commit_n01_queues_inner(
+        &mut self,
+        group: GroupId,
+        epoch: u64,
+        snapshot: &N01GroupSnapshot,
+        trusted_group_now_ns: u64,
+        overlap_budget_bytes: usize,
+        cancelled: &AtomicBool,
+        staged: &mut Option<PreparedN01Queues>,
+        before_final_cancel_check: impl FnOnce(),
+    ) -> Result<AllPeerAdmission, AllPeerAdmissionError> {
+        use AllPeerAdmissionError::{Cancelled, Invalid, MembershipChanged, Retry};
+        if cancelled.load(Ordering::Acquire) {
+            return Err(Cancelled);
+        }
+        let gi = self.group_index(group).map_err(Invalid)?;
+        if !Arc::ptr_eq(&self.stage_owner, &snapshot.owner)
+            || !n01_incarnation_matches(&self.groups[gi], snapshot, self.n01_binding_generation)
+            || snapshot.group != group
+            || snapshot.epoch != epoch
+            || self.groups[gi].epoch != epoch
+            || self.groups[gi].n01_clock_failed
+            || self.groups[gi].n01_last_group_ns != Some(trusted_group_now_ns)
+        {
+            return Err(MembershipChanged);
+        }
+        if !self.link_up {
+            return Err(Retry(AllPeerRetry::LinkDown));
+        }
+        let prepared = staged.as_ref().ok_or(Invalid(CarrierError::InvalidLimits(
+            "prepared queue already consumed",
+        )))?;
+        if prepared.accounted_bytes > overlap_budget_bytes {
+            return Err(Retry(AllPeerRetry::Budget));
+        }
+        if self.n01_live_allocation_bytes()? != prepared.live_bytes
+            || self.peers.iter().filter(|peer| peer.group == group).count()
+                != prepared.group_members
+        {
+            return Err(Retry(AllPeerRetry::Capacity));
+        }
+        let (packets, bytes) = self.aggregate_media();
+        let queued_bytes = prepared
+            .entries
+            .iter()
+            .try_fold(0_usize, |total, entry| total.checked_add(entry.2.wire_len))
+            .ok_or(Retry(AllPeerRetry::Capacity))?;
+        if packets
+            .checked_add(prepared.entries.len())
+            .is_none_or(|total| total > self.limits.aggregate_queue_packets)
+            || bytes
+                .checked_add(queued_bytes)
+                .is_none_or(|total| total > self.limits.aggregate_queue_bytes)
+        {
+            return Err(Retry(AllPeerRetry::Capacity));
+        }
+        for (index, replacement, queued, prior_len, prior_capacity, prior_seq) in &prepared.entries
+        {
+            let peer = self.peers.get(*index).ok_or(MembershipChanged)?;
+            if peer.group != group
+                || peer.sender.epoch() != epoch
+                || peer.media_q.len() != *prior_len
+                || peer.media_q.capacity() != *prior_capacity
+                || peer.sender.next_seq() != *prior_seq
+                || replacement.capacity() < peer.media_q.len().saturating_add(1)
+            {
+                return Err(MembershipChanged);
+            }
+            if peer.fence.is_some() {
+                return Err(Retry(AllPeerRetry::PeerFenced(peer.id)));
+            }
+            if peer.path_mtu < queued.wire_len.saturating_add(peer.overhead()) {
+                return Err(Retry(AllPeerRetry::PathMtu(peer.id)));
+            }
+            if peer
+                .queued_packets()
+                .checked_add(1)
+                .is_none_or(|total| total > self.limits.peer_queue_packets)
+                || peer
+                    .queued_bytes()
+                    .checked_add(queued.wire_len)
+                    .is_none_or(|total| total > self.limits.peer_queue_bytes)
+            {
+                return Err(Retry(AllPeerRetry::Capacity));
+            }
+            let ahead = u64::try_from(peer.media_q.len())
+                .map_err(|_| Invalid(CarrierError::Stream(StreamError::SequenceExhausted)))?;
+            if peer
+                .sender
+                .next_seq()
+                .checked_add(ahead)
+                .is_none_or(|seq| seq == u64::MAX)
+            {
+                return Err(Invalid(CarrierError::Stream(
+                    StreamError::SequenceExhausted,
+                )));
+            }
+            peer.sender
+                .profile
+                .check(queued.frame.kind, queued.frame.payload.len())
+                .map_err(|error| Invalid(CarrierError::Stream(error)))?;
+            if trusted_group_now_ns >= queued.frame.consume_by_ns {
+                return Err(Invalid(CarrierError::InvalidLimits(
+                    "frame deadline already elapsed",
+                )));
+            }
+            if peer
+                .counters
+                .media_submitted_packets
+                .checked_add(1)
+                .is_none()
+                || peer
+                    .counters
+                    .media_submitted_bytes
+                    .checked_add(queued.wire_len as u64)
+                    .is_none()
+            {
+                return Err(Invalid(CarrierError::InvalidLimits(
+                    "media accounting exhausted",
+                )));
+            }
+        }
+        before_final_cancel_check();
+        if cancelled.load(Ordering::Acquire) {
+            return Err(Cancelled);
+        }
+        let prepared = staged.take().ok_or(Invalid(CarrierError::InvalidLimits(
+            "prepared queue already consumed",
+        )))?;
+        let actual = prepared.accounted_bytes;
+        for (index, mut replacement, queued, _, _, _) in prepared.entries {
+            let peer = &mut self.peers[index];
+            let wire_len = queued.wire_len;
+            while let Some(old) = peer.media_q.pop_front() {
+                replacement.push_back(old);
+            }
+            replacement.push_back(queued);
+            peer.media_q = replacement;
+            peer.media_q_bytes += wire_len;
+            peer.counters.media_submitted_packets += 1;
+            peer.counters.media_submitted_bytes += wire_len as u64;
+        }
+        Ok(AllPeerAdmission {
+            accounted_overlap_bytes: actual,
+        })
     }
 
     fn enqueue_media(&mut self, idx: usize, queued: QueuedFrame, report: &mut SubmitReport) {
@@ -2741,11 +3974,14 @@ impl<P: DatagramPort> CarrierSender<P> {
                 break;
             }
             // The held datagram occupies room but is not evictable: with nothing else queued, the newcomer is what is refused.
-            if peer.media_q.is_empty() && peer.fec_q.is_empty() {
+            if !peer.has_evictable_media() {
                 add_drop(&mut self.peers[idx].counters, DropKind::Overflow, wire_len);
                 return;
             }
-            self.peers[idx].drop_oldest(DropKind::Overflow);
+            if !self.peers[idx].drop_oldest_evictable(DropKind::Overflow) {
+                add_drop(&mut self.peers[idx].counters, DropKind::Overflow, wire_len);
+                return;
+            }
             report.evicted += 1;
         }
         loop {
@@ -2760,7 +3996,11 @@ impl<P: DatagramPort> CarrierSender<P> {
                 report.rejected_aggregate += 1;
                 return;
             };
-            self.peers[victim].drop_oldest(DropKind::Aggregate);
+            if !self.peers[victim].drop_oldest_evictable(DropKind::Aggregate) {
+                add_drop(&mut self.peers[idx].counters, DropKind::Aggregate, wire_len);
+                report.rejected_aggregate += 1;
+                return;
+            }
             report.evicted += 1;
         }
         let peer = &mut self.peers[idx];
@@ -2802,7 +4042,96 @@ impl<P: DatagramPort> CarrierSender<P> {
         clocks: &[(GroupId, crate::playout::ClockView)],
         cancelled: &std::sync::atomic::AtomicBool,
     ) -> PumpReport {
-        if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+        self.pump_with_n01_clocks(now_ns, clocks, None, None, cancelled)
+    }
+
+    /// Pump N01 using fresh caller-admitted group views for deadlines and local time for pacing.
+    /// Missing, duplicate, unusable or wrong-epoch views prevent new N01 media transmission.
+    /// Control reports and already-authorized stall probes remain available for recovery.
+    /// The caller must enforce a cutoff conservative for the entire queued lifetime, and fence
+    /// the protected group before sending if its admitted work/lead/uncertainty bound is invalid.
+    /// This entry point does not send selected FEC media.
+    pub fn pump_n01_clocked(
+        &mut self,
+        interface_now_ns: u64,
+        clocks: &[N01GroupClock],
+        cancelled: &AtomicBool,
+    ) -> PumpReport {
+        self.pump_with_n01_clocks(interface_now_ns, &[], Some(clocks), None, cancelled)
+    }
+
+    /// Pump protected media belonging to one exclusive source selection.
+    pub fn pump_n01_selected(
+        &mut self,
+        interface_now_ns: u64,
+        clock: N01GroupClock,
+        snapshot: &N01GroupSnapshot,
+        cancelled: &AtomicBool,
+    ) -> Result<PumpReport, AllPeerAdmissionError> {
+        let gi = self
+            .group_index(clock.group)
+            .map_err(AllPeerAdmissionError::Invalid)?;
+        if snapshot.selection.is_none()
+            || !Arc::ptr_eq(&self.stage_owner, &snapshot.owner)
+            || !n01_incarnation_matches(&self.groups[gi], snapshot, self.n01_binding_generation)
+            || snapshot.group != clock.group
+            || snapshot.epoch != clock.epoch
+            || self.groups[gi].epoch != clock.epoch
+            || self.groups[gi].n01_clock_failed
+        {
+            return Err(AllPeerAdmissionError::MembershipChanged);
+        }
+        if cancelled.load(Ordering::Acquire) {
+            return Err(AllPeerAdmissionError::Cancelled);
+        }
+        Ok(self.pump_with_n01_clocks(
+            interface_now_ns,
+            &[],
+            Some(&[clock]),
+            Some(clock.group),
+            cancelled,
+        ))
+    }
+
+    fn pump_with_n01_clocks(
+        &mut self,
+        now_ns: u64,
+        clocks: &[(GroupId, crate::playout::ClockView)],
+        n01_clocks: Option<&[N01GroupClock]>,
+        selected: Option<GroupId>,
+        cancelled: &AtomicBool,
+    ) -> PumpReport {
+        let mut rollback = false;
+        if let Some(n01_clocks) = n01_clocks
+            && !cancelled.load(Ordering::Acquire)
+        {
+            for group in &mut self.groups {
+                if group.n01_selection.is_some() && selected != Some(group.id) {
+                    continue;
+                }
+                let mut matching = n01_clocks.iter().filter(|clock| clock.group == group.id);
+                if let (Some(clock), None) = (matching.next(), matching.next())
+                    && clock.epoch == group.epoch
+                    && clock.view.usable
+                    && !group.n01_clock_failed
+                {
+                    if group
+                        .n01_last_group_ns
+                        .is_some_and(|last| clock.view.group_ns < last)
+                    {
+                        group.n01_clock_failed = true;
+                        rollback = true;
+                    } else {
+                        group.n01_last_group_ns = Some(clock.view.group_ns);
+                    }
+                }
+            }
+        }
+        if rollback {
+            self.fence_prepared_target();
+            self.fence_n01_binding();
+        }
+        if n01_clocks.is_none() && cancelled.load(Ordering::Acquire) {
             let groups: Vec<_> = self
                 .groups
                 .iter()
@@ -2863,8 +4192,10 @@ impl<P: DatagramPort> CarrierSender<P> {
         self.pacer.refill(now_ns);
         self.control_pacer.refill(now_ns);
         out.control_sent = self.pump_control();
-        out.late_dropped = self.expire_late(now_ns);
-        self.pump_media(now_ns, clocks, cancelled, &mut out);
+        if n01_clocks.is_none() || !cancelled.load(Ordering::Acquire) {
+            out.late_dropped = self.expire_late(now_ns, n01_clocks, selected);
+        }
+        self.pump_media(now_ns, clocks, n01_clocks, selected, cancelled, &mut out);
         let window = self.limits.window_packets;
         for peer in &mut self.peers {
             if !peer.media_q.is_empty() && peer.fence.is_none() && peer.stalled(window) {
@@ -3361,13 +4692,25 @@ impl<P: DatagramPort> CarrierSender<P> {
     }
 
     /// Drop every queued frame whose own `consume_by` has passed: sent late it could only be heard late.
-    fn expire_late(&mut self, now_ns: u64) -> u32 {
+    fn expire_late(
+        &mut self,
+        now_ns: u64,
+        n01_clocks: Option<&[N01GroupClock]>,
+        selected: Option<GroupId>,
+    ) -> u32 {
         let mut dropped = 0u32;
+        let groups = &self.groups;
         for peer in &mut self.peers {
+            let group_now =
+                n01_clocks.and_then(|clocks| n01_group_time(groups, clocks, peer.group, selected));
             let before = peer.media_q.len();
             let mut late_bytes = Vec::new();
             peer.media_q.retain(|q| {
-                let late = now_ns > q.frame.consume_by_ns;
+                let late = if q.group_clock_required {
+                    group_now.is_some_and(|time| time >= q.frame.consume_by_ns)
+                } else {
+                    now_ns > q.frame.consume_by_ns
+                };
                 if late {
                     late_bytes.push(q.wire_len);
                 }
@@ -3379,11 +4722,13 @@ impl<P: DatagramPort> CarrierSender<P> {
                 add_drop(&mut peer.counters, DropKind::Late, wire_len);
                 dropped += 1;
             }
-            if peer
-                .held
-                .as_ref()
-                .is_some_and(|held| now_ns > held.consume_by_ns && !peer.must_keep(held))
-                && let Some(held) = peer.held.take()
+            if peer.held.as_ref().is_some_and(|held| {
+                (if held.group_clock_required {
+                    group_now.is_some_and(|time| time >= held.consume_by_ns)
+                } else {
+                    now_ns > held.consume_by_ns
+                }) && !peer.must_keep(held)
+            }) && let Some(held) = peer.held.take()
             {
                 add_drop(&mut peer.counters, DropKind::Late, held.wire_len);
                 dropped += 1;
@@ -3399,6 +4744,8 @@ impl<P: DatagramPort> CarrierSender<P> {
         &self,
         now_ns: u64,
         clocks: &[(GroupId, crate::playout::ClockView)],
+        n01_clocks: Option<&[N01GroupClock]>,
+        selected: Option<GroupId>,
         cancelled: &std::sync::atomic::AtomicBool,
     ) -> Option<(usize, usize, bool)> {
         let n = self.peers.len();
@@ -3428,9 +4775,45 @@ impl<P: DatagramPort> CarrierSender<P> {
             if peer.waiting(window) {
                 if peer.probe_due(window, now_ns)
                     && let Some(last) = &peer.last_sent
+                    && !(last.group_clock_required
+                        && self.groups.iter().any(|group| {
+                            group.id == peer.group
+                                && (group.n01_clock_failed
+                                    || selected.is_some_and(|id| id != peer.group)
+                                    || (group.n01_selection.is_some()
+                                        && (cancelled.load(Ordering::Acquire)
+                                            || selected != Some(peer.group)
+                                            || n01_clocks.is_none_or(|views| {
+                                                n01_group_time(
+                                                    &self.groups,
+                                                    views,
+                                                    peer.group,
+                                                    selected,
+                                                )
+                                                .is_none()
+                                            }))))
+                        }))
                 {
                     return Some((idx, last.wire_len + peer.overhead(), false));
                 }
+                continue;
+            }
+            if n01_clocks.is_some() && cancelled.load(Ordering::Acquire) {
+                continue;
+            }
+            let group_clock_required = peer.held.as_ref().map_or_else(
+                || {
+                    peer.media_q
+                        .front()
+                        .is_some_and(|head| head.group_clock_required)
+                },
+                |held| held.group_clock_required,
+            );
+            if group_clock_required
+                && n01_clocks.is_none_or(|views| {
+                    n01_group_time(&self.groups, views, peer.group, selected).is_none()
+                })
+            {
                 continue;
             }
             let wire_len = match (&peer.held, peer.media_q.front()) {
@@ -3476,6 +4859,8 @@ impl<P: DatagramPort> CarrierSender<P> {
         &mut self,
         now_ns: u64,
         clocks: &[(GroupId, crate::playout::ClockView)],
+        n01_clocks: Option<&[N01GroupClock]>,
+        selected: Option<GroupId>,
         cancelled: &std::sync::atomic::AtomicBool,
         out: &mut PumpReport,
     ) {
@@ -3493,7 +4878,9 @@ impl<P: DatagramPort> CarrierSender<P> {
                 self.stats.send_cap_pumps += 1;
                 break;
             }
-            let Some((idx, cost, fec)) = self.next_sendable(now_ns, clocks, cancelled) else {
+            let Some((idx, cost, fec)) =
+                self.next_sendable(now_ns, clocks, n01_clocks, selected, cancelled)
+            else {
                 break;
             };
             let cost = cost as u64;
@@ -3524,10 +4911,11 @@ impl<P: DatagramPort> CarrierSender<P> {
                         break;
                     };
                     self.peers[idx].media_q_bytes -= queued.wire_len;
-                    let (wire_len, enqueued_ns, consume_by_ns) = (
+                    let (wire_len, enqueued_ns, consume_by_ns, group_clock_required) = (
                         queued.wire_len,
                         queued.enqueued_ns,
                         queued.frame.consume_by_ns,
+                        queued.group_clock_required,
                     );
                     let seq = self.peers[idx].sender.next_seq();
                     match self.peers[idx].sender.send(queued.frame) {
@@ -3540,6 +4928,7 @@ impl<P: DatagramPort> CarrierSender<P> {
                                 enqueued_ns,
                                 consume_by_ns,
                                 attempts: 0,
+                                group_clock_required,
                             }
                         }
                         Err(_) => {
@@ -3551,7 +4940,16 @@ impl<P: DatagramPort> CarrierSender<P> {
             };
             // A datagram that aged while it waited is not sent late, unless it holds the last number the receiver is
             // certain to admit: that one goes however stale, because the receiver's answer to it is what reopens the budget.
-            if now_ns > datagram.consume_by_ns && !self.peers[idx].must_keep(&datagram) {
+            let late = if datagram.group_clock_required {
+                n01_clocks
+                    .and_then(|views| {
+                        n01_group_time(&self.groups, views, self.peers[idx].group, selected)
+                    })
+                    .is_none_or(|group_now| group_now >= datagram.consume_by_ns)
+            } else {
+                now_ns > datagram.consume_by_ns
+            };
+            if late && !self.peers[idx].must_keep(&datagram) {
                 add_drop(
                     &mut self.peers[idx].counters,
                     DropKind::Late,
@@ -3577,6 +4975,7 @@ impl<P: DatagramPort> CarrierSender<P> {
                     peer.last_sent = Some(SentDatagram {
                         wire: datagram.wire,
                         wire_len: datagram.wire_len,
+                        group_clock_required: datagram.group_clock_required,
                     });
                     // A peer that has just used the last of its window or its budget is waited on from now.
                     peer.probe_due_ns = peer
