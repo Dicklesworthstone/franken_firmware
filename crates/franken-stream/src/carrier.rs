@@ -40,6 +40,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::io;
 use std::net::{IpAddr, SocketAddr, UdpSocket};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 /// IPv4 header (20) plus UDP header (8).
 pub const IPV4_UDP_OVERHEAD_BYTES: usize = 28;
@@ -759,6 +763,39 @@ const FEC_TARGET_SCRATCH_BYTES: usize =
         + std::mem::size_of::<[u64; MAX_TARGET_FEC_PEERS]>()
         + std::mem::size_of::<[u32; MAX_TARGET_FEC_PEERS]>();
 
+/// Owned local preparation, not proof of peer readiness or an activation decision.
+/// The caller must hold the supplied numeric reservation until this is dropped or
+/// committed. The token cannot be copied or used with another sender.
+pub struct PreparedTargetFec {
+    staged: Option<FecGroup>,
+    owner: Arc<AtomicBool>,
+    generation: u64,
+    group: GroupId,
+    epoch: u64,
+    origin_ns: u64,
+    local_media: SocketAddr,
+    local_control: SocketAddr,
+    charge_bytes: usize,
+    initial_retained_bytes: usize,
+    allowance_bytes: usize,
+}
+
+impl PreparedTargetFec {
+    /// Total measured overlap and named scratch required at preparation.
+    #[must_use]
+    pub const fn required_bytes(&self) -> usize {
+        self.charge_bytes
+    }
+}
+
+impl Drop for PreparedTargetFec {
+    fn drop(&mut self) {
+        // Retire the actual allocations before making a subsequent preparation possible.
+        drop(self.staged.take());
+        self.owner.store(false, Ordering::Release);
+    }
+}
+
 struct FecTarget {
     peer_id: u32,
     config: crate::fec::SessionConfig,
@@ -1136,6 +1173,8 @@ pub struct CarrierSender<P: DatagramPort = HostUdp> {
     stats: CarrierStats,
     control_stats: ControlStats,
     faults: PortFaults,
+    stage_owner: Arc<AtomicBool>,
+    stage_generation: u64,
 }
 
 /// What control cost the interface, apart from the model's counters.
@@ -1216,6 +1255,8 @@ impl<P: DatagramPort> CarrierSender<P> {
             stats: CarrierStats::default(),
             control_stats: ControlStats::default(),
             faults: PortFaults::default(),
+            stage_owner: Arc::new(AtomicBool::new(false)),
+            stage_generation: 0,
         })
     }
 
@@ -1259,6 +1300,7 @@ impl<P: DatagramPort> CarrierSender<P> {
 
     /// The port, for a harness that moves its simulated state.
     pub fn port_mut(&mut self) -> &mut P {
+        self.fence_prepared_target();
         &mut self.port
     }
 
@@ -1272,6 +1314,7 @@ impl<P: DatagramPort> CarrierSender<P> {
     /// The address is outside the declared policy (nothing changed), or the port could not rebind (nothing changed).
     pub fn rebind(&mut self, ip: IpAddr) -> Result<(SocketAddr, SocketAddr), CarrierError> {
         check_address(&self.limits, SocketAddr::new(ip, 0))?;
+        self.fence_prepared_target();
         if let Err(fault) = self.port.rebind(ip) {
             self.faults.rebind_failures = self.faults.rebind_failures.saturating_add(1);
             return Err(CarrierError::Io(fault_text(&fault)));
@@ -1404,6 +1447,27 @@ impl<P: DatagramPort> CarrierSender<P> {
         })
     }
 
+    fn fence_prepared_target(&mut self) {
+        self.stage_generation = self.stage_generation.saturating_add(1);
+    }
+
+    fn no_target_preparation(&self) -> Result<(), CarrierError> {
+        if self.stage_owner.load(Ordering::Acquire) {
+            return Err(CarrierError::InvalidLimits(
+                "target preparation unavailable",
+            ));
+        }
+        Ok(())
+    }
+
+    fn target_preparation_available(&self) -> Result<(), CarrierError> {
+        self.no_target_preparation()?;
+        if self.stage_generation == u64::MAX {
+            return Err(CarrierError::InvalidLimits("target generation exhausted"));
+        }
+        Ok(())
+    }
+
     fn index_of(&self, id: u32) -> Result<usize, CarrierError> {
         self.peers
             .iter()
@@ -1502,6 +1566,7 @@ impl<P: DatagramPort> CarrierSender<P> {
                 budget: self.limits.pace_bytes_per_sec,
             });
         }
+        self.fence_prepared_target();
         let state = &self.groups[gi];
         let sender = StreamSender::new(state.key.clone(), state.stream_id, state.epoch);
         self.peers.push(PeerState {
@@ -1585,6 +1650,7 @@ impl<P: DatagramPort> CarrierSender<P> {
     /// sent to it until the path recovers); other peers are untouched. Nothing is ever fragmented.
     pub fn set_path_mtu(&mut self, id: u32, path_mtu: usize) -> Result<PathOutcome, CarrierError> {
         let idx = self.index_of(id)?;
+        self.fence_prepared_target();
         let required = self.limits.required_payload_bytes;
         let group = self.peers[idx].group;
         let selected = self.groups.iter().any(|g| g.id == group && g.fec.is_some());
@@ -1611,6 +1677,9 @@ impl<P: DatagramPort> CarrierSender<P> {
     /// Interface up or down (a simulated event: no interface is touched). While down nothing is sent or read, queues
     /// stay bounded, and frames past their `consume_by` are dropped when the link returns.
     pub fn set_link_up(&mut self, up: bool) {
+        if self.link_up != up {
+            self.fence_prepared_target();
+        }
         self.link_up = up;
         self.stats.link_events += 1;
     }
@@ -1636,6 +1705,7 @@ impl<P: DatagramPort> CarrierSender<P> {
                 current,
             }));
         }
+        self.fence_prepared_target();
         for peer in self.peers.iter_mut().filter(|p| p.group == group) {
             peer.pending_fec_feedback = None;
             peer.sender.advance_epoch(new_epoch)?;
@@ -1677,6 +1747,7 @@ impl<P: DatagramPort> CarrierSender<P> {
                 max: self.limits.max_peers,
             });
         }
+        self.fence_prepared_target();
         let id = self.next_group;
         self.next_group = id.saturating_add(1);
         self.groups.push(GroupState {
@@ -1700,6 +1771,7 @@ impl<P: DatagramPort> CarrierSender<P> {
             return Err(CarrierError::PrimaryGroupIsFixed);
         }
         let gi = self.group_index(group)?;
+        self.fence_prepared_target();
         let stats = &mut self.stats;
         self.peers.retain(|gone| {
             if gone.group != group {
@@ -1749,6 +1821,7 @@ impl<P: DatagramPort> CarrierSender<P> {
                 current,
             }));
         }
+        self.fence_prepared_target();
         let key = self.groups[gi].key.clone();
         for peer in self.peers.iter_mut().filter(|p| p.group == group) {
             peer.sender = StreamSender::new(key.clone(), new_stream_id, new_epoch);
@@ -1827,10 +1900,11 @@ impl<P: DatagramPort> CarrierSender<P> {
 
     fn reserve_fec_work(&mut self, now_ns: u64, cost: u64) -> bool {
         const INTERVAL_NS: u64 = 21_333_334;
-        if self
-            .fec_work_start_ns
-            .is_none_or(|start| now_ns >= start.saturating_add(INTERVAL_NS))
-        {
+        if self.fec_work_start_ns.is_none_or(|start| {
+            now_ns
+                .checked_sub(start)
+                .is_some_and(|elapsed| elapsed >= INTERVAL_NS)
+        }) {
             self.fec_work_start_ns = Some(now_ns);
             self.fec_work_charged = 0;
         }
@@ -1848,10 +1922,11 @@ impl<P: DatagramPort> CarrierSender<P> {
 
     fn fec_work_available(&self, now_ns: u64, cost: u64) -> bool {
         const INTERVAL_NS: u64 = 21_333_334;
-        let charged = if self
-            .fec_work_start_ns
-            .is_none_or(|start| now_ns >= start.saturating_add(INTERVAL_NS))
-        {
+        let charged = if self.fec_work_start_ns.is_none_or(|start| {
+            now_ns
+                .checked_sub(start)
+                .is_some_and(|elapsed| elapsed >= INTERVAL_NS)
+        }) {
             0
         } else {
             self.fec_work_charged
@@ -1862,6 +1937,7 @@ impl<P: DatagramPort> CarrierSender<P> {
     }
 
     fn invalidate_group_fec(&mut self, group: GroupId) {
+        self.fence_prepared_target();
         if let Some(state) = self.groups.iter_mut().find(|g| g.id == group)
             && state.fec.take().is_some()
         {
@@ -1885,6 +1961,7 @@ impl<P: DatagramPort> CarrierSender<P> {
         origin_ns: u64,
         validated_peer_ids: &[u32],
     ) -> Result<(), CarrierError> {
+        self.no_target_preparation()?;
         let (gi, config) = self.preflight_group_fec(group, epoch, origin_ns, validated_peer_ids)?;
         self.advance_group_epoch(group, epoch)?;
         self.groups[gi].fec = Some(FecGroup {
@@ -1911,6 +1988,7 @@ impl<P: DatagramPort> CarrierSender<P> {
         bindings: &[TargetFecBinding],
         retained_budget_bytes: usize,
     ) -> Result<(), CarrierError> {
+        self.no_target_preparation()?;
         if bindings.is_empty() || bindings.len() > MAX_TARGET_FEC_PEERS {
             return Err(CarrierError::InvalidLimits("per-target FEC work cap"));
         }
@@ -2023,6 +2101,224 @@ impl<P: DatagramPort> CarrierSender<P> {
             last_group_ns: None,
             clock_failed: false,
         });
+        Ok(())
+    }
+
+    /// Allocate a bounded future target selection while the current stream remains live.
+    /// This does not authenticate members, check clocks, or authorize activation. The trusted
+    /// caller must hold `retained_budget_bytes` until token drop or successful commit, and
+    /// must include other users of the same budget. Only one token may exist per sender.
+    /// The caller must retain exclusive custody of the port: external mutations through
+    /// shared backend aliases cannot be observed reliably, including an address ABA.
+    /// The owner identity Arc backing is a fixed sender allocation, excluded from this FEC
+    /// allowance; account for it in the caller's sender budget. This is not an RSS bound.
+    pub fn prepare_group_target_fec(
+        &mut self,
+        group: GroupId,
+        epoch: u64,
+        origin_ns: u64,
+        bindings: &[TargetFecBinding],
+        retained_budget_bytes: usize,
+    ) -> Result<PreparedTargetFec, CarrierError> {
+        self.target_preparation_available()?;
+        if bindings.is_empty() || bindings.len() > MAX_TARGET_FEC_PEERS {
+            return Err(CarrierError::InvalidLimits("per-target FEC work cap"));
+        }
+        let gi = self.group_index(group)?;
+        if self.groups[gi].epoch.checked_add(1) != Some(epoch) {
+            return Err(CarrierError::StaleEpoch {
+                submitted: epoch,
+                current: self.groups[gi].epoch,
+            });
+        }
+        for (i, binding) in bindings.iter().enumerate() {
+            if binding.config.epoch != epoch
+                || binding.config.presentation_origin_ns != origin_ns
+                || bindings.iter().skip(i + 1).any(|other| {
+                    other.peer_id == binding.peer_id || other.config.stream == binding.config.stream
+                })
+                || self.groups.iter().any(|other| {
+                    other.id != group
+                        && (other.stream_id == binding.config.stream
+                            || other.fec.as_ref().is_some_and(|fec| {
+                                fec.targets
+                                    .iter()
+                                    .any(|target| target.config.stream == binding.config.stream)
+                            }))
+                })
+            {
+                return Err(CarrierError::InvalidLimits(
+                    "inconsistent target FEC binding",
+                ));
+            }
+            binding
+                .config
+                .metadata(0)
+                .map_err(|_| CarrierError::InvalidLimits("invalid target timeline"))?;
+        }
+        let mut ids = [0_u32; MAX_TARGET_FEC_PEERS];
+        for (i, binding) in bindings.iter().enumerate() {
+            ids[i] = binding.peer_id;
+        }
+        let (_, common_config) =
+            self.preflight_group_fec(group, epoch, origin_ns, &ids[..bindings.len()])?;
+        if self
+            .peers
+            .iter()
+            .any(|peer| peer.group == group && peer.fence.is_some())
+        {
+            return Err(CarrierError::InvalidLimits("target peer is fenced"));
+        }
+        let work = FEC_TARGET_WORK
+            .checked_mul(bindings.len() as u64)
+            .ok_or(CarrierError::InvalidLimits("target FEC work overflow"))?;
+        if work > crate::fec::WINDOW_ALLOWANCE_NS / crate::fec::WORK_UNIT_NS {
+            return Err(CarrierError::InvalidLimits("per-target FEC work cap"));
+        }
+        // Charge each explicitly held submission array, not a whole-stack/RSS estimate.
+        let scratch = FEC_TARGET_SCRATCH_BYTES
+            .checked_add(std::mem::size_of::<PreparedTargetFec>())
+            .ok_or(CarrierError::InvalidLimits("target FEC memory overflow"))?;
+        let minimum = self
+            .fec_retained_bytes()
+            .checked_add(scratch)
+            .and_then(|v| v.checked_add(bindings.len() * std::mem::size_of::<FecTarget>()))
+            .and_then(|v| {
+                v.checked_add(
+                    bindings.len()
+                        * crate::fec::WINDOWS
+                        * std::mem::size_of::<(u64, crate::fec::SenderWindow)>(),
+                )
+            })
+            .ok_or(CarrierError::InvalidLimits("target FEC memory overflow"))?;
+        if minimum > retained_budget_bytes {
+            return Err(CarrierError::InvalidLimits("target FEC memory cap"));
+        }
+        let mut targets = Vec::new();
+        targets
+            .try_reserve_exact(bindings.len())
+            .map_err(|_| CarrierError::InvalidLimits("target FEC allocation"))?;
+        let mut actual = self
+            .fec_retained_bytes()
+            .checked_add(scratch)
+            .and_then(|v| {
+                targets
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<FecTarget>())
+                    .and_then(|bytes| v.checked_add(bytes))
+            })
+            .ok_or(CarrierError::InvalidLimits("target FEC memory overflow"))?;
+        if actual > retained_budget_bytes {
+            return Err(CarrierError::InvalidLimits("target FEC memory cap"));
+        }
+        for binding in bindings {
+            let mut windows = VecDeque::new();
+            windows
+                .try_reserve_exact(crate::fec::WINDOWS)
+                .map_err(|_| CarrierError::InvalidLimits("target FEC allocation"))?;
+            actual = actual
+                .checked_add(
+                    windows
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<(u64, crate::fec::SenderWindow)>())
+                        .ok_or(CarrierError::InvalidLimits("target FEC memory overflow"))?,
+                )
+                .ok_or(CarrierError::InvalidLimits("target FEC memory overflow"))?;
+            if actual > retained_budget_bytes {
+                return Err(CarrierError::InvalidLimits("target FEC memory cap"));
+            }
+            targets.push(FecTarget {
+                peer_id: binding.peer_id,
+                config: binding.config.clone(),
+                windows,
+            });
+        }
+        let local_media = self.media_addr()?;
+        let local_control = self.control_addr()?;
+        self.stage_owner.store(true, Ordering::Release);
+        Ok(PreparedTargetFec {
+            staged: Some(FecGroup {
+                config: common_config,
+                windows: VecDeque::new(),
+                targets,
+                next_window: 0,
+                last_group_ns: None,
+                clock_failed: false,
+            }),
+            owner: Arc::clone(&self.stage_owner),
+            generation: self.stage_generation,
+            group,
+            epoch,
+            origin_ns,
+            local_media,
+            local_control,
+            charge_bytes: actual,
+            initial_retained_bytes: self.fec_retained_bytes(),
+            allowance_bytes: retained_budget_bytes,
+        })
+    }
+
+    /// Consume the prepared allocations at a caller-authorized local boundary. The caller
+    /// decides timing and activation, and continues reserving the allowance while selected.
+    /// All checks precede queue or epoch mutation; failure consumes and drops this token.
+    pub fn commit_group_target_fec(
+        &mut self,
+        mut prepared: PreparedTargetFec,
+        retained_budget_bytes: usize,
+    ) -> Result<(), CarrierError> {
+        if !Arc::ptr_eq(&self.stage_owner, &prepared.owner)
+            || !self.stage_owner.load(Ordering::Acquire)
+            || prepared.generation != self.stage_generation
+            || self.stage_generation == u64::MAX
+        {
+            return Err(CarrierError::InvalidLimits("stale target preparation"));
+        }
+        if self.media_addr()? != prepared.local_media
+            || self.control_addr()? != prepared.local_control
+        {
+            return Err(CarrierError::InvalidLimits("stale target preparation"));
+        }
+        let staged = prepared
+            .staged
+            .as_ref()
+            .ok_or(CarrierError::InvalidLimits("stale target preparation"))?;
+        let mut ids = [0_u32; MAX_TARGET_FEC_PEERS];
+        for (index, target) in staged.targets.iter().enumerate() {
+            ids[index] = target.peer_id;
+        }
+        let (gi, _) = self.preflight_group_fec(
+            prepared.group,
+            prepared.epoch,
+            prepared.origin_ns,
+            &ids[..staged.targets.len()],
+        )?;
+        if self
+            .peers
+            .iter()
+            .any(|peer| peer.group == prepared.group && peer.fence.is_some())
+        {
+            return Err(CarrierError::InvalidLimits("target peer is fenced"));
+        }
+        if self.groups[gi].epoch.checked_add(1) != Some(prepared.epoch)
+            || self
+                .peers
+                .iter()
+                .filter(|p| p.group == prepared.group)
+                .any(|p| p.sender.epoch() != self.groups[gi].epoch)
+        {
+            return Err(CarrierError::InvalidLimits("stale target preparation"));
+        }
+        // Recheck other retained capacity as well as a caller-supplied changed allowance.
+        let required = prepared
+            .charge_bytes
+            .checked_sub(prepared.initial_retained_bytes)
+            .and_then(|v| v.checked_add(self.fec_retained_bytes()))
+            .ok_or(CarrierError::InvalidLimits("target FEC memory overflow"))?;
+        if required > retained_budget_bytes || required > prepared.allowance_bytes {
+            return Err(CarrierError::InvalidLimits("target FEC memory cap"));
+        }
+        self.advance_group_epoch(prepared.group, prepared.epoch)?;
+        self.groups[gi].fec = prepared.staged.take();
         Ok(())
     }
 
@@ -2161,18 +2457,19 @@ impl<P: DatagramPort> CarrierSender<P> {
         let metadata = config
             .metadata(window)
             .map_err(|_| CarrierError::InvalidLimits("invalid FEC window"))?;
-        // Two source digests, eight bounded encodes and eight authentications.
-        // The synthetic ledger is aggregate across groups and is not a WCET claim.
-        let work = 2
-            * (66 * crate::fec::solver::HASH_WORK + (crate::fec::K * crate::fec::BYTES) as u64)
-            + crate::fec::N as u64
-                * (crate::fec::AUTH_WORK + (crate::fec::K * crate::fec::BYTES) as u64);
+        // Source work plus one wire copy per symbol and member. This conservative
+        // synthetic interface-wide charge is not a measured CPU or WCET claim.
+        let members = self.peers.iter().filter(|p| p.group == group).count();
+        let work = u64::try_from(members)
+            .ok()
+            .and_then(|count| count.checked_mul((crate::fec::N * crate::fec::DATAGRAM) as u64))
+            .and_then(|copies| FEC_SOURCE_WORK.checked_add(copies))
+            .ok_or(CarrierError::InvalidLimits("common FEC work overflow"))?;
         if !self.reserve_fec_work(now_ns, work) {
             return Err(CarrierError::InvalidLimits("aggregate FEC work exhausted"));
         }
         let deadline = be_u64(&metadata, 52);
         let digest = crate::fec::content_digest(&metadata, &source);
-        let members = self.peers.iter().filter(|p| p.group == group).count();
         let retained = crate::fec::SenderWindow::new(config.clone(), window, source, members)
             .map_err(|_| CarrierError::InvalidLimits("invalid FEC sender window"))?;
         let mut wires = Vec::with_capacity(crate::fec::N);

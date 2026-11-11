@@ -1203,6 +1203,256 @@ fn n06_target_sender_delivers_two_distinct_streams_and_repairs_actual_pcm() {
 }
 
 #[test]
+fn n06_staged_target_keeps_old_n01_then_delivers_and_repairs_pcm() {
+    let mut sender = two_target_sender();
+    let bindings = two_target_bindings();
+    let before = sender.group_view(PRIMARY_GROUP).unwrap();
+    let staged = sender
+        .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, 2 * 1024 * 1024)
+        .unwrap();
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), before);
+    let frame = OutboundFrame::media(0, 500_000_000, 497_500_000, vec![0x37; 1024]);
+    assert_eq!(sender.submit_media(1, &frame, 0).unwrap().queued, 2);
+    assert_eq!(sender.pump(1).media_sent, 2);
+    for (_, wire, _) in &sender.port.sent {
+        let mut receiver = crate::StreamReceiver::new(key(), stream(), 1);
+        let packet = receiver.accept(wire).unwrap();
+        assert_eq!(packet.seq, 0);
+        assert_eq!(packet.payload, vec![0x37; 1024]);
+    }
+    let second = OutboundFrame::media(256, 505_333_333, 502_833_333, vec![0x42; 1024]);
+    assert_eq!(sender.submit_media(1, &second, 2).unwrap().queued, 2);
+    assert_eq!(sender.pump(3).media_sent, 2);
+    for (_, wire, _) in sender.port.sent.iter().skip(2) {
+        let mut receiver = crate::StreamReceiver::new(key(), stream(), 1);
+        let packet = receiver.accept(wire).unwrap();
+        assert_eq!(packet.seq, 1);
+        assert_eq!(packet.payload, vec![0x42; 1024]);
+    }
+    assert_eq!(sender.epoch(), 1);
+    let staged_targets_ptr = staged.staged.as_ref().unwrap().targets.as_ptr();
+    let staged_caps: Vec<_> = staged
+        .staged
+        .as_ref()
+        .unwrap()
+        .targets
+        .iter()
+        .map(|t| t.windows.as_slices().0.as_ptr())
+        .collect();
+    sender
+        .commit_group_target_fec(staged, 2 * 1024 * 1024)
+        .unwrap();
+    assert_eq!(
+        staged_targets_ptr,
+        sender.groups[0].fec.as_ref().unwrap().targets.as_ptr()
+    );
+    let committed_caps: Vec<_> = sender.groups[0]
+        .fec
+        .as_ref()
+        .unwrap()
+        .targets
+        .iter()
+        .map(|t| t.windows.as_slices().0.as_ptr())
+        .collect();
+    assert_eq!(
+        staged_caps, committed_caps,
+        "commit moves the actual allocations"
+    );
+    sender.port.sent.clear();
+    assert!(matches!(
+        sender.add_group(key(), bindings[1].config.stream, 2),
+        Err(CarrierError::StreamIdInUse(_))
+    ));
+    let source = samples();
+    assert_eq!(
+        sender
+            .submit_group_fec_window(PRIMARY_GROUP, 2, 0, source, 0)
+            .unwrap()
+            .queued,
+        16
+    );
+    assert!(
+        sender.fec_retained_bytes()
+            >= 2 * fec::WINDOWS * std::mem::size_of::<(u64, fec::SenderWindow)>()
+    );
+    let cancel = AtomicBool::new(false);
+    assert_eq!(
+        sender
+            .pump_fec(4, &[(PRIMARY_GROUP, view(20_000_000))], &cancel)
+            .media_sent,
+        16
+    );
+    let initial = sender.port.sent.clone();
+    assert_eq!(
+        initial
+            .iter()
+            .filter(|(_, _, dest)| *dest == addr(42000))
+            .count(),
+        8
+    );
+    assert_eq!(
+        initial
+            .iter()
+            .filter(|(_, _, dest)| *dest == addr(42100))
+            .count(),
+        8
+    );
+    let mut receiver_a = fec::Receiver::new(bindings[0].config.clone()).unwrap();
+    let mut receiver_b = fec::Receiver::new(bindings[1].config.clone()).unwrap();
+    let mut engine_a = target_engine();
+    let mut engine_b = target_engine();
+    let a_wire = &initial
+        .iter()
+        .find(|(_, wire, dest)| *dest == addr(42000) && wire[72] == 0)
+        .unwrap()
+        .1;
+    let mut probe_a = fec::Receiver::new(bindings[0].config.clone()).unwrap();
+    let mut probe_b = fec::Receiver::new(bindings[1].config.clone()).unwrap();
+    let mut probe_engine_a = target_engine();
+    let mut probe_engine_b = target_engine();
+    assert!(matches!(
+        probe_b.ingest(&mut probe_engine_b, view(20_000_000), a_wire),
+        Err(fec::Refusal::Authentication)
+    ));
+    let mut wrong_key = bindings[0].config.clone();
+    wrong_key.key = bindings[1].config.key.clone();
+    let digest = fec::content_digest(&wrong_key.metadata(0).unwrap(), &source);
+    let bad = fec::sign_symbol(&wrong_key, 0, 0, 0, digest, &source[0]).unwrap();
+    assert!(matches!(
+        probe_a.ingest(&mut probe_engine_a, view(20_000_000), &bad),
+        Err(fec::Refusal::Authentication)
+    ));
+    let mut wrong_stream = bindings[0].config.clone();
+    wrong_stream.stream = bindings[1].config.stream;
+    let digest = fec::content_digest(&wrong_stream.metadata(0).unwrap(), &source);
+    let bad_stream = fec::sign_symbol(&wrong_stream, 0, 0, 0, digest, &source[0]).unwrap();
+    assert!(matches!(
+        probe_a.ingest(&mut probe_engine_a, view(20_000_000), &bad_stream),
+        Err(fec::Refusal::Identity)
+    ));
+    for (_, wire, dest) in &initial {
+        if wire[72] < 3 && *dest == addr(42000) {
+            receiver_a
+                .ingest(&mut engine_a, view(20_000_000), wire)
+                .unwrap();
+        } else if wire[72] < 3 && *dest == addr(42100) {
+            receiver_b
+                .ingest(&mut engine_b, view(20_000_000), wire)
+                .unwrap();
+        }
+    }
+    assert_eq!(
+        receiver_a
+            .poll(&mut engine_a, view(80_000_000), &cancel)
+            .unwrap(),
+        fec::DecodeState::Idle
+    );
+    assert_eq!(
+        receiver_b
+            .poll(&mut engine_b, view(80_000_000), &cancel)
+            .unwrap(),
+        fec::DecodeState::Idle
+    );
+    let feedback_a = receiver_a
+        .feedback(&engine_a, view(80_000_000))
+        .unwrap()
+        .unwrap();
+    let feedback_b = receiver_b
+        .feedback(&engine_b, view(80_000_000))
+        .unwrap()
+        .unwrap();
+    // A correctly signed report from the wrong peer/stream cannot be re-routed.
+    sender
+        .port
+        .control
+        .push_back((feedback_a.0.to_vec(), Some(addr(42101))));
+    sender
+        .port
+        .control
+        .push_back((feedback_b.0.to_vec(), Some(addr(42001))));
+    let mut wrong_key = feedback_a.0;
+    wrong_key[95] ^= 1;
+    sender
+        .port
+        .control
+        .push_back((wrong_key.to_vec(), Some(addr(42001))));
+    sender
+        .port
+        .control
+        .push_back((feedback_a.0.to_vec(), Some(addr(42001))));
+    sender
+        .port
+        .control
+        .push_back((feedback_b.0.to_vec(), Some(addr(42101))));
+    let initial_len = sender.port.sent.len();
+    let result = sender.pump_fec(21_333_334, &[(PRIMARY_GROUP, view(100_000_000))], &cancel);
+    assert_eq!(result.media_sent, 2);
+    let repairs = &sender.port.sent[initial_len..];
+    assert_eq!(repairs.len(), 2);
+    for (_, wire, dest) in repairs {
+        assert_eq!((wire[72], wire[73]), (3, 1));
+        if *dest == addr(42000) {
+            receiver_a
+                .ingest(&mut engine_a, view(105_000_000), wire)
+                .unwrap();
+        } else {
+            assert_eq!(*dest, addr(42100));
+            receiver_b
+                .ingest(&mut engine_b, view(105_000_000), wire)
+                .unwrap();
+        }
+    }
+    assert_eq!(
+        sender.peer_view(7).unwrap().counters.fec_feedback_accepted,
+        1
+    );
+    assert_eq!(
+        sender.peer_view(8).unwrap().counters.fec_feedback_accepted,
+        1
+    );
+    assert!(sender.stats().fec_feedback_refused >= 3);
+    let before_refused = sender.stats().fec_feedback_refused;
+    let before_peer = sender.peer_view(7).unwrap().counters.fec_feedback_refused;
+    sender
+        .port
+        .control
+        .push_back((feedback_a.0.to_vec(), Some(addr(42001))));
+    let mut stale_epoch = feedback_b.0;
+    stale_epoch[27] = 3;
+    sender
+        .port
+        .control
+        .push_back((stale_epoch.to_vec(), Some(addr(42101))));
+    assert_eq!(
+        sender
+            .pump_fec(21_333_335, &[(PRIMARY_GROUP, view(110_000_000))], &cancel)
+            .media_sent,
+        0
+    );
+    assert_eq!(sender.stats().fec_feedback_refused, before_refused + 2);
+    assert_eq!(
+        sender.peer_view(7).unwrap().counters.fec_feedback_refused,
+        before_peer + 1
+    );
+    for (receiver, engine) in [
+        (&mut receiver_a, &mut engine_a),
+        (&mut receiver_b, &mut engine_b),
+    ] {
+        for (i, expected) in source.iter().enumerate() {
+            let presentation = 500_000_000 + playout::frames_to_ns(i as u64 * 256);
+            let cutoff = playout::consume_by(presentation, 1_000_000, 1_000_000, 500_000);
+            let mut out = [0; fec::BYTES];
+            let playout::Poll::Decision(decision) = receiver.decide(engine, view(cutoff), &mut out)
+            else {
+                panic!("missing target PCM decision");
+            };
+            assert_eq!(decision.outcome, playout::Outcome::Real);
+            assert_eq!(&out, expected);
+        }
+    }
+}
+
+#[test]
 fn n06_target_selection_rejects_invalid_bindings_and_keeps_n01_live() {
     let mut sender = two_target_sender();
     let valid = two_target_bindings();
@@ -1532,4 +1782,307 @@ fn n06_target_exact_capacity_accepts_two_and_one_byte_less_preserves_n01() {
             .media_sent,
         16
     );
+}
+
+#[test]
+fn n06_staged_target_drop_cancel_and_budget_are_transactional() {
+    let mut sender = two_target_sender();
+    let bindings = two_target_bindings();
+    let before = sender.group_view(PRIMARY_GROUP).unwrap();
+    let probe = sender
+        .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, usize::MAX)
+        .unwrap();
+    let exact = probe.required_bytes();
+    assert!(exact > FEC_TARGET_SCRATCH_BYTES);
+    assert!(
+        sender
+            .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, usize::MAX)
+            .is_err()
+    );
+    assert!(
+        sender
+            .select_group_fec(PRIMARY_GROUP, 2, 500_000_000, &[7, 8])
+            .is_err()
+    );
+    drop(probe); // explicit cancellation releases only the staged resources
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), before);
+    assert!(
+        sender
+            .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, exact - 1)
+            .is_err()
+    );
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), before);
+    let staged = sender
+        .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, exact)
+        .unwrap();
+    assert_eq!(staged.required_bytes(), exact);
+    assert!(sender.commit_group_target_fec(staged, exact - 1).is_err());
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), before);
+    let staged = sender
+        .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, exact)
+        .unwrap();
+    sender.commit_group_target_fec(staged, exact).unwrap();
+    assert_eq!(sender.epoch(), 2);
+    assert_eq!(
+        sender
+            .submit_group_fec_window(PRIMARY_GROUP, 2, 0, samples(), 0)
+            .unwrap()
+            .queued,
+        16
+    );
+}
+
+#[test]
+fn n06_staged_target_fences_foreign_owner_membership_path_and_epoch_aba() {
+    let bindings = two_target_bindings();
+    let allowance = 2 * 1024 * 1024;
+    let mut one = two_target_sender();
+    let mut other = two_target_sender();
+    let foreign = one
+        .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, allowance)
+        .unwrap();
+    let other_token = other
+        .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, allowance)
+        .unwrap();
+    let before_other = other.group_view(PRIMARY_GROUP).unwrap();
+    assert!(other.commit_group_target_fec(foreign, allowance).is_err());
+    assert_eq!(other.group_view(PRIMARY_GROUP).unwrap(), before_other);
+    // A foreign token must not clear the other sender's outstanding reservation.
+    assert!(
+        other
+            .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, allowance)
+            .is_err()
+    );
+    other
+        .commit_group_target_fec(other_token, allowance)
+        .unwrap();
+    assert_eq!(other.epoch(), 2);
+    let token = one
+        .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, allowance)
+        .unwrap();
+    one.remove_peer(8).unwrap();
+    one.add_peer(8, addr(42100), addr(42101), 1500).unwrap();
+    let after = one.group_view(PRIMARY_GROUP).unwrap();
+    assert!(one.commit_group_target_fec(token, allowance).is_err());
+    assert_eq!(one.group_view(PRIMARY_GROUP).unwrap(), after);
+    let token = one
+        .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, allowance)
+        .unwrap();
+    one.peer_address_changed(8, addr(42102), addr(42103))
+        .unwrap();
+    one.peer_address_changed(8, addr(42100), addr(42101))
+        .unwrap();
+    let after = one.group_view(PRIMARY_GROUP).unwrap();
+    assert!(one.commit_group_target_fec(token, allowance).is_err());
+    assert_eq!(one.group_view(PRIMARY_GROUP).unwrap(), after);
+    let token = one
+        .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, allowance)
+        .unwrap();
+    one.set_path_mtu(8, 1400).unwrap();
+    one.set_path_mtu(8, 1500).unwrap();
+    let after = one.group_view(PRIMARY_GROUP).unwrap();
+    assert!(one.commit_group_target_fec(token, allowance).is_err());
+    assert_eq!(one.group_view(PRIMARY_GROUP).unwrap(), after);
+    let token = one
+        .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, allowance)
+        .unwrap();
+    let _ = one.port_mut(); // externally mutable transport is a conservative fence
+    assert!(one.commit_group_target_fec(token, allowance).is_err());
+    assert_eq!(one.epoch(), 1);
+    let token = one
+        .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, allowance)
+        .unwrap();
+    one.advance_epoch(2).unwrap();
+    let after = one.group_view(PRIMARY_GROUP).unwrap();
+    assert!(one.commit_group_target_fec(token, allowance).is_err());
+    assert_eq!(one.group_view(PRIMARY_GROUP).unwrap(), after);
+    assert_eq!(one.epoch(), 2);
+}
+
+#[test]
+fn n06_staged_target_accounts_existing_group_and_reuses_exact_overlap() {
+    let mut limits = generous();
+    limits.pace_bytes_per_sec = 4_000_000;
+    let mut sender = sender(limits);
+    sender.add_peer(8, addr(42100), addr(42101), 1500).unwrap();
+    let other = sender
+        .add_group(key(), StreamId::new(stream().get() + 50).unwrap(), 1)
+        .unwrap();
+    sender
+        .add_peer_in_group(other, 9, addr(42200), addr(42201), 1500)
+        .unwrap();
+    sender
+        .select_group_fec(other, 2, 500_000_000, &[9])
+        .unwrap();
+    let old_retained = sender.fec_retained_bytes();
+    assert!(old_retained > 0);
+    let bindings = two_target_bindings();
+    let probe = sender
+        .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, usize::MAX)
+        .unwrap();
+    let exact = probe.required_bytes();
+    assert!(exact > old_retained + FEC_TARGET_SCRATCH_BYTES);
+    drop(probe);
+    let old_group = sender.group_view(other).unwrap();
+    let primary = sender.group_view(PRIMARY_GROUP).unwrap();
+    assert!(
+        sender
+            .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, exact - 1)
+            .is_err()
+    );
+    assert_eq!(sender.group_view(other).unwrap(), old_group);
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), primary);
+    let staged = sender
+        .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, exact)
+        .unwrap();
+    sender.commit_group_target_fec(staged, exact).unwrap();
+    assert_eq!(sender.group_view(other).unwrap(), old_group);
+    assert_eq!(sender.epoch(), 2);
+    assert!(sender.fec_retained_bytes() > old_retained);
+}
+
+#[test]
+fn n06_staged_target_refuses_new_live_mtu_fence_before_mutation() {
+    let mut sender = two_target_sender();
+    let bindings = two_target_bindings();
+    let allowance = 2 * 1024 * 1024;
+    let staged = sender
+        .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, allowance)
+        .unwrap();
+    sender.port.fault = Some(PortFault::MessageTooLong);
+    let frame = OutboundFrame::media(0, 500_000_000, 497_500_000, vec![0x37; 1024]);
+    assert_eq!(sender.submit_media(1, &frame, 0).unwrap().queued, 2);
+    sender.pump(1);
+    assert!(sender.peer_view(7).unwrap().fence.is_some());
+    let before = sender.group_view(PRIMARY_GROUP).unwrap();
+    assert!(sender.commit_group_target_fec(staged, allowance).is_err());
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), before);
+    assert_eq!(sender.epoch(), 1);
+    sender.port.fault = None;
+    sender.set_path_mtu(7, 1500).unwrap();
+    sender.set_path_mtu(8, 1500).unwrap();
+    let staged = sender
+        .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, allowance)
+        .unwrap();
+    sender.commit_group_target_fec(staged, allowance).unwrap();
+    assert_eq!(sender.epoch(), 2);
+}
+
+#[test]
+fn n06_staged_target_rejected_operations_leave_token_and_old_pcm_live() {
+    let mut sender = two_target_sender();
+    let bindings = two_target_bindings();
+    let allowance = 2 * 1024 * 1024;
+    let staged = sender
+        .prepare_group_target_fec(PRIMARY_GROUP, 2, 500_000_000, &bindings, allowance)
+        .unwrap();
+    let before = sender.group_view(PRIMARY_GROUP).unwrap();
+    assert!(matches!(
+        sender.add_peer(7, addr(42000), addr(42001), 1500),
+        Err(CarrierError::DuplicatePeer(7))
+    ));
+    assert!(matches!(
+        sender.remove_peer(999),
+        Err(CarrierError::UnknownPeer(999))
+    ));
+    assert!(matches!(
+        sender.set_path_mtu(999, 1500),
+        Err(CarrierError::UnknownPeer(999))
+    ));
+    assert!(
+        sender
+            .peer_address_changed(999, addr(42100), addr(42101))
+            .is_err()
+    );
+    assert!(sender.advance_epoch(1).is_err());
+    assert!(sender.add_group(key(), stream(), 1).is_err());
+    assert!(sender.remove_group(PRIMARY_GROUP).is_err());
+    assert!(sender.restart_group(PRIMARY_GROUP, stream(), 2).is_err());
+    assert!(sender.rebind(IpAddr::V4([192, 0, 2, 1].into())).is_err());
+    assert_eq!(sender.group_view(PRIMARY_GROUP).unwrap(), before);
+    let frame = OutboundFrame::media(0, 500_000_000, 497_500_000, vec![0x55; 1024]);
+    assert_eq!(sender.submit_media(1, &frame, 0).unwrap().queued, 2);
+    assert_eq!(sender.pump(1).media_sent, 2);
+    for (_, wire, _) in &sender.port.sent {
+        let mut receiver = crate::StreamReceiver::new(key(), stream(), 1);
+        let packet = receiver.accept(wire).unwrap();
+        assert_eq!(packet.seq, 0);
+        assert_eq!(packet.payload, vec![0x55; 1024]);
+    }
+    sender.commit_group_target_fec(staged, allowance).unwrap();
+    assert_eq!(sender.epoch(), 2);
+    assert_eq!(
+        sender
+            .submit_group_fec_window(PRIMARY_GROUP, 2, 0, samples(), 2)
+            .unwrap()
+            .queued,
+        16
+    );
+}
+
+#[test]
+fn n06_sender_work_interval_at_maximum_clock_never_refunds_charge() {
+    let limit = fec::WINDOW_ALLOWANCE_NS / fec::WORK_UNIT_NS;
+    let mut ring = sender(generous());
+    assert!(ring.reserve_fec_work(u64::MAX, 1));
+    assert!(!ring.fec_work_available(u64::MAX, limit));
+    assert!(!ring.reserve_fec_work(u64::MAX, limit));
+    assert_eq!(ring.fec_work_charged(), 1);
+    assert!(ring.reserve_fec_work(u64::MAX, limit - 1));
+    assert_eq!(ring.fec_work_charged(), limit);
+    assert!(!ring.fec_work_available(u64::MAX - 1, 1));
+    assert!(!ring.reserve_fec_work(u64::MAX - 1, 1));
+    assert_eq!(ring.fec_work_charged(), limit);
+
+    let mut positive = sender(generous());
+    let start = u64::MAX - 21_333_334;
+    assert!(positive.reserve_fec_work(start, limit));
+    assert!(!positive.fec_work_available(u64::MAX - 1, 1));
+    assert!(!positive.reserve_fec_work(u64::MAX - 1, 1));
+    assert!(positive.fec_work_available(u64::MAX, limit));
+    assert!(positive.reserve_fec_work(u64::MAX, limit));
+    assert!(!positive.reserve_fec_work(u64::MAX, 1));
+    assert_eq!(positive.fec_work_charged(), limit);
+}
+
+#[test]
+fn n06_common_sender_charges_each_fanout_and_recovers_next_interval() {
+    let mut one = sender(generous());
+    let mut two = two_target_sender();
+    one.select_group_fec(PRIMARY_GROUP, 2, 500_000_000, &[7])
+        .unwrap();
+    two.select_group_fec(PRIMARY_GROUP, 2, 500_000_000, &[7, 8])
+        .unwrap();
+    let one_cost = FEC_SOURCE_WORK + (fec::N * fec::DATAGRAM) as u64;
+    let two_cost = FEC_SOURCE_WORK + 2 * (fec::N * fec::DATAGRAM) as u64;
+    assert_eq!(
+        one.submit_group_fec_window(PRIMARY_GROUP, 2, 0, samples(), 0)
+            .unwrap()
+            .queued,
+        8
+    );
+    assert_eq!(one.fec_work_charged(), one_cost);
+    assert_eq!(
+        two.submit_group_fec_window(PRIMARY_GROUP, 2, 0, samples(), 0)
+            .unwrap()
+            .queued,
+        16
+    );
+    assert_eq!(two.fec_work_charged(), two_cost);
+    let ceiling = fec::WINDOW_ALLOWANCE_NS / fec::WORK_UNIT_NS;
+    assert!(two.reserve_fec_work(1, ceiling - two_cost - 1));
+    let before = two.group_view(PRIMARY_GROUP).unwrap();
+    let retained = two.fec_retained_bytes();
+    assert!(matches!(
+        two.submit_group_fec_window(PRIMARY_GROUP, 2, 1, samples(), 2),
+        Err(CarrierError::InvalidLimits("aggregate FEC work exhausted"))
+    ));
+    assert_eq!(two.group_view(PRIMARY_GROUP).unwrap(), before);
+    assert_eq!(two.fec_retained_bytes(), retained);
+    assert_eq!(two.fec_work_charged(), ceiling - 1);
+    let accepted = two
+        .submit_group_fec_window(PRIMARY_GROUP, 2, 1, samples(), 21_333_334)
+        .unwrap();
+    assert_eq!(accepted.queued, 16);
+    assert_eq!(two.fec_work_charged(), two_cost);
 }

@@ -199,6 +199,18 @@ TARGET_SENDER_TESTS = (
 )
 for case, name in TARGET_SENDER_TESTS:
     CASES[case].append(("franken_stream", SENDER_CARRIER + name))
+STAGED_SENDER_TESTS = (
+    ("N06-CONSUMER", "n06_staged_target_keeps_old_n01_then_delivers_and_repairs_pcm"),
+    ("N06-CANCEL", "n06_staged_target_drop_cancel_and_budget_are_transactional"),
+    ("N06-RESTART", "n06_staged_target_fences_foreign_owner_membership_path_and_epoch_aba"),
+    ("N06-CONSUMER", "n06_staged_target_accounts_existing_group_and_reuses_exact_overlap"),
+    ("N06-CONSUMER", "n06_staged_target_refuses_new_live_mtu_fence_before_mutation"),
+    ("N06-CONSUMER", "n06_staged_target_rejected_operations_leave_token_and_old_pcm_live"),
+    ("N06-STORM", "n06_sender_work_interval_at_maximum_clock_never_refunds_charge"),
+    ("N06-OVERLOAD", "n06_common_sender_charges_each_fanout_and_recovers_next_interval"),
+)
+for case, name in STAGED_SENDER_TESTS:
+    CASES[case].append(("franken_stream", SENDER_CARRIER + name))
 # Concrete integration gaps named by root: these remain full acceptance blockers.
 # No invented Rust test, disabled requirement, or refusal-only qualification.
 PENDING = {
